@@ -71,7 +71,7 @@ impl<'txn, 'db> RecordFieldCompletionSiteScanner<'txn, 'db> {
         best: &mut Option<(RecordFieldCompletionSite, u32)>,
     ) {
         for expr in body.exprs().iter() {
-            if expr.source.file_id != self.file_id {
+            if !expr.source.is_written_in_file(self.file_id) {
                 continue;
             }
             let ExprKind::Record {

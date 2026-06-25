@@ -5,11 +5,11 @@ pub(crate) mod resolved;
 
 pub use rg_ir_model::{
     BindingData, BindingKind, BodyAssociatedPathPrefix, BodyOwner, BodyPath, BodySelfParamKind,
-    BodySource, BodySourceItems, ClosureCapture, ClosureKind, ClosureParamData, ExprAssignOp,
-    ExprBinaryOp, ExprBlockKind, ExprData, ExprKind, ExprRangeKind, ExprUnaryOp, ExprWrapperKind,
-    FunctionParamData, LabelData, LiteralKind, MatchArmData, PatBindingMode, PatData, PatKind,
-    PatMutability, PatRangeKind, RecordExprField, RecordExprSpread, RecordFieldSyntax,
-    RecordPatField, ScopeData, StmtData, StmtKind,
+    BodySource, BodySourceItems, BuiltinMacroExprKind, ClosureCapture, ClosureKind,
+    ClosureParamData, ExprAssignOp, ExprBinaryOp, ExprBlockKind, ExprData, ExprKind, ExprRangeKind,
+    ExprUnaryOp, ExprWrapperKind, FunctionParamData, LabelData, LiteralKind, MatchArmData,
+    PatBindingMode, PatData, PatKind, PatMutability, PatRangeKind, RecordExprField,
+    RecordExprSpread, RecordFieldSyntax, RecordPatField, ScopeData, StmtData, StmtKind,
 };
 
 pub use self::{

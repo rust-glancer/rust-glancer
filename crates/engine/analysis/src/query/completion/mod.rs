@@ -49,6 +49,23 @@ impl CompletionClientCapabilities {
     }
 }
 
+/// Controls whether accepting a callable candidate inserts syntax around the completed name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CallCompletionKind {
+    /// Insert only the completed name.
+    Plain,
+    /// Insert ordinary call syntax for this candidate kind.
+    Call,
+    /// Insert method-call syntax and omit the receiver from function placeholders.
+    MethodCall,
+}
+
+impl CallCompletionKind {
+    fn inserts_call_syntax(self) -> bool {
+        !matches!(self, Self::Plain)
+    }
+}
+
 /// One source-position completion query, including request-local editor state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CompletionQuery<'a> {
@@ -177,4 +194,16 @@ fn def_completion_detail(kind: CompletionKind, label: &str) -> String {
         CompletionKind::Union => format!("union {label}"),
         CompletionKind::Variable => format!("let {label}"),
     }
+}
+
+/// Escapes plain text before embedding it into an LSP snippet placeholder.
+fn escape_lsp_snippet_text(value: &str) -> String {
+    let mut escaped = String::new();
+    for ch in value.chars() {
+        if matches!(ch, '\\' | '$' | '}') {
+            escaped.push('\\');
+        }
+        escaped.push(ch);
+    }
+    escaped
 }

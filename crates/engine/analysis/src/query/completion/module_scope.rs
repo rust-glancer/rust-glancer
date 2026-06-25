@@ -4,14 +4,17 @@ use rg_ir_view::member::MemberView;
 
 use crate::{
     Analysis,
-    model::{CompletionApplicability, CompletionEdit, CompletionInsertText, CompletionItem},
+    model::{
+        CompletionApplicability, CompletionEdit, CompletionInsertText, CompletionItem,
+        CompletionKind,
+    },
 };
 
 use super::{
-    CompletionQuery,
+    CallCompletionKind, CompletionQuery,
     candidates::ModuleCompletionCandidate,
-    def_completion_detail,
-    function::{FunctionCallCompletion, FunctionCompletionRenderer, FunctionCompletionRequest},
+    def_completion_detail, escape_lsp_snippet_text,
+    function::{FunctionCompletionRenderer, FunctionCompletionRequest},
 };
 
 use super::completion_sort::{CompletionSortPolicy, CompletionSortPriority};
@@ -19,7 +22,7 @@ use super::completion_sort::{CompletionSortPolicy, CompletionSortPriority};
 pub(super) struct ModuleCompletionRequest<'candidate> {
     pub(super) candidate: &'candidate ModuleCompletionCandidate,
     pub(super) edit: CompletionEdit,
-    pub(super) function_call_completion: FunctionCallCompletion,
+    pub(super) call_completion: CallCompletionKind,
     pub(super) sort_policy: CompletionSortPolicy,
     pub(super) sort_priority: Option<CompletionSortPriority>,
 }
@@ -51,7 +54,7 @@ impl<'a, 'db, 'source> ModuleCompletionRenderer<'a, 'db, 'source> {
                         kind: request.candidate.kind(),
                         applicability: CompletionApplicability::Known,
                         edit: request.edit,
-                        call_completion: request.function_call_completion,
+                        call_completion: request.call_completion,
                         sort_policy: request.sort_policy,
                         sort_priority: request.sort_priority,
                     })
@@ -76,8 +79,26 @@ impl<'a, 'db, 'source> ModuleCompletionRenderer<'a, 'db, 'source> {
                 CompletionApplicability::Known,
                 target,
             ),
-            insert_text: CompletionInsertText::Plain,
+            insert_text: self.insert_text(kind, label, request.call_completion),
             edit: Some(request.edit),
         }))
+    }
+
+    fn insert_text(
+        &self,
+        kind: CompletionKind,
+        label: &str,
+        call_completion: CallCompletionKind,
+    ) -> CompletionInsertText {
+        // Macros follow the same path-position policy as functions: expression
+        // sites get call syntax, while import-like sites keep plain names.
+        if !matches!(kind, CompletionKind::Macro)
+            || !call_completion.inserts_call_syntax()
+            || !self.query.client_capabilities.snippet_support
+        {
+            return CompletionInsertText::Plain;
+        }
+
+        CompletionInsertText::Snippet(format!("{}!($0)", escape_lsp_snippet_text(label)))
     }
 }

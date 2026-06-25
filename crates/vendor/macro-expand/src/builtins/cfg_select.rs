@@ -1,8 +1,7 @@
-//! Parser for item-position `cfg_select!` calls.
+//! Parser for braced `cfg_select!` calls.
 //!
-//! Rust accepts `cfg_select!` in expression and item positions. Def-map needs the item form, but
-//! target cfg is not known at item-tree lowering time, so this module preserves every parsed arm
-//! and leaves selection to the caller.
+//! Rust accepts `cfg_select!` in expression and item positions. The parser preserves every arm as
+//! token-tree payload and leaves target selection plus payload parsing to the caller.
 
 use rg_cfg_eval::CfgPredicate;
 use rg_tt::{
@@ -17,7 +16,7 @@ pub struct CfgSelect {
 }
 
 impl CfgSelect {
-    /// Parses the supported item-position `cfg_select! { predicate => { ... } }` form.
+    /// Parses the supported `cfg_select! { predicate => { ... } }` form.
     pub fn parse(args: &TopSubtree) -> Option<Self> {
         let mut parser = CfgSelectParser::new(args.view().token_trees().iter());
         parser.parse()
@@ -29,7 +28,7 @@ impl CfgSelect {
     }
 }
 
-/// One `predicate => { items }` arm from `cfg_select!`.
+/// One `predicate => { source }` arm from `cfg_select!`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CfgSelectArm {
     pub predicate: CfgPredicate,
@@ -53,8 +52,8 @@ impl<'a> CfgSelectParser<'a> {
             let predicate = self.parse_arm_predicate()?;
             self.expect_arrow()?;
 
-            // Item-position `cfg_select!` strips the selected arm's braces before parsing the
-            // generated items.
+            // The builtin strips the selected arm's braces before parsing it as the caller's
+            // requested syntax kind.
             let payload = self.parse_braced_payload()?;
 
             arms.push(CfgSelectArm { predicate, payload });
@@ -133,7 +132,7 @@ impl<'a> CfgSelectParser<'a> {
             return None;
         }
 
-        // Use an invisible delimiter so the selected arm behaves as a plain item stream while
+        // Use an invisible delimiter so the selected arm behaves as a plain source stream while
         // keeping the arm span available for coarse diagnostics.
         let mut builder = TopSubtreeBuilder::new(Delimiter::invisible_delim_spanned(
             subtree.delimiter.delim_span(),

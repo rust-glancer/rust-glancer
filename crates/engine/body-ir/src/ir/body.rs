@@ -3,9 +3,9 @@ use wincode::{SchemaRead, SchemaWrite};
 
 use rg_arena::Arena;
 use rg_ir_model::{
-    BindingData, BindingId, BodyData, BodyOwner, BodyRef, BodySource, BodySourceItems, ExprData,
-    ExprId, FunctionParamData, FunctionRef, ModuleRef, PatData, PatId, ScopeData, ScopeId,
-    StmtData, StmtId,
+    BindingData, BindingId, BodyData, BodyMacroCallData, BodyOwner, BodyRef, BodySource,
+    BodySourceItems, ExprData, ExprId, FunctionParamData, FunctionRef, ModuleRef, PatData, PatId,
+    ScopeData, ScopeId, StmtData, StmtId,
     identity::DeclarationRef,
     items::{ItemNode, ItemTreeId},
 };
@@ -43,6 +43,10 @@ impl ResolvedBodyData {
 
     pub fn source_items(&self) -> &BodySourceItems {
         self.body.source_items()
+    }
+
+    pub fn macro_calls(&self) -> &[BodyMacroCallData] {
+        self.body.macro_calls()
     }
 
     pub fn param_scope(&self) -> ScopeId {
@@ -123,6 +127,14 @@ impl ResolvedBodyData {
 
     pub fn source_item(&self, item: ItemTreeId) -> Option<&ItemNode> {
         self.body.source_item(item)
+    }
+
+    pub fn source_item_source(&self, item: ItemTreeId) -> Option<BodySource> {
+        self.body.source_item_source(item)
+    }
+
+    pub fn source_item_is_written(&self, item: ItemTreeId) -> bool {
+        self.body.source_item_is_written(item)
     }
 
     pub fn statement(&self, statement: StmtId) -> Option<&StmtData> {
@@ -255,6 +267,7 @@ pub(crate) enum PendingBindingResolution {
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub(crate) struct BodyBuilder {
     pub(crate) source_items: BodySourceItems,
+    pub(crate) macro_calls: Vec<BodyMacroCallData>,
     pub(crate) scopes: Arena<ScopeId, ScopeData>,
     pub(crate) bindings: Arena<BindingId, BindingData>,
     pub(crate) facts: BodyFacts,
@@ -283,6 +296,7 @@ impl BodyBuilder {
     ) {
         let Self {
             source_items,
+            macro_calls,
             scopes,
             bindings,
             facts,
@@ -299,6 +313,7 @@ impl BodyBuilder {
                 fallback_module,
                 source,
                 source_items,
+                macro_calls,
                 param_scope,
                 root_expr,
                 function_params,
@@ -322,15 +337,28 @@ impl BodyBuilder {
         })
     }
 
+    pub(crate) fn push_macro_call(&mut self, data: BodyMacroCallData) {
+        self.macro_calls.push(data);
+    }
+
     /// Some items do not directly belong to a scope, e.g. contents of `impl` block.
     /// These are only indexed by their item ID, but not recorded as a part of the scope.
-    pub(crate) fn alloc_scopeless_source_item(&mut self, data: ItemNode) -> ItemTreeId {
-        self.source_items.alloc(data)
+    pub(crate) fn alloc_scopeless_source_item(
+        &mut self,
+        data: ItemNode,
+        source: BodySource,
+    ) -> ItemTreeId {
+        self.source_items.alloc(data, source)
     }
 
     /// Items declared within an expression scope are associated with the corresponding scope.
-    pub(crate) fn alloc_scope_source_item(&mut self, scope: ScopeId, data: ItemNode) -> ItemTreeId {
-        let item = self.alloc_scopeless_source_item(data);
+    pub(crate) fn alloc_scope_source_item(
+        &mut self,
+        scope: ScopeId,
+        data: ItemNode,
+        source: BodySource,
+    ) -> ItemTreeId {
+        let item = self.alloc_scopeless_source_item(data, source);
         self.scopes
             .get_mut(scope)
             .expect("source item scope should exist while lowering body")

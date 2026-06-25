@@ -106,6 +106,38 @@ pub fn use_it() {
 }
 
 #[test]
+fn resolves_body_macro_calls_to_macro_definitions() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_macro_call_goto"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct Text;
+
+pub fn helper(value: u64) -> Text { Text }
+
+/// Builds text from a value.
+macro_rules! make_text {
+    ($value:expr) => { helper($value) };
+}
+
+pub fn use_it(input: u64) {
+    let _text = make_$goto_macro$text!(input);
+}
+"#,
+        &[AnalysisQuery::goto("goto body macro call", "goto_macro")],
+        expect![[r#"
+            goto body macro call
+            - macro make_text @ 6:14-6:23
+        "#]],
+    );
+}
+
+#[test]
 fn named_module_targets_select_module_name() {
     check_analysis_queries(
         r#"

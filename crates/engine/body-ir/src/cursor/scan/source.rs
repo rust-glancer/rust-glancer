@@ -60,6 +60,7 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
             let body_local_items = target_bodies.body_local_items(body_ref.body);
 
             self.push_declaration_candidates(body_ref, body, body_local_items, &mut candidates);
+            self.push_macro_call_candidates(body, &mut candidates);
             self.push_member_reference_candidates(body_ref, body, &mut candidates);
             self.push_record_field_key_candidates(body_ref, body, &mut candidates);
 
@@ -85,6 +86,25 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
         Ok(candidates)
     }
 
+    /// Adds written macro invocations as references to the macro definition selected by expansion.
+    fn push_macro_call_candidates(
+        &self,
+        body: &ResolvedBodyData,
+        candidates: &mut Vec<BodyCursorCandidate>,
+    ) {
+        for call in body.macro_calls() {
+            if !call.source.is_written_in_selected_file(self.file_id) {
+                continue;
+            }
+
+            candidates.push(BodyCursorCandidate::MacroCall {
+                definition: call.definition,
+                file_id: call.source.file_id,
+                span: call.name_span,
+            });
+        }
+    }
+
     /// Adds declarations using the spans users expect to navigate from: names and field names.
     fn push_declaration_candidates(
         &self,
@@ -95,7 +115,7 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
     ) {
         let record_shorthand_bindings = self.record_shorthand_bindings(body);
         for (binding_idx, binding) in body.bindings().iter().enumerate() {
-            if !self.file_matches(binding.source.file_id) {
+            if !binding.source.is_written_in_selected_file(self.file_id) {
                 continue;
             }
             let binding_id = BindingId(binding_idx);
@@ -125,6 +145,12 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
             return;
         };
         for item in item_store.semantic_items() {
+            if let ItemSourceKind::Body(source) = item.source().kind
+                && source.body == body_ref
+                && !body.source_item_is_written(source.item)
+            {
+                continue;
+            }
             if self
                 .file_id
                 .is_some_and(|file_id| item.source().file_id != file_id)
@@ -271,7 +297,7 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
     ) {
         let record_shorthand_values = Self::record_expr_shorthand_values(body);
         for (expr_idx, expr) in body.exprs().iter().enumerate() {
-            if !self.file_matches(expr.source.file_id) {
+            if !expr.source.is_written_in_selected_file(self.file_id) {
                 continue;
             }
             if record_shorthand_values.contains(&ExprId(expr_idx)) {
@@ -330,7 +356,7 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
         candidates: &mut Vec<BodyCursorCandidate>,
     ) {
         for expr in body.exprs().iter() {
-            if !self.file_matches(expr.source.file_id) {
+            if !expr.source.is_written_in_selected_file(self.file_id) {
                 continue;
             }
             let ExprKind::Record {

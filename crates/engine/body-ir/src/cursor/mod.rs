@@ -8,7 +8,7 @@ mod scan;
 
 use rg_ir_model::items::FieldKey;
 use rg_ir_model::{
-    BindingId, BodyRef, EnumVariantRef, ExprId, FieldRef, FunctionRef, Path, ScopeId,
+    BindingId, BodyRef, EnumVariantRef, ExprId, FieldRef, FunctionRef, LocalDefRef, Path, ScopeId,
     SemanticItemRef, TargetRef,
 };
 use rg_package_store::PackageStoreError;
@@ -163,6 +163,12 @@ pub enum BodyCursorCandidate {
         expr: ExprId,
         span: Span,
     },
+    /// Macro invocation path written inside a body, e.g. `format` in `format!("{}", value)`.
+    MacroCall {
+        definition: LocalDefRef,
+        file_id: FileId,
+        span: Span,
+    },
     /// Body-local type-namespace item, e.g. `User` in `fn f() { struct User; }`.
     ///
     /// This also covers local `enum`, `union`, `type`, and `trait` declarations.
@@ -213,6 +219,7 @@ impl BodyCursorCandidate {
             Self::Body { span, .. }
             | Self::Binding { span, .. }
             | Self::Expr { span, .. }
+            | Self::MacroCall { span, .. }
             | Self::LocalItem { span, .. }
             | Self::LocalValueItem { span, .. }
             | Self::LocalField { span, .. }

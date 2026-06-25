@@ -68,10 +68,7 @@ impl TargetState {
     }
 
     pub(super) fn cfg_evaluator(&self) -> CfgEvaluator<'_> {
-        CfgEvaluator::new(
-            &self.cfg_options,
-            matches!(self.target_kind, TargetKind::Test | TargetKind::Bench),
-        )
+        CfgEvaluator::new(&self.cfg_options, self.target_kind.enables_test_cfg())
     }
 }
 
@@ -405,7 +402,12 @@ impl<'db> TargetScopeCollector<'db> {
         }
         self.def_map_builder.insert_macro_definition(
             local_def_id,
-            MacroDefinitionData::from_item(macro_definition, self.edition, self.target),
+            MacroDefinitionData::from_item(
+                macro_definition,
+                item.docs.clone(),
+                self.edition,
+                self.target,
+            ),
         );
     }
 
@@ -751,9 +753,6 @@ impl<'db> TargetScopeCollector<'db> {
     }
 
     fn cfg_evaluator(&self) -> CfgEvaluator<'_> {
-        CfgEvaluator::new(
-            self.cfg_options,
-            matches!(self.target_kind, TargetKind::Test | TargetKind::Bench),
-        )
+        CfgEvaluator::new(self.cfg_options, self.target_kind.enables_test_cfg())
     }
 }

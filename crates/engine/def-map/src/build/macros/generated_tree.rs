@@ -16,7 +16,7 @@ use rg_item_tree::{
     MaybeFromAst, ModuleItem, ModuleSource, OuterDocs, StaticItem, StructItem, TraitItem,
     TraitItemContext, TypeAliasItem, UnionItem, UseItem, VisibilityLevel,
 };
-use rg_macro_expand::ExpansionSyntax;
+use rg_macro_runtime::{ExpansionSyntax, macro_edition};
 use rg_parse::{FileId, LineIndex, Span};
 use rg_syntax::{
     AstNode as _,
@@ -471,8 +471,7 @@ impl<'a> GeneratedSourceLowering<'a> {
 
     fn parse_span_for_range(&self, range: rg_syntax::TextRange) -> Option<Span> {
         self.span_map
-            .span_for_range(range)
-            .filter(|span| span.anchor.file_id.raw_file_id() as usize == self.origin.file_id.0)
+            .span_for_range_in_file(range, self.origin.file_id.0)
             .map(|span| Span::from_text_range(span.range))
     }
 }
@@ -495,15 +494,6 @@ fn tt_span_for_range(
         macro_edition(edition),
     )
     .span_for(text_range)
-}
-
-fn macro_edition(edition: rg_workspace::RustEdition) -> rg_tt::Edition {
-    match edition {
-        rg_workspace::RustEdition::Edition2015 => rg_tt::Edition::Edition2015,
-        rg_workspace::RustEdition::Edition2018 => rg_tt::Edition::Edition2018,
-        rg_workspace::RustEdition::Edition2021 => rg_tt::Edition::Edition2021,
-        rg_workspace::RustEdition::Edition2024 => rg_tt::Edition::Edition2024,
-    }
 }
 
 /// Keeps the original `use ...` text in a compact, human-readable form for debugging and tests.

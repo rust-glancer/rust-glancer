@@ -7,7 +7,7 @@ use anyhow::Context as _;
 use rg_ir_model::identity::DeclarationRef;
 use rg_ir_view::{
     item::declaration::{Declaration, DeclarationView},
-    source::IndexedSourceSurface,
+    source::{IndexedSourceSurface, SourceOccurrenceView},
 };
 use rg_parse::Span;
 use rg_syntax::{Edition, SyntaxKind};
@@ -89,12 +89,18 @@ impl<'a, 'db> RenameResolver<'a, 'db> {
 
         // Reference resolution gives us source occurrences. Rename then handles the final surface
         // rewrite, because shorthand records may need a larger replacement than the selected span.
-        let edits = ReferenceResolver::new(self.analysis, query)
+        let mut edits = Vec::new();
+        for symbol in ReferenceResolver::new(self.analysis, query)
             .source_symbols_matching_declarations(&declarations)?
-            .into_iter()
-            .map(|symbol| self.rename_edit_for_symbol(symbol, &rename_target.placeholder, new_name))
-            .collect::<anyhow::Result<Vec<_>>>()
-            .context("while attempting to plan rename edits")?;
+        {
+            let Some(edit) = self
+                .rename_edit_for_symbol(symbol, &rename_target.placeholder, new_name)
+                .context("while attempting to plan rename edits")?
+            else {
+                continue;
+            };
+            edits.push(edit);
+        }
 
         // A semantic occurrence can be reachable through more than one source candidate. Collapse
         // exact duplicates and fail loudly if two planned edits would fight over the same text.
@@ -112,7 +118,11 @@ impl<'a, 'db> RenameResolver<'a, 'db> {
         symbol: SourceSymbol,
         old_name: &str,
         new_name: &str,
-    ) -> anyhow::Result<RenameEdit> {
+    ) -> anyhow::Result<Option<RenameEdit>> {
+        if self.source_symbol_uses_different_spelling(&symbol, old_name)? {
+            return Ok(None);
+        }
+
         // Plain references can replace the selected text directly. Shorthand record syntax carries
         // two names in one span, so those occurrences expand into explicit `field: value` spelling.
         let (span, old_text, new_text) = match symbol.surface().clone() {
@@ -160,13 +170,49 @@ impl<'a, 'db> RenameResolver<'a, 'db> {
             }
         };
 
-        Ok(RenameEdit {
+        Ok(Some(RenameEdit {
             target: symbol.target(),
             file_id: symbol.file_id(),
             span,
             old_text,
             new_text,
-        })
+        }))
+    }
+
+    /// Returns whether rename should leave this occurrence untouched because it uses an alias.
+    ///
+    /// Reference search intentionally treats aliases as references to the imported declaration.
+    /// Rename is stricter: editing `Account` while renaming `User`, or `alias_text!()` while
+    /// renaming `make_text`, would break the alias surface instead of renaming the declaration.
+    fn source_symbol_uses_different_spelling(
+        &self,
+        symbol: &SourceSymbol,
+        canonical_name: &str,
+    ) -> anyhow::Result<bool> {
+        let Some(spelling) = self.source_symbol_spelling(symbol)? else {
+            return Ok(false);
+        };
+        Ok(spelling != canonical_name)
+    }
+
+    fn source_symbol_spelling(&self, symbol: &SourceSymbol) -> anyhow::Result<Option<String>> {
+        if let IndexedSourceSurface::RecordExprShorthandValue { key, .. } = symbol.surface() {
+            return Ok(Some(key.declaration_label()));
+        }
+
+        match symbol.symbol() {
+            SymbolAt::TypePath { path, .. }
+            | SymbolAt::ValuePath { path, .. }
+            | SymbolAt::UsePath { path, .. } => Ok(path.last_segment_label()),
+            SymbolAt::RecordField { key, .. } => Ok(Some(key.declaration_label())),
+            SymbolAt::Expr { expr } => {
+                SourceOccurrenceView::new(self.analysis.view_db()).expr_source_label(*expr)
+            }
+            SymbolAt::Declaration { .. } if symbol.role() == SourceSymbolRole::Reference => {
+                self.source_text_for_span(symbol, symbol.span()).map(Some)
+            }
+            SymbolAt::FunctionBody { .. } | SymbolAt::Declaration { .. } => Ok(None),
+        }
     }
 
     /// Reads the exact source text covered by a rename surface span.
@@ -276,12 +322,7 @@ impl<'a, 'db> RenameResolver<'a, 'db> {
         if !Self::is_renameable_declaration(&declaration) {
             return Ok(None);
         }
-
-        // Path-like symbols expose the selected segment label. If it already disagrees with the
-        // canonical declaration name, the occurrence is probably an alias or keyword-like path.
-        if let Some(label) = Self::selected_label(symbol.symbol())
-            && label != declaration.name()
-        {
+        if self.source_symbol_uses_different_spelling(&symbol, declaration.name())? {
             return Ok(None);
         }
 
@@ -313,6 +354,9 @@ impl<'a, 'db> RenameResolver<'a, 'db> {
         symbol: &SourceSymbol,
         declaration: &Declaration,
     ) -> bool {
+        if symbol.role() != SourceSymbolRole::Declaration {
+            return true;
+        }
         if !matches!(symbol.symbol(), SymbolAt::Declaration { .. }) {
             return true;
         }
@@ -324,10 +368,7 @@ impl<'a, 'db> RenameResolver<'a, 'db> {
 
     /// Returns whether the declaration kind and canonical name can safely be renamed.
     fn is_renameable_declaration(declaration: &Declaration) -> bool {
-        if matches!(
-            declaration.kind(),
-            SymbolKind::Impl | SymbolKind::Macro | SymbolKind::Module
-        ) {
+        if matches!(declaration.kind(), SymbolKind::Impl | SymbolKind::Module) {
             return false;
         }
 
@@ -336,19 +377,6 @@ impl<'a, 'db> RenameResolver<'a, 'db> {
             && name != "<unsupported>"
             && !name.starts_with('#')
             && !matches!(name, "self" | "Self" | "crate" | "super")
-    }
-
-    /// Returns the visible label selected by path-like cursor symbols.
-    fn selected_label(symbol: &SymbolAt) -> Option<String> {
-        match symbol {
-            SymbolAt::TypePath { path, .. }
-            | SymbolAt::ValuePath { path, .. }
-            | SymbolAt::UsePath { path, .. } => path.last_segment_label(),
-            SymbolAt::RecordField { key, .. } => Some(key.declaration_label()),
-            SymbolAt::FunctionBody { .. }
-            | SymbolAt::Declaration { .. }
-            | SymbolAt::Expr { .. } => None,
-        }
     }
 
     /// Returns whether a requested replacement can be emitted as a Rust identifier token.

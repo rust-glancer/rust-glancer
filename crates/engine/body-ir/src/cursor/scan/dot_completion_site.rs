@@ -53,7 +53,7 @@ impl<'txn, 'db> DotCompletionSiteScanner<'txn, 'db> {
                 body: BodyId(body_idx),
             };
             for expr in body.exprs().iter() {
-                if expr.source.file_id != self.file_id {
+                if !expr.source.is_written_in_file(self.file_id) {
                     continue;
                 }
                 // Then ask the expression-level matcher whether this dot access accepts

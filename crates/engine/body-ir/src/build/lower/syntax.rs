@@ -40,9 +40,7 @@ impl BodyLowering<'_> {
             | ast::LiteralKind::CString(_) => LiteralKind::String,
         }
     }
-}
 
-impl BodyLowering<'_> {
     pub(super) fn lower_body_path(&mut self, path: ast::Path) -> Option<BodyPath> {
         let source_span = Span::from_text_range(path.syntax().text_range());
         let absolute = path
@@ -78,6 +76,43 @@ impl BodyLowering<'_> {
         self.lower_lifetime_label(label.and_then(|label| label.lifetime()))
     }
 
+    pub(super) fn lower_type_ref(&mut self, ty: ast::Type) -> TypeRef {
+        // Body lowering only expands macro calls that occupy the whole type position. Nested type
+        // syntax stays delegated to item-tree's TypeRef lowering so we do not duplicate that
+        // recursive grammar here.
+        if let ast::Type::MacroType(macro_ty) = ty.clone()
+            && let Some(expanded) = self.expand_macro_type(&macro_ty)
+        {
+            return expanded;
+        }
+
+        TypeRef::from_ast(&ty, (self.line_index, &mut *self.interner))
+    }
+
+    fn expand_macro_type(&mut self, ty: &ast::MacroType) -> Option<TypeRef> {
+        let call_source = self.source(ty.syntax());
+        let call = ty.macro_call()?;
+        let _expansion_scope = self.macro_expansion.expansion_scope()?;
+        let module = self.macro_resolution_module();
+        let origin = self.macro_call_origin();
+
+        // Type expansion is best-effort like expression and pattern expansion. A failed expansion
+        // keeps the original `MacroType` as an unknown TypeRef so body lowering remains buildable.
+        let outcome = self
+            .macro_expansion
+            .expand_type_call(module, call_source, origin, &call)
+            .ok()
+            .flatten()?;
+        self.record_source_macro_call(call_source, &call, origin, outcome.definition);
+        let expanded = outcome.expansion?;
+
+        Some(
+            self.with_expanded_macro(call_source, expanded, |this, syntax| {
+                this.lower_type_ref(syntax)
+            }),
+        )
+    }
+
     pub(super) fn lower_lifetime_label(
         &mut self,
         lifetime: Option<ast::Lifetime>,
@@ -110,10 +145,15 @@ impl BodyLowering<'_> {
         let (kind, span) = match segment.kind()? {
             PathSegmentKind::Name(name_ref) => {
                 let span = self.source(name_ref.syntax()).span;
-                (
-                    BodyPathSegmentKind::Name(self.intern_ast_name_ref(name_ref)),
-                    span,
-                )
+                let name = self.intern_ast_name_ref(name_ref);
+                // `$crate` is meaningful only for macro-generated syntax, where the temporary
+                // lowering context knows which crate defined the macro.
+                let kind = if name.as_str() == "$crate" {
+                    BodyPathSegmentKind::DollarCrate(self.dollar_crate_target()?)
+                } else {
+                    BodyPathSegmentKind::Name(name)
+                };
+                (kind, span)
             }
             // `Self` needs to stay distinguishable in the rich path, but its DefMap projection
             // follows DefMap's type-path convention and behaves like a normal type name.
@@ -149,8 +189,7 @@ impl BodyLowering<'_> {
                 type_ref,
                 trait_ref,
             } => {
-                let ty = type_ref
-                    .map(|ty| TypeRef::from_ast(&ty, (self.line_index, &mut *self.interner)));
+                let ty = type_ref.map(|ty| self.lower_type_ref(ty));
                 let trait_ref = trait_ref
                     .and_then(|trait_ref| trait_ref.path())
                     .map(|path| {
@@ -203,10 +242,7 @@ impl BodyLowering<'_> {
 }
 
 pub(super) fn source_for(file_id: FileId, syntax: &rg_syntax::SyntaxNode) -> BodySource {
-    BodySource {
-        file_id,
-        span: Span::from_text_range(syntax.text_range()),
-    }
+    BodySource::written(file_id, Span::from_text_range(syntax.text_range()))
 }
 
 #[cfg(test)]

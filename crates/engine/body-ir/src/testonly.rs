@@ -18,6 +18,10 @@ impl BodyIrFixture {
         Self::build_with_policy(fixture, BodyIrBuildPolicy::default())
     }
 
+    pub fn build_with_sysroot(fixture: &str) -> Self {
+        Self::build_from_semantic_ir(SemanticIrFixture::build_with_sysroot(fixture))
+    }
+
     pub fn build_with_policy(fixture: &str, policy: BodyIrBuildPolicy) -> Self {
         Self::build_from_semantic_ir_with_policy(SemanticIrFixture::build(fixture), policy)
     }

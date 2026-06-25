@@ -73,6 +73,39 @@ fn main() {
 }
 
 #[test]
+fn skips_inlay_hints_for_generated_body_macro_internals() {
+    check_inlay_hints(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_body_macro_inlay_hints"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct Text;
+
+pub fn helper(value: u64) -> Text {
+    Text
+}
+
+macro_rules! make_text {
+    ($value:expr) => { helper($value) };
+}
+
+pub fn demo(input: u64) {
+    let text = make_text!(input);
+}
+"#,
+        InlayHintsQuery::new("body macro inlay hints", "/src/lib.rs"),
+        expect![[r#"
+            body macro inlay hints
+            - `: Text` @ 12:9-12:13
+        "#]],
+    );
+}
+
+#[test]
 fn shows_type_hints_for_pattern_bindings_with_known_types() {
     check_inlay_hints(
         r#"

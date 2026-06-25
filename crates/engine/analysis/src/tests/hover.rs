@@ -116,6 +116,52 @@ pub fn configure(f$fn_once_hover$: impl FnOnce(&mut AttrVec)) {
 }
 
 #[test]
+fn hovers_over_body_macro_calls_without_exposing_generated_internals() {
+    check_analysis_queries(
+        r#"
+        //- /Cargo.toml
+        [package]
+        name = "analysis_hover_body_macros"
+        version = "0.0.0"
+        edition = "2024"
+
+        //- /src/lib.rs
+        pub struct Text;
+
+        /// Internal helper used by macro output.
+        pub fn helper(value: u64) -> Text {
+            Text
+        }
+
+        /// Builds text from a value.
+        macro_rules! make_text {
+            ($value:expr) => { helper($value) };
+        }
+
+        pub fn demo(input: u64) {
+            let text = make_$macro_hover$text!(input);
+            text;
+        }
+        "#,
+        &[AnalysisQuery::hover(
+            "hover generated macro call",
+            "macro_hover",
+        )],
+        expect![[r#"
+            hover generated macro call
+            - range: 14:16-14:25
+            - block:
+              kind: macro
+              path: analysis_hover_body_macros::make_text
+              signature:
+                macro_definition make_text
+              docs:
+                Builds text from a value.
+        "#]],
+    );
+}
+
+#[test]
 fn hovers_over_enum_variants_and_body_local_items() {
     check_analysis_queries(
         r#"

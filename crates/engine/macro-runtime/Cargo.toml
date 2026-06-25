@@ -1,0 +1,21 @@
+[package]
+name = "rg_macro_runtime"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme.workspace = true
+description = "Rust Glancer declarative macro runtime."
+
+[dependencies]
+anyhow.workspace = true
+rayon.workspace = true
+rg_ir_model.workspace = true
+rg_ir_storage.workspace = true
+rg_macro_expand.workspace = true
+rg_parse.workspace = true
+rg_syntax.workspace = true
+rg_tt.workspace = true
+rg_workspace.workspace = true

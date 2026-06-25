@@ -10,13 +10,14 @@ use rg_item_tree::{
     ConstItem, Documentation, EnumItem, ExternCrateItem, FromAst as _, FunctionItem, ImplItem,
     ImplItemContext, InnerDocs, ItemKind, ItemNode, ItemTreeId, MacroUseAttr, MaybeFromAst,
     ModuleItem, ModuleSource, OuterDocs, StaticItem, StructItem, TraitItem, TraitItemContext,
-    TypeAliasItem, TypeRef, UnionItem, UseItem, VisibilityLevel,
+    TypeAliasItem, UnionItem, UseItem, VisibilityLevel,
 };
 use rg_parse::Span;
 use rg_text::Name;
 
 use crate::ir::{
-    BindingData, BindingKind, BodySelfParamKind, ExprBlockKind, ExprKind, StmtData, StmtKind,
+    BindingData, BindingKind, BodySelfParamKind, BodySource, ExprBlockKind, ExprKind, StmtData,
+    StmtKind,
 };
 
 use super::body::BodyLowering;
@@ -32,24 +33,25 @@ impl BodyLowering<'_> {
         };
 
         let mut params = Vec::new();
-        if let Some(self_param) = param_list.self_param() {
+        if let Some(self_param) = param_list.self_param()
+            && let Some(self_param) = self.cfg.enabled_syntax(self_param)
+        {
             params.push(self.lower_self_param(self_param, param_scope));
         }
 
-        params.extend(
-            param_list
-                .params()
-                .map(|param| self.lower_param(param, param_scope)),
-        );
+        for param in param_list.params() {
+            let Some(param) = self.cfg.enabled_syntax(param) else {
+                continue;
+            };
+            params.push(self.lower_param(param, param_scope));
+        }
 
         params
     }
 
     fn lower_self_param(&mut self, param: ast::SelfParam, scope: ScopeId) -> FunctionParamData {
         let source = self.source(param.syntax());
-        let annotation = param
-            .ty()
-            .map(|ty| TypeRef::from_ast(&ty, (self.line_index, &mut *self.interner)));
+        let annotation = param.ty().map(|ty| self.lower_type_ref(ty));
         let self_kind = if annotation.is_some() {
             BodySelfParamKind::Explicit
         } else if param.amp_token().is_some() {
@@ -81,9 +83,7 @@ impl BodyLowering<'_> {
 
     fn lower_param(&mut self, param: ast::Param, scope: ScopeId) -> FunctionParamData {
         let source = self.source(param.syntax());
-        let annotation = param
-            .ty()
-            .map(|ty| TypeRef::from_ast(&ty, (self.line_index, &mut *self.interner)));
+        let annotation = param.ty().map(|ty| self.lower_type_ref(ty));
         let (pat, bindings) = match param.pat() {
             Some(pat) => self.lower_pat(pat, scope, BindingKind::Param, annotation.clone()),
             None => (
@@ -118,14 +118,36 @@ impl BodyLowering<'_> {
         let mut tail = None;
 
         if let Some(stmt_list) = block.stmt_list() {
-            statements.extend(
-                stmt_list
-                    .statements()
-                    .map(|statement| self.lower_statement(statement, block_scope)),
-            );
-            tail = stmt_list
+            let mut active_statements = stmt_list
+                .statements()
+                .filter_map(|statement| self.cfg_enabled_statement(statement))
+                .collect::<Vec<_>>();
+            let active_tail = stmt_list
                 .tail_expr()
-                .map(|tail_expr| self.lower_expr(tail_expr, block_scope));
+                .and_then(|tail_expr| self.cfg.enabled_syntax(tail_expr));
+
+            // Apply cfg before deciding the final block shape. If the written tail is inactive,
+            // a preceding expression statement without a semicolon becomes the semantic tail.
+            let promoted_tail = active_tail.or_else(|| {
+                let statement = active_statements.last()?;
+                let ast::Stmt::ExprStmt(statement) = statement else {
+                    return None;
+                };
+                if statement.semicolon_token().is_some() {
+                    return None;
+                }
+
+                let expr = statement.expr()?;
+                active_statements.pop();
+                Some(expr)
+            });
+
+            for statement in active_statements {
+                self.lower_active_statement(statement, block_scope, &mut statements);
+            }
+            if let Some(tail_expr) = promoted_tail {
+                tail = Some(self.lower_expr(tail_expr, block_scope));
+            }
         }
 
         let label = self.lower_label(block.label());
@@ -167,9 +189,7 @@ impl BodyLowering<'_> {
         {
             return ExprBlockKind::Try {
                 bikeshed: modifier.bikeshed_token().is_some(),
-                result_ty: modifier
-                    .ty()
-                    .map(|ty| TypeRef::from_ast(&ty, (self.line_index, &mut *self.interner))),
+                result_ty: modifier.ty().map(|ty| self.lower_type_ref(ty)),
             };
         }
 
@@ -180,24 +200,153 @@ impl BodyLowering<'_> {
         ExprBlockKind::Plain
     }
 
-    fn lower_statement(&mut self, statement: ast::Stmt, scope: ScopeId) -> StmtId {
+    /// Lower one source statement into the surrounding block statement list.
+    ///
+    /// Most syntax statements append exactly one `StmtId`. Macro expression statements are the
+    /// exception: `make_stmts!();` can expand to many generated statements or none at all.
+    fn lower_statement(
+        &mut self,
+        statement: ast::Stmt,
+        scope: ScopeId,
+        statements: &mut Vec<StmtId>,
+    ) {
+        // Body syntax bypasses item-tree cfg filtering, so statement-level gates are applied
+        // before the statement can introduce bindings or body-local items.
+        let Some(statement) = self.cfg_enabled_statement(statement) else {
+            return;
+        };
+
+        self.lower_active_statement(statement, scope, statements);
+    }
+
+    // Block lowering can cfg-normalize a statement list before lowering it. This entry point keeps
+    // that path from re-checking cfg while preserving the ordinary statement lowering behavior.
+    fn lower_active_statement(
+        &mut self,
+        statement: ast::Stmt,
+        scope: ScopeId,
+        statements: &mut Vec<StmtId>,
+    ) {
         match statement {
-            ast::Stmt::LetStmt(statement) => self.lower_let_statement(statement, scope),
-            ast::Stmt::ExprStmt(statement) => {
-                let expr = statement.expr().map(|expr| self.lower_expr(expr, scope));
-                self.builder.alloc_statement(StmtData {
-                    source: self.source(statement.syntax()),
-                    kind: match expr {
-                        Some(expr) => StmtKind::Expr {
-                            expr,
-                            has_semicolon: statement.semicolon_token().is_some(),
-                        },
-                        None => StmtKind::ItemIgnored,
-                    },
-                })
+            ast::Stmt::LetStmt(statement) => {
+                statements.push(self.lower_let_statement(statement, scope));
             }
-            ast::Stmt::Item(item) => self.lower_item_statement(item, scope),
+            ast::Stmt::ExprStmt(statement) => {
+                if self.lower_macro_expr_statement(&statement, scope, statements) {
+                    return;
+                }
+
+                let expr = statement.expr().map(|expr| self.lower_expr(expr, scope));
+                statements.push(self.alloc_expr_statement(
+                    self.source(statement.syntax()),
+                    expr,
+                    statement.semicolon_token().is_some(),
+                ));
+            }
+            ast::Stmt::Item(item) => {
+                statements.push(self.lower_item_statement(item, scope));
+            }
         }
+    }
+
+    fn cfg_enabled_statement(&self, statement: ast::Stmt) -> Option<ast::Stmt> {
+        let enabled = match &statement {
+            ast::Stmt::LetStmt(statement) => self.cfg.is_syntax_enabled(statement),
+            ast::Stmt::ExprStmt(statement) => match statement.expr() {
+                Some(expr) => self.cfg.is_syntax_enabled(&expr),
+                None => true,
+            },
+            ast::Stmt::Item(item) => self.cfg.is_syntax_enabled(item),
+        };
+
+        enabled.then_some(statement)
+    }
+
+    /// Try to lower an expression statement as a statement-position macro expansion.
+    ///
+    /// Returns `true` only after the macro expansion has been fully spliced into `statements`.
+    /// Returning `false` tells the caller to lower the original expression statement normally.
+    ///
+    /// Example: `make_steps!(input);` can expand to two `let` statements, both lowered in the
+    /// caller's block scope and both recorded at the original macro call source span.
+    fn lower_macro_expr_statement(
+        &mut self,
+        statement: &ast::ExprStmt,
+        scope: ScopeId,
+        statements: &mut Vec<StmtId>,
+    ) -> bool {
+        // Only statement syntax gets `MacroStmts` treatment here. Macro calls in initializers,
+        // operands, or block tails keep using the expression-position expansion path.
+        let Some(ast::Expr::MacroExpr(expr)) = statement.expr() else {
+            return false;
+        };
+        let Some(call) = expr.macro_call() else {
+            return false;
+        };
+
+        // The scope guard covers lowering of the generated statements too, so recursive
+        // statement macros consume the same depth budget as expression macros.
+        let call_source = self.source(expr.syntax());
+        let Some(_expansion_scope) = self.macro_expansion.expansion_scope() else {
+            return false;
+        };
+        let module = self.macro_resolution_module();
+        let origin = self.macro_call_origin();
+
+        // Statement expansion is best-effort just like expression expansion. A failed expansion
+        // falls back to the original macro expression statement so Body IR remains buildable.
+        let Some(outcome) = self
+            .macro_expansion
+            .expand_stmt_call(module, call_source, origin, &call)
+            .ok()
+            .flatten()
+        else {
+            return false;
+        };
+        let Some(expanded) = outcome.expansion else {
+            return false;
+        };
+        self.record_source_macro_call(call_source, &call, origin, outcome.definition);
+
+        // Generated statement syntax has no stable Body IR source of its own yet. Lower every
+        // generated node under the call site so cursor-facing data remains conservative.
+        self.with_expanded_macro(call_source, expanded, |this, expanded| {
+            for generated in expanded.statements() {
+                this.lower_statement(generated, scope, statements);
+            }
+
+            // `MacroStmts` may contain a final expression after generated statements.
+            // Preserve the invocation's semicolon shape when turning that expression back into
+            // a statement.
+            if let Some(tail_expr) = expanded.expr() {
+                let expr = this.lower_expr(tail_expr, scope);
+                statements.push(this.alloc_expr_statement(
+                    call_source,
+                    Some(expr),
+                    statement.semicolon_token().is_some(),
+                ));
+            }
+        });
+
+        true
+    }
+
+    fn alloc_expr_statement(
+        &mut self,
+        source: BodySource,
+        expr: Option<ExprId>,
+        has_semicolon: bool,
+    ) -> StmtId {
+        self.builder.alloc_statement(StmtData {
+            source,
+            kind: match expr {
+                Some(expr) => StmtKind::Expr {
+                    expr,
+                    has_semicolon,
+                },
+                None => StmtKind::ItemIgnored,
+            },
+        })
     }
 
     fn lower_item_statement(&mut self, item: ast::Item, scope: ScopeId) -> StmtId {
@@ -205,7 +354,7 @@ impl BodyLowering<'_> {
 
         let kind = self
             .lower_source_item(&item)
-            .map(|node| self.builder.alloc_scope_source_item(scope, node))
+            .map(|node| self.builder.alloc_scope_source_item(scope, node, source))
             .map(|item| StmtKind::Item { item })
             .unwrap_or(StmtKind::ItemIgnored);
         self.builder.alloc_statement(StmtData { source, kind })
@@ -221,9 +370,7 @@ impl BodyLowering<'_> {
             .let_else()
             .and_then(|else_branch| else_branch.block_expr())
             .map(|block| self.lower_block_expr(block, scope));
-        let annotation = statement
-            .ty()
-            .map(|ty| TypeRef::from_ast(&ty, (self.line_index, &mut *self.interner)));
+        let annotation = statement.ty().map(|ty| self.lower_type_ref(ty));
         let bindings = statement
             .pat()
             .map(|pat| self.lower_pat(pat, scope, BindingKind::Let, annotation.clone()))
@@ -452,8 +599,12 @@ impl BodyLowering<'_> {
     ) -> Vec<ItemTreeId> {
         let mut item_ids = Vec::new();
         for item in items {
+            let Some(item) = self.cfg.enabled_syntax(item) else {
+                continue;
+            };
+            let source = self.source(item.syntax());
             if let Some(node) = self.lower_source_item(&item) {
-                item_ids.push(self.builder.alloc_scopeless_source_item(node));
+                item_ids.push(self.builder.alloc_scopeless_source_item(node, source));
             }
         }
         item_ids
@@ -469,8 +620,12 @@ impl BodyLowering<'_> {
 
         let mut item_ids = Vec::new();
         for item in item_list.assoc_items() {
+            let Some(item) = self.cfg.enabled_syntax(item) else {
+                continue;
+            };
+            let source = self.source(item.syntax());
             if let Some(node) = self.lower_source_assoc_item(item) {
-                item_ids.push(self.builder.alloc_scopeless_source_item(node));
+                item_ids.push(self.builder.alloc_scopeless_source_item(node, source));
             }
         }
         item_ids

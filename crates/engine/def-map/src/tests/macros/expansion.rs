@@ -374,3 +374,398 @@ macros::include!();
         "qualified user macros should not be classified as builtins by last segment",
     );
 }
+
+#[test]
+fn unqualified_macro_can_resolve_from_standard_prelude() {
+    let project = utils::DefMapFixtureDb::build_with_sysroot(
+        r#"
+//- /Cargo.toml
+[package]
+name = "prelude_macro_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+make_item!();
+
+//- /sysroot/library/core/src/lib.rs
+pub struct Core;
+
+//- /sysroot/library/alloc/src/lib.rs
+pub struct Alloc;
+
+//- /sysroot/library/std/src/lib.rs
+pub mod macros {
+    macro_rules! make_item {
+        () => {
+            pub struct FromPrelude;
+        };
+    }
+
+    pub use make_item;
+}
+
+pub mod prelude {
+    pub mod rust_2024 {
+        pub use crate::macros::make_item;
+    }
+}
+"#,
+    );
+    let target = project.lib("prelude_macro_fixture");
+
+    target
+        .entry("FromPrelude")
+        .assert_type_exists("unqualified macro calls should see standard-prelude macro bindings");
+}
+
+#[test]
+fn imported_macro_shadows_standard_prelude_macro() {
+    let project = utils::DefMapFixtureDb::build_with_sysroot(
+        r#"
+//- /Cargo.toml
+[package]
+name = "prelude_macro_shadow_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+mod local {
+    macro_rules! make_item {
+        () => {
+            pub struct FromLocal;
+        };
+    }
+
+    pub(crate) use make_item;
+}
+
+use local::make_item;
+
+make_item!();
+
+//- /sysroot/library/core/src/lib.rs
+pub struct Core;
+
+//- /sysroot/library/alloc/src/lib.rs
+pub struct Alloc;
+
+//- /sysroot/library/std/src/lib.rs
+pub mod macros {
+    macro_rules! make_item {
+        () => {
+            pub struct FromPrelude;
+        };
+    }
+
+    pub use make_item;
+}
+
+pub mod prelude {
+    pub mod rust_2024 {
+        pub use crate::macros::make_item;
+    }
+}
+"#,
+    );
+    let target = project.lib("prelude_macro_shadow_fixture");
+
+    target
+        .entry("FromLocal")
+        .assert_type_exists("imported macros should shadow standard-prelude macros");
+    target
+        .entry("FromPrelude")
+        .assert_missing("shadowed prelude macros should not expand");
+}
+
+#[test]
+fn standard_prelude_macro_resolves_before_later_local_macro() {
+    let project = utils::DefMapFixtureDb::build_with_sysroot(
+        r#"
+//- /Cargo.toml
+[package]
+name = "prelude_before_later_local_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+make_item!();
+
+macro_rules! make_item {
+    () => {
+        pub struct FromLaterLocal;
+    };
+}
+
+//- /sysroot/library/core/src/lib.rs
+pub struct Core;
+
+//- /sysroot/library/alloc/src/lib.rs
+pub struct Alloc;
+
+//- /sysroot/library/std/src/lib.rs
+pub mod macros {
+    macro_rules! make_item {
+        () => {
+            pub struct FromPrelude;
+        };
+    }
+
+    pub use make_item;
+}
+
+pub mod prelude {
+    pub mod rust_2024 {
+        pub use crate::macros::make_item;
+    }
+}
+"#,
+    );
+    let target = project.lib("prelude_before_later_local_fixture");
+
+    target.entry("FromPrelude").assert_type_exists(
+        "later same-module macro_rules bindings should be filtered before trying the prelude",
+    );
+    target.entry("FromLaterLocal").assert_missing(
+        "later same-module macro_rules bindings should not expand the earlier call",
+    );
+}
+
+#[test]
+fn standard_prelude_macro_shadows_macro_use_extern_crate_fallback() {
+    let project = utils::DefMapFixtureDb::build_with_sysroot(
+        r#"
+//- /Cargo.toml
+[workspace]
+members = ["crates/dep", "crates/app"]
+resolver = "3"
+
+//- /crates/dep/Cargo.toml
+[package]
+name = "dep"
+version = "0.1.0"
+edition = "2024"
+
+//- /crates/dep/src/lib.rs
+#[macro_export]
+macro_rules! make_item {
+    () => {
+        pub struct FromMacroUse;
+    };
+}
+
+//- /crates/app/Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+dep = { path = "../dep" }
+
+//- /crates/app/src/lib.rs
+#[macro_use]
+extern crate dep as _;
+
+make_item!();
+
+//- /sysroot/library/core/src/lib.rs
+pub struct Core;
+
+//- /sysroot/library/alloc/src/lib.rs
+pub struct Alloc;
+
+//- /sysroot/library/std/src/lib.rs
+pub mod macros {
+    macro_rules! make_item {
+        () => {
+            pub struct FromPrelude;
+        };
+    }
+
+    pub use make_item;
+}
+
+pub mod prelude {
+    pub mod rust_2024 {
+        pub use crate::macros::make_item;
+    }
+}
+"#,
+    );
+    let target = project.lib("app");
+
+    target
+        .entry("FromPrelude")
+        .assert_type_exists("standard-prelude macros should resolve before legacy macro_use");
+    target
+        .entry("FromMacroUse")
+        .assert_missing("macro_use fallback should not run after a prelude macro resolves");
+}
+
+#[test]
+fn standard_prelude_macro_resolves_before_macro_use_when_local_macro_is_later() {
+    let project = utils::DefMapFixtureDb::build_with_sysroot(
+        r#"
+//- /Cargo.toml
+[workspace]
+members = ["crates/dep", "crates/app"]
+resolver = "3"
+
+//- /crates/dep/Cargo.toml
+[package]
+name = "dep"
+version = "0.1.0"
+edition = "2024"
+
+//- /crates/dep/src/lib.rs
+#[macro_export]
+macro_rules! make_item {
+    () => {
+        pub struct FromMacroUse;
+    };
+}
+
+//- /crates/app/Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+dep = { path = "../dep" }
+
+//- /crates/app/src/lib.rs
+#[macro_use]
+extern crate dep as _;
+
+make_item!();
+
+macro_rules! make_item {
+    () => {
+        pub struct FromLaterLocal;
+    };
+}
+
+//- /sysroot/library/core/src/lib.rs
+pub struct Core;
+
+//- /sysroot/library/alloc/src/lib.rs
+pub struct Alloc;
+
+//- /sysroot/library/std/src/lib.rs
+pub mod macros {
+    macro_rules! make_item {
+        () => {
+            pub struct FromPrelude;
+        };
+    }
+
+    pub use make_item;
+}
+
+pub mod prelude {
+    pub mod rust_2024 {
+        pub use crate::macros::make_item;
+    }
+}
+"#,
+    );
+    let target = project.lib("app");
+
+    target.entry("FromPrelude").assert_type_exists(
+        "prelude macros should resolve after filtering later locals and before macro_use fallback",
+    );
+    target.entry("FromLaterLocal").assert_missing(
+        "later same-module macro_rules bindings should not expand the earlier call",
+    );
+    target
+        .entry("FromMacroUse")
+        .assert_missing("macro_use fallback should not win after a prelude macro resolves");
+}
+
+#[test]
+fn ambiguous_standard_prelude_macro_blocks_macro_use_fallback() {
+    let project = utils::DefMapFixtureDb::build_with_sysroot(
+        r#"
+//- /Cargo.toml
+[workspace]
+members = ["crates/dep", "crates/app"]
+resolver = "3"
+
+//- /crates/dep/Cargo.toml
+[package]
+name = "dep"
+version = "0.1.0"
+edition = "2024"
+
+//- /crates/dep/src/lib.rs
+#[macro_export]
+macro_rules! make_item {
+    () => {
+        pub struct FromMacroUse;
+    };
+}
+
+//- /crates/app/Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+dep = { path = "../dep" }
+
+//- /crates/app/src/lib.rs
+#[macro_use]
+extern crate dep as _;
+
+make_item!();
+
+//- /sysroot/library/core/src/lib.rs
+pub struct Core;
+
+//- /sysroot/library/alloc/src/lib.rs
+pub struct Alloc;
+
+//- /sysroot/library/std/src/lib.rs
+pub mod first {
+    macro_rules! make_item {
+        () => {
+            pub struct FromFirstPrelude;
+        };
+    }
+
+    pub use make_item;
+}
+
+pub mod second {
+    macro_rules! make_item {
+        () => {
+            pub struct FromSecondPrelude;
+        };
+    }
+
+    pub use make_item;
+}
+
+pub mod prelude {
+    pub mod rust_2024 {
+        pub use crate::first::make_item;
+        pub use crate::second::make_item;
+    }
+}
+"#,
+    );
+    let target = project.lib("app");
+
+    target
+        .entry("FromFirstPrelude")
+        .assert_missing("ambiguous prelude macros should not pick the first candidate");
+    target
+        .entry("FromSecondPrelude")
+        .assert_missing("ambiguous prelude macros should not pick the second candidate");
+    target
+        .entry("FromMacroUse")
+        .assert_missing("ambiguous prelude macros should block later fallback lookup");
+}

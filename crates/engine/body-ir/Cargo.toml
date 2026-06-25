@@ -16,6 +16,7 @@ rg_syntax.workspace = true
 rayon.workspace = true
 wincode.workspace = true
 rg_arena.workspace = true
+rg_cfg_eval.workspace = true
 rg_std.workspace = true
 rg_package_store.workspace = true
 rg_def_map.workspace = true

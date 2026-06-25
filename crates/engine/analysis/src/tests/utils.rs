@@ -845,6 +845,7 @@ impl<'a> AnalysisQuerySnapshot<'a> {
                 format!("record {path}")
             }
             ExprKind::Wrapper { kind, .. } => format!("wrapper {kind}"),
+            ExprKind::BuiltinMacro { kind } => format!("builtin_macro {kind}"),
             ExprKind::Literal { kind } => {
                 format!(
                     "literal {kind} {}",

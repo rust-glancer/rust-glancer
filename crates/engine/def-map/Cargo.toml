@@ -11,10 +11,9 @@ description.workspace = true
 
 [dependencies]
 anyhow.workspace = true
-rayon.workspace = true
 rg_arena.workspace = true
 rg_cfg_eval.workspace = true
-rg_macro_expand.workspace = true
+rg_macro_runtime.workspace = true
 rg_profile.workspace = true
 rg_std.workspace = true
 rg_package_store.workspace = true

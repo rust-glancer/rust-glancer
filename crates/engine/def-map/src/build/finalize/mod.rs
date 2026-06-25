@@ -11,13 +11,14 @@ mod rebuild;
 
 use anyhow::Context as _;
 
-use rg_ir_model::{DefMapRef, LocalDefRef, ModuleId, ModuleRef, TargetRef};
+use rg_ir_model::{DefId, DefMapRef, LocalDefRef, ModuleId, ModuleRef, TargetRef};
 use rg_ir_storage::{
-    DefMap, ImportPath, LocalDefData, MacroDefinitionData, ModuleData, ModuleScopeBuilder,
-    PackageDefMaps as DefMapPackage, PathResolver, ScopeEntryRef, ScopeResolutionEnv, TargetData,
-    TargetResolutionEnv,
+    DefMap, ImportPath, LocalDefData, MacroDefinitionEnv, MacroDefinitionView, ModuleData,
+    ModuleScopeBuilder, PackageDefMaps as DefMapPackage, PathResolver, ScopeEntryRef,
+    ScopeResolutionEnv, TargetData, TargetResolutionEnv,
 };
 use rg_item_tree::ItemTreeDb;
+use rg_macro_runtime::{MacroExpansionPerformancePreference, MacroExpansionRuntime};
 use rg_parse::Package;
 use rg_text::{Name, PackageNameInterners};
 use rg_workspace::WorkspaceMetadata;
@@ -25,13 +26,11 @@ use rg_workspace::WorkspaceMetadata;
 use crate::{DefMapReadTxn, PackageSlot, profile::metric};
 
 use super::{
-    DefMapPerformancePreference,
     collect::TargetState,
     imports::{UnresolvedImports, apply_imports},
     macros::{
-        MAX_MACRO_EXPANSION_PASSES, MacroExpansionCache, MacroExpansionCursors,
-        MacroExpansionExecutor, MacroExpansionScan, apply_expansion_attempts,
-        collect_expansion_attempts, expand_expansion_attempts,
+        MAX_MACRO_EXPANSION_PASSES, MacroExpansionCursors, MacroExpansionScan,
+        apply_expansion_attempts, collect_expansion_attempts, expand_expansion_attempts,
         mark_retryable_macros_skipped_by_limit,
     },
 };
@@ -311,29 +310,42 @@ impl ScopeResolutionEnv for FinalizeResolutionEnv<'_> {
             .transpose()
             .map(Option::flatten)
     }
+}
 
-    fn macro_definition_data(
-        &self,
-        local_def_ref: LocalDefRef,
-    ) -> Result<Option<&MacroDefinitionData>, rg_package_store::PackageStoreError> {
-        if let Some(target) = local_def_ref.origin.as_target_ref()
-            && let Some(state) = self.states.target(target)
-        {
-            return Ok(state
-                .def_map_builder
-                .partial()
-                .macro_definition(local_def_ref.local_def));
-        }
-
-        let Some(target) = local_def_ref.origin.as_target_ref() else {
+impl MacroDefinitionEnv for FinalizeResolutionEnv<'_> {
+    fn macro_definition_view<'a>(
+        &'a self,
+        def: DefId,
+    ) -> Result<Option<MacroDefinitionView<'a>>, rg_package_store::PackageStoreError> {
+        let DefId::Local(def_ref) = def else {
             return Ok(None);
         };
-        Ok(self
-            .old
-            .map(|old| old.def_map(target))
-            .transpose()?
-            .flatten()
-            .and_then(|def_map| def_map.macro_definition(local_def_ref.local_def)))
+        let Some(local_def) = self.local_def_data(def_ref)? else {
+            return Ok(None);
+        };
+
+        let data = if let Some(target) = def_ref.origin.as_target_ref()
+            && let Some(state) = self.states.target(target)
+        {
+            state
+                .def_map_builder
+                .partial()
+                .macro_definition(def_ref.local_def)
+        } else {
+            let Some(target) = def_ref.origin.as_target_ref() else {
+                return Ok(None);
+            };
+            self.old
+                .map(|old| old.def_map(target))
+                .transpose()?
+                .flatten()
+                .and_then(|def_map| def_map.macro_definition(def_ref.local_def))
+        };
+        let Some(data) = data else {
+            return Ok(None);
+        };
+
+        Ok(MacroDefinitionView::new(def_ref, local_def, data))
     }
 }
 
@@ -414,7 +426,7 @@ pub(super) fn finalize_target_states(
     item_tree: &ItemTreeDb,
     target_states: &mut FinalizeTargetStates,
     interners: &mut PackageNameInterners,
-    performance_preference: DefMapPerformancePreference,
+    performance_preference: MacroExpansionPerformancePreference,
 ) -> anyhow::Result<()> {
     // Prelude selection needs the directly declared root modules and implicit extern roots, but it
     // must happen before import resolution because prelude imports participate in normal lookup.
@@ -561,10 +573,9 @@ fn finalize_scopes(
     item_tree: &ItemTreeDb,
     states: &mut FinalizeTargetStates,
     interners: &mut PackageNameInterners,
-    performance_preference: DefMapPerformancePreference,
+    performance_preference: MacroExpansionPerformancePreference,
 ) -> anyhow::Result<()> {
-    let mut macro_cache = MacroExpansionCache::default();
-    let mut macro_expansion_executor = None;
+    let mut macro_runtime = MacroExpansionRuntime::new(performance_preference);
     let mut expansion_passes = 0;
     metric::EXPANSION_PASS_LIMIT.record_count(MAX_MACRO_EXPANSION_PASSES);
 
@@ -607,7 +618,7 @@ fn finalize_scopes(
                     .as_ref()
                     .map(MacroExpansionScan::NewCallsSince)
                     .unwrap_or(MacroExpansionScan::AllPending);
-                collect_expansion_attempts(&env, states, scan, &mut macro_cache)?
+                collect_expansion_attempts(&env, states, scan, &mut macro_runtime)?
             };
             timer.finish();
 
@@ -615,16 +626,9 @@ fn finalize_scopes(
                 .iter()
                 .any(|attempt| attempt.needs_expansion())
             {
-                if macro_expansion_executor.is_none() {
-                    macro_expansion_executor =
-                        Some(MacroExpansionExecutor::new(performance_preference)?);
-                }
-                // The executor owns the rust-analyzer expansion adapter. It is created lazily so
-                // projects without expandable declarative macros do not pay its setup cost.
-                let executor = macro_expansion_executor
-                    .as_ref()
-                    .expect("macro expansion executor should be initialized");
-                expand_expansion_attempts(executor, &mut expansion_attempts, &mut macro_cache);
+                // The runtime owns the worker pool and creates it lazily, so projects without
+                // expandable declarative macros do not pay its setup cost.
+                expand_expansion_attempts(&mut macro_runtime, &mut expansion_attempts)?;
             }
 
             let scan_cursors_before_apply = MacroExpansionCursors::capture(states);

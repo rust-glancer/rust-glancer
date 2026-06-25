@@ -6,7 +6,7 @@
 
 use rg_ir_model::items::Documentation;
 use rg_ir_model::{
-    BodyBindingRef, ConstRef, EnumVariantRef, FieldRef, FunctionRef, LocalDefRef, ModuleRef,
+    BodyBindingRef, ConstRef, DefId, EnumVariantRef, FieldRef, FunctionRef, LocalDefRef, ModuleRef,
     SemanticItemRef, StaticRef, TraitRef, TypeAliasRef, TypeDefId, TypeDefRef,
     identity::DeclarationRef,
 };
@@ -308,11 +308,14 @@ impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
                 module: data.module,
             })?
             .map(|module| format!("{module}::{}", data.name));
+        let docs = def_maps
+            .macro_definition_view(DefId::Local(local_def_ref))?
+            .and_then(|macro_| macro_.data.docs.as_ref().map(Documentation::text));
         Ok(Some(DeclarationDetails {
             kind: SymbolKind::from_local_def_kind(data.kind),
             path,
             signature: Some(format!("{} {}", data.kind, data.name)),
-            docs: None,
+            docs,
         }))
     }
 }

@@ -7,13 +7,11 @@
 use anyhow::Context as _;
 
 use rg_item_tree::ItemTreeDb;
+use rg_macro_runtime::MacroExpansionPerformancePreference;
 use rg_text::PackageNameInterners;
 use rg_workspace::WorkspaceMetadata;
 
-use super::super::{
-    DefMapPerformancePreference, collect::collect_package_target_states,
-    implicit_roots::build_implicit_roots,
-};
+use super::super::{collect::collect_package_target_states, implicit_roots::build_implicit_roots};
 use super::{FinalizeTargetStates, finalize_target_states, freeze_package};
 use crate::{DefMapDb, DefMapReadTxn, PackageSlot};
 
@@ -27,7 +25,7 @@ pub(crate) fn rebuild_packages(
     item_tree: &ItemTreeDb,
     packages: &[PackageSlot],
     interners: &mut PackageNameInterners,
-    performance_preference: DefMapPerformancePreference,
+    performance_preference: MacroExpansionPerformancePreference,
 ) -> anyhow::Result<DefMapDb> {
     let packages = normalized_package_slots(packages);
     if packages.is_empty() {

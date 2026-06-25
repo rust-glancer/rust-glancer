@@ -40,6 +40,11 @@ impl TargetKind {
         matches!(self, Self::CustomBuild)
     }
 
+    /// Cargo enables `cfg(test)` for test-like targets without reporting it in rustc cfg output.
+    pub fn enables_test_cfg(&self) -> bool {
+        matches!(self, Self::Test | Self::Bench)
+    }
+
     // Used for predictable ordering, e.g.
     // in test snapshots.
     pub fn sort_order(&self) -> u8 {

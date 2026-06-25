@@ -8,11 +8,11 @@ use rg_text::Name;
 
 use super::{
     path_resolution::{NameResolutionFilter, PathResolver, ResolvePathResult},
-    resolution_env::{ScopeResolutionEnv, TargetResolutionEnv},
+    resolution_env::{MacroDefinitionEnv, ScopeResolutionEnv, TargetResolutionEnv},
 };
 
 use super::super::{
-    DefMap, LocalDefData, LocalImplData, MacroDefinitionData, ModuleData, ModuleScopeBuilder,
+    DefMap, LocalDefData, LocalImplData, MacroDefinitionView, ModuleData, ModuleScopeBuilder,
     Namespace, ScopeEntryRef, ScopeNamespace, VisibleScopeDef, VisibleScopeDefs,
     VisibleScopeOrigin,
 };
@@ -179,14 +179,26 @@ where
             .and_then(|def_map| def_map.local_impl(local_impl_ref.local_impl)))
     }
 
-    pub fn macro_definition_data(
+    /// Classify a resolved definition as a declarative macro and borrow its expansion payload.
+    pub fn macro_definition_view(
         &self,
-        local_def_ref: LocalDefRef,
-    ) -> Result<Option<&MacroDefinitionData>, S::Error> {
-        Ok(self
+        def: DefId,
+    ) -> Result<Option<MacroDefinitionView<'_>>, S::Error> {
+        let DefId::Local(def_ref) = def else {
+            return Ok(None);
+        };
+        let Some(local_def) = self.local_def_data(def_ref)? else {
+            return Ok(None);
+        };
+        let Some(data) = self
             .source
-            .def_map_for_origin(local_def_ref.origin)?
-            .and_then(|def_map| def_map.macro_definition(local_def_ref.local_def)))
+            .def_map_for_origin(def_ref.origin)?
+            .and_then(|def_map| def_map.macro_definition(def_ref.local_def))
+        else {
+            return Ok(None);
+        };
+
+        Ok(MacroDefinitionView::new(def_ref, local_def, data))
     }
 
     /// Returns the namespace occupied by one resolved definition.
@@ -297,12 +309,17 @@ where
     ) -> Result<Option<&LocalDefData>, Self::Error> {
         DefMapQuery::local_def_data(self, local_def_ref)
     }
+}
 
-    fn macro_definition_data(
-        &self,
-        local_def_ref: LocalDefRef,
-    ) -> Result<Option<&MacroDefinitionData>, Self::Error> {
-        DefMapQuery::macro_definition_data(self, local_def_ref)
+impl<S> MacroDefinitionEnv for DefMapQuery<S>
+where
+    S: DefMapSource,
+{
+    fn macro_definition_view<'a>(
+        &'a self,
+        def: DefId,
+    ) -> Result<Option<MacroDefinitionView<'a>>, Self::Error> {
+        DefMapQuery::macro_definition_view(self, def)
     }
 }
 

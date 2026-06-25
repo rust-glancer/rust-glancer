@@ -15,20 +15,11 @@ mod imports;
 mod macros;
 
 use rg_item_tree::ItemTreeDb;
+use rg_macro_runtime::MacroExpansionPerformancePreference;
 use rg_text::PackageNameInterners;
 use rg_workspace::WorkspaceMetadata;
 
 use crate::{DefMapDb, DefMapReadTxn, PackageSlot};
-
-/// Build-time speed/memory preference for def-map finalization.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum DefMapPerformancePreference {
-    /// Use unconstrained macro-expansion behavior.
-    #[default]
-    FasterBuilds,
-    /// Bound bursty macro-expansion parallelism to reduce peak resident memory.
-    LowerPeakMemory,
-}
 
 /// Builder for a fresh def-map snapshot.
 pub struct DefMapDbBuilder<'a, 'names> {
@@ -36,7 +27,7 @@ pub struct DefMapDbBuilder<'a, 'names> {
     parse: &'a rg_parse::ParseDb,
     item_tree: &'a ItemTreeDb,
     interners: NameInternerSource<'names>,
-    performance_preference: DefMapPerformancePreference,
+    performance_preference: MacroExpansionPerformancePreference,
 }
 
 impl<'a> DefMapDbBuilder<'a, 'static> {
@@ -50,7 +41,7 @@ impl<'a> DefMapDbBuilder<'a, 'static> {
             parse,
             item_tree,
             interners: NameInternerSource::Owned(PackageNameInterners::new(parse.package_count())),
-            performance_preference: DefMapPerformancePreference::default(),
+            performance_preference: MacroExpansionPerformancePreference::default(),
         }
     }
 }
@@ -69,7 +60,10 @@ impl<'a, 'names> DefMapDbBuilder<'a, 'names> {
         }
     }
 
-    pub fn performance_preference(mut self, preference: DefMapPerformancePreference) -> Self {
+    pub fn performance_preference(
+        mut self,
+        preference: MacroExpansionPerformancePreference,
+    ) -> Self {
         self.performance_preference = preference;
         self
     }
@@ -110,7 +104,7 @@ pub struct DefMapDbPackageRebuilder<'a, 'db> {
     item_tree: &'a ItemTreeDb,
     packages: &'a [PackageSlot],
     interners: &'a mut PackageNameInterners,
-    performance_preference: DefMapPerformancePreference,
+    performance_preference: MacroExpansionPerformancePreference,
 }
 
 impl<'a, 'db> DefMapDbPackageRebuilder<'a, 'db> {
@@ -131,11 +125,14 @@ impl<'a, 'db> DefMapDbPackageRebuilder<'a, 'db> {
             item_tree,
             packages,
             interners,
-            performance_preference: DefMapPerformancePreference::default(),
+            performance_preference: MacroExpansionPerformancePreference::default(),
         }
     }
 
-    pub fn performance_preference(mut self, preference: DefMapPerformancePreference) -> Self {
+    pub fn performance_preference(
+        mut self,
+        preference: MacroExpansionPerformancePreference,
+    ) -> Self {
         self.performance_preference = preference;
         self
     }

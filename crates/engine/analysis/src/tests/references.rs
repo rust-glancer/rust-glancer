@@ -101,6 +101,66 @@ pub fn use_it() -> u32 {
 }
 
 #[test]
+fn finds_body_macro_call_references() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_macro_references"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct Text;
+
+pub fn helper(value: u64) -> Text { Text }
+
+/// Builds text from a value.
+macro_rules! make_$macro_decl$text {
+    ($value:expr) => { helper($value) };
+}
+
+pub fn use_it(input: u64) {
+    let _first = make_$macro_call$text!(input);
+    let _second = make_text!(input + 1);
+}
+"#,
+        &[
+            AnalysisQuery::references(
+                "macro references from declaration",
+                "macro_decl",
+                ReferenceQuery::all(),
+            ),
+            AnalysisQuery::references(
+                "macro references from body call",
+                "macro_call",
+                ReferenceQuery::all(),
+            ),
+            AnalysisQuery::references(
+                "macro references without declaration",
+                "macro_call",
+                ReferenceQuery::all().without_declaration(),
+            ),
+        ],
+        expect![[r#"
+            macro references from declaration
+            - `make_text` @ src/lib.rs:6:14-6:23
+            - `make_text` @ src/lib.rs:11:18-11:27
+            - `make_text` @ src/lib.rs:12:19-12:28
+
+            macro references from body call
+            - `make_text` @ src/lib.rs:6:14-6:23
+            - `make_text` @ src/lib.rs:11:18-11:27
+            - `make_text` @ src/lib.rs:12:19-12:28
+
+            macro references without declaration
+            - `make_text` @ src/lib.rs:11:18-11:27
+            - `make_text` @ src/lib.rs:12:19-12:28
+        "#]],
+    );
+}
+
+#[test]
 fn local_binding_method_receiver_shadows_same_name_function() {
     check_analysis_queries(
         r#"

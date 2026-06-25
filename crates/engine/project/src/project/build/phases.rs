@@ -154,7 +154,7 @@ pub(super) fn build(
             build_plan.source_packages.as_slice(),
             &mut names,
         )
-        .performance_preference(indexing_preference.def_map_preference());
+        .performance_preference(indexing_preference.macro_expansion_preference());
     let def_map = def_map_rebuilder
         .build()
         .context("while attempting to build def map db")?;

@@ -117,11 +117,26 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
         // declaration item still lives in the parent body-local item store.
         self.consider_body_owner_declaration(body, &mut best)?;
 
+        // Macro expansion can map many generated nodes back to the invocation span. Give the
+        // written macro path a precise candidate before the generated-source guard below decides
+        // whether the rest of the expanded internals should stay hidden.
+        self.consider_macro_calls(body, &mut best);
+
+        // Expanded macro syntax often maps back to the macro call span. Once generated nodes are
+        // hidden from editor queries, do not let a broad enclosing expression such as the function
+        // body block answer a cursor query for the macro call token.
+        if self.generated_source_touches_offset(body) {
+            return Ok(best.finish());
+        }
+
         // First look at expressions under the cursor: calls, paths, field accesses, literals, and
         // so on. Record shorthand values are skipped here because the key token has its own
         // source-level candidate.
         for (expr_idx, expr) in body.exprs().iter().enumerate() {
-            if expr.source.file_id == self.file_id && expr.source.span.touches(self.offset) {
+            if !expr.source.is_written_in_file(self.file_id) {
+                continue;
+            }
+            if expr.source.span.touches(self.offset) {
                 if record_shorthand_values.contains(&ExprId(expr_idx)) {
                     continue;
                 }
@@ -149,8 +164,11 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
         // Then look for local bindings introduced by params, lets, closures, and patterns. For
         // shorthand record patterns, keep enough surface information for rename to expand the field.
         for (binding_idx, binding) in body.bindings().iter().enumerate() {
+            if !binding.source.is_written_in_file(self.file_id) {
+                continue;
+            }
             let binding_span = binding.name_span.unwrap_or(binding.source.span);
-            if binding.source.file_id == self.file_id && binding_span.touches(self.offset) {
+            if binding_span.touches(self.offset) {
                 let binding_id = BindingId(binding_idx);
                 let surface = if let Some(shorthand) = record_shorthand_bindings
                     .iter()
@@ -182,6 +200,12 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
             // item store. Their names can be the best answer when the cursor is on a nested item
             // declaration or one of its fields/variants.
             for item in item_store.semantic_items() {
+                if let ItemSourceKind::Body(source) = item.source().kind
+                    && source.body == body_ref
+                    && !body.source_item_is_written(source.item)
+                {
+                    continue;
+                }
                 if item.source().file_id != self.file_id {
                     continue;
                 }
@@ -269,6 +293,26 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
         Ok(())
     }
 
+    fn consider_macro_calls(&self, body: &ResolvedBodyData, best: &mut BestCursorCandidate) {
+        for call in body.macro_calls() {
+            if !call.source.is_written_in_file(self.file_id) {
+                continue;
+            }
+            if !call.name_span.touches(self.offset) {
+                continue;
+            }
+
+            best.consider(
+                call.name_span,
+                BodyCursorCandidate::MacroCall {
+                    definition: call.definition,
+                    file_id: call.source.file_id,
+                    span: call.name_span,
+                },
+            );
+        }
+    }
+
     fn body_owner_declaration(
         &self,
         body: &ResolvedBodyData,
@@ -353,6 +397,22 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
             }
         }
         values
+    }
+
+    fn generated_source_touches_offset(&self, body: &ResolvedBodyData) -> bool {
+        body.exprs().iter().any(|expr| {
+            !expr.source.is_written()
+                && expr.source.file_id == self.file_id
+                && expr.source.span.touches(self.offset)
+        }) || body.pats().iter().any(|pat| {
+            !pat.source.is_written()
+                && pat.source.file_id == self.file_id
+                && pat.source.span.touches(self.offset)
+        }) || body.bindings().iter().any(|binding| {
+            !binding.source.is_written()
+                && binding.source.file_id == self.file_id
+                && binding.source.span.touches(self.offset)
+        })
     }
 
     fn consider_record_expr_fields(

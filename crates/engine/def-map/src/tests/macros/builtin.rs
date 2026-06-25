@@ -1,9 +1,77 @@
 use super::super::utils;
-use expect_test::expect;
+use expect_test::{Expect, expect};
+
+const BUILTIN_MACRO_SYSROOT: &str = r#"
+//- /sysroot/library/core/src/lib.rs
+#[rustc_builtin_macro]
+#[macro_export]
+macro_rules! include {
+    ($($args:tt)*) => {{ /* compiler built-in */ }};
+}
+
+#[rustc_builtin_macro]
+#[macro_export]
+macro_rules! cfg_select {
+    ($($args:tt)*) => {{ /* compiler built-in */ }};
+}
+
+pub mod prelude {
+    pub mod rust_2024 {
+        pub use crate::cfg_select;
+        pub use crate::include;
+    }
+}
+
+//- /sysroot/library/alloc/src/lib.rs
+pub struct Alloc;
+
+//- /sysroot/library/std/src/lib.rs
+#[rustc_builtin_macro]
+#[macro_export]
+macro_rules! include {
+    ($($args:tt)*) => {{ /* compiler built-in */ }};
+}
+
+#[rustc_builtin_macro]
+#[macro_export]
+macro_rules! cfg_select {
+    ($($args:tt)*) => {{ /* compiler built-in */ }};
+}
+
+pub mod prelude {
+    pub mod rust_2024 {
+        pub use crate::cfg_select;
+        pub use crate::include;
+    }
+}
+"#;
+
+fn builtin_macro_fixture(fixture: &str) -> String {
+    format!("{fixture}\n{BUILTIN_MACRO_SYSROOT}")
+}
+
+fn build_builtin_macro_fixture(fixture: &str) -> utils::DefMapFixtureDb {
+    let fixture = builtin_macro_fixture(fixture);
+    utils::DefMapFixtureDb::build_with_sysroot(&fixture)
+}
+
+fn check_builtin_macro_project_def_map(fixture: &str, expect: Expect) {
+    let fixture = builtin_macro_fixture(fixture);
+    utils::check_project_def_map_with_sysroot(&fixture, expect);
+}
+
+fn check_builtin_macro_path_resolution(
+    fixture: &str,
+    queries: &[utils::PathResolutionQuery],
+    expect: Expect,
+) {
+    let fixture = builtin_macro_fixture(fixture);
+    utils::check_project_path_resolution_with_sysroot(&fixture, queries, expect);
+}
 
 #[test]
 fn include_macro_splices_real_source_items() {
-    let project = utils::DefMapFixtureDb::build(
+    let project = build_builtin_macro_fixture(
         r#"
 //- /Cargo.toml
 [package]
@@ -39,7 +107,7 @@ macro_rules! make_included {
 
 #[test]
 fn qualified_include_macro_splices_real_source_items() {
-    let project = utils::DefMapFixtureDb::build(
+    let project = build_builtin_macro_fixture(
         r#"
 //- /Cargo.toml
 [package]
@@ -58,12 +126,12 @@ pub struct Included;
 
     target
         .entry("Included")
-        .assert_type_exists("std-qualified include should use builtin fallback");
+        .assert_type_exists("std-qualified include should resolve the sysroot builtin");
 }
 
 #[test]
 fn local_include_macro_shadows_builtin_include() {
-    let project = utils::DefMapFixtureDb::build(
+    let project = build_builtin_macro_fixture(
         r#"
 //- /Cargo.toml
 [package]
@@ -96,7 +164,7 @@ pub struct FromFile;
 
 #[test]
 fn cfg_select_expands_first_enabled_item_arm() {
-    let project = utils::DefMapFixtureDb::build(
+    let project = build_builtin_macro_fixture(
         r#"
 //- /Cargo.toml
 [package]
@@ -144,7 +212,7 @@ make_from_selected!();
 
 #[test]
 fn qualified_cfg_select_expands_first_enabled_item_arm() {
-    let project = utils::DefMapFixtureDb::build(
+    let project = build_builtin_macro_fixture(
         r#"
 //- /Cargo.toml
 [package]
@@ -176,18 +244,18 @@ core::cfg_select! {
 
     target
         .entry("FromStd")
-        .assert_type_exists("std-qualified cfg_select should use builtin fallback");
+        .assert_type_exists("std-qualified cfg_select should resolve the sysroot builtin");
     target
         .entry("FromCore")
-        .assert_type_exists("core-qualified cfg_select should use builtin fallback");
+        .assert_type_exists("core-qualified cfg_select should resolve the sysroot builtin");
     target
         .entry("FromAbsoluteStd")
-        .assert_type_exists("absolute std-qualified cfg_select should use builtin fallback");
+        .assert_type_exists("absolute std-qualified cfg_select should resolve the sysroot builtin");
 }
 
 #[test]
 fn cfg_select_uses_wildcard_fallback() {
-    let project = utils::DefMapFixtureDb::build(
+    let project = build_builtin_macro_fixture(
         r#"
 //- /Cargo.toml
 [package]
@@ -218,7 +286,7 @@ cfg_select! {
 
 #[test]
 fn cfg_select_matches_key_value_cfg_predicates() {
-    let project = utils::DefMapFixtureDb::build(
+    let project = build_builtin_macro_fixture(
         r#"
 //- /Cargo.toml
 [package]
@@ -253,7 +321,7 @@ cfg_select! {
 
 #[test]
 fn cfg_select_collects_out_of_line_modules_relative_to_call_site() {
-    utils::check_project_path_resolution(
+    check_builtin_macro_path_resolution(
         r#"
 //- /Cargo.toml
 [package]
@@ -284,7 +352,7 @@ pub struct Unix;
 
 #[test]
 fn cfg_select_collects_impls_and_extern_crates_as_source_items() {
-    utils::check_project_def_map(
+    check_builtin_macro_project_def_map(
         r#"
 //- /Cargo.toml
 [package]
@@ -316,6 +384,12 @@ edition = "2024"
 pub struct Dep;
 "#,
         expect![[r#"
+            package alloc
+
+            alloc [lib]
+            crate
+            - Alloc : type [pub struct alloc[lib]::crate::Alloc]
+
             package cfg_select_source_items_fixture
 
             cfg_select_source_items_fixture [lib]
@@ -325,18 +399,48 @@ pub struct Dep;
             impls
             - impl lib.rs#2
 
+            package core
+
+            core [lib]
+            crate
+            - cfg_select : macro [macro_definition core[lib]::crate::cfg_select; pub macro_definition core[lib]::crate::cfg_select]
+            - include : macro [macro_definition core[lib]::crate::include; pub macro_definition core[lib]::crate::include]
+            - prelude : type [pub module core[lib]::crate::prelude]
+
+            crate::prelude
+            - rust_2024 : type [pub module core[lib]::crate::prelude::rust_2024]
+
+            crate::prelude::rust_2024
+            - cfg_select : macro [pub macro_definition core[lib]::crate::cfg_select]
+            - include : macro [pub macro_definition core[lib]::crate::include]
+
             package dep
 
             dep [lib]
             crate
             - Dep : type [pub struct dep[lib]::crate::Dep]
+
+            package std
+
+            std [lib]
+            crate
+            - cfg_select : macro [macro_definition std[lib]::crate::cfg_select; pub macro_definition std[lib]::crate::cfg_select]
+            - include : macro [macro_definition std[lib]::crate::include; pub macro_definition std[lib]::crate::include]
+            - prelude : type [pub module std[lib]::crate::prelude]
+
+            crate::prelude
+            - rust_2024 : type [pub module std[lib]::crate::prelude::rust_2024]
+
+            crate::prelude::rust_2024
+            - cfg_select : macro [pub macro_definition std[lib]::crate::cfg_select]
+            - include : macro [pub macro_definition std[lib]::crate::include]
         "#]],
     );
 }
 
 #[test]
 fn cfg_select_ignores_failed_inactive_arm_lowering() {
-    let project = utils::DefMapFixtureDb::build(
+    let project = build_builtin_macro_fixture(
         r#"
 //- /Cargo.toml
 [package]
@@ -364,7 +468,7 @@ cfg_select! {
 
 #[test]
 fn local_cfg_select_macro_shadows_builtin_cfg_select() {
-    let project = utils::DefMapFixtureDb::build(
+    let project = build_builtin_macro_fixture(
         r#"
 //- /Cargo.toml
 [package]

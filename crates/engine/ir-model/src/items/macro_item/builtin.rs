@@ -9,7 +9,43 @@ use rg_parse::FileId;
 use rg_std::{MemorySize, Shrink};
 use wincode::{SchemaRead, SchemaWrite};
 
+use crate::BuiltinMacroExprKind;
+
 use super::super::ItemTreeId;
+
+/// Compiler-provided macro definition selected through normal macro resolution.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
+#[memsize(leaf)]
+#[shrink(leaf)]
+pub enum BuiltinMacroKind {
+    /// Builtin expression macro that Body IR can represent without declarative expansion.
+    Expr(BuiltinMacroExprKind),
+    /// Builtin that selects one source stream from cfg predicates.
+    CfgSelect,
+    /// Builtin that splices another source file into the caller.
+    Include,
+    /// Builtin that does not contribute item definitions to def-map.
+    IgnoredByDefMap,
+    /// Builtin that needs dedicated support before it can be expanded.
+    Unsupported,
+}
+
+impl BuiltinMacroKind {
+    /// Classify a definition explicitly marked by rustc as compiler-provided.
+    pub fn from_rustc_builtin_macro_name(name: &str) -> Self {
+        if let Some(kind) = BuiltinMacroExprKind::from_macro_name(name) {
+            return Self::Expr(kind);
+        }
+
+        match name {
+            "asm" | "compile_error" | "global_asm" | "llvm_asm" => Self::IgnoredByDefMap,
+            "cfg_select" => Self::CfgSelect,
+            "include" => Self::Include,
+            "concat_idents" => Self::Unsupported,
+            _ => Self::Unsupported,
+        }
+    }
+}
 
 /// Source-like builtin payload discovered during item-tree lowering.
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]

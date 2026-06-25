@@ -178,12 +178,20 @@ impl BodyLowering<'_> {
                 }
             }
             ast::Pat::OrPat(pat) => {
-                let pats = pat
-                    .pats()
-                    .map(|inner| {
-                        self.lower_pat_inner(inner, scope, kind, None, alloc_bindings, bindings)
-                    })
-                    .collect();
+                let mut pats = Vec::new();
+                for inner in pat.pats() {
+                    let Some(inner) = self.cfg_enabled_pat(inner) else {
+                        continue;
+                    };
+                    pats.push(self.lower_pat_inner(
+                        inner,
+                        scope,
+                        kind,
+                        None,
+                        alloc_bindings,
+                        bindings,
+                    ));
+                }
                 PatKind::Or { pats }
             }
             ast::Pat::ParenPat(pat) => {
@@ -201,54 +209,59 @@ impl BodyLowering<'_> {
             }
             ast::Pat::RecordPat(pat) => {
                 let field_list = pat.record_pat_field_list();
-                let fields = field_list
-                    .iter()
-                    .flat_map(|field_list| field_list.fields())
-                    .filter_map(|field| {
-                        let field_name = field.field_name()?;
-                        let key_span = self.source(field_name.syntax()).span;
-                        let name = self.intern_ast_name_or_name_ref(field_name);
-                        let key = FieldKey::Named(name.clone());
-                        let source_span = self.source(field.syntax()).span;
-                        let syntax = <RecordFieldSyntax as rg_item_tree::FromAst<
+                let mut fields = Vec::new();
+                for field in field_list.iter().flat_map(|field_list| field_list.fields()) {
+                    let Some(field) = self.cfg.enabled_syntax(field) else {
+                        continue;
+                    };
+                    let Some(field_name) = field.field_name() else {
+                        continue;
+                    };
+                    let key_span = self.source(field_name.syntax()).span;
+                    let name = self.intern_ast_name_or_name_ref(field_name);
+                    let key = FieldKey::Named(name.clone());
+                    let source_span = self.source(field.syntax()).span;
+                    let syntax =
+                        <RecordFieldSyntax as rg_item_tree::FromAst<RecordPatFieldAst>>::from_ast(
+                            &field,
                             RecordPatFieldAst,
-                        >>::from_ast(&field, RecordPatFieldAst);
-                        let pat = if syntax.is_explicit() {
-                            match field.pat() {
-                                Some(inner) => self.lower_pat_inner(
-                                    inner,
-                                    scope,
-                                    kind,
-                                    None,
-                                    alloc_bindings,
-                                    bindings,
-                                ),
-                                None => self.alloc_unsupported_pat(field.syntax()),
-                            }
-                        } else {
-                            match field.pat() {
-                                Some(inner) => self.lower_record_shorthand_pat(
-                                    inner,
-                                    scope,
-                                    kind,
-                                    alloc_bindings,
-                                    bindings,
-                                ),
-                                None => self.alloc_unsupported_pat(field.syntax()),
-                            }
-                        };
-                        Some(RecordPatField {
-                            key,
-                            key_span,
-                            source_span,
-                            syntax,
-                            pat,
-                        })
-                    })
-                    .collect();
+                        );
+                    let pat = if syntax.is_explicit() {
+                        match field.pat() {
+                            Some(inner) => self.lower_pat_inner(
+                                inner,
+                                scope,
+                                kind,
+                                None,
+                                alloc_bindings,
+                                bindings,
+                            ),
+                            None => self.alloc_unsupported_pat(field.syntax()),
+                        }
+                    } else {
+                        match field.pat() {
+                            Some(inner) => self.lower_record_shorthand_pat(
+                                inner,
+                                scope,
+                                kind,
+                                alloc_bindings,
+                                bindings,
+                            ),
+                            None => self.alloc_unsupported_pat(field.syntax()),
+                        }
+                    };
+                    fields.push(RecordPatField {
+                        key,
+                        key_span,
+                        source_span,
+                        syntax,
+                        pat,
+                    });
+                }
                 let rest = field_list
                     .as_ref()
                     .and_then(|field_list| field_list.rest_pat())
+                    .and_then(|rest| self.cfg.enabled_syntax(rest))
                     .map(|rest| {
                         self.lower_pat_inner(
                             ast::Pat::RestPat(rest),
@@ -278,30 +291,54 @@ impl BodyLowering<'_> {
                 }
             }
             ast::Pat::SlicePat(pat) => {
-                let fields = pat
-                    .pats()
-                    .map(|inner| {
-                        self.lower_pat_inner(inner, scope, kind, None, alloc_bindings, bindings)
-                    })
-                    .collect();
+                let mut fields = Vec::new();
+                for inner in pat.pats() {
+                    let Some(inner) = self.cfg_enabled_pat(inner) else {
+                        continue;
+                    };
+                    fields.push(self.lower_pat_inner(
+                        inner,
+                        scope,
+                        kind,
+                        None,
+                        alloc_bindings,
+                        bindings,
+                    ));
+                }
                 PatKind::Slice { fields }
             }
             ast::Pat::TuplePat(pat) => {
-                let fields = pat
-                    .fields()
-                    .map(|inner| {
-                        self.lower_pat_inner(inner, scope, kind, None, alloc_bindings, bindings)
-                    })
-                    .collect();
+                let mut fields = Vec::new();
+                for inner in pat.fields() {
+                    let Some(inner) = self.cfg_enabled_pat(inner) else {
+                        continue;
+                    };
+                    fields.push(self.lower_pat_inner(
+                        inner,
+                        scope,
+                        kind,
+                        None,
+                        alloc_bindings,
+                        bindings,
+                    ));
+                }
                 PatKind::Tuple { fields }
             }
             ast::Pat::TupleStructPat(pat) => {
-                let fields = pat
-                    .fields()
-                    .map(|inner| {
-                        self.lower_pat_inner(inner, scope, kind, None, alloc_bindings, bindings)
-                    })
-                    .collect();
+                let mut fields = Vec::new();
+                for inner in pat.fields() {
+                    let Some(inner) = self.cfg_enabled_pat(inner) else {
+                        continue;
+                    };
+                    fields.push(self.lower_pat_inner(
+                        inner,
+                        scope,
+                        kind,
+                        None,
+                        alloc_bindings,
+                        bindings,
+                    ));
+                }
                 PatKind::TupleStruct {
                     path: pat.path().and_then(|path| self.lower_body_path(path)),
                     fields,
@@ -334,13 +371,49 @@ impl BodyLowering<'_> {
                     .map(|block| self.lower_const_block_pat_expr(block)),
             },
             ast::Pat::WildcardPat(_) => PatKind::Wildcard,
-            ast::Pat::MacroPat(_) => PatKind::Unsupported,
+            ast::Pat::MacroPat(pat) => {
+                return self
+                    .lower_macro_pat(&pat, scope, options, bindings)
+                    .unwrap_or_else(|| self.alloc_unsupported_pat(pat.syntax()));
+            }
         };
 
         self.builder.alloc_pat(PatData {
             source,
             kind: pat_kind,
         })
+    }
+
+    fn lower_macro_pat(
+        &mut self,
+        pat: &ast::MacroPat,
+        scope: ScopeId,
+        options: PatLoweringOptions,
+        bindings: &mut Vec<BindingId>,
+    ) -> Option<PatId> {
+        let call_source = self.source(pat.syntax());
+        let call = pat.macro_call()?;
+        let _expansion_scope = self.macro_expansion.expansion_scope()?;
+        let module = self.macro_resolution_module();
+        let origin = self.macro_call_origin();
+
+        // Pattern expansion is best-effort. If the macro cannot be resolved or parsed as a
+        // pattern, the caller keeps the original macro pattern as unsupported but buildable IR.
+        let outcome = self
+            .macro_expansion
+            .expand_pat_call(module, call_source, origin, &call)
+            .ok()
+            .flatten()?;
+        self.record_source_macro_call(call_source, &call, origin, outcome.definition);
+        let expanded = outcome.expansion?;
+
+        // The expanded pattern should behave exactly like handwritten syntax in the same pattern
+        // position, including binding allocation and ambiguity handling.
+        Some(
+            self.with_expanded_macro(call_source, expanded, |this, syntax| {
+                this.lower_pat_inner_with_ident_binding(syntax, scope, options, bindings)
+            }),
+        )
     }
 
     fn push_pat_binding(
@@ -392,6 +465,15 @@ impl BodyLowering<'_> {
         // own locals still work without inheriting pattern bindings.
         let const_scope = self.builder.alloc_scope(None);
         self.lower_block_expr(block, const_scope)
+    }
+
+    fn cfg_enabled_pat(&self, pat: ast::Pat) -> Option<ast::Pat> {
+        let enabled = match ast::AnyHasAttrs::cast(pat.syntax().clone()) {
+            Some(syntax) => self.cfg.is_syntax_enabled(&syntax),
+            None => true,
+        };
+
+        enabled.then_some(pat)
     }
 
     fn lower_record_shorthand_pat(

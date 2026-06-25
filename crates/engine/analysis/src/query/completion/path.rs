@@ -12,11 +12,10 @@ use crate::{
 };
 
 use super::{
-    CompletionQuery,
+    CallCompletionKind, CompletionQuery,
     candidates::{CompletionCandidateSource, CompletionScopeNamespace, ModuleCompletionCandidate},
     completion_sort::CompletionSortPolicy,
     def_completion_detail,
-    function::FunctionCallCompletion,
     module_scope::{ModuleCompletionRenderer, ModuleCompletionRequest},
 };
 
@@ -46,9 +45,9 @@ impl<'a, 'db, 'source> PathCompletionResolver<'a, 'db, 'source> {
             PathCompletionFilter::from(context),
             match context {
                 PathCompletionContext::Type | PathCompletionContext::Value => {
-                    FunctionCallCompletion::FunctionCall
+                    CallCompletionKind::Call
                 }
-                PathCompletionContext::Import => FunctionCallCompletion::Plain,
+                PathCompletionContext::Import => CallCompletionKind::Plain,
             },
         )?;
 
@@ -70,7 +69,7 @@ impl<'a, 'db, 'source> PathCompletionResolver<'a, 'db, 'source> {
         candidates: Vec<ModuleCompletionCandidate>,
         edit: CompletionEdit,
         filter: PathCompletionFilter,
-        function_call_completion: FunctionCallCompletion,
+        call_completion: CallCompletionKind,
     ) -> anyhow::Result<Vec<CompletionItem>> {
         let renderer = ModuleCompletionRenderer::new(self.analysis, self.query);
         let mut completions: Vec<CompletionItem> = Vec::new();
@@ -82,7 +81,7 @@ impl<'a, 'db, 'source> PathCompletionResolver<'a, 'db, 'source> {
             let Some(completion) = renderer.completion(ModuleCompletionRequest {
                 candidate: &candidate,
                 edit,
-                function_call_completion,
+                call_completion,
                 sort_policy: CompletionSortPolicy::General,
                 sort_priority: None,
             })?

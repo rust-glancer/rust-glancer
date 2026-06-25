@@ -1,10 +1,11 @@
 //! Mechanical lowering from AST expression bodies into Body IR.
 //!
-//! This pass intentionally does not resolve names. It records the source shape, lexical scopes,
+//! This pass does not resolve names. It records the source shape, lexical scopes,
 //! and visibility-order binding boundaries so the later resolution pass can stay focused.
 
 mod body;
 mod expr;
+mod macro_expansion;
 mod pat;
 mod stmt;
 mod syntax;
@@ -14,7 +15,8 @@ mod task;
 use anyhow::Context as _;
 use rayon::prelude::*;
 
-use rg_def_map::PackageSlot;
+use rg_cfg_eval::CfgEvaluator;
+use rg_def_map::{DefMapReadTxn, PackageSlot};
 use rg_ir_model::{ConstRef, StaticRef, TargetRef};
 use rg_parse::{FileId, ParseDb, TargetId};
 use rg_semantic_ir::SemanticIrReadTxn;
@@ -22,12 +24,14 @@ use rg_text::{NameInterner, PackageNameInterners};
 
 use crate::{BodyIrBuildPolicy, BodyIrFile, PackageBodies, TargetBodies};
 
+pub(super) use self::macro_expansion::BodyMacroExpansion;
 use self::target::TargetLowering;
 pub(super) use self::task::{BodyLoweringTask, BodyTaskLowering};
 use super::local_thread_pool;
 
 pub(super) fn build_packages(
     parse: &ParseDb,
+    def_map: &DefMapReadTxn<'_>,
     semantic_ir: &SemanticIrReadTxn<'_>,
     package_count: usize,
     policy: BodyIrBuildPolicy,
@@ -40,6 +44,7 @@ pub(super) fn build_packages(
     packages.resize_with(package_count, || None);
     build_package_outputs(
         parse,
+        def_map,
         semantic_ir,
         BodyIrLoweringScope::PackagePolicy(policy),
         interners,
@@ -55,6 +60,7 @@ pub(super) fn build_packages(
 
 pub(super) fn build_selected_packages(
     parse: &ParseDb,
+    def_map: &DefMapReadTxn<'_>,
     semantic_ir: &SemanticIrReadTxn<'_>,
     scope: BodyIrLoweringScope<'_>,
     package_slots: &[PackageSlot],
@@ -73,6 +79,7 @@ pub(super) fn build_selected_packages(
     packages.resize_with(parse.package_count(), || None);
     build_package_outputs(
         parse,
+        def_map,
         semantic_ir,
         scope,
         interners,
@@ -89,6 +96,7 @@ pub(super) fn build_selected_packages(
 
 fn build_package_outputs(
     parse: &ParseDb,
+    def_map: &DefMapReadTxn<'_>,
     semantic_ir: &SemanticIrReadTxn<'_>,
     scope: BodyIrLoweringScope<'_>,
     interners: &mut PackageNameInterners,
@@ -123,6 +131,7 @@ fn build_package_outputs(
                     let package = PackageSlot(package_idx);
                     *output = Some(build_package_with_interner(
                         parse_package,
+                        def_map,
                         semantic_ir,
                         scope,
                         package,
@@ -136,6 +145,7 @@ fn build_package_outputs(
 
 fn build_package_with_interner(
     parse_package: &rg_parse::Package,
+    def_map: &DefMapReadTxn<'_>,
     semantic_ir: &SemanticIrReadTxn<'_>,
     scope: BodyIrLoweringScope<'_>,
     package: PackageSlot,
@@ -150,11 +160,21 @@ fn build_package_with_interner(
     let target_count = package_ir.targets().len();
     let mut targets = Vec::with_capacity(target_count);
 
+    // Go through all targets
     for target_idx in 0..target_count {
+        let target_id = TargetId(target_idx);
+
+        // Build cfg evaluator to support `#[cfg]` in bodies
+        let parse_target = parse_package.target(target_id).with_context(|| {
+            format!("while attempting to fetch parsed target {target_idx} for body lowering")
+        })?;
         let target_ref = TargetRef {
             package,
-            target: TargetId(target_idx),
+            target: target_id,
         };
+        let cfg = CfgEvaluator::new(parse_package.cfg_options(), parse_target.enables_test_cfg());
+
+        // Collect known semantic items.
         let store = semantic_ir
             .items(target_ref)
             .with_context(|| {
@@ -193,6 +213,8 @@ fn build_package_with_interner(
                 )
             })
             .collect::<Vec<_>>();
+
+        // Check if we need lowering in the first place.
         let body_files = functions
             .iter()
             .map(|(_, file_id, _)| *file_id)
@@ -206,9 +228,11 @@ fn build_package_with_interner(
             continue;
         }
 
+        // Lower.
         targets.push(
             TargetLowering {
                 parse_package,
+                def_map,
                 semantic_ir,
                 scope,
                 package,
@@ -216,6 +240,7 @@ fn build_package_with_interner(
                 consts,
                 statics,
                 target_bodies: TargetBodies::new(),
+                cfg,
                 interner,
             }
             .lower()

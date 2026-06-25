@@ -8,14 +8,16 @@ use std::collections::HashMap;
 
 use anyhow::Context as _;
 
-use rg_ir_model::{DefMapRef, TargetRef};
-use rg_ir_storage::{ScopeBindingOrigin, TargetResolutionEnv};
+use rg_ir_model::{TargetRef, items::BuiltinMacroKind};
+use rg_ir_storage::{ImportPath, MacroDefinitionEnv, TargetResolutionEnv};
 use rg_item_tree::{BuiltinMacroItem, CfgSelectArmPayload, ItemTreeDb, ItemTreeId};
-use rg_macro_expand::{Edition, ExpansionSyntax};
-use rg_parse::{FileId, Span};
+use rg_macro_runtime::{
+    ExpansionParseKind, ExpansionSyntax, MacroCompileRecord, MacroExpandRecord,
+    MacroExpansionRequest, MacroExpansionRuntime, PendingMacroExpansion, PreparedMacroExpansion,
+};
+use rg_parse::FileId;
+use rg_std::ExpectedUnique;
 use rg_text::PackageNameInterners;
-use rg_tt::{Span as TtSpan, syntax_bridge::SpanFactory};
-use rg_workspace::RustEdition;
 
 use crate::build::{
     collect::TargetState,
@@ -25,13 +27,8 @@ use crate::profile::metric;
 
 use super::{
     MacroCallSite, MacroDirectiveState,
-    cache::{MacroCompileRecord, MacroExpandRecord, MacroExpansionCache, PreparedMacroExpansion},
-    expand::MacroExpansionWork,
     generated::{GeneratedCollector, GeneratedOrigin},
-    resolve::{
-        BuiltinMacroDisposition, builtin_macro_disposition, macro_path_from_text,
-        resolve_macro_definition,
-    },
+    resolve::ItemMacroResolver,
     source_fragment::{SourceFragmentCollector, SourceFragmentOrigin},
 };
 
@@ -91,12 +88,15 @@ impl MacroExpansionCursors {
 }
 
 /// Resolves pending macro calls into concrete attempts for the current scope snapshot.
-pub(crate) fn collect_expansion_attempts(
-    env: &impl TargetResolutionEnv<Error = rg_package_store::PackageStoreError>,
+pub(crate) fn collect_expansion_attempts<E>(
+    env: &E,
     states: &FinalizeTargetStates,
     scan: MacroExpansionScan<'_>,
-    cache: &mut MacroExpansionCache,
-) -> anyhow::Result<Vec<MacroExpansionAttempt>> {
+    runtime: &mut MacroExpansionRuntime,
+) -> anyhow::Result<Vec<MacroExpansionAttempt>>
+where
+    E: TargetResolutionEnv<Error = rg_package_store::PackageStoreError> + MacroDefinitionEnv,
+{
     let mut attempts = Vec::new();
 
     for package_states in states.iter_dirty() {
@@ -116,7 +116,7 @@ pub(crate) fn collect_expansion_attempts(
                 let attempt = MacroExpansionAttempt::for_call(
                     env,
                     states,
-                    cache,
+                    runtime,
                     state,
                     call_id,
                     &directive.call,
@@ -451,23 +451,6 @@ impl MacroExpansionAttempt {
         )
     }
 
-    /// A direct same-module macro resolved but is declared after this call.
-    fn resolved_skipped(
-        target: TargetRef,
-        call_id: usize,
-        call: &MacroCallSite,
-        path_text: &str,
-    ) -> Self {
-        Self::new(
-            target,
-            call_id,
-            call,
-            Some(path_text.to_string()),
-            MacroExpansionAttemptOutcome::NoSource(MacroDirectiveState::Skipped),
-            MacroExpansionAttemptRecord::resolved_skipped(),
-        )
-    }
-
     /// Common initializer that anchors generated items at the original call site.
     fn new(
         target: TargetRef,
@@ -494,14 +477,17 @@ impl MacroExpansionAttempt {
         }
     }
 
-    fn for_call(
-        env: &impl TargetResolutionEnv<Error = rg_package_store::PackageStoreError>,
+    fn for_call<E>(
+        env: &E,
         states: &FinalizeTargetStates,
-        cache: &mut MacroExpansionCache,
+        runtime: &mut MacroExpansionRuntime,
         state: &TargetState,
         call_id: usize,
         call: &MacroCallSite,
-    ) -> anyhow::Result<Self> {
+    ) -> anyhow::Result<Self>
+    where
+        E: TargetResolutionEnv<Error = rg_package_store::PackageStoreError> + MacroDefinitionEnv,
+    {
         // First normalize the syntactic call into a path and argument list. Calls that are not
         // item-position macro invocations are marked done so the worklist can move on.
         let Some(path_text) = call.path.as_deref().or(call.callee.as_deref()) else {
@@ -510,83 +496,48 @@ impl MacroExpansionAttempt {
         let Some(args) = call.args.as_ref() else {
             return Ok(Self::skipped(state.target, call_id, call));
         };
-        let Some(path) = macro_path_from_text(path_text, call.dollar_crate_target) else {
+        let Some(path) = ImportPath::from_macro_path_text(path_text, call.dollar_crate_target)
+        else {
             return Ok(Self::skipped(state.target, call_id, call));
         };
 
         // Then resolve against the current scope snapshot. Unresolved user macros stay resumable;
-        // known builtins are classified once so we do not retry names that def-map cannot expand.
-        let Some(resolved) = resolve_macro_definition(env, states, state, call, &path)? else {
-            match builtin_macro_disposition(&path) {
-                Some(BuiltinMacroDisposition::IgnoredByDefMap) => {
-                    return Ok(Self::ignored_by_def_map(
-                        state.target,
-                        call_id,
-                        call,
-                        path_text,
-                    ));
-                }
-                Some(BuiltinMacroDisposition::CfgSelect) => {
-                    return Ok(Self::cfg_select(
-                        state.target,
-                        call_id,
-                        call,
-                        state,
-                        path_text,
-                    ));
-                }
-                Some(BuiltinMacroDisposition::Include) => {
-                    return Ok(Self::include_file(state.target, call_id, call, path_text));
-                }
-                Some(BuiltinMacroDisposition::Unsupported) => {
-                    return Ok(Self::unsupported_builtin(
-                        state.target,
-                        call_id,
-                        call,
-                        path_text,
-                    ));
-                }
-                None => return Ok(Self::unresolved(state.target, call_id, call, path_text)),
+        // compiler builtins are handled only after resolution identifies a builtin definition.
+        let resolver = ItemMacroResolver::new(env, states, state);
+        let resolved = match resolver.resolve(call, &path)? {
+            ExpectedUnique::One(resolved) => resolved,
+            ExpectedUnique::Ambiguous => {
+                return Ok(Self::unresolved(state.target, call_id, call, path_text));
+            }
+            ExpectedUnique::Empty => {
+                return Ok(Self::unresolved(state.target, call_id, call, path_text));
             }
         };
 
-        // Direct `macro_rules!` bindings cannot be used before a later definition in the same
-        // module. Imported bindings and `#[macro_export]` root bindings are path-based and have
-        // already gone through ordinary scope resolution.
-        if resolved.origin == ScopeBindingOrigin::Direct
-            && resolved.def_ref.origin == DefMapRef::Target(state.target)
-            && resolved.local_def.module == call.module
-            && let Some(order) = resolved.order
-            && order > &call.order
-        {
-            return Ok(Self::resolved_skipped(
+        if let Some(kind) = resolved.data.builtin {
+            return Ok(Self::builtin(
+                kind,
                 state.target,
                 call_id,
                 call,
+                state,
                 path_text,
             ));
         }
 
-        // Finally compile the definition and either reuse cached output or prepare self-contained
-        // expansion work for the worker pool.
-        let edition = macro_edition(resolved.data.edition);
-        let compile_result = cache.compile(resolved.def_ref, resolved.data, edition);
-        let Some(macro_) = compile_result.macro_ else {
-            return Ok(Self::resolved(
-                state.target,
-                call_id,
-                call,
-                path_text,
-                MacroExpansionAttemptOutcome::NoSource(MacroDirectiveState::Failed),
-                compile_result.record,
-                None,
-            ));
-        };
-
-        let call_site =
-            tt_span_for_parse_span(call.file_id, call.span, macro_edition(state.edition));
-        let prepared_expansion =
-            cache.prepare_expansion(resolved.def_ref, macro_, path_text, args, call_site);
+        // Finally hand the resolved definition and call tokens to the runtime. Def-map keeps the
+        // visibility policy, while the runtime owns compilation, expansion caching, and pending
+        // worker-pool jobs.
+        let prepared_expansion = runtime.prepare_expansion(MacroExpansionRequest {
+            def_ref: resolved.def_ref,
+            definition: resolved.data,
+            path_text,
+            args,
+            call_file_id: call.file_id,
+            call_span: call.span,
+            call_edition: state.edition,
+            parse_kind: ExpansionParseKind::Items,
+        });
         let outcome = match prepared_expansion.expansion {
             PreparedMacroExpansion::Syntax(syntax) => {
                 MacroExpansionAttemptOutcome::Generated(syntax)
@@ -594,8 +545,8 @@ impl MacroExpansionAttempt {
             PreparedMacroExpansion::Failed => {
                 MacroExpansionAttemptOutcome::NoSource(MacroDirectiveState::Failed)
             }
-            PreparedMacroExpansion::Work(work) => {
-                MacroExpansionAttemptOutcome::PendingExpansion(work)
+            PreparedMacroExpansion::Pending(pending) => {
+                MacroExpansionAttemptOutcome::PendingExpansion(pending)
             }
         };
 
@@ -605,11 +556,33 @@ impl MacroExpansionAttempt {
             call,
             path_text,
             outcome,
-            compile_result.record,
-            Some(prepared_expansion.record),
+            prepared_expansion.compile,
+            prepared_expansion.expand,
         );
         attempt.origin.dollar_crate_target = Some(resolved.data.dollar_crate_target);
         Ok(attempt)
+    }
+
+    fn builtin(
+        kind: BuiltinMacroKind,
+        target: TargetRef,
+        call_id: usize,
+        call: &MacroCallSite,
+        state: &TargetState,
+        macro_name: &str,
+    ) -> Self {
+        match kind {
+            BuiltinMacroKind::Expr(_) | BuiltinMacroKind::IgnoredByDefMap => {
+                Self::ignored_by_def_map(target, call_id, call, macro_name)
+            }
+            BuiltinMacroKind::CfgSelect => {
+                Self::cfg_select(target, call_id, call, state, macro_name)
+            }
+            BuiltinMacroKind::Include => Self::include_file(target, call_id, call, macro_name),
+            BuiltinMacroKind::Unsupported => {
+                Self::unsupported_builtin(target, call_id, call, macro_name)
+            }
+        }
     }
 
     pub(crate) fn needs_expansion(&self) -> bool {
@@ -624,13 +597,13 @@ impl MacroExpansionAttempt {
         self.record.record(macro_name);
     }
 
-    pub(super) fn take_expansion_work(&mut self) -> Option<MacroExpansionWork> {
+    pub(super) fn take_pending_expansion(&mut self) -> Option<PendingMacroExpansion> {
         let outcome = std::mem::replace(
             &mut self.outcome,
             MacroExpansionAttemptOutcome::NoSource(MacroDirectiveState::Pending),
         );
         match outcome {
-            MacroExpansionAttemptOutcome::PendingExpansion(work) => Some(work),
+            MacroExpansionAttemptOutcome::PendingExpansion(pending) => Some(pending),
             other => {
                 self.outcome = other;
                 None
@@ -694,14 +667,6 @@ impl MacroExpansionAttemptRecord {
         Self {
             resolved: true,
             failed: true,
-            ..Self::default()
-        }
-    }
-
-    fn resolved_skipped() -> Self {
-        Self {
-            resolved: true,
-            skipped: true,
             ..Self::default()
         }
     }
@@ -778,23 +743,5 @@ enum MacroExpansionAttemptOutcome {
         file_id: FileId,
         items: Vec<ItemTreeId>,
     },
-    PendingExpansion(MacroExpansionWork),
-}
-
-fn macro_edition(edition: RustEdition) -> Edition {
-    match edition {
-        RustEdition::Edition2015 => Edition::Edition2015,
-        RustEdition::Edition2018 => Edition::Edition2018,
-        RustEdition::Edition2021 => Edition::Edition2021,
-        RustEdition::Edition2024 => Edition::Edition2024,
-    }
-}
-
-fn tt_span_for_parse_span(file_id: FileId, span: Span, edition: Edition) -> TtSpan {
-    let text_range = rg_syntax::TextRange::new(span.text.start.into(), span.text.end.into());
-    SpanFactory::new(
-        u32::try_from(file_id.0).expect("file id should fit macro span storage"),
-        edition,
-    )
-    .span_for(text_range)
+    PendingExpansion(PendingMacroExpansion),
 }

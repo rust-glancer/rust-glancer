@@ -1,4 +1,5 @@
 mod build;
+mod macro_expansion;
 mod profile;
 mod query;
 mod store;
@@ -7,8 +8,14 @@ pub mod testonly;
 
 pub use rg_workspace::PackageSlot;
 
+pub use rg_macro_runtime::MacroExpansionPerformancePreference;
+
 pub use self::{
-    build::DefMapPerformancePreference,
+    macro_expansion::{
+        BodyMacroCallOrigin, BodyMacroCallSite, BodyMacroExpander, BodyMacroExpansionOutcome,
+        BodyMacroExprExpansion, BodyMacroExprExpansionOutcome, BodyMacroPatExpansionOutcome,
+        BodyMacroStmtExpansionOutcome, BodyMacroTypeExpansionOutcome, ExpandedBodyMacro,
+    },
     profile::profile_descriptors,
     query::{DefMapCursorCandidate, DefMapPathCompletionSite, DefMapUnqualifiedCompletionSite},
     store::{DefMapDb, DefMapReadTxn, DefMapStats},

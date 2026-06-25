@@ -5,12 +5,12 @@
 //! This module keeps the structural walk in one place while leaving those query-specific meanings
 //! with the callers.
 
-use rg_ir_model::{PatId, ScopeId};
+use rg_ir_model::{BodySource, PatId, ScopeId, items::ItemTreeId};
 use rg_item_tree::{
     FieldItem, FieldList, FunctionItem, GenericParams, ImplItem, ItemKind, ItemNode, ModuleItem,
     ModuleSource, TypeBound, TypePath, TypeRef, WherePredicate,
 };
-use rg_parse::{FileId, Span};
+use rg_parse::FileId;
 
 use crate::{
     BodyPath, ExprKind, ResolvedBodyData, StmtKind,
@@ -25,8 +25,7 @@ use crate::{
 struct PatternSite {
     scope: ScopeId,
     pat: PatId,
-    file_id: FileId,
-    source_span: Span,
+    source: BodySource,
 }
 
 /// A type reference written inside a body-local source form.
@@ -34,7 +33,7 @@ struct PatternSite {
 struct TypeRefSite<'body> {
     scope: ScopeId,
     visible_bindings: usize,
-    file_id: FileId,
+    source: BodySource,
     ty: &'body TypeRef,
 }
 
@@ -43,7 +42,17 @@ struct TypeRefSite<'body> {
 struct TypeRefContext {
     scope: ScopeId,
     visible_bindings: usize,
-    file_id: FileId,
+    source: BodySource,
+}
+
+impl TypeRefContext {
+    fn new(scope: ScopeId, visible_bindings: usize, source: BodySource) -> Self {
+        Self {
+            scope,
+            visible_bindings,
+            source,
+        }
+    }
 }
 
 /// One type path reached from a body-local type reference.
@@ -76,15 +85,15 @@ impl<'body> BodyScanSites<'body> {
         mut visit: impl FnMut(PatWalkSite<'body>),
     ) {
         self.for_each_pattern_site(|site| {
-            if !Self::file_matches(file_id, site.file_id) {
+            if !site.source.is_written_in_selected_file(file_id) {
                 return;
             }
-            if offset.is_some_and(|offset| !site.source_span.touches(offset)) {
+            if offset.is_some_and(|offset| !site.source.span.touches(offset)) {
                 return;
             }
 
             walk_pat(self.body, site.scope, site.pat, &mut |walk_site| {
-                if Self::file_matches(file_id, walk_site.data.source.file_id) {
+                if walk_site.data.source.is_written_in_selected_file(file_id) {
                     visit(walk_site);
                 }
             });
@@ -101,7 +110,7 @@ impl<'body> BodyScanSites<'body> {
         mut visit: impl FnMut(TypePathSite<'body>),
     ) {
         self.for_each_type_ref_site(|site| {
-            if !Self::file_matches(file_id, site.file_id) {
+            if !site.source.is_written_in_selected_file(file_id) {
                 return;
             }
 
@@ -109,7 +118,7 @@ impl<'body> BodyScanSites<'body> {
                 visit(TypePathSite {
                     scope: site.scope,
                     visible_bindings: site.visible_bindings,
-                    file_id: site.file_id,
+                    file_id: site.source.file_id,
                     path,
                 });
             });
@@ -172,13 +181,8 @@ impl<'body> BodyScanSites<'body> {
         visit(PatternSite {
             scope,
             pat,
-            file_id: data.source.file_id,
-            source_span: data.source.span,
+            source: data.source,
         });
-    }
-
-    fn file_matches(selected: Option<FileId>, file_id: FileId) -> bool {
-        selected.is_none_or(|selected| selected == file_id)
     }
 }
 
@@ -223,7 +227,8 @@ where
                 continue;
             };
 
-            self.emit_decl_type_ref(*scope, statement.source.file_id, annotation);
+            let context = TypeRefContext::new(*scope, self.body_visible_bindings, statement.source);
+            self.emit_type_ref(context, annotation);
         }
     }
 
@@ -231,11 +236,7 @@ where
         for (scope_idx, scope_data) in self.sites.body.scopes().iter().enumerate() {
             let scope = ScopeId(scope_idx);
             for item in &scope_data.source_items {
-                let Some(item) = self.sites.body.source_item(*item) else {
-                    continue;
-                };
-                let context = self.decl_context(scope, item.file_id);
-                self.walk_source_item_type_refs(context, item);
+                self.walk_source_item_id_type_refs(scope, *item);
             }
         }
     }
@@ -252,23 +253,29 @@ where
                 } => {
                     for param in params {
                         if let Some(annotation) = &param.annotation {
-                            self.emit_decl_type_ref(*scope, param.source.file_id, annotation);
+                            let context =
+                                TypeRefContext::new(*scope, expr.visible_bindings, param.source);
+                            self.emit_type_ref(context, annotation);
                         }
                     }
 
                     if let Some(ret_ty) = ret_ty {
-                        self.emit_decl_type_ref(*scope, expr.source.file_id, ret_ty);
+                        let context =
+                            TypeRefContext::new(*scope, expr.visible_bindings, expr.source);
+                        self.emit_type_ref(context, ret_ty);
                     }
                 }
                 ExprKind::Cast { ty: Some(ty), .. } => {
-                    self.emit_decl_type_ref(expr.scope, expr.source.file_id, ty);
+                    let context =
+                        TypeRefContext::new(expr.scope, expr.visible_bindings, expr.source);
+                    self.emit_type_ref(context, ty);
                 }
                 ExprKind::Path { path } => {
                     self.walk_expr_body_path_type_refs(
                         path,
                         expr.scope,
                         expr.visible_bindings,
-                        expr.source.file_id,
+                        expr.source,
                     );
                 }
                 ExprKind::Record {
@@ -278,15 +285,12 @@ where
                         path,
                         expr.scope,
                         expr.visible_bindings,
-                        expr.source.file_id,
+                        expr.source,
                     );
                 }
                 ExprKind::MethodCall { generic_args, .. } => {
-                    let context = TypeRefContext {
-                        scope: expr.scope,
-                        visible_bindings: expr.visible_bindings,
-                        file_id: expr.source.file_id,
-                    };
+                    let context =
+                        TypeRefContext::new(expr.scope, expr.visible_bindings, expr.source);
                     walk_generic_args_type_refs(generic_args, &mut |ty| {
                         self.emit_type_ref(context, ty);
                     });
@@ -299,16 +303,34 @@ where
     fn walk_pattern_path_type_refs(&mut self) {
         let sites = self.sites;
         sites.for_each_pattern_site(|site| {
+            if !site.source.is_written() {
+                return;
+            }
             walk_pat(sites.body, site.scope, site.pat, &mut |walk_site| {
+                if !walk_site.data.source.is_written() {
+                    return;
+                }
                 if let Some(path) = walk_site.data.kind.path() {
                     self.walk_decl_body_path_type_refs(
                         path,
                         walk_site.scope,
-                        walk_site.data.source.file_id,
+                        walk_site.data.source,
                     );
                 }
             });
         });
+    }
+
+    fn walk_source_item_id_type_refs(&mut self, scope: ScopeId, item_id: ItemTreeId) {
+        let Some(item) = self.sites.body.source_item(item_id) else {
+            return;
+        };
+        let Some(source) = self.sites.body.source_item_source(item_id) else {
+            return;
+        };
+
+        let context = self.decl_context(scope, source);
+        self.walk_source_item_type_refs(context, item);
     }
 
     fn walk_source_item_type_refs(&mut self, context: TypeRefContext, item: &'body ItemNode) {
@@ -338,9 +360,7 @@ where
                 self.walk_generic_params_type_refs(context, &item.generics);
                 self.walk_type_bounds_type_refs(context, &item.super_traits);
                 for assoc_item in &item.items {
-                    if let Some(item) = self.sites.body.source_item(*assoc_item) {
-                        self.walk_source_item_type_refs(context, item);
-                    }
+                    self.walk_source_item_id_type_refs(context.scope, *assoc_item);
                 }
             }
             ItemKind::Const(item) => {
@@ -373,9 +393,7 @@ where
         }
         self.emit_type_ref(context, &item.self_ty);
         for assoc_item in &item.items {
-            if let Some(item) = self.sites.body.source_item(*assoc_item) {
-                self.walk_source_item_type_refs(context, item);
-            }
+            self.walk_source_item_id_type_refs(context.scope, *assoc_item);
         }
     }
 
@@ -384,9 +402,7 @@ where
             return;
         };
         for item in items {
-            if let Some(item) = self.sites.body.source_item(*item) {
-                self.walk_source_item_type_refs(context, item);
-            }
+            self.walk_source_item_id_type_refs(context.scope, *item);
         }
     }
 
@@ -451,9 +467,9 @@ where
         &mut self,
         path: &'body BodyPath,
         scope: ScopeId,
-        file_id: FileId,
+        source: BodySource,
     ) {
-        let context = self.decl_context(scope, file_id);
+        let context = TypeRefContext::new(scope, self.body_visible_bindings, source);
         self.walk_body_path_type_refs(context, path);
     }
 
@@ -462,15 +478,11 @@ where
         path: &'body BodyPath,
         scope: ScopeId,
         visible_bindings: usize,
-        file_id: FileId,
+        source: BodySource,
     ) {
         // Type arguments inside a value path belong to a concrete expression, so they inherit that
         // expression's binding cutoff rather than the body-wide declaration cutoff.
-        let context = TypeRefContext {
-            scope,
-            visible_bindings,
-            file_id,
-        };
+        let context = TypeRefContext::new(scope, visible_bindings, source);
         self.walk_body_path_type_refs(context, path);
     }
 
@@ -480,27 +492,20 @@ where
         });
     }
 
-    fn emit_decl_type_ref(&mut self, scope: ScopeId, file_id: FileId, ty: &'body TypeRef) {
-        // Type syntax owned by declarations and annotations is not source-ordered against body
-        // expressions. The body-wide cutoff marks that no expression-local binding filter applies.
-        let context = self.decl_context(scope, file_id);
-        self.emit_type_ref(context, ty);
-    }
-
     fn emit_type_ref(&mut self, context: TypeRefContext, ty: &'body TypeRef) {
+        if !context.source.is_written() {
+            return;
+        }
+
         (self.visit)(TypeRefSite {
             scope: context.scope,
             visible_bindings: context.visible_bindings,
-            file_id: context.file_id,
+            source: context.source,
             ty,
         });
     }
 
-    fn decl_context(&self, scope: ScopeId, file_id: FileId) -> TypeRefContext {
-        TypeRefContext {
-            scope,
-            visible_bindings: self.body_visible_bindings,
-            file_id,
-        }
+    fn decl_context(&self, scope: ScopeId, source: BodySource) -> TypeRefContext {
+        TypeRefContext::new(scope, self.body_visible_bindings, source)
     }
 }

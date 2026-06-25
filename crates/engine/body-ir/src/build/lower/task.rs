@@ -10,13 +10,14 @@ use std::collections::HashMap;
 use anyhow::Context as _;
 use rg_syntax::{AstNode as _, ast};
 
+use rg_cfg_eval::CfgEvaluator;
 use rg_ir_model::{BodyId, ModuleRef};
 use rg_parse::{FileId, Span};
 use rg_text::NameInterner;
 
 use crate::{BodyOwner, TargetBodies};
 
-use super::{body::BodyLowering, syntax::source_for};
+use super::{body::BodyLowering, macro_expansion::BodyMacroExpansionContext, syntax::source_for};
 
 /// A function body or item initializer that should become a `ResolvedBodyData`.
 #[derive(Debug, Clone, Copy)]
@@ -40,6 +41,7 @@ pub(crate) struct BodyLoweringTask {
 pub(crate) struct BodyTaskLowering<'a> {
     parse_package: &'a rg_parse::Package,
     target_bodies: &'a mut TargetBodies,
+    cfg: CfgEvaluator<'a>,
     interner: &'a mut NameInterner,
 }
 
@@ -47,11 +49,13 @@ impl<'a> BodyTaskLowering<'a> {
     pub(crate) fn new(
         parse_package: &'a rg_parse::Package,
         target_bodies: &'a mut TargetBodies,
+        cfg: CfgEvaluator<'a>,
         interner: &'a mut NameInterner,
     ) -> Self {
         Self {
             parse_package,
             target_bodies,
+            cfg,
             interner,
         }
     }
@@ -63,6 +67,7 @@ impl<'a> BodyTaskLowering<'a> {
     pub(crate) fn lower_tasks(
         &mut self,
         tasks: &[BodyLoweringTask],
+        macro_expansion: &mut dyn BodyMacroExpansionContext,
     ) -> anyhow::Result<Vec<BodyId>> {
         let mut tasks = tasks.to_vec();
         tasks.sort_by_key(|task| task.file_id.0);
@@ -74,7 +79,7 @@ impl<'a> BodyTaskLowering<'a> {
         let mut lowered = Vec::new();
         for file_id in file_ids {
             let range = task_range_for_file(&tasks, file_id);
-            self.lower_file_tasks(file_id, &tasks[range], &mut lowered)?;
+            self.lower_file_tasks(file_id, &tasks[range], &mut lowered, &mut *macro_expansion)?;
         }
 
         Ok(lowered)
@@ -85,6 +90,7 @@ impl<'a> BodyTaskLowering<'a> {
         file_id: FileId,
         tasks: &[BodyLoweringTask],
         lowered: &mut Vec<BodyId>,
+        macro_expansion: &mut dyn BodyMacroExpansionContext,
     ) -> anyhow::Result<()> {
         let parsed_file = self.parse_package.parsed_file(file_id).with_context(|| {
             format!("while attempting to fetch parsed source file {:?}", file_id)
@@ -135,8 +141,10 @@ impl<'a> BodyTaskLowering<'a> {
                         task.owner_module,
                         task.fallback_module,
                         source,
+                        self.cfg,
                         line_index,
                         self.interner,
+                        &mut *macro_expansion,
                     )
                     .lower_function(ast_fn, body_ast);
                     lowered.push(self.target_bodies.alloc_body(body));
@@ -156,8 +164,10 @@ impl<'a> BodyTaskLowering<'a> {
                         task.owner_module,
                         task.fallback_module,
                         source,
+                        self.cfg,
                         line_index,
                         self.interner,
+                        &mut *macro_expansion,
                     )
                     .lower_initializer(body_ast);
                     lowered.push(self.target_bodies.alloc_body(body));
@@ -177,8 +187,10 @@ impl<'a> BodyTaskLowering<'a> {
                         task.owner_module,
                         task.fallback_module,
                         source,
+                        self.cfg,
                         line_index,
                         self.interner,
+                        &mut *macro_expansion,
                     )
                     .lower_initializer(body_ast);
                     lowered.push(self.target_bodies.alloc_body(body));

@@ -8,6 +8,7 @@ pub mod data;
 pub mod expr;
 pub mod label;
 pub mod literal;
+pub mod macro_call;
 pub mod owner;
 pub mod pat;
 pub mod path;
@@ -21,12 +22,13 @@ pub use self::{
     binding::{BindingData, BindingKind, BodySelfParamKind},
     data::{BodyData, FunctionParamData},
     expr::{
-        ClosureCapture, ClosureKind, ClosureParamData, ExprAssignOp, ExprBinaryOp, ExprBlockKind,
-        ExprData, ExprKind, ExprRangeKind, ExprUnaryOp, ExprWrapperKind, MatchArmData,
-        RecordExprField, RecordExprSpread,
+        BuiltinMacroExprKind, ClosureCapture, ClosureKind, ClosureParamData, ExprAssignOp,
+        ExprBinaryOp, ExprBlockKind, ExprData, ExprKind, ExprRangeKind, ExprUnaryOp,
+        ExprWrapperKind, MatchArmData, RecordExprField, RecordExprSpread,
     },
     label::LabelData,
     literal::LiteralKind,
+    macro_call::BodyMacroCallData,
     owner::BodyOwner,
     pat::{PatBindingMode, PatData, PatKind, PatMutability, PatRangeKind, RecordPatField},
     path::{
@@ -36,6 +38,6 @@ pub use self::{
     record::RecordFieldSyntax,
     scope::ScopeData,
     source::BodySource,
-    source_items::BodySourceItems,
+    source_items::{BodySourceItem, BodySourceItems},
     stmt::{StmtData, StmtKind},
 };

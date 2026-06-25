@@ -1,6 +1,6 @@
 //! User-facing indexing trade-offs passed down to build phases.
 
-use rg_def_map::DefMapPerformancePreference;
+use rg_def_map::MacroExpansionPerformancePreference;
 
 /// High-level indexing preference selected by users or frontends.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -30,10 +30,10 @@ impl IndexingPerformancePreference {
         }
     }
 
-    pub(crate) fn def_map_preference(self) -> DefMapPerformancePreference {
+    pub(crate) fn macro_expansion_preference(self) -> MacroExpansionPerformancePreference {
         match self {
-            Self::LowerPeakMemory => DefMapPerformancePreference::LowerPeakMemory,
-            Self::FasterBuilds => DefMapPerformancePreference::FasterBuilds,
+            Self::LowerPeakMemory => MacroExpansionPerformancePreference::LowerPeakMemory,
+            Self::FasterBuilds => MacroExpansionPerformancePreference::FasterBuilds,
         }
     }
 }

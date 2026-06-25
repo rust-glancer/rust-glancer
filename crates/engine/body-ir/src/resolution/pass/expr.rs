@@ -24,7 +24,7 @@ use crate::{
 
 use crate::resolution::{CallSite, MethodCallSite, TypeRefUseSite, support::TyNormalizer};
 
-use super::body::BodyResolutionPass;
+use super::{body::BodyResolutionPass, builtin_macro::BuiltinMacroExprTypeMapper};
 
 pub(super) struct ExprResolutionPass<'pass, 'query, 'body, D, I> {
     pass: &'pass mut BodyResolutionPass<'query, 'body, D, I>,
@@ -54,6 +54,10 @@ where
             }
             ExprKind::Call { callee, args } => {
                 let ty = self.pass.context().calls().call_expr_ty(callee, &args)?;
+                self.pass.set_expr_ty(expr, ty);
+            }
+            ExprKind::BuiltinMacro { kind } => {
+                let ty = BuiltinMacroExprTypeMapper::new(self.pass.context()).ty_for(expr, kind)?;
                 self.pass.set_expr_ty(expr, ty);
             }
             ExprKind::Tuple { fields } => {
