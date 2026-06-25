@@ -1,5 +1,7 @@
 //! Per-query comparison report sections.
 
+use std::collections::BTreeSet;
+
 use serde::Serialize;
 
 use crate::{
@@ -14,6 +16,8 @@ use crate::{
 };
 
 use super::{duration_ms, optional_percent};
+
+const HIGHLIGHT_LIMIT: usize = 10;
 
 #[derive(Debug, Serialize)]
 pub(super) struct QueryReport {
@@ -39,9 +43,59 @@ impl QueryReport {
         document: ReportDocumentBuilder,
         queries: &[Self],
     ) -> ReportDocumentBuilder {
+        let document = Self::append_highlight_section(document, queries);
         let document = Self::append_query_section(document, queries);
 
         Self::append_failures_section(document, queries)
+    }
+
+    fn append_highlight_section(
+        document: ReportDocumentBuilder,
+        queries: &[Self],
+    ) -> ReportDocumentBuilder {
+        if queries.is_empty() {
+            return document;
+        }
+
+        document.section("query_highlights", |section| {
+            section.group("comparison", "Comparison");
+            section.table("slowest_queries", |table| {
+                Self::configure_slowest_table(table);
+                for query in Self::slowest_queries(queries) {
+                    query.append_slowest_row(table);
+                }
+            });
+
+            let lowest_recall = Self::lowest_recall_queries(queries);
+            if !lowest_recall.is_empty() {
+                section.table("lowest_recall", |table| {
+                    Self::configure_recall_table(table);
+                    for (query, counts) in lowest_recall {
+                        query.append_recall_row(table, counts);
+                    }
+                });
+            }
+
+            let lowest_precision = Self::lowest_precision_queries(queries);
+            if !lowest_precision.is_empty() {
+                section.table("lowest_precision", |table| {
+                    Self::configure_precision_table(table);
+                    for (query, counts) in lowest_precision {
+                        query.append_precision_row(table, counts);
+                    }
+                });
+            }
+
+            let hover_gaps = Self::hover_gap_queries(queries);
+            if !hover_gaps.is_empty() {
+                section.table("hover_gaps", |table| {
+                    Self::configure_hover_gap_table(table);
+                    for query in hover_gaps {
+                        query.append_hover_gap_row(table);
+                    }
+                });
+            }
+        })
     }
 
     fn append_query_section(
@@ -50,13 +104,254 @@ impl QueryReport {
     ) -> ReportDocumentBuilder {
         document.section("queries", |section| {
             section.group("comparison", "Comparison");
-            section.table("queries", |table| {
-                Self::configure_query_table(table);
-                for query in queries {
-                    query.append_query_row(table);
-                }
-            });
+            for method in Self::query_methods(queries) {
+                section.table(Self::table_key_for_method(method), |table| {
+                    table.title(method);
+                    Self::configure_query_table(table);
+                    for query in queries.iter().filter(|query| query.method == method) {
+                        query.append_query_row(table);
+                    }
+                });
+            }
         })
+    }
+
+    fn query_methods(queries: &[Self]) -> Vec<&str> {
+        let mut methods = Vec::new();
+        let mut seen = BTreeSet::new();
+        for query in queries {
+            if seen.insert(query.method.as_str()) {
+                methods.push(query.method.as_str());
+            }
+        }
+        methods
+    }
+
+    fn table_key_for_method(method: &str) -> String {
+        let mut key = String::from("queries_");
+        for character in method.chars() {
+            if character.is_ascii_alphanumeric() {
+                key.push(character.to_ascii_lowercase());
+            } else {
+                key.push('_');
+            }
+        }
+        key
+    }
+
+    fn slowest_queries(queries: &[Self]) -> Vec<&Self> {
+        let mut slowest = queries.iter().collect::<Vec<_>>();
+        slowest.sort_by(|left, right| right.rust_glancer_ms.total_cmp(&left.rust_glancer_ms));
+        slowest.truncate(HIGHLIGHT_LIMIT);
+        slowest
+    }
+
+    fn lowest_recall_queries(queries: &[Self]) -> Vec<(&Self, QueryCounts)> {
+        let mut lowest = queries
+            .iter()
+            .filter_map(|query| query.counts().map(|counts| (query, counts)))
+            .filter(|(_, counts)| counts.recall_percent.is_some_and(|recall| recall < 100.0))
+            .collect::<Vec<_>>();
+        lowest.sort_by(|(_, left), (_, right)| {
+            left.recall_percent
+                .unwrap_or(100.0)
+                .total_cmp(&right.recall_percent.unwrap_or(100.0))
+        });
+        lowest.truncate(HIGHLIGHT_LIMIT);
+        lowest
+    }
+
+    fn lowest_precision_queries(queries: &[Self]) -> Vec<(&Self, QueryCounts)> {
+        let mut lowest = queries
+            .iter()
+            .filter_map(|query| query.counts().map(|counts| (query, counts)))
+            .filter(|(_, counts)| {
+                counts
+                    .precision_percent
+                    .is_some_and(|precision| precision < 100.0)
+            })
+            .collect::<Vec<_>>();
+        lowest.sort_by(|(_, left), (_, right)| {
+            left.precision_percent
+                .unwrap_or(100.0)
+                .total_cmp(&right.precision_percent.unwrap_or(100.0))
+        });
+        lowest.truncate(HIGHLIGHT_LIMIT);
+        lowest
+    }
+
+    fn hover_gap_queries(queries: &[Self]) -> Vec<&Self> {
+        queries
+            .iter()
+            .filter(|query| query.hover().is_some_and(|hover| !hover.agreement))
+            .take(HIGHLIGHT_LIMIT)
+            .collect()
+    }
+
+    fn counts(&self) -> Option<QueryCounts> {
+        self.result.counts()
+    }
+
+    fn hover(&self) -> Option<&HoverQueryReport> {
+        self.result.hover()
+    }
+
+    fn configure_slowest_table(table: &mut ReportTableBuilder) {
+        table
+            .text_column("method")
+            .text_column("query")
+            .duration_column_as("rust_glancer_ms", "rust-glancer")
+            .duration_column_as("rust_analyzer_ms", "rust-analyzer")
+            .text_column("outcome")
+            .column_as(
+                "recall",
+                "Recall",
+                ReportAlign::Right,
+                Some(ReportUnit::Percent),
+            )
+            .column_as(
+                "precision",
+                "Precision",
+                ReportAlign::Right,
+                Some(ReportUnit::Percent),
+            );
+    }
+
+    fn configure_recall_table(table: &mut ReportTableBuilder) {
+        table
+            .text_column("method")
+            .text_column("query")
+            .column_as(
+                "recall",
+                "Recall",
+                ReportAlign::Right,
+                Some(ReportUnit::Percent),
+            )
+            .count_column("rust_glancer_count")
+            .count_column("rust_analyzer_count")
+            .count_column("matched")
+            .count_column("missing");
+    }
+
+    fn configure_precision_table(table: &mut ReportTableBuilder) {
+        table
+            .text_column("method")
+            .text_column("query")
+            .column_as(
+                "precision",
+                "Precision",
+                ReportAlign::Right,
+                Some(ReportUnit::Percent),
+            )
+            .count_column("rust_glancer_count")
+            .count_column("rust_analyzer_count")
+            .count_column("matched")
+            .count_column("extra");
+    }
+
+    fn configure_hover_gap_table(table: &mut ReportTableBuilder) {
+        table
+            .text_column("method")
+            .text_column("query")
+            .duration_column_as("rust_glancer_ms", "rust-glancer")
+            .duration_column_as("rust_analyzer_ms", "rust-analyzer")
+            .column_as(
+                "rust_glancer_present",
+                "rust-glancer present",
+                ReportAlign::Center,
+                None,
+            )
+            .column_as(
+                "rust_analyzer_present",
+                "rust-analyzer present",
+                ReportAlign::Center,
+                None,
+            );
+    }
+
+    fn append_slowest_row(&self, table: &mut ReportTableBuilder) {
+        table.row(|row| {
+            row.text("method", &self.method)
+                .text("query", &self.label)
+                .duration_ms("rust_glancer_ms", self.rust_glancer_ms)
+                .duration_ms("rust_analyzer_ms", self.rust_analyzer_ms)
+                .text("outcome", self.result.kind());
+
+            if let Some(counts) = self.counts() {
+                counts.append_score_cells(row);
+            }
+        });
+    }
+
+    fn append_recall_row(&self, table: &mut ReportTableBuilder, counts: QueryCounts) {
+        table.row(|row| {
+            row.text("method", &self.method).text("query", &self.label);
+            counts.append_recall_cells(row);
+        });
+    }
+
+    fn append_precision_row(&self, table: &mut ReportTableBuilder, counts: QueryCounts) {
+        table.row(|row| {
+            row.text("method", &self.method).text("query", &self.label);
+            counts.append_precision_cells(row);
+        });
+    }
+
+    fn append_hover_gap_row(&self, table: &mut ReportTableBuilder) {
+        let Some(hover) = self.hover() else {
+            return;
+        };
+
+        table.row(|row| {
+            row.text("method", &self.method)
+                .text("query", &self.label)
+                .duration_ms("rust_glancer_ms", self.rust_glancer_ms)
+                .duration_ms("rust_analyzer_ms", self.rust_analyzer_ms)
+                .value(
+                    "rust_glancer_present",
+                    ReportValue::Bool(hover.rust_glancer_present),
+                )
+                .value(
+                    "rust_analyzer_present",
+                    ReportValue::Bool(hover.rust_analyzer_present),
+                );
+        });
+    }
+
+    fn configure_query_table(table: &mut ReportTableBuilder) {
+        table
+            .text_column("query")
+            .duration_column_as("rust_glancer_ms", "rust-glancer")
+            .duration_column_as("rust_analyzer_ms", "rust-analyzer")
+            .text_column("outcome")
+            .count_column("rust_glancer_count")
+            .count_column("rust_analyzer_count")
+            .count_column("matched")
+            .count_column("missing")
+            .count_column("extra")
+            .column_as(
+                "recall",
+                "Recall",
+                ReportAlign::Right,
+                Some(ReportUnit::Percent),
+            )
+            .column_as(
+                "precision",
+                "Precision",
+                ReportAlign::Right,
+                Some(ReportUnit::Percent),
+            );
+    }
+
+    fn append_query_row(&self, table: &mut ReportTableBuilder) {
+        table.row(|row| {
+            row.text("query", &self.label)
+                .duration_ms("rust_glancer_ms", self.rust_glancer_ms)
+                .duration_ms("rust_analyzer_ms", self.rust_analyzer_ms)
+                .text("outcome", self.result.kind());
+
+            self.result.append_query_cells(row);
+        });
     }
 
     fn append_failures_section(
@@ -83,32 +378,6 @@ impl QueryReport {
         })
     }
 
-    fn configure_query_table(table: &mut ReportTableBuilder) {
-        table
-            .text_column("method")
-            .text_column("query")
-            .duration_column_as("rust_glancer_ms", "rust-glancer")
-            .duration_column_as("rust_analyzer_ms", "rust-analyzer")
-            .text_column("outcome")
-            .count_column("rust_glancer_count")
-            .count_column("rust_analyzer_count")
-            .count_column("matched")
-            .count_column("missing")
-            .count_column("extra")
-            .column_as(
-                "recall",
-                "Recall",
-                ReportAlign::Right,
-                Some(ReportUnit::Percent),
-            )
-            .column_as(
-                "precision",
-                "Precision",
-                ReportAlign::Right,
-                Some(ReportUnit::Percent),
-            );
-    }
-
     fn configure_failure_table(table: &mut ReportTableBuilder) {
         table
             .text_column("method")
@@ -117,18 +386,6 @@ impl QueryReport {
             .text_column("rust_glancer_detail")
             .text_column("rust_analyzer")
             .text_column("rust_analyzer_detail");
-    }
-
-    fn append_query_row(&self, table: &mut ReportTableBuilder) {
-        table.row(|row| {
-            row.text("method", &self.method)
-                .text("query", &self.label)
-                .duration_ms("rust_glancer_ms", self.rust_glancer_ms)
-                .duration_ms("rust_analyzer_ms", self.rust_analyzer_ms)
-                .text("outcome", self.result.kind());
-
-            self.result.append_query_cells(row);
-        });
     }
 
     fn append_failure_row(&self, table: &mut ReportTableBuilder) {
@@ -216,6 +473,87 @@ impl QueryResultReport {
             Self::Hover(_) | Self::NonComparable(_) => {}
         }
     }
+
+    fn counts(&self) -> Option<QueryCounts> {
+        match self {
+            Self::Locations(locations) => Some(locations.into()),
+            Self::PrepareRenames(rename) => Some(rename.into()),
+            Self::RenameEdits(rename) => Some(rename.into()),
+            Self::Ranges(ranges) => Some(ranges.into()),
+            Self::Symbols(symbols) => Some(symbols.into()),
+            Self::InlayHints(hints) => Some(hints.into()),
+            Self::Hover(_) | Self::NonComparable(_) => None,
+        }
+    }
+
+    fn hover(&self) -> Option<&HoverQueryReport> {
+        match self {
+            Self::Hover(hover) => Some(hover),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct QueryCounts {
+    rust_glancer_count: usize,
+    rust_analyzer_count: usize,
+    matched_count: usize,
+    missing_count: usize,
+    extra_count: usize,
+    recall_percent: Option<f64>,
+    precision_percent: Option<f64>,
+}
+
+impl QueryCounts {
+    fn append_query_cells(self, row: &mut ReportRowBuilder) {
+        row.value(
+            "rust_glancer_count",
+            ReportValue::count(self.rust_glancer_count),
+        )
+        .value(
+            "rust_analyzer_count",
+            ReportValue::count(self.rust_analyzer_count),
+        )
+        .value("matched", ReportValue::count(self.matched_count))
+        .value("missing", ReportValue::count(self.missing_count))
+        .value("extra", ReportValue::count(self.extra_count))
+        .value("recall", optional_percent(self.recall_percent))
+        .value("precision", optional_percent(self.precision_percent));
+    }
+
+    fn append_score_cells(self, row: &mut ReportRowBuilder) {
+        row.value("recall", optional_percent(self.recall_percent))
+            .value("precision", optional_percent(self.precision_percent));
+    }
+
+    fn append_recall_cells(self, row: &mut ReportRowBuilder) {
+        row.value("recall", optional_percent(self.recall_percent))
+            .value(
+                "rust_glancer_count",
+                ReportValue::count(self.rust_glancer_count),
+            )
+            .value(
+                "rust_analyzer_count",
+                ReportValue::count(self.rust_analyzer_count),
+            )
+            .value("matched", ReportValue::count(self.matched_count))
+            .value("missing", ReportValue::count(self.missing_count));
+    }
+
+    fn append_precision_cells(self, row: &mut ReportRowBuilder) {
+        row.value("precision", optional_percent(self.precision_percent))
+            .value(
+                "rust_glancer_count",
+                ReportValue::count(self.rust_glancer_count),
+            )
+            .value(
+                "rust_analyzer_count",
+                ReportValue::count(self.rust_analyzer_count),
+            )
+            .value("matched", ReportValue::count(self.matched_count))
+            .value("extra", ReportValue::count(self.extra_count));
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -239,19 +577,21 @@ struct LocationQueryReport {
 
 impl LocationQueryReport {
     fn append_query_cells(&self, row: &mut ReportRowBuilder) {
-        row.value(
-            "rust_glancer_count",
-            ReportValue::count(self.rust_glancer_count),
-        )
-        .value(
-            "rust_analyzer_count",
-            ReportValue::count(self.rust_analyzer_count),
-        )
-        .value("matched", ReportValue::count(self.matched_count))
-        .value("missing", ReportValue::count(self.missing_count))
-        .value("extra", ReportValue::count(self.extra_count))
-        .value("recall", optional_percent(self.recall_percent))
-        .value("precision", optional_percent(self.precision_percent));
+        QueryCounts::from(self).append_query_cells(row);
+    }
+}
+
+impl From<&LocationQueryReport> for QueryCounts {
+    fn from(report: &LocationQueryReport) -> Self {
+        Self {
+            rust_glancer_count: report.rust_glancer_count,
+            rust_analyzer_count: report.rust_analyzer_count,
+            matched_count: report.matched_count,
+            missing_count: report.missing_count,
+            extra_count: report.extra_count,
+            recall_percent: report.recall_percent,
+            precision_percent: report.precision_percent,
+        }
     }
 }
 
@@ -288,19 +628,21 @@ struct RangeQueryReport {
 
 impl RangeQueryReport {
     fn append_query_cells(&self, row: &mut ReportRowBuilder) {
-        row.value(
-            "rust_glancer_count",
-            ReportValue::count(self.rust_glancer_count),
-        )
-        .value(
-            "rust_analyzer_count",
-            ReportValue::count(self.rust_analyzer_count),
-        )
-        .value("matched", ReportValue::count(self.matched_count))
-        .value("missing", ReportValue::count(self.missing_count))
-        .value("extra", ReportValue::count(self.extra_count))
-        .value("recall", optional_percent(self.recall_percent))
-        .value("precision", optional_percent(self.precision_percent));
+        QueryCounts::from(self).append_query_cells(row);
+    }
+}
+
+impl From<&RangeQueryReport> for QueryCounts {
+    fn from(report: &RangeQueryReport) -> Self {
+        Self {
+            rust_glancer_count: report.rust_glancer_count,
+            rust_analyzer_count: report.rust_analyzer_count,
+            matched_count: report.matched_count,
+            missing_count: report.missing_count,
+            extra_count: report.extra_count,
+            recall_percent: report.recall_percent,
+            precision_percent: report.precision_percent,
+        }
     }
 }
 
@@ -339,19 +681,21 @@ struct SymbolQueryReport {
 
 impl SymbolQueryReport {
     fn append_query_cells(&self, row: &mut ReportRowBuilder) {
-        row.value(
-            "rust_glancer_count",
-            ReportValue::count(self.rust_glancer_count),
-        )
-        .value(
-            "rust_analyzer_count",
-            ReportValue::count(self.rust_analyzer_count),
-        )
-        .value("matched", ReportValue::count(self.matched_count))
-        .value("missing", ReportValue::count(self.missing_count))
-        .value("extra", ReportValue::count(self.extra_count))
-        .value("recall", optional_percent(self.recall_percent))
-        .value("precision", optional_percent(self.precision_percent));
+        QueryCounts::from(self).append_query_cells(row);
+    }
+}
+
+impl From<&SymbolQueryReport> for QueryCounts {
+    fn from(report: &SymbolQueryReport) -> Self {
+        Self {
+            rust_glancer_count: report.rust_glancer_count,
+            rust_analyzer_count: report.rust_analyzer_count,
+            matched_count: report.matched_count,
+            missing_count: report.missing_count,
+            extra_count: report.extra_count,
+            recall_percent: report.recall_percent,
+            precision_percent: report.precision_percent,
+        }
     }
 }
 
