@@ -18,7 +18,6 @@ mod config;
 mod data;
 mod output;
 mod profile;
-mod report;
 
 pub(crate) use self::config::{CliIndexingPreference, CliPackageResidencyPolicy, OutputFormat};
 pub(crate) use self::profile::profile_groups_help;

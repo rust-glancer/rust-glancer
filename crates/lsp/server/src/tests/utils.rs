@@ -47,6 +47,11 @@ impl RoutingFixture {
                     )
                     .expect("routing snapshot should be writable");
                 }
+                RoutingStep::KnownRootOwner { title, path } => {
+                    let owner = self.routing.engine_id_for_known_root_path(&self.path(path));
+                    writeln!(rendered, "{title}: {}", self.render_known_root_owner(owner))
+                        .expect("routing snapshot should be writable");
+                }
                 RoutingStep::WorkspaceRoot {
                     title,
                     workspace_root,
@@ -107,6 +112,13 @@ impl RoutingFixture {
         }
     }
 
+    fn render_known_root_owner(&self, owner: Option<EngineId>) -> String {
+        match owner {
+            Some(id) => format!("known {}", self.render_engine(id)),
+            None => "unknown".to_string(),
+        }
+    }
+
     fn render_workspace_route(&self, route: &Option<WorkspaceEngineRoute>) -> String {
         match route {
             Some(WorkspaceEngineRoute::Existing(id)) => {
@@ -162,6 +174,10 @@ pub(super) enum RoutingStep {
         title: &'static str,
         path: &'static str,
     },
+    KnownRootOwner {
+        title: &'static str,
+        path: &'static str,
+    },
     WorkspaceRoot {
         title: &'static str,
         workspace_root: &'static str,
@@ -186,6 +202,10 @@ pub(super) enum RoutingStep {
 impl RoutingStep {
     pub(super) fn cached_file_owner(title: &'static str, path: &'static str) -> Self {
         Self::CachedFileOwner { title, path }
+    }
+
+    pub(super) fn known_root_owner(title: &'static str, path: &'static str) -> Self {
+        Self::KnownRootOwner { title, path }
     }
 
     pub(super) fn workspace_root(title: &'static str, workspace_root: &'static str) -> Self {

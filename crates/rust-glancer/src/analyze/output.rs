@@ -10,8 +10,8 @@ use anyhow::Context as _;
 use super::{
     config::OutputFormat,
     data::{AnalyzeReport, ReportDocumentOptions},
-    report::{self, ReportDocument},
 };
+use crate::report::{self, ReportDocument};
 
 pub(crate) fn write_report(
     analyze_report: &AnalyzeReport,

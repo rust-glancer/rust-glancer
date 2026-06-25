@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use serde::Serialize;
 
-use crate::analyze::report::{ReportSectionBuilder, ReportTableBuilder};
+use crate::report::{ReportSectionBuilder, ReportTableBuilder};
 
 /// Timings collected before the project pipeline itself starts.
 #[derive(Debug, Clone, Copy, Serialize)]

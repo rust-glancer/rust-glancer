@@ -60,7 +60,10 @@ impl EngineClient {
     }
 
     fn operation_may_rebuild_analysis(operation: &'static str) -> bool {
-        matches!(operation, "initialize" | "reindex_workspace" | "did_save")
+        matches!(
+            operation,
+            "initialize" | "reindex_workspace" | "did_save" | "external_project_paths_changed"
+        )
     }
 }
 
@@ -78,7 +81,12 @@ mod tests {
 
     #[test]
     fn indexing_operations_get_long_rpc_deadline() {
-        for operation in ["initialize", "reindex_workspace", "did_save"] {
+        for operation in [
+            "initialize",
+            "reindex_workspace",
+            "did_save",
+            "external_project_paths_changed",
+        ] {
             let context = EngineClient::context(operation);
 
             assert!(

@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::{path::PathBuf, sync::Arc};
 
 use rg_lsp_proto::{AnalysisConfig, CompletionClientCapabilities};
 use tokio::sync::oneshot;
@@ -14,9 +14,8 @@ pub(crate) enum EngineCommand {
         analysis: AnalysisConfig,
         respond_to: EngineResponse<()>,
     },
-    DidSave {
-        path: PathBuf,
-        text: Option<String>,
+    ProjectPathsChanged {
+        paths: Vec<PathBuf>,
         respond_to: EngineResponse<()>,
     },
     GotoDefinition {
@@ -75,6 +74,11 @@ pub(crate) enum EngineCommand {
         client_capabilities: CompletionClientCapabilities,
         dirty: Option<DirtyDocumentSnapshot>,
         respond_to: EngineResponse<Vec<ls_types::CompletionItem>>,
+    },
+    Formatting {
+        path: PathBuf,
+        text: Arc<str>,
+        respond_to: EngineResponse<Vec<ls_types::TextEdit>>,
     },
     DocumentSymbol {
         path: PathBuf,

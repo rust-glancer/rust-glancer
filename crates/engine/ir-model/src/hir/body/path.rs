@@ -169,6 +169,10 @@ impl BodyPath {
     /// resolve the enum type, while a cursor on `Variant` should resolve the variant. Rich pieces
     /// such as type anchors intentionally have no DefMap projection.
     pub fn prefix_through(&self, segment_idx: usize) -> Option<Path> {
+        if segment_idx >= self.segments.len() {
+            return None;
+        }
+
         let segments = self
             .segments
             .iter()

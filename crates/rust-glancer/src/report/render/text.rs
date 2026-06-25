@@ -1,6 +1,6 @@
 use std::fmt::Write as _;
 
-use crate::analyze::report::{
+use crate::report::{
     ReportAlign, ReportBlock, ReportColumn, ReportDocument, ReportField, ReportRow,
 };
 

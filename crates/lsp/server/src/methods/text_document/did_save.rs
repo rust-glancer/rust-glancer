@@ -1,16 +1,14 @@
+use std::path::PathBuf;
+
 use tower_lsp_server::ls_types::*;
 
-use crate::methods::{MethodContext, uri_to_path};
+use crate::methods::MethodContext;
 
 #[tracing::instrument(
     level = "trace", skip_all,
     fields(rg.has_text = params.text.is_some())
 )]
-pub(crate) async fn did_save(ctx: MethodContext, params: DidSaveTextDocumentParams) {
-    let Some(path) = uri_to_path(&params.text_document.uri) else {
-        return;
-    };
-
+pub(crate) async fn did_save(ctx: MethodContext, path: PathBuf, params: DidSaveTextDocumentParams) {
     ctx.engine_client
         .notify(
             "did_save",

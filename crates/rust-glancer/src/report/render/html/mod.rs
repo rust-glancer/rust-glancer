@@ -7,7 +7,7 @@ mod section;
 mod table;
 mod writer;
 
-use crate::analyze::report::{ReportBlock, ReportDocument, ReportField, ReportSection};
+use crate::report::{ReportBlock, ReportDocument, ReportField, ReportSection};
 
 use self::{section::SectionGroup, table::TableBlock, writer::HtmlWriter};
 use super::value::format_value;

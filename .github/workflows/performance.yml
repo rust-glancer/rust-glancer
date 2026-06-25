@@ -8,6 +8,7 @@ on:
       - "crates/**"
       - "rust-toolchain.toml"
       - ".github/scripts/render_benchmark_comment.py"
+      - ".github/scripts/render_lsp_compatibility_comment.py"
       - ".github/scripts/render_memory_profile_comment.py"
       - ".github/scripts/render_performance_comment.py"
       - ".github/workflows/performance.yml"
@@ -22,6 +23,7 @@ on:
       - "crates/**"
       - "rust-toolchain.toml"
       - ".github/scripts/render_benchmark_comment.py"
+      - ".github/scripts/render_lsp_compatibility_comment.py"
       - ".github/scripts/render_memory_profile_comment.py"
       - ".github/scripts/render_performance_comment.py"
       - ".github/workflows/performance.yml"
@@ -179,12 +181,79 @@ jobs:
           path: target/gungraun
           key: gungraun-${{ github.sha }}
 
+  lsp-compatibility:
+    name: lsp-compatibility
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - uses: ./.github/actions/cargo-cache
+        with:
+          scope: performance-${{ github.job }}
+          target-dir: target
+          dependency-key: ${{ hashFiles('Cargo.lock', 'Cargo.toml', 'crates/**/Cargo.toml', 'rust-toolchain.toml') }}
+
+      - name: Restore base LSP compatibility
+        if: github.event_name == 'pull_request'
+        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        with:
+          path: .ci/lsp/base
+          key: lsp-compatibility-${{ github.event.pull_request.base.sha }}
+
+      - name: Fetch rust-analyzer fixture
+        run: ./test_targets/bench_fixtures/fetch-rust-analyzer.sh
+
+      - name: Install rust-analyzer server
+        run: rustup component add rust-analyzer
+
+      - name: Build rust-glancer
+        run: cargo build --release --locked -p rust-glancer
+
+      - name: Run LSP compatibility
+        run: |
+          mkdir -p .ci/lsp/current
+          RUST_GLANCER_COMPARE_LSP_RUST_ANALYZER="$(rustup which rust-analyzer)" \
+            target/release/rust-glancer compare-lsp rust_analyzer \
+              --path test_targets/bench_fixtures/rust-analyzer \
+              --format json > .ci/lsp/current/result.json
+
+      - name: Render LSP compatibility section
+        run: |
+          python3 .github/scripts/render_lsp_compatibility_comment.py \
+            --current .ci/lsp/current/result.json \
+            --base .ci/lsp/base/result.json \
+            --output .ci/lsp/comment.md \
+            --section-title "LSP compatibility"
+          cat .ci/lsp/comment.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload LSP compatibility section
+        if: github.event_name == 'pull_request'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: lsp-compatibility-comment
+          path: .ci/lsp/comment.md
+
+      - name: Prepare main-branch LSP compatibility cache
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          mkdir -p .ci/lsp/base
+          cp .ci/lsp/current/result.json .ci/lsp/base/result.json
+
+      - name: Save main-branch LSP compatibility cache
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        continue-on-error: true
+        with:
+          path: .ci/lsp/base
+          key: lsp-compatibility-${{ github.sha }}
+
   performance-comment:
     name: performance-comment
     if: github.event_name == 'pull_request'
     needs:
       - memory-profile
       - benchmark
+      - lsp-compatibility
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
@@ -201,11 +270,18 @@ jobs:
           name: benchmark-comment
           path: .ci/performance/benchmark
 
+      - name: Download LSP compatibility section
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: lsp-compatibility-comment
+          path: .ci/performance/lsp
+
       - name: Render performance comment
         run: |
           python3 .github/scripts/render_performance_comment.py \
             --memory .ci/performance/memory/comment.md \
             --benchmark .ci/performance/benchmark/comment.md \
+            --lsp .ci/performance/lsp/comment.md \
             --output .ci/performance/comment.md
           cat .ci/performance/comment.md >> "$GITHUB_STEP_SUMMARY"
 

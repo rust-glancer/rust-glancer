@@ -1,4 +1,4 @@
-use crate::analyze::report::ReportDocument;
+use crate::report::ReportDocument;
 
 pub(crate) struct RichJsonRenderer;
 

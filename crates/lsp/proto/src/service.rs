@@ -26,6 +26,9 @@ pub trait EngineService {
 
     async fn did_save(path: PathBuf, text: Option<String>) -> EngineResult<()>;
 
+    /// Saved project paths changed on disk outside the editor-owned save flow.
+    async fn external_project_paths_changed(paths: Vec<PathBuf>) -> EngineResult<()>;
+
     async fn did_close(path: PathBuf) -> EngineResult<()>;
 
     async fn goto_definition(
@@ -75,6 +78,8 @@ pub trait EngineService {
         position: ls_types::Position,
         client_capabilities: CompletionClientCapabilities,
     ) -> EngineResult<Vec<ls_types::CompletionItem>>;
+
+    async fn formatting(path: PathBuf) -> EngineResult<Option<Vec<ls_types::TextEdit>>>;
 
     async fn document_symbol(path: PathBuf) -> EngineResult<Vec<ls_types::DocumentSymbol>>;
 

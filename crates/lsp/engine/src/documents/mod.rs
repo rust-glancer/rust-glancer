@@ -96,6 +96,25 @@ impl DocumentStore {
         document.dirty = document.live != document.saved;
     }
 
+    /// Processes a saved-file change that came from outside the editor save flow.
+    ///
+    /// Clean open documents can follow the new disk text. Dirty documents keep the editor text,
+    /// but still update their saved state so future comparisons use the latest file contents.
+    pub(crate) fn external_saved_change(&mut self, path: PathBuf, full_text: &str) {
+        let Some(document) = self.documents.get_mut(&path) else {
+            return;
+        };
+
+        let saved = TextFingerprint::new(full_text);
+        document.saved = Some(saved);
+        // If the editor has no unsaved changes, keep its live snapshot in sync with disk.
+        if !document.dirty {
+            document.live = Some(saved);
+            document.live_text = Some(Arc::from(full_text));
+        }
+        document.dirty = document.live != document.saved;
+    }
+
     pub(crate) fn mark_dirty_after_failed_save(&mut self, path: PathBuf) {
         let document = self.documents.entry(path).or_default();
         document.dirty = true;
@@ -103,6 +122,12 @@ impl DocumentStore {
 
     pub(crate) fn did_close(&mut self, path: &Path) {
         self.documents.remove(path);
+    }
+
+    pub(crate) fn current_text(&self, path: &Path) -> Option<Arc<str>> {
+        self.documents
+            .get(path)
+            .and_then(|document| document.live_text.clone())
     }
 
     #[cfg(test)]

@@ -11,7 +11,7 @@ use serde::Serialize;
 pub(crate) use self::stages::AnalysisSetupReport;
 
 use self::{memory::MemoryReport, profile::ProfileSnapshotReport, project::ProjectReport};
-use super::report::ReportDocument;
+use crate::report::ReportDocument;
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct ReportDocumentOptions {
