@@ -53,6 +53,21 @@ impl MethodAggregateReport {
                     rust_glancer_extra_present_count: hover.rust_glancer_extra_present_count(),
                 }),
             },
+            MethodAggregateData::Ranges(ranges) => Self {
+                method: aggregate.method().lsp_method().to_string(),
+                query_count: ranges.query_count(),
+                comparable_count: ranges.comparable_count(),
+                non_comparable_count: ranges.non_comparable_count(),
+                data: MethodAggregateDataReport::Ranges(RangeAggregateReport {
+                    rust_glancer_count: ranges.rust_glancer_ranges(),
+                    rust_analyzer_count: ranges.rust_analyzer_ranges(),
+                    matched_count: ranges.matched_ranges(),
+                    missing_count: ranges.missing_ranges(),
+                    extra_count: ranges.extra_ranges(),
+                    recall_percent: ranges.weighted_completeness_percent(),
+                    precision_percent: ranges.precision_signal_percent(),
+                }),
+            },
         }
     }
 
@@ -120,6 +135,7 @@ impl MethodAggregateReport {
 #[serde(tag = "kind", rename_all = "snake_case")]
 enum MethodAggregateDataReport {
     Locations(LocationAggregateReport),
+    Ranges(RangeAggregateReport),
     Hover(HoverAggregateReport),
 }
 
@@ -127,6 +143,7 @@ impl MethodAggregateDataReport {
     fn append_row_cells(&self, row: &mut ReportRowBuilder) {
         match self {
             Self::Locations(locations) => locations.append_row_cells(row),
+            Self::Ranges(ranges) => ranges.append_row_cells(row),
             Self::Hover(hover) => hover.append_row_cells(row),
         }
     }
@@ -167,6 +184,34 @@ impl LocationAggregateReport {
                 "unmapped_ra",
                 ReportValue::count(self.rust_analyzer_unmapped_count),
             );
+    }
+}
+
+#[derive(Debug, Serialize)]
+struct RangeAggregateReport {
+    rust_glancer_count: usize,
+    rust_analyzer_count: usize,
+    matched_count: usize,
+    missing_count: usize,
+    extra_count: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    recall_percent: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    precision_percent: Option<f64>,
+}
+
+impl RangeAggregateReport {
+    fn append_row_cells(&self, row: &mut ReportRowBuilder) {
+        row.value("rust_glancer", ReportValue::count(self.rust_glancer_count))
+            .value(
+                "rust_analyzer",
+                ReportValue::count(self.rust_analyzer_count),
+            )
+            .value("matched", ReportValue::count(self.matched_count))
+            .value("missing", ReportValue::count(self.missing_count))
+            .value("extra", ReportValue::count(self.extra_count))
+            .value("recall", optional_percent(self.recall_percent))
+            .value("precision", optional_percent(self.precision_percent));
     }
 }
 

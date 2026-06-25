@@ -158,6 +158,7 @@ impl QueryReport {
 #[serde(tag = "kind", rename_all = "snake_case")]
 enum QueryResultReport {
     Locations(LocationQueryReport),
+    Ranges(RangeQueryReport),
     Hover(HoverQueryReport),
     NonComparable(NonComparableQueryReport),
 }
@@ -177,6 +178,15 @@ impl QueryResultReport {
                 rust_analyzer_unmapped: locations.rust_analyzer_unmapped().to_vec(),
                 recall_percent: locations.completeness_percent(),
                 precision_percent: locations.precision_signal_percent(),
+            }),
+            QueryComparisonResult::Ranges(ranges) => Self::Ranges(RangeQueryReport {
+                rust_glancer_count: ranges.rust_glancer_count(),
+                rust_analyzer_count: ranges.rust_analyzer_count(),
+                matched_count: ranges.matched_count(),
+                missing_count: ranges.missing_count(),
+                extra_count: ranges.extra_count(),
+                recall_percent: ranges.completeness_percent(),
+                precision_percent: ranges.precision_signal_percent(),
             }),
             QueryComparisonResult::Hover(hover) => Self::Hover(HoverQueryReport {
                 rust_glancer_present: hover.rust_glancer_present(),
@@ -199,14 +209,17 @@ impl QueryResultReport {
     fn kind(&self) -> &'static str {
         match self {
             Self::Locations(_) => "locations",
+            Self::Ranges(_) => "ranges",
             Self::Hover(_) => "hover",
             Self::NonComparable(_) => "non_comparable",
         }
     }
 
     fn append_query_cells(&self, row: &mut ReportRowBuilder) {
-        if let Self::Locations(locations) = self {
-            locations.append_query_cells(row);
+        match self {
+            Self::Locations(locations) => locations.append_query_cells(row),
+            Self::Ranges(ranges) => ranges.append_query_cells(row),
+            Self::Hover(_) | Self::NonComparable(_) => {}
         }
     }
 }
@@ -231,6 +244,37 @@ struct LocationQueryReport {
 }
 
 impl LocationQueryReport {
+    fn append_query_cells(&self, row: &mut ReportRowBuilder) {
+        row.value(
+            "rust_glancer_count",
+            ReportValue::count(self.rust_glancer_count),
+        )
+        .value(
+            "rust_analyzer_count",
+            ReportValue::count(self.rust_analyzer_count),
+        )
+        .value("matched", ReportValue::count(self.matched_count))
+        .value("missing", ReportValue::count(self.missing_count))
+        .value("extra", ReportValue::count(self.extra_count))
+        .value("recall", optional_percent(self.recall_percent))
+        .value("precision", optional_percent(self.precision_percent));
+    }
+}
+
+#[derive(Debug, Serialize)]
+struct RangeQueryReport {
+    rust_glancer_count: usize,
+    rust_analyzer_count: usize,
+    matched_count: usize,
+    missing_count: usize,
+    extra_count: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    recall_percent: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    precision_percent: Option<f64>,
+}
+
+impl RangeQueryReport {
     fn append_query_cells(&self, row: &mut ReportRowBuilder) {
         row.value(
             "rust_glancer_count",

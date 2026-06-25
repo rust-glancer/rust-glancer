@@ -11,8 +11,10 @@ use std::{
 
 use anyhow::Context as _;
 use ls_types::{
-    GotoDefinitionParams, HoverParams, PartialResultParams, ReferenceContext, ReferenceParams,
-    TextDocumentIdentifier, TextDocumentPositionParams, WorkDoneProgressParams,
+    DocumentHighlightParams, GotoDefinitionParams, HoverParams, PartialResultParams,
+    ReferenceContext, ReferenceParams, TextDocumentIdentifier, TextDocumentPositionParams,
+    WorkDoneProgressParams,
+    request::{GotoImplementationParams, GotoTypeDefinitionParams},
 };
 use serde_json::Value;
 
@@ -165,6 +167,21 @@ impl QueryRequest {
                 },
             }),
             QueryKind::GotoDefinition => serde_json::to_value(GotoDefinitionParams {
+                text_document_position_params: text_document_position,
+                work_done_progress_params: WorkDoneProgressParams::default(),
+                partial_result_params: PartialResultParams::default(),
+            }),
+            QueryKind::TypeDefinition => serde_json::to_value(GotoTypeDefinitionParams {
+                text_document_position_params: text_document_position,
+                work_done_progress_params: WorkDoneProgressParams::default(),
+                partial_result_params: PartialResultParams::default(),
+            }),
+            QueryKind::Implementation => serde_json::to_value(GotoImplementationParams {
+                text_document_position_params: text_document_position,
+                work_done_progress_params: WorkDoneProgressParams::default(),
+                partial_result_params: PartialResultParams::default(),
+            }),
+            QueryKind::DocumentHighlight => serde_json::to_value(DocumentHighlightParams {
                 text_document_position_params: text_document_position,
                 work_done_progress_params: WorkDoneProgressParams::default(),
                 partial_result_params: PartialResultParams::default(),

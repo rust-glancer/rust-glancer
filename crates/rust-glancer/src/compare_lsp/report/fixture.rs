@@ -61,6 +61,21 @@ impl FixtureReport {
                     QueryKind::GotoDefinition.lsp_method(),
                     self.methods.goto_definition,
                 )
+                .count_as(
+                    "type_definition",
+                    QueryKind::TypeDefinition.lsp_method(),
+                    self.methods.type_definition,
+                )
+                .count_as(
+                    "implementation",
+                    QueryKind::Implementation.lsp_method(),
+                    self.methods.implementation,
+                )
+                .count_as(
+                    "document_highlight",
+                    QueryKind::DocumentHighlight.lsp_method(),
+                    self.methods.document_highlight,
+                )
                 .count_as("hover", QueryKind::Hover.lsp_method(), self.methods.hover);
         });
     }
@@ -71,6 +86,9 @@ struct QueryMethodReport {
     references: usize,
     references_include_declaration: usize,
     goto_definition: usize,
+    type_definition: usize,
+    implementation: usize,
+    document_highlight: usize,
     hover: usize,
 }
 
@@ -89,6 +107,18 @@ impl QueryMethodReport {
             goto_definition: query_cases
                 .iter()
                 .filter(|query| query.kind().is_goto_definition())
+                .count(),
+            type_definition: query_cases
+                .iter()
+                .filter(|query| query.kind().is_type_definition())
+                .count(),
+            implementation: query_cases
+                .iter()
+                .filter(|query| query.kind().is_implementation())
+                .count(),
+            document_highlight: query_cases
+                .iter()
+                .filter(|query| query.kind().is_document_highlight())
                 .count(),
             hover: query_cases
                 .iter()

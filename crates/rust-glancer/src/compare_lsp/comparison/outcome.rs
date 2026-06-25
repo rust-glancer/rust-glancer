@@ -40,6 +40,7 @@ impl NonComparableComparison {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum OutcomeStatus {
     Locations,
+    Ranges,
     HoverPresent,
     HoverAbsent,
     MalformedSuccess,
@@ -52,6 +53,7 @@ impl OutcomeStatus {
     fn from_outcome(outcome: &NormalizedOutcome) -> Self {
         match outcome {
             NormalizedOutcome::Locations(_) => Self::Locations,
+            NormalizedOutcome::Ranges(_) => Self::Ranges,
             NormalizedOutcome::Hover { present: true } => Self::HoverPresent,
             NormalizedOutcome::Hover { present: false } => Self::HoverAbsent,
             NormalizedOutcome::MalformedSuccess { .. } => Self::MalformedSuccess,
@@ -64,6 +66,7 @@ impl OutcomeStatus {
     pub(crate) fn label(self) -> &'static str {
         match self {
             Self::Locations => "locations",
+            Self::Ranges => "ranges",
             Self::HoverPresent => "hover_present",
             Self::HoverAbsent => "hover_absent",
             Self::MalformedSuccess => "malformed",
@@ -99,6 +102,7 @@ fn outcome_detail(outcome: &NormalizedOutcome) -> Option<String> {
         NormalizedOutcome::Error { code, message } => Some(format!("{code}: {message}")),
         NormalizedOutcome::TransportFailure { message } => Some(message.clone()),
         NormalizedOutcome::Locations(_)
+        | NormalizedOutcome::Ranges(_)
         | NormalizedOutcome::Hover { .. }
         | NormalizedOutcome::Timeout => None,
     }

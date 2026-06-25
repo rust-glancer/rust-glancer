@@ -76,6 +76,9 @@ impl SourcePosition {
 pub(crate) enum QueryKind {
     References { include_declaration: bool },
     GotoDefinition,
+    TypeDefinition,
+    Implementation,
+    DocumentHighlight,
     Hover,
 }
 
@@ -86,6 +89,9 @@ impl QueryKind {
         match self {
             Self::References { .. } => request::References::METHOD,
             Self::GotoDefinition => request::GotoDefinition::METHOD,
+            Self::TypeDefinition => request::GotoTypeDefinition::METHOD,
+            Self::Implementation => request::GotoImplementation::METHOD,
+            Self::DocumentHighlight => request::DocumentHighlightRequest::METHOD,
             Self::Hover => request::HoverRequest::METHOD,
         }
     }
@@ -99,12 +105,28 @@ impl QueryKind {
             Self::References {
                 include_declaration,
             } => Some(include_declaration),
-            Self::GotoDefinition | Self::Hover => None,
+            Self::GotoDefinition
+            | Self::TypeDefinition
+            | Self::Implementation
+            | Self::DocumentHighlight
+            | Self::Hover => None,
         }
     }
 
     pub(crate) fn is_goto_definition(self) -> bool {
         matches!(self, Self::GotoDefinition)
+    }
+
+    pub(crate) fn is_type_definition(self) -> bool {
+        matches!(self, Self::TypeDefinition)
+    }
+
+    pub(crate) fn is_implementation(self) -> bool {
+        matches!(self, Self::Implementation)
+    }
+
+    pub(crate) fn is_document_highlight(self) -> bool {
+        matches!(self, Self::DocumentHighlight)
     }
 
     pub(crate) fn is_hover(self) -> bool {

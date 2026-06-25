@@ -6,6 +6,7 @@
 mod hover;
 mod location;
 mod outcome;
+mod range;
 
 use std::time::Duration;
 
@@ -14,6 +15,7 @@ use crate::compare_lsp::{
         hover::{HoverAggregate, HoverComparison},
         location::{LocationAggregate, LocationComparison},
         outcome::NonComparableComparison,
+        range::{RangeAggregate, RangeComparison},
     },
     execution::ServerUnderTest,
     normalization::{NormalizedOutcome, NormalizedSummary},
@@ -67,21 +69,34 @@ impl QueryComparison {
         let rust_glancer = query.outcome(ServerUnderTest::RustGlancer).value();
         let rust_analyzer = query.outcome(ServerUnderTest::RustAnalyzer).value();
         let result = match query.kind() {
-            QueryKind::References { .. } | QueryKind::GotoDefinition => {
-                match (rust_glancer, rust_analyzer) {
-                    (
-                        NormalizedOutcome::Locations(rust_glancer),
-                        NormalizedOutcome::Locations(rust_analyzer),
-                    ) => QueryComparisonResult::Locations(LocationComparison::new(
-                        rust_glancer,
-                        rust_analyzer,
-                    )),
-                    _ => QueryComparisonResult::NonComparable(NonComparableComparison::new(
-                        rust_glancer,
-                        rust_analyzer,
-                    )),
+            QueryKind::References { .. }
+            | QueryKind::GotoDefinition
+            | QueryKind::TypeDefinition
+            | QueryKind::Implementation => match (rust_glancer, rust_analyzer) {
+                (
+                    NormalizedOutcome::Locations(rust_glancer),
+                    NormalizedOutcome::Locations(rust_analyzer),
+                ) => QueryComparisonResult::Locations(LocationComparison::new(
+                    rust_glancer,
+                    rust_analyzer,
+                )),
+                _ => QueryComparisonResult::NonComparable(NonComparableComparison::new(
+                    rust_glancer,
+                    rust_analyzer,
+                )),
+            },
+            QueryKind::DocumentHighlight => match (rust_glancer, rust_analyzer) {
+                (
+                    NormalizedOutcome::Ranges(rust_glancer),
+                    NormalizedOutcome::Ranges(rust_analyzer),
+                ) => {
+                    QueryComparisonResult::Ranges(RangeComparison::new(rust_glancer, rust_analyzer))
                 }
-            }
+                _ => QueryComparisonResult::NonComparable(NonComparableComparison::new(
+                    rust_glancer,
+                    rust_analyzer,
+                )),
+            },
             QueryKind::Hover => match (rust_glancer, rust_analyzer) {
                 (
                     NormalizedOutcome::Hover {
@@ -134,6 +149,7 @@ impl QueryComparison {
 #[derive(Debug)]
 pub(crate) enum QueryComparisonResult {
     Locations(LocationComparison),
+    Ranges(RangeComparison),
     Hover(HoverComparison),
     NonComparable(NonComparableComparison),
 }
@@ -148,12 +164,18 @@ impl MethodAggregate {
     fn from_queries(queries: &[QueryComparison]) -> Vec<Self> {
         let mut references = LocationAggregate::default();
         let mut goto_definition = LocationAggregate::default();
+        let mut type_definition = LocationAggregate::default();
+        let mut implementation = LocationAggregate::default();
+        let mut document_highlight = RangeAggregate::default();
         let mut hover = HoverAggregate::default();
 
         for query in queries {
             match query.method {
                 QueryMethod::References => references.record(query),
                 QueryMethod::GotoDefinition => goto_definition.record(query),
+                QueryMethod::TypeDefinition => type_definition.record(query),
+                QueryMethod::Implementation => implementation.record(query),
+                QueryMethod::DocumentHighlight => document_highlight.record(query),
                 QueryMethod::Hover => hover.record(query),
             }
         }
@@ -169,6 +191,24 @@ impl MethodAggregate {
             aggregates.push(Self {
                 method: QueryMethod::GotoDefinition,
                 data: MethodAggregateData::Locations(goto_definition),
+            });
+        }
+        if type_definition.query_count() > 0 {
+            aggregates.push(Self {
+                method: QueryMethod::TypeDefinition,
+                data: MethodAggregateData::Locations(type_definition),
+            });
+        }
+        if implementation.query_count() > 0 {
+            aggregates.push(Self {
+                method: QueryMethod::Implementation,
+                data: MethodAggregateData::Locations(implementation),
+            });
+        }
+        if document_highlight.query_count() > 0 {
+            aggregates.push(Self {
+                method: QueryMethod::DocumentHighlight,
+                data: MethodAggregateData::Ranges(document_highlight),
             });
         }
         if hover.query_count() > 0 {
@@ -193,6 +233,7 @@ impl MethodAggregate {
 #[derive(Debug)]
 pub(crate) enum MethodAggregateData {
     Locations(LocationAggregate),
+    Ranges(RangeAggregate),
     Hover(HoverAggregate),
 }
 
@@ -200,6 +241,9 @@ pub(crate) enum MethodAggregateData {
 pub(crate) enum QueryMethod {
     References,
     GotoDefinition,
+    TypeDefinition,
+    Implementation,
+    DocumentHighlight,
     Hover,
 }
 
@@ -208,6 +252,9 @@ impl QueryMethod {
         match kind {
             QueryKind::References { .. } => Self::References,
             QueryKind::GotoDefinition => Self::GotoDefinition,
+            QueryKind::TypeDefinition => Self::TypeDefinition,
+            QueryKind::Implementation => Self::Implementation,
+            QueryKind::DocumentHighlight => Self::DocumentHighlight,
             QueryKind::Hover => Self::Hover,
         }
     }
@@ -219,6 +266,9 @@ impl QueryMethod {
             }
             .lsp_method(),
             Self::GotoDefinition => QueryKind::GotoDefinition.lsp_method(),
+            Self::TypeDefinition => QueryKind::TypeDefinition.lsp_method(),
+            Self::Implementation => QueryKind::Implementation.lsp_method(),
+            Self::DocumentHighlight => QueryKind::DocumentHighlight.lsp_method(),
             Self::Hover => QueryKind::Hover.lsp_method(),
         }
     }

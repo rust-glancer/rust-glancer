@@ -11,7 +11,7 @@ use std::{
 };
 
 use anyhow::Context as _;
-use ls_types::{Location, LocationLink, Range, Uri};
+use ls_types::{DocumentHighlight, Location, LocationLink, Range, Uri};
 use serde_json::Value;
 
 use crate::compare_lsp::{
@@ -147,6 +147,7 @@ impl NormalizedServerOutcome {
 #[derive(Debug)]
 pub(crate) enum NormalizedOutcome {
     Locations(NormalizedLocationSet),
+    Ranges(NormalizedRangeSet),
     Hover { present: bool },
     MalformedSuccess { message: String },
     Error { code: i64, message: String },
@@ -158,12 +159,19 @@ impl NormalizedOutcome {
     fn from_raw(fixture_root: &Path, kind: QueryKind, raw_outcome: &RawOutcome) -> Self {
         match raw_outcome {
             RawOutcome::Success { raw, .. } => match kind {
-                QueryKind::References { .. } | QueryKind::GotoDefinition => {
+                QueryKind::References { .. }
+                | QueryKind::GotoDefinition
+                | QueryKind::TypeDefinition
+                | QueryKind::Implementation => {
                     match NormalizedLocationSet::from_json(fixture_root, raw) {
                         Ok(locations) => Self::Locations(locations),
                         Err(message) => Self::MalformedSuccess { message },
                     }
                 }
+                QueryKind::DocumentHighlight => match NormalizedRangeSet::from_json(raw) {
+                    Ok(ranges) => Self::Ranges(ranges),
+                    Err(message) => Self::MalformedSuccess { message },
+                },
                 QueryKind::Hover => Self::Hover {
                     present: !raw.is_null(),
                 },
@@ -177,6 +185,39 @@ impl NormalizedOutcome {
                 message: message.clone(),
             },
         }
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct NormalizedRangeSet {
+    ranges: Vec<NormalizedRange>,
+}
+
+impl NormalizedRangeSet {
+    fn from_json(raw: &Value) -> Result<Self, String> {
+        if raw.is_null() {
+            return Ok(Self { ranges: Vec::new() });
+        }
+
+        let highlights =
+            serde_json::from_value::<Vec<DocumentHighlight>>(raw.clone()).map_err(|_| {
+                format!(
+                    "unsupported document-highlight response shape {}",
+                    json_shape(raw)
+                )
+            })?;
+        let ranges = highlights
+            .into_iter()
+            .map(|highlight| NormalizedRange::from_lsp(highlight.range))
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+
+        Ok(Self { ranges })
+    }
+
+    pub(crate) fn ranges(&self) -> &[NormalizedRange] {
+        &self.ranges
     }
 }
 

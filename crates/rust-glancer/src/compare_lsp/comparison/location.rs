@@ -161,7 +161,7 @@ impl LocationAggregate {
                 self.rust_analyzer_unmapped_locations += comparison.rust_analyzer_unmapped_count();
             }
             QueryComparisonResult::NonComparable(_) => self.non_comparable_count += 1,
-            QueryComparisonResult::Hover(_) => {}
+            QueryComparisonResult::Ranges(_) | QueryComparisonResult::Hover(_) => {}
         }
     }
 
