@@ -2,6 +2,8 @@
 
 use crate::compare_lsp::normalization::NormalizedOutcome;
 
+use super::metrics::NonComparableMetrics;
+
 #[derive(Debug)]
 pub(crate) struct NonComparableComparison {
     rust_glancer: OutcomeStatus,
@@ -20,20 +22,13 @@ impl NonComparableComparison {
         }
     }
 
-    pub(crate) fn rust_glancer_status(&self) -> OutcomeStatus {
-        self.rust_glancer
-    }
-
-    pub(crate) fn rust_analyzer_status(&self) -> OutcomeStatus {
-        self.rust_analyzer
-    }
-
-    pub(crate) fn rust_glancer_detail(&self) -> Option<&str> {
-        self.rust_glancer_detail.as_deref()
-    }
-
-    pub(crate) fn rust_analyzer_detail(&self) -> Option<&str> {
-        self.rust_analyzer_detail.as_deref()
+    pub(crate) fn metrics(&self) -> NonComparableMetrics {
+        NonComparableMetrics {
+            rust_glancer_status: self.rust_glancer,
+            rust_analyzer_status: self.rust_analyzer,
+            rust_glancer_detail: self.rust_glancer_detail.clone(),
+            rust_analyzer_detail: self.rust_analyzer_detail.clone(),
+        }
     }
 }
 

@@ -2,8 +2,9 @@
 
 use std::collections::BTreeSet;
 
+use super::metrics::{AggregateSummaryMetrics, SetComparisonMetrics};
 use crate::compare_lsp::{
-    comparison::{QueryComparison, QueryComparisonResult, outcome::Ratio},
+    comparison::{QueryComparison, QueryComparisonResult},
     normalization::{NormalizedRange, NormalizedRangeSet},
 };
 
@@ -57,40 +58,14 @@ impl RangeComparison {
         }
     }
 
-    pub(crate) fn rust_glancer_count(&self) -> usize {
-        self.rust_glancer_count
-    }
-
-    pub(crate) fn rust_analyzer_count(&self) -> usize {
-        self.rust_analyzer_count
-    }
-
-    pub(crate) fn matched_count(&self) -> usize {
-        self.matched.len()
-    }
-
-    pub(crate) fn missing_count(&self) -> usize {
-        self.missing.len()
-    }
-
-    pub(crate) fn extra_count(&self) -> usize {
-        self.extra.len()
-    }
-
-    fn completeness(&self) -> Option<Ratio> {
-        Ratio::new(self.matched_count(), self.rust_analyzer_count)
-    }
-
-    fn precision_signal(&self) -> Option<Ratio> {
-        Ratio::new(self.matched_count(), self.rust_glancer_count)
-    }
-
-    pub(crate) fn completeness_percent(&self) -> Option<f64> {
-        self.completeness().map(Ratio::percent)
-    }
-
-    pub(crate) fn precision_signal_percent(&self) -> Option<f64> {
-        self.precision_signal().map(Ratio::percent)
+    pub(crate) fn metrics(&self) -> SetComparisonMetrics {
+        SetComparisonMetrics::new(
+            self.rust_glancer_count,
+            self.rust_analyzer_count,
+            self.matched.len(),
+            self.missing.len(),
+            self.extra.len(),
+        )
     }
 }
 
@@ -112,62 +87,36 @@ impl RangeAggregate {
         match query.result() {
             QueryComparisonResult::Ranges(comparison) => {
                 self.comparable_count += 1;
-                self.rust_glancer_ranges += comparison.rust_glancer_count();
-                self.rust_analyzer_ranges += comparison.rust_analyzer_count();
-                self.matched_ranges += comparison.matched_count();
-                self.missing_ranges += comparison.missing_count();
-                self.extra_ranges += comparison.extra_count();
+                self.rust_glancer_ranges += comparison.rust_glancer_count;
+                self.rust_analyzer_ranges += comparison.rust_analyzer_count;
+                self.matched_ranges += comparison.matched.len();
+                self.missing_ranges += comparison.missing.len();
+                self.extra_ranges += comparison.extra.len();
             }
             QueryComparisonResult::NonComparable(_) => self.non_comparable_count += 1,
             _ => {}
         }
     }
 
-    pub(crate) fn query_count(&self) -> usize {
-        self.query_count
+    pub(super) fn is_empty(&self) -> bool {
+        self.query_count == 0
     }
 
-    pub(crate) fn comparable_count(&self) -> usize {
-        self.comparable_count
+    pub(super) fn summary(&self) -> AggregateSummaryMetrics {
+        AggregateSummaryMetrics {
+            query_count: self.query_count,
+            comparable_count: self.comparable_count,
+            non_comparable_count: self.non_comparable_count,
+        }
     }
 
-    pub(crate) fn non_comparable_count(&self) -> usize {
-        self.non_comparable_count
-    }
-
-    pub(crate) fn rust_glancer_ranges(&self) -> usize {
-        self.rust_glancer_ranges
-    }
-
-    pub(crate) fn rust_analyzer_ranges(&self) -> usize {
-        self.rust_analyzer_ranges
-    }
-
-    pub(crate) fn matched_ranges(&self) -> usize {
-        self.matched_ranges
-    }
-
-    pub(crate) fn missing_ranges(&self) -> usize {
-        self.missing_ranges
-    }
-
-    pub(crate) fn extra_ranges(&self) -> usize {
-        self.extra_ranges
-    }
-
-    fn weighted_completeness(&self) -> Option<Ratio> {
-        Ratio::new(self.matched_ranges, self.rust_analyzer_ranges)
-    }
-
-    fn precision_signal(&self) -> Option<Ratio> {
-        Ratio::new(self.matched_ranges, self.rust_glancer_ranges)
-    }
-
-    pub(crate) fn weighted_completeness_percent(&self) -> Option<f64> {
-        self.weighted_completeness().map(Ratio::percent)
-    }
-
-    pub(crate) fn precision_signal_percent(&self) -> Option<f64> {
-        self.precision_signal().map(Ratio::percent)
+    pub(crate) fn metrics(&self) -> SetComparisonMetrics {
+        SetComparisonMetrics::new(
+            self.rust_glancer_ranges,
+            self.rust_analyzer_ranges,
+            self.matched_ranges,
+            self.missing_ranges,
+            self.extra_ranges,
+        )
     }
 }

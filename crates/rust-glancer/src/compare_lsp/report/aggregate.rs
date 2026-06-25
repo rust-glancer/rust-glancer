@@ -3,7 +3,10 @@
 use serde::Serialize;
 
 use crate::{
-    compare_lsp::comparison::{MethodAggregate, MethodAggregateData},
+    compare_lsp::comparison::{
+        HoverAggregateMetrics, MappedSetAggregateMetrics, MethodAggregate, MethodAggregateData,
+        SetComparisonMetrics,
+    },
     report::{
         ReportAlign, ReportDocumentBuilder, ReportRowBuilder, ReportTableBuilder, ReportUnit,
         ReportValue,
@@ -24,67 +27,13 @@ pub(super) struct MethodAggregateReport {
 
 impl MethodAggregateReport {
     pub(super) fn capture(aggregate: &MethodAggregate) -> Self {
-        match aggregate.data() {
-            MethodAggregateData::Locations(locations) => Self {
-                method: aggregate.method().lsp_method().to_string(),
-                query_count: locations.query_count(),
-                comparable_count: locations.comparable_count(),
-                non_comparable_count: locations.non_comparable_count(),
-                data: MethodAggregateDataReport::Locations(LocationAggregateReport {
-                    rust_glancer_count: locations.rust_glancer_locations(),
-                    rust_analyzer_count: locations.rust_analyzer_locations(),
-                    matched_count: locations.matched_locations(),
-                    missing_count: locations.missing_locations(),
-                    extra_count: locations.extra_locations(),
-                    rust_glancer_unmapped_count: locations.rust_glancer_unmapped_locations(),
-                    rust_analyzer_unmapped_count: locations.rust_analyzer_unmapped_locations(),
-                    recall_percent: locations.weighted_completeness_percent(),
-                    precision_percent: locations.precision_signal_percent(),
-                }),
-            },
-            MethodAggregateData::Hover(hover) => Self {
-                method: aggregate.method().lsp_method().to_string(),
-                query_count: hover.query_count(),
-                comparable_count: hover.comparable_count(),
-                non_comparable_count: hover.non_comparable_count(),
-                data: MethodAggregateDataReport::Hover(HoverAggregateReport {
-                    agreement_count: hover.agreement_count(),
-                    rust_glancer_missing_count: hover.rust_glancer_missing_count(),
-                    rust_glancer_extra_present_count: hover.rust_glancer_extra_present_count(),
-                }),
-            },
-            MethodAggregateData::Ranges(ranges) => Self {
-                method: aggregate.method().lsp_method().to_string(),
-                query_count: ranges.query_count(),
-                comparable_count: ranges.comparable_count(),
-                non_comparable_count: ranges.non_comparable_count(),
-                data: MethodAggregateDataReport::Ranges(RangeAggregateReport {
-                    rust_glancer_count: ranges.rust_glancer_ranges(),
-                    rust_analyzer_count: ranges.rust_analyzer_ranges(),
-                    matched_count: ranges.matched_ranges(),
-                    missing_count: ranges.missing_ranges(),
-                    extra_count: ranges.extra_ranges(),
-                    recall_percent: ranges.weighted_completeness_percent(),
-                    precision_percent: ranges.precision_signal_percent(),
-                }),
-            },
-            MethodAggregateData::Symbols(symbols) => Self {
-                method: aggregate.method().lsp_method().to_string(),
-                query_count: symbols.query_count(),
-                comparable_count: symbols.comparable_count(),
-                non_comparable_count: symbols.non_comparable_count(),
-                data: MethodAggregateDataReport::Symbols(SymbolAggregateReport {
-                    rust_glancer_count: symbols.rust_glancer_symbols(),
-                    rust_analyzer_count: symbols.rust_analyzer_symbols(),
-                    matched_count: symbols.matched_symbols(),
-                    missing_count: symbols.missing_symbols(),
-                    extra_count: symbols.extra_symbols(),
-                    rust_glancer_unmapped_count: symbols.rust_glancer_unmapped_symbols(),
-                    rust_analyzer_unmapped_count: symbols.rust_analyzer_unmapped_symbols(),
-                    recall_percent: symbols.weighted_completeness_percent(),
-                    precision_percent: symbols.precision_signal_percent(),
-                }),
-            },
+        let summary = aggregate.data().summary();
+        Self {
+            method: aggregate.method().lsp_method().to_string(),
+            query_count: summary.query_count,
+            comparable_count: summary.comparable_count,
+            non_comparable_count: summary.non_comparable_count,
+            data: MethodAggregateDataReport::capture(aggregate.data()),
         }
     }
 
@@ -158,6 +107,17 @@ enum MethodAggregateDataReport {
 }
 
 impl MethodAggregateDataReport {
+    fn capture(data: &MethodAggregateData) -> Self {
+        match data {
+            MethodAggregateData::Locations(locations) => {
+                Self::Locations(locations.metrics().into())
+            }
+            MethodAggregateData::Ranges(ranges) => Self::Ranges(ranges.metrics().into()),
+            MethodAggregateData::Symbols(symbols) => Self::Symbols(symbols.metrics().into()),
+            MethodAggregateData::Hover(hover) => Self::Hover(hover.metrics().into()),
+        }
+    }
+
     fn append_row_cells(&self, row: &mut ReportRowBuilder) {
         match self {
             Self::Locations(locations) => locations.append_row_cells(row),
@@ -206,6 +166,22 @@ impl LocationAggregateReport {
     }
 }
 
+impl From<MappedSetAggregateMetrics> for LocationAggregateReport {
+    fn from(metrics: MappedSetAggregateMetrics) -> Self {
+        Self {
+            rust_glancer_count: metrics.set.rust_glancer_count,
+            rust_analyzer_count: metrics.set.rust_analyzer_count,
+            matched_count: metrics.set.matched_count,
+            missing_count: metrics.set.missing_count,
+            extra_count: metrics.set.extra_count,
+            rust_glancer_unmapped_count: metrics.rust_glancer_unmapped_count,
+            rust_analyzer_unmapped_count: metrics.rust_analyzer_unmapped_count,
+            recall_percent: metrics.set.recall_percent,
+            precision_percent: metrics.set.precision_percent,
+        }
+    }
+}
+
 #[derive(Debug, Serialize)]
 struct RangeAggregateReport {
     rust_glancer_count: usize,
@@ -231,6 +207,20 @@ impl RangeAggregateReport {
             .value("extra", ReportValue::count(self.extra_count))
             .value("recall", optional_percent(self.recall_percent))
             .value("precision", optional_percent(self.precision_percent));
+    }
+}
+
+impl From<SetComparisonMetrics> for RangeAggregateReport {
+    fn from(metrics: SetComparisonMetrics) -> Self {
+        Self {
+            rust_glancer_count: metrics.rust_glancer_count,
+            rust_analyzer_count: metrics.rust_analyzer_count,
+            matched_count: metrics.matched_count,
+            missing_count: metrics.missing_count,
+            extra_count: metrics.extra_count,
+            recall_percent: metrics.recall_percent,
+            precision_percent: metrics.precision_percent,
+        }
     }
 }
 
@@ -272,6 +262,22 @@ impl SymbolAggregateReport {
     }
 }
 
+impl From<MappedSetAggregateMetrics> for SymbolAggregateReport {
+    fn from(metrics: MappedSetAggregateMetrics) -> Self {
+        Self {
+            rust_glancer_count: metrics.set.rust_glancer_count,
+            rust_analyzer_count: metrics.set.rust_analyzer_count,
+            matched_count: metrics.set.matched_count,
+            missing_count: metrics.set.missing_count,
+            extra_count: metrics.set.extra_count,
+            rust_glancer_unmapped_count: metrics.rust_glancer_unmapped_count,
+            rust_analyzer_unmapped_count: metrics.rust_analyzer_unmapped_count,
+            recall_percent: metrics.set.recall_percent,
+            precision_percent: metrics.set.precision_percent,
+        }
+    }
+}
+
 #[derive(Debug, Serialize)]
 struct HoverAggregateReport {
     agreement_count: usize,
@@ -290,5 +296,15 @@ impl HoverAggregateReport {
                 "hover_extra_present",
                 ReportValue::count(self.rust_glancer_extra_present_count),
             );
+    }
+}
+
+impl From<HoverAggregateMetrics> for HoverAggregateReport {
+    fn from(metrics: HoverAggregateMetrics) -> Self {
+        Self {
+            agreement_count: metrics.agreement_count,
+            rust_glancer_missing_count: metrics.rust_glancer_missing_count,
+            rust_glancer_extra_present_count: metrics.rust_glancer_extra_present_count,
+        }
     }
 }

@@ -2,8 +2,12 @@
 
 use std::collections::BTreeSet;
 
+use super::metrics::{
+    AggregateSummaryMetrics, MappedSetAggregateMetrics, MappedSetComparisonMetrics,
+    SetComparisonMetrics,
+};
 use crate::compare_lsp::{
-    comparison::{QueryComparison, QueryComparisonResult, outcome::Ratio},
+    comparison::{QueryComparison, QueryComparisonResult},
     normalization::{NormalizedLocation, NormalizedLocationSet},
 };
 
@@ -64,12 +68,20 @@ impl LocationComparison {
         }
     }
 
-    pub(crate) fn rust_glancer_count(&self) -> usize {
-        self.rust_glancer_count
-    }
-
-    pub(crate) fn rust_analyzer_count(&self) -> usize {
-        self.rust_analyzer_count
+    pub(crate) fn metrics(&self) -> MappedSetComparisonMetrics {
+        MappedSetComparisonMetrics {
+            set: SetComparisonMetrics::new(
+                self.rust_glancer_count,
+                self.rust_analyzer_count,
+                self.matched.len(),
+                self.missing.len(),
+                self.extra.len(),
+            ),
+            rust_glancer_unmapped_count: self.rust_glancer_unmapped_count,
+            rust_analyzer_unmapped_count: self.rust_analyzer_unmapped_count,
+            rust_glancer_unmapped: self.rust_glancer_unmapped.clone(),
+            rust_analyzer_unmapped: self.rust_analyzer_unmapped.clone(),
+        }
     }
 
     #[cfg(test)]
@@ -85,50 +97,6 @@ impl LocationComparison {
     #[cfg(test)]
     pub(super) fn extra(&self) -> &[NormalizedLocation] {
         &self.extra
-    }
-
-    pub(crate) fn matched_count(&self) -> usize {
-        self.matched.len()
-    }
-
-    pub(crate) fn missing_count(&self) -> usize {
-        self.missing.len()
-    }
-
-    pub(crate) fn extra_count(&self) -> usize {
-        self.extra.len()
-    }
-
-    pub(crate) fn rust_glancer_unmapped_count(&self) -> usize {
-        self.rust_glancer_unmapped_count
-    }
-
-    pub(crate) fn rust_analyzer_unmapped_count(&self) -> usize {
-        self.rust_analyzer_unmapped_count
-    }
-
-    pub(crate) fn rust_glancer_unmapped(&self) -> &[String] {
-        &self.rust_glancer_unmapped
-    }
-
-    pub(crate) fn rust_analyzer_unmapped(&self) -> &[String] {
-        &self.rust_analyzer_unmapped
-    }
-
-    fn completeness(&self) -> Option<Ratio> {
-        Ratio::new(self.matched_count(), self.rust_analyzer_count)
-    }
-
-    fn precision_signal(&self) -> Option<Ratio> {
-        Ratio::new(self.matched_count(), self.rust_glancer_count)
-    }
-
-    pub(crate) fn completeness_percent(&self) -> Option<f64> {
-        self.completeness().map(Ratio::percent)
-    }
-
-    pub(crate) fn precision_signal_percent(&self) -> Option<f64> {
-        self.precision_signal().map(Ratio::percent)
     }
 }
 
@@ -152,72 +120,42 @@ impl LocationAggregate {
         match query.result() {
             QueryComparisonResult::Locations(comparison) => {
                 self.comparable_count += 1;
-                self.rust_glancer_locations += comparison.rust_glancer_count();
-                self.rust_analyzer_locations += comparison.rust_analyzer_count();
-                self.matched_locations += comparison.matched_count();
-                self.missing_locations += comparison.missing_count();
-                self.extra_locations += comparison.extra_count();
-                self.rust_glancer_unmapped_locations += comparison.rust_glancer_unmapped_count();
-                self.rust_analyzer_unmapped_locations += comparison.rust_analyzer_unmapped_count();
+                self.rust_glancer_locations += comparison.rust_glancer_count;
+                self.rust_analyzer_locations += comparison.rust_analyzer_count;
+                self.matched_locations += comparison.matched.len();
+                self.missing_locations += comparison.missing.len();
+                self.extra_locations += comparison.extra.len();
+                self.rust_glancer_unmapped_locations += comparison.rust_glancer_unmapped_count;
+                self.rust_analyzer_unmapped_locations += comparison.rust_analyzer_unmapped_count;
             }
             QueryComparisonResult::NonComparable(_) => self.non_comparable_count += 1,
             _ => {}
         }
     }
 
-    pub(crate) fn query_count(&self) -> usize {
-        self.query_count
+    pub(super) fn is_empty(&self) -> bool {
+        self.query_count == 0
     }
 
-    pub(crate) fn comparable_count(&self) -> usize {
-        self.comparable_count
+    pub(super) fn summary(&self) -> AggregateSummaryMetrics {
+        AggregateSummaryMetrics {
+            query_count: self.query_count,
+            comparable_count: self.comparable_count,
+            non_comparable_count: self.non_comparable_count,
+        }
     }
 
-    pub(crate) fn non_comparable_count(&self) -> usize {
-        self.non_comparable_count
-    }
-
-    pub(crate) fn rust_glancer_locations(&self) -> usize {
-        self.rust_glancer_locations
-    }
-
-    pub(crate) fn rust_analyzer_locations(&self) -> usize {
-        self.rust_analyzer_locations
-    }
-
-    pub(crate) fn matched_locations(&self) -> usize {
-        self.matched_locations
-    }
-
-    pub(crate) fn missing_locations(&self) -> usize {
-        self.missing_locations
-    }
-
-    pub(crate) fn extra_locations(&self) -> usize {
-        self.extra_locations
-    }
-
-    pub(crate) fn rust_glancer_unmapped_locations(&self) -> usize {
-        self.rust_glancer_unmapped_locations
-    }
-
-    pub(crate) fn rust_analyzer_unmapped_locations(&self) -> usize {
-        self.rust_analyzer_unmapped_locations
-    }
-
-    fn weighted_completeness(&self) -> Option<Ratio> {
-        Ratio::new(self.matched_locations, self.rust_analyzer_locations)
-    }
-
-    fn precision_signal(&self) -> Option<Ratio> {
-        Ratio::new(self.matched_locations, self.rust_glancer_locations)
-    }
-
-    pub(crate) fn weighted_completeness_percent(&self) -> Option<f64> {
-        self.weighted_completeness().map(Ratio::percent)
-    }
-
-    pub(crate) fn precision_signal_percent(&self) -> Option<f64> {
-        self.precision_signal().map(Ratio::percent)
+    pub(crate) fn metrics(&self) -> MappedSetAggregateMetrics {
+        MappedSetAggregateMetrics {
+            set: SetComparisonMetrics::new(
+                self.rust_glancer_locations,
+                self.rust_analyzer_locations,
+                self.matched_locations,
+                self.missing_locations,
+                self.extra_locations,
+            ),
+            rust_glancer_unmapped_count: self.rust_glancer_unmapped_locations,
+            rust_analyzer_unmapped_count: self.rust_analyzer_unmapped_locations,
+        }
     }
 }

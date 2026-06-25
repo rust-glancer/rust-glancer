@@ -5,6 +5,7 @@
 
 mod hover;
 mod location;
+mod metrics;
 mod outcome;
 mod range;
 mod symbol;
@@ -22,6 +23,12 @@ use crate::compare_lsp::{
     execution::ServerUnderTest,
     normalization::{NormalizedOutcome, NormalizedSummary},
     query::QueryKind,
+};
+
+pub(crate) use self::metrics::{
+    AggregateSummaryMetrics, HoverAggregateMetrics, HoverComparisonMetrics,
+    MappedSetAggregateMetrics, MappedSetComparisonMetrics, NonComparableMetrics,
+    SetComparisonMetrics,
 };
 
 /// Complete comparison result for one normalized benchmark run.
@@ -203,49 +210,49 @@ impl MethodAggregate {
         }
 
         let mut aggregates = Vec::new();
-        if references.query_count() > 0 {
+        if !references.is_empty() {
             aggregates.push(Self {
                 method: QueryMethod::References,
                 data: MethodAggregateData::Locations(references),
             });
         }
-        if goto_definition.query_count() > 0 {
+        if !goto_definition.is_empty() {
             aggregates.push(Self {
                 method: QueryMethod::GotoDefinition,
                 data: MethodAggregateData::Locations(goto_definition),
             });
         }
-        if type_definition.query_count() > 0 {
+        if !type_definition.is_empty() {
             aggregates.push(Self {
                 method: QueryMethod::TypeDefinition,
                 data: MethodAggregateData::Locations(type_definition),
             });
         }
-        if implementation.query_count() > 0 {
+        if !implementation.is_empty() {
             aggregates.push(Self {
                 method: QueryMethod::Implementation,
                 data: MethodAggregateData::Locations(implementation),
             });
         }
-        if document_highlight.query_count() > 0 {
+        if !document_highlight.is_empty() {
             aggregates.push(Self {
                 method: QueryMethod::DocumentHighlight,
                 data: MethodAggregateData::Ranges(document_highlight),
             });
         }
-        if document_symbol.query_count() > 0 {
+        if !document_symbol.is_empty() {
             aggregates.push(Self {
                 method: QueryMethod::DocumentSymbol,
                 data: MethodAggregateData::Symbols(document_symbol),
             });
         }
-        if workspace_symbol.query_count() > 0 {
+        if !workspace_symbol.is_empty() {
             aggregates.push(Self {
                 method: QueryMethod::WorkspaceSymbol,
                 data: MethodAggregateData::Symbols(workspace_symbol),
             });
         }
-        if hover.query_count() > 0 {
+        if !hover.is_empty() {
             aggregates.push(Self {
                 method: QueryMethod::Hover,
                 data: MethodAggregateData::Hover(hover),
@@ -270,6 +277,17 @@ pub(crate) enum MethodAggregateData {
     Ranges(RangeAggregate),
     Symbols(SymbolAggregate),
     Hover(HoverAggregate),
+}
+
+impl MethodAggregateData {
+    pub(crate) fn summary(&self) -> AggregateSummaryMetrics {
+        match self {
+            Self::Locations(locations) => locations.summary(),
+            Self::Ranges(ranges) => ranges.summary(),
+            Self::Symbols(symbols) => symbols.summary(),
+            Self::Hover(hover) => hover.summary(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -359,13 +377,14 @@ mod tests {
         let QueryComparisonResult::Locations(query) = &comparison.queries[0].result else {
             panic!("first query should compare locations");
         };
-        assert_eq!(query.rust_glancer_count(), 2);
-        assert_eq!(query.rust_analyzer_count(), 2);
+        let query_metrics = query.metrics();
+        assert_eq!(query_metrics.set.rust_glancer_count, 2);
+        assert_eq!(query_metrics.set.rust_analyzer_count, 2);
         assert_eq!(query.matched(), &[shared]);
         assert_eq!(query.missing(), &[missing]);
         assert_eq!(query.extra(), &[extra]);
-        assert_eq!(query.completeness_percent(), Some(50.0));
-        assert_eq!(query.precision_signal_percent(), Some(50.0));
+        assert_eq!(query_metrics.set.recall_percent, Some(50.0));
+        assert_eq!(query_metrics.set.precision_percent, Some(50.0));
 
         let references = comparison
             .aggregates
@@ -375,15 +394,17 @@ mod tests {
         let MethodAggregateData::Locations(aggregate) = &references.data else {
             panic!("references should use location aggregation");
         };
-        assert_eq!(aggregate.query_count(), 2);
-        assert_eq!(aggregate.comparable_count(), 1);
-        assert_eq!(aggregate.non_comparable_count(), 1);
-        assert_eq!(aggregate.rust_glancer_locations(), 2);
-        assert_eq!(aggregate.rust_analyzer_locations(), 2);
-        assert_eq!(aggregate.matched_locations(), 1);
-        assert_eq!(aggregate.missing_locations(), 1);
-        assert_eq!(aggregate.extra_locations(), 1);
-        assert_eq!(aggregate.weighted_completeness_percent(), Some(50.0),);
+        let summary = aggregate.summary();
+        let metrics = aggregate.metrics();
+        assert_eq!(summary.query_count, 2);
+        assert_eq!(summary.comparable_count, 1);
+        assert_eq!(summary.non_comparable_count, 1);
+        assert_eq!(metrics.set.rust_glancer_count, 2);
+        assert_eq!(metrics.set.rust_analyzer_count, 2);
+        assert_eq!(metrics.set.matched_count, 1);
+        assert_eq!(metrics.set.missing_count, 1);
+        assert_eq!(metrics.set.extra_count, 1);
+        assert_eq!(metrics.set.recall_percent, Some(50.0),);
     }
 
     #[test]
@@ -419,12 +440,14 @@ mod tests {
         let MethodAggregateData::Hover(aggregate) = &hover.data else {
             panic!("hover should use hover aggregation");
         };
-        assert_eq!(aggregate.query_count(), 3);
-        assert_eq!(aggregate.comparable_count(), 2);
-        assert_eq!(aggregate.agreement_count(), 1);
-        assert_eq!(aggregate.rust_glancer_missing_count(), 1);
-        assert_eq!(aggregate.rust_glancer_extra_present_count(), 0);
-        assert_eq!(aggregate.non_comparable_count(), 1);
+        let summary = aggregate.summary();
+        let metrics = aggregate.metrics();
+        assert_eq!(summary.query_count, 3);
+        assert_eq!(summary.comparable_count, 2);
+        assert_eq!(metrics.agreement_count, 1);
+        assert_eq!(metrics.rust_glancer_missing_count, 1);
+        assert_eq!(metrics.rust_glancer_extra_present_count, 0);
+        assert_eq!(summary.non_comparable_count, 1);
     }
 
     fn locations(locations: Vec<NormalizedLocation>) -> NormalizedOutcome {

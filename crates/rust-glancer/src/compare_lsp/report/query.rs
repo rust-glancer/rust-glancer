@@ -3,7 +3,10 @@
 use serde::Serialize;
 
 use crate::{
-    compare_lsp::comparison::{QueryComparison, QueryComparisonResult},
+    compare_lsp::comparison::{
+        HoverComparisonMetrics, MappedSetComparisonMetrics, NonComparableMetrics, QueryComparison,
+        QueryComparisonResult, SetComparisonMetrics,
+    },
     report::{
         ReportAlign, ReportDocumentBuilder, ReportRowBuilder, ReportTableBuilder, ReportUnit,
         ReportValue,
@@ -167,55 +170,14 @@ enum QueryResultReport {
 impl QueryResultReport {
     fn capture(result: &QueryComparisonResult) -> Self {
         match result {
-            QueryComparisonResult::Locations(locations) => Self::Locations(LocationQueryReport {
-                rust_glancer_count: locations.rust_glancer_count(),
-                rust_analyzer_count: locations.rust_analyzer_count(),
-                matched_count: locations.matched_count(),
-                missing_count: locations.missing_count(),
-                extra_count: locations.extra_count(),
-                rust_glancer_unmapped_count: locations.rust_glancer_unmapped_count(),
-                rust_analyzer_unmapped_count: locations.rust_analyzer_unmapped_count(),
-                rust_glancer_unmapped: locations.rust_glancer_unmapped().to_vec(),
-                rust_analyzer_unmapped: locations.rust_analyzer_unmapped().to_vec(),
-                recall_percent: locations.completeness_percent(),
-                precision_percent: locations.precision_signal_percent(),
-            }),
-            QueryComparisonResult::Ranges(ranges) => Self::Ranges(RangeQueryReport {
-                rust_glancer_count: ranges.rust_glancer_count(),
-                rust_analyzer_count: ranges.rust_analyzer_count(),
-                matched_count: ranges.matched_count(),
-                missing_count: ranges.missing_count(),
-                extra_count: ranges.extra_count(),
-                recall_percent: ranges.completeness_percent(),
-                precision_percent: ranges.precision_signal_percent(),
-            }),
-            QueryComparisonResult::Symbols(symbols) => Self::Symbols(SymbolQueryReport {
-                rust_glancer_count: symbols.rust_glancer_count(),
-                rust_analyzer_count: symbols.rust_analyzer_count(),
-                matched_count: symbols.matched_count(),
-                missing_count: symbols.missing_count(),
-                extra_count: symbols.extra_count(),
-                rust_glancer_unmapped_count: symbols.rust_glancer_unmapped_count(),
-                rust_analyzer_unmapped_count: symbols.rust_analyzer_unmapped_count(),
-                rust_glancer_unmapped: symbols.rust_glancer_unmapped().to_vec(),
-                rust_analyzer_unmapped: symbols.rust_analyzer_unmapped().to_vec(),
-                recall_percent: symbols.completeness_percent(),
-                precision_percent: symbols.precision_signal_percent(),
-            }),
-            QueryComparisonResult::Hover(hover) => Self::Hover(HoverQueryReport {
-                rust_glancer_present: hover.rust_glancer_present(),
-                rust_analyzer_present: hover.rust_analyzer_present(),
-                agreement: hover.agrees(),
-                rust_glancer_missing: hover.rust_glancer_missing(),
-                rust_glancer_extra_present: hover.rust_glancer_extra_present(),
-            }),
+            QueryComparisonResult::Locations(locations) => {
+                Self::Locations(locations.metrics().into())
+            }
+            QueryComparisonResult::Ranges(ranges) => Self::Ranges(ranges.metrics().into()),
+            QueryComparisonResult::Symbols(symbols) => Self::Symbols(symbols.metrics().into()),
+            QueryComparisonResult::Hover(hover) => Self::Hover(hover.metrics().into()),
             QueryComparisonResult::NonComparable(non_comparable) => {
-                Self::NonComparable(NonComparableQueryReport {
-                    rust_glancer_status: non_comparable.rust_glancer_status().label().to_string(),
-                    rust_analyzer_status: non_comparable.rust_analyzer_status().label().to_string(),
-                    rust_glancer_detail: non_comparable.rust_glancer_detail().map(str::to_string),
-                    rust_analyzer_detail: non_comparable.rust_analyzer_detail().map(str::to_string),
-                })
+                Self::NonComparable(non_comparable.metrics().into())
             }
         }
     }
@@ -277,6 +239,24 @@ impl LocationQueryReport {
     }
 }
 
+impl From<MappedSetComparisonMetrics> for LocationQueryReport {
+    fn from(metrics: MappedSetComparisonMetrics) -> Self {
+        Self {
+            rust_glancer_count: metrics.set.rust_glancer_count,
+            rust_analyzer_count: metrics.set.rust_analyzer_count,
+            matched_count: metrics.set.matched_count,
+            missing_count: metrics.set.missing_count,
+            extra_count: metrics.set.extra_count,
+            rust_glancer_unmapped_count: metrics.rust_glancer_unmapped_count,
+            rust_analyzer_unmapped_count: metrics.rust_analyzer_unmapped_count,
+            rust_glancer_unmapped: metrics.rust_glancer_unmapped,
+            rust_analyzer_unmapped: metrics.rust_analyzer_unmapped,
+            recall_percent: metrics.set.recall_percent,
+            precision_percent: metrics.set.precision_percent,
+        }
+    }
+}
+
 #[derive(Debug, Serialize)]
 struct RangeQueryReport {
     rust_glancer_count: usize,
@@ -305,6 +285,20 @@ impl RangeQueryReport {
         .value("extra", ReportValue::count(self.extra_count))
         .value("recall", optional_percent(self.recall_percent))
         .value("precision", optional_percent(self.precision_percent));
+    }
+}
+
+impl From<SetComparisonMetrics> for RangeQueryReport {
+    fn from(metrics: SetComparisonMetrics) -> Self {
+        Self {
+            rust_glancer_count: metrics.rust_glancer_count,
+            rust_analyzer_count: metrics.rust_analyzer_count,
+            matched_count: metrics.matched_count,
+            missing_count: metrics.missing_count,
+            extra_count: metrics.extra_count,
+            recall_percent: metrics.recall_percent,
+            precision_percent: metrics.precision_percent,
+        }
     }
 }
 
@@ -345,6 +339,24 @@ impl SymbolQueryReport {
     }
 }
 
+impl From<MappedSetComparisonMetrics> for SymbolQueryReport {
+    fn from(metrics: MappedSetComparisonMetrics) -> Self {
+        Self {
+            rust_glancer_count: metrics.set.rust_glancer_count,
+            rust_analyzer_count: metrics.set.rust_analyzer_count,
+            matched_count: metrics.set.matched_count,
+            missing_count: metrics.set.missing_count,
+            extra_count: metrics.set.extra_count,
+            rust_glancer_unmapped_count: metrics.rust_glancer_unmapped_count,
+            rust_analyzer_unmapped_count: metrics.rust_analyzer_unmapped_count,
+            rust_glancer_unmapped: metrics.rust_glancer_unmapped,
+            rust_analyzer_unmapped: metrics.rust_analyzer_unmapped,
+            recall_percent: metrics.set.recall_percent,
+            precision_percent: metrics.set.precision_percent,
+        }
+    }
+}
+
 #[derive(Debug, Serialize)]
 struct HoverQueryReport {
     rust_glancer_present: bool,
@@ -352,6 +364,18 @@ struct HoverQueryReport {
     agreement: bool,
     rust_glancer_missing: bool,
     rust_glancer_extra_present: bool,
+}
+
+impl From<HoverComparisonMetrics> for HoverQueryReport {
+    fn from(metrics: HoverComparisonMetrics) -> Self {
+        Self {
+            rust_glancer_present: metrics.rust_glancer_present,
+            rust_analyzer_present: metrics.rust_analyzer_present,
+            agreement: metrics.agreement,
+            rust_glancer_missing: metrics.rust_glancer_missing,
+            rust_glancer_extra_present: metrics.rust_glancer_extra_present,
+        }
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -362,4 +386,15 @@ struct NonComparableQueryReport {
     rust_glancer_detail: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     rust_analyzer_detail: Option<String>,
+}
+
+impl From<NonComparableMetrics> for NonComparableQueryReport {
+    fn from(metrics: NonComparableMetrics) -> Self {
+        Self {
+            rust_glancer_status: metrics.rust_glancer_status.label().to_string(),
+            rust_analyzer_status: metrics.rust_analyzer_status.label().to_string(),
+            rust_glancer_detail: metrics.rust_glancer_detail,
+            rust_analyzer_detail: metrics.rust_analyzer_detail,
+        }
+    }
 }
