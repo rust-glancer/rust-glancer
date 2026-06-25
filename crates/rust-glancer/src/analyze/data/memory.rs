@@ -3,7 +3,7 @@ use rg_project::Project;
 use rg_std::{MemoryRecord, MemoryRecorder, MemorySize};
 use serde::Serialize;
 
-use crate::analyze::report::{ReportSectionBuilder, ReportTableBuilder};
+use crate::report::{ReportSectionBuilder, ReportTableBuilder};
 
 const TOP_MEMORY_ROWS: usize = 12;
 

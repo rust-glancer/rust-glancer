@@ -16,6 +16,9 @@ codegen-check:
 analyze *args:
     cargo run --release -p rust-glancer -- analyze {{args}}
 
+compare-lsp fixture="rust_analyzer" *args:
+    cargo run --release -p rust-glancer -- compare-lsp {{fixture}} {{args}}
+
 deny:
     cargo deny check
 

@@ -2,7 +2,7 @@ use rg_project::Project;
 use serde::Serialize;
 
 use super::package::PackageReport;
-use crate::analyze::report::{ReportFieldsBuilder, ReportSectionBuilder};
+use crate::report::{ReportFieldsBuilder, ReportSectionBuilder};
 
 #[derive(Debug, Serialize)]
 pub(crate) struct ProjectReport {

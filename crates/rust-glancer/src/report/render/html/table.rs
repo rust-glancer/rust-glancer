@@ -1,4 +1,4 @@
-use crate::analyze::report::{ReportAlign, ReportBlock, ReportColumn, ReportRow, ReportValue};
+use crate::report::{ReportAlign, ReportBlock, ReportColumn, ReportRow, ReportValue};
 
 use super::super::value::format_value;
 use super::{html_id, render_tab_list, writer::HtmlWriter};

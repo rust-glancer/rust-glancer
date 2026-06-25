@@ -21,6 +21,8 @@ jemalloc-stats = [
 [dependencies]
 anyhow.workspace = true
 clap = { workspace = true, features = ["derive"] }
+futures.workspace = true
+ls_types.workspace = true
 rg_std.workspace = true
 rg_project.workspace = true
 rg_profile.workspace = true
@@ -29,7 +31,9 @@ rg_lsp_engine.workspace = true
 rg_lsp_server.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
-tokio = { workspace = true, features = ["rt-multi-thread"] }
+tokio = { workspace = true, features = ["io-util", "macros", "process", "rt-multi-thread", "sync", "time"] }
+tower.workspace = true
+tower-lsp-server.workspace = true
 tracing.workspace = true
 tracing-subscriber = { workspace = true, features = ["env-filter", "fmt"] }
 

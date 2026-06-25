@@ -1,4 +1,4 @@
-use crate::analyze::report::ReportValue;
+use crate::report::ReportValue;
 
 pub(super) fn format_value(value: &ReportValue) -> String {
     match value {
