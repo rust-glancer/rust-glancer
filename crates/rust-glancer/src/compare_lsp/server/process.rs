@@ -284,7 +284,13 @@ impl RunningServer {
     async fn wait_until_ready(&mut self) -> anyhow::Result<()> {
         tokio::time::timeout(READY_TIMEOUT, async {
             loop {
-                let notification = self.client.next_notification().await?;
+                let notification = self.client.next_notification().await.with_context(|| {
+                    format!(
+                        "Waiting for {} readiness notification failed{}",
+                        self.kind.display_name(),
+                        self.stderr_note(),
+                    )
+                })?;
                 match self.readiness_notification(&notification) {
                     ReadinessNotification::Ready => return Ok(()),
                     ReadinessNotification::Failed(message) => anyhow::bail!(
