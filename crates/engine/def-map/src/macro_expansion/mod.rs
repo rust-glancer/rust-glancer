@@ -4,7 +4,6 @@
 //! facade that still depends on frozen def-map visibility.
 
 mod body;
-pub(crate) mod builtin;
 
 pub use self::body::{
     BodyMacroCallOrigin, BodyMacroCallSite, BodyMacroExpander, BodyMacroExprExpansion,

@@ -519,26 +519,16 @@ impl MacroExpansionAttempt {
         };
 
         // Then resolve against the current scope snapshot. Unresolved user macros stay resumable;
-        // known builtins are classified once so we do not retry names that def-map cannot expand.
+        // compiler builtins are handled only after resolution identifies a builtin definition.
         let resolver = ItemMacroResolver::new(env, states, state);
         let resolved = match resolver.resolve(call, &path)? {
             ExpectedUnique::One(resolved) => resolved,
             ExpectedUnique::Ambiguous => {
                 return Ok(Self::unresolved(state.target, call_id, call, path_text));
             }
-            ExpectedUnique::Empty => match crate::macro_expansion::builtin::kind_from_path(&path) {
-                Some(kind) => {
-                    return Ok(Self::builtin(
-                        kind,
-                        state.target,
-                        call_id,
-                        call,
-                        state,
-                        path_text,
-                    ));
-                }
-                None => return Ok(Self::unresolved(state.target, call_id, call, path_text)),
-            },
+            ExpectedUnique::Empty => {
+                return Ok(Self::unresolved(state.target, call_id, call, path_text));
+            }
         };
 
         // Direct `macro_rules!` bindings cannot be used before a later definition in the same

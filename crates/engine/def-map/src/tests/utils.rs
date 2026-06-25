@@ -18,6 +18,13 @@ pub(super) fn check_project_def_map(fixture: &str, expect: Expect) {
     expect.assert_eq(&actual);
 }
 
+pub(super) fn check_project_def_map_with_sysroot(fixture: &str, expect: Expect) {
+    let db = DefMapFixtureDb::build_with_sysroot(fixture);
+    let actual = ProjectDefMapSnapshot::new(&db).render();
+    let actual = format!("{}\n", actual.trim_end());
+    expect.assert_eq(&actual);
+}
+
 pub(super) fn check_project_path_resolution(
     fixture: &str,
     queries: &[PathResolutionQuery],
