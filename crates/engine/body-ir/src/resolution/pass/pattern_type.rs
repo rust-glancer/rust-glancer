@@ -6,12 +6,12 @@
 
 use rg_ir_model::{
     BindingId, BodyPath, ExprId, PatId, Path, PathSegment, ScopeId, StmtId, TypeDefId,
-    items::{FieldKey, TypeRef},
+    items::{FieldKey, Mutability, TypeRef},
 };
 use rg_ir_storage::{DefMapSource, ItemStoreSource};
 use rg_package_store::PackageStoreError;
 use rg_std::ExpectedUnique;
-use rg_ty::{RefMutability, ReferencePeelingCandidates, Ty};
+use rg_ty::{ReferencePeelingCandidates, Ty};
 
 use crate::ir::{ExprKind, PatKind, PatMutability, RecordPatField, StmtKind};
 use crate::resolution::{BodyResolutionContext, TypeRefUseSite};
@@ -434,10 +434,10 @@ where
         updates.push((binding, ty));
     }
 
-    fn ref_mutability(mutability: PatMutability) -> RefMutability {
+    fn ref_mutability(mutability: PatMutability) -> Mutability {
         match mutability {
-            PatMutability::Shared => RefMutability::Shared,
-            PatMutability::Mut => RefMutability::Mutable,
+            PatMutability::Shared => Mutability::Shared,
+            PatMutability::Mut => Mutability::Mutable,
         }
     }
 }

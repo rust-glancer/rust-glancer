@@ -3,8 +3,8 @@
 //! This layer links bindings inside tuple, reference, and slice patterns to the matching
 //! initializer slots, so later evidence on the binding can solve the initializer.
 
-use rg_ir_model::{ExprId, PatId};
-use rg_ty::{RefMutability, inference::InferTy};
+use rg_ir_model::{ExprId, PatId, items::Mutability};
+use rg_ty::inference::InferTy;
 
 use crate::{
     ir::{PatKind, PatMutability},
@@ -147,10 +147,10 @@ impl<'query, D, I> BodyPatternInference<'query, D, I> {
             .is_some_and(|pat| matches!(&pat.kind, PatKind::Rest))
     }
 
-    fn ref_mutability(mutability: PatMutability) -> RefMutability {
+    fn ref_mutability(mutability: PatMutability) -> Mutability {
         match mutability {
-            PatMutability::Shared => RefMutability::Shared,
-            PatMutability::Mut => RefMutability::Mutable,
+            PatMutability::Shared => Mutability::Shared,
+            PatMutability::Mut => Mutability::Mutable,
         }
     }
 }

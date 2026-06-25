@@ -1,7 +1,7 @@
 use rg_ir_model::items::{GenericParams, Mutability, ParamItem, TypeRef};
 use rg_text::Name;
 
-use crate::{RefMutability, Ty, TypeSubst};
+use crate::{Ty, TypeSubst};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CallArgMapping {
@@ -156,12 +156,8 @@ impl<'signature, 'arg> CallArgInference<'signature, 'arg> {
         subst.push(name, arg_ty.clone());
     }
 
-    fn ref_mutability_matches(param_mutability: Mutability, arg_mutability: RefMutability) -> bool {
-        matches!(
-            (param_mutability, arg_mutability),
-            (Mutability::Shared, RefMutability::Shared)
-                | (Mutability::Mutable, RefMutability::Mutable)
-        )
+    fn ref_mutability_matches(param_mutability: Mutability, arg_mutability: Mutability) -> bool {
+        param_mutability == arg_mutability
     }
 
     fn ty_is_inferable_arg(ty: &Ty) -> bool {

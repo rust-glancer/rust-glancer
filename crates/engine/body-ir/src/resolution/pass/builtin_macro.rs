@@ -11,7 +11,7 @@ use rg_ir_model::{
 use rg_ir_storage::{DefMapSource, ItemStoreSource};
 use rg_package_store::PackageStoreError;
 use rg_text::Name;
-use rg_ty::{PrimitiveTy, RefMutability, Ty, UnsignedIntTy};
+use rg_ty::{PrimitiveTy, Ty, UnsignedIntTy};
 
 use crate::resolution::{BodyResolutionContext, TypeRefUseSite};
 
@@ -48,7 +48,7 @@ where
             | BuiltinMacroExprKind::ModulePath
             | BuiltinMacroExprKind::Stringify => Ok(Self::static_str_ty()),
             BuiltinMacroExprKind::IncludeBytes => Ok(Ty::reference(
-                RefMutability::Shared,
+                Mutability::Shared,
                 Ty::slice(Ty::Primitive(PrimitiveTy::UnsignedInt(UnsignedIntTy::U8))),
             )),
             BuiltinMacroExprKind::FormatArgs | BuiltinMacroExprKind::FormatArgsNl => {
@@ -151,6 +151,6 @@ where
     }
 
     fn static_str_ty() -> Ty {
-        Ty::reference(RefMutability::Shared, Ty::Primitive(PrimitiveTy::Str))
+        Ty::reference(Mutability::Shared, Ty::Primitive(PrimitiveTy::Str))
     }
 }

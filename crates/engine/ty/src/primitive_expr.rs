@@ -1,6 +1,6 @@
 use rg_ir_model::{ExprBinaryOp, ExprUnaryOp, LiteralKind};
 
-use crate::{PrimitiveTy, RefMutability, Ty};
+use crate::{Mutability, PrimitiveTy, Ty};
 
 /// Returns the primitive type implied by a lowered literal token.
 pub fn ty_for_literal(kind: LiteralKind) -> Ty {
@@ -10,9 +10,7 @@ pub fn ty_for_literal(kind: LiteralKind) -> Ty {
         LiteralKind::Float { primitive_ty } | LiteralKind::Int { primitive_ty } => {
             primitive_ty.map(Ty::Primitive).unwrap_or(Ty::Unknown)
         }
-        LiteralKind::String => {
-            Ty::reference(RefMutability::Shared, Ty::Primitive(PrimitiveTy::Str))
-        }
+        LiteralKind::String => Ty::reference(Mutability::Shared, Ty::Primitive(PrimitiveTy::Str)),
         LiteralKind::Unknown => Ty::Unknown,
     }
 }
@@ -133,7 +131,7 @@ mod tests {
             ),
             (
                 LiteralKind::String,
-                Ty::reference(RefMutability::Shared, Ty::Primitive(PrimitiveTy::Str)),
+                Ty::reference(Mutability::Shared, Ty::Primitive(PrimitiveTy::Str)),
                 "string literal",
             ),
             (

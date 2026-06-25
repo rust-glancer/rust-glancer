@@ -5,7 +5,7 @@ use rg_text::Name;
 
 use super::family::{PlainTyToInferMapper, TyToInferMapper};
 use super::table::{InferVarId, InferVarKind};
-use crate::{GenericArg, PrimitiveTy, RefMutability, Ty};
+use crate::{GenericArg, Mutability, PrimitiveTy, Ty};
 
 /// Inference-aware mirror of `Ty`.
 ///
@@ -28,7 +28,7 @@ pub enum InferTy {
     },
     Slice(Box<InferTy>),
     Reference {
-        mutability: RefMutability,
+        mutability: Mutability,
         inner: Box<InferTy>,
     },
     Opaque {

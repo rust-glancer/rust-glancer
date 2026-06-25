@@ -8,7 +8,7 @@ use std::{borrow::Cow, collections::VecDeque};
 
 use rg_ir_storage::{DefMapSource, ItemLookupIndex, ItemStoreSource, TargetItemQuery};
 
-use crate::{ItemPathQuery, RefMutability, Ty, deref::DerefResolver};
+use crate::{ItemPathQuery, Mutability, Ty, deref::DerefResolver};
 use rg_std::UniqueVec;
 
 const AUTODEREF_LIMIT: usize = 8;
@@ -122,7 +122,7 @@ impl AutoderefMode {
 pub struct AutoderefCandidate<'ty> {
     ty: Cow<'ty, Ty>,
     depth: usize,
-    mutability: Option<RefMutability>,
+    mutability: Option<Mutability>,
 }
 
 impl<'ty> AutoderefCandidate<'ty> {
@@ -137,7 +137,7 @@ impl<'ty> AutoderefCandidate<'ty> {
     }
 
     /// Mutability of the reference dereferenced to reach this candidate.
-    pub fn mutability(&self) -> Option<RefMutability> {
+    pub fn mutability(&self) -> Option<Mutability> {
         self.mutability
     }
 }
@@ -165,7 +165,7 @@ enum AutoderefCandidatesKind<'ty> {
 struct PendingAutoderefCandidate<'ty> {
     ty: PendingAutoderefTy<'ty>,
     depth: usize,
-    mutability: Option<RefMutability>,
+    mutability: Option<Mutability>,
 }
 
 #[derive(Debug, Clone)]
@@ -189,7 +189,7 @@ impl<'ty> PendingAutoderefTy<'ty> {
         }
     }
 
-    fn reference_inner(&self) -> Option<(Self, RefMutability)> {
+    fn reference_inner(&self) -> Option<(Self, Mutability)> {
         match self {
             Self::Borrowed(ty) => ty
                 .reference_inner()
@@ -301,7 +301,7 @@ where
 pub struct ReferencePeelingCandidates<'ty> {
     next_ty: Option<&'ty Ty>,
     next_depth: usize,
-    next_mutability: Option<RefMutability>,
+    next_mutability: Option<Mutability>,
 }
 
 impl<'ty> ReferencePeelingCandidates<'ty> {

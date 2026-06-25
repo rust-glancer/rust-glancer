@@ -3,7 +3,7 @@
 //! `Deref`, structural inherent lookup, and associated-type projection all affect real type facts.
 //! This module therefore rejects uncertain headers instead of returning maybe-applicable matches.
 
-use crate::{GenericArg, NominalTy, RefMutability, Ty, TypeSubst};
+use crate::{GenericArg, NominalTy, Ty, TypeSubst};
 use rg_ir_model::hir::items::ImplData;
 use rg_ir_model::items::{GenericArg as ItemGenericArg, Mutability, TypePath, TypeRef};
 use rg_ir_model::{ImplRef, Path, TraitImplRef, TypePathResolution};
@@ -544,13 +544,9 @@ where
 
     fn ref_mutability_matches(
         impl_mutability: Mutability,
-        receiver_mutability: RefMutability,
+        receiver_mutability: Mutability,
     ) -> bool {
-        matches!(
-            (impl_mutability, receiver_mutability),
-            (Mutability::Shared, RefMutability::Shared)
-                | (Mutability::Mutable, RefMutability::Mutable)
-        )
+        impl_mutability == receiver_mutability
     }
 
     fn array_len_matches(
