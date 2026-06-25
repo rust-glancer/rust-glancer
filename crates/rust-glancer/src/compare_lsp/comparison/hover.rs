@@ -64,7 +64,7 @@ impl HoverAggregate {
                 }
             }
             QueryComparisonResult::NonComparable(_) => self.non_comparable_count += 1,
-            QueryComparisonResult::Locations(_) | QueryComparisonResult::Ranges(_) => {}
+            _ => {}
         }
     }
 

@@ -11,7 +11,10 @@ use std::{
 };
 
 use anyhow::Context as _;
-use ls_types::{DocumentHighlight, Location, LocationLink, Range, Uri};
+use ls_types::{
+    DocumentHighlight, DocumentSymbol, DocumentSymbolResponse, Location, LocationLink, OneOf,
+    Range, SymbolInformation, SymbolKind, Uri, WorkspaceSymbol, WorkspaceSymbolResponse,
+};
 use serde_json::Value;
 
 use crate::compare_lsp::{
@@ -148,6 +151,7 @@ impl NormalizedServerOutcome {
 pub(crate) enum NormalizedOutcome {
     Locations(NormalizedLocationSet),
     Ranges(NormalizedRangeSet),
+    Symbols(NormalizedSymbolSet),
     Hover { present: bool },
     MalformedSuccess { message: String },
     Error { code: i64, message: String },
@@ -172,6 +176,18 @@ impl NormalizedOutcome {
                     Ok(ranges) => Self::Ranges(ranges),
                     Err(message) => Self::MalformedSuccess { message },
                 },
+                QueryKind::DocumentSymbol => {
+                    match NormalizedSymbolSet::from_document_json(fixture_root, raw) {
+                        Ok(symbols) => Self::Symbols(symbols),
+                        Err(message) => Self::MalformedSuccess { message },
+                    }
+                }
+                QueryKind::WorkspaceSymbol => {
+                    match NormalizedSymbolSet::from_workspace_json(fixture_root, raw) {
+                        Ok(symbols) => Self::Symbols(symbols),
+                        Err(message) => Self::MalformedSuccess { message },
+                    }
+                }
                 QueryKind::Hover => Self::Hover {
                     present: !raw.is_null(),
                 },
@@ -218,6 +234,118 @@ impl NormalizedRangeSet {
 
     pub(crate) fn ranges(&self) -> &[NormalizedRange] {
         &self.ranges
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct NormalizedSymbolSet {
+    symbols: Vec<NormalizedSymbol>,
+    unmapped: Vec<UnmappedLocation>,
+}
+
+impl NormalizedSymbolSet {
+    fn from_document_json(fixture_root: &Path, raw: &Value) -> Result<Self, String> {
+        if raw.is_null() {
+            return Ok(Self {
+                symbols: Vec::new(),
+                unmapped: Vec::new(),
+            });
+        }
+
+        let response =
+            serde_json::from_value::<DocumentSymbolResponse>(raw.clone()).map_err(|_| {
+                format!(
+                    "unsupported document-symbol response shape {}",
+                    json_shape(raw)
+                )
+            })?;
+        let mut symbols = BTreeSet::new();
+        let mut unmapped = Vec::new();
+
+        match response {
+            DocumentSymbolResponse::Nested(document_symbols) => {
+                for symbol in document_symbols {
+                    NormalizedSymbol::push_document_symbol(symbol, &mut symbols);
+                }
+            }
+            DocumentSymbolResponse::Flat(symbol_infos) => {
+                for symbol in symbol_infos {
+                    match NormalizedSymbol::from_document_symbol_information(fixture_root, symbol) {
+                        Ok(symbol) => {
+                            symbols.insert(symbol);
+                        }
+                        Err(location) => unmapped.push(location),
+                    }
+                }
+            }
+        }
+
+        Ok(Self {
+            symbols: symbols.into_iter().collect(),
+            unmapped,
+        })
+    }
+
+    fn from_workspace_json(fixture_root: &Path, raw: &Value) -> Result<Self, String> {
+        if raw.is_null() {
+            return Ok(Self {
+                symbols: Vec::new(),
+                unmapped: Vec::new(),
+            });
+        }
+
+        let response =
+            serde_json::from_value::<WorkspaceSymbolResponse>(raw.clone()).map_err(|_| {
+                format!(
+                    "unsupported workspace-symbol response shape {}",
+                    json_shape(raw)
+                )
+            })?;
+        let mut symbols = BTreeSet::new();
+        let mut unmapped = Vec::new();
+
+        match response {
+            WorkspaceSymbolResponse::Nested(workspace_symbols) => {
+                for symbol in workspace_symbols {
+                    match NormalizedSymbol::from_workspace_symbol(fixture_root, symbol) {
+                        Ok(symbol) => {
+                            symbols.insert(symbol);
+                        }
+                        Err(location) => unmapped.push(location),
+                    }
+                }
+            }
+            WorkspaceSymbolResponse::Flat(symbol_infos) => {
+                for symbol in symbol_infos {
+                    match NormalizedSymbol::from_symbol_information(fixture_root, symbol) {
+                        Ok(symbol) => {
+                            symbols.insert(symbol);
+                        }
+                        Err(location) => unmapped.push(location),
+                    }
+                }
+            }
+        }
+
+        Ok(Self {
+            symbols: symbols.into_iter().collect(),
+            unmapped,
+        })
+    }
+
+    pub(crate) fn symbols(&self) -> &[NormalizedSymbol] {
+        &self.symbols
+    }
+
+    pub(crate) fn unmapped_count(&self) -> usize {
+        self.unmapped.len()
+    }
+
+    pub(crate) fn unmapped_summaries(&self) -> Vec<String> {
+        self.unmapped
+            .iter()
+            .map(UnmappedLocation::summary)
+            .collect()
     }
 }
 
@@ -402,6 +530,112 @@ impl NormalizedLocation {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct NormalizedSymbol {
+    name: String,
+    kind: i64,
+    path: Option<String>,
+    range: Option<NormalizedRange>,
+}
+
+impl NormalizedSymbol {
+    fn push_document_symbol(symbol: DocumentSymbol, symbols: &mut BTreeSet<Self>) {
+        let children = symbol.children.unwrap_or_default();
+        symbols.insert(Self {
+            name: symbol.name,
+            kind: symbol_kind_code(symbol.kind),
+            path: None,
+            range: Some(NormalizedRange::from_lsp(symbol.selection_range)),
+        });
+
+        for child in children {
+            Self::push_document_symbol(child, symbols);
+        }
+    }
+
+    fn from_symbol_information(
+        fixture_root: &Path,
+        symbol: SymbolInformation,
+    ) -> Result<Self, UnmappedLocation> {
+        let location = NormalizedLocation::from_protocol(
+            fixture_root,
+            ProtocolLocation::Location(symbol.location),
+        )?;
+        Ok(Self {
+            name: symbol.name,
+            kind: symbol_kind_code(symbol.kind),
+            path: Some(location.path),
+            range: Some(location.range),
+        })
+    }
+
+    fn from_document_symbol_information(
+        fixture_root: &Path,
+        symbol: SymbolInformation,
+    ) -> Result<Self, UnmappedLocation> {
+        let location = NormalizedLocation::from_protocol(
+            fixture_root,
+            ProtocolLocation::Location(symbol.location),
+        )?;
+        Ok(Self {
+            name: symbol.name,
+            kind: symbol_kind_code(symbol.kind),
+            path: None,
+            range: Some(location.range),
+        })
+    }
+
+    fn from_workspace_symbol(
+        fixture_root: &Path,
+        symbol: WorkspaceSymbol,
+    ) -> Result<Self, UnmappedLocation> {
+        let (path, range) = match symbol.location {
+            OneOf::Left(location) => {
+                let location = NormalizedLocation::from_protocol(
+                    fixture_root,
+                    ProtocolLocation::Location(location),
+                )?;
+                (Some(location.path), Some(location.range))
+            }
+            OneOf::Right(location) => {
+                let uri_text = location.uri.as_str().to_string();
+                if !location.uri.scheme().as_str().eq_ignore_ascii_case("file") {
+                    return Err(UnmappedLocation {
+                        uri: uri_text,
+                        reason: "URI is not a file URI".to_string(),
+                    });
+                }
+
+                let Some(path) = location.uri.to_file_path() else {
+                    return Err(UnmappedLocation {
+                        uri: uri_text,
+                        reason: "file URI has no path".to_string(),
+                    });
+                };
+                let path = path.into_owned();
+                let relative = path
+                    .strip_prefix(fixture_root)
+                    .map_err(|_| UnmappedLocation {
+                        uri: uri_text,
+                        reason: format!(
+                            "file path is outside fixture root {}",
+                            fixture_root.display(),
+                        ),
+                    })?;
+
+                (Some(fixture_relative_path(relative)), None)
+            }
+        };
+
+        Ok(Self {
+            name: symbol.name,
+            kind: symbol_kind_code(symbol.kind),
+            path,
+            range,
+        })
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) struct NormalizedRange {
     start_line: u32,
@@ -462,6 +696,13 @@ fn fixture_relative_path(path: &Path) -> String {
     }
 
     components.join("/")
+}
+
+fn symbol_kind_code(kind: SymbolKind) -> i64 {
+    serde_json::to_value(kind)
+        .expect("SymbolKind should serialize as an integer")
+        .as_i64()
+        .expect("SymbolKind should serialize as an integer")
 }
 
 fn json_shape(value: &Value) -> String {

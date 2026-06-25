@@ -119,7 +119,7 @@ impl RangeAggregate {
                 self.extra_ranges += comparison.extra_count();
             }
             QueryComparisonResult::NonComparable(_) => self.non_comparable_count += 1,
-            QueryComparisonResult::Locations(_) | QueryComparisonResult::Hover(_) => {}
+            _ => {}
         }
     }
 

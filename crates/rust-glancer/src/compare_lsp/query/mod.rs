@@ -5,7 +5,7 @@ mod parser;
 
 use std::sync::LazyLock;
 
-pub(crate) use self::model::{QueryCase, QueryKind, SourcePosition};
+pub(crate) use self::model::{QueryCase, QueryKind, QueryTarget, SourcePosition};
 
 use self::parser::parse_query_cases;
 
@@ -19,7 +19,9 @@ static RUST_ANALYZER_CASES: LazyLock<Vec<QueryCase>> =
 // Format:
 //
 // [<lsp-method>(<optional-params>)]
-// <fixture-relative-path>:<zero-based-line>:<zero-based-character> # <label>
+// <fixture-relative-path>:<zero-based-line>:<zero-based-character> # <label>  (position methods)
+// <fixture-relative-path> # <label>                                        (file methods)
+// <workspace-symbol-query> # <label>                                       (workspace methods)
 //
 // Keep cases fixture-root-local so location normalization remains meaningful. The line/character
 // coordinates are LSP coordinates, not byte offsets.
@@ -79,6 +81,22 @@ crates/ide/src/navigation_target.rs:120:10 # document_highlight/trait: TryToNav
 crates/ide/src/navigation_target.rs:140:11 # document_highlight/method: focus_or_full_range
 crates/ide/src/references.rs:120:14 # document_highlight/function: find_all_refs
 crates/ide/src/references.rs:209:14 # document_highlight/function: find_defs
+
+[textDocument/documentSymbol]
+crates/ide/src/call_hierarchy.rs # document_symbol/file: call_hierarchy
+crates/ide/src/goto_definition.rs # document_symbol/file: goto_definition
+crates/ide/src/goto_implementation.rs # document_symbol/file: goto_implementation
+crates/ide/src/hover.rs # document_symbol/file: hover
+crates/ide/src/navigation_target.rs # document_symbol/file: navigation_target
+crates/ide/src/references.rs # document_symbol/file: references
+
+[workspace/symbol]
+CallHierarchyConfig # workspace_symbol/type: CallHierarchyConfig
+find_all_refs # workspace_symbol/function: find_all_refs
+GotoDefinitionConfig # workspace_symbol/type: GotoDefinitionConfig
+HoverConfig # workspace_symbol/type: HoverConfig
+NavigationTarget # workspace_symbol/type: NavigationTarget
+TryToNav # workspace_symbol/trait: TryToNav
 
 [textDocument/hover]
 crates/ide/src/call_hierarchy.rs:19:11 # hover/type: CallItem

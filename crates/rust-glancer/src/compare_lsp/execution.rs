@@ -11,9 +11,9 @@ use std::{
 
 use anyhow::Context as _;
 use ls_types::{
-    DocumentHighlightParams, GotoDefinitionParams, HoverParams, PartialResultParams,
-    ReferenceContext, ReferenceParams, TextDocumentIdentifier, TextDocumentPositionParams,
-    WorkDoneProgressParams,
+    DocumentHighlightParams, DocumentSymbolParams, GotoDefinitionParams, HoverParams,
+    PartialResultParams, ReferenceContext, ReferenceParams, TextDocumentIdentifier,
+    TextDocumentPositionParams, WorkDoneProgressParams, WorkspaceSymbolParams,
     request::{GotoImplementationParams, GotoTypeDefinitionParams},
 };
 use serde_json::Value;
@@ -21,7 +21,7 @@ use serde_json::Value;
 use crate::compare_lsp::{
     fixture::Fixture,
     lsp_client::{RequestOutcome, RpcError},
-    query::{QueryCase, QueryKind},
+    query::{QueryCase, QueryKind, QueryTarget, SourcePosition},
     server::{self, StartedServers},
 };
 
@@ -147,49 +147,132 @@ struct QueryRequest {
 
 impl QueryRequest {
     fn from_case(fixture_root: &Path, query_case: &QueryCase) -> anyhow::Result<Self> {
-        let path = fixture_root.join(query_case.source_path());
-        let uri = server::file_uri(&path)
-            .with_context(|| format!("Creating query URI for `{}` failed", query_case.label()))?;
-        let position = query_case.position().to_lsp();
-        let text_document_position =
-            TextDocumentPositionParams::new(TextDocumentIdentifier::new(uri), position);
-
         let method = query_case.kind().lsp_method();
-        let params = match query_case.kind() {
-            QueryKind::References {
-                include_declaration,
-            } => serde_json::to_value(ReferenceParams {
-                text_document_position,
+        let params = match (query_case.kind(), query_case.target()) {
+            (
+                QueryKind::References {
+                    include_declaration,
+                },
+                QueryTarget::Position {
+                    source_path,
+                    position,
+                },
+            ) => serde_json::to_value(ReferenceParams {
+                text_document_position: Self::text_document_position(
+                    fixture_root,
+                    query_case.label(),
+                    source_path,
+                    position,
+                )?,
                 work_done_progress_params: WorkDoneProgressParams::default(),
                 partial_result_params: PartialResultParams::default(),
                 context: ReferenceContext {
                     include_declaration,
                 },
             }),
-            QueryKind::GotoDefinition => serde_json::to_value(GotoDefinitionParams {
-                text_document_position_params: text_document_position,
+            (
+                QueryKind::GotoDefinition,
+                QueryTarget::Position {
+                    source_path,
+                    position,
+                },
+            ) => serde_json::to_value(GotoDefinitionParams {
+                text_document_position_params: Self::text_document_position(
+                    fixture_root,
+                    query_case.label(),
+                    source_path,
+                    position,
+                )?,
                 work_done_progress_params: WorkDoneProgressParams::default(),
                 partial_result_params: PartialResultParams::default(),
             }),
-            QueryKind::TypeDefinition => serde_json::to_value(GotoTypeDefinitionParams {
-                text_document_position_params: text_document_position,
+            (
+                QueryKind::TypeDefinition,
+                QueryTarget::Position {
+                    source_path,
+                    position,
+                },
+            ) => serde_json::to_value(GotoTypeDefinitionParams {
+                text_document_position_params: Self::text_document_position(
+                    fixture_root,
+                    query_case.label(),
+                    source_path,
+                    position,
+                )?,
                 work_done_progress_params: WorkDoneProgressParams::default(),
                 partial_result_params: PartialResultParams::default(),
             }),
-            QueryKind::Implementation => serde_json::to_value(GotoImplementationParams {
-                text_document_position_params: text_document_position,
+            (
+                QueryKind::Implementation,
+                QueryTarget::Position {
+                    source_path,
+                    position,
+                },
+            ) => serde_json::to_value(GotoImplementationParams {
+                text_document_position_params: Self::text_document_position(
+                    fixture_root,
+                    query_case.label(),
+                    source_path,
+                    position,
+                )?,
                 work_done_progress_params: WorkDoneProgressParams::default(),
                 partial_result_params: PartialResultParams::default(),
             }),
-            QueryKind::DocumentHighlight => serde_json::to_value(DocumentHighlightParams {
-                text_document_position_params: text_document_position,
+            (
+                QueryKind::DocumentHighlight,
+                QueryTarget::Position {
+                    source_path,
+                    position,
+                },
+            ) => serde_json::to_value(DocumentHighlightParams {
+                text_document_position_params: Self::text_document_position(
+                    fixture_root,
+                    query_case.label(),
+                    source_path,
+                    position,
+                )?,
                 work_done_progress_params: WorkDoneProgressParams::default(),
                 partial_result_params: PartialResultParams::default(),
             }),
-            QueryKind::Hover => serde_json::to_value(HoverParams {
-                text_document_position_params: text_document_position,
+            (
+                QueryKind::Hover,
+                QueryTarget::Position {
+                    source_path,
+                    position,
+                },
+            ) => serde_json::to_value(HoverParams {
+                text_document_position_params: Self::text_document_position(
+                    fixture_root,
+                    query_case.label(),
+                    source_path,
+                    position,
+                )?,
                 work_done_progress_params: WorkDoneProgressParams::default(),
             }),
+            (QueryKind::DocumentSymbol, QueryTarget::File { source_path }) => {
+                serde_json::to_value(DocumentSymbolParams {
+                    text_document: Self::text_document_identifier(
+                        fixture_root,
+                        query_case.label(),
+                        source_path,
+                    )?,
+                    work_done_progress_params: WorkDoneProgressParams::default(),
+                    partial_result_params: PartialResultParams::default(),
+                })
+            }
+            (QueryKind::WorkspaceSymbol, QueryTarget::Workspace { query }) => {
+                serde_json::to_value(WorkspaceSymbolParams {
+                    partial_result_params: PartialResultParams::default(),
+                    work_done_progress_params: WorkDoneProgressParams::default(),
+                    query: query.to_string(),
+                })
+            }
+            (kind, target) => anyhow::bail!(
+                "LSP comparison query `{}` uses incompatible kind {:?} and target {:?}",
+                query_case.label(),
+                kind,
+                target,
+            ),
         };
 
         Ok(Self {
@@ -201,6 +284,29 @@ impl QueryRequest {
                 )
             })?,
         })
+    }
+
+    fn text_document_position(
+        fixture_root: &Path,
+        label: &str,
+        source_path: &str,
+        position: SourcePosition,
+    ) -> anyhow::Result<TextDocumentPositionParams> {
+        Ok(TextDocumentPositionParams::new(
+            Self::text_document_identifier(fixture_root, label, source_path)?,
+            position.to_lsp(),
+        ))
+    }
+
+    fn text_document_identifier(
+        fixture_root: &Path,
+        label: &str,
+        source_path: &str,
+    ) -> anyhow::Result<TextDocumentIdentifier> {
+        let path = fixture_root.join(source_path);
+        let uri = server::file_uri(&path)
+            .with_context(|| format!("Creating query URI for `{label}` failed"))?;
+        Ok(TextDocumentIdentifier::new(uri))
     }
 }
 

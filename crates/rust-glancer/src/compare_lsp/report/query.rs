@@ -159,6 +159,7 @@ impl QueryReport {
 enum QueryResultReport {
     Locations(LocationQueryReport),
     Ranges(RangeQueryReport),
+    Symbols(SymbolQueryReport),
     Hover(HoverQueryReport),
     NonComparable(NonComparableQueryReport),
 }
@@ -188,6 +189,19 @@ impl QueryResultReport {
                 recall_percent: ranges.completeness_percent(),
                 precision_percent: ranges.precision_signal_percent(),
             }),
+            QueryComparisonResult::Symbols(symbols) => Self::Symbols(SymbolQueryReport {
+                rust_glancer_count: symbols.rust_glancer_count(),
+                rust_analyzer_count: symbols.rust_analyzer_count(),
+                matched_count: symbols.matched_count(),
+                missing_count: symbols.missing_count(),
+                extra_count: symbols.extra_count(),
+                rust_glancer_unmapped_count: symbols.rust_glancer_unmapped_count(),
+                rust_analyzer_unmapped_count: symbols.rust_analyzer_unmapped_count(),
+                rust_glancer_unmapped: symbols.rust_glancer_unmapped().to_vec(),
+                rust_analyzer_unmapped: symbols.rust_analyzer_unmapped().to_vec(),
+                recall_percent: symbols.completeness_percent(),
+                precision_percent: symbols.precision_signal_percent(),
+            }),
             QueryComparisonResult::Hover(hover) => Self::Hover(HoverQueryReport {
                 rust_glancer_present: hover.rust_glancer_present(),
                 rust_analyzer_present: hover.rust_analyzer_present(),
@@ -210,6 +224,7 @@ impl QueryResultReport {
         match self {
             Self::Locations(_) => "locations",
             Self::Ranges(_) => "ranges",
+            Self::Symbols(_) => "symbols",
             Self::Hover(_) => "hover",
             Self::NonComparable(_) => "non_comparable",
         }
@@ -219,6 +234,7 @@ impl QueryResultReport {
         match self {
             Self::Locations(locations) => locations.append_query_cells(row),
             Self::Ranges(ranges) => ranges.append_query_cells(row),
+            Self::Symbols(symbols) => symbols.append_query_cells(row),
             Self::Hover(_) | Self::NonComparable(_) => {}
         }
     }
@@ -275,6 +291,43 @@ struct RangeQueryReport {
 }
 
 impl RangeQueryReport {
+    fn append_query_cells(&self, row: &mut ReportRowBuilder) {
+        row.value(
+            "rust_glancer_count",
+            ReportValue::count(self.rust_glancer_count),
+        )
+        .value(
+            "rust_analyzer_count",
+            ReportValue::count(self.rust_analyzer_count),
+        )
+        .value("matched", ReportValue::count(self.matched_count))
+        .value("missing", ReportValue::count(self.missing_count))
+        .value("extra", ReportValue::count(self.extra_count))
+        .value("recall", optional_percent(self.recall_percent))
+        .value("precision", optional_percent(self.precision_percent));
+    }
+}
+
+#[derive(Debug, Serialize)]
+struct SymbolQueryReport {
+    rust_glancer_count: usize,
+    rust_analyzer_count: usize,
+    matched_count: usize,
+    missing_count: usize,
+    extra_count: usize,
+    rust_glancer_unmapped_count: usize,
+    rust_analyzer_unmapped_count: usize,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    rust_glancer_unmapped: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    rust_analyzer_unmapped: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    recall_percent: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    precision_percent: Option<f64>,
+}
+
+impl SymbolQueryReport {
     fn append_query_cells(&self, row: &mut ReportRowBuilder) {
         row.value(
             "rust_glancer_count",

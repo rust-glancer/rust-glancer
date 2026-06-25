@@ -68,6 +68,23 @@ impl MethodAggregateReport {
                     precision_percent: ranges.precision_signal_percent(),
                 }),
             },
+            MethodAggregateData::Symbols(symbols) => Self {
+                method: aggregate.method().lsp_method().to_string(),
+                query_count: symbols.query_count(),
+                comparable_count: symbols.comparable_count(),
+                non_comparable_count: symbols.non_comparable_count(),
+                data: MethodAggregateDataReport::Symbols(SymbolAggregateReport {
+                    rust_glancer_count: symbols.rust_glancer_symbols(),
+                    rust_analyzer_count: symbols.rust_analyzer_symbols(),
+                    matched_count: symbols.matched_symbols(),
+                    missing_count: symbols.missing_symbols(),
+                    extra_count: symbols.extra_symbols(),
+                    rust_glancer_unmapped_count: symbols.rust_glancer_unmapped_symbols(),
+                    rust_analyzer_unmapped_count: symbols.rust_analyzer_unmapped_symbols(),
+                    recall_percent: symbols.weighted_completeness_percent(),
+                    precision_percent: symbols.precision_signal_percent(),
+                }),
+            },
         }
     }
 
@@ -136,6 +153,7 @@ impl MethodAggregateReport {
 enum MethodAggregateDataReport {
     Locations(LocationAggregateReport),
     Ranges(RangeAggregateReport),
+    Symbols(SymbolAggregateReport),
     Hover(HoverAggregateReport),
 }
 
@@ -144,6 +162,7 @@ impl MethodAggregateDataReport {
         match self {
             Self::Locations(locations) => locations.append_row_cells(row),
             Self::Ranges(ranges) => ranges.append_row_cells(row),
+            Self::Symbols(symbols) => symbols.append_row_cells(row),
             Self::Hover(hover) => hover.append_row_cells(row),
         }
     }
@@ -212,6 +231,44 @@ impl RangeAggregateReport {
             .value("extra", ReportValue::count(self.extra_count))
             .value("recall", optional_percent(self.recall_percent))
             .value("precision", optional_percent(self.precision_percent));
+    }
+}
+
+#[derive(Debug, Serialize)]
+struct SymbolAggregateReport {
+    rust_glancer_count: usize,
+    rust_analyzer_count: usize,
+    matched_count: usize,
+    missing_count: usize,
+    extra_count: usize,
+    rust_glancer_unmapped_count: usize,
+    rust_analyzer_unmapped_count: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    recall_percent: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    precision_percent: Option<f64>,
+}
+
+impl SymbolAggregateReport {
+    fn append_row_cells(&self, row: &mut ReportRowBuilder) {
+        row.value("rust_glancer", ReportValue::count(self.rust_glancer_count))
+            .value(
+                "rust_analyzer",
+                ReportValue::count(self.rust_analyzer_count),
+            )
+            .value("matched", ReportValue::count(self.matched_count))
+            .value("missing", ReportValue::count(self.missing_count))
+            .value("extra", ReportValue::count(self.extra_count))
+            .value("recall", optional_percent(self.recall_percent))
+            .value("precision", optional_percent(self.precision_percent))
+            .value(
+                "unmapped_rg",
+                ReportValue::count(self.rust_glancer_unmapped_count),
+            )
+            .value(
+                "unmapped_ra",
+                ReportValue::count(self.rust_analyzer_unmapped_count),
+            );
     }
 }
 

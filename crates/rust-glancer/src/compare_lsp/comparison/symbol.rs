@@ -1,59 +1,57 @@
-//! Location-result comparison and aggregation.
+//! Symbol-result comparison and aggregation.
 
 use std::collections::BTreeSet;
 
 use crate::compare_lsp::{
     comparison::{QueryComparison, QueryComparisonResult, outcome::Ratio},
-    normalization::{NormalizedLocation, NormalizedLocationSet},
+    normalization::{NormalizedSymbol, NormalizedSymbolSet},
 };
 
 #[derive(Debug)]
-pub(crate) struct LocationComparison {
+pub(crate) struct SymbolComparison {
     rust_glancer_count: usize,
     rust_analyzer_count: usize,
-    matched: Vec<NormalizedLocation>,
-    missing: Vec<NormalizedLocation>,
-    extra: Vec<NormalizedLocation>,
+    matched: Vec<NormalizedSymbol>,
+    missing: Vec<NormalizedSymbol>,
+    extra: Vec<NormalizedSymbol>,
     rust_glancer_unmapped_count: usize,
     rust_analyzer_unmapped_count: usize,
     rust_glancer_unmapped: Vec<String>,
     rust_analyzer_unmapped: Vec<String>,
 }
 
-impl LocationComparison {
+impl SymbolComparison {
     pub(super) fn new(
-        rust_glancer: &NormalizedLocationSet,
-        rust_analyzer: &NormalizedLocationSet,
+        rust_glancer: &NormalizedSymbolSet,
+        rust_analyzer: &NormalizedSymbolSet,
     ) -> Self {
-        let rust_glancer_locations = rust_glancer
-            .locations()
+        let rust_glancer_symbols = rust_glancer
+            .symbols()
             .iter()
             .cloned()
             .collect::<BTreeSet<_>>();
-        let rust_analyzer_locations = rust_analyzer
-            .locations()
+        let rust_analyzer_symbols = rust_analyzer
+            .symbols()
             .iter()
             .cloned()
             .collect::<BTreeSet<_>>();
 
-        // The normalized lists are already deterministic, but using set operations here makes the
-        // scoring rules explicit and keeps missing/extra details ready for the report slice.
-        let matched = rust_glancer_locations
-            .intersection(&rust_analyzer_locations)
+        let matched = rust_glancer_symbols
+            .intersection(&rust_analyzer_symbols)
             .cloned()
             .collect();
-        let missing = rust_analyzer_locations
-            .difference(&rust_glancer_locations)
+        let missing = rust_analyzer_symbols
+            .difference(&rust_glancer_symbols)
             .cloned()
             .collect();
-        let extra = rust_glancer_locations
-            .difference(&rust_analyzer_locations)
+        let extra = rust_glancer_symbols
+            .difference(&rust_analyzer_symbols)
             .cloned()
             .collect();
 
         Self {
-            rust_glancer_count: rust_glancer_locations.len(),
-            rust_analyzer_count: rust_analyzer_locations.len(),
+            rust_glancer_count: rust_glancer_symbols.len(),
+            rust_analyzer_count: rust_analyzer_symbols.len(),
             matched,
             missing,
             extra,
@@ -70,21 +68,6 @@ impl LocationComparison {
 
     pub(crate) fn rust_analyzer_count(&self) -> usize {
         self.rust_analyzer_count
-    }
-
-    #[cfg(test)]
-    pub(super) fn matched(&self) -> &[NormalizedLocation] {
-        &self.matched
-    }
-
-    #[cfg(test)]
-    pub(super) fn missing(&self) -> &[NormalizedLocation] {
-        &self.missing
-    }
-
-    #[cfg(test)]
-    pub(super) fn extra(&self) -> &[NormalizedLocation] {
-        &self.extra
     }
 
     pub(crate) fn matched_count(&self) -> usize {
@@ -133,32 +116,32 @@ impl LocationComparison {
 }
 
 #[derive(Debug, Default)]
-pub(crate) struct LocationAggregate {
+pub(crate) struct SymbolAggregate {
     query_count: usize,
     comparable_count: usize,
     non_comparable_count: usize,
-    rust_glancer_locations: usize,
-    rust_analyzer_locations: usize,
-    matched_locations: usize,
-    missing_locations: usize,
-    extra_locations: usize,
-    rust_glancer_unmapped_locations: usize,
-    rust_analyzer_unmapped_locations: usize,
+    rust_glancer_symbols: usize,
+    rust_analyzer_symbols: usize,
+    matched_symbols: usize,
+    missing_symbols: usize,
+    extra_symbols: usize,
+    rust_glancer_unmapped_symbols: usize,
+    rust_analyzer_unmapped_symbols: usize,
 }
 
-impl LocationAggregate {
+impl SymbolAggregate {
     pub(super) fn record(&mut self, query: &QueryComparison) {
         self.query_count += 1;
         match query.result() {
-            QueryComparisonResult::Locations(comparison) => {
+            QueryComparisonResult::Symbols(comparison) => {
                 self.comparable_count += 1;
-                self.rust_glancer_locations += comparison.rust_glancer_count();
-                self.rust_analyzer_locations += comparison.rust_analyzer_count();
-                self.matched_locations += comparison.matched_count();
-                self.missing_locations += comparison.missing_count();
-                self.extra_locations += comparison.extra_count();
-                self.rust_glancer_unmapped_locations += comparison.rust_glancer_unmapped_count();
-                self.rust_analyzer_unmapped_locations += comparison.rust_analyzer_unmapped_count();
+                self.rust_glancer_symbols += comparison.rust_glancer_count();
+                self.rust_analyzer_symbols += comparison.rust_analyzer_count();
+                self.matched_symbols += comparison.matched_count();
+                self.missing_symbols += comparison.missing_count();
+                self.extra_symbols += comparison.extra_count();
+                self.rust_glancer_unmapped_symbols += comparison.rust_glancer_unmapped_count();
+                self.rust_analyzer_unmapped_symbols += comparison.rust_analyzer_unmapped_count();
             }
             QueryComparisonResult::NonComparable(_) => self.non_comparable_count += 1,
             _ => {}
@@ -177,40 +160,40 @@ impl LocationAggregate {
         self.non_comparable_count
     }
 
-    pub(crate) fn rust_glancer_locations(&self) -> usize {
-        self.rust_glancer_locations
+    pub(crate) fn rust_glancer_symbols(&self) -> usize {
+        self.rust_glancer_symbols
     }
 
-    pub(crate) fn rust_analyzer_locations(&self) -> usize {
-        self.rust_analyzer_locations
+    pub(crate) fn rust_analyzer_symbols(&self) -> usize {
+        self.rust_analyzer_symbols
     }
 
-    pub(crate) fn matched_locations(&self) -> usize {
-        self.matched_locations
+    pub(crate) fn matched_symbols(&self) -> usize {
+        self.matched_symbols
     }
 
-    pub(crate) fn missing_locations(&self) -> usize {
-        self.missing_locations
+    pub(crate) fn missing_symbols(&self) -> usize {
+        self.missing_symbols
     }
 
-    pub(crate) fn extra_locations(&self) -> usize {
-        self.extra_locations
+    pub(crate) fn extra_symbols(&self) -> usize {
+        self.extra_symbols
     }
 
-    pub(crate) fn rust_glancer_unmapped_locations(&self) -> usize {
-        self.rust_glancer_unmapped_locations
+    pub(crate) fn rust_glancer_unmapped_symbols(&self) -> usize {
+        self.rust_glancer_unmapped_symbols
     }
 
-    pub(crate) fn rust_analyzer_unmapped_locations(&self) -> usize {
-        self.rust_analyzer_unmapped_locations
+    pub(crate) fn rust_analyzer_unmapped_symbols(&self) -> usize {
+        self.rust_analyzer_unmapped_symbols
     }
 
     fn weighted_completeness(&self) -> Option<Ratio> {
-        Ratio::new(self.matched_locations, self.rust_analyzer_locations)
+        Ratio::new(self.matched_symbols, self.rust_analyzer_symbols)
     }
 
     fn precision_signal(&self) -> Option<Ratio> {
-        Ratio::new(self.matched_locations, self.rust_glancer_locations)
+        Ratio::new(self.matched_symbols, self.rust_glancer_symbols)
     }
 
     pub(crate) fn weighted_completeness_percent(&self) -> Option<f64> {

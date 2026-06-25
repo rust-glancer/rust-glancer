@@ -153,8 +153,11 @@ impl ServerReadiness {
 fn unique_source_paths(query_cases: &[QueryCase]) -> Vec<&'static str> {
     let mut source_paths = Vec::new();
     for query_case in query_cases {
-        if !source_paths.contains(&query_case.source_path()) {
-            source_paths.push(query_case.source_path());
+        let Some(source_path) = query_case.source_path() else {
+            continue;
+        };
+        if !source_paths.contains(&source_path) {
+            source_paths.push(source_path);
         }
     }
     source_paths

@@ -76,6 +76,16 @@ impl FixtureReport {
                     QueryKind::DocumentHighlight.lsp_method(),
                     self.methods.document_highlight,
                 )
+                .count_as(
+                    "document_symbol",
+                    QueryKind::DocumentSymbol.lsp_method(),
+                    self.methods.document_symbol,
+                )
+                .count_as(
+                    "workspace_symbol",
+                    QueryKind::WorkspaceSymbol.lsp_method(),
+                    self.methods.workspace_symbol,
+                )
                 .count_as("hover", QueryKind::Hover.lsp_method(), self.methods.hover);
         });
     }
@@ -89,6 +99,8 @@ struct QueryMethodReport {
     type_definition: usize,
     implementation: usize,
     document_highlight: usize,
+    document_symbol: usize,
+    workspace_symbol: usize,
     hover: usize,
 }
 
@@ -119,6 +131,14 @@ impl QueryMethodReport {
             document_highlight: query_cases
                 .iter()
                 .filter(|query| query.kind().is_document_highlight())
+                .count(),
+            document_symbol: query_cases
+                .iter()
+                .filter(|query| query.kind().is_document_symbol())
+                .count(),
+            workspace_symbol: query_cases
+                .iter()
+                .filter(|query| query.kind().is_workspace_symbol())
                 .count(),
             hover: query_cases
                 .iter()

@@ -51,14 +51,24 @@ fn parse_query_case(line: &'static str, line_number: usize, kind: QueryKind) -> 
         panic!("query label is empty on line {line_number}: `{line}`");
     }
 
-    let location = spec.trim();
-    if location.is_empty() {
-        panic!("missing source location on line {line_number}: `{line}`");
+    let input = spec.trim();
+    if input.is_empty() {
+        panic!("missing query input on line {line_number}: `{line}`");
     }
 
-    let (source_path, position) = parse_location(location, line_number);
-
-    QueryCase::new(label, source_path, position, kind)
+    match kind {
+        QueryKind::References { .. }
+        | QueryKind::GotoDefinition
+        | QueryKind::TypeDefinition
+        | QueryKind::Implementation
+        | QueryKind::DocumentHighlight
+        | QueryKind::Hover => {
+            let (source_path, position) = parse_location(input, line_number);
+            QueryCase::position(label, kind, source_path, position)
+        }
+        QueryKind::DocumentSymbol => QueryCase::file(label, kind, input),
+        QueryKind::WorkspaceSymbol => QueryCase::workspace_query(label, kind, input),
+    }
 }
 
 fn parse_location(location: &'static str, line_number: usize) -> (&'static str, SourcePosition) {
@@ -91,6 +101,8 @@ fn parse_query_kind(method: &'static str, line_number: usize) -> QueryKind {
         method if method == QueryKind::DocumentHighlight.lsp_method() => {
             QueryKind::DocumentHighlight
         }
+        method if method == QueryKind::DocumentSymbol.lsp_method() => QueryKind::DocumentSymbol,
+        method if method == QueryKind::WorkspaceSymbol.lsp_method() => QueryKind::WorkspaceSymbol,
         method if method == QueryKind::Hover.lsp_method() => QueryKind::Hover,
         _ => panic!("unsupported LSP query method `{method}` on line {line_number}"),
     }

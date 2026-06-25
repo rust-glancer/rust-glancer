@@ -7,6 +7,7 @@ mod hover;
 mod location;
 mod outcome;
 mod range;
+mod symbol;
 
 use std::time::Duration;
 
@@ -16,6 +17,7 @@ use crate::compare_lsp::{
         location::{LocationAggregate, LocationComparison},
         outcome::NonComparableComparison,
         range::{RangeAggregate, RangeComparison},
+        symbol::{SymbolAggregate, SymbolComparison},
     },
     execution::ServerUnderTest,
     normalization::{NormalizedOutcome, NormalizedSummary},
@@ -97,6 +99,21 @@ impl QueryComparison {
                     rust_analyzer,
                 )),
             },
+            QueryKind::DocumentSymbol | QueryKind::WorkspaceSymbol => {
+                match (rust_glancer, rust_analyzer) {
+                    (
+                        NormalizedOutcome::Symbols(rust_glancer),
+                        NormalizedOutcome::Symbols(rust_analyzer),
+                    ) => QueryComparisonResult::Symbols(SymbolComparison::new(
+                        rust_glancer,
+                        rust_analyzer,
+                    )),
+                    _ => QueryComparisonResult::NonComparable(NonComparableComparison::new(
+                        rust_glancer,
+                        rust_analyzer,
+                    )),
+                }
+            }
             QueryKind::Hover => match (rust_glancer, rust_analyzer) {
                 (
                     NormalizedOutcome::Hover {
@@ -150,6 +167,7 @@ impl QueryComparison {
 pub(crate) enum QueryComparisonResult {
     Locations(LocationComparison),
     Ranges(RangeComparison),
+    Symbols(SymbolComparison),
     Hover(HoverComparison),
     NonComparable(NonComparableComparison),
 }
@@ -167,6 +185,8 @@ impl MethodAggregate {
         let mut type_definition = LocationAggregate::default();
         let mut implementation = LocationAggregate::default();
         let mut document_highlight = RangeAggregate::default();
+        let mut document_symbol = SymbolAggregate::default();
+        let mut workspace_symbol = SymbolAggregate::default();
         let mut hover = HoverAggregate::default();
 
         for query in queries {
@@ -176,6 +196,8 @@ impl MethodAggregate {
                 QueryMethod::TypeDefinition => type_definition.record(query),
                 QueryMethod::Implementation => implementation.record(query),
                 QueryMethod::DocumentHighlight => document_highlight.record(query),
+                QueryMethod::DocumentSymbol => document_symbol.record(query),
+                QueryMethod::WorkspaceSymbol => workspace_symbol.record(query),
                 QueryMethod::Hover => hover.record(query),
             }
         }
@@ -211,6 +233,18 @@ impl MethodAggregate {
                 data: MethodAggregateData::Ranges(document_highlight),
             });
         }
+        if document_symbol.query_count() > 0 {
+            aggregates.push(Self {
+                method: QueryMethod::DocumentSymbol,
+                data: MethodAggregateData::Symbols(document_symbol),
+            });
+        }
+        if workspace_symbol.query_count() > 0 {
+            aggregates.push(Self {
+                method: QueryMethod::WorkspaceSymbol,
+                data: MethodAggregateData::Symbols(workspace_symbol),
+            });
+        }
         if hover.query_count() > 0 {
             aggregates.push(Self {
                 method: QueryMethod::Hover,
@@ -234,6 +268,7 @@ impl MethodAggregate {
 pub(crate) enum MethodAggregateData {
     Locations(LocationAggregate),
     Ranges(RangeAggregate),
+    Symbols(SymbolAggregate),
     Hover(HoverAggregate),
 }
 
@@ -244,6 +279,8 @@ pub(crate) enum QueryMethod {
     TypeDefinition,
     Implementation,
     DocumentHighlight,
+    DocumentSymbol,
+    WorkspaceSymbol,
     Hover,
 }
 
@@ -255,6 +292,8 @@ impl QueryMethod {
             QueryKind::TypeDefinition => Self::TypeDefinition,
             QueryKind::Implementation => Self::Implementation,
             QueryKind::DocumentHighlight => Self::DocumentHighlight,
+            QueryKind::DocumentSymbol => Self::DocumentSymbol,
+            QueryKind::WorkspaceSymbol => Self::WorkspaceSymbol,
             QueryKind::Hover => Self::Hover,
         }
     }
@@ -269,6 +308,8 @@ impl QueryMethod {
             Self::TypeDefinition => QueryKind::TypeDefinition.lsp_method(),
             Self::Implementation => QueryKind::Implementation.lsp_method(),
             Self::DocumentHighlight => QueryKind::DocumentHighlight.lsp_method(),
+            Self::DocumentSymbol => QueryKind::DocumentSymbol.lsp_method(),
+            Self::WorkspaceSymbol => QueryKind::WorkspaceSymbol.lsp_method(),
             Self::Hover => QueryKind::Hover.lsp_method(),
         }
     }

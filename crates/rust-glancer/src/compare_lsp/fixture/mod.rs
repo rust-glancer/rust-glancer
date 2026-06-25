@@ -11,7 +11,7 @@ use anyhow::Context as _;
 
 use crate::compare_lsp::{
     CliFixture,
-    query::{self, QueryCase},
+    query::{self, QueryCase, QueryTarget},
 };
 
 /// Prepared benchmark fixture used by the LSP comparison pipeline.
@@ -108,7 +108,10 @@ impl Fixture {
     /// Check that hardcoded vector entries still point at real source positions.
     fn validate_query_files(root: &Path, query_cases: &[QueryCase]) -> anyhow::Result<()> {
         for query in query_cases {
-            let path = root.join(query.source_path());
+            let Some(source_path) = query.source_path() else {
+                continue;
+            };
+            let path = root.join(source_path);
             if !path.is_file() {
                 anyhow::bail!(
                     "LSP comparison query `{}` points to missing file {}",
@@ -123,23 +126,26 @@ impl Fixture {
                     path.display()
                 )
             })?;
+            let QueryTarget::Position { position, .. } = query.target() else {
+                continue;
+            };
             // LSP speaks UTF-16 positions, so validate the same coordinate space the eventual
             // request payload will use.
-            let Some(line) = source.lines().nth(query.position().line() as usize) else {
+            let Some(line) = source.lines().nth(position.line() as usize) else {
                 anyhow::bail!(
                     "LSP comparison query `{}` points past the end of {} at line {}",
                     query.label(),
                     path.display(),
-                    query.position().line(),
+                    position.line(),
                 );
             };
-            if line.encode_utf16().count() < query.position().character() as usize {
+            if line.encode_utf16().count() < position.character() as usize {
                 anyhow::bail!(
                     "LSP comparison query `{}` points past line {} in {} at character {}",
                     query.label(),
-                    query.position().line(),
+                    position.line(),
                     path.display(),
-                    query.position().character(),
+                    position.character(),
                 );
             }
         }

@@ -7,23 +7,48 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct QueryCase {
     label: &'static str,
-    source_path: &'static str,
-    position: SourcePosition,
     kind: QueryKind,
+    target: QueryTarget,
 }
 
 impl QueryCase {
-    pub(super) const fn new(
+    pub(super) const fn position(
         label: &'static str,
+        kind: QueryKind,
         source_path: &'static str,
         position: SourcePosition,
-        kind: QueryKind,
     ) -> Self {
         Self {
             label,
-            source_path,
-            position,
             kind,
+            target: QueryTarget::Position {
+                source_path,
+                position,
+            },
+        }
+    }
+
+    pub(super) const fn file(
+        label: &'static str,
+        kind: QueryKind,
+        source_path: &'static str,
+    ) -> Self {
+        Self {
+            label,
+            kind,
+            target: QueryTarget::File { source_path },
+        }
+    }
+
+    pub(super) const fn workspace_query(
+        label: &'static str,
+        kind: QueryKind,
+        query: &'static str,
+    ) -> Self {
+        Self {
+            label,
+            kind,
+            target: QueryTarget::Workspace { query },
         }
     }
 
@@ -31,17 +56,37 @@ impl QueryCase {
         self.label
     }
 
-    pub(crate) fn source_path(&self) -> &'static str {
-        self.source_path
-    }
-
-    pub(crate) fn position(&self) -> SourcePosition {
-        self.position
-    }
-
     pub(crate) fn kind(&self) -> QueryKind {
         self.kind
     }
+
+    pub(crate) fn target(&self) -> QueryTarget {
+        self.target
+    }
+
+    pub(crate) fn source_path(&self) -> Option<&'static str> {
+        match self.target {
+            QueryTarget::Position { source_path, .. } | QueryTarget::File { source_path } => {
+                Some(source_path)
+            }
+            QueryTarget::Workspace { .. } => None,
+        }
+    }
+}
+
+/// Request input shape for one query case.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum QueryTarget {
+    Position {
+        source_path: &'static str,
+        position: SourcePosition,
+    },
+    File {
+        source_path: &'static str,
+    },
+    Workspace {
+        query: &'static str,
+    },
 }
 
 /// Zero-based position in the same UTF-16 coordinate space used by LSP.
@@ -79,6 +124,8 @@ pub(crate) enum QueryKind {
     TypeDefinition,
     Implementation,
     DocumentHighlight,
+    DocumentSymbol,
+    WorkspaceSymbol,
     Hover,
 }
 
@@ -92,6 +139,8 @@ impl QueryKind {
             Self::TypeDefinition => request::GotoTypeDefinition::METHOD,
             Self::Implementation => request::GotoImplementation::METHOD,
             Self::DocumentHighlight => request::DocumentHighlightRequest::METHOD,
+            Self::DocumentSymbol => request::DocumentSymbolRequest::METHOD,
+            Self::WorkspaceSymbol => request::WorkspaceSymbolRequest::METHOD,
             Self::Hover => request::HoverRequest::METHOD,
         }
     }
@@ -109,6 +158,8 @@ impl QueryKind {
             | Self::TypeDefinition
             | Self::Implementation
             | Self::DocumentHighlight
+            | Self::DocumentSymbol
+            | Self::WorkspaceSymbol
             | Self::Hover => None,
         }
     }
@@ -127,6 +178,14 @@ impl QueryKind {
 
     pub(crate) fn is_document_highlight(self) -> bool {
         matches!(self, Self::DocumentHighlight)
+    }
+
+    pub(crate) fn is_document_symbol(self) -> bool {
+        matches!(self, Self::DocumentSymbol)
+    }
+
+    pub(crate) fn is_workspace_symbol(self) -> bool {
+        matches!(self, Self::WorkspaceSymbol)
     }
 
     pub(crate) fn is_hover(self) -> bool {
