@@ -264,9 +264,7 @@ impl<'db, 'txn> BodyMacroExpander<'db, 'txn> {
         parse_kind: ExpansionParseKind,
     ) -> Option<ExpandedBodyMacro<Parse<SyntaxNode>>> {
         let request = invocation.expansion_request(resolved.def_ref, resolved.data, parse_kind);
-        let Some(ExpansionSyntax { parse, span_map }) = self.runtime.expand_now(request) else {
-            return None;
-        };
+        let ExpansionSyntax { parse, span_map } = self.runtime.expand_now(request)?;
 
         Some(ExpandedBodyMacro::new(
             parse,

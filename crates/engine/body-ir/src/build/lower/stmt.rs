@@ -33,10 +33,10 @@ impl BodyLowering<'_> {
         };
 
         let mut params = Vec::new();
-        if let Some(self_param) = param_list.self_param() {
-            if let Some(self_param) = self.cfg.enabled_syntax(self_param) {
-                params.push(self.lower_self_param(self_param, param_scope));
-            }
+        if let Some(self_param) = param_list.self_param()
+            && let Some(self_param) = self.cfg.enabled_syntax(self_param)
+        {
+            params.push(self.lower_self_param(self_param, param_scope));
         }
 
         for param in param_list.params() {

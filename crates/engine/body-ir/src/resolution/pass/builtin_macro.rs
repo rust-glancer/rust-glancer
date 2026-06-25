@@ -128,9 +128,11 @@ where
                 .enumerate()
                 .map(|(idx, name)| TypePathSegment {
                     name: Name::new(name),
-                    args: (idx == final_idx)
-                        .then(|| final_args.clone())
-                        .unwrap_or_default(),
+                    args: if idx == final_idx {
+                        final_args.clone()
+                    } else {
+                        Default::default()
+                    },
                     span: synthetic_span,
                 })
                 .collect(),
