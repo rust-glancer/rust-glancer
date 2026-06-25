@@ -66,6 +66,25 @@ impl ComparisonSummary {
     pub(crate) fn aggregates(&self) -> &[MethodAggregate] {
         &self.aggregates
     }
+
+    /// One normalized completeness score for the whole benchmark run.
+    ///
+    /// Each method contributes equally, regardless of how many raw locations/ranges/hints it
+    /// returns. Non-comparable queries reduce that method's contribution before the method scores
+    /// are averaged.
+    pub(crate) fn equivalence_score_percent(&self) -> Option<f64> {
+        if self.aggregates.is_empty() {
+            return None;
+        }
+
+        let total = self
+            .aggregates
+            .iter()
+            .map(MethodAggregate::equivalence_score_percent)
+            .sum::<f64>();
+
+        Some(total / self.aggregates.len() as f64)
+    }
 }
 
 #[derive(Debug)]
@@ -341,6 +360,10 @@ impl MethodAggregate {
     pub(crate) fn data(&self) -> &MethodAggregateData {
         &self.data
     }
+
+    fn equivalence_score_percent(&self) -> f64 {
+        self.data.equivalence_score_percent()
+    }
 }
 
 #[derive(Debug)]
@@ -364,6 +387,29 @@ impl MethodAggregateData {
             Self::Symbols(symbols) => symbols.summary(),
             Self::InlayHints(hints) => hints.summary(),
             Self::Hover(hover) => hover.summary(),
+        }
+    }
+
+    fn equivalence_score_percent(&self) -> f64 {
+        let summary = self.summary();
+        if summary.query_count == 0 {
+            return 0.0;
+        }
+
+        let comparable_ratio = summary.comparable_count as f64 / summary.query_count as f64;
+
+        comparable_ratio * self.match_score_percent()
+    }
+
+    fn match_score_percent(&self) -> f64 {
+        match self {
+            Self::Locations(locations) => locations.metrics().set.match_score_percent,
+            Self::PrepareRenames(rename) => rename.metrics().match_score_percent,
+            Self::RenameEdits(rename) => rename.metrics().set.match_score_percent,
+            Self::Ranges(ranges) => ranges.metrics().match_score_percent,
+            Self::Symbols(symbols) => symbols.metrics().set.match_score_percent,
+            Self::InlayHints(hints) => hints.metrics().match_score_percent,
+            Self::Hover(hover) => hover.metrics().match_score_percent,
         }
     }
 }

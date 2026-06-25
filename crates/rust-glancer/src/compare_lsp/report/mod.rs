@@ -38,7 +38,11 @@ impl LspComparisonReport {
         comparison: &ComparisonSummary,
     ) -> Self {
         Self {
-            fixture: FixtureReport::capture(fixture, opened_files),
+            fixture: FixtureReport::capture(
+                fixture,
+                opened_files,
+                comparison.equivalence_score_percent(),
+            ),
             servers: vec![rust_glancer, rust_analyzer],
             aggregates: comparison
                 .aggregates()

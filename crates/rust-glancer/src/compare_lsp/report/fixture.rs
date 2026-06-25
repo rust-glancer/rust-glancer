@@ -7,7 +7,7 @@ use crate::{
         fixture::Fixture,
         query::{QueryCase, QueryKind},
     },
-    report::{ReportDocumentBuilder, ReportSectionBuilder},
+    report::{ReportDocumentBuilder, ReportSectionBuilder, ReportValue},
 };
 
 #[derive(Debug, Serialize)]
@@ -16,17 +16,24 @@ pub(super) struct FixtureReport {
     root: String,
     query_count: usize,
     opened_files: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    equivalence_score_percent: Option<f64>,
     methods: QueryMethodReport,
 }
 
 impl FixtureReport {
-    pub(super) fn capture(fixture: &Fixture, opened_files: usize) -> Self {
+    pub(super) fn capture(
+        fixture: &Fixture,
+        opened_files: usize,
+        equivalence_score_percent: Option<f64>,
+    ) -> Self {
         let query_cases = fixture.query_cases();
         Self {
             kind: fixture.kind().to_string(),
             root: fixture.root().display().to_string(),
             query_count: query_cases.len(),
             opened_files,
+            equivalence_score_percent,
             methods: QueryMethodReport::capture(query_cases),
         }
     }
@@ -43,6 +50,13 @@ impl FixtureReport {
                 .text("root", &self.root)
                 .count_as("query_count", "Query count", self.query_count)
                 .count_as("opened_files", "Opened files", self.opened_files)
+                .value_as(
+                    "equivalence_score",
+                    "Equivalence score",
+                    self.equivalence_score_percent
+                        .map(ReportValue::Percent)
+                        .unwrap_or(ReportValue::Empty),
+                )
                 .count_as(
                     "references",
                     QueryKind::References {
