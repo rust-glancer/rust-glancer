@@ -1,4 +1,4 @@
-use crate::analyze::report::{ReportDocument, ReportSection};
+use crate::report::{ReportDocument, ReportSection};
 
 use super::html_id;
 

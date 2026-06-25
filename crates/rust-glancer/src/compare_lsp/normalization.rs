@@ -50,55 +50,6 @@ impl NormalizedSummary {
         &self.results
     }
 
-    pub(crate) fn summary_line(&self) -> String {
-        format!("{} query cases normalized", self.results.len())
-    }
-
-    pub(crate) fn server_summary_line(&self, server: ServerUnderTest) -> String {
-        let mut total_locations = 0;
-        let mut total_unmapped_locations = 0;
-        let mut hover_present_count = 0;
-        let mut hover_absent_count = 0;
-        let mut malformed_success_count = 0;
-        let mut error_count = 0;
-        let mut timeout_count = 0;
-        let mut transport_failure_count = 0;
-        let mut normalized_results = Vec::new();
-
-        for query in &self.results {
-            let outcome = query.outcome(server);
-            match &outcome.value {
-                NormalizedOutcome::Locations(locations) => {
-                    total_locations += locations.locations.len();
-                    total_unmapped_locations += locations.unmapped.len();
-                }
-                NormalizedOutcome::Hover { present: true } => hover_present_count += 1,
-                NormalizedOutcome::Hover { present: false } => hover_absent_count += 1,
-                NormalizedOutcome::MalformedSuccess { .. } => malformed_success_count += 1,
-                NormalizedOutcome::Error { .. } => error_count += 1,
-                NormalizedOutcome::Timeout => timeout_count += 1,
-                NormalizedOutcome::TransportFailure { .. } => transport_failure_count += 1,
-            }
-
-            normalized_results.push(format!(
-                "{}:{}={} in {}",
-                query.kind().label(),
-                compact(query.label()),
-                outcome.value.summary(),
-                format_duration(outcome.latency),
-            ));
-        }
-
-        format!(
-            "{} normalized_locations={total_locations}, unmapped_locations={total_unmapped_locations}, \
-             hover_present={hover_present_count}, hover_absent={hover_absent_count}, \
-             malformed_successes={malformed_success_count}, errors={error_count}, \
-             timeouts={timeout_count}, transport_failures={transport_failure_count}, normalized=[{}]",
-            server.label(),
-            normalized_results.join(", "),
-        )
-    }
-
     #[cfg(test)]
     pub(crate) fn test_from_results(results: Vec<NormalizedQueryExecution>) -> Self {
         Self { results }
@@ -180,6 +131,10 @@ impl NormalizedServerOutcome {
         &self.value
     }
 
+    pub(crate) fn latency(&self) -> Duration {
+        self.latency
+    }
+
     #[cfg(test)]
     pub(crate) fn test_new(value: NormalizedOutcome) -> Self {
         Self {
@@ -223,18 +178,6 @@ impl NormalizedOutcome {
             },
         }
     }
-
-    pub(crate) fn summary(&self) -> String {
-        match self {
-            Self::Locations(locations) => locations.summary(),
-            Self::Hover { present: true } => "hover present".to_string(),
-            Self::Hover { present: false } => "hover absent".to_string(),
-            Self::MalformedSuccess { message } => format!("malformed({})", compact(message)),
-            Self::Error { code, message } => format!("error({code}: {})", compact(message)),
-            Self::Timeout => "timeout".to_string(),
-            Self::TransportFailure { message } => format!("transport({})", compact(message)),
-        }
-    }
 }
 
 #[derive(Debug)]
@@ -272,6 +215,13 @@ impl NormalizedLocationSet {
         self.unmapped.len()
     }
 
+    pub(crate) fn unmapped_summaries(&self) -> Vec<String> {
+        self.unmapped
+            .iter()
+            .map(UnmappedLocation::summary)
+            .collect()
+    }
+
     #[cfg(test)]
     pub(crate) fn test_from_locations(locations: Vec<NormalizedLocation>) -> Self {
         let locations = locations
@@ -284,22 +234,6 @@ impl NormalizedLocationSet {
             locations,
             unmapped: Vec::new(),
         }
-    }
-
-    fn summary(&self) -> String {
-        if self.unmapped.is_empty() {
-            return format!("{} locations", self.locations.len());
-        }
-
-        format!(
-            "{} locations, {} unmapped (first: {})",
-            self.locations.len(),
-            self.unmapped.len(),
-            self.unmapped
-                .first()
-                .map(UnmappedLocation::summary)
-                .unwrap_or_else(|| "none".to_string()),
-        )
     }
 }
 
@@ -469,7 +403,7 @@ struct UnmappedLocation {
 
 impl UnmappedLocation {
     fn summary(&self) -> String {
-        format!("{}: {}", self.reason, compact(&self.uri))
+        format!("{}: {}", self.reason, self.uri)
     }
 }
 
@@ -502,20 +436,6 @@ fn json_shape(value: &Value) -> String {
             format!("object(keys={})", keys.join("|"))
         }
     }
-}
-
-fn compact(message: &str) -> String {
-    let mut message = message.split_whitespace().collect::<Vec<_>>().join(" ");
-    const MAX_LEN: usize = 80;
-    if message.len() > MAX_LEN {
-        message.truncate(MAX_LEN);
-        message.push_str("...");
-    }
-    message
-}
-
-fn format_duration(duration: Duration) -> String {
-    format!("{:.1}ms", duration.as_secs_f64() * 1_000.0)
 }
 
 #[cfg(test)]
@@ -606,8 +526,8 @@ mod tests {
         assert_eq!(locations.locations.len(), 0);
         assert_eq!(locations.unmapped.len(), 1);
         assert!(
-            locations.summary().contains("URI is not a file URI"),
-            "summary should explain why the location was not mapped",
+            locations.unmapped_summaries()[0].contains("URI is not a file URI"),
+            "unmapped details should explain why the location was not mapped",
         );
     }
 

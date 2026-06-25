@@ -173,6 +173,10 @@ impl RunningServer {
         self.client.request(method, params, timeout).await
     }
 
+    pub(super) fn command_label(&self) -> &str {
+        &self.command_label
+    }
+
     /// Build the client capabilities and workspace identity shared by both compared servers.
     fn initialize_params(&self, fixture_root: &Path) -> anyhow::Result<Value> {
         let root_uri = file_uri(fixture_root)?;

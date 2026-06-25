@@ -7,6 +7,8 @@ mod hover;
 mod location;
 mod outcome;
 
+use std::time::Duration;
+
 use crate::compare_lsp::{
     comparison::{
         hover::{HoverAggregate, HoverComparison},
@@ -40,37 +42,21 @@ impl ComparisonSummary {
         }
     }
 
-    pub(crate) fn summary_line(&self) -> String {
-        format!("{} query cases compared", self.queries.len())
+    pub(crate) fn queries(&self) -> &[QueryComparison] {
+        &self.queries
     }
 
-    pub(crate) fn aggregate_summary_line(&self) -> String {
-        format!(
-            "aggregates=[{}]",
-            self.aggregates
-                .iter()
-                .map(MethodAggregate::summary)
-                .collect::<Vec<_>>()
-                .join(", "),
-        )
-    }
-
-    pub(crate) fn query_summary_line(&self) -> String {
-        format!(
-            "queries=[{}]",
-            self.queries
-                .iter()
-                .map(QueryComparison::summary)
-                .collect::<Vec<_>>()
-                .join(", "),
-        )
+    pub(crate) fn aggregates(&self) -> &[MethodAggregate] {
+        &self.aggregates
     }
 }
 
 #[derive(Debug)]
-struct QueryComparison {
+pub(crate) struct QueryComparison {
     label: &'static str,
     method: QueryMethod,
+    rust_glancer_latency: Duration,
+    rust_analyzer_latency: Duration,
     result: QueryComparisonResult,
 }
 
@@ -118,43 +104,42 @@ impl QueryComparison {
         Self {
             label: query.label(),
             method: QueryMethod::from_kind(query.kind()),
+            rust_glancer_latency: query.outcome(ServerUnderTest::RustGlancer).latency(),
+            rust_analyzer_latency: query.outcome(ServerUnderTest::RustAnalyzer).latency(),
             result,
         }
     }
 
-    fn result(&self) -> &QueryComparisonResult {
-        &self.result
+    pub(crate) fn label(&self) -> &'static str {
+        self.label
     }
 
-    fn summary(&self) -> String {
-        format!(
-            "{}:{}={}",
-            self.method.label(),
-            compact(self.label),
-            self.result.summary(),
-        )
+    pub(crate) fn method(&self) -> QueryMethod {
+        self.method
+    }
+
+    pub(crate) fn rust_glancer_latency(&self) -> Duration {
+        self.rust_glancer_latency
+    }
+
+    pub(crate) fn rust_analyzer_latency(&self) -> Duration {
+        self.rust_analyzer_latency
+    }
+
+    pub(crate) fn result(&self) -> &QueryComparisonResult {
+        &self.result
     }
 }
 
 #[derive(Debug)]
-enum QueryComparisonResult {
+pub(crate) enum QueryComparisonResult {
     Locations(LocationComparison),
     Hover(HoverComparison),
     NonComparable(NonComparableComparison),
 }
 
-impl QueryComparisonResult {
-    fn summary(&self) -> String {
-        match self {
-            Self::Locations(comparison) => comparison.summary(),
-            Self::Hover(comparison) => comparison.summary(),
-            Self::NonComparable(comparison) => comparison.summary(),
-        }
-    }
-}
-
 #[derive(Debug)]
-struct MethodAggregate {
+pub(crate) struct MethodAggregate {
     method: QueryMethod,
     data: MethodAggregateData,
 }
@@ -196,26 +181,23 @@ impl MethodAggregate {
         aggregates
     }
 
-    fn summary(&self) -> String {
-        match &self.data {
-            MethodAggregateData::Locations(aggregate) => {
-                format!("{}: {}", self.method.label(), aggregate.summary())
-            }
-            MethodAggregateData::Hover(aggregate) => {
-                format!("{}: {}", self.method.label(), aggregate.summary())
-            }
-        }
+    pub(crate) fn method(&self) -> QueryMethod {
+        self.method
+    }
+
+    pub(crate) fn data(&self) -> &MethodAggregateData {
+        &self.data
     }
 }
 
 #[derive(Debug)]
-enum MethodAggregateData {
+pub(crate) enum MethodAggregateData {
     Locations(LocationAggregate),
     Hover(HoverAggregate),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum QueryMethod {
+pub(crate) enum QueryMethod {
     References,
     GotoDefinition,
     Hover,
@@ -230,23 +212,16 @@ impl QueryMethod {
         }
     }
 
-    fn label(self) -> &'static str {
+    pub(crate) fn lsp_method(self) -> &'static str {
         match self {
-            Self::References => "references",
-            Self::GotoDefinition => "goto_definition",
-            Self::Hover => "hover",
+            Self::References => QueryKind::References {
+                include_declaration: true,
+            }
+            .lsp_method(),
+            Self::GotoDefinition => QueryKind::GotoDefinition.lsp_method(),
+            Self::Hover => QueryKind::Hover.lsp_method(),
         }
     }
-}
-
-fn compact(message: &str) -> String {
-    let mut message = message.split_whitespace().collect::<Vec<_>>().join(" ");
-    const MAX_LEN: usize = 80;
-    if message.len() > MAX_LEN {
-        message.truncate(MAX_LEN);
-        message.push_str("...");
-    }
-    message
 }
 
 #[cfg(test)]
@@ -298,14 +273,8 @@ mod tests {
         assert_eq!(query.matched(), &[shared]);
         assert_eq!(query.missing(), &[missing]);
         assert_eq!(query.extra(), &[extra]);
-        assert_eq!(
-            query.completeness().map(|ratio| ratio.percent()),
-            Some(50.0),
-        );
-        assert_eq!(
-            query.precision_signal().map(|ratio| ratio.percent()),
-            Some(50.0),
-        );
+        assert_eq!(query.completeness_percent(), Some(50.0));
+        assert_eq!(query.precision_signal_percent(), Some(50.0));
 
         let references = comparison
             .aggregates
@@ -323,12 +292,7 @@ mod tests {
         assert_eq!(aggregate.matched_locations(), 1);
         assert_eq!(aggregate.missing_locations(), 1);
         assert_eq!(aggregate.extra_locations(), 1);
-        assert_eq!(
-            aggregate
-                .weighted_completeness()
-                .map(|ratio| ratio.percent()),
-            Some(50.0),
-        );
+        assert_eq!(aggregate.weighted_completeness_percent(), Some(50.0),);
     }
 
     #[test]

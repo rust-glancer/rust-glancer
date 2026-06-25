@@ -11,7 +11,9 @@ mod execution;
 mod fixture;
 mod lsp_client;
 mod normalization;
+mod output;
 mod query;
+mod report;
 mod server;
 
 use std::path::PathBuf;
@@ -27,10 +29,16 @@ pub(crate) async fn run(
     let fixture = Fixture::resolve(fixture, path)?;
     let mut servers = server::StartedServers::start(&fixture).await?;
     let opened_files = servers.opened_files();
-    let rust_glancer_name = servers.rust_glancer_readiness().name();
-    let rust_glancer_initialize = servers.rust_glancer_readiness().initialize_latency();
-    let rust_analyzer_name = servers.rust_analyzer_readiness().name();
-    let rust_analyzer_initialize = servers.rust_analyzer_readiness().initialize_latency();
+    let rust_glancer = report::ServerReport::capture(
+        servers.rust_glancer_readiness().name(),
+        servers.rust_glancer_command_label(),
+        servers.rust_glancer_readiness().initialize_latency(),
+    );
+    let rust_analyzer = report::ServerReport::capture(
+        servers.rust_analyzer_readiness().name(),
+        servers.rust_analyzer_command_label(),
+        servers.rust_analyzer_readiness().initialize_latency(),
+    );
     let execution = execution::run(&fixture, &mut servers).await;
 
     // Query execution may fail after both processes have accepted initialization. Try graceful
@@ -40,61 +48,13 @@ pub(crate) async fn run(
     shutdown?;
     let normalized = normalization::NormalizedSummary::from_execution(&fixture, &execution)?;
     let comparison = comparison::ComparisonSummary::from_normalized(&normalized);
-
-    anyhow::bail!(
-        "LSP comparison fixture `{}` resolved to {} with {} query cases, \
-         methods: {}. Both servers initialized and opened {} source files: {}={}, {}={}. \
-         Query execution ran: {}; {}; {}. \
-         Normalization ran: {}; {}; {}. \
-         Comparison ran: {}; {}; {}. \
-         Report rendering is not implemented yet \
-         (format: {output_format:?})",
-        fixture.kind(),
-        fixture.root().display(),
-        fixture.query_cases().len(),
-        query_summary(fixture.query_cases()),
+    let report = report::LspComparisonReport::build(
+        &fixture,
         opened_files,
-        rust_glancer_name,
-        format_duration(rust_glancer_initialize),
-        rust_analyzer_name,
-        format_duration(rust_analyzer_initialize),
-        execution.summary_line(),
-        execution.server_summary_line(execution::ServerUnderTest::RustGlancer),
-        execution.server_summary_line(execution::ServerUnderTest::RustAnalyzer),
-        normalized.summary_line(),
-        normalized.server_summary_line(execution::ServerUnderTest::RustGlancer),
-        normalized.server_summary_line(execution::ServerUnderTest::RustAnalyzer),
-        comparison.summary_line(),
-        comparison.aggregate_summary_line(),
-        comparison.query_summary_line(),
+        rust_glancer,
+        rust_analyzer,
+        &comparison,
     );
-}
 
-fn query_summary(query_cases: &[query::QueryCase]) -> String {
-    let references = query_cases
-        .iter()
-        .filter(|query| query.kind().is_references())
-        .count();
-    let references_with_declaration = query_cases
-        .iter()
-        .filter_map(|query| query.kind().references_include_declaration())
-        .filter(|include_declaration| *include_declaration)
-        .count();
-    let goto_definition = query_cases
-        .iter()
-        .filter(|query| query.kind().is_goto_definition())
-        .count();
-    let hover = query_cases
-        .iter()
-        .filter(|query| query.kind().is_hover())
-        .count();
-
-    format!(
-        "references={references} (include_declaration={references_with_declaration}), \
-         goto_definition={goto_definition}, hover={hover}",
-    )
-}
-
-fn format_duration(duration: std::time::Duration) -> String {
-    format!("{:.1}ms", duration.as_secs_f64() * 1_000.0)
+    output::write_report(&report, output_format)
 }

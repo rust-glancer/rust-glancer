@@ -8,6 +8,7 @@ mod analyze;
 mod compare_lsp;
 mod logging;
 mod memory;
+mod report;
 mod start_engine;
 mod start_server;
 

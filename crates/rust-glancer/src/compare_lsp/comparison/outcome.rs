@@ -3,9 +3,11 @@
 use crate::compare_lsp::normalization::NormalizedOutcome;
 
 #[derive(Debug)]
-pub(super) struct NonComparableComparison {
+pub(crate) struct NonComparableComparison {
     rust_glancer: OutcomeStatus,
     rust_analyzer: OutcomeStatus,
+    rust_glancer_detail: Option<String>,
+    rust_analyzer_detail: Option<String>,
 }
 
 impl NonComparableComparison {
@@ -13,20 +15,30 @@ impl NonComparableComparison {
         Self {
             rust_glancer: OutcomeStatus::from_outcome(rust_glancer),
             rust_analyzer: OutcomeStatus::from_outcome(rust_analyzer),
+            rust_glancer_detail: outcome_detail(rust_glancer),
+            rust_analyzer_detail: outcome_detail(rust_analyzer),
         }
     }
 
-    pub(super) fn summary(&self) -> String {
-        format!(
-            "non_comparable rust-glancer={}, rust-analyzer={}",
-            self.rust_glancer.label(),
-            self.rust_analyzer.label(),
-        )
+    pub(crate) fn rust_glancer_status(&self) -> OutcomeStatus {
+        self.rust_glancer
+    }
+
+    pub(crate) fn rust_analyzer_status(&self) -> OutcomeStatus {
+        self.rust_analyzer
+    }
+
+    pub(crate) fn rust_glancer_detail(&self) -> Option<&str> {
+        self.rust_glancer_detail.as_deref()
+    }
+
+    pub(crate) fn rust_analyzer_detail(&self) -> Option<&str> {
+        self.rust_analyzer_detail.as_deref()
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum OutcomeStatus {
+pub(crate) enum OutcomeStatus {
     Locations,
     HoverPresent,
     HoverAbsent,
@@ -49,7 +61,7 @@ impl OutcomeStatus {
         }
     }
 
-    fn label(self) -> &'static str {
+    pub(crate) fn label(self) -> &'static str {
         match self {
             Self::Locations => "locations",
             Self::HoverPresent => "hover_present",
@@ -81,8 +93,13 @@ impl Ratio {
     }
 }
 
-pub(super) fn format_ratio(ratio: Option<Ratio>) -> String {
-    ratio
-        .map(|ratio| format!("{:.1}%", ratio.percent()))
-        .unwrap_or_else(|| "n/a".to_string())
+fn outcome_detail(outcome: &NormalizedOutcome) -> Option<String> {
+    match outcome {
+        NormalizedOutcome::MalformedSuccess { message } => Some(message.clone()),
+        NormalizedOutcome::Error { code, message } => Some(format!("{code}: {message}")),
+        NormalizedOutcome::TransportFailure { message } => Some(message.clone()),
+        NormalizedOutcome::Locations(_)
+        | NormalizedOutcome::Hover { .. }
+        | NormalizedOutcome::Timeout => None,
+    }
 }

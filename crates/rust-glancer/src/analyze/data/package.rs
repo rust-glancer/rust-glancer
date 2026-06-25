@@ -1,7 +1,7 @@
 use rg_project::{PackageResidency, Project};
 use serde::Serialize;
 
-use crate::analyze::report::ReportFieldsBuilder;
+use crate::report::ReportFieldsBuilder;
 
 #[derive(Debug, Serialize)]
 pub(crate) struct PackageReport {

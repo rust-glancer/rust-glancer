@@ -61,6 +61,14 @@ impl StartedServers {
         &self.rust_analyzer_readiness
     }
 
+    pub(crate) fn rust_glancer_command_label(&self) -> &str {
+        self.rust_glancer_server.command_label()
+    }
+
+    pub(crate) fn rust_analyzer_command_label(&self) -> &str {
+        self.rust_analyzer_server.command_label()
+    }
+
     pub(crate) async fn request_rust_glancer(
         &mut self,
         method: &'static str,

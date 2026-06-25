@@ -80,11 +80,13 @@ pub(crate) enum QueryKind {
 }
 
 impl QueryKind {
-    pub(crate) fn label(self) -> &'static str {
+    pub(crate) fn lsp_method(self) -> &'static str {
+        use ls_types::{request, request::Request as _};
+
         match self {
-            Self::References { .. } => "references",
-            Self::GotoDefinition => "goto_definition",
-            Self::Hover => "hover",
+            Self::References { .. } => request::References::METHOD,
+            Self::GotoDefinition => request::GotoDefinition::METHOD,
+            Self::Hover => request::HoverRequest::METHOD,
         }
     }
 

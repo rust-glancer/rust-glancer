@@ -3,7 +3,7 @@
 use crate::compare_lsp::comparison::{QueryComparison, QueryComparisonResult};
 
 #[derive(Debug)]
-pub(super) struct HoverComparison {
+pub(crate) struct HoverComparison {
     rust_glancer_present: bool,
     rust_analyzer_present: bool,
 }
@@ -16,30 +16,29 @@ impl HoverComparison {
         }
     }
 
-    fn agrees(&self) -> bool {
+    pub(crate) fn rust_glancer_present(&self) -> bool {
+        self.rust_glancer_present
+    }
+
+    pub(crate) fn rust_analyzer_present(&self) -> bool {
+        self.rust_analyzer_present
+    }
+
+    pub(crate) fn agrees(&self) -> bool {
         self.rust_glancer_present == self.rust_analyzer_present
     }
 
-    fn rust_glancer_missing(&self) -> bool {
+    pub(crate) fn rust_glancer_missing(&self) -> bool {
         !self.rust_glancer_present && self.rust_analyzer_present
     }
 
-    fn rust_glancer_extra_present(&self) -> bool {
+    pub(crate) fn rust_glancer_extra_present(&self) -> bool {
         self.rust_glancer_present && !self.rust_analyzer_present
-    }
-
-    pub(super) fn summary(&self) -> String {
-        format!(
-            "hover rust-glancer={}, rust-analyzer={}, agreement={}",
-            presence(self.rust_glancer_present),
-            presence(self.rust_analyzer_present),
-            self.agrees(),
-        )
     }
 }
 
 #[derive(Debug, Default)]
-pub(super) struct HoverAggregate {
+pub(crate) struct HoverAggregate {
     query_count: usize,
     comparable_count: usize,
     agreement_count: usize,
@@ -69,49 +68,27 @@ impl HoverAggregate {
         }
     }
 
-    pub(super) fn query_count(&self) -> usize {
+    pub(crate) fn query_count(&self) -> usize {
         self.query_count
     }
 
-    #[cfg(test)]
-    pub(super) fn comparable_count(&self) -> usize {
+    pub(crate) fn comparable_count(&self) -> usize {
         self.comparable_count
     }
 
-    #[cfg(test)]
-    pub(super) fn agreement_count(&self) -> usize {
+    pub(crate) fn agreement_count(&self) -> usize {
         self.agreement_count
     }
 
-    #[cfg(test)]
-    pub(super) fn rust_glancer_missing_count(&self) -> usize {
+    pub(crate) fn rust_glancer_missing_count(&self) -> usize {
         self.rust_glancer_missing_count
     }
 
-    #[cfg(test)]
-    pub(super) fn rust_glancer_extra_present_count(&self) -> usize {
+    pub(crate) fn rust_glancer_extra_present_count(&self) -> usize {
         self.rust_glancer_extra_present_count
     }
 
-    #[cfg(test)]
-    pub(super) fn non_comparable_count(&self) -> usize {
+    pub(crate) fn non_comparable_count(&self) -> usize {
         self.non_comparable_count
     }
-
-    pub(super) fn summary(&self) -> String {
-        format!(
-            "comparable={}/{}, agreements={}, rust_glancer_missing={}, \
-             rust_glancer_extra_present={}, non_comparable={}",
-            self.comparable_count,
-            self.query_count,
-            self.agreement_count,
-            self.rust_glancer_missing_count,
-            self.rust_glancer_extra_present_count,
-            self.non_comparable_count,
-        )
-    }
-}
-
-fn presence(present: bool) -> &'static str {
-    if present { "present" } else { "absent" }
 }
