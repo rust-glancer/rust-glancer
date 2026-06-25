@@ -263,12 +263,7 @@ impl TargetBodyIrSnapshot<'_> {
         }
     }
 
-    fn render_source_item(
-        &self,
-        id: usize,
-        item: &rg_ir_model::BodySourceItem,
-        dump: &mut String,
-    ) {
+    fn render_source_item(&self, id: usize, item: &rg_ir_model::BodySourceItem, dump: &mut String) {
         let source_item = item.item();
         let name = source_item.name.as_deref().unwrap_or("<unnamed>");
         let provenance = if item.source().is_written() {

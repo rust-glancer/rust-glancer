@@ -184,7 +184,6 @@ impl<'body> BodyScanSites<'body> {
             source: data.source,
         });
     }
-
 }
 
 /// Collects written type references while keeping scope policy close to each source form.
@@ -228,8 +227,7 @@ where
                 continue;
             };
 
-            let context =
-                TypeRefContext::new(*scope, self.body_visible_bindings, statement.source);
+            let context = TypeRefContext::new(*scope, self.body_visible_bindings, statement.source);
             self.emit_type_ref(context, annotation);
         }
     }

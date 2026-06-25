@@ -109,7 +109,10 @@ pub fn use_it(input: u64) {
     let _text = make_$symbol_macro$text!(input);
 }
 "#,
-        &[AnalysisQuery::symbol("symbol at body macro call", "symbol_macro")],
+        &[AnalysisQuery::symbol(
+            "symbol at body macro call",
+            "symbol_macro",
+        )],
         expect![[r#"
             symbol at body macro call
             - macro make_text @ 10:17-10:26
