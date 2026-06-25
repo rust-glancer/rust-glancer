@@ -164,7 +164,7 @@ pub fn use_it() {
 }
 
 #[test]
-fn expands_module_visible_macro_statement_bodies() {
+fn statement_macros_expand_statements_and_body_local_items() {
     check_project_body_ir(
         r#"
 //- /Cargo.toml
@@ -174,6 +174,8 @@ version = "0.1.0"
 edition = "2024"
 
 //- /src/lib.rs
+pub struct GlobalId;
+
 macro_rules! make_steps {
     ($input:expr) => {
         let doubled = $input + $input;
@@ -181,142 +183,15 @@ macro_rules! make_steps {
     };
 }
 
-pub fn use_it(input: i32) -> i32 {
-    make_steps!(input);
-    tripled
-}
-"#,
-        expect![[r#"
-            package body_stmt_macro_fixture
-
-            body_stmt_macro_fixture [lib]
-            body b0 fn body_stmt_macro_fixture[lib]::crate::use_it @ 8:1-11:2
-            scopes
-            - s0 parent <none>: v0
-            - s1 parent s0: v1, v2
-            bindings
-            - v0 param input `input`: i32 => i32 @ 8:15-8:20
-            - v1 let doubled `make_steps!(input)` => i32 @ 9:5-9:23
-            - v2 let tripled `make_steps!(input)` => i32 @ 9:5-9:23
-            body
-            expr e7 block s1 => i32 @ 8:34-11:2
-              stmt s0 let v1 @ 9:5-9:23
-                initializer
-                  expr e2 binary + => i32 @ 9:5-9:23
-                    lhs
-                      expr e0 path input -> local v0 => i32 @ 9:5-9:23
-                    rhs
-                      expr e1 path input -> local v0 => i32 @ 9:5-9:23
-              stmt s1 let v2 @ 9:5-9:23
-                initializer
-                  expr e5 binary + => i32 @ 9:5-9:23
-                    lhs
-                      expr e3 path doubled -> local v1 => i32 @ 9:5-9:23
-                    rhs
-                      expr e4 path input -> local v0 => i32 @ 9:5-9:23
-              tail
-                expr e6 path tripled -> local v2 => i32 @ 10:5-10:12
-        "#]],
-    );
-}
-
-#[test]
-fn skips_empty_macro_statement_expansion() {
-    check_project_body_ir(
-        r#"
-//- /Cargo.toml
-[package]
-name = "body_stmt_empty_macro_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
 macro_rules! nothing {
     () => {};
 }
 
-pub fn use_it(input: i32) -> i32 {
-    nothing!();
-    input
-}
-"#,
-        expect![[r#"
-            package body_stmt_empty_macro_fixture
-
-            body_stmt_empty_macro_fixture [lib]
-            body b0 fn body_stmt_empty_macro_fixture[lib]::crate::use_it @ 5:1-8:2
-            scopes
-            - s0 parent <none>: v0
-            - s1 parent s0: <none>
-            bindings
-            - v0 param input `input`: i32 => i32 @ 5:15-5:20
-            body
-            expr e1 block s1 => i32 @ 5:34-8:2
-              tail
-                expr e0 path input -> local v0 => i32 @ 7:5-7:10
-        "#]],
-    );
-}
-
-#[test]
-fn macro_statement_expands_to_body_local_struct() {
-    check_project_body_ir(
-        r#"
-//- /Cargo.toml
-[package]
-name = "body_macro_local_struct_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
 macro_rules! make_user {
     () => {
         struct User;
     };
 }
-
-pub fn use_it() {
-    make_user!();
-    let user: User = User;
-    user
-}
-"#,
-        expect![[r#"
-            package body_macro_local_struct_fixture
-
-            body_macro_local_struct_fixture [lib]
-            body b0 fn body_macro_local_struct_fixture[lib]::crate::use_it @ 7:1-11:2
-            scopes
-            - s0 parent <none>: <none>
-            - s1 parent s0: v0; source_items i0
-            source_items
-            - i0 struct User @ 8:5-8:17
-            bindings
-            - v0 let user `user`: User => nominal struct fn body_macro_local_struct_fixture[lib]::crate::use_it::User @ 8:5-8:17 @ 9:9-9:13
-            body
-            expr e2 block s1 => nominal struct fn body_macro_local_struct_fixture[lib]::crate::use_it::User @ 8:5-8:17 @ 7:17-11:2
-              stmt s0 source_item i0 @ 8:5-8:17
-              stmt s1 let v0: User @ 9:5-9:27
-                initializer
-                  expr e0 path User -> struct fn body_macro_local_struct_fixture[lib]::crate::use_it::User @ 8:5-8:17 => nominal struct fn body_macro_local_struct_fixture[lib]::crate::use_it::User @ 8:5-8:17 @ 9:22-9:26
-              tail
-                expr e1 path user -> local v0 => nominal struct fn body_macro_local_struct_fixture[lib]::crate::use_it::User @ 8:5-8:17 @ 10:5-10:9
-        "#]],
-    );
-}
-
-#[test]
-fn macro_statement_expands_to_body_local_use() {
-    check_project_body_ir(
-        r#"
-//- /Cargo.toml
-[package]
-name = "body_macro_local_use_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
-pub struct GlobalId;
 
 macro_rules! import_id {
     () => {
@@ -324,32 +199,106 @@ macro_rules! import_id {
     };
 }
 
-pub fn use_it() {
+pub fn steps(input: i32) -> i32 {
+    make_steps!(input);
+    tripled
+}
+
+pub fn empty(input: i32) -> i32 {
+    nothing!();
+    input
+}
+
+pub fn local_struct() {
+    make_user!();
+    let user: User = User;
+    user
+}
+
+pub fn local_use() {
     import_id!();
     let id: Id = GlobalId;
     id
 }
 "#,
         expect![[r#"
-            package body_macro_local_use_fixture
+            package body_stmt_macro_fixture
 
-            body_macro_local_use_fixture [lib]
-            body b0 fn body_macro_local_use_fixture[lib]::crate::use_it @ 9:1-13:2
+            body_stmt_macro_fixture [lib]
+            body b0 fn body_stmt_macro_fixture[lib]::crate::steps @ 26:1-29:2
+            scopes
+            - s0 parent <none>: v0
+            - s1 parent s0: v1, v2
+            bindings
+            - v0 param input `input`: i32 => i32 @ 26:14-26:19
+            - v1 let doubled `make_steps!(input)` => i32 @ 27:5-27:23
+            - v2 let tripled `make_steps!(input)` => i32 @ 27:5-27:23
+            body
+            expr e7 block s1 => i32 @ 26:33-29:2
+              stmt s0 let v1 @ 27:5-27:23
+                initializer
+                  expr e2 binary + => i32 @ 27:5-27:23
+                    lhs
+                      expr e0 path input -> local v0 => i32 @ 27:5-27:23
+                    rhs
+                      expr e1 path input -> local v0 => i32 @ 27:5-27:23
+              stmt s1 let v2 @ 27:5-27:23
+                initializer
+                  expr e5 binary + => i32 @ 27:5-27:23
+                    lhs
+                      expr e3 path doubled -> local v1 => i32 @ 27:5-27:23
+                    rhs
+                      expr e4 path input -> local v0 => i32 @ 27:5-27:23
+              tail
+                expr e6 path tripled -> local v2 => i32 @ 28:5-28:12
+
+
+            body b1 fn body_stmt_macro_fixture[lib]::crate::empty @ 31:1-34:2
+            scopes
+            - s0 parent <none>: v0
+            - s1 parent s0: <none>
+            bindings
+            - v0 param input `input`: i32 => i32 @ 31:14-31:19
+            body
+            expr e1 block s1 => i32 @ 31:33-34:2
+              tail
+                expr e0 path input -> local v0 => i32 @ 33:5-33:10
+
+
+            body b2 fn body_stmt_macro_fixture[lib]::crate::local_struct @ 36:1-40:2
             scopes
             - s0 parent <none>: <none>
             - s1 parent s0: v0; source_items i0
             source_items
-            - i0 use <unnamed> @ 10:5-10:17
+            - i0 struct User @ 37:5-37:17
             bindings
-            - v0 let id `id`: Id => nominal struct body_macro_local_use_fixture[lib]::crate::GlobalId @ 11:9-11:11
+            - v0 let user `user`: User => nominal struct fn body_stmt_macro_fixture[lib]::crate::local_struct::User @ 37:5-37:17 @ 38:9-38:13
             body
-            expr e2 block s1 => nominal struct body_macro_local_use_fixture[lib]::crate::GlobalId @ 9:17-13:2
-              stmt s0 source_item i0 @ 10:5-10:17
-              stmt s1 let v0: Id @ 11:5-11:27
+            expr e2 block s1 => nominal struct fn body_stmt_macro_fixture[lib]::crate::local_struct::User @ 37:5-37:17 @ 36:23-40:2
+              stmt s0 source_item i0 @ 37:5-37:17
+              stmt s1 let v0: User @ 38:5-38:27
                 initializer
-                  expr e0 path GlobalId -> item struct body_macro_local_use_fixture[lib]::crate::GlobalId => nominal struct body_macro_local_use_fixture[lib]::crate::GlobalId @ 11:18-11:26
+                  expr e0 path User -> struct fn body_stmt_macro_fixture[lib]::crate::local_struct::User @ 37:5-37:17 => nominal struct fn body_stmt_macro_fixture[lib]::crate::local_struct::User @ 37:5-37:17 @ 38:22-38:26
               tail
-                expr e1 path id -> local v0 => nominal struct body_macro_local_use_fixture[lib]::crate::GlobalId @ 12:5-12:7
+                expr e1 path user -> local v0 => nominal struct fn body_stmt_macro_fixture[lib]::crate::local_struct::User @ 37:5-37:17 @ 39:5-39:9
+
+
+            body b3 fn body_stmt_macro_fixture[lib]::crate::local_use @ 42:1-46:2
+            scopes
+            - s0 parent <none>: <none>
+            - s1 parent s0: v0; source_items i0
+            source_items
+            - i0 use <unnamed> @ 43:5-43:17
+            bindings
+            - v0 let id `id`: Id => nominal struct body_stmt_macro_fixture[lib]::crate::GlobalId @ 44:9-44:11
+            body
+            expr e2 block s1 => nominal struct body_stmt_macro_fixture[lib]::crate::GlobalId @ 42:20-46:2
+              stmt s0 source_item i0 @ 43:5-43:17
+              stmt s1 let v0: Id @ 44:5-44:27
+                initializer
+                  expr e0 path GlobalId -> item struct body_stmt_macro_fixture[lib]::crate::GlobalId => nominal struct body_stmt_macro_fixture[lib]::crate::GlobalId @ 44:18-44:26
+              tail
+                expr e1 path id -> local v0 => nominal struct body_stmt_macro_fixture[lib]::crate::GlobalId @ 45:5-45:7
         "#]],
     );
 }
@@ -577,85 +526,8 @@ pub fn use_it(input: i32) -> i32 {
 }
 
 #[test]
-fn dependency_macro_dollar_crate_resolves_to_definition_crate_in_body() {
-    check_project_body_ir(
-        r#"
-//- /Cargo.toml
-[workspace]
-members = ["crates/dep", "crates/app"]
-resolver = "3"
-
-//- /crates/dep/Cargo.toml
-[package]
-name = "dep"
-version = "0.1.0"
-edition = "2024"
-
-//- /crates/dep/src/lib.rs
-pub fn dep_value() -> i32 {
-    7
-}
-
-macro_rules! make_dep_value {
-    () => {
-        $crate::dep_value()
-    };
-}
-
-pub use make_dep_value;
-
-//- /crates/app/Cargo.toml
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-dep = { path = "../dep" }
-
-//- /crates/app/src/lib.rs
-use dep::make_dep_value;
-
-pub fn use_it() -> i32 {
-    make_dep_value!()
-}
-"#,
-        expect![[r#"
-            package app
-
-            app [lib]
-            body b0 fn app[lib]::crate::use_it @ 3:1-5:2
-            scopes
-            - s0 parent <none>: <none>
-            - s1 parent s0: <none>
-            bindings
-            body
-            expr e2 block s1 => i32 @ 3:24-5:2
-              tail
-                expr e1 call => i32 @ 4:5-4:22
-                  callee
-                    expr e0 path $crate::dep_value -> item fn dep[lib]::crate::dep_value => <unknown> @ 4:5-4:22
-
-
-            package dep
-
-            dep [lib]
-            body b0 fn dep[lib]::crate::dep_value @ 1:1-3:2
-            scopes
-            - s0 parent <none>: <none>
-            - s1 parent s0: <none>
-            bindings
-            body
-            expr e1 block s1 => i32 @ 1:27-3:2
-              tail
-                expr e0 literal int `7` => i32 @ 2:5-2:6
-        "#]],
-    );
-}
-
-#[test]
 fn generated_body_macro_calls_use_dollar_crate_definition_crate() {
-    check_project_body_ir(
+    check_project_body_ir_with_sysroot(
         r#"
 //- /Cargo.toml
 [workspace]
@@ -723,8 +595,32 @@ pub fn direct() -> i32 {
 pub fn via_cfg_select() -> i32 {
     outer_select_value!()
 }
+
+//- /sysroot/library/core/src/lib.rs
+pub struct Core;
+
+//- /sysroot/library/alloc/src/lib.rs
+pub struct Alloc;
+
+//- /sysroot/library/std/src/lib.rs
+#[rustc_builtin_macro]
+#[macro_export]
+macro_rules! cfg_select {
+    ($($args:tt)*) => {{ /* compiler built-in */ }};
+}
+
+pub mod prelude {
+    pub mod rust_2024 {
+        pub use crate::cfg_select;
+    }
+}
 "#,
         expect![[r#"
+            package alloc
+
+            alloc [lib]
+            skipped
+
             package app
 
             app [lib]
@@ -754,6 +650,11 @@ pub fn via_cfg_select() -> i32 {
                     expr e0 path $crate::dep_value -> item fn dep[lib]::crate::dep_value => <unknown> @ 15:5-15:26
 
 
+            package core
+
+            core [lib]
+            skipped
+
             package dep
 
             dep [lib]
@@ -766,22 +667,28 @@ pub fn via_cfg_select() -> i32 {
             expr e1 block s1 => i32 @ 1:27-3:2
               tail
                 expr e0 literal int `7` => i32 @ 2:5-2:6
+
+
+            package std
+
+            std [lib]
+            skipped
         "#]],
     );
 }
 
 #[test]
-fn cfg_select_builtin_expands_expression_body() {
-    check_project_body_ir(
+fn cfg_select_builtin_expands_body_syntax_and_respects_shadowing() {
+    check_project_body_ir_with_sysroot(
         r#"
 //- /Cargo.toml
 [package]
-name = "body_cfg_select_expr_fixture"
+name = "body_cfg_select_fixture"
 version = "0.1.0"
 edition = "2024"
 
 //- /src/lib.rs
-pub fn use_it(input: i32) -> i32 {
+pub fn expr(input: i32) -> i32 {
     let selected = cfg_select! {
         false => { unresolved },
         not(test) => { input + 1 },
@@ -795,21 +702,76 @@ pub fn use_it(input: i32) -> i32 {
 
     selected + fallback
 }
+
+pub fn stmt(input: i32) -> i32 {
+    cfg_select! {
+        false => {
+            let broken = ;
+        },
+        not(test) => {
+            let doubled = input + input;
+            let tripled = doubled + input;
+        },
+        _ => {
+            let tripled = 0;
+        },
+    };
+
+    tripled
+}
+
+pub mod local {
+    macro_rules! cfg_select {
+        ($($tt:tt)*) => {
+            true
+        };
+    }
+
+    pub fn shadow() -> bool {
+        cfg_select! {
+            _ => { 0 },
+        }
+    }
+}
+
+//- /sysroot/library/core/src/lib.rs
+pub struct Core;
+
+//- /sysroot/library/alloc/src/lib.rs
+pub struct Alloc;
+
+//- /sysroot/library/std/src/lib.rs
+#[rustc_builtin_macro]
+#[macro_export]
+macro_rules! cfg_select {
+    ($($args:tt)*) => {{ /* compiler built-in */ }};
+}
+
+pub mod prelude {
+    pub mod rust_2024 {
+        pub use crate::cfg_select;
+    }
+}
 "#,
         expect![[r#"
-            package body_cfg_select_expr_fixture
+            package alloc
 
-            body_cfg_select_expr_fixture [lib]
-            body b0 fn body_cfg_select_expr_fixture[lib]::crate::use_it @ 1:1-14:2
+            alloc [lib]
+            skipped
+
+            package body_cfg_select_fixture
+
+            body_cfg_select_fixture [lib]
+            body b0 fn body_cfg_select_fixture[lib]::crate::expr @ 1:1-14:2
             scopes
             - s0 parent <none>: v0
             - s1 parent s0: v1, v2
             bindings
-            - v0 param input `input`: i32 => i32 @ 1:15-1:20
+            - v0 param input `input`: i32 => i32 @ 1:13-1:18
             - v1 let selected `selected` => i32 @ 2:9-2:17
             - v2 let fallback `fallback` => i32 @ 8:9-8:17
             body
-            expr e7 block s1 => i32 @ 1:34-14:2
+            expr e7 block s1 => i32 @ 1:32-14:2
               stmt s0 let v1 @ 2:5-6:7
                 initializer
                   expr e2 binary + => i32 @ 2:20-6:6
@@ -826,218 +788,115 @@ pub fn use_it(input: i32) -> i32 {
                     expr e4 path selected -> local v1 => i32 @ 13:5-13:13
                   rhs
                     expr e5 path fallback -> local v2 => i32 @ 13:16-13:24
-        "#]],
-    );
-}
 
-#[test]
-fn cfg_select_builtin_expands_statement_body() {
-    check_project_body_ir(
-        r#"
-//- /Cargo.toml
-[package]
-name = "body_cfg_select_stmt_fixture"
-version = "0.1.0"
-edition = "2024"
 
-//- /src/lib.rs
-pub fn use_it(input: i32) -> i32 {
-    cfg_select! {
-        false => {
-            let broken = ;
-        },
-        not(test) => {
-            let doubled = input + input;
-            let tripled = doubled + input;
-        },
-        _ => {
-            let tripled = 0;
-        },
-    };
-
-    tripled
-}
-"#,
-        expect![[r#"
-            package body_cfg_select_stmt_fixture
-
-            body_cfg_select_stmt_fixture [lib]
-            body b0 fn body_cfg_select_stmt_fixture[lib]::crate::use_it @ 1:1-16:2
+            body b1 fn body_cfg_select_fixture[lib]::crate::stmt @ 16:1-31:2
             scopes
             - s0 parent <none>: v0
             - s1 parent s0: v1, v2
             bindings
-            - v0 param input `input`: i32 => i32 @ 1:15-1:20
-            - v1 let doubled `cfg_select! { false => { let broken = ; }, not(test) => { let doubled = input + input; let tripled = doubled + input; }, _ => { let tripled = 0; }, }` => i32 @ 2:5-13:6
-            - v2 let tripled `cfg_select! { false => { let broken = ; }, not(test) => { let doubled = input + input; let tripled = doubled + input; }, _ => { let tripled = 0; }, }` => i32 @ 2:5-13:6
+            - v0 param input `input`: i32 => i32 @ 16:13-16:18
+            - v1 let doubled `cfg_select! { false => { let broken = ; }, not(test) => { let doubled = input + input; let tripled = doubled + input; }, _ => { let tripled = 0; }, }` => i32 @ 17:5-28:6
+            - v2 let tripled `cfg_select! { false => { let broken = ; }, not(test) => { let doubled = input + input; let tripled = doubled + input; }, _ => { let tripled = 0; }, }` => i32 @ 17:5-28:6
             body
-            expr e7 block s1 => i32 @ 1:34-16:2
-              stmt s0 let v1 @ 2:5-13:6
+            expr e7 block s1 => i32 @ 16:32-31:2
+              stmt s0 let v1 @ 17:5-28:6
                 initializer
-                  expr e2 binary + => i32 @ 2:5-13:6
+                  expr e2 binary + => i32 @ 17:5-28:6
                     lhs
-                      expr e0 path input -> local v0 => i32 @ 2:5-13:6
+                      expr e0 path input -> local v0 => i32 @ 17:5-28:6
                     rhs
-                      expr e1 path input -> local v0 => i32 @ 2:5-13:6
-              stmt s1 let v2 @ 2:5-13:6
+                      expr e1 path input -> local v0 => i32 @ 17:5-28:6
+              stmt s1 let v2 @ 17:5-28:6
                 initializer
-                  expr e5 binary + => i32 @ 2:5-13:6
+                  expr e5 binary + => i32 @ 17:5-28:6
                     lhs
-                      expr e3 path doubled -> local v1 => i32 @ 2:5-13:6
+                      expr e3 path doubled -> local v1 => i32 @ 17:5-28:6
                     rhs
-                      expr e4 path input -> local v0 => i32 @ 2:5-13:6
+                      expr e4 path input -> local v0 => i32 @ 17:5-28:6
               tail
-                expr e6 path tripled -> local v2 => i32 @ 15:5-15:12
-        "#]],
-    );
-}
+                expr e6 path tripled -> local v2 => i32 @ 30:5-30:12
 
-#[test]
-fn local_cfg_select_macro_shadows_body_builtin() {
-    check_project_body_ir(
-        r#"
-//- /Cargo.toml
-[package]
-name = "body_cfg_select_shadow_fixture"
-version = "0.1.0"
-edition = "2024"
 
-//- /src/lib.rs
-macro_rules! cfg_select {
-    ($($tt:tt)*) => {
-        true
-    };
-}
-
-pub fn use_it() -> bool {
-    cfg_select! {
-        _ => { 0 },
-    }
-}
-"#,
-        expect![[r#"
-            package body_cfg_select_shadow_fixture
-
-            body_cfg_select_shadow_fixture [lib]
-            body b0 fn body_cfg_select_shadow_fixture[lib]::crate::use_it @ 7:1-11:2
+            body b2 fn body_cfg_select_fixture[lib]::crate::local::shadow @ 40:5-44:6
             scopes
             - s0 parent <none>: <none>
             - s1 parent s0: <none>
             bindings
             body
-            expr e1 block s1 => bool @ 7:25-11:2
+            expr e1 block s1 => bool @ 40:29-44:6
               tail
-                expr e0 literal bool `cfg_select! { _ => { 0 }, }` => bool @ 8:5-10:6
+                expr e0 literal bool `cfg_select! { _ => { 0 }, }` => bool @ 41:9-43:10
+
+
+            package core
+
+            core [lib]
+            skipped
+
+            package std
+
+            std [lib]
+            skipped
         "#]],
     );
 }
 
 #[test]
-fn format_args_builtin_lowers_as_body_expression() {
-    check_project_body_ir(
-        r#"
-//- /Cargo.toml
-[package]
-name = "body_format_args_builtin_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
-pub mod core {
-    pub mod fmt {
-        pub struct Arguments;
-    }
-}
-
-pub fn use_it() {
-    let args = format_args!("hello");
-    let args_nl = format_args_nl!("hello");
-    args_nl
-}
-"#,
-        expect![[r#"
-            package body_format_args_builtin_fixture
-
-            body_format_args_builtin_fixture [lib]
-            body b0 fn body_format_args_builtin_fixture[lib]::crate::use_it @ 7:1-11:2
-            scopes
-            - s0 parent <none>: <none>
-            - s1 parent s0: v0, v1
-            bindings
-            - v0 let args `args` => nominal struct body_format_args_builtin_fixture[lib]::crate::core::fmt::Arguments @ 8:9-8:13
-            - v1 let args_nl `args_nl` => nominal struct body_format_args_builtin_fixture[lib]::crate::core::fmt::Arguments @ 9:9-9:16
-            body
-            expr e3 block s1 => nominal struct body_format_args_builtin_fixture[lib]::crate::core::fmt::Arguments @ 7:17-11:2
-              stmt s0 let v0 @ 8:5-8:38
-                initializer
-                  expr e0 builtin_macro format_args => nominal struct body_format_args_builtin_fixture[lib]::crate::core::fmt::Arguments @ 8:16-8:37
-              stmt s1 let v1 @ 9:5-9:44
-                initializer
-                  expr e1 builtin_macro format_args_nl => nominal struct body_format_args_builtin_fixture[lib]::crate::core::fmt::Arguments @ 9:19-9:43
-              tail
-                expr e2 path args_nl -> local v1 => nominal struct body_format_args_builtin_fixture[lib]::crate::core::fmt::Arguments @ 10:5-10:12
-        "#]],
-    );
-}
-
-#[test]
-fn qualified_format_args_builtin_lowers_as_body_expression() {
-    check_project_body_ir(
-        r#"
-//- /Cargo.toml
-[package]
-name = "body_qualified_format_args_builtin_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
-pub mod core {
-    pub mod fmt {
-        pub struct Arguments;
-    }
-}
-
-pub fn use_it() {
-    let args = core::format_args!("hello");
-    args
-}
-"#,
-        expect![[r#"
-            package body_qualified_format_args_builtin_fixture
-
-            body_qualified_format_args_builtin_fixture [lib]
-            body b0 fn body_qualified_format_args_builtin_fixture[lib]::crate::use_it @ 7:1-10:2
-            scopes
-            - s0 parent <none>: <none>
-            - s1 parent s0: v0
-            bindings
-            - v0 let args `args` => nominal struct body_qualified_format_args_builtin_fixture[lib]::crate::core::fmt::Arguments @ 8:9-8:13
-            body
-            expr e2 block s1 => nominal struct body_qualified_format_args_builtin_fixture[lib]::crate::core::fmt::Arguments @ 7:17-10:2
-              stmt s0 let v0 @ 8:5-8:44
-                initializer
-                  expr e0 builtin_macro format_args => nominal struct body_qualified_format_args_builtin_fixture[lib]::crate::core::fmt::Arguments @ 8:16-8:43
-              tail
-                expr e1 path args -> local v0 => nominal struct body_qualified_format_args_builtin_fixture[lib]::crate::core::fmt::Arguments @ 9:5-9:9
-        "#]],
-    );
-}
-
-#[test]
-fn resolved_sysroot_builtin_macro_lowers_as_body_expression() {
+fn format_family_builtins_resolve_through_sysroot_and_shadow_normally() {
     check_project_body_ir_with_sysroot(
         r#"
 //- /Cargo.toml
 [package]
-name = "body_resolved_builtin_macro_fixture"
+name = "body_format_family_fixture"
 version = "0.1.0"
 edition = "2024"
 
 //- /src/lib.rs
-pub fn use_it() {
+pub fn direct() {
+    let args = format_args!("hello");
+    let args_nl = format_args_nl!("hello");
+    args_nl
+}
+
+pub fn qualified() {
+    let args = std::format_args!("hello");
+    args
+}
+
+pub fn aliased() {
     let direct = format_args!("hello");
     let aliased = my_format_args!("hello");
     aliased
+}
+
+pub fn library() {
+    let args = format!("hello {}", 1);
+    args
+}
+
+pub mod shadow {
+    macro_rules! format {
+        () => {
+            92
+        };
+    }
+
+    macro_rules! format_args {
+        () => {
+            93
+        };
+    }
+
+    pub fn local_format() -> i32 {
+        let value = format!();
+        value
+    }
+
+    pub fn local_format_args() -> i32 {
+        let value = format_args!();
+        value
+    }
 }
 
 //- /sysroot/library/core/src/lib.rs
@@ -1055,13 +914,32 @@ macro_rules! format_args {
     ($($args:tt)*) => {{ /* compiler built-in */ }};
 }
 
+#[rustc_builtin_macro]
+#[macro_export]
+macro_rules! format_args_nl {
+    ($($args:tt)*) => {{ /* compiler built-in */ }};
+}
+
+#[macro_export]
+macro_rules! format {
+    ($($args:tt)*) => {
+        $crate::__export::format_args!($($args)*)
+    };
+}
+
+pub mod __export {
+    pub use crate::format_args;
+}
+
 pub mod macros {
     pub use crate::format_args as my_format_args;
 }
 
 pub mod prelude {
     pub mod rust_2024 {
+        pub use crate::format;
         pub use crate::format_args;
+        pub use crate::format_args_nl;
         pub use crate::macros::my_format_args;
     }
 }
@@ -1072,26 +950,105 @@ pub mod prelude {
             alloc [lib]
             skipped
 
-            package body_resolved_builtin_macro_fixture
+            package body_format_family_fixture
 
-            body_resolved_builtin_macro_fixture [lib]
-            body b0 fn body_resolved_builtin_macro_fixture[lib]::crate::use_it @ 1:1-5:2
+            body_format_family_fixture [lib]
+            body b0 fn body_format_family_fixture[lib]::crate::direct @ 1:1-5:2
             scopes
             - s0 parent <none>: <none>
             - s1 parent s0: v0, v1
             bindings
-            - v0 let direct `direct` => nominal struct core[lib]::crate::fmt::Arguments @ 2:9-2:15
-            - v1 let aliased `aliased` => nominal struct core[lib]::crate::fmt::Arguments @ 3:9-3:16
+            - v0 let args `args` => nominal struct core[lib]::crate::fmt::Arguments @ 2:9-2:13
+            - v1 let args_nl `args_nl` => nominal struct core[lib]::crate::fmt::Arguments @ 3:9-3:16
             body
             expr e3 block s1 => nominal struct core[lib]::crate::fmt::Arguments @ 1:17-5:2
-              stmt s0 let v0 @ 2:5-2:40
+              stmt s0 let v0 @ 2:5-2:38
                 initializer
-                  expr e0 builtin_macro format_args => nominal struct core[lib]::crate::fmt::Arguments @ 2:18-2:39
+                  expr e0 builtin_macro format_args => nominal struct core[lib]::crate::fmt::Arguments @ 2:16-2:37
               stmt s1 let v1 @ 3:5-3:44
                 initializer
-                  expr e1 builtin_macro format_args => nominal struct core[lib]::crate::fmt::Arguments @ 3:19-3:43
+                  expr e1 builtin_macro format_args_nl => nominal struct core[lib]::crate::fmt::Arguments @ 3:19-3:43
               tail
-                expr e2 path aliased -> local v1 => nominal struct core[lib]::crate::fmt::Arguments @ 4:5-4:12
+                expr e2 path args_nl -> local v1 => nominal struct core[lib]::crate::fmt::Arguments @ 4:5-4:12
+
+
+            body b1 fn body_format_family_fixture[lib]::crate::qualified @ 7:1-10:2
+            scopes
+            - s0 parent <none>: <none>
+            - s1 parent s0: v0
+            bindings
+            - v0 let args `args` => nominal struct core[lib]::crate::fmt::Arguments @ 8:9-8:13
+            body
+            expr e2 block s1 => nominal struct core[lib]::crate::fmt::Arguments @ 7:20-10:2
+              stmt s0 let v0 @ 8:5-8:43
+                initializer
+                  expr e0 builtin_macro format_args => nominal struct core[lib]::crate::fmt::Arguments @ 8:16-8:42
+              tail
+                expr e1 path args -> local v0 => nominal struct core[lib]::crate::fmt::Arguments @ 9:5-9:9
+
+
+            body b2 fn body_format_family_fixture[lib]::crate::aliased @ 12:1-16:2
+            scopes
+            - s0 parent <none>: <none>
+            - s1 parent s0: v0, v1
+            bindings
+            - v0 let direct `direct` => nominal struct core[lib]::crate::fmt::Arguments @ 13:9-13:15
+            - v1 let aliased `aliased` => nominal struct core[lib]::crate::fmt::Arguments @ 14:9-14:16
+            body
+            expr e3 block s1 => nominal struct core[lib]::crate::fmt::Arguments @ 12:18-16:2
+              stmt s0 let v0 @ 13:5-13:40
+                initializer
+                  expr e0 builtin_macro format_args => nominal struct core[lib]::crate::fmt::Arguments @ 13:18-13:39
+              stmt s1 let v1 @ 14:5-14:44
+                initializer
+                  expr e1 builtin_macro format_args => nominal struct core[lib]::crate::fmt::Arguments @ 14:19-14:43
+              tail
+                expr e2 path aliased -> local v1 => nominal struct core[lib]::crate::fmt::Arguments @ 15:5-15:12
+
+
+            body b3 fn body_format_family_fixture[lib]::crate::library @ 18:1-21:2
+            scopes
+            - s0 parent <none>: <none>
+            - s1 parent s0: v0
+            bindings
+            - v0 let args `args` => nominal struct core[lib]::crate::fmt::Arguments @ 19:9-19:13
+            body
+            expr e2 block s1 => nominal struct core[lib]::crate::fmt::Arguments @ 18:18-21:2
+              stmt s0 let v0 @ 19:5-19:39
+                initializer
+                  expr e0 builtin_macro format_args => nominal struct core[lib]::crate::fmt::Arguments @ 19:16-19:38
+              tail
+                expr e1 path args -> local v0 => nominal struct core[lib]::crate::fmt::Arguments @ 20:5-20:9
+
+
+            body b4 fn body_format_family_fixture[lib]::crate::shadow::local_format @ 36:5-39:6
+            scopes
+            - s0 parent <none>: <none>
+            - s1 parent s0: v0
+            bindings
+            - v0 let value `value` => i32 @ 37:13-37:18
+            body
+            expr e2 block s1 => i32 @ 36:34-39:6
+              stmt s0 let v0 @ 37:9-37:31
+                initializer
+                  expr e0 literal int `format!()` => i32 @ 37:21-37:30
+              tail
+                expr e1 path value -> local v0 => i32 @ 38:9-38:14
+
+
+            body b5 fn body_format_family_fixture[lib]::crate::shadow::local_format_args @ 41:5-44:6
+            scopes
+            - s0 parent <none>: <none>
+            - s1 parent s0: v0
+            bindings
+            - v0 let value `value` => i32 @ 42:13-42:18
+            body
+            expr e2 block s1 => i32 @ 41:39-44:6
+              stmt s0 let v0 @ 42:9-42:36
+                initializer
+                  expr e0 literal int `format_args!()` => i32 @ 42:21-42:35
+              tail
+                expr e1 path value -> local v0 => i32 @ 43:9-43:14
 
 
             package core
@@ -1108,7 +1065,7 @@ pub mod prelude {
 }
 
 #[test]
-fn ambiguous_prelude_macro_blocks_body_builtin_fallback() {
+fn ambiguous_prelude_macro_blocks_body_builtin_resolution() {
     check_project_body_ir_with_sysroot(
         r#"
 //- /Cargo.toml
@@ -1197,51 +1154,8 @@ pub mod prelude {
 }
 
 #[test]
-fn local_format_args_macro_shadows_builtin_in_body() {
-    check_project_body_ir(
-        r#"
-//- /Cargo.toml
-[package]
-name = "body_format_args_shadow_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
-macro_rules! format_args {
-    () => {
-        92
-    };
-}
-
-pub fn use_it() -> i32 {
-    let value = format_args!();
-    value
-}
-"#,
-        expect![[r#"
-            package body_format_args_shadow_fixture
-
-            body_format_args_shadow_fixture [lib]
-            body b0 fn body_format_args_shadow_fixture[lib]::crate::use_it @ 7:1-10:2
-            scopes
-            - s0 parent <none>: <none>
-            - s1 parent s0: v0
-            bindings
-            - v0 let value `value` => i32 @ 8:9-8:14
-            body
-            expr e2 block s1 => i32 @ 7:24-10:2
-              stmt s0 let v0 @ 8:5-8:32
-                initializer
-                  expr e0 literal int `format_args!()` => i32 @ 8:17-8:31
-              tail
-                expr e1 path value -> local v0 => i32 @ 9:5-9:10
-        "#]],
-    );
-}
-
-#[test]
 fn common_builtin_macros_lower_to_body_expression_types() {
-    check_project_body_ir(
+    check_project_body_ir_with_sysroot(
         r#"
 //- /Cargo.toml
 [package]
@@ -1250,15 +1164,6 @@ version = "0.1.0"
 edition = "2024"
 
 //- /src/lib.rs
-pub mod core {
-    pub mod option {
-        pub enum Option<T> {
-            Some(T),
-            None,
-        }
-    }
-}
-
 pub fn use_it() {
     let cfg_value = cfg!(target_os = "linux");
     let stringified = stringify!(a + b);
@@ -1273,64 +1178,174 @@ pub fn use_it() {
     let column_no = column!();
     maybe_env
 }
+
+//- /sysroot/library/core/src/lib.rs
+pub mod option {
+    pub enum Option<T> {
+        Some(T),
+        None,
+    }
+}
+
+//- /sysroot/library/alloc/src/lib.rs
+pub struct Alloc;
+
+//- /sysroot/library/std/src/lib.rs
+#[rustc_builtin_macro]
+#[macro_export]
+macro_rules! cfg {
+    ($($args:tt)*) => {{ /* compiler built-in */ }};
+}
+
+#[rustc_builtin_macro]
+#[macro_export]
+macro_rules! column {
+    ($($args:tt)*) => {{ /* compiler built-in */ }};
+}
+
+#[rustc_builtin_macro]
+#[macro_export]
+macro_rules! concat {
+    ($($args:tt)*) => {{ /* compiler built-in */ }};
+}
+
+#[rustc_builtin_macro]
+#[macro_export]
+macro_rules! env {
+    ($($args:tt)*) => {{ /* compiler built-in */ }};
+}
+
+#[rustc_builtin_macro]
+#[macro_export]
+macro_rules! file {
+    ($($args:tt)*) => {{ /* compiler built-in */ }};
+}
+
+#[rustc_builtin_macro]
+#[macro_export]
+macro_rules! include_bytes {
+    ($($args:tt)*) => {{ /* compiler built-in */ }};
+}
+
+#[rustc_builtin_macro]
+#[macro_export]
+macro_rules! include_str {
+    ($($args:tt)*) => {{ /* compiler built-in */ }};
+}
+
+#[rustc_builtin_macro]
+#[macro_export]
+macro_rules! line {
+    ($($args:tt)*) => {{ /* compiler built-in */ }};
+}
+
+#[rustc_builtin_macro]
+#[macro_export]
+macro_rules! module_path {
+    ($($args:tt)*) => {{ /* compiler built-in */ }};
+}
+
+#[rustc_builtin_macro]
+#[macro_export]
+macro_rules! option_env {
+    ($($args:tt)*) => {{ /* compiler built-in */ }};
+}
+
+#[rustc_builtin_macro]
+#[macro_export]
+macro_rules! stringify {
+    ($($args:tt)*) => {{ /* compiler built-in */ }};
+}
+
+pub mod prelude {
+    pub mod rust_2024 {
+        pub use crate::cfg;
+        pub use crate::column;
+        pub use crate::concat;
+        pub use crate::env;
+        pub use crate::file;
+        pub use crate::include_bytes;
+        pub use crate::include_str;
+        pub use crate::line;
+        pub use crate::module_path;
+        pub use crate::option_env;
+        pub use crate::stringify;
+    }
+}
 "#,
         expect![[r#"
+            package alloc
+
+            alloc [lib]
+            skipped
+
             package body_builtin_macro_types_fixture
 
             body_builtin_macro_types_fixture [lib]
-            body b0 fn body_builtin_macro_types_fixture[lib]::crate::use_it @ 10:1-23:2
+            body b0 fn body_builtin_macro_types_fixture[lib]::crate::use_it @ 1:1-14:2
             scopes
             - s0 parent <none>: <none>
             - s1 parent s0: v0, v1, v2, v3, v4, v5, v6, v7, v8, v9, v10
             bindings
-            - v0 let cfg_value `cfg_value` => bool @ 11:9-11:18
-            - v1 let stringified `stringified` => &str @ 12:9-12:20
-            - v2 let concatenated `concatenated` => &str @ 13:9-13:21
-            - v3 let env_value `env_value` => &str @ 14:9-14:18
-            - v4 let maybe_env `maybe_env` => nominal enum body_builtin_macro_types_fixture[lib]::crate::core::option::Option<&str> @ 15:9-15:18
-            - v5 let included `included` => &str @ 16:9-16:17
-            - v6 let bytes `bytes` => &[u8] @ 17:9-17:14
-            - v7 let file_name `file_name` => &str @ 18:9-18:18
-            - v8 let module_name `module_name` => &str @ 19:9-19:20
-            - v9 let line_no `line_no` => u32 @ 20:9-20:16
-            - v10 let column_no `column_no` => u32 @ 21:9-21:18
+            - v0 let cfg_value `cfg_value` => bool @ 2:9-2:18
+            - v1 let stringified `stringified` => &str @ 3:9-3:20
+            - v2 let concatenated `concatenated` => &str @ 4:9-4:21
+            - v3 let env_value `env_value` => &str @ 5:9-5:18
+            - v4 let maybe_env `maybe_env` => nominal enum core[lib]::crate::option::Option<&str> @ 6:9-6:18
+            - v5 let included `included` => &str @ 7:9-7:17
+            - v6 let bytes `bytes` => &[u8] @ 8:9-8:14
+            - v7 let file_name `file_name` => &str @ 9:9-9:18
+            - v8 let module_name `module_name` => &str @ 10:9-10:20
+            - v9 let line_no `line_no` => u32 @ 11:9-11:16
+            - v10 let column_no `column_no` => u32 @ 12:9-12:18
             body
-            expr e12 block s1 => nominal enum body_builtin_macro_types_fixture[lib]::crate::core::option::Option<&str> @ 10:17-23:2
-              stmt s0 let v0 @ 11:5-11:47
+            expr e12 block s1 => nominal enum core[lib]::crate::option::Option<&str> @ 1:17-14:2
+              stmt s0 let v0 @ 2:5-2:47
                 initializer
-                  expr e0 builtin_macro cfg => bool @ 11:21-11:46
-              stmt s1 let v1 @ 12:5-12:41
+                  expr e0 builtin_macro cfg => bool @ 2:21-2:46
+              stmt s1 let v1 @ 3:5-3:41
                 initializer
-                  expr e1 builtin_macro stringify => &str @ 12:23-12:40
-              stmt s2 let v2 @ 13:5-13:42
+                  expr e1 builtin_macro stringify => &str @ 3:23-3:40
+              stmt s2 let v2 @ 4:5-4:42
                 initializer
-                  expr e2 builtin_macro concat => &str @ 13:24-13:41
-              stmt s3 let v3 @ 14:5-14:34
+                  expr e2 builtin_macro concat => &str @ 4:24-4:41
+              stmt s3 let v3 @ 5:5-5:34
                 initializer
-                  expr e3 builtin_macro env => &str @ 14:21-14:33
-              stmt s4 let v4 @ 15:5-15:41
+                  expr e3 builtin_macro env => &str @ 5:21-5:33
+              stmt s4 let v4 @ 6:5-6:41
                 initializer
-                  expr e4 builtin_macro option_env => nominal enum body_builtin_macro_types_fixture[lib]::crate::core::option::Option<&str> @ 15:21-15:40
-              stmt s5 let v5 @ 16:5-16:48
+                  expr e4 builtin_macro option_env => nominal enum core[lib]::crate::option::Option<&str> @ 6:21-6:40
+              stmt s5 let v5 @ 7:5-7:48
                 initializer
-                  expr e5 builtin_macro include_str => &str @ 16:20-16:47
-              stmt s6 let v6 @ 17:5-17:47
+                  expr e5 builtin_macro include_str => &str @ 7:20-7:47
+              stmt s6 let v6 @ 8:5-8:47
                 initializer
-                  expr e6 builtin_macro include_bytes => &[u8] @ 17:17-17:46
-              stmt s7 let v7 @ 18:5-18:29
+                  expr e6 builtin_macro include_bytes => &[u8] @ 8:17-8:46
+              stmt s7 let v7 @ 9:5-9:29
                 initializer
-                  expr e7 builtin_macro file => &str @ 18:21-18:28
-              stmt s8 let v8 @ 19:5-19:38
+                  expr e7 builtin_macro file => &str @ 9:21-9:28
+              stmt s8 let v8 @ 10:5-10:38
                 initializer
-                  expr e8 builtin_macro module_path => &str @ 19:23-19:37
-              stmt s9 let v9 @ 20:5-20:27
+                  expr e8 builtin_macro module_path => &str @ 10:23-10:37
+              stmt s9 let v9 @ 11:5-11:27
                 initializer
-                  expr e9 builtin_macro line => u32 @ 20:19-20:26
-              stmt s10 let v10 @ 21:5-21:31
+                  expr e9 builtin_macro line => u32 @ 11:19-11:26
+              stmt s10 let v10 @ 12:5-12:31
                 initializer
-                  expr e10 builtin_macro column => u32 @ 21:21-21:30
+                  expr e10 builtin_macro column => u32 @ 12:21-12:30
               tail
-                expr e11 path maybe_env -> local v4 => nominal enum body_builtin_macro_types_fixture[lib]::crate::core::option::Option<&str> @ 22:5-22:14
+                expr e11 path maybe_env -> local v4 => nominal enum core[lib]::crate::option::Option<&str> @ 13:5-13:14
+
+
+            package core
+
+            core [lib]
+            skipped
+
+            package std
+
+            std [lib]
+            skipped
         "#]],
     );
 }

@@ -15,8 +15,6 @@ use rg_text::Name;
 
 use crate::DefMapReadTxn;
 
-use super::builtin;
-
 mod call;
 mod expanded;
 
@@ -26,9 +24,8 @@ pub use self::expanded::{BodyMacroExprExpansion, ExpandedBodyMacro};
 
 /// Expands body macro calls using frozen def-map visibility.
 ///
-/// Declarative macros return generated syntax. Compiler builtins are selected through ordinary
-/// macro lookup when possible, with a path-shaped fallback for calls that do not resolve to sysroot
-/// definitions.
+/// Declarative macros return generated syntax. Compiler builtins use the same lookup path, but
+/// dispatch to builtin behavior after resolution proves that the callee is a builtin definition.
 pub struct BodyMacroExpander<'db, 'txn> {
     def_maps: &'txn DefMapReadTxn<'db>,
     runtime: MacroExpansionRuntime,
@@ -202,10 +199,7 @@ impl<'db, 'txn> BodyMacroExpander<'db, 'txn> {
                 None => BodyMacroCallee::Declarative(resolved),
             },
             ExpectedUnique::Ambiguous => return Ok(None),
-            ExpectedUnique::Empty => match builtin::kind_from_path(&path) {
-                Some(kind) => BodyMacroCallee::Builtin(kind),
-                None => return Ok(None),
-            },
+            ExpectedUnique::Empty => return Ok(None),
         };
 
         Ok(Some(ResolvedBodyMacroCall::new(invocation, callee)))

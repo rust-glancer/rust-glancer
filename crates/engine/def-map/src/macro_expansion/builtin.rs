@@ -2,7 +2,7 @@
 //!
 //! Macro lookup should always prefer user definitions first. Resolved definitions carry builtin
 //! identity directly when item-tree saw `#[rustc_builtin_macro]`; the path classifier below remains
-//! a fallback for names that do not resolve through the sysroot yet.
+//! an item-position compatibility fallback for names that do not resolve through the sysroot yet.
 
 use rg_ir_model::{PathSegment, items::BuiltinMacroKind};
 use rg_ir_storage::ImportPath;
