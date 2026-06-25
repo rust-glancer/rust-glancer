@@ -473,6 +473,7 @@ mod tests {
         assert_eq!(query.extra(), &[extra]);
         assert_eq!(query_metrics.set.recall_percent, Some(50.0));
         assert_eq!(query_metrics.set.precision_percent, Some(50.0));
+        assert_eq!(query_metrics.set.match_score_percent, 50.0);
 
         let references = comparison
             .aggregates
@@ -493,6 +494,7 @@ mod tests {
         assert_eq!(metrics.set.missing_count, 1);
         assert_eq!(metrics.set.extra_count, 1);
         assert_eq!(metrics.set.recall_percent, Some(50.0),);
+        assert_eq!(metrics.set.match_score_percent, 50.0);
     }
 
     #[test]

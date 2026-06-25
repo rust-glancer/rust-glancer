@@ -66,6 +66,16 @@ impl QueryReport {
                 }
             });
 
+            let lowest_match_score = Self::lowest_match_score_queries(queries);
+            if !lowest_match_score.is_empty() {
+                section.table("lowest_match_score", |table| {
+                    Self::configure_score_table(table);
+                    for (query, counts) in lowest_match_score {
+                        query.append_score_row(table, counts);
+                    }
+                });
+            }
+
             let lowest_recall = Self::lowest_recall_queries(queries);
             if !lowest_recall.is_empty() {
                 section.table("lowest_recall", |table| {
@@ -146,6 +156,20 @@ impl QueryReport {
         slowest
     }
 
+    fn lowest_match_score_queries(queries: &[Self]) -> Vec<(&Self, QueryCounts)> {
+        let mut lowest = queries
+            .iter()
+            .filter_map(|query| query.counts().map(|counts| (query, counts)))
+            .filter(|(_, counts)| counts.match_score_percent < 100.0)
+            .collect::<Vec<_>>();
+        lowest.sort_by(|(_, left), (_, right)| {
+            left.match_score_percent
+                .total_cmp(&right.match_score_percent)
+        });
+        lowest.truncate(HIGHLIGHT_LIMIT);
+        lowest
+    }
+
     fn lowest_recall_queries(queries: &[Self]) -> Vec<(&Self, QueryCounts)> {
         let mut lowest = queries
             .iter()
@@ -204,6 +228,12 @@ impl QueryReport {
             .duration_column_as("rust_analyzer_ms", "rust-analyzer")
             .text_column("outcome")
             .column_as(
+                "match_score",
+                "Match score",
+                ReportAlign::Right,
+                Some(ReportUnit::Percent),
+            )
+            .column_as(
                 "recall",
                 "Recall",
                 ReportAlign::Right,
@@ -217,10 +247,45 @@ impl QueryReport {
             );
     }
 
+    fn configure_score_table(table: &mut ReportTableBuilder) {
+        table
+            .text_column("method")
+            .text_column("query")
+            .column_as(
+                "match_score",
+                "Match score",
+                ReportAlign::Right,
+                Some(ReportUnit::Percent),
+            )
+            .column_as(
+                "recall",
+                "Recall",
+                ReportAlign::Right,
+                Some(ReportUnit::Percent),
+            )
+            .column_as(
+                "precision",
+                "Precision",
+                ReportAlign::Right,
+                Some(ReportUnit::Percent),
+            )
+            .count_column("rust_glancer_count")
+            .count_column("rust_analyzer_count")
+            .count_column("matched")
+            .count_column("missing")
+            .count_column("extra");
+    }
+
     fn configure_recall_table(table: &mut ReportTableBuilder) {
         table
             .text_column("method")
             .text_column("query")
+            .column_as(
+                "match_score",
+                "Match score",
+                ReportAlign::Right,
+                Some(ReportUnit::Percent),
+            )
             .column_as(
                 "recall",
                 "Recall",
@@ -237,6 +302,12 @@ impl QueryReport {
         table
             .text_column("method")
             .text_column("query")
+            .column_as(
+                "match_score",
+                "Match score",
+                ReportAlign::Right,
+                Some(ReportUnit::Percent),
+            )
             .column_as(
                 "precision",
                 "Precision",
@@ -280,6 +351,13 @@ impl QueryReport {
             if let Some(counts) = self.counts() {
                 counts.append_score_cells(row);
             }
+        });
+    }
+
+    fn append_score_row(&self, table: &mut ReportTableBuilder, counts: QueryCounts) {
+        table.row(|row| {
+            row.text("method", &self.method).text("query", &self.label);
+            counts.append_score_table_cells(row);
         });
     }
 
@@ -329,6 +407,12 @@ impl QueryReport {
             .count_column("matched")
             .count_column("missing")
             .count_column("extra")
+            .column_as(
+                "match_score",
+                "Match score",
+                ReportAlign::Right,
+                Some(ReportUnit::Percent),
+            )
             .column_as(
                 "recall",
                 "Recall",
@@ -501,6 +585,7 @@ struct QueryCounts {
     matched_count: usize,
     missing_count: usize,
     extra_count: usize,
+    match_score_percent: f64,
     recall_percent: Option<f64>,
     precision_percent: Option<f64>,
 }
@@ -518,41 +603,72 @@ impl QueryCounts {
         .value("matched", ReportValue::count(self.matched_count))
         .value("missing", ReportValue::count(self.missing_count))
         .value("extra", ReportValue::count(self.extra_count))
+        .value(
+            "match_score",
+            ReportValue::Percent(self.match_score_percent),
+        )
         .value("recall", optional_percent(self.recall_percent))
         .value("precision", optional_percent(self.precision_percent));
     }
 
     fn append_score_cells(self, row: &mut ReportRowBuilder) {
-        row.value("recall", optional_percent(self.recall_percent))
-            .value("precision", optional_percent(self.precision_percent));
+        row.value(
+            "match_score",
+            ReportValue::Percent(self.match_score_percent),
+        )
+        .value("recall", optional_percent(self.recall_percent))
+        .value("precision", optional_percent(self.precision_percent));
+    }
+
+    fn append_score_table_cells(self, row: &mut ReportRowBuilder) {
+        self.append_score_cells(row);
+        row.value(
+            "rust_glancer_count",
+            ReportValue::count(self.rust_glancer_count),
+        )
+        .value(
+            "rust_analyzer_count",
+            ReportValue::count(self.rust_analyzer_count),
+        )
+        .value("matched", ReportValue::count(self.matched_count))
+        .value("missing", ReportValue::count(self.missing_count))
+        .value("extra", ReportValue::count(self.extra_count));
     }
 
     fn append_recall_cells(self, row: &mut ReportRowBuilder) {
-        row.value("recall", optional_percent(self.recall_percent))
-            .value(
-                "rust_glancer_count",
-                ReportValue::count(self.rust_glancer_count),
-            )
-            .value(
-                "rust_analyzer_count",
-                ReportValue::count(self.rust_analyzer_count),
-            )
-            .value("matched", ReportValue::count(self.matched_count))
-            .value("missing", ReportValue::count(self.missing_count));
+        row.value(
+            "match_score",
+            ReportValue::Percent(self.match_score_percent),
+        )
+        .value("recall", optional_percent(self.recall_percent))
+        .value(
+            "rust_glancer_count",
+            ReportValue::count(self.rust_glancer_count),
+        )
+        .value(
+            "rust_analyzer_count",
+            ReportValue::count(self.rust_analyzer_count),
+        )
+        .value("matched", ReportValue::count(self.matched_count))
+        .value("missing", ReportValue::count(self.missing_count));
     }
 
     fn append_precision_cells(self, row: &mut ReportRowBuilder) {
-        row.value("precision", optional_percent(self.precision_percent))
-            .value(
-                "rust_glancer_count",
-                ReportValue::count(self.rust_glancer_count),
-            )
-            .value(
-                "rust_analyzer_count",
-                ReportValue::count(self.rust_analyzer_count),
-            )
-            .value("matched", ReportValue::count(self.matched_count))
-            .value("extra", ReportValue::count(self.extra_count));
+        row.value(
+            "match_score",
+            ReportValue::Percent(self.match_score_percent),
+        )
+        .value("precision", optional_percent(self.precision_percent))
+        .value(
+            "rust_glancer_count",
+            ReportValue::count(self.rust_glancer_count),
+        )
+        .value(
+            "rust_analyzer_count",
+            ReportValue::count(self.rust_analyzer_count),
+        )
+        .value("matched", ReportValue::count(self.matched_count))
+        .value("extra", ReportValue::count(self.extra_count));
     }
 }
 
@@ -573,6 +689,7 @@ struct LocationQueryReport {
     recall_percent: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     precision_percent: Option<f64>,
+    match_score_percent: f64,
 }
 
 impl LocationQueryReport {
@@ -589,6 +706,7 @@ impl From<&LocationQueryReport> for QueryCounts {
             matched_count: report.matched_count,
             missing_count: report.missing_count,
             extra_count: report.extra_count,
+            match_score_percent: report.match_score_percent,
             recall_percent: report.recall_percent,
             precision_percent: report.precision_percent,
         }
@@ -609,6 +727,7 @@ impl From<MappedSetComparisonMetrics> for LocationQueryReport {
             rust_analyzer_unmapped: metrics.rust_analyzer_unmapped,
             recall_percent: metrics.set.recall_percent,
             precision_percent: metrics.set.precision_percent,
+            match_score_percent: metrics.set.match_score_percent,
         }
     }
 }
@@ -624,6 +743,7 @@ struct RangeQueryReport {
     recall_percent: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     precision_percent: Option<f64>,
+    match_score_percent: f64,
 }
 
 impl RangeQueryReport {
@@ -640,6 +760,7 @@ impl From<&RangeQueryReport> for QueryCounts {
             matched_count: report.matched_count,
             missing_count: report.missing_count,
             extra_count: report.extra_count,
+            match_score_percent: report.match_score_percent,
             recall_percent: report.recall_percent,
             precision_percent: report.precision_percent,
         }
@@ -654,6 +775,7 @@ impl From<SetComparisonMetrics> for RangeQueryReport {
             matched_count: metrics.matched_count,
             missing_count: metrics.missing_count,
             extra_count: metrics.extra_count,
+            match_score_percent: metrics.match_score_percent,
             recall_percent: metrics.recall_percent,
             precision_percent: metrics.precision_percent,
         }
@@ -677,6 +799,7 @@ struct SymbolQueryReport {
     recall_percent: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     precision_percent: Option<f64>,
+    match_score_percent: f64,
 }
 
 impl SymbolQueryReport {
@@ -693,6 +816,7 @@ impl From<&SymbolQueryReport> for QueryCounts {
             matched_count: report.matched_count,
             missing_count: report.missing_count,
             extra_count: report.extra_count,
+            match_score_percent: report.match_score_percent,
             recall_percent: report.recall_percent,
             precision_percent: report.precision_percent,
         }
@@ -713,6 +837,7 @@ impl From<MappedSetComparisonMetrics> for SymbolQueryReport {
             rust_analyzer_unmapped: metrics.rust_analyzer_unmapped,
             recall_percent: metrics.set.recall_percent,
             precision_percent: metrics.set.precision_percent,
+            match_score_percent: metrics.set.match_score_percent,
         }
     }
 }

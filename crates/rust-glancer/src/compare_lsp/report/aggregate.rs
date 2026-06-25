@@ -64,6 +64,12 @@ impl MethodAggregateReport {
             .count_column("missing")
             .count_column("extra")
             .column_as(
+                "match_score",
+                "Match score",
+                ReportAlign::Right,
+                Some(ReportUnit::Percent),
+            )
+            .column_as(
                 "recall",
                 "Recall",
                 ReportAlign::Right,
@@ -148,6 +154,7 @@ struct LocationAggregateReport {
     extra_count: usize,
     rust_glancer_unmapped_count: usize,
     rust_analyzer_unmapped_count: usize,
+    match_score_percent: f64,
     #[serde(skip_serializing_if = "Option::is_none")]
     recall_percent: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -164,6 +171,10 @@ impl LocationAggregateReport {
             .value("matched", ReportValue::count(self.matched_count))
             .value("missing", ReportValue::count(self.missing_count))
             .value("extra", ReportValue::count(self.extra_count))
+            .value(
+                "match_score",
+                ReportValue::Percent(self.match_score_percent),
+            )
             .value("recall", optional_percent(self.recall_percent))
             .value("precision", optional_percent(self.precision_percent))
             .value(
@@ -187,6 +198,7 @@ impl From<MappedSetAggregateMetrics> for LocationAggregateReport {
             extra_count: metrics.set.extra_count,
             rust_glancer_unmapped_count: metrics.rust_glancer_unmapped_count,
             rust_analyzer_unmapped_count: metrics.rust_analyzer_unmapped_count,
+            match_score_percent: metrics.set.match_score_percent,
             recall_percent: metrics.set.recall_percent,
             precision_percent: metrics.set.precision_percent,
         }
@@ -200,6 +212,7 @@ struct RangeAggregateReport {
     matched_count: usize,
     missing_count: usize,
     extra_count: usize,
+    match_score_percent: f64,
     #[serde(skip_serializing_if = "Option::is_none")]
     recall_percent: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -216,6 +229,10 @@ impl RangeAggregateReport {
             .value("matched", ReportValue::count(self.matched_count))
             .value("missing", ReportValue::count(self.missing_count))
             .value("extra", ReportValue::count(self.extra_count))
+            .value(
+                "match_score",
+                ReportValue::Percent(self.match_score_percent),
+            )
             .value("recall", optional_percent(self.recall_percent))
             .value("precision", optional_percent(self.precision_percent));
     }
@@ -229,6 +246,7 @@ impl From<SetComparisonMetrics> for RangeAggregateReport {
             matched_count: metrics.matched_count,
             missing_count: metrics.missing_count,
             extra_count: metrics.extra_count,
+            match_score_percent: metrics.match_score_percent,
             recall_percent: metrics.recall_percent,
             precision_percent: metrics.precision_percent,
         }
@@ -244,6 +262,7 @@ struct SymbolAggregateReport {
     extra_count: usize,
     rust_glancer_unmapped_count: usize,
     rust_analyzer_unmapped_count: usize,
+    match_score_percent: f64,
     #[serde(skip_serializing_if = "Option::is_none")]
     recall_percent: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -260,6 +279,10 @@ impl SymbolAggregateReport {
             .value("matched", ReportValue::count(self.matched_count))
             .value("missing", ReportValue::count(self.missing_count))
             .value("extra", ReportValue::count(self.extra_count))
+            .value(
+                "match_score",
+                ReportValue::Percent(self.match_score_percent),
+            )
             .value("recall", optional_percent(self.recall_percent))
             .value("precision", optional_percent(self.precision_percent))
             .value(
@@ -283,6 +306,7 @@ impl From<MappedSetAggregateMetrics> for SymbolAggregateReport {
             extra_count: metrics.set.extra_count,
             rust_glancer_unmapped_count: metrics.rust_glancer_unmapped_count,
             rust_analyzer_unmapped_count: metrics.rust_analyzer_unmapped_count,
+            match_score_percent: metrics.set.match_score_percent,
             recall_percent: metrics.set.recall_percent,
             precision_percent: metrics.set.precision_percent,
         }
