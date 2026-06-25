@@ -167,6 +167,15 @@ impl BodyData {
         self.source_items.item(item)
     }
 
+    pub fn source_item_source(&self, item: ItemTreeId) -> Option<BodySource> {
+        self.source_items.source(item)
+    }
+
+    pub fn source_item_is_written(&self, item: ItemTreeId) -> bool {
+        self.source_item_source(item)
+            .is_none_or(|source| source.is_written())
+    }
+
     pub fn statement(&self, statement: StmtId) -> Option<&StmtData> {
         self.statements.get(statement)
     }
@@ -289,12 +298,12 @@ mod tests {
     use super::*;
 
     fn source() -> BodySource {
-        BodySource {
-            file_id: FileId(0),
-            span: Span {
+        BodySource::written(
+            FileId(0),
+            Span {
                 text: TextSpan { start: 0, end: 0 },
             },
-        }
+        )
     }
 
     fn module() -> ModuleRef {

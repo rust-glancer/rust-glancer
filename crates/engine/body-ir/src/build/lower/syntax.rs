@@ -240,10 +240,7 @@ impl BodyLowering<'_> {
 }
 
 pub(super) fn source_for(file_id: FileId, syntax: &rg_syntax::SyntaxNode) -> BodySource {
-    BodySource {
-        file_id,
-        span: Span::from_text_range(syntax.text_range()),
-    }
+    BodySource::written(file_id, Span::from_text_range(syntax.text_range()))
 }
 
 #[cfg(test)]

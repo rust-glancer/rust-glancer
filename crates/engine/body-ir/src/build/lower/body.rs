@@ -152,12 +152,9 @@ impl BodyLowering<'_> {
                 .expanded
                 .source_for_exact_syntax(context.source, syntax)
             {
-                return BodySource {
-                    file_id: context.source.file_id,
-                    span,
-                };
+                return BodySource::macro_generated(context.source.file_id, span);
             }
-            return context.source;
+            return BodySource::macro_generated(context.source.file_id, context.source.span);
         }
 
         source_for(self.body_source.file_id, syntax)

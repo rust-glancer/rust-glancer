@@ -88,7 +88,7 @@ impl<'txn, 'db> UnqualifiedCompletionSiteScanner<'txn, 'db> {
         best: &mut Option<(UnqualifiedCompletionSite, u32)>,
     ) {
         for (_expr, expr_data) in body.exprs_with_ids() {
-            if expr_data.source.file_id != self.file_id {
+            if !expr_data.source.is_written_in_file(self.file_id) {
                 continue;
             }
             match &expr_data.kind {

@@ -418,7 +418,7 @@ impl<'a, 'db> BodyView<'a, 'db> {
         let mut bindings = Vec::new();
         for body in target_bodies.bodies() {
             for (binding_idx, binding) in body.bindings().iter().enumerate() {
-                if binding.source.file_id != file_id {
+                if !binding.source.is_written_in_file(file_id) {
                     continue;
                 }
                 if !matches!(binding.kind, BindingKind::Let) {
@@ -470,7 +470,7 @@ impl<'a, 'db> BodyView<'a, 'db> {
             };
 
             for (expr_idx, expr) in body.exprs().iter().enumerate() {
-                if expr.source.file_id != file_id {
+                if !expr.source.is_written_in_file(file_id) {
                     continue;
                 }
 

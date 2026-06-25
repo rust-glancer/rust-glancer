@@ -266,20 +266,24 @@ impl TargetBodyIrSnapshot<'_> {
     fn render_source_item(
         &self,
         id: usize,
-        item: &rg_ir_model::items::ItemNode,
+        item: &rg_ir_model::BodySourceItem,
         dump: &mut String,
     ) {
-        let name = item.name.as_deref().unwrap_or("<unnamed>");
+        let source_item = item.item();
+        let name = source_item.name.as_deref().unwrap_or("<unnamed>");
+        let provenance = if item.source().is_written() {
+            ""
+        } else {
+            " generated"
+        };
         writeln!(
             dump,
-            "- i{} {} {} @ {}",
+            "- i{} {} {}{} @ {}",
             id,
-            item.kind.tag(),
+            source_item.kind.tag(),
             name,
-            self.render_source(BodySource {
-                file_id: item.file_id,
-                span: item.span,
-            }),
+            provenance,
+            self.render_source(item.source()),
         )
         .expect("string writes should not fail");
     }
@@ -305,10 +309,7 @@ impl TargetBodyIrSnapshot<'_> {
             .map(|span| {
                 format!(
                     " name @ {}",
-                    self.render_source(BodySource {
-                        file_id: binding.source.file_id,
-                        span,
-                    })
+                    self.render_source(BodySource::written(binding.source.file_id, span))
                 )
             })
             .unwrap_or_default();
@@ -791,10 +792,10 @@ impl TargetBodyIrSnapshot<'_> {
                         dump,
                         "{}spread @ {}",
                         indent(depth + 1),
-                        self.render_source(BodySource {
-                            file_id: data.source.file_id,
-                            span: spread.source_span,
-                        })
+                        self.render_source(BodySource::written(
+                            data.source.file_id,
+                            spread.source_span
+                        ))
                     )
                     .expect("string writes should not fail");
                     if let Some(expr) = spread.expr {
@@ -1308,10 +1309,7 @@ impl TargetBodyIrSnapshot<'_> {
 
         format!(
             " @ {}",
-            self.render_source(BodySource {
-                file_id: data.file_id,
-                span: data.span,
-            })
+            self.render_source(BodySource::written(data.file_id, data.span))
         )
     }
 

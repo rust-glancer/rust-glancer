@@ -383,6 +383,9 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
                 let Some(data) = self.db.body_ir.body_data(body)? else {
                     return Ok(None);
                 };
+                if !data.source().is_written() {
+                    return Ok(None);
+                }
                 let Some(_) = data.function_owner() else {
                     return Ok(None);
                 };
@@ -400,6 +403,12 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
                 ..
             } => {
                 let declaration = DeclarationRef::body_binding(BodyBindingRef { body, binding });
+                if let Some(body_data) = self.db.body_ir.body_data(body)?
+                    && let Some(data) = body_data.binding(binding)
+                    && !data.source.is_written()
+                {
+                    return Ok(None);
+                }
                 match surface {
                     BindingSurface::Plain => {
                         self.declaration_occurrence(declaration, target, span, fallback_file_id)?
@@ -445,7 +454,8 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
             BodyCursorCandidate::Expr { body, expr, .. } => {
                 let file_id = match self.db.body_ir.body_data(body)? {
                     Some(body_data) => match body_data.expr(expr) {
-                        Some(data) => data.source.file_id,
+                        Some(data) if data.source.is_written() => data.source.file_id,
+                        Some(_) => return Ok(None),
                         None => {
                             let Some(file_id) = fallback_file_id else {
                                 return Ok(None);

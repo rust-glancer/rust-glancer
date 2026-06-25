@@ -71,7 +71,7 @@ impl ValuePathCursorScanner<'_> {
         // paths need finer granularity: in `Action::Start()`, `Action` and `Start` should produce
         // different symbols even though they belong to the same lowered expression.
         for (_expr, expr_data) in self.body.exprs_with_ids() {
-            if !self.file_matches(expr_data.source.file_id) {
+            if !expr_data.source.is_written_in_selected_file(self.file_id) {
                 continue;
             }
             match &expr_data.kind {
@@ -191,10 +191,6 @@ impl ValuePathCursorScanner<'_> {
                 },
             });
         }
-    }
-
-    fn file_matches(&self, file_id: FileId) -> bool {
-        self.file_id.is_none_or(|selected| selected == file_id)
     }
 
     fn offset_matches(&self, span: Span) -> bool {

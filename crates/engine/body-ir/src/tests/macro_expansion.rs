@@ -270,7 +270,7 @@ pub fn local_use() {
             - s0 parent <none>: <none>
             - s1 parent s0: v0; source_items i0
             source_items
-            - i0 struct User @ 37:5-37:17
+            - i0 struct User generated @ 37:5-37:17
             bindings
             - v0 let user `user`: User => nominal struct fn body_stmt_macro_fixture[lib]::crate::local_struct::User @ 37:5-37:17 @ 38:9-38:13
             body
@@ -288,7 +288,7 @@ pub fn local_use() {
             - s0 parent <none>: <none>
             - s1 parent s0: v0; source_items i0
             source_items
-            - i0 use <unnamed> @ 43:5-43:17
+            - i0 use <unnamed> generated @ 43:5-43:17
             bindings
             - v0 let id `id`: Id => nominal struct body_stmt_macro_fixture[lib]::crate::GlobalId @ 44:9-44:11
             body

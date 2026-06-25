@@ -125,6 +125,14 @@ impl ResolvedBodyData {
         self.body.source_item(item)
     }
 
+    pub fn source_item_source(&self, item: ItemTreeId) -> Option<BodySource> {
+        self.body.source_item_source(item)
+    }
+
+    pub fn source_item_is_written(&self, item: ItemTreeId) -> bool {
+        self.body.source_item_is_written(item)
+    }
+
     pub fn statement(&self, statement: StmtId) -> Option<&StmtData> {
         self.body.statement(statement)
     }
@@ -324,13 +332,22 @@ impl BodyBuilder {
 
     /// Some items do not directly belong to a scope, e.g. contents of `impl` block.
     /// These are only indexed by their item ID, but not recorded as a part of the scope.
-    pub(crate) fn alloc_scopeless_source_item(&mut self, data: ItemNode) -> ItemTreeId {
-        self.source_items.alloc(data)
+    pub(crate) fn alloc_scopeless_source_item(
+        &mut self,
+        data: ItemNode,
+        source: BodySource,
+    ) -> ItemTreeId {
+        self.source_items.alloc(data, source)
     }
 
     /// Items declared within an expression scope are associated with the corresponding scope.
-    pub(crate) fn alloc_scope_source_item(&mut self, scope: ScopeId, data: ItemNode) -> ItemTreeId {
-        let item = self.alloc_scopeless_source_item(data);
+    pub(crate) fn alloc_scope_source_item(
+        &mut self,
+        scope: ScopeId,
+        data: ItemNode,
+        source: BodySource,
+    ) -> ItemTreeId {
+        let item = self.alloc_scopeless_source_item(data, source);
         self.scopes
             .get_mut(scope)
             .expect("source item scope should exist while lowering body")

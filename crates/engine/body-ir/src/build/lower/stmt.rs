@@ -350,7 +350,7 @@ impl BodyLowering<'_> {
 
         let kind = self
             .lower_source_item(&item)
-            .map(|node| self.builder.alloc_scope_source_item(scope, node))
+            .map(|node| self.builder.alloc_scope_source_item(scope, node, source))
             .map(|item| StmtKind::Item { item })
             .unwrap_or(StmtKind::ItemIgnored);
         self.builder.alloc_statement(StmtData { source, kind })
@@ -598,8 +598,9 @@ impl BodyLowering<'_> {
             let Some(item) = self.cfg.enabled_syntax(item) else {
                 continue;
             };
+            let source = self.source(item.syntax());
             if let Some(node) = self.lower_source_item(&item) {
-                item_ids.push(self.builder.alloc_scopeless_source_item(node));
+                item_ids.push(self.builder.alloc_scopeless_source_item(node, source));
             }
         }
         item_ids
@@ -618,8 +619,9 @@ impl BodyLowering<'_> {
             let Some(item) = self.cfg.enabled_syntax(item) else {
                 continue;
             };
+            let source = self.source(item.syntax());
             if let Some(node) = self.lower_source_assoc_item(item) {
-                item_ids.push(self.builder.alloc_scopeless_source_item(node));
+                item_ids.push(self.builder.alloc_scopeless_source_item(node, source));
             }
         }
         item_ids

@@ -208,6 +208,34 @@ fn use_it(by_ref: User, by_mut: User, by_at: User) {
     );
 }
 
+#[test]
+fn source_scan_skips_generated_body_local_item_type_refs() {
+    check_source_candidates(
+        "Text",
+        r#"
+//- /Cargo.toml
+[package]
+name = "body_cursor_generated_body_local_item"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct Text;
+
+macro_rules! make_item {
+    ($ty:ty) => { struct Generated { field: $ty } };
+}
+
+pub fn use_it() {
+    make_item!(Text);
+}
+"#,
+        expect![[r#"
+            <none>
+        "#]],
+    );
+}
+
 fn check_source_candidates(ident: &str, fixture: &str, expect: Expect) {
     let db = BodyIrFixture::build(fixture);
     let package = db
@@ -260,7 +288,11 @@ fn check_source_candidates(ident: &str, fixture: &str, expect: Expect) {
     }
     candidates.sort();
 
-    let actual = format!("{}\n", candidates.join("\n"));
+    let actual = if candidates.is_empty() {
+        "<none>\n".to_string()
+    } else {
+        format!("{}\n", candidates.join("\n"))
+    };
     expect.assert_eq(&actual);
 }
 

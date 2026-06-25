@@ -95,7 +95,7 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
     ) {
         let record_shorthand_bindings = self.record_shorthand_bindings(body);
         for (binding_idx, binding) in body.bindings().iter().enumerate() {
-            if !self.file_matches(binding.source.file_id) {
+            if !binding.source.is_written_in_selected_file(self.file_id) {
                 continue;
             }
             let binding_id = BindingId(binding_idx);
@@ -125,6 +125,12 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
             return;
         };
         for item in item_store.semantic_items() {
+            if let ItemSourceKind::Body(source) = item.source().kind
+                && source.body == body_ref
+                && !body.source_item_is_written(source.item)
+            {
+                continue;
+            }
             if self
                 .file_id
                 .is_some_and(|file_id| item.source().file_id != file_id)
@@ -271,7 +277,7 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
     ) {
         let record_shorthand_values = Self::record_expr_shorthand_values(body);
         for (expr_idx, expr) in body.exprs().iter().enumerate() {
-            if !self.file_matches(expr.source.file_id) {
+            if !expr.source.is_written_in_selected_file(self.file_id) {
                 continue;
             }
             if record_shorthand_values.contains(&ExprId(expr_idx)) {
@@ -330,7 +336,7 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
         candidates: &mut Vec<BodyCursorCandidate>,
     ) {
         for expr in body.exprs().iter() {
-            if !self.file_matches(expr.source.file_id) {
+            if !expr.source.is_written_in_selected_file(self.file_id) {
                 continue;
             }
             let ExprKind::Record {

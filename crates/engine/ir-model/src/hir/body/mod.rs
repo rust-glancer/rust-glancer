@@ -36,6 +36,6 @@ pub use self::{
     record::RecordFieldSyntax,
     scope::ScopeData,
     source::BodySource,
-    source_items::BodySourceItems,
+    source_items::{BodySourceItem, BodySourceItems},
     stmt::{StmtData, StmtKind},
 };

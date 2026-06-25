@@ -102,7 +102,7 @@ impl<'a, 'db> BodyStructureView<'a, 'db> {
             let parent_dot_by_receiver = Self::method_parent_dots_by_receiver(body);
 
             for (expr_idx, expr) in body.exprs().iter().enumerate() {
-                if expr.source.file_id != file_id {
+                if !expr.source.is_written_in_file(file_id) {
                     continue;
                 }
                 if !matches!(expr.kind, ExprKind::MethodCall { .. }) {
@@ -163,7 +163,7 @@ impl<'a, 'db> BodyStructureView<'a, 'db> {
             }
 
             for expr in body.exprs() {
-                if expr.source.file_id != file_id {
+                if !expr.source.is_written_in_file(file_id) {
                     continue;
                 }
                 let Some(kind) = Self::closing_brace_kind(body, &expr.kind) else {
