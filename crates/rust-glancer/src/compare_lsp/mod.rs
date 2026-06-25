@@ -5,6 +5,7 @@
 //! attached to the server that produced them so downstream normalization can compare behavior
 //! without mixing protocol setup with report logic.
 
+mod comparison;
 mod config;
 mod execution;
 mod fixture;
@@ -38,13 +39,15 @@ pub(crate) async fn run(
     let execution = execution?;
     shutdown?;
     let normalized = normalization::NormalizedSummary::from_execution(&fixture, &execution)?;
+    let comparison = comparison::ComparisonSummary::from_normalized(&normalized);
 
     anyhow::bail!(
         "LSP comparison fixture `{}` resolved to {} with {} query cases, \
          methods: {}. Both servers initialized and opened {} source files: {}={}, {}={}. \
          Query execution ran: {}; {}; {}. \
          Normalization ran: {}; {}; {}. \
-         Comparison and report rendering are not implemented yet \
+         Comparison ran: {}; {}; {}. \
+         Report rendering is not implemented yet \
          (format: {output_format:?})",
         fixture.kind(),
         fixture.root().display(),
@@ -61,6 +64,9 @@ pub(crate) async fn run(
         normalized.summary_line(),
         normalized.server_summary_line(execution::ServerUnderTest::RustGlancer),
         normalized.server_summary_line(execution::ServerUnderTest::RustAnalyzer),
+        comparison.summary_line(),
+        comparison.aggregate_summary_line(),
+        comparison.query_summary_line(),
     );
 }
 

@@ -46,6 +46,10 @@ impl NormalizedSummary {
         Ok(Self { results })
     }
 
+    pub(crate) fn results(&self) -> &[NormalizedQueryExecution] {
+        &self.results
+    }
+
     pub(crate) fn summary_line(&self) -> String {
         format!("{} query cases normalized", self.results.len())
     }
@@ -94,10 +98,15 @@ impl NormalizedSummary {
             normalized_results.join(", "),
         )
     }
+
+    #[cfg(test)]
+    pub(crate) fn test_from_results(results: Vec<NormalizedQueryExecution>) -> Self {
+        Self { results }
+    }
 }
 
 #[derive(Debug)]
-struct NormalizedQueryExecution {
+pub(crate) struct NormalizedQueryExecution {
     label: &'static str,
     kind: QueryKind,
     rust_glancer: NormalizedServerOutcome,
@@ -122,24 +131,39 @@ impl NormalizedQueryExecution {
         }
     }
 
-    fn label(&self) -> &'static str {
+    pub(crate) fn label(&self) -> &'static str {
         self.label
     }
 
-    fn kind(&self) -> QueryKind {
+    pub(crate) fn kind(&self) -> QueryKind {
         self.kind
     }
 
-    fn outcome(&self, server: ServerUnderTest) -> &NormalizedServerOutcome {
+    pub(crate) fn outcome(&self, server: ServerUnderTest) -> &NormalizedServerOutcome {
         match server {
             ServerUnderTest::RustGlancer => &self.rust_glancer,
             ServerUnderTest::RustAnalyzer => &self.rust_analyzer,
         }
     }
+
+    #[cfg(test)]
+    pub(crate) fn test_new(
+        label: &'static str,
+        kind: QueryKind,
+        rust_glancer: NormalizedOutcome,
+        rust_analyzer: NormalizedOutcome,
+    ) -> Self {
+        Self {
+            label,
+            kind,
+            rust_glancer: NormalizedServerOutcome::test_new(rust_glancer),
+            rust_analyzer: NormalizedServerOutcome::test_new(rust_analyzer),
+        }
+    }
 }
 
 #[derive(Debug)]
-struct NormalizedServerOutcome {
+pub(crate) struct NormalizedServerOutcome {
     latency: Duration,
     value: NormalizedOutcome,
 }
@@ -151,10 +175,22 @@ impl NormalizedServerOutcome {
             value: NormalizedOutcome::from_raw(fixture_root, kind, outcome.value()),
         }
     }
+
+    pub(crate) fn value(&self) -> &NormalizedOutcome {
+        &self.value
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_new(value: NormalizedOutcome) -> Self {
+        Self {
+            latency: Duration::ZERO,
+            value,
+        }
+    }
 }
 
 #[derive(Debug)]
-enum NormalizedOutcome {
+pub(crate) enum NormalizedOutcome {
     Locations(NormalizedLocationSet),
     Hover { present: bool },
     MalformedSuccess { message: String },
@@ -188,7 +224,7 @@ impl NormalizedOutcome {
         }
     }
 
-    fn summary(&self) -> String {
+    pub(crate) fn summary(&self) -> String {
         match self {
             Self::Locations(locations) => locations.summary(),
             Self::Hover { present: true } => "hover present".to_string(),
@@ -202,7 +238,7 @@ impl NormalizedOutcome {
 }
 
 #[derive(Debug)]
-struct NormalizedLocationSet {
+pub(crate) struct NormalizedLocationSet {
     locations: Vec<NormalizedLocation>,
     unmapped: Vec<UnmappedLocation>,
 }
@@ -226,6 +262,28 @@ impl NormalizedLocationSet {
             locations: locations.into_iter().collect(),
             unmapped,
         })
+    }
+
+    pub(crate) fn locations(&self) -> &[NormalizedLocation] {
+        &self.locations
+    }
+
+    pub(crate) fn unmapped_count(&self) -> usize {
+        self.unmapped.len()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_from_locations(locations: Vec<NormalizedLocation>) -> Self {
+        let locations = locations
+            .into_iter()
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+
+        Self {
+            locations,
+            unmapped: Vec::new(),
+        }
     }
 
     fn summary(&self) -> String {
@@ -316,12 +374,20 @@ impl ProtocolLocation {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-struct NormalizedLocation {
+pub(crate) struct NormalizedLocation {
     path: String,
     range: NormalizedRange,
 }
 
 impl NormalizedLocation {
+    #[cfg(test)]
+    pub(crate) fn test_new(path: &'static str, range: NormalizedRange) -> Self {
+        Self {
+            path: path.to_string(),
+            range,
+        }
+    }
+
     fn from_protocol(
         fixture_root: &Path,
         location: ProtocolLocation,
@@ -362,7 +428,7 @@ impl NormalizedLocation {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-struct NormalizedRange {
+pub(crate) struct NormalizedRange {
     start_line: u32,
     start_character: u32,
     end_line: u32,
@@ -370,6 +436,21 @@ struct NormalizedRange {
 }
 
 impl NormalizedRange {
+    #[cfg(test)]
+    pub(crate) const fn test_new(
+        start_line: u32,
+        start_character: u32,
+        end_line: u32,
+        end_character: u32,
+    ) -> Self {
+        Self {
+            start_line,
+            start_character,
+            end_line,
+            end_character,
+        }
+    }
+
     fn from_lsp(range: Range) -> Self {
         Self {
             start_line: range.start.line,
