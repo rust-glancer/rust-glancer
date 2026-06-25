@@ -228,10 +228,13 @@ impl BodyLowering<'_> {
         let Some(path) = call.path() else {
             return;
         };
+        let Some(name_ref) = path.segment().and_then(|segment| segment.name_ref()) else {
+            return;
+        };
 
         self.builder.push_macro_call(BodyMacroCallData {
             source: call_source,
-            path_span: self.source(path.syntax()).span,
+            name_span: self.source(name_ref.syntax()).span,
             definition,
         });
     }

@@ -272,6 +272,65 @@ pub fn wrap(user: User) -> crate::model::User {
 }
 
 #[test]
+fn rename_skips_import_alias_reference_spelling() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_rename_alias_spelling"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub mod api {
+    pub struct Us$type_decl$er;
+    pub fn ma$fn_decl$ke(value: User) -> User { value }
+}
+
+use api::User as Account;
+use api::make as build;
+
+pub fn use_type(account: Account) -> api::User {
+    account
+}
+
+pub fn use_fn(account: Account) -> api::User {
+    let _via_alias = build(account);
+    api::make(account)
+}
+"#,
+        &[
+            AnalysisQuery::rename(
+                "rename type with import alias references",
+                "type_decl",
+                "Person",
+            ),
+            AnalysisQuery::rename(
+                "rename function with import alias references",
+                "fn_decl",
+                "create",
+            ),
+        ],
+        expect![[r#"
+            rename type with import alias references
+            - target `User` @ src/lib.rs:2:16-2:20
+            - `User` -> `Person` @ src/lib.rs:2:16-2:20
+            - `User` -> `Person` @ src/lib.rs:3:24-3:28
+            - `User` -> `Person` @ src/lib.rs:3:33-3:37
+            - `User` -> `Person` @ src/lib.rs:6:10-6:14
+            - `User` -> `Person` @ src/lib.rs:9:43-9:47
+            - `User` -> `Person` @ src/lib.rs:13:41-13:45
+
+            rename function with import alias references
+            - target `make` @ src/lib.rs:3:12-3:16
+            - `make` -> `create` @ src/lib.rs:3:12-3:16
+            - `make` -> `create` @ src/lib.rs:7:10-7:14
+            - `make` -> `create` @ src/lib.rs:15:10-15:14
+        "#]],
+    );
+}
+
+#[test]
 fn rename_respects_nested_body_shadowing() {
     check_analysis_queries(
         r#"
@@ -770,6 +829,89 @@ pub fn use_it(by_ref_source: User, by_mut_source: User, by_at_source: User) -> u
 }
 
 #[test]
+fn renames_body_macro_calls() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_rename_body_macros"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct Text;
+
+pub fn helper(value: u64) -> Text { Text }
+
+/// Builds text from a value.
+#[macro_export]
+macro_rules! make_$macro_decl$text {
+    ($value:expr) => { helper($value) };
+}
+
+use crate::make_text as alias_text;
+
+pub fn use_it(input: u64) {
+    let _first = make_$macro_call$text!(input);
+    let _second = make_text!(input + 1);
+    let _qualified = crate::make_$qualified_macro_call$text!(input + 2);
+    let _aliased = alias_$alias_macro_call$text!(input + 3);
+}
+"#,
+        &[
+            AnalysisQuery::prepare_rename("prepare macro rename", "macro_decl"),
+            AnalysisQuery::rename("rename macro from declaration", "macro_decl", "build_text"),
+            AnalysisQuery::rename("rename macro from body call", "macro_call", "build_text"),
+            AnalysisQuery::rename(
+                "rename macro from qualified body call",
+                "qualified_macro_call",
+                "build_text",
+            ),
+            AnalysisQuery::prepare_rename("reject aliased macro rename", "alias_macro_call"),
+            AnalysisQuery::rename(
+                "reject direct aliased macro rename",
+                "alias_macro_call",
+                "build_text",
+            ),
+        ],
+        expect![[r#"
+            prepare macro rename
+            - `make_text` @ src/lib.rs:7:14-7:23
+
+            rename macro from declaration
+            - target `make_text` @ src/lib.rs:7:14-7:23
+            - `make_text` -> `build_text` @ src/lib.rs:7:14-7:23
+            - `make_text` -> `build_text` @ src/lib.rs:11:12-11:21
+            - `make_text` -> `build_text` @ src/lib.rs:14:18-14:27
+            - `make_text` -> `build_text` @ src/lib.rs:15:19-15:28
+            - `make_text` -> `build_text` @ src/lib.rs:16:29-16:38
+
+            rename macro from body call
+            - target `make_text` @ src/lib.rs:14:18-14:27
+            - `make_text` -> `build_text` @ src/lib.rs:7:14-7:23
+            - `make_text` -> `build_text` @ src/lib.rs:11:12-11:21
+            - `make_text` -> `build_text` @ src/lib.rs:14:18-14:27
+            - `make_text` -> `build_text` @ src/lib.rs:15:19-15:28
+            - `make_text` -> `build_text` @ src/lib.rs:16:29-16:38
+
+            rename macro from qualified body call
+            - target `make_text` @ src/lib.rs:16:29-16:38
+            - `make_text` -> `build_text` @ src/lib.rs:7:14-7:23
+            - `make_text` -> `build_text` @ src/lib.rs:11:12-11:21
+            - `make_text` -> `build_text` @ src/lib.rs:14:18-14:27
+            - `make_text` -> `build_text` @ src/lib.rs:15:19-15:28
+            - `make_text` -> `build_text` @ src/lib.rs:16:29-16:38
+
+            reject aliased macro rename
+            - <none>
+
+            reject direct aliased macro rename
+            - <none>
+        "#]],
+    );
+}
+
+#[test]
 fn rejects_unsupported_rename_targets() {
     check_analysis_queries(
         r#"
@@ -786,33 +928,17 @@ mod us$module_ref$er {
 
 use user::User as Acc$alias_ref$ount;
 
-macro_rules! make_$macro_decl$text {
-    () => { 1 };
-}
-
 pub fn use_it(_account: Account) {}
-
-pub fn use_macro() {
-    let _ = make_$macro_call$text!();
-}
 "#,
         &[
             AnalysisQuery::prepare_rename("reject module rename", "module_ref"),
             AnalysisQuery::prepare_rename("reject alias rename", "alias_ref"),
-            AnalysisQuery::prepare_rename("reject macro declaration rename", "macro_decl"),
-            AnalysisQuery::prepare_rename("reject macro call rename", "macro_call"),
         ],
         expect![[r#"
             reject module rename
             - <none>
 
             reject alias rename
-            - <none>
-
-            reject macro declaration rename
-            - <none>
-
-            reject macro call rename
             - <none>
         "#]],
     );

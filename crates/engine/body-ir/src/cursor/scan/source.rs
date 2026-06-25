@@ -100,7 +100,7 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
             candidates.push(BodyCursorCandidate::MacroCall {
                 definition: call.definition,
                 file_id: call.source.file_id,
-                span: call.path_span,
+                span: call.name_span,
             });
         }
     }

@@ -11,8 +11,8 @@ use super::BodySource;
 pub struct BodyMacroCallData {
     /// Whole macro call source, e.g. `format!("{}", value)`.
     pub source: BodySource,
-    /// Path/name portion used by cursor queries, e.g. `format`.
-    pub path_span: Span,
+    /// Invoked macro name span used by cursor queries, e.g. `format`.
+    pub name_span: Span,
     /// Macro definition selected by the same lookup policy used for body expansion.
     pub definition: LocalDefRef,
 }

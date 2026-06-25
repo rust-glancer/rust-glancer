@@ -298,16 +298,16 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
             if !call.source.is_written_in_file(self.file_id) {
                 continue;
             }
-            if !call.path_span.touches(self.offset) {
+            if !call.name_span.touches(self.offset) {
                 continue;
             }
 
             best.consider(
-                call.path_span,
+                call.name_span,
                 BodyCursorCandidate::MacroCall {
                     definition: call.definition,
                     file_id: call.source.file_id,
-                    span: call.path_span,
+                    span: call.name_span,
                 },
             );
         }
