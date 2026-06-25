@@ -729,6 +729,14 @@ impl NormalizedInlayHint {
             label: inlay_hint_label(hint.label),
         }
     }
+
+    pub(crate) const fn line(&self) -> u32 {
+        self.line
+    }
+
+    pub(crate) fn label(&self) -> &str {
+        &self.label
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
