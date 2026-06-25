@@ -14,13 +14,13 @@ use crate::{
 };
 
 use super::{
-    CompletionQuery,
+    CallCompletionKind, CompletionQuery,
     candidates::{
         CompletionCandidateSource, CompletionScopeNamespace, LexicalCompletionCandidate,
         ModuleCompletionCandidate,
     },
     completion_sort::{CompletionSortPolicy, CompletionSortPriority},
-    function::{FunctionCallCompletion, FunctionCompletionRenderer, FunctionCompletionRequest},
+    function::{FunctionCompletionRenderer, FunctionCompletionRequest},
     module_scope::{ModuleCompletionRenderer, ModuleCompletionRequest},
     primitive::PrimitiveTypeCompletionResolver,
 };
@@ -67,11 +67,11 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
                     }
                     UnqualifiedCompletionContext::Import => VisibleScopeSort::General,
                 },
-                function_call_completion: match context {
+                call_completion: match context {
                     UnqualifiedCompletionContext::Type | UnqualifiedCompletionContext::Value => {
-                        FunctionCallCompletion::FunctionCall
+                        CallCompletionKind::Call
                     }
-                    UnqualifiedCompletionContext::Import => FunctionCallCompletion::Plain,
+                    UnqualifiedCompletionContext::Import => CallCompletionKind::Plain,
                 },
             },
             &hidden,
@@ -113,7 +113,7 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
                     kind: candidate.kind(),
                     applicability: CompletionApplicability::Known,
                     edit,
-                    call_completion: FunctionCallCompletion::Plain,
+                    call_completion: CallCompletionKind::Plain,
                     sort_policy: filter.sort_policy(),
                     sort_priority: Some(CompletionSortPriority::body_scope(
                         candidate.scope_distance(),
@@ -177,7 +177,7 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
             let Some(completion) = renderer.completion(ModuleCompletionRequest {
                 candidate: &candidate,
                 edit: options.edit,
-                function_call_completion: options.function_call_completion,
+                call_completion: options.call_completion,
                 sort_policy: options.filter.sort_policy(),
                 sort_priority: match options.visible_scope_sort {
                     VisibleScopeSort::ByOrigin => {
@@ -219,7 +219,7 @@ struct ModuleCompletionOptions {
     filter: UnqualifiedCompletionFilter,
     edit: CompletionEdit,
     visible_scope_sort: VisibleScopeSort,
-    function_call_completion: FunctionCallCompletion,
+    call_completion: CallCompletionKind,
 }
 
 impl UnqualifiedCompletionFilter {

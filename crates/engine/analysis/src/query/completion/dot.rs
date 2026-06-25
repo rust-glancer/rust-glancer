@@ -9,11 +9,11 @@ use crate::{
 };
 
 use super::{
-    CompletionQuery,
+    CallCompletionKind, CompletionQuery,
     candidates::CompletionCandidateSource,
     completion_sort::CompletionSortPolicy,
     field::FieldCompletionRenderer,
-    function::{FunctionCallCompletion, FunctionCompletionRenderer, FunctionCompletionRequest},
+    function::{FunctionCompletionRenderer, FunctionCompletionRequest},
 };
 
 pub(super) struct DotCompletionResolver<'a, 'db, 'source> {
@@ -68,7 +68,7 @@ impl<'a, 'db, 'source> DotCompletionResolver<'a, 'db, 'source> {
                 kind: method.kind(),
                 applicability: method.applicability(),
                 edit,
-                call_completion: FunctionCallCompletion::MethodCall,
+                call_completion: CallCompletionKind::MethodCall,
                 sort_policy: CompletionSortPolicy::General,
                 sort_priority: None,
             });

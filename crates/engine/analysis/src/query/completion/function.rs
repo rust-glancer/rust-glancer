@@ -12,17 +12,10 @@ use crate::model::{
 };
 
 use super::{
-    CompletionQuery,
+    CallCompletionKind, CompletionQuery,
     completion_sort::{CompletionSortPolicy, CompletionSortPriority},
+    escape_lsp_snippet_text,
 };
-
-/// Controls whether accepting a function completion inserts a call expression.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum FunctionCallCompletion {
-    Plain,
-    FunctionCall,
-    MethodCall,
-}
 
 /// Signature metadata and insertion text for one function completion.
 struct FunctionCompletionMetadata {
@@ -46,7 +39,7 @@ pub(super) struct FunctionCompletionRequest<'label, 'member> {
     pub(super) kind: CompletionKind,
     pub(super) applicability: CompletionApplicability,
     pub(super) edit: CompletionEdit,
-    pub(super) call_completion: FunctionCallCompletion,
+    pub(super) call_completion: CallCompletionKind,
     pub(super) sort_policy: CompletionSortPolicy,
     pub(super) sort_priority: Option<CompletionSortPriority>,
 }
@@ -100,7 +93,7 @@ impl<'source> FunctionCompletionRenderer<'source> {
         &self,
         function: MemberFunction<'_>,
         label_override: Option<&str>,
-        call_completion: FunctionCallCompletion,
+        call_completion: CallCompletionKind,
         edit: CompletionEdit,
     ) -> FunctionCompletionMetadata {
         let label = label_override
@@ -120,17 +113,17 @@ impl<'source> FunctionCompletionRenderer<'source> {
         &self,
         label: &str,
         params: &[ParamItem],
-        call_completion: FunctionCallCompletion,
+        call_completion: CallCompletionKind,
         edit: CompletionEdit,
     ) -> CompletionInsertText {
-        if matches!(call_completion, FunctionCallCompletion::Plain)
+        if !call_completion.inserts_call_syntax()
             || !self.query.client_capabilities.snippet_support
             || self.call_parens_already_present(edit)
         {
             return CompletionInsertText::Plain;
         }
 
-        let skip_self = matches!(call_completion, FunctionCallCompletion::MethodCall);
+        let skip_self = matches!(call_completion, CallCompletionKind::MethodCall);
         CompletionInsertText::Snippet(call_snippet(label, params, skip_self))
     }
 
@@ -150,7 +143,7 @@ impl<'source> FunctionCompletionRenderer<'source> {
 }
 
 fn call_snippet(label: &str, params: &[ParamItem], skip_self: bool) -> String {
-    let mut snippet = snippet_text(label);
+    let mut snippet = escape_lsp_snippet_text(label);
     snippet.push('(');
 
     for (idx, param) in params
@@ -164,7 +157,11 @@ fn call_snippet(label: &str, params: &[ParamItem], skip_self: bool) -> String {
             snippet.push_str(", ");
         }
         let placeholder = param_placeholder(param, idx + 1);
-        snippet.push_str(&format!("${{{}:{}}}", idx + 1, snippet_text(&placeholder)));
+        snippet.push_str(&format!(
+            "${{{}:{}}}",
+            idx + 1,
+            escape_lsp_snippet_text(&placeholder)
+        ));
     }
 
     snippet.push(')');
@@ -208,15 +205,4 @@ fn is_ident_like(value: &str) -> bool {
     }
 
     chars.all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
-}
-
-fn snippet_text(value: &str) -> String {
-    let mut escaped = String::new();
-    for ch in value.chars() {
-        if matches!(ch, '\\' | '$' | '}') {
-            escaped.push('\\');
-        }
-        escaped.push(ch);
-    }
-    escaped
 }

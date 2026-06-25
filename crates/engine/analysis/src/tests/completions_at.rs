@@ -421,6 +421,105 @@ pub fn use_it(input_user: User) {
 }
 
 #[test]
+fn completes_unqualified_body_macros() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_unqualified_macro_completions"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+/// Builds a value through a declarative macro.
+macro_rules! make_value {
+    () => { 1u8 };
+}
+
+pub fn make_function() -> u8 {
+    0
+}
+
+pub fn use_it() {
+    let _plain = make$plain_macro_prefix$;
+}
+"#,
+        &[AnalysisQuery::complete_verbose(
+            "macro from value prefix",
+            "plain_macro_prefix",
+        )],
+        expect![[r#"
+            macro from value prefix
+            - fn make_function
+              detail: pub fn make_function() -> u8
+              sort: 01-module|make_function|06|00|Function(FunctionRef { origin: Target(TargetRef { package: PackageSlot(0), target: TargetId(0) }), id: FunctionId(0) })
+              replace: 171..175
+              snippet: make_function()$0
+            - macro make_value
+              detail: macro make_value
+              sort: 01-module|make_value|06|00|Declaration(DeclarationRef { kind: "local_def", local_def: LocalDefRef { origin: Target(TargetRef { package: PackageSlot(0), target: TargetId(0) }), local_def: LocalDefId(0) } })
+              replace: 171..175
+              snippet: make_value!($0)
+            - fn use_it
+              detail: pub fn use_it()
+              sort: 01-module|use_it|06|00|Function(FunctionRef { origin: Target(TargetRef { package: PackageSlot(0), target: TargetId(0) }), id: FunctionId(1) })
+              replace: 171..175
+              snippet: use_it()$0
+        "#]],
+    );
+}
+
+#[test]
+fn completes_qualified_body_macros() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_qualified_macro_completions"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+/// Builds a value through a crate-root macro.
+#[macro_export]
+macro_rules! exported_value {
+    () => { 1u8 };
+}
+
+pub fn exported_function() -> u8 {
+    0
+}
+
+pub fn use_it() {
+    let _plain = crate::exported$qualified_prefix$;
+}
+"#,
+        &[AnalysisQuery::complete_verbose(
+            "qualified macro from value prefix",
+            "qualified_prefix",
+        )],
+        expect![[r#"
+            qualified macro from value prefix
+            - fn exported_function
+              detail: pub fn exported_function() -> u8
+              sort: exported_function|06|00|Function(FunctionRef { origin: Target(TargetRef { package: PackageSlot(0), target: TargetId(0) }), id: FunctionId(0) })
+              replace: 201..209
+              snippet: exported_function()$0
+            - macro exported_value
+              detail: macro exported_value
+              sort: exported_value|06|00|Declaration(DeclarationRef { kind: "local_def", local_def: LocalDefRef { origin: Target(TargetRef { package: PackageSlot(0), target: TargetId(0) }), local_def: LocalDefId(0) } })
+              replace: 201..209
+              snippet: exported_value!($0)
+            - fn use_it
+              detail: pub fn use_it()
+              sort: use_it|06|00|Function(FunctionRef { origin: Target(TargetRef { package: PackageSlot(0), target: TargetId(0) }), id: FunctionId(1) })
+              replace: 201..209
+              snippet: use_it()$0
+        "#]],
+    );
+}
+
+#[test]
 fn unqualified_local_values_shadow_module_values() {
     check_analysis_queries(
         r#"
