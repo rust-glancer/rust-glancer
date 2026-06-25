@@ -1,8 +1,8 @@
 //! Type facts for compiler-provided expression macros.
 //!
-//! Def-map decides whether an unresolved macro call is a known builtin. Body resolution only needs
-//! the conservative type fact for that lowered builtin expression, so this module keeps the
-//! synthetic type construction out of the general expression walker.
+//! Def-map marks resolved compiler builtin macro definitions before Body IR lowers them. Body
+//! resolution only needs the conservative type fact for that lowered builtin expression, so this
+//! module keeps the synthetic type construction out of the general expression walker.
 
 use rg_ir_model::{
     BuiltinMacroExprKind, ExprId, Span, TextSpan,

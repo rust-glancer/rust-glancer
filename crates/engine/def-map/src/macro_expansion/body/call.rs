@@ -40,7 +40,6 @@ impl BodyMacroCallOrigin {
 /// Snapshot of the source context needed to resolve and expand one body macro call.
 #[derive(Clone, Copy)]
 pub struct BodyMacroCallSite<'cfg> {
-    target: TargetRef,
     module: ModuleRef,
     source: BodySource,
     origin: BodyMacroCallOrigin,
@@ -51,14 +50,12 @@ pub struct BodyMacroCallSite<'cfg> {
 impl<'cfg> BodyMacroCallSite<'cfg> {
     /// Creates a call site for macro positions that do not need cfg-sensitive builtin expansion.
     pub fn new(
-        target: TargetRef,
         module: ModuleRef,
         source: BodySource,
         origin: BodyMacroCallOrigin,
         edition: RustEdition,
     ) -> Self {
         Self {
-            target,
             module,
             source,
             origin,
@@ -75,8 +72,8 @@ impl<'cfg> BodyMacroCallSite<'cfg> {
         }
     }
 
-    pub(super) fn target(self) -> TargetRef {
-        self.target
+    pub(super) fn target(self) -> Option<TargetRef> {
+        self.module.origin.as_target_ref()
     }
 
     pub(super) fn module(self) -> ModuleRef {
@@ -95,8 +92,11 @@ impl<'cfg> BodyMacroCallSite<'cfg> {
         self.origin.dollar_crate_target_for_path()
     }
 
-    pub(super) fn dollar_crate_target_for_expansion(self) -> TargetRef {
-        self.origin.dollar_crate_target_for_expansion(self.target)
+    pub(super) fn dollar_crate_target_for_expansion(self) -> Option<TargetRef> {
+        Some(
+            self.origin
+                .dollar_crate_target_for_expansion(self.target()?),
+        )
     }
 }
 

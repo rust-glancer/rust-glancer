@@ -94,14 +94,13 @@ impl BodyLowering<'_> {
         let call = ty.macro_call()?;
         let _expansion_scope = self.macro_expansion.expansion_scope()?;
         let module = self.macro_resolution_module();
-        let target = module.origin.origin_target();
         let origin = self.macro_call_origin();
 
         // Type expansion is best-effort like expression and pattern expansion. A failed expansion
         // keeps the original `MacroType` as an unknown TypeRef so body lowering remains buildable.
         let expanded = self
             .macro_expansion
-            .expand_type_call(target, module, call_source, origin, &call)
+            .expand_type_call(module, call_source, origin, &call)
             .ok()
             .flatten()?;
 

@@ -11,7 +11,7 @@ use rg_def_map::{
     BodyMacroCallOrigin, BodyMacroCallSite, BodyMacroExpander as DefMapBodyMacroExpander,
     BodyMacroExprExpansion, DefMapReadTxn, ExpandedBodyMacro,
 };
-use rg_ir_model::{ModuleRef, TargetRef};
+use rg_ir_model::ModuleRef;
 use rg_syntax::ast;
 
 use crate::ir::BodySource;
@@ -34,7 +34,6 @@ pub(crate) trait BodyMacroExpansionContext {
     /// macro expression.
     fn expand_expr_call(
         &mut self,
-        target: TargetRef,
         module: ModuleRef,
         source: BodySource,
         origin: BodyMacroCallOrigin,
@@ -47,7 +46,6 @@ pub(crate) trait BodyMacroExpansionContext {
     /// generated statements, and an empty expansion contributes no placeholder statement.
     fn expand_stmt_call(
         &mut self,
-        target: TargetRef,
         module: ModuleRef,
         source: BodySource,
         origin: BodyMacroCallOrigin,
@@ -60,7 +58,6 @@ pub(crate) trait BodyMacroExpansionContext {
     /// then applies the same binding rules that a handwritten tuple or identifier pattern would.
     fn expand_pat_call(
         &mut self,
-        target: TargetRef,
         module: ModuleRef,
         source: BodySource,
         origin: BodyMacroCallOrigin,
@@ -73,7 +70,6 @@ pub(crate) trait BodyMacroExpansionContext {
     /// lowers the generated type under the original macro call source span.
     fn expand_type_call(
         &mut self,
-        target: TargetRef,
         module: ModuleRef,
         source: BodySource,
         origin: BodyMacroCallOrigin,
@@ -121,12 +117,11 @@ impl<'ctx, 'db> BodyMacroExpansion<'ctx, 'db> {
 
     fn call_site(
         &self,
-        target: TargetRef,
         module: ModuleRef,
         source: BodySource,
         origin: BodyMacroCallOrigin,
     ) -> BodyMacroCallSite<'ctx> {
-        BodyMacroCallSite::new(target, module, source, origin, self.parse_package.edition())
+        BodyMacroCallSite::new(module, source, origin, self.parse_package.edition())
     }
 }
 
@@ -144,53 +139,45 @@ impl BodyMacroExpansionContext for BodyMacroExpansion<'_, '_> {
 
     fn expand_expr_call(
         &mut self,
-        target: TargetRef,
         module: ModuleRef,
         source: BodySource,
         origin: BodyMacroCallOrigin,
         call: &ast::MacroCall,
     ) -> anyhow::Result<Option<BodyMacroExprExpansion>> {
-        let site = self
-            .call_site(target, module, source, origin)
-            .with_cfg(self.cfg);
+        let site = self.call_site(module, source, origin).with_cfg(self.cfg);
         self.expander.expand_expr_call(site, call)
     }
 
     fn expand_stmt_call(
         &mut self,
-        target: TargetRef,
         module: ModuleRef,
         source: BodySource,
         origin: BodyMacroCallOrigin,
         call: &ast::MacroCall,
     ) -> anyhow::Result<Option<ExpandedBodyMacro<ast::MacroStmts>>> {
-        let site = self
-            .call_site(target, module, source, origin)
-            .with_cfg(self.cfg);
+        let site = self.call_site(module, source, origin).with_cfg(self.cfg);
         self.expander.expand_stmt_call(site, call)
     }
 
     fn expand_pat_call(
         &mut self,
-        target: TargetRef,
         module: ModuleRef,
         source: BodySource,
         origin: BodyMacroCallOrigin,
         call: &ast::MacroCall,
     ) -> anyhow::Result<Option<ExpandedBodyMacro<ast::Pat>>> {
-        let site = self.call_site(target, module, source, origin);
+        let site = self.call_site(module, source, origin);
         self.expander.expand_pat_call(site, call)
     }
 
     fn expand_type_call(
         &mut self,
-        target: TargetRef,
         module: ModuleRef,
         source: BodySource,
         origin: BodyMacroCallOrigin,
         call: &ast::MacroCall,
     ) -> anyhow::Result<Option<ExpandedBodyMacro<ast::Type>>> {
-        let site = self.call_site(target, module, source, origin);
+        let site = self.call_site(module, source, origin);
         self.expander.expand_type_call(site, call)
     }
 }

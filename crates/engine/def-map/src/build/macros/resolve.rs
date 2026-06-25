@@ -38,9 +38,9 @@ impl Eq for ResolvedMacroDefinition<'_> {}
 ///
 /// Macro calls are mostly path-shaped, but one-segment calls have extra Rust-specific behavior:
 /// textual `macro_rules!` definitions can shadow namespace bindings, legacy `#[macro_use]` imports
-/// are a fallback, and unresolved names may still be known builtins that def-map should classify
-/// rather than retry forever. This resolver keeps that policy together while reusing
-/// `PathResolver` for the ordinary namespace work.
+/// are a fallback, and resolved compiler builtin definitions need to carry their builtin identity
+/// into expansion dispatch. This resolver keeps that policy together while reusing `PathResolver`
+/// for the ordinary namespace work.
 pub(super) struct ItemMacroResolver<'a, E: ?Sized> {
     env: &'a E,
     states: &'a FinalizeTargetStates,

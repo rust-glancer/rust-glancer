@@ -226,14 +226,13 @@ impl BodyLowering<'_> {
     ) -> Option<ExprId> {
         let _expansion_scope = self.macro_expansion.expansion_scope()?;
         let module = self.macro_resolution_module();
-        let target = module.origin.origin_target();
         let origin = self.macro_call_origin();
 
         // Expansion is best-effort during mechanical lowering: unresolved, unsupported, or failing
         // macros should leave normal unknown expressions instead of aborting the whole body build.
         let expansion = self
             .macro_expansion
-            .expand_expr_call(target, module, call_source, origin, call)
+            .expand_expr_call(module, call_source, origin, call)
             .ok()
             .flatten()?;
 

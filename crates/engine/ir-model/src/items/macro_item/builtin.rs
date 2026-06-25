@@ -31,24 +31,19 @@ pub enum BuiltinMacroKind {
 }
 
 impl BuiltinMacroKind {
-    /// Classify a known compiler builtin name.
-    pub fn from_known_name(name: &str) -> Option<Self> {
+    /// Classify a definition explicitly marked by rustc as compiler-provided.
+    pub fn from_rustc_builtin_macro_name(name: &str) -> Self {
         if let Some(kind) = BuiltinMacroExprKind::from_macro_name(name) {
-            return Some(Self::Expr(kind));
+            return Self::Expr(kind);
         }
 
         match name {
-            "asm" | "compile_error" | "global_asm" | "llvm_asm" => Some(Self::IgnoredByDefMap),
-            "cfg_select" => Some(Self::CfgSelect),
-            "include" => Some(Self::Include),
-            "concat_idents" => Some(Self::Unsupported),
-            _ => None,
+            "asm" | "compile_error" | "global_asm" | "llvm_asm" => Self::IgnoredByDefMap,
+            "cfg_select" => Self::CfgSelect,
+            "include" => Self::Include,
+            "concat_idents" => Self::Unsupported,
+            _ => Self::Unsupported,
         }
-    }
-
-    /// Classify a definition explicitly marked by rustc as compiler-provided.
-    pub fn from_rustc_builtin_macro_name(name: &str) -> Self {
-        Self::from_known_name(name).unwrap_or(Self::Unsupported)
     }
 }
 

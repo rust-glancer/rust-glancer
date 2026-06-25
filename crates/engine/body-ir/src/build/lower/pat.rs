@@ -395,14 +395,13 @@ impl BodyLowering<'_> {
         let call = pat.macro_call()?;
         let _expansion_scope = self.macro_expansion.expansion_scope()?;
         let module = self.macro_resolution_module();
-        let target = module.origin.origin_target();
         let origin = self.macro_call_origin();
 
         // Pattern expansion is best-effort. If the macro cannot be resolved or parsed as a
         // pattern, the caller keeps the original macro pattern as unsupported but buildable IR.
         let expanded = self
             .macro_expansion
-            .expand_pat_call(target, module, call_source, origin, &call)
+            .expand_pat_call(module, call_source, origin, &call)
             .ok()
             .flatten()?;
 

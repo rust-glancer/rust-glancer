@@ -190,7 +190,7 @@ impl<'db, 'txn> BodyMacroExpander<'db, 'txn> {
         ) else {
             return Ok(None);
         };
-        let resolved = Self::resolve_macro_definition(query, site.target(), site.module(), &path)
+        let resolved = Self::resolve_macro_definition(query, site.module(), &path)
             .context("while attempting to resolve body macro call")?;
 
         let callee = match resolved {
@@ -222,7 +222,7 @@ impl<'db, 'txn> BodyMacroExpander<'db, 'txn> {
         Some(ExpandedBodyMacro::new(
             parse,
             span_map,
-            site.dollar_crate_target_for_expansion(),
+            site.dollar_crate_target_for_expansion()?,
         ))
     }
 
@@ -246,18 +246,14 @@ impl<'db, 'txn> BodyMacroExpander<'db, 'txn> {
 
     fn resolve_macro_definition<'a>(
         query: &'a DefMapQuery<&DefMapReadTxn<'_>>,
-        target: TargetRef,
         module: ModuleRef,
         path: &ImportPath,
     ) -> anyhow::Result<ExpectedUnique<MacroDefinitionView<'a>>> {
         // Body expansion is target-local. Synthetic body modules resolve through their semantic
         // fallback before reaching this facade.
-        let Some(module_target) = module.origin.as_target_ref() else {
+        let Some(target) = module.origin.as_target_ref() else {
             return Ok(ExpectedUnique::Empty);
         };
-        if module_target != target {
-            return Ok(ExpectedUnique::Empty);
-        }
 
         if let Some(name) = path.relative_single_name() {
             return Self::resolve_single_name_macro(query, target, module.module, name);

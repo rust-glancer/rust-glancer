@@ -8,8 +8,8 @@ use std::collections::HashMap;
 
 use anyhow::Context as _;
 
-use rg_ir_model::{DefMapRef, TargetRef, items::BuiltinMacroKind};
-use rg_ir_storage::{ImportPath, MacroDefinitionEnv, ScopeBindingOrigin, TargetResolutionEnv};
+use rg_ir_model::{TargetRef, items::BuiltinMacroKind};
+use rg_ir_storage::{ImportPath, MacroDefinitionEnv, TargetResolutionEnv};
 use rg_item_tree::{BuiltinMacroItem, CfgSelectArmPayload, ItemTreeDb, ItemTreeId};
 use rg_macro_runtime::{
     ExpansionParseKind, ExpansionSyntax, MacroCompileRecord, MacroExpandRecord,
@@ -451,23 +451,6 @@ impl MacroExpansionAttempt {
         )
     }
 
-    /// A direct same-module macro resolved but is declared after this call.
-    fn resolved_skipped(
-        target: TargetRef,
-        call_id: usize,
-        call: &MacroCallSite,
-        path_text: &str,
-    ) -> Self {
-        Self::new(
-            target,
-            call_id,
-            call,
-            Some(path_text.to_string()),
-            MacroExpansionAttemptOutcome::NoSource(MacroDirectiveState::Skipped),
-            MacroExpansionAttemptRecord::resolved_skipped(),
-        )
-    }
-
     /// Common initializer that anchors generated items at the original call site.
     fn new(
         target: TargetRef,
@@ -530,23 +513,6 @@ impl MacroExpansionAttempt {
                 return Ok(Self::unresolved(state.target, call_id, call, path_text));
             }
         };
-
-        // Direct `macro_rules!` bindings cannot be used before a later definition in the same
-        // module. Imported bindings and `#[macro_export]` root bindings are path-based and have
-        // already gone through ordinary scope resolution.
-        if resolved.origin == ScopeBindingOrigin::Direct
-            && resolved.def_ref.origin == DefMapRef::Target(state.target)
-            && resolved.local_def.module == call.module
-            && let Some(order) = resolved.order
-            && order > &call.order
-        {
-            return Ok(Self::resolved_skipped(
-                state.target,
-                call_id,
-                call,
-                path_text,
-            ));
-        }
 
         if let Some(kind) = resolved.data.builtin {
             return Ok(Self::builtin(
@@ -701,14 +667,6 @@ impl MacroExpansionAttemptRecord {
         Self {
             resolved: true,
             failed: true,
-            ..Self::default()
-        }
-    }
-
-    fn resolved_skipped() -> Self {
-        Self {
-            resolved: true,
-            skipped: true,
             ..Self::default()
         }
     }
