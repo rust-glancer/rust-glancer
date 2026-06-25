@@ -117,6 +117,11 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
         // declaration item still lives in the parent body-local item store.
         self.consider_body_owner_declaration(body, &mut best)?;
 
+        // Macro expansion can map many generated nodes back to the invocation span. Give the
+        // written macro path a precise candidate before the generated-source guard below decides
+        // whether the rest of the expanded internals should stay hidden.
+        self.consider_macro_calls(body, &mut best);
+
         // Expanded macro syntax often maps back to the macro call span. Once generated nodes are
         // hidden from editor queries, do not let a broad enclosing expression such as the function
         // body block answer a cursor query for the macro call token.
@@ -286,6 +291,26 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
         }
 
         Ok(())
+    }
+
+    fn consider_macro_calls(&self, body: &ResolvedBodyData, best: &mut BestCursorCandidate) {
+        for call in body.macro_calls() {
+            if !call.source.is_written_in_file(self.file_id) {
+                continue;
+            }
+            if !call.path_span.touches(self.offset) {
+                continue;
+            }
+
+            best.consider(
+                call.path_span,
+                BodyCursorCandidate::MacroCall {
+                    definition: call.definition,
+                    file_id: call.source.file_id,
+                    span: call.path_span,
+                },
+            );
+        }
     }
 
     fn body_owner_declaration(

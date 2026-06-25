@@ -98,11 +98,13 @@ impl BodyLowering<'_> {
 
         // Type expansion is best-effort like expression and pattern expansion. A failed expansion
         // keeps the original `MacroType` as an unknown TypeRef so body lowering remains buildable.
-        let expanded = self
+        let outcome = self
             .macro_expansion
             .expand_type_call(module, call_source, origin, &call)
             .ok()
             .flatten()?;
+        self.record_source_macro_call(call_source, &call, origin, outcome.definition);
+        let expanded = outcome.expansion?;
 
         Some(
             self.with_expanded_macro(call_source, expanded, |this, syntax| {

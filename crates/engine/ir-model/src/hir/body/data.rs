@@ -8,8 +8,8 @@ use crate::{
 use rg_std::{MemorySize, Shrink};
 
 use super::{
-    BindingData, BodyOwner, BodySource, BodySourceItems, ExprData, ExprKind, PatData, PatKind,
-    ScopeData, StmtData, StmtKind,
+    BindingData, BodyMacroCallData, BodyOwner, BodySource, BodySourceItems, ExprData, ExprKind,
+    PatData, PatKind, ScopeData, StmtData, StmtKind,
 };
 
 /// Model-shaped expression body for a function, const, or static initializer.
@@ -23,6 +23,7 @@ pub struct BodyData {
     fallback_module: ModuleRef,
     source: BodySource,
     source_items: BodySourceItems,
+    macro_calls: Vec<BodyMacroCallData>,
     param_scope: ScopeId,
     root_expr: ExprId,
     function_params: Vec<FunctionParamData>,
@@ -44,6 +45,7 @@ impl BodyData {
         fallback_module: ModuleRef,
         source: BodySource,
         source_items: BodySourceItems,
+        macro_calls: Vec<BodyMacroCallData>,
         param_scope: ScopeId,
         root_expr: ExprId,
         function_params: Vec<FunctionParamData>,
@@ -60,6 +62,7 @@ impl BodyData {
             fallback_module,
             source,
             source_items,
+            macro_calls,
             param_scope,
             root_expr,
             function_params,
@@ -90,6 +93,10 @@ impl BodyData {
 
     pub fn source_items(&self) -> &BodySourceItems {
         &self.source_items
+    }
+
+    pub fn macro_calls(&self) -> &[BodyMacroCallData] {
+        &self.macro_calls
     }
 
     pub fn param_scope(&self) -> ScopeId {
@@ -360,6 +367,7 @@ mod tests {
             owner_module,
             source(),
             BodySourceItems::default(),
+            Vec::new(),
             param_scope,
             root_expr,
             vec![FunctionParamData {

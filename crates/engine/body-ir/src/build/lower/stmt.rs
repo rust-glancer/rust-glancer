@@ -295,7 +295,7 @@ impl BodyLowering<'_> {
 
         // Statement expansion is best-effort just like expression expansion. A failed expansion
         // falls back to the original macro expression statement so Body IR remains buildable.
-        let Some(expanded) = self
+        let Some(outcome) = self
             .macro_expansion
             .expand_stmt_call(module, call_source, origin, &call)
             .ok()
@@ -303,6 +303,10 @@ impl BodyLowering<'_> {
         else {
             return false;
         };
+        let Some(expanded) = outcome.expansion else {
+            return false;
+        };
+        self.record_source_macro_call(call_source, &call, origin, outcome.definition);
 
         // Generated statement syntax has no stable Body IR source of its own yet. Lower every
         // generated node under the call site so cursor-facing data remains conservative.

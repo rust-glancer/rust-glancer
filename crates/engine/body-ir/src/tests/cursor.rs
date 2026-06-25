@@ -236,6 +236,34 @@ pub fn use_it() {
     );
 }
 
+#[test]
+fn source_scan_includes_written_body_macro_calls() {
+    check_source_candidates(
+        "make_text",
+        r#"
+//- /Cargo.toml
+[package]
+name = "body_cursor_body_macro_calls"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct Text;
+
+macro_rules! make_text {
+    ($ty:ty) => { let _value: $ty; };
+}
+
+pub fn use_it() {
+    make_text!(Text);
+}
+"#,
+        expect![[r#"
+            macro_call @ 8:5-8:14
+        "#]],
+    );
+}
+
 fn check_source_candidates(ident: &str, fixture: &str, expect: Expect) {
     let db = BodyIrFixture::build(fixture);
     let package = db
@@ -320,6 +348,7 @@ fn render_candidate_kind(candidate: &BodyCursorCandidate) -> String {
             }
         },
         BodyCursorCandidate::Expr { .. } => "expr".to_string(),
+        BodyCursorCandidate::MacroCall { .. } => "macro_call".to_string(),
         BodyCursorCandidate::LocalItem { .. } => "local_item".to_string(),
         BodyCursorCandidate::LocalValueItem { .. } => "local_value_item".to_string(),
         BodyCursorCandidate::LocalField { .. } => "local_field".to_string(),

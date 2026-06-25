@@ -230,7 +230,12 @@ impl SourceFragmentCollector<'_> {
         }
         self.state.def_map_builder.insert_macro_definition(
             local_def_id,
-            MacroDefinitionData::from_item(macro_definition, self.state.edition, self.state.target),
+            MacroDefinitionData::from_item(
+                macro_definition,
+                item.docs.clone(),
+                self.state.edition,
+                self.state.target,
+            ),
         );
     }
 

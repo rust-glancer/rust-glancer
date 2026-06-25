@@ -1,4 +1,4 @@
-use rg_ir_model::{BodySource, BuiltinMacroExprKind, TargetRef};
+use rg_ir_model::{BodySource, BuiltinMacroExprKind, LocalDefRef, TargetRef};
 use rg_parse::Span;
 use rg_syntax::{AstNode, Parse, SyntaxNode, ast};
 use rg_tt::syntax_bridge::ExpansionSpanMap;
@@ -93,3 +93,49 @@ pub enum BodyMacroExprExpansion {
     /// Compiler-provided expression macro that has no declarative transcriber to execute.
     Builtin(BuiltinMacroExprKind),
 }
+
+/// Result of body macro lookup plus the position-specific expansion, if one was produced.
+///
+/// A resolved macro call is useful to editor features even when expansion fails or the macro is not
+/// supported in the current syntax position. Keeping the selected definition next to the expansion
+/// result prevents body lowering from asking macro resolution the same question twice.
+pub struct BodyMacroExpansionOutcome<T> {
+    /// Macro definition selected by body macro lookup.
+    pub definition: LocalDefRef,
+    /// Syntax or builtin marker produced for the specific body position.
+    pub expansion: Option<T>,
+}
+
+impl<T> BodyMacroExpansionOutcome<T> {
+    pub(super) fn new(definition: LocalDefRef, expansion: Option<T>) -> Self {
+        Self {
+            definition,
+            expansion,
+        }
+    }
+}
+
+/// Expression-position macro lookup outcome.
+///
+/// The expansion is generated expression syntax for declarative macros, or a builtin expression
+/// marker for compiler-provided expression macros such as `format_args!`.
+pub type BodyMacroExprExpansionOutcome = BodyMacroExpansionOutcome<BodyMacroExprExpansion>;
+
+/// Statement-position macro lookup outcome.
+///
+/// The expansion is generated `MacroStmts` syntax when the selected macro can be parsed as a body
+/// statement list.
+pub type BodyMacroStmtExpansionOutcome =
+    BodyMacroExpansionOutcome<ExpandedBodyMacro<ast::MacroStmts>>;
+
+/// Pattern-position macro lookup outcome.
+///
+/// The expansion is generated pattern syntax when the selected macro can be parsed in a pattern
+/// position.
+pub type BodyMacroPatExpansionOutcome = BodyMacroExpansionOutcome<ExpandedBodyMacro<ast::Pat>>;
+
+/// Type-position macro lookup outcome.
+///
+/// The expansion is generated type syntax when the selected macro can be parsed in a type
+/// position.
+pub type BodyMacroTypeExpansionOutcome = BodyMacroExpansionOutcome<ExpandedBodyMacro<ast::Type>>;

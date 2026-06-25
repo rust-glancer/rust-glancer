@@ -9,7 +9,8 @@ use std::{cell::Cell, rc::Rc};
 use rg_cfg_eval::CfgEvaluator;
 use rg_def_map::{
     BodyMacroCallOrigin, BodyMacroCallSite, BodyMacroExpander as DefMapBodyMacroExpander,
-    BodyMacroExprExpansion, DefMapReadTxn, ExpandedBodyMacro,
+    BodyMacroExprExpansionOutcome, BodyMacroPatExpansionOutcome, BodyMacroStmtExpansionOutcome,
+    BodyMacroTypeExpansionOutcome, DefMapReadTxn,
 };
 use rg_ir_model::ModuleRef;
 use rg_syntax::ast;
@@ -38,7 +39,7 @@ pub(crate) trait BodyMacroExpansionContext {
         source: BodySource,
         origin: BodyMacroCallOrigin,
         call: &ast::MacroCall,
-    ) -> anyhow::Result<Option<BodyMacroExprExpansion>>;
+    ) -> anyhow::Result<Option<BodyMacroExprExpansionOutcome>>;
 
     /// Expand a macro call as statement-list syntax, leaving lowering to splice the result.
     ///
@@ -50,7 +51,7 @@ pub(crate) trait BodyMacroExpansionContext {
         source: BodySource,
         origin: BodyMacroCallOrigin,
         call: &ast::MacroCall,
-    ) -> anyhow::Result<Option<ExpandedBodyMacro<ast::MacroStmts>>>;
+    ) -> anyhow::Result<Option<BodyMacroStmtExpansionOutcome>>;
 
     /// Expand a macro call as pattern syntax, leaving lowering to preserve binding semantics.
     ///
@@ -62,7 +63,7 @@ pub(crate) trait BodyMacroExpansionContext {
         source: BodySource,
         origin: BodyMacroCallOrigin,
         call: &ast::MacroCall,
-    ) -> anyhow::Result<Option<ExpandedBodyMacro<ast::Pat>>>;
+    ) -> anyhow::Result<Option<BodyMacroPatExpansionOutcome>>;
 
     /// Expand a macro call as type syntax, leaving lowering to preserve the fallback type.
     ///
@@ -74,7 +75,7 @@ pub(crate) trait BodyMacroExpansionContext {
         source: BodySource,
         origin: BodyMacroCallOrigin,
         call: &ast::MacroCall,
-    ) -> anyhow::Result<Option<ExpandedBodyMacro<ast::Type>>>;
+    ) -> anyhow::Result<Option<BodyMacroTypeExpansionOutcome>>;
 }
 
 /// RAII guard that keeps recursive macro expansion depth balanced across early returns.
@@ -143,7 +144,7 @@ impl BodyMacroExpansionContext for BodyMacroExpansion<'_, '_> {
         source: BodySource,
         origin: BodyMacroCallOrigin,
         call: &ast::MacroCall,
-    ) -> anyhow::Result<Option<BodyMacroExprExpansion>> {
+    ) -> anyhow::Result<Option<BodyMacroExprExpansionOutcome>> {
         let site = self.call_site(module, source, origin).with_cfg(self.cfg);
         self.expander.expand_expr_call(site, call)
     }
@@ -154,7 +155,7 @@ impl BodyMacroExpansionContext for BodyMacroExpansion<'_, '_> {
         source: BodySource,
         origin: BodyMacroCallOrigin,
         call: &ast::MacroCall,
-    ) -> anyhow::Result<Option<ExpandedBodyMacro<ast::MacroStmts>>> {
+    ) -> anyhow::Result<Option<BodyMacroStmtExpansionOutcome>> {
         let site = self.call_site(module, source, origin).with_cfg(self.cfg);
         self.expander.expand_stmt_call(site, call)
     }
@@ -165,7 +166,7 @@ impl BodyMacroExpansionContext for BodyMacroExpansion<'_, '_> {
         source: BodySource,
         origin: BodyMacroCallOrigin,
         call: &ast::MacroCall,
-    ) -> anyhow::Result<Option<ExpandedBodyMacro<ast::Pat>>> {
+    ) -> anyhow::Result<Option<BodyMacroPatExpansionOutcome>> {
         let site = self.call_site(module, source, origin);
         self.expander.expand_pat_call(site, call)
     }
@@ -176,7 +177,7 @@ impl BodyMacroExpansionContext for BodyMacroExpansion<'_, '_> {
         source: BodySource,
         origin: BodyMacroCallOrigin,
         call: &ast::MacroCall,
-    ) -> anyhow::Result<Option<ExpandedBodyMacro<ast::Type>>> {
+    ) -> anyhow::Result<Option<BodyMacroTypeExpansionOutcome>> {
         let site = self.call_site(module, source, origin);
         self.expander.expand_type_call(site, call)
     }

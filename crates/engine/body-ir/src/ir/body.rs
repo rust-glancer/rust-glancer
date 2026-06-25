@@ -3,9 +3,9 @@ use wincode::{SchemaRead, SchemaWrite};
 
 use rg_arena::Arena;
 use rg_ir_model::{
-    BindingData, BindingId, BodyData, BodyOwner, BodyRef, BodySource, BodySourceItems, ExprData,
-    ExprId, FunctionParamData, FunctionRef, ModuleRef, PatData, PatId, ScopeData, ScopeId,
-    StmtData, StmtId,
+    BindingData, BindingId, BodyData, BodyMacroCallData, BodyOwner, BodyRef, BodySource,
+    BodySourceItems, ExprData, ExprId, FunctionParamData, FunctionRef, ModuleRef, PatData, PatId,
+    ScopeData, ScopeId, StmtData, StmtId,
     identity::DeclarationRef,
     items::{ItemNode, ItemTreeId},
 };
@@ -43,6 +43,10 @@ impl ResolvedBodyData {
 
     pub fn source_items(&self) -> &BodySourceItems {
         self.body.source_items()
+    }
+
+    pub fn macro_calls(&self) -> &[BodyMacroCallData] {
+        self.body.macro_calls()
     }
 
     pub fn param_scope(&self) -> ScopeId {
@@ -263,6 +267,7 @@ pub(crate) enum PendingBindingResolution {
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub(crate) struct BodyBuilder {
     pub(crate) source_items: BodySourceItems,
+    pub(crate) macro_calls: Vec<BodyMacroCallData>,
     pub(crate) scopes: Arena<ScopeId, ScopeData>,
     pub(crate) bindings: Arena<BindingId, BindingData>,
     pub(crate) facts: BodyFacts,
@@ -291,6 +296,7 @@ impl BodyBuilder {
     ) {
         let Self {
             source_items,
+            macro_calls,
             scopes,
             bindings,
             facts,
@@ -307,6 +313,7 @@ impl BodyBuilder {
                 fallback_module,
                 source,
                 source_items,
+                macro_calls,
                 param_scope,
                 root_expr,
                 function_params,
@@ -328,6 +335,10 @@ impl BodyBuilder {
             source_items: Vec::new(),
             bindings: Vec::new(),
         })
+    }
+
+    pub(crate) fn push_macro_call(&mut self, data: BodyMacroCallData) {
+        self.macro_calls.push(data);
     }
 
     /// Some items do not directly belong to a scope, e.g. contents of `impl` block.

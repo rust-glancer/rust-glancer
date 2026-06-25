@@ -116,7 +116,7 @@ pub fn configure(f$fn_once_hover$: impl FnOnce(&mut AttrVec)) {
 }
 
 #[test]
-fn skips_hover_for_generated_body_macro_internals() {
+fn hovers_over_body_macro_calls_without_exposing_generated_internals() {
     check_analysis_queries(
         r#"
         //- /Cargo.toml
@@ -133,6 +133,7 @@ fn skips_hover_for_generated_body_macro_internals() {
             Text
         }
 
+        /// Builds text from a value.
         macro_rules! make_text {
             ($value:expr) => { helper($value) };
         }
@@ -148,7 +149,14 @@ fn skips_hover_for_generated_body_macro_internals() {
         )],
         expect![[r#"
             hover generated macro call
-            - <none>
+            - range: 14:16-14:25
+            - block:
+              kind: macro
+              path: analysis_hover_body_macros::make_text
+              signature:
+                macro_definition make_text
+              docs:
+                Builds text from a value.
         "#]],
     );
 }

@@ -1,4 +1,6 @@
-use rg_ir_model::items::{BuiltinMacroKind, ItemTag, MacroDefinitionItem, VisibilityLevel};
+use rg_ir_model::items::{
+    BuiltinMacroKind, Documentation, ItemTag, MacroDefinitionItem, VisibilityLevel,
+};
 use rg_ir_model::{LocalDefRef, ModuleId, TargetRef, hir::source::ItemSource};
 use rg_parse::{FileId, Span};
 use rg_std::{MemorySize, Shrink};
@@ -28,6 +30,8 @@ pub struct MacroDefinitionData {
     pub edition: RustEdition,
     /// Target that `$crate` inside this macro body should resolve to when expanded.
     pub dollar_crate_target: TargetRef,
+    /// User-facing documentation attached to the macro definition item.
+    pub docs: Option<Documentation>,
     /// Compiler hook that should run instead of declarative expansion, if any.
     pub builtin: Option<BuiltinMacroKind>,
     #[shrink(skip)]
@@ -37,12 +41,14 @@ pub struct MacroDefinitionData {
 impl MacroDefinitionData {
     pub fn from_item(
         item: &MacroDefinitionItem,
+        docs: Option<Documentation>,
         edition: RustEdition,
         dollar_crate_target: TargetRef,
     ) -> Self {
         Self {
             edition,
             dollar_crate_target,
+            docs,
             builtin: Self::builtin_from_item(item),
             payload: MacroDefinitionPayload::from_item(item),
         }

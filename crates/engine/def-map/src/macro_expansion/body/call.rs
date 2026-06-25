@@ -84,8 +84,22 @@ impl<'cfg> BodyMacroCallSite<'cfg> {
         self.cfg
     }
 
-    pub(super) fn invocation(self, call: &ast::MacroCall) -> Option<BodyMacroInvocation> {
-        BodyMacroInvocation::from_ast(self.source.file_id, self.source.span, self.edition, call)
+    pub(super) fn path_text(self, call: &ast::MacroCall) -> Option<String> {
+        call.path().map(|path| normalized_syntax_text(&path))
+    }
+
+    pub(super) fn invocation(
+        self,
+        path_text: String,
+        call: &ast::MacroCall,
+    ) -> Option<BodyMacroInvocation> {
+        BodyMacroInvocation::from_ast(
+            self.source.file_id,
+            self.source.span,
+            self.edition,
+            path_text,
+            call,
+        )
     }
 
     pub(super) fn dollar_crate_target_for_path(self) -> Option<TargetRef> {
@@ -100,22 +114,46 @@ impl<'cfg> BodyMacroCallSite<'cfg> {
     }
 }
 
-/// Body macro call after parsing and normalizing macro lookup.
+/// Body macro call after path lookup has selected the callee.
 pub(super) struct ResolvedBodyMacroCall<'a> {
-    pub(super) invocation: BodyMacroInvocation,
+    path_text: String,
     pub(super) callee: BodyMacroCallee<'a>,
 }
 
 impl<'a> ResolvedBodyMacroCall<'a> {
-    pub(super) fn new(invocation: BodyMacroInvocation, callee: BodyMacroCallee<'a>) -> Self {
-        Self { invocation, callee }
+    pub(super) fn new(path_text: String, callee: BodyMacroCallee<'a>) -> Self {
+        Self { path_text, callee }
+    }
+
+    pub(super) fn invocation(
+        &self,
+        site: BodyMacroCallSite<'_>,
+        call: &ast::MacroCall,
+    ) -> Option<BodyMacroInvocation> {
+        site.invocation(self.path_text.clone(), call)
+    }
+
+    pub(super) fn definition(&self) -> LocalDefRef {
+        self.callee.def_ref()
     }
 }
 
 /// Macro implementation selected for one body call.
 pub(super) enum BodyMacroCallee<'a> {
     Declarative(MacroDefinitionView<'a>),
-    Builtin(BuiltinMacroKind),
+    Builtin {
+        def_ref: LocalDefRef,
+        kind: BuiltinMacroKind,
+    },
+}
+
+impl BodyMacroCallee<'_> {
+    pub(super) fn def_ref(&self) -> LocalDefRef {
+        match self {
+            Self::Declarative(resolved) => resolved.def_ref,
+            Self::Builtin { def_ref, .. } => *def_ref,
+        }
+    }
 }
 
 /// Body-specific adapter from parsed macro-call syntax to runtime expansion input.
@@ -136,9 +174,9 @@ impl BodyMacroInvocation {
         file_id: FileId,
         span: Span,
         edition: RustEdition,
+        path_text: String,
         call: &ast::MacroCall,
     ) -> Option<Self> {
-        let path_text = call.path().map(|path| normalized_syntax_text(&path))?;
         let args = call.token_tree()?;
 
         let span_factory = SpanFactory::new(
@@ -155,10 +193,6 @@ impl BodyMacroInvocation {
             call_span: span,
             call_edition: edition,
         })
-    }
-
-    pub(super) fn path_text(&self) -> &str {
-        &self.path_text
     }
 
     pub(super) fn args(&self) -> &TopSubtree {

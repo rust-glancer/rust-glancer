@@ -399,11 +399,13 @@ impl BodyLowering<'_> {
 
         // Pattern expansion is best-effort. If the macro cannot be resolved or parsed as a
         // pattern, the caller keeps the original macro pattern as unsupported but buildable IR.
-        let expanded = self
+        let outcome = self
             .macro_expansion
             .expand_pat_call(module, call_source, origin, &call)
             .ok()
             .flatten()?;
+        self.record_source_macro_call(call_source, &call, origin, outcome.definition);
+        let expanded = outcome.expansion?;
 
         // The expanded pattern should behave exactly like handwritten syntax in the same pattern
         // position, including binding allocation and ambiguity handling.

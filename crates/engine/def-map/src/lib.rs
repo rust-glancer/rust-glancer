@@ -12,8 +12,9 @@ pub use rg_macro_runtime::MacroExpansionPerformancePreference;
 
 pub use self::{
     macro_expansion::{
-        BodyMacroCallOrigin, BodyMacroCallSite, BodyMacroExpander, BodyMacroExprExpansion,
-        ExpandedBodyMacro,
+        BodyMacroCallOrigin, BodyMacroCallSite, BodyMacroExpander, BodyMacroExpansionOutcome,
+        BodyMacroExprExpansion, BodyMacroExprExpansionOutcome, BodyMacroPatExpansionOutcome,
+        BodyMacroStmtExpansionOutcome, BodyMacroTypeExpansionOutcome, ExpandedBodyMacro,
     },
     profile::profile_descriptors,
     query::{DefMapCursorCandidate, DefMapPathCompletionSite, DefMapUnqualifiedCompletionSite},

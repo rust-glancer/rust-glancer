@@ -477,6 +477,16 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
                     span,
                 ))
             }
+            BodyCursorCandidate::MacroCall {
+                definition,
+                file_id,
+                ..
+            } => Some(IndexedSourceOccurrence::reference(
+                IndexedSourceFact::Declaration(DeclarationRef::local_def(definition)),
+                target,
+                file_id,
+                span,
+            )),
             BodyCursorCandidate::LocalItem { item, .. } => {
                 let declaration = DeclarationRef::from(item);
                 self.declaration_occurrence(declaration, target, span, fallback_file_id)?

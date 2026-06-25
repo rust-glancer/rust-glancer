@@ -11,9 +11,9 @@ pub mod path;
 mod resolution;
 
 pub use self::hir::body::{
-    BindingData, BindingKind, BodyAssociatedPathPrefix, BodyData, BodyOwner, BodyPath,
-    BodyPathSegment, BodyPathSegmentArgs, BodyPathSegmentKind, BodySelfParamKind, BodySource,
-    BodySourceItem, BodySourceItems, BuiltinMacroExprKind, ClosureCapture, ClosureKind,
+    BindingData, BindingKind, BodyAssociatedPathPrefix, BodyData, BodyMacroCallData, BodyOwner,
+    BodyPath, BodyPathSegment, BodyPathSegmentArgs, BodyPathSegmentKind, BodySelfParamKind,
+    BodySource, BodySourceItem, BodySourceItems, BuiltinMacroExprKind, ClosureCapture, ClosureKind,
     ClosureParamData, ExprAssignOp, ExprBinaryOp, ExprBlockKind, ExprData, ExprKind, ExprRangeKind,
     ExprUnaryOp, ExprWrapperKind, FunctionParamData, LabelData, LiteralKind, MatchArmData,
     PatBindingMode, PatData, PatKind, PatMutability, PatRangeKind, RecordExprField,

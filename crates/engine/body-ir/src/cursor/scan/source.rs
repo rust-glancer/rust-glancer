@@ -60,6 +60,7 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
             let body_local_items = target_bodies.body_local_items(body_ref.body);
 
             self.push_declaration_candidates(body_ref, body, body_local_items, &mut candidates);
+            self.push_macro_call_candidates(body, &mut candidates);
             self.push_member_reference_candidates(body_ref, body, &mut candidates);
             self.push_record_field_key_candidates(body_ref, body, &mut candidates);
 
@@ -83,6 +84,25 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
         }
 
         Ok(candidates)
+    }
+
+    /// Adds written macro invocations as references to the macro definition selected by expansion.
+    fn push_macro_call_candidates(
+        &self,
+        body: &ResolvedBodyData,
+        candidates: &mut Vec<BodyCursorCandidate>,
+    ) {
+        for call in body.macro_calls() {
+            if !call.source.is_written_in_selected_file(self.file_id) {
+                continue;
+            }
+
+            candidates.push(BodyCursorCandidate::MacroCall {
+                definition: call.definition,
+                file_id: call.source.file_id,
+                span: call.path_span,
+            });
+        }
     }
 
     /// Adds declarations using the spans users expect to navigate from: names and field names.

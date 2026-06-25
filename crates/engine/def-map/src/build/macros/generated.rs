@@ -259,6 +259,7 @@ impl GeneratedCollector<'_> {
             local_def_id,
             MacroDefinitionData::from_item(
                 macro_definition,
+                item.docs.clone(),
                 self.state.edition,
                 dollar_crate_target,
             ),

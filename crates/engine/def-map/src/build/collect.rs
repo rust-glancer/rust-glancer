@@ -402,7 +402,12 @@ impl<'db> TargetScopeCollector<'db> {
         }
         self.def_map_builder.insert_macro_definition(
             local_def_id,
-            MacroDefinitionData::from_item(macro_definition, self.edition, self.target),
+            MacroDefinitionData::from_item(
+                macro_definition,
+                item.docs.clone(),
+                self.edition,
+                self.target,
+            ),
         );
     }
 

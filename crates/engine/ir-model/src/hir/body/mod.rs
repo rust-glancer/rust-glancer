@@ -8,6 +8,7 @@ pub mod data;
 pub mod expr;
 pub mod label;
 pub mod literal;
+pub mod macro_call;
 pub mod owner;
 pub mod pat;
 pub mod path;
@@ -27,6 +28,7 @@ pub use self::{
     },
     label::LabelData,
     literal::LiteralKind,
+    macro_call::BodyMacroCallData,
     owner::BodyOwner,
     pat::{PatBindingMode, PatData, PatKind, PatMutability, PatRangeKind, RecordPatField},
     path::{

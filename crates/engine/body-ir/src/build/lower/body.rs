@@ -1,10 +1,10 @@
 //! Shared lowering context for expression bodies.
 
-use rg_syntax::ast;
+use rg_syntax::{AstNode as _, ast};
 
 use rg_cfg_eval::CfgEvaluator;
 use rg_def_map::{BodyMacroCallOrigin, BodyMacroExprExpansion, ExpandedBodyMacro};
-use rg_ir_model::{ExprId, ModuleRef, ScopeId, TargetRef};
+use rg_ir_model::{BodyMacroCallData, ExprId, LocalDefRef, ModuleRef, ScopeId, TargetRef};
 use rg_parse::LineIndex;
 use rg_text::NameInterner;
 
@@ -209,6 +209,33 @@ impl BodyLowering<'_> {
         result
     }
 
+    /// Record a user-written macro call as a navigation/reference candidate.
+    ///
+    /// Generated nested macro calls are implementation details of expansion, so only source calls
+    /// are indexed. The definition comes from the expansion outcome, which keeps hover/goto
+    /// aligned with the macro that lowering actually selected.
+    pub(super) fn record_source_macro_call(
+        &mut self,
+        call_source: BodySource,
+        call: &ast::MacroCall,
+        origin: BodyMacroCallOrigin,
+        definition: LocalDefRef,
+    ) {
+        if !matches!(origin, BodyMacroCallOrigin::Source) {
+            return;
+        }
+
+        let Some(path) = call.path() else {
+            return;
+        };
+
+        self.builder.push_macro_call(BodyMacroCallData {
+            source: call_source,
+            path_span: self.source(path.syntax()).span,
+            definition,
+        });
+    }
+
     /// Resolve an expression-position macro call from its original source location.
     ///
     /// Example: `let value = make_expr!(input);` expands to syntax and is lowered in the current
@@ -221,17 +248,20 @@ impl BodyLowering<'_> {
         call: &ast::MacroCall,
         scope: ScopeId,
     ) -> Option<ExprId> {
-        let _expansion_scope = self.macro_expansion.expansion_scope()?;
         let module = self.macro_resolution_module();
         let origin = self.macro_call_origin();
 
+        let _expansion_scope = self.macro_expansion.expansion_scope()?;
+
         // Expansion is best-effort during mechanical lowering: unresolved, unsupported, or failing
         // macros should leave normal unknown expressions instead of aborting the whole body build.
-        let expansion = self
+        let outcome = self
             .macro_expansion
             .expand_expr_call(module, call_source, origin, call)
             .ok()
             .flatten()?;
+        self.record_source_macro_call(call_source, call, origin, outcome.definition);
+        let expansion = outcome.expansion?;
 
         match expansion {
             BodyMacroExprExpansion::Expanded(expanded) => {
