@@ -7,13 +7,14 @@
 use std::collections::HashMap;
 
 use rg_ir_model::{AssocItemId, FunctionRef, ImplRef, TraitImplRef, TraitRef, TypeDefRef};
-use rg_std::UniqueVec;
+use rg_std::{MemorySize, Shrink, UniqueVec};
 use rg_text::Name;
+use wincode::{SchemaRead, SchemaWrite};
 
 use crate::{ItemStoreQuery, ItemStoreSource, TargetItemQuery};
 
 /// Receiver-oriented lookup cache built from the stores visible from one use-site target.
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct ItemLookupIndex {
     // Method lookup starts from a receiver type. These maps let callers jump directly to impls
     // whose already-resolved `Self` type mentions that receiver, instead of re-scanning all impls.
