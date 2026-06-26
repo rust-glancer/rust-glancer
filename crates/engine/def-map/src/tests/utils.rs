@@ -279,6 +279,7 @@ impl<'a> FixtureEntry<'a> {
         let origin = match binding.def {
             DefId::Module(module_ref) => module_ref.origin,
             DefId::Local(local_def_ref) => local_def_ref.origin,
+            DefId::EnumVariant(variant_ref) => variant_ref.origin,
         };
         let target_ref = origin.as_target_ref()?;
         self.db.parse_db().packages().get(target_ref.package.0)?;
@@ -686,6 +687,7 @@ impl<'a> TargetDefMapSnapshot<'a> {
         let origin = match binding.def {
             DefId::Module(module_ref) => module_ref.origin,
             DefId::Local(local_def_ref) => local_def_ref.origin,
+            DefId::EnumVariant(variant_ref) => variant_ref.origin,
         };
         let target_ref = origin.as_target_ref()?;
         self.project
@@ -804,6 +806,29 @@ impl ResolvedDefOrigin<'_> {
                 });
 
                 format!("{} {}::{}", local_def.kind, module_path, local_def.name)
+            }
+            DefId::EnumVariant(variant_ref) => {
+                let variant = self
+                    .project
+                    .resident_def_map(variant_ref.origin.origin_target())
+                    .expect("target def map should exist while dumping")
+                    .local_enum_variant(variant_ref.local_enum_variant)
+                    .expect("enum variant id should exist while dumping");
+                let enum_def = self
+                    .project
+                    .resident_def_map(variant_ref.origin.origin_target())
+                    .expect("target def map should exist while dumping")
+                    .local_def(variant.enum_def)
+                    .expect("enum def id should exist while dumping");
+                let module_path = self.render_module_path(ModuleRef {
+                    origin: variant_ref.origin,
+                    module: variant.module,
+                });
+
+                format!(
+                    "variant {}::{}::{}",
+                    module_path, enum_def.name, variant.name
+                )
             }
         }
     }

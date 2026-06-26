@@ -10,14 +10,14 @@ mod visible;
 pub use self::{
     import::{ImportBinding, ImportData, ImportKind, ImportPath, ImportSourcePath},
     local::{
-        LocalDefData, LocalDefKind, LocalImplData, MacroDefinitionData, MacroDefinitionPayload,
-        MacroDefinitionView,
+        LocalDefData, LocalDefKind, LocalEnumVariantData, LocalEnumVariantEntry, LocalImplData,
+        MacroDefinitionData, MacroDefinitionPayload, MacroDefinitionView,
     },
     module::{ModuleData, ModuleOrigin},
     package::{PackageDefMaps, TargetData},
     query::{
-        DefMapQuery, DefMapSource, MacroDefinitionEnv, NameResolutionFilter, PathResolver,
-        ResolvePathResult, ScopeResolutionEnv, TargetResolutionEnv,
+        DefMapQuery, DefMapSource, GlobImportSource, MacroDefinitionEnv, NameResolutionFilter,
+        PathResolver, ResolvePathResult, ScopeResolutionEnv, TargetResolutionEnv,
     },
     scope::{
         ModuleScope, ModuleScopeBuilder, Namespace, ScopeBinding, ScopeBindingOrigin, ScopeEntry,

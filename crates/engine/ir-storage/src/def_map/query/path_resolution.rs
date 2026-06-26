@@ -9,11 +9,15 @@
 //! construction, the same path-walking logic reads from frozen `DefMapDb` data.
 
 use rg_ir_model::items::VisibilityLevel;
-use rg_ir_model::{DefId, DefMapRef, ModuleId, ModuleRef, Path, PathSegment, TargetRef};
+use rg_ir_model::{
+    DefId, DefMapRef, LocalDefRef, ModuleId, ModuleRef, Path, PathSegment, TargetRef,
+};
 use rg_std::UniqueVec;
 use rg_text::Name;
 
-use super::super::{ImportPath, ModuleOrigin, ModuleScopeBuilder, Namespace, ScopeBinding};
+use super::super::{
+    ImportPath, LocalDefKind, ModuleOrigin, ModuleScopeBuilder, Namespace, ScopeBinding,
+};
 
 use super::resolution_env::{ScopeResolutionEnv, TargetResolutionEnv};
 
@@ -28,6 +32,13 @@ pub struct UnqualifiedMacroBindings {
 pub struct ResolvePathResult {
     pub resolved: Vec<DefId>,
     pub unresolved_at: Option<usize>,
+}
+
+/// Source accepted by a glob import.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GlobImportSource {
+    Module(ModuleRef),
+    Enum(LocalDefRef),
 }
 
 /// Namespace buckets that may contribute definitions for a path terminal.
@@ -77,6 +88,7 @@ impl<E: ScopeResolutionEnv + ?Sized> PathResolver<'_, E> {
                 .env
                 .local_def_kind(local_def_ref)?
                 .map(|kind| kind.namespace())),
+            DefId::EnumVariant(_) => Ok(Some(Namespace::Values)),
         }
     }
 
@@ -185,18 +197,53 @@ impl<E: ScopeResolutionEnv + ?Sized> PathResolver<'_, E> {
         let mut next_defs = UniqueVec::new();
 
         for current_def in current_defs {
-            let DefId::Module(module_ref) = current_def else {
-                continue;
-            };
-
-            for resolved_def in
-                self.resolve_lexical_name_in_module(importing_module, module_ref, name, filter)?
-            {
-                next_defs.push(resolved_def);
+            match current_def {
+                DefId::Module(module_ref) => {
+                    for resolved_def in self.resolve_lexical_name_in_module(
+                        importing_module,
+                        module_ref,
+                        name,
+                        filter,
+                    )? {
+                        next_defs.push(resolved_def);
+                    }
+                }
+                DefId::Local(local_def_ref) => {
+                    if let Some(variant) =
+                        self.enum_variant_for_name(local_def_ref, name, filter)?
+                    {
+                        next_defs.push(DefId::EnumVariant(variant));
+                    }
+                }
+                DefId::EnumVariant(_) => {}
             }
         }
 
         Ok(next_defs.into_vec())
+    }
+
+    fn enum_variant_for_name(
+        &self,
+        enum_def: LocalDefRef,
+        name: &str,
+        filter: NameResolutionFilter,
+    ) -> Result<Option<rg_ir_model::LocalEnumVariantRef>, E::Error> {
+        if matches!(filter, NameResolutionFilter::TypesOnly) {
+            return Ok(None);
+        }
+        if !self
+            .env
+            .local_def_kind(enum_def)?
+            .is_some_and(|kind| kind == LocalDefKind::Enum)
+        {
+            return Ok(None);
+        }
+
+        Ok(self
+            .env
+            .local_enum_variant_entries_for_enum(enum_def)?
+            .into_iter()
+            .find_map(|entry| (entry.data.name == name).then_some(entry.variant_ref)))
     }
 
     fn first_name_in_lexical_scope(
@@ -415,6 +462,22 @@ impl<E: TargetResolutionEnv + ?Sized> PathResolver<'_, E> {
         )
     }
 
+    /// Resolves a glob import prefix to modules and enums that can export bindings.
+    pub fn import_glob_sources(
+        &self,
+        importing_target: TargetRef,
+        importing_module: ModuleId,
+        path: &ImportPath,
+    ) -> Result<Vec<GlobImportSource>, E::Error> {
+        self.import_glob_sources_from_module(
+            ModuleRef {
+                origin: DefMapRef::Target(importing_target),
+                module: importing_module,
+            },
+            path,
+        )
+    }
+
     /// Resolves an import path from a concrete module origin.
     ///
     /// Target-level imports delegate here, and body-local import finalization can use the same path
@@ -443,16 +506,94 @@ impl<E: TargetResolutionEnv + ?Sized> PathResolver<'_, E> {
             NameResolutionFilter::TypesOnly,
         )?;
 
-        let mut modules = Vec::new();
+        let mut modules = UniqueVec::new();
         for resolved_def in resolved_defs {
-            if let DefId::Module(module_ref) = resolved_def
-                && !modules.contains(&module_ref)
-            {
+            if let DefId::Module(module_ref) = resolved_def {
                 modules.push(module_ref);
             }
         }
 
-        Ok(modules)
+        Ok(modules.into_vec())
+    }
+
+    /// Resolves an import path from a concrete module origin and keeps glob-capable sources.
+    pub fn import_glob_sources_from_module(
+        &self,
+        importing_module: ModuleRef,
+        path: &ImportPath,
+    ) -> Result<Vec<GlobImportSource>, E::Error> {
+        let resolved_defs = self.import_defs_from_module_with_filter(
+            importing_module,
+            path,
+            NameResolutionFilter::TypesOnly,
+        )?;
+
+        let mut sources = UniqueVec::new();
+        for resolved_def in resolved_defs {
+            match resolved_def {
+                DefId::Module(module_ref) => {
+                    sources.push(GlobImportSource::Module(module_ref));
+                }
+                DefId::Local(local_def_ref)
+                    if self
+                        .env
+                        .local_def_kind(local_def_ref)?
+                        .is_some_and(|kind| kind == LocalDefKind::Enum) =>
+                {
+                    sources.push(GlobImportSource::Enum(local_def_ref));
+                }
+                DefId::Local(_) | DefId::EnumVariant(_) => {}
+            }
+        }
+
+        Ok(sources.into_vec())
+    }
+
+    /// Returns value bindings that a glob import from an enum should introduce.
+    pub fn visible_enum_variant_bindings(
+        &self,
+        importing_module: ModuleRef,
+        enum_def: LocalDefRef,
+    ) -> Result<Vec<(Name, ScopeBinding)>, E::Error> {
+        let Some(enum_data) = self.env.local_def_data(enum_def)? else {
+            return Ok(Vec::new());
+        };
+        if enum_data.kind != LocalDefKind::Enum {
+            return Ok(Vec::new());
+        }
+
+        let enum_binding = ScopeBinding {
+            def: DefId::Local(enum_def),
+            visibility: enum_data.visibility.clone(),
+            owner: ModuleRef {
+                origin: enum_def.origin,
+                module: enum_data.module,
+            },
+            origin: super::super::ScopeBindingOrigin::Direct,
+        };
+        if !self.binding_is_visible(importing_module, &enum_binding)? {
+            return Ok(Vec::new());
+        }
+
+        Ok(self
+            .env
+            .local_enum_variant_entries_for_enum(enum_def)?
+            .into_iter()
+            .map(|entry| {
+                (
+                    entry.data.name.clone(),
+                    ScopeBinding {
+                        def: DefId::EnumVariant(entry.variant_ref),
+                        visibility: entry.data.visibility.clone(),
+                        owner: ModuleRef {
+                            origin: enum_def.origin,
+                            module: entry.data.module,
+                        },
+                        origin: super::super::ScopeBindingOrigin::Direct,
+                    },
+                )
+            })
+            .collect())
     }
 
     /// Resolves a path whose terminal segment must be a macro binding.
@@ -647,32 +788,44 @@ impl<E: TargetResolutionEnv + ?Sized> PathResolver<'_, E> {
         let mut next_defs = UniqueVec::new();
 
         for current_def in current_defs {
-            let DefId::Module(module_ref) = current_def else {
-                continue;
-            };
-
-            match segment {
-                PathSegment::SelfKw => {
-                    next_defs.push(DefId::Module(module_ref));
-                }
-                PathSegment::SuperKw => {
-                    if let Some(parent) = self.env.parent_module(module_ref)? {
-                        next_defs.push(DefId::Module(parent));
+            match current_def {
+                DefId::Module(module_ref) => match segment {
+                    PathSegment::SelfKw => {
+                        next_defs.push(DefId::Module(module_ref));
                     }
-                }
-                PathSegment::CrateKw => {
-                    if let Some(root) = self.env.root_module(module_ref.origin.origin_target())? {
-                        next_defs.push(DefId::Module(root));
+                    PathSegment::SuperKw => {
+                        if let Some(parent) = self.env.parent_module(module_ref)? {
+                            next_defs.push(DefId::Module(parent));
+                        }
                     }
-                }
-                PathSegment::DollarCrate(_) => {}
-                PathSegment::Name(name) => {
-                    for resolved_def in
-                        self.name_in_module(importing_module, module_ref, name.as_str(), filter)?
+                    PathSegment::CrateKw => {
+                        if let Some(root) =
+                            self.env.root_module(module_ref.origin.origin_target())?
+                        {
+                            next_defs.push(DefId::Module(root));
+                        }
+                    }
+                    PathSegment::DollarCrate(_) => {}
+                    PathSegment::Name(name) => {
+                        for resolved_def in self.name_in_module(
+                            importing_module,
+                            module_ref,
+                            name.as_str(),
+                            filter,
+                        )? {
+                            next_defs.push(resolved_def);
+                        }
+                    }
+                },
+                DefId::Local(local_def_ref) => {
+                    if let PathSegment::Name(name) = segment
+                        && let Some(variant) =
+                            self.enum_variant_for_name(local_def_ref, name.as_str(), filter)?
                     {
-                        next_defs.push(resolved_def);
+                        next_defs.push(DefId::EnumVariant(variant));
                     }
                 }
+                DefId::EnumVariant(_) => {}
             }
         }
 

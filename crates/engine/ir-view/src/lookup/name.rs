@@ -4,7 +4,9 @@
 //! concepts: they are names visible from an indexed module or lexical body scope.
 
 use rg_ir_model::items::Documentation;
-use rg_ir_model::{DefId, FunctionRef, ModuleRef, Path, SemanticItemRef, identity::DeclarationRef};
+use rg_ir_model::{
+    DefId, FunctionRef, LocalDefRef, ModuleRef, Path, SemanticItemRef, identity::DeclarationRef,
+};
 use rg_ir_storage::{
     DefMapQuery, ItemStoreQuery, ScopeNamespace, VisibleScopeDef, VisibleScopeOrigin,
 };
@@ -147,14 +149,14 @@ impl<'a, 'db> NameLookupView<'a, 'db> {
         visible_def: VisibleScopeDef,
     ) -> anyhow::Result<Option<ModuleScopeName>> {
         let def_maps = DefMapQuery::new(self.db);
-        let declaration = DeclarationRef::from_def(visible_def.def);
         let mut function = None;
-        let (kind, documentation) = match visible_def.def {
+        let (declaration, kind, documentation) = match visible_def.def {
             DefId::Module(module) => {
                 let Some(data) = def_maps.module_data(module)? else {
                     return Ok(None);
                 };
                 (
+                    DeclarationRef::Module(module),
                     SymbolKind::Module,
                     data.docs.as_ref().map(Documentation::text),
                 )
@@ -168,7 +170,35 @@ impl<'a, 'db> NameLookupView<'a, 'db> {
                 {
                     function = Some(function_ref);
                 }
-                (SymbolKind::from_local_def_kind(data.kind), None)
+                (
+                    DeclarationRef::LocalDef(local_def_ref),
+                    SymbolKind::from_local_def_kind(data.kind),
+                    None,
+                )
+            }
+            DefId::EnumVariant(variant_def) => {
+                let item_query = ItemStoreQuery::new(self.db);
+                if let Some(variant_def_data) = def_maps.local_enum_variant_data(variant_def)?
+                    && let Some(variant_ref) = item_query.enum_variant_ref_for_local_def_index(
+                        LocalDefRef {
+                            origin: variant_def.origin,
+                            local_def: variant_def_data.enum_def,
+                        },
+                        variant_def_data.index,
+                        Some(variant_def_data.name.as_str()),
+                    )?
+                {
+                    let docs = item_query
+                        .enum_variant_data(variant_ref)?
+                        .and_then(|data| data.variant.docs.as_ref().map(Documentation::text));
+                    (
+                        DeclarationRef::EnumVariant(variant_ref),
+                        SymbolKind::EnumVariant,
+                        docs,
+                    )
+                } else {
+                    return Ok(None);
+                }
             }
         };
 

@@ -216,30 +216,53 @@ where
             }))
     }
 
+    /// Projects an enum local-def plus variant slot into the semantic variant ref lowered for it.
+    pub fn enum_variant_ref_for_local_def_index(
+        &self,
+        enum_def: LocalDefRef,
+        index: usize,
+        expected_name: Option<&str>,
+    ) -> Result<Option<EnumVariantRef>, S::Error> {
+        if let Some(SemanticItemRef::TypeDef(TypeDefRef {
+            origin,
+            id: TypeDefId::Enum(enum_id),
+        })) = self.semantic_item_for_local_def(enum_def)?
+            && let Some(items) = self.item_store_for_origin(origin)?
+            && let Some(data) = items.enum_data(enum_id)
+            && let Some(variant) = data.variants.get(index)
+            && expected_name.is_none_or(|expected_name| variant.name == expected_name)
+        {
+            Ok(Some(EnumVariantRef {
+                origin,
+                enum_id,
+                index,
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+
     /// Expands a variant ref with its enum owner and source facts.
     pub fn enum_variant_data(
         &self,
         variant_ref: EnumVariantRef,
     ) -> Result<Option<EnumVariantData<'a>>, S::Error> {
-        let Some(items) = self.item_store_for_origin(variant_ref.origin)? else {
-            return Ok(None);
-        };
-        let Some(data) = items.enum_data(variant_ref.enum_id) else {
-            return Ok(None);
-        };
-        let Some(variant) = data.variants.get(variant_ref.index) else {
-            return Ok(None);
-        };
-
-        Ok(Some(EnumVariantData {
-            owner: TypeDefRef {
-                origin: variant_ref.origin,
-                id: TypeDefId::Enum(variant_ref.enum_id),
-            },
-            owner_module: data.owner,
-            file_id: data.source.file_id,
-            variant,
-        }))
+        if let Some(items) = self.item_store_for_origin(variant_ref.origin)?
+            && let Some(data) = items.enum_data(variant_ref.enum_id)
+            && let Some(variant) = data.variants.get(variant_ref.index)
+        {
+            Ok(Some(EnumVariantData {
+                owner: TypeDefRef {
+                    origin: variant_ref.origin,
+                    id: TypeDefId::Enum(variant_ref.enum_id),
+                },
+                owner_module: data.owner,
+                file_id: data.source.file_id,
+                variant,
+            }))
+        } else {
+            Ok(None)
+        }
     }
 
     /// Enumerates stable field refs without exposing whether the owner stores struct or union

@@ -7,7 +7,8 @@
 
 use rg_ir_model::{DefMapRef, ImportId, ModuleRef, TargetRef};
 use rg_ir_storage::{
-    ImportKind, PathResolver, ScopeBinding, ScopeBindingOrigin, TargetResolutionEnv,
+    GlobImportSource, ImportKind, Namespace, PathResolver, ScopeBinding, ScopeBindingOrigin,
+    TargetResolutionEnv,
 };
 
 use super::{
@@ -76,28 +77,50 @@ pub(super) fn apply_imports(
     for import in state.def_map_builder.partial().imports().iter() {
         match import.kind {
             ImportKind::Glob => {
-                let source_modules =
-                    resolver.import_modules(state.target, import.module, &import.path)?;
+                let glob_sources =
+                    resolver.import_glob_sources(state.target, import.module, &import.path)?;
 
-                for source_module in source_modules {
+                for glob_source in glob_sources {
                     let import_owner = ModuleRef {
                         origin: DefMapRef::Target(state.target),
                         module: import.module,
                     };
-                    let source_scope = resolver.visible_scope(import_owner, source_module)?;
                     let target_scope = next_scopes
                         .module_scope_mut(state.target, import.module)
                         .expect("target scope should exist for every import");
 
-                    // Visibility is attached to the binding introduced by the glob import, not to
-                    // the original definition.
-                    for (name, entry) in source_scope.entries() {
-                        target_scope.copy_visible_bindings(
-                            name,
-                            entry,
-                            import.visibility.clone(),
-                            import_owner,
-                        );
+                    match glob_source {
+                        GlobImportSource::Module(source_module) => {
+                            let source_scope =
+                                resolver.visible_scope(import_owner, source_module)?;
+
+                            // Visibility is attached to the binding introduced by the glob import,
+                            // not to the original definition.
+                            for (name, entry) in source_scope.entries() {
+                                target_scope.copy_visible_bindings(
+                                    name,
+                                    entry,
+                                    import.visibility.clone(),
+                                    import_owner,
+                                );
+                            }
+                        }
+                        GlobImportSource::Enum(enum_def) => {
+                            for (name, binding) in
+                                resolver.visible_enum_variant_bindings(import_owner, enum_def)?
+                            {
+                                target_scope.insert_binding(
+                                    &name,
+                                    Namespace::Values,
+                                    ScopeBinding {
+                                        def: binding.def,
+                                        visibility: import.visibility.clone(),
+                                        owner: import_owner,
+                                        origin: ScopeBindingOrigin::Import,
+                                    },
+                                );
+                            }
+                        }
                     }
                 }
             }
@@ -149,7 +172,7 @@ fn unresolved_imports_for_target(
     for (import_id, import) in state.def_map_builder.partial().imports_with_ids() {
         let is_unresolved = match import.kind {
             ImportKind::Glob => resolver
-                .import_modules(state.target, import.module, &import.path)?
+                .import_glob_sources(state.target, import.module, &import.path)?
                 .is_empty(),
             ImportKind::Named | ImportKind::SelfImport => resolver
                 .import_defs(state.target, import.module, &import.path)?

@@ -18,13 +18,15 @@ use rg_cfg_eval::{CfgEvaluator, CfgOptions};
 use rg_ir_model::{DefId, DefMapRef, LocalDefId, LocalDefRef, ModuleId, ModuleRef, TargetRef};
 use rg_ir_storage::{
     DefMapBuilder, ImportBinding, ImportData, ImportKind, ImportPath, ImportSourcePath,
-    LocalDefData, LocalDefKind, LocalImplData, MacroDefinitionData, ModuleData, ModuleOrigin,
-    ModuleScope, ModuleScopeBuilder, Namespace, ScopeBinding, ScopeBindingOrigin,
+    LocalDefData, LocalDefKind, LocalEnumVariantData, LocalImplData, MacroDefinitionData,
+    ModuleData, ModuleOrigin, ModuleScope, ModuleScopeBuilder, Namespace, ScopeBinding,
+    ScopeBindingOrigin,
 };
 use rg_item_tree::{
-    Documentation, ExternCrateItem, ItemKind, ItemNode, ItemTreeDb, ItemTreeId, ItemTreeRef,
-    MacroCallItem, MacroDefinitionAttrs, MacroDefinitionItem, MacroUseAttr, MacroUseSelector,
-    ModuleItem, ModuleSource, Package as ItemTreePackage, UseImport, UseItem, VisibilityLevel,
+    Documentation, EnumItem, ExternCrateItem, ItemKind, ItemNode, ItemTreeDb, ItemTreeId,
+    ItemTreeRef, MacroCallItem, MacroDefinitionAttrs, MacroDefinitionItem, MacroUseAttr,
+    MacroUseSelector, ModuleItem, ModuleSource, Package as ItemTreePackage, UseImport, UseItem,
+    VisibilityLevel,
 };
 use rg_parse::{Package, Target};
 use rg_text::Name;
@@ -307,6 +309,9 @@ impl<'db> TargetScopeCollector<'db> {
                 ItemKind::MacroDefinition(macro_definition) => {
                     self.collect_macro_definition(module_id, item, source, macro_definition, order);
                 }
+                ItemKind::Enum(enum_item) => {
+                    self.collect_enum(module_id, item, source, enum_item);
+                }
                 _ => {
                     self.collect_local_def(module_id, item, source);
                 }
@@ -366,6 +371,35 @@ impl<'db> TargetScopeCollector<'db> {
                 },
             );
         Some(local_def_id)
+    }
+
+    /// Records enum variants as value-namespace import targets without injecting them into the
+    /// enclosing module scope. Variants become bare names only through explicit/prelude/glob
+    /// imports, while `Enum::Variant` is handled by path resolution against this table.
+    fn collect_enum(
+        &mut self,
+        module_id: ModuleId,
+        item: &ItemNode,
+        source: ItemTreeRef,
+        enum_item: &EnumItem,
+    ) {
+        let Some(local_def_id) = self.collect_local_def(module_id, item, source) else {
+            return;
+        };
+
+        for (index, variant) in enum_item.variants.iter().enumerate() {
+            self.def_map_builder
+                .alloc_local_enum_variant(LocalEnumVariantData {
+                    module: module_id,
+                    enum_def: local_def_id,
+                    name: variant.name.clone(),
+                    index,
+                    visibility: item.visibility.clone(),
+                    file_id: item.file_id,
+                    name_span: variant.name_span,
+                    span: variant.span,
+                });
+        }
     }
 
     /// Records a macro definition both as a normal macro-namespace binding and as macro payload

@@ -3,7 +3,9 @@
 //! DefMaps only know about one scope graph. This query object adds the routing layer that decides
 //! which graph owns a `DefMapRef`, then reuses the private path resolver for the actual lookup.
 
-use rg_ir_model::{DefId, DefMapRef, LocalDefRef, LocalImplRef, ModuleRef, Path, TargetRef};
+use rg_ir_model::{
+    DefId, DefMapRef, LocalDefRef, LocalEnumVariantRef, LocalImplRef, ModuleRef, Path, TargetRef,
+};
 use rg_text::Name;
 
 use super::{
@@ -12,9 +14,9 @@ use super::{
 };
 
 use super::super::{
-    DefMap, LocalDefData, LocalImplData, MacroDefinitionView, ModuleData, ModuleScopeBuilder,
-    Namespace, ScopeEntryRef, ScopeNamespace, VisibleScopeDef, VisibleScopeDefs,
-    VisibleScopeOrigin,
+    DefMap, LocalDefData, LocalEnumVariantData, LocalEnumVariantEntry, LocalImplData,
+    MacroDefinitionView, ModuleData, ModuleScopeBuilder, Namespace, ScopeEntryRef, ScopeNamespace,
+    VisibleScopeDef, VisibleScopeDefs, VisibleScopeOrigin,
 };
 
 /// Routes DefMap-origin refs and target-level facts to concrete storage.
@@ -179,6 +181,31 @@ where
             .and_then(|def_map| def_map.local_impl(local_impl_ref.local_impl)))
     }
 
+    pub fn local_enum_variant_data(
+        &self,
+        local_enum_variant_ref: LocalEnumVariantRef,
+    ) -> Result<Option<&LocalEnumVariantData>, S::Error> {
+        Ok(self
+            .source
+            .def_map_for_origin(local_enum_variant_ref.origin)?
+            .and_then(|def_map| {
+                def_map.local_enum_variant(local_enum_variant_ref.local_enum_variant)
+            }))
+    }
+
+    pub fn local_enum_variant_entries_for_enum(
+        &self,
+        enum_def: LocalDefRef,
+    ) -> Result<Vec<LocalEnumVariantEntry<'_>>, S::Error> {
+        let Some(def_map) = self.source.def_map_for_origin(enum_def.origin)? else {
+            return Ok(Vec::new());
+        };
+
+        Ok(def_map
+            .local_enum_variant_entries_for_enum(enum_def.local_def)
+            .collect())
+    }
+
     /// Classify a resolved definition as a declarative macro and borrow its expansion payload.
     pub fn macro_definition_view(
         &self,
@@ -308,6 +335,13 @@ where
         local_def_ref: LocalDefRef,
     ) -> Result<Option<&LocalDefData>, Self::Error> {
         DefMapQuery::local_def_data(self, local_def_ref)
+    }
+
+    fn local_enum_variant_entries_for_enum<'a>(
+        &'a self,
+        enum_def: LocalDefRef,
+    ) -> Result<Vec<LocalEnumVariantEntry<'a>>, Self::Error> {
+        DefMapQuery::local_enum_variant_entries_for_enum(self, enum_def)
     }
 }
 
