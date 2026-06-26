@@ -14,6 +14,7 @@ mod engine_process;
 mod engine_registry;
 mod methods;
 mod notifications;
+mod project_watcher;
 mod recent_editor_saves;
 mod stdio;
 

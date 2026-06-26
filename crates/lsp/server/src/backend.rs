@@ -17,6 +17,7 @@ use crate::{
     engine_client::EngineClient,
     engine_registry::EngineRegistry,
     methods::{self, MethodContext},
+    project_watcher::ProjectWatcher,
     recent_editor_saves::RecentEditorSaves,
 };
 
@@ -24,6 +25,7 @@ use crate::{
 pub(crate) struct Backend {
     lsp_client: LspClient,
     engines: OnceCell<EngineRegistry>,
+    project_watcher: OnceCell<ProjectWatcher>,
     client_capabilities: OnceCell<EngineClientCapabilities>,
     recent_editor_saves: RecentEditorSaves,
 }
@@ -33,6 +35,7 @@ impl Backend {
         Self {
             lsp_client,
             engines: OnceCell::new(),
+            project_watcher: OnceCell::new(),
             client_capabilities: OnceCell::new(),
             recent_editor_saves: RecentEditorSaves::default(),
         }
@@ -114,13 +117,33 @@ impl LanguageServer for Backend {
                 message: Cow::Borrowed("rust-glancer client capabilities are already initialized"),
                 data: None,
             })?;
-        let engines = EngineRegistry::new(self.lsp_client.clone(), workspace_folders, config);
+        let engines =
+            EngineRegistry::new(self.lsp_client.clone(), workspace_folders.clone(), config);
+        let project_watcher = ProjectWatcher::spawn(
+            workspace_folders,
+            engines.clone(),
+            self.recent_editor_saves.clone(),
+        )
+        .map_err(|error| Error {
+            code: ErrorCode::ServerError(-32003),
+            message: Cow::Owned(format!(
+                "failed to start rust-glancer project watcher: {error}"
+            )),
+            data: None,
+        })?;
 
         self.engines.set(engines).map_err(|_| Error {
             code: ErrorCode::InvalidRequest,
             message: Cow::Borrowed("rust-glancer engine registry is already initialized"),
             data: None,
         })?;
+        self.project_watcher
+            .set(project_watcher)
+            .map_err(|_| Error {
+                code: ErrorCode::InvalidRequest,
+                message: Cow::Borrowed("rust-glancer project watcher is already initialized"),
+                data: None,
+            })?;
 
         Ok(methods::initialize())
     }

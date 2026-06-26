@@ -6,6 +6,7 @@
 use std::{
     fs,
     path::{Path, PathBuf},
+    sync::Arc,
     time::{Duration, Instant, SystemTime},
 };
 
@@ -18,9 +19,9 @@ const MAX_RECENT_EDITOR_SAVES: usize = 128;
 ///
 /// If file metadata changes after the save, for example because `rustfmt` rewrote the file, the
 /// watched change goes through.
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub(crate) struct RecentEditorSaves {
-    inner: Mutex<RecentEditorSavesInner>,
+    inner: Arc<Mutex<RecentEditorSavesInner>>,
 }
 
 impl RecentEditorSaves {
