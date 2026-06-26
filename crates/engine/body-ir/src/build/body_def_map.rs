@@ -127,12 +127,8 @@ impl<'body> BodyDefMapCollector<'body> {
         item_id: ItemTreeId,
         item: &ItemNode,
     ) -> Option<rg_ir_model::LocalDefId> {
-        let Some(kind) = LocalDefKind::from_item_tag(item.kind.tag()) else {
-            return None;
-        };
-        let Some(name) = item.name.clone() else {
-            return None;
-        };
+        let kind = LocalDefKind::from_item_tag(item.kind.tag())?;
+        let name = item.name.clone()?;
         let namespace = kind.namespace();
 
         let local_def = self.builder.alloc_local_def(LocalDefData {
