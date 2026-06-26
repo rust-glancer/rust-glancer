@@ -1298,7 +1298,7 @@ impl EngineWorker {
         Some(verified)
     }
 
-    /// Runs a read-only request, responds immediately, then heals disposable cache failures.
+    /// Runs a read-only request and hides disposable cache churn from the LSP client.
     fn respond_to_query<T>(
         &mut self,
         context: QueryContext,
@@ -1368,10 +1368,14 @@ impl EngineWorker {
             }
         }
 
-        let _ = respond_to.send(result);
-
         if should_recover {
+            // Lazy package loads can fail when an offloaded artifact becomes stale between
+            // indexing and a query. The next command sees a repaired project, while this request
+            // degrades to an empty answer instead of a visible JSON-RPC popup in the editor.
+            let _ = respond_to.send(Ok(T::default()));
             self.recover_after_query_cache_failure(label);
+        } else {
+            let _ = respond_to.send(result);
         }
     }
 
