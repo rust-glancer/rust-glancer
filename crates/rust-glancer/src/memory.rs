@@ -6,7 +6,7 @@
 
 use std::sync::Arc;
 
-use rg_lsp_engine::{AllocatorPurgeResult, AllocatorStats, MemoryControl};
+use rg_lsp_engine::{AllocatorStats, MemoryControl};
 use rg_project::{ProjectMemoryHooks, ProjectMemoryPurgePoint};
 
 const JEMALLOC_PURGE_AFTER_BUILD_ENV: &str = "RUST_GLANCER_PURGE_MEMORY_AFTER_BUILD";
@@ -31,7 +31,7 @@ impl MemoryControl for ProcessMemoryControl {
         Self::allocator_stats()
     }
 
-    fn try_purge_allocator(&self) -> Option<AllocatorPurgeResult> {
+    fn try_purge_allocator(&self) -> bool {
         Self::try_purge_allocator()
     }
 }
@@ -53,7 +53,7 @@ struct ProjectProcessMemoryHooks {
 
 impl ProjectMemoryHooks for ProjectProcessMemoryHooks {
     fn purge(&self, _point: ProjectMemoryPurgePoint) {
-        let _ = self.memory_control.try_purge_allocator();
+        self.memory_control.try_purge_allocator();
     }
 }
 
@@ -85,19 +85,20 @@ impl ProcessMemoryControl {
             .unwrap_or(true) // Enabled by default
     }
 
-    pub(crate) fn try_purge_allocator() -> Option<AllocatorPurgeResult> {
+    pub(crate) fn try_purge_allocator() -> bool {
         if !Self::allocator_purge_enabled() {
-            return None;
+            return false;
         }
 
         #[cfg(all(feature = "jemalloc-stats", not(target_env = "msvc")))]
         {
-            Some(jemalloc_stats::purge())
+            jemalloc_stats::purge();
+            true
         }
 
         #[cfg(not(all(feature = "jemalloc-stats", not(target_env = "msvc"))))]
         {
-            None
+            false
         }
     }
 }
@@ -153,19 +154,14 @@ mod jemalloc_stats {
         CString::new(name).expect("jemalloc mallctl name should not contain NUL")
     }
 
-    pub(super) fn purge() -> rg_lsp_engine::AllocatorPurgeResult {
+    pub(super) fn purge() {
         // The engine builds analysis on a dedicated thread, so flushing this thread's tcache first
         // makes recently freed indexing allocations visible to the arena purge below.
-        let tcache_flushed = mallctl_void("thread.tcache.flush");
+        mallctl_void("thread.tcache.flush");
 
         // 4096 is jemalloc's documented MALLCTL_ARENAS_ALL constant. It lets one mallctl target all
         // arenas instead of discovering and iterating arena indexes manually.
-        let arenas_purged = mallctl_void("arena.4096.purge");
-
-        rg_lsp_engine::AllocatorPurgeResult {
-            tcache_flushed,
-            arenas_purged,
-        }
+        mallctl_void("arena.4096.purge");
     }
 
     fn mallctl_void(name: &'static str) -> bool {

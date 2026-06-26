@@ -6,19 +6,7 @@
       "include": "#timestamp"
     },
     {
-      "include": "#prefix-trace"
-    },
-    {
-      "include": "#prefix-debug"
-    },
-    {
-      "include": "#prefix-info"
-    },
-    {
-      "include": "#prefix-warn"
-    },
-    {
-      "include": "#prefix-error"
+      "include": "#prefix"
     },
     {
       "include": "#quoted-field"
@@ -32,8 +20,8 @@
       "match": "^\\d{2}:\\d{2}:\\d{2}\\.\\d{3}",
       "name": "constant.numeric.timestamp.rust-glancer-log"
     },
-    "prefix-trace": {
-      "match": "(\\[)(t)(/)([^/\\]\\s]+)(?:(/)([^\\]\\s]+))?(\\])",
+    "prefix": {
+      "match": "(\\[)(?:(t)|(d)|(i)|(w)|(e))(/)([^/\\]\\s]+)(?:(/)([^\\]\\s]+))?(\\])",
       "captures": {
         "1": {
           "name": "punctuation.definition.bracket.begin.rust-glancer-log"
@@ -42,122 +30,30 @@
           "name": "comment.line.level.trace.rust-glancer-log"
         },
         "3": {
-          "name": "punctuation.separator.source.rust-glancer-log"
-        },
-        "4": {
-          "name": "comment.line.source.rust-glancer-log"
-        },
-        "5": {
-          "name": "punctuation.separator.target.rust-glancer-log"
-        },
-        "6": {
-          "name": "comment.line.target.rust-glancer-log"
-        },
-        "7": {
-          "name": "punctuation.definition.bracket.end.rust-glancer-log"
-        }
-      }
-    },
-    "prefix-debug": {
-      "match": "(\\[)(d)(/)([^/\\]\\s]+)(?:(/)([^\\]\\s]+))?(\\])",
-      "captures": {
-        "1": {
-          "name": "punctuation.definition.bracket.begin.rust-glancer-log"
-        },
-        "2": {
           "name": "constant.language.level.debug.rust-glancer-log"
         },
-        "3": {
-          "name": "punctuation.separator.source.rust-glancer-log"
-        },
         "4": {
-          "name": "comment.line.source.rust-glancer-log"
-        },
-        "5": {
-          "name": "punctuation.separator.target.rust-glancer-log"
-        },
-        "6": {
-          "name": "comment.line.target.rust-glancer-log"
-        },
-        "7": {
-          "name": "punctuation.definition.bracket.end.rust-glancer-log"
-        }
-      }
-    },
-    "prefix-info": {
-      "match": "(\\[)(i)(/)([^/\\]\\s]+)(?:(/)([^\\]\\s]+))?(\\])",
-      "captures": {
-        "1": {
-          "name": "punctuation.definition.bracket.begin.rust-glancer-log"
-        },
-        "2": {
           "name": "support.type.level.info.rust-glancer-log"
         },
-        "3": {
-          "name": "punctuation.separator.source.rust-glancer-log"
-        },
-        "4": {
-          "name": "comment.line.source.rust-glancer-log"
-        },
         "5": {
-          "name": "punctuation.separator.target.rust-glancer-log"
-        },
-        "6": {
-          "name": "comment.line.target.rust-glancer-log"
-        },
-        "7": {
-          "name": "punctuation.definition.bracket.end.rust-glancer-log"
-        }
-      }
-    },
-    "prefix-warn": {
-      "match": "(\\[)(w)(/)([^/\\]\\s]+)(?:(/)([^\\]\\s]+))?(\\])",
-      "captures": {
-        "1": {
-          "name": "punctuation.definition.bracket.begin.rust-glancer-log"
-        },
-        "2": {
           "name": "markup.warning.level.warn.rust-glancer-log"
         },
-        "3": {
-          "name": "punctuation.separator.source.rust-glancer-log"
-        },
-        "4": {
-          "name": "comment.line.source.rust-glancer-log"
-        },
-        "5": {
-          "name": "punctuation.separator.target.rust-glancer-log"
-        },
         "6": {
-          "name": "comment.line.target.rust-glancer-log"
-        },
-        "7": {
-          "name": "punctuation.definition.bracket.end.rust-glancer-log"
-        }
-      }
-    },
-    "prefix-error": {
-      "match": "(\\[)(e)(/)([^/\\]\\s]+)(?:(/)([^\\]\\s]+))?(\\])",
-      "captures": {
-        "1": {
-          "name": "punctuation.definition.bracket.begin.rust-glancer-log"
-        },
-        "2": {
           "name": "invalid.illegal.level.error.rust-glancer-log"
         },
-        "3": {
+        "7": {
           "name": "punctuation.separator.source.rust-glancer-log"
         },
-        "4": {
+        "8": {
           "name": "comment.line.source.rust-glancer-log"
         },
-        "5": {
+        "9": {
           "name": "punctuation.separator.target.rust-glancer-log"
         },
-        "6": {
+        "10": {
           "name": "comment.line.target.rust-glancer-log"
         },
-        "7": {
+        "11": {
           "name": "punctuation.definition.bracket.end.rust-glancer-log"
         }
       }

@@ -3,7 +3,7 @@
 //! The core memory module defines what the executable can expose. This module owns the logging
 //! shape: point-in-time records and human-readable byte formatting.
 
-use super::{MemoryControl, MemoryDelta, MemoryPurge, MemoryStats, format_memory_report_field};
+use super::{MemoryControl, MemoryDelta, MemoryStats, format_memory_report_field};
 
 /// Reports allocator memory at explicit retention checkpoints.
 pub(crate) struct MemoryReporter;
@@ -57,9 +57,11 @@ impl MemoryReporter {
             return before_purge;
         }
 
-        MemoryPurge::try_purge(memory_control, before_purge)
-            .map(|purge| purge.after)
-            .unwrap_or(before_purge)
+        if memory_control.try_purge_allocator() {
+            MemoryStats::capture(memory_control)
+        } else {
+            before_purge
+        }
     }
 
     fn log_report_debug(label: &'static str, after: MemoryStats, delta: MemoryDelta) {
