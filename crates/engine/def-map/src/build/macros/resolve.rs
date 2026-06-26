@@ -75,8 +75,10 @@ where
 
         // Qualified calls follow ordinary path resolution for the prefix, then keep the final macro
         // binding so order filtering can distinguish direct definitions from exports/imports.
-        let resolved_bindings =
-            PathResolver::new(self.env).macro_bindings(self.state.target, call.module, path)?;
+        let resolved_bindings = PathResolver::new(self.env).macro_bindings(
+            ModuleRef::target(self.state.target, call.module),
+            path,
+        )?;
         let mut macros = Vec::new();
 
         for binding in resolved_bindings {

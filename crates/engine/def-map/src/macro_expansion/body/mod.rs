@@ -289,7 +289,7 @@ impl<'db, 'txn> BodyMacroExpander<'db, 'txn> {
         }
 
         let bindings = PathResolver::new(query)
-            .macro_bindings(target, module.module, path)
+            .macro_bindings(module, path)
             .context("while attempting to resolve qualified body macro path")?;
         let mut macros = ExpectedUnique::new();
         for binding in bindings {

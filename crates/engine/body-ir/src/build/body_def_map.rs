@@ -402,7 +402,7 @@ impl BodyDefMapBuildState {
             match import.kind {
                 ImportKind::Glob => {
                     let glob_sources =
-                        resolver.import_glob_sources_from_module(importing_module, &import.path)?;
+                        resolver.import_glob_sources(importing_module, &import.path)?;
 
                     for glob_source in glob_sources {
                         let target_scope = next_scopes
@@ -443,8 +443,7 @@ impl BodyDefMapBuildState {
                     }
                 }
                 ImportKind::Named | ImportKind::SelfImport => {
-                    let resolved_defs =
-                        resolver.import_defs_from_module(importing_module, &import.path)?;
+                    let resolved_defs = resolver.import_defs(importing_module, &import.path)?;
                     let Some(binding_name) = import.binding_name() else {
                         continue;
                     };
@@ -494,10 +493,10 @@ impl BodyDefMapBuildState {
             let importing_module = self.importing_module(import.module);
             let is_unresolved = match import.kind {
                 ImportKind::Glob => resolver
-                    .import_glob_sources_from_module(importing_module, &import.path)?
+                    .import_glob_sources(importing_module, &import.path)?
                     .is_empty(),
                 ImportKind::Named | ImportKind::SelfImport => resolver
-                    .import_defs_from_module(importing_module, &import.path)?
+                    .import_defs(importing_module, &import.path)?
                     .is_empty(),
             };
             if is_unresolved {

@@ -5,7 +5,7 @@
 //! the imported bindings into the next scope snapshot, and recording imports that still fail once
 //! the fixed point has stabilized.
 
-use rg_ir_model::{DefMapRef, ImportId, ModuleRef, TargetRef};
+use rg_ir_model::{ImportId, ModuleRef, TargetRef};
 use rg_ir_storage::{
     GlobImportSource, ImportKind, Namespace, PathResolver, ScopeBinding, ScopeBindingOrigin,
     TargetResolutionEnv,
@@ -75,16 +75,12 @@ pub(super) fn apply_imports(
 ) -> anyhow::Result<()> {
     let resolver = PathResolver::new(env);
     for import in state.def_map_builder.partial().imports().iter() {
+        let import_owner = ModuleRef::target(state.target, import.module);
         match import.kind {
             ImportKind::Glob => {
-                let glob_sources =
-                    resolver.import_glob_sources(state.target, import.module, &import.path)?;
+                let glob_sources = resolver.import_glob_sources(import_owner, &import.path)?;
 
                 for glob_source in glob_sources {
-                    let import_owner = ModuleRef {
-                        origin: DefMapRef::Target(state.target),
-                        module: import.module,
-                    };
                     let target_scope = next_scopes
                         .module_scope_mut(state.target, import.module)
                         .expect("target scope should exist for every import");
@@ -125,8 +121,7 @@ pub(super) fn apply_imports(
                 }
             }
             ImportKind::Named | ImportKind::SelfImport => {
-                let resolved_defs =
-                    resolver.import_defs(state.target, import.module, &import.path)?;
+                let resolved_defs = resolver.import_defs(import_owner, &import.path)?;
 
                 let Some(binding_name) = import.binding_name() else {
                     continue;
@@ -144,16 +139,13 @@ pub(super) fn apply_imports(
                     target_scope.insert_binding(
                         &binding_name,
                         namespace,
-                        ScopeBinding {
-                            def: resolved_def,
-                            visibility: import.visibility.clone(),
-                            owner: ModuleRef {
-                                origin: DefMapRef::Target(state.target),
-                                module: import.module,
+                            ScopeBinding {
+                                def: resolved_def,
+                                visibility: import.visibility.clone(),
+                                owner: import_owner,
+                                origin: ScopeBindingOrigin::Import,
                             },
-                            origin: ScopeBindingOrigin::Import,
-                        },
-                    );
+                        );
                 }
             }
         }
@@ -170,12 +162,13 @@ fn unresolved_imports_for_target(
     let resolver = PathResolver::new(env);
 
     for (import_id, import) in state.def_map_builder.partial().imports_with_ids() {
+        let import_owner = ModuleRef::target(state.target, import.module);
         let is_unresolved = match import.kind {
             ImportKind::Glob => resolver
-                .import_glob_sources(state.target, import.module, &import.path)?
+                .import_glob_sources(import_owner, &import.path)?
                 .is_empty(),
             ImportKind::Named | ImportKind::SelfImport => resolver
-                .import_defs(state.target, import.module, &import.path)?
+                .import_defs(import_owner, &import.path)?
                 .is_empty(),
         };
         if is_unresolved {

@@ -9,9 +9,7 @@
 //! construction, the same path-walking logic reads from frozen `DefMapDb` data.
 
 use rg_ir_model::items::VisibilityLevel;
-use rg_ir_model::{
-    DefId, DefMapRef, LocalDefRef, ModuleId, ModuleRef, Path, PathSegment, TargetRef,
-};
+use rg_ir_model::{DefId, LocalDefRef, ModuleRef, Path, PathSegment};
 use rg_std::UniqueVec;
 use rg_text::Name;
 
@@ -430,77 +428,26 @@ impl<E: TargetResolutionEnv + ?Sized> PathResolver<'_, E> {
         )
     }
 
-    /// Resolves an import path to every definition it denotes in the current scope snapshot.
+    /// Resolves an import path to every definition it denotes from a concrete module origin.
     pub fn import_defs(
-        &self,
-        importing_target: TargetRef,
-        importing_module: ModuleId,
-        path: &ImportPath,
-    ) -> Result<Vec<DefId>, E::Error> {
-        self.import_defs_from_module(
-            ModuleRef {
-                origin: DefMapRef::Target(importing_target),
-                module: importing_module,
-            },
-            path,
-        )
-    }
-
-    /// Resolves a path and keeps only module results.
-    pub fn import_modules(
-        &self,
-        importing_target: TargetRef,
-        importing_module: ModuleId,
-        path: &ImportPath,
-    ) -> Result<Vec<ModuleRef>, E::Error> {
-        self.import_modules_from_module(
-            ModuleRef {
-                origin: DefMapRef::Target(importing_target),
-                module: importing_module,
-            },
-            path,
-        )
-    }
-
-    /// Resolves a glob import prefix to modules and enums that can export bindings.
-    pub fn import_glob_sources(
-        &self,
-        importing_target: TargetRef,
-        importing_module: ModuleId,
-        path: &ImportPath,
-    ) -> Result<Vec<GlobImportSource>, E::Error> {
-        self.import_glob_sources_from_module(
-            ModuleRef {
-                origin: DefMapRef::Target(importing_target),
-                module: importing_module,
-            },
-            path,
-        )
-    }
-
-    /// Resolves an import path from a concrete module origin.
-    ///
-    /// Target-level imports delegate here, and body-local import finalization can use the same path
-    /// rules without losing the body origin of the importing synthetic module.
-    pub fn import_defs_from_module(
         &self,
         importing_module: ModuleRef,
         path: &ImportPath,
     ) -> Result<Vec<DefId>, E::Error> {
-        self.import_defs_from_module_with_filter(
+        self.import_defs_with_filter(
             importing_module,
             path,
             NameResolutionFilter::AllNamespaces,
         )
     }
 
-    /// Resolves an import path from a concrete module origin and keeps only module results.
-    pub fn import_modules_from_module(
+    /// Resolves an import path and keeps only module results.
+    pub fn import_modules(
         &self,
         importing_module: ModuleRef,
         path: &ImportPath,
     ) -> Result<Vec<ModuleRef>, E::Error> {
-        let resolved_defs = self.import_defs_from_module_with_filter(
+        let resolved_defs = self.import_defs_with_filter(
             importing_module,
             path,
             NameResolutionFilter::TypesOnly,
@@ -516,13 +463,13 @@ impl<E: TargetResolutionEnv + ?Sized> PathResolver<'_, E> {
         Ok(modules.into_vec())
     }
 
-    /// Resolves an import path from a concrete module origin and keeps glob-capable sources.
-    pub fn import_glob_sources_from_module(
+    /// Resolves a glob import prefix to modules and enums that can export bindings.
+    pub fn import_glob_sources(
         &self,
         importing_module: ModuleRef,
         path: &ImportPath,
     ) -> Result<Vec<GlobImportSource>, E::Error> {
-        let resolved_defs = self.import_defs_from_module_with_filter(
+        let resolved_defs = self.import_defs_with_filter(
             importing_module,
             path,
             NameResolutionFilter::TypesOnly,
@@ -599,8 +546,7 @@ impl<E: TargetResolutionEnv + ?Sized> PathResolver<'_, E> {
     /// Resolves a path whose terminal segment must be a macro binding.
     pub fn macro_bindings(
         &self,
-        importing_target: TargetRef,
-        importing_module: ModuleId,
+        importing_module: ModuleRef,
         path: &ImportPath,
     ) -> Result<Vec<ScopeBinding>, E::Error> {
         let Some((terminal, prefix)) = path.segments.split_last() else {
@@ -610,19 +556,14 @@ impl<E: TargetResolutionEnv + ?Sized> PathResolver<'_, E> {
             return Ok(Vec::new());
         };
 
-        let importing_module_ref = ModuleRef {
-            origin: DefMapRef::Target(importing_target),
-            module: importing_module,
-        };
         let source_modules = if prefix.is_empty() {
             if path.absolute {
                 Vec::new()
             } else {
-                vec![importing_module_ref]
+                vec![importing_module]
             }
         } else {
             self.import_modules(
-                importing_target,
                 importing_module,
                 &ImportPath {
                     absolute: path.absolute,
@@ -637,7 +578,7 @@ impl<E: TargetResolutionEnv + ?Sized> PathResolver<'_, E> {
                 continue;
             };
             for binding in entry.macros() {
-                if self.binding_is_visible(importing_module_ref, binding)? {
+                if self.binding_is_visible(importing_module, binding)? {
                     bindings.push(binding.clone());
                 }
             }
@@ -646,7 +587,7 @@ impl<E: TargetResolutionEnv + ?Sized> PathResolver<'_, E> {
         Ok(bindings)
     }
 
-    fn import_defs_from_module_with_filter(
+    fn import_defs_with_filter(
         &self,
         importing_module: ModuleRef,
         path: &ImportPath,

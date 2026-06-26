@@ -73,6 +73,15 @@ pub struct ModuleRef {
     pub module: ModuleId,
 }
 
+impl ModuleRef {
+    pub fn target(target: TargetRef, module: ModuleId) -> Self {
+        Self {
+            origin: DefMapRef::Target(target),
+            module,
+        }
+    }
+}
+
 /// Stable reference to one local definition across the whole project analysis.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 #[shrink(leaf)]

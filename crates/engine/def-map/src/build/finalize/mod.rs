@@ -555,8 +555,9 @@ fn select_preludes(
             ];
 
             for prelude_path in prelude_paths.into_iter().flatten() {
+                let root_module = ModuleRef::target(state.target, state.root_module);
                 prelude_module = PathResolver::new(&env)
-                    .import_modules(state.target, state.root_module, &prelude_path)?
+                    .import_modules(root_module, &prelude_path)?
                     .into_iter()
                     .next();
                 if prelude_module.is_some() {
