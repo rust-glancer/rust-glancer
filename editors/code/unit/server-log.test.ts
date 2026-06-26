@@ -32,7 +32,7 @@ describe("server log parsing", () => {
       assert.equal(parsed.record.engine, "simple_crate");
       assert.equal(
         formatServerLogRecord(parsed.record),
-        "[simple_crate/rg_lsp_engine::engine::worker] workspace indexing finished elapsed_ms=7630 workspace_root=/workspace/simple_crate",
+        "[i/simple_crate/rg_lsp_engine::engine::worker] workspace indexing finished elapsed_ms=7630 workspace_root=/workspace/simple_crate",
       );
     }
   });
@@ -54,7 +54,7 @@ describe("server log parsing", () => {
       assert.equal(parsed.record.level, "trace");
       assert.equal(
         formatServerLogRecord(parsed.record),
-        "[server/rg_lsp_server::backend] request received",
+        "[t/server/rg_lsp_server::backend] request received",
       );
     }
   });
@@ -73,7 +73,7 @@ describe("server log parsing", () => {
         },
         new Date(2026, 4, 13, 22, 23, 58, 537),
       ),
-      "22:23:58.537 [trace] [server/rg_lsp_server::backend] request received method=hover",
+      "22:23:58.537 [t/server/rg_lsp_server::backend] request received method=hover",
     );
   });
 
@@ -91,7 +91,7 @@ describe("server log parsing", () => {
           resident: "35.4MiB(+0B)",
         },
       }),
-      "[simple_crate/rg_lsp_engine::memory] memory report label=inlay_hint allocated=9.2MiB(-2.0MiB) resident=35.4MiB(+0B)",
+      "[d/simple_crate/rg_lsp_engine::memory] memory report label=inlay_hint allocated=9.2MiB(-2.0MiB) resident=35.4MiB(+0B)",
     );
   });
 
@@ -102,7 +102,7 @@ describe("server log parsing", () => {
         "error: failed to compile",
         new Date(2026, 4, 13, 22, 23, 58, 537),
       ),
-      "22:23:58.537 [error] error: failed to compile",
+      "22:23:58.537 [e/raw] error: failed to compile",
     );
   });
 
@@ -114,7 +114,7 @@ describe("server log parsing", () => {
         message: "server started",
         fields: {},
       }),
-      "[server] server started",
+      "[i/server] server started",
     );
   });
 

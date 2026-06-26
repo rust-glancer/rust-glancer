@@ -31,6 +31,19 @@
           ".rs"
         ],
         "configuration": "./language-configuration.json"
+      },
+      {
+        "id": "rust-glancer-log",
+        "aliases": [
+          "Rust Glancer Log"
+        ]
+      }
+    ],
+    "grammars": [
+      {
+        "language": "rust-glancer-log",
+        "scopeName": "source.rust-glancer-log",
+        "path": "./syntaxes/rust-glancer-log.tmLanguage.json"
       }
     ],
     "commands": [

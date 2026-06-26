@@ -20,7 +20,7 @@ export interface ServerLogRecord {
 }
 
 export function formatServerLogLine(record: ServerLogRecord, date = new Date()): string {
-  return `${formatTimestamp(date)} [${record.level}] ${formatServerLogRecord(record)}`;
+  return `${formatTimestamp(date)} ${formatServerLogRecord(record)}`;
 }
 
 export function formatRawServerLogLine(
@@ -28,7 +28,7 @@ export function formatRawServerLogLine(
   message: string,
   date = new Date(),
 ): string {
-  return `${formatTimestamp(date)} [${level}] ${message}`;
+  return `${formatTimestamp(date)} [${logLevelCode(level)}/raw] ${message}`;
 }
 
 export type ParsedServerLogLine =
@@ -77,13 +77,28 @@ export function formatServerLogRecord(record: ServerLogRecord): string {
   const source = logSource(record);
   const prefix =
     record.target !== undefined && record.target.length > 0
-      ? `[${source}/${record.target}]`
-      : `[${source}]`;
+      ? `[${logLevelCode(record.level)}/${source}/${record.target}]`
+      : `[${logLevelCode(record.level)}/${source}]`;
   const fields = formatFields(record.fields);
 
   return fields.length === 0
     ? `${prefix} ${record.message}`
     : `${prefix} ${record.message} ${fields}`;
+}
+
+function logLevelCode(level: ServerLogLevel): string {
+  switch (level) {
+    case "trace":
+      return "t";
+    case "debug":
+      return "d";
+    case "info":
+      return "i";
+    case "warn":
+      return "w";
+    case "error":
+      return "e";
+  }
 }
 
 function logSource(record: ServerLogRecord): string {
