@@ -47,6 +47,7 @@ impl EngineClient {
         Fut: Future<Output = Result<EngineResult<T>, TarpcRpcError>>,
     {
         if let Err(error) = self.call(operation, request).await {
+            let error = format!("{error:#}");
             tracing::debug!(operation, error = %error, "engine notification failed");
         }
     }

@@ -162,7 +162,7 @@ impl EngineHandle {
             "document freshness after failed save reindex"
         );
 
-        let message = format!("failed to process saved file: {error}");
+        let message = format!("failed to process saved file: {error:#}");
         self.notifications.send(ServiceNotification::LogMessage {
             level: ServiceLogLevel::Error,
             message,

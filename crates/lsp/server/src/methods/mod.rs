@@ -41,7 +41,7 @@ pub(crate) async fn shutdown(ctx: MethodContext) -> anyhow::Result<()> {
 pub(crate) fn internal_error(error: anyhow::Error) -> Error {
     Error {
         code: ErrorCode::InternalError,
-        message: Cow::Owned(error.to_string()),
+        message: Cow::Owned(format!("{error:#}")),
         data: None,
     }
 }
@@ -58,8 +58,26 @@ pub(crate) fn uri_to_path(uri: &Uri) -> Option<PathBuf> {
 mod tests {
     use std::str::FromStr;
 
-    use super::uri_to_path;
+    use super::{internal_error, uri_to_path};
     use tower_lsp_server::ls_types::Uri;
+
+    #[test]
+    fn internal_error_preserves_context_chain() {
+        let error = anyhow::anyhow!("engine response channel closed")
+            .context("while receiving engine response")
+            .context("while handling hover");
+
+        let message = internal_error(error).message;
+
+        assert_eq!(
+            message.as_ref(),
+            "while handling hover: while receiving engine response: engine response channel closed",
+        );
+        assert!(
+            !message.contains('\n'),
+            "alternate anyhow display should keep context chains on one line",
+        );
+    }
 
     #[test]
     fn uri_to_path_accepts_only_file_uris() {

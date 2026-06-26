@@ -1363,14 +1363,30 @@ impl EngineWorker {
             .as_ref()
             .err()
             .is_some_and(Project::is_recoverable_cache_load_failure);
-        tracing::debug!(
-            label,
-            queued_ms = queue_elapsed.as_millis(),
-            query_elapsed_ms = query_elapsed.as_millis(),
-            result_ok = result.is_ok(),
-            recoverable_cache_failure = should_recover,
-            "analysis query finished"
-        );
+        match &result {
+            Ok(_) => {
+                tracing::debug!(
+                    label,
+                    queued_ms = queue_elapsed.as_millis(),
+                    query_elapsed_ms = query_elapsed.as_millis(),
+                    result_ok = true,
+                    recoverable_cache_failure = should_recover,
+                    "analysis query finished"
+                );
+            }
+            Err(error) => {
+                let error = format!("{error:#}");
+                tracing::debug!(
+                    label,
+                    queued_ms = queue_elapsed.as_millis(),
+                    query_elapsed_ms = query_elapsed.as_millis(),
+                    result_ok = false,
+                    recoverable_cache_failure = should_recover,
+                    error = %error,
+                    "analysis query finished"
+                );
+            }
+        }
 
         let _ = respond_to.send(result);
 
@@ -1411,6 +1427,7 @@ impl EngineWorker {
                 );
             }
             Err(error) => {
+                let error = format!("{error:#}");
                 tracing::error!(
                     label,
                     error = %error,
