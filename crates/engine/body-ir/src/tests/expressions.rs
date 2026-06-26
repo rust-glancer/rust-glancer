@@ -80,7 +80,7 @@ impl User {
                 initializer
                   expr e6 call => nominal struct body_expr_fixture[lib]::crate::UserId @ 15:30-15:42
                     callee
-                      expr e4 path identity -> item fn body_expr_fixture[lib]::crate::identity => <unknown> @ 15:30-15:38
+                      expr e4 path identity -> fn body_expr_fixture[lib]::crate::identity => <unknown> @ 15:30-15:38
                     arg
                       expr e5 path id -> local v1 => nominal struct body_expr_fixture[lib]::crate::UserId @ 15:39-15:41
               stmt s3 let v5 @ 16:9-16:29
@@ -1048,7 +1048,7 @@ pub fn use_it(mut pair: (u8, u8), mut slots: [u8; 3], value: u8, user: User) {
                   value
                     expr e64 call => ! @ 26:12-26:19
                       callee
-                        expr e63 path never -> item fn body_common_expr_fixture[lib]::crate::never => <unknown> @ 26:12-26:17
+                        expr e63 path never -> fn body_common_expr_fixture[lib]::crate::never => <unknown> @ 26:12-26:17
         "#]],
     );
 }

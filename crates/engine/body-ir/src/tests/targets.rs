@@ -61,7 +61,7 @@ fn main() {
                 initializer
                   expr e1 call => nominal struct body_bin_fixture[lib]::crate::Api @ 2:38-2:62
                     callee
-                      expr e0 path body_bin_fixture::make -> item fn body_bin_fixture[lib]::crate::make => <unknown> @ 2:38-2:60
+                      expr e0 path body_bin_fixture::make -> fn body_bin_fixture[lib]::crate::make => <unknown> @ 2:38-2:60
               stmt s1 let v1: body_bin_fixture::Api @ 3:5-3:44
                 initializer
                   expr e2 path api -> local v0 => nominal struct body_bin_fixture[lib]::crate::Api @ 3:40-3:43

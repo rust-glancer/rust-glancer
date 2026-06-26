@@ -634,7 +634,7 @@ pub mod prelude {
               tail
                 expr e1 call => i32 @ 11:5-11:19
                   callee
-                    expr e0 path $crate::dep_value -> item fn dep[lib]::crate::dep_value => <unknown> @ 11:5-11:19
+                    expr e0 path $crate::dep_value -> fn dep[lib]::crate::dep_value => <unknown> @ 11:5-11:19
 
 
             body b1 fn app[lib]::crate::via_cfg_select @ 14:1-16:2
@@ -647,7 +647,7 @@ pub mod prelude {
               tail
                 expr e1 call => i32 @ 15:5-15:26
                   callee
-                    expr e0 path $crate::dep_value -> item fn dep[lib]::crate::dep_value => <unknown> @ 15:5-15:26
+                    expr e0 path $crate::dep_value -> fn dep[lib]::crate::dep_value => <unknown> @ 15:5-15:26
 
 
             package core

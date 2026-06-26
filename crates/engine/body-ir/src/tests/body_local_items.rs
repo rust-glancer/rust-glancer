@@ -753,7 +753,7 @@ pub fn use_it() {
               tail
                 expr e1 call => nominal struct body_more_local_items_fixture[lib]::crate::GlobalId @ 23:13-23:21
                   callee
-                    expr e0 path helper -> item fn fn body_more_local_items_fixture[lib]::crate::use_it::helper => <unknown> @ 23:13-23:19
+                    expr e0 path helper -> fn fn body_more_local_items_fixture[lib]::crate::use_it::helper => <unknown> @ 23:13-23:19
         "#]],
     );
 }
