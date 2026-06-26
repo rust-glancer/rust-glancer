@@ -197,6 +197,42 @@ impl ItemLookupIndex {
         &self.structural_inherent_impls
     }
 
+    /// Returns inherent impls indexed for a receiver type.
+    pub fn inherent_impls_for_type(&self, ty: TypeDefRef) -> UniqueVec<ImplRef> {
+        self.inherent_impls_by_type
+            .get(&ty)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// Returns impl blocks indexed for a receiver type, including inherent and trait impls.
+    pub fn impls_for_type(&self, ty: TypeDefRef) -> UniqueVec<ImplRef> {
+        let mut impls = self.inherent_impls_for_type(ty);
+        if let Some(trait_impls) = self.trait_impls_by_type.get(&ty) {
+            impls.extend(trait_impls.iter().map(|trait_impl| trait_impl.impl_ref));
+        }
+        impls
+    }
+
+    /// Returns impl blocks indexed for an implemented trait.
+    pub fn impls_for_trait(&self, trait_ref: TraitRef) -> UniqueVec<ImplRef> {
+        self.trait_impls_by_trait
+            .get(&trait_ref)
+            .into_iter()
+            .flat_map(|trait_impls| trait_impls.iter())
+            .map(|trait_impl| trait_impl.impl_ref)
+            .collect()
+    }
+
+    /// Returns all indexed trait impl candidates.
+    pub fn trait_impls(&self) -> UniqueVec<TraitImplRef> {
+        let mut trait_impls = UniqueVec::new();
+        for candidates in self.trait_impls_by_trait.values() {
+            trait_impls.extend(candidates.iter().copied());
+        }
+        trait_impls
+    }
+
     /// Returns trait impl candidates indexed for a receiver type.
     pub fn trait_impls_for_type(&self, ty: TypeDefRef) -> Option<&UniqueVec<TraitImplRef>> {
         self.trait_impls_by_type.get(&ty)

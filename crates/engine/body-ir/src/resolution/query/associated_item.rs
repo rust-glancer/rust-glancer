@@ -322,8 +322,8 @@ where
 
         self.associated_const_candidate_for_impls(
             self.context
-                .target_items()
-                .inherent_impls_for_type(ty.def)?,
+                .semantic_index()
+                .inherent_impls_for_type(ty.def),
             ty,
             name,
         )
@@ -392,7 +392,7 @@ where
 
         let body_trait_impls = body_items.trait_impls_for_type(ty.def)?;
         for (function_ref, _) in matcher.trait_function_candidates_from_impls(
-            Some(self.context.semantic_index()),
+            self.context.semantic_index(),
             body_trait_impls,
             ty,
             Some(name),
@@ -402,7 +402,7 @@ where
 
         if ty.def.origin.as_target_ref().is_some() {
             for (function_ref, _) in matcher.trait_function_candidates_for_receiver(
-                Some(self.context.semantic_index()),
+                self.context.semantic_index(),
                 ty,
                 Some(name),
             )? {
@@ -425,7 +425,7 @@ where
                 .context
                 .impl_matcher()
                 .trait_function_candidates_from_impls(
-                    Some(self.context.semantic_index()),
+                    self.context.semantic_index(),
                     receiver.impls().clone(),
                     receiver.receiver_ty(),
                     Some(name),

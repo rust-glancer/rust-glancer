@@ -52,7 +52,7 @@ pub enum MemberMethodOrigin {
 pub struct MemberQuery<'query, D, I> {
     item_paths: ItemPathQuery<'query, D, I>,
     target_items: TargetItemQuery<'query, D, I>,
-    lookup_index: Option<&'query ItemLookupIndex>,
+    lookup_index: &'query ItemLookupIndex,
 }
 
 impl<'query, D, I> MemberQuery<'query, D, I>
@@ -60,19 +60,7 @@ where
     D: DefMapSource + Clone,
     I: ItemStoreSource<'query, Error = D::Error> + Clone,
 {
-    /// Creates a member query that scans the visible item stores directly.
-    pub fn new(
-        item_paths: ItemPathQuery<'query, D, I>,
-        target_items: TargetItemQuery<'query, D, I>,
-    ) -> Self {
-        Self {
-            item_paths,
-            target_items,
-            lookup_index: None,
-        }
-    }
-
-    /// Creates a member query that can reuse a precomputed receiver lookup index.
+    /// Creates a member query over a target-scoped receiver lookup index.
     pub fn with_index(
         item_paths: ItemPathQuery<'query, D, I>,
         target_items: TargetItemQuery<'query, D, I>,
@@ -81,7 +69,7 @@ where
         Self {
             item_paths,
             target_items,
-            lookup_index: Some(lookup_index),
+            lookup_index,
         }
     }
 
@@ -152,22 +140,15 @@ where
         &self,
         receiver_ty: &NominalTy,
     ) -> Result<UniqueVec<FunctionRef>, D::Error> {
-        match self.lookup_index {
-            Some(index) => {
-                index.inherent_functions_for_type(self.item_paths.items(), receiver_ty.def)
-            }
-            None => self
-                .target_items
-                .inherent_functions_for_type(receiver_ty.def),
-        }
+        self.lookup_index
+            .inherent_functions_for_type(self.item_paths.items(), receiver_ty.def)
     }
 
     fn autoderef(&self) -> Autoderef<'query, D, I> {
-        match self.lookup_index {
-            Some(index) => {
-                Autoderef::with_index(self.item_paths.clone(), self.target_items.clone(), index)
-            }
-            None => Autoderef::new(self.item_paths.clone(), self.target_items.clone()),
-        }
+        Autoderef::with_index(
+            self.item_paths.clone(),
+            self.target_items.clone(),
+            self.lookup_index,
+        )
     }
 }

@@ -19,7 +19,7 @@ use crate::{
 pub(crate) struct DerefResolver<'query, D, I> {
     item_paths: ItemPathQuery<'query, D, I>,
     target_items: TargetItemQuery<'query, D, I>,
-    lookup_index: Option<&'query ItemLookupIndex>,
+    lookup_index: &'query ItemLookupIndex,
 }
 
 impl<'query, D, I> DerefResolver<'query, D, I>
@@ -30,7 +30,7 @@ where
     pub(crate) fn new(
         item_paths: ItemPathQuery<'query, D, I>,
         target_items: TargetItemQuery<'query, D, I>,
-        lookup_index: Option<&'query ItemLookupIndex>,
+        lookup_index: &'query ItemLookupIndex,
     ) -> Self {
         Self {
             item_paths,
@@ -60,13 +60,11 @@ where
         let matcher = ImplMatcher::new(self.item_paths.clone(), self.target_items.clone());
         let item_query = self.item_paths.items();
         let mut targets = UniqueVec::new();
-        let trait_impls = match self.lookup_index {
-            Some(index) => index
-                .trait_impls_for_type(receiver_ty.def)
-                .cloned()
-                .unwrap_or_default(),
-            None => self.target_items.trait_impls_for_type(receiver_ty.def)?,
-        };
+        let trait_impls = self
+            .lookup_index
+            .trait_impls_for_type(receiver_ty.def)
+            .cloned()
+            .unwrap_or_default();
 
         for trait_impl in trait_impls {
             let Some(impl_data) = item_query.impl_data(trait_impl.impl_ref)? else {

@@ -181,7 +181,7 @@ where
 
         let body_trait_impls = body_items.trait_impls_for_type(receiver_ty.def)?;
         for (function, applicability) in matcher.trait_function_candidates_from_impls(
-            Some(self.context.semantic_index()),
+            self.context.semantic_index(),
             body_trait_impls,
             receiver_ty,
             method_name,
@@ -194,7 +194,7 @@ where
 
         if receiver_ty.def.origin.as_target_ref().is_some() {
             for (function, applicability) in matcher.trait_function_candidates_for_receiver(
-                Some(self.context.semantic_index()),
+                self.context.semantic_index(),
                 receiver_ty,
                 method_name,
             )? {

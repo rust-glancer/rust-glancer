@@ -11,7 +11,10 @@ use rg_ir_model::{
     StructId, TargetId, TargetRef, TextSpan, TraitId, TraitImplRef, TraitRef, TypeDefId,
     TypeDefRef,
 };
-use rg_ir_storage::{DefMap, DefMapSource, ItemStore, ItemStoreBuilder, ItemStoreSource};
+use rg_ir_storage::{
+    DefMap, DefMapSource, ItemLookupIndex, ItemStore, ItemStoreBuilder, ItemStoreSource,
+    TargetItemQuery,
+};
 use rg_std::ExpectedUnique;
 use rg_text::Name;
 
@@ -22,6 +25,7 @@ use crate::{GenericArg, ItemPathQuery, NominalTy, Ty};
 struct TraitSelectionFixture {
     store: ItemStore,
     target: TargetRef,
+    lookup_index: ItemLookupIndex,
 }
 
 impl DefMapSource for TraitSelectionFixture {
@@ -216,18 +220,26 @@ fn fixture(impls: Vec<ImplData>) -> TraitSelectionFixture {
     for impl_data in impls {
         builder.impls.alloc(impl_data);
     }
-    TraitSelectionFixture {
+    let mut fixture = TraitSelectionFixture {
         store: builder.build(),
         target: target(),
+        lookup_index: ItemLookupIndex::default(),
+    };
+    {
+        let target_items = TargetItemQuery::new(&fixture, &fixture, fixture.target);
+        fixture.lookup_index =
+            ItemLookupIndex::build_from(&target_items).expect("fixture lookup index should build");
     }
+    fixture
 }
 
 fn query(
     fixture: &TraitSelectionFixture,
 ) -> TraitSelectionQuery<'_, &TraitSelectionFixture, &TraitSelectionFixture> {
-    TraitSelectionQuery::new(
+    TraitSelectionQuery::with_index(
         ItemPathQuery::new(fixture, fixture),
-        rg_ir_storage::TargetItemQuery::new(fixture, fixture, fixture.target),
+        TargetItemQuery::new(fixture, fixture, fixture.target),
+        &fixture.lookup_index,
     )
 }
 

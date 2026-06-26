@@ -24,7 +24,7 @@ use crate::{
 pub struct IterationItemResolver<'query, D, I> {
     item_paths: ItemPathQuery<'query, D, I>,
     target_items: TargetItemQuery<'query, D, I>,
-    lookup_index: Option<&'query ItemLookupIndex>,
+    lookup_index: &'query ItemLookupIndex,
 }
 
 impl<'query, D, I> IterationItemResolver<'query, D, I>
@@ -32,18 +32,7 @@ where
     D: DefMapSource + Clone,
     I: ItemStoreSource<'query, Error = D::Error> + Clone,
 {
-    pub fn new(
-        item_paths: ItemPathQuery<'query, D, I>,
-        target_items: TargetItemQuery<'query, D, I>,
-    ) -> Self {
-        Self {
-            item_paths,
-            target_items,
-            lookup_index: None,
-        }
-    }
-
-    /// Creates an iteration resolver that can reuse a target-scoped item lookup index.
+    /// Creates an iteration resolver over a target-scoped item lookup index.
     pub fn with_index(
         item_paths: ItemPathQuery<'query, D, I>,
         target_items: TargetItemQuery<'query, D, I>,
@@ -52,7 +41,7 @@ where
         Self {
             item_paths,
             target_items,
-            lookup_index: Some(lookup_index),
+            lookup_index,
         }
     }
 
@@ -130,18 +119,10 @@ where
     ) -> Result<UniqueVec<TraitImplRef>, D::Error> {
         let mut candidates = UniqueVec::new();
         for trait_ref in canonical_traits {
-            if let Some(indexed_impls) = self
-                .lookup_index
-                .and_then(|index| index.trait_impls_for_trait(*trait_ref))
-            {
+            if let Some(indexed_impls) = self.lookup_index.trait_impls_for_trait(*trait_ref) {
                 for trait_impl in indexed_impls {
                     candidates.push(*trait_impl);
                 }
-                continue;
-            }
-
-            for trait_impl in self.target_items.trait_impls_for_trait(*trait_ref)? {
-                candidates.push(trait_impl);
             }
         }
 
@@ -149,27 +130,19 @@ where
             return Ok(candidates);
         }
 
-        // Some fixture/core-like contexts cannot resolve `::core` from the use-site root. Keep the
-        // older impl-context scan as a rare fallback so the fast path does not narrow semantics.
-        for store in self.target_items.visible_stores()? {
-            for (impl_ref, impl_data) in store.impls_with_refs() {
-                if impl_data.trait_ref.is_none() {
-                    continue;
-                }
-
-                let Some(trait_ref) = impl_data.resolved_trait_ref.as_option() else {
-                    continue;
-                };
-                let trait_impl = TraitImplRef {
-                    impl_ref,
-                    trait_ref: *trait_ref,
-                };
-                if !self.is_canonical_trait_impl(projector, trait_impl, impl_data, trait_kind)? {
-                    continue;
-                }
-
-                candidates.push(trait_impl);
+        // Some fixture/core-like contexts cannot resolve `::core` from the use-site root. Walk the
+        // indexed trait impl candidates as a rare fallback so the fast path does not narrow
+        // semantics, but still avoids re-scanning visible stores.
+        let item_query = self.item_paths.items();
+        for trait_impl in self.lookup_index.trait_impls() {
+            let Some(impl_data) = item_query.impl_data(trait_impl.impl_ref)? else {
+                continue;
+            };
+            if !self.is_canonical_trait_impl(projector, trait_impl, impl_data, trait_kind)? {
+                continue;
             }
+
+            candidates.push(trait_impl);
         }
 
         Ok(candidates)
