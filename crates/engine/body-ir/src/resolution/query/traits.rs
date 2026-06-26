@@ -153,14 +153,12 @@ where
         )?;
 
         if ty.def.origin.as_target_ref().is_some() {
-            let target_items = self.context.target_items();
-            let semantic_impls = match self.context.semantic_index() {
-                Some(index) => index
-                    .trait_impls_for_type(ty.def)
-                    .cloned()
-                    .unwrap_or_default(),
-                None => target_items.trait_impls_for_type(ty.def)?,
-            };
+            let semantic_impls = self
+                .context
+                .semantic_index()
+                .trait_impls_for_type(ty.def)
+                .cloned()
+                .unwrap_or_default();
             self.push_matching_qualified_trait_impls(
                 &mut impls,
                 semantic_impls,

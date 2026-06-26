@@ -1,0 +1,90 @@
+{
+  "name": "Rust Glancer Log",
+  "scopeName": "source.rust-glancer-log",
+  "patterns": [
+    {
+      "include": "#timestamp"
+    },
+    {
+      "include": "#prefix"
+    },
+    {
+      "include": "#quoted-field"
+    },
+    {
+      "include": "#unquoted-field"
+    }
+  ],
+  "repository": {
+    "timestamp": {
+      "match": "^\\d{2}:\\d{2}:\\d{2}\\.\\d{3}",
+      "name": "constant.numeric.timestamp.rust-glancer-log"
+    },
+    "prefix": {
+      "match": "(\\[)(?:(t)|(d)|(i)|(w)|(e))(/)([^/\\]\\s]+)(?:(/)([^\\]\\s]+))?(\\])",
+      "captures": {
+        "1": {
+          "name": "punctuation.definition.bracket.begin.rust-glancer-log"
+        },
+        "2": {
+          "name": "comment.line.level.trace.rust-glancer-log"
+        },
+        "3": {
+          "name": "constant.language.level.debug.rust-glancer-log"
+        },
+        "4": {
+          "name": "support.type.level.info.rust-glancer-log"
+        },
+        "5": {
+          "name": "markup.warning.level.warn.rust-glancer-log"
+        },
+        "6": {
+          "name": "invalid.illegal.level.error.rust-glancer-log"
+        },
+        "7": {
+          "name": "punctuation.separator.source.rust-glancer-log"
+        },
+        "8": {
+          "name": "comment.line.source.rust-glancer-log"
+        },
+        "9": {
+          "name": "punctuation.separator.target.rust-glancer-log"
+        },
+        "10": {
+          "name": "comment.line.target.rust-glancer-log"
+        },
+        "11": {
+          "name": "punctuation.definition.bracket.end.rust-glancer-log"
+        }
+      }
+    },
+    "quoted-field": {
+      "match": "\\b([A-Za-z_][A-Za-z0-9_.-]*)(=)(\"(?:\\\\.|[^\"\\\\])*\")",
+      "captures": {
+        "1": {
+          "name": "variable.parameter.field.rust-glancer-log"
+        },
+        "2": {
+          "name": "keyword.operator.assignment.rust-glancer-log"
+        },
+        "3": {
+          "name": "string.quoted.double.field-value.rust-glancer-log"
+        }
+      }
+    },
+    "unquoted-field": {
+      "match": "\\b([A-Za-z_][A-Za-z0-9_.-]*)(=)([^\\s]+)",
+      "captures": {
+        "1": {
+          "name": "variable.parameter.field.rust-glancer-log"
+        },
+        "2": {
+          "name": "keyword.operator.assignment.rust-glancer-log"
+        },
+        "3": {
+          "name": "string.unquoted.field-value.rust-glancer-log"
+        }
+      }
+    }
+  }
+}

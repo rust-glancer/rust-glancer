@@ -57,22 +57,16 @@ where
     }
 
     /// Returns trait-associated function candidates for a nominal receiver.
-    ///
-    /// The optional index lets hot method lookup reuse a precomputed receiver cache. Without it,
-    /// the query falls back to direct item-store scans through the same provider.
     pub fn trait_function_candidates_for_receiver(
         &self,
-        index: Option<&ItemLookupIndex>,
+        index: &ItemLookupIndex,
         receiver_ty: &NominalTy,
         method_name: Option<&str>,
     ) -> Result<Vec<(FunctionRef, TraitApplicability)>, D::Error> {
-        let trait_impls = match index {
-            Some(index) => index
-                .trait_impls_for_type(receiver_ty.def)
-                .cloned()
-                .unwrap_or_default(),
-            None => self.target_items.trait_impls_for_type(receiver_ty.def)?,
-        };
+        let trait_impls = index
+            .trait_impls_for_type(receiver_ty.def)
+            .cloned()
+            .unwrap_or_default();
         self.trait_function_candidates_from_impls(index, trait_impls, receiver_ty, method_name)
     }
 
@@ -82,7 +76,7 @@ where
     /// this method owns only receiver applicability and trait-associated function expansion.
     pub fn trait_function_candidates_from_impls(
         &self,
-        index: Option<&ItemLookupIndex>,
+        index: &ItemLookupIndex,
         trait_impls: UniqueVec<TraitImplRef>,
         receiver_ty: &NominalTy,
         method_name: Option<&str>,
@@ -94,7 +88,7 @@ where
             // If the indexed trait has no function with that name, this impl cannot contribute a
             // candidate regardless of how well the impl header matches the receiver.
             let mut indexed_trait_functions = None;
-            if let (Some(index), Some(method_name)) = (index, method_name)
+            if let Some(method_name) = method_name
                 && let Some(indexed_functions) =
                     index.trait_functions_by_name(trait_impl.trait_ref, method_name)
             {
@@ -111,17 +105,13 @@ where
 
             let trait_functions = if let Some(functions) = indexed_trait_functions {
                 functions
+            } else if let Some(functions) = index.trait_functions(trait_impl.trait_ref) {
+                functions.clone()
             } else {
-                let trait_functions = if let Some(index) = index
-                    && let Some(functions) = index.trait_functions(trait_impl.trait_ref)
-                {
-                    functions.clone()
-                } else {
-                    item_query
-                        .trait_data(trait_impl.trait_ref)?
-                        .map(|t| t.functions().collect())
-                        .unwrap_or_default()
-                };
+                let trait_functions = item_query
+                    .trait_data(trait_impl.trait_ref)?
+                    .map(|t| t.functions().collect())
+                    .unwrap_or_default();
 
                 // The direct item-store fallback cannot skip the impl check up front, but it can
                 // still avoid returning unrelated trait functions to the later method-call filter.

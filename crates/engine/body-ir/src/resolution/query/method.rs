@@ -220,7 +220,6 @@ where
             return Ok(Vec::new());
         }
 
-        let target_items = self.context.target_items();
         let matcher = self.context.impl_matcher();
         let item_query = self.context.item_query();
         let mut candidates = Vec::new();
@@ -228,10 +227,11 @@ where
         // Structural inherent impls model language/core-provided builtins such as `impl<T> [T]`.
         // Body-local impl lookup remains nominal-only because block-local impls are useful for
         // local structs, not for defining new inherent methods on builtin shaped types.
-        let impl_refs = match self.context.semantic_index() {
-            Some(index) => index.structural_inherent_impls().clone(),
-            None => target_items.inherent_impls()?,
-        };
+        let impl_refs = self
+            .context
+            .semantic_index()
+            .structural_inherent_impls()
+            .clone();
         for impl_ref in impl_refs {
             self.push_structural_inherent_functions_for_impl(
                 &item_query,
@@ -317,21 +317,15 @@ where
         receiver_ty: &NominalTy,
         method_name: Option<&str>,
     ) -> Result<UniqueVec<FunctionRef>, PackageStoreError> {
-        match (self.context.semantic_index(), method_name) {
-            (Some(index), Some(name)) => Ok(index
+        let index = self.context.semantic_index();
+        match method_name {
+            Some(name) => Ok(index
                 .inherent_functions_for_type_and_name(receiver_ty.def, name)
                 .cloned()
                 .unwrap_or_default()),
-            (Some(index), None) => {
+            None => {
                 let item_query = self.context.item_query();
                 index.inherent_functions_for_type(&item_query, receiver_ty.def)
-            }
-            (None, method_name) => {
-                let functions = self
-                    .context
-                    .target_items()
-                    .inherent_functions_for_type(receiver_ty.def)?;
-                self.filter_functions_by_name(functions, method_name)
             }
         }
     }

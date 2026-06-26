@@ -1,6 +1,9 @@
-use crate::items::{
-    Documentation, EnumVariantItem, FieldItem, FieldList, GenericParams, Mutability, ParamKind,
-    TypeBound, TypeRef, VisibilityLevel,
+use crate::{
+    Mutability,
+    items::{
+        Documentation, EnumVariantItem, FieldItem, FieldList, GenericParams, ParamKind, TypeBound,
+        TypeRef, VisibilityLevel,
+    },
 };
 use rg_parse::{FileId, Span};
 use rg_std::{ExpectedUnique, MemorySize, Shrink};

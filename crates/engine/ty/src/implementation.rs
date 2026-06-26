@@ -5,7 +5,7 @@
 //! declaration shape that UI-facing analysis expects.
 
 use rg_ir_model::{AssocItemId, FunctionRef, ImplRef, ItemOwner, TraitRef, TypeDefRef};
-use rg_ir_storage::{DefMapSource, ItemStoreSource, TargetItemQuery};
+use rg_ir_storage::{DefMapSource, ItemLookupIndex, ItemStoreSource, TargetItemQuery};
 use rg_std::UniqueVec;
 
 use crate::{Autoderef, AutoderefMode, ImplMatcher, ItemPathQuery, ReferencePeelingCandidates, Ty};
@@ -14,6 +14,7 @@ use crate::{Autoderef, AutoderefMode, ImplMatcher, ItemPathQuery, ReferencePeeli
 pub struct ImplementationQuery<'query, D, I> {
     item_paths: ItemPathQuery<'query, D, I>,
     target_items: TargetItemQuery<'query, D, I>,
+    lookup_index: &'query ItemLookupIndex,
 }
 
 impl<'query, D, I> ImplementationQuery<'query, D, I>
@@ -21,13 +22,16 @@ where
     D: DefMapSource + Clone,
     I: ItemStoreSource<'query, Error = D::Error> + Clone,
 {
-    pub fn new(
+    /// Creates an implementation query over a target-scoped receiver lookup index.
+    pub fn with_index(
         item_paths: ItemPathQuery<'query, D, I>,
         target_items: TargetItemQuery<'query, D, I>,
+        lookup_index: &'query ItemLookupIndex,
     ) -> Self {
         Self {
             item_paths,
             target_items,
+            lookup_index,
         }
     }
 
@@ -46,12 +50,12 @@ where
 
     /// Returns impl blocks whose resolved self type mentions this nominal type definition.
     pub fn impls_for_type_def(&self, ty: TypeDefRef) -> Result<UniqueVec<ImplRef>, D::Error> {
-        self.target_items.impls_for_type(ty)
+        Ok(self.lookup_index.impls_for_type(ty))
     }
 
     /// Returns impl blocks that resolve to the requested trait.
     pub fn impls_for_trait(&self, trait_ref: TraitRef) -> Result<UniqueVec<ImplRef>, D::Error> {
-        self.target_items.impls_for_trait(trait_ref)
+        Ok(self.lookup_index.impls_for_trait(trait_ref))
     }
 
     /// Returns concrete functions that implement or correspond to the selected function.
@@ -102,14 +106,23 @@ where
         method_name: &str,
         receiver_ty: &Ty,
     ) -> Result<UniqueVec<FunctionRef>, D::Error> {
-        let autoderef = Autoderef::new(self.item_paths.clone(), self.target_items.clone());
+        let autoderef = Autoderef::with_index(
+            self.item_paths.clone(),
+            self.target_items.clone(),
+            self.lookup_index,
+        );
         let matcher = ImplMatcher::new(self.item_paths.clone(), self.target_items.clone());
         let mut functions = UniqueVec::new();
 
         for candidate in autoderef.candidates(AutoderefMode::MethodReceiver, receiver_ty) {
             let candidate = candidate?;
             for ty in candidate.ty().as_nominals() {
-                for trait_impl in self.target_items.trait_impls_for_type(ty.def)? {
+                let trait_impls = self
+                    .lookup_index
+                    .trait_impls_for_type(ty.def)
+                    .cloned()
+                    .unwrap_or_default();
+                for trait_impl in trait_impls {
                     if trait_impl.trait_ref != trait_ref {
                         continue;
                     }

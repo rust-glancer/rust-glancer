@@ -12,7 +12,7 @@ use rg_ir_model::{
     TypePathResolution,
     hir::items::{EnumVariantData, FieldData, FunctionData},
 };
-use rg_ir_storage::{ItemStoreQuery, TargetItemQuery};
+use rg_ir_storage::{ItemLookupIndex, ItemStoreQuery, TargetItemQuery};
 use rg_ty::MemberMethodOrigin;
 use rg_ty::{ItemPathQuery, MemberMethodCandidateRef, MemberQuery, Ty};
 
@@ -171,9 +171,13 @@ impl<'a, 'db> MemberView<'a, 'db> {
         ty: &Ty,
     ) -> anyhow::Result<Vec<MemberField<'view>>> {
         let mut fields = Vec::new();
-        let member_query = MemberQuery::new(
+        let Some(semantic_index) = self.semantic_index(use_site)? else {
+            return Ok(fields);
+        };
+        let member_query = MemberQuery::with_index(
             ItemPathQuery::new(self.db, self.db),
             TargetItemQuery::new(self.db, self.db, use_site),
+            semantic_index,
         );
         for field_ref in member_query.fields_for_ty(ty)? {
             let Some(field) = self.field(field_ref)? else {
@@ -198,9 +202,13 @@ impl<'a, 'db> MemberView<'a, 'db> {
         };
 
         let mut fields = Vec::new();
-        let member_query = MemberQuery::new(
+        let Some(semantic_index) = self.semantic_index(body.target)? else {
+            return Ok(fields);
+        };
+        let member_query = MemberQuery::with_index(
             ItemPathQuery::new(self.db, self.db),
             TargetItemQuery::new(self.db, self.db, body.target),
+            semantic_index,
         );
         if let TypePathResolution::SelfType(ty) | TypePathResolution::TypeDef(ty) = resolution {
             for field_ref in member_query.fields_for_type_def(ty)? {
@@ -299,9 +307,13 @@ impl<'a, 'db> MemberView<'a, 'db> {
         use_site: TargetRef,
         ty: &Ty,
     ) -> anyhow::Result<Vec<MemberMethodCandidateRef>> {
-        let member_query = MemberQuery::new(
+        let Some(semantic_index) = self.semantic_index(use_site)? else {
+            return Ok(Vec::new());
+        };
+        let member_query = MemberQuery::with_index(
             ItemPathQuery::new(self.db, self.db),
             TargetItemQuery::new(self.db, self.db, use_site),
+            semantic_index,
         );
         Ok(member_query.method_candidates_for_ty(ty)?)
     }
@@ -347,5 +359,14 @@ impl<'a, 'db> MemberView<'a, 'db> {
             function,
             origin: candidate.origin(),
         }
+    }
+
+    /// Return the target-scoped semantic index that backs fast type/member queries.
+    fn semantic_index(&self, use_site: TargetRef) -> anyhow::Result<Option<&ItemLookupIndex>> {
+        Ok(self
+            .db
+            .body_ir
+            .target_bodies(use_site)?
+            .map(|target_bodies| target_bodies.semantic_index()))
     }
 }

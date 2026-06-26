@@ -367,7 +367,7 @@ where
         Ok(None)
     }
 
-    /// Probe a trait goal using the same indexed or non-indexed query path everywhere.
+    /// Probe a trait goal using the target lookup index persisted with Body IR.
     ///
     /// Keeping this as probe mode matters: callers decide when an `ExpectedUnique::One` result is
     /// strong enough to commit the returned inference table.
@@ -376,18 +376,12 @@ where
         goal: &TraitGoal,
         inference: &BodyInferenceCtx,
     ) -> Result<ExpectedUnique<TraitSelection>, PackageStoreError> {
-        match self.context.semantic_index() {
-            Some(index) => TraitSelectionQuery::with_index(
-                self.context.item_paths(),
-                self.context.target_items(),
-                index,
-            )
-            .probe(goal, &inference.table),
-            None => {
-                TraitSelectionQuery::new(self.context.item_paths(), self.context.target_items())
-                    .probe(goal, &inference.table)
-            }
-        }
+        TraitSelectionQuery::with_index(
+            self.context.item_paths(),
+            self.context.target_items(),
+            self.context.semantic_index(),
+        )
+        .probe(goal, &inference.table)
     }
 
     fn self_associated_type_name(ty: &TypeRef) -> Option<&str> {

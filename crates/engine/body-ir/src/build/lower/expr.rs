@@ -10,8 +10,8 @@ use rg_syntax::{
 };
 
 use rg_ir_model::{
-    ExprId, ScopeId,
-    items::{FieldKey, GenericArg, Mutability},
+    ExprId, Mutability, ScopeId,
+    items::{FieldKey, GenericArg},
 };
 use rg_item_tree::{FromAst as _, MaybeFromAst as _, RecordExprFieldAst};
 use rg_parse::{Span, TextSpan};

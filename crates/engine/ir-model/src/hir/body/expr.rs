@@ -6,8 +6,8 @@ use rg_parse::Span;
 use rg_text::Name;
 
 use crate::{
-    BindingId, ExprId, PatId, ScopeId, StmtId,
-    items::{FieldKey, GenericArg, Mutability, TypeRef},
+    BindingId, ExprId, Mutability, PatId, ScopeId, StmtId,
+    items::{FieldKey, GenericArg, TypeRef},
 };
 use rg_std::{MemorySize, Shrink};
 

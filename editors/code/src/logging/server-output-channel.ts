@@ -6,11 +6,48 @@ import {
   formatServerLogLine,
   parseServerLogLine,
 } from "./server-log";
+import { RecordingOutputChannel } from "../test-support/recording-output-channel";
 
-/// Adapts stderr text from `vscode-languageclient` into the server output channel.
-///
-/// The Rust side emits one structured JSON log event per line. Cargo startup output, panics, and
-/// other non-JSON stderr still remain visible through the raw-line fallback.
+const EXTENSION_TEST_ENV = "RUST_GLANCER_EXTENSION_TEST";
+const SERVER_LOG_LANGUAGE_ID = "rust-glancer-log";
+const SERVER_LOG_CHANNEL_NAME = "Rust Glancer Language Server";
+
+export interface CreatedServerOutputChannel {
+  readonly output: ServerOutputChannel;
+  readonly recording?: RecordingOutputChannel;
+}
+
+export function createServerOutputChannel(): CreatedServerOutputChannel {
+  const raw = vscode.window.createOutputChannel(SERVER_LOG_CHANNEL_NAME, SERVER_LOG_LANGUAGE_ID);
+  const recording = isExtensionTestMode() ? new RecordingOutputChannel(raw) : undefined;
+
+  return {
+    output: new ServerOutputChannel(recording ?? raw),
+    recording,
+  };
+}
+
+export function isExtensionTestMode(): boolean {
+  return process.env[EXTENSION_TEST_ENV] === "1";
+}
+
+/**
+ * Defines the editor-facing log format for the Rust language server.
+ *
+ * We use a custom output language instead of VS Code's generic `log` grammar because the default
+ * grammar is not flexible enough for compact structured logs. A normal line looks like this:
+ *
+ * `09:39:29.210 [d/rust-glancer/rg_lsp_engine::memory] memory report active=23.2MiB(+96.0KiB)`
+ *
+ * The prefix is `[level/source/target]`: `t/d/i/w/e` for trace/debug/info/warn/error, then the
+ * server or engine name, then the Rust tracing target when one exists. Everything after the
+ * message is `key=value` fields. The `rust-glancer-log` grammar colors those pieces and treats
+ * each field value as one token, so paths, URIs, and memory values stay visually consistent.
+ *
+ * The Rust side still writes structured JSON lines to stderr. `server-log.ts` is the entrypoint
+ * that parses those records, keeps raw stderr visible as a fallback, and formats both into this
+ * compact display language.
+ */
 export class ServerOutputChannel implements vscode.OutputChannel {
   private bufferedText = "";
 

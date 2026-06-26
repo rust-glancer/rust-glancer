@@ -10,7 +10,8 @@ use wincode::{SchemaRead, SchemaWrite};
 use rg_parse::Span;
 use rg_text::Name;
 
-use super::{Documentation, ItemTreeId, Mutability, TypeBound, TypeRef, VisibilityLevel};
+use super::{Documentation, ItemTreeId, TypeBound, TypeRef, VisibilityLevel};
+use crate::Mutability;
 
 /// Generic parameter data attached to an item declaration.
 #[derive(Debug, Clone, PartialEq, Eq, Default, SchemaRead, SchemaWrite, MemorySize, Shrink)]

@@ -5,7 +5,7 @@ use rg_syntax::{
     ast::{self, HasModuleItem as _, HasName as _, HasVisibility as _},
 };
 
-use rg_ir_model::{ExprId, FunctionParamData, ScopeId, StmtId, items::Mutability};
+use rg_ir_model::{ExprId, FunctionParamData, Mutability, ScopeId, StmtId};
 use rg_item_tree::{
     ConstItem, Documentation, EnumItem, ExternCrateItem, FromAst as _, FunctionItem, ImplItem,
     ImplItemContext, InnerDocs, ItemKind, ItemNode, ItemTreeId, MacroUseAttr, MaybeFromAst,

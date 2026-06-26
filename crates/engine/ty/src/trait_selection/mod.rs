@@ -42,7 +42,7 @@ pub struct TraitSelection {
 pub struct TraitSelectionQuery<'query, D, I> {
     item_paths: ItemPathQuery<'query, D, I>,
     target_items: TargetItemQuery<'query, D, I>,
-    lookup_index: Option<&'query ItemLookupIndex>,
+    lookup_index: &'query ItemLookupIndex,
 }
 
 impl<'query, D, I> TraitSelectionQuery<'query, D, I>
@@ -50,17 +50,6 @@ where
     D: DefMapSource<Error = I::Error>,
     I: ItemStoreSource<'query>,
 {
-    pub fn new(
-        item_paths: ItemPathQuery<'query, D, I>,
-        target_items: TargetItemQuery<'query, D, I>,
-    ) -> Self {
-        Self {
-            item_paths,
-            target_items,
-            lookup_index: None,
-        }
-    }
-
     pub fn with_index(
         item_paths: ItemPathQuery<'query, D, I>,
         target_items: TargetItemQuery<'query, D, I>,
@@ -69,7 +58,7 @@ where
         Self {
             item_paths,
             target_items,
-            lookup_index: Some(lookup_index),
+            lookup_index,
         }
     }
 
@@ -130,17 +119,11 @@ where
     }
 
     fn trait_impl_candidates(&self, trait_ref: TraitRef) -> Result<Vec<TraitImplRef>, I::Error> {
-        if let Some(index) = self.lookup_index
-            && let Some(candidates) = index.trait_impls_for_trait(trait_ref)
-        {
-            return Ok(candidates.iter().copied().collect());
-        }
-
         Ok(self
-            .target_items
-            .trait_impls_for_trait(trait_ref)?
-            .into_iter()
-            .collect())
+            .lookup_index
+            .trait_impls_for_trait(trait_ref)
+            .map(|candidates| candidates.iter().copied().collect())
+            .unwrap_or_default())
     }
 
     fn probe_impl(

@@ -3,9 +3,7 @@
 //! This is the `InferTy` mirror of ordinary `TypeSubst` use: bind declared type params from
 //! inference evidence, then project another type ref while preserving `?T` slots.
 
-use rg_ir_model::items::{
-    GenericArg as ItemGenericArg, GenericParams, Mutability, TypePath, TypeRef,
-};
+use rg_ir_model::items::{GenericArg as ItemGenericArg, GenericParams, TypePath, TypeRef};
 use rg_text::Name;
 
 use super::{
@@ -13,7 +11,7 @@ use super::{
     model::{InferGenericArg, InferTy},
     table::{InferenceConflict, InferenceTable},
 };
-use crate::{RefMutability, Ty};
+use crate::Ty;
 
 /// Substitution from declared type params to inference-aware types.
 ///
@@ -112,7 +110,7 @@ impl InferTypeSubst {
                     mutability: evidence_mutability,
                     inner: evidence_inner,
                 },
-            ) if Self::ref_mutability(*mutability) == *evidence_mutability => {
+            ) if *mutability == *evidence_mutability => {
                 self.bind_type_ref(table, pattern_inner, evidence_inner, generics);
             }
             (TypeRef::Path(path), InferTy::Nominal(evidence_ty) | InferTy::SelfTy(evidence_ty)) => {
@@ -211,14 +209,6 @@ impl InferTypeSubst {
                 self.bind_type_ref(table, pattern_ty, evidence_ty, generics);
             }
             _ => {}
-        }
-    }
-
-    /// Convert syntax mutability into the type-layer reference mutability.
-    fn ref_mutability(mutability: Mutability) -> RefMutability {
-        match mutability {
-            Mutability::Shared => RefMutability::Shared,
-            Mutability::Mutable => RefMutability::Mutable,
         }
     }
 }

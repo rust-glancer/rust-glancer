@@ -28,9 +28,8 @@ pub use self::{
         BodySelfParamKind, BodySource, BodySourceItems, BuiltinMacroExprKind, ClosureCapture,
         ClosureKind, ClosureParamData, ExprAssignOp, ExprBinaryOp, ExprBlockKind, ExprData,
         ExprFacts, ExprKind, ExprRangeKind, ExprUnaryOp, FunctionParamData, LabelData, LiteralKind,
-        PatBindingMode, PatData, PatKind, PatMutability, PatRangeKind, RecordExprField,
-        RecordExprSpread, RecordFieldSyntax, RecordPatField, ResolvedBodyData, ScopeData, StmtData,
-        StmtKind,
+        PatBindingMode, PatData, PatKind, PatRangeKind, RecordExprField, RecordExprSpread,
+        RecordFieldSyntax, RecordPatField, ResolvedBodyData, ScopeData, StmtData, StmtKind,
     },
     resolution::{BodyMethodQuery, BodyResolutionContext, BodyTypePathQuery, BodyValuePathQuery},
     store::{

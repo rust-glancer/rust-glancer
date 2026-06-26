@@ -8,7 +8,7 @@ use std::{borrow::Cow, collections::VecDeque};
 
 use rg_ir_storage::{DefMapSource, ItemLookupIndex, ItemStoreSource, TargetItemQuery};
 
-use crate::{ItemPathQuery, RefMutability, Ty, deref::DerefResolver};
+use crate::{ItemPathQuery, Mutability, Ty, deref::DerefResolver};
 use rg_std::UniqueVec;
 
 const AUTODEREF_LIMIT: usize = 8;
@@ -18,7 +18,7 @@ const AUTODEREF_LIMIT: usize = 8;
 pub struct Autoderef<'query, D, I> {
     item_paths: ItemPathQuery<'query, D, I>,
     target_items: TargetItemQuery<'query, D, I>,
-    lookup_index: Option<&'query ItemLookupIndex>,
+    lookup_index: &'query ItemLookupIndex,
 }
 
 impl<'query, D, I> Autoderef<'query, D, I>
@@ -26,19 +26,7 @@ where
     D: DefMapSource + Clone,
     I: ItemStoreSource<'query, Error = D::Error> + Clone,
 {
-    /// Creates an autoderef engine without a precomputed lookup index.
-    pub fn new(
-        item_paths: ItemPathQuery<'query, D, I>,
-        target_items: TargetItemQuery<'query, D, I>,
-    ) -> Self {
-        Self {
-            item_paths,
-            target_items,
-            lookup_index: None,
-        }
-    }
-
-    /// Creates an autoderef engine that can reuse a receiver lookup index.
+    /// Creates an autoderef engine over a target-scoped receiver lookup index.
     pub fn with_index(
         item_paths: ItemPathQuery<'query, D, I>,
         target_items: TargetItemQuery<'query, D, I>,
@@ -47,7 +35,7 @@ where
         Self {
             item_paths,
             target_items,
-            lookup_index: Some(lookup_index),
+            lookup_index,
         }
     }
 
@@ -122,7 +110,7 @@ impl AutoderefMode {
 pub struct AutoderefCandidate<'ty> {
     ty: Cow<'ty, Ty>,
     depth: usize,
-    mutability: Option<RefMutability>,
+    mutability: Option<Mutability>,
 }
 
 impl<'ty> AutoderefCandidate<'ty> {
@@ -137,7 +125,7 @@ impl<'ty> AutoderefCandidate<'ty> {
     }
 
     /// Mutability of the reference dereferenced to reach this candidate.
-    pub fn mutability(&self) -> Option<RefMutability> {
+    pub fn mutability(&self) -> Option<Mutability> {
         self.mutability
     }
 }
@@ -165,7 +153,7 @@ enum AutoderefCandidatesKind<'ty> {
 struct PendingAutoderefCandidate<'ty> {
     ty: PendingAutoderefTy<'ty>,
     depth: usize,
-    mutability: Option<RefMutability>,
+    mutability: Option<Mutability>,
 }
 
 #[derive(Debug, Clone)]
@@ -189,7 +177,7 @@ impl<'ty> PendingAutoderefTy<'ty> {
         }
     }
 
-    fn reference_inner(&self) -> Option<(Self, RefMutability)> {
+    fn reference_inner(&self) -> Option<(Self, Mutability)> {
         match self {
             Self::Borrowed(ty) => ty
                 .reference_inner()
@@ -301,7 +289,7 @@ where
 pub struct ReferencePeelingCandidates<'ty> {
     next_ty: Option<&'ty Ty>,
     next_depth: usize,
-    next_mutability: Option<RefMutability>,
+    next_mutability: Option<Mutability>,
 }
 
 impl<'ty> ReferencePeelingCandidates<'ty> {

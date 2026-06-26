@@ -2,6 +2,8 @@ mod body;
 mod def_map;
 mod item;
 
+pub use rg_std::UniqueVec;
+
 pub use self::{
     body::BodyLocalItems,
     def_map::{

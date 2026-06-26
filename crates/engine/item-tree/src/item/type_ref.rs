@@ -1,4 +1,7 @@
-use rg_ir_model::items::{GenericArg, Mutability, TypeBound, TypePath, TypePathSegment, TypeRef};
+use rg_ir_model::{
+    Mutability,
+    items::{GenericArg, TypeBound, TypePath, TypePathSegment, TypeRef},
+};
 use rg_parse::{LineIndex, Span};
 use rg_syntax::{
     AstNode as _,

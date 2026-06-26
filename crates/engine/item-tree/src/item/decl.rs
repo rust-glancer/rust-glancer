@@ -1,8 +1,11 @@
-use rg_ir_model::items::{
-    ConstItem, ConstParamData, Documentation, EnumItem, EnumVariantItem, FieldItem, FieldKey,
-    FieldList, FunctionItem, FunctionQualifiers, GenericParams, ImplItem, ItemTreeId,
-    LifetimeParamData, Mutability, ParamItem, ParamKind, StaticItem, StructItem, TraitItem,
-    TypeAliasItem, TypeParamData, TypeRef, UnionItem, VisibilityLevel, WherePredicate,
+use rg_ir_model::{
+    Mutability,
+    items::{
+        ConstItem, ConstParamData, Documentation, EnumItem, EnumVariantItem, FieldItem, FieldKey,
+        FieldList, FunctionItem, FunctionQualifiers, GenericParams, ImplItem, ItemTreeId,
+        LifetimeParamData, ParamItem, ParamKind, StaticItem, StructItem, TraitItem, TypeAliasItem,
+        TypeParamData, TypeRef, UnionItem, VisibilityLevel, WherePredicate,
+    },
 };
 use rg_parse::{LineIndex, Span};
 use rg_syntax::{

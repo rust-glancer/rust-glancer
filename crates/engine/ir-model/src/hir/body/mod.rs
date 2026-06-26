@@ -30,7 +30,7 @@ pub use self::{
     literal::LiteralKind,
     macro_call::BodyMacroCallData,
     owner::BodyOwner,
-    pat::{PatBindingMode, PatData, PatKind, PatMutability, PatRangeKind, RecordPatField},
+    pat::{PatBindingMode, PatData, PatKind, PatRangeKind, RecordPatField},
     path::{
         BodyAssociatedPathPrefix, BodyPath, BodyPathSegment, BodyPathSegmentArgs,
         BodyPathSegmentKind,

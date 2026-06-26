@@ -23,8 +23,9 @@ pub trait MemoryControl: std::fmt::Debug + Send + Sync {
         None
     }
 
-    fn try_purge_allocator(&self) -> Option<AllocatorPurgeResult> {
-        None
+    /// Attempts allocator-specific release work, returning whether a purge path ran.
+    fn try_purge_allocator(&self) -> bool {
+        false
     }
 }
 
@@ -60,13 +61,6 @@ pub struct AllocatorStats {
     pub retained_bytes: usize,
 }
 
-/// Outcome of one allocator purge attempt.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct AllocatorPurgeResult {
-    pub tcache_flushed: bool,
-    pub arenas_purged: bool,
-}
-
 #[derive(Clone, Copy, derive_more::Debug, derive_more::Display)]
 #[display("{:?}", self)]
 pub(crate) struct MemoryStats {
@@ -95,36 +89,10 @@ impl MemoryStats {
     }
 }
 
-#[derive(Debug, Clone, Copy, derive_more::Display)]
-#[display("{:?}", self)]
-pub(crate) struct MemoryPurge {
-    tcache_flushed: bool,
-    arenas_purged: bool,
-    after: MemoryStats,
-    delta: MemoryDelta,
-}
-
-impl MemoryPurge {
-    pub(crate) fn try_purge(
-        memory_control: &dyn MemoryControl,
-        before: MemoryStats,
-    ) -> Option<Self> {
-        let result = memory_control.try_purge_allocator()?;
-        let after = MemoryStats::capture(memory_control);
-
-        Some(Self {
-            tcache_flushed: result.tcache_flushed,
-            arenas_purged: result.arenas_purged,
-            after,
-            delta: MemoryDelta::between(before, after),
-        })
-    }
-}
-
 /// Difference between two allocator snapshots, formatted for memory logs.
 #[derive(Clone, Copy, derive_more::Debug, derive_more::Display)]
 #[display("{:?}", self)]
-pub(crate) struct MemoryDelta {
+struct MemoryDelta {
     #[debug("{}", format_optional_byte_delta(*allocated))]
     allocated: Option<i64>,
     #[debug("{}", format_optional_byte_delta(*active))]
@@ -149,24 +117,64 @@ impl MemoryDelta {
     }
 }
 
-pub(crate) fn format_bytes(bytes: usize) -> String {
-    const UNITS: [&str; 5] = ["B", "KiB", "MiB", "GiB", "TiB"];
+#[derive(Clone, Copy)]
+enum ByteFormatStyle {
+    Human,
+    Compact,
+}
 
-    let mut value = bytes as f64;
-    let mut unit = UNITS[0];
-    for next_unit in UNITS.iter().skip(1) {
-        if value < 1024.0 {
-            break;
+impl ByteFormatStyle {
+    fn format_bytes(self, bytes: usize) -> String {
+        const UNITS: [&str; 5] = ["B", "KiB", "MiB", "GiB", "TiB"];
+
+        let mut value = bytes as f64;
+        let mut unit = UNITS[0];
+        for next_unit in UNITS.iter().skip(1) {
+            if value < 1024.0 {
+                break;
+            }
+            value /= 1024.0;
+            unit = next_unit;
         }
-        value /= 1024.0;
-        unit = next_unit;
+
+        let separator = self.unit_separator();
+        if unit == "B" {
+            format!("{bytes}{separator}{unit}")
+        } else {
+            format!("{value:.1}{separator}{unit}")
+        }
     }
 
-    if unit == "B" {
-        format!("{bytes} B")
-    } else {
-        format!("{value:.1} {unit}")
+    fn format_delta(self, delta: Option<i64>) -> String {
+        let Some(delta) = delta else {
+            return "-".to_string();
+        };
+
+        let prefix = if delta >= 0 { "+" } else { "-" };
+        let bytes = delta.unsigned_abs();
+        let bytes = usize::try_from(bytes)
+            .ok()
+            .map(|bytes| self.format_bytes(bytes));
+        match bytes {
+            Some(bytes) => format!("{prefix}{bytes}"),
+            None => format!("{delta}{}B", self.unit_separator()),
+        }
     }
+
+    fn unit_separator(self) -> &'static str {
+        match self {
+            Self::Human => " ",
+            Self::Compact => "",
+        }
+    }
+}
+
+pub(crate) fn format_bytes(bytes: usize) -> String {
+    ByteFormatStyle::Human.format_bytes(bytes)
+}
+
+fn format_bytes_compact(bytes: usize) -> String {
+    ByteFormatStyle::Compact.format_bytes(bytes)
 }
 
 // Used by `derive_more::Debug` field formatting above; dead-code analysis does not look inside
@@ -186,15 +194,42 @@ fn byte_delta(after: Option<usize>, before: Option<usize>) -> Option<i64> {
 // derive expansion.
 #[allow(dead_code)]
 fn format_optional_byte_delta(delta: Option<i64>) -> String {
-    let Some(delta) = delta else {
-        return "-".to_string();
-    };
+    ByteFormatStyle::Human.format_delta(delta)
+}
 
-    let prefix = if delta >= 0 { "+" } else { "-" };
-    let bytes = delta.unsigned_abs();
-    let bytes = usize::try_from(bytes).ok().map(format_bytes);
-    match bytes {
-        Some(bytes) => format!("{prefix}{bytes}"),
-        None => format!("{delta} B"),
+fn format_optional_memory_delta(delta: Option<i64>) -> String {
+    ByteFormatStyle::Compact.format_delta(delta)
+}
+
+fn format_memory_report_field(bytes: Option<usize>, delta: Option<i64>) -> String {
+    if bytes.is_none() && delta.is_none() {
+        return "-".to_string();
+    }
+
+    let bytes = bytes
+        .map(format_bytes_compact)
+        .unwrap_or_else(|| "-".to_string());
+    let delta = format_optional_memory_delta(delta);
+    format!("{bytes}({delta})")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{format_memory_report_field, format_optional_byte_delta};
+
+    #[test]
+    fn byte_delta_formatting_keeps_human_spacing_for_debug() {
+        assert_eq!(format_optional_byte_delta(Some(1536)), "+1.5 KiB");
+        assert_eq!(format_optional_byte_delta(Some(-1536)), "-1.5 KiB");
+        assert_eq!(format_optional_byte_delta(None), "-");
+    }
+
+    #[test]
+    fn memory_report_field_is_compact_for_log_rendering() {
+        assert_eq!(
+            format_memory_report_field(Some(12 * 1024 * 1024), Some(-2 * 1024 * 1024)),
+            "12.0MiB(-2.0MiB)",
+        );
+        assert_eq!(format_memory_report_field(None, None), "-");
     }
 }

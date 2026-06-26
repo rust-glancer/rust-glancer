@@ -58,17 +58,17 @@ impl<'target> TargetBodyBuildState<'target> {
         // the items declared within the body, and we need to match `impl`
         // blocks to their corresponding `Self` types.
         self.materialize_body_local_items(def_map, semantic_ir)?;
-        self.resolve_body_local_impl_headers(def_map, semantic_ir)?;
 
-        // Now that we collected body local items, we can build a lookup index
-        // to match impls/functions/traits without a complex scan.
-        // Note that here we do _not_ include body-local items; these are routed in
-        // later via `BodyBuildQuerySource`.
+        // Build a target-semantic lookup index once and persist it with Body IR. Body-local items
+        // are deliberately overlaid through `BodyBuildQuerySource` instead of being part of this
+        // target-scoped cache.
         let target_items = TargetItemQuery::new(def_map, semantic_ir, self.target);
         let semantic_index = ItemLookupIndex::build_from(&target_items)?;
+        self.resolve_body_local_impl_headers(def_map, semantic_ir, &semantic_index)?;
 
         // Do a pass on resolving body expressions.
         self.resolve_bodies(def_map, semantic_ir, &semantic_index)?;
+        self.target_bodies.set_semantic_index(semantic_index);
 
         // Finalize the build state, e.g. associate each body with its corresponding
         // defmap/item store.
@@ -223,6 +223,7 @@ impl<'target> TargetBodyBuildState<'target> {
         &mut self,
         def_map: &DefMapReadTxn<'_>,
         semantic_ir: &SemanticIrReadTxn<'_>,
+        semantic_index: &ItemLookupIndex,
     ) -> anyhow::Result<()> {
         for body_idx in 0..self.target_bodies.bodies().len() {
             let body_ref = self.body_ref(body_idx);
@@ -253,7 +254,8 @@ impl<'target> TargetBodyBuildState<'target> {
                     self.target,
                     &self.body_local_items,
                 );
-                let context = BodyResolutionContext::new(&source, &source, body_ref, body);
+                let context =
+                    BodyResolutionContext::new(&source, &source, body_ref, body, semantic_index);
                 let type_paths = context.type_path_query();
                 let mut resolved_headers = Vec::new();
                 for (impl_id, owner, self_ty, trait_ref) in impl_headers {

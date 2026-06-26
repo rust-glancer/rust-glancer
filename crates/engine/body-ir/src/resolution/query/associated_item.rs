@@ -322,8 +322,8 @@ where
 
         self.associated_const_candidate_for_impls(
             self.context
-                .target_items()
-                .inherent_impls_for_type(ty.def)?,
+                .semantic_index()
+                .inherent_impls_for_type(ty.def),
             ty,
             name,
         )
@@ -350,14 +350,12 @@ where
             return Ok(items);
         }
 
-        let target_items = self.context.target_items();
-        let semantic_trait_impls = match self.context.semantic_index() {
-            Some(index) => index
-                .trait_impls_for_type(ty.def)
-                .cloned()
-                .unwrap_or_default(),
-            None => target_items.trait_impls_for_type(ty.def)?,
-        };
+        let semantic_trait_impls = self
+            .context
+            .semantic_index()
+            .trait_impls_for_type(ty.def)
+            .cloned()
+            .unwrap_or_default();
         self.push_trait_associated_const_candidates_for_impls(
             &mut items,
             semantic_trait_impls,
@@ -463,22 +461,18 @@ where
         Ok(consts)
     }
 
-    /// Read target-visible inherent functions, using the index when available.
+    /// Read target-visible inherent functions from the persisted lookup index.
     fn semantic_inherent_function_items_for_type(
         &self,
         ty: &NominalTy,
         name: &str,
     ) -> Result<UniqueVec<FunctionRef>, PackageStoreError> {
-        match self.context.semantic_index() {
-            Some(index) => Ok(index
-                .inherent_functions_for_type_and_name(ty.def, name)
-                .cloned()
-                .unwrap_or_default()),
-            None => self
-                .context
-                .target_items()
-                .inherent_functions_for_type(ty.def),
-        }
+        Ok(self
+            .context
+            .semantic_index()
+            .inherent_functions_for_type_and_name(ty.def, name)
+            .cloned()
+            .unwrap_or_default())
     }
 
     /// Add a function only if it is static and has the requested name.

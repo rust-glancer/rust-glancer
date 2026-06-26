@@ -2,7 +2,7 @@ use wincode::{SchemaRead, SchemaWrite};
 
 use rg_arena::Arena;
 use rg_ir_model::BodyId;
-use rg_ir_storage::{BodyLocalItems, DefMap, ItemStore};
+use rg_ir_storage::{BodyLocalItems, DefMap, ItemLookupIndex, ItemStore};
 use rg_parse::TargetId;
 
 use crate::ir::body::ResolvedBodyData;
@@ -38,6 +38,7 @@ impl PackageBodies {
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct TargetBodies {
     pub(crate) status: TargetBodiesStatus,
+    pub(crate) semantic_index: ItemLookupIndex,
     pub(crate) bodies: Arena<BodyId, ResolvedBodyData>,
     pub(crate) body_local_items: Arena<BodyId, BodyLocalItems>,
 }
@@ -46,6 +47,7 @@ impl TargetBodies {
     pub(crate) fn new() -> Self {
         Self {
             status: TargetBodiesStatus::Built,
+            semantic_index: ItemLookupIndex::default(),
             bodies: Arena::new(),
             body_local_items: Arena::new(),
         }
@@ -54,6 +56,7 @@ impl TargetBodies {
     pub(crate) fn skipped() -> Self {
         Self {
             status: TargetBodiesStatus::Skipped,
+            semantic_index: ItemLookupIndex::default(),
             bodies: Arena::new(),
             body_local_items: Arena::new(),
         }
@@ -65,6 +68,10 @@ impl TargetBodies {
 
     pub fn body(&self, body: BodyId) -> Option<&ResolvedBodyData> {
         self.bodies.get(body)
+    }
+
+    pub fn semantic_index(&self) -> &ItemLookupIndex {
+        &self.semantic_index
     }
 
     pub fn body_local_items(&self, body: BodyId) -> Option<&BodyLocalItems> {
@@ -94,6 +101,10 @@ impl TargetBodies {
             "every built body should have finalized body-local items"
         );
         self.body_local_items = Arena::from_vec(items);
+    }
+
+    pub(crate) fn set_semantic_index(&mut self, index: ItemLookupIndex) {
+        self.semantic_index = index;
     }
 
     pub(crate) fn bodies_mut(&mut self) -> &mut [ResolvedBodyData] {

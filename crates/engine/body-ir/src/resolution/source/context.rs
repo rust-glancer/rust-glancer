@@ -24,20 +24,16 @@ use super::BodyQuerySource;
 #[derive(Clone, Copy)]
 pub struct BodyResolutionContext<'a, D, I> {
     source: BodyQuerySource<'a, D, I>,
-    semantic_index: Option<&'a ItemLookupIndex>,
+    semantic_index: &'a ItemLookupIndex,
 }
 
 impl<'a, D, I> BodyResolutionContext<'a, D, I> {
-    pub fn new(def_maps: D, item_stores: I, body_ref: BodyRef, body: &'a ResolvedBodyData) -> Self {
-        Self::with_semantic_index(def_maps, item_stores, body_ref, body, None)
-    }
-
-    pub(crate) fn with_semantic_index(
+    pub fn new(
         def_maps: D,
         item_stores: I,
         body_ref: BodyRef,
         body: &'a ResolvedBodyData,
-        semantic_index: Option<&'a ItemLookupIndex>,
+        semantic_index: &'a ItemLookupIndex,
     ) -> Self {
         Self {
             source: BodyQuerySource::new(def_maps, item_stores, body_ref, body),
@@ -53,7 +49,7 @@ impl<'a, D, I> BodyResolutionContext<'a, D, I> {
         self.source.body()
     }
 
-    pub(crate) fn semantic_index(&self) -> Option<&'a ItemLookupIndex> {
+    pub(crate) fn semantic_index(&self) -> &'a ItemLookupIndex {
         self.semantic_index
     }
 }
@@ -146,20 +142,16 @@ where
     pub(crate) fn autoderef(
         &self,
     ) -> Autoderef<'a, BodyQuerySource<'a, D, I>, BodyQuerySource<'a, D, I>> {
-        match self.semantic_index {
-            Some(index) => Autoderef::with_index(self.item_paths(), self.target_items(), index),
-            None => Autoderef::new(self.item_paths(), self.target_items()),
-        }
+        Autoderef::with_index(self.item_paths(), self.target_items(), self.semantic_index)
     }
 
     pub(crate) fn iteration_items(
         &self,
     ) -> IterationItemResolver<'a, BodyQuerySource<'a, D, I>, BodyQuerySource<'a, D, I>> {
-        match self.semantic_index {
-            Some(index) => {
-                IterationItemResolver::with_index(self.item_paths(), self.target_items(), index)
-            }
-            None => IterationItemResolver::new(self.item_paths(), self.target_items()),
-        }
+        IterationItemResolver::with_index(
+            self.item_paths(),
+            self.target_items(),
+            self.semantic_index,
+        )
     }
 }

@@ -612,7 +612,7 @@ impl EngineWorker {
                 Ok(locations)
             })?;
 
-        tracing::debug!(
+        tracing::trace!(
             path = %path.display(),
             line = position.line,
             character = position.character,
@@ -666,7 +666,7 @@ impl EngineWorker {
                 Ok(None)
             })?;
 
-        tracing::debug!(
+        tracing::trace!(
             path = %path.display(),
             line = position.line,
             character = position.character,
@@ -734,7 +734,7 @@ impl EngineWorker {
                 rename::workspace_edit(snapshot, edits).map(Some)
             })?;
 
-        tracing::debug!(
+        tracing::trace!(
             path = %path.display(),
             line = position.line,
             character = position.character,
@@ -794,7 +794,7 @@ impl EngineWorker {
                 Ok(highlights)
             })?;
 
-        tracing::debug!(
+        tracing::trace!(
             path = %path.display(),
             line = position.line,
             character = position.character,
@@ -849,7 +849,7 @@ impl EngineWorker {
                 Ok(completions)
             })?;
 
-        tracing::debug!(
+        tracing::trace!(
             path = %path.display(),
             line = position.line,
             character = position.character,
@@ -895,7 +895,7 @@ impl EngineWorker {
                 Ok(None)
             })?;
 
-        tracing::debug!(
+        tracing::trace!(
             path = %path.display(),
             line = position.line,
             character = position.character,
@@ -939,7 +939,7 @@ impl EngineWorker {
                 Ok(lsp_symbols)
             })?;
 
-        tracing::debug!(
+        tracing::trace!(
             path = %path.display(),
             result_count = lsp_symbols.len(),
             elapsed_ms = started.elapsed().as_millis(),
@@ -969,7 +969,7 @@ impl EngineWorker {
         let formatted_text = crate::formatting::rustfmt(text.as_ref(), edition)?;
         let edits = formatting_proto::document_edits(text.as_ref(), formatted_text)?;
 
-        tracing::debug!(
+        tracing::trace!(
             path = %path.display(),
             edition = %edition,
             edit_count = edits.len(),
@@ -1026,7 +1026,7 @@ impl EngineWorker {
                 Ok(lsp_hints)
             })?;
 
-        tracing::debug!(
+        tracing::trace!(
             path = %path.display(),
             result_count = lsp_hints.len(),
             elapsed_ms = started.elapsed().as_millis(),
@@ -1051,7 +1051,7 @@ impl EngineWorker {
             }
         }
 
-        tracing::debug!(
+        tracing::trace!(
             query,
             result_count = lsp_symbols.len(),
             elapsed_ms = started.elapsed().as_millis(),
@@ -1107,7 +1107,7 @@ impl EngineWorker {
                 Ok(locations)
             })?;
 
-        tracing::debug!(
+        tracing::trace!(
             query = query.name(),
             path = %path.display(),
             line = position.line,
@@ -1190,17 +1190,11 @@ impl EngineWorker {
             .iter()
             .map(|context| context.targets.len())
             .sum::<usize>();
-        tracing::debug!(
-            path = %path.display(),
-            context_count = contexts.len(),
-            target_count,
-            "resolved file contexts"
-        );
         tracing::trace!(
             path = %path.display(),
             context_count = contexts.len(),
             target_count,
-            "resolved file contexts for query"
+            "resolved file contexts"
         );
 
         Ok(contexts)
@@ -1334,43 +1328,45 @@ impl EngineWorker {
         // analysis query.
         let label = context.label;
         let queue_elapsed = context.queue_elapsed;
-        tracing::debug!(
+        tracing::trace!(
             label,
             queued_ms = queue_elapsed.as_millis(),
-            "analysis query dequeued"
+            "analysis query started"
         );
         let started = Instant::now();
         let memory_control = Arc::clone(&self.memory_control);
-        let memory_before =
-            MemoryReporter::log_checkpoint(memory_control.as_ref(), label, "query_before");
+        let memory_before = MemoryReporter::snapshot(memory_control.as_ref());
         let result = query(self);
         let query_elapsed = started.elapsed();
-        let memory_after_query = MemoryReporter::log_checkpoint_delta(
-            memory_control.as_ref(),
-            label,
-            "query_after",
-            memory_before,
-        );
         self.project.release_query_memory();
-        MemoryReporter::log_checkpoint_delta(
-            memory_control.as_ref(),
-            label,
-            "query_cleanup_after",
-            memory_after_query,
-        );
-        MemoryReporter::purge_and_report_debug(memory_control.as_ref(), "after analysis query");
+        MemoryReporter::purge_and_report_delta_debug(memory_control.as_ref(), label, memory_before);
         let should_recover = result
             .as_ref()
             .err()
             .is_some_and(Project::is_recoverable_cache_load_failure);
-        tracing::debug!(
-            label,
-            queued_ms = queue_elapsed.as_millis(),
-            query_elapsed_ms = query_elapsed.as_millis(),
-            result_ok = result.is_ok(),
-            recoverable_cache_failure = should_recover,
-            "analysis query finished"
-        );
+        match &result {
+            Ok(_) => {
+                tracing::info!(
+                    query = label,
+                    queued_ms = queue_elapsed.as_millis(),
+                    elapsed_ms = query_elapsed.as_millis(),
+                    status = "ok",
+                    "analysis query completed"
+                );
+            }
+            Err(error) => {
+                let error = format!("{error:#}");
+                tracing::warn!(
+                    query = label,
+                    queued_ms = queue_elapsed.as_millis(),
+                    elapsed_ms = query_elapsed.as_millis(),
+                    status = "error",
+                    recoverable_cache_failure = should_recover,
+                    error = %error,
+                    "analysis query completed"
+                );
+            }
+        }
 
         let _ = respond_to.send(result);
 
@@ -1411,6 +1407,7 @@ impl EngineWorker {
                 );
             }
             Err(error) => {
+                let error = format!("{error:#}");
                 tracing::error!(
                     label,
                     error = %error,

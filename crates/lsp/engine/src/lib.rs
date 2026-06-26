@@ -19,7 +19,7 @@ mod service;
 mod tests;
 
 pub use self::{
-    memory::{AllocatorPurgeResult, AllocatorStats, MemoryControl},
+    memory::{AllocatorStats, MemoryControl},
     rpc::run_rpc,
     service::{Service, ServiceNotificationsSink},
 };

@@ -7,13 +7,14 @@
 use std::collections::HashMap;
 
 use rg_ir_model::{AssocItemId, FunctionRef, ImplRef, TraitImplRef, TraitRef, TypeDefRef};
-use rg_std::UniqueVec;
+use rg_std::{MemorySize, Shrink, UniqueVec};
 use rg_text::Name;
+use wincode::{SchemaRead, SchemaWrite};
 
 use crate::{ItemStoreQuery, ItemStoreSource, TargetItemQuery};
 
 /// Receiver-oriented lookup cache built from the stores visible from one use-site target.
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct ItemLookupIndex {
     // Method lookup starts from a receiver type. These maps let callers jump directly to impls
     // whose already-resolved `Self` type mentions that receiver, instead of re-scanning all impls.
@@ -194,6 +195,42 @@ impl ItemLookupIndex {
     /// Returns inherent impls whose `Self` type needs structural matching instead of a type key.
     pub fn structural_inherent_impls(&self) -> &UniqueVec<ImplRef> {
         &self.structural_inherent_impls
+    }
+
+    /// Returns inherent impls indexed for a receiver type.
+    pub fn inherent_impls_for_type(&self, ty: TypeDefRef) -> UniqueVec<ImplRef> {
+        self.inherent_impls_by_type
+            .get(&ty)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// Returns impl blocks indexed for a receiver type, including inherent and trait impls.
+    pub fn impls_for_type(&self, ty: TypeDefRef) -> UniqueVec<ImplRef> {
+        let mut impls = self.inherent_impls_for_type(ty);
+        if let Some(trait_impls) = self.trait_impls_by_type.get(&ty) {
+            impls.extend(trait_impls.iter().map(|trait_impl| trait_impl.impl_ref));
+        }
+        impls
+    }
+
+    /// Returns impl blocks indexed for an implemented trait.
+    pub fn impls_for_trait(&self, trait_ref: TraitRef) -> UniqueVec<ImplRef> {
+        self.trait_impls_by_trait
+            .get(&trait_ref)
+            .into_iter()
+            .flat_map(|trait_impls| trait_impls.iter())
+            .map(|trait_impl| trait_impl.impl_ref)
+            .collect()
+    }
+
+    /// Returns all indexed trait impl candidates.
+    pub fn trait_impls(&self) -> UniqueVec<TraitImplRef> {
+        let mut trait_impls = UniqueVec::new();
+        for candidates in self.trait_impls_by_trait.values() {
+            trait_impls.extend(candidates.iter().copied());
+        }
+        trait_impls
     }
 
     /// Returns trait impl candidates indexed for a receiver type.

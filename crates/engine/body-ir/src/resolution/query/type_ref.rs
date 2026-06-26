@@ -2,12 +2,12 @@
 
 use rg_ir_model::{
     DefMapRef, FunctionRef, ModuleRef, Path, ScopeId, TraitRef, TypePathResolution,
-    items::{GenericArg as ItemGenericArg, Mutability, PrimitiveTy, TypePath, TypeRef},
+    items::{GenericArg as ItemGenericArg, PrimitiveTy, TypePath, TypeRef},
 };
 use rg_ir_storage::{DefMapSource, ItemStoreSource, TypePathContext};
 use rg_package_store::PackageStoreError;
 use rg_std::ExpectedUnique;
-use rg_ty::{ExpectedNominalTyExt, GenericArg, NominalTy, RefMutability, Ty, TypeSubst};
+use rg_ty::{ExpectedNominalTyExt, GenericArg, NominalTy, Ty, TypeSubst};
 
 use crate::resolution::BodyResolutionContext;
 
@@ -198,13 +198,7 @@ where
             TypeRef::Never => Ok(Ty::Never),
             TypeRef::Reference {
                 mutability, inner, ..
-            } => Ok(Ty::reference(
-                match mutability {
-                    Mutability::Shared => RefMutability::Shared,
-                    Mutability::Mutable => RefMutability::Mutable,
-                },
-                self.resolve_at(inner, anchor)?,
-            )),
+            } => Ok(Ty::reference(*mutability, self.resolve_at(inner, anchor)?)),
             TypeRef::Unknown(_) | TypeRef::Infer => Ok(Ty::Unknown),
             TypeRef::Tuple(types) if types.is_empty() => Ok(Ty::Unit),
             TypeRef::Tuple(types) => Ok(Ty::tuple(

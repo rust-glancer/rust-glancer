@@ -3,7 +3,7 @@ use rg_ir_model::{TraitRef, TypeDefRef, TypePathResolution};
 use rg_std::{ExpectedUnique, MemorySize, Shrink, UniqueVec};
 use rg_text::Name;
 
-use crate::{GenericArg, PrimitiveTy, RefMutability};
+use crate::{GenericArg, Mutability, PrimitiveTy};
 use wincode::{SchemaRead, SchemaWrite};
 
 /// Ordered substitutions for type parameters visible at one use site.
@@ -80,7 +80,7 @@ pub enum Ty {
     },
     Slice(#[wincode(with = "rg_wincode_utils::WincodeDynamic<Box<Ty>>")] Box<Ty>),
     Reference {
-        mutability: RefMutability,
+        mutability: Mutability,
         #[wincode(with = "rg_wincode_utils::WincodeDynamic<Box<Ty>>")]
         inner: Box<Ty>,
     },
@@ -139,7 +139,7 @@ impl Ty {
         Self::Slice(Box::new(inner))
     }
 
-    pub fn reference(mutability: RefMutability, inner: Self) -> Self {
+    pub fn reference(mutability: Mutability, inner: Self) -> Self {
         if matches!(inner, Self::Unknown) {
             return Self::Unknown;
         }
@@ -203,7 +203,7 @@ impl Ty {
         }
     }
 
-    pub fn reference_inner(&self) -> Option<(&Self, RefMutability)> {
+    pub fn reference_inner(&self) -> Option<(&Self, Mutability)> {
         match self {
             Self::Reference { mutability, inner } => Some((inner, *mutability)),
             Self::Unit

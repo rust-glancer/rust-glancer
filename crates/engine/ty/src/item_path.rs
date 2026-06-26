@@ -4,14 +4,14 @@
 //! answers "which semantic item does this local definition lower to?". Type algorithms use this
 //! query to stay independent from the concrete target/body storage that provided those answers.
 
-use rg_ir_model::items::{GenericArg as ItemGenericArg, Mutability, TypeBound, TypePath, TypeRef};
+use rg_ir_model::items::{GenericArg as ItemGenericArg, TypeBound, TypePath, TypeRef};
 use rg_ir_model::{
     DefId, ModuleRef, Path, SemanticItemRef, TraitRef, TypeDefRef, TypePathResolution,
 };
 use rg_ir_storage::{DefMapQuery, DefMapSource, ItemStoreQuery, ItemStoreSource, TypePathContext};
 use rg_std::{ExpectedUnique, UniqueVec};
 
-use crate::{GenericArg, OpaqueTraitBound, PrimitiveTy, RefMutability, Ty, TypeSubst};
+use crate::{GenericArg, OpaqueTraitBound, PrimitiveTy, Ty, TypeSubst};
 
 /// Resolves paths into semantic-shaped item refs using independent DefMap and ItemStore sources.
 #[derive(Clone)]
@@ -75,10 +75,7 @@ where
             TypeRef::Reference {
                 mutability, inner, ..
             } => Ok(Ty::reference(
-                match mutability {
-                    Mutability::Shared => RefMutability::Shared,
-                    Mutability::Mutable => RefMutability::Mutable,
-                },
+                *mutability,
                 self.resolve_type_ref(inner, context, Ty::syntax((**inner).clone()), subst)?,
             )),
             TypeRef::Unknown(_) | TypeRef::Infer => Ok(Ty::Unknown),

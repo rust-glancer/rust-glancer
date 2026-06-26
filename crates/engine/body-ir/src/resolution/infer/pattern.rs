@@ -3,13 +3,10 @@
 //! This layer links bindings inside tuple, reference, and slice patterns to the matching
 //! initializer slots, so later evidence on the binding can solve the initializer.
 
-use rg_ir_model::{ExprId, PatId};
-use rg_ty::{RefMutability, inference::InferTy};
+use rg_ir_model::{ExprId, Mutability, PatId};
+use rg_ty::inference::InferTy;
 
-use crate::{
-    ir::{PatKind, PatMutability},
-    resolution::BodyResolutionContext,
-};
+use crate::{ir::PatKind, resolution::BodyResolutionContext};
 
 use super::BodyInferenceCtx;
 
@@ -104,13 +101,13 @@ impl<'query, D, I> BodyPatternInference<'query, D, I> {
         &self,
         inference: &mut BodyInferenceCtx,
         pat: PatId,
-        pat_mutability: PatMutability,
+        pat_mutability: Mutability,
         ty: &InferTy,
     ) -> bool {
         let InferTy::Reference { mutability, inner } = ty else {
             return false;
         };
-        if *mutability != Self::ref_mutability(pat_mutability) {
+        if *mutability != pat_mutability {
             return false;
         }
 
@@ -145,12 +142,5 @@ impl<'query, D, I> BodyPatternInference<'query, D, I> {
             .body()
             .pat(pat)
             .is_some_and(|pat| matches!(&pat.kind, PatKind::Rest))
-    }
-
-    fn ref_mutability(mutability: PatMutability) -> RefMutability {
-        match mutability {
-            PatMutability::Shared => RefMutability::Shared,
-            PatMutability::Mut => RefMutability::Mutable,
-        }
     }
 }
