@@ -7,7 +7,7 @@
 
 use rg_ir_model::{ImportId, ModuleRef, TargetRef};
 use rg_ir_storage::{
-    GlobImportSource, ImportKind, Namespace, ScopeResolver, ScopeBinding, ScopeBindingOrigin,
+    GlobImportSource, ImportKind, Namespace, ScopeBinding, ScopeBindingOrigin, ScopeResolver,
     TargetResolutionEnv,
 };
 
@@ -139,13 +139,13 @@ pub(super) fn apply_imports(
                     target_scope.insert_binding(
                         &binding_name,
                         namespace,
-                            ScopeBinding {
-                                def: resolved_def,
-                                visibility: import.visibility.clone(),
-                                owner: import_owner,
-                                origin: ScopeBindingOrigin::Import,
-                            },
-                        );
+                        ScopeBinding {
+                            def: resolved_def,
+                            visibility: import.visibility.clone(),
+                            owner: import_owner,
+                            origin: ScopeBindingOrigin::Import,
+                        },
+                    );
                 }
             }
         }
@@ -167,9 +167,9 @@ fn unresolved_imports_for_target(
             ImportKind::Glob => resolver
                 .import_glob_sources(import_owner, &import.path)?
                 .is_empty(),
-            ImportKind::Named | ImportKind::SelfImport => resolver
-                .import_defs(import_owner, &import.path)?
-                .is_empty(),
+            ImportKind::Named | ImportKind::SelfImport => {
+                resolver.import_defs(import_owner, &import.path)?.is_empty()
+            }
         };
         if is_unresolved {
             module_imports

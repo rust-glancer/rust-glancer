@@ -129,11 +129,11 @@ where
             origin: DefMapRef::Body(self.context.body_ref()),
             module: ModuleId(scope.0),
         };
-        let result = self.context.def_map_query().resolve_lexical_path(
-            from,
-            path,
-            NameResolutionFilter::TypesOnly,
-        )?;
+        let result = self
+            .context
+            .def_map_query()
+            .scope_resolver()
+            .resolve_lexical_path(from, path, NameResolutionFilter::TypesOnly)?;
 
         self.semantic_items_for_defs(result.resolved)
     }
@@ -145,7 +145,11 @@ where
         path: &Path,
     ) -> Result<UniqueVec<SemanticItemRef>, PackageStoreError> {
         let def_maps = self.context.def_map_query();
-        let result = def_maps.resolve_path_in_type_namespace(module, path)?;
+        let result = def_maps.scope_resolver().resolve_path(
+            module,
+            path,
+            NameResolutionFilter::TypesOnly,
+        )?;
         let items = self.semantic_items_for_defs(result.resolved)?;
         if !items.is_empty() {
             return Ok(items);
@@ -158,7 +162,11 @@ where
             return Ok(items);
         }
 
-        let result = def_maps.resolve_path_in_type_namespace(fallback_module, path)?;
+        let result = def_maps.scope_resolver().resolve_path(
+            fallback_module,
+            path,
+            NameResolutionFilter::TypesOnly,
+        )?;
         self.semantic_items_for_defs(result.resolved)
     }
 

@@ -14,8 +14,8 @@ use rg_ir_storage::{
     DefMap, DefMapBuilder, DefMapSource, GlobImportSource, ImportBinding, ImportData, ImportKind,
     ImportPath, ImportSourcePath, LocalDefData, LocalDefKind, LocalEnumVariantData,
     LocalEnumVariantEntry, LocalImplData, MacroDefinitionEnv, MacroDefinitionView, ModuleData,
-    ModuleOrigin, ModuleScope, ModuleScopeBuilder, Namespace, ScopeResolver, ScopeBinding,
-    ScopeBindingOrigin, ScopeEntryRef, ScopeResolutionEnv, TargetResolutionEnv,
+    ModuleOrigin, ModuleScope, ModuleScopeBuilder, Namespace, ScopeBinding, ScopeBindingOrigin,
+    ScopeEntryRef, ScopeResolutionEnv, ScopeResolver, TargetResolutionEnv,
 };
 use rg_package_store::PackageStoreError;
 use rg_text::Name;

@@ -12,8 +12,8 @@ pub use self::{
         LocalEnumVariantData, LocalEnumVariantEntry, LocalImplData, MacroDefinitionData,
         MacroDefinitionEnv, MacroDefinitionPayload, MacroDefinitionView, ModuleData, ModuleOrigin,
         ModuleScope, ModuleScopeBuilder, NameResolutionFilter, Namespace, PackageDefMaps,
-        PartialDefMap, ScopeResolver, ResolvePathResult, ScopeBinding, ScopeBindingOrigin,
-        ScopeEntry, ScopeEntryRef, ScopeNamespace, ScopeResolutionEnv, TargetData,
+        PartialDefMap, ResolvePathResult, ScopeBinding, ScopeBindingOrigin, ScopeEntry,
+        ScopeEntryRef, ScopeNamespace, ScopeResolutionEnv, ScopeResolver, TargetData,
         TargetResolutionEnv, VisibleScopeDef, VisibleScopeDefs, VisibleScopeOrigin,
     },
     item::{

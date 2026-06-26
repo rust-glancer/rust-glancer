@@ -8,7 +8,10 @@ use rg_ir_model::items::{GenericArg as ItemGenericArg, TypeBound, TypePath, Type
 use rg_ir_model::{
     DefId, ModuleRef, Path, SemanticItemRef, TraitRef, TypeDefRef, TypePathResolution,
 };
-use rg_ir_storage::{DefMapQuery, DefMapSource, ItemStoreQuery, ItemStoreSource, TypePathContext};
+use rg_ir_storage::{
+    DefMapQuery, DefMapSource, ItemStoreQuery, ItemStoreSource, NameResolutionFilter,
+    TypePathContext,
+};
 use rg_std::{ExpectedUnique, UniqueVec};
 
 use crate::{GenericArg, OpaqueTraitBound, PrimitiveTy, Ty, TypeSubst};
@@ -197,7 +200,11 @@ where
         from: ModuleRef,
         path: &Path,
     ) -> Result<UniqueVec<SemanticItemRef>, D::Error> {
-        let result = self.def_maps.resolve_path_in_type_namespace(from, path)?;
+        let result = self.def_maps.scope_resolver().resolve_path(
+            from,
+            path,
+            NameResolutionFilter::TypesOnly,
+        )?;
         let mut resolved_items = UniqueVec::new();
         for def in result.resolved {
             if let DefId::Local(local_def) = def

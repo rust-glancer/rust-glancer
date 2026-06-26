@@ -8,7 +8,7 @@ use rg_ir_model::{
     ConstRef, DefMapRef, FunctionRef, ImplId, ImplRef, ItemOwner, ModuleRef, StaticRef, TraitRef,
     TypeAliasRef, TypeDefId, TypeDefRef, hir::items::EnumVariantData,
 };
-use rg_ir_storage::{DefMapQuery, ItemStoreQuery};
+use rg_ir_storage::{DefMapSource, ItemStoreQuery};
 
 use crate::IndexedViewDb;
 
@@ -26,17 +26,16 @@ impl<'a, 'db> PathView<'a, 'db> {
             return Ok(None);
         };
         let package = self.0.def_map.package(target.package)?;
-        let def_maps = DefMapQuery::new(self.0);
         let mut names = Vec::new();
         let mut current = module_ref.module;
 
         // Module ids form a parent chain rooted at the target module. Walking it upward and then
         // reversing gives us the same crate::item::module::child shape users see in Rust paths.
         loop {
-            let Some(module) = def_maps.module_data(ModuleRef {
-                origin: module_ref.origin,
-                module: current,
-            })?
+            let Some(module) = self
+                .0
+                .def_map_for_origin(module_ref.origin)?
+                .and_then(|def_map| def_map.module(current))
             else {
                 return Ok(None);
             };

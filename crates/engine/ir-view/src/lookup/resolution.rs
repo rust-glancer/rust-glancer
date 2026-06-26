@@ -10,7 +10,9 @@ use rg_ir_model::{
     BodyRef, DefId, LocalDefRef, ModuleRef, ScopeId, TypePathResolution,
     identity::{DeclarationRef, ExprRef},
 };
-use rg_ir_storage::{DefMapQuery, ItemStoreQuery, TypePathContext};
+use rg_ir_storage::{
+    DefMapQuery, DefMapSource, ItemStoreQuery, NameResolutionFilter, TypePathContext,
+};
 use rg_ty::ItemPathQuery;
 
 use crate::{IndexedViewDb, body::BodyResolutionView, source::IndexedTypePathScope};
@@ -102,9 +104,11 @@ impl<'a, 'db> ResolutionView<'a, 'db> {
                 Ok(vec![declaration])
             }
             DefId::EnumVariant(variant_def) => {
-                let def_maps = DefMapQuery::new(self.0);
                 let item_query = ItemStoreQuery::new(self.0);
-                if let Some(variant_def_data) = def_maps.local_enum_variant_data(variant_def)?
+                if let Some(variant_def_data) = self
+                    .0
+                    .def_map_for_origin(variant_def.origin)?
+                    .and_then(|def_map| def_map.local_enum_variant(variant_def.local_enum_variant))
                     && let Some(variant_ref) = item_query.enum_variant_ref_for_local_def_index(
                         LocalDefRef {
                             origin: variant_def.origin,
@@ -141,8 +145,10 @@ impl<'a, 'db> ResolutionView<'a, 'db> {
         path: &Path,
     ) -> anyhow::Result<Vec<DeclarationRef>> {
         let mut declarations = Vec::new();
-        for def in DefMapQuery::new(self.0)
-            .resolve_path(module, path)?
+        let def_maps = DefMapQuery::new(self.0);
+        for def in def_maps
+            .scope_resolver()
+            .resolve_path(module, path, NameResolutionFilter::AllNamespaces)?
             .resolved
         {
             declarations.extend(self.declarations_for_def(def)?);

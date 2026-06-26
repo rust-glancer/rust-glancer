@@ -469,11 +469,7 @@ impl<E: TargetResolutionEnv + ?Sized> ScopeResolver<'_, E> {
         importing_module: ModuleRef,
         path: &ImportPath,
     ) -> Result<Vec<DefId>, E::Error> {
-        self.import_defs_with_filter(
-            importing_module,
-            path,
-            NameResolutionFilter::AllNamespaces,
-        )
+        self.import_defs_with_filter(importing_module, path, NameResolutionFilter::AllNamespaces)
     }
 
     /// Resolve an import path and keep only module results.
@@ -482,11 +478,8 @@ impl<E: TargetResolutionEnv + ?Sized> ScopeResolver<'_, E> {
         importing_module: ModuleRef,
         path: &ImportPath,
     ) -> Result<Vec<ModuleRef>, E::Error> {
-        let resolved_defs = self.import_defs_with_filter(
-            importing_module,
-            path,
-            NameResolutionFilter::TypesOnly,
-        )?;
+        let resolved_defs =
+            self.import_defs_with_filter(importing_module, path, NameResolutionFilter::TypesOnly)?;
 
         let mut modules = UniqueVec::new();
         for resolved_def in resolved_defs {
@@ -504,11 +497,8 @@ impl<E: TargetResolutionEnv + ?Sized> ScopeResolver<'_, E> {
         importing_module: ModuleRef,
         path: &ImportPath,
     ) -> Result<Vec<GlobImportSource>, E::Error> {
-        let resolved_defs = self.import_defs_with_filter(
-            importing_module,
-            path,
-            NameResolutionFilter::TypesOnly,
-        )?;
+        let resolved_defs =
+            self.import_defs_with_filter(importing_module, path, NameResolutionFilter::TypesOnly)?;
 
         let mut sources = UniqueVec::new();
         for resolved_def in resolved_defs {

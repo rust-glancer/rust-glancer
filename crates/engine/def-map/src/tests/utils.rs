@@ -5,7 +5,10 @@ use rg_ir_model::{
     DefId, DefMapRef, ModuleId, ModuleRef, Path, PathSegment, TargetRef,
     hir::source::{ItemSource, ItemSourceKind},
 };
-use rg_ir_storage::{DefMap, ImportData, ImportKind, ResolvePathResult, ScopeBinding, ScopeEntry};
+use rg_ir_storage::{
+    DefMap, ImportData, ImportKind, NameResolutionFilter, ResolvePathResult, ScopeBinding,
+    ScopeEntry,
+};
 use rg_item_tree::VisibilityLevel;
 use rg_package_store::PackageLoader;
 use rg_parse::{FileId, Package, ParseDb, Target};
@@ -384,12 +387,14 @@ impl<'a> ProjectPathResolutionSnapshot<'a> {
             .def_map_db()
             .read_txn(PackageLoader::resident_only("def-map fixture query"));
         let result = rg_ir_storage::DefMapQuery::new(&def_map)
+            .scope_resolver()
             .resolve_path(
                 ModuleRef {
                     origin: DefMapRef::Target(target_ref),
                     module: module_id,
                 },
                 &path,
+                NameResolutionFilter::AllNamespaces,
             )
             .expect("path resolution fixture should load def-map packages");
 

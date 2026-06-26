@@ -17,7 +17,7 @@ pub use self::{
     package::{PackageDefMaps, TargetData},
     query::{
         DefMapQuery, DefMapSource, GlobImportSource, MacroDefinitionEnv, NameResolutionFilter,
-        ScopeResolver, ResolvePathResult, ScopeResolutionEnv, TargetResolutionEnv,
+        ResolvePathResult, ScopeResolutionEnv, ScopeResolver, TargetResolutionEnv,
     },
     scope::{
         ModuleScope, ModuleScopeBuilder, Namespace, ScopeBinding, ScopeBindingOrigin, ScopeEntry,

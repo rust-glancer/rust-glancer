@@ -7,8 +7,8 @@ use anyhow::Result;
 
 use rg_ir_model::{DefId, DefMapRef, LocalDefRef, ModuleRef, TargetRef};
 use rg_ir_storage::{
-    ImportPath, LocalDefData, MacroDefinitionData, MacroDefinitionEnv, ScopeResolver, ScopeBinding,
-    ScopeBindingOrigin, TargetResolutionEnv,
+    ImportPath, LocalDefData, MacroDefinitionData, MacroDefinitionEnv, ScopeBinding,
+    ScopeBindingOrigin, ScopeResolver, TargetResolutionEnv,
 };
 use rg_std::ExpectedUnique;
 use rg_text::Name;
@@ -75,10 +75,8 @@ where
 
         // Qualified calls follow ordinary path resolution for the prefix, then keep the final macro
         // binding so order filtering can distinguish direct definitions from exports/imports.
-        let resolved_bindings = ScopeResolver::new(self.env).macro_bindings(
-            ModuleRef::target(self.state.target, call.module),
-            path,
-        )?;
+        let resolved_bindings = ScopeResolver::new(self.env)
+            .macro_bindings(ModuleRef::target(self.state.target, call.module), path)?;
         let mut macros = Vec::new();
 
         for binding in resolved_bindings {

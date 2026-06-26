@@ -6,6 +6,6 @@ mod resolution_env;
 
 pub use self::{
     def_map_query::{DefMapQuery, DefMapSource},
-    path_resolution::{GlobImportSource, NameResolutionFilter, ScopeResolver, ResolvePathResult},
+    path_resolution::{GlobImportSource, NameResolutionFilter, ResolvePathResult, ScopeResolver},
     resolution_env::{MacroDefinitionEnv, ScopeResolutionEnv, TargetResolutionEnv},
 };

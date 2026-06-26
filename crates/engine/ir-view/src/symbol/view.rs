@@ -6,7 +6,7 @@ use rg_ir_model::{
     FunctionRef as SemanticFunctionRef, ModuleId, ModuleRef, SemanticItemKind, TargetRef,
     TypeAliasRef, TypeDefId, TypeDefRef, identity::DeclarationRef,
 };
-use rg_ir_storage::{DefMapQuery, ItemStoreQuery, SemanticItemView};
+use rg_ir_storage::{DefMapSource, ItemStoreQuery, SemanticItemView};
 use rg_parse::{FileId, Span};
 
 use crate::{
@@ -118,17 +118,20 @@ impl<'a, 'db> SymbolItemIndex<'a, 'db> {
 
     /// Return module declarations for one target.
     fn module_declarations(&self, target: TargetRef) -> Result<Vec<DeclarationRef>> {
-        Ok(DefMapQuery::new(self.db)
-            .module_refs(target)?
-            .into_iter()
-            .map(DeclarationRef::module)
-            .collect())
+        Ok(self
+            .db
+            .def_map_for_origin(DefMapRef::Target(target))?
+            .map(|def_map| def_map.module_refs().map(DeclarationRef::module).collect())
+            .unwrap_or_default())
     }
 
     /// Return a workspace-symbol container name for a module.
     fn module_container_name(&self, module_ref: ModuleRef) -> Result<Option<String>> {
-        let def_maps = DefMapQuery::new(self.db);
-        let Some(module) = def_maps.module_data(module_ref)? else {
+        let Some(module) = self
+            .db
+            .def_map_for_origin(module_ref.origin)?
+            .and_then(|def_map| def_map.module(module_ref.module))
+        else {
             return Ok(None);
         };
         let Some(parent) = module.parent else {
@@ -337,8 +340,11 @@ impl<'a, 'db> SymbolItemIndex<'a, 'db> {
 
     /// Return a local module path for workspace-symbol containers.
     fn module_path(&self, origin: DefMapRef, module: ModuleId) -> Result<String> {
-        let def_maps = DefMapQuery::new(self.db);
-        let Some(data) = def_maps.module_data(ModuleRef { origin, module })? else {
+        let Some(data) = self
+            .db
+            .def_map_for_origin(origin)?
+            .and_then(|def_map| def_map.module(module))
+        else {
             return Ok(String::new());
         };
         let Some(name) = &data.name else {

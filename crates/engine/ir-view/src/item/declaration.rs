@@ -5,7 +5,7 @@ use rg_ir_model::{
     BodyBindingRef, EnumVariantRef, FieldRef, FunctionRef, ItemOwner, LocalDefRef, ModuleRef,
     SemanticItemKind, SemanticItemRef, TargetRef, identity::DeclarationRef,
 };
-use rg_ir_storage::{DefMapQuery, ItemStoreQuery, ModuleOrigin};
+use rg_ir_storage::{DefMapSource, ItemStoreQuery, ModuleOrigin};
 use rg_parse::{FileId, Span};
 
 use crate::{IndexedViewDb, SymbolKind};
@@ -89,8 +89,11 @@ impl<'a, 'db> DeclarationView<'a, 'db> {
 
     /// Return the file backing a root module.
     pub fn root_module_file(&self, module_ref: ModuleRef) -> anyhow::Result<Option<FileId>> {
-        let def_maps = DefMapQuery::new(self.db);
-        let Some(module) = def_maps.module_data(module_ref)? else {
+        let Some(module) = self
+            .db
+            .def_map_for_origin(module_ref.origin)?
+            .and_then(|def_map| def_map.module(module_ref.module))
+        else {
             return Ok(None);
         };
         let ModuleOrigin::Root { file_id } = module.origin else {
@@ -101,8 +104,11 @@ impl<'a, 'db> DeclarationView<'a, 'db> {
 
     /// Return declaration facts for an inline or out-of-line module declaration.
     fn module(&self, module_ref: ModuleRef) -> anyhow::Result<Option<Declaration>> {
-        let def_maps = DefMapQuery::new(self.db);
-        let Some(module) = def_maps.module_data(module_ref)? else {
+        let Some(module) = self
+            .db
+            .def_map_for_origin(module_ref.origin)?
+            .and_then(|def_map| def_map.module(module_ref.module))
+        else {
             return Ok(None);
         };
         let Some(name) = module.name.as_ref().map(ToString::to_string) else {
@@ -133,8 +139,11 @@ impl<'a, 'db> DeclarationView<'a, 'db> {
 
     /// Return declaration facts for a DefMap local item.
     fn local_def(&self, local_def: LocalDefRef) -> anyhow::Result<Option<Declaration>> {
-        let def_maps = DefMapQuery::new(self.db);
-        let Some(data) = def_maps.local_def_data(local_def)? else {
+        let Some(data) = self
+            .db
+            .def_map_for_origin(local_def.origin)?
+            .and_then(|def_map| def_map.local_def(local_def.local_def))
+        else {
             return Ok(None);
         };
 
@@ -168,8 +177,11 @@ impl<'a, 'db> DeclarationView<'a, 'db> {
                 let Some(local_impl_ref) = view.local_impl() else {
                     return Ok(None);
                 };
-                let def_maps = DefMapQuery::new(self.db);
-                let Some(local_impl) = def_maps.local_impl_data(local_impl_ref)? else {
+                let Some(local_impl) = self
+                    .db
+                    .def_map_for_origin(local_impl_ref.origin)?
+                    .and_then(|def_map| def_map.local_impl(local_impl_ref.local_impl))
+                else {
                     return Ok(None);
                 };
                 let Some((self_ty, trait_ref)) = view.impl_header() else {

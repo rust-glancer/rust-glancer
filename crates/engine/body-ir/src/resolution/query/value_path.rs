@@ -211,6 +211,7 @@ where
             let defs = self
                 .context
                 .def_map_query()
+                .scope_resolver()
                 .resolve_lexical_name_in_module(
                     from,
                     module,
@@ -234,10 +235,12 @@ where
         path: &Path,
     ) -> Result<ResolvePathResult, PackageStoreError> {
         let owner_module = self.context.body().owner_module();
-        let result = self
-            .context
-            .def_map_query()
-            .resolve_path(owner_module, path)?;
+        let def_maps = self.context.def_map_query();
+        let result = def_maps.scope_resolver().resolve_path(
+            owner_module,
+            path,
+            NameResolutionFilter::AllNamespaces,
+        )?;
         if !result.resolved.is_empty() {
             return Ok(result);
         }
@@ -247,9 +250,11 @@ where
             return Ok(result);
         }
 
-        self.context
-            .def_map_query()
-            .resolve_path(fallback_module, path)
+        def_maps.scope_resolver().resolve_path(
+            fallback_module,
+            path,
+            NameResolutionFilter::AllNamespaces,
+        )
     }
 
     /// Resolve a multi-segment value path through the body def map.
@@ -265,6 +270,7 @@ where
         let defs = self
             .context
             .def_map_query()
+            .scope_resolver()
             .resolve_lexical_path(from, path, NameResolutionFilter::ValuesOnly)?
             .resolved;
         self.value_name_resolution(BodyValueName::Candidates(
@@ -414,9 +420,11 @@ where
         &self,
         variant_def: LocalEnumVariantRef,
     ) -> Result<Option<BodyValueCandidate>, PackageStoreError> {
-        let def_maps = self.context.def_map_query();
+        let def_maps = self.context.def_map_source();
         let item_query = self.context.item_query();
-        if let Some(variant_def_data) = def_maps.local_enum_variant_data(variant_def)?
+        if let Some(variant_def_data) = def_maps
+            .def_map_for_origin(variant_def.origin)?
+            .and_then(|def_map| def_map.local_enum_variant(variant_def.local_enum_variant))
             && let Some(variant_ref) = item_query.enum_variant_ref_for_local_def_index(
                 LocalDefRef {
                     origin: variant_def.origin,

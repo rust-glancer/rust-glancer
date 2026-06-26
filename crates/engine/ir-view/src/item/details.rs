@@ -10,7 +10,7 @@ use rg_ir_model::{
     SemanticItemRef, StaticRef, TraitRef, TypeAliasRef, TypeDefId, TypeDefRef,
     identity::DeclarationRef,
 };
-use rg_ir_storage::{DefMapQuery, ItemStoreQuery};
+use rg_ir_storage::{DefMapQuery, DefMapSource, ItemStoreQuery};
 
 use crate::{
     IndexedViewDb, SymbolKind, display::signature::SignatureRenderer, item::path::PathView,
@@ -276,8 +276,11 @@ impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
         module_ref: ModuleRef,
         context: &DeclarationDetailsContext,
     ) -> anyhow::Result<Option<DeclarationDetails>> {
-        let def_maps = DefMapQuery::new(self.db);
-        let Some(module) = def_maps.module_data(module_ref)? else {
+        let Some(module) = self
+            .db
+            .def_map_for_origin(module_ref.origin)?
+            .and_then(|def_map| def_map.module(module_ref.module))
+        else {
             return Ok(None);
         };
         let name = context
@@ -298,8 +301,11 @@ impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
         &self,
         local_def_ref: LocalDefRef,
     ) -> anyhow::Result<Option<DeclarationDetails>> {
-        let def_maps = DefMapQuery::new(self.db);
-        let Some(data) = def_maps.local_def_data(local_def_ref)? else {
+        let Some(data) = self
+            .db
+            .def_map_for_origin(local_def_ref.origin)?
+            .and_then(|def_map| def_map.local_def(local_def_ref.local_def))
+        else {
             return Ok(None);
         };
         let path = PathView::new(self.db)
@@ -308,7 +314,7 @@ impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
                 module: data.module,
             })?
             .map(|module| format!("{module}::{}", data.name));
-        let docs = def_maps
+        let docs = DefMapQuery::new(self.db)
             .macro_definition_view(DefId::Local(local_def_ref))?
             .and_then(|macro_| macro_.data.docs.as_ref().map(Documentation::text));
         Ok(Some(DeclarationDetails {
