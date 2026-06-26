@@ -149,7 +149,7 @@ impl LanguageServer for Backend {
 
     #[tracing::instrument(
         skip_all,
-        fields(rg.method = "didOpen", rg.uri = ?params.text_document.uri)
+        fields(rg.method = "didOpen", rg.uri = %params.text_document.uri.as_str())
     )]
     async fn did_open(&self, params: DidOpenTextDocumentParams) {
         let Some(path) = methods::uri_to_path(&params.text_document.uri) else {
@@ -173,7 +173,7 @@ impl LanguageServer for Backend {
 
     #[tracing::instrument(
         skip_all,
-        fields(rg.method = "didChange", rg.uri = ?params.text_document.uri)
+        fields(rg.method = "didChange", rg.uri = %params.text_document.uri.as_str())
     )]
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
         let Some(context) = self
@@ -189,7 +189,7 @@ impl LanguageServer for Backend {
 
     #[tracing::instrument(
         skip_all,
-        fields(rg.method = "didSave", rg.uri = ?params.text_document.uri)
+        fields(rg.method = "didSave", rg.uri = %params.text_document.uri.as_str())
     )]
     async fn did_save(&self, params: DidSaveTextDocumentParams) {
         let Some(path) = methods::uri_to_path(&params.text_document.uri) else {
@@ -218,7 +218,7 @@ impl LanguageServer for Backend {
 
     #[tracing::instrument(
         skip_all,
-        fields(rg.method = "didClose", rg.uri = ?params.text_document.uri)
+        fields(rg.method = "didClose", rg.uri = %params.text_document.uri.as_str())
     )]
     async fn did_close(&self, params: DidCloseTextDocumentParams) {
         let Some(path) = methods::uri_to_path(&params.text_document.uri) else {
@@ -244,7 +244,7 @@ impl LanguageServer for Backend {
         skip_all,
         fields(
             rg.method = "gotoDefinition",
-            rg.uri = ?params.text_document_position_params.text_document.uri
+            rg.uri = %params.text_document_position_params.text_document.uri.as_str()
         )
     )]
     async fn goto_definition(
@@ -264,7 +264,7 @@ impl LanguageServer for Backend {
         skip_all,
         fields(
             rg.method = "gotoTypeDefinition",
-            rg.uri = ?params.text_document_position_params.text_document.uri
+            rg.uri = %params.text_document_position_params.text_document.uri.as_str()
         )
     )]
     async fn goto_type_definition(
@@ -284,7 +284,7 @@ impl LanguageServer for Backend {
         skip_all,
         fields(
             rg.method = "gotoImplementation",
-            rg.uri = ?params.text_document_position_params.text_document.uri
+            rg.uri = %params.text_document_position_params.text_document.uri.as_str()
         )
     )]
     async fn goto_implementation(
@@ -304,7 +304,7 @@ impl LanguageServer for Backend {
         skip_all,
         fields(
             rg.method = "references",
-            rg.uri = ?params.text_document_position.text_document.uri
+            rg.uri = %params.text_document_position.text_document.uri.as_str()
         )
     )]
     async fn references(&self, params: ReferenceParams) -> Result<Option<Vec<Location>>> {
@@ -321,7 +321,7 @@ impl LanguageServer for Backend {
         skip_all,
         fields(
             rg.method = "prepareRename",
-            rg.uri = ?params.text_document.uri
+            rg.uri = %params.text_document.uri.as_str()
         )
     )]
     async fn prepare_rename(
@@ -338,7 +338,7 @@ impl LanguageServer for Backend {
         skip_all,
         fields(
             rg.method = "rename",
-            rg.uri = ?params.text_document_position.text_document.uri
+            rg.uri = %params.text_document_position.text_document.uri.as_str()
         )
     )]
     async fn rename(&self, params: RenameParams) -> Result<Option<WorkspaceEdit>> {
@@ -355,7 +355,7 @@ impl LanguageServer for Backend {
         skip_all,
         fields(
             rg.method = "documentHighlight",
-            rg.uri = ?params.text_document_position_params.text_document.uri
+            rg.uri = %params.text_document_position_params.text_document.uri.as_str()
         )
     )]
     async fn document_highlight(
@@ -375,7 +375,7 @@ impl LanguageServer for Backend {
         skip_all,
         fields(
             rg.method = "hover",
-            rg.uri = ?params.text_document_position_params.text_document.uri
+            rg.uri = %params.text_document_position_params.text_document.uri.as_str()
         )
     )]
     async fn hover(&self, params: HoverParams) -> Result<Option<Hover>> {
@@ -392,7 +392,7 @@ impl LanguageServer for Backend {
         skip_all,
         fields(
             rg.method = "completion",
-            rg.uri = ?params.text_document_position.text_document.uri
+            rg.uri = %params.text_document_position.text_document.uri.as_str()
         )
     )]
     async fn completion(&self, params: CompletionParams) -> Result<Option<CompletionResponse>> {
@@ -407,7 +407,7 @@ impl LanguageServer for Backend {
 
     #[tracing::instrument(
         skip_all,
-        fields(rg.method = "formatting", rg.uri = ?params.text_document.uri)
+        fields(rg.method = "formatting", rg.uri = %params.text_document.uri.as_str())
     )]
     async fn formatting(&self, params: DocumentFormattingParams) -> Result<Option<Vec<TextEdit>>> {
         let Some(context) = self.method_context_for(&params.text_document.uri).await? else {
@@ -418,7 +418,7 @@ impl LanguageServer for Backend {
 
     #[tracing::instrument(
         skip_all,
-        fields(rg.method = "documentSymbol", rg.uri = ?params.text_document.uri)
+        fields(rg.method = "documentSymbol", rg.uri = %params.text_document.uri.as_str())
     )]
     async fn document_symbol(
         &self,
@@ -432,7 +432,7 @@ impl LanguageServer for Backend {
 
     #[tracing::instrument(
         skip_all,
-        fields(rg.method = "inlayHint", rg.uri = ?params.text_document.uri)
+        fields(rg.method = "inlayHint", rg.uri = %params.text_document.uri.as_str())
     )]
     async fn inlay_hint(&self, params: InlayHintParams) -> Result<Option<Vec<InlayHint>>> {
         let Some(context) = self.method_context_for(&params.text_document.uri).await? else {

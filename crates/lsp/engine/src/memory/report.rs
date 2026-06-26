@@ -3,110 +3,86 @@
 //! The core memory module defines what the executable can expose. This module owns the logging
 //! shape: point-in-time records and human-readable byte formatting.
 
-use super::{MemoryControl, MemoryDelta, MemoryPurge, MemoryStats};
+use super::{MemoryControl, MemoryDelta, MemoryPurge, MemoryStats, format_memory_report_field};
 
 /// Reports allocator memory at explicit retention checkpoints.
 pub(crate) struct MemoryReporter;
 
 impl MemoryReporter {
-    pub(crate) fn log_checkpoint(
-        memory_control: &dyn MemoryControl,
-        label: &'static str,
-        phase: &'static str,
-    ) -> MemoryStats {
-        let stats = MemoryStats::capture(memory_control);
-        tracing::debug!(
-            target: "rg_lsp_engine::memory",
-            label,
-            phase,
-            allocator = memory_control.allocator_name(),
-            allocator_purge_enabled = memory_control.allocator_purge_enabled(),
-            allocator_purged = false,
-            stats = %stats,
-            "temporary allocation checkpoint"
-        );
-        stats
+    pub(crate) fn snapshot(memory_control: &dyn MemoryControl) -> MemoryStats {
+        MemoryStats::capture(memory_control)
     }
 
-    pub(crate) fn log_checkpoint_delta(
+    pub(crate) fn log_delta_debug(
         memory_control: &dyn MemoryControl,
         label: &'static str,
         phase: &'static str,
         before: MemoryStats,
     ) -> MemoryStats {
         let after = MemoryStats::capture(memory_control);
+        let delta = MemoryDelta::between(before, after);
         tracing::debug!(
             target: "rg_lsp_engine::memory",
             label,
             phase,
-            allocator = memory_control.allocator_name(),
-            allocator_purge_enabled = memory_control.allocator_purge_enabled(),
-            allocator_purged = false,
-            before = %before,
-            after = %after,
-            delta = %MemoryDelta::between(before, after),
-            "temporary allocation checkpoint delta"
+            allocated = %format_memory_report_field(after.allocated, delta.allocated),
+            active = %format_memory_report_field(after.active, delta.active),
+            resident = %format_memory_report_field(after.resident, delta.resident),
+            mapped = %format_memory_report_field(after.mapped, delta.mapped),
+            "memory report"
         );
         after
     }
 
     pub(crate) fn purge_and_report(memory_control: &dyn MemoryControl, label: &'static str) {
-        let before_purge = MemoryStats::capture(memory_control);
-        let purge = if memory_control.allocator_purge_enabled() {
-            MemoryPurge::try_purge(memory_control, before_purge)
-        } else {
-            None
-        };
-        let after = match purge {
-            Some(purge) => purge.after,
-            None => before_purge,
-        };
-
-        tracing::info!(
-            label,
-            allocator = memory_control.allocator_name(),
-            allocator_purge_enabled = memory_control.allocator_purge_enabled(),
-            allocator_purged = purge.is_some(),
-            stats = %after,
-            "allocation info"
-        );
-
-        if let Some(purge) = purge {
-            tracing::info!(
-                label,
-                purge = %purge,
-                "purge stats"
-            );
-        }
+        let before = MemoryStats::capture(memory_control);
+        let after = Self::purge_after(memory_control, before);
+        let delta = MemoryDelta::between(before, after);
+        Self::log_report_info(label, after, delta);
     }
 
-    pub(crate) fn purge_and_report_debug(memory_control: &dyn MemoryControl, label: &'static str) {
+    pub(crate) fn purge_and_report_delta_debug(
+        memory_control: &dyn MemoryControl,
+        label: &'static str,
+        before: MemoryStats,
+    ) {
         let before_purge = MemoryStats::capture(memory_control);
-        let purge = if memory_control.allocator_purge_enabled() {
-            MemoryPurge::try_purge(memory_control, before_purge)
-        } else {
-            None
-        };
-        let after = match purge {
-            Some(purge) => purge.after,
-            None => before_purge,
-        };
+        let after = Self::purge_after(memory_control, before_purge);
+        let delta = MemoryDelta::between(before, after);
+        Self::log_report_debug(label, after, delta);
+    }
 
-        tracing::debug!(
-            label,
-            allocator = memory_control.allocator_name(),
-            allocator_purge_enabled = memory_control.allocator_purge_enabled(),
-            allocator_purged = purge.is_some(),
-            stats = %after,
-            "allocation info"
-        );
-
-        if let Some(purge) = purge {
-            tracing::debug!(
-                label,
-                purge = %purge,
-                "purge stats"
-            );
+    fn purge_after(memory_control: &dyn MemoryControl, before_purge: MemoryStats) -> MemoryStats {
+        if !memory_control.allocator_purge_enabled() {
+            return before_purge;
         }
+
+        MemoryPurge::try_purge(memory_control, before_purge)
+            .map(|purge| purge.after)
+            .unwrap_or(before_purge)
+    }
+
+    fn log_report_debug(label: &'static str, after: MemoryStats, delta: MemoryDelta) {
+        tracing::debug!(
+            target: "rg_lsp_engine::memory",
+            label,
+            allocated = %format_memory_report_field(after.allocated, delta.allocated),
+            active = %format_memory_report_field(after.active, delta.active),
+            resident = %format_memory_report_field(after.resident, delta.resident),
+            mapped = %format_memory_report_field(after.mapped, delta.mapped),
+            "memory report"
+        );
+    }
+
+    fn log_report_info(label: &'static str, after: MemoryStats, delta: MemoryDelta) {
+        tracing::info!(
+            target: "rg_lsp_engine::memory",
+            label,
+            allocated = %format_memory_report_field(after.allocated, delta.allocated),
+            active = %format_memory_report_field(after.active, delta.active),
+            resident = %format_memory_report_field(after.resident, delta.resident),
+            mapped = %format_memory_report_field(after.mapped, delta.mapped),
+            "memory report"
+        );
     }
 }

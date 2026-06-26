@@ -83,7 +83,7 @@ pub(crate) struct MemoryStats {
 }
 
 impl MemoryStats {
-    fn capture(memory_control: &dyn MemoryControl) -> Self {
+    pub(crate) fn capture(memory_control: &dyn MemoryControl) -> Self {
         let allocator = memory_control.allocator_stats();
         Self {
             allocated: allocator.map(|stats| stats.allocated_bytes),
@@ -138,7 +138,7 @@ pub(crate) struct MemoryDelta {
 }
 
 impl MemoryDelta {
-    fn between(before: MemoryStats, after: MemoryStats) -> Self {
+    pub(crate) fn between(before: MemoryStats, after: MemoryStats) -> Self {
         Self {
             allocated: byte_delta(after.allocated, before.allocated),
             active: byte_delta(after.active, before.active),
@@ -169,6 +169,10 @@ pub(crate) fn format_bytes(bytes: usize) -> String {
     }
 }
 
+fn format_bytes_compact(bytes: usize) -> String {
+    format_bytes(bytes).replace(' ', "")
+}
+
 // Used by `derive_more::Debug` field formatting above; dead-code analysis does not look inside
 // derive expansion.
 #[allow(dead_code)]
@@ -196,5 +200,45 @@ fn format_optional_byte_delta(delta: Option<i64>) -> String {
     match bytes {
         Some(bytes) => format!("{prefix}{bytes}"),
         None => format!("{delta} B"),
+    }
+}
+
+fn format_optional_memory_delta(delta: Option<i64>) -> String {
+    let Some(delta) = delta else {
+        return "-".to_string();
+    };
+
+    let prefix = if delta >= 0 { "+" } else { "-" };
+    let bytes = delta.unsigned_abs();
+    let bytes = usize::try_from(bytes).ok().map(format_bytes_compact);
+    match bytes {
+        Some(bytes) => format!("{prefix}{bytes}"),
+        None => format!("{delta}B"),
+    }
+}
+
+fn format_memory_report_field(bytes: Option<usize>, delta: Option<i64>) -> String {
+    if bytes.is_none() && delta.is_none() {
+        return "-".to_string();
+    }
+
+    let bytes = bytes
+        .map(format_bytes_compact)
+        .unwrap_or_else(|| "-".to_string());
+    let delta = format_optional_memory_delta(delta);
+    format!("{bytes}({delta})")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::format_memory_report_field;
+
+    #[test]
+    fn memory_report_field_is_compact_for_log_rendering() {
+        assert_eq!(
+            format_memory_report_field(Some(12 * 1024 * 1024), Some(-2 * 1024 * 1024)),
+            "12.0MiB(-2.0MiB)",
+        );
+        assert_eq!(format_memory_report_field(None, None), "-");
     }
 }

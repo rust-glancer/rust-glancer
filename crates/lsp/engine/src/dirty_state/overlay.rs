@@ -53,8 +53,7 @@ impl DirtyOverlayCache {
 
             let started = Instant::now();
             let memory_control = self.memory_control.as_ref();
-            let memory_before =
-                MemoryReporter::log_checkpoint(memory_control, "dirty_overlay", "before_rebuild");
+            let memory_before = MemoryReporter::snapshot(memory_control);
             let overlay = base
                 .dirty_overlay([DirtyFileChange::new(dirty.path(), dirty.text().to_string())])
                 .with_context(|| {
@@ -63,7 +62,7 @@ impl DirtyOverlayCache {
                         dirty.path().display()
                     )
                 })?;
-            MemoryReporter::log_checkpoint_delta(
+            MemoryReporter::log_delta_debug(
                 memory_control,
                 "dirty_overlay",
                 "after_rebuild",

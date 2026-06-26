@@ -102,21 +102,8 @@ impl EngineHandle {
 
     pub(crate) async fn dirty_document_snapshot(&self, path: &Path) -> DirtyDocumentSnapshotState {
         let documents = self.documents.lock().await;
-        let freshness = documents.freshness(path);
         let dirty = documents.dirty_snapshot(path);
         drop(documents);
-
-        tracing::trace!(
-            path = %path.display(),
-            tracked = freshness.tracked(),
-            version = ?freshness.version(),
-            dirty = freshness.dirty(),
-            saved_len = ?freshness.saved_len(),
-            live_len = ?freshness.live_len(),
-            saved_hash = ?freshness.saved_hash(),
-            live_hash = ?freshness.live_hash(),
-            "checked document freshness"
-        );
 
         match &dirty {
             DirtyDocumentSnapshotState::Dirty(snapshot) => {
