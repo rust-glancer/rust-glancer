@@ -17,7 +17,7 @@ use rg_ir_model::{
 use rg_ir_storage::{
     DefMap, ImportPath, LocalDefData, LocalEnumVariantEntry, MacroDefinitionEnv,
     MacroDefinitionView, ModuleData, ModuleScopeBuilder, PackageDefMaps as DefMapPackage,
-    PathResolver, ScopeEntryRef, ScopeResolutionEnv, TargetData, TargetResolutionEnv,
+    ScopeResolver, ScopeEntryRef, ScopeResolutionEnv, TargetData, TargetResolutionEnv,
 };
 use rg_item_tree::ItemTreeDb;
 use rg_macro_runtime::{MacroExpansionPerformancePreference, MacroExpansionRuntime};
@@ -556,7 +556,7 @@ fn select_preludes(
 
             for prelude_path in prelude_paths.into_iter().flatten() {
                 let root_module = ModuleRef::target(state.target, state.root_module);
-                prelude_module = PathResolver::new(&env)
+                prelude_module = ScopeResolver::new(&env)
                     .import_modules(root_module, &prelude_path)?
                     .into_iter()
                     .next();

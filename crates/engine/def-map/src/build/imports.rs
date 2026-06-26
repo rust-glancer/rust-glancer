@@ -7,7 +7,7 @@
 
 use rg_ir_model::{ImportId, ModuleRef, TargetRef};
 use rg_ir_storage::{
-    GlobImportSource, ImportKind, Namespace, PathResolver, ScopeBinding, ScopeBindingOrigin,
+    GlobImportSource, ImportKind, Namespace, ScopeResolver, ScopeBinding, ScopeBindingOrigin,
     TargetResolutionEnv,
 };
 
@@ -73,7 +73,7 @@ pub(super) fn apply_imports(
     env: &impl TargetResolutionEnv<Error = rg_package_store::PackageStoreError>,
     next_scopes: &mut ScopeMatrix,
 ) -> anyhow::Result<()> {
-    let resolver = PathResolver::new(env);
+    let resolver = ScopeResolver::new(env);
     for import in state.def_map_builder.partial().imports().iter() {
         let import_owner = ModuleRef::target(state.target, import.module);
         match import.kind {
@@ -159,7 +159,7 @@ fn unresolved_imports_for_target(
     env: &impl TargetResolutionEnv<Error = rg_package_store::PackageStoreError>,
 ) -> anyhow::Result<Vec<Vec<ImportId>>> {
     let mut module_imports = vec![Vec::new(); state.def_map_builder.partial().module_count()];
-    let resolver = PathResolver::new(env);
+    let resolver = ScopeResolver::new(env);
 
     for (import_id, import) in state.def_map_builder.partial().imports_with_ids() {
         let import_owner = ModuleRef::target(state.target, import.module);

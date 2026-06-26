@@ -7,7 +7,7 @@
 use anyhow::Context as _;
 
 use rg_ir_model::{DefMapRef, ModuleId, ModuleRef, TargetRef, items::BuiltinMacroKind};
-use rg_ir_storage::{DefMapQuery, ImportPath, MacroDefinitionView, PathResolver};
+use rg_ir_storage::{DefMapQuery, ImportPath, MacroDefinitionView, ScopeResolver};
 use rg_macro_runtime::{CfgSelect, ExpansionParseKind, ExpansionSyntax, MacroExpansionRuntime};
 use rg_std::ExpectedUnique;
 use rg_syntax::{AstNode, Parse, SyntaxNode, ast};
@@ -288,7 +288,7 @@ impl<'db, 'txn> BodyMacroExpander<'db, 'txn> {
             return Self::resolve_single_name_macro(query, target, module.module, name);
         }
 
-        let bindings = PathResolver::new(query)
+        let bindings = ScopeResolver::new(query)
             .macro_bindings(module, path)
             .context("while attempting to resolve qualified body macro path")?;
         let mut macros = ExpectedUnique::new();
@@ -336,7 +336,7 @@ impl<'db, 'txn> BodyMacroExpander<'db, 'txn> {
                 .and_then(|module| module.parent);
         }
 
-        let bindings = PathResolver::new(query)
+        let bindings = ScopeResolver::new(query)
             .visible_unqualified_macro_bindings(importing_module, module_scope_modules, name)
             .context("while attempting to resolve unqualified body macro")?;
 

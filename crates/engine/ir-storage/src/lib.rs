@@ -12,7 +12,7 @@ pub use self::{
         LocalEnumVariantData, LocalEnumVariantEntry, LocalImplData, MacroDefinitionData,
         MacroDefinitionEnv, MacroDefinitionPayload, MacroDefinitionView, ModuleData, ModuleOrigin,
         ModuleScope, ModuleScopeBuilder, NameResolutionFilter, Namespace, PackageDefMaps,
-        PartialDefMap, PathResolver, ResolvePathResult, ScopeBinding, ScopeBindingOrigin,
+        PartialDefMap, ScopeResolver, ResolvePathResult, ScopeBinding, ScopeBindingOrigin,
         ScopeEntry, ScopeEntryRef, ScopeNamespace, ScopeResolutionEnv, TargetData,
         TargetResolutionEnv, VisibleScopeDef, VisibleScopeDefs, VisibleScopeOrigin,
     },

@@ -1,7 +1,7 @@
 //! Shared path queries over DefMap storage.
 //!
 //! DefMaps only know about one scope graph. This query object adds the routing layer that decides
-//! which graph owns a `DefMapRef`, then reuses the private path resolver for the actual lookup.
+//! which graph owns a `DefMapRef`, then reuses the private scope resolver for the actual lookup.
 
 use rg_ir_model::{
     DefId, DefMapRef, LocalDefRef, LocalEnumVariantRef, LocalImplRef, ModuleRef, Path, TargetRef,
@@ -9,7 +9,7 @@ use rg_ir_model::{
 use rg_text::Name;
 
 use super::{
-    path_resolution::{NameResolutionFilter, PathResolver, ResolvePathResult},
+    path_resolution::{NameResolutionFilter, ScopeResolver, ResolvePathResult},
     resolution_env::{MacroDefinitionEnv, ScopeResolutionEnv, TargetResolutionEnv},
 };
 
@@ -81,7 +81,7 @@ where
         from: ModuleRef,
         path: &Path,
     ) -> Result<ResolvePathResult, S::Error> {
-        PathResolver::new(self).resolve_path(from, path, NameResolutionFilter::AllNamespaces)
+        ScopeResolver::new(self).resolve_path(from, path, NameResolutionFilter::AllNamespaces)
     }
 
     /// Resolves a type-position path using normal Rust module lookup rules.
@@ -90,7 +90,7 @@ where
         from: ModuleRef,
         path: &Path,
     ) -> Result<ResolvePathResult, S::Error> {
-        PathResolver::new(self).resolve_path(from, path, NameResolutionFilter::TypesOnly)
+        ScopeResolver::new(self).resolve_path(from, path, NameResolutionFilter::TypesOnly)
     }
 
     /// Resolves a path through lexical scopes represented as synthetic modules.
@@ -100,7 +100,7 @@ where
         path: &Path,
         filter: NameResolutionFilter,
     ) -> Result<ResolvePathResult, S::Error> {
-        PathResolver::new(self).resolve_lexical_path(from, path, filter)
+        ScopeResolver::new(self).resolve_lexical_path(from, path, filter)
     }
 
     /// Resolves one name inside a concrete lexical module without walking parents.
@@ -111,7 +111,7 @@ where
         name: &str,
         filter: NameResolutionFilter,
     ) -> Result<Vec<rg_ir_model::DefId>, S::Error> {
-        PathResolver::new(self).resolve_lexical_name_in_module(from, module, name, filter)
+        ScopeResolver::new(self).resolve_lexical_name_in_module(from, module, name, filter)
     }
 
     pub fn module_data(&self, module_ref: ModuleRef) -> Result<Option<&ModuleData>, S::Error> {
@@ -230,7 +230,7 @@ where
 
     /// Returns the namespace occupied by one resolved definition.
     pub fn namespace_for_def(&self, def: DefId) -> Result<Option<Namespace>, S::Error> {
-        PathResolver::new(self).namespace_for_def(def)
+        ScopeResolver::new(self).namespace_for_def(def)
     }
 
     /// Builds the visibility-filtered scope observed from `importing_module`.
@@ -239,7 +239,7 @@ where
         importing_module: ModuleRef,
         source_module: ModuleRef,
     ) -> Result<ModuleScopeBuilder, S::Error> {
-        PathResolver::new(self).visible_scope(importing_module, source_module)
+        ScopeResolver::new(self).visible_scope(importing_module, source_module)
     }
 
     /// Returns definitions from `source_module` that are visible from `importing_module`.
@@ -259,7 +259,7 @@ where
         &self,
         importing_module: ModuleRef,
     ) -> Result<VisibleScopeDefs, S::Error> {
-        let resolver = PathResolver::new(self);
+        let resolver = ScopeResolver::new(self);
 
         // First-segment resolution checks the current module scope before extern roots and the
         // standard prelude. Completion follows the same namespace-specific shadowing order.

@@ -14,7 +14,7 @@ use rg_ir_storage::{
     DefMap, DefMapBuilder, DefMapSource, GlobImportSource, ImportBinding, ImportData, ImportKind,
     ImportPath, ImportSourcePath, LocalDefData, LocalDefKind, LocalEnumVariantData,
     LocalEnumVariantEntry, LocalImplData, MacroDefinitionEnv, MacroDefinitionView, ModuleData,
-    ModuleOrigin, ModuleScope, ModuleScopeBuilder, Namespace, PathResolver, ScopeBinding,
+    ModuleOrigin, ModuleScope, ModuleScopeBuilder, Namespace, ScopeResolver, ScopeBinding,
     ScopeBindingOrigin, ScopeEntryRef, ScopeResolutionEnv, TargetResolutionEnv,
 };
 use rg_package_store::PackageStoreError;
@@ -396,7 +396,7 @@ impl BodyDefMapBuildState {
     where
         S: DefMapSource<Error = PackageStoreError> + Copy,
     {
-        let resolver = PathResolver::new(env);
+        let resolver = ScopeResolver::new(env);
         for import in self.builder.partial().imports() {
             let importing_module = self.importing_module(import.module);
             match import.kind {
@@ -487,7 +487,7 @@ impl BodyDefMapBuildState {
             state: self,
             current_scopes: final_scopes,
         };
-        let resolver = PathResolver::new(&env);
+        let resolver = ScopeResolver::new(&env);
 
         for (import_id, import) in self.builder.partial().imports_with_ids() {
             let importing_module = self.importing_module(import.module);
