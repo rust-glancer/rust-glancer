@@ -11,11 +11,11 @@ use rg_ir_model::{
     hir::source::{BodyItemSourceRef, ItemSource},
 };
 use rg_ir_storage::{
-    DefMap, DefMapBuilder, DefMapSource, GlobImportSource, ImportBinding, ImportData, ImportKind,
-    ImportPath, ImportSourcePath, LocalDefData, LocalDefKind, LocalEnumVariantData,
-    LocalEnumVariantEntry, LocalImplData, MacroDefinitionEnv, MacroDefinitionView, ModuleData,
-    ModuleOrigin, ModuleScope, ModuleScopeBuilder, Namespace, ScopeBinding, ScopeBindingOrigin,
-    ScopeEntryRef, ScopeResolutionEnv, ScopeResolver, TargetResolutionEnv,
+    DefMap, DefMapBuilder, DefMapSource, ImportBinding, ImportData, ImportKind, ImportPath,
+    ImportSourcePath, LocalDefData, LocalDefKind, LocalEnumVariantData, LocalEnumVariantEntry,
+    LocalImplData, MacroDefinitionEnv, MacroDefinitionView, ModuleData, ModuleOrigin, ModuleScope,
+    ModuleScopeBuilder, Namespace, ScopeBinding, ScopeBindingOrigin, ScopeEntryRef,
+    ScopeResolutionEnv, ScopeResolver, TargetResolutionEnv,
 };
 use rg_package_store::PackageStoreError;
 use rg_text::Name;
@@ -404,37 +404,16 @@ impl BodyDefMapBuildState {
                         let target_scope = next_scopes
                             .get_mut(import.module.0)
                             .expect("target scope should exist for body import");
+                        let source_scope =
+                            resolver.visible_glob_source_scope(importing_module, glob_source)?;
 
-                        match glob_source {
-                            GlobImportSource::Module(source_module) => {
-                                let source_scope =
-                                    resolver.visible_scope(importing_module, source_module)?;
-
-                                for (name, entry) in source_scope.entries() {
-                                    target_scope.copy_visible_bindings(
-                                        name,
-                                        entry,
-                                        import.visibility.clone(),
-                                        importing_module,
-                                    );
-                                }
-                            }
-                            GlobImportSource::Enum(enum_def) => {
-                                for (name, binding) in resolver
-                                    .visible_enum_variant_bindings(importing_module, enum_def)?
-                                {
-                                    target_scope.insert_binding(
-                                        &name,
-                                        Namespace::Values,
-                                        ScopeBinding {
-                                            def: binding.def,
-                                            visibility: import.visibility.clone(),
-                                            owner: importing_module,
-                                            origin: ScopeBindingOrigin::Import,
-                                        },
-                                    );
-                                }
-                            }
+                        for (name, entry) in source_scope.entries() {
+                            target_scope.copy_visible_bindings(
+                                name,
+                                entry,
+                                import.visibility.clone(),
+                                importing_module,
+                            );
                         }
                     }
                 }
@@ -540,10 +519,7 @@ where
             return Ok(self.state.builder.partial().module(module_ref.module));
         }
 
-        Ok(self
-            .def_maps
-            .def_map_for_origin(module_ref.origin)?
-            .and_then(|def_map| def_map.module(module_ref.module)))
+        self.def_maps.module_data(module_ref)
     }
 
     fn module_scope_entry<'a>(
@@ -600,10 +576,7 @@ where
                 .local_def(local_def_ref.local_def));
         }
 
-        Ok(self
-            .def_maps
-            .def_map_for_origin(local_def_ref.origin)?
-            .and_then(|def_map| def_map.local_def(local_def_ref.local_def)))
+        self.def_maps.local_def_data(local_def_ref)
     }
 
     fn local_enum_variant_entries_for_enum<'a>(
@@ -619,13 +592,7 @@ where
                 .collect());
         }
 
-        let Some(def_map) = self.def_maps.def_map_for_origin(enum_def.origin)? else {
-            return Ok(Vec::new());
-        };
-
-        Ok(def_map
-            .local_enum_variant_entries_for_enum(enum_def.local_def)
-            .collect())
+        self.def_maps.local_enum_variant_entries_for_enum(enum_def)
     }
 }
 

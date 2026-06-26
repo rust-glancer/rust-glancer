@@ -4,9 +4,7 @@
 //! concepts: they are names visible from an indexed module or lexical body scope.
 
 use rg_ir_model::items::Documentation;
-use rg_ir_model::{
-    DefId, FunctionRef, LocalDefRef, ModuleRef, Path, SemanticItemRef, identity::DeclarationRef,
-};
+use rg_ir_model::{DefId, FunctionRef, ModuleRef, Path, SemanticItemRef, identity::DeclarationRef};
 use rg_ir_storage::{
     DefMapQuery, DefMapSource, ItemStoreQuery, NameResolutionFilter, ScopeNamespace,
     VisibleScopeDef, VisibleScopeOrigin,
@@ -154,11 +152,7 @@ impl<'a, 'db> NameLookupView<'a, 'db> {
         let mut function = None;
         let (declaration, kind, documentation) = match visible_def.def {
             DefId::Module(module) => {
-                let Some(data) = self
-                    .db
-                    .def_map_for_origin(module.origin)?
-                    .and_then(|def_map| def_map.module(module.module))
-                else {
+                let Some(data) = self.db.module_data(module)? else {
                     return Ok(None);
                 };
                 (
@@ -168,11 +162,7 @@ impl<'a, 'db> NameLookupView<'a, 'db> {
                 )
             }
             DefId::Local(local_def_ref) => {
-                let Some(data) = self
-                    .db
-                    .def_map_for_origin(local_def_ref.origin)?
-                    .and_then(|def_map| def_map.local_def(local_def_ref.local_def))
-                else {
+                let Some(data) = self.db.local_def_data(local_def_ref)? else {
                     return Ok(None);
                 };
                 if let Some(SemanticItemRef::Function(function_ref)) =
@@ -188,18 +178,9 @@ impl<'a, 'db> NameLookupView<'a, 'db> {
             }
             DefId::EnumVariant(variant_def) => {
                 let item_query = ItemStoreQuery::new(self.db);
-                if let Some(variant_def_data) = self
-                    .db
-                    .def_map_for_origin(variant_def.origin)?
-                    .and_then(|def_map| def_map.local_enum_variant(variant_def.local_enum_variant))
-                    && let Some(variant_ref) = item_query.enum_variant_ref_for_local_def_index(
-                        LocalDefRef {
-                            origin: variant_def.origin,
-                            local_def: variant_def_data.enum_def,
-                        },
-                        variant_def_data.index,
-                        Some(variant_def_data.name.as_str()),
-                    )?
+                if let Some(variant_def_data) = self.db.local_enum_variant_data(variant_def)?
+                    && let Some(variant_ref) = item_query
+                        .enum_variant_ref_for_local_enum_variant(variant_def, variant_def_data)?
                 {
                     let docs = item_query
                         .enum_variant_data(variant_ref)?

@@ -6,7 +6,8 @@
 use rg_ir_model::items::{FieldKey, FieldList, GenericParams};
 use rg_ir_model::{
     ConstRef, DefMapRef, EnumVariantRef, FieldRef, FunctionRef, ImplRef, ItemOwner, LocalDefRef,
-    SemanticItemRef, StaticRef, TargetRef, TraitRef, TypeAliasRef, TypeDefId, TypeDefRef,
+    LocalEnumVariantRef, SemanticItemRef, StaticRef, TargetRef, TraitRef, TypeAliasRef, TypeDefId,
+    TypeDefRef,
     hir::items::{
         ConstData, EnumData, EnumVariantData, FieldData, FunctionData, ImplData, StaticData,
         TraitData, TypeAliasData,
@@ -14,7 +15,7 @@ use rg_ir_model::{
 };
 
 use super::ItemStoreSource;
-use crate::{ItemStore, SemanticItemView, TypePathContext};
+use crate::{ItemStore, LocalEnumVariantData, SemanticItemView, TypePathContext};
 
 /// Shared item queries over any storage that can route `DefMapRef` origins to item stores.
 ///
@@ -240,6 +241,22 @@ where
         } else {
             Ok(None)
         }
+    }
+
+    /// Projects a DefMap-local enum variant into the semantic variant ref lowered for it.
+    pub fn enum_variant_ref_for_local_enum_variant(
+        &self,
+        variant_ref: LocalEnumVariantRef,
+        variant_data: &LocalEnumVariantData,
+    ) -> Result<Option<EnumVariantRef>, S::Error> {
+        self.enum_variant_ref_for_local_def_index(
+            LocalDefRef {
+                origin: variant_ref.origin,
+                local_def: variant_data.enum_def,
+            },
+            variant_data.index,
+            Some(variant_data.name.as_str()),
+        )
     }
 
     /// Expands a variant ref with its enum owner and source facts.

@@ -7,8 +7,7 @@
 
 use rg_ir_model::{ImportId, ModuleRef, TargetRef};
 use rg_ir_storage::{
-    GlobImportSource, ImportKind, Namespace, ScopeBinding, ScopeBindingOrigin, ScopeResolver,
-    TargetResolutionEnv,
+    ImportKind, ScopeBinding, ScopeBindingOrigin, ScopeResolver, TargetResolutionEnv,
 };
 
 use super::{
@@ -84,39 +83,18 @@ pub(super) fn apply_imports(
                     let target_scope = next_scopes
                         .module_scope_mut(state.target, import.module)
                         .expect("target scope should exist for every import");
+                    let source_scope =
+                        resolver.visible_glob_source_scope(import_owner, glob_source)?;
 
-                    match glob_source {
-                        GlobImportSource::Module(source_module) => {
-                            let source_scope =
-                                resolver.visible_scope(import_owner, source_module)?;
-
-                            // Visibility is attached to the binding introduced by the glob import,
-                            // not to the original definition.
-                            for (name, entry) in source_scope.entries() {
-                                target_scope.copy_visible_bindings(
-                                    name,
-                                    entry,
-                                    import.visibility.clone(),
-                                    import_owner,
-                                );
-                            }
-                        }
-                        GlobImportSource::Enum(enum_def) => {
-                            for (name, binding) in
-                                resolver.visible_enum_variant_bindings(import_owner, enum_def)?
-                            {
-                                target_scope.insert_binding(
-                                    &name,
-                                    Namespace::Values,
-                                    ScopeBinding {
-                                        def: binding.def,
-                                        visibility: import.visibility.clone(),
-                                        owner: import_owner,
-                                        origin: ScopeBindingOrigin::Import,
-                                    },
-                                );
-                            }
-                        }
+                    // Visibility is attached to the binding introduced by the glob import,
+                    // not to the original definition.
+                    for (name, entry) in source_scope.entries() {
+                        target_scope.copy_visible_bindings(
+                            name,
+                            entry,
+                            import.visibility.clone(),
+                            import_owner,
+                        );
                     }
                 }
             }

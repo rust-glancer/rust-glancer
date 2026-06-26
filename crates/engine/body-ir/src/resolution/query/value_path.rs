@@ -1,9 +1,9 @@
 //! Value-path lookup.
 
 use rg_ir_model::{
-    BindingId, ConstRef, DefId, DefMapRef, EnumVariantRef, FunctionRef, LocalDefRef,
-    LocalEnumVariantRef, ModuleId, ModuleRef, Path, ScopeId, SemanticItemRef, StaticRef,
-    TypePathResolution, identity::DeclarationRef,
+    BindingId, ConstRef, DefId, DefMapRef, EnumVariantRef, FunctionRef, LocalEnumVariantRef,
+    ModuleId, ModuleRef, Path, ScopeId, SemanticItemRef, StaticRef, TypePathResolution,
+    identity::DeclarationRef,
 };
 use rg_ir_storage::{
     DefMapSource, ItemStoreSource, NameResolutionFilter, ResolvePathResult, TypePathContext,
@@ -422,17 +422,9 @@ where
     ) -> Result<Option<BodyValueCandidate>, PackageStoreError> {
         let def_maps = self.context.def_map_source();
         let item_query = self.context.item_query();
-        if let Some(variant_def_data) = def_maps
-            .def_map_for_origin(variant_def.origin)?
-            .and_then(|def_map| def_map.local_enum_variant(variant_def.local_enum_variant))
-            && let Some(variant_ref) = item_query.enum_variant_ref_for_local_def_index(
-                LocalDefRef {
-                    origin: variant_def.origin,
-                    local_def: variant_def_data.enum_def,
-                },
-                variant_def_data.index,
-                Some(variant_def_data.name.as_str()),
-            )?
+        if let Some(variant_def_data) = def_maps.local_enum_variant_data(variant_def)?
+            && let Some(variant_ref) =
+                item_query.enum_variant_ref_for_local_enum_variant(variant_def, variant_def_data)?
             && let Some(variant_data) = item_query.enum_variant_data(variant_ref)?
         {
             let args = item_query

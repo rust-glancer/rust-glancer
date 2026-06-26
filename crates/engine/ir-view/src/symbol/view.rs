@@ -120,18 +120,15 @@ impl<'a, 'db> SymbolItemIndex<'a, 'db> {
     fn module_declarations(&self, target: TargetRef) -> Result<Vec<DeclarationRef>> {
         Ok(self
             .db
-            .def_map_for_origin(DefMapRef::Target(target))?
-            .map(|def_map| def_map.module_refs().map(DeclarationRef::module).collect())
-            .unwrap_or_default())
+            .module_refs(target)?
+            .into_iter()
+            .map(DeclarationRef::module)
+            .collect())
     }
 
     /// Return a workspace-symbol container name for a module.
     fn module_container_name(&self, module_ref: ModuleRef) -> Result<Option<String>> {
-        let Some(module) = self
-            .db
-            .def_map_for_origin(module_ref.origin)?
-            .and_then(|def_map| def_map.module(module_ref.module))
-        else {
+        let Some(module) = self.db.module_data(module_ref)? else {
             return Ok(None);
         };
         let Some(parent) = module.parent else {
@@ -340,11 +337,7 @@ impl<'a, 'db> SymbolItemIndex<'a, 'db> {
 
     /// Return a local module path for workspace-symbol containers.
     fn module_path(&self, origin: DefMapRef, module: ModuleId) -> Result<String> {
-        let Some(data) = self
-            .db
-            .def_map_for_origin(origin)?
-            .and_then(|def_map| def_map.module(module))
-        else {
+        let Some(data) = self.db.module_data(ModuleRef { origin, module })? else {
             return Ok(String::new());
         };
         let Some(name) = &data.name else {

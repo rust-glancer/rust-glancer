@@ -4,7 +4,9 @@
 //! concrete storage that owns them; this query object keeps the operations that compose those raw
 //! maps into language-shaped answers.
 
-use rg_ir_model::{DefId, DefMapRef, LocalDefRef, ModuleRef, TargetRef};
+use rg_ir_model::{
+    DefId, DefMapRef, LocalDefRef, LocalEnumVariantRef, LocalImplRef, ModuleRef, TargetRef,
+};
 use rg_text::Name;
 
 use super::{
@@ -13,8 +15,9 @@ use super::{
 };
 
 use super::super::{
-    DefMap, LocalDefData, LocalEnumVariantEntry, MacroDefinitionView, ModuleData, ScopeEntryRef,
-    ScopeNamespace, VisibleScopeDef, VisibleScopeDefs, VisibleScopeOrigin,
+    DefMap, LocalDefData, LocalEnumVariantData, LocalEnumVariantEntry, LocalImplData,
+    MacroDefinitionView, ModuleData, ScopeEntryRef, ScopeNamespace, VisibleScopeDef,
+    VisibleScopeDefs, VisibleScopeOrigin,
 };
 
 /// Routes DefMap-origin refs and target-level facts to concrete storage.
@@ -25,6 +28,60 @@ pub trait DefMapSource {
     type Error;
 
     fn def_map_for_origin(&self, origin: DefMapRef) -> Result<Option<&DefMap>, Self::Error>;
+
+    fn module_data(&self, module_ref: ModuleRef) -> Result<Option<&ModuleData>, Self::Error> {
+        Ok(self
+            .def_map_for_origin(module_ref.origin)?
+            .and_then(|def_map| def_map.module(module_ref.module)))
+    }
+
+    fn module_refs(&self, target: TargetRef) -> Result<Vec<ModuleRef>, Self::Error> {
+        Ok(self
+            .def_map_for_origin(DefMapRef::Target(target))?
+            .map(|def_map| def_map.module_refs().collect())
+            .unwrap_or_default())
+    }
+
+    fn local_def_data(
+        &self,
+        local_def_ref: LocalDefRef,
+    ) -> Result<Option<&LocalDefData>, Self::Error> {
+        Ok(self
+            .def_map_for_origin(local_def_ref.origin)?
+            .and_then(|def_map| def_map.local_def(local_def_ref.local_def)))
+    }
+
+    fn local_impl_data(
+        &self,
+        local_impl_ref: LocalImplRef,
+    ) -> Result<Option<&LocalImplData>, Self::Error> {
+        Ok(self
+            .def_map_for_origin(local_impl_ref.origin)?
+            .and_then(|def_map| def_map.local_impl(local_impl_ref.local_impl)))
+    }
+
+    fn local_enum_variant_data(
+        &self,
+        variant_ref: LocalEnumVariantRef,
+    ) -> Result<Option<&LocalEnumVariantData>, Self::Error> {
+        Ok(self
+            .def_map_for_origin(variant_ref.origin)?
+            .and_then(|def_map| def_map.local_enum_variant(variant_ref.local_enum_variant)))
+    }
+
+    fn local_enum_variant_entries_for_enum<'a>(
+        &'a self,
+        enum_def: LocalDefRef,
+    ) -> Result<Vec<LocalEnumVariantEntry<'a>>, Self::Error> {
+        Ok(self
+            .def_map_for_origin(enum_def.origin)?
+            .map(|def_map| {
+                def_map
+                    .local_enum_variant_entries_for_enum(enum_def.local_def)
+                    .collect()
+            })
+            .unwrap_or_default())
+    }
 
     fn extern_root(&self, target: TargetRef, name: &str) -> Result<Option<ModuleRef>, Self::Error>;
 
@@ -185,10 +242,7 @@ where
     type Error = S::Error;
 
     fn module_data(&self, module_ref: ModuleRef) -> Result<Option<&ModuleData>, Self::Error> {
-        Ok(self
-            .source
-            .def_map_for_origin(module_ref.origin)?
-            .and_then(|def_map| def_map.module(module_ref.module)))
+        self.source.module_data(module_ref)
     }
 
     fn module_scope_entry<'a>(
@@ -220,23 +274,14 @@ where
         &self,
         local_def_ref: LocalDefRef,
     ) -> Result<Option<&LocalDefData>, Self::Error> {
-        Ok(self
-            .source
-            .def_map_for_origin(local_def_ref.origin)?
-            .and_then(|def_map| def_map.local_def(local_def_ref.local_def)))
+        self.source.local_def_data(local_def_ref)
     }
 
     fn local_enum_variant_entries_for_enum<'a>(
         &'a self,
         enum_def: LocalDefRef,
     ) -> Result<Vec<LocalEnumVariantEntry<'a>>, Self::Error> {
-        let Some(def_map) = self.source.def_map_for_origin(enum_def.origin)? else {
-            return Ok(Vec::new());
-        };
-
-        Ok(def_map
-            .local_enum_variant_entries_for_enum(enum_def.local_def)
-            .collect())
+        self.source.local_enum_variant_entries_for_enum(enum_def)
     }
 }
 

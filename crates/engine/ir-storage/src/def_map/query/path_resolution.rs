@@ -521,8 +521,30 @@ impl<E: TargetResolutionEnv + ?Sized> ScopeResolver<'_, E> {
         Ok(sources.into_vec())
     }
 
+    /// Build the visible bindings exported by one glob import source.
+    pub fn visible_glob_source_scope(
+        &self,
+        importing_module: ModuleRef,
+        glob_source: GlobImportSource,
+    ) -> Result<ModuleScopeBuilder, E::Error> {
+        match glob_source {
+            GlobImportSource::Module(source_module) => {
+                self.visible_scope(importing_module, source_module)
+            }
+            GlobImportSource::Enum(enum_def) => {
+                let mut visible_scope = ModuleScopeBuilder::default();
+                for (name, binding) in
+                    self.visible_enum_variant_bindings(importing_module, enum_def)?
+                {
+                    visible_scope.insert_binding(&name, Namespace::Values, binding);
+                }
+                Ok(visible_scope)
+            }
+        }
+    }
+
     /// Return value bindings that a glob import from an enum should introduce.
-    pub fn visible_enum_variant_bindings(
+    fn visible_enum_variant_bindings(
         &self,
         importing_module: ModuleRef,
         enum_def: LocalDefRef,

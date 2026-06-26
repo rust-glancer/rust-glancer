@@ -276,11 +276,7 @@ impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
         module_ref: ModuleRef,
         context: &DeclarationDetailsContext,
     ) -> anyhow::Result<Option<DeclarationDetails>> {
-        let Some(module) = self
-            .db
-            .def_map_for_origin(module_ref.origin)?
-            .and_then(|def_map| def_map.module(module_ref.module))
-        else {
+        let Some(module) = self.db.module_data(module_ref)? else {
             return Ok(None);
         };
         let name = context
@@ -301,11 +297,7 @@ impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
         &self,
         local_def_ref: LocalDefRef,
     ) -> anyhow::Result<Option<DeclarationDetails>> {
-        let Some(data) = self
-            .db
-            .def_map_for_origin(local_def_ref.origin)?
-            .and_then(|def_map| def_map.local_def(local_def_ref.local_def))
-        else {
+        let Some(data) = self.db.local_def_data(local_def_ref)? else {
             return Ok(None);
         };
         let path = PathView::new(self.db)

@@ -105,18 +105,9 @@ impl<'a, 'db> ResolutionView<'a, 'db> {
             }
             DefId::EnumVariant(variant_def) => {
                 let item_query = ItemStoreQuery::new(self.0);
-                if let Some(variant_def_data) = self
-                    .0
-                    .def_map_for_origin(variant_def.origin)?
-                    .and_then(|def_map| def_map.local_enum_variant(variant_def.local_enum_variant))
-                    && let Some(variant_ref) = item_query.enum_variant_ref_for_local_def_index(
-                        LocalDefRef {
-                            origin: variant_def.origin,
-                            local_def: variant_def_data.enum_def,
-                        },
-                        variant_def_data.index,
-                        Some(variant_def_data.name.as_str()),
-                    )?
+                if let Some(variant_def_data) = self.0.local_enum_variant_data(variant_def)?
+                    && let Some(variant_ref) = item_query
+                        .enum_variant_ref_for_local_enum_variant(variant_def, variant_def_data)?
                 {
                     Ok(vec![DeclarationRef::EnumVariant(variant_ref)])
                 } else {
