@@ -32,7 +32,7 @@ use self::{
 ///
 /// The server process is the only place that knows about multiple engines. Routing owns path/root
 /// decisions, while the registry owns engine lifecycle slots and RPC clients.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub(crate) struct EngineRegistry {
     lsp_client: LspClient,
     inner: Arc<Mutex<EngineRegistryInner>>,

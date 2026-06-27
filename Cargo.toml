@@ -72,9 +72,11 @@ either = "1.15.0"
 expect-test = "1.5.1"
 futures = "0.3.32"
 gungraun = "0.18.2"
+ignore = "0.4.26"
 itertools = "0.14.0"
 ls_types = { package = "ls-types", version = "0.0.6" }
 memchr = "2.8.0"
+notify-debouncer-full = "0.7.0"
 parser = { package = "rg_parser", path = "crates/vendor/parser" }
 proc-macro2 = "1.0.106"
 quote = "1.0.45"

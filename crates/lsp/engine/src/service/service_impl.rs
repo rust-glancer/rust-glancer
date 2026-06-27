@@ -111,7 +111,7 @@ impl EngineService for Service {
         path: PathBuf,
         text: Option<String>,
     ) -> EngineResult<()> {
-        self.diagnostics.launch_on_save(path.clone()).await;
+        self.diagnostics.launch_on_editor_save(path.clone()).await;
         let saved_text_len = text.as_ref().map(String::len);
         let mut documents = self.engine.documents.lock().await;
         documents.did_save(path.clone(), text.as_deref());
@@ -218,7 +218,7 @@ impl EngineService for Service {
 
         // Diagnostics run as a workspace command, so one changed path is enough to start them.
         if let Some(path) = forwarded_paths.first().cloned() {
-            self.diagnostics.launch_on_save(path).await;
+            self.diagnostics.launch_on_external_change(path).await;
         }
 
         // The project decides whether a path is a source edit or a Cargo graph change.
