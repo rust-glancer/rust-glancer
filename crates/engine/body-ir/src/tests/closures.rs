@@ -102,3 +102,104 @@ pub fn use_it(user: User) -> User {
         "#]],
     );
 }
+
+#[test]
+fn infers_closure_params_from_direct_fn_trait_expectations() {
+    check_project_body_ir(
+        r#"
+//- /Cargo.toml
+[package]
+name = "body_direct_closure_expectation_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct Attr;
+
+pub struct AttrVec;
+
+impl AttrVec {
+    pub fn push(&mut self, attr: Attr) {}
+}
+
+pub struct User;
+
+pub fn with_attrs(f: impl FnOnce(&mut AttrVec)) {}
+pub fn with_pair(f: impl FnOnce((User, User)) -> User) {}
+
+pub fn use_it(attr: Attr) {
+    with_attrs(|attrs| attrs.push(attr));
+    with_pair(|(left, right)| left);
+}
+"#,
+        expect![[r#"
+            package body_direct_closure_expectation_fixture
+
+            body_direct_closure_expectation_fixture [lib]
+            body b0 fn body_direct_closure_expectation_fixture[lib]::crate::with_attrs @ 11:1-11:51
+            scopes
+            - s0 parent <none>: v0
+            - s1 parent s0: <none>
+            bindings
+            - v0 param f `f`: impl FnOnce(&mut AttrVec) => syntax impl FnOnce(&mut AttrVec) @ 11:19-11:20
+            body
+            expr e0 block s1 => () @ 11:49-11:51
+
+
+            body b1 fn body_direct_closure_expectation_fixture[lib]::crate::with_pair @ 12:1-12:58
+            scopes
+            - s0 parent <none>: v0
+            - s1 parent s0: <none>
+            bindings
+            - v0 param f `f`: impl FnOnce((User, User)) -> User => syntax impl FnOnce((User, User)) -> User @ 12:18-12:19
+            body
+            expr e0 block s1 => () @ 12:56-12:58
+
+
+            body b2 fn body_direct_closure_expectation_fixture[lib]::crate::use_it @ 14:1-17:2
+            scopes
+            - s0 parent <none>: v0
+            - s1 parent s0: <none>
+            - s2 parent s1: v1
+            - s3 parent s1: v2, v3
+            bindings
+            - v0 param attr `attr`: Attr => nominal struct body_direct_closure_expectation_fixture[lib]::crate::Attr @ 14:15-14:19
+            - v1 param attrs `attrs` => &mut nominal struct body_direct_closure_expectation_fixture[lib]::crate::AttrVec @ 15:17-15:22
+            - v2 param left `left` => nominal struct body_direct_closure_expectation_fixture[lib]::crate::User @ 16:17-16:21
+            - v3 param right `right` => nominal struct body_direct_closure_expectation_fixture[lib]::crate::User @ 16:23-16:28
+            body
+            expr e10 block s1 => () @ 14:27-17:2
+              stmt s0 expr; @ 15:5-15:42
+                expr e5 call => () @ 15:5-15:41
+                  callee
+                    expr e0 path with_attrs -> item fn body_direct_closure_expectation_fixture[lib]::crate::with_attrs => <unknown> @ 15:5-15:15
+                  arg
+                    expr e4 closure s2 (v1) => <unknown> @ 15:16-15:40
+                      body
+                        expr e3 method_call push -> fn impl AttrVec::push => () @ 15:24-15:40
+                          receiver
+                            expr e1 path attrs -> local v1 => &mut nominal struct body_direct_closure_expectation_fixture[lib]::crate::AttrVec @ 15:24-15:29
+                          arg
+                            expr e2 path attr -> local v0 => nominal struct body_direct_closure_expectation_fixture[lib]::crate::Attr @ 15:35-15:39
+              stmt s1 expr; @ 16:5-16:37
+                expr e9 call => () @ 16:5-16:36
+                  callee
+                    expr e6 path with_pair -> item fn body_direct_closure_expectation_fixture[lib]::crate::with_pair => <unknown> @ 16:5-16:14
+                  arg
+                    expr e8 closure s3 (v2, v3) => <unknown> @ 16:15-16:35
+                      body
+                        expr e7 path left -> local v2 => nominal struct body_direct_closure_expectation_fixture[lib]::crate::User @ 16:31-16:35
+
+
+            body b3 fn impl AttrVec::push @ 6:5-6:42
+            scopes
+            - s0 parent <none>: v0, v1
+            - s1 parent s0: <none>
+            bindings
+            - v0 self_param self `&mut self` => &mut Self struct body_direct_closure_expectation_fixture[lib]::crate::AttrVec @ 6:17-6:26
+            - v1 param attr `attr`: Attr => nominal struct body_direct_closure_expectation_fixture[lib]::crate::Attr @ 6:28-6:32
+            body
+            expr e0 block s1 => () @ 6:40-6:42
+        "#]],
+    );
+}

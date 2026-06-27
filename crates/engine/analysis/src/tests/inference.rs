@@ -665,6 +665,45 @@ pub fn expected_destination(def_map: &DefMap) {
 }
 
 #[test]
+fn infers_closure_params_from_direct_fn_trait_expectations() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_direct_closure_expectation_inference"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct Attr;
+
+pub struct AttrVec;
+
+impl AttrVec {
+    pub fn push(&mut self, attr: Attr) {}
+}
+
+pub fn with_attrs(f: impl FnOnce(&mut AttrVec)) {}
+
+pub fn use_it(attr: Attr) {
+    with_attrs(|attrs| attrs$type_attrs$.push(attr)$type_push$);
+}
+"#,
+        &[
+            AnalysisQuery::ty("direct closure expected param", "type_attrs"),
+            AnalysisQuery::ty("direct closure expected method call", "type_push"),
+        ],
+        expect![[r#"
+            direct closure expected param
+            - &mut nominal struct analysis_direct_closure_expectation_inference[lib]::crate::AttrVec
+
+            direct closure expected method call
+            - ()
+        "#]],
+    );
+}
+
+#[test]
 fn propagates_expected_types_through_result_expressions() {
     check_analysis_queries(
         r#"
