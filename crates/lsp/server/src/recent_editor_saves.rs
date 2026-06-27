@@ -4,13 +4,14 @@
 //! files and ignore watched changes that still match the same file metadata.
 
 use std::{
-    fs,
     path::{Path, PathBuf},
     sync::Arc,
-    time::{Duration, Instant, SystemTime},
+    time::{Duration, Instant},
 };
 
 use tokio::sync::Mutex;
+
+use crate::file_identity::FileIdentity;
 
 const RECENT_EDITOR_SAVE_TTL: Duration = Duration::from_secs(2);
 const MAX_RECENT_EDITOR_SAVES: usize = 128;
@@ -71,13 +72,13 @@ impl RecentEditorSavesInner {
 
     fn is_save_echo_at(&mut self, path: &Path, now: Instant) -> bool {
         self.prune_expired(now);
-        let Some((path, metadata)) = file_identity(path) else {
+        let Some((path, identity)) = FileIdentity::read(path) else {
             return false;
         };
 
         self.entries
             .iter()
-            .any(|entry| entry.path == path && entry.metadata == metadata)
+            .any(|entry| entry.path == path && entry.identity == identity)
     }
 
     fn prune_expired(&mut self, now: Instant) {
@@ -92,41 +93,19 @@ impl RecentEditorSavesInner {
 #[derive(Clone, Debug)]
 struct RecentEditorSave {
     path: PathBuf,
-    metadata: FileIdentity,
+    identity: FileIdentity,
     recorded_at: Instant,
 }
 
 impl RecentEditorSave {
     fn from_path(path: &Path, recorded_at: Instant) -> Option<Self> {
-        let (path, metadata) = file_identity(path)?;
+        let (path, identity) = FileIdentity::read(path)?;
         Some(Self {
             path,
-            metadata,
+            identity,
             recorded_at,
         })
     }
-}
-
-/// Disk identity used to decide whether a watched event is the same save.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct FileIdentity {
-    len: u64,
-    modified: SystemTime,
-}
-
-fn file_identity(path: &Path) -> Option<(PathBuf, FileIdentity)> {
-    let metadata = fs::metadata(path).ok()?;
-    if !metadata.is_file() {
-        return None;
-    }
-
-    Some((
-        path.canonicalize().unwrap_or_else(|_| path.to_path_buf()),
-        FileIdentity {
-            len: metadata.len(),
-            modified: metadata.modified().ok()?,
-        },
-    ))
 }
 
 #[cfg(test)]
