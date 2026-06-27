@@ -11,13 +11,14 @@ use std::{
     hash::{Hash, Hasher},
     path::{Path, PathBuf},
     sync::Arc,
+    time::Duration,
 };
 
 use ls_types::ProgressToken;
 use rg_lsp_proto::{AnalysisConfig, DiagnosticsConfig};
 use tokio::{sync::Mutex, task::JoinHandle};
 
-use crate::{documents::DocumentStore, service::ServiceNotificationsSink};
+use crate::{debounce::Debouncer, documents::DocumentStore, service::ServiceNotificationsSink};
 
 mod cargo;
 mod command;
@@ -30,6 +31,8 @@ use self::{
     task::DiagnosticsTaskContext,
 };
 
+const EXTERNAL_CHANGE_DIAGNOSTICS_DEBOUNCE: Duration = Duration::from_secs(1);
+
 /// Launches Cargo diagnostics independently from the synchronous analysis engine.
 #[derive(Clone, Debug)]
 pub(crate) struct DiagnosticsHandle {
@@ -37,6 +40,7 @@ pub(crate) struct DiagnosticsHandle {
     documents: Arc<Mutex<DocumentStore>>,
     inner: Arc<Mutex<DiagnosticsHandleInner>>,
     current: Arc<Mutex<Option<CurrentDiagnostics>>>,
+    external_change_debouncer: Debouncer,
 }
 
 impl DiagnosticsHandle {
@@ -49,6 +53,7 @@ impl DiagnosticsHandle {
             documents,
             inner: Arc::default(),
             current: Arc::default(),
+            external_change_debouncer: Debouncer::new(EXTERNAL_CHANGE_DIAGNOSTICS_DEBOUNCE),
         }
     }
 
@@ -68,9 +73,29 @@ impl DiagnosticsHandle {
         self.launch(DiagnosticsTrigger::Startup).await;
     }
 
-    pub(crate) async fn launch_on_save(&self, saved_path: PathBuf) {
-        self.launch(DiagnosticsTrigger::Save { path: saved_path })
+    pub(crate) async fn launch_on_editor_save(&self, saved_path: PathBuf) {
+        self.external_change_debouncer.cancel();
+        self.launch(DiagnosticsTrigger::EditorSave { path: saved_path })
             .await;
+    }
+
+    pub(crate) async fn launch_on_external_change(&self, changed_path: PathBuf) {
+        if !self.on_save_diagnostics_enabled().await {
+            return;
+        }
+
+        // The previous cargo run belongs to an older saved snapshot. Stop it immediately, then
+        // wait for nearby external changes to settle before spending work on a replacement run.
+        self.cancel_current().await;
+
+        let handle = self.clone();
+        self.external_change_debouncer.call(move || {
+            tokio::spawn(async move {
+                handle
+                    .launch(DiagnosticsTrigger::ExternalChange { path: changed_path })
+                    .await;
+            });
+        });
     }
 
     async fn launch(&self, trigger: DiagnosticsTrigger) {
@@ -96,10 +121,24 @@ impl DiagnosticsHandle {
     }
 
     pub(crate) async fn shutdown(&self) {
+        self.external_change_debouncer.cancel();
         if let Some(current) = self.current.lock().await.take() {
             current.task.abort();
             current.progress.finish(ProgressFinish::Cancelled).await;
         }
+    }
+
+    async fn on_save_diagnostics_enabled(&self) -> bool {
+        let inner = self.inner.lock().await;
+        if !inner.config.on_save {
+            return false;
+        }
+        if inner.workspace_root.is_none() {
+            tracing::debug!("cargo diagnostics requested before workspace configuration");
+            return false;
+        }
+
+        true
     }
 
     async fn prepare_launch(&self, trigger: DiagnosticsTrigger) -> Option<DiagnosticsSnapshot> {
@@ -173,14 +212,15 @@ struct DiagnosticsSnapshot {
 #[derive(Debug)]
 enum DiagnosticsTrigger {
     Startup,
-    Save { path: PathBuf },
+    EditorSave { path: PathBuf },
+    ExternalChange { path: PathBuf },
 }
 
 impl DiagnosticsTrigger {
     fn enabled(&self, config: &DiagnosticsConfig) -> bool {
         match self {
             Self::Startup => config.on_startup,
-            Self::Save { .. } => config.on_save,
+            Self::EditorSave { .. } | Self::ExternalChange { .. } => config.on_save,
         }
     }
 }
@@ -189,7 +229,8 @@ impl std::fmt::Display for DiagnosticsTrigger {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Startup => f.write_str("startup"),
-            Self::Save { path } => write!(f, "save:{}", path.display()),
+            Self::EditorSave { path } => write!(f, "editor-save:{}", path.display()),
+            Self::ExternalChange { path } => write!(f, "external-change:{}", path.display()),
         }
     }
 }

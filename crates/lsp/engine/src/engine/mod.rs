@@ -1,5 +1,4 @@
 mod command;
-mod debounce;
 mod project_proxy;
 mod worker;
 
@@ -18,9 +17,9 @@ use rg_lsp_proto::{ServiceLogLevel, ServiceNotification};
 use tokio::sync::{Mutex, oneshot};
 
 pub(crate) use self::command::EngineCommand;
-use self::debounce::Debouncer;
 use self::{command::EngineResponse, worker::EngineWorker};
 use crate::{
+    debounce::Debouncer,
     dirty_state::DirtyState,
     documents::{DirtyDocumentSnapshotState, DocumentStore},
     memory::MemoryControl,
