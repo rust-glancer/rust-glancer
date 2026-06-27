@@ -16,6 +16,8 @@ allow = [
   "MIT",
   "MIT-0",
   "Unicode-3.0",
+  "ISC",
+  "CC0-1.0"
 ]
 
 [bans]
