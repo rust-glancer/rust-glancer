@@ -165,7 +165,7 @@ mod tests {
         let saves = RecentEditorSaves::default();
 
         saves.record_editor_save(&path).await;
-        std::fs::write(&path, "pub fn external_agent_edit() {}\n")
+        std::fs::write(&path, "pub fn external_edit() {}\n")
             .expect("fixture file should be writable");
 
         assert_eq!(saves.saves_to_process(vec![path.clone()]).await, vec![path]);
@@ -178,12 +178,12 @@ mod tests {
             //- /src/lib.rs
             pub fn saved() {}
 
-            //- /src/agent.rs
+            //- /src/ext.rs
             pub fn external() {}
             "#,
         );
         let saved_path = fixture.path("src/lib.rs");
-        let external_path = fixture.path("src/agent.rs");
+        let external_path = fixture.path("src/ext.rs");
         let saves = RecentEditorSaves::default();
 
         saves.record_editor_save(&saved_path).await;
