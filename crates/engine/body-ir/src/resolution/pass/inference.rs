@@ -24,7 +24,7 @@ use crate::{
     resolution::{
         TypeRefUseSite,
         infer::{BodyCallInference, BodyMemberInference, BodyPatternInference},
-        support::direct_callable_arg_expectations,
+        support::callable_arg_expectations,
     },
 };
 
@@ -378,14 +378,14 @@ where
         )
     }
 
-    /// Use direct callable return syntax to constrain matching closure bodies.
+    /// Use callable return syntax to constrain matching closure bodies.
     ///
     /// Parameter expectations run earlier because they can affect method lookup
     /// inside the closure body. Return expectations are different: by this
     /// point the closure body has already been selected and shaped, so this hook
-    /// only pushes a concrete `impl FnOnce(...) -> User` result into the body
-    /// expression and lets normal result-expression propagation do the rest.
-    fn constrain_direct_closure_return_expected_types(
+    /// only pushes a concrete `FnOnce(...) -> User` result into the body expression
+    /// and lets normal result-expression propagation do the rest.
+    fn constrain_closure_return_expected_types(
         &mut self,
         call: ExprId,
         args: &[ExprId],
@@ -397,7 +397,7 @@ where
             // Collect first while the read-only body context is alive, then
             // apply constraints after it is dropped and the inference table can
             // be mutably borrowed.
-            for (arg, expectation) in direct_callable_arg_expectations(context, call, args)? {
+            for (arg, expectation) in callable_arg_expectations(context, call, args)? {
                 let ExprKind::Closure {
                     body: Some(body), ..
                 } = context.body().expr_unchecked(arg).kind.clone()
@@ -405,9 +405,9 @@ where
                     continue;
                 };
 
-                // Direct generic returns such as `<unknown>` are not useful as
-                // concrete expectations. Shared return variables need a
-                // callable-bound expectation that preserves inference slots.
+                // Generic returns such as `<unknown>` are not useful as concrete expectations.
+                // Shared return variables need a callable-bound expectation that preserves
+                // inference slots.
                 if expectation.return_ty.has_unknown() {
                     continue;
                 }
@@ -545,7 +545,7 @@ where
                 args,
             } => {
                 self.constrain_call_target_argument_expected_types(expr, &args)?;
-                self.constrain_direct_closure_return_expected_types(expr, &args)?;
+                self.constrain_closure_return_expected_types(expr, &args)?;
                 self.solve_call_target_generic_trait_obligations(expr, &args, None)?;
                 self.constrain_enum_variant_payload_expected_types(expr, callee, args)
             }
@@ -555,7 +555,7 @@ where
                 ..
             } => {
                 self.constrain_call_target_argument_expected_types(expr, &args)?;
-                self.constrain_direct_closure_return_expected_types(expr, &args)?;
+                self.constrain_closure_return_expected_types(expr, &args)?;
 
                 let context = self.pass.providers.context(self.pass.body);
                 BodyCallInference::new(context).constrain_selected_method_receiver_and_arguments(
@@ -568,7 +568,7 @@ where
             }
             ExprKind::MethodCall { args, .. } => {
                 self.constrain_call_target_argument_expected_types(expr, &args)?;
-                self.constrain_direct_closure_return_expected_types(expr, &args)?;
+                self.constrain_closure_return_expected_types(expr, &args)?;
                 self.solve_call_target_generic_trait_obligations(expr, &args, None)
             }
             ExprKind::Record { fields, .. } => {

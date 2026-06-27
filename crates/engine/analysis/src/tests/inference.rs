@@ -704,6 +704,69 @@ pub fn use_it(attr: Attr) {
 }
 
 #[test]
+fn infers_closure_params_from_generic_fn_trait_bounds() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_generic_closure_expectation_inference"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct User;
+pub struct Name;
+
+impl User {
+    pub fn name(&self) -> Name {}
+}
+
+pub fn visit<T, F: FnOnce(T)>(value: T, f: F) {}
+
+pub fn visit_all<T, F>(values: &[T], f: F)
+where
+    F: FnMut(&T),
+{}
+
+pub fn visit_conflict<T, F>(value: T, f: F)
+where
+    F: FnOnce(T),
+    F: FnOnce(bool),
+{}
+
+pub fn use_it(user: User, users: &[User]) {
+    visit(user, |user| user$type_inline_param$.name()$type_inline_call$);
+    visit_all(users, |user| user$type_where_param$.name()$type_where_call$);
+    visit_conflict(user, |value| value$type_conflict_param$);
+}
+"#,
+        &[
+            AnalysisQuery::ty("inline generic closure param", "type_inline_param"),
+            AnalysisQuery::ty("inline generic closure method call", "type_inline_call"),
+            AnalysisQuery::ty("where generic closure param", "type_where_param"),
+            AnalysisQuery::ty("where generic closure method call", "type_where_call"),
+            AnalysisQuery::ty("conflicting generic closure param", "type_conflict_param"),
+        ],
+        expect![[r#"
+            inline generic closure param
+            - nominal struct analysis_generic_closure_expectation_inference[lib]::crate::User
+
+            inline generic closure method call
+            - nominal struct analysis_generic_closure_expectation_inference[lib]::crate::Name
+
+            where generic closure param
+            - &nominal struct analysis_generic_closure_expectation_inference[lib]::crate::User
+
+            where generic closure method call
+            - nominal struct analysis_generic_closure_expectation_inference[lib]::crate::Name
+
+            conflicting generic closure param
+            - <unknown>
+        "#]],
+    );
+}
+
+#[test]
 fn infers_closure_body_from_direct_fn_trait_return_expectations() {
     check_analysis_queries(
         r#"

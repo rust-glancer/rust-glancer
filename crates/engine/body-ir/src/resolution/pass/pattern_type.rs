@@ -15,7 +15,7 @@ use rg_ty::{ReferencePeelingCandidates, Ty};
 
 use crate::ir::{ExprKind, PatKind, RecordPatField, StmtKind};
 use crate::resolution::{
-    BodyResolutionContext, TypeRefUseSite, support::direct_callable_arg_expectations,
+    BodyResolutionContext, TypeRefUseSite, support::callable_arg_expectations,
 };
 
 pub(super) struct PatternTypePropagationPass<'query, D, I> {
@@ -152,7 +152,7 @@ where
     }
 
     /// Check if call has:
-    /// 1. `impl Fn*(...)` arguments in its target fn
+    /// 1. `impl Fn*(...)` or `F: Fn*(...)` arguments in its target fn
     /// 2. closures passed as arguments in matching positions.
     ///
     /// If so, propagate types from the (1) types to arguments in (2) closure.
@@ -165,8 +165,8 @@ where
         args: &[ExprId],
         updates: &mut Vec<(BindingId, Ty)>,
     ) -> Result<(), PackageStoreError> {
-        for (arg, expectation) in direct_callable_arg_expectations(self.context, call, args)? {
-            // Only direct closure arguments can receive callable parameter expectations here.
+        for (arg, expectation) in callable_arg_expectations(self.context, call, args)? {
+            // Only closure arguments can receive these types here.
             // Other expression kinds still get ordinary call-argument expectations elsewhere.
             let ExprKind::Closure { params, .. } =
                 self.context.body().expr_unchecked(arg).kind.clone()
