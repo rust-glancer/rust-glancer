@@ -6,7 +6,8 @@
 use rg_ir_model::items::Documentation;
 use rg_ir_model::{DefId, FunctionRef, ModuleRef, Path, SemanticItemRef, identity::DeclarationRef};
 use rg_ir_storage::{
-    DefMapQuery, ItemStoreQuery, ScopeNamespace, VisibleScopeDef, VisibleScopeOrigin,
+    DefMapQuery, DefMapSource, ItemStoreQuery, NameResolutionFilter, ScopeNamespace,
+    VisibleScopeDef, VisibleScopeOrigin,
 };
 
 use crate::{IndexedViewDb, SymbolKind};
@@ -105,8 +106,12 @@ impl<'a, 'db> NameLookupView<'a, 'db> {
         importing_module: ModuleRef,
         qualifier: &Path,
     ) -> anyhow::Result<Vec<ModuleScopeName>> {
-        let resolved = DefMapQuery::new(self.db)
-            .resolve_path_in_type_namespace(importing_module, qualifier)?;
+        let def_maps = DefMapQuery::new(self.db);
+        let resolved = def_maps.scope_resolver().resolve_path(
+            importing_module,
+            qualifier,
+            NameResolutionFilter::TypesOnly,
+        )?;
         let mut names = Vec::new();
 
         // Qualified module lookup only lists names from modules. Associated items hang off type
@@ -115,9 +120,7 @@ impl<'a, 'db> NameLookupView<'a, 'db> {
             let DefId::Module(source_module) = def else {
                 continue;
             };
-            for visible_def in
-                DefMapQuery::new(self.db).visible_scope_defs(importing_module, source_module)?
-            {
+            for visible_def in def_maps.visible_scope_defs(importing_module, source_module)? {
                 if let Some(name) = self.module_scope_name(visible_def)? {
                     names.push(name);
                 }
@@ -146,21 +149,20 @@ impl<'a, 'db> NameLookupView<'a, 'db> {
         &self,
         visible_def: VisibleScopeDef,
     ) -> anyhow::Result<Option<ModuleScopeName>> {
-        let def_maps = DefMapQuery::new(self.db);
-        let declaration = DeclarationRef::from_def(visible_def.def);
         let mut function = None;
-        let (kind, documentation) = match visible_def.def {
+        let (declaration, kind, documentation) = match visible_def.def {
             DefId::Module(module) => {
-                let Some(data) = def_maps.module_data(module)? else {
+                let Some(data) = self.db.module_data(module)? else {
                     return Ok(None);
                 };
                 (
+                    DeclarationRef::Module(module),
                     SymbolKind::Module,
                     data.docs.as_ref().map(Documentation::text),
                 )
             }
             DefId::Local(local_def_ref) => {
-                let Some(data) = def_maps.local_def_data(local_def_ref)? else {
+                let Some(data) = self.db.local_def_data(local_def_ref)? else {
                     return Ok(None);
                 };
                 if let Some(SemanticItemRef::Function(function_ref)) =
@@ -168,7 +170,29 @@ impl<'a, 'db> NameLookupView<'a, 'db> {
                 {
                     function = Some(function_ref);
                 }
-                (SymbolKind::from_local_def_kind(data.kind), None)
+                (
+                    DeclarationRef::LocalDef(local_def_ref),
+                    SymbolKind::from_local_def_kind(data.kind),
+                    None,
+                )
+            }
+            DefId::EnumVariant(variant_def) => {
+                let item_query = ItemStoreQuery::new(self.db);
+                if let Some(variant_def_data) = self.db.local_enum_variant_data(variant_def)?
+                    && let Some(variant_ref) = item_query
+                        .enum_variant_ref_for_local_enum_variant(variant_def, variant_def_data)?
+                {
+                    let docs = item_query
+                        .enum_variant_data(variant_ref)?
+                        .and_then(|data| data.variant.docs.as_ref().map(Documentation::text));
+                    (
+                        DeclarationRef::EnumVariant(variant_ref),
+                        SymbolKind::EnumVariant,
+                        docs,
+                    )
+                } else {
+                    return Ok(None);
+                }
             }
         };
 

@@ -1,36 +1,58 @@
-//! Helpers for resolving paths against def-map scopes.
+//! Scope-graph name lookup for DefMap-backed module scopes.
 //!
-//! Resolution here is intentionally narrow:
-//! - it works only with already-built module scopes
-//! - it understands module navigation (`self`, `super`, `crate`)
-//! - it can return multiple definitions because several namespaces may share one textual name
+//! DefMap finalization, body-local DefMap finalization, and ordinary queries all need the same
+//! lookup rules while reading from different storage. This module owns those shared rules:
+//! lexical/body lookup, module path lookup, import expansion, visibility filtering, and the small
+//! macro-namespace queries needed before macro-specific precedence is applied.
 //!
-//! During def-map construction this module reads from the fixed-point scope snapshot. After
-//! construction, the same path-walking logic reads from frozen `DefMapDb` data.
+//! The resolver does not own scopes. It reads through `ScopeResolutionEnv` and
+//! `TargetResolutionEnv`, so finalization can pass current fixed-point snapshots while frozen
+//! queries read persisted DefMaps.
 
 use rg_ir_model::items::VisibilityLevel;
-use rg_ir_model::{DefId, DefMapRef, ModuleId, ModuleRef, Path, PathSegment, TargetRef};
+use rg_ir_model::{DefId, LocalDefRef, ModuleRef, Path, PathSegment};
 use rg_std::UniqueVec;
 use rg_text::Name;
 
-use super::super::{ImportPath, ModuleOrigin, ModuleScopeBuilder, Namespace, ScopeBinding};
+use super::super::{
+    ImportPath, LocalDefKind, ModuleOrigin, ModuleScopeBuilder, Namespace, ScopeBinding,
+};
 
 use super::resolution_env::{ScopeResolutionEnv, TargetResolutionEnv};
 
-/// Privacy-visible macro bindings collected before Rust macro lookup precedence is applied.
+/// Macro candidates kept in the buckets required by Rust lookup precedence.
+///
+/// Callers try `module_scope` before `standard_prelude`; this type only preserves the split while
+/// sharing the visibility walk.
 pub struct UnqualifiedMacroBindings {
     pub module_scope: Vec<ScopeBinding>,
     pub standard_prelude: Vec<ScopeBinding>,
 }
 
-/// Result of resolving a path against the frozen def-map graph.
+/// Result of walking a path through the current scope graph.
+///
+/// `unresolved_at` points at the first segment that could not be resolved. Keeping that status
+/// explicit lets callers report partial resolution without inferring failure from `resolved`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResolvePathResult {
     pub resolved: Vec<DefId>,
     pub unresolved_at: Option<usize>,
 }
 
-/// Namespace buckets that may contribute definitions for a path terminal.
+/// Item that can appear on the left side of a glob import.
+///
+/// Modules export visible scope bindings. Enums export visible variant constructors into the value
+/// namespace, as in `use Option::*`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GlobImportSource {
+    Module(ModuleRef),
+    Enum(LocalDefRef),
+}
+
+/// Namespace buckets considered for the current path segment.
+///
+/// Prefixes are always type-like because only modules and type definitions can be traversed. The
+/// caller chooses the terminal filter based on the use site.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NameResolutionFilter {
     /// Type, value, and macro namespaces.
@@ -51,12 +73,16 @@ impl NameResolutionFilter {
     }
 }
 
-/// Groups path lookup operations around one scope source.
-pub struct PathResolver<'env, E: ?Sized> {
+/// Applies name lookup rules over one abstract scope source.
+///
+/// `ScopeResolver` is storage-agnostic on purpose. During finalization the environment can expose
+/// partial builders plus the current fixed-point scope snapshot; after finalization the same lookup
+/// code reads frozen DefMaps through `DefMapQuery`.
+pub struct ScopeResolver<'env, E: ?Sized> {
     env: &'env E,
 }
 
-impl<'env, E: ?Sized> PathResolver<'env, E> {
+impl<'env, E: ?Sized> ScopeResolver<'env, E> {
     pub fn new(env: &'env E) -> Self {
         Self { env }
     }
@@ -69,7 +95,8 @@ impl<'env, E: ?Sized> PathResolver<'env, E> {
     }
 }
 
-impl<E: ScopeResolutionEnv + ?Sized> PathResolver<'_, E> {
+impl<E: ScopeResolutionEnv + ?Sized> ScopeResolver<'_, E> {
+    /// Return the namespace a resolved definition occupies when it is inserted through an import.
     pub fn namespace_for_def(&self, def: DefId) -> Result<Option<Namespace>, E::Error> {
         match def {
             DefId::Module(_) => Ok(Some(Namespace::Types)),
@@ -77,10 +104,14 @@ impl<E: ScopeResolutionEnv + ?Sized> PathResolver<'_, E> {
                 .env
                 .local_def_kind(local_def_ref)?
                 .map(|kind| kind.namespace())),
+            DefId::EnumVariant(_) => Ok(Some(Namespace::Values)),
         }
     }
 
-    /// Walks a path through lexical scopes without module-keyword or target fallback rules.
+    /// Walk a path through lexical scopes without module-keyword or target fallback rules.
+    ///
+    /// Body-local paths use this form because synthetic modules represent nested lexical scopes,
+    /// not full Rust modules with extern roots and preludes.
     pub fn resolve_lexical_path(
         &self,
         importing_module: ModuleRef,
@@ -132,6 +163,7 @@ impl<E: ScopeResolutionEnv + ?Sized> PathResolver<'_, E> {
         })
     }
 
+    /// Resolve one name inside a single lexical module without walking parent scopes.
     pub fn resolve_lexical_name_in_module(
         &self,
         importing_module: ModuleRef,
@@ -185,18 +217,53 @@ impl<E: ScopeResolutionEnv + ?Sized> PathResolver<'_, E> {
         let mut next_defs = UniqueVec::new();
 
         for current_def in current_defs {
-            let DefId::Module(module_ref) = current_def else {
-                continue;
-            };
-
-            for resolved_def in
-                self.resolve_lexical_name_in_module(importing_module, module_ref, name, filter)?
-            {
-                next_defs.push(resolved_def);
+            match current_def {
+                DefId::Module(module_ref) => {
+                    for resolved_def in self.resolve_lexical_name_in_module(
+                        importing_module,
+                        module_ref,
+                        name,
+                        filter,
+                    )? {
+                        next_defs.push(resolved_def);
+                    }
+                }
+                DefId::Local(local_def_ref) => {
+                    if let Some(variant) =
+                        self.enum_variant_for_name(local_def_ref, name, filter)?
+                    {
+                        next_defs.push(DefId::EnumVariant(variant));
+                    }
+                }
+                DefId::EnumVariant(_) => {}
             }
         }
 
         Ok(next_defs.into_vec())
+    }
+
+    fn enum_variant_for_name(
+        &self,
+        enum_def: LocalDefRef,
+        name: &str,
+        filter: NameResolutionFilter,
+    ) -> Result<Option<rg_ir_model::LocalEnumVariantRef>, E::Error> {
+        if matches!(filter, NameResolutionFilter::TypesOnly) {
+            return Ok(None);
+        }
+        if !self
+            .env
+            .local_def_kind(enum_def)?
+            .is_some_and(|kind| kind == LocalDefKind::Enum)
+        {
+            return Ok(None);
+        }
+
+        Ok(self
+            .env
+            .local_enum_variant_entries_for_enum(enum_def)?
+            .into_iter()
+            .find_map(|entry| (entry.data.name == name).then_some(entry.variant_ref)))
     }
 
     fn first_name_in_lexical_scope(
@@ -225,6 +292,11 @@ impl<E: ScopeResolutionEnv + ?Sized> PathResolver<'_, E> {
         Ok(Vec::new())
     }
 
+    /// Visibility subset available to lexical-only lookup.
+    ///
+    /// Body lookup does not need target roots or extern/prelude fallback. That keeps this usable with
+    /// `ScopeResolutionEnv`, but also means target-relative `pub(in path)` restrictions are handled
+    /// only by target-aware lookup.
     fn lexical_binding_is_visible(
         &self,
         importing_module: ModuleRef,
@@ -253,6 +325,7 @@ impl<E: ScopeResolutionEnv + ?Sized> PathResolver<'_, E> {
         })
     }
 
+    /// Walk parent links inside one module origin to test Rust's ancestor-based visibility.
     fn module_is_descendant_of(
         &self,
         module: ModuleRef,
@@ -281,7 +354,10 @@ impl<E: ScopeResolutionEnv + ?Sized> PathResolver<'_, E> {
     }
 }
 
-impl<E: TargetResolutionEnv + ?Sized> PathResolver<'_, E> {
+impl<E: TargetResolutionEnv + ?Sized> ScopeResolver<'_, E> {
+    /// Build the source module scope as observed by `importing_module`.
+    ///
+    /// Glob imports use this to copy only bindings that pass visibility from the importer.
     pub fn visible_scope(
         &self,
         importing_module: ModuleRef,
@@ -369,6 +445,10 @@ impl<E: TargetResolutionEnv + ?Sized> PathResolver<'_, E> {
         self.visible_macro_bindings(importing_module, prelude_module, name)
     }
 
+    /// Resolve a normal Rust path from one module.
+    ///
+    /// This includes module keywords, the extern prelude, the selected standard prelude, and
+    /// namespace-specific shadowing for the first segment.
     pub fn resolve_path(
         &self,
         importing_module: ModuleRef,
@@ -383,83 +463,137 @@ impl<E: TargetResolutionEnv + ?Sized> PathResolver<'_, E> {
         )
     }
 
-    /// Resolves an import path to every definition it denotes in the current scope snapshot.
+    /// Resolve an import path to every definition it denotes from the importing module.
     pub fn import_defs(
         &self,
-        importing_target: TargetRef,
-        importing_module: ModuleId,
+        importing_module: ModuleRef,
         path: &ImportPath,
     ) -> Result<Vec<DefId>, E::Error> {
-        self.import_defs_from_module(
-            ModuleRef {
-                origin: DefMapRef::Target(importing_target),
-                module: importing_module,
-            },
-            path,
-        )
+        self.import_defs_with_filter(importing_module, path, NameResolutionFilter::AllNamespaces)
     }
 
-    /// Resolves a path and keeps only module results.
+    /// Resolve an import path and keep only module results.
     pub fn import_modules(
         &self,
-        importing_target: TargetRef,
-        importing_module: ModuleId,
-        path: &ImportPath,
-    ) -> Result<Vec<ModuleRef>, E::Error> {
-        self.import_modules_from_module(
-            ModuleRef {
-                origin: DefMapRef::Target(importing_target),
-                module: importing_module,
-            },
-            path,
-        )
-    }
-
-    /// Resolves an import path from a concrete module origin.
-    ///
-    /// Target-level imports delegate here, and body-local import finalization can use the same path
-    /// rules without losing the body origin of the importing synthetic module.
-    pub fn import_defs_from_module(
-        &self,
-        importing_module: ModuleRef,
-        path: &ImportPath,
-    ) -> Result<Vec<DefId>, E::Error> {
-        self.import_defs_from_module_with_filter(
-            importing_module,
-            path,
-            NameResolutionFilter::AllNamespaces,
-        )
-    }
-
-    /// Resolves an import path from a concrete module origin and keeps only module results.
-    pub fn import_modules_from_module(
-        &self,
         importing_module: ModuleRef,
         path: &ImportPath,
     ) -> Result<Vec<ModuleRef>, E::Error> {
-        let resolved_defs = self.import_defs_from_module_with_filter(
-            importing_module,
-            path,
-            NameResolutionFilter::TypesOnly,
-        )?;
+        let resolved_defs =
+            self.import_defs_with_filter(importing_module, path, NameResolutionFilter::TypesOnly)?;
 
-        let mut modules = Vec::new();
+        let mut modules = UniqueVec::new();
         for resolved_def in resolved_defs {
-            if let DefId::Module(module_ref) = resolved_def
-                && !modules.contains(&module_ref)
-            {
+            if let DefId::Module(module_ref) = resolved_def {
                 modules.push(module_ref);
             }
         }
 
-        Ok(modules)
+        Ok(modules.into_vec())
     }
 
-    /// Resolves a path whose terminal segment must be a macro binding.
+    /// Resolve a glob import prefix to every source that can export bindings.
+    pub fn import_glob_sources(
+        &self,
+        importing_module: ModuleRef,
+        path: &ImportPath,
+    ) -> Result<Vec<GlobImportSource>, E::Error> {
+        let resolved_defs =
+            self.import_defs_with_filter(importing_module, path, NameResolutionFilter::TypesOnly)?;
+
+        let mut sources = UniqueVec::new();
+        for resolved_def in resolved_defs {
+            match resolved_def {
+                DefId::Module(module_ref) => {
+                    sources.push(GlobImportSource::Module(module_ref));
+                }
+                DefId::Local(local_def_ref)
+                    if self
+                        .env
+                        .local_def_kind(local_def_ref)?
+                        .is_some_and(|kind| kind == LocalDefKind::Enum) =>
+                {
+                    sources.push(GlobImportSource::Enum(local_def_ref));
+                }
+                DefId::Local(_) | DefId::EnumVariant(_) => {}
+            }
+        }
+
+        Ok(sources.into_vec())
+    }
+
+    /// Build the visible bindings exported by one glob import source.
+    pub fn visible_glob_source_scope(
+        &self,
+        importing_module: ModuleRef,
+        glob_source: GlobImportSource,
+    ) -> Result<ModuleScopeBuilder, E::Error> {
+        match glob_source {
+            GlobImportSource::Module(source_module) => {
+                self.visible_scope(importing_module, source_module)
+            }
+            GlobImportSource::Enum(enum_def) => {
+                let mut visible_scope = ModuleScopeBuilder::default();
+                for (name, binding) in
+                    self.visible_enum_variant_bindings(importing_module, enum_def)?
+                {
+                    visible_scope.insert_binding(&name, Namespace::Values, binding);
+                }
+                Ok(visible_scope)
+            }
+        }
+    }
+
+    /// Return value bindings that a glob import from an enum should introduce.
+    fn visible_enum_variant_bindings(
+        &self,
+        importing_module: ModuleRef,
+        enum_def: LocalDefRef,
+    ) -> Result<Vec<(Name, ScopeBinding)>, E::Error> {
+        let Some(enum_data) = self.env.local_def_data(enum_def)? else {
+            return Ok(Vec::new());
+        };
+        if enum_data.kind != LocalDefKind::Enum {
+            return Ok(Vec::new());
+        }
+
+        let enum_binding = ScopeBinding {
+            def: DefId::Local(enum_def),
+            visibility: enum_data.visibility.clone(),
+            owner: ModuleRef {
+                origin: enum_def.origin,
+                module: enum_data.module,
+            },
+            origin: super::super::ScopeBindingOrigin::Direct,
+        };
+        if !self.binding_is_visible(importing_module, &enum_binding)? {
+            return Ok(Vec::new());
+        }
+
+        Ok(self
+            .env
+            .local_enum_variant_entries_for_enum(enum_def)?
+            .into_iter()
+            .map(|entry| {
+                (
+                    entry.data.name.clone(),
+                    ScopeBinding {
+                        def: DefId::EnumVariant(entry.variant_ref),
+                        visibility: entry.data.visibility.clone(),
+                        owner: ModuleRef {
+                            origin: enum_def.origin,
+                            module: entry.data.module,
+                        },
+                        origin: super::super::ScopeBindingOrigin::Direct,
+                    },
+                )
+            })
+            .collect())
+    }
+
+    /// Resolve a macro path by walking any prefix and reading the terminal macro bucket.
     pub fn macro_bindings(
         &self,
-        importing_target: TargetRef,
-        importing_module: ModuleId,
+        importing_module: ModuleRef,
         path: &ImportPath,
     ) -> Result<Vec<ScopeBinding>, E::Error> {
         let Some((terminal, prefix)) = path.segments.split_last() else {
@@ -469,19 +603,14 @@ impl<E: TargetResolutionEnv + ?Sized> PathResolver<'_, E> {
             return Ok(Vec::new());
         };
 
-        let importing_module_ref = ModuleRef {
-            origin: DefMapRef::Target(importing_target),
-            module: importing_module,
-        };
         let source_modules = if prefix.is_empty() {
             if path.absolute {
                 Vec::new()
             } else {
-                vec![importing_module_ref]
+                vec![importing_module]
             }
         } else {
             self.import_modules(
-                importing_target,
                 importing_module,
                 &ImportPath {
                     absolute: path.absolute,
@@ -496,7 +625,7 @@ impl<E: TargetResolutionEnv + ?Sized> PathResolver<'_, E> {
                 continue;
             };
             for binding in entry.macros() {
-                if self.binding_is_visible(importing_module_ref, binding)? {
+                if self.binding_is_visible(importing_module, binding)? {
                     bindings.push(binding.clone());
                 }
             }
@@ -505,7 +634,7 @@ impl<E: TargetResolutionEnv + ?Sized> PathResolver<'_, E> {
         Ok(bindings)
     }
 
-    fn import_defs_from_module_with_filter(
+    fn import_defs_with_filter(
         &self,
         importing_module: ModuleRef,
         path: &ImportPath,
@@ -521,7 +650,10 @@ impl<E: TargetResolutionEnv + ?Sized> PathResolver<'_, E> {
         Ok(result.resolved)
     }
 
-    /// Walks a path through one target-aware resolution environment.
+    /// Shared path walker for ordinary item paths and imports.
+    ///
+    /// The first segment chooses the initial search space. Each following segment is resolved inside
+    /// the modules or enum definitions produced by the previous step.
     fn resolve_path_segments(
         &self,
         importing_module: ModuleRef,
@@ -566,7 +698,7 @@ impl<E: TargetResolutionEnv + ?Sized> PathResolver<'_, E> {
         })
     }
 
-    /// Resolves the first path segment, which decides the starting search space.
+    /// Resolve the path head, where Rust allows roots, lexical lookup, and prelude fallback.
     fn first_segment(
         &self,
         importing_module: ModuleRef,
@@ -636,7 +768,10 @@ impl<E: TargetResolutionEnv + ?Sized> PathResolver<'_, E> {
         }
     }
 
-    /// Resolves every path segment after the first one.
+    /// Resolve a segment inside the containers produced by the previous segment.
+    ///
+    /// Modules expose ordinary scope entries. Enum definitions expose their variant constructors in
+    /// value positions.
     fn next_segment(
         &self,
         importing_module: ModuleRef,
@@ -647,32 +782,44 @@ impl<E: TargetResolutionEnv + ?Sized> PathResolver<'_, E> {
         let mut next_defs = UniqueVec::new();
 
         for current_def in current_defs {
-            let DefId::Module(module_ref) = current_def else {
-                continue;
-            };
-
-            match segment {
-                PathSegment::SelfKw => {
-                    next_defs.push(DefId::Module(module_ref));
-                }
-                PathSegment::SuperKw => {
-                    if let Some(parent) = self.env.parent_module(module_ref)? {
-                        next_defs.push(DefId::Module(parent));
+            match current_def {
+                DefId::Module(module_ref) => match segment {
+                    PathSegment::SelfKw => {
+                        next_defs.push(DefId::Module(module_ref));
                     }
-                }
-                PathSegment::CrateKw => {
-                    if let Some(root) = self.env.root_module(module_ref.origin.origin_target())? {
-                        next_defs.push(DefId::Module(root));
+                    PathSegment::SuperKw => {
+                        if let Some(parent) = self.env.parent_module(module_ref)? {
+                            next_defs.push(DefId::Module(parent));
+                        }
                     }
-                }
-                PathSegment::DollarCrate(_) => {}
-                PathSegment::Name(name) => {
-                    for resolved_def in
-                        self.name_in_module(importing_module, module_ref, name.as_str(), filter)?
+                    PathSegment::CrateKw => {
+                        if let Some(root) =
+                            self.env.root_module(module_ref.origin.origin_target())?
+                        {
+                            next_defs.push(DefId::Module(root));
+                        }
+                    }
+                    PathSegment::DollarCrate(_) => {}
+                    PathSegment::Name(name) => {
+                        for resolved_def in self.name_in_module(
+                            importing_module,
+                            module_ref,
+                            name.as_str(),
+                            filter,
+                        )? {
+                            next_defs.push(resolved_def);
+                        }
+                    }
+                },
+                DefId::Local(local_def_ref) => {
+                    if let PathSegment::Name(name) = segment
+                        && let Some(variant) =
+                            self.enum_variant_for_name(local_def_ref, name.as_str(), filter)?
                     {
-                        next_defs.push(resolved_def);
+                        next_defs.push(DefId::EnumVariant(variant));
                     }
                 }
+                DefId::EnumVariant(_) => {}
             }
         }
 
@@ -793,7 +940,10 @@ impl<E: TargetResolutionEnv + ?Sized> PathResolver<'_, E> {
         })
     }
 
-    /// Resolves the module that anchors a `pub(in path)` visibility restriction.
+    /// Resolve the module that anchors a `pub(in path)` visibility restriction.
+    ///
+    /// Unsupported or unresolved restrictions stay hidden rather than becoming visible through a
+    /// partial guess.
     fn restricted_visibility_owner(
         &self,
         owner: ModuleRef,

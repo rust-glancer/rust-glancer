@@ -513,6 +513,7 @@ where
         };
         let def_maps = self.context().def_map_query();
         let body_defs = def_maps
+            .scope_resolver()
             .resolve_lexical_path(from, path, NameResolutionFilter::ValuesOnly)?
             .resolved;
         if self.semantic_items_include_const_like(body_defs)? {
@@ -520,7 +521,10 @@ where
         }
 
         let owner_module = self.body.owner_module();
-        let owner_defs = def_maps.resolve_path(owner_module, path)?.resolved;
+        let owner_defs = def_maps
+            .scope_resolver()
+            .resolve_path(owner_module, path, NameResolutionFilter::AllNamespaces)?
+            .resolved;
         if self.semantic_items_include_const_like(owner_defs)? {
             return Ok(true);
         }
@@ -530,7 +534,10 @@ where
             return Ok(false);
         }
 
-        let fallback_defs = def_maps.resolve_path(fallback_module, path)?.resolved;
+        let fallback_defs = def_maps
+            .scope_resolver()
+            .resolve_path(fallback_module, path, NameResolutionFilter::AllNamespaces)?
+            .resolved;
         self.semantic_items_include_const_like(fallback_defs)
     }
 

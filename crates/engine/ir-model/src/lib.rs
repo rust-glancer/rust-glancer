@@ -24,8 +24,8 @@ pub use self::ids::{
     TargetId,
     body::{BindingId, BodyBindingRef, BodyId, BodyRef, ExprId, PatId, ScopeId, StmtId},
     def_map::{
-        DefId, DefMapRef, ImportId, ImportRef, LocalDefId, LocalDefRef, LocalImplId, LocalImplRef,
-        ModuleId, ModuleRef, TargetRef,
+        DefId, DefMapRef, ImportId, ImportRef, LocalDefId, LocalDefRef, LocalEnumVariantId,
+        LocalEnumVariantRef, LocalImplId, LocalImplRef, ModuleId, ModuleRef, TargetRef,
     },
     identity,
     semantic::{

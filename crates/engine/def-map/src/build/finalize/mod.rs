@@ -13,9 +13,9 @@ use anyhow::Context as _;
 
 use rg_ir_model::{DefId, DefMapRef, LocalDefRef, ModuleId, ModuleRef, TargetRef};
 use rg_ir_storage::{
-    DefMap, ImportPath, LocalDefData, MacroDefinitionEnv, MacroDefinitionView, ModuleData,
-    ModuleScopeBuilder, PackageDefMaps as DefMapPackage, PathResolver, ScopeEntryRef,
-    ScopeResolutionEnv, TargetData, TargetResolutionEnv,
+    DefMap, ImportPath, LocalDefData, LocalEnumVariantEntry, MacroDefinitionEnv,
+    MacroDefinitionView, ModuleData, ModuleScopeBuilder, PackageDefMaps as DefMapPackage,
+    ScopeEntryRef, ScopeResolutionEnv, ScopeResolver, TargetData, TargetResolutionEnv,
 };
 use rg_item_tree::ItemTreeDb;
 use rg_macro_runtime::{MacroExpansionPerformancePreference, MacroExpansionRuntime};
@@ -310,6 +310,32 @@ impl ScopeResolutionEnv for FinalizeResolutionEnv<'_> {
             .transpose()
             .map(Option::flatten)
     }
+
+    fn local_enum_variant_entries_for_enum<'a>(
+        &'a self,
+        enum_def: LocalDefRef,
+    ) -> Result<Vec<LocalEnumVariantEntry<'a>>, rg_package_store::PackageStoreError> {
+        if let Some(target) = enum_def.origin.as_target_ref()
+            && let Some(state) = self.states.target(target)
+        {
+            return Ok(state
+                .def_map_builder
+                .partial()
+                .local_enum_variant_entries_for_enum(enum_def.local_def)
+                .collect());
+        }
+
+        if let Some(target) = enum_def.origin.as_target_ref()
+            && let Some(old) = self.old
+            && let Some(def_map) = old.def_map(target)?
+        {
+            Ok(def_map
+                .local_enum_variant_entries_for_enum(enum_def.local_def)
+                .collect())
+        } else {
+            Ok(Vec::new())
+        }
+    }
 }
 
 impl MacroDefinitionEnv for FinalizeResolutionEnv<'_> {
@@ -527,8 +553,9 @@ fn select_preludes(
             ];
 
             for prelude_path in prelude_paths.into_iter().flatten() {
-                prelude_module = PathResolver::new(&env)
-                    .import_modules(state.target, state.root_module, &prelude_path)?
+                let root_module = ModuleRef::target(state.target, state.root_module);
+                prelude_module = ScopeResolver::new(&env)
+                    .import_modules(root_module, &prelude_path)?
                     .into_iter()
                     .next();
                 if prelude_module.is_some() {

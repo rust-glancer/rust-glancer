@@ -7,7 +7,10 @@
 use rg_ir_model::{DefId, LocalDefRef, ModuleRef, TargetRef};
 use rg_text::Name;
 
-use super::super::{LocalDefData, LocalDefKind, MacroDefinitionView, ModuleData, ScopeEntryRef};
+use super::super::{
+    LocalDefData, LocalDefKind, LocalEnumVariantEntry, MacroDefinitionView, ModuleData,
+    ScopeEntryRef,
+};
 
 /// Minimal scope graph required by path and visibility lookup.
 pub trait ScopeResolutionEnv {
@@ -30,6 +33,11 @@ pub trait ScopeResolutionEnv {
         &self,
         local_def_ref: LocalDefRef,
     ) -> Result<Option<&LocalDefData>, Self::Error>;
+
+    fn local_enum_variant_entries_for_enum<'a>(
+        &'a self,
+        enum_def: LocalDefRef,
+    ) -> Result<Vec<LocalEnumVariantEntry<'a>>, Self::Error>;
 
     fn local_def_kind(
         &self,

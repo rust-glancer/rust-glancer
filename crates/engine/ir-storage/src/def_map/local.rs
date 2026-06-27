@@ -1,7 +1,10 @@
 use rg_ir_model::items::{
     BuiltinMacroKind, Documentation, ItemTag, MacroDefinitionItem, VisibilityLevel,
 };
-use rg_ir_model::{LocalDefRef, ModuleId, TargetRef, hir::source::ItemSource};
+use rg_ir_model::{
+    DefMapRef, LocalDefId, LocalDefRef, LocalEnumVariantId, LocalEnumVariantRef, ModuleId,
+    TargetRef, hir::source::ItemSource,
+};
 use rg_parse::{FileId, Span};
 use rg_std::{MemorySize, Shrink};
 use rg_text::Name;
@@ -22,6 +25,46 @@ pub struct LocalDefData {
     pub file_id: FileId,
     pub name_span: Option<Span>,
     pub span: Span,
+}
+
+/// One enum variant that can be named through imports and value paths.
+///
+/// Variants stay semantically owned by `EnumData`, but def-map import resolution runs earlier than
+/// semantic lowering. This record gives the name resolver a small, source-shaped handle that can
+/// later be projected to `EnumVariantRef`.
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
+pub struct LocalEnumVariantData {
+    pub module: ModuleId,
+    pub enum_def: LocalDefId,
+    pub name: Name,
+    pub index: usize,
+    pub visibility: VisibilityLevel,
+    pub file_id: FileId,
+    pub name_span: Span,
+    pub span: Span,
+}
+
+/// Borrowed enum variant table entry paired with its stable def-map ref.
+#[derive(Debug, Clone, Copy)]
+pub struct LocalEnumVariantEntry<'a> {
+    pub variant_ref: LocalEnumVariantRef,
+    pub data: &'a LocalEnumVariantData,
+}
+
+impl<'a> LocalEnumVariantEntry<'a> {
+    pub fn new(
+        origin: DefMapRef,
+        local_enum_variant: LocalEnumVariantId,
+        data: &'a LocalEnumVariantData,
+    ) -> Self {
+        Self {
+            variant_ref: LocalEnumVariantRef {
+                origin,
+                local_enum_variant,
+            },
+            data,
+        }
+    }
 }
 
 /// Macro definition facts retained after def-map freezing.

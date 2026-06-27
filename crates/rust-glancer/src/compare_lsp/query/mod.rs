@@ -62,6 +62,9 @@ crates/ide/src/child_modules.rs:30:48 # definition/associated-function: from_mod
 crates/ide/src/child_modules.rs:54:68 # definition/method-call: focus_or_full_range
 crates/ide/src/goto_implementation.rs:83:28 # definition/helper-call: impls_for_trait_item
 crates/ide/src/goto_definition.rs:125:16 # definition/helper-call: try_lookup_include_path
+crates/ide/src/call_hierarchy.rs:107:8 # definition/enum-variant-import: SyntaxKind::IDENT
+crates/hir-def/src/item_scope.rs:784:12 # definition/body-macro: format_to
+crates/hir-def/src/item_tree/pretty.rs:58:8 # definition/body-macro: wln
 crates/ide/src/lib.rs:89:21 # definition/reexport: GotoDefinitionConfig
 crates/ide/src/lib.rs:93:21 # definition/reexport: HoverConfig
 crates/ide/src/lib.rs:109:24 # definition/reexport: NavigationTarget
@@ -70,6 +73,7 @@ crates/ide/src/references.rs:132:16 # definition/helper-call: retain_adt_literal
 crates/ide/src/references.rs:162:41 # definition/method-call: focus_or_full_range-extra-ref
 crates/ide/src/references.rs:174:23 # definition/helper-call: handle_control_flow_keywords
 crates/ide/src/references.rs:204:17 # definition/helper-call: find_defs
+crates/ide/src/references.rs:224:12 # definition/glob-enum-variant: SyntaxKind::IDENT
 
 [textDocument/typeDefinition]
 crates/ide/src/call_hierarchy.rs:52:12 # type_definition/local: calls
@@ -176,9 +180,14 @@ crates/ide/src/hover.rs:79:9 # hover/enum: HoverAction
 crates/ide/src/hover.rs:81:19 # hover/enum-variant: Implementation
 crates/ide/src/hover.rs:119:11 # hover/type: HoverResult
 crates/ide/src/hover.rs:130:14 # hover/function: hover
+crates/ide/src/hover.rs:389:38 # hover/body-macro: format
 crates/ide/src/hover.rs:159:3 # hover/helper: hover_offset
+crates/ide/src/inlay_hints.rs:803:27 # hover/enum-variant: Err
 crates/ide/src/lib.rs:109:24 # hover/reexport: NavigationTarget
 crates/ide/src/navigation_target.rs:31:11 # hover/type: NavigationTarget
 crates/ide/src/navigation_target.rs:120:10 # hover/trait: TryToNav
+crates/ide/src/navigation_target.rs:86:8 # hover/enum-variant: Ok
+crates/ide/src/references.rs:155:20 # hover/enum-variant: Some
+crates/ide/src/references.rs:156:20 # hover/enum-variant: None
 crates/ide/src/references.rs:91:8 # hover/field: search_scope
 "#;

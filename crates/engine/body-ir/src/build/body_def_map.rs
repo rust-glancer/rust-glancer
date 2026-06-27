@@ -4,7 +4,7 @@
 //! resolved in a fixed-point loop before the final DefMap is frozen.
 
 use rg_ir_model::items::{
-    Documentation, ImportAlias, ItemKind, ItemNode, ItemTreeId, ModuleSource,
+    Documentation, EnumItem, ImportAlias, ItemKind, ItemNode, ItemTreeId, ModuleSource,
 };
 use rg_ir_model::{
     BodyRef, DefId, DefMapRef, LocalDefRef, ModuleId, ModuleRef, TargetRef,
@@ -12,10 +12,10 @@ use rg_ir_model::{
 };
 use rg_ir_storage::{
     DefMap, DefMapBuilder, DefMapSource, ImportBinding, ImportData, ImportKind, ImportPath,
-    ImportSourcePath, LocalDefData, LocalDefKind, LocalImplData, MacroDefinitionEnv,
-    MacroDefinitionView, ModuleData, ModuleOrigin, ModuleScope, ModuleScopeBuilder, Namespace,
-    PathResolver, ScopeBinding, ScopeBindingOrigin, ScopeEntryRef, ScopeResolutionEnv,
-    TargetResolutionEnv,
+    ImportSourcePath, LocalDefData, LocalDefKind, LocalEnumVariantData, LocalEnumVariantEntry,
+    LocalImplData, MacroDefinitionEnv, MacroDefinitionView, ModuleData, ModuleOrigin, ModuleScope,
+    ModuleScopeBuilder, Namespace, ScopeBinding, ScopeBindingOrigin, ScopeEntryRef,
+    ScopeResolutionEnv, ScopeResolver, TargetResolutionEnv,
 };
 use rg_package_store::PackageStoreError;
 use rg_text::Name;
@@ -109,22 +109,26 @@ impl<'body> BodyDefMapCollector<'body> {
             ItemKind::Module(module_item) => self.collect_module(module, item, module_item),
             ItemKind::Use(use_item) => self.collect_use(module, item_id, item, use_item),
             ItemKind::Impl(_) => self.collect_local_impl(module, item_id, item),
+            ItemKind::Enum(enum_item) => self.collect_enum(module, item_id, item, enum_item),
             ItemKind::MacroCall(_)
             | ItemKind::MacroDefinition(_)
             | ItemKind::ExternCrate(_)
             | ItemKind::ExternBlock
             | ItemKind::AsmExpr => {}
-            _ => self.collect_local_def(module, item_id, item),
+            _ => {
+                self.collect_local_def(module, item_id, item);
+            }
         }
     }
 
-    fn collect_local_def(&mut self, module: ModuleId, item_id: ItemTreeId, item: &ItemNode) {
-        let Some(kind) = LocalDefKind::from_item_tag(item.kind.tag()) else {
-            return;
-        };
-        let Some(name) = item.name.clone() else {
-            return;
-        };
+    fn collect_local_def(
+        &mut self,
+        module: ModuleId,
+        item_id: ItemTreeId,
+        item: &ItemNode,
+    ) -> Option<rg_ir_model::LocalDefId> {
+        let kind = LocalDefKind::from_item_tag(item.kind.tag())?;
+        let name = item.name.clone()?;
         let namespace = kind.namespace();
 
         let local_def = self.builder.alloc_local_def(LocalDefData {
@@ -161,6 +165,32 @@ impl<'body> BodyDefMapCollector<'body> {
                     origin: ScopeBindingOrigin::Direct,
                 },
             );
+        Some(local_def)
+    }
+
+    fn collect_enum(
+        &mut self,
+        module: ModuleId,
+        item_id: ItemTreeId,
+        item: &ItemNode,
+        enum_item: &EnumItem,
+    ) {
+        let Some(local_def) = self.collect_local_def(module, item_id, item) else {
+            return;
+        };
+
+        for (index, variant) in enum_item.variants.iter().enumerate() {
+            self.builder.alloc_local_enum_variant(LocalEnumVariantData {
+                module,
+                enum_def: local_def,
+                name: variant.name.clone(),
+                index,
+                visibility: item.visibility.clone(),
+                file_id: item.file_id,
+                name_span: variant.name_span,
+                span: variant.span,
+            });
+        }
     }
 
     fn collect_local_impl(&mut self, module: ModuleId, item_id: ItemTreeId, item: &ItemNode) {
@@ -362,20 +392,20 @@ impl BodyDefMapBuildState {
     where
         S: DefMapSource<Error = PackageStoreError> + Copy,
     {
-        let resolver = PathResolver::new(env);
+        let resolver = ScopeResolver::new(env);
         for import in self.builder.partial().imports() {
             let importing_module = self.importing_module(import.module);
             match import.kind {
                 ImportKind::Glob => {
-                    let source_modules =
-                        resolver.import_modules_from_module(importing_module, &import.path)?;
+                    let glob_sources =
+                        resolver.import_glob_sources(importing_module, &import.path)?;
 
-                    for source_module in source_modules {
-                        let source_scope =
-                            resolver.visible_scope(importing_module, source_module)?;
+                    for glob_source in glob_sources {
                         let target_scope = next_scopes
                             .get_mut(import.module.0)
                             .expect("target scope should exist for body import");
+                        let source_scope =
+                            resolver.visible_glob_source_scope(importing_module, glob_source)?;
 
                         for (name, entry) in source_scope.entries() {
                             target_scope.copy_visible_bindings(
@@ -388,8 +418,7 @@ impl BodyDefMapBuildState {
                     }
                 }
                 ImportKind::Named | ImportKind::SelfImport => {
-                    let resolved_defs =
-                        resolver.import_defs_from_module(importing_module, &import.path)?;
+                    let resolved_defs = resolver.import_defs(importing_module, &import.path)?;
                     let Some(binding_name) = import.binding_name() else {
                         continue;
                     };
@@ -433,16 +462,16 @@ impl BodyDefMapBuildState {
             state: self,
             current_scopes: final_scopes,
         };
-        let resolver = PathResolver::new(&env);
+        let resolver = ScopeResolver::new(&env);
 
         for (import_id, import) in self.builder.partial().imports_with_ids() {
             let importing_module = self.importing_module(import.module);
             let is_unresolved = match import.kind {
                 ImportKind::Glob => resolver
-                    .import_modules_from_module(importing_module, &import.path)?
+                    .import_glob_sources(importing_module, &import.path)?
                     .is_empty(),
                 ImportKind::Named | ImportKind::SelfImport => resolver
-                    .import_defs_from_module(importing_module, &import.path)?
+                    .import_defs(importing_module, &import.path)?
                     .is_empty(),
             };
             if is_unresolved {
@@ -490,10 +519,7 @@ where
             return Ok(self.state.builder.partial().module(module_ref.module));
         }
 
-        Ok(self
-            .def_maps
-            .def_map_for_origin(module_ref.origin)?
-            .and_then(|def_map| def_map.module(module_ref.module)))
+        self.def_maps.module_data(module_ref)
     }
 
     fn module_scope_entry<'a>(
@@ -550,10 +576,23 @@ where
                 .local_def(local_def_ref.local_def));
         }
 
-        Ok(self
-            .def_maps
-            .def_map_for_origin(local_def_ref.origin)?
-            .and_then(|def_map| def_map.local_def(local_def_ref.local_def)))
+        self.def_maps.local_def_data(local_def_ref)
+    }
+
+    fn local_enum_variant_entries_for_enum<'a>(
+        &'a self,
+        enum_def: LocalDefRef,
+    ) -> Result<Vec<LocalEnumVariantEntry<'a>>, Self::Error> {
+        if self.is_active_body_origin(enum_def.origin) {
+            return Ok(self
+                .state
+                .builder
+                .partial()
+                .local_enum_variant_entries_for_enum(enum_def.local_def)
+                .collect());
+        }
+
+        self.def_maps.local_enum_variant_entries_for_enum(enum_def)
     }
 }
 

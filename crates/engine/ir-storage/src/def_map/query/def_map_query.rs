@@ -1,20 +1,23 @@
-//! Shared path queries over DefMap storage.
+//! Higher-level queries over routed DefMap storage.
 //!
-//! DefMaps only know about one scope graph. This query object adds the routing layer that decides
-//! which graph owns a `DefMapRef`, then reuses the private path resolver for the actual lookup.
+//! DefMaps only know about one scope graph. `DefMapSource` routes origin and target refs to the
+//! concrete storage that owns them; this query object keeps the operations that compose those raw
+//! maps into language-shaped answers.
 
-use rg_ir_model::{DefId, DefMapRef, LocalDefRef, LocalImplRef, ModuleRef, Path, TargetRef};
+use rg_ir_model::{
+    DefId, DefMapRef, LocalDefRef, LocalEnumVariantRef, LocalImplRef, ModuleRef, TargetRef,
+};
 use rg_text::Name;
 
 use super::{
-    path_resolution::{NameResolutionFilter, PathResolver, ResolvePathResult},
+    path_resolution::ScopeResolver,
     resolution_env::{MacroDefinitionEnv, ScopeResolutionEnv, TargetResolutionEnv},
 };
 
 use super::super::{
-    DefMap, LocalDefData, LocalImplData, MacroDefinitionView, ModuleData, ModuleScopeBuilder,
-    Namespace, ScopeEntryRef, ScopeNamespace, VisibleScopeDef, VisibleScopeDefs,
-    VisibleScopeOrigin,
+    DefMap, LocalDefData, LocalEnumVariantData, LocalEnumVariantEntry, LocalImplData,
+    MacroDefinitionView, ModuleData, ScopeEntryRef, ScopeNamespace, VisibleScopeDef,
+    VisibleScopeDefs, VisibleScopeOrigin,
 };
 
 /// Routes DefMap-origin refs and target-level facts to concrete storage.
@@ -25,6 +28,60 @@ pub trait DefMapSource {
     type Error;
 
     fn def_map_for_origin(&self, origin: DefMapRef) -> Result<Option<&DefMap>, Self::Error>;
+
+    fn module_data(&self, module_ref: ModuleRef) -> Result<Option<&ModuleData>, Self::Error> {
+        Ok(self
+            .def_map_for_origin(module_ref.origin)?
+            .and_then(|def_map| def_map.module(module_ref.module)))
+    }
+
+    fn module_refs(&self, target: TargetRef) -> Result<Vec<ModuleRef>, Self::Error> {
+        Ok(self
+            .def_map_for_origin(DefMapRef::Target(target))?
+            .map(|def_map| def_map.module_refs().collect())
+            .unwrap_or_default())
+    }
+
+    fn local_def_data(
+        &self,
+        local_def_ref: LocalDefRef,
+    ) -> Result<Option<&LocalDefData>, Self::Error> {
+        Ok(self
+            .def_map_for_origin(local_def_ref.origin)?
+            .and_then(|def_map| def_map.local_def(local_def_ref.local_def)))
+    }
+
+    fn local_impl_data(
+        &self,
+        local_impl_ref: LocalImplRef,
+    ) -> Result<Option<&LocalImplData>, Self::Error> {
+        Ok(self
+            .def_map_for_origin(local_impl_ref.origin)?
+            .and_then(|def_map| def_map.local_impl(local_impl_ref.local_impl)))
+    }
+
+    fn local_enum_variant_data(
+        &self,
+        variant_ref: LocalEnumVariantRef,
+    ) -> Result<Option<&LocalEnumVariantData>, Self::Error> {
+        Ok(self
+            .def_map_for_origin(variant_ref.origin)?
+            .and_then(|def_map| def_map.local_enum_variant(variant_ref.local_enum_variant)))
+    }
+
+    fn local_enum_variant_entries_for_enum<'a>(
+        &'a self,
+        enum_def: LocalDefRef,
+    ) -> Result<Vec<LocalEnumVariantEntry<'a>>, Self::Error> {
+        Ok(self
+            .def_map_for_origin(enum_def.origin)?
+            .map(|def_map| {
+                def_map
+                    .local_enum_variant_entries_for_enum(enum_def.local_def)
+                    .collect()
+            })
+            .unwrap_or_default())
+    }
 
     fn extern_root(&self, target: TargetRef, name: &str) -> Result<Option<ModuleRef>, Self::Error>;
 
@@ -59,7 +116,7 @@ impl<T: DefMapSource + ?Sized> DefMapSource for &T {
     }
 }
 
-/// Common DefMap lookup API over any source that can route origins to DefMaps.
+/// Composed DefMap queries over any source that can route origins to DefMaps.
 #[derive(Clone)]
 pub struct DefMapQuery<S> {
     source: S,
@@ -73,59 +130,9 @@ where
         Self { source }
     }
 
-    /// Resolves a value-position path using normal Rust module lookup rules.
-    pub fn resolve_path(
-        &self,
-        from: ModuleRef,
-        path: &Path,
-    ) -> Result<ResolvePathResult, S::Error> {
-        PathResolver::new(self).resolve_path(from, path, NameResolutionFilter::AllNamespaces)
-    }
-
-    /// Resolves a type-position path using normal Rust module lookup rules.
-    pub fn resolve_path_in_type_namespace(
-        &self,
-        from: ModuleRef,
-        path: &Path,
-    ) -> Result<ResolvePathResult, S::Error> {
-        PathResolver::new(self).resolve_path(from, path, NameResolutionFilter::TypesOnly)
-    }
-
-    /// Resolves a path through lexical scopes represented as synthetic modules.
-    pub fn resolve_lexical_path(
-        &self,
-        from: ModuleRef,
-        path: &Path,
-        filter: NameResolutionFilter,
-    ) -> Result<ResolvePathResult, S::Error> {
-        PathResolver::new(self).resolve_lexical_path(from, path, filter)
-    }
-
-    /// Resolves one name inside a concrete lexical module without walking parents.
-    pub fn resolve_lexical_name_in_module(
-        &self,
-        from: ModuleRef,
-        module: ModuleRef,
-        name: &str,
-        filter: NameResolutionFilter,
-    ) -> Result<Vec<rg_ir_model::DefId>, S::Error> {
-        PathResolver::new(self).resolve_lexical_name_in_module(from, module, name, filter)
-    }
-
-    pub fn module_data(&self, module_ref: ModuleRef) -> Result<Option<&ModuleData>, S::Error> {
-        Ok(self
-            .source
-            .def_map_for_origin(module_ref.origin)?
-            .and_then(|def_map| def_map.module(module_ref.module)))
-    }
-
-    /// Lists modules recorded in one target DefMap without exposing the concrete store.
-    pub fn module_refs(&self, target: TargetRef) -> Result<Vec<ModuleRef>, S::Error> {
-        Ok(self
-            .source
-            .def_map_for_origin(DefMapRef::Target(target))?
-            .map(|def_map| def_map.module_refs().collect())
-            .unwrap_or_default())
+    /// Construct a scope resolver over this routed DefMap source.
+    pub fn scope_resolver(&self) -> ScopeResolver<'_, Self> {
+        ScopeResolver::new(self)
     }
 
     /// Returns targets whose DefMap roots are visible from `root`.
@@ -159,60 +166,20 @@ where
         Ok(visible_targets)
     }
 
-    pub fn local_def_data(
-        &self,
-        local_def_ref: LocalDefRef,
-    ) -> Result<Option<&LocalDefData>, S::Error> {
-        Ok(self
-            .source
-            .def_map_for_origin(local_def_ref.origin)?
-            .and_then(|def_map| def_map.local_def(local_def_ref.local_def)))
-    }
-
-    pub fn local_impl_data(
-        &self,
-        local_impl_ref: LocalImplRef,
-    ) -> Result<Option<&LocalImplData>, S::Error> {
-        Ok(self
-            .source
-            .def_map_for_origin(local_impl_ref.origin)?
-            .and_then(|def_map| def_map.local_impl(local_impl_ref.local_impl)))
-    }
-
     /// Classify a resolved definition as a declarative macro and borrow its expansion payload.
     pub fn macro_definition_view(
         &self,
         def: DefId,
     ) -> Result<Option<MacroDefinitionView<'_>>, S::Error> {
-        let DefId::Local(def_ref) = def else {
-            return Ok(None);
-        };
-        let Some(local_def) = self.local_def_data(def_ref)? else {
-            return Ok(None);
-        };
-        let Some(data) = self
-            .source
-            .def_map_for_origin(def_ref.origin)?
-            .and_then(|def_map| def_map.macro_definition(def_ref.local_def))
-        else {
-            return Ok(None);
-        };
-
-        Ok(MacroDefinitionView::new(def_ref, local_def, data))
-    }
-
-    /// Returns the namespace occupied by one resolved definition.
-    pub fn namespace_for_def(&self, def: DefId) -> Result<Option<Namespace>, S::Error> {
-        PathResolver::new(self).namespace_for_def(def)
-    }
-
-    /// Builds the visibility-filtered scope observed from `importing_module`.
-    pub fn visible_scope(
-        &self,
-        importing_module: ModuleRef,
-        source_module: ModuleRef,
-    ) -> Result<ModuleScopeBuilder, S::Error> {
-        PathResolver::new(self).visible_scope(importing_module, source_module)
+        if let DefId::Local(def_ref) = def
+            && let Some(def_map) = self.source.def_map_for_origin(def_ref.origin)?
+            && let Some(local_def) = def_map.local_def(def_ref.local_def)
+            && let Some(data) = def_map.macro_definition(def_ref.local_def)
+        {
+            Ok(MacroDefinitionView::new(def_ref, local_def, data))
+        } else {
+            Ok(None)
+        }
     }
 
     /// Returns definitions from `source_module` that are visible from `importing_module`.
@@ -221,7 +188,9 @@ where
         importing_module: ModuleRef,
         source_module: ModuleRef,
     ) -> Result<VisibleScopeDefs, S::Error> {
-        let scope = self.visible_scope(importing_module, source_module)?;
+        let scope = self
+            .scope_resolver()
+            .visible_scope(importing_module, source_module)?;
         let mut defs = VisibleScopeDefs::new(&scope, VisibleScopeOrigin::ModuleScope, false);
         defs.sort();
         Ok(defs)
@@ -232,7 +201,7 @@ where
         &self,
         importing_module: ModuleRef,
     ) -> Result<VisibleScopeDefs, S::Error> {
-        let resolver = PathResolver::new(self);
+        let resolver = self.scope_resolver();
 
         // First-segment resolution checks the current module scope before extern roots and the
         // standard prelude. Completion follows the same namespace-specific shadowing order.
@@ -273,7 +242,7 @@ where
     type Error = S::Error;
 
     fn module_data(&self, module_ref: ModuleRef) -> Result<Option<&ModuleData>, Self::Error> {
-        DefMapQuery::module_data(self, module_ref)
+        self.source.module_data(module_ref)
     }
 
     fn module_scope_entry<'a>(
@@ -281,8 +250,7 @@ where
         module_ref: ModuleRef,
         name: &str,
     ) -> Result<Option<ScopeEntryRef<'a>>, Self::Error> {
-        Ok(self
-            .module_data(module_ref)?
+        Ok(<Self as ScopeResolutionEnv>::module_data(self, module_ref)?
             .and_then(|module| module.scope.entry(name))
             .map(|entry| entry.as_ref()))
     }
@@ -291,8 +259,7 @@ where
         &'a self,
         module_ref: ModuleRef,
     ) -> Result<Vec<(&'a Name, ScopeEntryRef<'a>)>, Self::Error> {
-        Ok(self
-            .module_data(module_ref)?
+        Ok(<Self as ScopeResolutionEnv>::module_data(self, module_ref)?
             .map(|module| {
                 module
                     .scope
@@ -307,7 +274,14 @@ where
         &self,
         local_def_ref: LocalDefRef,
     ) -> Result<Option<&LocalDefData>, Self::Error> {
-        DefMapQuery::local_def_data(self, local_def_ref)
+        self.source.local_def_data(local_def_ref)
+    }
+
+    fn local_enum_variant_entries_for_enum<'a>(
+        &'a self,
+        enum_def: LocalDefRef,
+    ) -> Result<Vec<LocalEnumVariantEntry<'a>>, Self::Error> {
+        self.source.local_enum_variant_entries_for_enum(enum_def)
     }
 }
 

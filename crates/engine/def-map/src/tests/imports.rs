@@ -90,6 +90,45 @@ use bar::work as _;
 }
 
 #[test]
+fn imports_enum_variants_as_values() {
+    utils::check_project_def_map(
+        r#"
+//- /Cargo.toml
+[package]
+name = "enum_variant_import_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub enum Maybe<T> {
+    Some(T),
+    None,
+}
+
+pub enum Result<T, E> {
+    Ok(T),
+    Err(E),
+}
+
+use Maybe::{Some, None as Nothing};
+use Result::*;
+"#,
+        expect![[r#"
+            package enum_variant_import_fixture
+
+            enum_variant_import_fixture [lib]
+            crate
+            - Err : value [variant enum_variant_import_fixture[lib]::crate::Result::Err]
+            - Maybe : type [pub enum enum_variant_import_fixture[lib]::crate::Maybe]
+            - Nothing : value [variant enum_variant_import_fixture[lib]::crate::Maybe::None]
+            - Ok : value [variant enum_variant_import_fixture[lib]::crate::Result::Ok]
+            - Result : type [pub enum enum_variant_import_fixture[lib]::crate::Result]
+            - Some : value [variant enum_variant_import_fixture[lib]::crate::Maybe::Some]
+        "#]],
+    );
+}
+
+#[test]
 fn records_unresolved_named_and_glob_imports() {
     utils::check_project_def_map(
         r#"

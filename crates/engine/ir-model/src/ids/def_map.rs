@@ -12,6 +12,9 @@ declare_id! {
     /// Stable identifier of one local definition inside a target map.
     pub struct LocalDefId;
 
+    /// Stable identifier of one enum variant inside a target map.
+    pub struct LocalEnumVariantId;
+
     /// Stable identifier of one impl block inside a target map.
     pub struct LocalImplId;
 
@@ -70,12 +73,29 @@ pub struct ModuleRef {
     pub module: ModuleId,
 }
 
+impl ModuleRef {
+    pub fn target(target: TargetRef, module: ModuleId) -> Self {
+        Self {
+            origin: DefMapRef::Target(target),
+            module,
+        }
+    }
+}
+
 /// Stable reference to one local definition across the whole project analysis.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 #[shrink(leaf)]
 pub struct LocalDefRef {
     pub origin: DefMapRef,
     pub local_def: LocalDefId,
+}
+
+/// Stable reference to one enum variant across the whole project analysis.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize, Shrink)]
+#[shrink(leaf)]
+pub struct LocalEnumVariantRef {
+    pub origin: DefMapRef,
+    pub local_enum_variant: LocalEnumVariantId,
 }
 
 /// Stable reference to one impl block across the whole project analysis.
@@ -100,4 +120,5 @@ pub struct ImportRef {
 pub enum DefId {
     Module(ModuleRef),
     Local(LocalDefRef),
+    EnumVariant(LocalEnumVariantRef),
 }

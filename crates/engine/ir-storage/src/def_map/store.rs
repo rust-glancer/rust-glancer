@@ -4,14 +4,17 @@ use wincode::{SchemaRead, SchemaWrite};
 
 use rg_arena::Arena;
 use rg_ir_model::{
-    BodyRef, DefMapRef, ImportId, LocalDefId, LocalDefRef, LocalImplId, LocalImplRef, ModuleId,
-    ModuleRef, TargetRef,
+    BodyRef, DefMapRef, ImportId, LocalDefId, LocalDefRef, LocalEnumVariantId, LocalEnumVariantRef,
+    LocalImplId, LocalImplRef, ModuleId, ModuleRef, TargetRef,
     hir::source::{GeneratedSourceData, GeneratedSourceId},
 };
 
 use super::{
     import::ImportData,
-    local::{LocalDefData, LocalImplData, MacroDefinitionData},
+    local::{
+        LocalDefData, LocalEnumVariantData, LocalEnumVariantEntry, LocalImplData,
+        MacroDefinitionData,
+    },
     module::ModuleData,
 };
 
@@ -19,6 +22,7 @@ use super::{
 struct DefMapData {
     modules: Arena<ModuleId, ModuleData>,
     local_defs: Arena<LocalDefId, LocalDefData>,
+    local_enum_variants: Arena<LocalEnumVariantId, LocalEnumVariantData>,
     macro_definitions: HashMap<LocalDefId, MacroDefinitionData>,
     local_impls: Arena<LocalImplId, LocalImplData>,
     imports: Arena<ImportId, ImportData>,
@@ -59,6 +63,16 @@ impl DefMapBuilder {
 
     pub fn alloc_local_def(&mut self, local_def: LocalDefData) -> LocalDefId {
         self.def_map.data.local_defs.alloc(local_def)
+    }
+
+    pub fn alloc_local_enum_variant(
+        &mut self,
+        local_enum_variant: LocalEnumVariantData,
+    ) -> LocalEnumVariantId {
+        self.def_map
+            .data
+            .local_enum_variants
+            .alloc(local_enum_variant)
     }
 
     pub fn insert_macro_definition(
@@ -114,6 +128,21 @@ impl<'a> PartialDefMap<'a> {
     /// Returns local definition data allocated so far during collection/finalization.
     pub fn local_def(&self, local_def: LocalDefId) -> Option<&'a LocalDefData> {
         self.def_map.local_def(local_def)
+    }
+
+    /// Returns enum variant data allocated so far during collection/finalization.
+    pub fn local_enum_variant(
+        &self,
+        local_enum_variant: LocalEnumVariantId,
+    ) -> Option<&'a LocalEnumVariantData> {
+        self.def_map.local_enum_variant(local_enum_variant)
+    }
+
+    pub fn local_enum_variant_entries_for_enum(
+        &self,
+        enum_def: LocalDefId,
+    ) -> impl Iterator<Item = LocalEnumVariantEntry<'a>> + 'a {
+        self.def_map.local_enum_variant_entries_for_enum(enum_def)
     }
 
     /// Returns a declarative macro payload allocated so far during collection/finalization.
@@ -210,6 +239,41 @@ impl DefMap {
             origin: self.own_ref,
             local_def: LocalDefId(id),
         })
+    }
+
+    /// Returns enum variant data by id.
+    pub fn local_enum_variant(
+        &self,
+        local_enum_variant: LocalEnumVariantId,
+    ) -> Option<&LocalEnumVariantData> {
+        self.data.local_enum_variants.get(local_enum_variant)
+    }
+
+    /// Returns all enum variants in stable variant-id order.
+    pub fn local_enum_variants(&self) -> &[LocalEnumVariantData] {
+        self.data.local_enum_variants.as_slice()
+    }
+
+    pub fn local_enum_variant_refs(&self) -> impl Iterator<Item = LocalEnumVariantRef> {
+        self.data
+            .local_enum_variants
+            .iter_with_ids()
+            .map(|(id, _)| LocalEnumVariantRef {
+                origin: self.own_ref,
+                local_enum_variant: id,
+            })
+    }
+
+    pub fn local_enum_variant_entries_for_enum(
+        &self,
+        enum_def: LocalDefId,
+    ) -> impl Iterator<Item = LocalEnumVariantEntry<'_>> {
+        let origin = self.own_ref;
+        self.data
+            .local_enum_variants
+            .iter_with_ids()
+            .filter(move |(_, variant)| variant.enum_def == enum_def)
+            .map(move |(id, data)| LocalEnumVariantEntry::new(origin, id, data))
     }
 
     /// Returns a declarative macro payload by its local definition id.

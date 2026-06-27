@@ -1,15 +1,16 @@
 //! Value-path lookup.
 
 use rg_ir_model::{
-    BindingId, ConstRef, DefId, DefMapRef, ModuleId, ModuleRef, Path, ScopeId, SemanticItemRef,
-    StaticRef, TypePathResolution, identity::DeclarationRef,
+    BindingId, ConstRef, DefId, DefMapRef, EnumVariantRef, FunctionRef, LocalEnumVariantRef,
+    ModuleId, ModuleRef, Path, ScopeId, SemanticItemRef, StaticRef, TypePathResolution,
+    identity::DeclarationRef,
 };
 use rg_ir_storage::{
     DefMapSource, ItemStoreSource, NameResolutionFilter, ResolvePathResult, TypePathContext,
 };
 use rg_package_store::PackageStoreError;
 use rg_std::{ExpectedUnique, UniqueVec};
-use rg_ty::{ExpectedNominalTyExt, ExpectedTyExt, NominalTy, Ty};
+use rg_ty::{ExpectedNominalTyExt, ExpectedTyExt, GenericArg, NominalTy, Ty};
 
 use crate::ir::resolved::BodyResolution;
 use crate::resolution::{BodyResolutionContext, TypeRefUseSite};
@@ -23,7 +24,16 @@ pub struct BodyValuePathQuery<'query, D, I> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum BodyValueName {
     Binding(BindingId),
-    SemanticItems(UniqueVec<SemanticItemRef>),
+    Candidates(UniqueVec<BodyValueCandidate>),
+}
+
+/// Resolved value candidate after DefMap names have been projected through semantic item data.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum BodyValueCandidate {
+    Function(FunctionRef),
+    Const(ConstRef),
+    Static(StaticRef),
+    EnumVariant(EnumVariantRef, Ty),
 }
 
 impl<'query, D, I> BodyValuePathQuery<'query, D, I>
@@ -201,13 +211,14 @@ where
             let defs = self
                 .context
                 .def_map_query()
+                .scope_resolver()
                 .resolve_lexical_name_in_module(
                     from,
                     module,
                     name,
                     NameResolutionFilter::ValuesOnly,
                 )?;
-            let value_name = BodyValueName::SemanticItems(self.semantic_items_for_defs(defs)?);
+            let value_name = BodyValueName::Candidates(self.value_candidates_for_defs(defs)?);
             if let Some(resolution) = self.value_name_resolution(value_name)? {
                 return Ok(Some(resolution));
             }
@@ -224,10 +235,12 @@ where
         path: &Path,
     ) -> Result<ResolvePathResult, PackageStoreError> {
         let owner_module = self.context.body().owner_module();
-        let result = self
-            .context
-            .def_map_query()
-            .resolve_path(owner_module, path)?;
+        let def_maps = self.context.def_map_query();
+        let result = def_maps.scope_resolver().resolve_path(
+            owner_module,
+            path,
+            NameResolutionFilter::AllNamespaces,
+        )?;
         if !result.resolved.is_empty() {
             return Ok(result);
         }
@@ -237,9 +250,11 @@ where
             return Ok(result);
         }
 
-        self.context
-            .def_map_query()
-            .resolve_path(fallback_module, path)
+        def_maps.scope_resolver().resolve_path(
+            fallback_module,
+            path,
+            NameResolutionFilter::AllNamespaces,
+        )
     }
 
     /// Resolve a multi-segment value path through the body def map.
@@ -255,41 +270,56 @@ where
         let defs = self
             .context
             .def_map_query()
+            .scope_resolver()
             .resolve_lexical_path(from, path, NameResolutionFilter::ValuesOnly)?
             .resolved;
-        self.value_name_resolution(BodyValueName::SemanticItems(
-            self.semantic_items_for_defs(defs)?,
+        self.value_name_resolution(BodyValueName::Candidates(
+            self.value_candidates_for_defs(defs)?,
         ))
     }
 
-    /// Keep only semantic items that belong to the value namespace.
-    fn semantic_items_for_defs(
+    /// Keep only definitions that can be used as value expressions.
+    fn value_candidates_for_defs(
         &self,
-        defs: Vec<DefId>,
-    ) -> Result<UniqueVec<SemanticItemRef>, PackageStoreError> {
-        let mut items = UniqueVec::new();
+        defs: impl IntoIterator<Item = DefId>,
+    ) -> Result<UniqueVec<BodyValueCandidate>, PackageStoreError> {
+        let mut candidates = UniqueVec::new();
         for def in defs {
-            let DefId::Local(local_def) = def else {
-                continue;
-            };
-            let Some(item) = self
-                .context
-                .item_query()
-                .semantic_item_for_local_def(local_def)?
-            else {
-                continue;
-            };
-            if matches!(
-                item,
-                SemanticItemRef::Function(_)
-                    | SemanticItemRef::Const(_)
-                    | SemanticItemRef::Static(_)
-            ) {
-                items.push(item);
+            match def {
+                DefId::Local(local_def) => {
+                    let Some(item) = self
+                        .context
+                        .item_query()
+                        .semantic_item_for_local_def(local_def)?
+                    else {
+                        continue;
+                    };
+                    match item {
+                        SemanticItemRef::Function(function) => {
+                            candidates.push(BodyValueCandidate::Function(function));
+                        }
+                        SemanticItemRef::Const(const_ref) => {
+                            candidates.push(BodyValueCandidate::Const(const_ref));
+                        }
+                        SemanticItemRef::Static(static_ref) => {
+                            candidates.push(BodyValueCandidate::Static(static_ref));
+                        }
+                        SemanticItemRef::TypeDef(_)
+                        | SemanticItemRef::Trait(_)
+                        | SemanticItemRef::Impl(_)
+                        | SemanticItemRef::TypeAlias(_) => {}
+                    }
+                }
+                DefId::EnumVariant(variant_def) => {
+                    if let Some(candidate) = self.enum_variant_candidate(variant_def)? {
+                        candidates.push(candidate);
+                    }
+                }
+                DefId::Module(_) => {}
             }
         }
 
-        Ok(items)
+        Ok(candidates)
     }
 
     /// Convert one value-namespace match into body resolution and type.
@@ -302,28 +332,28 @@ where
                 let ty = self.context.body().binding_ty_unchecked(binding).clone();
                 Ok(Some((BodyResolution::Binding(binding), ty)))
             }
-            BodyValueName::SemanticItems(items) => {
+            BodyValueName::Candidates(candidates) => {
                 let mut functions = UniqueVec::new();
                 let mut declarations = UniqueVec::new();
                 let mut tys = ExpectedUnique::new();
 
-                for item in items {
-                    match item {
-                        SemanticItemRef::Function(function) => {
+                for candidate in candidates {
+                    match candidate {
+                        BodyValueCandidate::Function(function) => {
                             functions.push(DeclarationRef::from(function));
                         }
-                        SemanticItemRef::Const(const_ref) => {
+                        BodyValueCandidate::Const(const_ref) => {
                             declarations.push(DeclarationRef::from(const_ref));
                             tys.push(self.semantic_const_ty(const_ref)?);
                         }
-                        SemanticItemRef::Static(static_ref) => {
+                        BodyValueCandidate::Static(static_ref) => {
                             declarations.push(DeclarationRef::from(static_ref));
                             tys.push(self.semantic_static_ty(static_ref)?);
                         }
-                        SemanticItemRef::TypeDef(_)
-                        | SemanticItemRef::Trait(_)
-                        | SemanticItemRef::Impl(_)
-                        | SemanticItemRef::TypeAlias(_) => {}
+                        BodyValueCandidate::EnumVariant(variant_ref, ty) => {
+                            declarations.push(DeclarationRef::EnumVariant(variant_ref));
+                            tys.push(ty);
+                        }
                     }
                 }
 
@@ -347,52 +377,9 @@ where
         &self,
         defs: &[DefId],
     ) -> Result<Option<(BodyResolution, Ty)>, PackageStoreError> {
-        let mut functions = UniqueVec::new();
-        let mut declarations = UniqueVec::new();
-        let mut tys = ExpectedUnique::new();
-
-        for def in defs {
-            let DefId::Local(local_def) = *def else {
-                continue;
-            };
-            let Some(item) = self
-                .context
-                .item_query()
-                .semantic_item_for_local_def(local_def)?
-            else {
-                continue;
-            };
-
-            match item {
-                SemanticItemRef::Function(_) => {
-                    functions.push(DeclarationRef::from(*def));
-                }
-                SemanticItemRef::Const(const_ref) => {
-                    declarations.push(DeclarationRef::from(const_ref));
-                    tys.push(self.semantic_const_ty(const_ref)?);
-                }
-                SemanticItemRef::Static(static_ref) => {
-                    declarations.push(DeclarationRef::from(static_ref));
-                    tys.push(self.semantic_static_ty(static_ref)?);
-                }
-                SemanticItemRef::TypeDef(_)
-                | SemanticItemRef::Trait(_)
-                | SemanticItemRef::Impl(_)
-                | SemanticItemRef::TypeAlias(_) => {}
-            }
-        }
-
-        if !declarations.is_empty() {
-            return Ok(Some((
-                BodyResolution::Declarations(declarations),
-                tys.into_ty(),
-            )));
-        }
-        if !functions.is_empty() {
-            return Ok(Some((BodyResolution::Declarations(functions), Ty::Unknown)));
-        }
-
-        Ok(None)
+        self.value_name_resolution(BodyValueName::Candidates(
+            self.value_candidates_for_defs(defs.iter().copied())?,
+        ))
     }
 
     /// Resolve the declared type of a const item.
@@ -428,6 +415,41 @@ where
             .resolve(ty)
     }
 
+    /// Build the constructor-like value type for an imported enum variant.
+    fn enum_variant_candidate(
+        &self,
+        variant_def: LocalEnumVariantRef,
+    ) -> Result<Option<BodyValueCandidate>, PackageStoreError> {
+        let def_maps = self.context.def_map_source();
+        let item_query = self.context.item_query();
+        if let Some(variant_def_data) = def_maps.local_enum_variant_data(variant_def)?
+            && let Some(variant_ref) =
+                item_query.enum_variant_ref_for_local_enum_variant(variant_def, variant_def_data)?
+            && let Some(variant_data) = item_query.enum_variant_data(variant_ref)?
+        {
+            let args = item_query
+                .generic_params_for_type_def(variant_data.owner)?
+                .map(|generics| {
+                    generics
+                        .types
+                        .iter()
+                        .map(|_| GenericArg::Type(Box::new(Ty::Unknown)))
+                        .collect()
+                })
+                .unwrap_or_default();
+
+            Ok(Some(BodyValueCandidate::EnumVariant(
+                variant_ref,
+                Ty::nominal(NominalTy {
+                    def: variant_data.owner,
+                    args,
+                }),
+            )))
+        } else {
+            Ok(None)
+        }
+    }
+
     /// Turn constructor-capable type defs into value declarations and their nominal type.
     fn constructor_resolution_from_defs(
         &self,
@@ -453,7 +475,7 @@ where
             {
                 continue;
             }
-            declarations.push(DeclarationRef::from(*def));
+            declarations.push(DeclarationRef::LocalDef(*local_def));
             type_defs.push(NominalTy::bare(type_def));
         }
 

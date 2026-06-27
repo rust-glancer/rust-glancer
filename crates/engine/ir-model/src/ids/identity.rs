@@ -139,21 +139,16 @@ impl DeclarationRef {
         Self::LocalDef(local_def)
     }
 
-    pub fn from_def(def: DefId) -> Self {
+    pub fn try_from_def(def: DefId) -> Option<Self> {
         match def {
-            DefId::Module(module) => Self::Module(module),
-            DefId::Local(local_def) => Self::LocalDef(local_def),
+            DefId::Module(module) => Some(Self::Module(module)),
+            DefId::Local(local_def) => Some(Self::LocalDef(local_def)),
+            DefId::EnumVariant(_) => None,
         }
     }
 
     pub fn body_binding(binding: BodyBindingRef) -> Self {
         Self::BodyBinding(binding)
-    }
-}
-
-impl From<DefId> for DeclarationRef {
-    fn from(def: DefId) -> Self {
-        Self::from_def(def)
     }
 }
 

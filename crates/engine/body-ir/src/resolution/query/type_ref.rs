@@ -156,7 +156,7 @@ where
         type_contexts.nominal_self_ty_for_context(context)
     }
 
-    /// Ask the path resolver that matches the current anchor kind.
+    /// Ask the scope resolver that matches the current anchor kind.
     fn resolve_type_path(
         &self,
         anchor: TypeRefAnchor,
