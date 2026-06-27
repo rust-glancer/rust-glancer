@@ -24,7 +24,6 @@ use crate::{
     resolution::{
         TypeRefUseSite,
         infer::{BodyCallInference, BodyMemberInference, BodyPatternInference},
-        support::callable_arg_expectations,
     },
 };
 
@@ -381,48 +380,20 @@ where
     /// Use callable return syntax to constrain matching closure bodies.
     ///
     /// Parameter expectations run earlier because they can affect method lookup
-    /// inside the closure body. Return expectations are different: by this
-    /// point the closure body has already been selected and shaped, so this hook
-    /// only pushes a concrete `FnOnce(...) -> User` result into the body expression
-    /// and lets normal result-expression propagation do the rest.
+    /// inside the closure body. Return expectations are different: this final
+    /// inference hook can preserve shared slots such as `?R`, so closure body
+    /// evidence can solve the selected call result.
     fn constrain_closure_return_expected_types(
         &mut self,
         call: ExprId,
         args: &[ExprId],
     ) -> Result<(), PackageStoreError> {
-        let expected_returns = {
-            let context = self.pass.context();
-            let mut expected_returns = Vec::new();
-
-            // Collect first while the read-only body context is alive, then
-            // apply constraints after it is dropped and the inference table can
-            // be mutably borrowed.
-            for (arg, expectation) in callable_arg_expectations(context, call, args)? {
-                let ExprKind::Closure {
-                    body: Some(body), ..
-                } = context.body().expr_unchecked(arg).kind.clone()
-                else {
-                    continue;
-                };
-
-                // Generic returns such as `<unknown>` are not useful as concrete expectations.
-                // Shared return variables need a callable-bound expectation that preserves
-                // inference slots.
-                if expectation.return_ty.has_unknown() {
-                    continue;
-                }
-
-                expected_returns.push((body, expectation.return_ty));
-            }
-
-            expected_returns
-        };
-
-        for (body, expected_ty) in expected_returns {
-            self.constrain_expr_with_expected(body, &expected_ty);
-        }
-
-        Ok(())
+        let context = self.pass.providers.context(self.pass.body);
+        BodyCallInference::new(context).constrain_closure_return_expected_types(
+            &mut self.pass.inference,
+            call,
+            args,
+        )
     }
 
     fn solve_call_target_generic_trait_obligations(

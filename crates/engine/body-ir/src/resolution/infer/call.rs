@@ -5,6 +5,7 @@
 
 use rg_ir_model::{
     DefMapRef, ExprId, ImplRef, ItemOwner, ScopeId,
+    hir::items::FunctionData,
     items::{GenericArg as ItemGenericArg, GenericParams, TypeRef},
 };
 use rg_ir_storage::{DefMapSource, ItemStoreSource, TypePathContext};
@@ -14,7 +15,13 @@ use rg_ty::{
     inference::{InferTy, InferTypeRefProjector, InferTypeSubst},
 };
 
-use crate::resolution::{BodyResolutionContext, TypeRefUseSite};
+use crate::{
+    ir::ExprKind,
+    resolution::{
+        BodyResolutionContext, TypeRefUseSite, query::ResolvedCallTarget,
+        support::CallableTypeRefExpectation,
+    },
+};
 
 use super::{
     BodyInferenceCtx,
@@ -181,6 +188,80 @@ where
             .collect())
     }
 
+    /// Constrain closure bodies from callable return expectations in one selected call.
+    ///
+    /// Concrete return expectations such as `FnOnce() -> User` become `User`. Generic returns
+    /// such as `F: FnOnce(T) -> R` become the same `?R` slot used by the selected call result, so
+    /// evidence from the closure body can solve the outer call.
+    pub(crate) fn constrain_closure_return_expected_types(
+        &self,
+        inference: &mut BodyInferenceCtx,
+        call: ExprId,
+        args: &[ExprId],
+    ) -> Result<(), PackageStoreError> {
+        if !args.iter().any(|arg| {
+            matches!(
+                &self.context.body().expr_unchecked(*arg).kind,
+                ExprKind::Closure { .. }
+            )
+        }) {
+            return Ok(());
+        }
+
+        let calls = self.context.calls();
+        let Some(target) = calls.target(call)? else {
+            return Ok(());
+        };
+        let Some(function_data) = self
+            .context
+            .item_query()
+            .function_data(target.function())?
+            .cloned()
+        else {
+            return Ok(());
+        };
+        let projection = calls.signature(&target).project(args)?;
+        if projection.written_param_refs().len() != args.len() {
+            return Ok(());
+        }
+
+        let subst =
+            self.selected_call_infer_subst(inference, call, args, &target, &function_data)?;
+        let resolver = self
+            .context
+            .type_refs(TypeRefUseSite::Function(target.function()))
+            .with_subst(projection.subst());
+
+        for (arg, param_ty) in args.iter().copied().zip(projection.written_param_refs()) {
+            let ExprKind::Closure {
+                body: Some(body), ..
+            } = self.context.body().expr_unchecked(arg).kind.clone()
+            else {
+                continue;
+            };
+            let Some(param_ty) = param_ty else {
+                continue;
+            };
+            let Some(expectation) = CallableTypeRefExpectation::from_written_param(
+                param_ty,
+                function_data.signature.generics(),
+            ) else {
+                continue;
+            };
+
+            let resolved_return_ty = resolver.resolve(expectation.return_ty())?;
+            let return_ty = InferTypeRefProjector::new(&subst)
+                .ty_from_type_ref(expectation.return_ty(), &resolved_return_ty);
+            if return_ty.has_unknown() {
+                continue;
+            }
+
+            inference.constrain_expr_infer_ty(body, &return_ty);
+        }
+
+        Ok(())
+    }
+
     /// Use call args to solve function generics shared with the call result.
     ///
     /// Example: `id(missing())` makes the arg and return share the same `?T`.
@@ -207,6 +288,43 @@ where
             return Ok(());
         }
 
+        let subst =
+            self.selected_call_infer_subst(inference, call, args, &target, &function_data)?;
+
+        let written_params = function_data
+            .signature
+            .params()
+            .iter()
+            .skip(target.first_written_param_idx());
+        let mut projector = InferTypeRefProjector::new(&subst);
+        for ((arg, param), resolved_ty) in args
+            .iter()
+            .zip(written_params)
+            .zip(projection.written_param_tys())
+        {
+            let Some(param_ty) = &param.ty else {
+                continue;
+            };
+            let expected_ty = projector.ty_from_type_ref(param_ty, resolved_ty);
+            inference.constrain_expr_infer_ty(*arg, &expected_ty);
+        }
+
+        Ok(())
+    }
+
+    /// Rebuild the substitution that connects selected signature generics to live inference slots.
+    ///
+    /// This is the final-inference version of call projection. It starts from receiver/type-prefix
+    /// evidence, gives each function generic a `?T` slot, applies explicit generic args, and then
+    /// binds the declared return type to the already-instantiated call result.
+    fn selected_call_infer_subst(
+        &self,
+        inference: &mut BodyInferenceCtx,
+        call: ExprId,
+        args: &[ExprId],
+        target: &ResolvedCallTarget,
+        function_data: &FunctionData,
+    ) -> Result<InferTypeSubst, PackageStoreError> {
         let scope = self.context.body().expr_unchecked(call).scope;
         let mut subst = self.type_prefix_impl_infer_subst(
             inference,
@@ -231,25 +349,22 @@ where
             subst.bind_type_ref(&mut inference.table, ret_ty, &return_ty, generics);
         }
 
-        let written_params = function_data
-            .signature
-            .params()
-            .iter()
-            .skip(target.first_written_param_idx());
-        let mut projector = InferTypeRefProjector::new(&subst);
-        for ((arg, param), resolved_ty) in args
-            .iter()
-            .zip(written_params)
-            .zip(projection.written_param_tys())
-        {
-            let Some(param_ty) = &param.ty else {
-                continue;
-            };
-            let expected_ty = projector.ty_from_type_ref(param_ty, resolved_ty);
-            inference.constrain_expr_infer_ty(*arg, &expected_ty);
+        if let Some(generics) = function_data.signature.generics() {
+            let written_params = function_data
+                .signature
+                .params()
+                .iter()
+                .skip(target.first_written_param_idx());
+            for (arg, param) in args.iter().zip(written_params) {
+                let Some(param_ty) = &param.ty else {
+                    continue;
+                };
+                let arg_ty = inference.root_resolved_expr_ty(*arg);
+                subst.bind_type_ref(&mut inference.table, param_ty, &arg_ty, generics);
+            }
         }
 
-        Ok(())
+        Ok(subst)
     }
 
     /// Bind impl generics for a static `Type::function` call from its result slot.

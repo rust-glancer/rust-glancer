@@ -817,6 +817,61 @@ pub fn use_it(flag: bool, user: User) {
 }
 
 #[test]
+fn infers_generic_call_results_from_closure_return_expectations() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_generic_closure_return_inference"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct Id;
+pub struct User;
+pub struct Name;
+
+pub enum Option<T> {
+    Some(T),
+    None,
+}
+
+pub fn make_user(id: Id) -> User {}
+pub fn make_name(id: Id) -> Name {}
+
+pub fn apply<T, R, F: FnOnce(T) -> R>(value: T, f: F) -> R {}
+
+pub fn try_apply<T, R, F: FnOnce(T) -> Option<R>>(value: T, f: F) -> Option<R> {}
+
+pub fn use_it(flag: bool, id: Id) {
+    let user = apply(id, |id| make_user(id))$type_apply$;
+    let maybe = try_apply(id, |id| Option::Some(make_user(id)))$type_try_apply$;
+    let conflict = apply(id, |id| if flag {
+        make_user(id)
+    } else {
+        make_name(id)
+    })$type_conflict$;
+}
+"#,
+        &[
+            AnalysisQuery::ty("generic closure return result", "type_apply"),
+            AnalysisQuery::ty("nested generic closure return result", "type_try_apply"),
+            AnalysisQuery::ty("conflicting generic closure return result", "type_conflict"),
+        ],
+        expect![[r#"
+            generic closure return result
+            - nominal struct analysis_generic_closure_return_inference[lib]::crate::User
+
+            nested generic closure return result
+            - nominal enum analysis_generic_closure_return_inference[lib]::crate::Option<nominal struct analysis_generic_closure_return_inference[lib]::crate::User>
+
+            conflicting generic closure return result
+            - <unknown>
+        "#]],
+    );
+}
+
+#[test]
 fn propagates_expected_types_through_result_expressions() {
     check_analysis_queries(
         r#"

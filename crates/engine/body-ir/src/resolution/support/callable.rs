@@ -113,11 +113,50 @@ impl CallableExpectation {
         D: DefMapSource<Error = PackageStoreError> + Copy,
         I: ItemStoreSource<'query, Error = PackageStoreError> + Copy,
     {
-        if let Some(expectation) = Self::from_direct_impl_trait(ty, resolver)? {
-            return Ok(Some(expectation));
+        let Some(expectation) = CallableTypeRefExpectation::from_written_param(ty, generics) else {
+            return Ok(None);
+        };
+
+        let params = expectation
+            .params()
+            .iter()
+            .map(|param| resolver.resolve(param))
+            .collect::<Result<Vec<_>, _>>()?;
+        let return_ty = resolver.resolve(expectation.return_ty())?;
+        Ok(Some(Self { params, return_ty }))
+    }
+}
+
+/// Callable expectation that still points at the written signature syntax.
+///
+/// This is the shared parser output. The fixed-point pattern pass resolves it
+/// into plain `Ty`; final inference can project the same syntax into `InferTy`
+/// so generic returns such as `R` keep their `?R` slot.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CallableTypeRefExpectation<'ty> {
+    params: &'ty [TypeRef],
+    return_ty: &'ty TypeRef,
+}
+
+impl<'ty> CallableTypeRefExpectation<'ty> {
+    pub(crate) fn params(&self) -> &'ty [TypeRef] {
+        self.params
+    }
+
+    pub(crate) fn return_ty(&self) -> &'ty TypeRef {
+        self.return_ty
+    }
+
+    /// Resolve a selected parameter's callable syntax.
+    pub(crate) fn from_written_param(
+        ty: &'ty TypeRef,
+        generics: Option<&'ty GenericParams>,
+    ) -> Option<Self> {
+        if let Some(expectation) = Self::from_direct_impl_trait(ty) {
+            return Some(expectation);
         }
 
-        Self::from_generic_param_bounds(ty, generics, resolver)
+        Self::from_generic_param_bounds(ty, generics)
     }
 
     /// Resolve one unambiguous parenthesized `Fn`, `FnMut`, or `FnOnce` bound.
@@ -125,22 +164,15 @@ impl CallableExpectation {
     /// This intentionally handles the direct argument shape only. Generic
     /// callable params are handled separately after we know which generic
     /// parameter the written argument uses.
-    fn from_direct_impl_trait<'query, D, I>(
-        ty: &TypeRef,
-        resolver: &TypeRefResolutionQuery<'query, D, I>,
-    ) -> Result<Option<Self>, PackageStoreError>
-    where
-        D: DefMapSource<Error = PackageStoreError> + Copy,
-        I: ItemStoreSource<'query, Error = PackageStoreError> + Copy,
-    {
+    fn from_direct_impl_trait(ty: &'ty TypeRef) -> Option<Self> {
         let TypeRef::ImplTrait(bounds) = ty else {
-            return Ok(None);
+            return None;
         };
 
         let mut candidates = ExpectedUnique::new();
-        Self::push_fn_trait_bound_expectations(bounds, resolver, &mut candidates)?;
+        Self::push_fn_trait_bound_expectations(bounds, &mut candidates);
 
-        Ok(candidates.into_option())
+        candidates.into_option()
     }
 
     /// Resolve callable bounds from a generic parameter used as a call argument.
@@ -149,26 +181,21 @@ impl CallableExpectation {
     /// argument lines up with written param `F`. By the time this runs, the call
     /// projection may already know `T = User` from the ordinary `value` arg, so
     /// resolving `F`'s bound through that projection gives the closure param type.
-    fn from_generic_param_bounds<'query, D, I>(
-        ty: &TypeRef,
-        generics: Option<&GenericParams>,
-        resolver: &TypeRefResolutionQuery<'query, D, I>,
-    ) -> Result<Option<Self>, PackageStoreError>
-    where
-        D: DefMapSource<Error = PackageStoreError> + Copy,
-        I: ItemStoreSource<'query, Error = PackageStoreError> + Copy,
-    {
+    fn from_generic_param_bounds(
+        ty: &'ty TypeRef,
+        generics: Option<&'ty GenericParams>,
+    ) -> Option<Self> {
         let Some(generics) = generics else {
-            return Ok(None);
+            return None;
         };
         let Some(param_name) = ty.type_param_name() else {
-            return Ok(None);
+            return None;
         };
 
         let mut candidates = ExpectedUnique::new();
         for param in &generics.types {
             if param.name.as_str() == param_name.as_str() {
-                Self::push_fn_trait_bound_expectations(&param.bounds, resolver, &mut candidates)?;
+                Self::push_fn_trait_bound_expectations(&param.bounds, &mut candidates);
             }
         }
 
@@ -181,37 +208,28 @@ impl CallableExpectation {
                     .type_param_name()
                     .is_some_and(|name| name.as_str() == param_name.as_str())
             {
-                Self::push_fn_trait_bound_expectations(bounds, resolver, &mut candidates)?;
+                Self::push_fn_trait_bound_expectations(bounds, &mut candidates);
             }
         }
 
-        Ok(candidates.into_option())
+        candidates.into_option()
     }
 
-    fn push_fn_trait_bound_expectations<'query, D, I>(
-        bounds: &[TypeBound],
-        resolver: &TypeRefResolutionQuery<'query, D, I>,
+    fn push_fn_trait_bound_expectations(
+        bounds: &'ty [TypeBound],
         candidates: &mut ExpectedUnique<Self>,
-    ) -> Result<(), PackageStoreError>
-    where
-        D: DefMapSource<Error = PackageStoreError> + Copy,
-        I: ItemStoreSource<'query, Error = PackageStoreError> + Copy,
-    {
+    ) {
         for bound in bounds {
             if let TypeBound::Trait(TypeRef::Path(path)) = bound
                 && let Some(segment) = path.segments.last()
                 && matches!(segment.name.as_str(), "Fn" | "FnMut" | "FnOnce")
                 && let [GenericArg::FnTraitArgs { params, ret }] = segment.args.as_slice()
             {
-                let params = params
-                    .iter()
-                    .map(|param| resolver.resolve(param))
-                    .collect::<Result<Vec<_>, _>>()?;
-                let return_ty = resolver.resolve(ret)?;
-                candidates.push(Self { params, return_ty });
+                candidates.push(Self {
+                    params,
+                    return_ty: ret,
+                });
             }
         }
-
-        Ok(())
     }
 }
