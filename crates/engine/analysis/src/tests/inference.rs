@@ -704,6 +704,56 @@ pub fn use_it(attr: Attr) {
 }
 
 #[test]
+fn infers_closure_body_from_direct_fn_trait_return_expectations() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_direct_closure_return_expectation_inference"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct User;
+
+pub fn id<T>(value: T) -> T {}
+pub fn missing<T>() -> T {}
+
+pub fn with_user(f: impl FnOnce() -> User) {}
+pub fn with_branch(f: impl FnOnce() -> User) {}
+
+pub fn use_it(flag: bool, user: User) {
+    with_user(|| id(missing())$type_direct$);
+    with_branch(|| if flag {
+        id(missing())$type_then$
+    } else {
+        user$type_else$
+    }$type_if$);
+}
+"#,
+        &[
+            AnalysisQuery::ty("direct closure return body", "type_direct"),
+            AnalysisQuery::ty("branch closure return then", "type_then"),
+            AnalysisQuery::ty("branch closure return else", "type_else"),
+            AnalysisQuery::ty("branch closure return body", "type_if"),
+        ],
+        expect![[r#"
+            direct closure return body
+            - nominal struct analysis_direct_closure_return_expectation_inference[lib]::crate::User
+
+            branch closure return then
+            - nominal struct analysis_direct_closure_return_expectation_inference[lib]::crate::User
+
+            branch closure return else
+            - nominal struct analysis_direct_closure_return_expectation_inference[lib]::crate::User
+
+            branch closure return body
+            - nominal struct analysis_direct_closure_return_expectation_inference[lib]::crate::User
+        "#]],
+    );
+}
+
+#[test]
 fn propagates_expected_types_through_result_expressions() {
     check_analysis_queries(
         r#"

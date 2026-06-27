@@ -6,7 +6,7 @@
 
 use rg_ir_model::{
     BindingId, BodyPath, ExprId, Mutability, PatId, Path, PathSegment, ScopeId, StmtId, TypeDefId,
-    items::{FieldKey, GenericArg, TypeBound, TypeRef},
+    items::{FieldKey, TypeRef},
 };
 use rg_ir_storage::{DefMapSource, ItemStoreSource};
 use rg_package_store::PackageStoreError;
@@ -14,7 +14,9 @@ use rg_std::ExpectedUnique;
 use rg_ty::{ReferencePeelingCandidates, Ty};
 
 use crate::ir::{ExprKind, PatKind, RecordPatField, StmtKind};
-use crate::resolution::{BodyResolutionContext, TypeRefUseSite, query::TypeRefResolutionQuery};
+use crate::resolution::{
+    BodyResolutionContext, TypeRefUseSite, support::direct_callable_arg_expectations,
+};
 
 pub(super) struct PatternTypePropagationPass<'query, D, I> {
     context: BodyResolutionContext<'query, D, I>,
@@ -163,41 +165,19 @@ where
         args: &[ExprId],
         updates: &mut Vec<(BindingId, Ty)>,
     ) -> Result<(), PackageStoreError> {
-        let calls = self.context.calls();
-        let Some(target) = calls.target(call)? else {
-            return Ok(());
-        };
-        let projection = calls.signature(&target).project(args)?;
-        if projection.written_param_refs().len() != args.len() {
-            return Ok(());
-        }
-
-        let resolver = self
-            .context
-            .type_refs(TypeRefUseSite::Function(target.function()))
-            .with_subst(projection.subst());
-
-        for (arg, param_ty) in args.iter().zip(projection.written_param_refs()) {
-            let Some(param_ty) = param_ty else {
-                continue;
-            };
-            let Some(expected_params) = Self::direct_callable_param_tys(param_ty, &resolver)?
-            else {
-                continue;
-            };
-
+        for (arg, expectation) in direct_callable_arg_expectations(self.context, call, args)? {
             // Only direct closure arguments can receive callable parameter expectations here.
             // Other expression kinds still get ordinary call-argument expectations elsewhere.
             let ExprKind::Closure { params, .. } =
-                self.context.body().expr_unchecked(*arg).kind.clone()
+                self.context.body().expr_unchecked(arg).kind.clone()
             else {
                 continue;
             };
-            if params.len() != expected_params.len() {
+            if params.len() != expectation.params.len() {
                 continue;
             };
 
-            for (param, expected_ty) in params.iter().zip(&expected_params) {
+            for (param, expected_ty) in params.iter().zip(&expectation.params) {
                 let Some(pat) = param.pat else {
                     continue;
                 };
@@ -206,33 +186,6 @@ where
         }
 
         Ok(())
-    }
-
-    /// Extract one unambiguous parenthesized `Fn`, `FnMut`, or `FnOnce` argument list.
-    fn direct_callable_param_tys(
-        ty: &TypeRef,
-        resolver: &TypeRefResolutionQuery<'query, D, I>,
-    ) -> Result<Option<Vec<Ty>>, PackageStoreError> {
-        let TypeRef::ImplTrait(bounds) = ty else {
-            return Ok(None);
-        };
-
-        let mut candidates = ExpectedUnique::new();
-        for bound in bounds {
-            if let TypeBound::Trait(TypeRef::Path(path)) = bound
-                && let Some(segment) = path.segments.last()
-                && matches!(segment.name.as_str(), "Fn" | "FnMut" | "FnOnce")
-                && let [GenericArg::FnTraitArgs { params, .. }] = segment.args.as_slice()
-            {
-                let param_tys = params
-                    .iter()
-                    .map(|param| resolver.resolve(param))
-                    .collect::<Result<Vec<_>, _>>()?;
-                candidates.push(param_tys);
-            }
-        }
-
-        Ok(candidates.into_option())
     }
 
     fn expected_ty_for_let(
