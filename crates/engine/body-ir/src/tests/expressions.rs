@@ -1396,7 +1396,7 @@ pub fn use_cfg(
             - v5 let kept `kept` => u8 @ 55:17-55:21
             - v6 let fallback `fallback` => u8 @ 59:9-59:17
             - v7 param kept `kept`: u8 => u8 @ 62:44-62:48
-            - v8 let closure `closure` => <unknown> @ 62:9-62:16
+            - v8 let closure `closure` => closure #21 @ 62:9-62:16
             - v9 let matched `matched` => u8 @ 64:9-64:16
             body
             expr e25 block s1 => () @ 11:3-70:2
@@ -1446,7 +1446,7 @@ pub fn use_cfg(
                   expr e19 path pair -> local v4 => nominal struct body_cfg_list_fixture[lib]::crate::Pair @ 60:9-60:13
               stmt s6 let v8 @ 62:5-62:59
                 initializer
-                  expr e21 closure s2 (v7: u8) => <unknown> @ 62:19-62:58
+                  expr e21 closure s2 (v7: u8) => closure #21 @ 62:19-62:58
                     body
                       expr e20 path kept -> local v7 => u8 @ 62:54-62:58
               stmt s7 let v9 @ 64:5-69:7

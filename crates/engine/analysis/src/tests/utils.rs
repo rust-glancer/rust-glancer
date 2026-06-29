@@ -1121,6 +1121,7 @@ impl<'a> AnalysisQuerySnapshot<'a> {
                 bounds.sort();
                 format!("impl {}", bounds.join(" + "))
             }
+            Ty::Closure(id) => format!("closure #{}", id.index()),
             Ty::Nominal(ty) => format!("nominal {}", self.render_body_nominal_ty(ty)),
             Ty::SelfTy(ty) => format!("Self {}", self.render_body_nominal_ty(ty)),
             Ty::Unknown => "<unknown>".to_string(),

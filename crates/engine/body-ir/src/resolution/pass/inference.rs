@@ -64,11 +64,29 @@ where
         Ok(())
     }
 
-    /// Instantiate inference-only facts that ordinary `Ty` cannot represent.
+    /// Instantiate facts that need the inference pass to add body-local identity or slots.
     fn instantiate_inference_facts(&mut self) -> Result<(), PackageStoreError> {
+        // TODO: These could be one body walk, but later instantiation steps can depend on facts
+        // from earlier ones. For example, call instantiation may eventually need closure
+        // witnesses to exist before processing a call argument. We keep the passes explicit until
+        // this code is more mature and there is a clearer reason to optimize the extra scans.
+        self.instantiate_closure_type_facts();
         self.instantiate_generic_call_result_facts()?;
         self.instantiate_record_result_facts();
         Ok(())
+    }
+
+    /// Give every closure expression its own anonymous body-local type.
+    fn instantiate_closure_type_facts(&mut self) {
+        for expr_idx in 0..self.pass.body.exprs().len() {
+            let expr = ExprId(expr_idx);
+            if matches!(
+                &self.pass.body.expr_unchecked(expr).kind,
+                ExprKind::Closure { .. }
+            ) {
+                self.pass.inference.set_expr_closure_ty(expr);
+            }
+        }
     }
 
     /// Turn generic call results such as `Vec<T>` or `Option<T>` into `Vec<?T>` / `Option<?T>`.

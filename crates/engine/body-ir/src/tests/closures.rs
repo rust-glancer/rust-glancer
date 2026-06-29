@@ -35,22 +35,22 @@ pub fn use_it(user: User) -> User {
             bindings
             - v0 param user `user`: User => nominal struct body_closure_fixture[lib]::crate::User @ 3:15-3:19
             - v1 param user `user`: User => nominal struct body_closure_fixture[lib]::crate::User @ 4:28-4:32
-            - v2 let pick `pick` => <unknown> @ 4:9-4:13
+            - v2 let pick `pick` => closure #2 @ 4:9-4:13
             - v3 param left `left` => nominal struct body_closure_fixture[lib]::crate::User @ 5:18-5:22
             - v4 param right `right` => nominal struct body_closure_fixture[lib]::crate::User @ 5:24-5:29
-            - v5 let pair `pair` => <unknown> @ 5:9-5:13
+            - v5 let pair `pair` => closure #4 @ 5:9-5:13
             body
             expr e6 block s1 => nominal struct body_closure_fixture[lib]::crate::User @ 3:35-7:2
               stmt s0 let v2 @ 4:5-4:57
                 initializer
-                  expr e2 closure async move s2 (v1: User) -> User => <unknown> @ 4:16-4:56
+                  expr e2 closure async move s2 (v1: User) -> User => closure #2 @ 4:16-4:56
                     body
                       expr e1 block s3 => nominal struct body_closure_fixture[lib]::crate::User @ 4:48-4:56
                         tail
                           expr e0 path user -> local v1 => nominal struct body_closure_fixture[lib]::crate::User @ 4:50-4:54
               stmt s1 let v5 @ 5:5-5:51
                 initializer
-                  expr e4 closure s4 (v3, v4: (User, User)) => <unknown> @ 5:16-5:50
+                  expr e4 closure s4 (v3, v4: (User, User)) => closure #4 @ 5:16-5:50
                     body
                       expr e3 path left -> local v3 => nominal struct body_closure_fixture[lib]::crate::User @ 5:46-5:50
               tail
@@ -89,12 +89,12 @@ pub fn use_it(user: User) -> User {
             bindings
             - v0 param user `user`: User => nominal struct body_untyped_closure_fixture[lib]::crate::User @ 3:15-3:19
             - v1 param user `user` => <unknown> @ 4:17-4:21
-            - v2 let echo `echo` => <unknown> @ 4:9-4:13
+            - v2 let echo `echo` => closure #1 @ 4:9-4:13
             body
             expr e3 block s1 => nominal struct body_untyped_closure_fixture[lib]::crate::User @ 3:35-6:2
               stmt s0 let v2 @ 4:5-4:28
                 initializer
-                  expr e1 closure s2 (v1) => <unknown> @ 4:16-4:27
+                  expr e1 closure s2 (v1) => closure #1 @ 4:16-4:27
                     body
                       expr e0 path user -> local v1 => <unknown> @ 4:23-4:27
               tail
@@ -174,7 +174,7 @@ pub fn use_it(attr: Attr) {
                   callee
                     expr e0 path with_attrs -> item fn body_direct_closure_expectation_fixture[lib]::crate::with_attrs => <unknown> @ 15:5-15:15
                   arg
-                    expr e4 closure s2 (v1) => <unknown> @ 15:16-15:40
+                    expr e4 closure s2 (v1) => closure #4 @ 15:16-15:40
                       body
                         expr e3 method_call push -> fn impl AttrVec::push => () @ 15:24-15:40
                           receiver
@@ -186,7 +186,7 @@ pub fn use_it(attr: Attr) {
                   callee
                     expr e6 path with_pair -> item fn body_direct_closure_expectation_fixture[lib]::crate::with_pair => <unknown> @ 16:5-16:14
                   arg
-                    expr e8 closure s3 (v2, v3) => <unknown> @ 16:15-16:35
+                    expr e8 closure s3 (v2, v3) => closure #8 @ 16:15-16:35
                       body
                         expr e7 path left -> local v2 => nominal struct body_direct_closure_expectation_fixture[lib]::crate::User @ 16:31-16:35
 

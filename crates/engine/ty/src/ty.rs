@@ -66,6 +66,23 @@ impl FromIterator<(Name, Ty)> for TypeSubst {
     }
 }
 
+/// Body-local identity of an anonymous closure type.
+///
+/// Rust gives every closure expression its own anonymous type. This id preserves that identity
+/// inside one body without pretending that it is a stable cross-body item.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize, Shrink)]
+pub struct ClosureTyId(u32);
+
+impl ClosureTyId {
+    pub fn new(index: u32) -> Self {
+        Self(index)
+    }
+
+    pub fn index(self) -> u32 {
+        self.0
+    }
+}
+
 /// Small type vocabulary shared by IR layers.
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
 pub enum Ty {
@@ -88,6 +105,7 @@ pub enum Ty {
         #[wincode(with = "rg_wincode_utils::WincodeDynamic<UniqueVec<OpaqueTraitBound>>")]
         bounds: UniqueVec<OpaqueTraitBound>,
     },
+    Closure(ClosureTyId),
     Syntax(TypeRef),
     Nominal(NominalTy),
     SelfTy(NominalTy),
@@ -162,6 +180,10 @@ impl Ty {
         Self::Opaque { bounds }
     }
 
+    pub fn closure(id: ClosureTyId) -> Self {
+        Self::Closure(id)
+    }
+
     pub fn nominal(ty: NominalTy) -> Self {
         Self::Nominal(ty)
     }
@@ -198,6 +220,7 @@ impl Ty {
             | Self::Slice(_)
             | Self::Reference { .. }
             | Self::Opaque { .. }
+            | Self::Closure(_)
             | Self::Syntax(_)
             | Self::Unknown => &[],
         }
@@ -213,6 +236,7 @@ impl Ty {
             | Self::Array { .. }
             | Self::Slice(_)
             | Self::Opaque { .. }
+            | Self::Closure(_)
             | Self::Syntax(_)
             | Self::Nominal(_)
             | Self::SelfTy(_)
@@ -232,7 +256,9 @@ impl Ty {
                 .any(|bound| bound.args.iter().any(GenericArg::has_unknown)),
             Self::Nominal(ty) | Self::SelfTy(ty) => ty.args.iter().any(GenericArg::has_unknown),
             Self::Unknown => true,
-            Self::Unit | Self::Never | Self::Primitive(_) | Self::Syntax(_) => false,
+            Self::Unit | Self::Never | Self::Primitive(_) | Self::Closure(_) | Self::Syntax(_) => {
+                false
+            }
         }
     }
 
@@ -245,9 +271,12 @@ impl Ty {
             Self::Opaque { bounds } => bounds
                 .iter()
                 .all(|bound| bound.args.iter().all(GenericArg::is_projectable)),
-            Self::Unit | Self::Never | Self::Primitive(_) | Self::Nominal(_) | Self::SelfTy(_) => {
-                true
-            }
+            Self::Unit
+            | Self::Never
+            | Self::Primitive(_)
+            | Self::Closure(_)
+            | Self::Nominal(_)
+            | Self::SelfTy(_) => true,
         }
     }
 }
@@ -302,7 +331,7 @@ impl Shrink for Ty {
             Self::Nominal(ty) | Self::SelfTy(ty) => {
                 Shrink::shrink_to_fit(ty);
             }
-            Self::Unit | Self::Never | Self::Primitive(_) | Self::Unknown => {}
+            Self::Unit | Self::Never | Self::Primitive(_) | Self::Closure(_) | Self::Unknown => {}
         }
     }
 }

@@ -5,7 +5,7 @@ use rg_text::Name;
 
 use super::family::{PlainTyToInferMapper, TyToInferMapper};
 use super::table::{InferVarId, InferVarKind};
-use crate::{GenericArg, Mutability, PrimitiveTy, Ty};
+use crate::{ClosureTyId, GenericArg, Mutability, PrimitiveTy, Ty};
 
 /// Inference-aware mirror of `Ty`.
 ///
@@ -34,6 +34,7 @@ pub enum InferTy {
     Opaque {
         bounds: UniqueVec<InferOpaqueTraitBound>,
     },
+    Closure(ClosureTyId),
     Syntax(Box<TypeRef>),
     Nominal(InferNominalTy),
     SelfTy(InferNominalTy),
@@ -57,6 +58,7 @@ impl InferTy {
             | Self::Slice(_)
             | Self::Reference { .. }
             | Self::Opaque { .. }
+            | Self::Closure(_)
             | Self::Syntax(_)
             | Self::Nominal(_)
             | Self::SelfTy(_)
@@ -88,6 +90,7 @@ impl InferTy {
             InferTy::Unit
             | InferTy::Never
             | InferTy::Primitive(_)
+            | InferTy::Closure(_)
             | InferTy::Syntax(_)
             | InferTy::Unknown => false,
         }
@@ -105,6 +108,7 @@ impl InferTy {
             | (InferTy::Slice(_), InferTy::Slice(_))
             | (InferTy::Unknown, InferTy::Unknown) => true,
             (InferTy::Primitive(lhs), InferTy::Primitive(rhs)) => lhs == rhs,
+            (InferTy::Closure(lhs), InferTy::Closure(rhs)) => lhs == rhs,
             (InferTy::Tuple(lhs), InferTy::Tuple(rhs)) => lhs.len() == rhs.len(),
             (InferTy::Array { len: lhs_len, .. }, InferTy::Array { len: rhs_len, .. }) => {
                 lhs_len == rhs_len
@@ -143,6 +147,7 @@ impl InferTy {
             InferTy::Unit
             | InferTy::Never
             | InferTy::Primitive(_)
+            | InferTy::Closure(_)
             | InferTy::Syntax(_)
             | InferTy::Unknown => false,
         }
@@ -168,6 +173,7 @@ impl InferTy {
             | InferTy::Unit
             | InferTy::Never
             | InferTy::Primitive(_)
+            | InferTy::Closure(_)
             | InferTy::Syntax(_) => false,
         }
     }
