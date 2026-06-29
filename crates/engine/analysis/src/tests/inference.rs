@@ -683,15 +683,30 @@ impl AttrVec {
     pub fn push(&mut self, attr: Attr) {}
 }
 
+pub struct Id;
+
+pub struct Factory;
+
+impl Factory {
+    type Id = Id;
+
+    pub fn with_id(f: impl FnOnce(Self::Id)) {}
+}
+
 pub fn with_attrs(f: impl FnOnce(&mut AttrVec)) {}
 
 pub fn use_it(attr: Attr) {
     with_attrs(|attrs| attrs$type_attrs$.push(attr)$type_push$);
+    Factory::with_id(|id| id$type_inherent_assoc$);
 }
 "#,
         &[
             AnalysisQuery::ty("direct closure expected param", "type_attrs"),
             AnalysisQuery::ty("direct closure expected method call", "type_push"),
+            AnalysisQuery::ty(
+                "direct closure inherent associated param",
+                "type_inherent_assoc",
+            ),
         ],
         expect![[r#"
             direct closure expected param
@@ -699,6 +714,9 @@ pub fn use_it(attr: Attr) {
 
             direct closure expected method call
             - ()
+
+            direct closure inherent associated param
+            - syntax Self::Id
         "#]],
     );
 }
@@ -761,6 +779,143 @@ pub fn use_it(user: User, users: &[User]) {
             - nominal struct analysis_generic_closure_expectation_inference[lib]::crate::Name
 
             conflicting generic closure param
+            - <unknown>
+        "#]],
+    );
+}
+
+#[test]
+fn infers_iterator_closure_params_from_selected_trait_method_bounds() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[workspace]
+members = ["core", "app"]
+resolver = "3"
+
+//- /core/Cargo.toml
+[package]
+name = "fake_core"
+version = "0.1.0"
+edition = "2024"
+
+//- /core/src/lib.rs
+pub mod iter {
+    pub trait Iterator {
+        type Item;
+
+        fn map<B, F>(self, f: F) -> Map<Self, F>
+        where
+            F: FnMut(Self::Item) -> B;
+
+        fn filter<P>(self, predicate: P) -> Filter<Self, P>
+        where
+            P: FnMut(&Self::Item) -> bool;
+
+        fn find<P>(self, predicate: P)
+        where
+            P: FnMut(&Self::Item) -> bool;
+
+        fn produce<F>(self, f: F)
+        where
+            F: FnOnce() -> Self::Item;
+    }
+
+    pub struct Map<I, F> {
+        iter: I,
+        f: F,
+    }
+
+    pub struct Filter<I, P> {
+        iter: I,
+        predicate: P,
+    }
+}
+
+pub mod slice {
+    pub struct Iter<'a, T>(&'a T);
+}
+
+impl<T> [T] {
+    pub fn iter(&self) -> slice::Iter<'_, T> {
+        missing()
+    }
+}
+
+impl<'a, T> iter::Iterator for slice::Iter<'a, T> {
+    type Item = &'a T;
+}
+
+//- /app/Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+core = { package = "fake_core", path = "../core" }
+
+//- /app/src/lib.rs
+pub struct User;
+pub struct Name;
+pub struct Searcher;
+
+impl User {
+    pub fn name(&self) -> Name {}
+
+    pub fn is_active(&self) -> bool {}
+}
+
+impl Searcher {
+    pub fn find<F>(&self, f: F) {}
+}
+
+pub fn id<T>(value: T) -> T {}
+pub fn missing<T>() -> T {}
+
+pub fn use_it(users: &[User], searcher: Searcher) {
+    let mapped = users.iter().map(|user| user$type_map_param$.name()$type_map_call$);
+    let filtered = users.iter().filter(|user| user$type_filter_param$.is_active()$type_filter_call$);
+    users.iter().find(|user| user$type_find_param$.is_active()$type_find_call$);
+    users.iter().produce(|| id(missing())$type_produce_body$);
+    searcher.find(|value| value$type_same_name_find_param$);
+}
+"#,
+        &[
+            AnalysisQuery::ty("iterator map closure param", "type_map_param").in_lib("app"),
+            AnalysisQuery::ty("iterator map closure method call", "type_map_call").in_lib("app"),
+            AnalysisQuery::ty("iterator filter closure param", "type_filter_param").in_lib("app"),
+            AnalysisQuery::ty("iterator filter closure method call", "type_filter_call")
+                .in_lib("app"),
+            AnalysisQuery::ty("iterator find closure param", "type_find_param").in_lib("app"),
+            AnalysisQuery::ty("iterator find closure method call", "type_find_call").in_lib("app"),
+            AnalysisQuery::ty("iterator callable return body", "type_produce_body").in_lib("app"),
+            AnalysisQuery::ty("same-name find closure param", "type_same_name_find_param")
+                .in_lib("app"),
+        ],
+        expect![[r#"
+            iterator map closure param
+            - &nominal struct app[lib]::crate::User
+
+            iterator map closure method call
+            - nominal struct app[lib]::crate::Name
+
+            iterator filter closure param
+            - &&nominal struct app[lib]::crate::User
+
+            iterator filter closure method call
+            - bool
+
+            iterator find closure param
+            - &&nominal struct app[lib]::crate::User
+
+            iterator find closure method call
+            - bool
+
+            iterator callable return body
+            - &nominal struct app[lib]::crate::User
+
+            same-name find closure param
             - <unknown>
         "#]],
     );

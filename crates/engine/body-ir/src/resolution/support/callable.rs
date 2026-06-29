@@ -7,7 +7,7 @@
 //! and final inference agree on the parameter and return types they see.
 
 use rg_ir_model::{
-    ExprId,
+    ExprId, FunctionRef, ItemOwner,
     items::{GenericArg, GenericParams, TypeBound, TypeRef, WherePredicate},
 };
 use rg_ir_storage::{DefMapSource, ItemStoreSource};
@@ -20,6 +20,10 @@ use crate::{
     resolution::{BodyResolutionContext, TypeRefUseSite, query::TypeRefResolutionQuery},
 };
 
+use super::selected_trait_assoc::{
+    SelectedTraitAssocProjector, SelectedTraitMethodContext, self_associated_type_name,
+};
+
 /// Return callable expectations aligned to closure arguments written at a call site.
 ///
 /// This owns the shared call-site setup:
@@ -27,10 +31,6 @@ use crate::{
 /// 1. Use only the unique selected target for the call.
 /// 2. Project the selected signature so written params line up with written args.
 /// 3. Resolve callable shapes at the selected function use site.
-///
-/// Most calls do not pass closures, so the helper checks that first and avoids the selected-call
-/// work when there is nothing for closure inference to consume. Callers can then decide what part
-/// of the expectation matters: pattern propagation uses `params`; final inference uses `return_ty`.
 pub(crate) fn callable_arg_expectations<'query, D, I>(
     context: BodyResolutionContext<'query, D, I>,
     call: ExprId,
@@ -40,6 +40,8 @@ where
     D: DefMapSource<Error = PackageStoreError> + Copy,
     I: ItemStoreSource<'query, Error = PackageStoreError> + Copy,
 {
+    // Most call arguments are not closures, so it makes sense to quickly check
+    // before doing any work.
     if !args.iter().any(|arg| {
         matches!(
             &context.body().expr_unchecked(*arg).kind,
@@ -53,6 +55,9 @@ where
     let Some(target) = calls.target(call)? else {
         return Ok(Vec::new());
     };
+    let Some(function_data) = context.item_query().function_data(target.function())? else {
+        return Ok(Vec::new());
+    };
     let projection = calls.signature(&target).project(args)?;
     if projection.written_param_refs().len() != args.len() {
         return Ok(Vec::new());
@@ -61,6 +66,13 @@ where
     let resolver = context
         .type_refs(TypeRefUseSite::Function(target.function()))
         .with_subst(projection.subst());
+    let callable_resolver = CallableTypeResolver::new(
+        context,
+        &resolver,
+        target.function(),
+        function_data.owner,
+        projection.selected_self_ty(),
+    )?;
     let mut expectations = Vec::new();
     for (arg, param_ty) in args.iter().copied().zip(projection.written_param_refs()) {
         if !matches!(
@@ -75,7 +87,7 @@ where
         let Some(expectation) = CallableExpectation::from_written_param(
             param_ty,
             projection.function_generics(),
-            &resolver,
+            &callable_resolver,
         )?
         else {
             continue;
@@ -107,7 +119,7 @@ impl CallableExpectation {
     fn from_written_param<'query, D, I>(
         ty: &TypeRef,
         generics: Option<&GenericParams>,
-        resolver: &TypeRefResolutionQuery<'query, D, I>,
+        resolver: &CallableTypeResolver<'_, 'query, D, I>,
     ) -> Result<Option<Self>, PackageStoreError>
     where
         D: DefMapSource<Error = PackageStoreError> + Copy,
@@ -124,6 +136,75 @@ impl CallableExpectation {
             .collect::<Result<Vec<_>, _>>()?;
         let return_ty = resolver.resolve(expectation.return_ty())?;
         Ok(Some(Self { params, return_ty }))
+    }
+}
+
+/// Resolves callable expectation syntax in the selected-call context.
+///
+/// Most callable expectation types are ordinary type refs, so this is a thin
+/// wrapper over `TypeRefResolutionQuery`. The extra selected-trait context is
+/// for signatures like `Iterator::map`, where the closure param or return is
+/// written as `Self::Item`. Plain type-ref resolution cannot know which
+/// receiver impl selected the method, but the call projection can.
+pub(crate) struct CallableTypeResolver<'a, 'query, D, I> {
+    context: BodyResolutionContext<'query, D, I>,
+    resolver: &'a TypeRefResolutionQuery<'query, D, I>,
+    selected_trait_method: Option<SelectedTraitMethodContext<'a>>,
+}
+
+impl<'a, 'query, D, I> CallableTypeResolver<'a, 'query, D, I>
+where
+    D: DefMapSource<Error = PackageStoreError> + Copy,
+    I: ItemStoreSource<'query, Error = PackageStoreError> + Copy,
+{
+    pub(crate) fn new(
+        context: BodyResolutionContext<'query, D, I>,
+        resolver: &'a TypeRefResolutionQuery<'query, D, I>,
+        function: FunctionRef,
+        owner: ItemOwner,
+        selected_self_ty: Option<&'a Ty>,
+    ) -> Result<Self, PackageStoreError> {
+        let selected_trait_method =
+            SelectedTraitMethodContext::from_function(context, function, owner, selected_self_ty)?;
+        Ok(Self {
+            context,
+            resolver,
+            selected_trait_method,
+        })
+    }
+
+    pub(crate) fn resolve(&self, ty: &TypeRef) -> Result<Ty, PackageStoreError> {
+        if let Some(projected_ty) = self.project_selected_trait_associated_ty(ty)? {
+            return Ok(projected_ty);
+        }
+
+        self.resolver.resolve(ty)
+    }
+
+    fn project_selected_trait_associated_ty(
+        &self,
+        ty: &TypeRef,
+    ) -> Result<Option<Ty>, PackageStoreError> {
+        if let Some(assoc_name) = self_associated_type_name(ty) {
+            let Some(selected_trait_method) = self.selected_trait_method.as_ref() else {
+                return Ok(None);
+            };
+            return SelectedTraitAssocProjector::new(self.context)
+                .project_concrete_ty(selected_trait_method, assoc_name)
+                .map(|ty| Some(ty.unwrap_or(Ty::Unknown)));
+        }
+
+        // Predicate adapters such as `filter` usually write `FnMut(&Self::Item)`.
+        // Keep that reference wrapper instead of smoothing it into just the item type.
+        if let TypeRef::Reference {
+            mutability, inner, ..
+        } = ty
+            && let Some(inner_ty) = self.project_selected_trait_associated_ty(inner)?
+        {
+            return Ok(Some(Ty::reference(*mutability, inner_ty)));
+        }
+
+        Ok(None)
     }
 }
 

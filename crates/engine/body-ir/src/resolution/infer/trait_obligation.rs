@@ -5,10 +5,10 @@
 //! still lives in the shared type layer.
 
 use rg_ir_model::{
-    AssocItemId, FunctionRef, ItemOwner, TraitRef, TypeAliasRef,
+    FunctionRef, ItemOwner,
     items::{GenericArg as ItemGenericArg, GenericParams, TypeBound, TypeRef, WherePredicate},
 };
-use rg_ir_storage::{DefMapSource, ItemStoreSource, TypePathContext};
+use rg_ir_storage::{DefMapSource, ItemStoreSource};
 use rg_package_store::PackageStoreError;
 use rg_std::ExpectedUnique;
 use rg_ty::{
@@ -16,8 +16,11 @@ use rg_ty::{
     inference::{InferGenericArg, InferTy, InferTypeRefProjector, InferTypeSubst},
 };
 
-use crate::resolution::query::TypeRefResolutionQuery;
-use crate::resolution::{BodyResolutionContext, TypeRefUseSite};
+use crate::resolution::{
+    BodyResolutionContext, TypeRefUseSite,
+    query::TypeRefResolutionQuery,
+    support::{SelectedTraitAssocProjector, SelectedTraitMethodContext, self_associated_type_name},
+};
 
 use super::BodyInferenceCtx;
 
@@ -39,12 +42,6 @@ pub(super) struct SelectedCallObligationInput<'input> {
     pub(super) subst: &'input InferTypeSubst,
     pub(super) signature_subst: &'input TypeSubst,
     pub(super) selected_self_ty: Option<&'input Ty>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct SelectedTraitMethodObligation {
-    trait_ref: TraitRef,
-    self_ty: InferTy,
 }
 
 /// Solves bounded trait obligations while preserving inference-table semantics.
@@ -74,9 +71,10 @@ where
         // Stage 1: capture the selected trait method context. This lets later projection read
         // `Self::Item` from the unique receiver impl, while inherent calls and free functions
         // simply proceed without that extra context.
-        let selected_trait_method = self.selected_trait_method_obligation(
-            &input.owner,
-            input.function.origin,
+        let selected_trait_method = SelectedTraitMethodContext::from_function(
+            self.context,
+            input.function,
+            input.owner,
             input.selected_self_ty,
         )?;
         let bound_resolver = self
@@ -140,7 +138,7 @@ where
         inference: &mut BodyInferenceCtx,
         subst: &InferTypeSubst,
         resolver: &TypeRefResolutionQuery<'query, D, I>,
-        selected_trait_method: Option<&SelectedTraitMethodObligation>,
+        selected_trait_method: Option<&SelectedTraitMethodContext<'_>>,
         ty: &TypeRef,
     ) -> Result<InferTy, PackageStoreError> {
         if let Some(projected_ty) =
@@ -163,7 +161,7 @@ where
         inference: &mut BodyInferenceCtx,
         subst: &InferTypeSubst,
         resolver: &TypeRefResolutionQuery<'query, D, I>,
-        selected_trait_method: Option<&SelectedTraitMethodObligation>,
+        selected_trait_method: Option<&SelectedTraitMethodContext<'_>>,
         self_ty: InferTy,
         bound: &TypeBound,
     ) -> Result<(), PackageStoreError> {
@@ -210,45 +208,6 @@ where
         Ok(())
     }
 
-    /// Build the extra context needed to interpret associated types on selected trait methods.
-    ///
-    /// Example: if `iter.collect()` selected `Iterator::collect` for receiver `Iter<User>`, later
-    /// projection can ask whether exactly one `impl Iterator for Iter<User>` defines `Item`.
-    fn selected_trait_method_obligation(
-        &self,
-        owner: &ItemOwner,
-        origin: rg_ir_model::DefMapRef,
-        selected_self_ty: Option<&Ty>,
-    ) -> Result<Option<SelectedTraitMethodObligation>, PackageStoreError> {
-        let ItemOwner::Trait(trait_id) = owner else {
-            return Ok(None);
-        };
-        let Some(selected_self_ty) = selected_self_ty else {
-            return Ok(None);
-        };
-
-        let trait_ref = TraitRef {
-            origin,
-            id: *trait_id,
-        };
-        let Some(trait_data) = self.context.item_query().trait_data(trait_ref)? else {
-            return Ok(None);
-        };
-        if !trait_data.generics.lifetimes.is_empty()
-            || !trait_data.generics.types.is_empty()
-            || !trait_data.generics.consts.is_empty()
-        {
-            // TODO: Thread trait-level generic args from method selection once we need
-            // associated projections for traits shaped like `Trait<T>`.
-            return Ok(None);
-        }
-
-        Ok(Some(SelectedTraitMethodObligation {
-            trait_ref,
-            self_ty: InferTy::from_ty(selected_self_ty),
-        }))
-    }
-
     /// Project a trait-bound generic argument while preserving inference variables.
     ///
     /// Most args use the ordinary `InferTypeRefProjector`: `Vec<_>` stays `Vec<?T>`. The special
@@ -258,7 +217,7 @@ where
         &self,
         inference: &mut BodyInferenceCtx,
         subst: &InferTypeSubst,
-        selected_trait_method: Option<&SelectedTraitMethodObligation>,
+        selected_trait_method: Option<&SelectedTraitMethodContext<'_>>,
         arg: &ItemGenericArg,
         resolved_arg: &GenericArg,
     ) -> Result<InferGenericArg, PackageStoreError> {
@@ -285,86 +244,28 @@ where
     fn project_selected_trait_associated_ty(
         &self,
         inference: &mut BodyInferenceCtx,
-        selected_trait_method: Option<&SelectedTraitMethodObligation>,
+        selected_trait_method: Option<&SelectedTraitMethodContext<'_>>,
         ty: &TypeRef,
     ) -> Result<Option<InferTy>, PackageStoreError> {
         let Some(selected_trait_method) = selected_trait_method else {
             return Ok(None);
         };
-        let Some(assoc_name) = Self::self_associated_type_name(ty) else {
+        let Some(assoc_name) = self_associated_type_name(ty) else {
             return Ok(None);
         };
 
-        let goal = TraitGoal {
-            self_ty: selected_trait_method.self_ty.clone(),
-            trait_ref: selected_trait_method.trait_ref,
-            args: Vec::new(),
-        };
-        let ExpectedUnique::One(selection) = self.probe_trait_goal(&goal, inference)? else {
-            return Ok(None);
-        };
-        let Some(projected_ty) =
-            self.project_associated_type_from_selection(&selection, assoc_name)?
+        let assoc_projector = SelectedTraitAssocProjector::new(self.context);
+        let Some(projection) = assoc_projector.project_infer_ty(
+            selected_trait_method,
+            assoc_name,
+            &inference.table,
+        )?
         else {
             return Ok(None);
         };
-
-        inference.table = selection.table;
+        let (projected_ty, table) = projection.into_parts();
+        inference.table = table;
         Ok(Some(projected_ty))
-    }
-
-    /// Read one associated type from a selected impl and project it through the impl substitution.
-    ///
-    /// Example: with `impl<T> Iterator for Iter<T> { type Item = T; }` and the selection subst
-    /// `T = User`, reading `Item` returns `User` in inference form.
-    fn project_associated_type_from_selection(
-        &self,
-        selection: &TraitSelection,
-        assoc_name: &str,
-    ) -> Result<Option<InferTy>, PackageStoreError> {
-        let Some(impl_data) = self
-            .context
-            .item_query()
-            .impl_data(selection.trait_impl.impl_ref)?
-        else {
-            return Ok(None);
-        };
-
-        for item in &impl_data.items {
-            let AssocItemId::TypeAlias(type_alias_id) = item else {
-                continue;
-            };
-            let type_alias_ref = TypeAliasRef {
-                origin: selection.trait_impl.impl_ref.origin,
-                id: *type_alias_id,
-            };
-            let Some(type_alias_data) =
-                self.context.item_query().type_alias_data(type_alias_ref)?
-            else {
-                continue;
-            };
-            if type_alias_data.name.as_str() != assoc_name {
-                continue;
-            }
-            let Some(aliased_ty) = type_alias_data.signature.aliased_ty() else {
-                continue;
-            };
-
-            let context = TypePathContext {
-                module: impl_data.owner,
-                impl_ref: Some(selection.trait_impl.impl_ref),
-            };
-            let resolved_ty = self
-                .context
-                .type_refs(TypeRefUseSite::OwnerContext(context))
-                .resolve(aliased_ty)?;
-            return Ok(Some(
-                InferTypeRefProjector::new(&selection.subst)
-                    .ty_from_type_ref(aliased_ty, &resolved_ty),
-            ));
-        }
-
-        Ok(None)
     }
 
     /// Probe a trait goal using the target lookup index persisted with Body IR.
@@ -382,25 +283,5 @@ where
             self.context.semantic_index(),
         )
         .probe(goal, &inference.table)
-    }
-
-    fn self_associated_type_name(ty: &TypeRef) -> Option<&str> {
-        // TODO: Generalize this replacement to nested shapes such as `Option<Self::Item>` when
-        // selected-call obligations need them.
-        let TypeRef::Path(path) = ty else {
-            return None;
-        };
-        let [self_segment, assoc_segment] = path.segments.as_slice() else {
-            return None;
-        };
-        if path.absolute
-            || self_segment.name.as_str() != "Self"
-            || !self_segment.args.is_empty()
-            || !assoc_segment.args.is_empty()
-        {
-            return None;
-        }
-
-        Some(assoc_segment.name.as_str())
     }
 }

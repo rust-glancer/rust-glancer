@@ -18,8 +18,9 @@ use rg_ty::{
 use crate::{
     ir::ExprKind,
     resolution::{
-        BodyResolutionContext, TypeRefUseSite, query::ResolvedCallTarget,
-        support::CallableTypeRefExpectation,
+        BodyResolutionContext, TypeRefUseSite,
+        query::ResolvedCallTarget,
+        support::{CallableTypeRefExpectation, CallableTypeResolver},
     },
 };
 
@@ -231,6 +232,13 @@ where
             .context
             .type_refs(TypeRefUseSite::Function(target.function()))
             .with_subst(projection.subst());
+        let callable_resolver = CallableTypeResolver::new(
+            self.context,
+            &resolver,
+            target.function(),
+            function_data.owner,
+            projection.selected_self_ty(),
+        )?;
 
         for (arg, param_ty) in args.iter().copied().zip(projection.written_param_refs()) {
             let ExprKind::Closure {
@@ -249,7 +257,7 @@ where
                 continue;
             };
 
-            let resolved_return_ty = resolver.resolve(expectation.return_ty())?;
+            let resolved_return_ty = callable_resolver.resolve(expectation.return_ty())?;
             let return_ty = InferTypeRefProjector::new(&subst)
                 .ty_from_type_ref(expectation.return_ty(), &resolved_return_ty);
             if return_ty.has_unknown() {
