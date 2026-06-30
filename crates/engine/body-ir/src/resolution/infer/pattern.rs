@@ -32,8 +32,13 @@ impl<'query, D, I> BodyPatternInference<'query, D, I> {
         self.link_pat(inference, pat, &initializer_ty)
     }
 
-    /// Project the current pattern from its matching initializer slot.
-    fn link_pat(&self, inference: &mut BodyInferenceCtx, pat: PatId, ty: &InferTy) -> bool {
+    /// Project the current pattern from its matching inference slot.
+    pub(crate) fn link_pat(
+        &self,
+        inference: &mut BodyInferenceCtx,
+        pat: PatId,
+        ty: &InferTy,
+    ) -> bool {
         let ty = inference.root_resolved_ty(ty);
         let Some(data) = self.context.body().pat(pat).cloned() else {
             return false;

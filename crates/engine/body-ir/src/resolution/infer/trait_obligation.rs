@@ -22,7 +22,7 @@ use crate::resolution::{
     support::{SelectedTraitAssocProjector, SelectedTraitMethodContext, self_associated_type_name},
 };
 
-use super::BodyInferenceCtx;
+use super::{BodyCallableGoalSolver, BodyInferenceCtx};
 
 /// Signature facts from an already-selected call that can expose trait obligations.
 ///
@@ -200,6 +200,16 @@ where
             trait_ref,
             args,
         };
+
+        // Note: trait solver is not powerful enough to "properly" solve obligations typically
+        // seen in closures, like `F: FnOnce(T) -> B` where `B` does not participate in impl
+        // header directly (only exposed through callable bounds).
+        // However, it is a very common piece of functionality, so we add a "lightweight"
+        // solver that would attempt solving it through the closure evidence.
+        if BodyCallableGoalSolver::new(self.context).solve_goal(inference, &goal)? {
+            return Ok(());
+        }
+
         let selection = self.probe_trait_goal(&goal, inference)?;
         if let ExpectedUnique::One(selection) = selection {
             inference.table = selection.table;

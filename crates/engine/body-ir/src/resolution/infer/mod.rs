@@ -4,6 +4,7 @@
 //! and binding slots to the transient inference table owned by `rg_ty`.
 
 mod call;
+mod callable_goal;
 mod context;
 mod facts;
 mod member;
@@ -11,6 +12,7 @@ mod pattern;
 mod trait_obligation;
 
 pub(super) use call::BodyCallInference;
+pub(super) use callable_goal::BodyCallableGoalSolver;
 pub(super) use context::BodyInferenceCtx;
 pub(super) use member::BodyMemberInference;
 pub(super) use pattern::BodyPatternInference;
