@@ -269,7 +269,7 @@ impl<'ty> CallableTypeRefExpectation<'ty> {
     /// This intentionally handles the direct argument shape only. Generic
     /// callable params are handled separately after we know which generic
     /// parameter the written argument uses.
-    fn from_direct_impl_trait(ty: &'ty TypeRef) -> ExpectedUnique<Self> {
+    pub(crate) fn from_direct_impl_trait(ty: &'ty TypeRef) -> ExpectedUnique<Self> {
         let TypeRef::ImplTrait(bounds) = ty else {
             return ExpectedUnique::new();
         };

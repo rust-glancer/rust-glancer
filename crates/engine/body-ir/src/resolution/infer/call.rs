@@ -15,17 +15,14 @@ use rg_ty::{
     inference::{InferTy, InferTypeRefProjector, InferTypeSubst},
 };
 
-use crate::{
-    ir::ExprKind,
-    resolution::{
-        BodyResolutionContext, TypeRefUseSite,
-        query::ResolvedCallTarget,
-        support::{CallableTypeRefExpectation, CallableTypeResolver},
-    },
+use crate::resolution::{
+    BodyResolutionContext, TypeRefUseSite,
+    query::ResolvedCallTarget,
+    support::{CallableTypeRefExpectation, CallableTypeResolver},
 };
 
 use super::{
-    BodyInferenceCtx,
+    BodyCallableGoalSolver, BodyInferenceCtx,
     trait_obligation::{BodyTraitObligationSolver, SelectedCallObligationInput},
 };
 
@@ -189,23 +186,22 @@ where
             .collect())
     }
 
-    /// Constrain closure bodies from callable return expectations in one selected call.
+    /// Solve direct `impl Fn*` callable syntax against closure arguments.
     ///
-    /// Concrete return expectations such as `FnOnce() -> User` become `User`. Generic returns
-    /// such as `F: FnOnce(T) -> R` become the same `?R` slot used by the selected call result, so
-    /// evidence from the closure body can solve the outer call.
-    pub(crate) fn constrain_closure_return_expected_types(
+    /// Generic callable params such as `F: FnOnce(T) -> R` are ordinary selected-call
+    /// obligations now. Inline `impl FnOnce(T) -> R` params do not have a named `F`, so this
+    /// hook turns their written callable args into the same closure-local goal directly:
+    /// `Closure#n: FnOnce(T) -> R`.
+    pub(crate) fn solve_direct_callable_closure_arguments(
         &self,
         inference: &mut BodyInferenceCtx,
         call: ExprId,
         args: &[ExprId],
     ) -> Result<(), PackageStoreError> {
-        if !args.iter().any(|arg| {
-            matches!(
-                &self.context.body().expr_unchecked(*arg).kind,
-                ExprKind::Closure { .. }
-            )
-        }) {
+        if !args
+            .iter()
+            .any(|arg| matches!(inference.root_resolved_expr_ty(*arg), InferTy::Closure(_)))
+        {
             return Ok(());
         }
 
@@ -240,32 +236,36 @@ where
             projection.selected_self_ty(),
         )?;
 
+        let callable_goal_solver = BodyCallableGoalSolver::new(self.context);
         for (arg, param_ty) in args.iter().copied().zip(projection.written_param_refs()) {
-            let ExprKind::Closure {
-                body: Some(body), ..
-            } = self.context.body().expr_unchecked(arg).kind.clone()
-            else {
+            let self_ty = inference.root_resolved_expr_ty(arg);
+            if !matches!(self_ty, InferTy::Closure(_)) {
                 continue;
-            };
+            }
             let Some(param_ty) = param_ty else {
                 continue;
             };
-            let Some(expectation) = CallableTypeRefExpectation::from_written_param(
-                param_ty,
-                function_data.signature.generics(),
-            )
-            .into_option() else {
+            let Some(expectation) =
+                CallableTypeRefExpectation::from_direct_impl_trait(param_ty).into_option()
+            else {
                 continue;
             };
 
+            let mut projector = InferTypeRefProjector::new(&subst);
+            let mut params = Vec::new();
+            for param in expectation.params() {
+                let resolved_param_ty = callable_resolver.resolve(param)?;
+                params.push(projector.ty_from_type_ref(param, &resolved_param_ty));
+            }
             let resolved_return_ty = callable_resolver.resolve(expectation.return_ty())?;
-            let return_ty = InferTypeRefProjector::new(&subst)
-                .ty_from_type_ref(expectation.return_ty(), &resolved_return_ty);
+            let return_ty =
+                projector.ty_from_type_ref(expectation.return_ty(), &resolved_return_ty);
             if return_ty.has_unknown() {
                 continue;
             }
 
-            inference.constrain_expr_infer_ty(body, &return_ty);
+            let _ = callable_goal_solver
+                .solve_fn_trait_goal(inference, &self_ty, &params, &return_ty)?;
         }
 
         Ok(())

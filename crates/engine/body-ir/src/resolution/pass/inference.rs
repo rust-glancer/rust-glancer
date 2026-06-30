@@ -395,19 +395,18 @@ where
         )
     }
 
-    /// Use callable return syntax to constrain matching closure bodies.
+    /// Use inline `impl Fn*` syntax to solve matching closure arguments.
     ///
-    /// Parameter expectations run earlier because they can affect method lookup
-    /// inside the closure body. Return expectations are different: this final
-    /// inference hook can preserve shared slots such as `?R`, so closure body
-    /// evidence can solve the selected call result.
-    fn constrain_closure_return_expected_types(
+    /// Parameter expectations run earlier because they can affect method lookup inside the
+    /// closure body. This final inference hook exists for the inline `impl FnOnce(...) -> R`
+    /// shape: it can preserve shared slots such as `?R` and then reuse the callable-goal solver.
+    fn solve_direct_callable_closure_arguments(
         &mut self,
         call: ExprId,
         args: &[ExprId],
     ) -> Result<(), PackageStoreError> {
         let context = self.pass.providers.context(self.pass.body);
-        BodyCallInference::new(context).constrain_closure_return_expected_types(
+        BodyCallInference::new(context).solve_direct_callable_closure_arguments(
             &mut self.pass.inference,
             call,
             args,
@@ -534,7 +533,7 @@ where
                 args,
             } => {
                 self.constrain_call_target_argument_expected_types(expr, &args)?;
-                self.constrain_closure_return_expected_types(expr, &args)?;
+                self.solve_direct_callable_closure_arguments(expr, &args)?;
                 self.solve_call_target_generic_trait_obligations(expr, &args, None)?;
                 self.constrain_enum_variant_payload_expected_types(expr, callee, args)
             }
@@ -544,7 +543,7 @@ where
                 ..
             } => {
                 self.constrain_call_target_argument_expected_types(expr, &args)?;
-                self.constrain_closure_return_expected_types(expr, &args)?;
+                self.solve_direct_callable_closure_arguments(expr, &args)?;
 
                 let context = self.pass.providers.context(self.pass.body);
                 BodyCallInference::new(context).constrain_selected_method_receiver_and_arguments(
@@ -557,7 +556,7 @@ where
             }
             ExprKind::MethodCall { args, .. } => {
                 self.constrain_call_target_argument_expected_types(expr, &args)?;
-                self.constrain_closure_return_expected_types(expr, &args)?;
+                self.solve_direct_callable_closure_arguments(expr, &args)?;
                 self.solve_call_target_generic_trait_obligations(expr, &args, None)
             }
             ExprKind::Record { fields, .. } => {
