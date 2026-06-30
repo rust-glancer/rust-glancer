@@ -5,7 +5,7 @@
 
 use rg_ir_model::{
     DefMapRef, ExprId, ImplRef, ItemOwner, ScopeId,
-    hir::items::FunctionData,
+    hir::{items::FunctionData, signature::FunctionSignature},
     items::{GenericArg as ItemGenericArg, GenericParams, TypeRef},
 };
 use rg_ir_storage::{DefMapSource, ItemStoreSource, TypePathContext};
@@ -253,7 +253,8 @@ where
             let Some(expectation) = CallableTypeRefExpectation::from_written_param(
                 param_ty,
                 function_data.signature.generics(),
-            ) else {
+            )
+            .into_option() else {
                 continue;
             };
 
@@ -357,20 +358,13 @@ where
             subst.bind_type_ref(&mut inference.table, ret_ty, &return_ty, generics);
         }
 
-        if let Some(generics) = function_data.signature.generics() {
-            let written_params = function_data
-                .signature
-                .params()
-                .iter()
-                .skip(target.first_written_param_idx());
-            for (arg, param) in args.iter().zip(written_params) {
-                let Some(param_ty) = &param.ty else {
-                    continue;
-                };
-                let arg_ty = inference.root_resolved_expr_ty(*arg);
-                subst.bind_type_ref(&mut inference.table, param_ty, &arg_ty, generics);
-            }
-        }
+        self.bind_selected_call_args_to_subst(
+            inference,
+            &mut subst,
+            args,
+            target,
+            &function_data.signature,
+        );
 
         Ok(subst)
     }
@@ -612,6 +606,13 @@ where
             let return_ty = inference.expr_ty(call);
             subst.bind_type_ref(&mut inference.table, ret_ty, &return_ty, generics);
         }
+        self.bind_selected_call_args_to_subst(
+            inference,
+            &mut subst,
+            args,
+            &target,
+            &function_data.signature,
+        );
 
         // Stage 2+: lower selected-call bounds into trait goals and commit only unique solutions.
         BodyTraitObligationSolver::new(self.context).solve_selected_call(
@@ -625,6 +626,45 @@ where
                 selected_self_ty: projection.selected_self_ty(),
             },
         )
+    }
+
+    /// Bind written call arguments into function generics.
+    ///
+    /// Example: `fn id<T>(value: T) -> T` plus `id(user)` gives `T = User`.
+    ///
+    /// Callable obligations need the same binding step:
+    /// `fn apply<T, F, R>(value: T, f: F) -> R where F: FnOnce(T) -> R`
+    /// plus `apply(user, |user| user.name())` gives:
+    /// - `T = User` from the first arg;
+    /// - `F = Closure#n` from the second arg.
+    ///
+    /// Obviously contradictory callable bounds, such as
+    /// `F: FnOnce(T) -> bool, F: FnOnce(T) -> u8`, are not a stable inference surface.
+    /// Inference may leave facts unknown or may be order-dependent there. The normal
+    /// path is intentionally simple and optimized for realistic selected calls.
+    fn bind_selected_call_args_to_subst(
+        &self,
+        inference: &mut BodyInferenceCtx,
+        subst: &mut InferTypeSubst,
+        args: &[ExprId],
+        target: &ResolvedCallTarget,
+        signature: &FunctionSignature,
+    ) {
+        let Some(generics) = signature.generics() else {
+            return;
+        };
+
+        let written_params = signature
+            .params()
+            .iter()
+            .skip(target.first_written_param_idx());
+        for (arg, param) in args.iter().zip(written_params) {
+            let Some(param_ty) = &param.ty else {
+                continue;
+            };
+            let arg_ty = inference.root_resolved_expr_ty(*arg);
+            subst.bind_type_ref(&mut inference.table, param_ty, &arg_ty, generics);
+        }
     }
 
     /// Bind impl generics from the selected receiver slot: `impl<T> Vec<T>` + `Vec<?T>`.

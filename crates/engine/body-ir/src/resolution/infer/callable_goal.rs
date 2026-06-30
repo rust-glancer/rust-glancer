@@ -52,7 +52,18 @@ where
         let Some((params, ret)) = self.callable_goal_args(goal)? else {
             return Ok(false);
         };
-        let Some(closure) = Self::closure_expr(inference, &goal.self_ty) else {
+        self.solve_fn_trait_goal(inference, &goal.self_ty, params, ret)
+    }
+
+    /// Use already-projected callable fn-trait args as closure-local inference evidence.
+    pub(super) fn solve_fn_trait_goal(
+        &self,
+        inference: &mut BodyInferenceCtx,
+        self_ty: &InferTy,
+        params: &[InferTy],
+        ret: &InferTy,
+    ) -> Result<bool, PackageStoreError> {
+        let Some(closure) = Self::closure_expr(inference, self_ty) else {
             return Ok(false);
         };
         let Some(closure_data) = self.context.body().expr(closure).cloned() else {
@@ -74,7 +85,7 @@ where
         // first closure pattern to `User`, including destructuring such as
         // `FnOnce((Left, Right))` -> `|(left, right)|`.
         let pattern_inference = BodyPatternInference::new(self.context);
-        for (closure_param, expected_ty) in closure_params.iter().zip(params) {
+        for (closure_param, expected_ty) in closure_params.iter().zip(params.iter()) {
             let Some(pat) = closure_param.pat else {
                 continue;
             };

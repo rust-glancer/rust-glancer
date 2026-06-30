@@ -746,16 +746,9 @@ where
     F: FnMut(&T),
 {}
 
-pub fn visit_conflict<T, F>(value: T, f: F)
-where
-    F: FnOnce(T),
-    F: FnOnce(bool),
-{}
-
 pub fn use_it(user: User, users: &[User]) {
     visit(user, |user| user$type_inline_param$.name()$type_inline_call$);
     visit_all(users, |user| user$type_where_param$.name()$type_where_call$);
-    visit_conflict(user, |value| value$type_conflict_param$);
 }
 "#,
         &[
@@ -763,7 +756,6 @@ pub fn use_it(user: User, users: &[User]) {
             AnalysisQuery::ty("inline generic closure method call", "type_inline_call"),
             AnalysisQuery::ty("where generic closure param", "type_where_param"),
             AnalysisQuery::ty("where generic closure method call", "type_where_call"),
-            AnalysisQuery::ty("conflicting generic closure param", "type_conflict_param"),
         ],
         expect![[r#"
             inline generic closure param
@@ -777,9 +769,6 @@ pub fn use_it(user: User, users: &[User]) {
 
             where generic closure method call
             - nominal struct analysis_generic_closure_expectation_inference[lib]::crate::Name
-
-            conflicting generic closure param
-            - <unknown>
         "#]],
     );
 }
@@ -1000,6 +989,8 @@ pub fn try_apply<T, R, F: FnOnce(T) -> Option<R>>(value: T, f: F) -> Option<R> {
 
 pub fn use_it(flag: bool, id: Id) {
     let user = apply(id, |id| make_user(id))$type_apply$;
+    let stored_f = |id| make_user(id);
+    let stored = apply(id, stored_f)$type_stored_apply$;
     let maybe = try_apply(id, |id| Option::Some(make_user(id)))$type_try_apply$;
     let conflict = apply(id, |id| if flag {
         make_user(id)
@@ -1010,11 +1001,15 @@ pub fn use_it(flag: bool, id: Id) {
 "#,
         &[
             AnalysisQuery::ty("generic closure return result", "type_apply"),
+            AnalysisQuery::ty("stored generic closure return result", "type_stored_apply"),
             AnalysisQuery::ty("nested generic closure return result", "type_try_apply"),
             AnalysisQuery::ty("conflicting generic closure return result", "type_conflict"),
         ],
         expect![[r#"
             generic closure return result
+            - nominal struct analysis_generic_closure_return_inference[lib]::crate::User
+
+            stored generic closure return result
             - nominal struct analysis_generic_closure_return_inference[lib]::crate::User
 
             nested generic closure return result

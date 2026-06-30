@@ -125,7 +125,9 @@ impl CallableExpectation {
         D: DefMapSource<Error = PackageStoreError> + Copy,
         I: ItemStoreSource<'query, Error = PackageStoreError> + Copy,
     {
-        let Some(expectation) = CallableTypeRefExpectation::from_written_param(ty, generics) else {
+        let Some(expectation) =
+            CallableTypeRefExpectation::from_written_param(ty, generics).into_option()
+        else {
             return Ok(None);
         };
 
@@ -232,12 +234,34 @@ impl<'ty> CallableTypeRefExpectation<'ty> {
     pub(crate) fn from_written_param(
         ty: &'ty TypeRef,
         generics: Option<&'ty GenericParams>,
-    ) -> Option<Self> {
-        if let Some(expectation) = Self::from_direct_impl_trait(ty) {
-            return Some(expectation);
+    ) -> ExpectedUnique<Self> {
+        let direct = Self::from_direct_impl_trait(ty);
+        if !direct.is_empty() {
+            return direct;
         }
 
         Self::from_generic_param_bounds(ty, generics)
+    }
+
+    /// Resolve one parenthesized `Fn`, `FnMut`, or `FnOnce` trait bound.
+    pub(crate) fn from_fn_trait_bound(ty: &'ty TypeRef) -> Option<Self> {
+        let TypeRef::Path(path) = ty else {
+            return None;
+        };
+        let Some(segment) = path.segments.last() else {
+            return None;
+        };
+        if !matches!(segment.name.as_str(), "Fn" | "FnMut" | "FnOnce") {
+            return None;
+        }
+        let [GenericArg::FnTraitArgs { params, ret }] = segment.args.as_slice() else {
+            return None;
+        };
+
+        Some(Self {
+            params,
+            return_ty: ret,
+        })
     }
 
     /// Resolve one unambiguous parenthesized `Fn`, `FnMut`, or `FnOnce` bound.
@@ -245,15 +269,14 @@ impl<'ty> CallableTypeRefExpectation<'ty> {
     /// This intentionally handles the direct argument shape only. Generic
     /// callable params are handled separately after we know which generic
     /// parameter the written argument uses.
-    fn from_direct_impl_trait(ty: &'ty TypeRef) -> Option<Self> {
+    fn from_direct_impl_trait(ty: &'ty TypeRef) -> ExpectedUnique<Self> {
         let TypeRef::ImplTrait(bounds) = ty else {
-            return None;
+            return ExpectedUnique::new();
         };
 
         let mut candidates = ExpectedUnique::new();
         Self::push_fn_trait_bound_expectations(bounds, &mut candidates);
-
-        candidates.into_option()
+        candidates
     }
 
     /// Resolve callable bounds from a generic parameter used as a call argument.
@@ -265,12 +288,12 @@ impl<'ty> CallableTypeRefExpectation<'ty> {
     fn from_generic_param_bounds(
         ty: &'ty TypeRef,
         generics: Option<&'ty GenericParams>,
-    ) -> Option<Self> {
+    ) -> ExpectedUnique<Self> {
         let Some(generics) = generics else {
-            return None;
+            return ExpectedUnique::new();
         };
         let Some(param_name) = ty.type_param_name() else {
-            return None;
+            return ExpectedUnique::new();
         };
 
         let mut candidates = ExpectedUnique::new();
@@ -293,7 +316,7 @@ impl<'ty> CallableTypeRefExpectation<'ty> {
             }
         }
 
-        candidates.into_option()
+        candidates
     }
 
     fn push_fn_trait_bound_expectations(
@@ -301,15 +324,10 @@ impl<'ty> CallableTypeRefExpectation<'ty> {
         candidates: &mut ExpectedUnique<Self>,
     ) {
         for bound in bounds {
-            if let TypeBound::Trait(TypeRef::Path(path)) = bound
-                && let Some(segment) = path.segments.last()
-                && matches!(segment.name.as_str(), "Fn" | "FnMut" | "FnOnce")
-                && let [GenericArg::FnTraitArgs { params, ret }] = segment.args.as_slice()
+            if let TypeBound::Trait(ty) = bound
+                && let Some(expectation) = Self::from_fn_trait_bound(ty)
             {
-                candidates.push(Self {
-                    params,
-                    return_ty: ret,
-                });
+                candidates.push(expectation);
             }
         }
     }

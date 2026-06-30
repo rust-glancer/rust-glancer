@@ -19,7 +19,10 @@ use rg_ty::{
 use crate::resolution::{
     BodyResolutionContext, TypeRefUseSite,
     query::TypeRefResolutionQuery,
-    support::{SelectedTraitAssocProjector, SelectedTraitMethodContext, self_associated_type_name},
+    support::{
+        CallableTypeRefExpectation, SelectedTraitAssocProjector, SelectedTraitMethodContext,
+        self_associated_type_name,
+    },
 };
 
 use super::{BodyCallableGoalSolver, BodyInferenceCtx};
@@ -168,6 +171,17 @@ where
         let TypeBound::Trait(bound_ty) = bound else {
             return Ok(());
         };
+        if self.solve_callable_syntax_obligation(
+            inference,
+            subst,
+            resolver,
+            selected_trait_method,
+            &self_ty,
+            bound_ty,
+        )? {
+            return Ok(());
+        }
+
         let Some((trait_ref, resolved_args)) = resolver.resolve_trait_bound(bound_ty)? else {
             return Ok(());
         };
@@ -218,11 +232,58 @@ where
         Ok(())
     }
 
+    /// Turn written `Fn*` bounds into closure evidence before ordinary trait solving.
+    ///
+    /// The trait solver does not model callable traits deeply enough to prove this on its own yet:
+    /// `where F: FnOnce(T) -> R`.
+    ///
+    /// But selected-call inference may already know that `F` is a particular closure:
+    /// `apply(user, |user| user.name())` gives `F = Closure#n`.
+    ///
+    /// In that case we can project `T` and `R` through the selected-call substitution and apply
+    /// the same closure-local goal as the normal trait path:
+    /// `Closure#n: FnOnce(User) -> R`.
+    fn solve_callable_syntax_obligation(
+        &self,
+        inference: &mut BodyInferenceCtx,
+        subst: &InferTypeSubst,
+        resolver: &TypeRefResolutionQuery<'query, D, I>,
+        selected_trait_method: Option<&SelectedTraitMethodContext<'_>>,
+        self_ty: &InferTy,
+        bound_ty: &TypeRef,
+    ) -> Result<bool, PackageStoreError> {
+        let Some(expectation) = CallableTypeRefExpectation::from_fn_trait_bound(bound_ty) else {
+            return Ok(false);
+        };
+        if !matches!(inference.root_resolved_ty(self_ty), InferTy::Closure(_)) {
+            return Ok(false);
+        }
+
+        let params = expectation
+            .params()
+            .iter()
+            .map(|param| {
+                self.project_obligation_ty(inference, subst, resolver, selected_trait_method, param)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let ret = self.project_obligation_ty(
+            inference,
+            subst,
+            resolver,
+            selected_trait_method,
+            expectation.return_ty(),
+        )?;
+
+        BodyCallableGoalSolver::new(self.context)
+            .solve_fn_trait_goal(inference, self_ty, &params, &ret)
+    }
+
     /// Project a trait-bound generic argument while preserving inference variables.
     ///
     /// Most args use the ordinary `InferTypeRefProjector`: `Vec<_>` stays `Vec<?T>`. The special
-    /// case is an exact `Self::Item` type arg from a selected trait method, which is replaced by
-    /// the receiver impl's associated type before matching the bound impl.
+    /// case is `Self::Item` from a selected trait method, which is replaced by the receiver impl's
+    /// associated type before matching the bound impl. Simple reference wrappers are preserved, so
+    /// `&Self::Item` can still project through bounds like `FnMut(&Self::Item)`.
     fn project_obligation_generic_arg(
         &self,
         inference: &mut BodyInferenceCtx,
@@ -246,7 +307,7 @@ where
         Ok(InferTypeRefProjector::new(subst).generic_arg_from_arg(arg, resolved_arg))
     }
 
-    /// Replace exact `Self::Assoc` with the associated type from a unique receiver impl.
+    /// Replace `Self::Assoc` with the associated type from a unique receiver impl.
     ///
     /// Example: for `Iterator::collect` on `Iter<User>`, this probes `Iter<User>: Iterator` and
     /// reads `type Item = User` from the unique impl. Ambiguous receiver impls return `None` so
@@ -260,22 +321,40 @@ where
         let Some(selected_trait_method) = selected_trait_method else {
             return Ok(None);
         };
-        let Some(assoc_name) = self_associated_type_name(ty) else {
-            return Ok(None);
-        };
+        if let Some(assoc_name) = self_associated_type_name(ty) {
+            let assoc_projector = SelectedTraitAssocProjector::new(self.context);
+            let Some(projection) = assoc_projector.project_infer_ty(
+                selected_trait_method,
+                assoc_name,
+                &inference.table,
+            )?
+            else {
+                return Ok(None);
+            };
+            let (projected_ty, table) = projection.into_parts();
+            inference.table = table;
+            return Ok(Some(projected_ty));
+        }
 
-        let assoc_projector = SelectedTraitAssocProjector::new(self.context);
-        let Some(projection) = assoc_projector.project_infer_ty(
-            selected_trait_method,
-            assoc_name,
-            &inference.table,
-        )?
-        else {
-            return Ok(None);
-        };
-        let (projected_ty, table) = projection.into_parts();
-        inference.table = table;
-        Ok(Some(projected_ty))
+        // Callable bounds often wrap associated types in references, e.g. `FnMut(&Self::Item)`.
+        // This is not autoderef: we only peel written reference wrappers until the inner type can
+        // be projected, then rebuild the same reference shape around the projected type.
+        if let TypeRef::Reference {
+            mutability, inner, ..
+        } = ty
+            && let Some(inner_ty) = self.project_selected_trait_associated_ty(
+                inference,
+                Some(selected_trait_method),
+                inner,
+            )?
+        {
+            return Ok(Some(InferTy::Reference {
+                mutability: *mutability,
+                inner: Box::new(inner_ty),
+            }));
+        }
+
+        Ok(None)
     }
 
     /// Probe a trait goal using the target lookup index persisted with Body IR.
