@@ -428,6 +428,21 @@ where
         )
     }
 
+    fn project_selected_trait_associated_return_type(
+        &mut self,
+        call: ExprId,
+        args: &[ExprId],
+        receiver: Option<ExprId>,
+    ) -> Result<(), PackageStoreError> {
+        let context = self.pass.providers.context(self.pass.body);
+        BodyCallInference::new(context).project_selected_trait_associated_return_type(
+            &mut self.pass.inference,
+            call,
+            args,
+            receiver,
+        )
+    }
+
     /// Visit all places that can provide expected types to already-created inference slots.
     fn constrain_expected_types(&mut self) -> Result<(), PackageStoreError> {
         for statement_idx in 0..self.pass.body.statements().len() {
@@ -534,6 +549,7 @@ where
             } => {
                 self.constrain_call_target_argument_expected_types(expr, &args)?;
                 self.solve_direct_callable_closure_arguments(expr, &args)?;
+                self.project_selected_trait_associated_return_type(expr, &args, None)?;
                 self.solve_call_target_generic_trait_obligations(expr, &args, None)?;
                 self.constrain_enum_variant_payload_expected_types(expr, callee, args)
             }
@@ -552,11 +568,13 @@ where
                     receiver,
                     &args,
                 )?;
+                self.project_selected_trait_associated_return_type(expr, &args, Some(receiver))?;
                 self.solve_call_target_generic_trait_obligations(expr, &args, Some(receiver))
             }
             ExprKind::MethodCall { args, .. } => {
                 self.constrain_call_target_argument_expected_types(expr, &args)?;
                 self.solve_direct_callable_closure_arguments(expr, &args)?;
+                self.project_selected_trait_associated_return_type(expr, &args, None)?;
                 self.solve_call_target_generic_trait_obligations(expr, &args, None)
             }
             ExprKind::Record { fields, .. } => {

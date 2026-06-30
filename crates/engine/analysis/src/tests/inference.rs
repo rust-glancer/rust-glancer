@@ -1022,6 +1022,59 @@ pub fn use_it(flag: bool, id: Id) {
 }
 
 #[test]
+fn projects_associated_type_from_callable_impl_where_clause() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_callable_impl_where_projection"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub trait Produces {
+    type Output;
+
+    fn produce(self) -> Self::Output;
+}
+
+pub struct Adapter<F> {
+    f: F,
+}
+
+pub struct Name;
+pub struct NotCallable;
+
+impl<F, R> Produces for Adapter<F>
+where
+    F: FnOnce() -> R,
+{
+    type Output = R;
+}
+
+pub fn adapter<F>(f: F) -> Adapter<F> {}
+pub fn make_name() -> Name {}
+
+pub fn use_it(not_callable: NotCallable) {
+    let produced = adapter(|| make_name()).produce()$type_produced$;
+    let unknown = adapter(not_callable).produce()$type_unknown$;
+}
+"#,
+        &[
+            AnalysisQuery::ty("callable impl where projection", "type_produced"),
+            AnalysisQuery::ty("non-callable impl where projection", "type_unknown"),
+        ],
+        expect![[r#"
+            callable impl where projection
+            - nominal struct analysis_callable_impl_where_projection[lib]::crate::Name
+
+            non-callable impl where projection
+            - <unknown>
+        "#]],
+    );
+}
+
+#[test]
 fn propagates_expected_types_through_result_expressions() {
     check_analysis_queries(
         r#"

@@ -18,7 +18,7 @@ use rg_ir_storage::{DefMapSource, ItemStoreSource, TypePathContext};
 use rg_package_store::PackageStoreError;
 use rg_std::ExpectedUnique;
 use rg_ty::{
-    TraitGoal, TraitSelection, TraitSelectionQuery, Ty,
+    TraitGoal, TraitSelection, TraitSelectionOptions, TraitSelectionQuery, Ty,
     inference::{InferTy, InferTypeRefProjector, InferenceTable},
 };
 
@@ -135,7 +135,9 @@ where
             trait_ref: selected_method.trait_ref,
             args: Vec::new(),
         };
-        let ExpectedUnique::One(selection) = self.probe_trait_goal(&goal, table)? else {
+        let ExpectedUnique::One(selection) =
+            self.probe_trait_goal(&goal, table, TraitSelectionOptions::new())?
+        else {
             return Ok(None);
         };
         let Some(projected_ty) =
@@ -148,6 +150,24 @@ where
             ty: projected_ty,
             table: selection.table,
         }))
+    }
+
+    /// Select the receiver impl using caller-provided trait-selection options.
+    pub(crate) fn select_infer_trait_impl(
+        &self,
+        selected_method: &SelectedTraitMethodContext<'_>,
+        table: &InferenceTable,
+        options: TraitSelectionOptions,
+    ) -> Result<Option<TraitSelection>, PackageStoreError> {
+        let goal = TraitGoal {
+            self_ty: InferTy::from_ty(selected_method.selected_self_ty),
+            trait_ref: selected_method.trait_ref,
+            args: Vec::new(),
+        };
+        let ExpectedUnique::One(selection) = self.probe_trait_goal(&goal, table, options)? else {
+            return Ok(None);
+        };
+        Ok(Some(selection))
     }
 
     /// Project an associated type into a stable concrete type for non-mutating callers.
@@ -169,7 +189,7 @@ where
         Ok(Some(projected_ty))
     }
 
-    fn project_associated_type_from_selection(
+    pub(crate) fn project_associated_type_from_selection(
         &self,
         selection: &TraitSelection,
         assoc_name: &str,
@@ -223,12 +243,14 @@ where
         &self,
         goal: &TraitGoal,
         table: &InferenceTable,
+        options: TraitSelectionOptions,
     ) -> Result<ExpectedUnique<TraitSelection>, PackageStoreError> {
         TraitSelectionQuery::with_index(
             self.context.item_paths(),
             self.context.target_items(),
             self.context.semantic_index(),
         )
+        .with_options(options)
         .probe(goal, table)
     }
 }

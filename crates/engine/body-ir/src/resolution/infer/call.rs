@@ -18,7 +18,10 @@ use rg_ty::{
 use crate::resolution::{
     BodyResolutionContext, TypeRefUseSite,
     query::ResolvedCallTarget,
-    support::{CallableTypeRefExpectation, CallableTypeResolver},
+    support::{
+        CallableTypeRefExpectation, CallableTypeResolver, SelectedTraitMethodContext,
+        self_associated_type_name,
+    },
 };
 
 use super::{
@@ -267,6 +270,67 @@ where
             let _ = callable_goal_solver
                 .solve_fn_trait_goal(inference, &self_ty, &params, &return_ty)?;
         }
+
+        Ok(())
+    }
+
+    /// Project exact `Self::Assoc` returns from selected trait methods in the inference view.
+    ///
+    /// Initial call projection only has ordinary `Ty` facts. Final inference may know more, such
+    /// as `Adapter<Closure#n>` after an inner call has bound its generic argument. That extra
+    /// closure witness is what lets impl where-clauses like `F: FnOnce() -> R` solve `R` before
+    /// projecting `type Output = R`.
+    pub(crate) fn project_selected_trait_associated_return_type(
+        &self,
+        inference: &mut BodyInferenceCtx,
+        call: ExprId,
+        args: &[ExprId],
+        receiver: Option<ExprId>,
+    ) -> Result<(), PackageStoreError> {
+        let calls = self.context.calls();
+        let Some(target) = calls.target(call)? else {
+            return Ok(());
+        };
+        let Some(function_data) = self
+            .context
+            .item_query()
+            .function_data(target.function())?
+            .cloned()
+        else {
+            return Ok(());
+        };
+        let projection = calls.signature(&target).project(args)?;
+        let Some(ret_ty) = projection.declared_return_ty() else {
+            return Ok(());
+        };
+        let Some(assoc_name) = self_associated_type_name(ret_ty) else {
+            return Ok(());
+        };
+
+        let finalized_receiver_ty;
+        let selected_self_ty = match receiver {
+            Some(receiver) => {
+                finalized_receiver_ty = inference
+                    .table
+                    .finalize(&inference.root_resolved_expr_ty(receiver));
+                Some(&finalized_receiver_ty)
+            }
+            None => projection.selected_self_ty(),
+        };
+        let Some(selected_trait_method) = SelectedTraitMethodContext::from_function(
+            self.context,
+            target.function(),
+            function_data.owner,
+            selected_self_ty,
+        )?
+        else {
+            return Ok(());
+        };
+
+        let projected_ty = BodyTraitObligationSolver::new(self.context)
+            .project_selected_trait_associated_alias(inference, &selected_trait_method, assoc_name)?
+            .unwrap_or(InferTy::Unknown);
+        inference.set_expr_infer_ty(call, projected_ty);
 
         Ok(())
     }

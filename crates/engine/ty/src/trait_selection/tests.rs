@@ -4,7 +4,7 @@ use rg_ir_model::hir::items::ImplData;
 use rg_ir_model::hir::source::{GeneratedItemRef, GeneratedSourceId, ItemSource, ItemSourceKind};
 use rg_ir_model::items::{
     GenericArg as ItemGenericArg, GenericParams, ItemTreeId, TypeBound, TypeParamData, TypePath,
-    TypePathSegment, TypeRef,
+    TypePathSegment, TypeRef, WherePredicate,
 };
 use rg_ir_model::{
     DefMapRef, FileId, ImplId, LocalImplId, LocalImplRef, ModuleId, ModuleRef, PackageSlot, Span,
@@ -18,9 +18,9 @@ use rg_ir_storage::{
 use rg_std::ExpectedUnique;
 use rg_text::Name;
 
-use super::{TraitGoal, TraitSelectionQuery};
+use super::{TraitGoal, TraitSelectionOptions, TraitSelectionQuery};
 use crate::inference::{InferGenericArg, InferNominalTy, InferTy, InferenceTable};
-use crate::{GenericArg, ItemPathQuery, NominalTy, Ty};
+use crate::{ClosureTyId, GenericArg, ItemPathQuery, NominalTy, Ty};
 
 struct TraitSelectionFixture {
     store: ItemStore,
@@ -171,6 +171,17 @@ fn bounded_type_param(name: &str) -> TypeParamData {
 fn generics(types: Vec<TypeParamData>) -> GenericParams {
     GenericParams {
         types,
+        ..GenericParams::default()
+    }
+}
+
+fn generics_with_where(
+    types: Vec<TypeParamData>,
+    where_predicates: Vec<WherePredicate>,
+) -> GenericParams {
+    GenericParams {
+        types,
+        where_predicates,
         ..GenericParams::default()
     }
 }
@@ -405,4 +416,47 @@ fn probe_skips_impls_that_need_bound_solving() {
     let selection = query(&fixture).probe(&goal, &table).unwrap();
 
     assert!(selection.is_empty());
+}
+
+#[test]
+fn probe_header_can_return_impl_that_still_needs_where_predicate_solving() {
+    let adapter_def = type_def(0);
+    let produces = trait_ref(0);
+    let impl_data = impl_data(
+        0,
+        generics_with_where(
+            vec![type_param("F"), type_param("R")],
+            vec![WherePredicate::Type {
+                ty: path_ty("F", Vec::new()),
+                bounds: vec![TypeBound::Trait(path_ty("FnOnce", Vec::new()))],
+            }],
+        ),
+        produces,
+        path_ty("Produces", Vec::new()),
+        adapter_def,
+        path_ty("Adapter", vec![type_arg(path_ty("F", Vec::new()))]),
+    );
+    let fixture = fixture(vec![impl_data]);
+
+    let goal = TraitGoal {
+        self_ty: nominal_infer_ty(
+            adapter_def,
+            vec![infer_type_arg(InferTy::Closure(ClosureTyId::new(0)))],
+        ),
+        trait_ref: produces,
+        args: Vec::new(),
+    };
+    let table = InferenceTable::new();
+
+    assert!(query(&fixture).probe(&goal, &table).unwrap().is_empty());
+    assert!(
+        matches!(
+            query(&fixture)
+                .with_options(TraitSelectionOptions::new().ignore_where_predicates())
+                .probe(&goal, &table)
+                .unwrap(),
+            ExpectedUnique::One(_)
+        ),
+        "header-only probe should leave the where predicate to a higher layer"
+    );
 }

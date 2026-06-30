@@ -6,13 +6,15 @@
 
 use rg_ir_model::{
     FunctionRef, ItemOwner,
+    hir::items::ImplData,
     items::{GenericArg as ItemGenericArg, GenericParams, TypeBound, TypeRef, WherePredicate},
 };
-use rg_ir_storage::{DefMapSource, ItemStoreSource};
+use rg_ir_storage::{DefMapSource, ItemStoreSource, TypePathContext};
 use rg_package_store::PackageStoreError;
 use rg_std::ExpectedUnique;
 use rg_ty::{
-    GenericArg, TraitGoal, TraitSelection, TraitSelectionQuery, Ty, TypeSubst,
+    GenericArg, TraitGoal, TraitSelection, TraitSelectionOptions, TraitSelectionQuery, Ty,
+    TypeSubst,
     inference::{InferGenericArg, InferTy, InferTypeRefProjector, InferTypeSubst},
 };
 
@@ -45,6 +47,12 @@ pub(super) struct SelectedCallObligationInput<'input> {
     pub(super) subst: &'input InferTypeSubst,
     pub(super) signature_subst: &'input TypeSubst,
     pub(super) selected_self_ty: Option<&'input Ty>,
+}
+
+struct CallableImplWhereObligation {
+    self_ty: InferTy,
+    params: Vec<InferTy>,
+    ret: InferTy,
 }
 
 /// Solves bounded trait obligations while preserving inference-table semantics.
@@ -322,18 +330,11 @@ where
             return Ok(None);
         };
         if let Some(assoc_name) = self_associated_type_name(ty) {
-            let assoc_projector = SelectedTraitAssocProjector::new(self.context);
-            let Some(projection) = assoc_projector.project_infer_ty(
+            return self.project_selected_trait_associated_alias(
+                inference,
                 selected_trait_method,
                 assoc_name,
-                &inference.table,
-            )?
-            else {
-                return Ok(None);
-            };
-            let (projected_ty, table) = projection.into_parts();
-            inference.table = table;
-            return Ok(Some(projected_ty));
+            );
         }
 
         // Callable bounds often wrap associated types in references, e.g. `FnMut(&Self::Item)`.
@@ -355,6 +356,156 @@ where
         }
 
         Ok(None)
+    }
+
+    /// Project `Self::Assoc` from the selected receiver impl, including shallow callable where
+    /// clauses that can solve impl-only generics.
+    ///
+    /// Example:
+    ///
+    /// ```text
+    /// impl<F, R> Produces for Adapter<F>
+    /// where
+    ///     F: FnOnce() -> R,
+    /// {
+    ///     type Output = R;
+    /// }
+    /// ```
+    ///
+    /// Matching `Adapter<Closure#n>: Produces` binds `F = Closure#n`, but `R` only appears in the
+    /// where-clause and alias. We give `R` a fresh slot, solve the callable where-clause from the
+    /// closure body, and then project `type Output = R`.
+    pub(super) fn project_selected_trait_associated_alias(
+        &self,
+        inference: &mut BodyInferenceCtx,
+        selected_trait_method: &SelectedTraitMethodContext<'_>,
+        assoc_name: &str,
+    ) -> Result<Option<InferTy>, PackageStoreError> {
+        let assoc_projector = SelectedTraitAssocProjector::new(self.context);
+        let Some(mut selection) = assoc_projector.select_infer_trait_impl(
+            selected_trait_method,
+            &inference.table,
+            TraitSelectionOptions::new().ignore_where_predicates(),
+        )?
+        else {
+            return Ok(None);
+        };
+        let Some(impl_data) = self
+            .context
+            .item_query()
+            .impl_data(selection.trait_impl.impl_ref)?
+            .cloned()
+        else {
+            return Ok(None);
+        };
+
+        self.bind_missing_impl_type_params(&mut selection, &impl_data.generics);
+        let Some(projected_ty) =
+            assoc_projector.project_associated_type_from_selection(&selection, assoc_name)?
+        else {
+            return Ok(None);
+        };
+
+        let Some(obligations) = self.callable_impl_where_obligations(&selection, &impl_data)?
+        else {
+            return Ok(None);
+        };
+        if obligations.iter().any(|obligation| {
+            !matches!(
+                selection.table.resolve_root_var(&obligation.self_ty),
+                InferTy::Closure(_)
+            )
+        }) {
+            return Ok(None);
+        }
+
+        let previous_table = inference.table.clone();
+        inference.table = selection.table;
+        for obligation in obligations {
+            if !BodyCallableGoalSolver::new(self.context).solve_fn_trait_goal(
+                inference,
+                &obligation.self_ty,
+                &obligation.params,
+                &obligation.ret,
+            )? {
+                inference.table = previous_table;
+                return Ok(None);
+            }
+        }
+
+        Ok(Some(projected_ty))
+    }
+
+    fn bind_missing_impl_type_params(
+        &self,
+        selection: &mut TraitSelection,
+        generics: &GenericParams,
+    ) {
+        for param in &generics.types {
+            if selection.subst.type_param(param.name.as_str()).is_some() {
+                continue;
+            }
+            let ty = selection.table.new_type_var();
+            selection
+                .subst
+                .push(&mut selection.table, param.name.clone(), ty);
+        }
+    }
+
+    fn callable_impl_where_obligations(
+        &self,
+        selection: &TraitSelection,
+        impl_data: &ImplData,
+    ) -> Result<Option<Vec<CallableImplWhereObligation>>, PackageStoreError> {
+        let context = TypePathContext {
+            module: impl_data.owner,
+            impl_ref: Some(selection.trait_impl.impl_ref),
+        };
+        let resolver = self
+            .context
+            .type_refs(TypeRefUseSite::OwnerContext(context));
+        let mut obligations = Vec::new();
+
+        for predicate in &impl_data.generics.where_predicates {
+            let WherePredicate::Type { ty, bounds } = predicate else {
+                return Ok(None);
+            };
+            let self_ty = self.project_impl_obligation_ty(selection, &resolver, ty)?;
+            for bound in bounds {
+                let TypeBound::Trait(bound_ty) = bound else {
+                    return Ok(None);
+                };
+                let Some(expectation) = CallableTypeRefExpectation::from_fn_trait_bound(bound_ty)
+                else {
+                    return Ok(None);
+                };
+
+                let params = expectation
+                    .params()
+                    .iter()
+                    .map(|param| self.project_impl_obligation_ty(selection, &resolver, param))
+                    .collect::<Result<Vec<_>, _>>()?;
+                let ret =
+                    self.project_impl_obligation_ty(selection, &resolver, expectation.return_ty())?;
+                obligations.push(CallableImplWhereObligation {
+                    self_ty: self_ty.clone(),
+                    params,
+                    ret,
+                });
+            }
+        }
+
+        Ok(Some(obligations))
+    }
+
+    fn project_impl_obligation_ty(
+        &self,
+        selection: &TraitSelection,
+        resolver: &TypeRefResolutionQuery<'query, D, I>,
+        ty: &TypeRef,
+    ) -> Result<InferTy, PackageStoreError> {
+        let resolved_ty = resolver.resolve(ty)?;
+        Ok(InferTypeRefProjector::new(&selection.subst).ty_from_type_ref(ty, &resolved_ty))
     }
 
     /// Probe a trait goal using the target lookup index persisted with Body IR.
