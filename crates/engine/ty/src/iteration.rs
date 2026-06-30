@@ -4,7 +4,7 @@
 //! traits and projects their associated `Item` type for impls whose self type can be matched
 //! without a solver.
 
-use rg_ir_model::items::{TypeBound, TypeRef};
+use rg_ir_model::items::TypeBound;
 use rg_ir_model::{
     AssocItemId, ImplRef, Path, PathSegment, TraitImplRef, TraitRef, TypeAliasRef,
     hir::items::ImplData,
@@ -290,28 +290,13 @@ where
                 continue;
             }
 
-            return Ok(type_alias_data
-                .signature
-                .aliased_ty()
-                .is_some_and(|ty| Self::is_type_param_assoc_item(ty, param_name, "Item")));
+            return Ok(type_alias_data.signature.aliased_ty().is_some_and(|ty| {
+                ty.as_type_param_assoc_path()
+                    .is_some_and(|(param, assoc)| param == param_name && assoc.as_str() == "Item")
+            }));
         }
 
         Ok(false)
-    }
-
-    fn is_type_param_assoc_item(ty: &TypeRef, param_name: &Name, assoc_name: &str) -> bool {
-        let TypeRef::Path(path) = ty else {
-            return false;
-        };
-        let [param_segment, assoc_segment] = path.segments.as_slice() else {
-            return false;
-        };
-
-        !path.absolute
-            && param_segment.name == *param_name
-            && param_segment.args.is_empty()
-            && assoc_segment.name.as_str() == assoc_name
-            && assoc_segment.args.is_empty()
     }
 }
 

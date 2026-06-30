@@ -681,14 +681,14 @@ where
         // Stage 2+: lower selected-call bounds into trait goals and commit only unique solutions.
         BodyTraitObligationSolver::new(self.context).solve_selected_call(
             inference,
-            SelectedCallObligationInput {
-                function: target.function(),
-                owner: function_data.owner,
+            SelectedCallObligationInput::new(
+                target.function(),
+                function_data.owner,
                 generics,
-                subst: &subst,
-                signature_subst: projection.subst(),
-                selected_self_ty: projection.selected_self_ty(),
-            },
+                &subst,
+                projection.subst(),
+                projection.selected_self_ty(),
+            ),
         )
     }
 

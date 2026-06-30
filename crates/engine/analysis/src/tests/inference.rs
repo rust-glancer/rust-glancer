@@ -1075,6 +1075,122 @@ pub fn use_it(not_callable: NotCallable) {
 }
 
 #[test]
+fn projects_associated_type_from_callable_impl_where_clause_with_generic_assoc_input() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_callable_impl_where_assoc_input_projection"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub trait Stream {
+    type Item;
+
+    fn map<B, F>(self, f: F) -> Map<Self, F>
+    where
+        F: FnMut(Self::Item) -> B;
+
+    fn map_ref<B, F>(self, f: F) -> RefMap<Self, F>
+    where
+        F: FnMut(&Self::Item) -> B;
+
+    fn map_marked<B, F>(self, f: F) -> MarkedMap<Self, F>
+    where
+        F: FnMut(Self::Item) -> B;
+
+    fn get(self) -> Self::Item;
+}
+
+pub trait Marker {}
+
+pub struct Source<T> {
+    value: T,
+}
+
+pub struct Map<S, F> {
+    stream: S,
+    f: F,
+}
+
+pub struct RefMap<S, F> {
+    stream: S,
+    f: F,
+}
+
+pub struct MarkedMap<S, F> {
+    stream: S,
+    f: F,
+}
+
+pub struct User;
+pub struct Name;
+
+impl User {
+    pub fn name(&self) -> Name {}
+}
+
+impl<T> Stream for Source<T> {
+    type Item = T;
+}
+
+impl<S, F, B> Stream for Map<S, F>
+where
+    S: Stream,
+    F: FnMut(S::Item) -> B,
+{
+    type Item = B;
+}
+
+impl<S, F, B> Stream for RefMap<S, F>
+where
+    S: Stream,
+    F: FnMut(&S::Item) -> B,
+{
+    type Item = B;
+}
+
+impl<S, F, B> Stream for MarkedMap<S, F>
+where
+    S: Stream,
+    F: FnMut(S::Item) -> B,
+    B: Marker,
+{
+    type Item = B;
+}
+
+pub fn use_it(source: Source<User>) {
+    let mapped = source.map(|user| user.name()).get()$type_mapped$;
+    let ref_mapped = source.map_ref(|user| user.name()).get()$type_ref_mapped$;
+    let marked = source.map_marked(|user| user.name()).get()$type_marked$;
+}
+"#,
+        &[
+            AnalysisQuery::ty(
+                "callable impl where associated input projection",
+                "type_mapped",
+            ),
+            AnalysisQuery::ty(
+                "callable impl where referenced associated input projection",
+                "type_ref_mapped",
+            ),
+            AnalysisQuery::ty("unsupported impl where projection", "type_marked"),
+        ],
+        expect![[r#"
+            callable impl where associated input projection
+            - nominal struct analysis_callable_impl_where_assoc_input_projection[lib]::crate::Name
+
+            callable impl where referenced associated input projection
+            - nominal struct analysis_callable_impl_where_assoc_input_projection[lib]::crate::Name
+
+            unsupported impl where projection
+            - <unknown>
+        "#]],
+    );
+}
+
+#[test]
 fn propagates_expected_types_through_result_expressions() {
     check_analysis_queries(
         r#"
