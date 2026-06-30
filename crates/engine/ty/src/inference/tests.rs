@@ -1,5 +1,5 @@
 use rg_ir_model::{
-    DefMapRef, PackageSlot, StructId, TargetId, TargetRef, TraitId, TraitRef, TypeDefId,
+    DefMapRef, ExprId, PackageSlot, StructId, TargetId, TargetRef, TraitId, TraitRef, TypeDefId,
     TypeDefRef,
     items::{FloatTy, SignedIntTy, TypeRef, UnsignedIntTy},
 };
@@ -42,8 +42,8 @@ fn project_ty() -> Ty {
     Ty::nominal(NominalTy::bare(type_def(1)))
 }
 
-fn closure_ty(index: u32) -> Ty {
-    Ty::closure(ClosureTyId::new(index))
+fn closure_ty(index: usize) -> Ty {
+    Ty::closure(ClosureTyId::new(ExprId(index)))
 }
 
 fn vec_ty(inner: InferTy) -> InferTy {
@@ -182,7 +182,7 @@ fn closure_types_round_trip_through_inference_family() {
     let ty = closure_ty(7);
     let infer_ty = InferTy::from_ty(&ty);
 
-    assert_eq!(infer_ty, InferTy::Closure(ClosureTyId::new(7)));
+    assert_eq!(infer_ty, InferTy::Closure(ClosureTyId::new(ExprId(7))));
     assert_eq!(table.finalize(&infer_ty), ty);
 }
 

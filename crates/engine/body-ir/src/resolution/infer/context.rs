@@ -37,9 +37,7 @@ impl BodyInferenceCtx {
     pub(crate) fn set_expr_closure_ty(&mut self, expr: ExprId) -> bool {
         // The id intentionally points back to the body expression index. Later callable-trait
         // phases can use that link to recover the closure params/body from the same body arena.
-        let index = u32::try_from(expr.0)
-            .expect("one body should not contain more than u32::MAX expressions");
-        self.set_expr_infer_ty(expr, InferTy::Closure(ClosureTyId::new(index)))
+        self.set_expr_infer_ty(expr, InferTy::Closure(ClosureTyId::new(expr)))
     }
 
     pub(crate) fn expr_ty(&self, expr: ExprId) -> InferTy {

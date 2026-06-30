@@ -5,6 +5,10 @@
 //! parameter `F` whose selected function declares `F: FnOnce(T) -> R`. This
 //! module keeps that syntax handling in one place so early pattern propagation
 //! and final inference agree on the parameter and return types they see.
+//!
+//! This module stops at selected signature syntax. It does not decide whether a
+//! closure really implements `Fn`, `FnMut`, or `FnOnce`; final inference turns
+//! the parsed syntax into body-local callable goals.
 
 use rg_ir_model::{
     ExprId, FunctionRef, ItemOwner,
@@ -212,9 +216,10 @@ where
 
 /// Callable expectation that still points at the written signature syntax.
 ///
-/// This is the shared parser output. The fixed-point pattern pass resolves it
-/// into plain `Ty`; final inference can project the same syntax into `InferTy`
-/// so generic returns such as `R` keep their `?R` slot.
+/// This is the shared parser output for parenthesized Fn-trait syntax. For
+/// `F: FnMut(&T) -> R`, it keeps `&T` and `R` as written `TypeRef`s. The early
+/// pattern pass can resolve those refs into plain `Ty`, while final inference
+/// can project them into `InferTy` so a return such as `R` keeps its `?R` slot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct CallableTypeRefExpectation<'ty> {
     params: &'ty [TypeRef],

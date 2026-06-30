@@ -29,8 +29,8 @@ fn vec_ty(inner: Ty) -> Ty {
     })
 }
 
-fn closure_ty(index: u32) -> Ty {
-    Ty::closure(ClosureTyId::new(index))
+fn closure_ty(index: usize) -> Ty {
+    Ty::closure(ClosureTyId::new(ExprId(index)))
 }
 
 fn default_int_ty() -> Ty {
@@ -49,7 +49,7 @@ fn stores_closure_types_as_body_local_facts() {
 
     assert_eq!(
         context.expr_ty(ExprId(0)),
-        InferTy::Closure(ClosureTyId::new(0))
+        InferTy::Closure(ClosureTyId::new(ExprId(0)))
     );
     assert_eq!(context.finalize_expr_ty(ExprId(0)), closure_ty(0));
 }
@@ -64,7 +64,7 @@ fn copies_closure_types_through_binding_reads() {
     assert!(context.set_expr_from_binding(ExprId(1), BindingId(0)));
     assert_eq!(
         context.expr_ty(ExprId(1)),
-        InferTy::Closure(ClosureTyId::new(0))
+        InferTy::Closure(ClosureTyId::new(ExprId(0)))
     );
     assert_eq!(context.finalize_expr_ty(ExprId(1)), closure_ty(0));
 }

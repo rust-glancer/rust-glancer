@@ -7,8 +7,8 @@ use rg_ir_model::items::{
     TypePathSegment, TypeRef, WherePredicate,
 };
 use rg_ir_model::{
-    DefMapRef, FileId, ImplId, LocalImplId, LocalImplRef, ModuleId, ModuleRef, PackageSlot, Span,
-    StructId, TargetId, TargetRef, TextSpan, TraitId, TraitImplRef, TraitRef, TypeDefId,
+    DefMapRef, ExprId, FileId, ImplId, LocalImplId, LocalImplRef, ModuleId, ModuleRef, PackageSlot,
+    Span, StructId, TargetId, TargetRef, TextSpan, TraitId, TraitImplRef, TraitRef, TypeDefId,
     TypeDefRef,
 };
 use rg_ir_storage::{
@@ -441,7 +441,9 @@ fn probe_header_can_return_impl_that_still_needs_where_predicate_solving() {
     let goal = TraitGoal {
         self_ty: nominal_infer_ty(
             adapter_def,
-            vec![infer_type_arg(InferTy::Closure(ClosureTyId::new(0)))],
+            vec![infer_type_arg(InferTy::Closure(ClosureTyId::new(ExprId(
+                0,
+            ))))],
         ),
         trait_ref: produces,
         args: Vec::new(),

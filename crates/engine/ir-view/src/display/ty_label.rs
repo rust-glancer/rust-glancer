@@ -54,7 +54,7 @@ impl<'a, 'db> TypeRenderer<'a, 'db> {
                     .collect::<anyhow::Result<Vec<_>>>()?;
                 Ok((!bounds.is_empty()).then(|| format!("impl {}", bounds.join(" + "))))
             }
-            Ty::Closure(id) => Ok(Some(format!("{{closure#{}}}", id.index()))),
+            Ty::Closure(id) => Ok(Some(format!("{{closure#{id}}}"))),
             Ty::Nominal(ty) | Ty::SelfTy(ty) => self.render_nominal(ty),
             Ty::Unknown => Ok(None),
         }

@@ -1,5 +1,7 @@
+use std::fmt;
+
 use rg_ir_model::items::{GenericParams, TypeRef};
-use rg_ir_model::{TraitRef, TypeDefRef, TypePathResolution};
+use rg_ir_model::{ExprId, TraitRef, TypeDefRef, TypePathResolution};
 use rg_std::{ExpectedUnique, MemorySize, Shrink, UniqueVec};
 use rg_text::Name;
 
@@ -70,16 +72,26 @@ impl FromIterator<(Name, Ty)> for TypeSubst {
 ///
 /// Rust gives every closure expression its own anonymous type. This id preserves that identity
 /// inside one body without pretending that it is a stable cross-body item.
+///
+/// Example: the closure at `ExprId(12)` can become `ClosureTyId::new(ExprId(12))`, so body
+/// inference can later find that closure's params and body result. The id does not encode
+/// captures or which callable trait the closure implements.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize, Shrink)]
-pub struct ClosureTyId(u32);
+pub struct ClosureTyId(ExprId);
 
 impl ClosureTyId {
-    pub fn new(index: u32) -> Self {
-        Self(index)
+    pub fn new(expr: ExprId) -> Self {
+        Self(expr)
     }
 
-    pub fn index(self) -> u32 {
+    pub fn into_expr_id(self) -> ExprId {
         self.0
+    }
+}
+
+impl fmt::Display for ClosureTyId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.0.fmt(f)
     }
 }
 

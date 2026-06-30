@@ -665,12 +665,12 @@ pub fn expected_destination(def_map: &DefMap) {
 }
 
 #[test]
-fn infers_closure_params_from_direct_fn_trait_expectations() {
+fn infers_closure_params_and_returns_from_callable_bounds() {
     check_analysis_queries(
         r#"
 //- /Cargo.toml
 [package]
-name = "analysis_direct_closure_expectation_inference"
+name = "analysis_callable_closure_bound_inference"
 version = "0.1.0"
 edition = "2024"
 
@@ -687,57 +687,26 @@ pub struct Id;
 
 pub struct Factory;
 
+pub struct User;
+pub struct Name;
+
+pub enum Option<T> {
+    Some(T),
+    None,
+}
+
 impl Factory {
     type Id = Id;
 
     pub fn with_id(f: impl FnOnce(Self::Id)) {}
 }
 
-pub fn with_attrs(f: impl FnOnce(&mut AttrVec)) {}
-
-pub fn use_it(attr: Attr) {
-    with_attrs(|attrs| attrs$type_attrs$.push(attr)$type_push$);
-    Factory::with_id(|id| id$type_inherent_assoc$);
-}
-"#,
-        &[
-            AnalysisQuery::ty("direct closure expected param", "type_attrs"),
-            AnalysisQuery::ty("direct closure expected method call", "type_push"),
-            AnalysisQuery::ty(
-                "direct closure inherent associated param",
-                "type_inherent_assoc",
-            ),
-        ],
-        expect![[r#"
-            direct closure expected param
-            - &mut nominal struct analysis_direct_closure_expectation_inference[lib]::crate::AttrVec
-
-            direct closure expected method call
-            - ()
-
-            direct closure inherent associated param
-            - syntax Self::Id
-        "#]],
-    );
-}
-
-#[test]
-fn infers_closure_params_from_generic_fn_trait_bounds() {
-    check_analysis_queries(
-        r#"
-//- /Cargo.toml
-[package]
-name = "analysis_generic_closure_expectation_inference"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
-pub struct User;
-pub struct Name;
-
 impl User {
     pub fn name(&self) -> Name {}
 }
+
+pub fn with_attrs(f: impl FnOnce(&mut AttrVec)) {}
+pub fn with_user(f: impl FnOnce() -> User) {}
 
 pub fn visit<T, F: FnOnce(T)>(value: T, f: F) {}
 
@@ -746,29 +715,99 @@ where
     F: FnMut(&T),
 {}
 
-pub fn use_it(user: User, users: &[User]) {
-    visit(user, |user| user$type_inline_param$.name()$type_inline_call$);
-    visit_all(users, |user| user$type_where_param$.name()$type_where_call$);
+pub fn apply<T, R, F: FnOnce(T) -> R>(value: T, f: F) -> R {}
+
+pub fn try_apply<T, R, F: FnOnce(T) -> Option<R>>(value: T, f: F) -> Option<R> {}
+
+pub fn id<T>(value: T) -> T {}
+pub fn missing<T>() -> T {}
+pub fn make_user(id: Id) -> User {}
+pub fn make_name(id: Id) -> Name {}
+
+pub fn use_it(flag: bool, attr: Attr, user: User, users: &[User], seed: Id) {
+    with_attrs(|attrs| attrs$type_direct_param$.push(attr)$type_direct_param_call$);
+    Factory::with_id(|id| id$type_inherent_assoc$);
+    with_user(|| id(missing())$type_direct_return_body$);
+
+    visit(user, |user| user$type_generic_inline_param$.name()$type_generic_inline_call$);
+    visit_all(users, |user| user$type_generic_where_param$.name()$type_generic_where_call$);
+
+    let applied = apply(seed, |id| make_user(id))$type_generic_result$;
+    let stored_f = |id| make_user(id);
+    let stored = apply(seed, stored_f)$type_stored_result$;
+    let maybe = try_apply(seed, |id| Option::Some(make_user(id)))$type_nested_result$;
+    let conflict = apply(seed, |id| if flag {
+        make_user(id)
+    } else {
+        make_name(id)
+    })$type_conflict$;
 }
 "#,
         &[
-            AnalysisQuery::ty("inline generic closure param", "type_inline_param"),
-            AnalysisQuery::ty("inline generic closure method call", "type_inline_call"),
-            AnalysisQuery::ty("where generic closure param", "type_where_param"),
-            AnalysisQuery::ty("where generic closure method call", "type_where_call"),
+            AnalysisQuery::ty("direct callable closure param", "type_direct_param"),
+            AnalysisQuery::ty(
+                "direct callable closure method call",
+                "type_direct_param_call",
+            ),
+            AnalysisQuery::ty(
+                "direct closure inherent associated param",
+                "type_inherent_assoc",
+            ),
+            AnalysisQuery::ty(
+                "direct callable closure return body",
+                "type_direct_return_body",
+            ),
+            AnalysisQuery::ty("inline generic closure param", "type_generic_inline_param"),
+            AnalysisQuery::ty(
+                "inline generic closure method call",
+                "type_generic_inline_call",
+            ),
+            AnalysisQuery::ty("where generic closure param", "type_generic_where_param"),
+            AnalysisQuery::ty(
+                "where generic closure method call",
+                "type_generic_where_call",
+            ),
+            AnalysisQuery::ty("generic closure return result", "type_generic_result"),
+            AnalysisQuery::ty("stored generic closure return result", "type_stored_result"),
+            AnalysisQuery::ty("nested generic closure return result", "type_nested_result"),
+            AnalysisQuery::ty("conflicting generic closure return result", "type_conflict"),
         ],
         expect![[r#"
+            direct callable closure param
+            - &mut nominal struct analysis_callable_closure_bound_inference[lib]::crate::AttrVec
+
+            direct callable closure method call
+            - ()
+
+            direct closure inherent associated param
+            - syntax Self::Id
+
+            direct callable closure return body
+            - nominal struct analysis_callable_closure_bound_inference[lib]::crate::User
+
             inline generic closure param
-            - nominal struct analysis_generic_closure_expectation_inference[lib]::crate::User
+            - nominal struct analysis_callable_closure_bound_inference[lib]::crate::User
 
             inline generic closure method call
-            - nominal struct analysis_generic_closure_expectation_inference[lib]::crate::Name
+            - nominal struct analysis_callable_closure_bound_inference[lib]::crate::Name
 
             where generic closure param
-            - &nominal struct analysis_generic_closure_expectation_inference[lib]::crate::User
+            - &nominal struct analysis_callable_closure_bound_inference[lib]::crate::User
 
             where generic closure method call
-            - nominal struct analysis_generic_closure_expectation_inference[lib]::crate::Name
+            - nominal struct analysis_callable_closure_bound_inference[lib]::crate::Name
+
+            generic closure return result
+            - nominal struct analysis_callable_closure_bound_inference[lib]::crate::User
+
+            stored generic closure return result
+            - nominal struct analysis_callable_closure_bound_inference[lib]::crate::User
+
+            nested generic closure return result
+            - nominal enum analysis_callable_closure_bound_inference[lib]::crate::Option<nominal struct analysis_callable_closure_bound_inference[lib]::crate::User>
+
+            conflicting generic closure return result
+            - <unknown>
         "#]],
     );
 }
@@ -905,117 +944,6 @@ pub fn use_it(users: &[User], searcher: Searcher) {
             - &nominal struct app[lib]::crate::User
 
             same-name find closure param
-            - <unknown>
-        "#]],
-    );
-}
-
-#[test]
-fn infers_closure_body_from_direct_fn_trait_return_expectations() {
-    check_analysis_queries(
-        r#"
-//- /Cargo.toml
-[package]
-name = "analysis_direct_closure_return_expectation_inference"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
-pub struct User;
-
-pub fn id<T>(value: T) -> T {}
-pub fn missing<T>() -> T {}
-
-pub fn with_user(f: impl FnOnce() -> User) {}
-pub fn with_branch(f: impl FnOnce() -> User) {}
-
-pub fn use_it(flag: bool, user: User) {
-    with_user(|| id(missing())$type_direct$);
-    with_branch(|| if flag {
-        id(missing())$type_then$
-    } else {
-        user$type_else$
-    }$type_if$);
-}
-"#,
-        &[
-            AnalysisQuery::ty("direct closure return body", "type_direct"),
-            AnalysisQuery::ty("branch closure return then", "type_then"),
-            AnalysisQuery::ty("branch closure return else", "type_else"),
-            AnalysisQuery::ty("branch closure return body", "type_if"),
-        ],
-        expect![[r#"
-            direct closure return body
-            - nominal struct analysis_direct_closure_return_expectation_inference[lib]::crate::User
-
-            branch closure return then
-            - nominal struct analysis_direct_closure_return_expectation_inference[lib]::crate::User
-
-            branch closure return else
-            - nominal struct analysis_direct_closure_return_expectation_inference[lib]::crate::User
-
-            branch closure return body
-            - nominal struct analysis_direct_closure_return_expectation_inference[lib]::crate::User
-        "#]],
-    );
-}
-
-#[test]
-fn infers_generic_call_results_from_closure_return_expectations() {
-    check_analysis_queries(
-        r#"
-//- /Cargo.toml
-[package]
-name = "analysis_generic_closure_return_inference"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
-pub struct Id;
-pub struct User;
-pub struct Name;
-
-pub enum Option<T> {
-    Some(T),
-    None,
-}
-
-pub fn make_user(id: Id) -> User {}
-pub fn make_name(id: Id) -> Name {}
-
-pub fn apply<T, R, F: FnOnce(T) -> R>(value: T, f: F) -> R {}
-
-pub fn try_apply<T, R, F: FnOnce(T) -> Option<R>>(value: T, f: F) -> Option<R> {}
-
-pub fn use_it(flag: bool, id: Id) {
-    let user = apply(id, |id| make_user(id))$type_apply$;
-    let stored_f = |id| make_user(id);
-    let stored = apply(id, stored_f)$type_stored_apply$;
-    let maybe = try_apply(id, |id| Option::Some(make_user(id)))$type_try_apply$;
-    let conflict = apply(id, |id| if flag {
-        make_user(id)
-    } else {
-        make_name(id)
-    })$type_conflict$;
-}
-"#,
-        &[
-            AnalysisQuery::ty("generic closure return result", "type_apply"),
-            AnalysisQuery::ty("stored generic closure return result", "type_stored_apply"),
-            AnalysisQuery::ty("nested generic closure return result", "type_try_apply"),
-            AnalysisQuery::ty("conflicting generic closure return result", "type_conflict"),
-        ],
-        expect![[r#"
-            generic closure return result
-            - nominal struct analysis_generic_closure_return_inference[lib]::crate::User
-
-            stored generic closure return result
-            - nominal struct analysis_generic_closure_return_inference[lib]::crate::User
-
-            nested generic closure return result
-            - nominal enum analysis_generic_closure_return_inference[lib]::crate::Option<nominal struct analysis_generic_closure_return_inference[lib]::crate::User>
-
-            conflicting generic closure return result
             - <unknown>
         "#]],
     );

@@ -122,8 +122,7 @@ where
         let InferTy::Closure(id) = inference.root_resolved_ty(ty) else {
             return None;
         };
-        let index = usize::try_from(id.index()).expect("closure type id should fit in usize");
-        Some(ExprId(index))
+        Some(id.into_expr_id())
     }
 }
 
