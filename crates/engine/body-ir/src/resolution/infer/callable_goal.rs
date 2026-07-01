@@ -89,7 +89,11 @@ where
             let Some(pat) = closure_param.pat else {
                 continue;
             };
-            let _ = pattern_inference.link_pat(inference, pat, expected_ty);
+            let expected_ty = inference.root_resolved_ty(expected_ty);
+            if expected_ty.has_unknown_or_syntax() {
+                continue;
+            }
+            let _ = pattern_inference.link_pat(inference, pat, &expected_ty);
         }
 
         // Return evidence flows in the opposite direction too: if `ret` is `?R` and the closure

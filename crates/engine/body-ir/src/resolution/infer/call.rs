@@ -678,6 +678,17 @@ where
             &function_data.signature,
         );
 
+        let finalized_receiver_ty;
+        let selected_self_ty = match receiver {
+            Some(receiver) => {
+                finalized_receiver_ty = inference
+                    .table
+                    .finalize(&inference.root_resolved_expr_ty(receiver));
+                Some(&finalized_receiver_ty)
+            }
+            None => projection.selected_self_ty(),
+        };
+
         // Stage 2+: lower selected-call bounds into trait goals and commit only unique solutions.
         BodyTraitObligationSolver::new(self.context).solve_selected_call(
             inference,
@@ -687,7 +698,7 @@ where
                 generics,
                 &subst,
                 projection.subst(),
-                projection.selected_self_ty(),
+                selected_self_ty,
             ),
         )
     }

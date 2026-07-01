@@ -665,6 +665,156 @@ pub fn expected_destination(def_map: &DefMap) {
 }
 
 #[test]
+fn projects_iterator_adapter_items_into_collect_destination() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[workspace]
+members = ["core", "app"]
+resolver = "3"
+
+//- /core/Cargo.toml
+[package]
+name = "fake_core"
+version = "0.1.0"
+edition = "2024"
+
+//- /core/src/lib.rs
+pub mod iter {
+    pub trait FromIterator<A> {}
+
+    pub trait Iterator {
+        type Item;
+
+        fn map<B, F>(self, f: F) -> Map<Self, F>
+        where
+            F: FnMut(Self::Item) -> B;
+
+        fn filter_map<B, F>(self, f: F) -> FilterMap<Self, F>
+        where
+            F: FnMut(Self::Item) -> Option<B>;
+
+        fn collect<B>(self) -> B
+        where
+            B: FromIterator<Self::Item>;
+    }
+
+    pub struct Map<I, F> {
+        iter: I,
+        f: F,
+    }
+
+    pub struct FilterMap<I, F> {
+        iter: I,
+        f: F,
+    }
+}
+
+pub mod slice {
+    pub struct Iter<'a, T>(&'a T);
+}
+
+pub enum Option<T> {
+    Some(T),
+    None,
+}
+
+pub struct Vec<T> {
+    value: T,
+}
+
+impl<T> iter::FromIterator<T> for Vec<T> {}
+
+impl<T> [T] {
+    pub fn iter(&self) -> slice::Iter<'_, T> {
+        missing()
+    }
+}
+
+impl<'a, T> iter::Iterator for slice::Iter<'a, T> {
+    type Item = &'a T;
+}
+
+impl<I, F, B> iter::Iterator for iter::Map<I, F>
+where
+    I: iter::Iterator,
+    F: FnMut(I::Item) -> B,
+{
+    type Item = B;
+}
+
+impl<I, F, B> iter::Iterator for iter::FilterMap<I, F>
+where
+    I: iter::Iterator,
+    F: FnMut(I::Item) -> Option<B>,
+{
+    type Item = B;
+}
+
+pub fn missing<T>() -> T {}
+
+//- /app/Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+core = { package = "fake_core", path = "../core" }
+
+//- /app/src/lib.rs
+use core::{Option, Vec};
+
+pub struct User;
+pub struct Name;
+pub struct Email;
+
+impl User {
+    pub fn name(&self) -> Name {}
+    pub fn email(&self) -> Option<Email> {}
+}
+
+pub struct SameNameMap;
+
+impl SameNameMap {
+    pub fn map<F>(&self, f: F) {}
+}
+
+pub fn use_it(users: &[User], same_name: SameNameMap) {
+    let names = users.iter().map(|user| user$type_map_param$.name()).collect::<Vec<_>>()$type_names$;
+    let emails = users.iter().filter_map(|user| user$type_filter_map_param$.email()).collect::<Vec<_>>()$type_emails$;
+    same_name.map(|value| value$type_same_name_map_param$);
+}
+"#,
+        &[
+            AnalysisQuery::ty("iterator map closure param", "type_map_param").in_lib("app"),
+            AnalysisQuery::ty("iterator map collect result", "type_names").in_lib("app"),
+            AnalysisQuery::ty("iterator filter_map closure param", "type_filter_map_param")
+                .in_lib("app"),
+            AnalysisQuery::ty("iterator filter_map collect result", "type_emails").in_lib("app"),
+            AnalysisQuery::ty("same-name map closure param", "type_same_name_map_param")
+                .in_lib("app"),
+        ],
+        expect![[r#"
+            iterator map closure param
+            - &nominal struct app[lib]::crate::User
+
+            iterator map collect result
+            - nominal struct fake_core[lib]::crate::Vec<nominal struct app[lib]::crate::Name>
+
+            iterator filter_map closure param
+            - &nominal struct app[lib]::crate::User
+
+            iterator filter_map collect result
+            - nominal struct fake_core[lib]::crate::Vec<nominal struct app[lib]::crate::Email>
+
+            same-name map closure param
+            - <unknown>
+        "#]],
+    );
+}
+
+#[test]
 fn infers_closure_params_and_returns_from_callable_bounds() {
     check_analysis_queries(
         r#"
