@@ -253,9 +253,7 @@ impl<'ty> CallableTypeRefExpectation<'ty> {
         let TypeRef::Path(path) = ty else {
             return None;
         };
-        let Some(segment) = path.segments.last() else {
-            return None;
-        };
+        let segment = path.segments.last()?;
         if !matches!(segment.name.as_str(), "Fn" | "FnMut" | "FnOnce") {
             return None;
         }
