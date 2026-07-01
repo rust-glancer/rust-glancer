@@ -12,7 +12,7 @@ use rg_ir_model::{TraitApplicability, TraitImplRef, TraitRef};
 use rg_ir_storage::{DefMapSource, ItemLookupIndex, ItemStoreSource, TargetItemQuery};
 use rg_std::ExpectedUnique;
 
-use self::header::SupportedImplHeader;
+pub use self::header::TraitSelectionOptions;
 use self::matcher::CandidateMatcher;
 use crate::ItemPathQuery;
 use crate::inference::{InferGenericArg, InferTy, InferTypeSubst, InferenceTable};
@@ -43,6 +43,7 @@ pub struct TraitSelectionQuery<'query, D, I> {
     item_paths: ItemPathQuery<'query, D, I>,
     target_items: TargetItemQuery<'query, D, I>,
     lookup_index: &'query ItemLookupIndex,
+    options: TraitSelectionOptions,
 }
 
 impl<'query, D, I> TraitSelectionQuery<'query, D, I>
@@ -59,7 +60,14 @@ where
             item_paths,
             target_items,
             lookup_index,
+            options: TraitSelectionOptions::new(),
         }
+    }
+
+    /// Use a non-default selection policy for all probes made through this query.
+    pub fn with_options(mut self, options: TraitSelectionOptions) -> Self {
+        self.options = options;
+        self
     }
 
     /// Return the unique visible impl whose simple header is compatible with the goal.
@@ -94,28 +102,31 @@ where
         table: &InferenceTable,
         trait_impl: TraitImplRef,
     ) -> Result<Option<TraitSelection>, I::Error> {
-        Self::probe_visible_trait_impl(
+        Self::probe_impl(
             &self.item_paths,
             &self.target_items,
             goal,
             table,
             trait_impl,
+            self.options,
         )
     }
 
-    /// Probe one already-visible impl without constructing an owning query wrapper.
+    /// Probe one already-visible impl using borrowed query state and an explicit policy.
     ///
     /// Some callers, such as method lookup, already own borrowed query state and want to reuse the
-    /// same candidate matcher for a single impl. This keeps that integration read-only and avoids
-    /// adding clone requirements to callers that only need a local proof.
-    pub fn probe_visible_trait_impl(
+    /// same candidate matcher for a single impl. Keeping the options as a parameter is intentional:
+    /// this helper is not a query-object method, so it must not smuggle in a different default
+    /// policy than `probe` / `probe_trait_impl`.
+    pub(crate) fn probe_visible_trait_impl(
         item_paths: &ItemPathQuery<'query, D, I>,
         target_items: &TargetItemQuery<'query, D, I>,
         goal: &TraitGoal,
         table: &InferenceTable,
         trait_impl: TraitImplRef,
+        options: TraitSelectionOptions,
     ) -> Result<Option<TraitSelection>, I::Error> {
-        Self::probe_impl(item_paths, target_items, goal, table, trait_impl)
+        Self::probe_impl(item_paths, target_items, goal, table, trait_impl, options)
     }
 
     fn trait_impl_candidates(&self, trait_ref: TraitRef) -> Result<Vec<TraitImplRef>, I::Error> {
@@ -132,12 +143,13 @@ where
         goal: &TraitGoal,
         table: &InferenceTable,
         trait_impl: TraitImplRef,
+        options: TraitSelectionOptions,
     ) -> Result<Option<TraitSelection>, I::Error> {
         let Some(impl_data) = target_items.items().impl_data(trait_impl.impl_ref)? else {
             return Ok(None);
         };
         if !impl_data.resolved_trait_ref.is(&goal.trait_ref)
-            || !SupportedImplHeader::accepts(impl_data)
+            || !options.accepts_impl_header(impl_data)
         {
             return Ok(None);
         }

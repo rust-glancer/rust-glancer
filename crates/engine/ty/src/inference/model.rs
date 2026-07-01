@@ -5,7 +5,7 @@ use rg_text::Name;
 
 use super::family::{PlainTyToInferMapper, TyToInferMapper};
 use super::table::{InferVarId, InferVarKind};
-use crate::{GenericArg, Mutability, PrimitiveTy, Ty};
+use crate::{ClosureTyId, GenericArg, Mutability, PrimitiveTy, Ty};
 
 /// Inference-aware mirror of `Ty`.
 ///
@@ -34,6 +34,7 @@ pub enum InferTy {
     Opaque {
         bounds: UniqueVec<InferOpaqueTraitBound>,
     },
+    Closure(ClosureTyId),
     Syntax(Box<TypeRef>),
     Nominal(InferNominalTy),
     SelfTy(InferNominalTy),
@@ -57,6 +58,7 @@ impl InferTy {
             | Self::Slice(_)
             | Self::Reference { .. }
             | Self::Opaque { .. }
+            | Self::Closure(_)
             | Self::Syntax(_)
             | Self::Nominal(_)
             | Self::SelfTy(_)
@@ -88,6 +90,7 @@ impl InferTy {
             InferTy::Unit
             | InferTy::Never
             | InferTy::Primitive(_)
+            | InferTy::Closure(_)
             | InferTy::Syntax(_)
             | InferTy::Unknown => false,
         }
@@ -105,6 +108,7 @@ impl InferTy {
             | (InferTy::Slice(_), InferTy::Slice(_))
             | (InferTy::Unknown, InferTy::Unknown) => true,
             (InferTy::Primitive(lhs), InferTy::Primitive(rhs)) => lhs == rhs,
+            (InferTy::Closure(lhs), InferTy::Closure(rhs)) => lhs == rhs,
             (InferTy::Tuple(lhs), InferTy::Tuple(rhs)) => lhs.len() == rhs.len(),
             (InferTy::Array { len: lhs_len, .. }, InferTy::Array { len: rhs_len, .. }) => {
                 lhs_len == rhs_len
@@ -143,6 +147,7 @@ impl InferTy {
             InferTy::Unit
             | InferTy::Never
             | InferTy::Primitive(_)
+            | InferTy::Closure(_)
             | InferTy::Syntax(_)
             | InferTy::Unknown => false,
         }
@@ -168,7 +173,35 @@ impl InferTy {
             | InferTy::Unit
             | InferTy::Never
             | InferTy::Primitive(_)
+            | InferTy::Closure(_)
             | InferTy::Syntax(_) => false,
+        }
+    }
+
+    /// Return whether this type still contains unknown gaps or unresolved source syntax.
+    pub fn has_unknown_or_syntax(&self) -> bool {
+        match self {
+            InferTy::Unknown | InferTy::Syntax(_) => true,
+            InferTy::Tuple(fields) => fields.iter().any(Self::has_unknown_or_syntax),
+            InferTy::Array { inner, .. }
+            | InferTy::Slice(inner)
+            | InferTy::Reference { inner, .. } => inner.has_unknown_or_syntax(),
+            InferTy::Opaque { bounds } => bounds.iter().any(|bound| {
+                bound
+                    .args
+                    .iter()
+                    .any(InferGenericArg::has_unknown_or_syntax)
+            }),
+            InferTy::Nominal(ty) | InferTy::SelfTy(ty) => {
+                ty.args.iter().any(InferGenericArg::has_unknown_or_syntax)
+            }
+            InferTy::Var(_)
+            | InferTy::IntegerVar(_)
+            | InferTy::FloatVar(_)
+            | InferTy::Unit
+            | InferTy::Never
+            | InferTy::Primitive(_)
+            | InferTy::Closure(_) => false,
         }
     }
 }
@@ -284,6 +317,22 @@ impl InferGenericArg {
             }
             InferGenericArg::AssocType { ty, .. } => {
                 ty.as_deref().is_some_and(InferTy::has_unknown)
+            }
+            InferGenericArg::Lifetime(_)
+            | InferGenericArg::Const(_)
+            | InferGenericArg::Unsupported(_) => false,
+        }
+    }
+
+    /// Return whether this generic arg still contains unknown gaps or unresolved source syntax.
+    pub fn has_unknown_or_syntax(&self) -> bool {
+        match self {
+            InferGenericArg::Type(ty) => ty.has_unknown_or_syntax(),
+            InferGenericArg::FnTraitArgs { params, ret } => {
+                params.iter().any(InferTy::has_unknown_or_syntax) || ret.has_unknown_or_syntax()
+            }
+            InferGenericArg::AssocType { ty, .. } => {
+                ty.as_deref().is_some_and(InferTy::has_unknown_or_syntax)
             }
             InferGenericArg::Lifetime(_)
             | InferGenericArg::Const(_)

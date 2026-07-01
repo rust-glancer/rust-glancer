@@ -64,11 +64,29 @@ where
         Ok(())
     }
 
-    /// Instantiate inference-only facts that ordinary `Ty` cannot represent.
+    /// Instantiate facts that need the inference pass to add body-local identity or slots.
     fn instantiate_inference_facts(&mut self) -> Result<(), PackageStoreError> {
+        // TODO: These could be one body walk, but later instantiation steps can depend on facts
+        // from earlier ones. For example, call instantiation may eventually need closure
+        // witnesses to exist before processing a call argument. We keep the passes explicit until
+        // this code is more mature and there is a clearer reason to optimize the extra scans.
+        self.instantiate_closure_type_facts();
         self.instantiate_generic_call_result_facts()?;
         self.instantiate_record_result_facts();
         Ok(())
+    }
+
+    /// Give every closure expression its own anonymous body-local type.
+    fn instantiate_closure_type_facts(&mut self) {
+        for expr_idx in 0..self.pass.body.exprs().len() {
+            let expr = ExprId(expr_idx);
+            if matches!(
+                &self.pass.body.expr_unchecked(expr).kind,
+                ExprKind::Closure { .. }
+            ) {
+                self.pass.inference.set_expr_closure_ty(expr);
+            }
+        }
     }
 
     /// Turn generic call results such as `Vec<T>` or `Option<T>` into `Vec<?T>` / `Option<?T>`.
@@ -83,17 +101,19 @@ where
                         &mut self.pass.inference,
                         expr,
                         &args,
+                        None,
                     )?;
                     if let Some(callee) = callee {
                         self.instantiate_enum_variant_call_result_fact(expr, callee);
                     }
                 }
-                ExprKind::MethodCall { args, .. } => {
+                ExprKind::MethodCall { receiver, args, .. } => {
                     let context = self.pass.providers.context(self.pass.body);
                     BodyCallInference::new(context).instantiate_return_fact(
                         &mut self.pass.inference,
                         expr,
                         &args,
+                        receiver,
                     )?;
                 }
                 _ => {}
@@ -377,6 +397,24 @@ where
         )
     }
 
+    /// Use inline `impl Fn*` syntax to solve matching closure arguments.
+    ///
+    /// Parameter expectations run earlier because they can affect method lookup inside the
+    /// closure body. This final inference hook exists for the inline `impl FnOnce(...) -> R`
+    /// shape: it can preserve shared slots such as `?R` and then reuse the callable-goal solver.
+    fn solve_direct_callable_closure_arguments(
+        &mut self,
+        call: ExprId,
+        args: &[ExprId],
+    ) -> Result<(), PackageStoreError> {
+        let context = self.pass.providers.context(self.pass.body);
+        BodyCallInference::new(context).solve_direct_callable_closure_arguments(
+            &mut self.pass.inference,
+            call,
+            args,
+        )
+    }
+
     fn solve_call_target_generic_trait_obligations(
         &mut self,
         call: ExprId,
@@ -385,6 +423,21 @@ where
     ) -> Result<(), PackageStoreError> {
         let context = self.pass.providers.context(self.pass.body);
         BodyCallInference::new(context).solve_generic_trait_obligations(
+            &mut self.pass.inference,
+            call,
+            args,
+            receiver,
+        )
+    }
+
+    fn project_selected_trait_associated_return_type(
+        &mut self,
+        call: ExprId,
+        args: &[ExprId],
+        receiver: Option<ExprId>,
+    ) -> Result<(), PackageStoreError> {
+        let context = self.pass.providers.context(self.pass.body);
+        BodyCallInference::new(context).project_selected_trait_associated_return_type(
             &mut self.pass.inference,
             call,
             args,
@@ -497,6 +550,8 @@ where
                 args,
             } => {
                 self.constrain_call_target_argument_expected_types(expr, &args)?;
+                self.solve_direct_callable_closure_arguments(expr, &args)?;
+                self.project_selected_trait_associated_return_type(expr, &args, None)?;
                 self.solve_call_target_generic_trait_obligations(expr, &args, None)?;
                 self.constrain_enum_variant_payload_expected_types(expr, callee, args)
             }
@@ -506,6 +561,7 @@ where
                 ..
             } => {
                 self.constrain_call_target_argument_expected_types(expr, &args)?;
+                self.solve_direct_callable_closure_arguments(expr, &args)?;
 
                 let context = self.pass.providers.context(self.pass.body);
                 BodyCallInference::new(context).constrain_selected_method_receiver_and_arguments(
@@ -514,10 +570,13 @@ where
                     receiver,
                     &args,
                 )?;
+                self.project_selected_trait_associated_return_type(expr, &args, Some(receiver))?;
                 self.solve_call_target_generic_trait_obligations(expr, &args, Some(receiver))
             }
             ExprKind::MethodCall { args, .. } => {
                 self.constrain_call_target_argument_expected_types(expr, &args)?;
+                self.solve_direct_callable_closure_arguments(expr, &args)?;
+                self.project_selected_trait_associated_return_type(expr, &args, None)?;
                 self.solve_call_target_generic_trait_obligations(expr, &args, None)
             }
             ExprKind::Record { fields, .. } => {

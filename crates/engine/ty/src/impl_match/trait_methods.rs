@@ -4,7 +4,9 @@
 //! deeper solving. Simple direct cases still reuse bounded trait selection for consistency.
 
 use crate::inference::{InferTy, InferenceTable};
-use crate::{GenericArg, NominalTy, TraitGoal, TraitSelectionQuery, Ty, TypeSubst};
+use crate::{
+    GenericArg, NominalTy, TraitGoal, TraitSelectionOptions, TraitSelectionQuery, Ty, TypeSubst,
+};
 use rg_ir_model::hir::items::ImplData;
 use rg_ir_model::items::{GenericArg as ItemGenericArg, TypeRef};
 use rg_ir_model::{FunctionRef, ImplRef, TraitApplicability, TraitImplRef};
@@ -208,6 +210,7 @@ where
             &goal,
             &table,
             trait_impl,
+            TraitSelectionOptions::new(),
         )?
         else {
             return Ok(None);

@@ -127,6 +127,7 @@ where
             | InferTy::Slice(_)
             | InferTy::Reference { .. }
             | InferTy::Opaque { .. }
+            | InferTy::Closure(_)
             | InferTy::Nominal(_)
             | InferTy::SelfTy(_) => None,
         }
@@ -365,6 +366,7 @@ where
             | InferTy::Unit
             | InferTy::Never
             | InferTy::Primitive(_)
+            | InferTy::Closure(_)
             | InferTy::Nominal(_)
             | InferTy::SelfTy(_) => false,
         }

@@ -1,5 +1,7 @@
+use std::fmt;
+
 use rg_ir_model::items::{GenericParams, TypeRef};
-use rg_ir_model::{TraitRef, TypeDefRef, TypePathResolution};
+use rg_ir_model::{ExprId, TraitRef, TypeDefRef, TypePathResolution};
 use rg_std::{ExpectedUnique, MemorySize, Shrink, UniqueVec};
 use rg_text::Name;
 
@@ -66,6 +68,33 @@ impl FromIterator<(Name, Ty)> for TypeSubst {
     }
 }
 
+/// Body-local identity of an anonymous closure type.
+///
+/// Rust gives every closure expression its own anonymous type. This id preserves that identity
+/// inside one body without pretending that it is a stable cross-body item.
+///
+/// Example: the closure at `ExprId(12)` can become `ClosureTyId::new(ExprId(12))`, so body
+/// inference can later find that closure's params and body result. The id does not encode
+/// captures or which callable trait the closure implements.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize, Shrink)]
+pub struct ClosureTyId(ExprId);
+
+impl ClosureTyId {
+    pub fn new(expr: ExprId) -> Self {
+        Self(expr)
+    }
+
+    pub fn into_expr_id(self) -> ExprId {
+        self.0
+    }
+}
+
+impl fmt::Display for ClosureTyId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.0.fmt(f)
+    }
+}
+
 /// Small type vocabulary shared by IR layers.
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
 pub enum Ty {
@@ -88,6 +117,7 @@ pub enum Ty {
         #[wincode(with = "rg_wincode_utils::WincodeDynamic<UniqueVec<OpaqueTraitBound>>")]
         bounds: UniqueVec<OpaqueTraitBound>,
     },
+    Closure(ClosureTyId),
     Syntax(TypeRef),
     Nominal(NominalTy),
     SelfTy(NominalTy),
@@ -162,6 +192,10 @@ impl Ty {
         Self::Opaque { bounds }
     }
 
+    pub fn closure(id: ClosureTyId) -> Self {
+        Self::Closure(id)
+    }
+
     pub fn nominal(ty: NominalTy) -> Self {
         Self::Nominal(ty)
     }
@@ -198,6 +232,7 @@ impl Ty {
             | Self::Slice(_)
             | Self::Reference { .. }
             | Self::Opaque { .. }
+            | Self::Closure(_)
             | Self::Syntax(_)
             | Self::Unknown => &[],
         }
@@ -213,6 +248,7 @@ impl Ty {
             | Self::Array { .. }
             | Self::Slice(_)
             | Self::Opaque { .. }
+            | Self::Closure(_)
             | Self::Syntax(_)
             | Self::Nominal(_)
             | Self::SelfTy(_)
@@ -232,7 +268,27 @@ impl Ty {
                 .any(|bound| bound.args.iter().any(GenericArg::has_unknown)),
             Self::Nominal(ty) | Self::SelfTy(ty) => ty.args.iter().any(GenericArg::has_unknown),
             Self::Unknown => true,
-            Self::Unit | Self::Never | Self::Primitive(_) | Self::Syntax(_) => false,
+            Self::Unit | Self::Never | Self::Primitive(_) | Self::Closure(_) | Self::Syntax(_) => {
+                false
+            }
+        }
+    }
+
+    /// Returns true when this type shape contains `Ty::Unknown` or unresolved source syntax.
+    pub fn has_unknown_or_syntax(&self) -> bool {
+        match self {
+            Self::Tuple(fields) => fields.iter().any(Self::has_unknown_or_syntax),
+            Self::Array { inner, .. } | Self::Slice(inner) | Self::Reference { inner, .. } => {
+                inner.has_unknown_or_syntax()
+            }
+            Self::Opaque { bounds } => bounds
+                .iter()
+                .any(|bound| bound.args.iter().any(GenericArg::has_unknown_or_syntax)),
+            Self::Nominal(ty) | Self::SelfTy(ty) => {
+                ty.args.iter().any(GenericArg::has_unknown_or_syntax)
+            }
+            Self::Unknown | Self::Syntax(_) => true,
+            Self::Unit | Self::Never | Self::Primitive(_) | Self::Closure(_) => false,
         }
     }
 
@@ -245,9 +301,12 @@ impl Ty {
             Self::Opaque { bounds } => bounds
                 .iter()
                 .all(|bound| bound.args.iter().all(GenericArg::is_projectable)),
-            Self::Unit | Self::Never | Self::Primitive(_) | Self::Nominal(_) | Self::SelfTy(_) => {
-                true
-            }
+            Self::Unit
+            | Self::Never
+            | Self::Primitive(_)
+            | Self::Closure(_)
+            | Self::Nominal(_)
+            | Self::SelfTy(_) => true,
         }
     }
 }
@@ -302,7 +361,7 @@ impl Shrink for Ty {
             Self::Nominal(ty) | Self::SelfTy(ty) => {
                 Shrink::shrink_to_fit(ty);
             }
-            Self::Unit | Self::Never | Self::Primitive(_) | Self::Unknown => {}
+            Self::Unit | Self::Never | Self::Primitive(_) | Self::Closure(_) | Self::Unknown => {}
         }
     }
 }

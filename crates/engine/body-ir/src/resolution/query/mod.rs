@@ -28,4 +28,4 @@ pub(crate) use self::{
     type_ref::{TypeRefResolutionQuery, TypeRefUseSite},
 };
 
-pub(crate) use self::call::{BodyCallQuery, CallSite, MethodCallSite};
+pub(crate) use self::call::{BodyCallQuery, CallSite, MethodCallSite, ResolvedCallTarget};

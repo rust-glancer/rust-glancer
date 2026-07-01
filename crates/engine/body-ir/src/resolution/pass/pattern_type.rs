@@ -14,7 +14,9 @@ use rg_std::ExpectedUnique;
 use rg_ty::{ReferencePeelingCandidates, Ty};
 
 use crate::ir::{ExprKind, PatKind, RecordPatField, StmtKind};
-use crate::resolution::{BodyResolutionContext, TypeRefUseSite};
+use crate::resolution::{
+    BodyResolutionContext, TypeRefUseSite, support::callable_arg_expectations,
+};
 
 pub(super) struct PatternTypePropagationPass<'query, D, I> {
     context: BodyResolutionContext<'query, D, I>,
@@ -112,8 +114,10 @@ where
                         self.propagate_pat(pat, &expected_ty, &mut updates)?;
                     }
                 }
+                ExprKind::Call { args, .. } | ExprKind::MethodCall { args, .. } => {
+                    self.propagate_closure_arg_expectations(expr, &args, &mut updates)?;
+                }
                 ExprKind::Path { .. }
-                | ExprKind::Call { .. }
                 | ExprKind::Tuple { .. }
                 | ExprKind::Array { .. }
                 | ExprKind::RepeatArray { .. }
@@ -132,7 +136,6 @@ where
                 | ExprKind::Block { .. }
                 | ExprKind::Field { .. }
                 | ExprKind::Record { .. }
-                | ExprKind::MethodCall { .. }
                 | ExprKind::Wrapper { .. }
                 | ExprKind::BuiltinMacro { .. }
                 | ExprKind::Literal { .. }
@@ -146,6 +149,43 @@ where
         }
 
         Ok(updates)
+    }
+
+    /// Check if call has:
+    /// 1. `impl Fn*(...)` or `F: Fn*(...)` arguments in its target fn
+    /// 2. closures passed as arguments in matching positions.
+    ///
+    /// If so, propagate types from the (1) types to arguments in (2) closure.
+    ///
+    /// Example: we do `invoke(|a| a + 1)`, where `invoke` is `fn invoke(f: impl FnOnce(usize))`,
+    /// we match `f` to the closure and propagate `a` type to `usize`.
+    fn propagate_closure_arg_expectations(
+        &self,
+        call: ExprId,
+        args: &[ExprId],
+        updates: &mut Vec<(BindingId, Ty)>,
+    ) -> Result<(), PackageStoreError> {
+        for (arg, expectation) in callable_arg_expectations(self.context, call, args)? {
+            // Only closure arguments can receive these types here.
+            // Other expression kinds still get ordinary call-argument expectations elsewhere.
+            let ExprKind::Closure { params, .. } =
+                self.context.body().expr_unchecked(arg).kind.clone()
+            else {
+                continue;
+            };
+            if params.len() != expectation.params.len() {
+                continue;
+            };
+
+            for (param, expected_ty) in params.iter().zip(&expectation.params) {
+                let Some(pat) = param.pat else {
+                    continue;
+                };
+                self.propagate_pat(pat, expected_ty, updates)?;
+            }
+        }
+
+        Ok(())
     }
 
     fn expected_ty_for_let(

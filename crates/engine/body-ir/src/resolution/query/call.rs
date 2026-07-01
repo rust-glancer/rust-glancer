@@ -232,6 +232,7 @@ pub(crate) struct CallSignature<'call, 'query, D, I> {
 /// Signature facts projected for one selected call target.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct CallProjection {
+    written_param_refs: Vec<Option<TypeRef>>,
     written_param_tys: Vec<Ty>,
     return_ty: Ty,
     declared_return_ty: Option<TypeRef>,
@@ -244,6 +245,7 @@ pub(crate) struct CallProjection {
 impl CallProjection {
     fn unknown(explicit_args: &[ItemGenericArg]) -> Self {
         Self {
+            written_param_refs: Vec::new(),
             written_param_tys: Vec::new(),
             return_ty: Ty::Unknown,
             declared_return_ty: None,
@@ -252,6 +254,11 @@ impl CallProjection {
             selected_self_ty: None,
             subst: TypeSubst::new(),
         }
+    }
+
+    /// Return declared parameter syntax for arguments written at the call site.
+    pub(crate) fn written_param_refs(&self) -> &[Option<TypeRef>] {
+        &self.written_param_refs
     }
 
     /// Return parameter types for arguments written at the call site.
@@ -540,11 +547,18 @@ where
 
         // Keep one expected type per written argument. Missing parameter annotations are not
         // useful evidence, but `Unknown` preserves arity so the caller can still zip safely.
-        let written_param_tys = function_data
+        let written_params = function_data
             .signature
             .params()
             .iter()
             .skip(self.target.self_source.first_written_param_idx())
+            .collect::<Vec<_>>();
+        let written_param_refs = written_params
+            .iter()
+            .map(|param| param.ty.clone())
+            .collect::<Vec<_>>();
+        let written_param_tys = written_params
+            .iter()
             .map(|param| {
                 let Some(param_ty) = &param.ty else {
                     return Ok(Ty::Unknown);
@@ -577,6 +591,7 @@ where
         };
 
         Ok(CallProjection {
+            written_param_refs,
             written_param_tys,
             return_ty,
             declared_return_ty,

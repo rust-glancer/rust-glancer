@@ -58,7 +58,7 @@ readme = "README.md"
 description = "A Rust workspace for rust-glancer."
 
 [workspace.dependencies]
-anyhow = "1.0.102"
+anyhow = "1.0.103"
 atomic-write-file = "0.3.0"
 blake3 = "1.8.5"
 bumpalo = "3.17.0"

@@ -2,7 +2,7 @@ use rg_ir_model::items::{GenericParams, TypeRef};
 use rg_ir_model::{BindingId, ExprId, ExprWrapperKind};
 
 use rg_ty::{
-    Ty,
+    ClosureTyId, Ty,
     inference::{
         ExplicitTypeArgInstantiationBuilder, GenericReturnInstantiationBuilder, InferTy,
         InferTypeSubst, InferenceTable, UnknownTypeInstantiationBuilder,
@@ -32,6 +32,12 @@ impl BodyInferenceCtx {
 
     pub(crate) fn set_expr_infer_ty(&mut self, expr: ExprId, ty: InferTy) -> bool {
         self.set_expr_fact(expr, ty)
+    }
+
+    pub(crate) fn set_expr_closure_ty(&mut self, expr: ExprId) -> bool {
+        // The id intentionally points back to the body expression index. Later callable-trait
+        // phases can use that link to recover the closure params/body from the same body arena.
+        self.set_expr_infer_ty(expr, InferTy::Closure(ClosureTyId::new(expr)))
     }
 
     pub(crate) fn expr_ty(&self, expr: ExprId) -> InferTy {

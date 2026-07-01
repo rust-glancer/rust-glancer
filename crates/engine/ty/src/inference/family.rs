@@ -36,6 +36,7 @@ pub(crate) trait TyToInferMapper {
                     .map(|bound| self.map_opaque_bound(bound))
                     .collect::<UniqueVec<_>>(),
             },
+            Ty::Closure(id) => InferTy::Closure(*id),
             Ty::Syntax(ty) => InferTy::Syntax(Box::new(ty.clone())),
             Ty::Nominal(ty) => InferTy::Nominal(self.map_nominal_ty(ty)),
             Ty::SelfTy(ty) => InferTy::SelfTy(self.map_nominal_ty(ty)),
@@ -127,6 +128,7 @@ pub(super) trait InferTyMapper {
                     .map(|bound| self.map_infer_opaque_bound(bound))
                     .collect::<UniqueVec<_>>(),
             },
+            InferTy::Closure(id) => InferTy::Closure(*id),
             InferTy::Syntax(ty) => InferTy::Syntax(ty.clone()),
             InferTy::Nominal(ty) => InferTy::Nominal(self.map_infer_nominal_ty(ty)),
             InferTy::SelfTy(ty) => InferTy::SelfTy(self.map_infer_nominal_ty(ty)),
@@ -360,6 +362,7 @@ pub(super) trait InferToTyMapper {
                     .map(|bound| self.map_infer_opaque_bound(bound))
                     .collect(),
             ),
+            InferTy::Closure(id) => Ty::closure(*id),
             InferTy::Syntax(ty) => Ty::syntax(ty.as_ref().clone()),
             InferTy::Nominal(ty) => Ty::nominal(self.map_infer_nominal_ty(ty)),
             InferTy::SelfTy(ty) => Ty::self_ty(self.map_infer_nominal_ty(ty)),

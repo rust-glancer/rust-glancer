@@ -2,7 +2,9 @@ use rg_ir_model::{
     BindingId, DefMapRef, ExprId, PackageSlot, StructId, TargetRef, TypeDefId, TypeDefRef,
 };
 use rg_parse::TargetId;
-use rg_ty::{GenericArg, NominalTy, PrimitiveTy, Ty, UnsignedIntTy, inference::InferTy};
+use rg_ty::{
+    ClosureTyId, GenericArg, NominalTy, PrimitiveTy, Ty, UnsignedIntTy, inference::InferTy,
+};
 
 use super::context::BodyInferenceCtx;
 
@@ -27,12 +29,44 @@ fn vec_ty(inner: Ty) -> Ty {
     })
 }
 
+fn closure_ty(index: usize) -> Ty {
+    Ty::closure(ClosureTyId::new(ExprId(index)))
+}
+
 fn default_int_ty() -> Ty {
     Ty::Primitive(PrimitiveTy::DEFAULT_INT)
 }
 
 fn u64_ty() -> Ty {
     Ty::Primitive(PrimitiveTy::UnsignedInt(UnsignedIntTy::U64))
+}
+
+#[test]
+fn stores_closure_types_as_body_local_facts() {
+    let mut context = BodyInferenceCtx::new(1, 0);
+
+    assert!(context.set_expr_closure_ty(ExprId(0)));
+
+    assert_eq!(
+        context.expr_ty(ExprId(0)),
+        InferTy::Closure(ClosureTyId::new(ExprId(0)))
+    );
+    assert_eq!(context.finalize_expr_ty(ExprId(0)), closure_ty(0));
+}
+
+#[test]
+fn copies_closure_types_through_binding_reads() {
+    let mut context = BodyInferenceCtx::new(2, 1);
+
+    context.set_expr_closure_ty(ExprId(0));
+    context.set_binding_infer_ty(BindingId(0), context.expr_ty(ExprId(0)));
+
+    assert!(context.set_expr_from_binding(ExprId(1), BindingId(0)));
+    assert_eq!(
+        context.expr_ty(ExprId(1)),
+        InferTy::Closure(ClosureTyId::new(ExprId(0)))
+    );
+    assert_eq!(context.finalize_expr_ty(ExprId(1)), closure_ty(0));
 }
 
 #[test]

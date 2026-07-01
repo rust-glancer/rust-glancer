@@ -197,7 +197,12 @@ where
             }
             Ty::Reference { inner, .. } => Self::type_arg_comparison_is_uncertain(inner),
             Ty::Opaque { .. } => true,
-            Ty::Unit | Ty::Never | Ty::Primitive(_) | Ty::Nominal(_) | Ty::SelfTy(_) => false,
+            Ty::Unit
+            | Ty::Never
+            | Ty::Primitive(_)
+            | Ty::Closure(_)
+            | Ty::Nominal(_)
+            | Ty::SelfTy(_) => false,
         }
     }
 }

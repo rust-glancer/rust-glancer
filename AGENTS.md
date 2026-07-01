@@ -78,23 +78,47 @@ It is not yet in production, so we must optimize for the code quality right now 
 
 ## Comments
 
-Add short (1-3 lines) comments in logically complex blocks to hint reader what's going on.
-Typically, a comment on a non-trivial function is sufficient.
-Not every function needs a comment, only ones that are not obvious right away.
-Same goes for types.
+Add simple-to-read comments in logically complex blocks to help the reader see what's going on.
+Where reasonable, use small examples driven by Rust syntax.
+Typically, functions with real business logic deserve at least a short comment.
+Simple getters, constructors, and obvious wrappers usually do not. Same goes for types.
 Inside of functions, comments might be helpful to explain an intention or non-trivial
-block of logic.
+block of logic. When the function represents multiple logical steps, walkthrough-style
+comments are usually a good idea.
+
+Comment priorities: clarity first, size second. The comment might be slightly obvious
+if it helps to understand what's going on, but we don't need to explain the entire codebase
+all the time.
 
 The goal of comments is to reduce cognitive complexity and help read the code as a book.
 Prefer commenting what exists, not cross-reference.
-Avoid documenting things that can go stale quick and do NOT help reading the code, e.g.
-the scope of the task you're working on, other files/modules that use this function.
+Avoid documenting things that can go stale quickly and do NOT help reading the code, e.g.
+the scope of the task you're working on, other files/modules that use this function,
+temporary design decisions.
 
 Rules of thumb:
-- user should not need to go to other places to understand the comment, it should keep reading with more knowledge
-- user should not have special knowledge to understand the comment (e.g. project roadmap/tasks/private discussions)
-- user should get a knowledge from comment that otherwise would require them to spend time reasoning about codebase.
+- reader should not have special knowledge to understand the comment (e.g. project roadmap/tasks/private discussions)
+- reader should learn something from the comment that otherwise would require them to spend time reasoning about codebase.
 - if your comment uses the word "currently" or another implication of current state that is likely to change, then it's probably a temporary implementation detail that should not be mentioned.
+
+### Documentation Voice
+
+In this project, we favor plain pre-reading notes over polished reference-doc summaries.
+The docs may be step-by-step, slightly repetitive, or intentionally simple if that helps the next
+reader understand the code before reading it.
+
+When proofreading existing comments, preserve the author's structure and voice. Do not compress,
+formalize, or "upgrade" comments into academic Rustdoc style unless explicitly asked. Fix only the
+parts that are unclear, grammatically broken, or misleading.
+
+A lot of existing documentation may still read too polished or bland, this is a bug, not a feature.
+Do not treat overly concise/compressed docs as a model to match, since we try to improve situation
+by making new documentation better than what we had, not create a uniform mix between "old" and
+"new" styles. Think of documentation in this project as being in the stage of slow and gradual
+rewrite spanning multiple months.
+
+A good comment should pass this test: can a tired reader understand why the next code exists before
+they read the code? If not, make the comment more concrete, not more elegant.
 
 ## `reference/` folder
 

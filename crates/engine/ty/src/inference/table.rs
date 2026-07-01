@@ -206,6 +206,7 @@ impl InferenceTable {
             | InferTy::Slice(_)
             | InferTy::Reference { .. }
             | InferTy::Opaque { .. }
+            | InferTy::Closure(_)
             | InferTy::Syntax(_)
             | InferTy::Nominal(_)
             | InferTy::SelfTy(_)
@@ -278,6 +279,7 @@ impl InferenceTable {
             (InferTy::Unit, InferTy::Unit)
             | (InferTy::Never, InferTy::Never)
             | (InferTy::Primitive(_), InferTy::Primitive(_))
+            | (InferTy::Closure(_), InferTy::Closure(_))
             | (InferTy::Syntax(_), InferTy::Syntax(_)) => UnifyResult::compatible(),
             (InferTy::Tuple(lhs_fields), InferTy::Tuple(rhs_fields)) => {
                 self.unify_iter(lhs_fields.iter(), rhs_fields.iter())

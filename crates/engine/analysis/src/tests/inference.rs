@@ -562,6 +562,47 @@ pub fn use_it(builder: Builder) {
 }
 
 #[test]
+fn preserves_live_receiver_self_when_instantiating_method_return() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_method_self_return_inference"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct User;
+pub struct Name;
+
+pub struct Iter<T> {
+    value: T,
+}
+
+pub struct Pair<A, B> {
+    left: A,
+    right: B,
+}
+
+impl<T> Iter<T> {
+    pub fn pair<U>(self, value: U) -> Pair<Self, U> {}
+}
+
+pub fn make_iter<T>(value: T) -> Iter<T> {}
+
+pub fn use_it(user: User, name: Name) {
+    let pair = make_iter(user).pair(name)$type_pair$;
+}
+"#,
+        &[AnalysisQuery::ty("method Self return", "type_pair")],
+        expect![[r#"
+            method Self return
+            - nominal struct analysis_method_self_return_inference[lib]::crate::Pair<nominal struct analysis_method_self_return_inference[lib]::crate::Iter<nominal struct analysis_method_self_return_inference[lib]::crate::User>, nominal struct analysis_method_self_return_inference[lib]::crate::Name>
+        "#]],
+    );
+}
+
+#[test]
 fn infers_collect_destination_through_trait_obligations() {
     check_analysis_queries(
         r#"
@@ -660,6 +701,682 @@ pub fn expected_destination(def_map: &DefMap) {
 
             expected collect destination
             - nominal struct fake_core[lib]::crate::Vec<&nominal struct storage[lib]::crate::ImportData>
+        "#]],
+    );
+}
+
+#[test]
+fn projects_iterator_adapter_items_into_collect_destination() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[workspace]
+members = ["core", "app"]
+resolver = "3"
+
+//- /core/Cargo.toml
+[package]
+name = "fake_core"
+version = "0.1.0"
+edition = "2024"
+
+//- /core/src/lib.rs
+pub mod iter {
+    pub trait FromIterator<A> {}
+
+    pub trait Iterator {
+        type Item;
+
+        fn map<B, F>(self, f: F) -> Map<Self, F>
+        where
+            F: FnMut(Self::Item) -> B;
+
+        fn filter_map<B, F>(self, f: F) -> FilterMap<Self, F>
+        where
+            F: FnMut(Self::Item) -> Option<B>;
+
+        fn enumerate(self) -> Enumerate<Self>;
+
+        fn collect<B>(self) -> B
+        where
+            B: FromIterator<Self::Item>;
+    }
+
+    pub struct Map<I, F> {
+        iter: I,
+        f: F,
+    }
+
+    pub struct FilterMap<I, F> {
+        iter: I,
+        f: F,
+    }
+
+    pub struct Enumerate<I> {
+        iter: I,
+    }
+}
+
+pub mod slice {
+    pub struct Iter<'a, T>(&'a T);
+}
+
+pub enum Option<T> {
+    Some(T),
+    None,
+}
+
+pub struct Vec<T> {
+    value: T,
+}
+
+pub struct HashMap<K, V> {
+    key: K,
+    value: V,
+}
+
+impl<T> iter::FromIterator<T> for Vec<T> {}
+impl<K, V> iter::FromIterator<(K, V)> for HashMap<K, V> {}
+
+impl<T> [T] {
+    pub fn iter(&self) -> slice::Iter<'_, T> {
+        missing()
+    }
+}
+
+impl<'a, T> iter::Iterator for slice::Iter<'a, T> {
+    type Item = &'a T;
+}
+
+impl<I, F, B> iter::Iterator for iter::Map<I, F>
+where
+    I: iter::Iterator,
+    F: FnMut(I::Item) -> B,
+{
+    type Item = B;
+}
+
+impl<I, F, B> iter::Iterator for iter::FilterMap<I, F>
+where
+    I: iter::Iterator,
+    F: FnMut(I::Item) -> Option<B>,
+{
+    type Item = B;
+}
+
+impl<I> iter::Iterator for iter::Enumerate<I>
+where
+    I: iter::Iterator,
+{
+    type Item = (usize, I::Item);
+}
+
+pub fn missing<T>() -> T {}
+
+//- /app/Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+core = { package = "fake_core", path = "../core" }
+
+//- /app/src/lib.rs
+use core::{HashMap, Option, Vec};
+
+pub struct User;
+pub struct Name;
+pub struct Email;
+pub struct Key;
+pub struct Value;
+
+impl User {
+    pub fn name(&self) -> Name {}
+    pub fn email(&self) -> Option<Email> {}
+    pub fn key(&self) -> Key {}
+    pub fn value(&self) -> Value {}
+}
+
+pub struct SameNameMap;
+
+impl SameNameMap {
+    pub fn map<F>(&self, f: F) {}
+}
+
+pub struct PairIter;
+
+impl core::iter::Iterator for PairIter {
+    type Item = (Key, Value);
+}
+
+pub struct AmbiguousMap<K, V> {
+    key: K,
+    value: V,
+}
+
+impl<K, V> core::iter::FromIterator<(K, V)> for AmbiguousMap<K, V> {}
+impl core::iter::FromIterator<(Key, Value)> for AmbiguousMap<Key, Value> {}
+
+pub fn pairs() -> PairIter {
+    core::missing()
+}
+
+pub fn use_it(users: &[User], same_name: SameNameMap) {
+    let names = users.iter().map(|user| user$type_map_param$.name()).collect::<Vec<_>>()$type_names$;
+    let emails = users.iter().filter_map(|user| user$type_filter_map_param$.email()).collect::<Vec<_>>()$type_emails$;
+    let enumerated = users.iter().enumerate().collect::<Vec<_>>()$type_enumerated$;
+    let name_pairs = users.iter().enumerate().map(|(index, user)| (index$type_enumerate_index$, user$type_enumerate_user$)).collect::<Vec<_>>();
+    let direct_lookup = pairs().collect::<HashMap<_, _>>()$type_direct_lookup$;
+    let lookup = users.iter().map(|user| (user.key(), user.value())).collect::<HashMap<_, _>>()$type_lookup$;
+    let ambiguous = pairs().collect::<AmbiguousMap<_, _>>()$type_ambiguous$;
+    same_name.map(|value| value$type_same_name_map_param$);
+}
+"#,
+        &[
+            AnalysisQuery::ty("iterator map closure param", "type_map_param").in_lib("app"),
+            AnalysisQuery::ty("iterator map collect result", "type_names").in_lib("app"),
+            AnalysisQuery::ty("iterator filter_map closure param", "type_filter_map_param")
+                .in_lib("app"),
+            AnalysisQuery::ty("iterator filter_map collect result", "type_emails").in_lib("app"),
+            AnalysisQuery::ty("iterator enumerate collect result", "type_enumerated").in_lib("app"),
+            AnalysisQuery::ty("iterator enumerate map index param", "type_enumerate_index")
+                .in_lib("app"),
+            AnalysisQuery::ty("iterator enumerate map user param", "type_enumerate_user")
+                .in_lib("app"),
+            AnalysisQuery::ty("direct HashMap collect result", "type_direct_lookup").in_lib("app"),
+            AnalysisQuery::ty("mapped HashMap collect result", "type_lookup").in_lib("app"),
+            AnalysisQuery::ty("ambiguous HashMap collect result", "type_ambiguous").in_lib("app"),
+            AnalysisQuery::ty("same-name map closure param", "type_same_name_map_param")
+                .in_lib("app"),
+        ],
+        expect![[r#"
+            iterator map closure param
+            - &nominal struct app[lib]::crate::User
+
+            iterator map collect result
+            - nominal struct fake_core[lib]::crate::Vec<nominal struct app[lib]::crate::Name>
+
+            iterator filter_map closure param
+            - &nominal struct app[lib]::crate::User
+
+            iterator filter_map collect result
+            - nominal struct fake_core[lib]::crate::Vec<nominal struct app[lib]::crate::Email>
+
+            iterator enumerate collect result
+            - nominal struct fake_core[lib]::crate::Vec<(usize, &nominal struct app[lib]::crate::User)>
+
+            iterator enumerate map index param
+            - usize
+
+            iterator enumerate map user param
+            - &nominal struct app[lib]::crate::User
+
+            direct HashMap collect result
+            - nominal struct fake_core[lib]::crate::HashMap<nominal struct app[lib]::crate::Key, nominal struct app[lib]::crate::Value>
+
+            mapped HashMap collect result
+            - nominal struct fake_core[lib]::crate::HashMap<nominal struct app[lib]::crate::Key, nominal struct app[lib]::crate::Value>
+
+            ambiguous HashMap collect result
+            - nominal struct app[lib]::crate::AmbiguousMap<<unknown>, <unknown>>
+
+            same-name map closure param
+            - <unknown>
+        "#]],
+    );
+}
+
+#[test]
+fn infers_closure_params_and_returns_from_callable_bounds() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_callable_closure_bound_inference"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct Attr;
+
+pub struct AttrVec;
+
+impl AttrVec {
+    pub fn push(&mut self, attr: Attr) {}
+}
+
+pub struct Id;
+
+pub struct Factory;
+
+pub struct User;
+pub struct Name;
+
+pub enum Option<T> {
+    Some(T),
+    None,
+}
+
+impl Factory {
+    type Id = Id;
+
+    pub fn with_id(f: impl FnOnce(Self::Id)) {}
+}
+
+impl User {
+    pub fn name(&self) -> Name {}
+}
+
+pub fn with_attrs(f: impl FnOnce(&mut AttrVec)) {}
+pub fn with_user(f: impl FnOnce() -> User) {}
+
+pub fn visit<T, F: FnOnce(T)>(value: T, f: F) {}
+
+pub fn visit_all<T, F>(values: &[T], f: F)
+where
+    F: FnMut(&T),
+{}
+
+pub fn apply<T, R, F: FnOnce(T) -> R>(value: T, f: F) -> R {}
+
+pub fn try_apply<T, R, F: FnOnce(T) -> Option<R>>(value: T, f: F) -> Option<R> {}
+
+pub fn id<T>(value: T) -> T {}
+pub fn missing<T>() -> T {}
+pub fn make_user(id: Id) -> User {}
+pub fn make_name(id: Id) -> Name {}
+
+pub fn use_it(flag: bool, attr: Attr, user: User, users: &[User], seed: Id) {
+    with_attrs(|attrs| attrs$type_direct_param$.push(attr)$type_direct_param_call$);
+    Factory::with_id(|id| id$type_inherent_assoc$);
+    with_user(|| id(missing())$type_direct_return_body$);
+
+    visit(user, |user| user$type_generic_inline_param$.name()$type_generic_inline_call$);
+    visit_all(users, |user| user$type_generic_where_param$.name()$type_generic_where_call$);
+
+    let applied = apply(seed, |id| make_user(id))$type_generic_result$;
+    let stored_f = |id| make_user(id);
+    let stored = apply(seed, stored_f)$type_stored_result$;
+    let maybe = try_apply(seed, |id| Option::Some(make_user(id)))$type_nested_result$;
+    let conflict = apply(seed, |id| if flag {
+        make_user(id)
+    } else {
+        make_name(id)
+    })$type_conflict$;
+}
+"#,
+        &[
+            AnalysisQuery::ty("direct callable closure param", "type_direct_param"),
+            AnalysisQuery::ty(
+                "direct callable closure method call",
+                "type_direct_param_call",
+            ),
+            AnalysisQuery::ty(
+                "direct closure inherent associated param",
+                "type_inherent_assoc",
+            ),
+            AnalysisQuery::ty(
+                "direct callable closure return body",
+                "type_direct_return_body",
+            ),
+            AnalysisQuery::ty("inline generic closure param", "type_generic_inline_param"),
+            AnalysisQuery::ty(
+                "inline generic closure method call",
+                "type_generic_inline_call",
+            ),
+            AnalysisQuery::ty("where generic closure param", "type_generic_where_param"),
+            AnalysisQuery::ty(
+                "where generic closure method call",
+                "type_generic_where_call",
+            ),
+            AnalysisQuery::ty("generic closure return result", "type_generic_result"),
+            AnalysisQuery::ty("stored generic closure return result", "type_stored_result"),
+            AnalysisQuery::ty("nested generic closure return result", "type_nested_result"),
+            AnalysisQuery::ty("conflicting generic closure return result", "type_conflict"),
+        ],
+        expect![[r#"
+            direct callable closure param
+            - &mut nominal struct analysis_callable_closure_bound_inference[lib]::crate::AttrVec
+
+            direct callable closure method call
+            - ()
+
+            direct closure inherent associated param
+            - syntax Self::Id
+
+            direct callable closure return body
+            - nominal struct analysis_callable_closure_bound_inference[lib]::crate::User
+
+            inline generic closure param
+            - nominal struct analysis_callable_closure_bound_inference[lib]::crate::User
+
+            inline generic closure method call
+            - nominal struct analysis_callable_closure_bound_inference[lib]::crate::Name
+
+            where generic closure param
+            - &nominal struct analysis_callable_closure_bound_inference[lib]::crate::User
+
+            where generic closure method call
+            - nominal struct analysis_callable_closure_bound_inference[lib]::crate::Name
+
+            generic closure return result
+            - nominal struct analysis_callable_closure_bound_inference[lib]::crate::User
+
+            stored generic closure return result
+            - nominal struct analysis_callable_closure_bound_inference[lib]::crate::User
+
+            nested generic closure return result
+            - nominal enum analysis_callable_closure_bound_inference[lib]::crate::Option<nominal struct analysis_callable_closure_bound_inference[lib]::crate::User>
+
+            conflicting generic closure return result
+            - <unknown>
+        "#]],
+    );
+}
+
+#[test]
+fn infers_iterator_closure_params_from_selected_trait_method_bounds() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[workspace]
+members = ["core", "app"]
+resolver = "3"
+
+//- /core/Cargo.toml
+[package]
+name = "fake_core"
+version = "0.1.0"
+edition = "2024"
+
+//- /core/src/lib.rs
+pub mod iter {
+    pub trait Iterator {
+        type Item;
+
+        fn map<B, F>(self, f: F) -> Map<Self, F>
+        where
+            F: FnMut(Self::Item) -> B;
+
+        fn filter<P>(self, predicate: P) -> Filter<Self, P>
+        where
+            P: FnMut(&Self::Item) -> bool;
+
+        fn find<P>(self, predicate: P)
+        where
+            P: FnMut(&Self::Item) -> bool;
+
+        fn produce<F>(self, f: F)
+        where
+            F: FnOnce() -> Self::Item;
+    }
+
+    pub struct Map<I, F> {
+        iter: I,
+        f: F,
+    }
+
+    pub struct Filter<I, P> {
+        iter: I,
+        predicate: P,
+    }
+}
+
+pub mod slice {
+    pub struct Iter<'a, T>(&'a T);
+}
+
+impl<T> [T] {
+    pub fn iter(&self) -> slice::Iter<'_, T> {
+        missing()
+    }
+}
+
+impl<'a, T> iter::Iterator for slice::Iter<'a, T> {
+    type Item = &'a T;
+}
+
+//- /app/Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+core = { package = "fake_core", path = "../core" }
+
+//- /app/src/lib.rs
+pub struct User;
+pub struct Name;
+pub struct Searcher;
+
+impl User {
+    pub fn name(&self) -> Name {}
+
+    pub fn is_active(&self) -> bool {}
+}
+
+impl Searcher {
+    pub fn find<F>(&self, f: F) {}
+}
+
+pub fn id<T>(value: T) -> T {}
+pub fn missing<T>() -> T {}
+
+pub fn use_it(users: &[User], searcher: Searcher) {
+    let mapped = users.iter().map(|user| user$type_map_param$.name()$type_map_call$);
+    let filtered = users.iter().filter(|user| user$type_filter_param$.is_active()$type_filter_call$);
+    users.iter().find(|user| user$type_find_param$.is_active()$type_find_call$);
+    users.iter().produce(|| id(missing())$type_produce_body$);
+    searcher.find(|value| value$type_same_name_find_param$);
+}
+"#,
+        &[
+            AnalysisQuery::ty("iterator map closure param", "type_map_param").in_lib("app"),
+            AnalysisQuery::ty("iterator map closure method call", "type_map_call").in_lib("app"),
+            AnalysisQuery::ty("iterator filter closure param", "type_filter_param").in_lib("app"),
+            AnalysisQuery::ty("iterator filter closure method call", "type_filter_call")
+                .in_lib("app"),
+            AnalysisQuery::ty("iterator find closure param", "type_find_param").in_lib("app"),
+            AnalysisQuery::ty("iterator find closure method call", "type_find_call").in_lib("app"),
+            AnalysisQuery::ty("iterator callable return body", "type_produce_body").in_lib("app"),
+            AnalysisQuery::ty("same-name find closure param", "type_same_name_find_param")
+                .in_lib("app"),
+        ],
+        expect![[r#"
+            iterator map closure param
+            - &nominal struct app[lib]::crate::User
+
+            iterator map closure method call
+            - nominal struct app[lib]::crate::Name
+
+            iterator filter closure param
+            - &&nominal struct app[lib]::crate::User
+
+            iterator filter closure method call
+            - bool
+
+            iterator find closure param
+            - &&nominal struct app[lib]::crate::User
+
+            iterator find closure method call
+            - bool
+
+            iterator callable return body
+            - &nominal struct app[lib]::crate::User
+
+            same-name find closure param
+            - <unknown>
+        "#]],
+    );
+}
+
+#[test]
+fn projects_associated_type_from_callable_impl_where_clause() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_callable_impl_where_projection"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub trait Produces {
+    type Output;
+
+    fn produce(self) -> Self::Output;
+}
+
+pub struct Adapter<F> {
+    f: F,
+}
+
+pub struct Name;
+pub struct NotCallable;
+
+impl<F, R> Produces for Adapter<F>
+where
+    F: FnOnce() -> R,
+{
+    type Output = R;
+}
+
+pub fn adapter<F>(f: F) -> Adapter<F> {}
+pub fn make_name() -> Name {}
+
+pub fn use_it(not_callable: NotCallable) {
+    let produced = adapter(|| make_name()).produce()$type_produced$;
+    let unknown = adapter(not_callable).produce()$type_unknown$;
+}
+"#,
+        &[
+            AnalysisQuery::ty("callable impl where projection", "type_produced"),
+            AnalysisQuery::ty("non-callable impl where projection", "type_unknown"),
+        ],
+        expect![[r#"
+            callable impl where projection
+            - nominal struct analysis_callable_impl_where_projection[lib]::crate::Name
+
+            non-callable impl where projection
+            - <unknown>
+        "#]],
+    );
+}
+
+#[test]
+fn projects_associated_type_from_callable_impl_where_clause_with_generic_assoc_input() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_callable_impl_where_assoc_input_projection"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub trait Stream {
+    type Item;
+
+    fn map<B, F>(self, f: F) -> Map<Self, F>
+    where
+        F: FnMut(Self::Item) -> B;
+
+    fn map_ref<B, F>(self, f: F) -> RefMap<Self, F>
+    where
+        F: FnMut(&Self::Item) -> B;
+
+    fn map_marked<B, F>(self, f: F) -> MarkedMap<Self, F>
+    where
+        F: FnMut(Self::Item) -> B;
+
+    fn get(self) -> Self::Item;
+}
+
+pub trait Marker {}
+
+pub struct Source<T> {
+    value: T,
+}
+
+pub struct Map<S, F> {
+    stream: S,
+    f: F,
+}
+
+pub struct RefMap<S, F> {
+    stream: S,
+    f: F,
+}
+
+pub struct MarkedMap<S, F> {
+    stream: S,
+    f: F,
+}
+
+pub struct User;
+pub struct Name;
+
+impl User {
+    pub fn name(&self) -> Name {}
+}
+
+impl<T> Stream for Source<T> {
+    type Item = T;
+}
+
+impl<S, F, B> Stream for Map<S, F>
+where
+    S: Stream,
+    F: FnMut(S::Item) -> B,
+{
+    type Item = B;
+}
+
+impl<S, F, B> Stream for RefMap<S, F>
+where
+    S: Stream,
+    F: FnMut(&S::Item) -> B,
+{
+    type Item = B;
+}
+
+impl<S, F, B> Stream for MarkedMap<S, F>
+where
+    S: Stream,
+    F: FnMut(S::Item) -> B,
+    B: Marker,
+{
+    type Item = B;
+}
+
+pub fn use_it(source: Source<User>) {
+    let mapped = source.map(|user| user.name()).get()$type_mapped$;
+    let ref_mapped = source.map_ref(|user| user.name()).get()$type_ref_mapped$;
+    let marked = source.map_marked(|user| user.name()).get()$type_marked$;
+}
+"#,
+        &[
+            AnalysisQuery::ty(
+                "callable impl where associated input projection",
+                "type_mapped",
+            ),
+            AnalysisQuery::ty(
+                "callable impl where referenced associated input projection",
+                "type_ref_mapped",
+            ),
+            AnalysisQuery::ty("unsupported impl where projection", "type_marked"),
+        ],
+        expect![[r#"
+            callable impl where associated input projection
+            - nominal struct analysis_callable_impl_where_assoc_input_projection[lib]::crate::Name
+
+            callable impl where referenced associated input projection
+            - nominal struct analysis_callable_impl_where_assoc_input_projection[lib]::crate::Name
+
+            unsupported impl where projection
+            - <unknown>
         "#]],
     );
 }

@@ -49,6 +49,18 @@ impl GenericArg {
         }
     }
 
+    /// Returns true when this generic argument contains `Ty::Unknown` or unresolved syntax.
+    pub fn has_unknown_or_syntax(&self) -> bool {
+        match self {
+            Self::Type(ty) => ty.has_unknown_or_syntax(),
+            Self::FnTraitArgs { params, ret } => {
+                params.iter().any(Ty::has_unknown_or_syntax) || ret.has_unknown_or_syntax()
+            }
+            Self::AssocType { ty, .. } => ty.as_deref().is_some_and(Ty::has_unknown_or_syntax),
+            Self::Lifetime(_) | Self::Const(_) | Self::Unsupported(_) => false,
+        }
+    }
+
     pub(crate) fn is_projectable(&self) -> bool {
         match self {
             Self::Type(ty) => ty.is_projectable(),

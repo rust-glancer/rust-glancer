@@ -1,12 +1,12 @@
 use rg_ir_model::{
-    DefMapRef, PackageSlot, StructId, TargetId, TargetRef, TraitId, TraitRef, TypeDefId,
+    DefMapRef, ExprId, PackageSlot, StructId, TargetId, TargetRef, TraitId, TraitRef, TypeDefId,
     TypeDefRef,
     items::{FloatTy, SignedIntTy, TypeRef, UnsignedIntTy},
 };
 
 use super::{InferTy, InferenceTable};
 use crate::{
-    GenericArg, NominalTy, PrimitiveTy, Ty,
+    ClosureTyId, GenericArg, NominalTy, PrimitiveTy, Ty,
     inference::{
         ExplicitTypeArgInstantiationBuilder, InferGenericArg, InferNominalTy,
         InferOpaqueTraitBound, UnknownTypeInstantiationBuilder,
@@ -40,6 +40,10 @@ fn user_ty() -> Ty {
 
 fn project_ty() -> Ty {
     Ty::nominal(NominalTy::bare(type_def(1)))
+}
+
+fn closure_ty(index: usize) -> Ty {
+    Ty::closure(ClosureTyId::new(ExprId(index)))
 }
 
 fn vec_ty(inner: InferTy) -> InferTy {
@@ -170,6 +174,16 @@ fn finalizes_solved_variables_inside_nominal_containers() {
             args: vec![GenericArg::Type(Box::new(user_ty()))],
         })
     );
+}
+
+#[test]
+fn closure_types_round_trip_through_inference_family() {
+    let table = InferenceTable::new();
+    let ty = closure_ty(7);
+    let infer_ty = InferTy::from_ty(&ty);
+
+    assert_eq!(infer_ty, InferTy::Closure(ClosureTyId::new(ExprId(7))));
+    assert_eq!(table.finalize(&infer_ty), ty);
 }
 
 #[test]

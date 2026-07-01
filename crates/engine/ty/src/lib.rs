@@ -33,6 +33,9 @@ pub use self::{
     iteration::IterationItemResolver,
     member::{MemberMethodCandidateRef, MemberMethodOrigin, MemberQuery},
     primitive_expr::{ty_for_binary, ty_for_literal, ty_for_unary},
-    trait_selection::{TraitGoal, TraitSelection, TraitSelectionQuery},
-    ty::{ExpectedNominalTyExt, ExpectedTyExt, NominalTy, OpaqueTraitBound, Ty, TypeSubst},
+    trait_selection::{TraitGoal, TraitSelection, TraitSelectionOptions, TraitSelectionQuery},
+    ty::{
+        ClosureTyId, ExpectedNominalTyExt, ExpectedTyExt, NominalTy, OpaqueTraitBound, Ty,
+        TypeSubst,
+    },
 };
