@@ -194,6 +194,26 @@ where
         selection: &TraitSelection,
         assoc_name: &str,
     ) -> Result<Option<InferTy>, PackageStoreError> {
+        let Some((context, aliased_ty)) =
+            self.associated_type_alias_from_selection(selection, assoc_name)?
+        else {
+            return Ok(None);
+        };
+        let resolved_ty = self
+            .context
+            .type_refs(TypeRefUseSite::OwnerContext(context))
+            .resolve(&aliased_ty)?;
+        Ok(Some(
+            InferTypeRefProjector::new(&selection.subst)
+                .ty_from_type_ref(&aliased_ty, &resolved_ty),
+        ))
+    }
+
+    pub(crate) fn associated_type_alias_from_selection(
+        &self,
+        selection: &TraitSelection,
+        assoc_name: &str,
+    ) -> Result<Option<(TypePathContext, TypeRef)>, PackageStoreError> {
         let Some(impl_data) = self
             .context
             .item_query()
@@ -226,14 +246,7 @@ where
                 module: impl_data.owner,
                 impl_ref: Some(selection.trait_impl.impl_ref),
             };
-            let resolved_ty = self
-                .context
-                .type_refs(TypeRefUseSite::OwnerContext(context))
-                .resolve(aliased_ty)?;
-            return Ok(Some(
-                InferTypeRefProjector::new(&selection.subst)
-                    .ty_from_type_ref(aliased_ty, &resolved_ty),
-            ));
+            return Ok(Some((context, aliased_ty.clone())));
         }
 
         Ok(None)

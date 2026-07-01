@@ -92,13 +92,18 @@ where
         };
 
         self.bind_missing_impl_type_params(&mut selection, &impl_data.generics);
-        let Some(projected_ty) =
-            assoc_projector.project_associated_type_from_selection(&selection, assoc_name)?
+        let Some((_, aliased_ty)) =
+            assoc_projector.associated_type_alias_from_selection(&selection, assoc_name)?
         else {
             return Ok(None);
         };
 
-        let Some(obligations) = self.callable_impl_where_obligations(&mut selection, &impl_data)?
+        let Some((projected_ty, obligations)) = self
+            .project_associated_alias_and_callable_impl_where(
+                &mut selection,
+                &impl_data,
+                &aliased_ty,
+            )?
         else {
             return Ok(None);
         };
@@ -144,11 +149,12 @@ where
         }
     }
 
-    fn callable_impl_where_obligations(
+    fn project_associated_alias_and_callable_impl_where(
         &self,
         selection: &mut TraitSelection,
         impl_data: &ImplData,
-    ) -> Result<Option<Vec<CallableImplWhereObligation>>, PackageStoreError> {
+        aliased_ty: &TypeRef,
+    ) -> Result<Option<(InferTy, Vec<CallableImplWhereObligation>)>, PackageStoreError> {
         let context = TypePathContext {
             module: impl_data.owner,
             impl_ref: Some(selection.trait_impl.impl_ref),
@@ -189,33 +195,35 @@ where
             supports.push(support);
         }
 
-        // Only two predicate families are accepted in this shallow projection path:
-        // callable predicates that can solve closure-return generics, and support predicates used
-        // by those callable predicates to project `S::Item`-style inputs. Anything left unused is
-        // a real extra obligation, so we keep the associated type unknown instead of ignoring it.
+        let Some(projected_ty) =
+            self.project_impl_where_ty(selection, &mut supports, &resolver, aliased_ty)?
+        else {
+            return Ok(None);
+        };
+
+        // Only two predicate families are accepted in this shallow projection path: callable
+        // predicates that can solve closure-return generics, and support predicates used to project
+        // `S::Item`-style inputs. Anything left unused is a real extra obligation, so we keep the
+        // associated type unknown instead of ignoring it.
         let mut obligations = Vec::new();
 
         for (ty, expectations) in callable_predicates {
             let Some(self_ty) =
-                self.project_callable_impl_obligation_ty(selection, &mut supports, &resolver, ty)?
+                self.project_impl_where_ty(selection, &mut supports, &resolver, ty)?
             else {
                 return Ok(None);
             };
             for expectation in expectations {
                 let mut params = Vec::new();
                 for param in expectation.params() {
-                    let Some(param) = self.project_callable_impl_obligation_ty(
-                        selection,
-                        &mut supports,
-                        &resolver,
-                        param,
-                    )?
+                    let Some(param) =
+                        self.project_impl_where_ty(selection, &mut supports, &resolver, param)?
                     else {
                         return Ok(None);
                     };
                     params.push(param);
                 }
-                let Some(ret) = self.project_callable_impl_obligation_ty(
+                let Some(ret) = self.project_impl_where_ty(
                     selection,
                     &mut supports,
                     &resolver,
@@ -236,7 +244,7 @@ where
             return Ok(None);
         }
 
-        Ok(Some(obligations))
+        Ok(Some((projected_ty, obligations)))
     }
 
     fn impl_where_projection_support(
@@ -278,7 +286,7 @@ where
         Ok(None)
     }
 
-    fn project_callable_impl_obligation_ty(
+    fn project_impl_where_ty(
         &self,
         selection: &mut TraitSelection,
         supports: &mut [ImplWhereProjectionSupport],
@@ -292,18 +300,47 @@ where
                 .project_impl_generic_associated_ty(selection, supports, param_name, assoc_name);
         }
 
+        if let TypeRef::Tuple(fields) = ty {
+            let fields = fields
+                .iter()
+                .map(|field| self.project_impl_where_ty(selection, supports, resolver, field))
+                .collect::<Result<Option<Vec<_>>, _>>()?;
+            return Ok(fields.map(InferTy::Tuple));
+        }
+
         if let TypeRef::Reference {
             mutability, inner, ..
         } = ty
         {
             let Some(inner_ty) =
-                self.project_callable_impl_obligation_ty(selection, supports, resolver, inner)?
+                self.project_impl_where_ty(selection, supports, resolver, inner)?
             else {
                 return Ok(None);
             };
             return Ok(Some(InferTy::Reference {
                 mutability: *mutability,
                 inner: Box::new(inner_ty),
+            }));
+        }
+
+        if let TypeRef::Slice(inner) = ty {
+            let Some(inner_ty) =
+                self.project_impl_where_ty(selection, supports, resolver, inner)?
+            else {
+                return Ok(None);
+            };
+            return Ok(Some(InferTy::Slice(Box::new(inner_ty))));
+        }
+
+        if let TypeRef::Array { inner, len } = ty {
+            let Some(inner_ty) =
+                self.project_impl_where_ty(selection, supports, resolver, inner)?
+            else {
+                return Ok(None);
+            };
+            return Ok(Some(InferTy::Array {
+                inner: Box::new(inner_ty),
+                len: len.clone(),
             }));
         }
 

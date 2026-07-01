@@ -10,6 +10,7 @@ use rg_ir_model::{
 };
 use rg_ir_storage::{DefMapSource, ItemStoreSource, TypePathContext};
 use rg_package_store::PackageStoreError;
+use rg_text::Name;
 use rg_ty::{
     Ty, TypeSubst,
     inference::{InferTy, InferTypeRefProjector, InferTypeSubst},
@@ -52,8 +53,14 @@ where
         inference: &mut BodyInferenceCtx,
         call: ExprId,
         args: &[ExprId],
+        receiver: Option<ExprId>,
     ) -> Result<(), PackageStoreError> {
-        if !self.context.body().expr_ty_unchecked(call).has_unknown() {
+        if !self
+            .context
+            .body()
+            .expr_ty_unchecked(call)
+            .has_unknown_or_syntax()
+        {
             return Ok(());
         }
 
@@ -62,9 +69,43 @@ where
             return Ok(());
         };
         let projection = calls.signature(&target).project(args)?;
+        let Some(function_data) = self
+            .context
+            .item_query()
+            .function_data(target.function())?
+            .cloned()
+        else {
+            return Ok(());
+        };
 
+        // Try instantiation paths from strongest to weakest. Once a branch writes the call slot,
+        // later branches must not replace it with an older or less precise projection.
         let mut instantiated = false;
-        if !projection.explicit_args().is_empty()
+
+        // Method returns that mention `Self` need the live receiver inference type. The call target
+        // only stores the receiver snapshot from method lookup, which can still contain stale
+        // source syntax such as `Iter<syntax T>`. Re-projecting here lets
+        // `make_iter(user).pair(name) -> Pair<Self, Name>` preserve `Self = Iter<User>`.
+        if let Some(receiver) = receiver
+            && let Some(ret_ty) = projection.declared_return_ty()
+        {
+            instantiated = self.instantiate_method_self_return_fact(
+                inference,
+                call,
+                args,
+                receiver,
+                &target,
+                &function_data,
+                ret_ty,
+                projection.return_ty(),
+            )?;
+        }
+
+        // Explicit type args can introduce written `_` holes that should become real inference
+        // slots inside the return. For example, `collect::<Vec<_>>()` should become `Vec<?T>` so
+        // later trait obligations can solve `?T`.
+        if !instantiated
+            && !projection.explicit_args().is_empty()
             && let Some(ret_ty) = projection.declared_return_ty()
             && let Some(generics) = projection.function_generics()
         {
@@ -78,7 +119,11 @@ where
             )?;
         }
 
-        if projection.explicit_args().is_empty()
+        // Without explicit args, a generic return can still expose function type params directly.
+        // `make_vec<T>() -> Vec<T>` becomes `Vec<?T>`, while non-generic return shapes are left to
+        // the fallback below.
+        if !instantiated
+            && projection.explicit_args().is_empty()
             && let Some(ret_ty) = projection.declared_return_ty()
             && let Some(generics) = projection.function_generics()
         {
@@ -97,6 +142,9 @@ where
             }
         }
 
+        // Last fallback for selected returns that already have the right outer shape but contain
+        // unresolved children, such as a receiver-derived `Vec<unknown>`. This does not understand
+        // written generics; it only replaces nested unknowns with inference slots.
         if !instantiated
             && projection.selected_self_ty().is_some_and(Ty::has_unknown)
             && projection.return_ty().has_unknown()
@@ -105,6 +153,53 @@ where
         }
 
         Ok(())
+    }
+
+    /// Re-project method returns like `Enumerate<Self>` from the current receiver inference type.
+    ///
+    /// Call resolution stores a snapshot of the selected receiver before body inference has a
+    /// chance to solve all child facts. For adapter methods, that can leave `Self` as
+    /// `Iter<syntax T>`. During inference we can do better: bind `Self` to the receiver expression
+    /// slot and then walk the declared return type again.
+    #[allow(clippy::too_many_arguments)]
+    fn instantiate_method_self_return_fact(
+        &self,
+        inference: &mut BodyInferenceCtx,
+        call: ExprId,
+        args: &[ExprId],
+        receiver: ExprId,
+        target: &ResolvedCallTarget,
+        function_data: &FunctionData,
+        ret_ty: &TypeRef,
+        resolved_ret_ty: &Ty,
+    ) -> Result<bool, PackageStoreError> {
+        if !ret_ty.mentions_type_param(&["Self"]) {
+            return Ok(false);
+        }
+
+        let scope = self.context.body().expr_unchecked(call).scope;
+        let mut subst = InferTypeSubst::new();
+        let receiver_ty = inference.root_resolved_expr_ty(receiver);
+        subst.push(&mut inference.table, Name::new("Self"), receiver_ty);
+        self.apply_function_generic_shadows(
+            inference,
+            &mut subst,
+            function_data.signature.generics(),
+            target.explicit_args(),
+            scope,
+        )?;
+        self.bind_selected_call_args_to_subst(
+            inference,
+            &mut subst,
+            args,
+            target,
+            &function_data.signature,
+        );
+
+        let return_ty =
+            InferTypeRefProjector::new(&subst).ty_from_type_ref(ret_ty, resolved_ret_ty);
+        inference.set_expr_infer_ty(call, return_ty);
+        Ok(true)
     }
 
     /// Instantiate explicit `_` args before projecting the call return.
@@ -303,6 +398,23 @@ where
         let Some(ret_ty) = projection.declared_return_ty() else {
             return Ok(());
         };
+        if let Some(receiver) = receiver
+            && self_associated_type_name(ret_ty).is_none()
+            && ret_ty.mentions_type_param(&["Self"])
+        {
+            let _ = self.instantiate_method_self_return_fact(
+                inference,
+                call,
+                args,
+                receiver,
+                &target,
+                &function_data,
+                ret_ty,
+                projection.return_ty(),
+            )?;
+            return Ok(());
+        }
+
         let Some(assoc_name) = self_associated_type_name(ret_ty) else {
             return Ok(());
         };

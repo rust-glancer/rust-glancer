@@ -101,17 +101,19 @@ where
                         &mut self.pass.inference,
                         expr,
                         &args,
+                        None,
                     )?;
                     if let Some(callee) = callee {
                         self.instantiate_enum_variant_call_result_fact(expr, callee);
                     }
                 }
-                ExprKind::MethodCall { args, .. } => {
+                ExprKind::MethodCall { receiver, args, .. } => {
                     let context = self.pass.providers.context(self.pass.body);
                     BodyCallInference::new(context).instantiate_return_fact(
                         &mut self.pass.inference,
                         expr,
                         &args,
+                        receiver,
                     )?;
                 }
                 _ => {}

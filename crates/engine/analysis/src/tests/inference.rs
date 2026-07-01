@@ -562,6 +562,47 @@ pub fn use_it(builder: Builder) {
 }
 
 #[test]
+fn preserves_live_receiver_self_when_instantiating_method_return() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_method_self_return_inference"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct User;
+pub struct Name;
+
+pub struct Iter<T> {
+    value: T,
+}
+
+pub struct Pair<A, B> {
+    left: A,
+    right: B,
+}
+
+impl<T> Iter<T> {
+    pub fn pair<U>(self, value: U) -> Pair<Self, U> {}
+}
+
+pub fn make_iter<T>(value: T) -> Iter<T> {}
+
+pub fn use_it(user: User, name: Name) {
+    let pair = make_iter(user).pair(name)$type_pair$;
+}
+"#,
+        &[AnalysisQuery::ty("method Self return", "type_pair")],
+        expect![[r#"
+            method Self return
+            - nominal struct analysis_method_self_return_inference[lib]::crate::Pair<nominal struct analysis_method_self_return_inference[lib]::crate::Iter<nominal struct analysis_method_self_return_inference[lib]::crate::User>, nominal struct analysis_method_self_return_inference[lib]::crate::Name>
+        "#]],
+    );
+}
+
+#[test]
 fn infers_collect_destination_through_trait_obligations() {
     check_analysis_queries(
         r#"
@@ -694,6 +735,8 @@ pub mod iter {
         where
             F: FnMut(Self::Item) -> Option<B>;
 
+        fn enumerate(self) -> Enumerate<Self>;
+
         fn collect<B>(self) -> B
         where
             B: FromIterator<Self::Item>;
@@ -707,6 +750,10 @@ pub mod iter {
     pub struct FilterMap<I, F> {
         iter: I,
         f: F,
+    }
+
+    pub struct Enumerate<I> {
+        iter: I,
     }
 }
 
@@ -751,6 +798,13 @@ where
     type Item = B;
 }
 
+impl<I> iter::Iterator for iter::Enumerate<I>
+where
+    I: iter::Iterator,
+{
+    type Item = (usize, I::Item);
+}
+
 pub fn missing<T>() -> T {}
 
 //- /app/Cargo.toml
@@ -783,6 +837,8 @@ impl SameNameMap {
 pub fn use_it(users: &[User], same_name: SameNameMap) {
     let names = users.iter().map(|user| user$type_map_param$.name()).collect::<Vec<_>>()$type_names$;
     let emails = users.iter().filter_map(|user| user$type_filter_map_param$.email()).collect::<Vec<_>>()$type_emails$;
+    let enumerated = users.iter().enumerate().collect::<Vec<_>>()$type_enumerated$;
+    let name_pairs = users.iter().enumerate().map(|(index, user)| (index$type_enumerate_index$, user$type_enumerate_user$)).collect::<Vec<_>>();
     same_name.map(|value| value$type_same_name_map_param$);
 }
 "#,
@@ -792,6 +848,11 @@ pub fn use_it(users: &[User], same_name: SameNameMap) {
             AnalysisQuery::ty("iterator filter_map closure param", "type_filter_map_param")
                 .in_lib("app"),
             AnalysisQuery::ty("iterator filter_map collect result", "type_emails").in_lib("app"),
+            AnalysisQuery::ty("iterator enumerate collect result", "type_enumerated").in_lib("app"),
+            AnalysisQuery::ty("iterator enumerate map index param", "type_enumerate_index")
+                .in_lib("app"),
+            AnalysisQuery::ty("iterator enumerate map user param", "type_enumerate_user")
+                .in_lib("app"),
             AnalysisQuery::ty("same-name map closure param", "type_same_name_map_param")
                 .in_lib("app"),
         ],
@@ -807,6 +868,15 @@ pub fn use_it(users: &[User], same_name: SameNameMap) {
 
             iterator filter_map collect result
             - nominal struct fake_core[lib]::crate::Vec<nominal struct app[lib]::crate::Email>
+
+            iterator enumerate collect result
+            - nominal struct fake_core[lib]::crate::Vec<(usize, &nominal struct app[lib]::crate::User)>
+
+            iterator enumerate map index param
+            - usize
+
+            iterator enumerate map user param
+            - &nominal struct app[lib]::crate::User
 
             same-name map closure param
             - <unknown>
