@@ -26,7 +26,7 @@ use crate::resolution::{
     },
 };
 
-use super::super::{BodyCallableGoalSolver, BodyInferenceCtx};
+use super::super::{BodyCallableGoalSolver, BodyInferenceCtx, projection::BodyTypeRefProjector};
 use super::BodyTraitObligationSolver;
 
 struct CallableImplWhereObligation {
@@ -293,59 +293,13 @@ where
         resolver: &TypeRefResolutionQuery<'query, D, I>,
         ty: &TypeRef,
     ) -> Result<Option<InferTy>, PackageStoreError> {
-        if let Some((param_name, assoc_name)) = ty.as_type_param_assoc_path()
-            && selection.subst.type_param(param_name.as_str()).is_some()
-        {
-            return self
-                .project_impl_generic_associated_ty(selection, supports, param_name, assoc_name);
-        }
-
-        if let TypeRef::Tuple(fields) = ty {
-            let fields = fields
-                .iter()
-                .map(|field| self.project_impl_where_ty(selection, supports, resolver, field))
-                .collect::<Result<Option<Vec<_>>, _>>()?;
-            return Ok(fields.map(InferTy::Tuple));
-        }
-
-        if let TypeRef::Reference {
-            mutability, inner, ..
-        } = ty
-        {
-            let Some(inner_ty) =
-                self.project_impl_where_ty(selection, supports, resolver, inner)?
-            else {
-                return Ok(None);
-            };
-            return Ok(Some(InferTy::Reference {
-                mutability: *mutability,
-                inner: Box::new(inner_ty),
-            }));
-        }
-
-        if let TypeRef::Slice(inner) = ty {
-            let Some(inner_ty) =
-                self.project_impl_where_ty(selection, supports, resolver, inner)?
-            else {
-                return Ok(None);
-            };
-            return Ok(Some(InferTy::Slice(Box::new(inner_ty))));
-        }
-
-        if let TypeRef::Array { inner, len } = ty {
-            let Some(inner_ty) =
-                self.project_impl_where_ty(selection, supports, resolver, inner)?
-            else {
-                return Ok(None);
-            };
-            return Ok(Some(InferTy::Array {
-                inner: Box::new(inner_ty),
-                len: len.clone(),
-            }));
-        }
-
-        self.project_impl_obligation_ty(selection, resolver, ty)
-            .map(Some)
+        let subst = selection.subst.clone();
+        let mut associated_ty = |param_name: &Name, assoc_name: &Name| {
+            self.project_impl_generic_associated_ty(selection, supports, param_name, assoc_name)
+        };
+        BodyTypeRefProjector::new(&subst, resolver)
+            .with_type_param_associated_ty(&mut associated_ty)
+            .ty_if_supported(ty)
     }
 
     fn project_impl_generic_associated_ty(
@@ -383,15 +337,5 @@ where
         selection.table = support_selection.table;
         supports[support_idx].used = true;
         Ok(Some(projected_ty))
-    }
-
-    fn project_impl_obligation_ty(
-        &self,
-        selection: &TraitSelection,
-        resolver: &TypeRefResolutionQuery<'query, D, I>,
-        ty: &TypeRef,
-    ) -> Result<InferTy, PackageStoreError> {
-        let resolved_ty = resolver.resolve(ty)?;
-        Ok(InferTypeRefProjector::new(&selection.subst).ty_from_type_ref(ty, &resolved_ty))
     }
 }

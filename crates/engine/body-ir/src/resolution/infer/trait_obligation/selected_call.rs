@@ -6,23 +6,23 @@
 
 use rg_ir_model::{
     FunctionRef, ItemOwner,
-    items::{GenericArg as ItemGenericArg, GenericParams, TypeBound, TypeRef, WherePredicate},
+    items::{GenericParams, TypeBound, TypeRef, WherePredicate},
 };
 use rg_ir_storage::{DefMapSource, ItemStoreSource};
 use rg_package_store::PackageStoreError;
 use rg_std::ExpectedUnique;
 use rg_ty::{
-    GenericArg, TraitGoal, Ty, TypeSubst,
-    inference::{InferGenericArg, InferTy, InferTypeRefProjector, InferTypeSubst},
+    TraitGoal, Ty, TypeSubst,
+    inference::{InferTy, InferTypeSubst},
 };
 
 use crate::resolution::{
     TypeRefUseSite,
     query::TypeRefResolutionQuery,
-    support::{CallableTypeRefExpectation, SelectedTraitMethodContext, self_associated_type_name},
+    support::{CallableTypeRefExpectation, SelectedTraitMethodContext},
 };
 
-use super::super::{BodyCallableGoalSolver, BodyInferenceCtx};
+use super::super::{BodyCallableGoalSolver, BodyInferenceCtx, projection::BodyTypeRefProjector};
 use super::BodyTraitObligationSolver;
 
 /// Signature facts from an already-selected call that can expose trait obligations.
@@ -118,13 +118,21 @@ where
             let WherePredicate::Type { ty, bounds } = predicate else {
                 continue;
             };
-            let subject_ty = self.project_obligation_ty(
-                inference,
-                input.subst,
-                &bound_resolver,
-                selected_trait_method.as_ref(),
-                ty,
-            )?;
+            let subject_ty = {
+                let mut self_assoc = |assoc_name: &str| {
+                    let Some(selected_trait_method) = selected_trait_method.as_ref() else {
+                        return Ok(None);
+                    };
+                    self.project_selected_trait_associated_alias(
+                        inference,
+                        selected_trait_method,
+                        assoc_name,
+                    )
+                };
+                let mut projector = BodyTypeRefProjector::new(input.subst, &bound_resolver)
+                    .with_self_associated_ty(&mut self_assoc);
+                projector.ty_or_fallback(ty)?
+            };
             for bound in bounds {
                 self.solve_trait_bound_obligation(
                     inference,
@@ -138,29 +146,6 @@ where
         }
 
         Ok(())
-    }
-
-    /// Project the subject type of a where-predicate into inference form.
-    ///
-    /// For `where B: FromIterator<T>`, this returns the current binding for `B`, such as
-    /// `Vec<?T>`. For a selected trait method, it can also turn an exact `Self::Item` subject into
-    /// the associated type from the uniquely matched receiver impl.
-    fn project_obligation_ty(
-        &self,
-        inference: &mut BodyInferenceCtx,
-        subst: &InferTypeSubst,
-        resolver: &TypeRefResolutionQuery<'query, D, I>,
-        selected_trait_method: Option<&SelectedTraitMethodContext<'_>>,
-        ty: &TypeRef,
-    ) -> Result<InferTy, PackageStoreError> {
-        if let Some(projected_ty) =
-            self.project_selected_trait_associated_ty(inference, selected_trait_method, ty)?
-        {
-            return Ok(projected_ty);
-        }
-
-        let resolved_ty = resolver.resolve(ty)?;
-        Ok(InferTypeRefProjector::new(subst).ty_from_type_ref(ty, &resolved_ty))
     }
 
     /// Solve one trait bound after the subject type is already known.
@@ -204,20 +189,26 @@ where
             return Ok(());
         }
 
-        let args = segment
-            .args
-            .iter()
-            .zip(&resolved_args)
-            .map(|(arg, resolved_arg)| {
-                self.project_obligation_generic_arg(
+        let args = {
+            let mut self_assoc = |assoc_name: &str| {
+                let Some(selected_trait_method) = selected_trait_method else {
+                    return Ok(None);
+                };
+                self.project_selected_trait_associated_alias(
                     inference,
-                    subst,
                     selected_trait_method,
-                    arg,
-                    resolved_arg,
+                    assoc_name,
                 )
-            })
-            .collect::<Result<Vec<_>, _>>()?;
+            };
+            let mut projector =
+                BodyTypeRefProjector::new(subst, resolver).with_self_associated_ty(&mut self_assoc);
+            segment
+                .args
+                .iter()
+                .zip(&resolved_args)
+                .map(|(arg, resolved_arg)| projector.generic_arg_or_fallback(arg, resolved_arg))
+                .collect::<Result<Vec<_>, _>>()?
+        };
         let goal = TraitGoal {
             self_ty,
             trait_ref,
@@ -268,94 +259,29 @@ where
             return Ok(false);
         }
 
-        let params = expectation
-            .params()
-            .iter()
-            .map(|param| {
-                self.project_obligation_ty(inference, subst, resolver, selected_trait_method, param)
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        let ret = self.project_obligation_ty(
-            inference,
-            subst,
-            resolver,
-            selected_trait_method,
-            expectation.return_ty(),
-        )?;
+        let (params, ret) = {
+            let mut self_assoc = |assoc_name: &str| {
+                let Some(selected_trait_method) = selected_trait_method else {
+                    return Ok(None);
+                };
+                self.project_selected_trait_associated_alias(
+                    inference,
+                    selected_trait_method,
+                    assoc_name,
+                )
+            };
+            let mut projector =
+                BodyTypeRefProjector::new(subst, resolver).with_self_associated_ty(&mut self_assoc);
+            let params = expectation
+                .params()
+                .iter()
+                .map(|param| projector.ty_or_fallback(param))
+                .collect::<Result<Vec<_>, _>>()?;
+            let ret = projector.ty_or_fallback(expectation.return_ty())?;
+            (params, ret)
+        };
 
         BodyCallableGoalSolver::new(self.context)
             .solve_fn_trait_goal(inference, self_ty, &params, &ret)
-    }
-
-    /// Project a trait-bound generic argument while preserving inference variables.
-    ///
-    /// Most args use the ordinary `InferTypeRefProjector`: `Vec<_>` stays `Vec<?T>`. The special
-    /// case is `Self::Item` from a selected trait method, which is replaced by the receiver impl's
-    /// associated type before matching the bound impl. Simple reference wrappers are preserved, so
-    /// `&Self::Item` can still project through bounds like `FnMut(&Self::Item)`.
-    fn project_obligation_generic_arg(
-        &self,
-        inference: &mut BodyInferenceCtx,
-        subst: &InferTypeSubst,
-        selected_trait_method: Option<&SelectedTraitMethodContext<'_>>,
-        arg: &ItemGenericArg,
-        resolved_arg: &GenericArg,
-    ) -> Result<InferGenericArg, PackageStoreError> {
-        if let (ItemGenericArg::Type(ty), GenericArg::Type(resolved_ty)) = (arg, resolved_arg) {
-            let projected_ty = match self.project_selected_trait_associated_ty(
-                inference,
-                selected_trait_method,
-                ty,
-            )? {
-                Some(ty) => ty,
-                None => InferTypeRefProjector::new(subst).ty_from_type_ref(ty, resolved_ty),
-            };
-            return Ok(InferGenericArg::Type(Box::new(projected_ty)));
-        }
-
-        Ok(InferTypeRefProjector::new(subst).generic_arg_from_arg(arg, resolved_arg))
-    }
-
-    /// Replace `Self::Assoc` with the associated type from a unique receiver impl.
-    ///
-    /// Example: for `Iterator::collect` on `Iter<User>`, this probes `Iter<User>: Iterator` and
-    /// reads `type Item = User` from the unique impl. Ambiguous receiver impls return `None` so
-    /// the outer obligation remains unsolved instead of guessing.
-    fn project_selected_trait_associated_ty(
-        &self,
-        inference: &mut BodyInferenceCtx,
-        selected_trait_method: Option<&SelectedTraitMethodContext<'_>>,
-        ty: &TypeRef,
-    ) -> Result<Option<InferTy>, PackageStoreError> {
-        let Some(selected_trait_method) = selected_trait_method else {
-            return Ok(None);
-        };
-        if let Some(assoc_name) = self_associated_type_name(ty) {
-            return self.project_selected_trait_associated_alias(
-                inference,
-                selected_trait_method,
-                assoc_name,
-            );
-        }
-
-        // Callable bounds often wrap associated types in references, e.g. `FnMut(&Self::Item)`.
-        // This is not autoderef: we only peel written reference wrappers until the inner type can
-        // be projected, then rebuild the same reference shape around the projected type.
-        if let TypeRef::Reference {
-            mutability, inner, ..
-        } = ty
-            && let Some(inner_ty) = self.project_selected_trait_associated_ty(
-                inference,
-                Some(selected_trait_method),
-                inner,
-            )?
-        {
-            return Ok(Some(InferTy::Reference {
-                mutability: *mutability,
-                inner: Box::new(inner_ty),
-            }));
-        }
-
-        Ok(None)
     }
 }
