@@ -172,7 +172,7 @@ pub fn use_it(attr: Attr) {
               stmt s0 expr; @ 15:5-15:42
                 expr e5 call => () @ 15:5-15:41
                   callee
-                    expr e0 path with_attrs -> item fn body_direct_closure_expectation_fixture[lib]::crate::with_attrs => <unknown> @ 15:5-15:15
+                    expr e0 path with_attrs -> fn body_direct_closure_expectation_fixture[lib]::crate::with_attrs => <unknown> @ 15:5-15:15
                   arg
                     expr e4 closure s2 (v1) => closure #4 @ 15:16-15:40
                       body
@@ -184,7 +184,7 @@ pub fn use_it(attr: Attr) {
               stmt s1 expr; @ 16:5-16:37
                 expr e9 call => () @ 16:5-16:36
                   callee
-                    expr e6 path with_pair -> item fn body_direct_closure_expectation_fixture[lib]::crate::with_pair => <unknown> @ 16:5-16:14
+                    expr e6 path with_pair -> fn body_direct_closure_expectation_fixture[lib]::crate::with_pair => <unknown> @ 16:5-16:14
                   arg
                     expr e8 closure s3 (v2, v3) => closure #8 @ 16:15-16:35
                       body
