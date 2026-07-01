@@ -770,7 +770,13 @@ pub struct Vec<T> {
     value: T,
 }
 
+pub struct HashMap<K, V> {
+    key: K,
+    value: V,
+}
+
 impl<T> iter::FromIterator<T> for Vec<T> {}
+impl<K, V> iter::FromIterator<(K, V)> for HashMap<K, V> {}
 
 impl<T> [T] {
     pub fn iter(&self) -> slice::Iter<'_, T> {
@@ -817,15 +823,19 @@ edition = "2024"
 core = { package = "fake_core", path = "../core" }
 
 //- /app/src/lib.rs
-use core::{Option, Vec};
+use core::{HashMap, Option, Vec};
 
 pub struct User;
 pub struct Name;
 pub struct Email;
+pub struct Key;
+pub struct Value;
 
 impl User {
     pub fn name(&self) -> Name {}
     pub fn email(&self) -> Option<Email> {}
+    pub fn key(&self) -> Key {}
+    pub fn value(&self) -> Value {}
 }
 
 pub struct SameNameMap;
@@ -834,11 +844,32 @@ impl SameNameMap {
     pub fn map<F>(&self, f: F) {}
 }
 
+pub struct PairIter;
+
+impl core::iter::Iterator for PairIter {
+    type Item = (Key, Value);
+}
+
+pub struct AmbiguousMap<K, V> {
+    key: K,
+    value: V,
+}
+
+impl<K, V> core::iter::FromIterator<(K, V)> for AmbiguousMap<K, V> {}
+impl core::iter::FromIterator<(Key, Value)> for AmbiguousMap<Key, Value> {}
+
+pub fn pairs() -> PairIter {
+    core::missing()
+}
+
 pub fn use_it(users: &[User], same_name: SameNameMap) {
     let names = users.iter().map(|user| user$type_map_param$.name()).collect::<Vec<_>>()$type_names$;
     let emails = users.iter().filter_map(|user| user$type_filter_map_param$.email()).collect::<Vec<_>>()$type_emails$;
     let enumerated = users.iter().enumerate().collect::<Vec<_>>()$type_enumerated$;
     let name_pairs = users.iter().enumerate().map(|(index, user)| (index$type_enumerate_index$, user$type_enumerate_user$)).collect::<Vec<_>>();
+    let direct_lookup = pairs().collect::<HashMap<_, _>>()$type_direct_lookup$;
+    let lookup = users.iter().map(|user| (user.key(), user.value())).collect::<HashMap<_, _>>()$type_lookup$;
+    let ambiguous = pairs().collect::<AmbiguousMap<_, _>>()$type_ambiguous$;
     same_name.map(|value| value$type_same_name_map_param$);
 }
 "#,
@@ -853,6 +884,9 @@ pub fn use_it(users: &[User], same_name: SameNameMap) {
                 .in_lib("app"),
             AnalysisQuery::ty("iterator enumerate map user param", "type_enumerate_user")
                 .in_lib("app"),
+            AnalysisQuery::ty("direct HashMap collect result", "type_direct_lookup").in_lib("app"),
+            AnalysisQuery::ty("mapped HashMap collect result", "type_lookup").in_lib("app"),
+            AnalysisQuery::ty("ambiguous HashMap collect result", "type_ambiguous").in_lib("app"),
             AnalysisQuery::ty("same-name map closure param", "type_same_name_map_param")
                 .in_lib("app"),
         ],
@@ -877,6 +911,15 @@ pub fn use_it(users: &[User], same_name: SameNameMap) {
 
             iterator enumerate map user param
             - &nominal struct app[lib]::crate::User
+
+            direct HashMap collect result
+            - nominal struct fake_core[lib]::crate::HashMap<nominal struct app[lib]::crate::Key, nominal struct app[lib]::crate::Value>
+
+            mapped HashMap collect result
+            - nominal struct fake_core[lib]::crate::HashMap<nominal struct app[lib]::crate::Key, nominal struct app[lib]::crate::Value>
+
+            ambiguous HashMap collect result
+            - nominal struct app[lib]::crate::AmbiguousMap<<unknown>, <unknown>>
 
             same-name map closure param
             - <unknown>
