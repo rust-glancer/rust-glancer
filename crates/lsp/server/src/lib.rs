@@ -12,8 +12,10 @@ mod config;
 mod engine_client;
 mod engine_process;
 mod engine_registry;
+mod file_identity;
 mod methods;
 mod notifications;
+mod project_watcher;
 mod recent_editor_saves;
 mod stdio;
 

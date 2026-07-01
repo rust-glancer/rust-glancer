@@ -75,16 +75,10 @@ export class LanguageClientSession implements vscode.Disposable {
     this.extensionLog.info(`server source: ${statusDetails.serverSource}`);
     this.clientStatus.starting(statusDetails);
 
-    const fileEvents = vscode.workspace.createFileSystemWatcher(
-      new vscode.RelativePattern(this.workspaceFolder, "**/{*.rs,Cargo.toml,Cargo.lock}"),
-    );
     const clientOptions: LanguageClientOptions = {
       documentSelector: [{ scheme: "file", language: "rust" }],
       diagnosticCollectionName: "rust-glancer",
       outputChannel: this.serverOutput,
-      synchronize: {
-        fileEvents,
-      },
       initializationOptions: {
         cfg: config.cfg,
         diagnostics: config.diagnostics,
@@ -104,7 +98,6 @@ export class LanguageClientSession implements vscode.Disposable {
 
     this.client = client;
     this.clientState = vscode.Disposable.from(
-      fileEvents,
       client.onDidChangeState((event) => {
         switch (event.newState) {
           case State.Starting:

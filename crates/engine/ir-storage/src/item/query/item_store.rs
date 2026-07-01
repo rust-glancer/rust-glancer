@@ -6,7 +6,8 @@
 use rg_ir_model::items::{FieldKey, FieldList, GenericParams};
 use rg_ir_model::{
     ConstRef, DefMapRef, EnumVariantRef, FieldRef, FunctionRef, ImplRef, ItemOwner, LocalDefRef,
-    SemanticItemRef, StaticRef, TargetRef, TraitRef, TypeAliasRef, TypeDefId, TypeDefRef,
+    LocalEnumVariantRef, SemanticItemRef, StaticRef, TargetRef, TraitRef, TypeAliasRef, TypeDefId,
+    TypeDefRef,
     hir::items::{
         ConstData, EnumData, EnumVariantData, FieldData, FunctionData, ImplData, StaticData,
         TraitData, TypeAliasData,
@@ -14,7 +15,7 @@ use rg_ir_model::{
 };
 
 use super::ItemStoreSource;
-use crate::{ItemStore, SemanticItemView, TypePathContext};
+use crate::{ItemStore, LocalEnumVariantData, SemanticItemView, TypePathContext};
 
 /// Shared item queries over any storage that can route `DefMapRef` origins to item stores.
 ///
@@ -216,30 +217,69 @@ where
             }))
     }
 
+    /// Projects an enum local-def plus variant slot into the semantic variant ref lowered for it.
+    pub fn enum_variant_ref_for_local_def_index(
+        &self,
+        enum_def: LocalDefRef,
+        index: usize,
+        expected_name: Option<&str>,
+    ) -> Result<Option<EnumVariantRef>, S::Error> {
+        if let Some(SemanticItemRef::TypeDef(TypeDefRef {
+            origin,
+            id: TypeDefId::Enum(enum_id),
+        })) = self.semantic_item_for_local_def(enum_def)?
+            && let Some(items) = self.item_store_for_origin(origin)?
+            && let Some(data) = items.enum_data(enum_id)
+            && let Some(variant) = data.variants.get(index)
+            && expected_name.is_none_or(|expected_name| variant.name == expected_name)
+        {
+            Ok(Some(EnumVariantRef {
+                origin,
+                enum_id,
+                index,
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Projects a DefMap-local enum variant into the semantic variant ref lowered for it.
+    pub fn enum_variant_ref_for_local_enum_variant(
+        &self,
+        variant_ref: LocalEnumVariantRef,
+        variant_data: &LocalEnumVariantData,
+    ) -> Result<Option<EnumVariantRef>, S::Error> {
+        self.enum_variant_ref_for_local_def_index(
+            LocalDefRef {
+                origin: variant_ref.origin,
+                local_def: variant_data.enum_def,
+            },
+            variant_data.index,
+            Some(variant_data.name.as_str()),
+        )
+    }
+
     /// Expands a variant ref with its enum owner and source facts.
     pub fn enum_variant_data(
         &self,
         variant_ref: EnumVariantRef,
     ) -> Result<Option<EnumVariantData<'a>>, S::Error> {
-        let Some(items) = self.item_store_for_origin(variant_ref.origin)? else {
-            return Ok(None);
-        };
-        let Some(data) = items.enum_data(variant_ref.enum_id) else {
-            return Ok(None);
-        };
-        let Some(variant) = data.variants.get(variant_ref.index) else {
-            return Ok(None);
-        };
-
-        Ok(Some(EnumVariantData {
-            owner: TypeDefRef {
-                origin: variant_ref.origin,
-                id: TypeDefId::Enum(variant_ref.enum_id),
-            },
-            owner_module: data.owner,
-            file_id: data.source.file_id,
-            variant,
-        }))
+        if let Some(items) = self.item_store_for_origin(variant_ref.origin)?
+            && let Some(data) = items.enum_data(variant_ref.enum_id)
+            && let Some(variant) = data.variants.get(variant_ref.index)
+        {
+            Ok(Some(EnumVariantData {
+                owner: TypeDefRef {
+                    origin: variant_ref.origin,
+                    id: TypeDefId::Enum(variant_ref.enum_id),
+                },
+                owner_module: data.owner,
+                file_id: data.source.file_id,
+                variant,
+            }))
+        } else {
+            Ok(None)
+        }
     }
 
     /// Enumerates stable field refs without exposing whether the owner stores struct or union

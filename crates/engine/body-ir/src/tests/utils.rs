@@ -1094,6 +1094,35 @@ impl TargetBodyIrSnapshot<'_> {
         match def {
             DefId::Module(module_ref) => format!("module {}", self.render_module_ref(module_ref)),
             DefId::Local(local_def) => self.render_local_def(local_def),
+            DefId::EnumVariant(variant_def) => {
+                let variant_data = match variant_def.origin {
+                    DefMapRef::Target(target) => {
+                        self.project.resident_def_map(target).and_then(|def_map| {
+                            def_map.local_enum_variant(variant_def.local_enum_variant)
+                        })
+                    }
+                    DefMapRef::Body(body) => {
+                        self.project
+                            .resident_body_def_map(body)
+                            .and_then(|def_map| {
+                                def_map.local_enum_variant(variant_def.local_enum_variant)
+                            })
+                    }
+                };
+                if let Some(variant_data) = variant_data
+                    && let Some(items) = self.project.resident_item_store(variant_def.origin)
+                    && let Some(ItemId::Enum(enum_id)) =
+                        items.item_for_local_def(variant_data.enum_def)
+                {
+                    self.render_enum_variant_ref(EnumVariantRef {
+                        origin: variant_def.origin,
+                        enum_id,
+                        index: variant_data.index,
+                    })
+                } else {
+                    "variant <unresolved>".to_string()
+                }
+            }
         }
     }
 

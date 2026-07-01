@@ -5,9 +5,9 @@
 //! the imported bindings into the next scope snapshot, and recording imports that still fail once
 //! the fixed point has stabilized.
 
-use rg_ir_model::{DefMapRef, ImportId, ModuleRef, TargetRef};
+use rg_ir_model::{ImportId, ModuleRef, TargetRef};
 use rg_ir_storage::{
-    ImportKind, PathResolver, ScopeBinding, ScopeBindingOrigin, TargetResolutionEnv,
+    ImportKind, ScopeBinding, ScopeBindingOrigin, ScopeResolver, TargetResolutionEnv,
 };
 
 use super::{
@@ -72,25 +72,22 @@ pub(super) fn apply_imports(
     env: &impl TargetResolutionEnv<Error = rg_package_store::PackageStoreError>,
     next_scopes: &mut ScopeMatrix,
 ) -> anyhow::Result<()> {
-    let resolver = PathResolver::new(env);
+    let resolver = ScopeResolver::new(env);
     for import in state.def_map_builder.partial().imports().iter() {
+        let import_owner = ModuleRef::target(state.target, import.module);
         match import.kind {
             ImportKind::Glob => {
-                let source_modules =
-                    resolver.import_modules(state.target, import.module, &import.path)?;
+                let glob_sources = resolver.import_glob_sources(import_owner, &import.path)?;
 
-                for source_module in source_modules {
-                    let import_owner = ModuleRef {
-                        origin: DefMapRef::Target(state.target),
-                        module: import.module,
-                    };
-                    let source_scope = resolver.visible_scope(import_owner, source_module)?;
+                for glob_source in glob_sources {
                     let target_scope = next_scopes
                         .module_scope_mut(state.target, import.module)
                         .expect("target scope should exist for every import");
+                    let source_scope =
+                        resolver.visible_glob_source_scope(import_owner, glob_source)?;
 
-                    // Visibility is attached to the binding introduced by the glob import, not to
-                    // the original definition.
+                    // Visibility is attached to the binding introduced by the glob import,
+                    // not to the original definition.
                     for (name, entry) in source_scope.entries() {
                         target_scope.copy_visible_bindings(
                             name,
@@ -102,8 +99,7 @@ pub(super) fn apply_imports(
                 }
             }
             ImportKind::Named | ImportKind::SelfImport => {
-                let resolved_defs =
-                    resolver.import_defs(state.target, import.module, &import.path)?;
+                let resolved_defs = resolver.import_defs(import_owner, &import.path)?;
 
                 let Some(binding_name) = import.binding_name() else {
                     continue;
@@ -124,10 +120,7 @@ pub(super) fn apply_imports(
                         ScopeBinding {
                             def: resolved_def,
                             visibility: import.visibility.clone(),
-                            owner: ModuleRef {
-                                origin: DefMapRef::Target(state.target),
-                                module: import.module,
-                            },
+                            owner: import_owner,
                             origin: ScopeBindingOrigin::Import,
                         },
                     );
@@ -144,16 +137,17 @@ fn unresolved_imports_for_target(
     env: &impl TargetResolutionEnv<Error = rg_package_store::PackageStoreError>,
 ) -> anyhow::Result<Vec<Vec<ImportId>>> {
     let mut module_imports = vec![Vec::new(); state.def_map_builder.partial().module_count()];
-    let resolver = PathResolver::new(env);
+    let resolver = ScopeResolver::new(env);
 
     for (import_id, import) in state.def_map_builder.partial().imports_with_ids() {
+        let import_owner = ModuleRef::target(state.target, import.module);
         let is_unresolved = match import.kind {
             ImportKind::Glob => resolver
-                .import_modules(state.target, import.module, &import.path)?
+                .import_glob_sources(import_owner, &import.path)?
                 .is_empty(),
-            ImportKind::Named | ImportKind::SelfImport => resolver
-                .import_defs(state.target, import.module, &import.path)?
-                .is_empty(),
+            ImportKind::Named | ImportKind::SelfImport => {
+                resolver.import_defs(import_owner, &import.path)?.is_empty()
+            }
         };
         if is_unresolved {
             module_imports

@@ -248,7 +248,9 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
             }
         }
         for candidate in self.db.def_map.cursor_candidates(target, file_id, offset)? {
-            occurrences.push(Self::def_map_occurrence(target, candidate));
+            if let Some(occurrence) = Self::def_map_occurrence(target, candidate) {
+                occurrences.push(occurrence);
+            }
         }
         for candidate in self
             .db
@@ -272,7 +274,9 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
         let mut occurrences = Vec::new();
 
         for candidate in self.db.def_map.source_candidates(target, file_id)? {
-            occurrences.push(Self::def_map_occurrence(target, candidate));
+            if let Some(occurrence) = Self::def_map_occurrence(target, candidate) {
+                occurrences.push(occurrence);
+            }
         }
         for candidate in self.db.body_ir.source_candidates(target, file_id)? {
             if let Some(occurrence) = self.body_occurrence(target, candidate, file_id)? {
@@ -296,38 +300,42 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
     fn def_map_occurrence(
         target: TargetRef,
         candidate: DefMapCursorCandidate,
-    ) -> IndexedSourceOccurrence {
+    ) -> Option<IndexedSourceOccurrence> {
         match candidate {
             DefMapCursorCandidate::Def { def, file_id, span } => {
-                IndexedSourceOccurrence::declaration(
-                    IndexedSourceFact::Declaration(DeclarationRef::from_def(def)),
+                // TODO: Technically we are being defensive here, because enum variants
+                // are not candidates. Probably we need a slightly better representation
+                // and should get rid of option.
+                let declaration = DeclarationRef::try_from_def(def)?;
+                Some(IndexedSourceOccurrence::declaration(
+                    IndexedSourceFact::Declaration(declaration),
                     target,
                     file_id,
                     span,
-                )
+                ))
             }
             DefMapCursorCandidate::UsePath {
                 module,
                 path,
                 file_id,
                 span,
-            } => IndexedSourceOccurrence::reference(
+            } => Some(IndexedSourceOccurrence::reference(
                 IndexedSourceFact::UsePath { module, path },
                 target,
                 file_id,
                 span,
-            ),
+            )),
             DefMapCursorCandidate::ImportAlias {
                 module,
                 path,
                 file_id,
                 span,
-            } => IndexedSourceOccurrence::structural(
+            } => Some(IndexedSourceOccurrence::structural(
                 IndexedSourceFact::UsePath { module, path },
                 target,
                 file_id,
                 span,
-            ),
+            )),
         }
     }
 

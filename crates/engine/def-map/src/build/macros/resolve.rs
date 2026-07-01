@@ -7,8 +7,8 @@ use anyhow::Result;
 
 use rg_ir_model::{DefId, DefMapRef, LocalDefRef, ModuleRef, TargetRef};
 use rg_ir_storage::{
-    ImportPath, LocalDefData, MacroDefinitionData, MacroDefinitionEnv, PathResolver, ScopeBinding,
-    ScopeBindingOrigin, TargetResolutionEnv,
+    ImportPath, LocalDefData, MacroDefinitionData, MacroDefinitionEnv, ScopeBinding,
+    ScopeBindingOrigin, ScopeResolver, TargetResolutionEnv,
 };
 use rg_std::ExpectedUnique;
 use rg_text::Name;
@@ -39,7 +39,7 @@ impl Eq for ResolvedMacroDefinition<'_> {}
 /// Macro calls are mostly path-shaped, but one-segment calls have extra Rust-specific behavior:
 /// textual `macro_rules!` definitions can shadow namespace bindings, legacy `#[macro_use]` imports
 /// are a fallback, and resolved compiler builtin definitions need to carry their builtin identity
-/// into expansion dispatch. This resolver keeps that policy together while reusing `PathResolver`
+/// into expansion dispatch. This resolver keeps that policy together while reusing `ScopeResolver`
 /// for the ordinary namespace work.
 pub(super) struct ItemMacroResolver<'a, E: ?Sized> {
     env: &'a E,
@@ -75,8 +75,8 @@ where
 
         // Qualified calls follow ordinary path resolution for the prefix, then keep the final macro
         // binding so order filtering can distinguish direct definitions from exports/imports.
-        let resolved_bindings =
-            PathResolver::new(self.env).macro_bindings(self.state.target, call.module, path)?;
+        let resolved_bindings = ScopeResolver::new(self.env)
+            .macro_bindings(ModuleRef::target(self.state.target, call.module), path)?;
         let mut macros = Vec::new();
 
         for binding in resolved_bindings {
@@ -123,7 +123,7 @@ where
             origin: DefMapRef::Target(self.state.target),
             module: call.module,
         };
-        let bindings = PathResolver::new(self.env).visible_unqualified_macro_bindings(
+        let bindings = ScopeResolver::new(self.env).visible_unqualified_macro_bindings(
             importing_module,
             [importing_module],
             name,
@@ -201,7 +201,7 @@ where
                 origin: DefMapRef::Target(self.state.target),
                 module: macro_use.module,
             };
-            for binding in PathResolver::new(self.env).visible_macro_bindings(
+            for binding in ScopeResolver::new(self.env).visible_macro_bindings(
                 import_owner,
                 macro_use.source_module,
                 name,

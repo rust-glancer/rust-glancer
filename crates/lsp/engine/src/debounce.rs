@@ -56,6 +56,14 @@ impl Debouncer {
         callback();
     }
 
+    pub(crate) fn cancel(&self) {
+        let mut pending = self.pending();
+        self.next_generation();
+        if let Some(previous) = pending.take() {
+            previous.abort();
+        }
+    }
+
     fn next_generation(&self) -> u64 {
         self.state
             .generation

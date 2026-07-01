@@ -4,6 +4,7 @@
 //! memory reporting for an engine instance. Public APIs expose engine construction and event
 //! delivery primitives; shared request and notification contracts live in `rg_lsp_proto`.
 
+mod debounce;
 mod diagnostics;
 mod dirty_state;
 mod documents;

@@ -5,7 +5,10 @@ use rg_ir_model::{
     DefId, DefMapRef, ModuleId, ModuleRef, Path, PathSegment, TargetRef,
     hir::source::{ItemSource, ItemSourceKind},
 };
-use rg_ir_storage::{DefMap, ImportData, ImportKind, ResolvePathResult, ScopeBinding, ScopeEntry};
+use rg_ir_storage::{
+    DefMap, ImportData, ImportKind, NameResolutionFilter, ResolvePathResult, ScopeBinding,
+    ScopeEntry,
+};
 use rg_item_tree::VisibilityLevel;
 use rg_package_store::PackageLoader;
 use rg_parse::{FileId, Package, ParseDb, Target};
@@ -279,6 +282,7 @@ impl<'a> FixtureEntry<'a> {
         let origin = match binding.def {
             DefId::Module(module_ref) => module_ref.origin,
             DefId::Local(local_def_ref) => local_def_ref.origin,
+            DefId::EnumVariant(variant_ref) => variant_ref.origin,
         };
         let target_ref = origin.as_target_ref()?;
         self.db.parse_db().packages().get(target_ref.package.0)?;
@@ -383,12 +387,14 @@ impl<'a> ProjectPathResolutionSnapshot<'a> {
             .def_map_db()
             .read_txn(PackageLoader::resident_only("def-map fixture query"));
         let result = rg_ir_storage::DefMapQuery::new(&def_map)
+            .scope_resolver()
             .resolve_path(
                 ModuleRef {
                     origin: DefMapRef::Target(target_ref),
                     module: module_id,
                 },
                 &path,
+                NameResolutionFilter::AllNamespaces,
             )
             .expect("path resolution fixture should load def-map packages");
 
@@ -686,6 +692,7 @@ impl<'a> TargetDefMapSnapshot<'a> {
         let origin = match binding.def {
             DefId::Module(module_ref) => module_ref.origin,
             DefId::Local(local_def_ref) => local_def_ref.origin,
+            DefId::EnumVariant(variant_ref) => variant_ref.origin,
         };
         let target_ref = origin.as_target_ref()?;
         self.project
@@ -804,6 +811,29 @@ impl ResolvedDefOrigin<'_> {
                 });
 
                 format!("{} {}::{}", local_def.kind, module_path, local_def.name)
+            }
+            DefId::EnumVariant(variant_ref) => {
+                let variant = self
+                    .project
+                    .resident_def_map(variant_ref.origin.origin_target())
+                    .expect("target def map should exist while dumping")
+                    .local_enum_variant(variant_ref.local_enum_variant)
+                    .expect("enum variant id should exist while dumping");
+                let enum_def = self
+                    .project
+                    .resident_def_map(variant_ref.origin.origin_target())
+                    .expect("target def map should exist while dumping")
+                    .local_def(variant.enum_def)
+                    .expect("enum def id should exist while dumping");
+                let module_path = self.render_module_path(ModuleRef {
+                    origin: variant_ref.origin,
+                    module: variant.module,
+                });
+
+                format!(
+                    "variant {}::{}::{}",
+                    module_path, enum_def.name, variant.name
+                )
             }
         }
     }

@@ -60,11 +60,11 @@ pub fn use_it(user: User) {
                 initializer
                   expr e3 call => nominal struct body_assignment_inference_fixture[lib]::crate::User @ 7:21-7:34
                     callee
-                      expr e0 path id -> item fn body_assignment_inference_fixture[lib]::crate::id => <unknown> @ 7:21-7:23
+                      expr e0 path id -> fn body_assignment_inference_fixture[lib]::crate::id => <unknown> @ 7:21-7:23
                     arg
                       expr e2 call => nominal struct body_assignment_inference_fixture[lib]::crate::User @ 7:24-7:33
                         callee
-                          expr e1 path missing -> item fn body_assignment_inference_fixture[lib]::crate::missing => <unknown> @ 7:24-7:31
+                          expr e1 path missing -> fn body_assignment_inference_fixture[lib]::crate::missing => <unknown> @ 7:24-7:31
               stmt s1 expr; @ 8:5-8:18
                 expr e6 assign = => () @ 8:5-8:17
                   target
@@ -73,6 +73,62 @@ pub fn use_it(user: User) {
                     expr e5 path user -> local v0 => nominal struct body_assignment_inference_fixture[lib]::crate::User @ 8:13-8:17
               stmt s2 expr; @ 9:5-9:11
                 expr e7 path value -> local v1 => nominal struct body_assignment_inference_fixture[lib]::crate::User @ 9:5-9:10
+        "#]],
+    );
+}
+
+#[test]
+fn infers_imported_enum_variant_constructors() {
+    check_project_body_ir(
+        r#"
+//- /Cargo.toml
+[package]
+name = "body_imported_enum_variant_inference"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub enum Option<T> {
+    Some(T),
+    None,
+}
+
+use Option::{Some, None};
+
+pub fn use_it() {
+    let value = Some(10u8);
+    let absent: Option<u8> = None;
+    value;
+    absent;
+}
+"#,
+        expect![[r#"
+            package body_imported_enum_variant_inference
+
+            body_imported_enum_variant_inference [lib]
+            body b0 fn body_imported_enum_variant_inference[lib]::crate::use_it @ 8:1-13:2
+            scopes
+            - s0 parent <none>: <none>
+            - s1 parent s0: v0, v1
+            bindings
+            - v0 let value `value` => nominal enum body_imported_enum_variant_inference[lib]::crate::Option<u8> @ 9:9-9:14
+            - v1 let absent `absent`: Option<u8> => nominal enum body_imported_enum_variant_inference[lib]::crate::Option<u8> @ 10:9-10:15
+            body
+            expr e6 block s1 => () @ 8:17-13:2
+              stmt s0 let v0 @ 9:5-9:28
+                initializer
+                  expr e2 call => nominal enum body_imported_enum_variant_inference[lib]::crate::Option<u8> @ 9:17-9:27
+                    callee
+                      expr e0 path Some -> variant enum body_imported_enum_variant_inference[lib]::crate::Option::Some => nominal enum body_imported_enum_variant_inference[lib]::crate::Option<<unknown>> @ 9:17-9:21
+                    arg
+                      expr e1 literal int `10u8` => u8 @ 9:22-9:26
+              stmt s1 let v1: Option<u8> @ 10:5-10:35
+                initializer
+                  expr e3 path None -> variant enum body_imported_enum_variant_inference[lib]::crate::Option::None => nominal enum body_imported_enum_variant_inference[lib]::crate::Option<<unknown>> @ 10:30-10:34
+              stmt s2 expr; @ 11:5-11:11
+                expr e4 path value -> local v0 => nominal enum body_imported_enum_variant_inference[lib]::crate::Option<u8> @ 11:5-11:10
+              stmt s3 expr; @ 12:5-12:12
+                expr e5 path absent -> local v1 => nominal enum body_imported_enum_variant_inference[lib]::crate::Option<u8> @ 12:5-12:11
         "#]],
     );
 }
@@ -429,7 +485,7 @@ pub fn unrelated_collect(iter: NotIterator<User>) {
               tail
                 expr e1 call => <unknown> @ 18:9-18:18
                   callee
-                    expr e0 path missing -> item fn body_conservative_trait_obligation_solving[lib]::crate::missing => <unknown> @ 18:9-18:16
+                    expr e0 path missing -> fn body_conservative_trait_obligation_solving[lib]::crate::missing => <unknown> @ 18:9-18:16
 
 
             body b4 fn impl NotIterator<T>::collect @ 27:5-29:6
@@ -443,7 +499,7 @@ pub fn unrelated_collect(iter: NotIterator<User>) {
               tail
                 expr e1 call => <unknown> @ 28:9-28:18
                   callee
-                    expr e0 path missing -> item fn body_conservative_trait_obligation_solving[lib]::crate::missing => <unknown> @ 28:9-28:16
+                    expr e0 path missing -> fn body_conservative_trait_obligation_solving[lib]::crate::missing => <unknown> @ 28:9-28:16
         "#]],
     );
 }

@@ -63,6 +63,10 @@ where
         DefMapQuery::new(self.source)
     }
 
+    pub(crate) fn def_map_source(&self) -> BodyQuerySource<'a, D, I> {
+        self.source
+    }
+
     pub(crate) fn item_query(&self) -> ItemStoreQuery<'a, BodyQuerySource<'a, D, I>> {
         ItemStoreQuery::new(self.source)
     }

@@ -12,6 +12,8 @@ description.workspace = true
 [dependencies]
 anyhow.workspace = true
 futures.workspace = true
+ignore.workspace = true
+notify-debouncer-full.workspace = true
 rg_lsp_proto.workspace = true
 rg_std.workspace = true
 tarpc = { workspace = true, features = ["serde-transport", "serde-transport-json", "tcp", "tokio1"] }
