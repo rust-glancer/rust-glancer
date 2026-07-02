@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Instant;
 
 use chalk_engine::solve::SLGSolver;
 use chalk_ir::{
@@ -45,7 +46,11 @@ impl ChalkTraitSolver {
         D: DefMapSource<Error = I::Error>,
         I: ItemStoreSource<'query>,
     {
-        ChalkProgram::build(item_paths, target_items).map(|program| Self { program })
+        crate::profile::metric::PROGRAM_BUILDS.inc();
+        let started = Instant::now();
+        let program = ChalkProgram::build(item_paths, target_items);
+        crate::profile::metric::PROGRAM_BUILD_TIME.record(started.elapsed());
+        program.map(|program| Self { program })
     }
 
     pub(crate) fn impl_bounds_applicability<'query, D, I>(
@@ -79,9 +84,14 @@ impl ChalkTraitSolver {
         for goal in goals {
             let mut solver = SLGSolver::new(SOLVER_MAX_SIZE, Some(1));
             let canonical_goal = goal.into_closed_goal(INTER);
+            crate::profile::metric::SOLVER_GOALS.inc();
+            let started = Instant::now();
             let solution = solver.solve(&self.program, &canonical_goal);
+            crate::profile::metric::SOLVER_GOAL_TIME_BY_KIND
+                .record("impl_bounds", started.elapsed());
             let solution = solution?;
             if solution.is_ambig() {
+                crate::profile::metric::SOLVER_AMBIGUOUS_GOALS.inc();
                 applicability = applicability.and(TraitApplicability::Maybe);
             }
         }

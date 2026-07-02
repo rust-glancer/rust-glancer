@@ -27,13 +27,7 @@ use crate::resolution::{
 };
 
 use super::super::{BodyCallableGoalSolver, BodyInferenceCtx, projection::BodyTypeRefProjector};
-use super::BodyTraitObligationSolver;
-
-struct CallableImplWhereObligation {
-    self_ty: InferTy,
-    params: Vec<InferTy>,
-    ret: InferTy,
-}
+use super::{BodyCallableObligation, BodyTraitObligationSolver};
 
 /// Non-callable where-predicate that exists to project an associated type used by a callable one.
 ///
@@ -109,7 +103,7 @@ where
         };
         if obligations.iter().any(|obligation| {
             !matches!(
-                selection.table.resolve_root_var(&obligation.self_ty),
+                selection.table.resolve_root_var(obligation.self_ty()),
                 InferTy::Closure(_)
             )
         }) {
@@ -121,9 +115,9 @@ where
         for obligation in obligations {
             if !BodyCallableGoalSolver::new(self.context).solve_fn_trait_goal(
                 inference,
-                &obligation.self_ty,
-                &obligation.params,
-                &obligation.ret,
+                obligation.self_ty(),
+                obligation.params(),
+                obligation.ret(),
             )? {
                 inference.table = previous_table;
                 return Ok(None);
@@ -154,7 +148,7 @@ where
         selection: &mut TraitSelection,
         impl_data: &ImplData,
         aliased_ty: &TypeRef,
-    ) -> Result<Option<(InferTy, Vec<CallableImplWhereObligation>)>, PackageStoreError> {
+    ) -> Result<Option<(InferTy, Vec<BodyCallableObligation>)>, PackageStoreError> {
         let context = TypePathContext {
             module: impl_data.owner,
             impl_ref: Some(selection.trait_impl.impl_ref),
@@ -232,11 +226,7 @@ where
                 else {
                     return Ok(None);
                 };
-                obligations.push(CallableImplWhereObligation {
-                    self_ty: self_ty.clone(),
-                    params,
-                    ret,
-                });
+                obligations.push(BodyCallableObligation::new(self_ty.clone(), params, ret));
             }
         }
 

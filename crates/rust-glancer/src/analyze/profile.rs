@@ -21,6 +21,11 @@ const PROFILE_ALIASES: &[ProfileAlias] = &[
         selectors: &["def_map.finalization", "def_map.macros.by_name"],
     },
     ProfileAlias {
+        name: "trait-solver",
+        description: "trait-selection Chalk counters and timings",
+        selectors: &["ty.trait_selection.chalk"],
+    },
+    ProfileAlias {
         name: "memory:def-map",
         description: "build checkpoints plus the def-map memory snapshot",
         selectors: &[

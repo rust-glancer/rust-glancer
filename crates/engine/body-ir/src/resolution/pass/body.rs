@@ -6,7 +6,7 @@
 use rg_ir_model::{BindingId, BodyRef, ExprId};
 use rg_ir_storage::{DefMapSource, ItemLookupIndex, ItemStoreSource};
 use rg_package_store::PackageStoreError;
-use rg_ty::{ExpectedNominalTyExt, PrimitiveTy, Ty};
+use rg_ty::{ExpectedNominalTyExt, PrimitiveTy, TraitSelectionCache, Ty};
 
 use crate::{
     ir::body::ResolvedBodyData,
@@ -44,6 +44,7 @@ where
         semantic_index: &'query ItemLookupIndex,
         body_ref: BodyRef,
         body: &'body mut ResolvedBodyData,
+        trait_selection_cache: TraitSelectionCache,
     ) -> Result<Self, PackageStoreError> {
         let providers =
             BodyResolutionProviders::new(def_maps, item_stores, semantic_index, body_ref);
@@ -51,7 +52,11 @@ where
         // Pattern materialization rewrites pending binding ids into the final binding arena.
         // Every later resolution step, including inference storage, assumes that stable shape.
         PatternBindingMaterializationPass::new(providers, body).materialize()?;
-        let inference = BodyInferenceCtx::new(body.exprs().len(), body.bindings().len());
+        let inference = BodyInferenceCtx::with_trait_selection_cache(
+            body.exprs().len(),
+            body.bindings().len(),
+            trait_selection_cache,
+        );
 
         Ok(Self {
             providers,

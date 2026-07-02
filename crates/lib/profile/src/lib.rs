@@ -30,9 +30,10 @@ pub use self::{
     },
     registry::{ProfileFilterValidationError, ProfileRegistry, ProfileRegistryError},
     runtime::{
-        ProfileInitializeError, ProfileRun, ProfileRunStartError, ProfileTimer, duration_enabled,
-        initialize, memory_snapshot_enabled, record_checkpoint, record_duration, record_gauge,
-        record_keyed_counter, record_keyed_duration, record_memory_snapshot, timer,
+        ProfileInitializeError, ProfileRun, ProfileRunStartError, ProfileThreadContext,
+        ProfileThreadGuard, ProfileTimer, duration_enabled, initialize, memory_snapshot_enabled,
+        record_checkpoint, record_duration, record_gauge, record_keyed_counter,
+        record_keyed_duration, record_memory_snapshot, timer,
     },
     snapshot::{
         ProfileCheckpoint, ProfileCheckpointValue, ProfileEntry, ProfileKeyedCounter,
@@ -190,6 +191,26 @@ mod tests {
 
         assert_eq!(memory.retained_bytes, 64);
         assert_eq!(memory.records[0].path, "build.def_map");
+    }
+
+    #[test]
+    fn thread_context_propagates_active_run_to_worker_thread() {
+        let run = test_support::ProfileTest::start(test_metric::descriptors(), "def_map.macros");
+        let context = ProfileThreadContext::capture();
+
+        thread::spawn(move || {
+            let _profile_guard = context.enter();
+            test_metric::MACRO_CALLS_SEEN.inc();
+        })
+        .join()
+        .expect("worker thread should finish successfully");
+
+        let snapshot = run.finish();
+        snapshot.assert_counter_with_message(
+            test_metric::MACRO_CALLS_SEEN,
+            1,
+            "captured profile contexts should let worker threads record into the active run",
+        );
     }
 
     #[test]

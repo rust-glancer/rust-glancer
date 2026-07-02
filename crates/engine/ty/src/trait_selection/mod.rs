@@ -6,6 +6,8 @@
 //! wants full predicate solving. Callers that already have their own obligation/projection path can
 //! still opt into header-only selection through `TraitSelectionOptions`.
 
+use std::sync::{Arc, Mutex};
+
 mod chalk;
 mod header;
 mod matcher;
@@ -41,12 +43,59 @@ pub struct TraitSelection {
     pub table: InferenceTable,
 }
 
+/// Reusable solver state for a group of trait-selection probes with the same visible items.
+///
+/// Building a Chalk program walks all visible stores, so the cost is much larger than checking one
+/// candidate. Keep this cache scoped to the same target visibility context as the query that fills
+/// it; different targets may see different impls and traits.
+#[derive(Clone)]
+pub struct TraitSelectionCache {
+    solver: Arc<Mutex<Option<ChalkTraitSolver>>>,
+}
+
+impl Default for TraitSelectionCache {
+    fn default() -> Self {
+        Self {
+            solver: Arc::new(Mutex::new(None)),
+        }
+    }
+}
+
+impl TraitSelectionCache {
+    fn impl_bounds_applicability<'query, D, I>(
+        &self,
+        item_paths: &ItemPathQuery<'query, D, I>,
+        target_items: &TargetItemQuery<'query, D, I>,
+        trait_impl: TraitImplRef,
+        impl_data: &rg_ir_model::hir::items::ImplData,
+        subst: &InferTypeSubst,
+        table: &InferenceTable,
+    ) -> Result<Option<TraitApplicability>, I::Error>
+    where
+        D: DefMapSource<Error = I::Error>,
+        I: ItemStoreSource<'query>,
+    {
+        let mut solver = self
+            .solver
+            .lock()
+            .expect("trait selection solver cache lock should not be poisoned");
+        if solver.is_none() {
+            *solver = Some(ChalkTraitSolver::new(item_paths, target_items)?);
+        }
+        let solver = solver
+            .as_ref()
+            .expect("solver should be initialized before use");
+        Ok(solver.impl_bounds_applicability(item_paths, trait_impl, impl_data, subst, table))
+    }
+}
+
 /// Shared bounded trait-selection query.
 pub struct TraitSelectionQuery<'query, D, I> {
     item_paths: ItemPathQuery<'query, D, I>,
     target_items: TargetItemQuery<'query, D, I>,
     lookup_index: &'query ItemLookupIndex,
     options: TraitSelectionOptions,
+    cache: TraitSelectionCache,
 }
 
 impl<'query, D, I> TraitSelectionQuery<'query, D, I>
@@ -64,12 +113,23 @@ where
             target_items,
             lookup_index,
             options: TraitSelectionOptions::new(),
+            cache: TraitSelectionCache::default(),
         }
     }
 
     /// Use a non-default selection policy for all probes made through this query.
     pub fn with_options(mut self, options: TraitSelectionOptions) -> Self {
         self.options = options;
+        self
+    }
+
+    /// Reuse solver state across probes made through this query.
+    ///
+    /// The cache belongs to the same visible item context as the query. Reusing it across bodies in
+    /// one target is useful; reusing it across unrelated target visibility contexts would mix
+    /// different impl universes.
+    pub fn with_cache(mut self, cache: TraitSelectionCache) -> Self {
+        self.cache = cache;
         self
     }
 
@@ -84,10 +144,6 @@ where
         table: &InferenceTable,
     ) -> Result<ExpectedUnique<TraitSelection>, I::Error> {
         let trait_impls = self.trait_impl_candidates(goal.trait_ref)?;
-        // Build the Chalk program only if some candidate reaches predicate solving, then reuse it
-        // for the rest of this probe. Wider caching can wait until the solver surface settles.
-        let mut solver = None;
-
         let mut selections = ExpectedUnique::new();
         for trait_impl in trait_impls {
             let Some(selection) = Self::probe_impl(
@@ -97,7 +153,7 @@ where
                 table,
                 trait_impl,
                 self.options,
-                &mut solver,
+                &self.cache,
             )?
             else {
                 continue;
@@ -119,7 +175,6 @@ where
         table: &InferenceTable,
         trait_impl: TraitImplRef,
     ) -> Result<Option<TraitSelection>, I::Error> {
-        let mut solver = None;
         Self::probe_impl(
             &self.item_paths,
             &self.target_items,
@@ -127,7 +182,7 @@ where
             table,
             trait_impl,
             self.options,
-            &mut solver,
+            &self.cache,
         )
     }
 
@@ -145,7 +200,7 @@ where
         trait_impl: TraitImplRef,
         options: TraitSelectionOptions,
     ) -> Result<Option<TraitSelection>, I::Error> {
-        let mut solver = None;
+        let cache = TraitSelectionCache::default();
         Self::probe_impl(
             item_paths,
             target_items,
@@ -153,7 +208,7 @@ where
             table,
             trait_impl,
             options,
-            &mut solver,
+            &cache,
         )
     }
 
@@ -172,7 +227,7 @@ where
         table: &InferenceTable,
         trait_impl: TraitImplRef,
         options: TraitSelectionOptions,
-        solver: &mut Option<ChalkTraitSolver>,
+        cache: &TraitSelectionCache,
     ) -> Result<Option<TraitSelection>, I::Error> {
         let Some(impl_data) = target_items.items().impl_data(trait_impl.impl_ref)? else {
             return Ok(None);
@@ -194,14 +249,24 @@ where
         let mut applicability = applicability;
 
         if options.should_solve_where_predicates() {
-            if solver.is_none() {
-                *solver = Some(ChalkTraitSolver::new(item_paths, target_items)?);
+            if !Self::impl_has_chalk_predicates(impl_data) {
+                crate::profile::metric::PREDICATE_FREE_CANDIDATES.inc();
+                return Ok(applicability.is_applicable().then_some(TraitSelection {
+                    trait_impl,
+                    subst,
+                    applicability,
+                    table,
+                }));
             }
-            let solver = solver
-                .as_ref()
-                .expect("solver should be initialized before use");
-            let Some(where_applicability) =
-                solver.impl_bounds_applicability(item_paths, trait_impl, impl_data, &subst, &table)
+
+            let Some(where_applicability) = cache.impl_bounds_applicability(
+                item_paths,
+                target_items,
+                trait_impl,
+                impl_data,
+                &subst,
+                &table,
+            )?
             else {
                 return Ok(None);
             };
@@ -214,6 +279,15 @@ where
             applicability,
             table,
         }))
+    }
+
+    fn impl_has_chalk_predicates(impl_data: &rg_ir_model::hir::items::ImplData) -> bool {
+        impl_data
+            .generics
+            .types
+            .iter()
+            .any(|param| !param.bounds.is_empty())
+            || !impl_data.generics.where_predicates.is_empty()
     }
 }
 

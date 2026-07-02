@@ -14,6 +14,7 @@
 //! share this facade. The detailed steps live in child modules so each file can read as one story.
 
 mod assoc_projection;
+mod obligation;
 mod selected_call;
 
 use rg_ir_storage::{DefMapSource, ItemStoreSource};
@@ -23,7 +24,10 @@ use rg_ty::{TraitGoal, TraitSelection, TraitSelectionQuery, inference::Inference
 
 use crate::resolution::BodyResolutionContext;
 
+use super::BodyCallableGoalSolver;
 use super::BodyInferenceCtx;
+
+use self::obligation::{BodyCallableObligation, BodyObligation, BodyObligationGoal};
 
 pub(super) use selected_call::SelectedCallObligationInput;
 
@@ -48,9 +52,15 @@ where
     fn probe_trait_goal(
         &self,
         goal: &TraitGoal,
-        inference: &BodyInferenceCtx,
+        inference: &mut BodyInferenceCtx,
     ) -> Result<ExpectedUnique<TraitSelection>, PackageStoreError> {
-        self.probe_trait_goal_in_table(goal, &inference.table)
+        TraitSelectionQuery::with_index(
+            self.context.item_paths(),
+            self.context.target_items(),
+            self.context.semantic_index(),
+        )
+        .with_cache(inference.trait_selection_cache.clone())
+        .probe(goal, &inference.table)
     }
 
     fn probe_trait_goal_in_table(
@@ -64,5 +74,69 @@ where
             self.context.semantic_index(),
         )
         .probe(goal, table)
+    }
+
+    /// Evaluate one body obligation using today's local solver hooks.
+    ///
+    /// This is deliberately shallow. It preserves the current policy of applying closure-callable
+    /// evidence first, then probing visible trait impls and committing only a unique trial table.
+    fn evaluate_obligation(
+        &self,
+        inference: &mut BodyInferenceCtx,
+        obligation: BodyObligation,
+    ) -> Result<(), PackageStoreError> {
+        match obligation.into_goal() {
+            BodyObligationGoal::Trait(goal) => self.evaluate_trait_goal(inference, &goal),
+            BodyObligationGoal::Callable(goal) => {
+                self.evaluate_callable_obligation(inference, &goal)
+            }
+        }
+    }
+
+    fn evaluate_obligations(
+        &self,
+        inference: &mut BodyInferenceCtx,
+        obligations: Vec<BodyObligation>,
+    ) -> Result<(), PackageStoreError> {
+        for obligation in obligations {
+            self.evaluate_obligation(inference, obligation)?;
+        }
+        Ok(())
+    }
+
+    fn evaluate_trait_goal(
+        &self,
+        inference: &mut BodyInferenceCtx,
+        goal: &TraitGoal,
+    ) -> Result<(), PackageStoreError> {
+        // Fn* trait goals can sometimes be answered from a body-local closure witness before the
+        // shallow trait selector has enough type-system machinery to prove them.
+        if BodyCallableGoalSolver::new(self.context).solve_goal(inference, goal)? {
+            return Ok(());
+        }
+
+        let selection = self.probe_trait_goal(goal, inference)?;
+        if let ExpectedUnique::One(selection) = selection {
+            inference.table = selection.table;
+        }
+
+        Ok(())
+    }
+
+    fn evaluate_callable_obligation(
+        &self,
+        inference: &mut BodyInferenceCtx,
+        obligation: &BodyCallableObligation,
+    ) -> Result<(), PackageStoreError> {
+        // Callable obligations are best-effort closure evidence. If this local hook cannot learn
+        // anything from the closure body, there is no separate trait-selection fallback in this
+        // path: the obligation has already been classified as callable-only evidence.
+        let _solved = BodyCallableGoalSolver::new(self.context).solve_fn_trait_goal(
+            inference,
+            obligation.self_ty(),
+            obligation.params(),
+            obligation.ret(),
+        )?;
+        Ok(())
     }
 }

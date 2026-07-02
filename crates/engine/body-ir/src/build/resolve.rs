@@ -19,6 +19,7 @@ pub(super) fn resolve_packages(
     def_map: &DefMapReadTxn<'_>,
     semantic_ir: &SemanticIrReadTxn<'_>,
 ) -> anyhow::Result<()> {
+    let profile_context = rg_profile::ProfileThreadContext::capture();
     let thread_pool = local_thread_pool("rg-body-resolve")?;
     thread_pool
         .install(|| {
@@ -29,6 +30,7 @@ pub(super) fn resolve_packages(
                 .enumerate()
                 .try_for_each(
                     |(package_idx, ((package, parse_package), interner))| -> anyhow::Result<()> {
+                        let _profile_guard = profile_context.enter();
                         resolve_package(
                             PackageSlot(package_idx),
                             parse_package,
@@ -50,6 +52,7 @@ pub(super) fn resolve_selected_packages(
     def_map: &DefMapReadTxn<'_>,
     semantic_ir: &SemanticIrReadTxn<'_>,
 ) -> anyhow::Result<()> {
+    let profile_context = rg_profile::ProfileThreadContext::capture();
     // Selected rebuilds are sparse, but resolution may discover nested bodies and lower them,
     // which needs mutable access to the matching package name interner. The rebuilder normalizes
     // package slots, so walking the interner slice left-to-right lets us prepare disjoint jobs that
@@ -90,6 +93,7 @@ pub(super) fn resolve_selected_packages(
         .install(|| {
             jobs.into_par_iter().try_for_each(
                 |(package_slot, parse_package, package, interner)| -> anyhow::Result<()> {
+                    let _profile_guard = profile_context.enter();
                     resolve_package(
                         package_slot,
                         parse_package,

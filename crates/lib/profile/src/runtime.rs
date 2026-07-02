@@ -139,6 +139,47 @@ impl Drop for ProfileRun {
     }
 }
 
+/// Captured active profile run that can be installed on another thread.
+///
+/// `rg_profile` keeps the active run in thread-local storage so unrelated work does not
+/// accidentally record into a caller's profile. Parallel build phases that intentionally continue
+/// the same profiled operation should capture this value before spawning work, then call `enter`
+/// inside each worker job.
+#[derive(Clone)]
+pub struct ProfileThreadContext {
+    active: Option<Arc<ActiveRun>>,
+}
+
+impl ProfileThreadContext {
+    pub fn capture() -> Self {
+        Self {
+            active: active_run(),
+        }
+    }
+
+    pub fn enter(&self) -> ProfileThreadGuard {
+        let previous = ACTIVE_RUN.with(|active_slot| {
+            let mut active_slot = active_slot.borrow_mut();
+            std::mem::replace(&mut *active_slot, self.active.clone())
+        });
+        ProfileThreadGuard { previous }
+    }
+}
+
+/// Restores the previously active profile run when dropped.
+#[must_use = "dropping the guard immediately restores the previous profile context"]
+pub struct ProfileThreadGuard {
+    previous: Option<Arc<ActiveRun>>,
+}
+
+impl Drop for ProfileThreadGuard {
+    fn drop(&mut self) {
+        ACTIVE_RUN.with(|active_slot| {
+            *active_slot.borrow_mut() = self.previous.take();
+        });
+    }
+}
+
 fn deactivate_run(id: u64) {
     ACTIVE_RUN.with(|active_slot| {
         let mut active = active_slot.borrow_mut();
