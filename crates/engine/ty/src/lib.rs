@@ -36,7 +36,8 @@ pub use self::{
     primitive_expr::{ty_for_binary, ty_for_literal, ty_for_unary},
     profile::profile_descriptors,
     trait_selection::{
-        TraitGoal, TraitSelection, TraitSelectionCache, TraitSelectionOptions, TraitSelectionQuery,
+        AssocProjectionResult, TraitGoal, TraitSelection, TraitSelectionCache,
+        TraitSelectionOptions, TraitSelectionQuery,
     },
     ty::{
         ClosureTyId, ExpectedNominalTyExt, ExpectedTyExt, NominalTy, OpaqueTraitBound, Ty,

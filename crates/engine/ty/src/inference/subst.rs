@@ -11,7 +11,7 @@ use super::{
     model::{InferGenericArg, InferTy},
     table::{InferenceConflict, InferenceTable},
 };
-use crate::Ty;
+use crate::{Ty, TypeSubst};
 
 /// Substitution from declared type params to inference-aware types.
 ///
@@ -48,6 +48,18 @@ impl InferTypeSubst {
     /// Return the visible inference binding for a type parameter.
     pub fn type_param(&self, name: &str) -> Option<InferTy> {
         self.get(name).cloned()
+    }
+
+    /// Finalize inference bindings into an ordinary substitution for type-ref resolution.
+    ///
+    /// This is a bridge for APIs that still need resolved `Ty` shapes before projecting them back
+    /// into inference form. The inference-aware projector remains responsible for preserving
+    /// unsolved `?T` slots where the written type ref mentions a bound type parameter.
+    pub(crate) fn finalize_type_subst(&self, table: &InferenceTable) -> TypeSubst {
+        self.0
+            .iter()
+            .map(|(name, ty)| (name.clone(), table.finalize(ty)))
+            .collect()
     }
 
     /// Let function generics hide same-named impl generics while staying inferable.

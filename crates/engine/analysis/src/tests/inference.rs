@@ -830,6 +830,7 @@ pub struct Name;
 pub struct Email;
 pub struct Key;
 pub struct Value;
+pub struct Row;
 
 impl User {
     pub fn name(&self) -> Name {}
@@ -862,11 +863,14 @@ pub fn pairs() -> PairIter {
     core::missing()
 }
 
+pub fn bar(_: usize, _: &User) -> Row {}
+
 pub fn use_it(users: &[User], same_name: SameNameMap) {
     let names = users.iter().map(|user| user$type_map_param$.name()).collect::<Vec<_>>()$type_names$;
     let emails = users.iter().filter_map(|user| user$type_filter_map_param$.email()).collect::<Vec<_>>()$type_emails$;
     let enumerated = users.iter().enumerate().collect::<Vec<_>>()$type_enumerated$;
     let name_pairs = users.iter().enumerate().map(|(index, user)| (index$type_enumerate_index$, user$type_enumerate_user$)).collect::<Vec<_>>();
+    let rows = users.iter().enumerate().map(|(id, f)| bar(id$type_bar_id$, f$type_bar_user$)).collect::<Vec<_>>()$type_rows$;
     let direct_lookup = pairs().collect::<HashMap<_, _>>()$type_direct_lookup$;
     let lookup = users.iter().map(|user| (user.key(), user.value())).collect::<HashMap<_, _>>()$type_lookup$;
     let ambiguous = pairs().collect::<AmbiguousMap<_, _>>()$type_ambiguous$;
@@ -884,6 +888,9 @@ pub fn use_it(users: &[User], same_name: SameNameMap) {
                 .in_lib("app"),
             AnalysisQuery::ty("iterator enumerate map user param", "type_enumerate_user")
                 .in_lib("app"),
+            AnalysisQuery::ty("iterator bar map id param", "type_bar_id").in_lib("app"),
+            AnalysisQuery::ty("iterator bar map user param", "type_bar_user").in_lib("app"),
+            AnalysisQuery::ty("iterator bar map collect result", "type_rows").in_lib("app"),
             AnalysisQuery::ty("direct HashMap collect result", "type_direct_lookup").in_lib("app"),
             AnalysisQuery::ty("mapped HashMap collect result", "type_lookup").in_lib("app"),
             AnalysisQuery::ty("ambiguous HashMap collect result", "type_ambiguous").in_lib("app"),
@@ -911,6 +918,15 @@ pub fn use_it(users: &[User], same_name: SameNameMap) {
 
             iterator enumerate map user param
             - &nominal struct app[lib]::crate::User
+
+            iterator bar map id param
+            - usize
+
+            iterator bar map user param
+            - &nominal struct app[lib]::crate::User
+
+            iterator bar map collect result
+            - nominal struct fake_core[lib]::crate::Vec<nominal struct app[lib]::crate::Row>
 
             direct HashMap collect result
             - nominal struct fake_core[lib]::crate::HashMap<nominal struct app[lib]::crate::Key, nominal struct app[lib]::crate::Value>

@@ -1,24 +1,26 @@
 use std::convert::Infallible;
 
-use rg_ir_model::hir::items::{ImplData, TraitData};
+use rg_ir_model::hir::items::{ImplData, StructData, TraitData, TypeAliasData};
+use rg_ir_model::hir::signature::TypeAliasSignature;
 use rg_ir_model::hir::source::{GeneratedItemRef, GeneratedSourceId, ItemSource, ItemSourceKind};
 use rg_ir_model::items::{
-    GenericArg as ItemGenericArg, GenericParams, ItemTreeId, TypeBound, TypeParamData, TypePath,
-    TypePathSegment, TypeRef, VisibilityLevel, WherePredicate,
+    FieldList, GenericArg as ItemGenericArg, GenericParams, ItemTreeId, TypeAliasItem, TypeBound,
+    TypeParamData, TypePath, TypePathSegment, TypeRef, VisibilityLevel, WherePredicate,
 };
 use rg_ir_model::{
-    DefMapRef, ExprId, FileId, ImplId, LocalDefId, LocalDefRef, LocalImplId, LocalImplRef,
-    ModuleId, ModuleRef, PackageSlot, Span, StructId, TargetId, TargetRef, TextSpan, TraitId,
-    TraitImplRef, TraitRef, TypeDefId, TypeDefRef,
+    AssocItemId, DefMapRef, ExprId, FileId, ImplId, ItemOwner, LocalDefId, LocalDefRef,
+    LocalImplId, LocalImplRef, ModuleId, ModuleRef, PackageSlot, Span, StructId, TargetId,
+    TargetRef, TextSpan, TraitApplicability, TraitId, TraitImplRef, TraitRef, TypeAliasId,
+    TypeDefId, TypeDefRef,
 };
 use rg_ir_storage::{
     DefMap, DefMapSource, ItemLookupIndex, ItemStore, ItemStoreBuilder, ItemStoreSource,
-    TargetItemQuery,
+    TargetItemQuery, TypePathContext,
 };
 use rg_std::ExpectedUnique;
 use rg_text::Name;
 
-use super::{TraitGoal, TraitSelectionOptions, TraitSelectionQuery};
+use super::{ChalkTraitSolver, TraitGoal, TraitSelectionOptions, TraitSelectionQuery};
 use crate::inference::{InferGenericArg, InferNominalTy, InferTy, InferenceTable};
 use crate::{ClosureTyId, GenericArg, ItemPathQuery, NominalTy, Ty};
 
@@ -223,6 +225,26 @@ fn impl_data(
     self_def: TypeDefRef,
     self_ty: TypeRef,
 ) -> ImplData {
+    impl_data_with_items(
+        index,
+        generics,
+        trait_ref,
+        trait_ty,
+        self_def,
+        self_ty,
+        Vec::new(),
+    )
+}
+
+fn impl_data_with_items(
+    index: usize,
+    generics: GenericParams,
+    trait_ref: TraitRef,
+    trait_ty: TypeRef,
+    self_def: TypeDefRef,
+    self_ty: TypeRef,
+    items: Vec<AssocItemId>,
+) -> ImplData {
     ImplData {
         local_impl: local_impl(index),
         source: dummy_source(),
@@ -232,12 +254,21 @@ fn impl_data(
         self_ty,
         resolved_self_ty: resolved_one(self_def),
         resolved_trait_ref: resolved_one(trait_ref),
-        items: Vec::new(),
+        items,
         is_unsafe: false,
     }
 }
 
 fn trait_data(index: usize, name: &str, generics: GenericParams) -> TraitData {
+    trait_data_with_items(index, name, generics, Vec::new())
+}
+
+fn trait_data_with_items(
+    index: usize,
+    name: &str,
+    generics: GenericParams,
+    items: Vec<AssocItemId>,
+) -> TraitData {
     TraitData {
         local_def: local_def(index),
         source: dummy_source(),
@@ -247,8 +278,41 @@ fn trait_data(index: usize, name: &str, generics: GenericParams) -> TraitData {
         docs: None,
         generics,
         super_traits: Vec::new(),
-        items: Vec::new(),
+        items,
         is_unsafe: false,
+    }
+}
+
+fn struct_data(index: usize, name: &str, generics: GenericParams) -> StructData {
+    StructData {
+        local_def: local_def(100 + index),
+        source: dummy_source(),
+        owner: module(),
+        name: Name::new(name),
+        visibility: VisibilityLevel::Public,
+        docs: None,
+        generics,
+        fields: FieldList::Unit,
+    }
+}
+
+fn type_alias_data(name: &str, owner: ItemOwner, aliased_ty: Option<TypeRef>) -> TypeAliasData {
+    TypeAliasData {
+        local_def: None,
+        source: dummy_source(),
+        span: Span {
+            text: TextSpan { start: 0, end: 0 },
+        },
+        name_span: None,
+        owner,
+        name: Name::new(name),
+        visibility: VisibilityLevel::Public,
+        docs: None,
+        signature: TypeAliasSignature::from_item(&TypeAliasItem {
+            generics: GenericParams::default(),
+            bounds: Vec::new(),
+            aliased_ty,
+        }),
     }
 }
 
@@ -257,7 +321,30 @@ fn fixture(impls: Vec<ImplData>) -> TraitSelectionFixture {
 }
 
 fn fixture_with_traits(traits: Vec<TraitData>, impls: Vec<ImplData>) -> TraitSelectionFixture {
+    fixture_with_traits_impls_and_aliases(traits, impls, Vec::new())
+}
+
+fn fixture_with_traits_impls_and_aliases(
+    traits: Vec<TraitData>,
+    impls: Vec<ImplData>,
+    type_aliases: Vec<TypeAliasData>,
+) -> TraitSelectionFixture {
+    fixture_with_traits_impls_aliases_and_structs(traits, impls, type_aliases, Vec::new())
+}
+
+fn fixture_with_traits_impls_aliases_and_structs(
+    traits: Vec<TraitData>,
+    impls: Vec<ImplData>,
+    type_aliases: Vec<TypeAliasData>,
+    structs: Vec<StructData>,
+) -> TraitSelectionFixture {
     let mut builder = ItemStoreBuilder::new(origin(), 0);
+    for struct_data in structs {
+        builder.structs.alloc(struct_data);
+    }
+    for type_alias_data in type_aliases {
+        builder.type_aliases.alloc(type_alias_data);
+    }
     for trait_data in traits {
         builder.traits.alloc(trait_data);
     }
@@ -285,6 +372,48 @@ fn query(
         TargetItemQuery::new(fixture, fixture, fixture.target),
         &fixture.lookup_index,
     )
+}
+
+fn generic_iterator_assoc_fixture() -> (TraitSelectionFixture, TypeDefRef, TypeDefRef, TraitRef) {
+    let iter_def = type_def(0);
+    let user_def = type_def(1);
+    let iterator = trait_ref(0);
+    let trait_item = TypeAliasId(0);
+    let impl_item = TypeAliasId(1);
+
+    let iterator_data = trait_data_with_items(
+        0,
+        "Iterator",
+        GenericParams::default(),
+        vec![AssocItemId::TypeAlias(trait_item)],
+    );
+    let iter_impl = impl_data_with_items(
+        0,
+        generics(vec![type_param("T")]),
+        iterator,
+        path_ty("Iterator", Vec::new()),
+        iter_def,
+        path_ty("Iter", vec![type_arg(path_ty("T", Vec::new()))]),
+        vec![AssocItemId::TypeAlias(impl_item)],
+    );
+    let fixture = fixture_with_traits_impls_aliases_and_structs(
+        vec![iterator_data],
+        vec![iter_impl],
+        vec![
+            type_alias_data("Item", ItemOwner::Trait(TraitId(0)), None),
+            type_alias_data(
+                "Item",
+                ItemOwner::Impl(ImplId(0)),
+                Some(path_ty("T", Vec::new())),
+            ),
+        ],
+        vec![
+            struct_data(0, "Iter", generics(vec![type_param("T")])),
+            struct_data(1, "User", GenericParams::default()),
+        ],
+    );
+
+    (fixture, iter_def, user_def, iterator)
 }
 
 #[test]
@@ -331,6 +460,62 @@ fn probe_selects_direct_from_iterator_impl_and_solves_destination_arg() {
             args: vec![GenericArg::Type(Box::new(Ty::Unknown))],
         })
     );
+}
+
+#[test]
+fn normalize_assoc_type_projects_generic_impl_value() {
+    let (fixture, iter_def, user_def, iterator) = generic_iterator_assoc_fixture();
+
+    let table = InferenceTable::new();
+    let goal = TraitGoal {
+        self_ty: nominal_infer_ty(
+            iter_def,
+            vec![infer_type_arg(InferTy::from_ty(&nominal_ty(user_def)))],
+        ),
+        trait_ref: iterator,
+        args: Vec::new(),
+    };
+
+    let projection = query(&fixture)
+        .normalize_assoc_type(&goal, "Item", &table)
+        .unwrap()
+        .expect("Iterator::Item should project through the generic impl value");
+
+    assert_eq!(
+        projection.table.finalize(&projection.ty),
+        nominal_ty(user_def)
+    );
+}
+
+#[test]
+fn chalk_solver_normalizes_generic_associated_type_value() {
+    let (fixture, iter_def, user_def, iterator) = generic_iterator_assoc_fixture();
+
+    let table = InferenceTable::new();
+    let goal = TraitGoal {
+        self_ty: nominal_infer_ty(
+            iter_def,
+            vec![infer_type_arg(InferTy::from_ty(&nominal_ty(user_def)))],
+        ),
+        trait_ref: iterator,
+        args: Vec::new(),
+    };
+    let item_paths = ItemPathQuery::new(&fixture, &fixture);
+    let target_items = TargetItemQuery::new(&fixture, &fixture, fixture.target);
+    let solver = ChalkTraitSolver::new(&item_paths, &target_items).unwrap();
+
+    let (projection_ty, applicability) = solver
+        .normalize_assoc_type(
+            &item_paths,
+            TypePathContext::module(module()),
+            &goal,
+            "Item",
+            &table,
+        )
+        .expect("Chalk should normalize the generic impl associated type value");
+
+    assert_eq!(table.finalize(&projection_ty), nominal_ty(user_def));
+    assert_eq!(applicability, TraitApplicability::Yes);
 }
 
 #[test]

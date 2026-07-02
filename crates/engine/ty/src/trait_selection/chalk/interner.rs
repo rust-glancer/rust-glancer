@@ -22,6 +22,7 @@ pub(super) enum ChalkDefId {
     Trait(TraitRef),
     Impl(ImplRef),
     AssocType(TypeAliasRef),
+    AssocTypeValue(TypeAliasRef),
     Opaque(u32),
     Function(FunctionRef),
     Closure(ClosureTyId),

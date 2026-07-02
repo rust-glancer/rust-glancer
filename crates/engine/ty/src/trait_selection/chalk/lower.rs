@@ -4,24 +4,29 @@ use chalk_ir::cast::Cast;
 use chalk_ir::fold::Shift;
 use chalk_ir::visit::VisitExt;
 use chalk_ir::{
-    AdtId, BoundVar, DebruijnIndex, DomainGoal, GenericArg, GenericArgData, Goal, LifetimeData,
-    Mutability as ChalkMutability, QuantifiedWhereClause, Scalar, Substitution, TraitId,
-    TraitRef as ChalkTraitRef, TyKind, TyVariableKind, UintTy, VariableKind, VariableKinds,
-    WhereClause,
+    AdtId, AliasTy, AssocTypeId, BoundVar, DebruijnIndex, DomainGoal, GenericArg, GenericArgData,
+    Goal, LifetimeData, Mutability as ChalkMutability, ProjectionTy, QuantifiedWhereClause, Scalar,
+    Substitution, TraitId, TraitRef as ChalkTraitRef, TyKind, TyVariableKind, UintTy, VariableKind,
+    VariableKinds, WhereClause,
 };
 use chalk_solve::rust_ir::{
-    AdtDatum, AdtDatumBound, AdtFlags, AdtKind, AdtVariantDatum, ImplDatum, ImplDatumBound,
-    ImplType, Polarity, TraitDatum, TraitDatumBound, TraitFlags,
+    AdtDatum, AdtDatumBound, AdtFlags, AdtKind, AdtVariantDatum, AssociatedTyDatum,
+    AssociatedTyDatumBound, AssociatedTyValue, AssociatedTyValueBound, AssociatedTyValueId,
+    ImplDatum, ImplDatumBound, ImplType, Polarity, TraitDatum, TraitDatumBound, TraitFlags,
 };
 use rg_ir_model::items::{
     GenericArg as ItemGenericArg, GenericParams, TypeBound, TypeRef, WherePredicate,
 };
-use rg_ir_model::{Mutability, Path, TraitRef, TypeDefId, TypeDefRef, TypePathResolution};
+use rg_ir_model::{
+    ImplRef, Mutability, Path, TraitRef, TypeAliasRef, TypeDefId, TypeDefRef, TypePathResolution,
+    hir::items::TypeAliasData,
+};
 use rg_ir_storage::{DefMapSource, ItemStoreSource, TypePathContext};
 use rg_text::Name;
 
 use super::interner::{ChalkDefId, RgChalkInterner};
 use crate::inference::{InferGenericArg, InferTy, InferTypeSubst, InferenceTable};
+use crate::trait_selection::TraitGoal;
 use crate::{FloatTy, ItemPathQuery, PrimitiveTy, SignedIntTy, UnsignedIntTy};
 
 pub(super) type ChalkTy = chalk_ir::Ty<RgChalkInterner>;
@@ -179,6 +184,7 @@ where
         trait_ref: TraitRef,
         generics: &GenericParams,
         super_traits: &[TypeBound],
+        associated_ty_ids: Vec<AssocTypeId<RgChalkInterner>>,
     ) -> Option<TraitDatum<RgChalkInterner>> {
         let binders = GenericBinderEnv::for_trait(generics)?;
         let self_ty = BoundVar::new(DebruijnIndex::INNERMOST, 0).to_ty::<RgChalkInterner>(INTER);
@@ -203,14 +209,46 @@ where
                 non_enumerable: false,
                 coinductive: false,
             },
-            associated_ty_ids: Vec::new(),
+            associated_ty_ids,
             well_known: None,
+        })
+    }
+
+    pub(super) fn associated_ty_datum(
+        &self,
+        trait_ref: TraitRef,
+        type_alias_ref: TypeAliasRef,
+        type_alias_data: &TypeAliasData,
+        trait_generics: &GenericParams,
+    ) -> Option<AssociatedTyDatum<RgChalkInterner>> {
+        let binders = GenericBinderEnv::for_trait(trait_generics)?;
+        // V1 only lowers plain associated types like `type Item;`.
+        // GAT binders and associated type bounds need another parameter/where-clause layer before
+        // they can be represented without lying to Chalk.
+        if type_alias_data.signature.generics().is_some()
+            || !type_alias_data.signature.bounds().is_empty()
+        {
+            return None;
+        }
+
+        Some(AssociatedTyDatum {
+            trait_id: chalk_trait_id(trait_ref),
+            id: chalk_assoc_type_id(type_alias_ref),
+            name: type_alias_data.name.to_string(),
+            binders: chalk_ir::Binders::new(
+                binders.variable_kinds(),
+                AssociatedTyDatumBound {
+                    bounds: Vec::new(),
+                    where_clauses: Vec::new(),
+                },
+            ),
         })
     }
 
     pub(super) fn impl_datum(
         &self,
         impl_data: &rg_ir_model::hir::items::ImplData,
+        associated_ty_value_ids: Vec<AssociatedTyValueId<RgChalkInterner>>,
     ) -> Option<ImplDatum<RgChalkInterner>> {
         let binders = GenericBinderEnv::for_impl(&impl_data.generics)?;
         let lowerer = self.with_binders(&binders);
@@ -232,8 +270,57 @@ where
                 },
             ),
             impl_type: ImplType::Local,
-            associated_ty_value_ids: Vec::new(),
+            associated_ty_value_ids,
         })
+    }
+
+    pub(super) fn associated_ty_value(
+        &self,
+        impl_ref: ImplRef,
+        associated_ty_ref: TypeAliasRef,
+        type_alias_data: &TypeAliasData,
+        impl_data: &rg_ir_model::hir::items::ImplData,
+    ) -> Option<AssociatedTyValue<RgChalkInterner>> {
+        let binders = GenericBinderEnv::for_impl(&impl_data.generics)?;
+        // Keep impl values aligned with the declaration support above: `type Item = T` is in,
+        // `type Item<'a> = ...` and value-side bounds are left unsupported.
+        if type_alias_data.signature.generics().is_some()
+            || !type_alias_data.signature.bounds().is_empty()
+        {
+            return None;
+        }
+
+        let aliased_ty = type_alias_data.signature.aliased_ty()?;
+        let lowerer = self.with_binders(&binders);
+        let ty = lowerer.lower_type_ref(aliased_ty, None)?;
+
+        Some(AssociatedTyValue {
+            impl_id: chalk_impl_id(impl_ref),
+            associated_ty_id: chalk_assoc_type_id(associated_ty_ref),
+            value: chalk_ir::Binders::new(binders.variable_kinds(), AssociatedTyValueBound { ty }),
+        })
+    }
+
+    pub(super) fn projection_alias(
+        &self,
+        assoc_type_ref: TypeAliasRef,
+        goal: &TraitGoal,
+        table: &InferenceTable,
+    ) -> Option<AliasTy<RgChalkInterner>> {
+        // Projection goals are allowed to decline when project-local inference variables are still
+        // present. The public API can still use the selected impl substitution path to preserve
+        // those variables in the returned `InferenceTable`.
+        let self_ty = self.lower_infer_ty(&goal.self_ty, table)?;
+        let mut substitution = Vec::with_capacity(1 + goal.args.len());
+        substitution.push(GenericArgData::Ty(self_ty).intern(INTER));
+        for arg in &goal.args {
+            substitution.push(self.lower_infer_generic_arg(arg, table)?);
+        }
+
+        Some(AliasTy::Projection(ProjectionTy {
+            associated_ty_id: chalk_assoc_type_id(assoc_type_ref),
+            substitution: Substitution::from_iter(INTER, substitution),
+        }))
     }
 
     pub(super) fn candidate_where_goals(
@@ -639,6 +726,16 @@ pub(super) fn chalk_trait_id(trait_ref: TraitRef) -> TraitId<RgChalkInterner> {
 
 pub(super) fn chalk_impl_id(impl_ref: rg_ir_model::ImplRef) -> chalk_ir::ImplId<RgChalkInterner> {
     chalk_ir::ImplId(ChalkDefId::Impl(impl_ref))
+}
+
+pub(super) fn chalk_assoc_type_id(type_alias_ref: TypeAliasRef) -> AssocTypeId<RgChalkInterner> {
+    AssocTypeId(ChalkDefId::AssocType(type_alias_ref))
+}
+
+pub(super) fn chalk_assoc_type_value_id(
+    type_alias_ref: TypeAliasRef,
+) -> AssociatedTyValueId<RgChalkInterner> {
+    AssociatedTyValueId(ChalkDefId::AssocTypeValue(type_alias_ref))
 }
 
 pub(super) fn stub_trait_datum(

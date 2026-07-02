@@ -3,10 +3,13 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use chalk_engine::solve::SLGSolver;
+use chalk_ir::cast::Cast;
 use chalk_ir::{
-    AdtId, AliasTy, AssocTypeId, Binders, CanonicalVarKinds, ClosureId, CoroutineId, FnDefId,
-    GenericArg, OpaqueTyId, ProgramClause, ProgramClauses, Substitution, Ty, TyKind,
-    UnificationDatabase, Variance, Variances, WhereClause,
+    AdtId, AliasTy, AssocTypeId, Binders, BoundVar, CanonicalVarKinds, ClosureId, CoroutineId,
+    DebruijnIndex, DomainGoal, FnDefId, GenericArg, GenericArgData, GoalData, Normalize,
+    OpaqueTyId, ProgramClause, ProgramClauses, QuantifierKind, Substitution, Ty, TyKind,
+    TyVariableKind, UnificationDatabase, VariableKind, VariableKinds, Variance, Variances,
+    WhereClause,
 };
 use chalk_solve::ext::GoalExt;
 use chalk_solve::rust_ir::{
@@ -18,16 +21,20 @@ use chalk_solve::rust_ir::{
 };
 use chalk_solve::{RustIrDatabase, Solver};
 use rg_ir_model::hir::items::ImplData;
-use rg_ir_model::{TraitApplicability, TraitImplRef, TraitRef, TypeDefRef};
+use rg_ir_model::{
+    AssocItemId, ImplRef, TraitApplicability, TraitImplRef, TraitRef, TypeAliasRef, TypeDefRef,
+};
 use rg_ir_storage::{DefMapSource, ItemStoreSource, TargetItemQuery, TypePathContext};
+use rg_text::Name;
 
 use super::interner::{ChalkDefId, RgChalkInterner};
 use super::lower::{
-    ChalkLowerer, GenericBinderEnv, TraitNameIndex, adt_datum, chalk_impl_id, chalk_trait_id,
-    stub_trait_datum, unit_ty,
+    ChalkLowerer, GenericBinderEnv, TraitNameIndex, adt_datum, chalk_assoc_type_id,
+    chalk_assoc_type_value_id, chalk_impl_id, chalk_trait_id, stub_trait_datum, unit_ty,
 };
+use super::raise;
 use crate::ItemPathQuery;
-use crate::inference::{InferTypeSubst, InferenceTable};
+use crate::inference::{InferTy, InferTypeSubst, InferenceTable};
 
 const INTER: RgChalkInterner = RgChalkInterner;
 const SOLVER_MAX_SIZE: usize = 32;
@@ -97,6 +104,70 @@ impl ChalkTraitSolver {
         }
         Some(applicability)
     }
+
+    pub(crate) fn normalize_assoc_type<'query, D, I>(
+        &self,
+        item_paths: &ItemPathQuery<'query, D, I>,
+        context: TypePathContext,
+        goal: &crate::trait_selection::TraitGoal,
+        assoc_name: &str,
+        table: &InferenceTable,
+    ) -> Option<(InferTy, TraitApplicability)>
+    where
+        D: DefMapSource<Error = I::Error>,
+        I: ItemStoreSource<'query>,
+    {
+        let assoc_type_ref = self.program.associated_ty_ref(goal.trait_ref, assoc_name)?;
+        let binders = GenericBinderEnv::empty();
+        let lowerer = ChalkLowerer::new(item_paths, &self.program.trait_names, context, &binders);
+        let alias = lowerer.projection_alias(assoc_type_ref, goal, table)?;
+        // Ask Chalk for the one existential result type in:
+        //
+        // `Normalize(<Self as Trait>::Assoc -> ?Result)`
+        //
+        // The answer decoder below only accepts result shapes that map directly back into
+        // `InferTy`; richer alias/opaque/const answers stay unsupported instead of becoming a
+        // parallel inference engine.
+        let result_ty = BoundVar::new(DebruijnIndex::INNERMOST, 0).to_ty::<RgChalkInterner>(INTER);
+        let normalize = Normalize {
+            alias,
+            ty: result_ty,
+        };
+        let goal = GoalData::Quantified(
+            QuantifierKind::Exists,
+            Binders::new(
+                VariableKinds::from1(INTER, VariableKind::Ty(TyVariableKind::General)),
+                DomainGoal::Normalize(normalize).cast(INTER),
+            ),
+        )
+        .intern(INTER);
+
+        let mut solver = SLGSolver::new(SOLVER_MAX_SIZE, None);
+        let canonical_goal = goal.into_peeled_goal(INTER);
+        crate::profile::metric::SOLVER_GOALS.inc();
+        let started = Instant::now();
+        let solution = solver.solve(&self.program, &canonical_goal)?;
+        crate::profile::metric::SOLVER_GOAL_TIME_BY_KIND
+            .record("assoc_projection", started.elapsed());
+        if solution.is_ambig() {
+            crate::profile::metric::SOLVER_AMBIGUOUS_GOALS.inc();
+        }
+
+        let applicability = if solution.is_ambig() {
+            TraitApplicability::Maybe
+        } else {
+            TraitApplicability::Yes
+        };
+        let subst = solution.definite_subst(INTER)?;
+        if !subst.binders.is_empty(INTER) {
+            return None;
+        }
+        let projected_arg = subst.value.subst.as_slice(INTER).first()?;
+        let GenericArgData::Ty(projected_ty) = projected_arg.data(INTER) else {
+            return None;
+        };
+        raise::infer_ty_from_chalk(projected_ty).map(|ty| (ty, applicability))
+    }
 }
 
 #[derive(Debug)]
@@ -104,6 +175,10 @@ struct ChalkProgram {
     trait_names: TraitNameIndex,
     traits: HashMap<TraitRef, Arc<TraitDatum<RgChalkInterner>>>,
     trait_arities: HashMap<TraitRef, usize>,
+    associated_tys: HashMap<TypeAliasRef, Arc<AssociatedTyDatum<RgChalkInterner>>>,
+    associated_ty_by_trait_name: HashMap<(TraitRef, Name), TypeAliasRef>,
+    associated_ty_values: HashMap<TypeAliasRef, Arc<AssociatedTyValue<RgChalkInterner>>>,
+    associated_ty_value_by_impl: HashMap<(ImplRef, TypeAliasRef), TypeAliasRef>,
     adts: HashMap<TypeDefRef, Arc<chalk_solve::rust_ir::AdtDatum<RgChalkInterner>>>,
     adt_variances: HashMap<TypeDefRef, Variances<RgChalkInterner>>,
     impls: HashMap<rg_ir_model::ImplRef, Arc<ImplDatum<RgChalkInterner>>>,
@@ -123,6 +198,10 @@ impl ChalkProgram {
             trait_names: TraitNameIndex::new(),
             traits: HashMap::new(),
             trait_arities: HashMap::new(),
+            associated_tys: HashMap::new(),
+            associated_ty_by_trait_name: HashMap::new(),
+            associated_ty_values: HashMap::new(),
+            associated_ty_value_by_impl: HashMap::new(),
             adts: HashMap::new(),
             adt_variances: HashMap::new(),
             impls: HashMap::new(),
@@ -136,18 +215,24 @@ impl ChalkProgram {
             }
         }
 
+        let trait_names = program.trait_names.clone();
         for store in &visible_stores {
             for (trait_ref, trait_data) in store.traits_with_refs() {
                 let binders = GenericBinderEnv::empty();
                 let lowerer = ChalkLowerer::new(
                     item_paths,
-                    &program.trait_names,
+                    &trait_names,
                     TypePathContext::module(trait_data.owner),
                     &binders,
                 );
-                let Some(datum) =
-                    lowerer.trait_datum(trait_ref, &trait_data.generics, &trait_data.super_traits)
-                else {
+                let associated_ty_ids = program
+                    .collect_trait_associated_tys(item_paths, &lowerer, trait_ref, trait_data)?;
+                let Some(datum) = lowerer.trait_datum(
+                    trait_ref,
+                    &trait_data.generics,
+                    &trait_data.super_traits,
+                    associated_ty_ids,
+                ) else {
                     continue;
                 };
                 program.ensure_trait_datum_adts(target_items, &datum)?;
@@ -158,6 +243,7 @@ impl ChalkProgram {
             }
         }
 
+        let trait_names = program.trait_names.clone();
         for store in &visible_stores {
             for (impl_ref, impl_data) in store.impls_with_refs() {
                 let Some(trait_ref) = impl_data.resolved_trait_ref.as_option().copied() else {
@@ -166,14 +252,21 @@ impl ChalkProgram {
                 let binders = GenericBinderEnv::empty();
                 let lowerer = ChalkLowerer::new(
                     item_paths,
-                    &program.trait_names,
+                    &trait_names,
                     TypePathContext {
                         module: impl_data.owner,
                         impl_ref: Some(impl_ref),
                     },
                     &binders,
                 );
-                let Some(datum) = lowerer.impl_datum(impl_data) else {
+                let associated_ty_value_ids = program.collect_impl_associated_ty_values(
+                    item_paths,
+                    target_items,
+                    &lowerer,
+                    impl_ref,
+                    impl_data,
+                )?;
+                let Some(datum) = lowerer.impl_datum(impl_data, associated_ty_value_ids) else {
                     continue;
                 };
                 program.ensure_impl_datum_adts(target_items, &datum)?;
@@ -195,6 +288,100 @@ impl ChalkProgram {
         }
 
         Ok(program)
+    }
+
+    fn collect_trait_associated_tys<'query, D, I>(
+        &mut self,
+        item_paths: &ItemPathQuery<'query, D, I>,
+        lowerer: &ChalkLowerer<'_, 'query, D, I>,
+        trait_ref: TraitRef,
+        trait_data: &rg_ir_model::hir::items::TraitData,
+    ) -> Result<Vec<AssocTypeId<RgChalkInterner>>, I::Error>
+    where
+        D: DefMapSource<Error = I::Error>,
+        I: ItemStoreSource<'query>,
+    {
+        let mut associated_ty_ids = Vec::new();
+        for item in &trait_data.items {
+            let AssocItemId::TypeAlias(type_alias_id) = item else {
+                continue;
+            };
+            let type_alias_ref = TypeAliasRef {
+                origin: trait_ref.origin,
+                id: *type_alias_id,
+            };
+            let Some(type_alias_data) = item_paths.items().type_alias_data(type_alias_ref)? else {
+                continue;
+            };
+            let Some(datum) = lowerer.associated_ty_datum(
+                trait_ref,
+                type_alias_ref,
+                type_alias_data,
+                &trait_data.generics,
+            ) else {
+                continue;
+            };
+
+            self.associated_ty_by_trait_name
+                .insert((trait_ref, type_alias_data.name.clone()), type_alias_ref);
+            self.associated_tys.insert(type_alias_ref, Arc::new(datum));
+            associated_ty_ids.push(chalk_assoc_type_id(type_alias_ref));
+        }
+        Ok(associated_ty_ids)
+    }
+
+    fn collect_impl_associated_ty_values<'query, D, I>(
+        &mut self,
+        item_paths: &ItemPathQuery<'query, D, I>,
+        target_items: &TargetItemQuery<'query, D, I>,
+        lowerer: &ChalkLowerer<'_, 'query, D, I>,
+        impl_ref: ImplRef,
+        impl_data: &ImplData,
+    ) -> Result<Vec<AssociatedTyValueId<RgChalkInterner>>, I::Error>
+    where
+        D: DefMapSource<Error = I::Error>,
+        I: ItemStoreSource<'query>,
+    {
+        let Some(trait_ref) = impl_data.resolved_trait_ref.as_option().copied() else {
+            return Ok(Vec::new());
+        };
+
+        let mut associated_ty_value_ids = Vec::new();
+        for item in &impl_data.items {
+            let AssocItemId::TypeAlias(type_alias_id) = item else {
+                continue;
+            };
+            let type_alias_ref = TypeAliasRef {
+                origin: impl_ref.origin,
+                id: *type_alias_id,
+            };
+            let Some(type_alias_data) = item_paths.items().type_alias_data(type_alias_ref)? else {
+                continue;
+            };
+            let Some(associated_ty_ref) = self
+                .associated_ty_by_trait_name
+                .get(&(trait_ref, type_alias_data.name.clone()))
+                .copied()
+            else {
+                continue;
+            };
+            let Some(value) = lowerer.associated_ty_value(
+                impl_ref,
+                associated_ty_ref,
+                type_alias_data,
+                impl_data,
+            ) else {
+                continue;
+            };
+
+            self.ensure_ty_adts(target_items, &value.value.skip_binders().ty)?;
+            self.associated_ty_value_by_impl
+                .insert((impl_ref, associated_ty_ref), type_alias_ref);
+            self.associated_ty_values
+                .insert(type_alias_ref, Arc::new(value));
+            associated_ty_value_ids.push(chalk_assoc_type_value_id(type_alias_ref));
+        }
+        Ok(associated_ty_value_ids)
     }
 
     fn ensure_adt<'query, D, I>(
@@ -220,6 +407,12 @@ impl ChalkProgram {
         );
         self.adts.insert(type_def, Arc::new(datum));
         Ok(())
+    }
+
+    fn associated_ty_ref(&self, trait_ref: TraitRef, assoc_name: &str) -> Option<TypeAliasRef> {
+        self.associated_ty_by_trait_name
+            .get(&(trait_ref, Name::new(assoc_name)))
+            .copied()
     }
 
     fn ensure_trait_datum_adts<'query, D, I>(
@@ -418,6 +611,12 @@ impl RustIrDatabase<RgChalkInterner> for ChalkProgram {
         &self,
         ty: AssocTypeId<RgChalkInterner>,
     ) -> Arc<AssociatedTyDatum<RgChalkInterner>> {
+        if let ChalkDefId::AssocType(type_alias_ref) = ty.0
+            && let Some(datum) = self.associated_tys.get(&type_alias_ref)
+        {
+            return datum.clone();
+        }
+
         Arc::new(AssociatedTyDatum {
             trait_id: chalk_trait_id(TraitRef {
                 origin: rg_ir_model::DefMapRef::Target(rg_ir_model::TargetRef {
@@ -595,19 +794,45 @@ impl RustIrDatabase<RgChalkInterner> for ChalkProgram {
 
     fn associated_ty_from_impl(
         &self,
-        _impl_id: chalk_ir::ImplId<RgChalkInterner>,
-        _assoc_type_id: AssocTypeId<RgChalkInterner>,
+        impl_id: chalk_ir::ImplId<RgChalkInterner>,
+        assoc_type_id: AssocTypeId<RgChalkInterner>,
     ) -> Option<AssociatedTyValueId<RgChalkInterner>> {
-        None
+        let (ChalkDefId::Impl(impl_ref), ChalkDefId::AssocType(assoc_type_ref)) =
+            (impl_id.0, assoc_type_id.0)
+        else {
+            return None;
+        };
+        self.associated_ty_value_by_impl
+            .get(&(impl_ref, assoc_type_ref))
+            .copied()
+            .map(chalk_assoc_type_value_id)
     }
 
     fn associated_ty_value(
         &self,
         id: AssociatedTyValueId<RgChalkInterner>,
     ) -> Arc<AssociatedTyValue<RgChalkInterner>> {
+        if let ChalkDefId::AssocTypeValue(type_alias_ref) = id.0
+            && let Some(value) = self.associated_ty_values.get(&type_alias_ref)
+        {
+            return value.clone();
+        }
+
         Arc::new(AssociatedTyValue {
-            impl_id: chalk_ir::ImplId(id.0),
-            associated_ty_id: AssocTypeId(id.0),
+            impl_id: chalk_impl_id(ImplRef {
+                origin: rg_ir_model::DefMapRef::Target(rg_ir_model::TargetRef {
+                    package: rg_ir_model::PackageSlot(0),
+                    target: rg_ir_model::TargetId(0),
+                }),
+                id: rg_ir_model::ImplId(0),
+            }),
+            associated_ty_id: AssocTypeId(ChalkDefId::AssocType(TypeAliasRef {
+                origin: rg_ir_model::DefMapRef::Target(rg_ir_model::TargetRef {
+                    package: rg_ir_model::PackageSlot(0),
+                    target: rg_ir_model::TargetId(0),
+                }),
+                id: rg_ir_model::TypeAliasId(0),
+            })),
             value: Binders::empty(INTER, AssociatedTyValueBound { ty: unit_ty() }),
         })
     }

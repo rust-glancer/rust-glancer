@@ -11,10 +11,9 @@ use rg_ir_model::{
 };
 use rg_ir_storage::{DefMapSource, ItemStoreSource, TypePathContext};
 use rg_package_store::PackageStoreError;
-use rg_std::ExpectedUnique;
 use rg_text::Name;
 use rg_ty::{
-    TraitGoal, TraitSelection, TraitSelectionOptions,
+    TraitGoal, TraitSelection, TraitSelectionCache, TraitSelectionOptions,
     inference::{InferTy, InferTypeRefProjector},
 };
 
@@ -97,6 +96,7 @@ where
                 &mut selection,
                 &impl_data,
                 &aliased_ty,
+                &inference.trait_selection_cache,
             )?
         else {
             return Ok(None);
@@ -148,6 +148,7 @@ where
         selection: &mut TraitSelection,
         impl_data: &ImplData,
         aliased_ty: &TypeRef,
+        trait_selection_cache: &TraitSelectionCache,
     ) -> Result<Option<(InferTy, Vec<BodyCallableObligation>)>, PackageStoreError> {
         let context = TypePathContext {
             module: impl_data.owner,
@@ -189,8 +190,13 @@ where
             supports.push(support);
         }
 
-        let Some(projected_ty) =
-            self.project_impl_where_ty(selection, &mut supports, &resolver, aliased_ty)?
+        let Some(projected_ty) = self.project_impl_where_ty(
+            selection,
+            &mut supports,
+            &resolver,
+            aliased_ty,
+            trait_selection_cache,
+        )?
         else {
             return Ok(None);
         };
@@ -202,16 +208,26 @@ where
         let mut obligations = Vec::new();
 
         for (ty, expectations) in callable_predicates {
-            let Some(self_ty) =
-                self.project_impl_where_ty(selection, &mut supports, &resolver, ty)?
+            let Some(self_ty) = self.project_impl_where_ty(
+                selection,
+                &mut supports,
+                &resolver,
+                ty,
+                trait_selection_cache,
+            )?
             else {
                 return Ok(None);
             };
             for expectation in expectations {
                 let mut params = Vec::new();
                 for param in expectation.params() {
-                    let Some(param) =
-                        self.project_impl_where_ty(selection, &mut supports, &resolver, param)?
+                    let Some(param) = self.project_impl_where_ty(
+                        selection,
+                        &mut supports,
+                        &resolver,
+                        param,
+                        trait_selection_cache,
+                    )?
                     else {
                         return Ok(None);
                     };
@@ -222,6 +238,7 @@ where
                     &mut supports,
                     &resolver,
                     expectation.return_ty(),
+                    trait_selection_cache,
                 )?
                 else {
                     return Ok(None);
@@ -282,10 +299,17 @@ where
         supports: &mut [ImplWhereProjectionSupport],
         resolver: &TypeRefResolutionQuery<'query, D, I>,
         ty: &TypeRef,
+        trait_selection_cache: &TraitSelectionCache,
     ) -> Result<Option<InferTy>, PackageStoreError> {
         let subst = selection.subst.clone();
         let mut associated_ty = |param_name: &Name, assoc_name: &Name| {
-            self.project_impl_generic_associated_ty(selection, supports, param_name, assoc_name)
+            self.project_impl_generic_associated_ty(
+                selection,
+                supports,
+                param_name,
+                assoc_name,
+                trait_selection_cache,
+            )
         };
         BodyTypeRefProjector::new(&subst, resolver)
             .with_type_param_associated_ty(&mut associated_ty)
@@ -298,33 +322,33 @@ where
         supports: &mut [ImplWhereProjectionSupport],
         param_name: &Name,
         assoc_name: &Name,
+        trait_selection_cache: &TraitSelectionCache,
     ) -> Result<Option<InferTy>, PackageStoreError> {
         // `S::Item` is useful only if some support predicate proves which `Stream` impl applies
         // to `S`. We probe those predicates in the same trial table as the outer impl selection,
         // so any inference refinements stay local until the whole projection succeeds.
         let mut candidate = None;
-        let assoc_projector = SelectedTraitAssocProjector::new(self.context);
 
         for (support_idx, support) in supports.iter().enumerate() {
             if support.param_name.as_str() == param_name.as_str()
-                && let ExpectedUnique::One(support_selection) =
-                    self.probe_trait_goal_in_table(&support.goal, &selection.table)?
-                && let Some(projected_ty) = assoc_projector.project_associated_type_from_selection(
-                    &support_selection,
+                && let Some(projection) = self.normalize_assoc_type_in_table(
+                    &support.goal,
                     assoc_name.as_str(),
+                    &selection.table,
+                    trait_selection_cache,
                 )?
             {
                 if candidate.is_some() {
                     return Ok(None);
                 }
-                candidate = Some((support_idx, support_selection, projected_ty));
+                candidate = Some((support_idx, projection.table, projection.ty));
             }
         }
 
-        let Some((support_idx, support_selection, projected_ty)) = candidate else {
+        let Some((support_idx, projection_table, projected_ty)) = candidate else {
             return Ok(None);
         };
-        selection.table = support_selection.table;
+        selection.table = projection_table;
         supports[support_idx].used = true;
         Ok(Some(projected_ty))
     }

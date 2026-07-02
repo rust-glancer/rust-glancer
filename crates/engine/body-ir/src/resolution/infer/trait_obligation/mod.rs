@@ -20,7 +20,10 @@ mod selected_call;
 use rg_ir_storage::{DefMapSource, ItemStoreSource};
 use rg_package_store::PackageStoreError;
 use rg_std::ExpectedUnique;
-use rg_ty::{TraitGoal, TraitSelection, TraitSelectionQuery, inference::InferenceTable};
+use rg_ty::{
+    AssocProjectionResult, TraitGoal, TraitSelection, TraitSelectionCache, TraitSelectionOptions,
+    TraitSelectionQuery, inference::InferenceTable,
+};
 
 use crate::resolution::BodyResolutionContext;
 
@@ -59,21 +62,30 @@ where
             self.context.target_items(),
             self.context.semantic_index(),
         )
+        // Body obligations are emitted from selected calls and then evaluated by this local
+        // fixed-point pass. Treat explicit impl where-clauses as the caller's responsibility here
+        // so one body-local obligation does not build a whole Chalk program for a target. Generic
+        // parameter bounds still reject the impl in this mode.
+        .with_options(TraitSelectionOptions::new().caller_solves_where_predicates())
         .with_cache(inference.trait_selection_cache.clone())
         .probe(goal, &inference.table)
     }
 
-    fn probe_trait_goal_in_table(
+    fn normalize_assoc_type_in_table(
         &self,
         goal: &TraitGoal,
+        assoc_name: &str,
         table: &InferenceTable,
-    ) -> Result<ExpectedUnique<TraitSelection>, PackageStoreError> {
+        cache: &TraitSelectionCache,
+    ) -> Result<Option<AssocProjectionResult>, PackageStoreError> {
         TraitSelectionQuery::with_index(
             self.context.item_paths(),
             self.context.target_items(),
             self.context.semantic_index(),
         )
-        .probe(goal, table)
+        .with_options(TraitSelectionOptions::new().caller_solves_where_predicates())
+        .with_cache(cache.clone())
+        .normalize_assoc_type(goal, assoc_name, table)
     }
 
     /// Evaluate one body obligation using today's local solver hooks.

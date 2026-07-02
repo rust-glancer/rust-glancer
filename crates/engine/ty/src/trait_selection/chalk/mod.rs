@@ -7,5 +7,6 @@
 mod interner;
 mod lower;
 mod program;
+mod raise;
 
 pub(super) use self::program::ChalkTraitSolver;

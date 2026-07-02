@@ -19,10 +19,10 @@ use rg_package_store::PackageStoreError;
 use rg_std::ExpectedUnique;
 use rg_ty::{
     TraitGoal, TraitSelection, TraitSelectionOptions, TraitSelectionQuery, Ty,
-    inference::{InferTy, InferTypeRefProjector, InferenceTable},
+    inference::{InferTy, InferenceTable},
 };
 
-use crate::resolution::{BodyResolutionContext, TypeRefUseSite};
+use crate::resolution::BodyResolutionContext;
 
 /// Selected trait-method context needed to interpret `Self::Assoc` syntax.
 ///
@@ -135,25 +135,23 @@ where
             trait_ref: selected_method.trait_ref,
             args: Vec::new(),
         };
-        // Associated type projection still uses the body-local table as the source of truth for
-        // committing receiver evidence and then reads the alias from the selected impl. The Chalk
-        // MVP proves impl where-clauses, but it does not yet feed projection substitutions back
-        // into this path, so keep this selection header-only and reject impls that need predicate
-        // solving.
-        let ExpectedUnique::One(selection) =
-            self.probe_trait_goal(&goal, table, TraitSelectionOptions::new().header_only())?
-        else {
-            return Ok(None);
-        };
-        let Some(projected_ty) =
-            self.project_associated_type_from_selection(&selection, assoc_name)?
+        let Some(projection) = TraitSelectionQuery::with_index(
+            self.context.item_paths(),
+            self.context.target_items(),
+            self.context.semantic_index(),
+        )
+        // This projector is a body-local bridge from an already selected trait method to
+        // `Self::Assoc`. The body obligation pass handles explicit where-clause evidence, so this
+        // step only needs the impl header and must keep rejecting generic-parameter bounds.
+        .with_options(TraitSelectionOptions::new().caller_solves_where_predicates())
+        .normalize_assoc_type(&goal, assoc_name, table)?
         else {
             return Ok(None);
         };
 
         Ok(Some(SelectedTraitAssocProjection {
-            ty: projected_ty,
-            table: selection.table,
+            ty: projection.ty,
+            table: projection.table,
         }))
     }
 
@@ -192,26 +190,6 @@ where
         }
 
         Ok(Some(projected_ty))
-    }
-
-    pub(crate) fn project_associated_type_from_selection(
-        &self,
-        selection: &TraitSelection,
-        assoc_name: &str,
-    ) -> Result<Option<InferTy>, PackageStoreError> {
-        let Some((context, aliased_ty)) =
-            self.associated_type_alias_from_selection(selection, assoc_name)?
-        else {
-            return Ok(None);
-        };
-        let resolved_ty = self
-            .context
-            .type_refs(TypeRefUseSite::OwnerContext(context))
-            .resolve(&aliased_ty)?;
-        Ok(Some(
-            InferTypeRefProjector::new(&selection.subst)
-                .ty_from_type_ref(&aliased_ty, &resolved_ty),
-        ))
     }
 
     pub(crate) fn associated_type_alias_from_selection(
