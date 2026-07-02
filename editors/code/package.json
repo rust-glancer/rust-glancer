@@ -10,7 +10,7 @@
     "url": "https://github.com/popzxc/rust-glancer"
   },
   "engines": {
-    "vscode": "^1.119.0"
+    "vscode": "^1.126.0"
   },
   "categories": [
     "Programming Languages"
@@ -273,15 +273,15 @@
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@types/mocha": "^10.0.10",
-    "@types/node": "^24.12.3",
-    "@types/vscode": "^1.118.0",
-    "@vscode/test-cli": "^0.0.12",
+    "@types/node": "^24.13.2",
+    "@types/vscode": "^1.125.0",
+    "@vscode/test-cli": "^0.0.15",
     "@vscode/test-electron": "^2.5.2",
     "@vscode/vsce": "^3.9.2",
-    "esbuild": "^0.28.0",
-    "eslint": "^10.3.0",
-    "prettier": "^3.8.3",
+    "esbuild": "^0.28.1",
+    "eslint": "^10.6.0",
+    "prettier": "^3.9.3",
     "typescript": "^6.0.3",
-    "typescript-eslint": "^8.59.2"
+    "typescript-eslint": "^8.62.0"
   }
 }
