@@ -1,6 +1,9 @@
 use expect_test::expect;
 
-use super::utils::{AnalysisQuery, check_analysis_queries, check_analysis_queries_with_sysroot};
+use super::utils::{
+    AnalysisQuery, check_analysis_queries, check_analysis_queries_with_fake_sysroot,
+    check_analysis_queries_with_sysroot,
+};
 
 #[test]
 fn returns_body_expression_types() {
@@ -1343,6 +1346,70 @@ pub mod prelude {
             - &nominal struct storage[lib]::crate::ImportData
 
             for item from sysroot chained method returned slice
+            - &nominal struct storage[lib]::crate::ImportData
+        "#]],
+    );
+}
+
+#[test]
+fn shared_fake_sysroot_provides_prelude_and_slice_iteration() {
+    check_analysis_queries_with_fake_sysroot(
+        r#"
+//- /Cargo.toml
+[workspace]
+members = ["storage", "app"]
+resolver = "3"
+
+//- /storage/Cargo.toml
+[package]
+name = "storage"
+version = "0.1.0"
+edition = "2024"
+
+//- /storage/src/lib.rs
+pub struct ImportData;
+
+pub struct DefMap;
+
+impl DefMap {
+    pub fn imports(&self) -> &[ImportData] {
+        missing()
+    }
+}
+
+//- /app/Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+storage = { path = "../storage" }
+
+//- /app/src/lib.rs
+use storage::{DefMap, ImportData};
+
+pub fn missing<T>() -> T {}
+
+pub fn use_it(def_map: &DefMap) {
+    let values: Vec<ImportData> = missing();
+    let _values = val$type_values$ues;
+
+    for import in def_map.imports() {
+        let _import = imp$type_import$ort;
+    }
+}
+"#,
+        &[
+            AnalysisQuery::ty("prelude Vec from fake sysroot", "type_values").in_lib("app"),
+            AnalysisQuery::ty("for item from fake sysroot slice iterator", "type_import")
+                .in_lib("app"),
+        ],
+        expect![[r#"
+            prelude Vec from fake sysroot
+            - nominal struct alloc[lib]::crate::vec::Vec<nominal struct storage[lib]::crate::ImportData>
+
+            for item from fake sysroot slice iterator
             - &nominal struct storage[lib]::crate::ImportData
         "#]],
     );
