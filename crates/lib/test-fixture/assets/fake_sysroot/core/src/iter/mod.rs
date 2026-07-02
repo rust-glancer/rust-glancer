@@ -14,21 +14,26 @@ pub trait Iterator {
 
     fn map<B, F>(self, f: F) -> Map<Self, F>
     where
+        Self: Sized,
         F: crate::FnMut(Self::Item) -> B;
 
     fn filter<P>(self, predicate: P) -> Filter<Self, P>
     where
+        Self: Sized,
         P: crate::FnMut(&Self::Item) -> bool;
 
     fn filter_map<B, F>(self, f: F) -> FilterMap<Self, F>
     where
+        Self: Sized,
         F: crate::FnMut(Self::Item) -> crate::option::Option<B>;
 
-    fn enumerate(self) -> Enumerate<Self>;
-
-    fn collect<B>(self) -> B
+    fn enumerate(self) -> Enumerate<Self>
     where
-        B: FromIterator<Self::Item>;
+        Self: Sized;
+
+    fn collect<B: FromIterator<Self::Item>>(self) -> B
+    where
+        Self: Sized;
 }
 
 impl<I: Iterator> IntoIterator for I {

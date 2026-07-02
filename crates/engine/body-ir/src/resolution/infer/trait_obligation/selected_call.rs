@@ -18,10 +18,10 @@ use rg_ty::{
 use crate::resolution::{
     TypeRefUseSite,
     query::TypeRefResolutionQuery,
-    support::{CallableTypeRefExpectation, SelectedTraitMethodContext},
+    support::{BodyTypeRefProjector, CallableTypeRefExpectation, SelectedTraitMethodContext},
 };
 
-use super::super::{BodyInferenceCtx, projection::BodyTypeRefProjector};
+use super::super::BodyInferenceCtx;
 use super::{BodyCallableObligation, BodyObligation, BodyTraitObligationSolver};
 
 /// Signature facts from an already-selected call that can expose trait obligations.

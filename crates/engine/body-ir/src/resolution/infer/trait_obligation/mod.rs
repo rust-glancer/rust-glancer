@@ -6,8 +6,8 @@
 //!
 //! There are two related flows here:
 //!
-//! - selected-call obligations, such as `where B: FromIterator<Self::Item>` on a selected method;
-//! - selected-impl associated alias projection, such as projecting `Self::Item` through an impl
+//! - selected-call obligations, such as a selected method's `where R: From<Self::Output>` bound;
+//! - selected-impl associated alias projection, such as projecting `Self::Output` through an impl
 //!   whose where-clause contains `F: FnMut(S::Item) -> B`.
 //!
 //! Both flows need the same body-local trait probing and inference-table commit semantics, so they
@@ -17,6 +17,7 @@ mod assoc_projection;
 mod obligation;
 mod selected_call;
 
+use rg_ir_model::TraitApplicability;
 use rg_ir_storage::{DefMapSource, ItemStoreSource};
 use rg_package_store::PackageStoreError;
 use rg_std::ExpectedUnique;
@@ -25,7 +26,7 @@ use rg_ty::{
     TraitSelectionQuery, inference::InferenceTable,
 };
 
-use crate::resolution::BodyResolutionContext;
+use crate::resolution::{BodyResolutionContext, support::ImplPredicateAssocProjector};
 
 use super::BodyCallableGoalSolver;
 use super::BodyInferenceCtx;
@@ -78,6 +79,22 @@ where
         table: &InferenceTable,
         cache: &TraitSelectionCache,
     ) -> Result<Option<AssocProjectionResult>, PackageStoreError> {
+        // Nested support goals often need the same impl-predicate projection as the outer selected
+        // alias. For example, while solving `Adapter<S, F>::Output = B`, a callable predicate may
+        // mention `S::Item`, and `S` may itself be another projected impl type. The type-layer
+        // normalizer does not inspect those caller-owned support predicates, so try the body-local
+        // support path before falling back to the shared query.
+        if let Some(projection) = ImplPredicateAssocProjector::new(self.context)
+            .project_goal_through_impl_predicates(goal, assoc_name, table)?
+        {
+            let (ty, table) = projection.into_parts();
+            return Ok(Some(AssocProjectionResult {
+                ty,
+                applicability: TraitApplicability::Yes,
+                table,
+            }));
+        }
+
         TraitSelectionQuery::with_index(
             self.context.item_paths(),
             self.context.target_items(),

@@ -55,6 +55,14 @@ where
         self.associated_item_for_trait(ty, CanonicalIteratorTrait::Iterator)
     }
 
+    /// Returns true when a selected trait is the canonical `core::iter::Iterator`.
+    pub fn is_iterator_trait_ref(&self, trait_ref: TraitRef) -> Result<bool, D::Error> {
+        let projector = AssociatedTypeProjector::new(&self.item_paths, &self.target_items);
+        let canonical_traits =
+            self.canonical_trait_refs_from_use_site(&projector, CanonicalIteratorTrait::Iterator)?;
+        Ok(canonical_traits.contains(&trait_ref))
+    }
+
     fn associated_item_for_trait(
         &self,
         ty: &Ty,

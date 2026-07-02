@@ -11,6 +11,7 @@ enum PredicatePolicy {
     SolveWithChalk,
     RejectAll,
     CallerSolvesWherePredicates,
+    CallerSolvesImplPredicates,
 }
 
 impl Default for TraitSelectionOptions {
@@ -43,6 +44,16 @@ impl TraitSelectionOptions {
         self
     }
 
+    /// Match the direct impl header while leaving all impl predicates to the caller.
+    ///
+    /// This is for body-local paths that immediately inspect both inline type-parameter bounds and
+    /// explicit where-clauses. It still rejects lifetime-parameter bounds because those are not part
+    /// of that body-local predicate stream.
+    pub fn caller_solves_impl_predicates(mut self) -> Self {
+        self.predicate_policy = PredicatePolicy::CallerSolvesImplPredicates;
+        self
+    }
+
     pub(super) fn accepts_impl_header(self, impl_data: &ImplData) -> bool {
         if !impl_data.generics.consts.is_empty() {
             return false;
@@ -57,6 +68,9 @@ impl TraitSelectionOptions {
             PredicatePolicy::CallerSolvesWherePredicates => {
                 !Self::has_generic_param_bounds(impl_data)
             }
+            PredicatePolicy::CallerSolvesImplPredicates => {
+                !Self::has_lifetime_param_bounds(impl_data)
+            }
         }
     }
 
@@ -65,15 +79,19 @@ impl TraitSelectionOptions {
     }
 
     fn has_generic_param_bounds(impl_data: &ImplData) -> bool {
-        impl_data
-            .generics
-            .lifetimes
-            .iter()
-            .any(|param| !param.bounds.is_empty())
+        Self::has_lifetime_param_bounds(impl_data)
             || impl_data
                 .generics
                 .types
                 .iter()
                 .any(|param| !param.bounds.is_empty())
+    }
+
+    fn has_lifetime_param_bounds(impl_data: &ImplData) -> bool {
+        impl_data
+            .generics
+            .lifetimes
+            .iter()
+            .any(|param| !param.bounds.is_empty())
     }
 }

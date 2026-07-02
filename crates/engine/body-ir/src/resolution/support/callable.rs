@@ -195,9 +195,17 @@ where
             let Some(selected_trait_method) = self.selected_trait_method.as_ref() else {
                 return Ok(None);
             };
-            return SelectedTraitAssocProjector::new(self.context)
-                .project_concrete_ty(selected_trait_method, assoc_name)
-                .map(|ty| Some(ty.unwrap_or(Ty::Unknown)));
+            if let Some(projected_ty) = SelectedTraitAssocProjector::new(self.context)
+                .project_concrete_ty(selected_trait_method, assoc_name)?
+            {
+                return Ok(Some(projected_ty));
+            }
+            if let Some(projected_ty) =
+                self.project_canonical_iterator_item(selected_trait_method, assoc_name)?
+            {
+                return Ok(Some(projected_ty));
+            }
+            return Ok(Some(Ty::Unknown));
         }
 
         // Predicate adapters such as `filter` usually write `FnMut(&Self::Item)`.
@@ -211,6 +219,34 @@ where
         }
 
         Ok(None)
+    }
+
+    /// Fallback for early closure-parameter projection on canonical iterator methods.
+    ///
+    /// `Iterator::map` and `Iterator::filter` need `Self::Item` before the closure body is
+    /// resolved. The generic selected-associated path above is the preferred answer. This fallback
+    /// only covers the canonical iterator trait so editor behavior can still use older iterator
+    /// item knowledge when the generic path cannot project a concrete type.
+    ///
+    /// TODO: Delete this after qualified associated projections let the generic impl-predicate
+    /// projector cover the real std adapter shapes that still need this bridge.
+    fn project_canonical_iterator_item(
+        &self,
+        selected_trait_method: &SelectedTraitMethodContext<'_>,
+        assoc_name: &str,
+    ) -> Result<Option<Ty>, PackageStoreError> {
+        if assoc_name != "Item" {
+            return Ok(None);
+        }
+
+        let iteration_items = self.context.iteration_items();
+        if !iteration_items.is_iterator_trait_ref(selected_trait_method.trait_ref())? {
+            return Ok(None);
+        }
+
+        let item_ty =
+            iteration_items.iterator_item_for_ty(selected_trait_method.selected_self_ty())?;
+        Ok((!item_ty.has_unknown_or_syntax()).then_some(item_ty))
     }
 }
 

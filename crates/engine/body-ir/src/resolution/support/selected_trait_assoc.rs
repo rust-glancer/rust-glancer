@@ -2,37 +2,38 @@
 //!
 //! Selected trait methods have one extra fact that plain type-ref resolution does not carry:
 //! which receiver type selected the trait method. That matters for syntax such as
-//! `Self::Item` in `Iterator::collect` or `Iterator::map`, because the `Item` alias has to be
-//! read from the receiver impl for that selected `Self` type.
+//! `Self::Output` in a trait method signature, because the associated alias has to be read from
+//! the receiver impl for that selected `Self` type.
 //!
-//! In simple words: imagine that you have `foo.iter().map(..)`. You know that `foo` is `Vec<u8>`,
-//! and you know that `map()` comes from `Iterator` trait. But `map` talks about `Self::Item`,
-//! so what is `Self` here? It might not be the type that you're invoking `map()` on -- trait can
-//! be selected through autoderef or the receiver type might not match `Self` overall.
+//! In simple words: imagine that `value.produce()` resolves to a trait method whose return type is
+//! `Self::Output`. You know the selected receiver type at the call site, and you know which trait
+//! supplied the method. This helper turns those two facts into the trait goal needed to project the
+//! associated type.
 //!
-//! To resolve that, we need an extra hop to find a unique trait impl for this method invocation
-//! and resolve associated item through it.
+//! To resolve that, we build a selected-method trait goal and delegate actual impl projection to
+//! the shared impl-predicate projector.
 
-use rg_ir_model::{AssocItemId, FunctionRef, ItemOwner, TraitRef, TypeAliasRef, items::TypeRef};
-use rg_ir_storage::{DefMapSource, ItemStoreSource, TypePathContext};
+use rg_ir_model::{FunctionRef, ItemOwner, TraitRef, items::TypeRef};
+use rg_ir_storage::{DefMapSource, ItemStoreSource};
 use rg_package_store::PackageStoreError;
-use rg_std::ExpectedUnique;
 use rg_ty::{
-    TraitGoal, TraitSelection, TraitSelectionOptions, TraitSelectionQuery, Ty,
+    TraitGoal, TraitSelectionOptions, TraitSelectionQuery, Ty,
     inference::{InferTy, InferenceTable},
 };
 
 use crate::resolution::BodyResolutionContext;
 
+use super::{ImplPredicateAssocProjection, ImplPredicateAssocProjector};
+
 /// Selected trait-method context needed to interpret `Self::Assoc` syntax.
 ///
 /// Basically, "we think the method comes from this trait, and we have this
-/// receiver type at call site", e.g. for `users.iter().map(...)`
-/// - `trait_ref` would correspond to `Iterator`
-/// - `selected_self_ty` would correspond to `slice::Iter<'_, User>`
+/// receiver type at call site", e.g. for `value.produce()`
+/// - `trait_ref` would correspond to `Produces`
+/// - `selected_self_ty` would correspond to `Adapter<User>`
 ///
 /// Note that at this stage we have not done impl matching yet, so Self ty
-/// is not necessarily `Foo` from `impl Iterator for Foo`.
+/// is not necessarily `Foo` from `impl Produces for Foo`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct SelectedTraitMethodContext<'a> {
     trait_ref: TraitRef,
@@ -40,6 +41,14 @@ pub(crate) struct SelectedTraitMethodContext<'a> {
 }
 
 impl<'a> SelectedTraitMethodContext<'a> {
+    pub(crate) fn trait_ref(&self) -> TraitRef {
+        self.trait_ref
+    }
+
+    pub(crate) fn selected_self_ty(&self) -> &'a Ty {
+        self.selected_self_ty
+    }
+
     /// Build selected-trait context from an already selected associated function.
     ///
     /// Inherent calls and free functions have no trait `Self`, so they cannot project `Self::Assoc`
@@ -85,28 +94,7 @@ impl<'a> SelectedTraitMethodContext<'a> {
     }
 }
 
-/// Result of projecting one associated type through a selected receiver impl.
-///
-/// Roughly "we have done trait solving and here's what we found together with
-/// evidence".
-pub(crate) struct SelectedTraitAssocProjection {
-    ty: InferTy,
-    table: InferenceTable,
-}
-
-impl SelectedTraitAssocProjection {
-    pub(crate) fn into_parts(self) -> (InferTy, InferenceTable) {
-        (self.ty, self.table)
-    }
-}
-
 /// Projects `Self::Assoc` through the unique impl selected by a trait method receiver.
-// TODO/watch: this entity is basically two things glued together: probe an impl, and then
-// fetch an associated item from it. It kinda feels like two separate concepts wanting
-// to be born, but right now we have a domain problem that fits the shape, and no demand
-// for either of its halved being generic. In the future, if demand for trait probing at
-// callsite grows, we potentially want to split this thing rather than reimplement probing
-// everywhere.
 pub(crate) struct SelectedTraitAssocProjector<'query, D, I> {
     context: BodyResolutionContext<'query, D, I>,
 }
@@ -129,12 +117,8 @@ where
         selected_method: &SelectedTraitMethodContext<'_>,
         assoc_name: &str,
         table: &InferenceTable,
-    ) -> Result<Option<SelectedTraitAssocProjection>, PackageStoreError> {
-        let goal = TraitGoal {
-            self_ty: InferTy::from_ty(selected_method.selected_self_ty),
-            trait_ref: selected_method.trait_ref,
-            args: Vec::new(),
-        };
+    ) -> Result<Option<ImplPredicateAssocProjection>, PackageStoreError> {
+        let goal = self.selected_goal(selected_method);
         let Some(projection) = TraitSelectionQuery::with_index(
             self.context.item_paths(),
             self.context.target_items(),
@@ -149,28 +133,10 @@ where
             return Ok(None);
         };
 
-        Ok(Some(SelectedTraitAssocProjection {
-            ty: projection.ty,
-            table: projection.table,
-        }))
-    }
-
-    /// Select the receiver impl using caller-provided trait-selection options.
-    pub(crate) fn select_infer_trait_impl(
-        &self,
-        selected_method: &SelectedTraitMethodContext<'_>,
-        table: &InferenceTable,
-        options: TraitSelectionOptions,
-    ) -> Result<Option<TraitSelection>, PackageStoreError> {
-        let goal = TraitGoal {
-            self_ty: InferTy::from_ty(selected_method.selected_self_ty),
-            trait_ref: selected_method.trait_ref,
-            args: Vec::new(),
-        };
-        let ExpectedUnique::One(selection) = self.probe_trait_goal(&goal, table, options)? else {
-            return Ok(None);
-        };
-        Ok(Some(selection))
+        Ok(Some(ImplPredicateAssocProjection::new(
+            projection.ty,
+            projection.table,
+        )))
     }
 
     /// Project an associated type into a stable concrete type for non-mutating callers.
@@ -180,7 +146,17 @@ where
         assoc_name: &str,
     ) -> Result<Option<Ty>, PackageStoreError> {
         let table = InferenceTable::new();
-        let Some(projection) = self.project_infer_ty(selected_method, assoc_name, &table)? else {
+        // Prefer the body-local impl-predicate path first. It can use simple support predicates
+        // such as `S: Source` without mutating caller inference. If that cannot answer, fall
+        // back to the shared associated-type normalizer for direct aliases.
+        let projection = if let Some(projection) =
+            self.project_concrete_infer_ty(selected_method, assoc_name, &table)?
+        {
+            Some(projection)
+        } else {
+            self.project_infer_ty(selected_method, assoc_name, &table)?
+        };
+        let Some(projection) = projection else {
             return Ok(None);
         };
         let (projected_ty, table) = projection.into_parts();
@@ -192,62 +168,36 @@ where
         Ok(Some(projected_ty))
     }
 
-    pub(crate) fn associated_type_alias_from_selection(
+    /// Project concrete selected aliases using the impl predicates that the project understands
+    /// locally.
+    ///
+    /// This is the early, non-mutating companion to the final body-obligation path. It is enough
+    /// for aliases such as `Adapter<S>::Output = S::Item`: the `S: Source` support predicate tells
+    /// us how to normalize `S::Item`, while unrelated callable predicates are ignored because they
+    /// do not contribute to that alias value. Aliases that require callable return solving, such as
+    /// `CallAdapter<S, F>::Output = B` with `F: FnMut(S::Item) -> B`, stay unknown here and are
+    /// handled by the final inference pass where closure bodies are available.
+    fn project_concrete_infer_ty(
         &self,
-        selection: &TraitSelection,
+        selected_method: &SelectedTraitMethodContext<'_>,
         assoc_name: &str,
-    ) -> Result<Option<(TypePathContext, TypeRef)>, PackageStoreError> {
-        let Some(impl_data) = self
-            .context
-            .item_query()
-            .impl_data(selection.trait_impl.impl_ref)?
-        else {
-            return Ok(None);
-        };
-
-        for item in &impl_data.items {
-            let AssocItemId::TypeAlias(type_alias_id) = item else {
-                continue;
-            };
-            let type_alias_ref = TypeAliasRef {
-                origin: selection.trait_impl.impl_ref.origin,
-                id: *type_alias_id,
-            };
-            let Some(type_alias_data) =
-                self.context.item_query().type_alias_data(type_alias_ref)?
-            else {
-                continue;
-            };
-            if type_alias_data.name.as_str() != assoc_name {
-                continue;
-            }
-            let Some(aliased_ty) = type_alias_data.signature.aliased_ty() else {
-                continue;
-            };
-
-            let context = TypePathContext {
-                module: impl_data.owner,
-                impl_ref: Some(selection.trait_impl.impl_ref),
-            };
-            return Ok(Some((context, aliased_ty.clone())));
-        }
-
-        Ok(None)
+        table: &InferenceTable,
+    ) -> Result<Option<ImplPredicateAssocProjection>, PackageStoreError> {
+        let goal = self.selected_goal(selected_method);
+        ImplPredicateAssocProjector::new(self.context)
+            .project_goal_through_impl_predicates(&goal, assoc_name, table)
     }
 
-    fn probe_trait_goal(
-        &self,
-        goal: &TraitGoal,
-        table: &InferenceTable,
-        options: TraitSelectionOptions,
-    ) -> Result<ExpectedUnique<TraitSelection>, PackageStoreError> {
-        TraitSelectionQuery::with_index(
-            self.context.item_paths(),
-            self.context.target_items(),
-            self.context.semantic_index(),
-        )
-        .with_options(options)
-        .probe(goal, table)
+    /// Build the trait goal represented by this selected method call.
+    ///
+    /// Trait-level generic args are not threaded through selected method context yet, so selected
+    /// contexts are only built for traits without such params.
+    fn selected_goal(&self, selected_method: &SelectedTraitMethodContext<'_>) -> TraitGoal {
+        TraitGoal {
+            self_ty: InferTy::from_ty(selected_method.selected_self_ty),
+            trait_ref: selected_method.trait_ref,
+            args: Vec::new(),
+        }
     }
 }
 

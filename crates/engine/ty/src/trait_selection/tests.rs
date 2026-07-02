@@ -848,3 +848,49 @@ fn header_only_rejects_impl_type_param_bounds_even_when_chalk_can_prove_them() {
         "header-only selection must not pretend generic parameter bounds are true"
     );
 }
+
+#[test]
+fn caller_solved_impl_predicates_can_return_impl_with_type_param_bounds() {
+    let from_iterator = trait_ref(0);
+    let vec_def = type_def(0);
+    let user_def = type_def(1);
+
+    let from_iterator_impl = impl_data(
+        0,
+        generics(vec![bounded_type_param("T")]),
+        from_iterator,
+        path_ty("FromIterator", vec![type_arg(path_ty("T", Vec::new()))]),
+        vec_def,
+        path_ty("Vec", vec![type_arg(path_ty("T", Vec::new()))]),
+    );
+    let fixture = fixture(vec![from_iterator_impl]);
+
+    let goal = TraitGoal {
+        self_ty: nominal_infer_ty(
+            vec_def,
+            vec![infer_type_arg(InferTy::from_ty(&nominal_ty(user_def)))],
+        ),
+        trait_ref: from_iterator,
+        args: vec![infer_type_arg(InferTy::from_ty(&nominal_ty(user_def)))],
+    };
+    let table = InferenceTable::new();
+
+    assert!(
+        query(&fixture)
+            .with_options(TraitSelectionOptions::new().caller_solves_where_predicates())
+            .probe(&goal, &table)
+            .unwrap()
+            .is_empty(),
+        "where-only mode should keep rejecting inline type-parameter bounds"
+    );
+    assert!(
+        matches!(
+            query(&fixture)
+                .with_options(TraitSelectionOptions::new().caller_solves_impl_predicates())
+                .probe(&goal, &table)
+                .unwrap(),
+            ExpectedUnique::One(_)
+        ),
+        "impl-predicate mode leaves inline bounds to the caller"
+    );
+}
