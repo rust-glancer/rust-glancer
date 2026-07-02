@@ -1,9 +1,16 @@
 use rg_ir_model::hir::items::ImplData;
 
-/// Controls how much of an impl header the shallow selector is allowed to accept.
+/// Controls where impl predicates are solved during trait selection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TraitSelectionOptions {
-    where_predicates_allowed: bool,
+    predicate_policy: PredicatePolicy,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PredicatePolicy {
+    SolveWithChalk,
+    RejectAll,
+    CallerSolvesWherePredicates,
 }
 
 impl Default for TraitSelectionOptions {
@@ -13,31 +20,60 @@ impl Default for TraitSelectionOptions {
 }
 
 impl TraitSelectionOptions {
-    /// Keep trait selection strict by default: impl `where` predicates require more solving.
+    /// Keep trait selection strict by default: impl predicates must be proved by Chalk.
     pub fn new() -> Self {
         Self {
-            where_predicates_allowed: false,
+            predicate_policy: PredicatePolicy::SolveWithChalk,
         }
     }
 
-    /// Accept the impl header while leaving `where` predicates for a caller to solve separately.
-    pub fn ignore_where_predicates(mut self) -> Self {
-        self.where_predicates_allowed = true;
+    /// Match only the direct impl header, rejecting impls that carry unresolved predicates.
+    pub fn header_only(mut self) -> Self {
+        self.predicate_policy = PredicatePolicy::RejectAll;
+        self
+    }
+
+    /// Match the direct impl header while leaving explicit `where` predicates to the caller.
+    ///
+    /// This is narrower than a blanket predicate skip: type-parameter and lifetime-parameter
+    /// bounds still reject the impl because callers using this mode only inspect explicit
+    /// where-clauses.
+    pub fn caller_solves_where_predicates(mut self) -> Self {
+        self.predicate_policy = PredicatePolicy::CallerSolvesWherePredicates;
         self
     }
 
     pub(super) fn accepts_impl_header(self, impl_data: &ImplData) -> bool {
-        (self.where_predicates_allowed || impl_data.generics.where_predicates.is_empty())
-            && impl_data
-                .generics
-                .lifetimes
-                .iter()
-                .all(|param| param.bounds.is_empty())
-            && impl_data
+        if !impl_data.generics.consts.is_empty() {
+            return false;
+        }
+
+        match self.predicate_policy {
+            PredicatePolicy::SolveWithChalk => true,
+            PredicatePolicy::RejectAll => {
+                !Self::has_generic_param_bounds(impl_data)
+                    && impl_data.generics.where_predicates.is_empty()
+            }
+            PredicatePolicy::CallerSolvesWherePredicates => {
+                !Self::has_generic_param_bounds(impl_data)
+            }
+        }
+    }
+
+    pub(super) fn should_solve_where_predicates(self) -> bool {
+        self.predicate_policy == PredicatePolicy::SolveWithChalk
+    }
+
+    fn has_generic_param_bounds(impl_data: &ImplData) -> bool {
+        impl_data
+            .generics
+            .lifetimes
+            .iter()
+            .any(|param| !param.bounds.is_empty())
+            || impl_data
                 .generics
                 .types
                 .iter()
-                .all(|param| param.bounds.is_empty() && param.default.is_none())
-            && impl_data.generics.consts.is_empty()
+                .any(|param| !param.bounds.is_empty())
     }
 }

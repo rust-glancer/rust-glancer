@@ -1,10 +1,12 @@
 //! Bounded trait-impl selection shared by inference and editor queries.
 //!
-//! This is intentionally smaller than a real trait solver. It starts from a resolved trait goal,
-//! enumerates visible impls for that trait, and checks only direct header relationships that can be
-//! expressed as inference-table unification. More complex bounds are skipped so callers can keep
-//! returning unknown or maybe-applicable facts instead of inventing a proof.
+//! This intentionally keeps a small project-facing facade around trait solving. The selector starts
+//! from a resolved trait goal, uses the existing inference table to match direct impl-header
+//! evidence, and then asks Chalk to prove the candidate's where-clause obligations when the caller
+//! wants full predicate solving. Callers that already have their own obligation/projection path can
+//! still opt into header-only selection through `TraitSelectionOptions`.
 
+mod chalk;
 mod header;
 mod matcher;
 
@@ -12,6 +14,7 @@ use rg_ir_model::{TraitApplicability, TraitImplRef, TraitRef};
 use rg_ir_storage::{DefMapSource, ItemLookupIndex, ItemStoreSource, TargetItemQuery};
 use rg_std::ExpectedUnique;
 
+use self::chalk::ChalkTraitSolver;
 pub use self::header::TraitSelectionOptions;
 use self::matcher::CandidateMatcher;
 use crate::ItemPathQuery;
@@ -80,9 +83,23 @@ where
         goal: &TraitGoal,
         table: &InferenceTable,
     ) -> Result<ExpectedUnique<TraitSelection>, I::Error> {
+        let trait_impls = self.trait_impl_candidates(goal.trait_ref)?;
+        // Build the Chalk program only if some candidate reaches predicate solving, then reuse it
+        // for the rest of this probe. Wider caching can wait until the solver surface settles.
+        let mut solver = None;
+
         let mut selections = ExpectedUnique::new();
-        for trait_impl in self.trait_impl_candidates(goal.trait_ref)? {
-            let Some(selection) = self.probe_trait_impl(goal, table, trait_impl)? else {
+        for trait_impl in trait_impls {
+            let Some(selection) = Self::probe_impl(
+                &self.item_paths,
+                &self.target_items,
+                goal,
+                table,
+                trait_impl,
+                self.options,
+                &mut solver,
+            )?
+            else {
                 continue;
             };
             selections.push(selection);
@@ -102,6 +119,7 @@ where
         table: &InferenceTable,
         trait_impl: TraitImplRef,
     ) -> Result<Option<TraitSelection>, I::Error> {
+        let mut solver = None;
         Self::probe_impl(
             &self.item_paths,
             &self.target_items,
@@ -109,6 +127,7 @@ where
             table,
             trait_impl,
             self.options,
+            &mut solver,
         )
     }
 
@@ -126,7 +145,16 @@ where
         trait_impl: TraitImplRef,
         options: TraitSelectionOptions,
     ) -> Result<Option<TraitSelection>, I::Error> {
-        Self::probe_impl(item_paths, target_items, goal, table, trait_impl, options)
+        let mut solver = None;
+        Self::probe_impl(
+            item_paths,
+            target_items,
+            goal,
+            table,
+            trait_impl,
+            options,
+            &mut solver,
+        )
     }
 
     fn trait_impl_candidates(&self, trait_ref: TraitRef) -> Result<Vec<TraitImplRef>, I::Error> {
@@ -144,6 +172,7 @@ where
         table: &InferenceTable,
         trait_impl: TraitImplRef,
         options: TraitSelectionOptions,
+        solver: &mut Option<ChalkTraitSolver>,
     ) -> Result<Option<TraitSelection>, I::Error> {
         let Some(impl_data) = target_items.items().impl_data(trait_impl.impl_ref)? else {
             return Ok(None);
@@ -162,6 +191,22 @@ where
         else {
             return Ok(None);
         };
+        let mut applicability = applicability;
+
+        if options.should_solve_where_predicates() {
+            if solver.is_none() {
+                *solver = Some(ChalkTraitSolver::new(item_paths, target_items)?);
+            }
+            let solver = solver
+                .as_ref()
+                .expect("solver should be initialized before use");
+            let Some(where_applicability) =
+                solver.impl_bounds_applicability(item_paths, trait_impl, impl_data, &subst, &table)
+            else {
+                return Ok(None);
+            };
+            applicability = applicability.and(where_applicability);
+        }
 
         Ok(applicability.is_applicable().then_some(TraitSelection {
             trait_impl,

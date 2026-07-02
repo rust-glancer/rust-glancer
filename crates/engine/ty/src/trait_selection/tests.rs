@@ -1,15 +1,15 @@
 use std::convert::Infallible;
 
-use rg_ir_model::hir::items::ImplData;
+use rg_ir_model::hir::items::{ImplData, TraitData};
 use rg_ir_model::hir::source::{GeneratedItemRef, GeneratedSourceId, ItemSource, ItemSourceKind};
 use rg_ir_model::items::{
     GenericArg as ItemGenericArg, GenericParams, ItemTreeId, TypeBound, TypeParamData, TypePath,
-    TypePathSegment, TypeRef, WherePredicate,
+    TypePathSegment, TypeRef, VisibilityLevel, WherePredicate,
 };
 use rg_ir_model::{
-    DefMapRef, ExprId, FileId, ImplId, LocalImplId, LocalImplRef, ModuleId, ModuleRef, PackageSlot,
-    Span, StructId, TargetId, TargetRef, TextSpan, TraitId, TraitImplRef, TraitRef, TypeDefId,
-    TypeDefRef,
+    DefMapRef, ExprId, FileId, ImplId, LocalDefId, LocalDefRef, LocalImplId, LocalImplRef,
+    ModuleId, ModuleRef, PackageSlot, Span, StructId, TargetId, TargetRef, TextSpan, TraitId,
+    TraitImplRef, TraitRef, TypeDefId, TypeDefRef,
 };
 use rg_ir_storage::{
     DefMap, DefMapSource, ItemLookupIndex, ItemStore, ItemStoreBuilder, ItemStoreSource,
@@ -110,6 +110,13 @@ fn trait_ref(index: usize) -> TraitRef {
     }
 }
 
+fn local_def(index: usize) -> LocalDefRef {
+    LocalDefRef {
+        origin: origin(),
+        local_def: LocalDefId(index),
+    }
+}
+
 fn trait_impl(index: usize, trait_ref: TraitRef) -> TraitImplRef {
     TraitImplRef {
         impl_ref: rg_ir_model::ImplRef {
@@ -160,12 +167,16 @@ fn type_param(name: &str) -> TypeParamData {
     }
 }
 
-fn bounded_type_param(name: &str) -> TypeParamData {
+fn type_param_with_bounds(name: &str, bounds: Vec<TypeBound>) -> TypeParamData {
     TypeParamData {
         name: Name::new(name),
-        bounds: vec![TypeBound::Trait(path_ty("Clone", Vec::new()))],
+        bounds,
         default: None,
     }
+}
+
+fn bounded_type_param(name: &str) -> TypeParamData {
+    type_param_with_bounds(name, vec![TypeBound::Trait(path_ty("Clone", Vec::new()))])
 }
 
 fn generics(types: Vec<TypeParamData>) -> GenericParams {
@@ -226,8 +237,30 @@ fn impl_data(
     }
 }
 
+fn trait_data(index: usize, name: &str, generics: GenericParams) -> TraitData {
+    TraitData {
+        local_def: local_def(index),
+        source: dummy_source(),
+        owner: module(),
+        name: Name::new(name),
+        visibility: VisibilityLevel::Public,
+        docs: None,
+        generics,
+        super_traits: Vec::new(),
+        items: Vec::new(),
+        is_unsafe: false,
+    }
+}
+
 fn fixture(impls: Vec<ImplData>) -> TraitSelectionFixture {
+    fixture_with_traits(Vec::new(), impls)
+}
+
+fn fixture_with_traits(traits: Vec<TraitData>, impls: Vec<ImplData>) -> TraitSelectionFixture {
     let mut builder = ItemStoreBuilder::new(origin(), 0);
+    for trait_data in traits {
+        builder.traits.alloc(trait_data);
+    }
     for impl_data in impls {
         builder.impls.alloc(impl_data);
     }
@@ -391,7 +424,7 @@ fn probe_keeps_multiple_applicable_impls_as_separate_candidates() {
 }
 
 #[test]
-fn probe_skips_impls_that_need_bound_solving() {
+fn probe_rejects_impls_with_unproven_bounds() {
     let vec_def = type_def(0);
     let user_def = type_def(1);
     let from_iterator = trait_ref(0);
@@ -419,7 +452,122 @@ fn probe_skips_impls_that_need_bound_solving() {
 }
 
 #[test]
-fn probe_header_can_return_impl_that_still_needs_where_predicate_solving() {
+fn probe_uses_chalk_to_prove_impl_type_param_bounds() {
+    let clone = trait_ref(0);
+    let from_iterator = trait_ref(1);
+    let vec_def = type_def(0);
+    let user_def = type_def(1);
+
+    let from_iterator_impl = impl_data(
+        0,
+        generics(vec![bounded_type_param("T")]),
+        from_iterator,
+        path_ty("FromIterator", vec![type_arg(path_ty("T", Vec::new()))]),
+        vec_def,
+        path_ty("Vec", vec![type_arg(path_ty("T", Vec::new()))]),
+    );
+    let clone_impl = impl_data(
+        1,
+        GenericParams::default(),
+        clone,
+        path_ty("Clone", Vec::new()),
+        user_def,
+        path_ty("User", Vec::new()),
+    );
+    let fixture = fixture_with_traits(
+        vec![trait_data(0, "Clone", GenericParams::default())],
+        vec![from_iterator_impl, clone_impl],
+    );
+
+    let mut table = InferenceTable::new();
+    let element = table.new_type_var();
+    let goal_self = nominal_infer_ty(vec_def, vec![infer_type_arg(element.clone())]);
+    let goal = TraitGoal {
+        self_ty: goal_self.clone(),
+        trait_ref: from_iterator,
+        args: vec![infer_type_arg(InferTy::from_ty(&nominal_ty(user_def)))],
+    };
+
+    let selection = query(&fixture).probe(&goal, &table).unwrap();
+    let ExpectedUnique::One(selection) = selection else {
+        panic!("Chalk should prove the Clone bound through the visible Clone impl");
+    };
+
+    assert_eq!(selection.trait_impl, trait_impl(0, from_iterator));
+    assert_eq!(
+        selection.table.finalize(&goal_self),
+        Ty::nominal(NominalTy {
+            def: vec_def,
+            args: vec![GenericArg::Type(Box::new(nominal_ty(user_def)))],
+        })
+    );
+}
+
+#[test]
+fn probe_handles_visible_trait_data_with_generic_bounds() {
+    let clone = trait_ref(0);
+    let needs_clone = trait_ref(1);
+    let from_iterator = trait_ref(2);
+    let vec_def = type_def(0);
+    let user_def = type_def(1);
+
+    let from_iterator_impl = impl_data(
+        0,
+        generics(vec![type_param_with_bounds(
+            "T",
+            vec![TypeBound::Trait(path_ty(
+                "NeedsClone",
+                vec![type_arg(path_ty("T", Vec::new()))],
+            ))],
+        )]),
+        from_iterator,
+        path_ty("FromIterator", vec![type_arg(path_ty("T", Vec::new()))]),
+        vec_def,
+        path_ty("Vec", vec![type_arg(path_ty("T", Vec::new()))]),
+    );
+    let needs_clone_impl = impl_data(
+        1,
+        generics(vec![bounded_type_param("T")]),
+        needs_clone,
+        path_ty("NeedsClone", vec![type_arg(path_ty("T", Vec::new()))]),
+        user_def,
+        path_ty("T", Vec::new()),
+    );
+    let clone_impl = impl_data(
+        2,
+        GenericParams::default(),
+        clone,
+        path_ty("Clone", Vec::new()),
+        user_def,
+        path_ty("User", Vec::new()),
+    );
+    let fixture = fixture_with_traits(
+        vec![
+            trait_data(0, "Clone", GenericParams::default()),
+            trait_data(1, "NeedsClone", generics(vec![bounded_type_param("T")])),
+        ],
+        vec![from_iterator_impl, needs_clone_impl, clone_impl],
+    );
+
+    let mut table = InferenceTable::new();
+    let element = table.new_type_var();
+    let goal = TraitGoal {
+        self_ty: nominal_infer_ty(vec_def, vec![infer_type_arg(element)]),
+        trait_ref: from_iterator,
+        args: vec![infer_type_arg(InferTy::from_ty(&nominal_ty(user_def)))],
+    };
+
+    assert!(
+        matches!(
+            query(&fixture).probe(&goal, &table).unwrap(),
+            ExpectedUnique::One(selection) if selection.trait_impl == trait_impl(0, from_iterator)
+        ),
+        "Chalk should prove bounds even when a visible trait datum has its own generic bounds"
+    );
+}
+
+#[test]
+fn caller_solved_where_predicates_can_return_impl_that_still_needs_solving() {
     let adapter_def = type_def(0);
     let produces = trait_ref(0);
     let impl_data = impl_data(
@@ -454,11 +602,64 @@ fn probe_header_can_return_impl_that_still_needs_where_predicate_solving() {
     assert!(
         matches!(
             query(&fixture)
-                .with_options(TraitSelectionOptions::new().ignore_where_predicates())
+                .with_options(TraitSelectionOptions::new().caller_solves_where_predicates())
                 .probe(&goal, &table)
                 .unwrap(),
             ExpectedUnique::One(_)
         ),
-        "header-only probe should leave the where predicate to a higher layer"
+        "caller-solved where predicate mode should leave the predicate to a higher layer"
+    );
+}
+
+#[test]
+fn header_only_rejects_impl_type_param_bounds_even_when_chalk_can_prove_them() {
+    let clone = trait_ref(0);
+    let from_iterator = trait_ref(1);
+    let vec_def = type_def(0);
+    let user_def = type_def(1);
+
+    let from_iterator_impl = impl_data(
+        0,
+        generics(vec![bounded_type_param("T")]),
+        from_iterator,
+        path_ty("FromIterator", vec![type_arg(path_ty("T", Vec::new()))]),
+        vec_def,
+        path_ty("Vec", vec![type_arg(path_ty("T", Vec::new()))]),
+    );
+    let clone_impl = impl_data(
+        1,
+        GenericParams::default(),
+        clone,
+        path_ty("Clone", Vec::new()),
+        user_def,
+        path_ty("User", Vec::new()),
+    );
+    let fixture = fixture_with_traits(
+        vec![trait_data(0, "Clone", GenericParams::default())],
+        vec![from_iterator_impl, clone_impl],
+    );
+
+    let mut table = InferenceTable::new();
+    let element = table.new_type_var();
+    let goal = TraitGoal {
+        self_ty: nominal_infer_ty(vec_def, vec![infer_type_arg(element)]),
+        trait_ref: from_iterator,
+        args: vec![infer_type_arg(InferTy::from_ty(&nominal_ty(user_def)))],
+    };
+
+    assert!(
+        matches!(
+            query(&fixture).probe(&goal, &table).unwrap(),
+            ExpectedUnique::One(_)
+        ),
+        "default selection should let Chalk prove the Clone bound"
+    );
+    assert!(
+        query(&fixture)
+            .with_options(TraitSelectionOptions::new().header_only())
+            .probe(&goal, &table)
+            .unwrap()
+            .is_empty(),
+        "header-only selection must not pretend generic parameter bounds are true"
     );
 }

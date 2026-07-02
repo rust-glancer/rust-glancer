@@ -135,8 +135,13 @@ where
             trait_ref: selected_method.trait_ref,
             args: Vec::new(),
         };
+        // Associated type projection still uses the body-local table as the source of truth for
+        // committing receiver evidence and then reads the alias from the selected impl. The Chalk
+        // MVP proves impl where-clauses, but it does not yet feed projection substitutions back
+        // into this path, so keep this selection header-only and reject impls that need predicate
+        // solving.
         let ExpectedUnique::One(selection) =
-            self.probe_trait_goal(&goal, table, TraitSelectionOptions::new())?
+            self.probe_trait_goal(&goal, table, TraitSelectionOptions::new().header_only())?
         else {
             return Ok(None);
         };

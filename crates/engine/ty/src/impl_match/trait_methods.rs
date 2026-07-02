@@ -210,7 +210,7 @@ where
             &goal,
             &table,
             trait_impl,
-            TraitSelectionOptions::new(),
+            TraitSelectionOptions::new().header_only(),
         )?
         else {
             return Ok(None);

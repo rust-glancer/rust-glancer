@@ -77,7 +77,7 @@ where
         let Some(mut selection) = assoc_projector.select_infer_trait_impl(
             selected_trait_method,
             &inference.table,
-            TraitSelectionOptions::new().ignore_where_predicates(),
+            TraitSelectionOptions::new().caller_solves_where_predicates(),
         )?
         else {
             return Ok(None);

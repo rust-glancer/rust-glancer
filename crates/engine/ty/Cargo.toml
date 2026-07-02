@@ -10,6 +10,9 @@ readme.workspace = true
 description.workspace = true
 
 [dependencies]
+chalk-engine.workspace = true
+chalk-ir.workspace = true
+chalk-solve.workspace = true
 rg_ir_model.workspace = true
 rg_ir_storage.workspace = true
 rg_std.workspace = true
