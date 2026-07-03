@@ -178,15 +178,21 @@ where
     /// Return the unique visible impl whose simple header is compatible with the goal.
     ///
     /// This is probe mode: every candidate gets a cloned inference table, and the caller's table
-    /// remains unchanged even if a candidate would solve variables. Multiple distinct surviving
-    /// candidates become `ExpectedUnique::Ambiguous` rather than being exposed as a ranking list.
+    /// remains unchanged even if a candidate would solve variables.
+    ///
+    /// By default, multiple distinct concrete candidates become `ExpectedUnique::Ambiguous`, and
+    /// speculative `Maybe` candidates are used only when no concrete candidate survives. Callers
+    /// that need exploratory candidate sets can opt into keeping maybe candidates through
+    /// `TraitSelectionOptions`.
     pub fn probe(
         &self,
         goal: &TraitGoal,
         table: &InferenceTable,
     ) -> Result<ExpectedUnique<TraitSelection>, I::Error> {
         let trait_impls = self.trait_impl_candidates(goal.trait_ref)?;
-        let mut selections = ExpectedUnique::new();
+        let mut definite_selections = ExpectedUnique::new();
+        let mut maybe_selections = ExpectedUnique::new();
+        let mut all_selections = ExpectedUnique::new();
         for trait_impl in trait_impls {
             let Some(selection) = Self::probe_impl(
                 &self.item_paths,
@@ -200,9 +206,29 @@ where
             else {
                 continue;
             };
-            selections.push(selection);
+            if !self.options.prefers_definite_candidates() {
+                all_selections.push(selection);
+                continue;
+            }
+            if selection.applicability == TraitApplicability::Yes {
+                definite_selections.push(selection);
+            } else {
+                maybe_selections.push(selection);
+            }
         }
-        Ok(selections)
+
+        // `Maybe` candidates come from unsupported or syntax-limited headers. They are useful for
+        // exploratory callers, but commit-style trait selection should not let speculative headers
+        // drown out a concrete match. Keep the ranking choice explicit in options so future callers
+        // do not inherit a hidden policy by accident.
+        if !self.options.prefers_definite_candidates() {
+            return Ok(all_selections);
+        }
+        if !definite_selections.is_empty() {
+            return Ok(definite_selections);
+        }
+
+        Ok(maybe_selections)
     }
 
     /// Probe one already-visible impl against a trait goal.

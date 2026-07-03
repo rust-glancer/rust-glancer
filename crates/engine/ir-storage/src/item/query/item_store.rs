@@ -6,8 +6,8 @@
 use rg_ir_model::items::{FieldKey, FieldList, GenericParams};
 use rg_ir_model::{
     ConstRef, DefMapRef, EnumVariantRef, FieldRef, FunctionRef, ImplRef, ItemOwner, LocalDefRef,
-    LocalEnumVariantRef, SemanticItemRef, StaticRef, TargetRef, TraitRef, TypeAliasRef, TypeDefId,
-    TypeDefRef,
+    LocalEnumVariantRef, ModuleRef, SemanticItemRef, StaticRef, TargetRef, TraitRef, TypeAliasRef,
+    TypeDefId, TypeDefRef,
     hir::items::{
         ConstData, EnumData, EnumVariantData, FieldData, FunctionData, ImplData, StaticData,
         TraitData, TypeAliasData,
@@ -147,6 +147,19 @@ where
         Ok(self
             .item_store_for_origin(ty.origin)?
             .and_then(|items| items.generic_params_for_type_def(ty.id)))
+    }
+
+    /// Reads the owner module for a nominal type from the store that owns its item data.
+    pub fn type_def_owner(&self, ty: TypeDefRef) -> Result<Option<ModuleRef>, S::Error> {
+        let Some(items) = self.item_store_for_origin(ty.origin)? else {
+            return Ok(None);
+        };
+
+        Ok(match ty.id {
+            TypeDefId::Struct(id) => items.struct_data(id).map(|data| data.owner),
+            TypeDefId::Enum(id) => items.enum_data(id).map(|data| data.owner),
+            TypeDefId::Union(id) => items.union_data(id).map(|data| data.owner),
+        })
     }
 
     /// Returns the display name for a nominal type ref, which intentionally carries only an ID.

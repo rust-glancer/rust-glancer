@@ -4,6 +4,7 @@ use rg_ir_model::hir::items::ImplData;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TraitSelectionOptions {
     predicate_policy: PredicatePolicy,
+    candidate_policy: CandidatePolicy,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -12,6 +13,12 @@ enum PredicatePolicy {
     RejectAll,
     CallerSolvesWherePredicates,
     CallerSolvesImplPredicates,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CandidatePolicy {
+    PreferDefinite,
+    KeepAllApplicable,
 }
 
 impl Default for TraitSelectionOptions {
@@ -25,6 +32,7 @@ impl TraitSelectionOptions {
     pub fn new() -> Self {
         Self {
             predicate_policy: PredicatePolicy::SolveWithChalk,
+            candidate_policy: CandidatePolicy::PreferDefinite,
         }
     }
 
@@ -54,6 +62,16 @@ impl TraitSelectionOptions {
         self
     }
 
+    /// Return every applicable candidate, including speculative `Maybe` matches.
+    ///
+    /// Commit-style inference normally wants the default policy, because an unsupported
+    /// header should not drown out a concrete match. Exploratory callers can opt into this mode
+    /// when seeing the speculative candidates is more useful than making one committed choice.
+    pub fn keep_maybe_candidates(mut self) -> Self {
+        self.candidate_policy = CandidatePolicy::KeepAllApplicable;
+        self
+    }
+
     pub(super) fn accepts_impl_header(self, impl_data: &ImplData) -> bool {
         if !impl_data.generics.consts.is_empty() {
             return false;
@@ -76,6 +94,10 @@ impl TraitSelectionOptions {
 
     pub(super) fn should_solve_where_predicates(self) -> bool {
         self.predicate_policy == PredicatePolicy::SolveWithChalk
+    }
+
+    pub(super) fn prefers_definite_candidates(self) -> bool {
+        self.candidate_policy == CandidatePolicy::PreferDefinite
     }
 
     fn has_generic_param_bounds(impl_data: &ImplData) -> bool {

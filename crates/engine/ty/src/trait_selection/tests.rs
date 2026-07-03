@@ -488,6 +488,59 @@ fn normalize_assoc_type_projects_generic_impl_value() {
 }
 
 #[test]
+fn probe_prefers_definite_impl_over_maybe_headers() {
+    let iter_def = type_def(0);
+    let user_def = type_def(1);
+    let iterator = trait_ref(0);
+
+    let definite_impl = impl_data(
+        0,
+        generics(vec![type_param("T")]),
+        iterator,
+        path_ty("Iterator", Vec::new()),
+        iter_def,
+        path_ty("Iter", vec![type_arg(path_ty("T", Vec::new()))]),
+    );
+    let mut unsupported_impl = impl_data(
+        1,
+        GenericParams::default(),
+        iterator,
+        path_ty("Iterator", Vec::new()),
+        type_def(2),
+        TypeRef::unknown_from_text("macro generated self type"),
+    );
+    unsupported_impl.resolved_self_ty = ExpectedUnique::Empty;
+    let fixture = fixture(vec![definite_impl, unsupported_impl]);
+
+    let table = InferenceTable::new();
+    let goal = TraitGoal {
+        self_ty: nominal_infer_ty(
+            iter_def,
+            vec![infer_type_arg(InferTy::from_ty(&nominal_ty(user_def)))],
+        ),
+        trait_ref: iterator,
+        args: Vec::new(),
+    };
+
+    let selection = query(&fixture).probe(&goal, &table).unwrap();
+
+    let ExpectedUnique::One(selection) = selection else {
+        panic!("definite impl should win over unsupported maybe headers");
+    };
+    assert_eq!(selection.trait_impl, trait_impl(0, iterator));
+    assert_eq!(selection.applicability, TraitApplicability::Yes);
+
+    assert!(
+        query(&fixture)
+            .with_options(TraitSelectionOptions::new().keep_maybe_candidates())
+            .probe(&goal, &table)
+            .unwrap()
+            .is_ambiguous(),
+        "exploratory selection should keep maybe candidates visible when explicitly requested"
+    );
+}
+
+#[test]
 fn chalk_solver_normalizes_generic_associated_type_value() {
     let (fixture, iter_def, user_def, iterator) = generic_iterator_assoc_fixture();
 
@@ -593,7 +646,16 @@ fn probe_keeps_multiple_applicable_impls_as_separate_candidates() {
             path_ty("Vec", vec![type_arg(path_ty("T", Vec::new()))]),
         )
     };
-    let fixture = fixture(vec![make_impl(0), make_impl(1)]);
+    let mut unsupported_impl = impl_data(
+        2,
+        GenericParams::default(),
+        from_iterator,
+        path_ty("FromIterator", Vec::new()),
+        type_def(2),
+        TypeRef::unknown_from_text("unsupported self type"),
+    );
+    unsupported_impl.resolved_self_ty = ExpectedUnique::Empty;
+    let fixture = fixture(vec![make_impl(0), make_impl(1), unsupported_impl]);
 
     let mut table = InferenceTable::new();
     let element = table.new_type_var();

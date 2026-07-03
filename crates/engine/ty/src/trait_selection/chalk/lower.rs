@@ -544,6 +544,7 @@ where
                 Some(TyKind::Slice(inner).intern(INTER))
             }
             TypeRef::Array { .. }
+            | TypeRef::QualifiedAssociatedType { .. }
             | TypeRef::FnPointer { .. }
             | TypeRef::ImplTrait(_)
             | TypeRef::DynTrait(_) => None,
@@ -597,6 +598,11 @@ where
             | InferTy::Array { .. }
             | InferTy::Opaque { .. }
             | InferTy::Closure(_) => None,
+            // Function items are real rust-glancer types, but lowering them to Chalk needs a real
+            // `FnDef` signature. The current Chalk database only has placeholder fn-def callbacks,
+            // so treating a function item as a solvable Chalk type would prove the wrong callable
+            // shape. Body inference handles function-item callable evidence before this boundary.
+            InferTy::FunctionItem(_) => None,
         }
     }
 

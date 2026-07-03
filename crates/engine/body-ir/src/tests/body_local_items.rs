@@ -692,7 +692,7 @@ pub fn use_it() {
                 initializer
                   expr e1 call => nominal struct body_more_local_items_fixture[lib]::crate::GlobalId @ 27:24-27:32
                     callee
-                      expr e0 path helper -> fn fn body_more_local_items_fixture[lib]::crate::use_it::helper => <unknown> @ 27:24-27:30
+                      expr e0 path helper -> fn fn body_more_local_items_fixture[lib]::crate::use_it::helper => function item fn fn body_more_local_items_fixture[lib]::crate::use_it::helper @ 27:24-27:30
               stmt s9 let v1 @ 28:5-28:27
                 initializer
                   expr e2 path DEFAULT -> const fn body_more_local_items_fixture[lib]::crate::use_it::DEFAULT => nominal struct body_more_local_items_fixture[lib]::crate::GlobalId @ 28:19-28:26
@@ -753,7 +753,7 @@ pub fn use_it() {
               tail
                 expr e1 call => nominal struct body_more_local_items_fixture[lib]::crate::GlobalId @ 23:13-23:21
                   callee
-                    expr e0 path helper -> fn fn body_more_local_items_fixture[lib]::crate::use_it::helper => <unknown> @ 23:13-23:19
+                    expr e0 path helper -> fn fn body_more_local_items_fixture[lib]::crate::use_it::helper => function item fn fn body_more_local_items_fixture[lib]::crate::use_it::helper @ 23:13-23:19
         "#]],
     );
 }
@@ -803,7 +803,7 @@ pub fn use_it() {
                 initializer
                   expr e1 call => nominal struct fn nested_body_parent_items_fixture[lib]::crate::use_it::Local @ 2:5-2:18 @ 9:24-9:32
                     callee
-                      expr e0 path helper -> fn fn nested_body_parent_items_fixture[lib]::crate::use_it::helper => <unknown> @ 9:24-9:30
+                      expr e0 path helper -> fn fn nested_body_parent_items_fixture[lib]::crate::use_it::helper => function item fn fn nested_body_parent_items_fixture[lib]::crate::use_it::helper @ 9:24-9:30
 
 
             body b1 const fn nested_body_parent_items_fixture[lib]::crate::use_it::DEFAULT @ 3:5-3:34
@@ -873,7 +873,7 @@ pub fn use_it() {
                 initializer
                   expr e1 call => nominal struct body_in_body_in_body_fixture[lib]::crate::GlobalId @ 14:27-14:34
                     callee
-                      expr e0 path outer -> fn fn body_in_body_in_body_fixture[lib]::crate::use_it::outer => <unknown> @ 14:27-14:32
+                      expr e0 path outer -> fn fn body_in_body_in_body_fixture[lib]::crate::use_it::outer => function item fn fn body_in_body_in_body_fixture[lib]::crate::use_it::outer @ 14:27-14:32
 
 
             body b1 fn fn body_in_body_in_body_fixture[lib]::crate::use_it::outer @ 4:5-12:6
@@ -891,7 +891,7 @@ pub fn use_it() {
               tail
                 expr e1 call => nominal struct body_in_body_in_body_fixture[lib]::crate::GlobalId @ 11:9-11:17
                   callee
-                    expr e0 path deeper -> fn fn fn body_in_body_in_body_fixture[lib]::crate::use_it::outer::deeper => <unknown> @ 11:9-11:15
+                    expr e0 path deeper -> fn fn fn body_in_body_in_body_fixture[lib]::crate::use_it::outer::deeper => function item fn fn fn body_in_body_in_body_fixture[lib]::crate::use_it::outer::deeper @ 11:9-11:15
 
 
             body b2 const fn fn body_in_body_in_body_fixture[lib]::crate::use_it::outer::INNER @ 5:9-5:42
@@ -1083,7 +1083,7 @@ pub fn use_it() {
                     initializer
                       expr e2 call => nominal struct body_local_value_shadowing_fixture[lib]::crate::Inner @ 14:23-14:30
                         callee
-                          expr e1 path value -> fn fn body_local_value_shadowing_fixture[lib]::crate::use_it::value => <unknown> @ 14:23-14:28
+                          expr e1 path value -> fn fn body_local_value_shadowing_fixture[lib]::crate::use_it::value => function item fn fn body_local_value_shadowing_fixture[lib]::crate::use_it::value @ 14:23-14:28
               stmt s7 expr; @ 17:5-20:7
                 expr e5 block s3 => () @ 17:5-20:6
                   stmt s5 source_item i2 @ 18:9-18:37

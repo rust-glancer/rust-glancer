@@ -430,6 +430,14 @@ impl SignatureCursorScanner<'_, '_> {
     fn push_type_ref(&mut self, context: TypePathContext, ty: &TypeRef, file_id: FileId) {
         match ty {
             TypeRef::Path(path) => self.push_type_path(context, path, file_id),
+            TypeRef::QualifiedAssociatedType {
+                self_ty, trait_ty, ..
+            } => {
+                self.push_type_ref(context, self_ty, file_id);
+                if let Some(trait_ty) = trait_ty {
+                    self.push_type_ref(context, trait_ty, file_id);
+                }
+            }
             TypeRef::Tuple(types) => {
                 for ty in types {
                     self.push_type_ref(context, ty, file_id);

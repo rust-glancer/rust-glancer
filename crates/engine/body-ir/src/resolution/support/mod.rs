@@ -15,7 +15,8 @@ pub(crate) use self::callable::{
 };
 pub(crate) use self::impl_predicate::{ImplPredicateSubject, impl_projection_predicates};
 pub(crate) use self::impl_predicate_assoc::{
-    ImplPredicateAssocProjection, ImplPredicateAssocProjector,
+    ImplPredicateAssocProjection, ImplPredicateAssocProjector, ProjectionSupport,
+    project_unique_support_assoc,
 };
 pub(crate) use self::selected_trait_assoc::{
     SelectedTraitMethodContext, self_associated_type_name,

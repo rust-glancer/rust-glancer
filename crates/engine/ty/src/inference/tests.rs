@@ -1,6 +1,6 @@
 use rg_ir_model::{
-    DefMapRef, ExprId, PackageSlot, StructId, TargetId, TargetRef, TraitId, TraitRef, TypeDefId,
-    TypeDefRef,
+    DefMapRef, ExprId, FunctionId, FunctionRef, PackageSlot, StructId, TargetId, TargetRef,
+    TraitId, TraitRef, TypeDefId, TypeDefRef,
     items::{FloatTy, SignedIntTy, TypeRef, UnsignedIntTy},
 };
 
@@ -44,6 +44,13 @@ fn project_ty() -> Ty {
 
 fn closure_ty(index: usize) -> Ty {
     Ty::closure(ClosureTyId::new(ExprId(index)))
+}
+
+fn function_item_ty(index: usize) -> Ty {
+    Ty::function_item(FunctionRef {
+        origin: def_map_ref(),
+        id: FunctionId(index),
+    })
 }
 
 fn vec_ty(inner: InferTy) -> InferTy {
@@ -183,6 +190,20 @@ fn closure_types_round_trip_through_inference_family() {
     let infer_ty = InferTy::from_ty(&ty);
 
     assert_eq!(infer_ty, InferTy::Closure(ClosureTyId::new(ExprId(7))));
+    assert_eq!(table.finalize(&infer_ty), ty);
+}
+
+#[test]
+fn function_item_types_round_trip_through_inference_family() {
+    let table = InferenceTable::new();
+    let function = FunctionRef {
+        origin: def_map_ref(),
+        id: FunctionId(7),
+    };
+    let ty = function_item_ty(7);
+    let infer_ty = InferTy::from_ty(&ty);
+
+    assert_eq!(infer_ty, InferTy::FunctionItem(function));
     assert_eq!(table.finalize(&infer_ty), ty);
 }
 

@@ -6,6 +6,7 @@
 //! must solve that generic from a closure witness before the alias is useful.
 
 use rg_ir_model::{
+    TraitRef,
     hir::items::ImplData,
     items::{GenericParams, TypeBound, TypeRef},
 };
@@ -14,7 +15,7 @@ use rg_package_store::PackageStoreError;
 use rg_text::Name;
 use rg_ty::{
     TraitGoal, TraitSelection, TraitSelectionCache, TraitSelectionOptions,
-    inference::{InferTy, InferTypeRefProjector},
+    inference::{InferGenericArg, InferTy, InferTypeRefProjector},
 };
 
 use crate::resolution::{
@@ -22,22 +23,13 @@ use crate::resolution::{
     query::TypeRefResolutionQuery,
     support::{
         BodyTypeRefProjector, CallableTypeRefExpectation, ImplPredicateAssocProjector,
-        ImplPredicateSubject, SelectedTraitMethodContext, impl_projection_predicates,
+        ImplPredicateSubject, ProjectionSupport, SelectedTraitMethodContext,
+        impl_projection_predicates, project_unique_support_assoc,
     },
 };
 
 use super::super::{BodyCallableGoalSolver, BodyInferenceCtx};
 use super::{BodyCallableObligation, BodyTraitObligationSolver};
-
-/// Non-callable where-predicate that exists to project an associated type used by a callable one.
-///
-/// Example: in `S: Stream, F: FnMut(S::Item) -> B`, the `S: Stream` predicate lets us resolve
-/// `S::Item` before applying the callable predicate to the closure witness.
-struct ImplWhereProjectionSupport {
-    param_name: Name,
-    goal: TraitGoal,
-    used: bool,
-}
 
 impl<'query, D, I> BodyTraitObligationSolver<'query, D, I>
 where
@@ -65,11 +57,14 @@ where
         &self,
         inference: &mut BodyInferenceCtx,
         selected_trait_method: &SelectedTraitMethodContext<'_>,
+        selected_self_infer_ty: Option<&InferTy>,
         assoc_name: &str,
     ) -> Result<Option<InferTy>, PackageStoreError> {
         let assoc_projector = ImplPredicateAssocProjector::new(self.context);
         let goal = TraitGoal {
-            self_ty: InferTy::from_ty(selected_trait_method.selected_self_ty()),
+            self_ty: selected_self_infer_ty
+                .cloned()
+                .unwrap_or_else(|| InferTy::from_ty(selected_trait_method.selected_self_ty())),
             trait_ref: selected_trait_method.trait_ref(),
             args: Vec::new(),
         };
@@ -110,7 +105,7 @@ where
         if obligations.iter().any(|obligation| {
             !matches!(
                 selection.table.resolve_root_var(obligation.self_ty()),
-                InferTy::Closure(_)
+                InferTy::Closure(_) | InferTy::FunctionItem(_)
             )
         }) {
             return Ok(None);
@@ -262,7 +257,7 @@ where
             }
         }
 
-        if supports.iter().any(|support| !support.used) {
+        if supports.iter().any(ProjectionSupport::unused) {
             return Ok(None);
         }
 
@@ -279,7 +274,7 @@ where
         resolver: &TypeRefResolutionQuery<'query, D, I>,
         subject: &ImplPredicateSubject,
         bounds: &[TypeBound],
-    ) -> Result<Option<ImplWhereProjectionSupport>, PackageStoreError> {
+    ) -> Result<Option<ProjectionSupport>, PackageStoreError> {
         if let Some(param_name) = subject.type_param_name()
             && let Some(self_ty) = selection.subst.type_param(param_name.as_str())
             && let [TypeBound::Trait(bound_ty)] = bounds
@@ -298,15 +293,14 @@ where
                         .generic_arg_from_arg(arg, resolved_arg)
                 })
                 .collect();
-            return Ok(Some(ImplWhereProjectionSupport {
+            return Ok(Some(ProjectionSupport::new(
                 param_name,
-                goal: TraitGoal {
+                TraitGoal {
                     self_ty,
                     trait_ref,
                     args,
                 },
-                used: false,
-            }));
+            )));
         }
 
         Ok(None)
@@ -320,7 +314,7 @@ where
     fn project_impl_where_subject(
         &self,
         selection: &mut TraitSelection,
-        supports: &mut [ImplWhereProjectionSupport],
+        supports: &mut [ProjectionSupport],
         resolver: &TypeRefResolutionQuery<'query, D, I>,
         subject: &ImplPredicateSubject,
         trait_selection_cache: &TraitSelectionCache,
@@ -336,20 +330,32 @@ where
     fn project_impl_where_ty(
         &self,
         selection: &mut TraitSelection,
-        supports: &mut [ImplWhereProjectionSupport],
+        supports: &mut [ProjectionSupport],
         resolver: &TypeRefResolutionQuery<'query, D, I>,
         ty: &TypeRef,
         trait_selection_cache: &TraitSelectionCache,
     ) -> Result<Option<InferTy>, PackageStoreError> {
         let subst = selection.subst.clone();
-        let mut associated_ty = |param_name: &Name, assoc_name: &Name| {
-            self.project_impl_generic_associated_ty(
-                selection,
-                supports,
-                param_name,
-                assoc_name,
-                trait_selection_cache,
-            )
+        let mut associated_ty = |param_name: &Name, qualified_trait, assoc_name: &Name| {
+            if let Some((trait_ref, args)) = qualified_trait {
+                self.project_impl_qualified_generic_associated_ty(
+                    selection,
+                    supports,
+                    param_name,
+                    trait_ref,
+                    args,
+                    assoc_name,
+                    trait_selection_cache,
+                )
+            } else {
+                self.project_impl_generic_associated_ty(
+                    selection,
+                    supports,
+                    param_name,
+                    assoc_name,
+                    trait_selection_cache,
+                )
+            }
         };
         BodyTypeRefProjector::new(&subst, resolver)
             .with_type_param_associated_ty(&mut associated_ty)
@@ -359,7 +365,7 @@ where
     fn project_impl_generic_associated_ty(
         &self,
         selection: &mut TraitSelection,
-        supports: &mut [ImplWhereProjectionSupport],
+        supports: &mut [ProjectionSupport],
         param_name: &Name,
         assoc_name: &Name,
         trait_selection_cache: &TraitSelectionCache,
@@ -367,29 +373,49 @@ where
         // `S::Item` is useful only if some support predicate proves which `Stream` impl applies
         // to `S`. We probe those predicates in the same trial table as the outer impl selection,
         // so any inference refinements stay local until the whole projection succeeds.
-        let mut candidate = None;
-
-        for (support_idx, support) in supports.iter().enumerate() {
-            if support.param_name.as_str() == param_name.as_str()
-                && let Some(projection) = self.normalize_assoc_type_in_table(
-                    &support.goal,
-                    assoc_name.as_str(),
-                    &selection.table,
-                    trait_selection_cache,
-                )?
-            {
-                if candidate.is_some() {
-                    return Ok(None);
-                }
-                candidate = Some((support_idx, projection.table, projection.ty));
-            }
-        }
-
-        let Some((support_idx, projection_table, projected_ty)) = candidate else {
+        let Some((projection_table, projected_ty)) =
+            project_unique_support_assoc(supports, param_name, None, |goal| {
+                Ok(self
+                    .normalize_assoc_type_in_table(
+                        goal,
+                        assoc_name.as_str(),
+                        &selection.table,
+                        trait_selection_cache,
+                    )?
+                    .map(|projection| (projection.table, projection.ty)))
+            })?
+        else {
             return Ok(None);
         };
         selection.table = projection_table;
-        supports[support_idx].used = true;
+        Ok(Some(projected_ty))
+    }
+
+    fn project_impl_qualified_generic_associated_ty(
+        &self,
+        selection: &mut TraitSelection,
+        supports: &mut [ProjectionSupport],
+        param_name: &Name,
+        trait_ref: TraitRef,
+        args: Vec<InferGenericArg>,
+        assoc_name: &Name,
+        trait_selection_cache: &TraitSelectionCache,
+    ) -> Result<Option<InferTy>, PackageStoreError> {
+        let Some((projection_table, projected_ty)) =
+            project_unique_support_assoc(supports, param_name, Some((trait_ref, &args)), |goal| {
+                Ok(self
+                    .normalize_assoc_type_in_table(
+                        goal,
+                        assoc_name.as_str(),
+                        &selection.table,
+                        trait_selection_cache,
+                    )?
+                    .map(|projection| (projection.table, projection.ty)))
+            })?
+        else {
+            return Ok(None);
+        };
+        selection.table = projection_table;
         Ok(Some(projected_ty))
     }
 }

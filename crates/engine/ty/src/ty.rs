@@ -1,7 +1,7 @@
 use std::fmt;
 
 use rg_ir_model::items::{GenericParams, TypeRef};
-use rg_ir_model::{ExprId, TraitRef, TypeDefRef, TypePathResolution};
+use rg_ir_model::{ExprId, FunctionRef, TraitRef, TypeDefRef, TypePathResolution};
 use rg_std::{ExpectedUnique, MemorySize, Shrink, UniqueVec};
 use rg_text::Name;
 
@@ -118,6 +118,9 @@ pub enum Ty {
         bounds: UniqueVec<OpaqueTraitBound>,
     },
     Closure(ClosureTyId),
+    // Function item types are the zero-sized, identity-carrying type of a specific `fn` item.
+    // They are not function pointers: coercion to `fn(...) -> ...` is a separate operation.
+    FunctionItem(FunctionRef),
     Syntax(TypeRef),
     Nominal(NominalTy),
     SelfTy(NominalTy),
@@ -196,6 +199,10 @@ impl Ty {
         Self::Closure(id)
     }
 
+    pub fn function_item(function: FunctionRef) -> Self {
+        Self::FunctionItem(function)
+    }
+
     pub fn nominal(ty: NominalTy) -> Self {
         Self::Nominal(ty)
     }
@@ -233,6 +240,7 @@ impl Ty {
             | Self::Reference { .. }
             | Self::Opaque { .. }
             | Self::Closure(_)
+            | Self::FunctionItem(_)
             | Self::Syntax(_)
             | Self::Unknown => &[],
         }
@@ -249,6 +257,7 @@ impl Ty {
             | Self::Slice(_)
             | Self::Opaque { .. }
             | Self::Closure(_)
+            | Self::FunctionItem(_)
             | Self::Syntax(_)
             | Self::Nominal(_)
             | Self::SelfTy(_)
@@ -268,9 +277,12 @@ impl Ty {
                 .any(|bound| bound.args.iter().any(GenericArg::has_unknown)),
             Self::Nominal(ty) | Self::SelfTy(ty) => ty.args.iter().any(GenericArg::has_unknown),
             Self::Unknown => true,
-            Self::Unit | Self::Never | Self::Primitive(_) | Self::Closure(_) | Self::Syntax(_) => {
-                false
-            }
+            Self::Unit
+            | Self::Never
+            | Self::Primitive(_)
+            | Self::Closure(_)
+            | Self::FunctionItem(_)
+            | Self::Syntax(_) => false,
         }
     }
 
@@ -288,7 +300,11 @@ impl Ty {
                 ty.args.iter().any(GenericArg::has_unknown_or_syntax)
             }
             Self::Unknown | Self::Syntax(_) => true,
-            Self::Unit | Self::Never | Self::Primitive(_) | Self::Closure(_) => false,
+            Self::Unit
+            | Self::Never
+            | Self::Primitive(_)
+            | Self::Closure(_)
+            | Self::FunctionItem(_) => false,
         }
     }
 
@@ -305,6 +321,7 @@ impl Ty {
             | Self::Never
             | Self::Primitive(_)
             | Self::Closure(_)
+            | Self::FunctionItem(_)
             | Self::Nominal(_)
             | Self::SelfTy(_) => true,
         }
@@ -361,7 +378,12 @@ impl Shrink for Ty {
             Self::Nominal(ty) | Self::SelfTy(ty) => {
                 Shrink::shrink_to_fit(ty);
             }
-            Self::Unit | Self::Never | Self::Primitive(_) | Self::Closure(_) | Self::Unknown => {}
+            Self::Unit
+            | Self::Never
+            | Self::Primitive(_)
+            | Self::Closure(_)
+            | Self::FunctionItem(_)
+            | Self::Unknown => {}
         }
     }
 }

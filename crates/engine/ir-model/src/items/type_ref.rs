@@ -19,6 +19,13 @@ pub enum TypeRef {
     Unit,
     Infer,
     Path(#[wincode(with = "rg_wincode_utils::WincodeDynamic<TypePath>")] TypePath),
+    QualifiedAssociatedType {
+        #[wincode(with = "rg_wincode_utils::WincodeDynamic<Box<TypeRef>>")]
+        self_ty: Box<TypeRef>,
+        #[wincode(with = "rg_wincode_utils::WincodeDynamic<Option<Box<TypeRef>>>")]
+        trait_ty: Option<Box<TypeRef>>,
+        assoc_name: Name,
+    },
     Tuple(#[wincode(with = "rg_wincode_utils::WincodeDynamic<Vec<TypeRef>>")] Vec<TypeRef>),
     Reference {
         lifetime: Option<String>,
@@ -86,6 +93,12 @@ impl TypeRef {
     pub fn has_generic_args(&self) -> bool {
         match self {
             Self::Path(path) => path.segments.iter().any(|segment| !segment.args.is_empty()),
+            Self::QualifiedAssociatedType {
+                self_ty, trait_ty, ..
+            } => {
+                self_ty.has_generic_args()
+                    || trait_ty.as_deref().is_some_and(Self::has_generic_args)
+            }
             Self::Tuple(types) => types.iter().any(Self::has_generic_args),
             Self::Reference { inner, .. }
             | Self::RawPointer { inner, .. }
@@ -111,6 +124,14 @@ impl TypeRef {
                         .iter()
                         .any(|arg| arg.mentions_type_param(params))
             }),
+            Self::QualifiedAssociatedType {
+                self_ty, trait_ty, ..
+            } => {
+                self_ty.mentions_type_param(params)
+                    || trait_ty
+                        .as_deref()
+                        .is_some_and(|trait_ty| trait_ty.mentions_type_param(params))
+            }
             Self::Tuple(types) => types.iter().any(|ty| ty.mentions_type_param(params)),
             Self::Reference { inner, .. }
             | Self::RawPointer { inner, .. }
@@ -140,6 +161,14 @@ impl fmt::Display for TypeRef {
             Self::Unit => write!(f, "()"),
             Self::Infer => write!(f, "_"),
             Self::Path(path) => write!(f, "{path}"),
+            Self::QualifiedAssociatedType {
+                self_ty,
+                trait_ty,
+                assoc_name,
+            } => match trait_ty {
+                Some(trait_ty) => write!(f, "<{self_ty} as {trait_ty}>::{assoc_name}"),
+                None => write!(f, "<{self_ty}>::{assoc_name}"),
+            },
             Self::Tuple(types) => {
                 write!(f, "(")?;
                 for (idx, ty) in types.iter().enumerate() {

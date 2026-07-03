@@ -201,6 +201,7 @@ where
             | Ty::Never
             | Ty::Primitive(_)
             | Ty::Closure(_)
+            | Ty::FunctionItem(_)
             | Ty::Nominal(_)
             | Ty::SelfTy(_) => false,
         }

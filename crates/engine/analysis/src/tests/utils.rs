@@ -1141,6 +1141,7 @@ impl<'a> AnalysisQuerySnapshot<'a> {
                 format!("impl {}", bounds.join(" + "))
             }
             Ty::Closure(id) => format!("closure #{id}"),
+            Ty::FunctionItem(function) => format!("function item {function:?}"),
             Ty::Nominal(ty) => format!("nominal {}", self.render_body_nominal_ty(ty)),
             Ty::SelfTy(ty) => format!("Self {}", self.render_body_nominal_ty(ty)),
             Ty::Unknown => "<unknown>".to_string(),

@@ -1028,6 +1028,9 @@ impl TargetBodyIrSnapshot<'_> {
                 format!("impl {}", bounds.join(" + "))
             }
             Ty::Closure(id) => format!("closure #{id}"),
+            Ty::FunctionItem(function) => {
+                format!("function item {}", self.render_function_ref(*function))
+            }
             Ty::Nominal(ty) => format!("nominal {}", self.render_body_nominal_ty(ty)),
             Ty::SelfTy(ty) => format!("Self {}", self.render_body_nominal_ty(ty)),
             Ty::Unknown => "<unknown>".to_string(),

@@ -55,6 +55,9 @@ impl<'a, 'db> TypeRenderer<'a, 'db> {
                 Ok((!bounds.is_empty()).then(|| format!("impl {}", bounds.join(" + "))))
             }
             Ty::Closure(id) => Ok(Some(format!("{{closure#{id}}}"))),
+            Ty::FunctionItem(function) => Ok(PathView::new(self.0)
+                .function_path(*function)?
+                .map(|path| format!("{{fn {path}}}"))),
             Ty::Nominal(ty) | Ty::SelfTy(ty) => self.render_nominal(ty),
             Ty::Unknown => Ok(None),
         }

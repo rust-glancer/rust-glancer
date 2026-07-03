@@ -336,11 +336,13 @@ where
                 let mut functions = UniqueVec::new();
                 let mut declarations = UniqueVec::new();
                 let mut tys = ExpectedUnique::new();
+                let mut function_tys = ExpectedUnique::new();
 
                 for candidate in candidates {
                     match candidate {
                         BodyValueCandidate::Function(function) => {
                             functions.push(DeclarationRef::from(function));
+                            function_tys.push(Ty::function_item(function));
                         }
                         BodyValueCandidate::Const(const_ref) => {
                             declarations.push(DeclarationRef::from(const_ref));
@@ -364,7 +366,10 @@ where
                     )));
                 }
                 if !functions.is_empty() {
-                    return Ok(Some((BodyResolution::Declarations(functions), Ty::Unknown)));
+                    return Ok(Some((
+                        BodyResolution::Declarations(functions),
+                        function_tys.into_ty(),
+                    )));
                 }
 
                 Ok(None)

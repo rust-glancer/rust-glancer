@@ -59,6 +59,9 @@ where
             return self
                 .match_nominal_self_ty(goal, trait_impl, *self_def, impl_data, table, subst);
         }
+        if let Some(self_def) = self.resolve_nominal_self_def(trait_impl, impl_data)? {
+            return self.match_nominal_self_ty(goal, trait_impl, self_def, impl_data, table, subst);
+        }
 
         // Bare blanket impls such as `impl<T> Trait for T` need recursive trait reasoning once
         // bounds enter the picture. The first slice deliberately leaves them to later work.
@@ -78,6 +81,43 @@ where
             table,
             subst,
         )
+    }
+
+    fn resolve_nominal_self_def(
+        &self,
+        trait_impl: TraitImplRef,
+        impl_data: &ImplData,
+    ) -> Result<Option<TypeDefRef>, I::Error> {
+        let TypeRef::Path(_) = &impl_data.self_ty else {
+            return Ok(None);
+        };
+
+        let context = TypePathContext {
+            module: impl_data.owner,
+            impl_ref: Some(trait_impl.impl_ref),
+        };
+        let resolved_ty = self.item_paths.resolve_type_ref(
+            &impl_data.self_ty,
+            context,
+            Ty::syntax(impl_data.self_ty.clone()),
+            &TypeSubst::new(),
+        )?;
+
+        match resolved_ty {
+            Ty::Nominal(ty) | Ty::SelfTy(ty) => Ok(Some(ty.def)),
+            Ty::Unit
+            | Ty::Never
+            | Ty::Primitive(_)
+            | Ty::Tuple(_)
+            | Ty::Array { .. }
+            | Ty::Slice(_)
+            | Ty::Reference { .. }
+            | Ty::Opaque { .. }
+            | Ty::Closure(_)
+            | Ty::FunctionItem(_)
+            | Ty::Syntax(_)
+            | Ty::Unknown => Ok(None),
+        }
     }
 
     fn match_nominal_self_ty(
@@ -128,6 +168,7 @@ where
             | InferTy::Reference { .. }
             | InferTy::Opaque { .. }
             | InferTy::Closure(_)
+            | InferTy::FunctionItem(_)
             | InferTy::Nominal(_)
             | InferTy::SelfTy(_) => None,
         }
@@ -367,6 +408,7 @@ where
             | InferTy::Never
             | InferTy::Primitive(_)
             | InferTy::Closure(_)
+            | InferTy::FunctionItem(_)
             | InferTy::Nominal(_)
             | InferTy::SelfTy(_) => false,
         }
@@ -385,6 +427,14 @@ where
                         .iter()
                         .any(|arg| Self::generic_arg_mentions_impl_type_param(arg, generics))
             }),
+            TypeRef::QualifiedAssociatedType {
+                self_ty, trait_ty, ..
+            } => {
+                Self::type_ref_mentions_impl_type_param(self_ty, generics)
+                    || trait_ty.as_deref().is_some_and(|trait_ty| {
+                        Self::type_ref_mentions_impl_type_param(trait_ty, generics)
+                    })
+            }
             TypeRef::Tuple(types) => types
                 .iter()
                 .any(|ty| Self::type_ref_mentions_impl_type_param(ty, generics)),

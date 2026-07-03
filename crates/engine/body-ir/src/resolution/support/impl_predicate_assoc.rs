@@ -15,7 +15,7 @@
 //! owned by the body-obligation pass.
 
 use rg_ir_model::{
-    AssocItemId, TypeAliasRef,
+    AssocItemId, TraitRef, TypeAliasRef,
     hir::items::ImplData,
     items::{GenericParams, TypeBound, TypeRef},
 };
@@ -25,7 +25,7 @@ use rg_std::ExpectedUnique;
 use rg_text::Name;
 use rg_ty::{
     TraitGoal, TraitSelection, TraitSelectionOptions, TraitSelectionQuery,
-    inference::{InferTy, InferTypeRefProjector, InferenceTable},
+    inference::{InferGenericArg, InferTy, InferTypeRefProjector, InferenceTable},
 };
 
 use crate::resolution::{BodyResolutionContext, TypeRefUseSite, query::TypeRefResolutionQuery};
@@ -64,10 +64,65 @@ impl ImplPredicateAssocProjection {
 /// Example: when projecting `Adapter<S>::Output = S::Item`, the `S: Source` predicate becomes a
 /// support goal. The support is marked as used only if the alias actually needed `S::Item`, so
 /// unrelated predicates are not accidentally accepted.
-struct ProjectionSupport {
+pub(crate) struct ProjectionSupport {
     param_name: Name,
     goal: TraitGoal,
     used: bool,
+}
+
+impl ProjectionSupport {
+    pub(crate) fn new(param_name: Name, goal: TraitGoal) -> Self {
+        Self {
+            param_name,
+            goal,
+            used: false,
+        }
+    }
+
+    pub(crate) fn unused(&self) -> bool {
+        !self.used
+    }
+}
+
+/// Find the single support predicate that can answer one `T::Assoc` projection.
+///
+/// Both shallow projection and body-obligation projection need the same bookkeeping: match support
+/// by impl type parameter, optionally require a qualified trait and args, reject ambiguity, and
+/// mark the support as used only after the caller's projection succeeds. The caller still supplies
+/// the projection closure, so recursive local projection and inference-table normalization remain
+/// separate policies.
+pub(crate) fn project_unique_support_assoc<T, E>(
+    supports: &mut [ProjectionSupport],
+    param_name: &Name,
+    qualified_trait: Option<(TraitRef, &[InferGenericArg])>,
+    mut project: impl FnMut(&TraitGoal) -> Result<Option<T>, E>,
+) -> Result<Option<T>, E> {
+    let mut candidate = None;
+
+    for (support_idx, support) in supports.iter().enumerate() {
+        if support.param_name.as_str() != param_name.as_str() {
+            continue;
+        }
+        if let Some((trait_ref, args)) = qualified_trait
+            && (support.goal.trait_ref != trait_ref || support.goal.args != args)
+        {
+            continue;
+        }
+
+        let Some(projection) = project(&support.goal)? else {
+            continue;
+        };
+        if candidate.is_some() {
+            return Ok(None);
+        }
+        candidate = Some((support_idx, projection));
+    }
+
+    let Some((support_idx, projection)) = candidate else {
+        return Ok(None);
+    };
+    supports[support_idx].used = true;
+    Ok(Some(projection))
 }
 
 /// Projects associated aliases using the simple impl predicates body resolution understands.
@@ -239,7 +294,7 @@ where
         };
         // Every accepted support predicate must be relevant to the alias. If an impl needs extra
         // non-callable evidence we did not consume, the result would be too confident.
-        if supports.iter().any(|support| !support.used) {
+        if supports.iter().any(ProjectionSupport::unused) {
             return Ok(None);
         }
 
@@ -345,15 +400,14 @@ where
                         .generic_arg_from_arg(arg, resolved_arg)
                 })
                 .collect();
-            return Ok(Some(ProjectionSupport {
+            return Ok(Some(ProjectionSupport::new(
                 param_name,
-                goal: TraitGoal {
+                TraitGoal {
                     self_ty,
                     trait_ref,
                     args,
                 },
-                used: false,
-            }));
+            )));
         }
 
         Ok(None)
@@ -373,14 +427,26 @@ where
         remaining_depth: usize,
     ) -> Result<Option<InferTy>, PackageStoreError> {
         let subst = selection.subst.clone();
-        let mut associated_ty = |param_name: &Name, assoc_name: &Name| {
-            self.project_impl_generic_associated_ty(
-                selection,
-                supports,
-                param_name,
-                assoc_name,
-                remaining_depth,
-            )
+        let mut associated_ty = |param_name: &Name, qualified_trait, assoc_name: &Name| {
+            if let Some((trait_ref, args)) = qualified_trait {
+                self.project_impl_qualified_generic_associated_ty(
+                    selection,
+                    supports,
+                    param_name,
+                    trait_ref,
+                    args,
+                    assoc_name,
+                    remaining_depth,
+                )
+            } else {
+                self.project_impl_generic_associated_ty(
+                    selection,
+                    supports,
+                    param_name,
+                    assoc_name,
+                    remaining_depth,
+                )
+            }
         };
         BodyTypeRefProjector::new(&subst, resolver)
             .with_type_param_associated_ty(&mut associated_ty)
@@ -399,29 +465,49 @@ where
         assoc_name: &Name,
         remaining_depth: usize,
     ) -> Result<Option<InferTy>, PackageStoreError> {
-        let mut candidate = None;
-
-        for (support_idx, support) in supports.iter().enumerate() {
-            if support.param_name.as_str() == param_name.as_str()
-                && let Some(projection) = self.project_goal_through_impl_predicates_inner(
-                    &support.goal,
-                    assoc_name.as_str(),
-                    &selection.table,
-                    remaining_depth - 1,
-                )?
-            {
-                if candidate.is_some() {
-                    return Ok(None);
-                }
-                candidate = Some((support_idx, projection.table, projection.ty));
-            }
-        }
-
-        let Some((support_idx, projection_table, projected_ty)) = candidate else {
+        let Some((projection_table, projected_ty)) =
+            project_unique_support_assoc(supports, param_name, None, |goal| {
+                Ok(self
+                    .project_goal_through_impl_predicates_inner(
+                        goal,
+                        assoc_name.as_str(),
+                        &selection.table,
+                        remaining_depth - 1,
+                    )?
+                    .map(|projection| (projection.table, projection.ty)))
+            })?
+        else {
             return Ok(None);
         };
         selection.table = projection_table;
-        supports[support_idx].used = true;
+        Ok(Some(projected_ty))
+    }
+
+    fn project_impl_qualified_generic_associated_ty(
+        &self,
+        selection: &mut TraitSelection,
+        supports: &mut [ProjectionSupport],
+        param_name: &Name,
+        trait_ref: TraitRef,
+        args: Vec<InferGenericArg>,
+        assoc_name: &Name,
+        remaining_depth: usize,
+    ) -> Result<Option<InferTy>, PackageStoreError> {
+        let Some((projection_table, projected_ty)) =
+            project_unique_support_assoc(supports, param_name, Some((trait_ref, &args)), |goal| {
+                Ok(self
+                    .project_goal_through_impl_predicates_inner(
+                        goal,
+                        assoc_name.as_str(),
+                        &selection.table,
+                        remaining_depth - 1,
+                    )?
+                    .map(|projection| (projection.table, projection.ty)))
+            })?
+        else {
+            return Ok(None);
+        };
+        selection.table = projection_table;
         Ok(Some(projected_ty))
     }
 }

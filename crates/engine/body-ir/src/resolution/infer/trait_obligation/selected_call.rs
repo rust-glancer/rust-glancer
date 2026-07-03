@@ -42,6 +42,7 @@ pub(crate) struct SelectedCallObligationInput<'input> {
     subst: &'input InferTypeSubst,
     signature_subst: &'input TypeSubst,
     selected_self_ty: Option<&'input Ty>,
+    selected_self_infer_ty: Option<InferTy>,
 }
 
 impl<'input> SelectedCallObligationInput<'input> {
@@ -52,6 +53,7 @@ impl<'input> SelectedCallObligationInput<'input> {
         subst: &'input InferTypeSubst,
         signature_subst: &'input TypeSubst,
         selected_self_ty: Option<&'input Ty>,
+        selected_self_infer_ty: Option<InferTy>,
     ) -> Self {
         Self {
             function,
@@ -60,6 +62,7 @@ impl<'input> SelectedCallObligationInput<'input> {
             subst,
             signature_subst,
             selected_self_ty,
+            selected_self_infer_ty,
         }
     }
 }
@@ -103,6 +106,7 @@ where
             input.subst,
             &bound_resolver,
             selected_trait_method.as_ref(),
+            input.selected_self_infer_ty.as_ref(),
         )?;
         self.evaluate_obligations(inference, obligations)?;
 
@@ -115,6 +119,7 @@ where
             input.subst,
             &bound_resolver,
             selected_trait_method.as_ref(),
+            input.selected_self_infer_ty.as_ref(),
         )?;
         self.evaluate_obligations(inference, obligations)?;
 
@@ -133,6 +138,7 @@ where
         subst: &InferTypeSubst,
         resolver: &TypeRefResolutionQuery<'query, D, I>,
         selected_trait_method: Option<&SelectedTraitMethodContext<'_>>,
+        selected_self_infer_ty: Option<&InferTy>,
     ) -> Result<Vec<BodyObligation>, PackageStoreError> {
         let mut obligations = Vec::new();
 
@@ -146,6 +152,7 @@ where
                     subst,
                     resolver,
                     selected_trait_method,
+                    selected_self_infer_ty,
                     subject_ty.clone(),
                     bound,
                 )? {
@@ -169,6 +176,7 @@ where
         subst: &InferTypeSubst,
         resolver: &TypeRefResolutionQuery<'query, D, I>,
         selected_trait_method: Option<&SelectedTraitMethodContext<'_>>,
+        selected_self_infer_ty: Option<&InferTy>,
     ) -> Result<Vec<BodyObligation>, PackageStoreError> {
         let mut obligations = Vec::new();
 
@@ -182,6 +190,7 @@ where
                 resolver,
                 ty,
                 selected_trait_method,
+                selected_self_infer_ty,
             )?;
             for bound in bounds {
                 if let Some(obligation) = self.trait_bound_obligation(
@@ -189,6 +198,7 @@ where
                     subst,
                     resolver,
                     selected_trait_method,
+                    selected_self_infer_ty,
                     subject_ty.clone(),
                     bound,
                 )? {
@@ -211,6 +221,7 @@ where
         subst: &InferTypeSubst,
         resolver: &TypeRefResolutionQuery<'query, D, I>,
         selected_trait_method: Option<&SelectedTraitMethodContext<'_>>,
+        selected_self_infer_ty: Option<&InferTy>,
         self_ty: InferTy,
         bound: &TypeBound,
     ) -> Result<Option<BodyObligation>, PackageStoreError> {
@@ -223,6 +234,7 @@ where
             subst,
             resolver,
             selected_trait_method,
+            selected_self_infer_ty,
             &self_ty,
             bound_ty,
         )? {
@@ -250,6 +262,7 @@ where
                 self.project_selected_trait_associated_alias(
                     inference,
                     selected_trait_method,
+                    selected_self_infer_ty,
                     assoc_name,
                 )
             };
@@ -288,13 +301,17 @@ where
         subst: &InferTypeSubst,
         resolver: &TypeRefResolutionQuery<'query, D, I>,
         selected_trait_method: Option<&SelectedTraitMethodContext<'_>>,
+        selected_self_infer_ty: Option<&InferTy>,
         self_ty: &InferTy,
         bound_ty: &TypeRef,
     ) -> Result<Option<BodyObligation>, PackageStoreError> {
         let Some(expectation) = CallableTypeRefExpectation::from_fn_trait_bound(bound_ty) else {
             return Ok(None);
         };
-        if !matches!(inference.root_resolved_ty(self_ty), InferTy::Closure(_)) {
+        if !matches!(
+            inference.root_resolved_ty(self_ty),
+            InferTy::Closure(_) | InferTy::FunctionItem(_)
+        ) {
             return Ok(None);
         }
 
@@ -306,6 +323,7 @@ where
                 self.project_selected_trait_associated_alias(
                     inference,
                     selected_trait_method,
+                    selected_self_infer_ty,
                     assoc_name,
                 )
             };
@@ -334,6 +352,7 @@ where
         resolver: &TypeRefResolutionQuery<'query, D, I>,
         ty: &TypeRef,
         selected_trait_method: Option<&SelectedTraitMethodContext<'_>>,
+        selected_self_infer_ty: Option<&InferTy>,
     ) -> Result<InferTy, PackageStoreError> {
         let mut self_assoc = |assoc_name: &str| {
             let Some(selected_trait_method) = selected_trait_method else {
@@ -342,6 +361,7 @@ where
             self.project_selected_trait_associated_alias(
                 inference,
                 selected_trait_method,
+                selected_self_infer_ty,
                 assoc_name,
             )
         };

@@ -4,8 +4,9 @@
 //! know how receiver substitutions and function generic shadows are built.
 
 use rg_ir_model::{
-    DefMapRef, ExprId, ImplRef, ItemOwner, ScopeId,
+    DefMapRef, ExprId, ImplRef, ItemOwner, ScopeId, SemanticItemRef,
     hir::{items::FunctionData, signature::FunctionSignature},
+    identity::DeclarationRef,
     items::{GenericArg as ItemGenericArg, GenericParams, TypeRef},
 };
 use rg_ir_storage::{DefMapSource, ItemStoreSource, TypePathContext};
@@ -16,6 +17,7 @@ use rg_ty::{
     inference::{InferTy, InferTypeRefProjector, InferTypeSubst},
 };
 
+use crate::ir::resolved::BodyResolution;
 use crate::resolution::{
     BodyResolutionContext, TypeRefUseSite,
     query::ResolvedCallTarget,
@@ -284,12 +286,12 @@ where
             .collect())
     }
 
-    /// Solve direct `impl Fn*` callable syntax against closure arguments.
+    /// Solve direct `impl Fn*` callable syntax against body-local callable witnesses.
     ///
     /// Generic callable params such as `F: FnOnce(T) -> R` are ordinary selected-call
     /// obligations now. Inline `impl FnOnce(T) -> R` params do not have a named `F`, so this
-    /// hook turns their written callable args into the same closure-local goal directly:
-    /// `Closure#n: FnOnce(T) -> R`.
+    /// hook turns their written callable args into the same body-local goal directly:
+    /// `Closure#n: FnOnce(T) -> R` or `FunctionItem(f): FnOnce(T) -> R`.
     pub(crate) fn solve_direct_callable_closure_arguments(
         &self,
         inference: &mut BodyInferenceCtx,
@@ -298,7 +300,7 @@ where
     ) -> Result<(), PackageStoreError> {
         if !args
             .iter()
-            .any(|arg| matches!(inference.root_resolved_expr_ty(*arg), InferTy::Closure(_)))
+            .any(|arg| self.callable_argument_ty(inference, *arg).is_some())
         {
             return Ok(());
         }
@@ -336,10 +338,9 @@ where
 
         let callable_goal_solver = BodyCallableGoalSolver::new(self.context);
         for (arg, param_ty) in args.iter().copied().zip(projection.written_param_refs()) {
-            let self_ty = inference.root_resolved_expr_ty(arg);
-            if !matches!(self_ty, InferTy::Closure(_)) {
+            let Some(self_ty) = self.callable_argument_ty(inference, arg) else {
                 continue;
-            }
+            };
             let Some(param_ty) = param_ty else {
                 continue;
             };
@@ -440,7 +441,14 @@ where
         };
 
         let projected_ty = BodyTraitObligationSolver::new(self.context)
-            .project_selected_trait_associated_alias(inference, &selected_trait_method, assoc_name)?
+            .project_selected_trait_associated_alias(
+                inference,
+                &selected_trait_method,
+                receiver
+                    .map(|receiver| inference.root_resolved_expr_ty(receiver))
+                    .as_ref(),
+                assoc_name,
+            )?
             .unwrap_or(InferTy::Unknown);
         inference.set_expr_infer_ty(call, projected_ty);
 
@@ -791,6 +799,8 @@ where
         );
 
         let finalized_receiver_ty;
+        let selected_self_infer_ty =
+            receiver.map(|receiver| inference.root_resolved_expr_ty(receiver));
         let selected_self_ty = match receiver {
             Some(receiver) => {
                 finalized_receiver_ty = inference
@@ -811,6 +821,7 @@ where
                 &subst,
                 projection.subst(),
                 selected_self_ty,
+                selected_self_infer_ty,
             ),
         )
     }
@@ -849,9 +860,32 @@ where
             let Some(param_ty) = &param.ty else {
                 continue;
             };
-            let arg_ty = inference.root_resolved_expr_ty(*arg);
+            let arg_ty = self
+                .function_item_arg_ty(*arg)
+                .unwrap_or_else(|| inference.root_resolved_expr_ty(*arg));
             subst.bind_type_ref(&mut inference.table, param_ty, &arg_ty, generics);
         }
+    }
+
+    fn callable_argument_ty(&self, inference: &BodyInferenceCtx, arg: ExprId) -> Option<InferTy> {
+        let arg_ty = inference.root_resolved_expr_ty(arg);
+        if matches!(arg_ty, InferTy::Closure(_) | InferTy::FunctionItem(_)) {
+            return Some(arg_ty);
+        }
+
+        self.function_item_arg_ty(arg)
+    }
+
+    fn function_item_arg_ty(&self, arg: ExprId) -> Option<InferTy> {
+        let BodyResolution::Declarations(declarations) = self.context.body().expr_resolution(arg)
+        else {
+            return None;
+        };
+        let Some(DeclarationRef::Item(SemanticItemRef::Function(function))) = declarations.as_one()
+        else {
+            return None;
+        };
+        Some(InferTy::FunctionItem(*function))
     }
 
     /// Bind impl generics from the selected receiver slot: `impl<T> Vec<T>` + `Vec<?T>`.

@@ -1,6 +1,6 @@
 pub mod adapters;
 
-pub use self::adapters::{Enumerate, Filter, FilterMap, Map};
+pub use self::adapters::{Enumerate, Filter, FilterMap, Map, Skip};
 
 pub trait FromIterator<A> {}
 
@@ -28,6 +28,10 @@ pub trait Iterator {
         F: crate::FnMut(Self::Item) -> crate::option::Option<B>;
 
     fn enumerate(self) -> Enumerate<Self>
+    where
+        Self: Sized;
+
+    fn skip(self, n: usize) -> Skip<Self>
     where
         Self: Sized;
 

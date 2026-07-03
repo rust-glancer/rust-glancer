@@ -473,6 +473,71 @@ pub fn use_it(wrapper: Wrapper<Result<Foo>>) {
 }
 
 #[test]
+fn rejects_defaulted_deref_impl_params_with_unproven_bounds() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[workspace]
+members = ["core", "app"]
+resolver = "3"
+
+//- /core/Cargo.toml
+[package]
+name = "fake_core"
+version = "0.1.0"
+edition = "2024"
+
+//- /core/src/lib.rs
+pub mod ops {
+    pub trait Deref {
+        type Target;
+    }
+}
+
+//- /app/Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+core = { package = "fake_core", path = "../core" }
+
+//- /app/src/lib.rs
+pub trait Allocator {}
+
+pub struct Global;
+pub struct Id;
+
+pub struct User {
+    pub id: Id,
+}
+
+pub struct Wrapper<T = Global> {
+    inner: T,
+}
+
+impl<T: Allocator> core::ops::Deref for Wrapper<T> {
+    type Target = User;
+}
+
+pub fn use_it(wrapper: Wrapper) {
+    let _id = wrapper.i$type_unproven_default_bound$d;
+}
+"#,
+        &[AnalysisQuery::ty(
+            "unproven defaulted Deref bound",
+            "type_unproven_default_bound",
+        )
+        .in_lib("app")],
+        expect![[r#"
+            unproven defaulted Deref bound
+            - <unknown>
+        "#]],
+    );
+}
+
+#[test]
 fn aggregates_same_depth_deref_targets_before_resolving_members() {
     check_analysis_queries(
         r#"

@@ -1,6 +1,7 @@
 extern crate self as core;
 
 pub mod iter;
+pub mod ops;
 pub mod option;
 pub mod prelude;
 pub mod result;
@@ -24,4 +25,3 @@ pub trait FnOnce<Args> {
 pub trait FnMut<Args>: FnOnce<Args> {}
 
 pub trait Fn<Args>: FnMut<Args> {}
-

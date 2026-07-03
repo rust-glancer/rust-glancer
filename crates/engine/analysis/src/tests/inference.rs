@@ -965,9 +965,14 @@ pub struct Name;
 pub struct Email;
 pub struct Row;
 pub struct CompletionItem;
+pub struct PackageSlot;
 
 pub struct KeywordCandidate {
     pub label: &'static str,
+}
+
+pub struct ChangedFile {
+    pub package: PackageSlot,
 }
 
 impl User {
@@ -981,13 +986,22 @@ impl KeywordCandidate {
 }
 
 pub fn bar(_: usize, _: &User) -> Row {}
+pub fn render(user: &User) -> Name {}
 pub fn keyword_candidates() -> &'static [KeywordCandidate] {
     missing()
 }
 pub fn missing<T>() -> T {}
 
-pub fn use_it(users: &[User], prefix: &str) {
+pub fn use_it(users: &[User], changed_files: &[ChangedFile], bytes: &[u8], prefix: &str) {
     let names = users.iter().map(|user| user$type_map_param$.name()$type_map_call$).collect::<Vec<_>>()$type_names$;
+    let skipped = users.iter().skip(1).collect::<Vec<_>>()$type_skipped$;
+    let rendered = users.iter().map(render).collect::<Vec<_>>()$type_rendered$;
+    let render_fn = render;
+    let rendered_from_binding = users.iter().map(render_fn).collect::<Vec<_>>()$type_rendered_from_binding$;
+    let owned_users: Vec<User> = missing();
+    let rendered_from_vec = owned_users.iter().map(render).collect::<Vec<_>>()$type_rendered_from_vec$;
+    let byte_refs = bytes.iter().map(|byte| byte$type_identity_map_param$).collect::<Vec<_>>()$type_identity_map$;
+    let packages = changed_files.iter().map(|changed_file| changed_file$type_package_map_param$.package$type_package_field$).collect::<Vec<_>>()$type_packages$;
     let emails = users.iter().filter_map(|user| user$type_filter_map_param$.email()).collect::<Vec<_>>()$type_emails$;
     let rows = users.iter().enumerate()$type_enumerate_call$.map(|(id, user)| bar(id$type_bar_id$, user$type_bar_user$)).collect::<Vec<_>>()$type_rows$;
     let filtered_names = users.iter().filter(|user| user$type_filter_param$.is_active())$type_filter_call$.map(|user| user$type_filtered_map_param$.name()$type_filtered_map_call$).collect::<Vec<_>>()$type_filtered_names$;
@@ -998,6 +1012,39 @@ pub fn use_it(users: &[User], prefix: &str) {
             ty("realistic iterator map closure param", "type_map_param"),
             ty("realistic iterator map closure call", "type_map_call"),
             ty("realistic iterator map collect result", "type_names"),
+            ty("realistic iterator skip collect result", "type_skipped"),
+            ty(
+                "realistic iterator named function collect result",
+                "type_rendered",
+            ),
+            ty(
+                "realistic iterator function binding collect result",
+                "type_rendered_from_binding",
+            ),
+            ty(
+                "realistic iterator named function vec collect result",
+                "type_rendered_from_vec",
+            ),
+            ty(
+                "realistic iterator identity map closure param",
+                "type_identity_map_param",
+            ),
+            ty(
+                "realistic iterator identity map collect result",
+                "type_identity_map",
+            ),
+            ty(
+                "realistic iterator field-copy map closure param",
+                "type_package_map_param",
+            ),
+            ty(
+                "realistic iterator field-copy map field",
+                "type_package_field",
+            ),
+            ty(
+                "realistic iterator field-copy collect result",
+                "type_packages",
+            ),
             ty(
                 "realistic iterator filter_map closure param",
                 "type_filter_map_param",
@@ -1050,6 +1097,33 @@ pub fn use_it(users: &[User], prefix: &str) {
             realistic iterator map collect result
             - nominal struct alloc[lib]::crate::vec::Vec<nominal struct analysis_realistic_iterator_adapters[lib]::crate::Name>
 
+            realistic iterator skip collect result
+            - nominal struct alloc[lib]::crate::vec::Vec<&nominal struct analysis_realistic_iterator_adapters[lib]::crate::User>
+
+            realistic iterator named function collect result
+            - nominal struct alloc[lib]::crate::vec::Vec<nominal struct analysis_realistic_iterator_adapters[lib]::crate::Name>
+
+            realistic iterator function binding collect result
+            - nominal struct alloc[lib]::crate::vec::Vec<nominal struct analysis_realistic_iterator_adapters[lib]::crate::Name>
+
+            realistic iterator named function vec collect result
+            - nominal struct alloc[lib]::crate::vec::Vec<nominal struct analysis_realistic_iterator_adapters[lib]::crate::Name>
+
+            realistic iterator identity map closure param
+            - &u8
+
+            realistic iterator identity map collect result
+            - nominal struct alloc[lib]::crate::vec::Vec<&u8>
+
+            realistic iterator field-copy map closure param
+            - &nominal struct analysis_realistic_iterator_adapters[lib]::crate::ChangedFile
+
+            realistic iterator field-copy map field
+            - nominal struct analysis_realistic_iterator_adapters[lib]::crate::PackageSlot
+
+            realistic iterator field-copy collect result
+            - nominal struct alloc[lib]::crate::vec::Vec<nominal struct analysis_realistic_iterator_adapters[lib]::crate::PackageSlot>
+
             realistic iterator filter_map closure param
             - &nominal struct analysis_realistic_iterator_adapters[lib]::crate::User
 
@@ -1072,7 +1146,7 @@ pub fn use_it(users: &[User], prefix: &str) {
             - &&nominal struct analysis_realistic_iterator_adapters[lib]::crate::User
 
             realistic iterator filter call result
-            - nominal struct core[lib]::crate::iter::adapters::Filter<nominal struct core[lib]::crate::slice::Iter<'_, nominal struct analysis_realistic_iterator_adapters[lib]::crate::User>, closure #28>
+            - nominal struct core[lib]::crate::iter::adapters::Filter<nominal struct core[lib]::crate::slice::Iter<'_, nominal struct analysis_realistic_iterator_adapters[lib]::crate::User>, closure #64>
 
             realistic iterator filtered map closure param
             - &nominal struct analysis_realistic_iterator_adapters[lib]::crate::User
@@ -1090,7 +1164,7 @@ pub fn use_it(users: &[User], prefix: &str) {
             - &str
 
             keyword filter call result
-            - nominal struct core[lib]::crate::iter::adapters::Filter<nominal struct core[lib]::crate::slice::Iter<'_, nominal struct analysis_realistic_iterator_adapters[lib]::crate::KeywordCandidate>, closure #42>
+            - nominal struct core[lib]::crate::iter::adapters::Filter<nominal struct core[lib]::crate::slice::Iter<'_, nominal struct analysis_realistic_iterator_adapters[lib]::crate::KeywordCandidate>, closure #78>
 
             keyword map closure param
             - &nominal struct analysis_realistic_iterator_adapters[lib]::crate::KeywordCandidate
