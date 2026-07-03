@@ -5,11 +5,10 @@ use std::time::Instant;
 use chalk_engine::solve::SLGSolver;
 use chalk_ir::cast::Cast;
 use chalk_ir::{
-    AdtId, AliasTy, AssocTypeId, Binders, BoundVar, CanonicalVarKinds, ClosureId, CoroutineId,
-    DebruijnIndex, DomainGoal, FnDefId, GenericArg, GenericArgData, GoalData, Normalize,
-    OpaqueTyId, ProgramClause, ProgramClauses, QuantifierKind, Substitution, Ty, TyKind,
-    TyVariableKind, UnificationDatabase, VariableKind, VariableKinds, Variance, Variances,
-    WhereClause,
+    AdtId, AliasTy, AssocTypeId, Binders, CanonicalVarKinds, ClosureId, CoroutineId, DomainGoal,
+    FnDefId, GenericArg, GenericArgData, GoalData, Normalize, OpaqueTyId, ProgramClause,
+    ProgramClauses, QuantifierKind, Substitution, Ty, TyKind, UnificationDatabase, Variance,
+    Variances, WhereClause,
 };
 use chalk_solve::ext::GoalExt;
 use chalk_solve::rust_ir::{
@@ -32,9 +31,11 @@ use super::lower::{
     ChalkLowerer, GenericBinderEnv, TraitNameIndex, adt_datum, chalk_assoc_type_id,
     chalk_assoc_type_value_id, chalk_impl_id, chalk_trait_id, stub_trait_datum, unit_ty,
 };
+use super::projection::ProjectionAnswerVars;
 use super::raise;
 use crate::ItemPathQuery;
 use crate::inference::{InferTy, InferTypeSubst, InferenceTable};
+use crate::trait_selection::AssocProjectionResult;
 
 const INTER: RgChalkInterner = RgChalkInterner;
 const SOLVER_MAX_SIZE: usize = 32;
@@ -112,7 +113,7 @@ impl ChalkTraitSolver {
         goal: &crate::trait_selection::TraitGoal,
         assoc_name: &str,
         table: &InferenceTable,
-    ) -> Option<(InferTy, TraitApplicability)>
+    ) -> Option<AssocProjectionResult>
     where
         D: DefMapSource<Error = I::Error>,
         I: ItemStoreSource<'query>,
@@ -120,23 +121,22 @@ impl ChalkTraitSolver {
         let assoc_type_ref = self.program.associated_ty_ref(goal.trait_ref, assoc_name)?;
         let binders = GenericBinderEnv::empty();
         let lowerer = ChalkLowerer::new(item_paths, &self.program.trait_names, context, &binders);
-        let alias = lowerer.projection_alias(assoc_type_ref, goal, table)?;
+        let projection = lowerer.projection_alias(assoc_type_ref, goal, table)?;
         // Ask Chalk for the one existential result type in:
         //
         // `Normalize(<Self as Trait>::Assoc -> ?Result)`
         //
-        // The answer decoder below only accepts result shapes that map directly back into
-        // `InferTy`; richer alias/opaque/const answers stay unsupported instead of becoming a
-        // parallel inference engine.
-        let result_ty = BoundVar::new(DebruijnIndex::INNERMOST, 0).to_ty::<RgChalkInterner>(INTER);
+        // The binder also includes any ordinary project inference variables used by the receiver
+        // goal. If Chalk answers `?Result = ?T`, the decoder maps that bound var back to the same
+        // rust-glancer `InferTy::Var`, then commits only the concrete equalities it can decode.
         let normalize = Normalize {
-            alias,
-            ty: result_ty,
+            alias: projection.alias,
+            ty: projection.variables.result_ty(),
         };
         let goal = GoalData::Quantified(
             QuantifierKind::Exists,
             Binders::new(
-                VariableKinds::from1(INTER, VariableKind::Ty(TyVariableKind::General)),
+                projection.variables.variable_kinds_with_result(),
                 DomainGoal::Normalize(normalize).cast(INTER),
             ),
         )
@@ -159,14 +159,41 @@ impl ChalkTraitSolver {
             TraitApplicability::Yes
         };
         let subst = solution.definite_subst(INTER)?;
-        if !subst.binders.is_empty(INTER) {
-            return None;
+        let subst_args = subst.value.subst.as_slice(INTER);
+        let mut table = table.clone();
+
+        let answer_vars = ProjectionAnswerVars::from_subst_args(&projection.variables, subst_args)?;
+
+        for (index, var) in projection.variables.iter_project_vars() {
+            let Some(project_arg) = subst_args.get(index) else {
+                return None;
+            };
+            let GenericArgData::Ty(project_ty) = project_arg.data(INTER) else {
+                return None;
+            };
+            if let Some(evidence) = raise::infer_ty_from_chalk_projection(
+                project_ty,
+                &projection.variables,
+                &answer_vars,
+            ) {
+                let _ = table.try_unify(&InferTy::Var(var), &evidence).ok()?;
+            }
         }
-        let projected_arg = subst.value.subst.as_slice(INTER).first()?;
+
+        let projected_arg = subst_args.get(projection.variables.result_index())?;
         let GenericArgData::Ty(projected_ty) = projected_arg.data(INTER) else {
             return None;
         };
-        raise::infer_ty_from_chalk(projected_ty).map(|ty| (ty, applicability))
+        let ty = raise::infer_ty_from_chalk_projection(
+            projected_ty,
+            &projection.variables,
+            &answer_vars,
+        )?;
+        Some(AssocProjectionResult {
+            ty,
+            applicability,
+            table,
+        })
     }
 }
 
@@ -244,6 +271,7 @@ impl ChalkProgram {
         }
 
         let trait_names = program.trait_names.clone();
+        let associated_ty_by_trait_name = program.associated_ty_by_trait_name.clone();
         for store in &visible_stores {
             for (impl_ref, impl_data) in store.impls_with_refs() {
                 let Some(trait_ref) = impl_data.resolved_trait_ref.as_option().copied() else {
@@ -258,7 +286,8 @@ impl ChalkProgram {
                         impl_ref: Some(impl_ref),
                     },
                     &binders,
-                );
+                )
+                .with_associated_tys(&associated_ty_by_trait_name);
                 let associated_ty_value_ids = program.collect_impl_associated_ty_values(
                     item_paths,
                     target_items,

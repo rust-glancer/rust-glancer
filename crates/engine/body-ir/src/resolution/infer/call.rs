@@ -330,6 +330,7 @@ where
             .with_subst(projection.subst());
         let callable_resolver = CallableTypeResolver::new(
             self.context,
+            inference.trait_selection_cache.clone(),
             &resolver,
             target.function(),
             function_data.owner,

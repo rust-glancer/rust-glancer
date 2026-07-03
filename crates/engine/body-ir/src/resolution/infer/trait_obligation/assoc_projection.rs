@@ -22,9 +22,9 @@ use crate::resolution::{
     TypeRefUseSite,
     query::TypeRefResolutionQuery,
     support::{
-        BodyTypeRefProjector, CallableTypeRefExpectation, ImplPredicateAssocProjector,
-        ImplPredicateSubject, ProjectionSupport, SelectedTraitMethodContext,
-        impl_projection_predicates, project_unique_support_assoc,
+        BodyAssocProjector, BodyTypeRefProjector, CallableTypeRefExpectation,
+        ImplPredicateAssocProjector, ImplPredicateSubject, ProjectionSupport,
+        SelectedTraitMethodContext, impl_projection_predicates, project_unique_support_assoc,
     },
 };
 
@@ -375,13 +375,9 @@ where
         // so any inference refinements stay local until the whole projection succeeds.
         let Some((projection_table, projected_ty)) =
             project_unique_support_assoc(supports, param_name, None, |goal| {
-                Ok(self
-                    .normalize_assoc_type_in_table(
-                        goal,
-                        assoc_name.as_str(),
-                        &selection.table,
-                        trait_selection_cache,
-                    )?
+                Ok(BodyAssocProjector::new(self.context)
+                    .with_cache(trait_selection_cache.clone())
+                    .normalize_assoc_type(goal, assoc_name.as_str(), &selection.table)?
                     .map(|projection| (projection.table, projection.ty)))
             })?
         else {
@@ -403,13 +399,9 @@ where
     ) -> Result<Option<InferTy>, PackageStoreError> {
         let Some((projection_table, projected_ty)) =
             project_unique_support_assoc(supports, param_name, Some((trait_ref, &args)), |goal| {
-                Ok(self
-                    .normalize_assoc_type_in_table(
-                        goal,
-                        assoc_name.as_str(),
-                        &selection.table,
-                        trait_selection_cache,
-                    )?
+                Ok(BodyAssocProjector::new(self.context)
+                    .with_cache(trait_selection_cache.clone())
+                    .normalize_assoc_type(goal, assoc_name.as_str(), &selection.table)?
                     .map(|projection| (projection.table, projection.ty)))
             })?
         else {

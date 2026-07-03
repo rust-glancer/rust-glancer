@@ -37,6 +37,10 @@ impl BodyInferenceCtx {
         }
     }
 
+    pub(crate) fn trait_selection_cache(&self) -> TraitSelectionCache {
+        self.trait_selection_cache.clone()
+    }
+
     pub(crate) fn set_expr_ty(&mut self, expr: ExprId, ty: &Ty) {
         self.set_expr_fact(expr, InferTy::from_ty(ty));
     }

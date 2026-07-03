@@ -2020,6 +2020,7 @@ dependencies = [
  "chalk-engine",
  "chalk-ir",
  "chalk-solve",
+ "expect-test",
  "rg_ir_model",
  "rg_ir_storage",
  "rg_profile",

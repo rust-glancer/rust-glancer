@@ -22,9 +22,11 @@ use rg_ir_model::{
     hir::items::TypeAliasData,
 };
 use rg_ir_storage::{DefMapSource, ItemStoreSource, TypePathContext};
+use rg_std::ExpectedUnique;
 use rg_text::Name;
 
 use super::interner::{ChalkDefId, RgChalkInterner};
+use super::projection::{ProjectionAliasLowering, ProjectionVariableEnv};
 use crate::inference::{InferGenericArg, InferTy, InferTypeSubst, InferenceTable};
 use crate::trait_selection::TraitGoal;
 use crate::{FloatTy, ItemPathQuery, PrimitiveTy, SignedIntTy, UnsignedIntTy};
@@ -52,10 +54,11 @@ impl TraitNameIndex {
 
     fn resolve_single(&self, name: &Name) -> Option<TraitRef> {
         let traits = self.traits_by_name.get(name)?;
-        let [trait_ref] = traits.as_slice() else {
-            return None;
-        };
-        Some(*trait_ref)
+        let mut resolved = ExpectedUnique::new();
+        for trait_ref in traits {
+            resolved.push(*trait_ref);
+        }
+        resolved.into_option()
     }
 }
 
@@ -147,6 +150,7 @@ impl GenericBinderEnv {
 pub(super) struct ChalkLowerer<'lower, 'query, D, I> {
     item_paths: &'lower ItemPathQuery<'query, D, I>,
     trait_names: &'lower TraitNameIndex,
+    associated_ty_by_trait_name: Option<&'lower HashMap<(TraitRef, Name), TypeAliasRef>>,
     context: TypePathContext,
     binders: &'lower GenericBinderEnv,
 }
@@ -165,15 +169,25 @@ where
         Self {
             item_paths,
             trait_names,
+            associated_ty_by_trait_name: None,
             context,
             binders,
         }
+    }
+
+    pub(super) fn with_associated_tys(
+        mut self,
+        associated_ty_by_trait_name: &'lower HashMap<(TraitRef, Name), TypeAliasRef>,
+    ) -> Self {
+        self.associated_ty_by_trait_name = Some(associated_ty_by_trait_name);
+        self
     }
 
     fn with_binders<'a>(&'a self, binders: &'a GenericBinderEnv) -> ChalkLowerer<'a, 'query, D, I> {
         ChalkLowerer {
             item_paths: self.item_paths,
             trait_names: self.trait_names,
+            associated_ty_by_trait_name: self.associated_ty_by_trait_name,
             context: self.context,
             binders,
         }
@@ -306,21 +320,21 @@ where
         assoc_type_ref: TypeAliasRef,
         goal: &TraitGoal,
         table: &InferenceTable,
-    ) -> Option<AliasTy<RgChalkInterner>> {
-        // Projection goals are allowed to decline when project-local inference variables are still
-        // present. The public API can still use the selected impl substitution path to preserve
-        // those variables in the returned `InferenceTable`.
-        let self_ty = self.lower_infer_ty(&goal.self_ty, table)?;
+    ) -> Option<ProjectionAliasLowering> {
+        let variables = ProjectionVariableEnv::from_goal(goal, table);
+        let self_ty = self.lower_infer_ty_with_projection_vars(&goal.self_ty, table, &variables)?;
         let mut substitution = Vec::with_capacity(1 + goal.args.len());
         substitution.push(GenericArgData::Ty(self_ty).intern(INTER));
         for arg in &goal.args {
-            substitution.push(self.lower_infer_generic_arg(arg, table)?);
+            substitution
+                .push(self.lower_infer_generic_arg_with_projection_vars(arg, table, &variables)?);
         }
 
-        Some(AliasTy::Projection(ProjectionTy {
+        let alias = AliasTy::Projection(ProjectionTy {
             associated_ty_id: chalk_assoc_type_id(assoc_type_ref),
             substitution: Substitution::from_iter(INTER, substitution),
-        }))
+        });
+        Some(ProjectionAliasLowering { alias, variables })
     }
 
     pub(super) fn candidate_where_goals(
@@ -544,14 +558,57 @@ where
                 Some(TyKind::Slice(inner).intern(INTER))
             }
             TypeRef::Array { .. }
-            | TypeRef::QualifiedAssociatedType { .. }
             | TypeRef::FnPointer { .. }
             | TypeRef::ImplTrait(_)
             | TypeRef::DynTrait(_) => None,
+            TypeRef::QualifiedAssociatedType {
+                self_ty,
+                trait_ty: Some(trait_ty),
+                assoc_name,
+            } => self.lower_qualified_associated_type(self_ty, trait_ty, assoc_name, subst),
+            TypeRef::QualifiedAssociatedType { trait_ty: None, .. } => None,
         }
     }
 
+    fn lower_qualified_associated_type(
+        &self,
+        self_ty: &TypeRef,
+        trait_ty: &TypeRef,
+        assoc_name: &Name,
+        subst: Option<(&InferTypeSubst, &InferenceTable)>,
+    ) -> Option<ChalkTy> {
+        let self_ty = self.lower_type_ref(self_ty, subst)?;
+        let TypeRef::Path(trait_path) = trait_ty else {
+            return None;
+        };
+        let trait_ref = self.resolve_trait_path(trait_path)?;
+        let associated_ty_ref = self
+            .associated_ty_by_trait_name?
+            .get(&(trait_ref, assoc_name.clone()))
+            .copied()?;
+        let mut args = Vec::with_capacity(1 + trait_path.segments.last()?.args.len());
+        args.push(GenericArgData::Ty(self_ty).intern(INTER));
+        args.extend(self.generic_args_from_final_segment(trait_path, subst)?);
+
+        Some(
+            TyKind::Alias(AliasTy::Projection(ProjectionTy {
+                associated_ty_id: chalk_assoc_type_id(associated_ty_ref),
+                substitution: Substitution::from_iter(INTER, args),
+            }))
+            .intern(INTER),
+        )
+    }
+
     fn lower_infer_ty(&self, ty: &InferTy, table: &InferenceTable) -> Option<ChalkTy> {
+        self.lower_infer_ty_with_projection_vars(ty, table, &ProjectionVariableEnv::empty())
+    }
+
+    fn lower_infer_ty_with_projection_vars(
+        &self,
+        ty: &InferTy,
+        table: &InferenceTable,
+        projection_vars: &ProjectionVariableEnv,
+    ) -> Option<ChalkTy> {
         let ty = table.canonicalize(ty);
         match ty {
             InferTy::Unit => Some(TyKind::Tuple(0, Substitution::empty(INTER)).intern(INTER)),
@@ -561,18 +618,20 @@ where
                 let args = fields
                     .iter()
                     .map(|field| {
-                        self.lower_infer_ty(field, table)
+                        self.lower_infer_ty_with_projection_vars(field, table, projection_vars)
                             .map(|ty| GenericArgData::Ty(ty).intern(INTER))
                     })
                     .collect::<Option<Vec<_>>>()?;
                 Some(TyKind::Tuple(args.len(), Substitution::from_iter(INTER, args)).intern(INTER))
             }
             InferTy::Slice(inner) => {
-                let inner = self.lower_infer_ty(&inner, table)?;
+                let inner =
+                    self.lower_infer_ty_with_projection_vars(&inner, table, projection_vars)?;
                 Some(TyKind::Slice(inner).intern(INTER))
             }
             InferTy::Reference { mutability, inner } => {
-                let inner = self.lower_infer_ty(&inner, table)?;
+                let inner =
+                    self.lower_infer_ty_with_projection_vars(&inner, table, projection_vars)?;
                 Some(
                     TyKind::Ref(
                         self.chalk_mutability(mutability),
@@ -586,13 +645,19 @@ where
                 let args = ty
                     .args
                     .iter()
-                    .map(|arg| self.lower_infer_generic_arg(arg, table))
+                    .map(|arg| {
+                        self.lower_infer_generic_arg_with_projection_vars(
+                            arg,
+                            table,
+                            projection_vars,
+                        )
+                    })
                     .collect::<Option<Vec<_>>>()?;
                 Some(TyKind::Adt(AdtId(ty.def), Substitution::from_iter(INTER, args)).intern(INTER))
             }
             InferTy::Syntax(ty) => self.lower_type_ref(&ty, None),
-            InferTy::Var(_)
-            | InferTy::IntegerVar(_)
+            InferTy::Var(id) => projection_vars.chalk_ty_for_var(id),
+            InferTy::IntegerVar(_)
             | InferTy::FloatVar(_)
             | InferTy::Unknown
             | InferTy::Array { .. }
@@ -606,14 +671,15 @@ where
         }
     }
 
-    fn lower_infer_generic_arg(
+    fn lower_infer_generic_arg_with_projection_vars(
         &self,
         arg: &InferGenericArg,
         table: &InferenceTable,
+        projection_vars: &ProjectionVariableEnv,
     ) -> Option<chalk_ir::GenericArg<RgChalkInterner>> {
         match arg {
             InferGenericArg::Type(ty) => self
-                .lower_infer_ty(ty, table)
+                .lower_infer_ty_with_projection_vars(ty, table, projection_vars)
                 .map(|ty| GenericArgData::Ty(ty).intern(INTER)),
             InferGenericArg::Lifetime(lifetime) => Some(
                 self.binders

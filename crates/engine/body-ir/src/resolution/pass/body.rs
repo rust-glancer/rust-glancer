@@ -87,7 +87,11 @@ where
                     changed |= expr_pass.resolve_expr(ExprId(expr_idx))?;
                 }
             }
-            let binding_updates = PatternTypePropagationPass::new(self.context()).propagate()?;
+            let binding_updates = PatternTypePropagationPass::new(
+                self.context(),
+                self.inference.trait_selection_cache(),
+            )
+            .propagate()?;
             changed |= self.apply_binding_type_updates(binding_updates);
 
             if !changed {

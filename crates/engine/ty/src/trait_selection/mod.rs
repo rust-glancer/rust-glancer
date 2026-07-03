@@ -11,8 +11,9 @@ use std::sync::{Arc, Mutex};
 mod chalk;
 mod header;
 mod matcher;
+mod projection;
 
-use rg_ir_model::{AssocItemId, TraitApplicability, TraitImplRef, TraitRef, TypeAliasRef};
+use rg_ir_model::{TraitApplicability, TraitImplRef, TraitRef};
 use rg_ir_storage::{
     DefMapSource, ItemLookupIndex, ItemStoreSource, TargetItemQuery, TypePathContext,
 };
@@ -21,11 +22,9 @@ use rg_std::ExpectedUnique;
 use self::chalk::ChalkTraitSolver;
 pub use self::header::TraitSelectionOptions;
 use self::matcher::CandidateMatcher;
+pub use self::projection::AssocProjectionResult;
 use crate::ItemPathQuery;
-use crate::Ty;
-use crate::inference::{
-    InferGenericArg, InferTy, InferTypeRefProjector, InferTypeSubst, InferenceTable,
-};
+use crate::inference::{InferGenericArg, InferTy, InferTypeSubst, InferenceTable};
 
 /// A shallow trait goal such as `Vec<?T>: FromIterator<User>`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -45,17 +44,6 @@ pub struct TraitSelection {
     ///
     /// Probe mode returns the table instead of mutating the caller. A later commit mode can adopt
     /// this table only when exactly one candidate survives.
-    pub table: InferenceTable,
-}
-
-/// Result of normalizing one selected associated type projection.
-///
-/// The projected type is still in inference form because callers usually want to commit it into an
-/// active body table, not immediately collapse unsolved variables to `Ty::Unknown`.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AssocProjectionResult {
-    pub ty: InferTy,
-    pub applicability: TraitApplicability,
     pub table: InferenceTable,
 }
 
@@ -112,7 +100,7 @@ impl TraitSelectionCache {
         goal: &TraitGoal,
         assoc_name: &str,
         table: &InferenceTable,
-    ) -> Result<Option<(InferTy, TraitApplicability)>, I::Error>
+    ) -> Result<Option<AssocProjectionResult>, I::Error>
     where
         D: DefMapSource<Error = I::Error>,
         I: ItemStoreSource<'query>,
@@ -254,67 +242,6 @@ where
         )
     }
 
-    /// Normalize a named associated type through the unique impl selected for this trait goal.
-    ///
-    /// This is the narrow projection API used by higher layers. It deliberately returns `None`
-    /// for empty or ambiguous selection, and it carries the trial table so the caller can commit
-    /// receiver/header evidence only when the whole projection is useful.
-    pub fn normalize_assoc_type(
-        &self,
-        goal: &TraitGoal,
-        assoc_name: &str,
-        table: &InferenceTable,
-    ) -> Result<Option<AssocProjectionResult>, I::Error> {
-        let ExpectedUnique::One(selection) = self.probe(goal, table)? else {
-            return Ok(None);
-        };
-        let Some(impl_data) = self
-            .target_items
-            .items()
-            .impl_data(selection.trait_impl.impl_ref)?
-        else {
-            return Ok(None);
-        };
-        let fallback_ty = Self::project_associated_type_from_selection(
-            &self.item_paths,
-            &self.target_items,
-            &selection,
-            assoc_name,
-        )?;
-
-        // Keep the project-side projection first. The selected impl already gives us the alias
-        // equality, and this path preserves this project's live `?T` variables in the returned
-        // table. Chalk remains useful as a fallback for cases the local type-ref projector cannot
-        // read yet, but we avoid building a full program when the selected impl answered directly.
-        let chalk_projection = if fallback_ty.is_none() {
-            let context = TypePathContext {
-                module: impl_data.owner,
-                impl_ref: Some(selection.trait_impl.impl_ref),
-            };
-            self.cache.normalize_assoc_type(
-                &self.item_paths,
-                &self.target_items,
-                context,
-                goal,
-                assoc_name,
-                &selection.table,
-            )?
-        } else {
-            None
-        };
-        let Some((ty, assoc_applicability)) =
-            chalk_projection.or_else(|| fallback_ty.map(|ty| (ty, TraitApplicability::Yes)))
-        else {
-            return Ok(None);
-        };
-
-        Ok(Some(AssocProjectionResult {
-            ty,
-            applicability: selection.applicability.and(assoc_applicability),
-            table: selection.table,
-        }))
-    }
-
     /// Probe one already-visible impl using borrowed query state and an explicit policy.
     ///
     /// Some callers, such as method lookup, already own borrowed query state and want to reuse the
@@ -408,57 +335,6 @@ where
             applicability,
             table,
         }))
-    }
-
-    fn project_associated_type_from_selection(
-        item_paths: &ItemPathQuery<'query, D, I>,
-        target_items: &TargetItemQuery<'query, D, I>,
-        selection: &TraitSelection,
-        assoc_name: &str,
-    ) -> Result<Option<InferTy>, I::Error> {
-        let Some(impl_data) = target_items
-            .items()
-            .impl_data(selection.trait_impl.impl_ref)?
-        else {
-            return Ok(None);
-        };
-
-        for item in &impl_data.items {
-            let AssocItemId::TypeAlias(type_alias_id) = item else {
-                continue;
-            };
-            let type_alias_ref = TypeAliasRef {
-                origin: selection.trait_impl.impl_ref.origin,
-                id: *type_alias_id,
-            };
-            let Some(type_alias_data) = item_paths.items().type_alias_data(type_alias_ref)? else {
-                continue;
-            };
-            if type_alias_data.name.as_str() != assoc_name {
-                continue;
-            }
-            let Some(aliased_ty) = type_alias_data.signature.aliased_ty() else {
-                continue;
-            };
-
-            let context = TypePathContext {
-                module: impl_data.owner,
-                impl_ref: Some(selection.trait_impl.impl_ref),
-            };
-            let type_subst = selection.subst.finalize_type_subst(&selection.table);
-            let resolved_ty = item_paths.resolve_type_ref(
-                aliased_ty,
-                context,
-                Ty::syntax(aliased_ty.clone()),
-                &type_subst,
-            )?;
-            return Ok(Some(
-                InferTypeRefProjector::new(&selection.subst)
-                    .ty_from_type_ref(aliased_ty, &resolved_ty),
-            ));
-        }
-
-        Ok(None)
     }
 
     fn impl_has_chalk_predicates(impl_data: &rg_ir_model::hir::items::ImplData) -> bool {

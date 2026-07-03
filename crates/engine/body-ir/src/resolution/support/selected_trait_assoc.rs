@@ -10,20 +10,20 @@
 //! supplied the method. This helper turns those two facts into the trait goal needed to project the
 //! associated type.
 //!
-//! To resolve that, we build a selected-method trait goal and delegate actual impl projection to
-//! the shared impl-predicate projector.
+//! To resolve that, we build a selected-method trait goal and delegate actual projection policy to
+//! the body associated type projector.
 
 use rg_ir_model::{FunctionRef, ItemOwner, TraitRef, items::TypeRef};
 use rg_ir_storage::{DefMapSource, ItemStoreSource};
 use rg_package_store::PackageStoreError;
 use rg_ty::{
-    TraitGoal, TraitSelectionOptions, TraitSelectionQuery, Ty,
+    TraitGoal, TraitSelectionCache, Ty,
     inference::{InferTy, InferenceTable},
 };
 
 use crate::resolution::BodyResolutionContext;
 
-use super::{ImplPredicateAssocProjection, ImplPredicateAssocProjector};
+use super::BodyAssocProjector;
 
 /// Selected trait-method context needed to interpret `Self::Assoc` syntax.
 ///
@@ -97,6 +97,7 @@ impl<'a> SelectedTraitMethodContext<'a> {
 /// Projects `Self::Assoc` through the unique impl selected by a trait method receiver.
 pub(crate) struct SelectedTraitAssocProjector<'query, D, I> {
     context: BodyResolutionContext<'query, D, I>,
+    trait_selection_cache: TraitSelectionCache,
 }
 
 impl<'query, D, I> SelectedTraitAssocProjector<'query, D, I>
@@ -105,38 +106,15 @@ where
     I: ItemStoreSource<'query, Error = PackageStoreError> + Copy,
 {
     pub(crate) fn new(context: BodyResolutionContext<'query, D, I>) -> Self {
-        Self { context }
+        Self {
+            context,
+            trait_selection_cache: TraitSelectionCache::default(),
+        }
     }
 
-    /// Project an associated type into inference form using the caller's table.
-    ///
-    /// Callers that are allowed to commit receiver evidence can adopt the returned table. Callers
-    /// that only need a concrete fallback can use `project_concrete_ty` instead.
-    pub(crate) fn project_infer_ty(
-        &self,
-        selected_method: &SelectedTraitMethodContext<'_>,
-        assoc_name: &str,
-        table: &InferenceTable,
-    ) -> Result<Option<ImplPredicateAssocProjection>, PackageStoreError> {
-        let goal = self.selected_goal(selected_method);
-        let Some(projection) = TraitSelectionQuery::with_index(
-            self.context.item_paths(),
-            self.context.target_items(),
-            self.context.semantic_index(),
-        )
-        // This projector is a body-local bridge from an already selected trait method to
-        // `Self::Assoc`. The body obligation pass handles explicit where-clause evidence, so this
-        // step only needs the impl header and must keep rejecting generic-parameter bounds.
-        .with_options(TraitSelectionOptions::new().caller_solves_where_predicates())
-        .normalize_assoc_type(&goal, assoc_name, table)?
-        else {
-            return Ok(None);
-        };
-
-        Ok(Some(ImplPredicateAssocProjection::new(
-            projection.ty,
-            projection.table,
-        )))
+    pub(crate) fn with_cache(mut self, cache: TraitSelectionCache) -> Self {
+        self.trait_selection_cache = cache;
+        self
     }
 
     /// Project an associated type into a stable concrete type for non-mutating callers.
@@ -146,46 +124,22 @@ where
         assoc_name: &str,
     ) -> Result<Option<Ty>, PackageStoreError> {
         let table = InferenceTable::new();
-        // Prefer the body-local impl-predicate path first. It can use simple support predicates
-        // such as `S: Source` without mutating caller inference. If that cannot answer, fall
-        // back to the shared associated-type normalizer for direct aliases.
-        let projection = if let Some(projection) =
-            self.project_concrete_infer_ty(selected_method, assoc_name, &table)?
-        {
-            Some(projection)
-        } else {
-            self.project_infer_ty(selected_method, assoc_name, &table)?
-        };
+        // Concrete callers still use the same body projection policy as mutating callers; they
+        // simply finalize the trial table instead of committing it.
+        let goal = self.selected_goal(selected_method);
+        let projection = BodyAssocProjector::new(self.context)
+            .with_cache(self.trait_selection_cache.clone())
+            .normalize_assoc_type(&goal, assoc_name, &table)?;
         let Some(projection) = projection else {
             return Ok(None);
         };
-        let (projected_ty, table) = projection.into_parts();
+        let (projected_ty, _applicability, table) = projection.into_parts();
         let projected_ty = table.finalize(&projected_ty);
         if matches!(projected_ty, Ty::Syntax(_)) || projected_ty.has_unknown() {
             return Ok(Some(Ty::Unknown));
         }
 
         Ok(Some(projected_ty))
-    }
-
-    /// Project concrete selected aliases using the impl predicates that the project understands
-    /// locally.
-    ///
-    /// This is the early, non-mutating companion to the final body-obligation path. It is enough
-    /// for aliases such as `Adapter<S>::Output = S::Item`: the `S: Source` support predicate tells
-    /// us how to normalize `S::Item`, while unrelated callable predicates are ignored because they
-    /// do not contribute to that alias value. Aliases that require callable return solving, such as
-    /// `CallAdapter<S, F>::Output = B` with `F: FnMut(S::Item) -> B`, stay unknown here and are
-    /// handled by the final inference pass where closure bodies are available.
-    fn project_concrete_infer_ty(
-        &self,
-        selected_method: &SelectedTraitMethodContext<'_>,
-        assoc_name: &str,
-        table: &InferenceTable,
-    ) -> Result<Option<ImplPredicateAssocProjection>, PackageStoreError> {
-        let goal = self.selected_goal(selected_method);
-        ImplPredicateAssocProjector::new(self.context)
-            .project_goal_through_impl_predicates(&goal, assoc_name, table)
     }
 
     /// Build the trait goal represented by this selected method call.

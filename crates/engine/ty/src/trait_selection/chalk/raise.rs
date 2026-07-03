@@ -8,41 +8,67 @@
 use chalk_ir::{GenericArg, GenericArgData, Mutability as ChalkMutability, Scalar, Ty, TyKind};
 
 use super::interner::RgChalkInterner;
+use super::projection::{ProjectionAnswerVars, ProjectionVariableEnv};
 use crate::inference::{InferGenericArg, InferNominalTy, InferTy};
 use crate::{FloatTy, PrimitiveTy, SignedIntTy, UnsignedIntTy};
 
 const INTER: RgChalkInterner = RgChalkInterner;
 
-pub(super) fn infer_ty_from_chalk(ty: &Ty<RgChalkInterner>) -> Option<InferTy> {
+pub(super) fn infer_ty_from_chalk_projection(
+    ty: &Ty<RgChalkInterner>,
+    variables: &ProjectionVariableEnv,
+    answer_vars: &ProjectionAnswerVars,
+) -> Option<InferTy> {
+    infer_ty_from_chalk_with_vars(ty, Some((variables, answer_vars)))
+}
+
+fn infer_ty_from_chalk_with_vars(
+    ty: &Ty<RgChalkInterner>,
+    variables: Option<(&ProjectionVariableEnv, &ProjectionAnswerVars)>,
+) -> Option<InferTy> {
     match ty.kind(INTER) {
         TyKind::Tuple(0, _) => Some(InferTy::Unit),
         TyKind::Tuple(_, substitution) => {
             let fields = substitution
                 .iter(INTER)
-                .map(|arg| infer_ty_from_chalk_arg(&arg))
+                .map(|arg| infer_ty_from_chalk_arg(&arg, variables))
                 .collect::<Option<Vec<_>>>()?;
             Some(InferTy::Tuple(fields))
         }
         TyKind::Never => Some(InferTy::Never),
         TyKind::Scalar(scalar) => primitive_from_chalk(*scalar).map(InferTy::Primitive),
         TyKind::Str => Some(InferTy::Primitive(PrimitiveTy::Str)),
-        TyKind::Slice(inner) => Some(InferTy::Slice(Box::new(infer_ty_from_chalk(inner)?))),
+        TyKind::Slice(inner) => Some(InferTy::Slice(Box::new(infer_ty_from_chalk_with_vars(
+            inner, variables,
+        )?))),
         TyKind::Ref(mutability, _, inner) => Some(InferTy::Reference {
             mutability: match mutability {
                 ChalkMutability::Mut => rg_ir_model::Mutability::Mutable,
                 ChalkMutability::Not => rg_ir_model::Mutability::Shared,
             },
-            inner: Box::new(infer_ty_from_chalk(inner)?),
+            inner: Box::new(infer_ty_from_chalk_with_vars(inner, variables)?),
         }),
         TyKind::Adt(adt_id, substitution) => {
             let args = substitution
                 .iter(INTER)
-                .map(|arg| infer_generic_arg_from_chalk(&arg))
+                .map(|arg| infer_generic_arg_from_chalk(&arg, variables))
                 .collect::<Option<Vec<_>>>()?;
             Some(InferTy::Nominal(InferNominalTy {
                 def: adt_id.0,
                 args,
             }))
+        }
+        TyKind::BoundVar(bound_var) => {
+            let (variables, answer_vars) = variables?;
+            if let Some(index) = bound_var.index_if_innermost()
+                && let Some(ty) = variables.project_var_ty(index)
+            {
+                return Some(ty);
+            }
+            answer_vars
+                .as_slice()
+                .iter()
+                .find_map(|(var, ty)| (*var == *bound_var).then_some(ty.clone()))
         }
         TyKind::Array(_, _)
         | TyKind::Raw(_, _)
@@ -55,7 +81,6 @@ pub(super) fn infer_ty_from_chalk(ty: &Ty<RgChalkInterner>) -> Option<InferTy> {
         | TyKind::CoroutineWitness(_, _)
         | TyKind::Foreign(_)
         | TyKind::Function(_)
-        | TyKind::BoundVar(_)
         | TyKind::InferenceVar(_, _)
         | TyKind::Dyn(_)
         | TyKind::Placeholder(_)
@@ -63,16 +88,24 @@ pub(super) fn infer_ty_from_chalk(ty: &Ty<RgChalkInterner>) -> Option<InferTy> {
     }
 }
 
-fn infer_ty_from_chalk_arg(arg: &GenericArg<RgChalkInterner>) -> Option<InferTy> {
+fn infer_ty_from_chalk_arg(
+    arg: &GenericArg<RgChalkInterner>,
+    variables: Option<(&ProjectionVariableEnv, &ProjectionAnswerVars)>,
+) -> Option<InferTy> {
     let GenericArgData::Ty(ty) = arg.data(INTER) else {
         return None;
     };
-    infer_ty_from_chalk(ty)
+    infer_ty_from_chalk_with_vars(ty, variables)
 }
 
-fn infer_generic_arg_from_chalk(arg: &GenericArg<RgChalkInterner>) -> Option<InferGenericArg> {
+fn infer_generic_arg_from_chalk(
+    arg: &GenericArg<RgChalkInterner>,
+    variables: Option<(&ProjectionVariableEnv, &ProjectionAnswerVars)>,
+) -> Option<InferGenericArg> {
     match arg.data(INTER) {
-        GenericArgData::Ty(ty) => Some(InferGenericArg::Type(Box::new(infer_ty_from_chalk(ty)?))),
+        GenericArgData::Ty(ty) => Some(InferGenericArg::Type(Box::new(
+            infer_ty_from_chalk_with_vars(ty, variables)?,
+        ))),
         GenericArgData::Lifetime(_) => Some(InferGenericArg::Lifetime("_".to_owned())),
         GenericArgData::Const(_) => None,
     }

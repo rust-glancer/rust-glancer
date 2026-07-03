@@ -17,7 +17,7 @@ use rg_ir_model::{
 use rg_ir_storage::{DefMapSource, ItemStoreSource};
 use rg_package_store::PackageStoreError;
 use rg_std::ExpectedUnique;
-use rg_ty::Ty;
+use rg_ty::{TraitSelectionCache, Ty};
 
 use crate::{
     ir::ExprKind,
@@ -37,6 +37,7 @@ use super::selected_trait_assoc::{
 /// 3. Resolve callable shapes at the selected function use site.
 pub(crate) fn callable_arg_expectations<'query, D, I>(
     context: BodyResolutionContext<'query, D, I>,
+    trait_selection_cache: TraitSelectionCache,
     call: ExprId,
     args: &[ExprId],
 ) -> Result<Vec<(ExprId, CallableExpectation)>, PackageStoreError>
@@ -72,6 +73,7 @@ where
         .with_subst(projection.subst());
     let callable_resolver = CallableTypeResolver::new(
         context,
+        trait_selection_cache,
         &resolver,
         target.function(),
         function_data.owner,
@@ -154,6 +156,7 @@ impl CallableExpectation {
 /// receiver impl selected the method, but the call projection can.
 pub(crate) struct CallableTypeResolver<'a, 'query, D, I> {
     context: BodyResolutionContext<'query, D, I>,
+    trait_selection_cache: TraitSelectionCache,
     resolver: &'a TypeRefResolutionQuery<'query, D, I>,
     selected_trait_method: Option<SelectedTraitMethodContext<'a>>,
 }
@@ -165,6 +168,7 @@ where
 {
     pub(crate) fn new(
         context: BodyResolutionContext<'query, D, I>,
+        trait_selection_cache: TraitSelectionCache,
         resolver: &'a TypeRefResolutionQuery<'query, D, I>,
         function: FunctionRef,
         owner: ItemOwner,
@@ -174,6 +178,7 @@ where
             SelectedTraitMethodContext::from_function(context, function, owner, selected_self_ty)?;
         Ok(Self {
             context,
+            trait_selection_cache,
             resolver,
             selected_trait_method,
         })
@@ -196,6 +201,7 @@ where
                 return Ok(None);
             };
             if let Some(projected_ty) = SelectedTraitAssocProjector::new(self.context)
+                .with_cache(self.trait_selection_cache.clone())
                 .project_concrete_ty(selected_trait_method, assoc_name)?
             {
                 return Ok(Some(projected_ty));

@@ -11,7 +11,7 @@ use rg_ir_model::{
 use rg_ir_storage::{DefMapSource, ItemStoreSource};
 use rg_package_store::PackageStoreError;
 use rg_std::ExpectedUnique;
-use rg_ty::{ReferencePeelingCandidates, Ty};
+use rg_ty::{ReferencePeelingCandidates, TraitSelectionCache, Ty};
 
 use crate::ir::{ExprKind, PatKind, RecordPatField, StmtKind};
 use crate::resolution::{
@@ -20,6 +20,7 @@ use crate::resolution::{
 
 pub(super) struct PatternTypePropagationPass<'query, D, I> {
     context: BodyResolutionContext<'query, D, I>,
+    trait_selection_cache: TraitSelectionCache,
 }
 
 impl<'query, D, I> PatternTypePropagationPass<'query, D, I>
@@ -27,8 +28,14 @@ where
     D: DefMapSource<Error = PackageStoreError> + Copy,
     I: ItemStoreSource<'query, Error = PackageStoreError> + Copy,
 {
-    pub(super) fn new(context: BodyResolutionContext<'query, D, I>) -> Self {
-        Self { context }
+    pub(super) fn new(
+        context: BodyResolutionContext<'query, D, I>,
+        trait_selection_cache: TraitSelectionCache,
+    ) -> Self {
+        Self {
+            context,
+            trait_selection_cache,
+        }
     }
 
     pub(super) fn propagate(&self) -> Result<Vec<(BindingId, Ty)>, PackageStoreError> {
@@ -165,7 +172,9 @@ where
         args: &[ExprId],
         updates: &mut Vec<(BindingId, Ty)>,
     ) -> Result<(), PackageStoreError> {
-        for (arg, expectation) in callable_arg_expectations(self.context, call, args)? {
+        for (arg, expectation) in
+            callable_arg_expectations(self.context, self.trait_selection_cache.clone(), call, args)?
+        {
             // Only closure arguments can receive these types here.
             // Other expression kinds still get ordinary call-argument expectations elsewhere.
             let ExprKind::Closure { params, .. } =

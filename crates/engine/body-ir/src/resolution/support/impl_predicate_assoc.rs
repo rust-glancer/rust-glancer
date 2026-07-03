@@ -15,7 +15,7 @@
 //! owned by the body-obligation pass.
 
 use rg_ir_model::{
-    AssocItemId, TraitRef, TypeAliasRef,
+    AssocItemId, TraitApplicability, TraitRef, TypeAliasRef,
     hir::items::ImplData,
     items::{GenericParams, TypeBound, TypeRef},
 };
@@ -24,7 +24,8 @@ use rg_package_store::PackageStoreError;
 use rg_std::ExpectedUnique;
 use rg_text::Name;
 use rg_ty::{
-    TraitGoal, TraitSelection, TraitSelectionOptions, TraitSelectionQuery,
+    AssocProjectionResult, TraitGoal, TraitSelection, TraitSelectionCache, TraitSelectionOptions,
+    TraitSelectionQuery,
     inference::{InferGenericArg, InferTy, InferTypeRefProjector, InferenceTable},
 };
 
@@ -39,25 +40,6 @@ use super::{
 // instead of growing the Rust stack. Eight steps is enough for ordinary nested projections while
 // still being small enough to make runaway projection obviously bounded.
 const IMPL_PREDICATE_ASSOC_PROJECTION_DEPTH: usize = 8;
-
-/// Result of projecting one associated type through impl-predicate evidence.
-///
-/// The projected type is still in inference form because callers usually want to commit it into an
-/// active body table, not immediately collapse unsolved variables to `Ty::Unknown`.
-pub(crate) struct ImplPredicateAssocProjection {
-    ty: InferTy,
-    table: InferenceTable,
-}
-
-impl ImplPredicateAssocProjection {
-    pub(crate) fn new(ty: InferTy, table: InferenceTable) -> Self {
-        Self { ty, table }
-    }
-
-    pub(crate) fn into_parts(self) -> (InferTy, InferenceTable) {
-        (self.ty, self.table)
-    }
-}
 
 /// Non-callable predicate that can normalize `T::Assoc` inside a concrete impl alias.
 ///
@@ -128,6 +110,7 @@ pub(crate) fn project_unique_support_assoc<T, E>(
 /// Projects associated aliases using the simple impl predicates body resolution understands.
 pub(crate) struct ImplPredicateAssocProjector<'query, D, I> {
     context: BodyResolutionContext<'query, D, I>,
+    trait_selection_cache: TraitSelectionCache,
 }
 
 impl<'query, D, I> ImplPredicateAssocProjector<'query, D, I>
@@ -136,7 +119,15 @@ where
     I: ItemStoreSource<'query, Error = PackageStoreError> + Copy,
 {
     pub(crate) fn new(context: BodyResolutionContext<'query, D, I>) -> Self {
-        Self { context }
+        Self {
+            context,
+            trait_selection_cache: TraitSelectionCache::default(),
+        }
+    }
+
+    pub(crate) fn with_cache(mut self, cache: TraitSelectionCache) -> Self {
+        self.trait_selection_cache = cache;
+        self
     }
 
     /// Select one impl for a trait goal using caller-provided trait-selection options.
@@ -204,12 +195,17 @@ where
     /// This intentionally does not solve callable return variables. It is for nested support goals
     /// such as `Adapter<S>::Output`, where `S: Source` is enough to normalize the alias, and for
     /// early concrete call-signature projection where mutating closure inference is not available.
+    ///
+    /// If the selected impl has no caller-owned predicates, this returns `None` so the caller can
+    /// use the shared type-layer projection API for direct associated aliases. Callable predicates
+    /// still count as body-local work because they can introduce impl-only type parameters such as
+    /// `B` in `Map<I, F>::Item = B`.
     pub(crate) fn project_goal_through_impl_predicates(
         &self,
         goal: &TraitGoal,
         assoc_name: &str,
         table: &InferenceTable,
-    ) -> Result<Option<ImplPredicateAssocProjection>, PackageStoreError> {
+    ) -> Result<Option<AssocProjectionResult>, PackageStoreError> {
         self.project_goal_through_impl_predicates_inner(
             goal,
             assoc_name,
@@ -229,6 +225,7 @@ where
             self.context.target_items(),
             self.context.semantic_index(),
         )
+        .with_cache(self.trait_selection_cache.clone())
         .with_options(options)
         .probe(goal, table)
     }
@@ -239,7 +236,7 @@ where
         assoc_name: &str,
         table: &InferenceTable,
         remaining_depth: usize,
-    ) -> Result<Option<ImplPredicateAssocProjection>, PackageStoreError> {
+    ) -> Result<Option<AssocProjectionResult>, PackageStoreError> {
         if remaining_depth == 0 {
             return Ok(None);
         }
@@ -265,6 +262,9 @@ where
         else {
             return Ok(None);
         };
+        if !Self::has_body_local_impl_predicates(&impl_data.generics) {
+            return Ok(None);
+        }
         Self::bind_missing_impl_type_params(&mut selection, &impl_data.generics);
         // 3. Read the alias body in the impl context and collect the predicates that can support
         // projections inside that body.
@@ -280,14 +280,17 @@ where
         let Some(mut supports) = self.projection_supports(&mut selection, &impl_data)? else {
             return Ok(None);
         };
+
         // 4. Project the alias body using the support goals. Any unsupported associated projection
         // keeps the whole alias unknown.
+        let mut applicability = selection.applicability;
         let Some(projected_ty) = self.project_impl_ty(
             &mut selection,
             &mut supports,
             &resolver,
             &aliased_ty,
             remaining_depth,
+            &mut applicability,
         )?
         else {
             return Ok(None);
@@ -298,10 +301,16 @@ where
             return Ok(None);
         }
 
-        Ok(Some(ImplPredicateAssocProjection::new(
+        Ok(Some(AssocProjectionResult::new(
             projected_ty,
+            applicability,
             selection.table,
         )))
+    }
+
+    fn has_body_local_impl_predicates(generics: &GenericParams) -> bool {
+        generics.types.iter().any(|param| !param.bounds.is_empty())
+            || !generics.where_predicates.is_empty()
     }
 
     fn bind_missing_impl_type_params(selection: &mut TraitSelection, generics: &GenericParams) {
@@ -425,6 +434,7 @@ where
         resolver: &TypeRefResolutionQuery<'query, D, I>,
         ty: &TypeRef,
         remaining_depth: usize,
+        applicability: &mut TraitApplicability,
     ) -> Result<Option<InferTy>, PackageStoreError> {
         let subst = selection.subst.clone();
         let mut associated_ty = |param_name: &Name, qualified_trait, assoc_name: &Name| {
@@ -437,6 +447,7 @@ where
                     args,
                     assoc_name,
                     remaining_depth,
+                    applicability,
                 )
             } else {
                 self.project_impl_generic_associated_ty(
@@ -445,6 +456,7 @@ where
                     param_name,
                     assoc_name,
                     remaining_depth,
+                    applicability,
                 )
             }
         };
@@ -464,23 +476,22 @@ where
         param_name: &Name,
         assoc_name: &Name,
         remaining_depth: usize,
+        applicability: &mut TraitApplicability,
     ) -> Result<Option<InferTy>, PackageStoreError> {
-        let Some((projection_table, projected_ty)) =
-            project_unique_support_assoc(supports, param_name, None, |goal| {
-                Ok(self
-                    .project_goal_through_impl_predicates_inner(
-                        goal,
-                        assoc_name.as_str(),
-                        &selection.table,
-                        remaining_depth - 1,
-                    )?
-                    .map(|projection| (projection.table, projection.ty)))
-            })?
+        let Some(projection) = project_unique_support_assoc(supports, param_name, None, |goal| {
+            self.project_support_goal_assoc_type(
+                goal,
+                assoc_name.as_str(),
+                &selection.table,
+                remaining_depth,
+            )
+        })?
         else {
             return Ok(None);
         };
-        selection.table = projection_table;
-        Ok(Some(projected_ty))
+        *applicability = applicability.and(projection.applicability);
+        selection.table = projection.table;
+        Ok(Some(projection.ty))
     }
 
     fn project_impl_qualified_generic_associated_ty(
@@ -492,22 +503,57 @@ where
         args: Vec<InferGenericArg>,
         assoc_name: &Name,
         remaining_depth: usize,
+        applicability: &mut TraitApplicability,
     ) -> Result<Option<InferTy>, PackageStoreError> {
-        let Some((projection_table, projected_ty)) =
+        let Some(projection) =
             project_unique_support_assoc(supports, param_name, Some((trait_ref, &args)), |goal| {
-                Ok(self
-                    .project_goal_through_impl_predicates_inner(
-                        goal,
-                        assoc_name.as_str(),
-                        &selection.table,
-                        remaining_depth - 1,
-                    )?
-                    .map(|projection| (projection.table, projection.ty)))
+                self.project_support_goal_assoc_type(
+                    goal,
+                    assoc_name.as_str(),
+                    &selection.table,
+                    remaining_depth,
+                )
             })?
         else {
             return Ok(None);
         };
-        selection.table = projection_table;
-        Ok(Some(projected_ty))
+        *applicability = applicability.and(projection.applicability);
+        selection.table = projection.table;
+        Ok(Some(projection.ty))
+    }
+
+    fn project_support_goal_assoc_type(
+        &self,
+        goal: &TraitGoal,
+        assoc_name: &str,
+        table: &InferenceTable,
+        remaining_depth: usize,
+    ) -> Result<Option<AssocProjectionResult>, PackageStoreError> {
+        if remaining_depth == 0 {
+            return Ok(None);
+        }
+
+        // A support goal can itself be another adapter-like impl whose alias depends on
+        // caller-owned predicates. Try that local bridge first so predicates such as
+        // `S: Source` remain visible to nested `S::Item` projections.
+        if let Some(projection) = self.project_goal_through_impl_predicates_inner(
+            goal,
+            assoc_name,
+            table,
+            remaining_depth - 1,
+        )? {
+            return Ok(Some(projection));
+        }
+
+        // If the support impl has no body-local predicate work, the associated alias belongs to
+        // the shared type layer. This is the common endpoint for projections like
+        // `<slice::Iter<T> as Iterator>::Item = T`.
+        TraitSelectionQuery::with_index(
+            self.context.item_paths(),
+            self.context.target_items(),
+            self.context.semantic_index(),
+        )
+        .with_cache(self.trait_selection_cache.clone())
+        .normalize_assoc_type(goal, assoc_name, table)
     }
 }
