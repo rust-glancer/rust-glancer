@@ -401,6 +401,44 @@ fn explicit_type_arg_builder_instantiates_nested_infer() {
 }
 
 #[test]
+fn explicit_type_arg_builder_instantiates_nested_infer_from_unknown_fallback() {
+    let cases = [
+        (
+            TypeRef::Tuple(vec![TypeRef::Infer]),
+            Ty::Tuple(vec![user_ty()]),
+        ),
+        (
+            TypeRef::Array {
+                inner: Box::new(TypeRef::Infer),
+                len: Some("3".to_owned()),
+            },
+            Ty::Array {
+                inner: Box::new(user_ty()),
+                len: Some("3".to_owned()),
+            },
+        ),
+        (
+            TypeRef::Slice(Box::new(TypeRef::Infer)),
+            Ty::Slice(Box::new(user_ty())),
+        ),
+    ];
+
+    for (written_ty, expected_ty) in cases {
+        let mut table = InferenceTable::new();
+        let inferred = {
+            let mut builder = ExplicitTypeArgInstantiationBuilder::new(&mut table);
+            let inferred = builder.ty_from_arg(&written_ty, &Ty::Unknown);
+            assert!(builder.used_type_vars());
+            inferred
+        };
+
+        assert!(table.unify(&inferred, &expected_ty));
+
+        assert_eq!(table.finalize(&inferred), expected_ty);
+    }
+}
+
+#[test]
 fn explicit_type_arg_builder_preserves_concrete_args() {
     let mut table = InferenceTable::new();
     let mut builder = ExplicitTypeArgInstantiationBuilder::new(&mut table);

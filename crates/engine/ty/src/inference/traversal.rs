@@ -265,6 +265,12 @@ pub(super) trait TypeRefInferenceProjector {
                         .collect(),
                 )
             }
+            (TypeRef::Tuple(written_fields), Ty::Unknown) => Ty::Tuple(
+                written_fields
+                    .iter()
+                    .map(|written_field| self.project_ty(written_field, &Ty::Unknown))
+                    .collect(),
+            ),
             (
                 TypeRef::Array {
                     inner: written_inner,
@@ -278,8 +284,21 @@ pub(super) trait TypeRefInferenceProjector {
                 inner: Box::new(self.project_ty(written_inner, resolved_inner)),
                 len: written_len.clone(),
             },
+            (
+                TypeRef::Array {
+                    inner: written_inner,
+                    len: written_len,
+                },
+                Ty::Unknown,
+            ) => Ty::Array {
+                inner: Box::new(self.project_ty(written_inner, &Ty::Unknown)),
+                len: written_len.clone(),
+            },
             (TypeRef::Slice(written_inner), Ty::Slice(resolved_inner)) => {
                 Ty::Slice(Box::new(self.project_ty(written_inner, resolved_inner)))
+            }
+            (TypeRef::Slice(written_inner), Ty::Unknown) => {
+                Ty::Slice(Box::new(self.project_ty(written_inner, &Ty::Unknown)))
             }
             (
                 TypeRef::Reference {
