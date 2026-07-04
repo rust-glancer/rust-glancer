@@ -39,8 +39,9 @@
     // accepted PRs leave dependency intent visible in Cargo.toml/package.json.
     "rangeStrategy": "bump",
 
-    // Avoid unnecessary rebases while still keeping conflicted branches usable.
-    "rebaseWhen": "conflicted",
+    // Keep update branches testing against the current base branch. This burns
+    // a little more CI, but stale dependency PRs are much harder to trust.
+    "rebaseWhen": "behind-base-branch",
 
     // Refresh lockfiles weekly as a separate maintenance PR rather than mixing
     // transitive-only churn into direct dependency updates.
@@ -67,6 +68,24 @@
             "enabled": false
         },
         {
+            // The vendored rust-analyzer crates are copied from one upstream
+            // snapshot. Their support crates need to move with that snapshot,
+            // not as ordinary independent dependency updates.
+            "description": "Do not update rust-analyzer snapshot crates independently",
+            "matchManagers": [
+                "cargo"
+            ],
+            "matchDepNames": [
+                "edition",
+                "ra-ap-rustc_lexer",
+                "rustc-literal-escaper",
+                "rustc_apfloat",
+                "stdx",
+                "test-utils"
+            ],
+            "enabled": false
+        },
+        {
             "description": "Group non-major Rust dependencies",
             "matchManagers": [
                 "cargo"
@@ -87,6 +106,34 @@
                 "patch"
             ],
             "groupName": "typescript dependencies"
+        },
+        {
+            // Formatter updates often need source reformatting, and hosted
+            // Renovate cannot safely run arbitrary format commands unless the
+            // bot installation explicitly allows them.
+            "description": "Require manual handling for Prettier updates",
+            "matchManagers": [
+                "npm"
+            ],
+            "matchPackageNames": [
+                "prettier"
+            ],
+            "groupName": "prettier",
+            "dependencyDashboardApproval": true
+        },
+        {
+            // npm lockfile maintenance can silently float dev tools within
+            // existing ranges. That is how Prettier changed formatting without
+            // any package.json change, so keep npm lock refreshes tied to real
+            // manifest updates instead.
+            "description": "Do not run npm lockfile-only maintenance",
+            "matchManagers": [
+                "npm"
+            ],
+            "matchUpdateTypes": [
+                "lockFileMaintenance"
+            ],
+            "enabled": false
         },
         {
             "description": "Group non-major GitHub Actions version and pin updates",
