@@ -80,20 +80,19 @@ pub(crate) fn analyze(
         .cargo_metadata_config(cargo_metadata_config)
         .indexing_preference(indexing_preference)
         .package_residency_policy(package_residency_policy)
-        .startup_cache_load(startup_cache_load);
+        .startup_cache_load(startup_cache_load)
+        .memory_hooks(crate::memory::project_memory_hooks());
     let builder = if include_memory {
-        builder
-            .memory_hooks(crate::memory::project_memory_hooks())
-            .process_memory_sampler(move || {
-                memory_control
-                    .allocator_stats()
-                    .map(|stats| BuildProcessMemory {
-                        allocated_bytes: stats.allocated_bytes,
-                        active_bytes: stats.active_bytes,
-                        resident_bytes: stats.resident_bytes,
-                        mapped_bytes: stats.mapped_bytes,
-                    })
-            })
+        builder.process_memory_sampler(move || {
+            memory_control
+                .allocator_stats()
+                .map(|stats| BuildProcessMemory {
+                    allocated_bytes: stats.allocated_bytes,
+                    active_bytes: stats.active_bytes,
+                    resident_bytes: stats.resident_bytes,
+                    mapped_bytes: stats.mapped_bytes,
+                })
+        })
     } else {
         builder
     };
