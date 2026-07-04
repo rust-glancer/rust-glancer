@@ -124,6 +124,8 @@ jobs:
       - name: Install Gungraun runner
         uses: taiki-e/install-action@16b05812d776ae1dfaabc8277e421fb6d2506419 # v2.82.7
         with:
+          # Renovate keeps this CLI version grouped with the gungraun crate so
+          # the bench harness and runner stay protocol-compatible.
           tool: gungraun-runner@0.18.2
           fallback: none
 
