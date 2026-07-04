@@ -169,6 +169,9 @@ where
         // source module cannot resolve it. Chalk already has the same unique-name escape hatch;
         // keep this local proof aligned so opaque bounds do not fall through only because of test
         // or generated-code path shape.
+        //
+        // TODO: make the resolver tell us when this fallback is allowed. Production source paths
+        // should eventually fail closed when the trait path did not resolve in scope.
         let mut traits = ExpectedUnique::new();
         for store in self.target_items.visible_stores()? {
             for (trait_ref, trait_data) in store.traits_with_refs() {

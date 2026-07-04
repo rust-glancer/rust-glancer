@@ -13,8 +13,8 @@
 use rg_ir_storage::{DefMapSource, ItemStoreSource};
 use rg_package_store::PackageStoreError;
 use rg_ty::{
-    AssocProjectionResult, TraitGoal, TraitSelectionCache, TraitSelectionOptions,
-    TraitSelectionQuery, inference::InferenceTable,
+    AssocProjectionResult, TraitGoal, TraitSelectionCache, TraitSelectionQuery,
+    inference::InferenceTable,
 };
 
 use crate::resolution::BodyResolutionContext;
@@ -66,9 +66,8 @@ where
             self.context.target_items(),
             self.context.semantic_index(),
         )
-        // Body projection callers already own explicit impl where-clause obligations. Keeping
-        // this option here makes the fallback policy consistent for all body paths.
-        .with_options(TraitSelectionOptions::new().caller_solves_where_predicates())
+        // This fallback can return an inference table to the caller, so it must prove explicit impl
+        // where-clauses before making the projection usable.
         .with_cache(self.trait_selection_cache.clone())
         .normalize_assoc_type(goal, assoc_name, table)
     }

@@ -695,6 +695,10 @@ where
         // the ordinary source module, while the trait itself is still visible in the target. Keep
         // that fallback unique and explicit instead of accepting whichever same-named trait we
         // happen to see first.
+        //
+        // TODO: gate this escape hatch to resolver-generated paths once those contexts carry an
+        // explicit marker. In ordinary source code, a missing import should not silently become
+        // evidence from a same-named visible trait.
         let mut traits = ExpectedUnique::new();
         for store in self.target_items.visible_stores()? {
             for (trait_ref, trait_data) in store.traits_with_refs() {

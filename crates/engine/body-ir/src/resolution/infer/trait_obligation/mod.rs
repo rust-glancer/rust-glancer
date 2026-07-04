@@ -20,7 +20,7 @@ mod selected_call;
 use rg_ir_storage::{DefMapSource, ItemStoreSource};
 use rg_package_store::PackageStoreError;
 use rg_std::ExpectedUnique;
-use rg_ty::{TraitGoal, TraitSelection, TraitSelectionOptions, TraitSelectionQuery};
+use rg_ty::{TraitGoal, TraitSelection, TraitSelectionQuery};
 
 use crate::resolution::BodyResolutionContext;
 
@@ -59,11 +59,8 @@ where
             self.context.target_items(),
             self.context.semantic_index(),
         )
-        // Body obligations are emitted from selected calls and then evaluated by this local
-        // fixed-point pass. Treat explicit impl where-clauses as the caller's responsibility here
-        // so one body-local obligation does not build a whole Chalk program for a target. Generic
-        // parameter bounds still reject the impl in this mode.
-        .with_options(TraitSelectionOptions::new().caller_solves_where_predicates())
+        // The returned table may be committed below, so this path uses full predicate solving
+        // instead of treating explicit impl where-clauses as someone else's obligation.
         .with_cache(inference.trait_selection_cache.clone())
         .probe(goal, &inference.table)
     }

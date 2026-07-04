@@ -2,9 +2,9 @@
 //!
 //! This intentionally keeps a small project-facing facade around trait solving. The selector starts
 //! from a resolved trait goal, uses the existing inference table to match direct impl-header
-//! evidence, and then asks Chalk to prove the candidate's where-clause obligations when the caller
-//! wants full predicate solving. Callers that already have their own obligation/projection path can
-//! still opt into header-only selection through `TraitSelectionOptions`.
+//! evidence, and then asks Chalk to prove the candidate's impl predicates in the default mode.
+//! Callers that already have their own obligation/projection path can still opt into stricter
+//! header-only selection or caller-owned predicate solving through `TraitSelectionOptions`.
 
 use std::sync::{Arc, Mutex};
 
@@ -306,7 +306,7 @@ where
         };
         let mut applicability = applicability;
 
-        if options.should_solve_where_predicates() {
+        if options.should_solve_impl_predicates() {
             if !Self::impl_has_chalk_predicates(impl_data) {
                 crate::profile::metric::PREDICATE_FREE_CANDIDATES.inc();
                 return Ok(applicability.is_applicable().then_some(TraitSelection {
@@ -325,7 +325,7 @@ where
                 }
                 ImplPredicateProof::Rejected => return Ok(None),
                 ImplPredicateProof::NotApplicable => {
-                    let Some(where_applicability) = cache.impl_bounds_applicability(
+                    let Some(predicate_applicability) = cache.impl_bounds_applicability(
                         item_paths,
                         target_items,
                         trait_impl,
@@ -336,7 +336,7 @@ where
                     else {
                         return Ok(None);
                     };
-                    applicability = applicability.and(where_applicability);
+                    applicability = applicability.and(predicate_applicability);
                 }
             }
         }

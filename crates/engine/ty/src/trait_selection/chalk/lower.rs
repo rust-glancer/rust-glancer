@@ -772,6 +772,9 @@ where
             return Some(trait_ref);
         }
         let name = path.single_name()?;
+        // TODO: this unique-name fallback exists for fixture/generated paths that skip ordinary
+        // module resolution. Once those paths are marked explicitly, avoid using it for unresolved
+        // production source paths.
         self.trait_names.resolve_single(name)
     }
 

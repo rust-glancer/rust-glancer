@@ -1550,8 +1550,6 @@ impl TraitSelectionSnapshot {
             "default"
         } else if options == TraitSelectionOptions::new().header_only() {
             "header-only"
-        } else if options == TraitSelectionOptions::new().caller_solves_where_predicates() {
-            "caller-solves-where-predicates"
         } else if options == TraitSelectionOptions::new().caller_solves_impl_predicates() {
             "caller-solves-impl-predicates"
         } else if options == TraitSelectionOptions::new().keep_maybe_candidates() {

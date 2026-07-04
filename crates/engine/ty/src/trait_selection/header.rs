@@ -11,7 +11,6 @@ pub struct TraitSelectionOptions {
 enum PredicatePolicy {
     SolveWithChalk,
     RejectAll,
-    CallerSolvesWherePredicates,
     CallerSolvesImplPredicates,
 }
 
@@ -42,16 +41,6 @@ impl TraitSelectionOptions {
         self
     }
 
-    /// Match the direct impl header while leaving explicit `where` predicates to the caller.
-    ///
-    /// This is narrower than a blanket predicate skip: type-parameter and lifetime-parameter
-    /// bounds still reject the impl because callers using this mode only inspect explicit
-    /// where-clauses.
-    pub fn caller_solves_where_predicates(mut self) -> Self {
-        self.predicate_policy = PredicatePolicy::CallerSolvesWherePredicates;
-        self
-    }
-
     /// Match the direct impl header while leaving all impl predicates to the caller.
     ///
     /// This is for body-local paths that immediately inspect both inline type-parameter bounds and
@@ -79,16 +68,13 @@ impl TraitSelectionOptions {
                 !Self::has_generic_param_bounds(impl_data)
                     && impl_data.generics.where_predicates.is_empty()
             }
-            PredicatePolicy::CallerSolvesWherePredicates => {
-                !Self::has_generic_param_bounds(impl_data)
-            }
             PredicatePolicy::CallerSolvesImplPredicates => {
                 !Self::has_lifetime_param_bounds(impl_data)
             }
         }
     }
 
-    pub(super) fn should_solve_where_predicates(self) -> bool {
+    pub(super) fn should_solve_impl_predicates(self) -> bool {
         self.predicate_policy == PredicatePolicy::SolveWithChalk
     }
 

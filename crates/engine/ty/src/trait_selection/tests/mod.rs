@@ -510,7 +510,7 @@ fn probe_handles_visible_trait_data_with_generic_bounds() {
 }
 
 #[test]
-fn caller_solved_where_predicates_can_return_impl_that_still_needs_solving() {
+fn caller_solved_impl_predicates_can_return_impl_with_where_predicates() {
     check_trait_selection_queries(
         r#"
             traits
@@ -527,10 +527,10 @@ fn caller_solved_where_predicates_can_return_impl_that_still_needs_solving() {
                 "Adapter<{closure#0}>: Produces",
             ),
             TraitSelectionCase::probe(
-                "caller solves where predicate",
+                "caller solves impl predicate",
                 "Adapter<{closure#0}>: Produces",
             )
-            .with_options(TraitSelectionOptions::new().caller_solves_where_predicates()),
+            .with_options(TraitSelectionOptions::new().caller_solves_impl_predicates()),
         ],
         expect![[r#"
             default rejects unsolved where predicate
@@ -538,8 +538,8 @@ fn caller_solved_where_predicates_can_return_impl_that_still_needs_solving() {
               goal: Adapter<{closure#0}>: Produces
               result: empty
 
-            caller solves where predicate
-              options: caller-solves-where-predicates
+            caller solves impl predicate
+              options: caller-solves-impl-predicates
               goal: Adapter<{closure#0}>: Produces
               result: one
                 impl: impl#0
@@ -606,22 +606,12 @@ fn caller_solved_impl_predicates_can_return_impl_with_type_param_bounds() {
         "#,
         vec![
             TraitSelectionCase::probe(
-                "where-only rejects inline bound",
-                "Vec<User>: FromIterator<User>",
-            )
-            .with_options(TraitSelectionOptions::new().caller_solves_where_predicates()),
-            TraitSelectionCase::probe(
                 "caller solves inline bound",
                 "Vec<User>: FromIterator<User>",
             )
             .with_options(TraitSelectionOptions::new().caller_solves_impl_predicates()),
         ],
         expect![[r#"
-            where-only rejects inline bound
-              options: caller-solves-where-predicates
-              goal: Vec<User>: FromIterator<User>
-              result: empty
-
             caller solves inline bound
               options: caller-solves-impl-predicates
               goal: Vec<User>: FromIterator<User>
