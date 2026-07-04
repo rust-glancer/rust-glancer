@@ -1,0 +1,133 @@
+name: Download Performance baseline
+description: Find and download a retained baseline artifact from a successful main Performance run.
+
+inputs:
+  artifact-name:
+    description: Baseline artifact name to download.
+    required: true
+  path:
+    description: Directory where the artifact should be extracted.
+    required: true
+  base-sha:
+    description: Pull request base commit SHA to compare against.
+    required: true
+  github-token:
+    description: Token with actions:read access for listing runs and downloading artifacts.
+    required: true
+  workflow:
+    description: Workflow name that publishes the baseline artifacts.
+    required: false
+    default: Performance
+
+runs:
+  using: composite
+  steps:
+    - name: Find baseline artifact
+      id: find-baseline
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        ARTIFACT_NAME: ${{ inputs.artifact-name }}
+        BASE_SHA: ${{ inputs.base-sha }}
+        WORKFLOW_NAME: ${{ inputs.workflow }}
+      run: |
+        set -euo pipefail
+
+        artifact_available() {
+          local candidate_run_id="$1"
+          local artifact_count
+
+          artifact_count="$(
+            gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${candidate_run_id}/artifacts" \
+              --jq '[.artifacts[] | select(.name == env.ARTIFACT_NAME and (.expired | not))] | length'
+          )"
+
+          [[ "${artifact_count:-0}" != "0" ]]
+        }
+
+        ancestor_or_same() {
+          local candidate_sha="$1"
+          local status
+
+          status="$(
+            gh api "repos/${GITHUB_REPOSITORY}/compare/${candidate_sha}...${BASE_SHA}" \
+              --jq '.status' 2>/dev/null || true
+          )"
+
+          [[ "$status" == "identical" || "$status" == "ahead" ]]
+        }
+
+        run_id=""
+        head_sha=""
+
+        exact_run_id="$(
+          gh run list \
+            --workflow "$WORKFLOW_NAME" \
+            --branch main \
+            --commit "$BASE_SHA" \
+            --event push \
+            --status success \
+            --limit 1 \
+            --json databaseId \
+            --jq '.[0].databaseId // ""'
+        )"
+
+        if [[ -n "$exact_run_id" ]] && artifact_available "$exact_run_id"; then
+          run_id="$exact_run_id"
+          head_sha="$BASE_SHA"
+        fi
+
+        if [[ -z "$run_id" ]]; then
+          mapfile -t candidate_runs < <(
+            gh run list \
+              --workflow "$WORKFLOW_NAME" \
+              --branch main \
+              --event push \
+              --status success \
+              --limit 50 \
+              --json databaseId,headSha \
+              --jq '.[] | [.databaseId, .headSha] | @tsv'
+          )
+
+          for candidate_run in "${candidate_runs[@]}"; do
+            IFS=$'\t' read -r candidate_run_id candidate_sha <<< "$candidate_run"
+            if [[ -z "$candidate_run_id" || -z "$candidate_sha" ]]; then
+              continue
+            fi
+
+            if ancestor_or_same "$candidate_sha" && artifact_available "$candidate_run_id"; then
+              run_id="$candidate_run_id"
+              head_sha="$candidate_sha"
+              break
+            fi
+          done
+        fi
+
+        if [[ -n "$run_id" ]]; then
+          {
+            echo "baseline-found=true"
+            echo "run-id=$run_id"
+            echo "head-sha=$head_sha"
+          } >> "$GITHUB_OUTPUT"
+
+          {
+            echo "Selected \`$ARTIFACT_NAME\` from Performance run \`$run_id\` at \`$head_sha\`."
+            echo
+          } >> "$GITHUB_STEP_SUMMARY"
+        else
+          echo "baseline-found=false" >> "$GITHUB_OUTPUT"
+
+          {
+            echo "No retained \`$ARTIFACT_NAME\` artifact was found for base SHA \`$BASE_SHA\`."
+            echo
+          } >> "$GITHUB_STEP_SUMMARY"
+        fi
+
+    - name: Download baseline artifact
+      if: steps.find-baseline.outputs.baseline-found == 'true'
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+      with:
+        name: ${{ inputs.artifact-name }}
+        path: ${{ inputs.path }}
+        github-token: ${{ inputs.github-token }}
+        run-id: ${{ steps.find-baseline.outputs.run-id }}

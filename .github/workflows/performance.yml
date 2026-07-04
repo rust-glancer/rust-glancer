@@ -11,6 +11,8 @@ on:
       - ".github/scripts/render_lsp_compatibility_comment.py"
       - ".github/scripts/render_memory_profile_comment.py"
       - ".github/scripts/render_performance_comment.py"
+      - ".github/actions/cargo-cache/**"
+      - ".github/actions/download-performance-baseline/**"
       - ".github/workflows/performance.yml"
       - "test_targets/bench_fixtures/fetch-rust-analyzer.sh"
       - "test_targets/moderate_workspace/**"
@@ -26,12 +28,15 @@ on:
       - ".github/scripts/render_lsp_compatibility_comment.py"
       - ".github/scripts/render_memory_profile_comment.py"
       - ".github/scripts/render_performance_comment.py"
+      - ".github/actions/cargo-cache/**"
+      - ".github/actions/download-performance-baseline/**"
       - ".github/workflows/performance.yml"
       - "test_targets/bench_fixtures/fetch-rust-analyzer.sh"
       - "test_targets/moderate_workspace/**"
   workflow_dispatch:
 
 permissions:
+  actions: read
   contents: read
   pull-requests: write
 
@@ -48,12 +53,14 @@ jobs:
           target-dir: target
           dependency-key: ${{ hashFiles('Cargo.lock', 'Cargo.toml', 'crates/**/Cargo.toml', 'rust-toolchain.toml') }}
 
-      - name: Restore base memory profile
+      - name: Download base memory profile
         if: github.event_name == 'pull_request'
-        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        uses: ./.github/actions/download-performance-baseline
         with:
+          artifact-name: memory-profile-baseline
+          base-sha: ${{ github.event.pull_request.base.sha }}
           path: .ci/memory/base
-          key: memory-profile-${{ github.event.pull_request.base.sha }}
+          github-token: ${{ github.token }}
 
       - name: Fetch rust-analyzer fixture
         run: ./test_targets/bench_fixtures/fetch-rust-analyzer.sh
@@ -85,19 +92,14 @@ jobs:
           name: memory-profile-comment
           path: .ci/memory/comment.md
 
-      - name: Prepare main-branch memory profile cache
+      - name: Upload main-branch memory profile baseline
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        run: |
-          mkdir -p .ci/memory/base
-          cp .ci/memory/current/result.json .ci/memory/base/result.json
-
-      - name: Save main-branch memory profile cache
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
-        continue-on-error: true
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          path: .ci/memory/base
-          key: memory-profile-${{ github.sha }}
+          name: memory-profile-baseline
+          path: .ci/memory/current/result.json
+          if-no-files-found: error
+          retention-days: 30
 
   benchmark:
     name: benchmark
@@ -125,12 +127,14 @@ jobs:
           tool: gungraun-runner@0.18.2
           fallback: none
 
-      - name: Restore base Gungraun baseline
+      - name: Download base Gungraun baseline
         if: github.event_name == 'pull_request'
-        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        uses: ./.github/actions/download-performance-baseline
         with:
+          artifact-name: gungraun-baseline
+          base-sha: ${{ github.event.pull_request.base.sha }}
           path: target/gungraun
-          key: gungraun-${{ github.event.pull_request.base.sha }}
+          github-token: ${{ github.token }}
 
       - name: Run pull request benchmark
         if: github.event_name == 'pull_request'
@@ -173,13 +177,14 @@ jobs:
           name: benchmark-comment
           path: .ci/benchmark/comment.md
 
-      - name: Save main-branch Gungraun baseline
+      - name: Upload main-branch Gungraun baseline
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
-        continue-on-error: true
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
+          name: gungraun-baseline
           path: target/gungraun
-          key: gungraun-${{ github.sha }}
+          if-no-files-found: error
+          retention-days: 30
 
   lsp-compatibility:
     name: lsp-compatibility
@@ -193,12 +198,14 @@ jobs:
           target-dir: target
           dependency-key: ${{ hashFiles('Cargo.lock', 'Cargo.toml', 'crates/**/Cargo.toml', 'rust-toolchain.toml') }}
 
-      - name: Restore base LSP compatibility
+      - name: Download base LSP compatibility
         if: github.event_name == 'pull_request'
-        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        uses: ./.github/actions/download-performance-baseline
         with:
+          artifact-name: lsp-compatibility-baseline
+          base-sha: ${{ github.event.pull_request.base.sha }}
           path: .ci/lsp/base
-          key: lsp-compatibility-${{ github.event.pull_request.base.sha }}
+          github-token: ${{ github.token }}
 
       - name: Fetch rust-analyzer fixture
         run: ./test_targets/bench_fixtures/fetch-rust-analyzer.sh
@@ -233,19 +240,14 @@ jobs:
           name: lsp-compatibility-comment
           path: .ci/lsp/comment.md
 
-      - name: Prepare main-branch LSP compatibility cache
+      - name: Upload main-branch LSP compatibility baseline
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        run: |
-          mkdir -p .ci/lsp/base
-          cp .ci/lsp/current/result.json .ci/lsp/base/result.json
-
-      - name: Save main-branch LSP compatibility cache
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
-        continue-on-error: true
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          path: .ci/lsp/base
-          key: lsp-compatibility-${{ github.sha }}
+          name: lsp-compatibility-baseline
+          path: .ci/lsp/current/result.json
+          if-no-files-found: error
+          retention-days: 30
 
   performance-comment:
     name: performance-comment
