@@ -19,6 +19,7 @@
     "ignorePaths": [
         "**/node_modules/**",
         "**/bower_components/**",
+        "crates/lib/test-fixture/assets/fake_sysroot/**",
         "test_targets/**"
     ],
 
@@ -32,8 +33,13 @@
     ],
     "prHourlyLimit": 2,
     "prConcurrentLimit": 5,
-    "minimumReleaseAge": "3 days",
+
+    // Only surface dependency PRs after Renovate's internal checks are no
+    // longer pending. For minimumReleaseAge this means CI-visible PRs should
+    // already be using updates that survived the waiting window.
+    "minimumReleaseAge": "7 days",
     "internalChecksFilter": "strict",
+    "prCreation": "not-pending",
 
     // Prefer updating manifest ranges instead of only refreshing lockfiles, so
     // accepted PRs leave dependency intent visible in Cargo.toml/package.json.
@@ -42,6 +48,24 @@
     // Keep update branches testing against the current base branch. This burns
     // a little more CI, but stale dependency PRs are much harder to trust.
     "rebaseWhen": "behind-base-branch",
+
+    // Some CI tools are installed from workflow strings rather than native
+    // package manifests. Teach Renovate about the important ones so they stay
+    // in the same dependency PRs as the libraries that require them.
+    "customManagers": [
+        {
+            "customType": "regex",
+            "description": "Update Rust CLI tools installed by CI",
+            "managerFilePatterns": [
+                "/^\\.github/workflows/.+\\.ya?ml$/"
+            ],
+            "matchStrings": [
+                "tool: (?<depName>gungraun-runner)@(?<currentValue>[^\\s]+)"
+            ],
+            "datasourceTemplate": "crate",
+            "versioningTemplate": "cargo"
+        }
+    ],
 
     // Refresh lockfiles weekly as a separate maintenance PR rather than mixing
     // transitive-only churn into direct dependency updates.
@@ -93,6 +117,16 @@
             "matchUpdateTypes": [
                 "minor",
                 "patch"
+            ],
+            "groupName": "rust dependencies"
+        },
+        {
+            "description": "Group CI Rust tools with Rust dependencies",
+            "matchManagers": [
+                "custom.regex"
+            ],
+            "matchDepNames": [
+                "gungraun-runner"
             ],
             "groupName": "rust dependencies"
         },
