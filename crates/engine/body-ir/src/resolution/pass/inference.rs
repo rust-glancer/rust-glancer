@@ -13,7 +13,7 @@ use rg_ir_storage::{DefMapSource, ItemStoreSource};
 use rg_package_store::PackageStoreError;
 use rg_ty::{
     NominalTy, Ty,
-    inference::{InferTy, InferTypeRefProjector, InferTypeSubst},
+    inference::{InferenceTypeRefProjector, InferenceTypeSubst},
 };
 
 use crate::{
@@ -317,7 +317,7 @@ where
                     // since it's still valid rust and it typechecks. Compiler will warn user
                     // about dead code anyway.
                     if tail.is_none() && self.tailless_block_final_statement_diverges(&statements) {
-                        self.pass.inference.set_expr_infer_ty(expr, InferTy::Never);
+                        self.pass.inference.set_expr_infer_ty(expr, Ty::Never);
                     } else {
                         self.pass.inference.set_expr_block_from_tail(expr, tail);
                     }
@@ -365,10 +365,7 @@ where
             _ => {}
         }
 
-        matches!(
-            self.pass.inference.root_resolved_expr_ty(expr),
-            InferTy::Never
-        )
+        matches!(self.pass.inference.root_resolved_expr_ty(expr), Ty::Never)
     }
 
     /// Use one selected call target to push parameter evidence into written args.
@@ -524,7 +521,7 @@ where
     /// binding. It intentionally does not process destructuring annotations such as
     /// `let (left, right): (Vec<_>, Vec<_>) = ...`; those need inference-aware pattern
     /// propagation rather than assigning the whole tuple type to one binding.
-    fn constrain_single_binding_annotation(&mut self, pat: PatId, expected_ty: &InferTy) {
+    fn constrain_single_binding_annotation(&mut self, pat: PatId, expected_ty: &Ty) {
         let Some(pat_data) = self.pass.body.pat(pat).cloned() else {
             return;
         };
@@ -693,7 +690,7 @@ where
             .unwrap_or_default();
 
         let expected_ty =
-            InferTypeRefProjector::new(&subst).ty_from_type_ref(&field_ty, resolved_field_ty);
+            InferenceTypeRefProjector::new(&subst).ty_from_type_ref(&field_ty, resolved_field_ty);
         self.pass
             .inference
             .constrain_expr_infer_ty(arg, &expected_ty);
@@ -706,10 +703,10 @@ where
         expr: ExprId,
         nominal_ty: &NominalTy,
         generics: &GenericParams,
-    ) -> Option<InferTypeSubst> {
+    ) -> Option<InferenceTypeSubst> {
         let infer_ty = self.pass.inference.expr_ty(expr);
         let infer_args = match infer_ty {
-            InferTy::Nominal(infer_nominal_ty) | InferTy::SelfTy(infer_nominal_ty)
+            Ty::Nominal(infer_nominal_ty) | Ty::SelfTy(infer_nominal_ty)
                 if infer_nominal_ty.def == nominal_ty.def =>
             {
                 infer_nominal_ty.args
@@ -717,7 +714,7 @@ where
             _ => return None,
         };
 
-        let mut subst = InferTypeSubst::new();
+        let mut subst = InferenceTypeSubst::new();
         self.pass
             .inference
             .bind_type_params_from_infer_args(&mut subst, generics, &infer_args);
@@ -801,7 +798,7 @@ where
         };
 
         let expected_ty =
-            InferTypeRefProjector::new(&subst).ty_from_type_ref(field_ty, resolved_field_ty);
+            InferenceTypeRefProjector::new(&subst).ty_from_type_ref(field_ty, resolved_field_ty);
         self.pass
             .inference
             .constrain_expr_infer_ty(value, &expected_ty);

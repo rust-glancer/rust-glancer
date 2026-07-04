@@ -24,9 +24,9 @@ use rg_package_store::PackageStoreError;
 use rg_std::ExpectedUnique;
 use rg_text::Name;
 use rg_ty::{
-    AssocProjectionResult, TraitGoal, TraitSelection, TraitSelectionCache, TraitSelectionOptions,
-    TraitSelectionQuery,
-    inference::{InferGenericArg, InferTy, InferTypeRefProjector, InferenceTable},
+    AssocProjectionResult, GenericArg, TraitGoal, TraitSelection, TraitSelectionCache,
+    TraitSelectionOptions, TraitSelectionQuery, Ty,
+    inference::{InferenceTable, InferenceTypeRefProjector},
 };
 
 use crate::resolution::{BodyResolutionContext, TypeRefUseSite, query::TypeRefResolutionQuery};
@@ -76,7 +76,7 @@ impl ProjectionSupport {
 pub(crate) fn project_unique_support_assoc<T, E>(
     supports: &mut [ProjectionSupport],
     param_name: &Name,
-    qualified_trait: Option<(TraitRef, &[InferGenericArg])>,
+    qualified_trait: Option<(TraitRef, &[GenericArg])>,
     mut project: impl FnMut(&TraitGoal) -> Result<Option<T>, E>,
 ) -> Result<Option<T>, E> {
     let mut candidate = None;
@@ -405,7 +405,7 @@ where
                 .iter()
                 .zip(&resolved_args)
                 .map(|(arg, resolved_arg)| {
-                    InferTypeRefProjector::new(&selection.subst)
+                    InferenceTypeRefProjector::new(&selection.subst)
                         .generic_arg_from_arg(arg, resolved_arg)
                 })
                 .collect();
@@ -435,7 +435,7 @@ where
         ty: &TypeRef,
         remaining_depth: usize,
         applicability: &mut TraitApplicability,
-    ) -> Result<Option<InferTy>, PackageStoreError> {
+    ) -> Result<Option<Ty>, PackageStoreError> {
         let subst = selection.subst.clone();
         let mut associated_ty = |param_name: &Name, qualified_trait, assoc_name: &Name| {
             if let Some((trait_ref, args)) = qualified_trait {
@@ -477,7 +477,7 @@ where
         assoc_name: &Name,
         remaining_depth: usize,
         applicability: &mut TraitApplicability,
-    ) -> Result<Option<InferTy>, PackageStoreError> {
+    ) -> Result<Option<Ty>, PackageStoreError> {
         let Some(projection) = project_unique_support_assoc(supports, param_name, None, |goal| {
             self.project_support_goal_assoc_type(
                 goal,
@@ -501,11 +501,11 @@ where
         supports: &mut [ProjectionSupport],
         param_name: &Name,
         trait_ref: TraitRef,
-        args: Vec<InferGenericArg>,
+        args: Vec<GenericArg>,
         assoc_name: &Name,
         remaining_depth: usize,
         applicability: &mut TraitApplicability,
-    ) -> Result<Option<InferTy>, PackageStoreError> {
+    ) -> Result<Option<Ty>, PackageStoreError> {
         let Some(projection) =
             project_unique_support_assoc(supports, param_name, Some((trait_ref, &args)), |goal| {
                 self.project_support_goal_assoc_type(

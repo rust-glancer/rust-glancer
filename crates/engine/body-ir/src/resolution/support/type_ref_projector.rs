@@ -13,7 +13,7 @@ use rg_package_store::PackageStoreError;
 use rg_text::Name;
 use rg_ty::{
     GenericArg, Ty,
-    inference::{InferGenericArg, InferTy, InferTypeRefProjector, InferTypeSubst},
+    inference::{InferenceTypeRefProjector, InferenceTypeSubst},
 };
 
 use crate::resolution::query::TypeRefResolutionQuery;
@@ -22,25 +22,25 @@ use super::self_associated_type_name;
 
 /// Callback for selected-trait `Self::Assoc`, such as `Iterator::Item` in `Iterator::map`.
 type SelfAssociatedTypeProjector<'a> =
-    &'a mut dyn FnMut(&str) -> Result<Option<InferTy>, PackageStoreError>;
+    &'a mut dyn FnMut(&str) -> Result<Option<Ty>, PackageStoreError>;
 /// Callback for impl-generic `T::Assoc`, such as `I::Item` inside an adapter alias.
 ///
 /// Qualified syntax like `<I as Iterator>::Item` passes the explicit trait goal. Plain `I::Item`
 /// passes `None`, because the caller has to choose the supporting predicate itself.
 type AssociatedTypeProjector<'a> = &'a mut dyn FnMut(
     &Name,
-    Option<(TraitRef, Vec<InferGenericArg>)>,
+    Option<(TraitRef, Vec<GenericArg>)>,
     &Name,
-) -> Result<Option<InferTy>, PackageStoreError>;
+) -> Result<Option<Ty>, PackageStoreError>;
 
 /// Projects written `TypeRef`s using body-local inference and associated projection evidence.
 ///
 /// This is the inference-side version of "what type does this written syntax mean here?" For
-/// ordinary syntax it delegates to `InferTypeRefProjector`, so `Vec<T>` can become `Vec<?T>`.
+/// ordinary syntax it delegates to `InferenceTypeRefProjector`, so `Vec<T>` can become `Vec<?T>`.
 /// Callers provide body-local associated projection callbacks. That keeps this component focused
 /// on walking written type syntax and lets obligation code own the solver evidence.
 pub(crate) struct BodyTypeRefProjector<'a, 'query, D, I> {
-    subst: &'a InferTypeSubst,
+    subst: &'a InferenceTypeSubst,
     resolver: &'a TypeRefResolutionQuery<'query, D, I>,
     self_associated_ty: Option<SelfAssociatedTypeProjector<'a>>,
     type_param_associated_ty: Option<AssociatedTypeProjector<'a>>,
@@ -52,7 +52,7 @@ pub(crate) struct BodyTypeRefProjector<'a, 'query, D, I> {
 /// body-local evidence and we failed to prove it. `NotBodyLocal` means the syntax did not need
 /// this layer at all, so ordinary type-ref projection should still run.
 enum LocalProjection {
-    Projected(InferTy),
+    Projected(Ty),
     /// The written shape asked for a body-local associated projection, but we could not prove it.
     Unsupported,
     /// The written shape has no body-local projection syntax and should use ordinary fallback.
@@ -60,14 +60,14 @@ enum LocalProjection {
 }
 
 impl LocalProjection {
-    fn from_attempted_projection(ty: Option<InferTy>) -> Self {
+    fn from_attempted_projection(ty: Option<Ty>) -> Self {
         match ty {
             Some(ty) => Self::Projected(ty),
             None => Self::Unsupported,
         }
     }
 
-    fn map_projected(self, f: impl FnOnce(InferTy) -> InferTy) -> Self {
+    fn map_projected(self, f: impl FnOnce(Ty) -> Ty) -> Self {
         match self {
             Self::Projected(ty) => Self::Projected(f(ty)),
             Self::Unsupported => Self::Unsupported,
@@ -82,7 +82,7 @@ where
     I: ItemStoreSource<'query, Error = PackageStoreError> + Copy,
 {
     pub(crate) fn new(
-        subst: &'a InferTypeSubst,
+        subst: &'a InferenceTypeSubst,
         resolver: &'a TypeRefResolutionQuery<'query, D, I>,
     ) -> Self {
         Self {
@@ -111,7 +111,7 @@ where
 
     /// Project a written type ref, falling back to ordinary type-ref projection when body-local
     /// associated projection is absent or unsupported.
-    pub(crate) fn ty_or_fallback(&mut self, ty: &TypeRef) -> Result<InferTy, PackageStoreError> {
+    pub(crate) fn ty_or_fallback(&mut self, ty: &TypeRef) -> Result<Ty, PackageStoreError> {
         if let LocalProjection::Projected(projected_ty) = self.project_body_local_ty(ty)? {
             return Ok(projected_ty);
         }
@@ -127,7 +127,7 @@ where
     pub(crate) fn ty_if_supported(
         &mut self,
         ty: &TypeRef,
-    ) -> Result<Option<InferTy>, PackageStoreError> {
+    ) -> Result<Option<Ty>, PackageStoreError> {
         match self.project_body_local_ty(ty)? {
             LocalProjection::Projected(projected_ty) => Ok(Some(projected_ty)),
             LocalProjection::Unsupported => Ok(None),
@@ -140,13 +140,13 @@ where
         &mut self,
         arg: &ItemGenericArg,
         resolved_arg: &GenericArg,
-    ) -> Result<InferGenericArg, PackageStoreError> {
+    ) -> Result<GenericArg, PackageStoreError> {
         if let (ItemGenericArg::Type(ty), GenericArg::Type(resolved_ty)) = (arg, resolved_arg) {
             let projected_ty = self.ty_from_resolved(ty, resolved_ty)?;
-            return Ok(InferGenericArg::Type(Box::new(projected_ty)));
+            return Ok(GenericArg::Type(Box::new(projected_ty)));
         }
 
-        Ok(InferTypeRefProjector::new(self.subst).generic_arg_from_arg(arg, resolved_arg))
+        Ok(InferenceTypeRefProjector::new(self.subst).generic_arg_from_arg(arg, resolved_arg))
     }
 
     /// Project a type ref when the caller already has the ordinary resolved `Ty`.
@@ -158,17 +158,17 @@ where
         &mut self,
         ty: &TypeRef,
         resolved_ty: &Ty,
-    ) -> Result<InferTy, PackageStoreError> {
+    ) -> Result<Ty, PackageStoreError> {
         if let LocalProjection::Projected(projected_ty) = self.project_body_local_ty(ty)? {
             return Ok(projected_ty);
         }
 
-        Ok(InferTypeRefProjector::new(self.subst).ty_from_type_ref(ty, resolved_ty))
+        Ok(InferenceTypeRefProjector::new(self.subst).ty_from_type_ref(ty, resolved_ty))
     }
 
-    fn fallback_ty(&mut self, ty: &TypeRef) -> Result<InferTy, PackageStoreError> {
+    fn fallback_ty(&mut self, ty: &TypeRef) -> Result<Ty, PackageStoreError> {
         let resolved_ty = self.resolver.resolve(ty)?;
-        Ok(InferTypeRefProjector::new(self.subst).ty_from_type_ref(ty, &resolved_ty))
+        Ok(InferenceTypeRefProjector::new(self.subst).ty_from_type_ref(ty, &resolved_ty))
     }
 
     /// Try body-local projection before ordinary resolver fallback.
@@ -222,7 +222,7 @@ where
         {
             return Ok(self
                 .project_body_local_ty(inner)?
-                .map_projected(|inner_ty| InferTy::Reference {
+                .map_projected(|inner_ty| Ty::Reference {
                     mutability: *mutability,
                     inner: Box::new(inner_ty),
                 }));
@@ -232,14 +232,14 @@ where
         if let TypeRef::Slice(inner) = ty {
             return Ok(self
                 .project_body_local_ty(inner)?
-                .map_projected(|inner_ty| InferTy::Slice(Box::new(inner_ty))));
+                .map_projected(|inner_ty| Ty::Slice(Box::new(inner_ty))));
         }
 
         // Check array.
         if let TypeRef::Array { inner, len } = ty {
             return Ok(self
                 .project_body_local_ty(inner)?
-                .map_projected(|inner_ty| InferTy::Array {
+                .map_projected(|inner_ty| Ty::Array {
                     inner: Box::new(inner_ty),
                     len: len.clone(),
                 }));
@@ -287,7 +287,7 @@ where
         &self,
         trait_ty: &TypeRef,
         resolved_args: &[GenericArg],
-    ) -> Option<Vec<InferGenericArg>> {
+    ) -> Option<Vec<GenericArg>> {
         let TypeRef::Path(path) = trait_ty else {
             return None;
         };
@@ -302,7 +302,8 @@ where
                 .iter()
                 .zip(resolved_args)
                 .map(|(arg, resolved_arg)| {
-                    InferTypeRefProjector::new(self.subst).generic_arg_from_arg(arg, resolved_arg)
+                    InferenceTypeRefProjector::new(self.subst)
+                        .generic_arg_from_arg(arg, resolved_arg)
                 })
                 .collect(),
         )
@@ -344,6 +345,6 @@ where
                 None => self.fallback_ty(field),
             })
             .collect::<Result<Vec<_>, _>>()?;
-        Ok(LocalProjection::Projected(InferTy::Tuple(fields)))
+        Ok(LocalProjection::Projected(Ty::Tuple(fields)))
     }
 }

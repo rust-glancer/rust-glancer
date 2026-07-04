@@ -8,13 +8,14 @@
 use std::collections::HashMap;
 
 use chalk_ir::{
-    AliasTy, BoundVar, DebruijnIndex, GenericArg, GenericArgData, Ty, TyKind, TyVariableKind,
-    VariableKind, VariableKinds,
+    AliasTy, BoundVar, DebruijnIndex, GenericArg as ChalkGenericArg, GenericArgData, Ty as ChalkTy,
+    TyKind, TyVariableKind, VariableKind, VariableKinds,
 };
 
 use super::interner::RgChalkInterner;
-use crate::inference::{InferGenericArg, InferTy, InferVarId, InferenceTable};
+use crate::inference::{InferVarId, InferVarKind, InferenceTable};
 use crate::trait_selection::TraitGoal;
+use crate::{GenericArg as RgGenericArg, Ty as RgTy};
 
 const INTER: RgChalkInterner = RgChalkInterner;
 
@@ -58,19 +59,22 @@ impl ProjectionVariableEnv {
         self.vars.len()
     }
 
-    pub(super) fn result_ty(&self) -> Ty<RgChalkInterner> {
+    pub(super) fn result_ty(&self) -> ChalkTy<RgChalkInterner> {
         BoundVar::new(DebruijnIndex::INNERMOST, self.result_index()).to_ty::<RgChalkInterner>(INTER)
     }
 
-    pub(super) fn project_var_ty(&self, index: usize) -> Option<InferTy> {
-        self.vars.get(index).copied().map(InferTy::Var)
+    pub(super) fn project_var_ty(&self, index: usize) -> Option<RgTy> {
+        self.vars
+            .get(index)
+            .copied()
+            .map(|id| RgTy::var_for_kind(InferVarKind::Type, id))
     }
 
     pub(super) fn iter_project_vars(&self) -> impl Iterator<Item = (usize, InferVarId)> + '_ {
         self.vars.iter().copied().enumerate()
     }
 
-    pub(super) fn chalk_ty_for_var(&self, id: InferVarId) -> Option<Ty<RgChalkInterner>> {
+    pub(super) fn chalk_ty_for_var(&self, id: InferVarId) -> Option<ChalkTy<RgChalkInterner>> {
         let index = *self.indices.get(&id)?;
         Some(BoundVar::new(DebruijnIndex::INNERMOST, index).to_ty::<RgChalkInterner>(INTER))
     }
@@ -84,46 +88,48 @@ impl ProjectionVariableEnv {
         self.indices.insert(id, index);
     }
 
-    fn collect_ty(&mut self, ty: &InferTy, table: &InferenceTable) {
+    fn collect_ty(&mut self, ty: &RgTy, table: &InferenceTable) {
         match table.canonicalize(ty) {
-            InferTy::Var(id) => self.push_var(id),
-            InferTy::Tuple(fields) => {
+            RgTy::InferVar {
+                kind: InferVarKind::Type,
+                id,
+            } => self.push_var(id),
+            RgTy::Tuple(fields) => {
                 for field in fields {
                     self.collect_ty(&field, table);
                 }
             }
-            InferTy::Slice(inner) | InferTy::Reference { inner, .. } => {
+            RgTy::Slice(inner) | RgTy::Reference { inner, .. } => {
                 self.collect_ty(&inner, table);
             }
-            InferTy::Array { inner, .. } => {
+            RgTy::Array { inner, .. } => {
                 self.collect_ty(&inner, table);
             }
-            InferTy::Nominal(ty) | InferTy::SelfTy(ty) => {
+            RgTy::Nominal(ty) | RgTy::SelfTy(ty) => {
                 for arg in &ty.args {
                     self.collect_generic_arg(arg, table);
                 }
             }
-            InferTy::Unit
-            | InferTy::Never
-            | InferTy::Primitive(_)
-            | InferTy::Opaque { .. }
-            | InferTy::Closure(_)
-            | InferTy::FunctionItem(_)
-            | InferTy::Syntax(_)
-            | InferTy::Unknown
-            | InferTy::IntegerVar(_)
-            | InferTy::FloatVar(_) => {}
+            RgTy::Unit
+            | RgTy::Never
+            | RgTy::Primitive(_)
+            | RgTy::Opaque { .. }
+            | RgTy::Closure(_)
+            | RgTy::FunctionItem(_)
+            | RgTy::Syntax(_)
+            | RgTy::Unknown
+            | RgTy::InferVar { .. } => {}
         }
     }
 
-    fn collect_generic_arg(&mut self, arg: &InferGenericArg, table: &InferenceTable) {
+    fn collect_generic_arg(&mut self, arg: &RgGenericArg, table: &InferenceTable) {
         match arg {
-            InferGenericArg::Type(ty) => self.collect_ty(ty, table),
-            InferGenericArg::Lifetime(_)
-            | InferGenericArg::Const(_)
-            | InferGenericArg::FnTraitArgs { .. }
-            | InferGenericArg::AssocType { .. }
-            | InferGenericArg::Unsupported(_) => {}
+            RgGenericArg::Type(ty) => self.collect_ty(ty, table),
+            RgGenericArg::Lifetime(_)
+            | RgGenericArg::Const(_)
+            | RgGenericArg::FnTraitArgs { .. }
+            | RgGenericArg::AssocType { .. }
+            | RgGenericArg::Unsupported(_) => {}
         }
     }
 }
@@ -136,13 +142,13 @@ pub(super) struct ProjectionAliasLowering {
 /// Bound variables from a Chalk projection answer that correspond to project inference variables.
 #[derive(Debug, Clone)]
 pub(super) struct ProjectionAnswerVars {
-    vars: Vec<(BoundVar, InferTy)>,
+    vars: Vec<(BoundVar, RgTy)>,
 }
 
 impl ProjectionAnswerVars {
     pub(super) fn from_subst_args(
         variables: &ProjectionVariableEnv,
-        subst_args: &[GenericArg<RgChalkInterner>],
+        subst_args: &[ChalkGenericArg<RgChalkInterner>],
     ) -> Option<Self> {
         // Chalk may answer an unconstrained projection in canonical form:
         //
@@ -157,13 +163,13 @@ impl ProjectionAnswerVars {
                 return None;
             };
             if let TyKind::BoundVar(bound_var) = project_ty.kind(INTER) {
-                vars.push((*bound_var, InferTy::Var(var)));
+                vars.push((*bound_var, RgTy::var_for_kind(InferVarKind::Type, var)));
             }
         }
         Some(Self { vars })
     }
 
-    pub(super) fn as_slice(&self) -> &[(BoundVar, InferTy)] {
+    pub(super) fn as_slice(&self) -> &[(BoundVar, RgTy)] {
         &self.vars
     }
 }

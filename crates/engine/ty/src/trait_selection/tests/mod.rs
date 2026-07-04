@@ -341,6 +341,28 @@ fn blanket_self_param_impl_proves_bound_before_projecting_item() {
 }
 
 #[test]
+fn probe_rejects_bare_inference_var_blanket_self_match() {
+    check_trait_selection_queries(
+        r#"
+            traits
+              trait#0 Marker
+            impls
+              impl#0 impl<T> Marker for T [resolved self: empty]
+        "#,
+        vec![TraitSelectionCase::probe(
+            "reject bare inference receiver",
+            "?receiver: Marker",
+        )],
+        expect![[r#"
+            reject bare inference receiver
+              options: default
+              goal: ?receiver: Marker
+              result: empty
+        "#]],
+    );
+}
+
+#[test]
 fn probe_rejects_concrete_self_mismatch() {
     check_trait_selection_queries(
         r#"

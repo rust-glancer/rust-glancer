@@ -5,7 +5,7 @@
 //! as a selected call bound. That wrapper stays intentionally small: it lets selected-call code
 //! produce obligations before the evaluation code decides how to use today's shallow solver hooks.
 
-use rg_ty::{TraitGoal, inference::InferTy};
+use rg_ty::{TraitGoal, Ty};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct BodyObligation {
@@ -20,9 +20,9 @@ pub(super) enum BodyObligationGoal {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct BodyCallableObligation {
-    self_ty: InferTy,
-    params: Vec<InferTy>,
-    ret: InferTy,
+    self_ty: Ty,
+    params: Vec<Ty>,
+    ret: Ty,
 }
 
 impl BodyObligation {
@@ -44,7 +44,7 @@ impl BodyObligation {
 }
 
 impl BodyCallableObligation {
-    pub(super) fn new(self_ty: InferTy, params: Vec<InferTy>, ret: InferTy) -> Self {
+    pub(super) fn new(self_ty: Ty, params: Vec<Ty>, ret: Ty) -> Self {
         Self {
             self_ty,
             params,
@@ -52,15 +52,15 @@ impl BodyCallableObligation {
         }
     }
 
-    pub(super) fn self_ty(&self) -> &InferTy {
+    pub(super) fn self_ty(&self) -> &Ty {
         &self.self_ty
     }
 
-    pub(super) fn params(&self) -> &[InferTy] {
+    pub(super) fn params(&self) -> &[Ty] {
         &self.params
     }
 
-    pub(super) fn ret(&self) -> &InferTy {
+    pub(super) fn ret(&self) -> &Ty {
         &self.ret
     }
 }

@@ -10,8 +10,7 @@ use rg_text::Name;
 
 use crate::{
     ExpectedTyExt, ItemPathQuery, TraitGoal, TraitSelectionCache, TraitSelectionQuery, Ty,
-    associated_type::AssociatedTypeResolver,
-    inference::{InferTy, InferenceTable},
+    associated_type::AssociatedTypeResolver, inference::InferenceTable,
 };
 
 /// Resolves the associated `Item` type for applicable iterator-shaped trait impls.
@@ -100,7 +99,7 @@ where
         let table = InferenceTable::new();
         for trait_ref in canonical_traits {
             let goal = TraitGoal {
-                self_ty: InferTy::from_ty(ty),
+                self_ty: ty.clone(),
                 trait_ref: *trait_ref,
                 args: Vec::new(),
             };

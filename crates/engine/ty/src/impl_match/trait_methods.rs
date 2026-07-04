@@ -3,7 +3,7 @@
 //! Editor-facing method lookup can preserve useful `Maybe` candidates when a proof would require
 //! deeper solving. Simple direct cases still reuse bounded trait selection for consistency.
 
-use crate::inference::{InferTy, InferenceTable};
+use crate::inference::InferenceTable;
 use crate::{
     GenericArg, NominalTy, TraitGoal, TraitSelectionOptions, TraitSelectionQuery, Ty, TypeSubst,
 };
@@ -199,7 +199,7 @@ where
         header_applicability: TraitApplicability,
     ) -> Result<Option<TraitImplMatch>, D::Error> {
         let goal = TraitGoal {
-            self_ty: InferTy::from_ty(&Ty::nominal(receiver_ty.clone())),
+            self_ty: Ty::nominal(receiver_ty.clone()),
             trait_ref: trait_impl.trait_ref,
             args: Vec::new(),
         };

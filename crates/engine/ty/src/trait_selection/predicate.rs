@@ -2,7 +2,7 @@
 //!
 //! Chalk is still the owner for ordinary impl predicates. This module handles one source of
 //! evidence that does not cross the Chalk boundary yet: opaque `impl Trait` bounds already stored
-//! in `InferTy`. For example, after matching
+//! in `Ty`. For example, after matching
 //!
 //! ```text
 //! impl<I: Iterator> IntoIterator for I
@@ -17,8 +17,8 @@ use rg_ir_model::items::{TypeBound, TypeRef, WherePredicate};
 use rg_ir_model::{Path, TraitApplicability, TraitRef, TypePathResolution};
 use rg_ir_storage::{DefMapSource, ItemStoreSource, TypePathContext};
 
-use crate::ItemPathQuery;
-use crate::inference::{InferTy, InferTypeSubst, InferenceTable};
+use crate::inference::{InferenceTable, InferenceTypeSubst};
+use crate::{ItemPathQuery, Ty};
 
 pub(super) enum ImplPredicateProof {
     Proven(TraitApplicability),
@@ -42,7 +42,7 @@ where
     pub(super) fn prove_all_from_opaque_bounds(
         &self,
         impl_data: &ImplData,
-        subst: &InferTypeSubst,
+        subst: &InferenceTypeSubst,
         table: &InferenceTable,
     ) -> Result<ImplPredicateProof, I::Error> {
         let context = TypePathContext {
@@ -97,9 +97,9 @@ where
     fn type_param_subject(
         &self,
         ty: &TypeRef,
-        subst: &InferTypeSubst,
+        subst: &InferenceTypeSubst,
         table: &InferenceTable,
-    ) -> Option<InferTy> {
+    ) -> Option<Ty> {
         let name = ty.type_param_name()?;
         subst
             .type_param(name.as_str())
@@ -109,10 +109,10 @@ where
     fn prove_trait_bound(
         &self,
         context: TypePathContext,
-        subject: &InferTy,
+        subject: &Ty,
         bound: &TypeBound,
     ) -> Result<SinglePredicateProof, I::Error> {
-        let InferTy::Opaque { bounds } = subject else {
+        let Ty::Opaque { bounds } = subject else {
             return Ok(SinglePredicateProof::NotApplicable);
         };
         let Some(trait_ref) = self.empty_trait_bound_ref(context, bound)? else {

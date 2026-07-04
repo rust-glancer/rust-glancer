@@ -1,4 +1,4 @@
-use super::super::{family::TyToInferMapper, model::InferTy, table::InferenceTable};
+use super::super::{table::InferenceTable, traversal::InferenceTyFolder};
 use crate::Ty;
 
 /// Instantiates unknowns nested inside a known return shape.
@@ -28,20 +28,20 @@ impl<'table> UnknownTypeInstantiationBuilder<'table> {
         self.used_type_vars
     }
 
-    pub fn ty_from_ty(&mut self, ty: &Ty) -> InferTy {
+    pub fn ty_from_ty(&mut self, ty: &Ty) -> Ty {
         // We don't instantiate root unknown.
         if matches!(ty, Ty::Unknown) {
-            return InferTy::Unknown;
+            return Ty::Unknown;
         }
 
         // For whatever unknowns exist inside of `Ty`, replace them with `?T`.
-        self.map_ty(ty)
+        self.fold_ty(ty)
     }
 }
 
-impl TyToInferMapper for UnknownTypeInstantiationBuilder<'_> {
-    /// Within a known `Ty` shape, replace each `Ty::Unknown` with a new infer variable.
-    fn map_unknown_ty(&mut self) -> InferTy {
+impl InferenceTyFolder for UnknownTypeInstantiationBuilder<'_> {
+    fn fold_unknown(&mut self) -> Ty {
+        // Within a known `Ty` shape, replace each `Ty::Unknown` with a new infer variable.
         self.used_type_vars = true;
         self.table.new_type_var()
     }

@@ -4,9 +4,10 @@ use rg_ir_model::items::{GenericParams, TypeRef};
 use rg_ir_model::{ExprId, FunctionRef, TraitRef, TypeDefRef, TypePathResolution};
 use rg_std::{ExpectedUnique, MemorySize, Shrink, UniqueVec};
 use rg_text::Name;
-
-use crate::{GenericArg, Mutability, PrimitiveTy};
 use wincode::{SchemaRead, SchemaWrite};
+
+use crate::inference::{InferVarId, InferVarKind};
+use crate::{GenericArg, Mutability, PrimitiveTy};
 
 /// Ordered substitutions for type parameters visible at one use site.
 ///
@@ -43,6 +44,10 @@ impl TypeSubst {
     /// Appends another substitution set, preserving its internal shadowing order.
     pub fn extend(&mut self, subst: Self) {
         self.0.extend(subst.0);
+    }
+
+    pub(crate) fn iter(&self) -> impl Iterator<Item = (&Name, &Ty)> {
+        self.0.iter().map(|(name, ty)| (name, ty))
     }
 
     /// Returns the visible binding for `name`, honoring later shadowing earlier entries.
@@ -114,7 +119,6 @@ pub enum Ty {
         inner: Box<Ty>,
     },
     Opaque {
-        #[wincode(with = "rg_wincode_utils::WincodeDynamic<UniqueVec<OpaqueTraitBound>>")]
         bounds: UniqueVec<OpaqueTraitBound>,
     },
     Closure(ClosureTyId),
@@ -125,6 +129,17 @@ pub enum Ty {
     Nominal(NominalTy),
     SelfTy(NominalTy),
     Unknown,
+    /// Transient inference variable stored directly in the shared type tree.
+    ///
+    /// Inference variables are meaningful only while a body is being inferred. They must be
+    /// finalized away before persistence; the wincode adapters on this variant reject any `Ty`
+    /// tree that still contains it.
+    InferVar {
+        #[wincode(with = "rg_wincode_utils::WincodeUnsupported<InferVarKind>")]
+        kind: InferVarKind,
+        #[wincode(with = "rg_wincode_utils::WincodeUnsupported<InferVarId>")]
+        id: InferVarId,
+    },
 }
 
 /// Module-level nominal type together with the generic arguments visible at use site.
@@ -211,6 +226,10 @@ impl Ty {
         Self::SelfTy(ty)
     }
 
+    pub(crate) fn var_for_kind(kind: InferVarKind, id: InferVarId) -> Self {
+        Self::InferVar { kind, id }
+    }
+
     /// Projects a resolved nominal type path into `Ty`, preserving source generic arguments.
     ///
     /// Aliases, traits, and unresolved paths need context-specific fallback behavior, so callers
@@ -242,7 +261,8 @@ impl Ty {
             | Self::Closure(_)
             | Self::FunctionItem(_)
             | Self::Syntax(_)
-            | Self::Unknown => &[],
+            | Self::Unknown
+            | Self::InferVar { .. } => &[],
         }
     }
 
@@ -261,7 +281,30 @@ impl Ty {
             | Self::Syntax(_)
             | Self::Nominal(_)
             | Self::SelfTy(_)
-            | Self::Unknown => None,
+            | Self::Unknown
+            | Self::InferVar { .. } => None,
+        }
+    }
+
+    /// Returns true when this type still carries inference variables.
+    pub fn has_var(&self) -> bool {
+        match self {
+            Self::InferVar { .. } => true,
+            Self::Tuple(fields) => fields.iter().any(Self::has_var),
+            Self::Array { inner, .. } | Self::Slice(inner) | Self::Reference { inner, .. } => {
+                inner.has_var()
+            }
+            Self::Opaque { bounds } => bounds
+                .iter()
+                .any(|bound| bound.args.iter().any(GenericArg::has_var)),
+            Self::Nominal(ty) | Self::SelfTy(ty) => ty.args.iter().any(GenericArg::has_var),
+            Self::Unit
+            | Self::Never
+            | Self::Primitive(_)
+            | Self::Closure(_)
+            | Self::FunctionItem(_)
+            | Self::Syntax(_)
+            | Self::Unknown => false,
         }
     }
 
@@ -282,7 +325,8 @@ impl Ty {
             | Self::Primitive(_)
             | Self::Closure(_)
             | Self::FunctionItem(_)
-            | Self::Syntax(_) => false,
+            | Self::Syntax(_)
+            | Self::InferVar { .. } => false,
         }
     }
 
@@ -304,13 +348,14 @@ impl Ty {
             | Self::Never
             | Self::Primitive(_)
             | Self::Closure(_)
-            | Self::FunctionItem(_) => false,
+            | Self::FunctionItem(_)
+            | Self::InferVar { .. } => false,
         }
     }
 
     pub(crate) fn is_projectable(&self) -> bool {
         match self {
-            Self::Unknown | Self::Syntax(_) => false,
+            Self::Unknown | Self::Syntax(_) | Self::InferVar { .. } => false,
             Self::Tuple(fields) => fields.iter().all(Self::is_projectable),
             Self::Array { inner, .. } | Self::Slice(inner) => inner.is_projectable(),
             Self::Reference { inner, .. } => inner.is_projectable(),
@@ -383,7 +428,8 @@ impl Shrink for Ty {
             | Self::Primitive(_)
             | Self::Closure(_)
             | Self::FunctionItem(_)
-            | Self::Unknown => {}
+            | Self::Unknown
+            | Self::InferVar { .. } => {}
         }
     }
 }

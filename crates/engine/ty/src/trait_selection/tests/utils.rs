@@ -25,9 +25,7 @@ use rg_std::ExpectedUnique;
 use rg_text::Name;
 
 use super::super::{ChalkTraitSolver, TraitGoal, TraitSelectionOptions, TraitSelectionQuery};
-use crate::inference::{
-    InferGenericArg, InferNominalTy, InferOpaqueTraitBound, InferTy, InferenceTable,
-};
+use crate::inference::{InferVarKind, InferenceTable};
 use crate::{GenericArg, ItemPathQuery, NominalTy, OpaqueTraitBound, PrimitiveTy, Ty};
 
 pub(super) struct TraitSelectionFixture {
@@ -228,8 +226,8 @@ pub(super) fn generics(types: Vec<TypeParamData>) -> GenericParams {
     }
 }
 
-pub(super) fn nominal_infer_ty(def: TypeDefRef, args: Vec<InferGenericArg>) -> InferTy {
-    InferTy::Nominal(InferNominalTy { def, args })
+pub(super) fn nominal_infer_ty(def: TypeDefRef, args: Vec<GenericArg>) -> Ty {
+    Ty::Nominal(NominalTy { def, args })
 }
 
 fn resolved_one<T: PartialEq>(value: T) -> ExpectedUnique<T> {
@@ -1003,14 +1001,14 @@ struct ParsedAssocQuery {
 
 struct NamedInferVar {
     name: String,
-    ty: InferTy,
+    ty: Ty,
 }
 
 struct TraitSelectionQueryParser<'a> {
     fixture: &'a TraitSelectionFixture,
     table: InferenceTable,
     vars: Vec<NamedInferVar>,
-    var_by_name: HashMap<String, InferTy>,
+    var_by_name: HashMap<String, Ty>,
 }
 
 impl<'a> TraitSelectionQueryParser<'a> {
@@ -1070,7 +1068,7 @@ impl<'a> TraitSelectionQueryParser<'a> {
         }
     }
 
-    fn parse_trait_path(&mut self, text: &str) -> (TraitRef, Vec<InferGenericArg>) {
+    fn parse_trait_path(&mut self, text: &str) -> (TraitRef, Vec<GenericArg>) {
         let (name, args) = parse_path_head_and_args(text.trim());
         let trait_ref = self
             .fixture
@@ -1083,10 +1081,10 @@ impl<'a> TraitSelectionQueryParser<'a> {
         (trait_ref, args)
     }
 
-    fn parse_infer_ty(&mut self, text: &str) -> InferTy {
+    fn parse_infer_ty(&mut self, text: &str) -> Ty {
         let text = text.trim();
         if text == "_" {
-            return InferTy::Unknown;
+            return Ty::Unknown;
         }
         if let Some(name) = text.strip_prefix('?') {
             return self.type_var(name);
@@ -1095,13 +1093,13 @@ impl<'a> TraitSelectionQueryParser<'a> {
             .strip_prefix("{closure#")
             .and_then(|text| text.strip_suffix('}'))
         {
-            return InferTy::Closure(crate::ClosureTyId::new(rg_ir_model::ExprId(parse_usize(
+            return Ty::Closure(crate::ClosureTyId::new(rg_ir_model::ExprId(parse_usize(
                 id,
                 "closure id",
             ))));
         }
         if let Some(bounds) = text.strip_prefix("impl ") {
-            return InferTy::Opaque {
+            return Ty::Opaque {
                 bounds: split_top_level(bounds, '+')
                     .into_iter()
                     .map(|bound| self.parse_infer_opaque_bound(bound))
@@ -1110,10 +1108,8 @@ impl<'a> TraitSelectionQueryParser<'a> {
         }
         if let Some(ty) = parse_bracket_ty(text) {
             return match ty {
-                ParsedBracketTy::Slice(inner) => {
-                    InferTy::Slice(Box::new(self.parse_infer_ty(inner)))
-                }
-                ParsedBracketTy::Array { inner, len } => InferTy::Array {
+                ParsedBracketTy::Slice(inner) => Ty::Slice(Box::new(self.parse_infer_ty(inner))),
+                ParsedBracketTy::Array { inner, len } => Ty::Array {
                     inner: Box::new(self.parse_infer_ty(inner)),
                     len,
                 },
@@ -1127,28 +1123,28 @@ impl<'a> TraitSelectionQueryParser<'a> {
             .unwrap_or_else(|| panic!("query refers to unknown type `{name}`"));
         let args = args
             .into_iter()
-            .map(|arg| InferGenericArg::Type(Box::new(self.parse_infer_ty(arg))))
+            .map(|arg| GenericArg::Type(Box::new(self.parse_infer_ty(arg))))
             .collect();
         nominal_infer_ty(def, args)
     }
 
-    fn parse_infer_opaque_bound(&mut self, text: &str) -> InferOpaqueTraitBound {
+    fn parse_infer_opaque_bound(&mut self, text: &str) -> OpaqueTraitBound {
         let (trait_ref, args) = self.parse_trait_path(text);
-        InferOpaqueTraitBound { trait_ref, args }
+        OpaqueTraitBound { trait_ref, args }
     }
 
-    fn parse_infer_generic_arg(&mut self, text: &str) -> InferGenericArg {
+    fn parse_infer_generic_arg(&mut self, text: &str) -> GenericArg {
         if let Some((name, ty)) = split_top_level_keyword(text, " = ") {
-            return InferGenericArg::AssocType {
+            return GenericArg::AssocType {
                 name: Name::new(name),
                 ty: Some(Box::new(self.parse_infer_ty(ty))),
             };
         }
 
-        InferGenericArg::Type(Box::new(self.parse_infer_ty(text)))
+        GenericArg::Type(Box::new(self.parse_infer_ty(text)))
     }
 
-    fn type_var(&mut self, name: &str) -> InferTy {
+    fn type_var(&mut self, name: &str) -> Ty {
         if let Some(ty) = self.var_by_name.get(name) {
             return ty.clone();
         }
@@ -1166,11 +1162,7 @@ impl<'a> TraitSelectionQueryParser<'a> {
         self.vars
             .iter()
             .filter_map(|var| match &var.ty {
-                InferTy::Var(id) => Some((
-                    TraitSelectionSnapshot::render_debug_tuple_id(id),
-                    var.name.clone(),
-                )),
-                InferTy::IntegerVar(id) | InferTy::FloatVar(id) => Some((
+                Ty::InferVar { id, .. } => Some((
                     TraitSelectionSnapshot::render_debug_tuple_id(id),
                     var.name.clone(),
                 )),
@@ -1341,7 +1333,7 @@ impl TraitSelectionSnapshot {
     fn render_trait_path_with_vars(
         &self,
         trait_ref: TraitRef,
-        args: &[InferGenericArg],
+        args: &[GenericArg],
         var_names: &HashMap<String, String>,
     ) -> String {
         let name = self.render_trait_ref(trait_ref);
@@ -1396,37 +1388,35 @@ impl TraitSelectionSnapshot {
         }
     }
 
-    fn render_infer_ty_with_vars(
-        &self,
-        ty: &InferTy,
-        var_names: &HashMap<String, String>,
-    ) -> String {
+    fn render_infer_ty_with_vars(&self, ty: &Ty, var_names: &HashMap<String, String>) -> String {
         match ty {
-            InferTy::Var(id) => Self::render_named_var("?", id, var_names),
-            InferTy::IntegerVar(id) => Self::render_named_var("?int", id, var_names),
-            InferTy::FloatVar(id) => Self::render_named_var("?float", id, var_names),
-            InferTy::Unit => "()".to_string(),
-            InferTy::Never => "!".to_string(),
-            InferTy::Primitive(primitive) => Self::render_primitive(*primitive),
-            InferTy::Tuple(fields) => self.render_infer_tuple_with_vars(fields, var_names),
-            InferTy::Array { inner, len } => {
+            Ty::InferVar { kind, id } => match kind {
+                InferVarKind::Type => Self::render_named_var("?", id, var_names),
+                InferVarKind::Integer => Self::render_named_var("?int", id, var_names),
+                InferVarKind::Float => Self::render_named_var("?float", id, var_names),
+            },
+            Ty::Unit => "()".to_string(),
+            Ty::Never => "!".to_string(),
+            Ty::Primitive(primitive) => Self::render_primitive(*primitive),
+            Ty::Tuple(fields) => self.render_infer_tuple_with_vars(fields, var_names),
+            Ty::Array { inner, len } => {
                 format!(
                     "[{}; {}]",
                     self.render_infer_ty_with_vars(inner, var_names),
                     len.as_deref().unwrap_or("_")
                 )
             }
-            InferTy::Slice(inner) => {
+            Ty::Slice(inner) => {
                 format!("[{}]", self.render_infer_ty_with_vars(inner, var_names))
             }
-            InferTy::Reference { mutability, inner } => {
+            Ty::Reference { mutability, inner } => {
                 format!(
                     "{}{}",
                     mutability.render_prefix(),
                     self.render_infer_ty_with_vars(inner, var_names)
                 )
             }
-            InferTy::Opaque { bounds } => {
+            Ty::Opaque { bounds } => {
                 let bounds = bounds
                     .iter()
                     .map(|bound| self.render_infer_opaque_bound_with_vars(bound, var_names))
@@ -1434,17 +1424,17 @@ impl TraitSelectionSnapshot {
                     .join(" + ");
                 format!("impl {bounds}")
             }
-            InferTy::Closure(id) => format!("{{closure#{id}}}"),
-            InferTy::FunctionItem(function) => format!("{{fn-item:{function:?}}}"),
-            InferTy::Syntax(ty) => ty.to_string(),
-            InferTy::Nominal(ty) => self.render_infer_nominal_ty_with_vars(ty, var_names),
-            InferTy::SelfTy(ty) => {
+            Ty::Closure(id) => format!("{{closure#{id}}}"),
+            Ty::FunctionItem(function) => format!("{{fn-item:{function:?}}}"),
+            Ty::Syntax(ty) => ty.to_string(),
+            Ty::Nominal(ty) => self.render_infer_nominal_ty_with_vars(ty, var_names),
+            Ty::SelfTy(ty) => {
                 format!(
                     "Self({})",
                     self.render_infer_nominal_ty_with_vars(ty, var_names)
                 )
             }
-            InferTy::Unknown => "_".to_string(),
+            Ty::Unknown => "_".to_string(),
         }
     }
 
@@ -1463,7 +1453,7 @@ impl TraitSelectionSnapshot {
 
     fn render_infer_tuple_with_vars(
         &self,
-        fields: &[InferTy],
+        fields: &[Ty],
         var_names: &HashMap<String, String>,
     ) -> String {
         if fields.is_empty() {
@@ -1511,6 +1501,11 @@ impl TraitSelectionSnapshot {
             Ty::Syntax(ty) => ty.to_string(),
             Ty::Nominal(ty) => self.render_nominal_ty(ty),
             Ty::SelfTy(ty) => format!("Self({})", self.render_nominal_ty(ty)),
+            Ty::InferVar { kind, id } => match kind {
+                InferVarKind::Type => Self::render_named_var("?", id, &HashMap::new()),
+                InferVarKind::Integer => Self::render_named_var("?int", id, &HashMap::new()),
+                InferVarKind::Float => Self::render_named_var("?float", id, &HashMap::new()),
+            },
             Ty::Unknown => "_".to_string(),
         }
     }
@@ -1533,7 +1528,7 @@ impl TraitSelectionSnapshot {
 
     fn render_infer_nominal_ty_with_vars(
         &self,
-        ty: &InferNominalTy,
+        ty: &NominalTy,
         var_names: &HashMap<String, String>,
     ) -> String {
         let name = self.render_type_def_ref(ty.def);
@@ -1571,14 +1566,14 @@ impl TraitSelectionSnapshot {
 
     fn render_infer_generic_arg_with_vars(
         &self,
-        arg: &InferGenericArg,
+        arg: &GenericArg,
         var_names: &HashMap<String, String>,
     ) -> String {
         match arg {
-            InferGenericArg::Type(ty) => self.render_infer_ty_with_vars(ty, var_names),
-            InferGenericArg::Lifetime(lifetime) => lifetime.clone(),
-            InferGenericArg::Const(value) => value.clone(),
-            InferGenericArg::FnTraitArgs { params, ret } => {
+            GenericArg::Type(ty) => self.render_infer_ty_with_vars(ty, var_names),
+            GenericArg::Lifetime(lifetime) => lifetime.clone(),
+            GenericArg::Const(value) => value.clone(),
+            GenericArg::FnTraitArgs { params, ret } => {
                 let params = params
                     .iter()
                     .map(|param| self.render_infer_ty_with_vars(param, var_names))
@@ -1589,11 +1584,11 @@ impl TraitSelectionSnapshot {
                     self.render_infer_ty_with_vars(ret, var_names)
                 )
             }
-            InferGenericArg::AssocType { name, ty } => match ty {
+            GenericArg::AssocType { name, ty } => match ty {
                 Some(ty) => format!("{name} = {}", self.render_infer_ty_with_vars(ty, var_names)),
                 None => name.to_string(),
             },
-            InferGenericArg::Unsupported(text) => format!("<unsupported:{text}>"),
+            GenericArg::Unsupported(text) => format!("<unsupported:{text}>"),
         }
     }
 
@@ -1620,7 +1615,7 @@ impl TraitSelectionSnapshot {
 
     fn render_infer_opaque_bound_with_vars(
         &self,
-        bound: &InferOpaqueTraitBound,
+        bound: &OpaqueTraitBound,
         var_names: &HashMap<String, String>,
     ) -> String {
         self.render_trait_path_with_vars(bound.trait_ref, &bound.args, var_names)

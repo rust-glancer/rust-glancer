@@ -26,9 +26,12 @@ use rg_text::Name;
 
 use super::interner::{ChalkDefId, RgChalkInterner};
 use super::projection::{ProjectionAliasLowering, ProjectionVariableEnv};
-use crate::inference::{InferGenericArg, InferTy, InferTypeSubst, InferenceTable};
+use crate::inference::{InferVarKind, InferenceTable, InferenceTypeSubst};
 use crate::trait_selection::TraitGoal;
-use crate::{FloatTy, ItemPathQuery, PrimitiveTy, SignedIntTy, UnsignedIntTy};
+use crate::{
+    FloatTy, GenericArg as RgGenericArg, ItemPathQuery, PrimitiveTy, SignedIntTy, Ty as RgTy,
+    UnsignedIntTy,
+};
 
 pub(super) type ChalkTy = chalk_ir::Ty<RgChalkInterner>;
 pub(super) type ChalkGoal = Goal<RgChalkInterner>;
@@ -309,7 +312,7 @@ where
     pub(super) fn candidate_where_goals(
         &self,
         impl_data: &rg_ir_model::hir::items::ImplData,
-        subst: &InferTypeSubst,
+        subst: &InferenceTypeSubst,
         table: &InferenceTable,
     ) -> Option<Vec<ChalkGoal>> {
         let binders = GenericBinderEnv::for_impl(&impl_data.generics)?;
@@ -338,7 +341,7 @@ where
     pub(super) fn type_param_bounds(
         &self,
         generics: &GenericParams,
-        subst: Option<(&InferTypeSubst, &InferenceTable)>,
+        subst: Option<(&InferenceTypeSubst, &InferenceTable)>,
     ) -> Option<Vec<QuantifiedWhereClause<RgChalkInterner>>> {
         let mut clauses = Vec::new();
         for param in &generics.types {
@@ -353,7 +356,7 @@ where
     fn where_predicates(
         &self,
         predicates: &[WherePredicate],
-        subst: Option<(&InferTypeSubst, &InferenceTable)>,
+        subst: Option<(&InferenceTypeSubst, &InferenceTable)>,
     ) -> Option<Vec<QuantifiedWhereClause<RgChalkInterner>>> {
         let mut clauses = Vec::new();
         for predicate in predicates {
@@ -374,7 +377,7 @@ where
     fn impl_self_ty(
         &self,
         impl_data: &rg_ir_model::hir::items::ImplData,
-        subst: Option<(&InferTypeSubst, &InferenceTable)>,
+        subst: Option<(&InferenceTypeSubst, &InferenceTable)>,
     ) -> Option<ChalkTy> {
         if let Some(name) = impl_data.self_ty.type_param_name()
             && let Some(subject) = self.type_param_subject(&name, subst)
@@ -397,7 +400,7 @@ where
     fn impl_trait_args(
         &self,
         impl_data: &rg_ir_model::hir::items::ImplData,
-        subst: Option<(&InferTypeSubst, &InferenceTable)>,
+        subst: Option<(&InferenceTypeSubst, &InferenceTable)>,
     ) -> Option<Vec<chalk_ir::GenericArg<RgChalkInterner>>> {
         let Some(TypeRef::Path(path)) = &impl_data.trait_ref else {
             return Some(Vec::new());
@@ -409,7 +412,7 @@ where
         &self,
         subject: &ChalkTy,
         bound: &TypeBound,
-        subst: Option<(&InferTypeSubst, &InferenceTable)>,
+        subst: Option<(&InferenceTypeSubst, &InferenceTable)>,
     ) -> Option<QuantifiedWhereClause<RgChalkInterner>> {
         let TypeBound::Trait(TypeRef::Path(path)) = bound else {
             return None;
@@ -446,7 +449,7 @@ where
     fn type_param_subject(
         &self,
         name: &Name,
-        subst: Option<(&InferTypeSubst, &InferenceTable)>,
+        subst: Option<(&InferenceTypeSubst, &InferenceTable)>,
     ) -> Option<ChalkTy> {
         if let Some((subst, table)) = subst {
             let ty = subst.type_param(name.as_str())?;
@@ -458,7 +461,7 @@ where
     fn lower_type_ref(
         &self,
         ty: &TypeRef,
-        subst: Option<(&InferTypeSubst, &InferenceTable)>,
+        subst: Option<(&InferenceTypeSubst, &InferenceTable)>,
     ) -> Option<ChalkTy> {
         match ty {
             TypeRef::Unit => Some(TyKind::Tuple(0, Substitution::empty(INTER)).intern(INTER)),
@@ -545,7 +548,7 @@ where
         self_ty: &TypeRef,
         trait_ty: &TypeRef,
         assoc_name: &Name,
-        subst: Option<(&InferTypeSubst, &InferenceTable)>,
+        subst: Option<(&InferenceTypeSubst, &InferenceTable)>,
     ) -> Option<ChalkTy> {
         let self_ty = self.lower_type_ref(self_ty, subst)?;
         let TypeRef::Path(trait_path) = trait_ty else {
@@ -569,22 +572,22 @@ where
         )
     }
 
-    fn lower_infer_ty(&self, ty: &InferTy, table: &InferenceTable) -> Option<ChalkTy> {
+    fn lower_infer_ty(&self, ty: &RgTy, table: &InferenceTable) -> Option<ChalkTy> {
         self.lower_infer_ty_with_projection_vars(ty, table, &ProjectionVariableEnv::empty())
     }
 
     fn lower_infer_ty_with_projection_vars(
         &self,
-        ty: &InferTy,
+        ty: &RgTy,
         table: &InferenceTable,
         projection_vars: &ProjectionVariableEnv,
     ) -> Option<ChalkTy> {
         let ty = table.canonicalize(ty);
         match ty {
-            InferTy::Unit => Some(TyKind::Tuple(0, Substitution::empty(INTER)).intern(INTER)),
-            InferTy::Never => Some(TyKind::Never.intern(INTER)),
-            InferTy::Primitive(primitive) => self.primitive_ty(primitive),
-            InferTy::Tuple(fields) => {
+            RgTy::Unit => Some(TyKind::Tuple(0, Substitution::empty(INTER)).intern(INTER)),
+            RgTy::Never => Some(TyKind::Never.intern(INTER)),
+            RgTy::Primitive(primitive) => self.primitive_ty(primitive),
+            RgTy::Tuple(fields) => {
                 let args = fields
                     .iter()
                     .map(|field| {
@@ -594,18 +597,18 @@ where
                     .collect::<Option<Vec<_>>>()?;
                 Some(TyKind::Tuple(args.len(), Substitution::from_iter(INTER, args)).intern(INTER))
             }
-            InferTy::Slice(inner) => {
+            RgTy::Slice(inner) => {
                 let inner =
                     self.lower_infer_ty_with_projection_vars(&inner, table, projection_vars)?;
                 Some(TyKind::Slice(inner).intern(INTER))
             }
-            InferTy::Array { inner, len } => {
+            RgTy::Array { inner, len } => {
                 let inner =
                     self.lower_infer_ty_with_projection_vars(&inner, table, projection_vars)?;
                 let len = self.lower_array_len(&len)?;
                 Some(TyKind::Array(inner, len).intern(INTER))
             }
-            InferTy::Reference { mutability, inner } => {
+            RgTy::Reference { mutability, inner } => {
                 let inner =
                     self.lower_infer_ty_with_projection_vars(&inner, table, projection_vars)?;
                 Some(
@@ -617,7 +620,7 @@ where
                     .intern(INTER),
                 )
             }
-            InferTy::Nominal(ty) | InferTy::SelfTy(ty) => {
+            RgTy::Nominal(ty) | RgTy::SelfTy(ty) => {
                 let args = ty
                     .args
                     .iter()
@@ -631,18 +634,17 @@ where
                     .collect::<Option<Vec<_>>>()?;
                 Some(TyKind::Adt(AdtId(ty.def), Substitution::from_iter(INTER, args)).intern(INTER))
             }
-            InferTy::Syntax(ty) => self.lower_type_ref(&ty, None),
-            InferTy::Var(id) => projection_vars.chalk_ty_for_var(id),
-            InferTy::IntegerVar(_)
-            | InferTy::FloatVar(_)
-            | InferTy::Unknown
-            | InferTy::Opaque { .. }
-            | InferTy::Closure(_) => None,
+            RgTy::Syntax(ty) => self.lower_type_ref(&ty, None),
+            RgTy::InferVar {
+                kind: InferVarKind::Type,
+                id,
+            } => projection_vars.chalk_ty_for_var(id),
+            RgTy::InferVar { .. } | RgTy::Unknown | RgTy::Opaque { .. } | RgTy::Closure(_) => None,
             // Function items are real rust-glancer types, but lowering them to Chalk needs a real
             // `FnDef` signature. The current Chalk database only has placeholder fn-def callbacks,
             // so treating a function item as a solvable Chalk type would prove the wrong callable
             // shape. Body inference handles function-item callable evidence before this boundary.
-            InferTy::FunctionItem(_) => None,
+            RgTy::FunctionItem(_) => None,
         }
     }
 
@@ -662,31 +664,31 @@ where
 
     fn lower_infer_generic_arg_with_projection_vars(
         &self,
-        arg: &InferGenericArg,
+        arg: &RgGenericArg,
         table: &InferenceTable,
         projection_vars: &ProjectionVariableEnv,
     ) -> Option<chalk_ir::GenericArg<RgChalkInterner>> {
         match arg {
-            InferGenericArg::Type(ty) => self
+            RgGenericArg::Type(ty) => self
                 .lower_infer_ty_with_projection_vars(ty, table, projection_vars)
                 .map(|ty| GenericArgData::Ty(ty).intern(INTER)),
-            InferGenericArg::Lifetime(lifetime) => Some(
+            RgGenericArg::Lifetime(lifetime) => Some(
                 self.binders
                     .lifetime_var(lifetime)
                     .unwrap_or_else(|| LifetimeData::Erased.intern(INTER)),
             )
             .map(|lifetime| GenericArgData::Lifetime(lifetime).intern(INTER)),
-            InferGenericArg::Const(_)
-            | InferGenericArg::FnTraitArgs { .. }
-            | InferGenericArg::AssocType { .. }
-            | InferGenericArg::Unsupported(_) => None,
+            RgGenericArg::Const(_)
+            | RgGenericArg::FnTraitArgs { .. }
+            | RgGenericArg::AssocType { .. }
+            | RgGenericArg::Unsupported(_) => None,
         }
     }
 
     fn type_path_args(
         &self,
         path: &rg_ir_model::items::TypePath,
-        subst: Option<(&InferTypeSubst, &InferenceTable)>,
+        subst: Option<(&InferenceTypeSubst, &InferenceTable)>,
     ) -> Option<Substitution<RgChalkInterner>> {
         Some(Substitution::from_iter(
             INTER,
@@ -697,7 +699,7 @@ where
     fn generic_args_from_final_segment(
         &self,
         path: &rg_ir_model::items::TypePath,
-        subst: Option<(&InferTypeSubst, &InferenceTable)>,
+        subst: Option<(&InferenceTypeSubst, &InferenceTable)>,
     ) -> Option<Vec<chalk_ir::GenericArg<RgChalkInterner>>> {
         let args = path
             .segments
@@ -712,7 +714,7 @@ where
     fn generic_arg(
         &self,
         arg: &ItemGenericArg,
-        subst: Option<(&InferTypeSubst, &InferenceTable)>,
+        subst: Option<(&InferenceTypeSubst, &InferenceTable)>,
     ) -> Option<chalk_ir::GenericArg<RgChalkInterner>> {
         match arg {
             ItemGenericArg::Type(ty) => self

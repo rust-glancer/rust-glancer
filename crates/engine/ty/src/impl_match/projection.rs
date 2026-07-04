@@ -3,8 +3,10 @@
 //! `Deref` and structural inherent lookup affect real type facts. This module therefore rejects
 //! uncertain headers instead of returning maybe-applicable matches.
 
-use crate::inference::{InferGenericArg, InferTy, InferenceTable};
-use crate::{NominalTy, TraitGoal, TraitSelectionOptions, TraitSelectionQuery, Ty, TypeSubst};
+use crate::inference::InferenceTable;
+use crate::{
+    GenericArg, NominalTy, TraitGoal, TraitSelectionOptions, TraitSelectionQuery, Ty, TypeSubst,
+};
 use rg_ir_model::hir::items::ImplData;
 use rg_ir_model::items::{GenericArg as ItemGenericArg, TypeBound, TypePath, TypeRef};
 use rg_ir_model::{
@@ -324,7 +326,7 @@ where
         };
 
         let goal = TraitGoal {
-            self_ty: InferTy::from_ty(default_ty),
+            self_ty: default_ty.clone(),
             trait_ref,
             args,
         };
@@ -359,7 +361,7 @@ where
         path: &TypePath,
         context: TypePathContext,
         subst: &TypeSubst,
-    ) -> Result<Option<Vec<InferGenericArg>>, D::Error> {
+    ) -> Result<Option<Vec<GenericArg>>, D::Error> {
         let Some(segment) = path.segments.last() else {
             return Ok(Some(Vec::new()));
         };
@@ -379,16 +381,16 @@ where
         arg: &ItemGenericArg,
         context: TypePathContext,
         subst: &TypeSubst,
-    ) -> Result<Option<InferGenericArg>, D::Error> {
+    ) -> Result<Option<GenericArg>, D::Error> {
         Ok(Some(match arg {
             ItemGenericArg::Type(ty) => {
                 let Some(ty) = self.infer_ty_from_bound_type_ref(ty, context, subst)? else {
                     return Ok(None);
                 };
-                InferGenericArg::Type(Box::new(ty))
+                GenericArg::Type(Box::new(ty))
             }
-            ItemGenericArg::Lifetime(lifetime) => InferGenericArg::Lifetime(lifetime.clone()),
-            ItemGenericArg::Const(value) => InferGenericArg::Const(value.clone()),
+            ItemGenericArg::Lifetime(lifetime) => GenericArg::Lifetime(lifetime.clone()),
+            ItemGenericArg::Const(value) => GenericArg::Const(value.clone()),
             ItemGenericArg::FnTraitArgs { params, ret } => {
                 let mut projected_params = Vec::new();
                 for param in params {
@@ -401,7 +403,7 @@ where
                 let Some(ret) = self.infer_ty_from_bound_type_ref(ret, context, subst)? else {
                     return Ok(None);
                 };
-                InferGenericArg::FnTraitArgs {
+                GenericArg::FnTraitArgs {
                     params: projected_params,
                     ret: Box::new(ret),
                 }
@@ -417,7 +419,7 @@ where
                     }
                     None => None,
                 };
-                InferGenericArg::AssocType {
+                GenericArg::AssocType {
                     name: name.clone(),
                     ty,
                 }
@@ -431,12 +433,11 @@ where
         ty: &TypeRef,
         context: TypePathContext,
         subst: &TypeSubst,
-    ) -> Result<Option<InferTy>, D::Error> {
+    ) -> Result<Option<Ty>, D::Error> {
         let resolved_ty =
             self.item_paths
                 .resolve_type_ref(ty, context, Ty::syntax(ty.clone()), subst)?;
-        Ok((!Self::type_arg_comparison_is_uncertain(&resolved_ty))
-            .then(|| InferTy::from_ty(&resolved_ty)))
+        Ok((!Self::type_arg_comparison_is_uncertain(&resolved_ty)).then_some(resolved_ty))
     }
 
     /// Recursively matches a structural impl `Self` type against an adjusted receiver type.

@@ -7,10 +7,7 @@
 use rg_ir_model::ExprId;
 use rg_ir_storage::{DefMapSource, ItemStoreSource};
 use rg_package_store::PackageStoreError;
-use rg_ty::{
-    TraitGoal, function_generic_shadow_subst,
-    inference::{InferGenericArg, InferTy},
-};
+use rg_ty::{GenericArg, TraitGoal, Ty, function_generic_shadow_subst};
 
 use crate::{
     ir::ExprKind,
@@ -62,11 +59,11 @@ where
     pub(super) fn solve_fn_trait_goal(
         &self,
         inference: &mut BodyInferenceCtx,
-        self_ty: &InferTy,
-        params: &[InferTy],
-        ret: &InferTy,
+        self_ty: &Ty,
+        params: &[Ty],
+        ret: &Ty,
     ) -> Result<bool, PackageStoreError> {
-        if let InferTy::FunctionItem(function) = inference.root_resolved_ty(self_ty) {
+        if let Ty::FunctionItem(function) = inference.root_resolved_ty(self_ty) {
             return self.solve_function_item_goal(inference, function, params, ret);
         }
 
@@ -116,8 +113,8 @@ where
         &self,
         inference: &mut BodyInferenceCtx,
         function: rg_ir_model::FunctionRef,
-        params: &[InferTy],
-        ret: &InferTy,
+        params: &[Ty],
+        ret: &Ty,
     ) -> Result<bool, PackageStoreError> {
         let Some(function_data) = self.context.item_query().function_data(function)? else {
             return Ok(false);
@@ -135,7 +132,7 @@ where
             let Some(param_ty) = &written_param.ty else {
                 return Ok(false);
             };
-            let param_ty = InferTy::from_ty(&resolver.resolve(param_ty)?);
+            let param_ty = resolver.resolve(param_ty)?;
             if param_ty.has_unknown_or_syntax() {
                 continue;
             }
@@ -149,8 +146,8 @@ where
         }
 
         let ret_ty = match function_data.signature.ret_ty() {
-            Some(ret_ty) => InferTy::from_ty(&resolver.resolve(ret_ty)?),
-            None => InferTy::Unit,
+            Some(ret_ty) => resolver.resolve(ret_ty)?,
+            None => Ty::Unit,
         };
         if !ret_ty.has_unknown_or_syntax() && inference.table.try_unify(ret, &ret_ty).is_err() {
             return Ok(false);
@@ -162,7 +159,7 @@ where
     fn callable_goal_args<'goal>(
         &self,
         goal: &'goal TraitGoal,
-    ) -> Result<Option<(&'goal [InferTy], &'goal InferTy)>, PackageStoreError> {
+    ) -> Result<Option<(&'goal [Ty], &'goal Ty)>, PackageStoreError> {
         let Some(trait_data) = self.context.item_query().trait_data(goal.trait_ref)? else {
             return Ok(None);
         };
@@ -170,14 +167,14 @@ where
             return Ok(None);
         }
 
-        let [InferGenericArg::FnTraitArgs { params, ret }] = goal.args.as_slice() else {
+        let [GenericArg::FnTraitArgs { params, ret }] = goal.args.as_slice() else {
             return Ok(None);
         };
         Ok(Some((params, ret)))
     }
 
-    fn closure_expr(inference: &BodyInferenceCtx, ty: &InferTy) -> Option<ExprId> {
-        let InferTy::Closure(id) = inference.root_resolved_ty(ty) else {
+    fn closure_expr(inference: &BodyInferenceCtx, ty: &Ty) -> Option<ExprId> {
+        let Ty::Closure(id) = inference.root_resolved_ty(ty) else {
             return None;
         };
         Some(id.into_expr_id())
@@ -190,10 +187,7 @@ mod tests {
     use rg_ir_model::{BindingId, BodyId, BodyRef, TargetRef, TraitRef, TypeDefRef};
     use rg_package_store::PackageLoader;
     use rg_parse::TargetId;
-    use rg_ty::{
-        NominalTy, TraitGoal, Ty,
-        inference::{InferGenericArg, InferTy},
-    };
+    use rg_ty::{GenericArg, NominalTy, TraitGoal, Ty};
 
     use super::*;
     use crate::{ResolvedBodyData, testonly::BodyIrFixture};
@@ -221,11 +215,7 @@ pub fn use_it(seed: Name) {
     fn callable_goal_constrains_closure_param_and_body() {
         let fixture = GoalFixture::new();
         let mut inference = fixture.inference();
-        let goal = fixture.callable_goal(
-            &inference,
-            vec![InferTy::from_ty(&fixture.user_ty())],
-            InferTy::from_ty(&fixture.name_ty()),
-        );
+        let goal = fixture.callable_goal(&inference, vec![fixture.user_ty()], fixture.name_ty());
 
         assert!(
             fixture
@@ -248,11 +238,7 @@ pub fn use_it(seed: Name) {
         let fixture = GoalFixture::new();
         let mut inference = fixture.inference();
         let ret = inference.table.new_type_var();
-        let goal = fixture.callable_goal(
-            &inference,
-            vec![InferTy::from_ty(&fixture.user_ty())],
-            ret.clone(),
-        );
+        let goal = fixture.callable_goal(&inference, vec![fixture.user_ty()], ret.clone());
 
         assert!(
             fixture
@@ -386,13 +372,13 @@ pub fn use_it(seed: Name) {
         fn callable_goal(
             &self,
             inference: &BodyInferenceCtx,
-            params: Vec<InferTy>,
-            ret: InferTy,
+            params: Vec<Ty>,
+            ret: Ty,
         ) -> TraitGoal {
             TraitGoal {
                 self_ty: inference.expr_ty(self.closure_expr()),
                 trait_ref: self.trait_ref("FnOnce"),
-                args: vec![InferGenericArg::FnTraitArgs {
+                args: vec![GenericArg::FnTraitArgs {
                     params,
                     ret: Box::new(ret),
                 }],

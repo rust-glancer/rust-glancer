@@ -4,14 +4,8 @@ use rg_ir_model::{
     items::{FloatTy, SignedIntTy, TypeRef, UnsignedIntTy},
 };
 
-use super::{InferTy, InferenceTable};
-use crate::{
-    ClosureTyId, GenericArg, NominalTy, PrimitiveTy, Ty,
-    inference::{
-        ExplicitTypeArgInstantiationBuilder, InferGenericArg, InferNominalTy,
-        InferOpaqueTraitBound, UnknownTypeInstantiationBuilder,
-    },
-};
+use super::{ExplicitTypeArgInstantiationBuilder, InferenceTable, UnknownTypeInstantiationBuilder};
+use crate::{ClosureTyId, GenericArg, NominalTy, OpaqueTraitBound, PrimitiveTy, Ty};
 
 fn def_map_ref() -> DefMapRef {
     DefMapRef::Target(TargetRef {
@@ -53,10 +47,10 @@ fn function_item_ty(index: usize) -> Ty {
     })
 }
 
-fn vec_ty(inner: InferTy) -> InferTy {
-    InferTy::Nominal(InferNominalTy {
+fn vec_ty(inner: Ty) -> Ty {
+    Ty::Nominal(NominalTy {
         def: type_def(10),
-        args: vec![InferGenericArg::Type(Box::new(inner))],
+        args: vec![GenericArg::Type(Box::new(inner))],
     })
 }
 
@@ -67,15 +61,15 @@ fn concrete_vec_ty(inner: Ty) -> Ty {
     })
 }
 
-fn opaque_bound(trait_index: usize, arg: InferTy) -> InferOpaqueTraitBound {
-    InferOpaqueTraitBound {
+fn opaque_bound(trait_index: usize, arg: Ty) -> OpaqueTraitBound {
+    OpaqueTraitBound {
         trait_ref: trait_ref(trait_index),
-        args: vec![InferGenericArg::Type(Box::new(arg))],
+        args: vec![GenericArg::Type(Box::new(arg))],
     }
 }
 
-fn opaque_ty(bounds: Vec<InferOpaqueTraitBound>) -> InferTy {
-    InferTy::Opaque {
+fn opaque_ty(bounds: Vec<OpaqueTraitBound>) -> Ty {
+    Ty::Opaque {
         bounds: bounds.into_iter().collect(),
     }
 }
@@ -104,8 +98,8 @@ fn conflicting_variables_finalize_to_unknown() {
     let mut table = InferenceTable::new();
     let var = table.new_type_var();
 
-    assert!(table.unify(&var, &InferTy::Primitive(PrimitiveTy::Bool)));
-    assert!(table.unify(&var, &InferTy::Primitive(PrimitiveTy::Char)));
+    assert!(table.unify(&var, &Ty::Primitive(PrimitiveTy::Bool)));
+    assert!(table.unify(&var, &Ty::Primitive(PrimitiveTy::Char)));
 
     assert_eq!(table.finalize(&var), Ty::Unknown);
 }
@@ -115,7 +109,7 @@ fn unknown_does_not_solve_variables() {
     let mut table = InferenceTable::new();
     let var = table.new_type_var();
 
-    assert!(!table.unify(&var, &InferTy::Unknown));
+    assert!(!table.unify(&var, &Ty::Unknown));
 
     assert_eq!(table.finalize(&var), Ty::Unknown);
 }
@@ -128,12 +122,9 @@ fn numeric_variables_accept_matching_primitive_evidence() {
 
     assert!(table.unify(
         &int_var,
-        &InferTy::Primitive(PrimitiveTy::UnsignedInt(UnsignedIntTy::U64))
+        &Ty::Primitive(PrimitiveTy::UnsignedInt(UnsignedIntTy::U64))
     ));
-    assert!(table.unify(
-        &float_var,
-        &InferTy::Primitive(PrimitiveTy::Float(FloatTy::F32))
-    ));
+    assert!(table.unify(&float_var, &Ty::Primitive(PrimitiveTy::Float(FloatTy::F32))));
 
     assert_eq!(
         table.finalize(&int_var),
@@ -153,7 +144,7 @@ fn numeric_variables_follow_already_solved_type_variables() {
 
     assert!(table.unify(
         &type_var,
-        &InferTy::Primitive(PrimitiveTy::UnsignedInt(UnsignedIntTy::U64))
+        &Ty::Primitive(PrimitiveTy::UnsignedInt(UnsignedIntTy::U64))
     ));
     assert!(table.unify(&int_var, &type_var));
 
@@ -172,7 +163,7 @@ fn finalizes_solved_variables_inside_nominal_containers() {
     let mut table = InferenceTable::new();
     let element = table.new_type_var();
 
-    assert!(table.unify(&element, &InferTy::from_ty(&user_ty())));
+    assert!(table.unify(&element, &user_ty()));
 
     assert_eq!(
         table.finalize(&vec_ty(element)),
@@ -184,26 +175,34 @@ fn finalizes_solved_variables_inside_nominal_containers() {
 }
 
 #[test]
-fn closure_types_round_trip_through_inference_family() {
+fn wincode_rejects_transient_inference_vars() {
+    let mut table = InferenceTable::new();
+    let ty = vec_ty(table.new_type_var());
+
+    assert!(wincode::serialize(&ty).is_err());
+}
+
+#[test]
+fn closure_types_round_trip_through_inference_traversal() {
     let table = InferenceTable::new();
     let ty = closure_ty(7);
-    let infer_ty = InferTy::from_ty(&ty);
+    let infer_ty = ty.clone();
 
-    assert_eq!(infer_ty, InferTy::Closure(ClosureTyId::new(ExprId(7))));
+    assert_eq!(infer_ty, Ty::Closure(ClosureTyId::new(ExprId(7))));
     assert_eq!(table.finalize(&infer_ty), ty);
 }
 
 #[test]
-fn function_item_types_round_trip_through_inference_family() {
+fn function_item_types_round_trip_through_inference_traversal() {
     let table = InferenceTable::new();
     let function = FunctionRef {
         origin: def_map_ref(),
         id: FunctionId(7),
     };
     let ty = function_item_ty(7);
-    let infer_ty = InferTy::from_ty(&ty);
+    let infer_ty = ty.clone();
 
-    assert_eq!(infer_ty, InferTy::FunctionItem(function));
+    assert_eq!(infer_ty, Ty::FunctionItem(function));
     assert_eq!(table.finalize(&infer_ty), ty);
 }
 
@@ -216,7 +215,7 @@ fn resolves_root_variables_without_replacing_nested_vars() {
     assert!(table.unify(&element, &vec_ty(nested.clone())));
 
     assert_eq!(table.resolve_root_var(&element), vec_ty(nested.clone()));
-    assert!(table.unify(&nested, &InferTy::from_ty(&user_ty())));
+    assert!(table.unify(&nested, &user_ty()));
     assert_eq!(table.resolve_root_var(&element), vec_ty(nested));
     assert_eq!(table.finalize(&element), concrete_vec_ty(user_ty()));
 }
@@ -276,12 +275,12 @@ fn canonicalize_expands_solved_slots_inside_type_shapes() {
     let mut table = InferenceTable::new();
     let element = table.new_type_var();
 
-    assert!(table.unify(&element, &InferTy::from_ty(&user_ty())));
+    assert!(table.unify(&element, &user_ty()));
 
-    assert_eq!(table.canonicalize(&element), InferTy::from_ty(&user_ty()));
+    assert_eq!(table.canonicalize(&element), user_ty());
     assert_eq!(
         table.canonicalize(&vec_ty(element.clone())),
-        vec_ty(InferTy::from_ty(&user_ty()))
+        vec_ty(user_ty())
     );
     assert_eq!(table.finalize(&element), user_ty());
 }
@@ -292,9 +291,9 @@ fn later_evidence_refines_unknown_children_inside_solved_slots() {
     let values = table.new_type_var();
     let element = table.new_type_var();
 
-    assert!(table.unify(&values, &vec_ty(InferTy::Unknown)));
+    assert!(table.unify(&values, &vec_ty(Ty::Unknown)));
     assert!(table.unify(&values, &vec_ty(element.clone())));
-    assert!(table.unify(&element, &InferTy::from_ty(&user_ty())));
+    assert!(table.unify(&element, &user_ty()));
 
     assert_eq!(table.finalize(&values), concrete_vec_ty(user_ty()));
 }
@@ -306,7 +305,7 @@ fn single_opaque_bound_infers_through_matching_trait_args() {
 
     assert!(table.unify(
         &opaque_ty(vec![opaque_bound(0, element.clone())]),
-        &opaque_ty(vec![opaque_bound(0, InferTy::from_ty(&user_ty()))])
+        &opaque_ty(vec![opaque_bound(0, user_ty())])
     ));
 
     assert_eq!(table.finalize(&element), user_ty());
@@ -322,13 +321,10 @@ fn broad_opaque_bounds_do_not_infer_from_partial_bound_overlap() {
         &opaque,
         &opaque_ty(vec![
             opaque_bound(0, element.clone()),
-            opaque_bound(1, InferTy::from_ty(&project_ty())),
+            opaque_bound(1, project_ty()),
         ])
     ));
-    assert!(!table.unify(
-        &opaque,
-        &opaque_ty(vec![opaque_bound(0, InferTy::from_ty(&user_ty()))])
-    ));
+    assert!(!table.unify(&opaque, &opaque_ty(vec![opaque_bound(0, user_ty())])));
 
     assert_eq!(table.finalize(&element), Ty::Unknown);
     assert!(matches!(table.finalize(&opaque), Ty::Opaque { .. }));
@@ -339,10 +335,7 @@ fn unifies_same_definition_nominal_generic_arguments() {
     let mut table = InferenceTable::new();
     let element = table.new_type_var();
 
-    assert!(table.unify(
-        &vec_ty(element.clone()),
-        &vec_ty(InferTy::from_ty(&user_ty()))
-    ));
+    assert!(table.unify(&vec_ty(element.clone()), &vec_ty(user_ty())));
 
     assert_eq!(
         table.finalize(&element),
@@ -360,7 +353,7 @@ fn instantiates_unknowns_nested_inside_known_shapes() {
         inferred
     };
 
-    assert!(table.unify(&inferred, &InferTy::from_ty(&concrete_vec_ty(user_ty()))));
+    assert!(table.unify(&inferred, &concrete_vec_ty(user_ty())));
 
     assert_eq!(table.finalize(&inferred), concrete_vec_ty(user_ty()));
 }
@@ -370,7 +363,7 @@ fn leaves_root_unknown_uninstantiated() {
     let mut table = InferenceTable::new();
     let mut builder = UnknownTypeInstantiationBuilder::new(&mut table);
 
-    assert_eq!(builder.ty_from_ty(&Ty::Unknown), InferTy::Unknown);
+    assert_eq!(builder.ty_from_ty(&Ty::Unknown), Ty::Unknown);
     assert!(!builder.used_type_vars());
 }
 
@@ -384,7 +377,7 @@ fn explicit_type_arg_builder_instantiates_root_infer() {
         inferred
     };
 
-    assert!(table.unify(&inferred, &InferTy::from_ty(&user_ty())));
+    assert!(table.unify(&inferred, &user_ty()));
 
     assert_eq!(table.finalize(&inferred), user_ty());
 }
@@ -402,9 +395,47 @@ fn explicit_type_arg_builder_instantiates_nested_infer() {
         inferred
     };
 
-    assert!(table.unify(&inferred, &InferTy::from_ty(&Ty::Tuple(vec![user_ty()]))));
+    assert!(table.unify(&inferred, &Ty::Tuple(vec![user_ty()])));
 
     assert_eq!(table.finalize(&inferred), Ty::Tuple(vec![user_ty()]));
+}
+
+#[test]
+fn explicit_type_arg_builder_instantiates_nested_infer_from_unknown_fallback() {
+    let cases = [
+        (
+            TypeRef::Tuple(vec![TypeRef::Infer]),
+            Ty::Tuple(vec![user_ty()]),
+        ),
+        (
+            TypeRef::Array {
+                inner: Box::new(TypeRef::Infer),
+                len: Some("3".to_owned()),
+            },
+            Ty::Array {
+                inner: Box::new(user_ty()),
+                len: Some("3".to_owned()),
+            },
+        ),
+        (
+            TypeRef::Slice(Box::new(TypeRef::Infer)),
+            Ty::Slice(Box::new(user_ty())),
+        ),
+    ];
+
+    for (written_ty, expected_ty) in cases {
+        let mut table = InferenceTable::new();
+        let inferred = {
+            let mut builder = ExplicitTypeArgInstantiationBuilder::new(&mut table);
+            let inferred = builder.ty_from_arg(&written_ty, &Ty::Unknown);
+            assert!(builder.used_type_vars());
+            inferred
+        };
+
+        assert!(table.unify(&inferred, &expected_ty));
+
+        assert_eq!(table.finalize(&inferred), expected_ty);
+    }
 }
 
 #[test]
@@ -425,8 +456,8 @@ fn conflicting_nominal_variables_finalize_to_unknown() {
     let mut table = InferenceTable::new();
     let var = table.new_type_var();
 
-    assert!(table.unify(&var, &InferTy::from_ty(&user_ty())));
-    assert!(table.unify(&var, &InferTy::from_ty(&project_ty())));
+    assert!(table.unify(&var, &user_ty()));
+    assert!(table.unify(&var, &project_ty()));
 
     assert_eq!(table.finalize(&var), Ty::Unknown);
 }

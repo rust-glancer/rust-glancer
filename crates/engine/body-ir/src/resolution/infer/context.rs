@@ -4,8 +4,8 @@ use rg_ir_model::{BindingId, ExprId, ExprWrapperKind};
 use rg_ty::{
     ClosureTyId, TraitSelectionCache, Ty,
     inference::{
-        ExplicitTypeArgInstantiationBuilder, GenericReturnInstantiationBuilder, InferTy,
-        InferTypeSubst, InferenceTable, UnknownTypeInstantiationBuilder,
+        ExplicitTypeArgInstantiationBuilder, GenericReturnInstantiationBuilder, InferenceTable,
+        InferenceTypeSubst, UnknownTypeInstantiationBuilder,
     },
 };
 
@@ -42,33 +42,33 @@ impl BodyInferenceCtx {
     }
 
     pub(crate) fn set_expr_ty(&mut self, expr: ExprId, ty: &Ty) {
-        self.set_expr_fact(expr, InferTy::from_ty(ty));
+        self.set_expr_fact(expr, ty.clone());
     }
 
-    pub(crate) fn set_expr_infer_ty(&mut self, expr: ExprId, ty: InferTy) -> bool {
+    pub(crate) fn set_expr_infer_ty(&mut self, expr: ExprId, ty: Ty) -> bool {
         self.set_expr_fact(expr, ty)
     }
 
     pub(crate) fn set_expr_closure_ty(&mut self, expr: ExprId) -> bool {
         // The id intentionally points back to the body expression index. Later callable-trait
         // phases can use that link to recover the closure params/body from the same body arena.
-        self.set_expr_infer_ty(expr, InferTy::Closure(ClosureTyId::new(expr)))
+        self.set_expr_infer_ty(expr, Ty::Closure(ClosureTyId::new(expr)))
     }
 
-    pub(crate) fn expr_ty(&self, expr: ExprId) -> InferTy {
+    pub(crate) fn expr_ty(&self, expr: ExprId) -> Ty {
         self.expr_tys.get(expr)
     }
 
     #[cfg(test)]
-    pub(crate) fn binding_ty(&self, binding: BindingId) -> InferTy {
+    pub(crate) fn binding_ty(&self, binding: BindingId) -> Ty {
         self.binding_tys.get(binding)
     }
 
-    pub(crate) fn root_resolved_expr_ty(&self, expr: ExprId) -> InferTy {
+    pub(crate) fn root_resolved_expr_ty(&self, expr: ExprId) -> Ty {
         self.expr_tys.root_resolved(&self.table, expr)
     }
 
-    pub(crate) fn root_resolved_ty(&self, ty: &InferTy) -> InferTy {
+    pub(crate) fn root_resolved_ty(&self, ty: &Ty) -> Ty {
         self.table.resolve_root_var(ty)
     }
 
@@ -97,7 +97,7 @@ impl BodyInferenceCtx {
         &mut self,
         arg_ty: &TypeRef,
         resolved_ty: &Ty,
-    ) -> (InferTy, bool) {
+    ) -> (Ty, bool) {
         let mut builder = ExplicitTypeArgInstantiationBuilder::new(&mut self.table);
         let infer_ty = builder.ty_from_arg(arg_ty, resolved_ty);
         let used_vars = builder.used_type_vars();
@@ -137,7 +137,7 @@ impl BodyInferenceCtx {
         // descend through the tuple and solve literals or variables nested inside each field.
         self.set_expr_infer_ty(
             expr,
-            InferTy::Tuple(fields.iter().map(|field| self.expr_ty(*field)).collect()),
+            Ty::tuple(fields.iter().map(|field| self.expr_ty(*field)).collect()),
         );
     }
 
@@ -148,7 +148,7 @@ impl BodyInferenceCtx {
         len: Option<String>,
     ) {
         if elements.is_empty() {
-            self.set_expr_infer_ty(expr, InferTy::Unknown);
+            self.set_expr_infer_ty(expr, Ty::Unknown);
             return;
         }
 
@@ -157,7 +157,7 @@ impl BodyInferenceCtx {
         // Refresh may visit the same array many times, so keep the old inference slot when the
         // shape matches.
         let element_ty = match self.expr_tys.get_ref(expr) {
-            InferTy::Array {
+            Ty::Array {
                 inner,
                 len: existing_len,
             } if existing_len == &len && Self::is_inference_owned_slot(inner) => {
@@ -172,7 +172,7 @@ impl BodyInferenceCtx {
 
         self.set_expr_fact_allowing_weak_slot(
             expr,
-            InferTy::Array {
+            Ty::Array {
                 inner: Box::new(element_ty),
                 len,
             },
@@ -186,13 +186,13 @@ impl BodyInferenceCtx {
         len: Option<String>,
     ) {
         let Some(initializer) = initializer else {
-            self.set_expr_infer_ty(expr, InferTy::Unknown);
+            self.set_expr_infer_ty(expr, Ty::Unknown);
             return;
         };
 
         self.set_expr_infer_ty(
             expr,
-            InferTy::Array {
+            Ty::Array {
                 inner: Box::new(self.expr_tys.get(initializer)),
                 len,
             },
@@ -214,19 +214,17 @@ impl BodyInferenceCtx {
 
         let ty = match kind {
             ExprWrapperKind::Paren | ExprWrapperKind::Await => inner_ty,
-            ExprWrapperKind::Ref { mutability } => InferTy::Reference {
+            ExprWrapperKind::Ref { mutability } => Ty::Reference {
                 mutability,
                 inner: Box::new(inner_ty),
             },
-            ExprWrapperKind::Try | ExprWrapperKind::Return => InferTy::from_ty(fallback_ty),
+            ExprWrapperKind::Try | ExprWrapperKind::Return => fallback_ty.clone(),
         };
         self.set_expr_infer_ty(expr, ty);
     }
 
     pub(crate) fn set_expr_block_from_tail(&mut self, expr: ExprId, tail: Option<ExprId>) {
-        let ty = tail
-            .map(|tail| self.expr_tys.get(tail))
-            .unwrap_or(InferTy::Unit);
+        let ty = tail.map(|tail| self.expr_tys.get(tail)).unwrap_or(Ty::Unit);
         self.set_expr_infer_ty(expr, ty);
     }
 
@@ -237,7 +235,7 @@ impl BodyInferenceCtx {
         else_branch: Option<ExprId>,
     ) {
         let Some(else_branch) = else_branch else {
-            self.set_expr_infer_ty(expr, InferTy::Unit);
+            self.set_expr_infer_ty(expr, Ty::Unit);
             return;
         };
 
@@ -261,7 +259,7 @@ impl BodyInferenceCtx {
         // but they do not produce a value that should conflict with the other branches.
         // Refresh may revisit the same branch expression, so reuse only an existing inference slot.
         let result_ty = match self.expr_tys.get_ref(expr) {
-            InferTy::Unknown | InferTy::Never => self.table.new_type_var(),
+            Ty::Unknown | Ty::Never => self.table.new_type_var(),
             ty if Self::is_inference_owned_slot(ty) => ty.clone(),
             _ => self.table.new_type_var(),
         };
@@ -270,12 +268,12 @@ impl BodyInferenceCtx {
         for result_expr in result_exprs {
             has_result = true;
             let branch_ty = self.expr_tys.root_resolved(&self.table, result_expr);
-            if matches!(branch_ty, InferTy::Never) {
+            if matches!(branch_ty, Ty::Never) {
                 continue;
             }
 
             has_value_result = true;
-            if matches!(branch_ty, InferTy::Unknown) {
+            if matches!(branch_ty, Ty::Unknown) {
                 continue;
             }
             // A branch may read the value being assigned by the whole expression, e.g.
@@ -287,22 +285,22 @@ impl BodyInferenceCtx {
         let ty = if has_value_result {
             result_ty
         } else if has_result {
-            InferTy::Never
+            Ty::Never
         } else {
             // Note that we don't handle "empty blocks" but "lack of blocks" here,
             // "empty blocks" are handled separately -- these are real exprs that resolve to unit,
             // while here we are dealing with incomplete code like `match` with no arms.
-            InferTy::Unknown
+            Ty::Unknown
         };
         self.set_expr_infer_ty(expr, ty);
     }
 
     pub(crate) fn set_binding_ty(&mut self, binding: BindingId, ty: &Ty) {
-        self.set_binding_fact(binding, InferTy::from_ty(ty));
+        self.set_binding_fact(binding, ty.clone());
     }
 
     /// Set a binding to an inference-aware type, preserving any previous evidence.
-    pub(crate) fn set_binding_infer_ty(&mut self, binding: BindingId, ty: InferTy) -> bool {
+    pub(crate) fn set_binding_infer_ty(&mut self, binding: BindingId, ty: Ty) -> bool {
         let previous_ty = self.binding_tys.get(binding);
         let changed = self.table.unify(&previous_ty, &ty);
         self.set_binding_fact(binding, ty) || changed
@@ -315,27 +313,25 @@ impl BodyInferenceCtx {
 
     pub(crate) fn constrain_expr_ty(&mut self, expr: ExprId, expected_ty: &Ty) -> bool {
         let current_ty = self.expr_ty(expr);
-        let changed = self
-            .table
-            .unify(&current_ty, &InferTy::from_ty(expected_ty));
+        let changed = self.table.unify(&current_ty, expected_ty);
         self.set_expr_fact(expr, current_ty) || changed
     }
 
-    pub(crate) fn constrain_expr_infer_ty(&mut self, expr: ExprId, expected_ty: &InferTy) -> bool {
+    pub(crate) fn constrain_expr_infer_ty(&mut self, expr: ExprId, expected_ty: &Ty) -> bool {
         let current_ty = self.expr_ty(expr);
         let changed = self.table.unify(&current_ty, expected_ty);
         self.set_expr_fact(expr, current_ty) || changed
     }
 
-    pub(crate) fn constrain_infer_tys(&mut self, lhs: &InferTy, rhs: &InferTy) -> bool {
+    pub(crate) fn constrain_infer_tys(&mut self, lhs: &Ty, rhs: &Ty) -> bool {
         self.table.unify(lhs, rhs)
     }
 
     pub(crate) fn bind_type_params_from_infer_args(
         &mut self,
-        subst: &mut InferTypeSubst,
+        subst: &mut InferenceTypeSubst,
         generics: &GenericParams,
-        args: &[rg_ty::inference::InferGenericArg],
+        args: &[rg_ty::GenericArg],
     ) {
         subst.bind_type_params_from_infer_args(&mut self.table, generics, args);
     }
@@ -349,22 +345,22 @@ impl BodyInferenceCtx {
     }
 
     /// Return whether a fact still points into the inference table.
-    fn is_inference_owned_slot(ty: &InferTy) -> bool {
+    fn is_inference_owned_slot(ty: &Ty) -> bool {
         ty.has_var()
     }
 
     /// Compare body-side facts canonically while preserving live inference slots.
-    fn set_expr_fact(&mut self, expr: ExprId, ty: InferTy) -> bool {
+    fn set_expr_fact(&mut self, expr: ExprId, ty: Ty) -> bool {
         self.expr_tys.set(&self.table, expr, ty)
     }
 
     /// Store a new slot even if its current weak evidence still canonicalizes to the old shape.
-    fn set_expr_fact_allowing_weak_slot(&mut self, expr: ExprId, ty: InferTy) -> bool {
+    fn set_expr_fact_allowing_weak_slot(&mut self, expr: ExprId, ty: Ty) -> bool {
         self.expr_tys.set_allowing_weak_slot(&self.table, expr, ty)
     }
 
     /// Compare binding-side facts canonically while preserving live inference slots.
-    fn set_binding_fact(&mut self, binding: BindingId, ty: InferTy) -> bool {
+    fn set_binding_fact(&mut self, binding: BindingId, ty: Ty) -> bool {
         self.binding_tys.set(&self.table, binding, ty)
     }
 }

@@ -1,8 +1,8 @@
 use rg_std::{MemorySize, Shrink};
 use rg_text::Name;
+use wincode::{SchemaRead, SchemaWrite};
 
 use crate::Ty;
-use wincode::{SchemaRead, SchemaWrite};
 
 /// Generic argument as understood by the shared type vocabulary.
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
@@ -34,6 +34,16 @@ impl GenericArg {
             | Self::FnTraitArgs { .. }
             | Self::AssocType { .. }
             | Self::Unsupported(_) => None,
+        }
+    }
+
+    /// Returns whether this generic argument still carries inference variables.
+    pub fn has_var(&self) -> bool {
+        match self {
+            Self::Type(ty) => ty.has_var(),
+            Self::FnTraitArgs { params, ret } => params.iter().any(Ty::has_var) || ret.has_var(),
+            Self::AssocType { ty, .. } => ty.as_deref().is_some_and(Ty::has_var),
+            Self::Lifetime(_) | Self::Const(_) | Self::Unsupported(_) => false,
         }
     }
 
