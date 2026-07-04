@@ -5,7 +5,10 @@
 //! accepts only shapes that map directly into today's `InferTy` model. Unsupported Chalk answers
 //! return `None` instead of becoming a second, partial inference engine.
 
-use chalk_ir::{GenericArg, GenericArgData, Mutability as ChalkMutability, Scalar, Ty, TyKind};
+use chalk_ir::{
+    Const, ConstValue, GenericArg, GenericArgData, Mutability as ChalkMutability, Scalar, Ty,
+    TyKind,
+};
 
 use super::interner::RgChalkInterner;
 use super::projection::{ProjectionAnswerVars, ProjectionVariableEnv};
@@ -41,6 +44,10 @@ fn infer_ty_from_chalk_with_vars(
         TyKind::Slice(inner) => Some(InferTy::Slice(Box::new(infer_ty_from_chalk_with_vars(
             inner, variables,
         )?))),
+        TyKind::Array(inner, len) => Some(InferTy::Array {
+            inner: Box::new(infer_ty_from_chalk_with_vars(inner, variables)?),
+            len: Some(array_len_from_chalk(len)?),
+        }),
         TyKind::Ref(mutability, _, inner) => Some(InferTy::Reference {
             mutability: match mutability {
                 ChalkMutability::Mut => rg_ir_model::Mutability::Mutable,
@@ -70,8 +77,7 @@ fn infer_ty_from_chalk_with_vars(
                 .iter()
                 .find_map(|(var, ty)| (*var == *bound_var).then_some(ty.clone()))
         }
-        TyKind::Array(_, _)
-        | TyKind::Raw(_, _)
+        TyKind::Raw(_, _)
         | TyKind::AssociatedType(_, _)
         | TyKind::Alias(_)
         | TyKind::OpaqueType(_, _)
@@ -86,6 +92,13 @@ fn infer_ty_from_chalk_with_vars(
         | TyKind::Placeholder(_)
         | TyKind::Error => None,
     }
+}
+
+fn array_len_from_chalk(len: &Const<RgChalkInterner>) -> Option<String> {
+    let ConstValue::Concrete(value) = &len.data(INTER).value else {
+        return None;
+    };
+    Some(value.interned.clone())
 }
 
 fn infer_ty_from_chalk_arg(

@@ -11,6 +11,7 @@ use std::sync::{Arc, Mutex};
 mod chalk;
 mod header;
 mod matcher;
+mod predicate;
 mod projection;
 
 use rg_ir_model::{TraitApplicability, TraitImplRef, TraitRef};
@@ -22,6 +23,7 @@ use rg_std::ExpectedUnique;
 use self::chalk::ChalkTraitSolver;
 pub use self::header::TraitSelectionOptions;
 use self::matcher::CandidateMatcher;
+use self::predicate::{ImplPredicateProof, ImplPredicateProver};
 pub use self::projection::AssocProjectionResult;
 use crate::ItemPathQuery;
 use crate::inference::{InferGenericArg, InferTy, InferTypeSubst, InferenceTable};
@@ -315,18 +317,28 @@ where
                 }));
             }
 
-            let Some(where_applicability) = cache.impl_bounds_applicability(
-                item_paths,
-                target_items,
-                trait_impl,
-                impl_data,
-                &subst,
-                &table,
-            )?
-            else {
-                return Ok(None);
-            };
-            applicability = applicability.and(where_applicability);
+            match ImplPredicateProver::new(item_paths, target_items)
+                .prove_all_from_opaque_bounds(impl_data, &subst, &table)?
+            {
+                ImplPredicateProof::Proven(predicate_applicability) => {
+                    applicability = applicability.and(predicate_applicability);
+                }
+                ImplPredicateProof::Rejected => return Ok(None),
+                ImplPredicateProof::NotApplicable => {
+                    let Some(where_applicability) = cache.impl_bounds_applicability(
+                        item_paths,
+                        target_items,
+                        trait_impl,
+                        impl_data,
+                        &subst,
+                        &table,
+                    )?
+                    else {
+                        return Ok(None);
+                    };
+                    applicability = applicability.and(where_applicability);
+                }
+            }
         }
 
         Ok(applicability.is_applicable().then_some(TraitSelection {

@@ -95,6 +95,9 @@ impl ProjectionVariableEnv {
             InferTy::Slice(inner) | InferTy::Reference { inner, .. } => {
                 self.collect_ty(&inner, table);
             }
+            InferTy::Array { inner, .. } => {
+                self.collect_ty(&inner, table);
+            }
             InferTy::Nominal(ty) | InferTy::SelfTy(ty) => {
                 for arg in &ty.args {
                     self.collect_generic_arg(arg, table);
@@ -103,7 +106,6 @@ impl ProjectionVariableEnv {
             InferTy::Unit
             | InferTy::Never
             | InferTy::Primitive(_)
-            | InferTy::Array { .. }
             | InferTy::Opaque { .. }
             | InferTy::Closure(_)
             | InferTy::FunctionItem(_)

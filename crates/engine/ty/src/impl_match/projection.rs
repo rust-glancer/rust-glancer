@@ -1,12 +1,10 @@
 //! Strict impl matching for type-changing operations.
 //!
-//! `Deref`, structural inherent lookup, and associated-type projection all affect real type facts.
-//! This module therefore rejects uncertain headers instead of returning maybe-applicable matches.
+//! `Deref` and structural inherent lookup affect real type facts. This module therefore rejects
+//! uncertain headers instead of returning maybe-applicable matches.
 
 use crate::inference::{InferGenericArg, InferTy, InferenceTable};
-use crate::{
-    GenericArg, NominalTy, TraitGoal, TraitSelectionOptions, TraitSelectionQuery, Ty, TypeSubst,
-};
+use crate::{NominalTy, TraitGoal, TraitSelectionOptions, TraitSelectionQuery, Ty, TypeSubst};
 use rg_ir_model::hir::items::ImplData;
 use rg_ir_model::items::{GenericArg as ItemGenericArg, TypeBound, TypePath, TypeRef};
 use rg_ir_model::{
@@ -83,49 +81,6 @@ where
         }
 
         self.impl_self_structural_subst(trait_impl.impl_ref, impl_data, receiver_ty)
-    }
-
-    /// Matches a trait impl for associated-type projection against any known receiver `Ty`.
-    ///
-    /// This is the strict path used by adjustments and iterator item flow. It accepts direct
-    /// generic bindings inside already-modeled nominal or structural self types, but rejects
-    /// bounded blanket impls unless the caller handles a specific blanket shape itself.
-    pub(crate) fn trait_impl_projection_subst_for_ty(
-        &self,
-        trait_impl: TraitImplRef,
-        impl_data: &ImplData,
-        receiver_ty: &Ty,
-    ) -> Result<Option<TypeSubst>, D::Error> {
-        if !impl_data.resolved_trait_ref.is(&trait_impl.trait_ref)
-            || !Self::impl_header_is_projectable(impl_data)
-            || impl_data.self_ty.type_param_name().is_some_and(|name| {
-                Self::impl_type_param_names(&impl_data.generics).contains(&name.as_str())
-            })
-        {
-            return Ok(None);
-        }
-
-        let impl_type_params = Self::impl_type_param_names(&impl_data.generics);
-        let impl_lifetime_params = Self::impl_lifetime_param_names(&impl_data.generics);
-        let impl_const_params = Self::impl_const_param_names(&impl_data.generics);
-        let mut subst = TypeSubst::new();
-
-        if self.projection_type_ref_matches_ty(
-            trait_impl.impl_ref,
-            impl_data,
-            &impl_data.self_ty,
-            receiver_ty,
-            &ImplParamNames {
-                types: &impl_type_params,
-                lifetimes: &impl_lifetime_params,
-                consts: &impl_const_params,
-            },
-            &mut subst,
-        )? {
-            Ok(Some(subst))
-        } else {
-            Ok(None)
-        }
     }
 
     /// Builds substitutions only when the impl self type structurally matches the receiver.
@@ -484,243 +439,6 @@ where
             .then(|| InferTy::from_ty(&resolved_ty)))
     }
 
-    /// Recursively matches an impl `Self` type against a receiver for real type projection.
-    fn projection_type_ref_matches_ty(
-        &self,
-        impl_ref: ImplRef,
-        impl_data: &ImplData,
-        impl_ty: &TypeRef,
-        receiver_ty: &Ty,
-        params: &ImplParamNames<'_>,
-        subst: &mut TypeSubst,
-    ) -> Result<bool, D::Error> {
-        // A direct type parameter inside a concrete shape is the only binding operation here.
-        // Bare blanket impls such as `impl<T> Trait for T` are rejected before this matcher is
-        // entered because they need trait-bound reasoning.
-        if let Some(name) = impl_ty.type_param_name()
-            && params.types.contains(&name.as_str())
-        {
-            return Ok(Self::push_projection_subst(
-                subst,
-                name,
-                receiver_ty.clone(),
-            ));
-        }
-
-        Ok(match (impl_ty, receiver_ty) {
-            (TypeRef::Unit, Ty::Unit) | (TypeRef::Never, Ty::Never) => true,
-            (TypeRef::Tuple(impl_fields), Ty::Tuple(receiver_fields)) => {
-                if impl_fields.len() != receiver_fields.len() {
-                    return Ok(false);
-                }
-                for (impl_field, receiver_field) in impl_fields.iter().zip(receiver_fields) {
-                    if !self.projection_type_ref_matches_ty(
-                        impl_ref,
-                        impl_data,
-                        impl_field,
-                        receiver_field,
-                        params,
-                        subst,
-                    )? {
-                        return Ok(false);
-                    }
-                }
-                true
-            }
-            (
-                TypeRef::Reference {
-                    mutability: impl_mutability,
-                    inner: impl_inner,
-                    ..
-                },
-                Ty::Reference {
-                    mutability: receiver_mutability,
-                    inner: receiver_inner,
-                },
-            ) if Self::ref_mutability_matches(*impl_mutability, *receiver_mutability) => self
-                .projection_type_ref_matches_ty(
-                    impl_ref,
-                    impl_data,
-                    impl_inner,
-                    receiver_inner,
-                    params,
-                    subst,
-                )?,
-            (TypeRef::Slice(impl_inner), Ty::Slice(receiver_inner)) => self
-                .projection_type_ref_matches_ty(
-                    impl_ref,
-                    impl_data,
-                    impl_inner,
-                    receiver_inner,
-                    params,
-                    subst,
-                )?,
-            (
-                TypeRef::Array {
-                    inner: impl_inner,
-                    len: impl_len,
-                },
-                Ty::Array {
-                    inner: receiver_inner,
-                    len: receiver_len,
-                },
-            ) if Self::array_len_matches(impl_len, receiver_len, params.consts) => self
-                .projection_type_ref_matches_ty(
-                    impl_ref,
-                    impl_data,
-                    impl_inner,
-                    receiver_inner,
-                    params,
-                    subst,
-                )?,
-            (TypeRef::Path(path), _) => self.projection_path_type_ref_matches_ty(
-                impl_ref,
-                impl_data,
-                path,
-                receiver_ty,
-                params,
-                subst,
-            )?,
-            _ => {
-                if impl_ty.mentions_type_param(params.types) {
-                    return Ok(false);
-                }
-
-                let context = TypePathContext {
-                    module: impl_data.owner,
-                    impl_ref: Some(impl_ref),
-                };
-                let impl_ty = self.item_paths.resolve_type_ref(
-                    impl_ty,
-                    context,
-                    Ty::syntax(impl_ty.clone()),
-                    &TypeSubst::new(),
-                )?;
-                impl_ty.is_projectable() && receiver_ty.is_projectable() && impl_ty == *receiver_ty
-            }
-        })
-    }
-
-    fn projection_path_type_ref_matches_ty(
-        &self,
-        impl_ref: ImplRef,
-        impl_data: &ImplData,
-        impl_path: &TypePath,
-        receiver_ty: &Ty,
-        params: &ImplParamNames<'_>,
-        subst: &mut TypeSubst,
-    ) -> Result<bool, D::Error> {
-        let path = Path::from_type_path(impl_path);
-        let context = TypePathContext {
-            module: impl_data.owner,
-            impl_ref: Some(impl_ref),
-        };
-        let impl_args = impl_path
-            .segments
-            .last()
-            .map(|segment| segment.args.as_slice())
-            .unwrap_or(&[]);
-
-        match self.item_paths.resolve_type_path(context, &path)? {
-            TypePathResolution::TypeDef(type_def) | TypePathResolution::SelfType(type_def) => {
-                for nominal in receiver_ty.as_nominals() {
-                    if nominal.def != type_def {
-                        continue;
-                    }
-                    if self.projection_generic_args_match_ty_args(
-                        impl_ref,
-                        impl_data,
-                        impl_args,
-                        &nominal.args,
-                        params,
-                        subst,
-                    )? {
-                        return Ok(true);
-                    }
-                }
-                Ok(false)
-            }
-            TypePathResolution::TypeAlias(_)
-            | TypePathResolution::Trait(_)
-            | TypePathResolution::Unknown => {
-                if let Some(name) = impl_path.single_name()
-                    && params.types.contains(&name.as_str())
-                {
-                    return Ok(Self::push_projection_subst(
-                        subst,
-                        name.clone(),
-                        receiver_ty.clone(),
-                    ));
-                }
-
-                let impl_ty = self.item_paths.resolve_type_ref(
-                    &TypeRef::Path(impl_path.clone()),
-                    context,
-                    Ty::syntax(TypeRef::Path(impl_path.clone())),
-                    &TypeSubst::new(),
-                )?;
-                Ok(impl_ty.is_projectable()
-                    && receiver_ty.is_projectable()
-                    && impl_ty == *receiver_ty)
-            }
-        }
-    }
-
-    fn projection_generic_args_match_ty_args(
-        &self,
-        impl_ref: ImplRef,
-        impl_data: &ImplData,
-        impl_args: &[ItemGenericArg],
-        receiver_args: &[GenericArg],
-        params: &ImplParamNames<'_>,
-        subst: &mut TypeSubst,
-    ) -> Result<bool, D::Error> {
-        if impl_args.len() != receiver_args.len() {
-            return Ok(false);
-        }
-
-        for (impl_arg, receiver_arg) in impl_args.iter().zip(receiver_args) {
-            match impl_arg {
-                ItemGenericArg::Type(impl_ty) => {
-                    let Some(receiver_ty) = receiver_arg.as_ty() else {
-                        return Ok(false);
-                    };
-                    if !self.projection_type_ref_matches_ty(
-                        impl_ref,
-                        impl_data,
-                        impl_ty,
-                        receiver_ty,
-                        params,
-                        subst,
-                    )? {
-                        return Ok(false);
-                    }
-                }
-                ItemGenericArg::Lifetime(lifetime) => {
-                    if !matches!(receiver_arg, GenericArg::Lifetime(_))
-                        || (!params.lifetimes.contains(&lifetime.as_str())
-                            && !matches!(receiver_arg, GenericArg::Lifetime(receiver) if receiver == lifetime))
-                    {
-                        return Ok(false);
-                    }
-                }
-                ItemGenericArg::Const(value) => {
-                    if params.consts.contains(&value.as_str()) {
-                        continue;
-                    }
-                    if !matches!(receiver_arg, GenericArg::Const(receiver) if receiver == value) {
-                        return Ok(false);
-                    }
-                }
-                ItemGenericArg::FnTraitArgs { .. }
-                | ItemGenericArg::AssocType { .. }
-                | ItemGenericArg::Unsupported(_) => return Ok(false),
-            }
-        }
-
-        Ok(true)
-    }
-
     /// Recursively matches a structural impl `Self` type against an adjusted receiver type.
     fn structural_type_ref_matches_ty(
         &self,
@@ -840,17 +558,6 @@ where
         impl_mutability == receiver_mutability
     }
 
-    fn array_len_matches(
-        impl_len: &Option<String>,
-        receiver_len: &Option<String>,
-        const_params: &[&str],
-    ) -> bool {
-        match impl_len {
-            Some(len) if const_params.contains(&len.as_str()) => true,
-            _ => impl_len == receiver_len,
-        }
-    }
-
     fn type_ref_uses_structural_receiver_lookup(ty: &TypeRef) -> bool {
         matches!(
             ty,
@@ -859,20 +566,6 @@ where
                 | TypeRef::Slice(_)
                 | TypeRef::Array { .. }
         )
-    }
-
-    /// Records a strict projection substitution, rejecting unknowns and repeated conflicts.
-    fn push_projection_subst(subst: &mut TypeSubst, name: Name, ty: Ty) -> bool {
-        if !ty.is_projectable() {
-            return false;
-        }
-
-        if let Some(existing_ty) = subst.get(name.as_str()) {
-            return existing_ty == &ty;
-        }
-
-        subst.push(name, ty);
-        true
     }
 
     /// Records a strict direct-param substitution, rejecting conflicting repeated params.
@@ -884,12 +577,6 @@ where
         subst.push(name, ty);
         true
     }
-}
-
-struct ImplParamNames<'a> {
-    types: &'a [&'a str],
-    lifetimes: &'a [&'a str],
-    consts: &'a [&'a str],
 }
 
 struct DefaultedMissingImplTypeParam {

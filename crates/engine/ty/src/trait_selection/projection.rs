@@ -6,10 +6,11 @@
 
 use rg_ir_model::{
     AssocItemId, Path, TraitApplicability, TraitRef, TypeAliasRef, TypePathResolution,
-    items::{GenericArg as ItemGenericArg, TypeRef},
+    items::{GenericArg as ItemGenericArg, TypeBound, TypeRef, WherePredicate},
 };
 use rg_ir_storage::{DefMapSource, ItemStoreSource, TypePathContext};
 use rg_std::ExpectedUnique;
+use rg_text::Name;
 
 use super::{TraitGoal, TraitSelection, TraitSelectionQuery};
 use crate::Ty;
@@ -44,12 +45,15 @@ impl AssocProjectionResult {
     }
 }
 
+/// Projected type syntax plus the table/applicability learned while projecting it.
 struct ProjectedTypeRef {
     ty: InferTy,
     applicability: TraitApplicability,
     table: InferenceTable,
 }
 
+/// Trait path syntax after resolving the trait and projecting its generic args.
+#[derive(PartialEq, Eq)]
 struct ProjectedTraitRef {
     trait_ref: TraitRef,
     args: Vec<InferGenericArg>,
@@ -57,6 +61,7 @@ struct ProjectedTraitRef {
     table: InferenceTable,
 }
 
+/// Generic arg syntax after any nested associated projections were applied.
 struct ProjectedGenericArg {
     arg: InferGenericArg,
     applicability: TraitApplicability,
@@ -94,6 +99,12 @@ where
         table: &InferenceTable,
         remaining_depth: usize,
     ) -> Result<Option<AssocProjectionResult>, I::Error> {
+        if let Some(projection) =
+            Self::project_associated_type_from_opaque_bound(goal, assoc_name, table)
+        {
+            return Ok(Some(projection));
+        }
+
         let ExpectedUnique::One(selection) = self.probe(goal, table)? else {
             return Ok(None);
         };
@@ -134,6 +145,106 @@ where
         };
 
         Ok(Some(projection))
+    }
+
+    fn project_associated_type_from_opaque_bound(
+        goal: &TraitGoal,
+        assoc_name: &str,
+        table: &InferenceTable,
+    ) -> Option<AssocProjectionResult> {
+        let InferTy::Opaque { bounds } = &goal.self_ty else {
+            return None;
+        };
+
+        // An `impl Trait<Assoc = Ty>` type hides the concrete self type, but the bound itself is a
+        // precise projection fact. Treat it as the base case for recursive projection through
+        // blanket impls such as `impl<I: Iterator> IntoIterator for I { type Item = I::Item; }`.
+        let mut candidates = ExpectedUnique::new();
+        for bound in bounds {
+            if bound.trait_ref != goal.trait_ref {
+                continue;
+            }
+
+            let Some(bound_table) =
+                Self::match_opaque_bound_goal_args(table, &bound.args, &goal.args)
+            else {
+                continue;
+            };
+            for arg in &bound.args {
+                let InferGenericArg::AssocType { name, ty: Some(ty) } = arg else {
+                    continue;
+                };
+                if name.as_str() != assoc_name || ty.has_unknown_or_syntax() {
+                    continue;
+                }
+
+                let projection = AssocProjectionResult {
+                    ty: bound_table.canonicalize(ty),
+                    applicability: TraitApplicability::Yes,
+                    table: bound_table.clone(),
+                };
+                candidates.push(projection);
+            }
+        }
+
+        candidates.into_option()
+    }
+
+    fn match_opaque_bound_goal_args(
+        table: &InferenceTable,
+        bound_args: &[InferGenericArg],
+        goal_args: &[InferGenericArg],
+    ) -> Option<InferenceTable> {
+        let mut table = table.clone();
+        let mut goal_args = goal_args.iter();
+        for bound_arg in bound_args {
+            if matches!(bound_arg, InferGenericArg::AssocType { .. }) {
+                continue;
+            }
+            let goal_arg = goal_args.next()?;
+            if !Self::match_opaque_bound_goal_arg(&mut table, bound_arg, goal_arg) {
+                return None;
+            }
+        }
+        if goal_args.next().is_some() {
+            return None;
+        }
+
+        Some(table)
+    }
+
+    fn match_opaque_bound_goal_arg(
+        table: &mut InferenceTable,
+        bound_arg: &InferGenericArg,
+        goal_arg: &InferGenericArg,
+    ) -> bool {
+        match (bound_arg, goal_arg) {
+            (InferGenericArg::Type(bound_ty), InferGenericArg::Type(goal_ty)) => {
+                table.try_unify(bound_ty, goal_ty).is_ok()
+            }
+            (InferGenericArg::Lifetime(lhs), InferGenericArg::Lifetime(rhs)) => lhs == rhs,
+            (InferGenericArg::Const(lhs), InferGenericArg::Const(rhs)) => lhs == rhs,
+            (
+                InferGenericArg::FnTraitArgs {
+                    params: bound_params,
+                    ret: bound_ret,
+                },
+                InferGenericArg::FnTraitArgs {
+                    params: goal_params,
+                    ret: goal_ret,
+                },
+            ) if bound_params.len() == goal_params.len() => {
+                for (bound_param, goal_param) in bound_params.iter().zip(goal_params) {
+                    if table.try_unify(bound_param, goal_param).is_err() {
+                        return false;
+                    }
+                }
+
+                table.try_unify(bound_ret, goal_ret).is_ok()
+            }
+            (InferGenericArg::Unsupported(lhs), InferGenericArg::Unsupported(rhs)) => lhs == rhs,
+            _ => false,
+        }
     }
 
     fn project_associated_type_from_selection(
@@ -204,6 +315,17 @@ where
         ty: &TypeRef,
         remaining_depth: usize,
     ) -> Result<Option<ProjectedTypeRef>, I::Error> {
+        if let Some((param_name, assoc_name)) = ty.as_type_param_assoc_path() {
+            return self.project_type_param_associated_path(
+                context,
+                subst,
+                table,
+                param_name,
+                assoc_name.as_str(),
+                remaining_depth,
+            );
+        }
+
         match ty {
             TypeRef::QualifiedAssociatedType {
                 self_ty,
@@ -318,6 +440,151 @@ where
                 }))
             }
         }
+    }
+
+    fn project_type_param_associated_path(
+        &self,
+        context: TypePathContext,
+        subst: &InferTypeSubst,
+        table: &InferenceTable,
+        param_name: &Name,
+        assoc_name: &str,
+        remaining_depth: usize,
+    ) -> Result<Option<ProjectedTypeRef>, I::Error> {
+        if remaining_depth == 0 {
+            return Ok(None);
+        }
+        let Some(self_ty) = subst.type_param(param_name.as_str()) else {
+            return Ok(None);
+        };
+        let Some(impl_ref) = context.impl_ref else {
+            return Ok(None);
+        };
+        let Some(impl_data) = self.target_items.items().impl_data(impl_ref)? else {
+            return Ok(None);
+        };
+
+        // `I::Item` is only useful when the selected impl tells us which trait bound owns `Item`.
+        // Keep this unique: if two bounds could own the same associated type name, guessing would
+        // leak invented evidence into projection.
+        let mut selected_traits = ExpectedUnique::new();
+        for param in &impl_data.generics.types {
+            if param.name != *param_name {
+                continue;
+            }
+            for bound in &param.bounds {
+                let Some(projected_trait) = self.project_type_param_assoc_bound(
+                    context,
+                    subst,
+                    table,
+                    bound,
+                    assoc_name,
+                    remaining_depth,
+                )?
+                else {
+                    continue;
+                };
+                selected_traits.push(projected_trait);
+            }
+        }
+        for predicate in &impl_data.generics.where_predicates {
+            let WherePredicate::Type { ty, bounds } = predicate else {
+                continue;
+            };
+            if ty.type_param_name().as_ref() != Some(param_name) {
+                continue;
+            }
+            for bound in bounds {
+                let Some(projected_trait) = self.project_type_param_assoc_bound(
+                    context,
+                    subst,
+                    table,
+                    bound,
+                    assoc_name,
+                    remaining_depth,
+                )?
+                else {
+                    continue;
+                };
+                selected_traits.push(projected_trait);
+            }
+        }
+
+        let Some(selected_trait) = selected_traits.into_option() else {
+            return Ok(None);
+        };
+        let goal = TraitGoal {
+            self_ty,
+            trait_ref: selected_trait.trait_ref,
+            args: selected_trait.args,
+        };
+        let Some(projection) = self.normalize_assoc_type_with_depth(
+            &goal,
+            assoc_name,
+            &selected_trait.table,
+            remaining_depth - 1,
+        )?
+        else {
+            return Ok(None);
+        };
+
+        Ok(Some(ProjectedTypeRef {
+            ty: projection.ty,
+            applicability: selected_trait.applicability.and(projection.applicability),
+            table: projection.table,
+        }))
+    }
+
+    fn project_type_param_assoc_bound(
+        &self,
+        context: TypePathContext,
+        subst: &InferTypeSubst,
+        table: &InferenceTable,
+        bound: &TypeBound,
+        assoc_name: &str,
+        remaining_depth: usize,
+    ) -> Result<Option<ProjectedTraitRef>, I::Error> {
+        let TypeBound::Trait(trait_ty) = bound else {
+            return Ok(None);
+        };
+        let Some(projected_trait) =
+            self.project_qualified_trait_ref(context, subst, table, trait_ty, remaining_depth)?
+        else {
+            return Ok(None);
+        };
+        if !self.trait_declares_assoc_type(projected_trait.trait_ref, assoc_name)? {
+            return Ok(None);
+        }
+
+        Ok(Some(projected_trait))
+    }
+
+    fn trait_declares_assoc_type(
+        &self,
+        trait_ref: TraitRef,
+        assoc_name: &str,
+    ) -> Result<bool, I::Error> {
+        let Some(trait_data) = self.target_items.items().trait_data(trait_ref)? else {
+            return Ok(false);
+        };
+        for item in &trait_data.items {
+            let AssocItemId::TypeAlias(type_alias_id) = item else {
+                continue;
+            };
+            let type_alias_ref = TypeAliasRef {
+                origin: trait_ref.origin,
+                id: *type_alias_id,
+            };
+            let Some(type_alias_data) = self.item_paths.items().type_alias_data(type_alias_ref)?
+            else {
+                continue;
+            };
+            if type_alias_data.name.as_str() == assoc_name {
+                return Ok(true);
+            }
+        }
+
+        Ok(false)
     }
 
     #[allow(clippy::too_many_arguments)]

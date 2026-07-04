@@ -1,3 +1,18 @@
+//! Impl-header matching for trait selection candidates.
+//!
+//! This is the cheap, local half of trait selection. It does not try to prove where-clauses or
+//! type-param bounds; that is either delegated to Chalk or to a body-local obligation path. The job
+//! here is narrower:
+//!
+//! - compare one visible impl header with a `TraitGoal`;
+//! - bind direct impl type params such as `impl<T> FromIterator<T> for Vec<T>`;
+//! - write any equality evidence into a trial inference table;
+//! - report whether the header is definite, maybe-applicable, or not applicable.
+//!
+//! Keeping this layer small is important because many callers probe candidates before they know
+//! whether they want to commit the result. A match here should mean "this impl header can be tried",
+//! not "the whole impl is proven".
+
 use rg_ir_model::hir::items::ImplData;
 use rg_ir_model::items::{GenericArg as ItemGenericArg, GenericParams, TypeBound, TypeRef};
 use rg_ir_model::{TraitApplicability, TraitImplRef, TypeDefRef};
@@ -11,6 +26,11 @@ use crate::inference::{
 };
 use crate::{Ty, TypeSubst};
 
+/// Matches a single impl header against a trait goal.
+///
+/// The matcher is intentionally state-light: callers pass in the trial table and substitution that
+/// should receive evidence. This lets `TraitSelectionQuery` clone the caller table per candidate
+/// and commit only after uniqueness is known.
 pub(super) struct CandidateMatcher<'matcher, 'query, D, I> {
     item_paths: &'matcher ItemPathQuery<'query, D, I>,
 }
@@ -24,6 +44,11 @@ where
         Self { item_paths }
     }
 
+    /// Match both sides of an impl header against the goal.
+    ///
+    /// For `Vec<?T>: FromIterator<User>` and `impl<T> FromIterator<T> for Vec<T>`, this records
+    /// `T = User` in `subst` and `?T = User` in the trial table. Impl predicates, such as
+    /// `T: Clone`, are intentionally checked after this function by the caller's policy.
     pub(super) fn match_goal(
         &self,
         goal: &TraitGoal,
@@ -47,6 +72,11 @@ where
         Ok(Some(self_applicability.and(trait_applicability)))
     }
 
+    /// Match the impl's `Self` type before looking at trait args.
+    ///
+    /// The self type is usually the strongest filter. A nominal self type can reject most impls by
+    /// definition id, while a blanket self param such as `impl<I: Iterator> IntoIterator for I`
+    /// only binds `I` and leaves the `I: Iterator` proof for the predicate stage.
     fn match_self_ty(
         &self,
         goal: &TraitGoal,
@@ -59,18 +89,20 @@ where
             return self
                 .match_nominal_self_ty(goal, trait_impl, *self_def, impl_data, table, subst);
         }
-        if let Some(self_def) = self.resolve_nominal_self_def(trait_impl, impl_data)? {
-            return self.match_nominal_self_ty(goal, trait_impl, self_def, impl_data, table, subst);
-        }
 
-        // Bare blanket impls such as `impl<T> Trait for T` need recursive trait reasoning once
-        // bounds enter the picture. The first slice deliberately leaves them to later work.
         if impl_data
             .self_ty
             .type_param_name()
             .is_some_and(|name| Self::is_impl_type_param(&impl_data.generics, &name))
         {
-            return Ok(None);
+            // Blanket self params are only the header match, for example
+            // `impl<I: Iterator> IntoIterator for I`. Predicate checking below still has to prove
+            // the bound after `I` is bound to the concrete goal self type.
+            return Self::match_type_param_self_ty(goal, impl_data, table, subst);
+        }
+
+        if let Some(self_def) = self.resolve_nominal_self_def(trait_impl, impl_data)? {
+            return self.match_nominal_self_ty(goal, trait_impl, self_def, impl_data, table, subst);
         }
 
         self.match_type_ref(
@@ -83,6 +115,49 @@ where
         )
     }
 
+    /// Bind a blanket impl self param to the goal receiver.
+    ///
+    /// Example: for `impl<I: Iterator> IntoIterator for I`, the header match for
+    /// `Iter<User>: IntoIterator` records `I = Iter<User>`. This is not enough by itself; the
+    /// later predicate step still has to prove `Iter<User>: Iterator`.
+    fn match_type_param_self_ty(
+        goal: &TraitGoal,
+        impl_data: &ImplData,
+        table: &mut InferenceTable,
+        subst: &mut InferTypeSubst,
+    ) -> Result<Option<TraitApplicability>, I::Error> {
+        let Some(name) = impl_data.self_ty.type_param_name() else {
+            return Ok(None);
+        };
+        let self_ty = table.resolve_root_var(&goal.self_ty);
+        let applicability = match &self_ty {
+            // `impl Trait` hides the concrete type, but it is still one concrete type from the
+            // caller's point of view. Bind the blanket self param and let predicate checking prove
+            // any required bounds from the opaque trait list.
+            InferTy::Opaque { .. } => TraitApplicability::Yes,
+            _ => {
+                let Some(applicability) =
+                    Self::unknown_self_applicability(&self_ty).or_else(|| {
+                        (!Self::type_is_uncertain(&self_ty)).then_some(TraitApplicability::Yes)
+                    })
+                else {
+                    return Ok(None);
+                };
+                applicability
+            }
+        };
+
+        match subst.try_push(table, name, goal.self_ty.clone()) {
+            Ok(()) => Ok(Some(applicability)),
+            Err(InferenceConflict) => Ok(None),
+        }
+    }
+
+    /// Resolve a path self type when semantic-ir did not already give us its type definition.
+    ///
+    /// Most impls have `resolved_self_ty`, but generated or partially-supported headers may only
+    /// have the written `TypeRef`. This fallback lets ordinary paths like `Vec<T>` still use the
+    /// fast nominal matching path after resolution succeeds.
     fn resolve_nominal_self_def(
         &self,
         trait_impl: TraitImplRef,
@@ -120,6 +195,10 @@ where
         }
     }
 
+    /// Match a nominal impl self type and then line up its generic args.
+    ///
+    /// Once the definition id matches, the interesting part is the substitution: `Vec<T>` against
+    /// `Vec<User>` binds `T = User`, while `Vec<String>` against `Vec<User>` rejects the impl.
     fn match_nominal_self_ty(
         &self,
         goal: &TraitGoal,
@@ -153,6 +232,11 @@ where
         )
     }
 
+    /// Decide whether an unknown-looking receiver should stay as a maybe candidate.
+    ///
+    /// `Ty::Unknown` and unresolved syntax can be useful for exploratory UI queries. Plain
+    /// inference vars are different: a bare `?T: Trait` would make nearly every impl a maybe
+    /// candidate, so we leave that to later evidence instead of flooding selection.
     fn unknown_self_applicability(self_ty: &InferTy) -> Option<TraitApplicability> {
         match self_ty {
             // A bare variable could match many impls for the same trait. Returning every impl as a
@@ -174,6 +258,10 @@ where
         }
     }
 
+    /// Match trait path arguments after the receiver side was accepted.
+    ///
+    /// For `impl<T> FromIterator<T> for Vec<T>`, this compares the impl's `T` with the goal's
+    /// `User` in `Vec<?T>: FromIterator<User>`.
     fn match_trait_args(
         &self,
         goal: &TraitGoal,
@@ -194,6 +282,7 @@ where
         self.match_generic_args(trait_impl, impl_data, impl_args, &goal.args, table, subst)
     }
 
+    /// Match generic args position-by-position, collecting the weakest applicability.
     fn match_generic_args(
         &self,
         trait_impl: TraitImplRef,
@@ -220,6 +309,11 @@ where
         Ok(Some(applicability))
     }
 
+    /// Match one generic arg in a trait path or nominal self type.
+    ///
+    /// Function-trait args and associated-type equality args can appear in bounds such as
+    /// `FnOnce(T) -> R` or `Iterator<Item = T>`, so the matcher handles the simple structural
+    /// forms even though it does not perform general trait solving here.
     fn match_generic_arg(
         &self,
         trait_impl: TraitImplRef,
@@ -286,6 +380,12 @@ where
         }
     }
 
+    /// Match written type syntax from an impl header against an inference type from the goal.
+    ///
+    /// This is the small unification-like core of header matching. Direct impl params bind into
+    /// `subst`; concrete written types are resolved and unified with the goal; unsupported source
+    /// shapes either become `Maybe` or reject the candidate, depending on whether using them would
+    /// invent evidence.
     fn match_type_ref(
         &self,
         trait_impl: TraitImplRef,
@@ -298,6 +398,9 @@ where
         if let Some(name) = impl_ty.type_param_name()
             && Self::is_impl_type_param(&impl_data.generics, &name)
         {
+            // A bare impl type param is the only binding operation this matcher performs directly.
+            // More complex generic patterns are rejected below unless they resolve to concrete
+            // projectable types.
             return match subst.try_push(table, name, goal_ty.clone()) {
                 Ok(()) => Ok(Some(TraitApplicability::Yes)),
                 Err(InferenceConflict) => Ok(None),
@@ -307,6 +410,8 @@ where
         let goal_ty = table.resolve_root_var(goal_ty);
         let mut applicability = TraitApplicability::Yes;
         if Self::type_is_uncertain(&goal_ty) {
+            // Unknown or syntax-backed goal types can keep a candidate alive for exploratory
+            // callers, but they should not be treated as a proven concrete match.
             applicability = TraitApplicability::Maybe;
         }
 
@@ -337,7 +442,7 @@ where
                     inner: goal_inner,
                     len: goal_len,
                 },
-            ) if impl_len == goal_len => {
+            ) if Self::array_len_matches(impl_len, goal_len, &impl_data.generics) => {
                 self.match_type_ref(trait_impl, impl_data, impl_inner, goal_inner, table, subst)
             }
             (TypeRef::Slice(impl_inner), InferTy::Slice(goal_inner)) => {
@@ -376,6 +481,9 @@ where
                     return Ok(Some(TraitApplicability::Maybe));
                 }
 
+                // Concrete type refs can use the normal inference-table unifier. This is how a
+                // header like `impl Trait for Vec<User>` rejects `Vec<String>` without special
+                // matching code for every nominal shape.
                 match table.try_unify(&InferTy::from_ty(&resolved_ty), &goal_ty) {
                     Ok(()) => Ok(Some(applicability)),
                     Err(InferenceConflict) => Ok(None),
@@ -393,6 +501,7 @@ where
         }
     }
 
+    /// Return true when a goal-side type is too incomplete for a definite header match.
     fn type_is_uncertain(ty: &InferTy) -> bool {
         match ty {
             InferTy::Unknown | InferTy::Syntax(_) => true,
@@ -414,10 +523,39 @@ where
         }
     }
 
+    /// Match array lengths without pretending to solve const generics.
+    ///
+    /// A concrete `impl<T> Trait for [T; 3]` only matches `[User; 3]`. A const param in the impl
+    /// header, such as `[T; N]`, is accepted structurally because the rest of this matcher can
+    /// still bind `T` without needing to know the actual value of `N`.
+    fn array_len_matches(
+        impl_len: &Option<String>,
+        goal_len: &Option<String>,
+        generics: &GenericParams,
+    ) -> bool {
+        match impl_len {
+            Some(len)
+                if generics
+                    .consts
+                    .iter()
+                    .any(|param| param.name.as_str() == len.as_str()) =>
+            {
+                true
+            }
+            _ => impl_len == goal_len,
+        }
+    }
+
+    /// Return true when the name belongs to the impl's own type params.
     fn is_impl_type_param(generics: &GenericParams, name: &Name) -> bool {
         generics.type_param_names().any(|param| param == name)
     }
 
+    /// Detect nested impl-param patterns the header matcher cannot safely bind.
+    ///
+    /// `T` by itself can be bound directly. `Option<T>` is different: matching that against a goal
+    /// type requires recursive decomposition after resolving `Option`, and this local matcher only
+    /// supports that for already-concrete projectable types.
     fn type_ref_mentions_impl_type_param(ty: &TypeRef, generics: &GenericParams) -> bool {
         match ty {
             TypeRef::Path(path) => path.segments.iter().any(|segment| {

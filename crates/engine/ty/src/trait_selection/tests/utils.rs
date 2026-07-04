@@ -163,19 +163,27 @@ fn dummy_source() -> ItemSource {
     }
 }
 
-pub(super) fn path_ty(name: &str, args: Vec<ItemGenericArg>) -> TypeRef {
+pub(super) fn path_ty(path: &str, args: Vec<ItemGenericArg>) -> TypeRef {
     let span = Span {
         text: TextSpan { start: 0, end: 0 },
     };
+    let mut segments = path
+        .split("::")
+        .map(|name| TypePathSegment {
+            name: Name::new(name),
+            args: Vec::new(),
+            span,
+        })
+        .collect::<Vec<_>>();
+    let final_segment = segments
+        .last_mut()
+        .expect("fixture path should have at least one segment");
+    final_segment.args = args;
 
     TypeRef::Path(TypePath {
         source_span: span,
         absolute: false,
-        segments: vec![TypePathSegment {
-            name: Name::new(name),
-            args,
-            span,
-        }],
+        segments,
     })
 }
 
@@ -682,6 +690,15 @@ fn parse_type_ref(text: &str) -> TypeRef {
     if text == "!" {
         return TypeRef::Never;
     }
+    if let Some(ty) = parse_bracket_ty(text) {
+        return match ty {
+            ParsedBracketTy::Slice(inner) => TypeRef::Slice(Box::new(parse_type_ref(inner))),
+            ParsedBracketTy::Array { inner, len } => TypeRef::Array {
+                inner: Box::new(parse_type_ref(inner)),
+                len,
+            },
+        };
+    }
     if text.starts_with('<') {
         let angle_end = matching_angle(text, 0);
         if let Some(assoc_name) = text[angle_end + 1..].strip_prefix("::") {
@@ -703,6 +720,28 @@ fn parse_type_ref(text: &str) -> TypeRef {
             .map(|arg| type_arg(parse_type_ref(arg)))
             .collect(),
     )
+}
+
+enum ParsedBracketTy<'a> {
+    Slice(&'a str),
+    Array { inner: &'a str, len: Option<String> },
+}
+
+fn parse_bracket_ty(text: &str) -> Option<ParsedBracketTy<'_>> {
+    if !text.starts_with('[') || !text.ends_with(']') {
+        return None;
+    }
+
+    let body = &text[1..text.len() - 1];
+    let parts = split_top_level(body, ';');
+    match parts.as_slice() {
+        [inner] => Some(ParsedBracketTy::Slice(inner)),
+        [inner, len] => Some(ParsedBracketTy::Array {
+            inner,
+            len: (!len.is_empty() && *len != "_").then(|| (*len).to_owned()),
+        }),
+        _ => panic!("array type should contain at most one top-level `;`: {text}"),
+    }
 }
 
 fn parse_path_head_and_args(text: &str) -> (&str, Vec<&str>) {
@@ -940,7 +979,7 @@ impl<'a> TraitSelectionQueryParser<'a> {
             .unwrap_or_else(|| panic!("query refers to unknown trait `{name}`"));
         let args = args
             .into_iter()
-            .map(|arg| InferGenericArg::Type(Box::new(self.parse_infer_ty(arg))))
+            .map(|arg| self.parse_infer_generic_arg(arg))
             .collect();
         (trait_ref, args)
     }
@@ -962,6 +1001,25 @@ impl<'a> TraitSelectionQueryParser<'a> {
                 "closure id",
             ))));
         }
+        if let Some(bounds) = text.strip_prefix("impl ") {
+            return InferTy::Opaque {
+                bounds: split_top_level(bounds, '+')
+                    .into_iter()
+                    .map(|bound| self.parse_infer_opaque_bound(bound))
+                    .collect(),
+            };
+        }
+        if let Some(ty) = parse_bracket_ty(text) {
+            return match ty {
+                ParsedBracketTy::Slice(inner) => {
+                    InferTy::Slice(Box::new(self.parse_infer_ty(inner)))
+                }
+                ParsedBracketTy::Array { inner, len } => InferTy::Array {
+                    inner: Box::new(self.parse_infer_ty(inner)),
+                    len,
+                },
+            };
+        }
 
         let (name, args) = parse_path_head_and_args(text);
         let def = self
@@ -973,6 +1031,22 @@ impl<'a> TraitSelectionQueryParser<'a> {
             .map(|arg| InferGenericArg::Type(Box::new(self.parse_infer_ty(arg))))
             .collect();
         nominal_infer_ty(def, args)
+    }
+
+    fn parse_infer_opaque_bound(&mut self, text: &str) -> InferOpaqueTraitBound {
+        let (trait_ref, args) = self.parse_trait_path(text);
+        InferOpaqueTraitBound { trait_ref, args }
+    }
+
+    fn parse_infer_generic_arg(&mut self, text: &str) -> InferGenericArg {
+        if let Some((name, ty)) = split_top_level_keyword(text, " = ") {
+            return InferGenericArg::AssocType {
+                name: Name::new(name),
+                ty: Some(Box::new(self.parse_infer_ty(ty))),
+            };
+        }
+
+        InferGenericArg::Type(Box::new(self.parse_infer_ty(text)))
     }
 
     fn type_var(&mut self, name: &str) -> InferTy {

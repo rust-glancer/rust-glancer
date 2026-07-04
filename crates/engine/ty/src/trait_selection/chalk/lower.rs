@@ -4,10 +4,10 @@ use chalk_ir::cast::Cast;
 use chalk_ir::fold::Shift;
 use chalk_ir::visit::VisitExt;
 use chalk_ir::{
-    AdtId, AliasTy, AssocTypeId, BoundVar, DebruijnIndex, DomainGoal, GenericArg, GenericArgData,
-    Goal, LifetimeData, Mutability as ChalkMutability, ProjectionTy, QuantifiedWhereClause, Scalar,
-    Substitution, TraitId, TraitRef as ChalkTraitRef, TyKind, TyVariableKind, UintTy, VariableKind,
-    VariableKinds, WhereClause,
+    AdtId, AliasTy, AssocTypeId, BoundVar, ConcreteConst, ConstData, ConstValue, DebruijnIndex,
+    DomainGoal, GenericArg, GenericArgData, Goal, LifetimeData, Mutability as ChalkMutability,
+    ProjectionTy, QuantifiedWhereClause, Scalar, Substitution, TraitId, TraitRef as ChalkTraitRef,
+    TyKind, TyVariableKind, UintTy, VariableKind, VariableKinds, WhereClause,
 };
 use chalk_solve::rust_ir::{
     AdtDatum, AdtDatumBound, AdtFlags, AdtKind, AdtVariantDatum, AssociatedTyDatum,
@@ -557,10 +557,12 @@ where
                 let inner = self.lower_type_ref(inner, subst)?;
                 Some(TyKind::Slice(inner).intern(INTER))
             }
-            TypeRef::Array { .. }
-            | TypeRef::FnPointer { .. }
-            | TypeRef::ImplTrait(_)
-            | TypeRef::DynTrait(_) => None,
+            TypeRef::Array { inner, len } => {
+                let inner = self.lower_type_ref(inner, subst)?;
+                let len = self.lower_array_len(len)?;
+                Some(TyKind::Array(inner, len).intern(INTER))
+            }
+            TypeRef::FnPointer { .. } | TypeRef::ImplTrait(_) | TypeRef::DynTrait(_) => None,
             TypeRef::QualifiedAssociatedType {
                 self_ty,
                 trait_ty: Some(trait_ty),
@@ -629,6 +631,12 @@ where
                     self.lower_infer_ty_with_projection_vars(&inner, table, projection_vars)?;
                 Some(TyKind::Slice(inner).intern(INTER))
             }
+            InferTy::Array { inner, len } => {
+                let inner =
+                    self.lower_infer_ty_with_projection_vars(&inner, table, projection_vars)?;
+                let len = self.lower_array_len(&len)?;
+                Some(TyKind::Array(inner, len).intern(INTER))
+            }
             InferTy::Reference { mutability, inner } => {
                 let inner =
                     self.lower_infer_ty_with_projection_vars(&inner, table, projection_vars)?;
@@ -660,7 +668,6 @@ where
             InferTy::IntegerVar(_)
             | InferTy::FloatVar(_)
             | InferTy::Unknown
-            | InferTy::Array { .. }
             | InferTy::Opaque { .. }
             | InferTy::Closure(_) => None,
             // Function items are real rust-glancer types, but lowering them to Chalk needs a real
@@ -669,6 +676,20 @@ where
             // shape. Body inference handles function-item callable evidence before this boundary.
             InferTy::FunctionItem(_) => None,
         }
+    }
+
+    fn lower_array_len(&self, len: &Option<String>) -> Option<chalk_ir::Const<RgChalkInterner>> {
+        let len = len.as_ref()?;
+        let ty = TyKind::Scalar(Scalar::Uint(UintTy::Usize)).intern(INTER);
+        Some(
+            ConstData {
+                ty,
+                value: ConstValue::Concrete(ConcreteConst {
+                    interned: len.clone(),
+                }),
+            }
+            .intern(INTER),
+        )
     }
 
     fn lower_infer_generic_arg_with_projection_vars(

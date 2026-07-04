@@ -164,6 +164,71 @@ fn chalk_solver_normalizes_associated_type_to_existing_inference_var() {
 }
 
 #[test]
+fn chalk_solver_commits_projection_answer_evidence_to_inference_table() {
+    check_trait_selection_queries(
+        r#"
+            traits
+              trait#0 Indexed<T>
+            structs
+              struct#0 Vec<T>
+              struct#1 User
+            impls
+              impl#0 impl<T> Indexed<T> for Vec<T>
+            type aliases
+              type#0 trait#0::Item
+              type#1 impl#0::Item = T
+        "#,
+        vec![TraitSelectionCase::chalk_normalize_assoc(
+            "chalk solves projection variable",
+            "<Vec<?item> as Indexed<User>>::Item",
+        )],
+        expect![[r#"
+            chalk solves projection variable
+              options: default
+              goal: <Vec<?item> as Indexed<User>>::Item
+              result: projected
+                infer: User
+                final: User
+                applicability: yes
+                vars
+                  ?item = User
+        "#]],
+    );
+}
+
+#[test]
+fn chalk_solver_normalizes_array_associated_type_value() {
+    check_trait_selection_queries(
+        r#"
+            traits
+              trait#0 ArrayProvider
+            structs
+              struct#0 Holder<T>
+            impls
+              impl#0 impl<T> ArrayProvider for Holder<T>
+            type aliases
+              type#0 trait#0::Item
+              type#1 impl#0::Item = [T; 3]
+        "#,
+        vec![TraitSelectionCase::chalk_normalize_assoc(
+            "chalk projects array impl Item",
+            "<Holder<?item> as ArrayProvider>::Item",
+        )],
+        expect![[r#"
+            chalk projects array impl Item
+              options: default
+              goal: <Holder<?item> as ArrayProvider>::Item
+              result: projected
+                infer: [?item; 3]
+                final: [_; 3]
+                applicability: yes
+                vars
+                  ?item = _
+        "#]],
+    );
+}
+
+#[test]
 fn normalize_assoc_type_projects_qualified_associated_type_value() {
     check_trait_selection_queries(
         r#"
@@ -193,6 +258,84 @@ fn normalize_assoc_type_projects_qualified_associated_type_value() {
                 infer: User
                 final: User
                 applicability: yes
+        "#]],
+    );
+}
+
+#[test]
+fn blanket_self_param_impl_proves_bound_before_projecting_item() {
+    check_trait_selection_queries(
+        r#"
+            traits
+              trait#0 Iterator
+              trait#1 IntoIterator
+            structs
+              struct#0 Iter<T>
+              struct#1 User
+              struct#2 NotIter
+            impls
+              impl#0 impl<T> Iterator for Iter<T>
+              impl#1 impl<I: Iterator> IntoIterator for I [resolved self: empty]
+            type aliases
+              type#0 trait#0::Item
+              type#1 impl#0::Item = T
+              type#2 trait#1::Item
+              type#3 impl#1::Item = I::Item
+        "#,
+        vec![
+            TraitSelectionCase::probe("prove blanket iterator impl", "Iter<User>: IntoIterator"),
+            TraitSelectionCase::normalize_assoc(
+                "project blanket IntoIterator Item",
+                "<Iter<User> as IntoIterator>::Item",
+            ),
+            TraitSelectionCase::probe(
+                "prove blanket iterator impl for opaque iterator",
+                "impl Iterator<Item = User>: IntoIterator",
+            ),
+            TraitSelectionCase::normalize_assoc(
+                "project blanket opaque IntoIterator Item",
+                "<impl Iterator<Item = User> as IntoIterator>::Item",
+            ),
+            TraitSelectionCase::probe(
+                "reject unproved blanket iterator impl",
+                "NotIter: IntoIterator",
+            ),
+        ],
+        expect![[r#"
+            prove blanket iterator impl
+              options: default
+              goal: Iter<User>: IntoIterator
+              result: one
+                impl: impl#1
+                applicability: yes
+
+            project blanket IntoIterator Item
+              options: default
+              goal: <Iter<User> as IntoIterator>::Item
+              result: projected
+                infer: User
+                final: User
+                applicability: yes
+
+            prove blanket iterator impl for opaque iterator
+              options: default
+              goal: impl Iterator<Item = User>: IntoIterator
+              result: one
+                impl: impl#1
+                applicability: yes
+
+            project blanket opaque IntoIterator Item
+              options: default
+              goal: <impl Iterator<Item = User> as IntoIterator>::Item
+              result: projected
+                infer: User
+                final: User
+                applicability: yes
+
+            reject unproved blanket iterator impl
+              options: default
+              goal: NotIter: IntoIterator
+              result: empty
         "#]],
     );
 }

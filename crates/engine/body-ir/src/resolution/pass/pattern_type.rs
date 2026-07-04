@@ -76,7 +76,10 @@ where
             self.propagate_pat(pat, &expected_ty, &mut updates)?;
         }
 
-        let iteration_items = self.context.iteration_items();
+        let iteration_items = self
+            .context
+            .iteration_items()
+            .with_cache(self.trait_selection_cache.clone());
         for expr_idx in 0..self.context.body().exprs().len() {
             let expr = ExprId(expr_idx);
             match self.context.body().expr_unchecked(expr).kind.clone() {

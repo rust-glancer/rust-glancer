@@ -1481,6 +1481,55 @@ pub fn use_it(def_map: &DefMap) {
 }
 
 #[test]
+fn fake_sysroot_iterator_chain_infers_map_and_collect_types() {
+    check_analysis_queries_with_fake_sysroot(
+        r#"
+//- /Cargo.toml
+[workspace]
+members = ["app"]
+resolver = "3"
+
+//- /app/Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+//- /app/src/lib.rs
+pub struct Field;
+pub struct Rendered;
+
+pub fn missing<T>() -> T {}
+
+pub fn bar(_id: usize, _field: &Field) -> Rendered {
+    missing()
+}
+
+pub fn use_it(fields: &[Field]) {
+    let values = fields
+        .iter()
+        .enumerate()
+        .map(|(id, f)| bar(id, f$type_field$))
+        .collect::<Vec<_>>();
+
+    let _values = val$type_values$ues;
+}
+"#,
+        &[
+            AnalysisQuery::ty("map closure field", "type_field").in_lib("app"),
+            AnalysisQuery::ty("collected mapped values", "type_values").in_lib("app"),
+        ],
+        expect![[r#"
+            map closure field
+            - &nominal struct app[lib]::crate::Field
+
+            collected mapped values
+            - nominal struct alloc[lib]::crate::vec::Vec<nominal struct app[lib]::crate::Rendered>
+        "#]],
+    );
+}
+
+#[test]
 fn propagates_for_loop_item_types_from_slice_iter_method() {
     check_analysis_queries(
         r#"

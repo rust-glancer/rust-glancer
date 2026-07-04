@@ -90,15 +90,6 @@ where
             .collect()
     }
 
-    /// Lists the lifetime parameters declared by an impl header.
-    fn impl_lifetime_param_names(generics: &GenericParams) -> Vec<&str> {
-        generics
-            .lifetimes
-            .iter()
-            .map(|param| param.name.as_str())
-            .collect()
-    }
-
     /// Lists the const parameters declared by an impl header.
     fn impl_const_param_names(generics: &GenericParams) -> Vec<&str> {
         generics
@@ -140,30 +131,6 @@ where
                 .trait_ref
                 .as_ref()
                 .is_none_or(|trait_ref| !trait_ref.has_generic_args())
-    }
-
-    /// Returns whether an impl is simple enough for real associated-type projection.
-    fn impl_header_is_projectable(impl_data: &ImplData) -> bool {
-        impl_data.generics.where_predicates.is_empty()
-            && impl_data
-                .generics
-                .lifetimes
-                .iter()
-                .all(|param| param.bounds.is_empty())
-            && impl_data
-                .generics
-                .types
-                .iter()
-                .all(|param| param.bounds.is_empty() && param.default.is_none())
-            && impl_data
-                .generics
-                .consts
-                .iter()
-                .all(|param| param.default.is_none())
-            && impl_data
-                .trait_ref
-                .as_ref()
-                .is_some_and(|trait_ref| !trait_ref.has_generic_args())
     }
 
     /// Classifies direct headers as proven and generic/conditional headers as maybe-applicable.

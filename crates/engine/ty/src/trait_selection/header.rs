@@ -73,10 +73,6 @@ impl TraitSelectionOptions {
     }
 
     pub(super) fn accepts_impl_header(self, impl_data: &ImplData) -> bool {
-        if !impl_data.generics.consts.is_empty() {
-            return false;
-        }
-
         match self.predicate_policy {
             PredicatePolicy::SolveWithChalk => true,
             PredicatePolicy::RejectAll => {
