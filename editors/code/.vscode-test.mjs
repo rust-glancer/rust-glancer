@@ -28,8 +28,7 @@ function vscodeTestVersion() {
   const packageJsonPath = resolve(extensionRoot, "package.json");
   const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf8"));
   const engine = packageJson.engines?.vscode;
-  const version =
-    typeof engine === "string" ? engine.match(/\d+\.\d+\.\d+/)?.[0] : undefined;
+  const version = typeof engine === "string" ? engine.match(/\d+\.\d+\.\d+/)?.[0] : undefined;
 
   if (version === undefined) {
     throw new Error(`Could not read VS Code engine version from ${packageJsonPath}`);
