@@ -20,6 +20,10 @@ impl SemanticIrFixture {
         Self::build_from_def_map(DefMapFixture::build_with_sysroot(fixture))
     }
 
+    pub fn build_with_fake_sysroot(fixture: &str) -> Self {
+        Self::build_from_def_map(DefMapFixture::build_with_fake_sysroot(fixture))
+    }
+
     pub fn build_from_def_map(def_map: DefMapFixture) -> Self {
         let semantic_ir = SemanticIrDb::builder(def_map.item_tree_db(), def_map.def_map_db())
             .build()

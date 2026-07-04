@@ -293,6 +293,31 @@ impl CrateFixture {
         Self::from_parsed_fixture(FixtureSpec::parse(spec))
     }
 
+    /// Adds rust-glancer's small shared fake sysroot under `/sysroot/library`.
+    ///
+    /// The fake sysroot is intentionally incomplete. It focuses on APIs whose standard-library
+    /// shape matters for name resolution and type inference tests: edition prelude wiring,
+    /// `core::iter`, `Option`, `Result`, slices, primitive `str`, `alloc::vec::Vec`, and
+    /// `alloc::string::String`. Inspect `crates/lib/test-fixture/assets/fake_sysroot` for the
+    /// exact available API surface before relying on a standard-library item in a test.
+    ///
+    /// This method panics if the fixture already defines one of the shared fake sysroot files.
+    /// Tests that need a custom sysroot should keep using explicit `/sysroot/library/...` fixture
+    /// files instead of silently mixing the two worlds.
+    pub fn with_fake_sysroot(self) -> Self {
+        for file in crate::fake_sysroot::files() {
+            let path = self.path(file.relative_path);
+            assert!(
+                !path.exists(),
+                "fixture already defines fake sysroot file `{}`",
+                file.relative_path
+            );
+            self.write_file(file.relative_path, file.contents);
+        }
+
+        self
+    }
+
     fn from_parsed_fixture(fixture: FixtureSpec) -> Self {
         Self::materialize(
             fixture

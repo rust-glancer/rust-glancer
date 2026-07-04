@@ -11,7 +11,7 @@ use rg_std::UniqueVec;
 use rg_text::Name;
 
 use crate::{
-    ImplMatcher, ItemPathQuery, NominalTy, Ty, TypeSubst, associated_type::AssociatedTypeProjector,
+    ImplMatcher, ItemPathQuery, NominalTy, Ty, TypeSubst, associated_type::AssociatedTypeResolver,
 };
 
 /// Resolves the associated `Target` type for applicable `core::ops::Deref` impls.
@@ -109,7 +109,7 @@ where
             impl_ref: Some(trait_impl.impl_ref),
         };
 
-        AssociatedTypeProjector::new(&self.item_paths, &self.target_items)
+        AssociatedTypeResolver::new(&self.item_paths, &self.target_items)
             .trait_impl_resolves_to_path(trait_impl, context, &path)
     }
 
@@ -120,7 +120,7 @@ where
         impl_data: &ImplData,
         subst: &TypeSubst,
     ) -> Result<Option<Ty>, D::Error> {
-        AssociatedTypeProjector::new(&self.item_paths, &self.target_items)
+        AssociatedTypeResolver::new(&self.item_paths, &self.target_items)
             .associated_type_from_impl(trait_impl, impl_data, "Target", subst)
     }
 }

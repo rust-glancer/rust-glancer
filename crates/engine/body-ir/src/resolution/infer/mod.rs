@@ -9,7 +9,6 @@ mod context;
 mod facts;
 mod member;
 mod pattern;
-mod projection;
 mod trait_obligation;
 
 pub(super) use call::BodyCallInference;

@@ -8,11 +8,14 @@ use rg_ir_model::ExprId;
 use rg_ir_storage::{DefMapSource, ItemStoreSource};
 use rg_package_store::PackageStoreError;
 use rg_ty::{
-    TraitGoal,
+    TraitGoal, function_generic_shadow_subst,
     inference::{InferGenericArg, InferTy},
 };
 
-use crate::{ir::ExprKind, resolution::BodyResolutionContext};
+use crate::{
+    ir::ExprKind,
+    resolution::{BodyResolutionContext, TypeRefUseSite},
+};
 
 use super::{BodyInferenceCtx, BodyPatternInference};
 
@@ -63,6 +66,10 @@ where
         params: &[InferTy],
         ret: &InferTy,
     ) -> Result<bool, PackageStoreError> {
+        if let InferTy::FunctionItem(function) = inference.root_resolved_ty(self_ty) {
+            return self.solve_function_item_goal(inference, function, params, ret);
+        }
+
         let Some(closure) = Self::closure_expr(inference, self_ty) else {
             return Ok(false);
         };
@@ -100,6 +107,53 @@ where
         // body is known to be `Name`, this solves `?R = Name` for the caller that owns the goal.
         if let Some(body) = body {
             let _ = inference.constrain_expr_infer_ty(body, ret);
+        }
+
+        Ok(true)
+    }
+
+    fn solve_function_item_goal(
+        &self,
+        inference: &mut BodyInferenceCtx,
+        function: rg_ir_model::FunctionRef,
+        params: &[InferTy],
+        ret: &InferTy,
+    ) -> Result<bool, PackageStoreError> {
+        let Some(function_data) = self.context.item_query().function_data(function)? else {
+            return Ok(false);
+        };
+        if function_data.signature.params().len() != params.len() {
+            return Ok(false);
+        }
+
+        let subst = function_generic_shadow_subst(function_data.signature.generics());
+        let resolver = self
+            .context
+            .type_refs(TypeRefUseSite::Function(function))
+            .with_subst(&subst);
+        for (written_param, expected_param) in function_data.signature.params().iter().zip(params) {
+            let Some(param_ty) = &written_param.ty else {
+                return Ok(false);
+            };
+            let param_ty = InferTy::from_ty(&resolver.resolve(param_ty)?);
+            if param_ty.has_unknown_or_syntax() {
+                continue;
+            }
+            if inference
+                .table
+                .try_unify(&param_ty, expected_param)
+                .is_err()
+            {
+                return Ok(false);
+            }
+        }
+
+        let ret_ty = match function_data.signature.ret_ty() {
+            Some(ret_ty) => InferTy::from_ty(&resolver.resolve(ret_ty)?),
+            None => InferTy::Unit,
+        };
+        if !ret_ty.has_unknown_or_syntax() && inference.table.try_unify(ret, &ret_ty).is_err() {
+            return Ok(false);
         }
 
         Ok(true)

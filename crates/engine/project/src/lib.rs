@@ -32,6 +32,7 @@ pub fn profile_descriptors() -> &'static [rg_profile::ProfileDescriptor] {
             let mut descriptors = Vec::new();
             descriptors.extend_from_slice(profile::profile_descriptors());
             descriptors.extend_from_slice(rg_def_map::profile_descriptors());
+            descriptors.extend_from_slice(rg_ty::profile_descriptors());
             descriptors
         })
         .as_slice()

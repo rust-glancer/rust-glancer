@@ -6,44 +6,30 @@
 //! must solve that generic from a closure witness before the alias is useful.
 
 use rg_ir_model::{
+    TraitRef,
     hir::items::ImplData,
-    items::{GenericParams, TypeBound, TypeRef, WherePredicate},
+    items::{GenericParams, TypeBound, TypeRef},
 };
 use rg_ir_storage::{DefMapSource, ItemStoreSource, TypePathContext};
 use rg_package_store::PackageStoreError;
-use rg_std::ExpectedUnique;
 use rg_text::Name;
 use rg_ty::{
-    TraitGoal, TraitSelection, TraitSelectionOptions,
-    inference::{InferTy, InferTypeRefProjector},
+    TraitGoal, TraitSelection, TraitSelectionCache, TraitSelectionOptions,
+    inference::{InferGenericArg, InferTy, InferTypeRefProjector},
 };
 
 use crate::resolution::{
     TypeRefUseSite,
     query::TypeRefResolutionQuery,
     support::{
-        CallableTypeRefExpectation, SelectedTraitAssocProjector, SelectedTraitMethodContext,
+        BodyAssocProjector, BodyTypeRefProjector, CallableTypeRefExpectation,
+        ImplPredicateAssocProjector, ImplPredicateSubject, ProjectionSupport,
+        SelectedTraitMethodContext, impl_projection_predicates, project_unique_support_assoc,
     },
 };
 
-use super::super::{BodyCallableGoalSolver, BodyInferenceCtx, projection::BodyTypeRefProjector};
-use super::BodyTraitObligationSolver;
-
-struct CallableImplWhereObligation {
-    self_ty: InferTy,
-    params: Vec<InferTy>,
-    ret: InferTy,
-}
-
-/// Non-callable where-predicate that exists to project an associated type used by a callable one.
-///
-/// Example: in `S: Stream, F: FnMut(S::Item) -> B`, the `S: Stream` predicate lets us resolve
-/// `S::Item` before applying the callable predicate to the closure witness.
-struct ImplWhereProjectionSupport {
-    param_name: Name,
-    goal: TraitGoal,
-    used: bool,
-}
+use super::super::{BodyCallableGoalSolver, BodyInferenceCtx};
+use super::{BodyCallableObligation, BodyTraitObligationSolver};
 
 impl<'query, D, I> BodyTraitObligationSolver<'query, D, I>
 where
@@ -71,13 +57,21 @@ where
         &self,
         inference: &mut BodyInferenceCtx,
         selected_trait_method: &SelectedTraitMethodContext<'_>,
+        selected_self_infer_ty: Option<&InferTy>,
         assoc_name: &str,
     ) -> Result<Option<InferTy>, PackageStoreError> {
-        let assoc_projector = SelectedTraitAssocProjector::new(self.context);
-        let Some(mut selection) = assoc_projector.select_infer_trait_impl(
-            selected_trait_method,
+        let assoc_projector = ImplPredicateAssocProjector::new(self.context);
+        let goal = TraitGoal {
+            self_ty: selected_self_infer_ty
+                .cloned()
+                .unwrap_or_else(|| InferTy::from_ty(selected_trait_method.selected_self_ty())),
+            trait_ref: selected_trait_method.trait_ref(),
+            args: Vec::new(),
+        };
+        let Some(mut selection) = assoc_projector.select_trait_impl(
+            &goal,
             &inference.table,
-            TraitSelectionOptions::new().ignore_where_predicates(),
+            TraitSelectionOptions::new().caller_solves_impl_predicates(),
         )?
         else {
             return Ok(None);
@@ -103,14 +97,15 @@ where
                 &mut selection,
                 &impl_data,
                 &aliased_ty,
+                &inference.trait_selection_cache,
             )?
         else {
             return Ok(None);
         };
         if obligations.iter().any(|obligation| {
             !matches!(
-                selection.table.resolve_root_var(&obligation.self_ty),
-                InferTy::Closure(_)
+                selection.table.resolve_root_var(obligation.self_ty()),
+                InferTy::Closure(_) | InferTy::FunctionItem(_)
             )
         }) {
             return Ok(None);
@@ -121,9 +116,9 @@ where
         for obligation in obligations {
             if !BodyCallableGoalSolver::new(self.context).solve_fn_trait_goal(
                 inference,
-                &obligation.self_ty,
-                &obligation.params,
-                &obligation.ret,
+                obligation.self_ty(),
+                obligation.params(),
+                obligation.ret(),
             )? {
                 inference.table = previous_table;
                 return Ok(None);
@@ -154,7 +149,8 @@ where
         selection: &mut TraitSelection,
         impl_data: &ImplData,
         aliased_ty: &TypeRef,
-    ) -> Result<Option<(InferTy, Vec<CallableImplWhereObligation>)>, PackageStoreError> {
+        trait_selection_cache: &TraitSelectionCache,
+    ) -> Result<Option<(InferTy, Vec<BodyCallableObligation>)>, PackageStoreError> {
         let context = TypePathContext {
             module: impl_data.owner,
             impl_ref: Some(selection.trait_impl.impl_ref),
@@ -163,17 +159,22 @@ where
             .context
             .type_refs(TypeRefUseSite::OwnerContext(context));
 
+        // Split impl predicates into two small families this body-local path understands.
+        // `S: Source`-style support predicates help project `S::Item`. Callable predicates such
+        // as `F: FnMut(S::Item) -> B` become obligations that can solve impl-only return params
+        // from closure bodies.
         let mut supports = Vec::new();
         let mut callable_predicates = Vec::new();
-        for predicate in &impl_data.generics.where_predicates {
-            let WherePredicate::Type { ty, bounds } = predicate else {
-                return Ok(None);
-            };
-            if bounds.is_empty() {
+        let Some(predicates) = impl_projection_predicates(&impl_data.generics) else {
+            return Ok(None);
+        };
+        for predicate in predicates {
+            if predicate.bounds.is_empty() {
                 return Ok(None);
             }
 
-            let callable_expectations = bounds
+            let callable_expectations = predicate
+                .bounds
                 .iter()
                 .map(|bound| match bound {
                     TypeBound::Trait(bound_ty) => {
@@ -183,20 +184,29 @@ where
                 })
                 .collect::<Option<Vec<_>>>();
             if let Some(expectations) = callable_expectations {
-                callable_predicates.push((ty, expectations));
+                callable_predicates.push((predicate.subject, expectations));
                 continue;
             }
 
-            let Some(support) =
-                self.impl_where_projection_support(selection, &resolver, ty, bounds)?
+            let Some(support) = self.impl_where_projection_support(
+                selection,
+                &resolver,
+                &predicate.subject,
+                predicate.bounds,
+            )?
             else {
                 return Ok(None);
             };
             supports.push(support);
         }
 
-        let Some(projected_ty) =
-            self.project_impl_where_ty(selection, &mut supports, &resolver, aliased_ty)?
+        let Some(projected_ty) = self.project_impl_where_ty(
+            selection,
+            &mut supports,
+            &resolver,
+            aliased_ty,
+            trait_selection_cache,
+        )?
         else {
             return Ok(None);
         };
@@ -207,17 +217,27 @@ where
         // associated type unknown instead of ignoring it.
         let mut obligations = Vec::new();
 
-        for (ty, expectations) in callable_predicates {
-            let Some(self_ty) =
-                self.project_impl_where_ty(selection, &mut supports, &resolver, ty)?
+        for (subject, expectations) in callable_predicates {
+            let Some(self_ty) = self.project_impl_where_subject(
+                selection,
+                &mut supports,
+                &resolver,
+                &subject,
+                trait_selection_cache,
+            )?
             else {
                 return Ok(None);
             };
             for expectation in expectations {
                 let mut params = Vec::new();
                 for param in expectation.params() {
-                    let Some(param) =
-                        self.project_impl_where_ty(selection, &mut supports, &resolver, param)?
+                    let Some(param) = self.project_impl_where_ty(
+                        selection,
+                        &mut supports,
+                        &resolver,
+                        param,
+                        trait_selection_cache,
+                    )?
                     else {
                         return Ok(None);
                     };
@@ -228,33 +248,34 @@ where
                     &mut supports,
                     &resolver,
                     expectation.return_ty(),
+                    trait_selection_cache,
                 )?
                 else {
                     return Ok(None);
                 };
-                obligations.push(CallableImplWhereObligation {
-                    self_ty: self_ty.clone(),
-                    params,
-                    ret,
-                });
+                obligations.push(BodyCallableObligation::new(self_ty.clone(), params, ret));
             }
         }
 
-        if supports.iter().any(|support| !support.used) {
+        if supports.iter().any(ProjectionSupport::unused) {
             return Ok(None);
         }
 
         Ok(Some((projected_ty, obligations)))
     }
 
+    /// Build support evidence from a non-callable impl predicate.
+    ///
+    /// The accepted shape is a single trait bound on an impl type parameter, such as
+    /// `S: Source`. That gives later `S::Item` projection a concrete trait goal to normalize.
     fn impl_where_projection_support(
         &self,
         selection: &TraitSelection,
         resolver: &TypeRefResolutionQuery<'query, D, I>,
-        ty: &TypeRef,
+        subject: &ImplPredicateSubject,
         bounds: &[TypeBound],
-    ) -> Result<Option<ImplWhereProjectionSupport>, PackageStoreError> {
-        if let Some(param_name) = ty.type_param_name()
+    ) -> Result<Option<ProjectionSupport>, PackageStoreError> {
+        if let Some(param_name) = subject.type_param_name()
             && let Some(self_ty) = selection.subst.type_param(param_name.as_str())
             && let [TypeBound::Trait(bound_ty)] = bounds
             && CallableTypeRefExpectation::from_fn_trait_bound(bound_ty).is_none()
@@ -272,30 +293,69 @@ where
                         .generic_arg_from_arg(arg, resolved_arg)
                 })
                 .collect();
-            return Ok(Some(ImplWhereProjectionSupport {
+            return Ok(Some(ProjectionSupport::new(
                 param_name,
-                goal: TraitGoal {
+                TraitGoal {
                     self_ty,
                     trait_ref,
                     args,
                 },
-                used: false,
-            }));
+            )));
         }
 
         Ok(None)
     }
 
+    /// Project the subject of a callable impl predicate.
+    ///
+    /// Inline `F: FnMut(...)` predicates already name the impl parameter, so the subject is just
+    /// the selected substitution for `F`. Where-clause subjects can be richer syntax and need the
+    /// normal impl-where type projector.
+    fn project_impl_where_subject(
+        &self,
+        selection: &mut TraitSelection,
+        supports: &mut [ProjectionSupport],
+        resolver: &TypeRefResolutionQuery<'query, D, I>,
+        subject: &ImplPredicateSubject,
+        trait_selection_cache: &TraitSelectionCache,
+    ) -> Result<Option<InferTy>, PackageStoreError> {
+        match subject {
+            ImplPredicateSubject::TypeParam(name) => Ok(selection.subst.type_param(name.as_str())),
+            ImplPredicateSubject::TypeRef(ty) => {
+                self.project_impl_where_ty(selection, supports, resolver, ty, trait_selection_cache)
+            }
+        }
+    }
+
     fn project_impl_where_ty(
         &self,
         selection: &mut TraitSelection,
-        supports: &mut [ImplWhereProjectionSupport],
+        supports: &mut [ProjectionSupport],
         resolver: &TypeRefResolutionQuery<'query, D, I>,
         ty: &TypeRef,
+        trait_selection_cache: &TraitSelectionCache,
     ) -> Result<Option<InferTy>, PackageStoreError> {
         let subst = selection.subst.clone();
-        let mut associated_ty = |param_name: &Name, assoc_name: &Name| {
-            self.project_impl_generic_associated_ty(selection, supports, param_name, assoc_name)
+        let mut associated_ty = |param_name: &Name, qualified_trait, assoc_name: &Name| {
+            if let Some((trait_ref, args)) = qualified_trait {
+                self.project_impl_qualified_generic_associated_ty(
+                    selection,
+                    supports,
+                    param_name,
+                    trait_ref,
+                    args,
+                    assoc_name,
+                    trait_selection_cache,
+                )
+            } else {
+                self.project_impl_generic_associated_ty(
+                    selection,
+                    supports,
+                    param_name,
+                    assoc_name,
+                    trait_selection_cache,
+                )
+            }
         };
         BodyTypeRefProjector::new(&subst, resolver)
             .with_type_param_associated_ty(&mut associated_ty)
@@ -305,37 +365,50 @@ where
     fn project_impl_generic_associated_ty(
         &self,
         selection: &mut TraitSelection,
-        supports: &mut [ImplWhereProjectionSupport],
+        supports: &mut [ProjectionSupport],
         param_name: &Name,
         assoc_name: &Name,
+        trait_selection_cache: &TraitSelectionCache,
     ) -> Result<Option<InferTy>, PackageStoreError> {
         // `S::Item` is useful only if some support predicate proves which `Stream` impl applies
         // to `S`. We probe those predicates in the same trial table as the outer impl selection,
         // so any inference refinements stay local until the whole projection succeeds.
-        let mut candidate = None;
-        let assoc_projector = SelectedTraitAssocProjector::new(self.context);
-
-        for (support_idx, support) in supports.iter().enumerate() {
-            if support.param_name.as_str() == param_name.as_str()
-                && let ExpectedUnique::One(support_selection) =
-                    self.probe_trait_goal_in_table(&support.goal, &selection.table)?
-                && let Some(projected_ty) = assoc_projector.project_associated_type_from_selection(
-                    &support_selection,
-                    assoc_name.as_str(),
-                )?
-            {
-                if candidate.is_some() {
-                    return Ok(None);
-                }
-                candidate = Some((support_idx, support_selection, projected_ty));
-            }
-        }
-
-        let Some((support_idx, support_selection, projected_ty)) = candidate else {
+        let Some((projection_table, projected_ty)) =
+            project_unique_support_assoc(supports, param_name, None, |goal| {
+                Ok(BodyAssocProjector::new(self.context)
+                    .with_cache(trait_selection_cache.clone())
+                    .normalize_assoc_type(goal, assoc_name.as_str(), &selection.table)?
+                    .map(|projection| (projection.table, projection.ty)))
+            })?
+        else {
             return Ok(None);
         };
-        selection.table = support_selection.table;
-        supports[support_idx].used = true;
+        selection.table = projection_table;
+        Ok(Some(projected_ty))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn project_impl_qualified_generic_associated_ty(
+        &self,
+        selection: &mut TraitSelection,
+        supports: &mut [ProjectionSupport],
+        param_name: &Name,
+        trait_ref: TraitRef,
+        args: Vec<InferGenericArg>,
+        assoc_name: &Name,
+        trait_selection_cache: &TraitSelectionCache,
+    ) -> Result<Option<InferTy>, PackageStoreError> {
+        let Some((projection_table, projected_ty)) =
+            project_unique_support_assoc(supports, param_name, Some((trait_ref, &args)), |goal| {
+                Ok(BodyAssocProjector::new(self.context)
+                    .with_cache(trait_selection_cache.clone())
+                    .normalize_assoc_type(goal, assoc_name.as_str(), &selection.table)?
+                    .map(|projection| (projection.table, projection.ty)))
+            })?
+        else {
+            return Ok(None);
+        };
+        selection.table = projection_table;
         Ok(Some(projected_ty))
     }
 }

@@ -19,6 +19,12 @@ analyze *args:
 compare-lsp fixture="rust_analyzer" *args:
     cargo run --release -p rust-glancer -- compare-lsp {{fixture}} {{args}}
 
+lsp-query query_file *args:
+    node tools/lsp-query.mjs --query-file '{{query_file}}' {{args}}
+
+lsp-query-help:
+    node tools/lsp-query.mjs --help
+
 deny:
     cargo deny check
 

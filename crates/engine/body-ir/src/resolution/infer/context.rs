@@ -2,7 +2,7 @@ use rg_ir_model::items::{GenericParams, TypeRef};
 use rg_ir_model::{BindingId, ExprId, ExprWrapperKind};
 
 use rg_ty::{
-    ClosureTyId, Ty,
+    ClosureTyId, TraitSelectionCache, Ty,
     inference::{
         ExplicitTypeArgInstantiationBuilder, GenericReturnInstantiationBuilder, InferTy,
         InferTypeSubst, InferenceTable, UnknownTypeInstantiationBuilder,
@@ -13,17 +13,32 @@ use super::facts::InferenceFacts;
 
 pub(crate) struct BodyInferenceCtx {
     pub(super) table: InferenceTable,
+    pub(super) trait_selection_cache: TraitSelectionCache,
     expr_tys: InferenceFacts<ExprId>,
     binding_tys: InferenceFacts<BindingId>,
 }
 
 impl BodyInferenceCtx {
+    #[cfg(test)]
     pub(crate) fn new(expr_count: usize, binding_count: usize) -> Self {
+        Self::with_trait_selection_cache(expr_count, binding_count, TraitSelectionCache::default())
+    }
+
+    pub(crate) fn with_trait_selection_cache(
+        expr_count: usize,
+        binding_count: usize,
+        trait_selection_cache: TraitSelectionCache,
+    ) -> Self {
         Self {
             table: InferenceTable::new(),
+            trait_selection_cache,
             expr_tys: InferenceFacts::new(expr_count),
             binding_tys: InferenceFacts::new(binding_count),
         }
+    }
+
+    pub(crate) fn trait_selection_cache(&self) -> TraitSelectionCache {
+        self.trait_selection_cache.clone()
     }
 
     pub(crate) fn set_expr_ty(&mut self, expr: ExprId, ty: &Ty) {

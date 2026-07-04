@@ -67,8 +67,12 @@ impl FromAst for TypeRef {
                 .unwrap_or_else(|| Self::unknown_from_text(normalized_syntax(&ty))),
             ast::Type::PathType(ty) => ty
                 .path()
-                .map(|path| TypePath::from_ast(&path, (line_index, &mut *interner)))
-                .map(Self::Path)
+                .map(|path| {
+                    qualified_associated_type_from_ast(&path, line_index, &mut *interner)
+                        .unwrap_or_else(|| {
+                            Self::Path(TypePath::from_ast(&path, (line_index, &mut *interner)))
+                        })
+                })
                 .unwrap_or_else(|| Self::unknown_from_text(normalized_syntax(&ty))),
             ast::Type::PtrType(ty) => Self::RawPointer {
                 mutability: Mutability::from_mut_token(ty.mut_token().is_some()),
@@ -105,6 +109,48 @@ impl FromAst for TypeRef {
             }
         }
     }
+}
+
+fn qualified_associated_type_from_ast(
+    path: &ast::Path,
+    line_index: &LineIndex,
+    interner: &mut NameInterner,
+) -> Option<TypeRef> {
+    let assoc_segment = path.segment()?;
+    if assoc_segment.generic_arg_list().is_some()
+        || assoc_segment.parenthesized_arg_list().is_some()
+        || assoc_segment.ret_type().is_some()
+    {
+        return None;
+    }
+    let assoc_name = assoc_segment
+        .name_ref()
+        .map(|name| interner.intern(name.syntax().text().to_string().trim()))?;
+
+    let qualifier = path.qualifier()?;
+    if qualifier.qualifier().is_some() {
+        return None;
+    }
+    let anchor_segment = qualifier.segment()?;
+    let ast::PathSegmentKind::Type {
+        type_ref,
+        trait_ref,
+    } = anchor_segment.kind()?
+    else {
+        return None;
+    };
+    let self_ty = type_ref
+        .as_ref()
+        .map(|ty| TypeRef::from_ast(ty, (line_index, &mut *interner)))?;
+    let trait_ty = trait_ref
+        .and_then(|trait_ref| trait_ref.path())
+        .map(|path| TypeRef::Path(TypePath::from_ast(&path, (line_index, interner))));
+
+    Some(TypeRef::QualifiedAssociatedType {
+        self_ty: Box::new(self_ty),
+        trait_ty: trait_ty.map(Box::new),
+        assoc_name,
+    })
 }
 
 impl FromAst for TypePath {

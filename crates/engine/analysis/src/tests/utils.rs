@@ -43,6 +43,25 @@ pub(super) fn check_analysis_queries_with_sysroot(
     expect.assert_eq(&actual);
 }
 
+pub(super) fn check_analysis_queries_with_fake_sysroot(
+    fixture: &str,
+    queries: &[AnalysisQuery],
+    expect: Expect,
+) {
+    let (fixture, markers) = fixture_crate_with_markers(fixture);
+    let fixture = fixture.with_fake_sysroot();
+    let sysroot = SysrootSources::from_library_root(fixture.path("sysroot/library"))
+        .expect("fake sysroot should be complete");
+    let workspace =
+        WorkspaceMetadata::for_tests(fixture.metadata(), WorkspaceLoweringConfig::default())
+            .expect("fixture workspace metadata should build")
+            .with_sysroot_sources(Some(sysroot));
+    let db = AnalysisFixtureDb::build_from_crate_with_workspace(fixture, workspace);
+    let renderer = AnalysisQuerySnapshot::new(&db, markers, queries);
+    let actual = format!("{}\n", renderer.render().trim_end());
+    expect.assert_eq(&actual);
+}
+
 pub(super) fn check_document_symbols(fixture: &str, query: DocumentSymbolsQuery, expect: Expect) {
     let fixture = fixture_crate(fixture);
     let db = AnalysisFixtureDb::build_from_crate(fixture);
@@ -1122,6 +1141,7 @@ impl<'a> AnalysisQuerySnapshot<'a> {
                 format!("impl {}", bounds.join(" + "))
             }
             Ty::Closure(id) => format!("closure #{id}"),
+            Ty::FunctionItem(function) => format!("function item {function:?}"),
             Ty::Nominal(ty) => format!("nominal {}", self.render_body_nominal_ty(ty)),
             Ty::SelfTy(ty) => format!("Self {}", self.render_body_nominal_ty(ty)),
             Ty::Unknown => "<unknown>".to_string(),

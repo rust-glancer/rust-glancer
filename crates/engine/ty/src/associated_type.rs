@@ -1,24 +1,31 @@
-//! Shared projection for associated types declared by trait impls.
+//! Small associated-type helpers that still sit outside general trait selection.
 //!
-//! This is intentionally much smaller than a trait solver: callers first decide that an impl is a
-//! relevant candidate, then this helper reads a named associated type from that impl and resolves it
-//! with the substitutions supplied by `ImplMatcher`.
+//! The shared solver path owns ordinary trait selection and projection. This helper keeps two
+//! narrow jobs that predate that boundary and are still useful to callers:
+//!
+//! - resolve canonical trait paths from impl and use-site contexts;
+//! - read a selected impl associated type for strict adjustment paths such as `Deref`.
 
 use rg_ir_model::{
     AssocItemId, Path, TraitImplRef, TraitRef, TypeAliasRef, TypePathResolution,
     hir::items::ImplData,
 };
 use rg_ir_storage::{DefMapSource, ItemStoreSource, TargetItemQuery, TypePathContext};
-use rg_std::{ExpectedUnique, UniqueVec};
+use rg_std::UniqueVec;
 
-use crate::{GenericArg, ItemPathQuery, OpaqueTraitBound, Ty, TypeSubst};
+use crate::{ItemPathQuery, Ty, TypeSubst};
 
-pub(crate) struct AssociatedTypeProjector<'a, 'query, D, I> {
+/// Resolves associated-type-adjacent facts that are not general projection.
+///
+/// Most associated projection should go through `TraitSelectionQuery::normalize_assoc_type`.
+/// This helper remains for stricter callers that already know which impl or canonical path they
+/// are asking about.
+pub(crate) struct AssociatedTypeResolver<'a, 'query, D, I> {
     item_paths: &'a ItemPathQuery<'query, D, I>,
     target_items: &'a TargetItemQuery<'query, D, I>,
 }
 
-impl<'a, 'query, D, I> AssociatedTypeProjector<'a, 'query, D, I>
+impl<'a, 'query, D, I> AssociatedTypeResolver<'a, 'query, D, I>
 where
     D: DefMapSource,
     I: ItemStoreSource<'query, Error = D::Error>,
@@ -33,6 +40,7 @@ where
         }
     }
 
+    /// Check whether an already-selected trait impl is for a specific canonical path.
     pub(crate) fn trait_impl_resolves_to_path(
         &self,
         trait_impl: TraitImplRef,
@@ -44,6 +52,7 @@ where
             .contains(&trait_impl.trait_ref))
     }
 
+    /// Resolve a trait path from one source context.
     pub(crate) fn trait_refs_for_path(
         &self,
         context: TypePathContext,
@@ -59,6 +68,11 @@ where
         Ok(traits)
     }
 
+    /// Resolve a canonical trait path from both the impl's module and the lookup use site.
+    ///
+    /// Iterator and deref helpers often compare against paths like `::core::iter::Iterator`.
+    /// Depending on whether the impl is written inside the core-like crate or outside it, one of
+    /// these contexts may be the only place where that path resolves.
     pub(crate) fn trait_refs_for_path_from_impl_and_use_site(
         &self,
         impl_data: &ImplData,
@@ -89,6 +103,7 @@ where
         Ok(traits)
     }
 
+    /// Resolve a canonical trait path from the target's use-site root.
     pub(crate) fn trait_refs_for_path_from_use_site(
         &self,
         trait_path: &Path,
@@ -121,6 +136,10 @@ where
         Ok(())
     }
 
+    /// Read an associated alias body from an impl that another strict path already selected.
+    ///
+    /// This is used by adjustment code such as `Deref`, where an uncertain alias value must not
+    /// become a real receiver type.
     pub(crate) fn associated_type_from_impl(
         &self,
         trait_impl: TraitImplRef,
@@ -161,31 +180,5 @@ where
         }
 
         Ok(None)
-    }
-
-    pub(crate) fn push_associated_types_from_opaque_bounds(
-        &self,
-        candidates: &mut ExpectedUnique<Ty>,
-        bounds: &UniqueVec<OpaqueTraitBound>,
-        canonical_traits: &UniqueVec<TraitRef>,
-        assoc_name: &str,
-    ) {
-        for bound in bounds {
-            if !canonical_traits.contains(&bound.trait_ref) {
-                continue;
-            }
-
-            // Opaque types expose only their declared bounds. Associated type equalities such as
-            // `impl Iterator<Item = User>` are precise facts even though the hidden concrete type
-            // remains unknown.
-            for arg in &bound.args {
-                let GenericArg::AssocType { name, ty: Some(ty) } = arg else {
-                    continue;
-                };
-                if name.as_str() == assoc_name && ty.is_projectable() {
-                    candidates.push((**ty).clone());
-                }
-            }
-        }
     }
 }

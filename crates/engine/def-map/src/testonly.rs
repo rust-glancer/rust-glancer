@@ -40,6 +40,17 @@ impl DefMapFixture {
         Self::build_from_crate(fixture, workspace)
     }
 
+    pub fn build_with_fake_sysroot(fixture: &str) -> Self {
+        let fixture = fixture_crate(fixture).with_fake_sysroot();
+        let sysroot = SysrootSources::from_library_root(fixture.path("sysroot/library"))
+            .expect("fake sysroot should be complete");
+        let workspace =
+            WorkspaceMetadata::for_tests(fixture.metadata(), WorkspaceLoweringConfig::default())
+                .expect("fixture workspace metadata should build")
+                .with_sysroot_sources(Some(sysroot));
+        Self::build_from_crate(fixture, workspace)
+    }
+
     pub fn build_from_crate(fixture: CrateFixture, workspace: WorkspaceMetadata) -> Self {
         let item_tree = ItemTreeFixture::build_from_crate(fixture, &workspace);
         let def_map = DefMapDb::builder(&workspace, item_tree.parse_db(), item_tree.item_tree_db())

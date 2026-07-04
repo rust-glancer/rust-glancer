@@ -226,6 +226,59 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "613afe47fcd5fac7ccf1db93babcb082c5994d996f20b8b159f2ad1658eb5724"
 
 [[package]]
+name = "chalk-derive"
+version = "0.104.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9ea9b1e80910f66ae87c772247591432032ef3f6a67367ff17f8343db05beafa"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+ "synstructure",
+]
+
+[[package]]
+name = "chalk-engine"
+version = "0.104.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9bc1a7963bc47163e79c36b0a6635208b078c4b3564c13a5509df21070e852fe"
+dependencies = [
+ "chalk-derive",
+ "chalk-ir",
+ "chalk-solve",
+ "rustc-hash 1.1.0",
+ "tracing",
+]
+
+[[package]]
+name = "chalk-ir"
+version = "0.104.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7047a516de16226cd17344d41a319d0ea1064bf9e60bd612ab341ab4a34bbfa8"
+dependencies = [
+ "bitflags",
+ "chalk-derive",
+]
+
+[[package]]
+name = "chalk-solve"
+version = "0.104.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "72860086494ccfa05bbd3779a74babb8ace27da9a0cbabffa1315223c7290927"
+dependencies = [
+ "chalk-derive",
+ "chalk-ir",
+ "ena",
+ "indexmap",
+ "itertools 0.12.1",
+ "petgraph",
+ "rustc-hash 1.1.0",
+ "tracing",
+ "tracing-subscriber",
+ "tracing-tree",
+]
+
+[[package]]
 name = "clap"
 version = "4.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -304,7 +357,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9726dee335c75f77ad4a01e1b637bd11e2e520204835efe95c6548961ad1fcb0"
 dependencies = [
  "divan-macros",
- "itertools",
+ "itertools 0.14.0",
  "proc-macro-crate",
  "proc-macro2",
  "quote",
@@ -525,6 +578,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "48c757948c5ede0e46177b7add2e67155f70e33c07fea8284df6576da70b3719"
 
 [[package]]
+name = "ena"
+version = "0.14.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "eabffdaee24bd1bf95c5ef7cec31260444317e72ea56c4c91750e8b7ee58d5f1"
+dependencies = [
+ "log",
+]
+
+[[package]]
 name = "enum-ordinalize"
 version = "4.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -590,6 +652,12 @@ name = "find-msvc-tools"
 version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5baebc0774151f905a1a2cc41989300b1e6fbb29aff0ceffa1064fdd3088d582"
+
+[[package]]
+name = "fixedbitset"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0ce7134b9999ecaf8bcd65542e436736ef32ddca1b3e06094cb6ec5755203b80"
 
 [[package]]
 name = "fluent-uri"
@@ -907,6 +975,15 @@ name = "is_terminal_polyfill"
 version = "1.70.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a6cb138bb79a146c1bd460005623e142ef0181e3d0219cb493e02f7d08a35695"
+
+[[package]]
+name = "itertools"
+version = "0.12.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ba291022dbbd398a455acf126c1e341954079855bc60dfdda641363bd6922569"
+dependencies = [
+ "either",
+]
 
 [[package]]
 name = "itertools"
@@ -1241,6 +1318,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "petgraph"
+version = "0.6.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b4c5cc86750666a3ed20bdaf5ca2a0344f9c67674cae0515bec2da16fbaa47db"
+dependencies = [
+ "fixedbitset",
+ "indexmap",
+]
+
+[[package]]
 name = "pin-project"
 version = "1.1.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1554,6 +1641,7 @@ dependencies = [
  "rg_item_tree",
  "rg_package_store",
  "rg_parse",
+ "rg_profile",
  "rg_semantic_ir",
  "rg_std",
  "rg_syntax",
@@ -1579,7 +1667,7 @@ dependencies = [
  "anyhow",
  "clap",
  "either",
- "itertools",
+ "itertools 0.14.0",
  "proc-macro2",
  "quote",
  "stdx",
@@ -1746,7 +1834,7 @@ dependencies = [
  "rg_parser",
  "rg_syntax",
  "rg_tt",
- "rustc-hash",
+ "rustc-hash 2.1.2",
  "smallvec",
  "smol_str",
  "stdx",
@@ -1889,10 +1977,10 @@ version = "0.1.0"
 dependencies = [
  "either",
  "expect-test",
- "itertools",
+ "itertools 0.14.0",
  "rayon",
  "rg_parser",
- "rustc-hash",
+ "rustc-hash 2.1.2",
  "rustc-literal-escaper",
  "rustc_apfloat",
  "smallvec",
@@ -1929,8 +2017,13 @@ dependencies = [
 name = "rg_ty"
 version = "0.1.0"
 dependencies = [
+ "chalk-engine",
+ "chalk-ir",
+ "chalk-solve",
+ "expect-test",
  "rg_ir_model",
  "rg_ir_storage",
+ "rg_profile",
  "rg_std",
  "rg_text",
  "rg_wincode_utils",
@@ -1983,6 +2076,12 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
 ]
+
+[[package]]
+name = "rustc-hash"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "08d43f7aa6b08d49f382cde6a7982047c3426db949b1424bc4b7ec9ae12c6ce2"
 
 [[package]]
 name = "rustc-hash"
@@ -2182,7 +2281,7 @@ source = "git+https://github.com/rust-lang/rust-analyzer?rev=b8458013c217be4fcce
 dependencies = [
  "crossbeam-channel",
  "crossbeam-utils",
- "itertools",
+ "itertools 0.14.0",
  "jod-thread",
  "libc",
  "miow",
@@ -2212,6 +2311,17 @@ name = "sync_wrapper"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0bf256ce5efdfa370213c1dabab5935a12e49f2c58d15e9eac2870d3b4f27263"
+
+[[package]]
+name = "synstructure"
+version = "0.13.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "728a70f3dbaf5bab7f0c4b1ac8d7ae5ea60a4b5549c8a5914361c99147a709d2"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
 
 [[package]]
 name = "tarpc"
@@ -2280,7 +2390,7 @@ dependencies = [
  "dissimilar",
  "paths",
  "profile",
- "rustc-hash",
+ "rustc-hash 2.1.2",
  "stdx",
  "text-size",
 ]
@@ -2557,6 +2667,18 @@ dependencies = [
  "tracing",
  "tracing-core",
  "tracing-log",
+]
+
+[[package]]
+name = "tracing-tree"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b56c62d2c80033cb36fae448730a2f2ef99410fe3ecbffc916681a32f6807dbe"
+dependencies = [
+ "nu-ansi-term",
+ "tracing-core",
+ "tracing-log",
+ "tracing-subscriber",
 ]
 
 [[package]]

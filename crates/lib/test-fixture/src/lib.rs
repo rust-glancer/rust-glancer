@@ -1,3 +1,4 @@
+mod fake_sysroot;
 mod fixture;
 #[doc(hidden)]
 pub mod testonly;

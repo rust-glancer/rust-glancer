@@ -1,6 +1,9 @@
 use expect_test::expect;
 
-use super::utils::{AnalysisQuery, check_analysis_queries, check_analysis_queries_with_sysroot};
+use super::utils::{
+    AnalysisQuery, check_analysis_queries, check_analysis_queries_with_fake_sysroot,
+    check_analysis_queries_with_sysroot,
+};
 
 #[test]
 fn returns_body_expression_types() {
@@ -464,6 +467,71 @@ pub fn use_it(wrapper: Wrapper<Result<Foo>>) {
         &[AnalysisQuery::ty("rejected nested Deref impl", "type_rejected_deref").in_lib("app")],
         expect![[r#"
             rejected nested Deref impl
+            - <unknown>
+        "#]],
+    );
+}
+
+#[test]
+fn rejects_defaulted_deref_impl_params_with_unproven_bounds() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[workspace]
+members = ["core", "app"]
+resolver = "3"
+
+//- /core/Cargo.toml
+[package]
+name = "fake_core"
+version = "0.1.0"
+edition = "2024"
+
+//- /core/src/lib.rs
+pub mod ops {
+    pub trait Deref {
+        type Target;
+    }
+}
+
+//- /app/Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+core = { package = "fake_core", path = "../core" }
+
+//- /app/src/lib.rs
+pub trait Allocator {}
+
+pub struct Global;
+pub struct Id;
+
+pub struct User {
+    pub id: Id,
+}
+
+pub struct Wrapper<T = Global> {
+    inner: T,
+}
+
+impl<T: Allocator> core::ops::Deref for Wrapper<T> {
+    type Target = User;
+}
+
+pub fn use_it(wrapper: Wrapper) {
+    let _id = wrapper.i$type_unproven_default_bound$d;
+}
+"#,
+        &[AnalysisQuery::ty(
+            "unproven defaulted Deref bound",
+            "type_unproven_default_bound",
+        )
+        .in_lib("app")],
+        expect![[r#"
+            unproven defaulted Deref bound
             - <unknown>
         "#]],
     );
@@ -1344,6 +1412,119 @@ pub mod prelude {
 
             for item from sysroot chained method returned slice
             - &nominal struct storage[lib]::crate::ImportData
+        "#]],
+    );
+}
+
+#[test]
+fn shared_fake_sysroot_provides_prelude_and_slice_iteration() {
+    check_analysis_queries_with_fake_sysroot(
+        r#"
+//- /Cargo.toml
+[workspace]
+members = ["storage", "app"]
+resolver = "3"
+
+//- /storage/Cargo.toml
+[package]
+name = "storage"
+version = "0.1.0"
+edition = "2024"
+
+//- /storage/src/lib.rs
+pub struct ImportData;
+
+pub struct DefMap;
+
+impl DefMap {
+    pub fn imports(&self) -> &[ImportData] {
+        missing()
+    }
+}
+
+//- /app/Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+storage = { path = "../storage" }
+
+//- /app/src/lib.rs
+use storage::{DefMap, ImportData};
+
+pub fn missing<T>() -> T {}
+
+pub fn use_it(def_map: &DefMap) {
+    let values: Vec<ImportData> = missing();
+    let _values = val$type_values$ues;
+
+    for import in def_map.imports() {
+        let _import = imp$type_import$ort;
+    }
+}
+"#,
+        &[
+            AnalysisQuery::ty("prelude Vec from fake sysroot", "type_values").in_lib("app"),
+            AnalysisQuery::ty("for item from fake sysroot slice iterator", "type_import")
+                .in_lib("app"),
+        ],
+        expect![[r#"
+            prelude Vec from fake sysroot
+            - nominal struct alloc[lib]::crate::vec::Vec<nominal struct storage[lib]::crate::ImportData>
+
+            for item from fake sysroot slice iterator
+            - &nominal struct storage[lib]::crate::ImportData
+        "#]],
+    );
+}
+
+#[test]
+fn fake_sysroot_iterator_chain_infers_map_and_collect_types() {
+    check_analysis_queries_with_fake_sysroot(
+        r#"
+//- /Cargo.toml
+[workspace]
+members = ["app"]
+resolver = "3"
+
+//- /app/Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+//- /app/src/lib.rs
+pub struct Field;
+pub struct Rendered;
+
+pub fn missing<T>() -> T {}
+
+pub fn bar(_id: usize, _field: &Field) -> Rendered {
+    missing()
+}
+
+pub fn use_it(fields: &[Field]) {
+    let values = fields
+        .iter()
+        .enumerate()
+        .map(|(id, f)| bar(id, f$type_field$))
+        .collect::<Vec<_>>();
+
+    let _values = val$type_values$ues;
+}
+"#,
+        &[
+            AnalysisQuery::ty("map closure field", "type_field").in_lib("app"),
+            AnalysisQuery::ty("collected mapped values", "type_values").in_lib("app"),
+        ],
+        expect![[r#"
+            map closure field
+            - &nominal struct app[lib]::crate::Field
+
+            collected mapped values
+            - nominal struct alloc[lib]::crate::vec::Vec<nominal struct app[lib]::crate::Rendered>
         "#]],
     );
 }

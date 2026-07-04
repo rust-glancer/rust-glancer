@@ -211,6 +211,15 @@ mod tests {
             "the macros alias should collect aggregate timings, counters, and by-name stats",
         );
 
+        let filter = parse_filter(Some("trait-solver"), false)
+            .expect("trait-solver profile alias should parse")
+            .expect("trait-solver profile alias should enable a profile run");
+        assert_eq!(
+            selector_texts(&filter),
+            vec!["ty.trait_selection.chalk"],
+            "the trait-solver alias should collect Chalk trait-selection metrics",
+        );
+
         let filter = parse_filter(Some("memory:def-map"), false)
             .expect("def-map memory profile alias should parse")
             .expect("def-map memory profile alias should enable a profile run");
@@ -240,8 +249,10 @@ mod tests {
             "project.build",
             "project.build.def_map",
             "def_map.macros.by_name",
+            "ty.trait_selection.chalk",
             "default",
             "macros",
+            "trait-solver",
             "memory:def-map",
         ] {
             let filter = parse_filter(Some(selector), false)

@@ -8,6 +8,7 @@ use rg_ir_model::{
 use rg_ir_storage::{DefMapSource, ItemStoreSource};
 use rg_package_store::PackageStoreError;
 use rg_std::{ExpectedUnique, UniqueVec};
+use rg_text::Name;
 use rg_ty::{
     CallArgInference, CallArgMapping, ExpectedNominalTyExt, ExpectedTyExt, Ty, TypeSubst,
     function_generic_shadow_subst,
@@ -130,7 +131,12 @@ impl CallSelfSource {
         match self {
             Self::None => TypeSubst::new(),
             Self::TypePrefix(self_context) | Self::Receiver(self_context) => {
-                self_context.subst.clone()
+                let mut subst = self_context.subst.clone();
+                // Trait and impl signatures may mention the special `Self` type directly. Add it
+                // to the same substitution as ordinary generics so projected call signatures see
+                // `Self::Item` and `Self`-typed params from the selected receiver.
+                subst.push(Name::new("Self"), self_context.self_ty.clone());
+                subst
             }
         }
     }

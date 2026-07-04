@@ -1,5 +1,5 @@
 use rg_ir_model::items::TypeRef;
-use rg_ir_model::{TraitRef, TypeDefRef};
+use rg_ir_model::{FunctionRef, TraitRef, TypeDefRef};
 use rg_std::UniqueVec;
 use rg_text::Name;
 
@@ -35,6 +35,7 @@ pub enum InferTy {
         bounds: UniqueVec<InferOpaqueTraitBound>,
     },
     Closure(ClosureTyId),
+    FunctionItem(FunctionRef),
     Syntax(Box<TypeRef>),
     Nominal(InferNominalTy),
     SelfTy(InferNominalTy),
@@ -59,6 +60,7 @@ impl InferTy {
             | Self::Reference { .. }
             | Self::Opaque { .. }
             | Self::Closure(_)
+            | Self::FunctionItem(_)
             | Self::Syntax(_)
             | Self::Nominal(_)
             | Self::SelfTy(_)
@@ -91,6 +93,7 @@ impl InferTy {
             | InferTy::Never
             | InferTy::Primitive(_)
             | InferTy::Closure(_)
+            | InferTy::FunctionItem(_)
             | InferTy::Syntax(_)
             | InferTy::Unknown => false,
         }
@@ -109,6 +112,7 @@ impl InferTy {
             | (InferTy::Unknown, InferTy::Unknown) => true,
             (InferTy::Primitive(lhs), InferTy::Primitive(rhs)) => lhs == rhs,
             (InferTy::Closure(lhs), InferTy::Closure(rhs)) => lhs == rhs,
+            (InferTy::FunctionItem(lhs), InferTy::FunctionItem(rhs)) => lhs == rhs,
             (InferTy::Tuple(lhs), InferTy::Tuple(rhs)) => lhs.len() == rhs.len(),
             (InferTy::Array { len: lhs_len, .. }, InferTy::Array { len: rhs_len, .. }) => {
                 lhs_len == rhs_len
@@ -148,6 +152,7 @@ impl InferTy {
             | InferTy::Never
             | InferTy::Primitive(_)
             | InferTy::Closure(_)
+            | InferTy::FunctionItem(_)
             | InferTy::Syntax(_)
             | InferTy::Unknown => false,
         }
@@ -174,6 +179,7 @@ impl InferTy {
             | InferTy::Never
             | InferTy::Primitive(_)
             | InferTy::Closure(_)
+            | InferTy::FunctionItem(_)
             | InferTy::Syntax(_) => false,
         }
     }
@@ -201,7 +207,8 @@ impl InferTy {
             | InferTy::Unit
             | InferTy::Never
             | InferTy::Primitive(_)
-            | InferTy::Closure(_) => false,
+            | InferTy::Closure(_)
+            | InferTy::FunctionItem(_) => false,
         }
     }
 }

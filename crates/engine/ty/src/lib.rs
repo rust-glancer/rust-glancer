@@ -12,6 +12,7 @@ mod item_path;
 mod iteration;
 mod member;
 mod primitive_expr;
+mod profile;
 mod trait_selection;
 mod ty;
 
@@ -33,7 +34,11 @@ pub use self::{
     iteration::IterationItemResolver,
     member::{MemberMethodCandidateRef, MemberMethodOrigin, MemberQuery},
     primitive_expr::{ty_for_binary, ty_for_literal, ty_for_unary},
-    trait_selection::{TraitGoal, TraitSelection, TraitSelectionOptions, TraitSelectionQuery},
+    profile::profile_descriptors,
+    trait_selection::{
+        AssocProjectionResult, TraitGoal, TraitSelection, TraitSelectionCache,
+        TraitSelectionOptions, TraitSelectionQuery,
+    },
     ty::{
         ClosureTyId, ExpectedNominalTyExt, ExpectedTyExt, NominalTy, OpaqueTraitBound, Ty,
         TypeSubst,

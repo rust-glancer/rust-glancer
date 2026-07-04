@@ -6,7 +6,9 @@
 
 use expect_test::expect;
 
-use super::utils::{AnalysisQuery, check_analysis_queries};
+use super::utils::{
+    AnalysisQuery, check_analysis_queries, check_analysis_queries_with_fake_sysroot,
+};
 
 #[test]
 fn refines_unsuffixed_numeric_literals_from_let_annotations() {
@@ -830,6 +832,7 @@ pub struct Name;
 pub struct Email;
 pub struct Key;
 pub struct Value;
+pub struct Row;
 
 impl User {
     pub fn name(&self) -> Name {}
@@ -862,11 +865,14 @@ pub fn pairs() -> PairIter {
     core::missing()
 }
 
+pub fn bar(_: usize, _: &User) -> Row {}
+
 pub fn use_it(users: &[User], same_name: SameNameMap) {
     let names = users.iter().map(|user| user$type_map_param$.name()).collect::<Vec<_>>()$type_names$;
     let emails = users.iter().filter_map(|user| user$type_filter_map_param$.email()).collect::<Vec<_>>()$type_emails$;
     let enumerated = users.iter().enumerate().collect::<Vec<_>>()$type_enumerated$;
     let name_pairs = users.iter().enumerate().map(|(index, user)| (index$type_enumerate_index$, user$type_enumerate_user$)).collect::<Vec<_>>();
+    let rows = users.iter().enumerate().map(|(id, f)| bar(id$type_bar_id$, f$type_bar_user$)).collect::<Vec<_>>()$type_rows$;
     let direct_lookup = pairs().collect::<HashMap<_, _>>()$type_direct_lookup$;
     let lookup = users.iter().map(|user| (user.key(), user.value())).collect::<HashMap<_, _>>()$type_lookup$;
     let ambiguous = pairs().collect::<AmbiguousMap<_, _>>()$type_ambiguous$;
@@ -884,6 +890,9 @@ pub fn use_it(users: &[User], same_name: SameNameMap) {
                 .in_lib("app"),
             AnalysisQuery::ty("iterator enumerate map user param", "type_enumerate_user")
                 .in_lib("app"),
+            AnalysisQuery::ty("iterator bar map id param", "type_bar_id").in_lib("app"),
+            AnalysisQuery::ty("iterator bar map user param", "type_bar_user").in_lib("app"),
+            AnalysisQuery::ty("iterator bar map collect result", "type_rows").in_lib("app"),
             AnalysisQuery::ty("direct HashMap collect result", "type_direct_lookup").in_lib("app"),
             AnalysisQuery::ty("mapped HashMap collect result", "type_lookup").in_lib("app"),
             AnalysisQuery::ty("ambiguous HashMap collect result", "type_ambiguous").in_lib("app"),
@@ -912,6 +921,15 @@ pub fn use_it(users: &[User], same_name: SameNameMap) {
             iterator enumerate map user param
             - &nominal struct app[lib]::crate::User
 
+            iterator bar map id param
+            - usize
+
+            iterator bar map user param
+            - &nominal struct app[lib]::crate::User
+
+            iterator bar map collect result
+            - nominal struct fake_core[lib]::crate::Vec<nominal struct app[lib]::crate::Row>
+
             direct HashMap collect result
             - nominal struct fake_core[lib]::crate::HashMap<nominal struct app[lib]::crate::Key, nominal struct app[lib]::crate::Value>
 
@@ -923,6 +941,239 @@ pub fn use_it(users: &[User], same_name: SameNameMap) {
 
             same-name map closure param
             - <unknown>
+        "#]],
+    );
+}
+
+#[test]
+fn projects_realistic_sysroot_iterator_adapters_into_collect_destination() {
+    let ty = |title, marker| {
+        AnalysisQuery::ty(title, marker).in_lib("analysis_realistic_iterator_adapters")
+    };
+
+    check_analysis_queries_with_fake_sysroot(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_realistic_iterator_adapters"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct User;
+pub struct Name;
+pub struct Email;
+pub struct Row;
+pub struct CompletionItem;
+pub struct PackageSlot;
+
+pub struct KeywordCandidate {
+    pub label: &'static str,
+}
+
+pub struct ChangedFile {
+    pub package: PackageSlot,
+}
+
+impl User {
+    pub fn name(&self) -> Name {}
+    pub fn email(&self) -> Option<Email> {}
+    pub fn is_active(&self) -> bool {}
+}
+
+impl KeywordCandidate {
+    pub fn completion_item(&self) -> CompletionItem {}
+}
+
+pub fn bar(_: usize, _: &User) -> Row {}
+pub fn render(user: &User) -> Name {}
+pub fn keyword_candidates() -> &'static [KeywordCandidate] {
+    missing()
+}
+pub fn missing<T>() -> T {}
+
+pub fn use_it(users: &[User], changed_files: &[ChangedFile], bytes: &[u8], prefix: &str) {
+    let names = users.iter().map(|user| user$type_map_param$.name()$type_map_call$).collect::<Vec<_>>()$type_names$;
+    let skipped = users.iter().skip(1).collect::<Vec<_>>()$type_skipped$;
+    let rendered = users.iter().map(render).collect::<Vec<_>>()$type_rendered$;
+    let render_fn = render;
+    let rendered_from_binding = users.iter().map(render_fn).collect::<Vec<_>>()$type_rendered_from_binding$;
+    let owned_users: Vec<User> = missing();
+    let rendered_from_vec = owned_users.iter().map(render).collect::<Vec<_>>()$type_rendered_from_vec$;
+    let byte_refs = bytes.iter().map(|byte| byte$type_identity_map_param$).collect::<Vec<_>>()$type_identity_map$;
+    let packages = changed_files.iter().map(|changed_file| changed_file$type_package_map_param$.package$type_package_field$).collect::<Vec<_>>()$type_packages$;
+    let emails = users.iter().filter_map(|user| user$type_filter_map_param$.email()).collect::<Vec<_>>()$type_emails$;
+    let rows = users.iter().enumerate()$type_enumerate_call$.map(|(id, user)| bar(id$type_bar_id$, user$type_bar_user$)).collect::<Vec<_>>()$type_rows$;
+    let filtered_names = users.iter().filter(|user| user$type_filter_param$.is_active())$type_filter_call$.map(|user| user$type_filtered_map_param$.name()$type_filtered_map_call$).collect::<Vec<_>>()$type_filtered_names$;
+    let completions = keyword_candidates().iter().filter(|candidate| candidate$type_keyword_filter_param$.label$type_keyword_label$.starts_with(prefix))$type_keyword_filter_call$.map(|candidate| candidate$type_keyword_map_param$.completion_item()$type_keyword_map_call$).collect::<Vec<_>>()$type_completions$;
+}
+"#,
+        &[
+            ty("realistic iterator map closure param", "type_map_param"),
+            ty("realistic iterator map closure call", "type_map_call"),
+            ty("realistic iterator map collect result", "type_names"),
+            ty("realistic iterator skip collect result", "type_skipped"),
+            ty(
+                "realistic iterator named function collect result",
+                "type_rendered",
+            ),
+            ty(
+                "realistic iterator function binding collect result",
+                "type_rendered_from_binding",
+            ),
+            ty(
+                "realistic iterator named function vec collect result",
+                "type_rendered_from_vec",
+            ),
+            ty(
+                "realistic iterator identity map closure param",
+                "type_identity_map_param",
+            ),
+            ty(
+                "realistic iterator identity map collect result",
+                "type_identity_map",
+            ),
+            ty(
+                "realistic iterator field-copy map closure param",
+                "type_package_map_param",
+            ),
+            ty(
+                "realistic iterator field-copy map field",
+                "type_package_field",
+            ),
+            ty(
+                "realistic iterator field-copy collect result",
+                "type_packages",
+            ),
+            ty(
+                "realistic iterator filter_map closure param",
+                "type_filter_map_param",
+            ),
+            ty(
+                "realistic iterator filter_map collect result",
+                "type_emails",
+            ),
+            ty(
+                "realistic iterator enumerate call result",
+                "type_enumerate_call",
+            ),
+            ty("realistic iterator enumerate map id", "type_bar_id"),
+            ty("realistic iterator enumerate map user", "type_bar_user"),
+            ty(
+                "realistic iterator enumerate map collect result",
+                "type_rows",
+            ),
+            ty(
+                "realistic iterator filter closure param",
+                "type_filter_param",
+            ),
+            ty("realistic iterator filter call result", "type_filter_call"),
+            ty(
+                "realistic iterator filtered map closure param",
+                "type_filtered_map_param",
+            ),
+            ty(
+                "realistic iterator filtered map closure call",
+                "type_filtered_map_call",
+            ),
+            ty(
+                "realistic iterator filtered map collect result",
+                "type_filtered_names",
+            ),
+            ty("keyword filter closure param", "type_keyword_filter_param"),
+            ty("keyword filter label", "type_keyword_label"),
+            ty("keyword filter call result", "type_keyword_filter_call"),
+            ty("keyword map closure param", "type_keyword_map_param"),
+            ty("keyword map closure call", "type_keyword_map_call"),
+            ty("keyword collect result", "type_completions"),
+        ],
+        expect![[r#"
+            realistic iterator map closure param
+            - &nominal struct analysis_realistic_iterator_adapters[lib]::crate::User
+
+            realistic iterator map closure call
+            - nominal struct analysis_realistic_iterator_adapters[lib]::crate::Name
+
+            realistic iterator map collect result
+            - nominal struct alloc[lib]::crate::vec::Vec<nominal struct analysis_realistic_iterator_adapters[lib]::crate::Name>
+
+            realistic iterator skip collect result
+            - nominal struct alloc[lib]::crate::vec::Vec<&nominal struct analysis_realistic_iterator_adapters[lib]::crate::User>
+
+            realistic iterator named function collect result
+            - nominal struct alloc[lib]::crate::vec::Vec<nominal struct analysis_realistic_iterator_adapters[lib]::crate::Name>
+
+            realistic iterator function binding collect result
+            - nominal struct alloc[lib]::crate::vec::Vec<nominal struct analysis_realistic_iterator_adapters[lib]::crate::Name>
+
+            realistic iterator named function vec collect result
+            - nominal struct alloc[lib]::crate::vec::Vec<nominal struct analysis_realistic_iterator_adapters[lib]::crate::Name>
+
+            realistic iterator identity map closure param
+            - &u8
+
+            realistic iterator identity map collect result
+            - nominal struct alloc[lib]::crate::vec::Vec<&u8>
+
+            realistic iterator field-copy map closure param
+            - &nominal struct analysis_realistic_iterator_adapters[lib]::crate::ChangedFile
+
+            realistic iterator field-copy map field
+            - nominal struct analysis_realistic_iterator_adapters[lib]::crate::PackageSlot
+
+            realistic iterator field-copy collect result
+            - nominal struct alloc[lib]::crate::vec::Vec<nominal struct analysis_realistic_iterator_adapters[lib]::crate::PackageSlot>
+
+            realistic iterator filter_map closure param
+            - &nominal struct analysis_realistic_iterator_adapters[lib]::crate::User
+
+            realistic iterator filter_map collect result
+            - nominal struct alloc[lib]::crate::vec::Vec<nominal struct analysis_realistic_iterator_adapters[lib]::crate::Email>
+
+            realistic iterator enumerate call result
+            - nominal struct core[lib]::crate::iter::adapters::Enumerate<nominal struct core[lib]::crate::slice::Iter<'_, nominal struct analysis_realistic_iterator_adapters[lib]::crate::User>>
+
+            realistic iterator enumerate map id
+            - usize
+
+            realistic iterator enumerate map user
+            - &nominal struct analysis_realistic_iterator_adapters[lib]::crate::User
+
+            realistic iterator enumerate map collect result
+            - nominal struct alloc[lib]::crate::vec::Vec<nominal struct analysis_realistic_iterator_adapters[lib]::crate::Row>
+
+            realistic iterator filter closure param
+            - &&nominal struct analysis_realistic_iterator_adapters[lib]::crate::User
+
+            realistic iterator filter call result
+            - nominal struct core[lib]::crate::iter::adapters::Filter<nominal struct core[lib]::crate::slice::Iter<'_, nominal struct analysis_realistic_iterator_adapters[lib]::crate::User>, closure #64>
+
+            realistic iterator filtered map closure param
+            - &nominal struct analysis_realistic_iterator_adapters[lib]::crate::User
+
+            realistic iterator filtered map closure call
+            - nominal struct analysis_realistic_iterator_adapters[lib]::crate::Name
+
+            realistic iterator filtered map collect result
+            - nominal struct alloc[lib]::crate::vec::Vec<nominal struct analysis_realistic_iterator_adapters[lib]::crate::Name>
+
+            keyword filter closure param
+            - &&nominal struct analysis_realistic_iterator_adapters[lib]::crate::KeywordCandidate
+
+            keyword filter label
+            - &str
+
+            keyword filter call result
+            - nominal struct core[lib]::crate::iter::adapters::Filter<nominal struct core[lib]::crate::slice::Iter<'_, nominal struct analysis_realistic_iterator_adapters[lib]::crate::KeywordCandidate>, closure #78>
+
+            keyword map closure param
+            - &nominal struct analysis_realistic_iterator_adapters[lib]::crate::KeywordCandidate
+
+            keyword map closure call
+            - nominal struct analysis_realistic_iterator_adapters[lib]::crate::CompletionItem
+
+            keyword collect result
+            - nominal struct alloc[lib]::crate::vec::Vec<nominal struct analysis_realistic_iterator_adapters[lib]::crate::CompletionItem>
         "#]],
     );
 }

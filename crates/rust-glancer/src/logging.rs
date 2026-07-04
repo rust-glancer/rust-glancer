@@ -19,6 +19,7 @@ use tracing_subscriber::{EnvFilter, Layer, layer::Context, prelude::*, registry:
 const ENGINE_ID_ENV: &str = "RUST_GLANCER_ENGINE_ID";
 const LOG_SCHEMA: &str = "rust-glancer-log/v1";
 const RUST_GLANCER_SPAN_FIELD_PREFIX: &str = "rg.";
+const DEFAULT_LOG_FILTER: &str = "info,tarpc=warn,chalk_engine=warn,chalk_solve=warn,chalk_ir=warn";
 
 /// Identifies which process emitted an LSP-mode log line.
 ///
@@ -44,7 +45,7 @@ impl LogComponent {
 /// Initializes the logger in a human-readable form.
 pub(crate) fn init_plain_tracing() {
     let filter = EnvFilter::try_from_env("RUST_GLANCER_LOG")
-        .unwrap_or_else(|_| EnvFilter::new("info,tarpc=warn"));
+        .unwrap_or_else(|_| EnvFilter::new(DEFAULT_LOG_FILTER));
     tracing_subscriber::fmt()
         .with_env_filter(filter)
         .with_writer(std::io::stderr)
@@ -56,7 +57,7 @@ pub(crate) fn init_plain_tracing() {
 /// Initializes the structured JSON logger consumed by the editor extension.
 pub(crate) fn init_lsp_tracing(component: LogComponent) {
     let filter = EnvFilter::try_from_env("RUST_GLANCER_LOG")
-        .unwrap_or_else(|_| EnvFilter::new("info,tarpc=warn"));
+        .unwrap_or_else(|_| EnvFilter::new(DEFAULT_LOG_FILTER));
     tracing_subscriber::registry()
         .with(filter)
         .with(JsonLogLayer {

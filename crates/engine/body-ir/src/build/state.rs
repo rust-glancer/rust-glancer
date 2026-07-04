@@ -11,6 +11,7 @@ use rg_ir_storage::{BodyLocalItems, ItemLookupIndex, ItemStore, TargetItemQuery}
 use rg_semantic_ir::SemanticIrReadTxn;
 use rg_std::ExpectedUnique;
 use rg_text::NameInterner;
+use rg_ty::TraitSelectionCache;
 
 use crate::{
     BodyOwner, TargetBodies,
@@ -317,13 +318,22 @@ impl<'target> TargetBodyBuildState<'target> {
             BodyBuildQuerySource::new(def_map, semantic_ir, self.target, &self.body_local_items);
         let target = self.target;
         let target_bodies = &mut *self.target_bodies;
+        let trait_selection_cache = TraitSelectionCache::default();
 
         for (body_idx, body) in target_bodies.bodies_mut().iter_mut().enumerate() {
             let body_ref = BodyRef {
                 target,
                 body: BodyId(body_idx),
             };
-            BodyResolutionPass::new(&source, &source, semantic_index, body_ref, body)?.resolve()?;
+            BodyResolutionPass::new(
+                &source,
+                &source,
+                semantic_index,
+                body_ref,
+                body,
+                trait_selection_cache.clone(),
+            )?
+            .resolve()?;
         }
 
         Ok(())

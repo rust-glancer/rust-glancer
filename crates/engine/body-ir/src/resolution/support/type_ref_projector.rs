@@ -4,7 +4,10 @@
 //! view: `T` should stay as the same `?T` slot that the call result uses, and associated
 //! projections such as `Self::Item` or `S::Item` may need body-local solver evidence.
 
-use rg_ir_model::items::{GenericArg as ItemGenericArg, TypeRef};
+use rg_ir_model::{
+    TraitRef,
+    items::{GenericArg as ItemGenericArg, TypeRef},
+};
 use rg_ir_storage::{DefMapSource, ItemStoreSource};
 use rg_package_store::PackageStoreError;
 use rg_text::Name;
@@ -13,12 +16,22 @@ use rg_ty::{
     inference::{InferGenericArg, InferTy, InferTypeRefProjector, InferTypeSubst},
 };
 
-use crate::resolution::{query::TypeRefResolutionQuery, support::self_associated_type_name};
+use crate::resolution::query::TypeRefResolutionQuery;
 
+use super::self_associated_type_name;
+
+/// Callback for selected-trait `Self::Assoc`, such as `Iterator::Item` in `Iterator::map`.
 type SelfAssociatedTypeProjector<'a> =
     &'a mut dyn FnMut(&str) -> Result<Option<InferTy>, PackageStoreError>;
-type AssociatedTypeProjector<'a> =
-    &'a mut dyn FnMut(&Name, &Name) -> Result<Option<InferTy>, PackageStoreError>;
+/// Callback for impl-generic `T::Assoc`, such as `I::Item` inside an adapter alias.
+///
+/// Qualified syntax like `<I as Iterator>::Item` passes the explicit trait goal. Plain `I::Item`
+/// passes `None`, because the caller has to choose the supporting predicate itself.
+type AssociatedTypeProjector<'a> = &'a mut dyn FnMut(
+    &Name,
+    Option<(TraitRef, Vec<InferGenericArg>)>,
+    &Name,
+) -> Result<Option<InferTy>, PackageStoreError>;
 
 /// Projects written `TypeRef`s using body-local inference and associated projection evidence.
 ///
@@ -26,13 +39,18 @@ type AssociatedTypeProjector<'a> =
 /// ordinary syntax it delegates to `InferTypeRefProjector`, so `Vec<T>` can become `Vec<?T>`.
 /// Callers provide body-local associated projection callbacks. That keeps this component focused
 /// on walking written type syntax and lets obligation code own the solver evidence.
-pub(super) struct BodyTypeRefProjector<'a, 'query, D, I> {
+pub(crate) struct BodyTypeRefProjector<'a, 'query, D, I> {
     subst: &'a InferTypeSubst,
     resolver: &'a TypeRefResolutionQuery<'query, D, I>,
     self_associated_ty: Option<SelfAssociatedTypeProjector<'a>>,
     type_param_associated_ty: Option<AssociatedTypeProjector<'a>>,
 }
 
+/// Result of trying the body-local projection hooks before ordinary type resolution.
+///
+/// This needs three states, not two. `Unsupported` means the syntax definitely asked for
+/// body-local evidence and we failed to prove it. `NotBodyLocal` means the syntax did not need
+/// this layer at all, so ordinary type-ref projection should still run.
 enum LocalProjection {
     Projected(InferTy),
     /// The written shape asked for a body-local associated projection, but we could not prove it.
@@ -63,7 +81,7 @@ where
     D: DefMapSource<Error = PackageStoreError> + Copy,
     I: ItemStoreSource<'query, Error = PackageStoreError> + Copy,
 {
-    pub(super) fn new(
+    pub(crate) fn new(
         subst: &'a InferTypeSubst,
         resolver: &'a TypeRefResolutionQuery<'query, D, I>,
     ) -> Self {
@@ -75,7 +93,7 @@ where
         }
     }
 
-    pub(super) fn with_self_associated_ty(
+    pub(crate) fn with_self_associated_ty(
         mut self,
         projector: SelfAssociatedTypeProjector<'a>,
     ) -> Self {
@@ -83,7 +101,7 @@ where
         self
     }
 
-    pub(super) fn with_type_param_associated_ty(
+    pub(crate) fn with_type_param_associated_ty(
         mut self,
         projector: AssociatedTypeProjector<'a>,
     ) -> Self {
@@ -93,7 +111,7 @@ where
 
     /// Project a written type ref, falling back to ordinary type-ref projection when body-local
     /// associated projection is absent or unsupported.
-    pub(super) fn ty_or_fallback(&mut self, ty: &TypeRef) -> Result<InferTy, PackageStoreError> {
+    pub(crate) fn ty_or_fallback(&mut self, ty: &TypeRef) -> Result<InferTy, PackageStoreError> {
         if let LocalProjection::Projected(projected_ty) = self.project_body_local_ty(ty)? {
             return Ok(projected_ty);
         }
@@ -106,7 +124,7 @@ where
     /// Impl associated aliases use this mode for shapes like `S::Item`: if no support predicate
     /// proves which impl provides `Item`, the whole alias projection must stay unknown rather than
     /// falling back to an ordinary `<unknown>`.
-    pub(super) fn ty_if_supported(
+    pub(crate) fn ty_if_supported(
         &mut self,
         ty: &TypeRef,
     ) -> Result<Option<InferTy>, PackageStoreError> {
@@ -118,7 +136,7 @@ where
     }
 
     /// Project a generic argument while preserving inference slots in type arguments.
-    pub(super) fn generic_arg_or_fallback(
+    pub(crate) fn generic_arg_or_fallback(
         &mut self,
         arg: &ItemGenericArg,
         resolved_arg: &GenericArg,
@@ -178,8 +196,18 @@ where
             && let Some(projector) = self.type_param_associated_ty.as_mut()
         {
             return Ok(LocalProjection::from_attempted_projection(projector(
-                param_name, assoc_name,
+                param_name, None, assoc_name,
             )?));
+        }
+
+        // Check `<T as Trait>::Assoc`.
+        if let TypeRef::QualifiedAssociatedType {
+            self_ty,
+            trait_ty,
+            assoc_name,
+        } = ty
+        {
+            return self.project_qualified_associated_ty(self_ty, trait_ty.as_deref(), assoc_name);
         }
 
         // Check tuple.
@@ -218,6 +246,66 @@ where
         }
 
         Ok(LocalProjection::NotBodyLocal)
+    }
+
+    fn project_qualified_associated_ty(
+        &mut self,
+        self_ty: &TypeRef,
+        trait_ty: Option<&TypeRef>,
+        assoc_name: &Name,
+    ) -> Result<LocalProjection, PackageStoreError> {
+        if self.type_param_associated_ty.is_none() {
+            return Ok(LocalProjection::NotBodyLocal);
+        }
+        let Some(param_name) = self_ty.type_param_name() else {
+            return Ok(LocalProjection::Unsupported);
+        };
+        if self.subst.type_param(param_name.as_str()).is_none() {
+            return Ok(LocalProjection::Unsupported);
+        }
+        let Some(trait_ty) = trait_ty else {
+            return Ok(LocalProjection::Unsupported);
+        };
+        let Some((trait_ref, resolved_args)) = self.resolver.resolve_trait_bound(trait_ty)? else {
+            return Ok(LocalProjection::Unsupported);
+        };
+        let Some(args) = self.project_qualified_trait_args(trait_ty, &resolved_args) else {
+            return Ok(LocalProjection::Unsupported);
+        };
+        let Some(projector) = self.type_param_associated_ty.as_mut() else {
+            return Ok(LocalProjection::NotBodyLocal);
+        };
+
+        Ok(LocalProjection::from_attempted_projection(projector(
+            &param_name,
+            Some((trait_ref, args)),
+            assoc_name,
+        )?))
+    }
+
+    fn project_qualified_trait_args(
+        &self,
+        trait_ty: &TypeRef,
+        resolved_args: &[GenericArg],
+    ) -> Option<Vec<InferGenericArg>> {
+        let TypeRef::Path(path) = trait_ty else {
+            return None;
+        };
+        let segment = path.segments.last()?;
+        if segment.args.len() != resolved_args.len() {
+            return None;
+        }
+
+        Some(
+            segment
+                .args
+                .iter()
+                .zip(resolved_args)
+                .map(|(arg, resolved_arg)| {
+                    InferTypeRefProjector::new(self.subst).generic_arg_from_arg(arg, resolved_arg)
+                })
+                .collect(),
+        )
     }
 
     /// Project tuple fields when at least one field uses body-local evidence.

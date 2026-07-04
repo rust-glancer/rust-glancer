@@ -30,6 +30,14 @@ pub(crate) fn walk_type_ref_paths<'ty>(ty: &'ty TypeRef, visit: &mut impl FnMut(
                 }
             }
         }
+        TypeRef::QualifiedAssociatedType {
+            self_ty, trait_ty, ..
+        } => {
+            walk_type_ref_paths(self_ty, visit);
+            if let Some(trait_ty) = trait_ty {
+                walk_type_ref_paths(trait_ty, visit);
+            }
+        }
         TypeRef::Tuple(types) => {
             for ty in types {
                 walk_type_ref_paths(ty, visit);
