@@ -129,6 +129,7 @@ where
         };
         let self_ty = table.resolve_root_var(&goal.self_ty);
         let applicability = match &self_ty {
+            Ty::InferVar { .. } => return Ok(None),
             // `impl Trait` hides the concrete type, but it is still one concrete type from the
             // caller's point of view. Bind the blanket self param and let predicate checking prove
             // any required bounds from the opaque trait list.

@@ -137,7 +137,7 @@ impl BodyInferenceCtx {
         // descend through the tuple and solve literals or variables nested inside each field.
         self.set_expr_infer_ty(
             expr,
-            Ty::Tuple(fields.iter().map(|field| self.expr_ty(*field)).collect()),
+            Ty::tuple(fields.iter().map(|field| self.expr_ty(*field)).collect()),
         );
     }
 

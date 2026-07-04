@@ -113,6 +113,16 @@ fn treats_equivalent_variable_aliases_as_stable_body_facts() {
 }
 
 #[test]
+fn empty_tuple_expression_is_unit_during_inference() {
+    let mut context = BodyInferenceCtx::new(1, 0);
+
+    context.set_expr_tuple_from_fields(ExprId(0), &[]);
+
+    assert_eq!(context.expr_ty(ExprId(0)), Ty::Unit);
+    assert_eq!(context.finalize_expr_ty(ExprId(0)), Ty::Unit);
+}
+
+#[test]
 fn refreshing_array_shapes_reuses_existing_element_slot() {
     let mut context = BodyInferenceCtx::new(3, 0);
     let first_element = context.table.new_type_var();
