@@ -215,6 +215,7 @@ where
     /// Example: after `B` is projected to `Vec<?T>`, the bound `FromIterator<Self::Item>` becomes
     /// the goal `Vec<?T>: FromIterator<Item>`. Evaluation will later decide whether a unique
     /// visible impl can commit inference-table evidence.
+    #[allow(clippy::too_many_arguments)]
     fn trait_bound_obligation(
         &self,
         inference: &mut BodyInferenceCtx,
@@ -295,6 +296,7 @@ where
     /// In that case we can project `T` and `R` through the selected-call substitution and apply
     /// the same closure-local goal as the normal trait path:
     /// `Closure#n: FnOnce(User) -> R`.
+    #[allow(clippy::too_many_arguments)]
     fn callable_syntax_obligation(
         &self,
         inference: &mut BodyInferenceCtx,

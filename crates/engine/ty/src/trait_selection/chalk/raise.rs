@@ -34,7 +34,7 @@ fn infer_ty_from_chalk_with_vars(
         TyKind::Tuple(_, substitution) => {
             let fields = substitution
                 .iter(INTER)
-                .map(|arg| infer_ty_from_chalk_arg(&arg, variables))
+                .map(|arg| infer_ty_from_chalk_arg(arg, variables))
                 .collect::<Option<Vec<_>>>()?;
             Some(InferTy::Tuple(fields))
         }
@@ -58,7 +58,7 @@ fn infer_ty_from_chalk_with_vars(
         TyKind::Adt(adt_id, substitution) => {
             let args = substitution
                 .iter(INTER)
-                .map(|arg| infer_generic_arg_from_chalk(&arg, variables))
+                .map(|arg| infer_generic_arg_from_chalk(arg, variables))
                 .collect::<Option<Vec<_>>>()?;
             Some(InferTy::Nominal(InferNominalTy {
                 def: adt_id.0,

@@ -176,9 +176,7 @@ impl ChalkTraitSolver {
         let answer_vars = ProjectionAnswerVars::from_subst_args(&projection.variables, subst_args)?;
 
         for (index, var) in projection.variables.iter_project_vars() {
-            let Some(project_arg) = subst_args.get(index) else {
-                return None;
-            };
+            let project_arg = subst_args.get(index)?;
             let GenericArgData::Ty(project_ty) = project_arg.data(INTER) else {
                 return None;
             };
@@ -187,7 +185,7 @@ impl ChalkTraitSolver {
                 &projection.variables,
                 &answer_vars,
             ) {
-                let _ = table.try_unify(&InferTy::Var(var), &evidence).ok()?;
+                table.try_unify(&InferTy::Var(var), &evidence).ok()?;
             }
         }
 

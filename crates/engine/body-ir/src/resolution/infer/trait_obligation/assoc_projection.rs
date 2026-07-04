@@ -387,6 +387,7 @@ where
         Ok(Some(projected_ty))
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn project_impl_qualified_generic_associated_ty(
         &self,
         selection: &mut TraitSelection,

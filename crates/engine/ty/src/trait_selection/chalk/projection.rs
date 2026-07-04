@@ -152,9 +152,7 @@ impl ProjectionAnswerVars {
         // slot. Build that tiny map first, then decode result types through it.
         let mut vars = Vec::new();
         for (index, var) in variables.iter_project_vars() {
-            let Some(project_arg) = subst_args.get(index) else {
-                return None;
-            };
+            let project_arg = subst_args.get(index)?;
             let GenericArgData::Ty(project_ty) = project_arg.data(INTER) else {
                 return None;
             };

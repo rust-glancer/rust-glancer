@@ -407,20 +407,19 @@ where
         impl_data: &rg_ir_model::hir::items::ImplData,
         subst: Option<(&InferTypeSubst, &InferenceTable)>,
     ) -> Option<ChalkTy> {
-        if let Some(name) = impl_data.self_ty.type_param_name() {
-            if let Some(subject) = self.type_param_subject(&name, subst) {
-                return Some(subject);
-            }
+        if let Some(name) = impl_data.self_ty.type_param_name()
+            && let Some(subject) = self.type_param_subject(&name, subst)
+        {
+            return Some(subject);
         }
 
-        if let Some(type_def) = impl_data.resolved_self_ty.as_option().copied() {
-            if let TypeRef::Path(path) = &impl_data.self_ty {
-                let args = self.generic_args_from_final_segment(path, subst)?;
-                return Some(
-                    TyKind::Adt(AdtId(type_def), Substitution::from_iter(INTER, args))
-                        .intern(INTER),
-                );
-            }
+        if let Some(type_def) = impl_data.resolved_self_ty.as_option().copied()
+            && let TypeRef::Path(path) = &impl_data.self_ty
+        {
+            let args = self.generic_args_from_final_segment(path, subst)?;
+            return Some(
+                TyKind::Adt(AdtId(type_def), Substitution::from_iter(INTER, args)).intern(INTER),
+            );
         }
 
         self.lower_type_ref(&impl_data.self_ty, subst)
