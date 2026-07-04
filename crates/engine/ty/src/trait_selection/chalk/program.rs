@@ -28,8 +28,8 @@ use rg_text::Name;
 
 use super::interner::{ChalkDefId, RgChalkInterner};
 use super::lower::{
-    ChalkLowerer, GenericBinderEnv, TraitNameIndex, adt_datum, chalk_assoc_type_id,
-    chalk_assoc_type_value_id, chalk_impl_id, chalk_trait_id, stub_trait_datum, unit_ty,
+    ChalkLowerer, GenericBinderEnv, adt_datum, chalk_assoc_type_id, chalk_assoc_type_value_id,
+    chalk_impl_id, chalk_trait_id, stub_trait_datum, unit_ty,
 };
 use super::projection::ProjectionAnswerVars;
 use super::raise;
@@ -85,7 +85,6 @@ impl ChalkTraitSolver {
         let binders = GenericBinderEnv::for_impl(&impl_data.generics)?;
         let lowerer = ChalkLowerer::new(
             item_paths,
-            &self.program.trait_names,
             TypePathContext {
                 module: impl_data.owner,
                 impl_ref: Some(trait_impl.impl_ref),
@@ -130,7 +129,7 @@ impl ChalkTraitSolver {
     {
         let assoc_type_ref = self.program.associated_ty_ref(goal.trait_ref, assoc_name)?;
         let binders = GenericBinderEnv::empty();
-        let lowerer = ChalkLowerer::new(item_paths, &self.program.trait_names, context, &binders);
+        let lowerer = ChalkLowerer::new(item_paths, context, &binders);
         let projection = lowerer.projection_alias(assoc_type_ref, goal, table)?;
         // Ask Chalk for the one existential result type in:
         //
@@ -208,7 +207,6 @@ impl ChalkTraitSolver {
 
 #[derive(Debug)]
 struct ChalkProgram {
-    trait_names: TraitNameIndex,
     traits: HashMap<TraitRef, Arc<TraitDatum<RgChalkInterner>>>,
     trait_arities: HashMap<TraitRef, usize>,
     associated_tys: HashMap<TypeAliasRef, Arc<AssociatedTyDatum<RgChalkInterner>>>,
@@ -231,7 +229,6 @@ impl ChalkProgram {
         I: ItemStoreSource<'query>,
     {
         let mut program = Self {
-            trait_names: TraitNameIndex::new(),
             traits: HashMap::new(),
             trait_arities: HashMap::new(),
             associated_tys: HashMap::new(),
@@ -247,17 +244,9 @@ impl ChalkProgram {
         let visible_stores = target_items.visible_stores()?;
         for store in &visible_stores {
             for (trait_ref, trait_data) in store.traits_with_refs() {
-                program.trait_names.push(trait_data.name.clone(), trait_ref);
-            }
-        }
-
-        let trait_names = program.trait_names.clone();
-        for store in &visible_stores {
-            for (trait_ref, trait_data) in store.traits_with_refs() {
                 let binders = GenericBinderEnv::empty();
                 let lowerer = ChalkLowerer::new(
                     item_paths,
-                    &trait_names,
                     TypePathContext::module(trait_data.owner),
                     &binders,
                 );
@@ -279,7 +268,6 @@ impl ChalkProgram {
             }
         }
 
-        let trait_names = program.trait_names.clone();
         let associated_ty_by_trait_name = program.associated_ty_by_trait_name.clone();
         for store in &visible_stores {
             for (impl_ref, impl_data) in store.impls_with_refs() {
@@ -289,7 +277,6 @@ impl ChalkProgram {
                 let binders = GenericBinderEnv::empty();
                 let lowerer = ChalkLowerer::new(
                     item_paths,
-                    &trait_names,
                     TypePathContext {
                         module: impl_data.owner,
                         impl_ref: Some(impl_ref),

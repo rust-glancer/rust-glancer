@@ -15,8 +15,7 @@
 use rg_ir_model::hir::items::ImplData;
 use rg_ir_model::items::{TypeBound, TypeRef, WherePredicate};
 use rg_ir_model::{Path, TraitApplicability, TraitRef, TypePathResolution};
-use rg_ir_storage::{DefMapSource, ItemStoreSource, TargetItemQuery, TypePathContext};
-use rg_std::ExpectedUnique;
+use rg_ir_storage::{DefMapSource, ItemStoreSource, TypePathContext};
 
 use crate::ItemPathQuery;
 use crate::inference::{InferTy, InferTypeSubst, InferenceTable};
@@ -29,7 +28,6 @@ pub(super) enum ImplPredicateProof {
 
 pub(super) struct ImplPredicateProver<'prover, 'query, D, I> {
     item_paths: &'prover ItemPathQuery<'query, D, I>,
-    target_items: &'prover TargetItemQuery<'query, D, I>,
 }
 
 impl<'prover, 'query, D, I> ImplPredicateProver<'prover, 'query, D, I>
@@ -37,14 +35,8 @@ where
     D: DefMapSource<Error = I::Error>,
     I: ItemStoreSource<'query>,
 {
-    pub(super) fn new(
-        item_paths: &'prover ItemPathQuery<'query, D, I>,
-        target_items: &'prover TargetItemQuery<'query, D, I>,
-    ) -> Self {
-        Self {
-            item_paths,
-            target_items,
-        }
+    pub(super) fn new(item_paths: &'prover ItemPathQuery<'query, D, I>) -> Self {
+        Self { item_paths }
     }
 
     pub(super) fn prove_all_from_opaque_bounds(
@@ -161,27 +153,7 @@ where
         {
             return Ok(Some(trait_ref));
         }
-        let Some(name) = path.single_name() else {
-            return Ok(None);
-        };
-
-        // Fixture and generated contexts sometimes preserve a plain trait name even when the
-        // source module cannot resolve it. Chalk already has the same unique-name escape hatch;
-        // keep this local proof aligned so opaque bounds do not fall through only because of test
-        // or generated-code path shape.
-        //
-        // TODO: make the resolver tell us when this fallback is allowed. Production source paths
-        // should eventually fail closed when the trait path did not resolve in scope.
-        let mut traits = ExpectedUnique::new();
-        for store in self.target_items.visible_stores()? {
-            for (trait_ref, trait_data) in store.traits_with_refs() {
-                if trait_data.name.as_str() == name.as_str() {
-                    traits.push(trait_ref);
-                }
-            }
-        }
-
-        Ok(traits.into_option())
+        Ok(None)
     }
 }
 

@@ -648,7 +648,10 @@ where
         let TypeRef::Path(path) = trait_ty else {
             return Ok(None);
         };
-        let Some(trait_ref) = self.resolve_trait_path_or_unique_visible_name(context, path)? else {
+        let TypePathResolution::Trait(trait_ref) = self
+            .item_paths
+            .resolve_type_path(context, &Path::from_type_path(path))?
+        else {
             return Ok(None);
         };
         let Some(segment) = path.segments.last() else {
@@ -674,41 +677,6 @@ where
             applicability,
             table,
         }))
-    }
-
-    fn resolve_trait_path_or_unique_visible_name(
-        &self,
-        context: TypePathContext,
-        path: &rg_ir_model::items::TypePath,
-    ) -> Result<Option<TraitRef>, I::Error> {
-        if let TypePathResolution::Trait(trait_ref) = self
-            .item_paths
-            .resolve_type_path(context, &Path::from_type_path(path))?
-        {
-            return Ok(Some(trait_ref));
-        }
-        let Some(name) = path.single_name() else {
-            return Ok(None);
-        };
-
-        // Some test and generated contexts can carry a trait path that does not resolve through
-        // the ordinary source module, while the trait itself is still visible in the target. Keep
-        // that fallback unique and explicit instead of accepting whichever same-named trait we
-        // happen to see first.
-        //
-        // TODO: gate this escape hatch to resolver-generated paths once those contexts carry an
-        // explicit marker. In ordinary source code, a missing import should not silently become
-        // evidence from a same-named visible trait.
-        let mut traits = ExpectedUnique::new();
-        for store in self.target_items.visible_stores()? {
-            for (trait_ref, trait_data) in store.traits_with_refs() {
-                if trait_data.name.as_str() == name.as_str() {
-                    traits.push(trait_ref);
-                }
-            }
-        }
-
-        Ok(traits.into_option())
     }
 
     fn project_associated_generic_arg(

@@ -22,7 +22,6 @@ use rg_ir_model::{
     hir::items::TypeAliasData,
 };
 use rg_ir_storage::{DefMapSource, ItemStoreSource, TypePathContext};
-use rg_std::ExpectedUnique;
 use rg_text::Name;
 
 use super::interner::{ChalkDefId, RgChalkInterner};
@@ -35,32 +34,6 @@ pub(super) type ChalkTy = chalk_ir::Ty<RgChalkInterner>;
 pub(super) type ChalkGoal = Goal<RgChalkInterner>;
 
 const INTER: RgChalkInterner = RgChalkInterner;
-
-#[derive(Debug, Clone)]
-pub(super) struct TraitNameIndex {
-    traits_by_name: HashMap<Name, Vec<TraitRef>>,
-}
-
-impl TraitNameIndex {
-    pub(super) fn new() -> Self {
-        Self {
-            traits_by_name: HashMap::new(),
-        }
-    }
-
-    pub(super) fn push(&mut self, name: Name, trait_ref: TraitRef) {
-        self.traits_by_name.entry(name).or_default().push(trait_ref);
-    }
-
-    fn resolve_single(&self, name: &Name) -> Option<TraitRef> {
-        let traits = self.traits_by_name.get(name)?;
-        let mut resolved = ExpectedUnique::new();
-        for trait_ref in traits {
-            resolved.push(*trait_ref);
-        }
-        resolved.into_option()
-    }
-}
 
 #[derive(Debug, Clone)]
 pub(super) struct GenericBinderEnv {
@@ -149,7 +122,6 @@ impl GenericBinderEnv {
 
 pub(super) struct ChalkLowerer<'lower, 'query, D, I> {
     item_paths: &'lower ItemPathQuery<'query, D, I>,
-    trait_names: &'lower TraitNameIndex,
     associated_ty_by_trait_name: Option<&'lower HashMap<(TraitRef, Name), TypeAliasRef>>,
     context: TypePathContext,
     binders: &'lower GenericBinderEnv,
@@ -162,13 +134,11 @@ where
 {
     pub(super) fn new(
         item_paths: &'lower ItemPathQuery<'query, D, I>,
-        trait_names: &'lower TraitNameIndex,
         context: TypePathContext,
         binders: &'lower GenericBinderEnv,
     ) -> Self {
         Self {
             item_paths,
-            trait_names,
             associated_ty_by_trait_name: None,
             context,
             binders,
@@ -186,7 +156,6 @@ where
     fn with_binders<'a>(&'a self, binders: &'a GenericBinderEnv) -> ChalkLowerer<'a, 'query, D, I> {
         ChalkLowerer {
             item_paths: self.item_paths,
-            trait_names: self.trait_names,
             associated_ty_by_trait_name: self.associated_ty_by_trait_name,
             context: self.context,
             binders,
@@ -771,11 +740,7 @@ where
         {
             return Some(trait_ref);
         }
-        let name = path.single_name()?;
-        // TODO: this unique-name fallback exists for fixture/generated paths that skip ordinary
-        // module resolution. Once those paths are marked explicitly, avoid using it for unresolved
-        // production source paths.
-        self.trait_names.resolve_single(name)
+        None
     }
 
     fn primitive_ty(&self, primitive: PrimitiveTy) -> Option<ChalkTy> {

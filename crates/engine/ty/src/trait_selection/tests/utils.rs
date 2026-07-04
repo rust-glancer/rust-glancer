@@ -12,13 +12,14 @@ use rg_ir_model::items::{
     VisibilityLevel, WherePredicate,
 };
 use rg_ir_model::{
-    AssocItemId, DefMapRef, FileId, ImplId, ItemOwner, LocalDefId, LocalDefRef, LocalImplId,
-    LocalImplRef, ModuleId, ModuleRef, PackageSlot, Span, StructId, TargetId, TargetRef, TextSpan,
-    TraitApplicability, TraitId, TraitRef, TypeAliasId, TypeDefId, TypeDefRef,
+    AssocItemId, DefId, DefMapRef, FileId, ImplId, ItemId, ItemOwner, LocalDefId, LocalDefRef,
+    LocalImplId, LocalImplRef, ModuleId, ModuleRef, PackageSlot, Span, StructId, TargetId,
+    TargetRef, TextSpan, TraitApplicability, TraitId, TraitRef, TypeAliasId, TypeDefId, TypeDefRef,
 };
 use rg_ir_storage::{
-    DefMap, DefMapSource, ItemLookupIndex, ItemStore, ItemStoreBuilder, ItemStoreSource,
-    TargetItemQuery, TypePathContext,
+    DefMap, DefMapBuilder, DefMapSource, ItemLookupIndex, ItemStore, ItemStoreBuilder,
+    ItemStoreSource, LocalDefData, LocalDefKind, ModuleData, ModuleOrigin, ModuleScopeBuilder,
+    Namespace, ScopeBinding, ScopeBindingOrigin, TargetItemQuery, TypePathContext,
 };
 use rg_std::ExpectedUnique;
 use rg_text::Name;
@@ -30,6 +31,7 @@ use crate::inference::{
 use crate::{GenericArg, ItemPathQuery, NominalTy, OpaqueTraitBound, PrimitiveTy, Ty};
 
 pub(super) struct TraitSelectionFixture {
+    def_map: DefMap,
     pub(super) store: ItemStore,
     pub(super) target: TargetRef,
     lookup_index: ItemLookupIndex,
@@ -65,8 +67,8 @@ impl From<&str> for TraitSelectionFixture {
 impl DefMapSource for TraitSelectionFixture {
     type Error = Infallible;
 
-    fn def_map_for_origin(&self, _origin: DefMapRef) -> Result<Option<&DefMap>, Self::Error> {
-        Ok(None)
+    fn def_map_for_origin(&self, origin_ref: DefMapRef) -> Result<Option<&DefMap>, Self::Error> {
+        Ok((origin_ref == origin()).then_some(&self.def_map))
     }
 
     fn extern_root(
@@ -163,10 +165,14 @@ fn dummy_source() -> ItemSource {
     }
 }
 
-pub(super) fn path_ty(path: &str, args: Vec<ItemGenericArg>) -> TypeRef {
-    let span = Span {
+fn fixture_span() -> Span {
+    Span {
         text: TextSpan { start: 0, end: 0 },
-    };
+    }
+}
+
+pub(super) fn path_ty(path: &str, args: Vec<ItemGenericArg>) -> TypeRef {
+    let span = fixture_span();
     let mut segments = path
         .split("::")
         .map(|name| TypePathSegment {
@@ -294,25 +300,118 @@ pub(super) fn type_alias_data(
 }
 
 fn fixture_with_traits_impls_aliases_and_structs(
-    traits: Vec<TraitData>,
+    mut traits: Vec<TraitData>,
     impls: Vec<ImplData>,
     type_aliases: Vec<TypeAliasData>,
-    structs: Vec<StructData>,
+    mut structs: Vec<StructData>,
 ) -> TraitSelectionFixture {
-    let mut builder = ItemStoreBuilder::new(origin(), 0);
+    let mut def_map_builder = DefMapBuilder::new(target());
+    let root_module = def_map_builder.alloc_module(ModuleData {
+        name: None,
+        name_span: None,
+        docs: None,
+        parent: None,
+        children: Vec::new(),
+        local_defs: Vec::new(),
+        impls: Vec::new(),
+        imports: Vec::new(),
+        unresolved_imports: Vec::new(),
+        scope: Default::default(),
+        origin: ModuleOrigin::Root { file_id: FileId(0) },
+    });
+    debug_assert_eq!(root_module, module().module);
+
+    let mut scope = ModuleScopeBuilder::default();
+    let mut local_defs = Vec::new();
+
+    // The fixture language describes semantic items directly, but trait selection resolves names
+    // through `ItemPathQuery` just like production code. Build the smallest root module scope that
+    // can resolve declared structs and traits instead of relying on a production same-name
+    // fallback.
+    for struct_data in &mut structs {
+        let local_def = def_map_builder.alloc_local_def(LocalDefData {
+            module: root_module,
+            name: struct_data.name.clone(),
+            kind: LocalDefKind::Struct,
+            visibility: VisibilityLevel::Public,
+            source: struct_data.source,
+            file_id: FileId(0),
+            name_span: None,
+            span: fixture_span(),
+        });
+        let local_def_ref = LocalDefRef {
+            origin: origin(),
+            local_def,
+        };
+        struct_data.local_def = local_def_ref;
+        local_defs.push(local_def);
+        scope.insert_binding(
+            &struct_data.name,
+            Namespace::Types,
+            ScopeBinding {
+                def: DefId::Local(local_def_ref),
+                visibility: VisibilityLevel::Public,
+                owner: module(),
+                origin: ScopeBindingOrigin::Direct,
+            },
+        );
+    }
+
+    for trait_data in &mut traits {
+        let local_def = def_map_builder.alloc_local_def(LocalDefData {
+            module: root_module,
+            name: trait_data.name.clone(),
+            kind: LocalDefKind::Trait,
+            visibility: VisibilityLevel::Public,
+            source: trait_data.source,
+            file_id: FileId(0),
+            name_span: None,
+            span: fixture_span(),
+        });
+        let local_def_ref = LocalDefRef {
+            origin: origin(),
+            local_def,
+        };
+        trait_data.local_def = local_def_ref;
+        local_defs.push(local_def);
+        scope.insert_binding(
+            &trait_data.name,
+            Namespace::Types,
+            ScopeBinding {
+                def: DefId::Local(local_def_ref),
+                visibility: VisibilityLevel::Public,
+                owner: module(),
+                origin: ScopeBindingOrigin::Direct,
+            },
+        );
+    }
+
+    let module_data = def_map_builder
+        .module_mut(root_module)
+        .expect("fixture root module should exist");
+    let local_def_count = local_defs.len();
+    module_data.local_defs = local_defs;
+    module_data.scope = scope.freeze();
+
+    let mut builder = ItemStoreBuilder::new(origin(), local_def_count);
     for struct_data in structs {
-        builder.structs.alloc(struct_data);
+        let local_def = struct_data.local_def.local_def;
+        let struct_id = builder.structs.alloc(struct_data);
+        builder.set_local_item(local_def, ItemId::Struct(struct_id));
     }
     for type_alias_data in type_aliases {
         builder.type_aliases.alloc(type_alias_data);
     }
     for trait_data in traits {
-        builder.traits.alloc(trait_data);
+        let local_def = trait_data.local_def.local_def;
+        let trait_id = builder.traits.alloc(trait_data);
+        builder.set_local_item(local_def, ItemId::Trait(trait_id));
     }
     for impl_data in impls {
         builder.impls.alloc(impl_data);
     }
     let mut fixture = TraitSelectionFixture {
+        def_map: def_map_builder.build(),
         store: builder.build(),
         target: target(),
         lookup_index: ItemLookupIndex::default(),

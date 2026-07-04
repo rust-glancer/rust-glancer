@@ -317,7 +317,7 @@ where
                 }));
             }
 
-            match ImplPredicateProver::new(item_paths, target_items)
+            match ImplPredicateProver::new(item_paths)
                 .prove_all_from_opaque_bounds(impl_data, &subst, &table)?
             {
                 ImplPredicateProof::Proven(predicate_applicability) => {
