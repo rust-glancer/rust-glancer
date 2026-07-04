@@ -1175,7 +1175,7 @@ impl TraitSelectionSnapshot {
             let item_paths = ItemPathQuery::new(&self.fixture, &self.fixture);
             let target_items =
                 TargetItemQuery::new(&self.fixture, &self.fixture, self.fixture.target);
-            let solver = ChalkTraitSolver::new(&item_paths, &target_items)
+            let mut solver = ChalkTraitSolver::new(&item_paths, &target_items)
                 .expect("Chalk fixture solver should build");
             solver.normalize_assoc_type(
                 &item_paths,

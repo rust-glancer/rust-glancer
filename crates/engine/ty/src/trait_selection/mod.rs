@@ -89,7 +89,7 @@ impl TraitSelectionCache {
             *solver = Some(ChalkTraitSolver::new(item_paths, target_items)?);
         }
         let solver = solver
-            .as_ref()
+            .as_mut()
             .expect("solver should be initialized before use");
         Ok(solver.impl_bounds_applicability(item_paths, trait_impl, impl_data, subst, table))
     }
@@ -115,7 +115,7 @@ impl TraitSelectionCache {
             *solver = Some(ChalkTraitSolver::new(item_paths, target_items)?);
         }
         let solver = solver
-            .as_ref()
+            .as_mut()
             .expect("solver should be initialized before use");
         Ok(solver.normalize_assoc_type(item_paths, context, goal, assoc_name, table))
     }

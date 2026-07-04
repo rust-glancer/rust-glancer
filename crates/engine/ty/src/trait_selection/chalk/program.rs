@@ -43,6 +43,8 @@ const UNKNOWN_ADT_VARIANCE_SLOTS: usize = 32;
 
 pub(crate) struct ChalkTraitSolver {
     program: ChalkProgram,
+    impl_bounds_solver: SLGSolver<RgChalkInterner>,
+    assoc_projection_solver: SLGSolver<RgChalkInterner>,
 }
 
 impl ChalkTraitSolver {
@@ -58,11 +60,18 @@ impl ChalkTraitSolver {
         let started = Instant::now();
         let program = ChalkProgram::build(item_paths, target_items);
         crate::profile::metric::PROGRAM_BUILD_TIME.record(started.elapsed());
-        program.map(|program| Self { program })
+        program.map(|program| Self {
+            program,
+            // Impl-bound checks only need to know whether a candidate obligation has at least one
+            // answer, while associated projection needs the substitution for the projected type.
+            // Keep separate SLG forests so the two goal modes do not share different answer limits.
+            impl_bounds_solver: SLGSolver::new(SOLVER_MAX_SIZE, Some(1)),
+            assoc_projection_solver: SLGSolver::new(SOLVER_MAX_SIZE, None),
+        })
     }
 
     pub(crate) fn impl_bounds_applicability<'query, D, I>(
-        &self,
+        &mut self,
         item_paths: &ItemPathQuery<'query, D, I>,
         trait_impl: TraitImplRef,
         impl_data: &ImplData,
@@ -90,11 +99,12 @@ impl ChalkTraitSolver {
 
         let mut applicability = TraitApplicability::Yes;
         for goal in goals {
-            let mut solver = SLGSolver::new(SOLVER_MAX_SIZE, Some(1));
             let canonical_goal = goal.into_closed_goal(INTER);
             crate::profile::metric::SOLVER_GOALS.inc();
             let started = Instant::now();
-            let solution = solver.solve(&self.program, &canonical_goal);
+            let solution = self
+                .impl_bounds_solver
+                .solve(&self.program, &canonical_goal);
             crate::profile::metric::SOLVER_GOAL_TIME_BY_KIND
                 .record("impl_bounds", started.elapsed());
             let solution = solution?;
@@ -107,7 +117,7 @@ impl ChalkTraitSolver {
     }
 
     pub(crate) fn normalize_assoc_type<'query, D, I>(
-        &self,
+        &mut self,
         item_paths: &ItemPathQuery<'query, D, I>,
         context: TypePathContext,
         goal: &crate::trait_selection::TraitGoal,
@@ -142,11 +152,12 @@ impl ChalkTraitSolver {
         )
         .intern(INTER);
 
-        let mut solver = SLGSolver::new(SOLVER_MAX_SIZE, None);
         let canonical_goal = goal.into_peeled_goal(INTER);
         crate::profile::metric::SOLVER_GOALS.inc();
         let started = Instant::now();
-        let solution = solver.solve(&self.program, &canonical_goal)?;
+        let solution = self
+            .assoc_projection_solver
+            .solve(&self.program, &canonical_goal)?;
         crate::profile::metric::SOLVER_GOAL_TIME_BY_KIND
             .record("assoc_projection", started.elapsed());
         if solution.is_ambig() {
