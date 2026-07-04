@@ -1,10 +1,7 @@
 use std::marker::PhantomData;
 
 use rg_ir_model::{BindingId, ExprId};
-use rg_ty::{
-    Ty,
-    inference::{InferTy, InferenceTable},
-};
+use rg_ty::{Ty, inference::InferenceTable};
 
 pub(super) trait InferenceFactId: Copy {
     fn index(self) -> usize;
@@ -24,32 +21,32 @@ impl InferenceFactId for BindingId {
 
 /// Body-owned expression or binding inference facts.
 pub(super) struct InferenceFacts<Id> {
-    facts: Vec<InferTy>,
+    facts: Vec<Ty>,
     _id: PhantomData<fn(Id)>,
 }
 
 impl<Id: InferenceFactId> InferenceFacts<Id> {
     pub(super) fn new(count: usize) -> Self {
         Self {
-            facts: vec![InferTy::Unknown; count],
+            facts: vec![Ty::Unknown; count],
             _id: PhantomData,
         }
     }
 
-    pub(super) fn get(&self, id: Id) -> InferTy {
+    pub(super) fn get(&self, id: Id) -> Ty {
         self.get_ref(id).clone()
     }
 
-    pub(super) fn get_ref(&self, id: Id) -> &InferTy {
+    pub(super) fn get_ref(&self, id: Id) -> &Ty {
         &self.facts[id.index()]
     }
 
-    pub(super) fn root_resolved(&self, table: &InferenceTable, id: Id) -> InferTy {
+    pub(super) fn root_resolved(&self, table: &InferenceTable, id: Id) -> Ty {
         table.resolve_root_var(self.get_ref(id))
     }
 
     /// Store a fact if its canonical form changed.
-    pub(super) fn set(&mut self, table: &InferenceTable, id: Id, ty: InferTy) -> bool {
+    pub(super) fn set(&mut self, table: &InferenceTable, id: Id, ty: Ty) -> bool {
         let previous_ty = table.canonicalize(self.get_ref(id));
         let canonical_ty = table.canonicalize(&ty);
         if previous_ty == canonical_ty {
@@ -65,7 +62,7 @@ impl<Id: InferenceFactId> InferenceFacts<Id> {
         &mut self,
         table: &InferenceTable,
         id: Id,
-        ty: InferTy,
+        ty: Ty,
     ) -> bool {
         let previous_ty = table.canonicalize(self.get_ref(id));
         let canonical_ty = table.canonicalize(&ty);

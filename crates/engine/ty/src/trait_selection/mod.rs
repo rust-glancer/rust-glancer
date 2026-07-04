@@ -25,22 +25,22 @@ pub use self::header::TraitSelectionOptions;
 use self::matcher::CandidateMatcher;
 use self::predicate::{ImplPredicateProof, ImplPredicateProver};
 pub use self::projection::AssocProjectionResult;
-use crate::ItemPathQuery;
-use crate::inference::{InferGenericArg, InferTy, InferTypeSubst, InferenceTable};
+use crate::inference::{InferenceTable, InferenceTypeSubst};
+use crate::{GenericArg, ItemPathQuery, Ty};
 
 /// A shallow trait goal such as `Vec<?T>: FromIterator<User>`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TraitGoal {
-    pub self_ty: InferTy,
+    pub self_ty: Ty,
     pub trait_ref: TraitRef,
-    pub args: Vec<InferGenericArg>,
+    pub args: Vec<GenericArg>,
 }
 
 /// One visible impl whose header is compatible with a trait goal.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TraitSelection {
     pub trait_impl: TraitImplRef,
-    pub subst: InferTypeSubst,
+    pub subst: InferenceTypeSubst,
     pub applicability: TraitApplicability,
     /// Trial table after applying this candidate's direct equality evidence.
     ///
@@ -74,7 +74,7 @@ impl TraitSelectionCache {
         target_items: &TargetItemQuery<'query, D, I>,
         trait_impl: TraitImplRef,
         impl_data: &rg_ir_model::hir::items::ImplData,
-        subst: &InferTypeSubst,
+        subst: &InferenceTypeSubst,
         table: &InferenceTable,
     ) -> Result<Option<TraitApplicability>, I::Error>
     where
@@ -297,7 +297,7 @@ where
         }
 
         let mut table = table.clone();
-        let mut subst = InferTypeSubst::new();
+        let mut subst = InferenceTypeSubst::new();
         let matcher = CandidateMatcher::new(item_paths);
         let Some(applicability) =
             matcher.match_goal(goal, trait_impl, impl_data, &mut table, &mut subst)?

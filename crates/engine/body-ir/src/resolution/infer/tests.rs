@@ -2,9 +2,7 @@ use rg_ir_model::{
     BindingId, DefMapRef, ExprId, PackageSlot, StructId, TargetRef, TypeDefId, TypeDefRef,
 };
 use rg_parse::TargetId;
-use rg_ty::{
-    ClosureTyId, GenericArg, NominalTy, PrimitiveTy, Ty, UnsignedIntTy, inference::InferTy,
-};
+use rg_ty::{ClosureTyId, GenericArg, NominalTy, PrimitiveTy, Ty, UnsignedIntTy};
 
 use super::context::BodyInferenceCtx;
 
@@ -49,7 +47,7 @@ fn stores_closure_types_as_body_local_facts() {
 
     assert_eq!(
         context.expr_ty(ExprId(0)),
-        InferTy::Closure(ClosureTyId::new(ExprId(0)))
+        Ty::Closure(ClosureTyId::new(ExprId(0)))
     );
     assert_eq!(context.finalize_expr_ty(ExprId(0)), closure_ty(0));
 }
@@ -64,7 +62,7 @@ fn copies_closure_types_through_binding_reads() {
     assert!(context.set_expr_from_binding(ExprId(1), BindingId(0)));
     assert_eq!(
         context.expr_ty(ExprId(1)),
-        InferTy::Closure(ClosureTyId::new(ExprId(0)))
+        Ty::Closure(ClosureTyId::new(ExprId(0)))
     );
     assert_eq!(context.finalize_expr_ty(ExprId(1)), closure_ty(0));
 }
@@ -75,11 +73,11 @@ fn creates_body_inference_context_with_body_sized_slots() {
 
     let var = context.table.new_type_var();
 
-    assert_eq!(context.expr_ty(ExprId(0)), InferTy::Unknown);
-    assert_eq!(context.expr_ty(ExprId(1)), InferTy::Unknown);
-    assert_eq!(context.binding_ty(BindingId(0)), InferTy::Unknown);
-    assert_eq!(context.binding_ty(BindingId(1)), InferTy::Unknown);
-    assert_eq!(context.binding_ty(BindingId(2)), InferTy::Unknown);
+    assert_eq!(context.expr_ty(ExprId(0)), Ty::Unknown);
+    assert_eq!(context.expr_ty(ExprId(1)), Ty::Unknown);
+    assert_eq!(context.binding_ty(BindingId(0)), Ty::Unknown);
+    assert_eq!(context.binding_ty(BindingId(1)), Ty::Unknown);
+    assert_eq!(context.binding_ty(BindingId(2)), Ty::Unknown);
     assert_eq!(context.table.finalize(&var), Ty::Unknown);
 }
 

@@ -10,8 +10,8 @@ use rg_ir_model::{
 use rg_ir_storage::{DefMapSource, ItemStoreSource};
 use rg_package_store::PackageStoreError;
 use rg_ty::{
-    NominalTy, Ty,
-    inference::{InferGenericArg, InferTy, InferTypeRefProjector, InferTypeSubst},
+    GenericArg, NominalTy, Ty,
+    inference::{InferenceTypeRefProjector, InferenceTypeSubst},
 };
 
 use crate::{ir::ExprKind, resolution::BodyResolutionContext};
@@ -92,7 +92,7 @@ where
             .generic_params_for_type_def(target.owner_ty().def)?
             .cloned()
         else {
-            return Ok(inference.set_expr_infer_ty(expr, InferTy::from_ty(&fallback_ty)));
+            return Ok(inference.set_expr_infer_ty(expr, fallback_ty.clone()));
         };
 
         let Some(subst) = self.infer_subst_for_owner(inference, base, target.owner_ty(), &generics)
@@ -101,7 +101,7 @@ where
         };
 
         let projected_ty =
-            InferTypeRefProjector::new(&subst).ty_from_type_ref(field_ty_ref, &fallback_ty);
+            InferenceTypeRefProjector::new(&subst).ty_from_type_ref(field_ty_ref, &fallback_ty);
         Ok(inference.set_expr_infer_ty(expr, projected_ty))
     }
 
@@ -112,32 +112,29 @@ where
         base: ExprId,
         owner_ty: &NominalTy,
         generics: &GenericParams,
-    ) -> Option<InferTypeSubst> {
+    ) -> Option<InferenceTypeSubst> {
         let base_ty = inference.root_resolved_expr_ty(base);
         let infer_args = Self::infer_args_for_owner(&base_ty, owner_ty)?;
 
-        let mut subst = InferTypeSubst::new();
+        let mut subst = InferenceTypeSubst::new();
         subst.bind_type_params_from_infer_args(&mut inference.table, generics, infer_args);
         Some(subst)
     }
 
     /// Find owner generic args after reference autoderef, e.g. `&Boxed<?T>` -> `Boxed<?T>`.
-    fn infer_args_for_owner<'ty>(
-        ty: &'ty InferTy,
-        owner_ty: &NominalTy,
-    ) -> Option<&'ty [InferGenericArg]> {
+    fn infer_args_for_owner<'ty>(ty: &'ty Ty, owner_ty: &NominalTy) -> Option<&'ty [GenericArg]> {
         match ty {
-            InferTy::Nominal(ty) | InferTy::SelfTy(ty) if ty.def == owner_ty.def => Some(&ty.args),
-            InferTy::Reference { inner, .. } => Self::infer_args_for_owner(inner, owner_ty),
+            Ty::Nominal(ty) | Ty::SelfTy(ty) if ty.def == owner_ty.def => Some(&ty.args),
+            Ty::Reference { inner, .. } => Self::infer_args_for_owner(inner, owner_ty),
             _ => None,
         }
     }
 
     /// Project `pair.0` from an inference-aware tuple, peeling explicit references.
-    fn structural_field_ty(ty: &InferTy, field: &FieldKey) -> Option<InferTy> {
+    fn structural_field_ty(ty: &Ty, field: &FieldKey) -> Option<Ty> {
         match (ty, field) {
-            (InferTy::Tuple(fields), FieldKey::Tuple(index)) => fields.get(*index).cloned(),
-            (InferTy::Reference { inner, .. }, _) => Self::structural_field_ty(inner, field),
+            (Ty::Tuple(fields), FieldKey::Tuple(index)) => fields.get(*index).cloned(),
+            (Ty::Reference { inner, .. }, _) => Self::structural_field_ty(inner, field),
             _ => None,
         }
     }
@@ -159,10 +156,10 @@ where
     }
 
     /// Return the element type for array/slice indexing.
-    fn structural_index_ty(ty: &InferTy) -> Option<InferTy> {
+    fn structural_index_ty(ty: &Ty) -> Option<Ty> {
         match ty {
-            InferTy::Array { inner, .. } | InferTy::Slice(inner) => Some(inner.as_ref().clone()),
-            InferTy::Reference { inner, .. } => Self::structural_index_ty(inner),
+            Ty::Array { inner, .. } | Ty::Slice(inner) => Some(inner.as_ref().clone()),
+            Ty::Reference { inner, .. } => Self::structural_index_ty(inner),
             _ => None,
         }
     }

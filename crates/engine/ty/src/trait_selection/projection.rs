@@ -13,10 +13,8 @@ use rg_std::ExpectedUnique;
 use rg_text::Name;
 
 use super::{TraitGoal, TraitSelection, TraitSelectionQuery};
-use crate::Ty;
-use crate::inference::{
-    InferGenericArg, InferTy, InferTypeRefProjector, InferTypeSubst, InferenceTable,
-};
+use crate::inference::{InferenceTable, InferenceTypeRefProjector, InferenceTypeSubst};
+use crate::{GenericArg, Ty};
 
 const ASSOCIATED_TYPE_PROJECTION_DEPTH: usize = 8;
 
@@ -26,13 +24,13 @@ const ASSOCIATED_TYPE_PROJECTION_DEPTH: usize = 8;
 /// active body table, not immediately collapse unsolved variables to `Ty::Unknown`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AssocProjectionResult {
-    pub ty: InferTy,
+    pub ty: Ty,
     pub applicability: TraitApplicability,
     pub table: InferenceTable,
 }
 
 impl AssocProjectionResult {
-    pub fn new(ty: InferTy, applicability: TraitApplicability, table: InferenceTable) -> Self {
+    pub fn new(ty: Ty, applicability: TraitApplicability, table: InferenceTable) -> Self {
         Self {
             ty,
             applicability,
@@ -40,14 +38,14 @@ impl AssocProjectionResult {
         }
     }
 
-    pub fn into_parts(self) -> (InferTy, TraitApplicability, InferenceTable) {
+    pub fn into_parts(self) -> (Ty, TraitApplicability, InferenceTable) {
         (self.ty, self.applicability, self.table)
     }
 }
 
 /// Projected type syntax plus the table/applicability learned while projecting it.
 struct ProjectedTypeRef {
-    ty: InferTy,
+    ty: Ty,
     applicability: TraitApplicability,
     table: InferenceTable,
 }
@@ -56,14 +54,14 @@ struct ProjectedTypeRef {
 #[derive(PartialEq, Eq)]
 struct ProjectedTraitRef {
     trait_ref: TraitRef,
-    args: Vec<InferGenericArg>,
+    args: Vec<GenericArg>,
     applicability: TraitApplicability,
     table: InferenceTable,
 }
 
 /// Generic arg syntax after any nested associated projections were applied.
 struct ProjectedGenericArg {
-    arg: InferGenericArg,
+    arg: GenericArg,
     applicability: TraitApplicability,
     table: InferenceTable,
 }
@@ -152,7 +150,7 @@ where
         assoc_name: &str,
         table: &InferenceTable,
     ) -> Option<AssocProjectionResult> {
-        let InferTy::Opaque { bounds } = &goal.self_ty else {
+        let Ty::Opaque { bounds } = &goal.self_ty else {
             return None;
         };
 
@@ -171,7 +169,7 @@ where
                 continue;
             };
             for arg in &bound.args {
-                let InferGenericArg::AssocType { name, ty: Some(ty) } = arg else {
+                let GenericArg::AssocType { name, ty: Some(ty) } = arg else {
                     continue;
                 };
                 if name.as_str() != assoc_name || ty.has_unknown_or_syntax() {
@@ -192,13 +190,13 @@ where
 
     fn match_opaque_bound_goal_args(
         table: &InferenceTable,
-        bound_args: &[InferGenericArg],
-        goal_args: &[InferGenericArg],
+        bound_args: &[GenericArg],
+        goal_args: &[GenericArg],
     ) -> Option<InferenceTable> {
         let mut table = table.clone();
         let mut goal_args = goal_args.iter();
         for bound_arg in bound_args {
-            if matches!(bound_arg, InferGenericArg::AssocType { .. }) {
+            if matches!(bound_arg, GenericArg::AssocType { .. }) {
                 continue;
             }
             let goal_arg = goal_args.next()?;
@@ -215,21 +213,21 @@ where
 
     fn match_opaque_bound_goal_arg(
         table: &mut InferenceTable,
-        bound_arg: &InferGenericArg,
-        goal_arg: &InferGenericArg,
+        bound_arg: &GenericArg,
+        goal_arg: &GenericArg,
     ) -> bool {
         match (bound_arg, goal_arg) {
-            (InferGenericArg::Type(bound_ty), InferGenericArg::Type(goal_ty)) => {
+            (GenericArg::Type(bound_ty), GenericArg::Type(goal_ty)) => {
                 table.try_unify(bound_ty, goal_ty).is_ok()
             }
-            (InferGenericArg::Lifetime(lhs), InferGenericArg::Lifetime(rhs)) => lhs == rhs,
-            (InferGenericArg::Const(lhs), InferGenericArg::Const(rhs)) => lhs == rhs,
+            (GenericArg::Lifetime(lhs), GenericArg::Lifetime(rhs)) => lhs == rhs,
+            (GenericArg::Const(lhs), GenericArg::Const(rhs)) => lhs == rhs,
             (
-                InferGenericArg::FnTraitArgs {
+                GenericArg::FnTraitArgs {
                     params: bound_params,
                     ret: bound_ret,
                 },
-                InferGenericArg::FnTraitArgs {
+                GenericArg::FnTraitArgs {
                     params: goal_params,
                     ret: goal_ret,
                 },
@@ -242,7 +240,7 @@ where
 
                 table.try_unify(bound_ret, goal_ret).is_ok()
             }
-            (InferGenericArg::Unsupported(lhs), InferGenericArg::Unsupported(rhs)) => lhs == rhs,
+            (GenericArg::Unsupported(lhs), GenericArg::Unsupported(rhs)) => lhs == rhs,
             _ => false,
         }
     }
@@ -310,7 +308,7 @@ where
     fn project_associated_type_ref(
         &self,
         context: TypePathContext,
-        subst: &InferTypeSubst,
+        subst: &InferenceTypeSubst,
         table: &InferenceTable,
         ty: &TypeRef,
         remaining_depth: usize,
@@ -366,7 +364,7 @@ where
                     projected_fields.push(field.ty);
                 }
                 Ok(Some(ProjectedTypeRef {
-                    ty: InferTy::Tuple(projected_fields),
+                    ty: Ty::Tuple(projected_fields),
                     applicability,
                     table,
                 }))
@@ -385,7 +383,7 @@ where
                     return Ok(None);
                 };
                 Ok(Some(ProjectedTypeRef {
-                    ty: InferTy::Reference {
+                    ty: Ty::Reference {
                         mutability: *mutability,
                         inner: Box::new(inner.ty),
                     },
@@ -405,7 +403,7 @@ where
                     return Ok(None);
                 };
                 Ok(Some(ProjectedTypeRef {
-                    ty: InferTy::Slice(Box::new(inner.ty)),
+                    ty: Ty::Slice(Box::new(inner.ty)),
                     applicability: inner.applicability,
                     table: inner.table,
                 }))
@@ -422,7 +420,7 @@ where
                     return Ok(None);
                 };
                 Ok(Some(ProjectedTypeRef {
-                    ty: InferTy::Array {
+                    ty: Ty::Array {
                         inner: Box::new(inner.ty),
                         len: len.clone(),
                     },
@@ -445,7 +443,7 @@ where
     fn project_type_param_associated_path(
         &self,
         context: TypePathContext,
-        subst: &InferTypeSubst,
+        subst: &InferenceTypeSubst,
         table: &InferenceTable,
         param_name: &Name,
         assoc_name: &str,
@@ -538,7 +536,7 @@ where
     fn project_type_param_assoc_bound(
         &self,
         context: TypePathContext,
-        subst: &InferTypeSubst,
+        subst: &InferenceTypeSubst,
         table: &InferenceTable,
         bound: &TypeBound,
         assoc_name: &str,
@@ -591,7 +589,7 @@ where
     fn project_qualified_associated_type_ref(
         &self,
         context: TypePathContext,
-        subst: &InferTypeSubst,
+        subst: &InferenceTypeSubst,
         table: &InferenceTable,
         self_ty: &TypeRef,
         trait_ty: &TypeRef,
@@ -640,7 +638,7 @@ where
     fn project_qualified_trait_ref(
         &self,
         context: TypePathContext,
-        subst: &InferTypeSubst,
+        subst: &InferenceTypeSubst,
         table: &InferenceTable,
         trait_ty: &TypeRef,
         remaining_depth: usize,
@@ -682,7 +680,7 @@ where
     fn project_associated_generic_arg(
         &self,
         context: TypePathContext,
-        subst: &InferTypeSubst,
+        subst: &InferenceTypeSubst,
         table: &InferenceTable,
         arg: &ItemGenericArg,
         remaining_depth: usize,
@@ -695,18 +693,18 @@ where
                     return Ok(None);
                 };
                 Ok(Some(ProjectedGenericArg {
-                    arg: InferGenericArg::Type(Box::new(projected.ty)),
+                    arg: GenericArg::Type(Box::new(projected.ty)),
                     applicability: projected.applicability,
                     table: projected.table,
                 }))
             }
             ItemGenericArg::Lifetime(lifetime) => Ok(Some(ProjectedGenericArg {
-                arg: InferGenericArg::Lifetime(lifetime.clone()),
+                arg: GenericArg::Lifetime(lifetime.clone()),
                 applicability: TraitApplicability::Yes,
                 table: table.clone(),
             })),
             ItemGenericArg::Const(value) => Ok(Some(ProjectedGenericArg {
-                arg: InferGenericArg::Const(value.clone()),
+                arg: GenericArg::Const(value.clone()),
                 applicability: TraitApplicability::Yes,
                 table: table.clone(),
             })),
@@ -719,16 +717,16 @@ where
     fn project_plain_associated_type_ref(
         &self,
         context: TypePathContext,
-        subst: &InferTypeSubst,
+        subst: &InferenceTypeSubst,
         table: &InferenceTable,
         ty: &TypeRef,
-    ) -> Result<(InferTy, InferenceTable), I::Error> {
+    ) -> Result<(Ty, InferenceTable), I::Error> {
         let type_subst = subst.finalize_type_subst(table);
         let resolved_ty =
             self.item_paths
                 .resolve_type_ref(ty, context, Ty::syntax(ty.clone()), &type_subst)?;
         Ok((
-            InferTypeRefProjector::new(subst).ty_from_type_ref(ty, &resolved_ty),
+            InferenceTypeRefProjector::new(subst).ty_from_type_ref(ty, &resolved_ty),
             table.clone(),
         ))
     }

@@ -21,10 +21,8 @@ use rg_text::Name;
 
 use super::TraitGoal;
 use crate::ItemPathQuery;
-use crate::inference::{
-    InferGenericArg, InferTy, InferTypeSubst, InferenceConflict, InferenceTable,
-};
-use crate::{Ty, TypeSubst};
+use crate::inference::{InferenceConflict, InferenceTable, InferenceTypeSubst};
+use crate::{GenericArg, Ty, TypeSubst};
 
 /// Matches a single impl header against a trait goal.
 ///
@@ -55,7 +53,7 @@ where
         trait_impl: TraitImplRef,
         impl_data: &ImplData,
         table: &mut InferenceTable,
-        subst: &mut InferTypeSubst,
+        subst: &mut InferenceTypeSubst,
     ) -> Result<Option<TraitApplicability>, I::Error> {
         let Some(self_applicability) =
             self.match_self_ty(goal, trait_impl, impl_data, table, subst)?
@@ -83,7 +81,7 @@ where
         trait_impl: TraitImplRef,
         impl_data: &ImplData,
         table: &mut InferenceTable,
-        subst: &mut InferTypeSubst,
+        subst: &mut InferenceTypeSubst,
     ) -> Result<Option<TraitApplicability>, I::Error> {
         if let Some(self_def) = impl_data.resolved_self_ty.as_option() {
             return self
@@ -124,7 +122,7 @@ where
         goal: &TraitGoal,
         impl_data: &ImplData,
         table: &mut InferenceTable,
-        subst: &mut InferTypeSubst,
+        subst: &mut InferenceTypeSubst,
     ) -> Result<Option<TraitApplicability>, I::Error> {
         let Some(name) = impl_data.self_ty.type_param_name() else {
             return Ok(None);
@@ -134,7 +132,7 @@ where
             // `impl Trait` hides the concrete type, but it is still one concrete type from the
             // caller's point of view. Bind the blanket self param and let predicate checking prove
             // any required bounds from the opaque trait list.
-            InferTy::Opaque { .. } => TraitApplicability::Yes,
+            Ty::Opaque { .. } => TraitApplicability::Yes,
             _ => {
                 let Some(applicability) =
                     Self::unknown_self_applicability(&self_ty).or_else(|| {
@@ -191,7 +189,8 @@ where
             | Ty::Closure(_)
             | Ty::FunctionItem(_)
             | Ty::Syntax(_)
-            | Ty::Unknown => Ok(None),
+            | Ty::Unknown
+            | Ty::InferVar { .. } => Ok(None),
         }
     }
 
@@ -206,10 +205,10 @@ where
         self_def: TypeDefRef,
         impl_data: &ImplData,
         table: &mut InferenceTable,
-        subst: &mut InferTypeSubst,
+        subst: &mut InferenceTypeSubst,
     ) -> Result<Option<TraitApplicability>, I::Error> {
         let self_ty = table.resolve_root_var(&goal.self_ty);
-        let (InferTy::Nominal(goal_ty) | InferTy::SelfTy(goal_ty)) = &self_ty else {
+        let (Ty::Nominal(goal_ty) | Ty::SelfTy(goal_ty)) = &self_ty else {
             return Ok(Self::unknown_self_applicability(&self_ty));
         };
         if goal_ty.def != self_def {
@@ -237,24 +236,24 @@ where
     /// `Ty::Unknown` and unresolved syntax can be useful for exploratory UI queries. Plain
     /// inference vars are different: a bare `?T: Trait` would make nearly every impl a maybe
     /// candidate, so we leave that to later evidence instead of flooding selection.
-    fn unknown_self_applicability(self_ty: &InferTy) -> Option<TraitApplicability> {
+    fn unknown_self_applicability(self_ty: &Ty) -> Option<TraitApplicability> {
         match self_ty {
             // A bare variable could match many impls for the same trait. Returning every impl as a
             // maybe-candidate would be noisy and not useful for commit mode, so leave it unsolved.
-            InferTy::Var(_) | InferTy::IntegerVar(_) | InferTy::FloatVar(_) => None,
-            InferTy::Unknown | InferTy::Syntax(_) => Some(TraitApplicability::Maybe),
-            InferTy::Unit
-            | InferTy::Never
-            | InferTy::Primitive(_)
-            | InferTy::Tuple(_)
-            | InferTy::Array { .. }
-            | InferTy::Slice(_)
-            | InferTy::Reference { .. }
-            | InferTy::Opaque { .. }
-            | InferTy::Closure(_)
-            | InferTy::FunctionItem(_)
-            | InferTy::Nominal(_)
-            | InferTy::SelfTy(_) => None,
+            Ty::InferVar { .. } => None,
+            Ty::Unknown | Ty::Syntax(_) => Some(TraitApplicability::Maybe),
+            Ty::Unit
+            | Ty::Never
+            | Ty::Primitive(_)
+            | Ty::Tuple(_)
+            | Ty::Array { .. }
+            | Ty::Slice(_)
+            | Ty::Reference { .. }
+            | Ty::Opaque { .. }
+            | Ty::Closure(_)
+            | Ty::FunctionItem(_)
+            | Ty::Nominal(_)
+            | Ty::SelfTy(_) => None,
         }
     }
 
@@ -268,7 +267,7 @@ where
         trait_impl: TraitImplRef,
         impl_data: &ImplData,
         table: &mut InferenceTable,
-        subst: &mut InferTypeSubst,
+        subst: &mut InferenceTypeSubst,
     ) -> Result<Option<TraitApplicability>, I::Error> {
         let Some(TypeRef::Path(trait_path)) = impl_data.trait_ref.as_ref() else {
             return Ok(goal.args.is_empty().then_some(TraitApplicability::Maybe));
@@ -288,9 +287,9 @@ where
         trait_impl: TraitImplRef,
         impl_data: &ImplData,
         impl_args: &[ItemGenericArg],
-        goal_args: &[InferGenericArg],
+        goal_args: &[GenericArg],
         table: &mut InferenceTable,
-        subst: &mut InferTypeSubst,
+        subst: &mut InferenceTypeSubst,
     ) -> Result<Option<TraitApplicability>, I::Error> {
         if impl_args.len() != goal_args.len() {
             return Ok(None);
@@ -319,18 +318,18 @@ where
         trait_impl: TraitImplRef,
         impl_data: &ImplData,
         impl_arg: &ItemGenericArg,
-        goal_arg: &InferGenericArg,
+        goal_arg: &GenericArg,
         table: &mut InferenceTable,
-        subst: &mut InferTypeSubst,
+        subst: &mut InferenceTypeSubst,
     ) -> Result<Option<TraitApplicability>, I::Error> {
         match (impl_arg, goal_arg) {
-            (ItemGenericArg::Type(impl_ty), InferGenericArg::Type(goal_ty)) => {
+            (ItemGenericArg::Type(impl_ty), GenericArg::Type(goal_ty)) => {
                 self.match_type_ref(trait_impl, impl_data, impl_ty, goal_ty, table, subst)
             }
-            (ItemGenericArg::Lifetime(_), InferGenericArg::Lifetime(_)) => {
+            (ItemGenericArg::Lifetime(_), GenericArg::Lifetime(_)) => {
                 Ok(Some(TraitApplicability::Yes))
             }
-            (ItemGenericArg::Const(lhs), InferGenericArg::Const(rhs)) if lhs == rhs => {
+            (ItemGenericArg::Const(lhs), GenericArg::Const(rhs)) if lhs == rhs => {
                 Ok(Some(TraitApplicability::Yes))
             }
             (
@@ -338,7 +337,7 @@ where
                     params: impl_params,
                     ret: impl_ret,
                 },
-                InferGenericArg::FnTraitArgs {
+                GenericArg::FnTraitArgs {
                     params: goal_params,
                     ret: goal_ret,
                 },
@@ -365,7 +364,7 @@ where
                     name: impl_name,
                     ty: impl_ty,
                 },
-                InferGenericArg::AssocType {
+                GenericArg::AssocType {
                     name: goal_name,
                     ty: goal_ty,
                 },
@@ -391,9 +390,9 @@ where
         trait_impl: TraitImplRef,
         impl_data: &ImplData,
         impl_ty: &TypeRef,
-        goal_ty: &InferTy,
+        goal_ty: &Ty,
         table: &mut InferenceTable,
-        subst: &mut InferTypeSubst,
+        subst: &mut InferenceTypeSubst,
     ) -> Result<Option<TraitApplicability>, I::Error> {
         if let Some(name) = impl_ty.type_param_name()
             && Self::is_impl_type_param(&impl_data.generics, &name)
@@ -416,10 +415,8 @@ where
         }
 
         match (impl_ty, &goal_ty) {
-            (TypeRef::Unit, InferTy::Unit) | (TypeRef::Never, InferTy::Never) => {
-                Ok(Some(applicability))
-            }
-            (TypeRef::Tuple(impl_fields), InferTy::Tuple(goal_fields))
+            (TypeRef::Unit, Ty::Unit) | (TypeRef::Never, Ty::Never) => Ok(Some(applicability)),
+            (TypeRef::Tuple(impl_fields), Ty::Tuple(goal_fields))
                 if impl_fields.len() == goal_fields.len() =>
             {
                 for (impl_field, goal_field) in impl_fields.iter().zip(goal_fields) {
@@ -438,14 +435,14 @@ where
                     inner: impl_inner,
                     len: impl_len,
                 },
-                InferTy::Array {
+                Ty::Array {
                     inner: goal_inner,
                     len: goal_len,
                 },
             ) if Self::array_len_matches(impl_len, goal_len, &impl_data.generics) => {
                 self.match_type_ref(trait_impl, impl_data, impl_inner, goal_inner, table, subst)
             }
-            (TypeRef::Slice(impl_inner), InferTy::Slice(goal_inner)) => {
+            (TypeRef::Slice(impl_inner), Ty::Slice(goal_inner)) => {
                 self.match_type_ref(trait_impl, impl_data, impl_inner, goal_inner, table, subst)
             }
             (
@@ -454,7 +451,7 @@ where
                     inner: impl_inner,
                     ..
                 },
-                InferTy::Reference {
+                Ty::Reference {
                     mutability: goal_mutability,
                     inner: goal_inner,
                 },
@@ -484,7 +481,7 @@ where
                 // Concrete type refs can use the normal inference-table unifier. This is how a
                 // header like `impl Trait for Vec<User>` rejects `Vec<String>` without special
                 // matching code for every nominal shape.
-                match table.try_unify(&InferTy::from_ty(&resolved_ty), &goal_ty) {
+                match table.try_unify(&resolved_ty, &goal_ty) {
                     Ok(()) => Ok(Some(applicability)),
                     Err(InferenceConflict) => Ok(None),
                 }
@@ -502,24 +499,22 @@ where
     }
 
     /// Return true when a goal-side type is too incomplete for a definite header match.
-    fn type_is_uncertain(ty: &InferTy) -> bool {
+    fn type_is_uncertain(ty: &Ty) -> bool {
         match ty {
-            InferTy::Unknown | InferTy::Syntax(_) => true,
-            InferTy::Tuple(fields) => fields.iter().any(Self::type_is_uncertain),
-            InferTy::Array { inner, .. }
-            | InferTy::Slice(inner)
-            | InferTy::Reference { inner, .. } => Self::type_is_uncertain(inner),
-            InferTy::Opaque { .. } => true,
-            InferTy::Var(_)
-            | InferTy::IntegerVar(_)
-            | InferTy::FloatVar(_)
-            | InferTy::Unit
-            | InferTy::Never
-            | InferTy::Primitive(_)
-            | InferTy::Closure(_)
-            | InferTy::FunctionItem(_)
-            | InferTy::Nominal(_)
-            | InferTy::SelfTy(_) => false,
+            Ty::Unknown | Ty::Syntax(_) => true,
+            Ty::Tuple(fields) => fields.iter().any(Self::type_is_uncertain),
+            Ty::Array { inner, .. } | Ty::Slice(inner) | Ty::Reference { inner, .. } => {
+                Self::type_is_uncertain(inner)
+            }
+            Ty::Opaque { .. } => true,
+            Ty::InferVar { .. }
+            | Ty::Unit
+            | Ty::Never
+            | Ty::Primitive(_)
+            | Ty::Closure(_)
+            | Ty::FunctionItem(_)
+            | Ty::Nominal(_)
+            | Ty::SelfTy(_) => false,
         }
     }
 

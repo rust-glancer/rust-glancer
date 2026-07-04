@@ -1144,6 +1144,7 @@ impl<'a> AnalysisQuerySnapshot<'a> {
             Ty::FunctionItem(function) => format!("function item {function:?}"),
             Ty::Nominal(ty) => format!("nominal {}", self.render_body_nominal_ty(ty)),
             Ty::SelfTy(ty) => format!("Self {}", self.render_body_nominal_ty(ty)),
+            Ty::InferVar { kind, id } => format!("infer {kind:?} {id:?}"),
             Ty::Unknown => "<unknown>".to_string(),
         }
     }

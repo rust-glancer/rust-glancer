@@ -10,10 +10,7 @@ use rg_ir_model::{
 };
 use rg_ir_storage::{DefMapSource, ItemStoreSource};
 use rg_package_store::PackageStoreError;
-use rg_ty::{
-    TraitGoal, Ty, TypeSubst,
-    inference::{InferTy, InferTypeSubst},
-};
+use rg_ty::{TraitGoal, Ty, TypeSubst, inference::InferenceTypeSubst};
 
 use crate::resolution::{
     TypeRefUseSite,
@@ -39,10 +36,10 @@ pub(crate) struct SelectedCallObligationInput<'input> {
     function: FunctionRef,
     owner: ItemOwner,
     generics: &'input GenericParams,
-    subst: &'input InferTypeSubst,
+    subst: &'input InferenceTypeSubst,
     signature_subst: &'input TypeSubst,
     selected_self_ty: Option<&'input Ty>,
-    selected_self_infer_ty: Option<InferTy>,
+    selected_self_infer_ty: Option<Ty>,
 }
 
 impl<'input> SelectedCallObligationInput<'input> {
@@ -50,10 +47,10 @@ impl<'input> SelectedCallObligationInput<'input> {
         function: FunctionRef,
         owner: ItemOwner,
         generics: &'input GenericParams,
-        subst: &'input InferTypeSubst,
+        subst: &'input InferenceTypeSubst,
         signature_subst: &'input TypeSubst,
         selected_self_ty: Option<&'input Ty>,
-        selected_self_infer_ty: Option<InferTy>,
+        selected_self_infer_ty: Option<Ty>,
     ) -> Self {
         Self {
             function,
@@ -135,10 +132,10 @@ where
         &self,
         inference: &mut BodyInferenceCtx,
         generics: &GenericParams,
-        subst: &InferTypeSubst,
+        subst: &InferenceTypeSubst,
         resolver: &TypeRefResolutionQuery<'query, D, I>,
         selected_trait_method: Option<&SelectedTraitMethodContext<'_>>,
-        selected_self_infer_ty: Option<&InferTy>,
+        selected_self_infer_ty: Option<&Ty>,
     ) -> Result<Vec<BodyObligation>, PackageStoreError> {
         let mut obligations = Vec::new();
 
@@ -173,10 +170,10 @@ where
         &self,
         inference: &mut BodyInferenceCtx,
         generics: &GenericParams,
-        subst: &InferTypeSubst,
+        subst: &InferenceTypeSubst,
         resolver: &TypeRefResolutionQuery<'query, D, I>,
         selected_trait_method: Option<&SelectedTraitMethodContext<'_>>,
-        selected_self_infer_ty: Option<&InferTy>,
+        selected_self_infer_ty: Option<&Ty>,
     ) -> Result<Vec<BodyObligation>, PackageStoreError> {
         let mut obligations = Vec::new();
 
@@ -219,11 +216,11 @@ where
     fn trait_bound_obligation(
         &self,
         inference: &mut BodyInferenceCtx,
-        subst: &InferTypeSubst,
+        subst: &InferenceTypeSubst,
         resolver: &TypeRefResolutionQuery<'query, D, I>,
         selected_trait_method: Option<&SelectedTraitMethodContext<'_>>,
-        selected_self_infer_ty: Option<&InferTy>,
-        self_ty: InferTy,
+        selected_self_infer_ty: Option<&Ty>,
+        self_ty: Ty,
         bound: &TypeBound,
     ) -> Result<Option<BodyObligation>, PackageStoreError> {
         let TypeBound::Trait(bound_ty) = bound else {
@@ -300,11 +297,11 @@ where
     fn callable_syntax_obligation(
         &self,
         inference: &mut BodyInferenceCtx,
-        subst: &InferTypeSubst,
+        subst: &InferenceTypeSubst,
         resolver: &TypeRefResolutionQuery<'query, D, I>,
         selected_trait_method: Option<&SelectedTraitMethodContext<'_>>,
-        selected_self_infer_ty: Option<&InferTy>,
-        self_ty: &InferTy,
+        selected_self_infer_ty: Option<&Ty>,
+        self_ty: &Ty,
         bound_ty: &TypeRef,
     ) -> Result<Option<BodyObligation>, PackageStoreError> {
         let Some(expectation) = CallableTypeRefExpectation::from_fn_trait_bound(bound_ty) else {
@@ -312,7 +309,7 @@ where
         };
         if !matches!(
             inference.root_resolved_ty(self_ty),
-            InferTy::Closure(_) | InferTy::FunctionItem(_)
+            Ty::Closure(_) | Ty::FunctionItem(_)
         ) {
             return Ok(None);
         }
@@ -350,12 +347,12 @@ where
     fn project_selected_call_bound_subject(
         &self,
         inference: &mut BodyInferenceCtx,
-        subst: &InferTypeSubst,
+        subst: &InferenceTypeSubst,
         resolver: &TypeRefResolutionQuery<'query, D, I>,
         ty: &TypeRef,
         selected_trait_method: Option<&SelectedTraitMethodContext<'_>>,
-        selected_self_infer_ty: Option<&InferTy>,
-    ) -> Result<InferTy, PackageStoreError> {
+        selected_self_infer_ty: Option<&Ty>,
+    ) -> Result<Ty, PackageStoreError> {
         let mut self_assoc = |assoc_name: &str| {
             let Some(selected_trait_method) = selected_trait_method else {
                 return Ok(None);

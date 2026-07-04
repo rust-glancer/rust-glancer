@@ -1,22 +1,22 @@
-//! Temporary inference types and variables used before finalizing to `Ty`.
+//! Temporary inference state used before finalizing `Ty`.
 //!
-//! This module keeps solver state separate from the persisted type vocabulary. Callers can carry
-//! shapes such as `Vec<?T>` or `{integer}` during resolution, then finalize them back to `Ty`.
+//! Inference variables are ordinary `Ty` nodes, but they must not cross the finalization boundary.
+//! The table owns those variables, solves them, and replaces any leftover transient state before
+//! types become persistent compiler facts.
 
-mod family;
 mod instantiate;
-mod model;
 mod subst;
 mod table;
+mod traversal;
+mod var;
 
-pub use family::TypeRefInferenceProjector;
 pub use instantiate::{
     ExplicitTypeArgInstantiationBuilder, GenericReturnInstantiationBuilder,
     UnknownTypeInstantiationBuilder,
 };
-pub use model::{InferGenericArg, InferNominalTy, InferOpaqueTraitBound, InferTy};
-pub use subst::{InferTypeRefProjector, InferTypeSubst};
-pub use table::{InferVarId, InferenceConflict, InferenceTable};
+pub use subst::{InferenceTypeRefProjector, InferenceTypeSubst};
+pub use table::{InferenceConflict, InferenceTable};
+pub use var::{InferVarId, InferVarKind};
 
 #[cfg(test)]
 mod tests;

@@ -14,7 +14,7 @@ use rg_package_store::PackageStoreError;
 use rg_text::Name;
 use rg_ty::{
     Ty, TypeSubst,
-    inference::{InferTy, InferTypeRefProjector, InferTypeSubst},
+    inference::{InferenceTypeRefProjector, InferenceTypeSubst},
 };
 
 use crate::ir::resolved::BodyResolution;
@@ -180,7 +180,7 @@ where
         }
 
         let scope = self.context.body().expr_unchecked(call).scope;
-        let mut subst = InferTypeSubst::new();
+        let mut subst = InferenceTypeSubst::new();
         let receiver_ty = inference.root_resolved_expr_ty(receiver);
         subst.push(&mut inference.table, Name::new("Self"), receiver_ty);
         self.apply_function_generic_shadows(
@@ -199,7 +199,7 @@ where
         );
 
         let return_ty =
-            InferTypeRefProjector::new(&subst).ty_from_type_ref(ret_ty, resolved_ret_ty);
+            InferenceTypeRefProjector::new(&subst).ty_from_type_ref(ret_ty, resolved_ret_ty);
         inference.set_expr_infer_ty(call, return_ty);
         Ok(true)
     }
@@ -223,7 +223,7 @@ where
         }
 
         let return_ty =
-            InferTypeRefProjector::new(&subst).ty_from_type_ref(ret_ty, resolved_ret_ty);
+            InferenceTypeRefProjector::new(&subst).ty_from_type_ref(ret_ty, resolved_ret_ty);
         inference.set_expr_infer_ty(call, return_ty);
         Ok(true)
     }
@@ -235,7 +235,7 @@ where
         generics: &GenericParams,
         explicit_args: &[ItemGenericArg],
         scope: ScopeId,
-    ) -> Result<(InferTypeSubst, bool), PackageStoreError> {
+    ) -> Result<(InferenceTypeSubst, bool), PackageStoreError> {
         let explicit_subst = self.context.generics().subst_for_explicit_args(
             generics,
             explicit_args,
@@ -243,7 +243,7 @@ where
         )?;
         let mut explicit_type_args = explicit_args.iter().filter_map(ItemGenericArg::type_ref);
 
-        let mut subst = InferTypeSubst::new();
+        let mut subst = InferenceTypeSubst::new();
         let mut used_vars = false;
         for param in &generics.types {
             let Some(arg_ty) = explicit_type_args.next() else {
@@ -351,7 +351,7 @@ where
                 continue;
             };
 
-            let mut projector = InferTypeRefProjector::new(&subst);
+            let mut projector = InferenceTypeRefProjector::new(&subst);
             let mut params = Vec::new();
             for param in expectation.params() {
                 let resolved_param_ty = callable_resolver.resolve(param)?;
@@ -450,7 +450,7 @@ where
                     .as_ref(),
                 assoc_name,
             )?
-            .unwrap_or(InferTy::Unknown);
+            .unwrap_or(Ty::Unknown);
         inference.set_expr_infer_ty(call, projected_ty);
 
         Ok(())
@@ -490,7 +490,7 @@ where
             .params()
             .iter()
             .skip(target.first_written_param_idx());
-        let mut projector = InferTypeRefProjector::new(&subst);
+        let mut projector = InferenceTypeRefProjector::new(&subst);
         for ((arg, param), resolved_ty) in args
             .iter()
             .zip(written_params)
@@ -518,7 +518,7 @@ where
         args: &[ExprId],
         target: &ResolvedCallTarget,
         function_data: &FunctionData,
-    ) -> Result<InferTypeSubst, PackageStoreError> {
+    ) -> Result<InferenceTypeSubst, PackageStoreError> {
         let scope = self.context.body().expr_unchecked(call).scope;
         let mut subst = self.type_prefix_impl_infer_subst(
             inference,
@@ -565,8 +565,8 @@ where
         origin: rg_ir_model::DefMapRef,
         owner: &ItemOwner,
         ret_ty: Option<&TypeRef>,
-    ) -> Result<InferTypeSubst, PackageStoreError> {
-        let mut subst = InferTypeSubst::new();
+    ) -> Result<InferenceTypeSubst, PackageStoreError> {
+        let mut subst = InferenceTypeSubst::new();
         if !has_type_prefix_self_source {
             return Ok(subst);
         }
@@ -659,7 +659,7 @@ where
         )?;
 
         let written_params = function_data.signature.params().iter().skip(1);
-        let mut projector = InferTypeRefProjector::new(&subst);
+        let mut projector = InferenceTypeRefProjector::new(&subst);
         for ((arg, param), resolved_ty) in args
             .iter()
             .zip(written_params)
@@ -682,7 +682,7 @@ where
         origin: DefMapRef,
         owner: &ItemOwner,
         receiver: ExprId,
-        subst: &InferTypeSubst,
+        subst: &InferenceTypeSubst,
     ) -> Result<(), PackageStoreError> {
         let ItemOwner::Impl(impl_id) = owner else {
             return Ok(());
@@ -709,7 +709,7 @@ where
             Ty::syntax(impl_data.self_ty.clone()),
             &TypeSubst::new(),
         )?;
-        let receiver_evidence = InferTypeRefProjector::new(subst)
+        let receiver_evidence = InferenceTypeRefProjector::new(subst)
             .ty_from_type_ref(&impl_data.self_ty, &resolved_self_ty);
         let receiver_ty = inference.root_resolved_expr_ty(receiver);
 
@@ -844,7 +844,7 @@ where
     fn bind_selected_call_args_to_subst(
         &self,
         inference: &mut BodyInferenceCtx,
-        subst: &mut InferTypeSubst,
+        subst: &mut InferenceTypeSubst,
         args: &[ExprId],
         target: &ResolvedCallTarget,
         signature: &FunctionSignature,
@@ -868,16 +868,16 @@ where
         }
     }
 
-    fn callable_argument_ty(&self, inference: &BodyInferenceCtx, arg: ExprId) -> Option<InferTy> {
+    fn callable_argument_ty(&self, inference: &BodyInferenceCtx, arg: ExprId) -> Option<Ty> {
         let arg_ty = inference.root_resolved_expr_ty(arg);
-        if matches!(arg_ty, InferTy::Closure(_) | InferTy::FunctionItem(_)) {
+        if matches!(arg_ty, Ty::Closure(_) | Ty::FunctionItem(_)) {
             return Some(arg_ty);
         }
 
         self.function_item_arg_ty(arg)
     }
 
-    fn function_item_arg_ty(&self, arg: ExprId) -> Option<InferTy> {
+    fn function_item_arg_ty(&self, arg: ExprId) -> Option<Ty> {
         let BodyResolution::Declarations(declarations) = self.context.body().expr_resolution(arg)
         else {
             return None;
@@ -886,7 +886,7 @@ where
         else {
             return None;
         };
-        Some(InferTy::FunctionItem(*function))
+        Some(Ty::FunctionItem(*function))
     }
 
     /// Bind impl generics from the selected receiver slot: `impl<T> Vec<T>` + `Vec<?T>`.
@@ -896,8 +896,8 @@ where
         origin: rg_ir_model::DefMapRef,
         owner: &ItemOwner,
         receiver: ExprId,
-    ) -> Result<InferTypeSubst, PackageStoreError> {
-        let mut subst = InferTypeSubst::new();
+    ) -> Result<InferenceTypeSubst, PackageStoreError> {
+        let mut subst = InferenceTypeSubst::new();
         let ItemOwner::Impl(impl_id) = owner else {
             return Ok(subst);
         };
@@ -925,7 +925,7 @@ where
     fn apply_function_generic_shadows(
         &self,
         inference: &mut BodyInferenceCtx,
-        subst: &mut InferTypeSubst,
+        subst: &mut InferenceTypeSubst,
         generics: Option<&GenericParams>,
         explicit_args: &[ItemGenericArg],
         scope: ScopeId,
@@ -943,11 +943,7 @@ where
         )?;
         for param in &generics.types {
             if let Some(ty) = explicit_subst.type_param(param.name.as_str()) {
-                subst.push(
-                    &mut inference.table,
-                    param.name.clone(),
-                    InferTy::from_ty(&ty),
-                );
+                subst.push(&mut inference.table, param.name.clone(), ty);
             }
         }
 

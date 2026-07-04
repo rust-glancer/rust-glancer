@@ -16,10 +16,7 @@
 use rg_ir_model::{FunctionRef, ItemOwner, TraitRef, items::TypeRef};
 use rg_ir_storage::{DefMapSource, ItemStoreSource};
 use rg_package_store::PackageStoreError;
-use rg_ty::{
-    TraitGoal, TraitSelectionCache, Ty,
-    inference::{InferTy, InferenceTable},
-};
+use rg_ty::{TraitGoal, TraitSelectionCache, Ty, inference::InferenceTable};
 
 use crate::resolution::BodyResolutionContext;
 
@@ -148,7 +145,7 @@ where
     /// contexts are only built for traits without such params.
     fn selected_goal(&self, selected_method: &SelectedTraitMethodContext<'_>) -> TraitGoal {
         TraitGoal {
-            self_ty: InferTy::from_ty(selected_method.selected_self_ty),
+            self_ty: selected_method.selected_self_ty.clone(),
             trait_ref: selected_method.trait_ref,
             args: Vec::new(),
         }

@@ -157,7 +157,7 @@ where
     /// Returns whether comparing this type as a generic argument would overstate certainty.
     fn type_arg_comparison_is_uncertain(ty: &Ty) -> bool {
         match ty {
-            Ty::Syntax(_) | Ty::Unknown => true,
+            Ty::Syntax(_) | Ty::Unknown | Ty::InferVar { .. } => true,
             Ty::Tuple(fields) => fields.iter().any(Self::type_arg_comparison_is_uncertain),
             Ty::Array { inner, .. } | Ty::Slice(inner) => {
                 Self::type_arg_comparison_is_uncertain(inner)

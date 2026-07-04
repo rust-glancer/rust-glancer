@@ -14,8 +14,8 @@ use rg_ir_storage::{DefMapSource, ItemStoreSource, TypePathContext};
 use rg_package_store::PackageStoreError;
 use rg_text::Name;
 use rg_ty::{
-    TraitGoal, TraitSelection, TraitSelectionCache, TraitSelectionOptions,
-    inference::{InferGenericArg, InferTy, InferTypeRefProjector},
+    GenericArg, TraitGoal, TraitSelection, TraitSelectionCache, TraitSelectionOptions, Ty,
+    inference::InferenceTypeRefProjector,
 };
 
 use crate::resolution::{
@@ -57,14 +57,14 @@ where
         &self,
         inference: &mut BodyInferenceCtx,
         selected_trait_method: &SelectedTraitMethodContext<'_>,
-        selected_self_infer_ty: Option<&InferTy>,
+        selected_self_infer_ty: Option<&Ty>,
         assoc_name: &str,
-    ) -> Result<Option<InferTy>, PackageStoreError> {
+    ) -> Result<Option<Ty>, PackageStoreError> {
         let assoc_projector = ImplPredicateAssocProjector::new(self.context);
         let goal = TraitGoal {
             self_ty: selected_self_infer_ty
                 .cloned()
-                .unwrap_or_else(|| InferTy::from_ty(selected_trait_method.selected_self_ty())),
+                .unwrap_or_else(|| selected_trait_method.selected_self_ty().clone()),
             trait_ref: selected_trait_method.trait_ref(),
             args: Vec::new(),
         };
@@ -105,7 +105,7 @@ where
         if obligations.iter().any(|obligation| {
             !matches!(
                 selection.table.resolve_root_var(obligation.self_ty()),
-                InferTy::Closure(_) | InferTy::FunctionItem(_)
+                Ty::Closure(_) | Ty::FunctionItem(_)
             )
         }) {
             return Ok(None);
@@ -150,7 +150,7 @@ where
         impl_data: &ImplData,
         aliased_ty: &TypeRef,
         trait_selection_cache: &TraitSelectionCache,
-    ) -> Result<Option<(InferTy, Vec<BodyCallableObligation>)>, PackageStoreError> {
+    ) -> Result<Option<(Ty, Vec<BodyCallableObligation>)>, PackageStoreError> {
         let context = TypePathContext {
             module: impl_data.owner,
             impl_ref: Some(selection.trait_impl.impl_ref),
@@ -289,7 +289,7 @@ where
                 .iter()
                 .zip(&resolved_args)
                 .map(|(arg, resolved_arg)| {
-                    InferTypeRefProjector::new(&selection.subst)
+                    InferenceTypeRefProjector::new(&selection.subst)
                         .generic_arg_from_arg(arg, resolved_arg)
                 })
                 .collect();
@@ -318,7 +318,7 @@ where
         resolver: &TypeRefResolutionQuery<'query, D, I>,
         subject: &ImplPredicateSubject,
         trait_selection_cache: &TraitSelectionCache,
-    ) -> Result<Option<InferTy>, PackageStoreError> {
+    ) -> Result<Option<Ty>, PackageStoreError> {
         match subject {
             ImplPredicateSubject::TypeParam(name) => Ok(selection.subst.type_param(name.as_str())),
             ImplPredicateSubject::TypeRef(ty) => {
@@ -334,7 +334,7 @@ where
         resolver: &TypeRefResolutionQuery<'query, D, I>,
         ty: &TypeRef,
         trait_selection_cache: &TraitSelectionCache,
-    ) -> Result<Option<InferTy>, PackageStoreError> {
+    ) -> Result<Option<Ty>, PackageStoreError> {
         let subst = selection.subst.clone();
         let mut associated_ty = |param_name: &Name, qualified_trait, assoc_name: &Name| {
             if let Some((trait_ref, args)) = qualified_trait {
@@ -369,7 +369,7 @@ where
         param_name: &Name,
         assoc_name: &Name,
         trait_selection_cache: &TraitSelectionCache,
-    ) -> Result<Option<InferTy>, PackageStoreError> {
+    ) -> Result<Option<Ty>, PackageStoreError> {
         // `S::Item` is useful only if some support predicate proves which `Stream` impl applies
         // to `S`. We probe those predicates in the same trial table as the outer impl selection,
         // so any inference refinements stay local until the whole projection succeeds.
@@ -394,10 +394,10 @@ where
         supports: &mut [ProjectionSupport],
         param_name: &Name,
         trait_ref: TraitRef,
-        args: Vec<InferGenericArg>,
+        args: Vec<GenericArg>,
         assoc_name: &Name,
         trait_selection_cache: &TraitSelectionCache,
-    ) -> Result<Option<InferTy>, PackageStoreError> {
+    ) -> Result<Option<Ty>, PackageStoreError> {
         let Some((projection_table, projected_ty)) =
             project_unique_support_assoc(supports, param_name, Some((trait_ref, &args)), |goal| {
                 Ok(BodyAssocProjector::new(self.context)

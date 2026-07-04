@@ -34,7 +34,7 @@ use super::lower::{
 use super::projection::ProjectionAnswerVars;
 use super::raise;
 use crate::ItemPathQuery;
-use crate::inference::{InferTy, InferTypeSubst, InferenceTable};
+use crate::inference::{InferVarKind, InferenceTable, InferenceTypeSubst};
 use crate::trait_selection::AssocProjectionResult;
 
 const INTER: RgChalkInterner = RgChalkInterner;
@@ -75,7 +75,7 @@ impl ChalkTraitSolver {
         item_paths: &ItemPathQuery<'query, D, I>,
         trait_impl: TraitImplRef,
         impl_data: &ImplData,
-        subst: &InferTypeSubst,
+        subst: &InferenceTypeSubst,
         table: &InferenceTable,
     ) -> Option<TraitApplicability>
     where
@@ -137,7 +137,7 @@ impl ChalkTraitSolver {
         //
         // The binder also includes any ordinary project inference variables used by the receiver
         // goal. If Chalk answers `?Result = ?T`, the decoder maps that bound var back to the same
-        // rust-glancer `InferTy::Var`, then commits only the concrete equalities it can decode.
+        // rust-glancer `Ty::InferVar`, then commits only the concrete equalities it can decode.
         let normalize = Normalize {
             alias: projection.alias,
             ty: projection.variables.result_ty(),
@@ -184,7 +184,9 @@ impl ChalkTraitSolver {
                 &projection.variables,
                 &answer_vars,
             ) {
-                table.try_unify(&InferTy::Var(var), &evidence).ok()?;
+                table
+                    .try_unify(&crate::Ty::var_for_kind(InferVarKind::Type, var), &evidence)
+                    .ok()?;
             }
         }
 

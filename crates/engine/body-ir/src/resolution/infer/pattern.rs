@@ -4,7 +4,7 @@
 //! initializer slots, so later evidence on the binding can solve the initializer.
 
 use rg_ir_model::{ExprId, Mutability, PatId};
-use rg_ty::inference::InferTy;
+use rg_ty::Ty;
 
 use crate::{ir::PatKind, resolution::BodyResolutionContext};
 
@@ -33,12 +33,7 @@ impl<'query, D, I> BodyPatternInference<'query, D, I> {
     }
 
     /// Project the current pattern from its matching inference slot.
-    pub(crate) fn link_pat(
-        &self,
-        inference: &mut BodyInferenceCtx,
-        pat: PatId,
-        ty: &InferTy,
-    ) -> bool {
+    pub(crate) fn link_pat(&self, inference: &mut BodyInferenceCtx, pat: PatId, ty: &Ty) -> bool {
         let ty = inference.root_resolved_ty(ty);
         let Some(data) = self.context.body().pat(pat).cloned() else {
             return false;
@@ -81,13 +76,8 @@ impl<'query, D, I> BodyPatternInference<'query, D, I> {
     }
 
     /// Link tuple fields by position, e.g. `(values,) = (Vec::new(),)`.
-    fn link_tuple_pat(
-        &self,
-        inference: &mut BodyInferenceCtx,
-        fields: &[PatId],
-        ty: &InferTy,
-    ) -> bool {
-        let InferTy::Tuple(field_tys) = ty else {
+    fn link_tuple_pat(&self, inference: &mut BodyInferenceCtx, fields: &[PatId], ty: &Ty) -> bool {
+        let Ty::Tuple(field_tys) = ty else {
             return false;
         };
         if fields.len() != field_tys.len() {
@@ -107,9 +97,9 @@ impl<'query, D, I> BodyPatternInference<'query, D, I> {
         inference: &mut BodyInferenceCtx,
         pat: PatId,
         pat_mutability: Mutability,
-        ty: &InferTy,
+        ty: &Ty,
     ) -> bool {
-        let InferTy::Reference { mutability, inner } = ty else {
+        let Ty::Reference { mutability, inner } = ty else {
             return false;
         };
         if *mutability != pat_mutability {
@@ -120,14 +110,9 @@ impl<'query, D, I> BodyPatternInference<'query, D, I> {
     }
 
     /// Link every non-rest slice pattern field to the element slot.
-    fn link_slice_pat(
-        &self,
-        inference: &mut BodyInferenceCtx,
-        fields: &[PatId],
-        ty: &InferTy,
-    ) -> bool {
+    fn link_slice_pat(&self, inference: &mut BodyInferenceCtx, fields: &[PatId], ty: &Ty) -> bool {
         let element_ty = match ty {
-            InferTy::Array { inner, .. } | InferTy::Slice(inner) => inner.as_ref(),
+            Ty::Array { inner, .. } | Ty::Slice(inner) => inner.as_ref(),
             _ => return false,
         };
         let element_ty = inference.root_resolved_ty(element_ty);
