@@ -6,7 +6,7 @@
 
 use rg_ir_model::{
     TraitRef,
-    items::{GenericArg as ItemGenericArg, TypeRef},
+    items::{GenericArg as ItemGenericArg, TypePathAnchor, TypeRef},
 };
 use rg_ir_storage::{DefMapSource, ItemStoreSource};
 use rg_package_store::PackageStoreError;
@@ -200,14 +200,24 @@ where
             )?));
         }
 
-        // Check `<T as Trait>::Assoc`.
-        if let TypeRef::QualifiedAssociatedType {
-            self_ty,
-            trait_ty,
-            assoc_name,
-        } = ty
+        // Check `<T>::Assoc` and `<T as Trait>::Assoc`.
+        if let TypeRef::Path(path) = ty
+            && let Some(anchor) = &path.anchor
         {
-            return self.project_qualified_associated_ty(self_ty, trait_ty.as_deref(), assoc_name);
+            let Some(assoc_segment) = path.segments.first() else {
+                return Ok(LocalProjection::Unsupported);
+            };
+            if path.segments.len() != 1 || !assoc_segment.args.is_empty() {
+                return Ok(LocalProjection::Unsupported);
+            }
+            return match anchor {
+                TypePathAnchor::Type(self_ty) => {
+                    self.project_type_anchor_associated_ty(self_ty, &assoc_segment.name)
+                }
+                TypePathAnchor::QualifiedTrait { self_ty, trait_ty } => {
+                    self.project_qualified_associated_ty(self_ty, trait_ty, &assoc_segment.name)
+                }
+            };
         }
 
         // Check tuple.
@@ -248,10 +258,9 @@ where
         Ok(LocalProjection::NotBodyLocal)
     }
 
-    fn project_qualified_associated_ty(
+    fn project_type_anchor_associated_ty(
         &mut self,
         self_ty: &TypeRef,
-        trait_ty: Option<&TypeRef>,
         assoc_name: &Name,
     ) -> Result<LocalProjection, PackageStoreError> {
         if self.type_param_associated_ty.is_none() {
@@ -263,9 +272,32 @@ where
         if self.subst.type_param(param_name.as_str()).is_none() {
             return Ok(LocalProjection::Unsupported);
         }
-        let Some(trait_ty) = trait_ty else {
+        let Some(projector) = self.type_param_associated_ty.as_mut() else {
+            return Ok(LocalProjection::NotBodyLocal);
+        };
+
+        Ok(LocalProjection::from_attempted_projection(projector(
+            &param_name,
+            None,
+            assoc_name,
+        )?))
+    }
+
+    fn project_qualified_associated_ty(
+        &mut self,
+        self_ty: &TypeRef,
+        trait_ty: &TypeRef,
+        assoc_name: &Name,
+    ) -> Result<LocalProjection, PackageStoreError> {
+        if self.type_param_associated_ty.is_none() {
+            return Ok(LocalProjection::NotBodyLocal);
+        }
+        let Some(param_name) = self_ty.type_param_name() else {
             return Ok(LocalProjection::Unsupported);
         };
+        if self.subst.type_param(param_name.as_str()).is_none() {
+            return Ok(LocalProjection::Unsupported);
+        }
         let Some((trait_ref, resolved_args)) = self.resolver.resolve_trait_bound(trait_ty)? else {
             return Ok(LocalProjection::Unsupported);
         };

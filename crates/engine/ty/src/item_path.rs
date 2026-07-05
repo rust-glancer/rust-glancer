@@ -52,7 +52,9 @@ where
             TypeRef::Unit => Ok(Ty::Unit),
             TypeRef::Never => Ok(Ty::Never),
             TypeRef::Path(type_path) => {
-                let path = Path::from_type_path(type_path);
+                let Some(path) = Path::from_type_path(type_path) else {
+                    return Ok(unresolved_path_fallback);
+                };
                 if let Some(name) = path.single_name()
                     && let Some(ty) = subst.type_param(name)
                 {
@@ -283,8 +285,11 @@ where
         for bound in bounds {
             match bound {
                 TypeBound::Trait(TypeRef::Path(bound_path)) => {
+                    let Some(path) = Path::from_type_path(bound_path) else {
+                        continue;
+                    };
                     let TypePathResolution::Trait(trait_ref) =
-                        self.resolve_type_path(context, &Path::from_type_path(bound_path))?
+                        self.resolve_type_path(context, &path)?
                     else {
                         continue;
                     };

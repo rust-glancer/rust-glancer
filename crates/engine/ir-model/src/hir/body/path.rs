@@ -6,7 +6,7 @@ use wincode::{SchemaRead, SchemaWrite};
 
 use crate::{
     Path, PathSegment, TargetRef,
-    items::{GenericArg, TypePath, TypePathSegment, TypeRef},
+    items::{GenericArg, TypePath, TypePathAnchor, TypePathSegment, TypeRef},
 };
 use rg_std::{MemorySize, Shrink};
 
@@ -76,6 +76,18 @@ pub enum BodyAssociatedPathPrefix {
     },
 }
 
+impl BodyAssociatedPathPrefix {
+    fn from_type_anchor(self_ty: &TypeRef, trait_ref: Option<&TypeRef>) -> Self {
+        match TypePathAnchor::from_parts(self_ty.clone(), trait_ref.cloned()) {
+            TypePathAnchor::Type(ty) => Self::Type(*ty),
+            TypePathAnchor::QualifiedTrait { self_ty, trait_ty } => Self::QualifiedTrait {
+                self_ty: *self_ty,
+                trait_ref: *trait_ty,
+            },
+        }
+    }
+}
+
 impl BodyPath {
     pub fn new(source_span: Span, absolute: bool, segments: Vec<BodyPathSegment>) -> Self {
         Self {
@@ -114,6 +126,7 @@ impl BodyPath {
             TypeRef::Path(TypePath {
                 source_span: self.source_span,
                 absolute: self.absolute,
+                anchor: None,
                 segments: prefix_segments,
             }),
             last_segment.as_str(),
@@ -141,13 +154,7 @@ impl BodyPath {
             _,
         ] = self.segments.as_slice()
         {
-            let prefix = match trait_ref {
-                Some(trait_ref) => BodyAssociatedPathPrefix::QualifiedTrait {
-                    self_ty: self_ty.clone(),
-                    trait_ref: trait_ref.clone(),
-                },
-                None => BodyAssociatedPathPrefix::Type(self_ty.clone()),
-            };
+            let prefix = BodyAssociatedPathPrefix::from_type_anchor(self_ty, trait_ref.as_ref());
             return Some((prefix, last_segment.as_str()));
         }
 
@@ -464,6 +471,7 @@ mod tests {
         TypeRef::Path(TypePath {
             source_span: span(),
             absolute: false,
+            anchor: None,
             segments: vec![TypePathSegment {
                 name: Name::new(name),
                 args: Vec::new(),

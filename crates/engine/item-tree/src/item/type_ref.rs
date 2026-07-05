@@ -1,6 +1,6 @@
 use rg_ir_model::{
     Mutability,
-    items::{GenericArg, TypeBound, TypePath, TypePathSegment, TypeRef},
+    items::{GenericArg, TypeBound, TypePath, TypePathAnchor, TypePathSegment, TypeRef},
 };
 use rg_parse::{LineIndex, Span};
 use rg_syntax::{
@@ -67,12 +67,7 @@ impl FromAst for TypeRef {
                 .unwrap_or_else(|| Self::unknown_from_text(normalized_syntax(&ty))),
             ast::Type::PathType(ty) => ty
                 .path()
-                .map(|path| {
-                    qualified_associated_type_from_ast(&path, line_index, &mut *interner)
-                        .unwrap_or_else(|| {
-                            Self::Path(TypePath::from_ast(&path, (line_index, &mut *interner)))
-                        })
-                })
+                .map(|path| Self::Path(TypePath::from_ast(&path, (line_index, &mut *interner))))
                 .unwrap_or_else(|| Self::unknown_from_text(normalized_syntax(&ty))),
             ast::Type::PtrType(ty) => Self::RawPointer {
                 mutability: Mutability::from_mut_token(ty.mut_token().is_some()),
@@ -111,81 +106,82 @@ impl FromAst for TypeRef {
     }
 }
 
-fn qualified_associated_type_from_ast(
-    path: &ast::Path,
-    line_index: &LineIndex,
-    interner: &mut NameInterner,
-) -> Option<TypeRef> {
-    let assoc_segment = path.segment()?;
-    if assoc_segment.generic_arg_list().is_some()
-        || assoc_segment.parenthesized_arg_list().is_some()
-        || assoc_segment.ret_type().is_some()
-    {
-        return None;
-    }
-    let assoc_name = assoc_segment
-        .name_ref()
-        .map(|name| interner.intern(name.syntax().text().to_string().trim()))?;
-
-    let qualifier = path.qualifier()?;
-    if qualifier.qualifier().is_some() {
-        return None;
-    }
-    let anchor_segment = qualifier.segment()?;
-    let ast::PathSegmentKind::Type {
-        type_ref,
-        trait_ref,
-    } = anchor_segment.kind()?
-    else {
-        return None;
-    };
-    let self_ty = type_ref
-        .as_ref()
-        .map(|ty| TypeRef::from_ast(ty, (line_index, &mut *interner)))?;
-    let trait_ty = trait_ref
-        .and_then(|trait_ref| trait_ref.path())
-        .map(|path| TypeRef::Path(TypePath::from_ast(&path, (line_index, interner))));
-
-    Some(TypeRef::QualifiedAssociatedType {
-        self_ty: Box::new(self_ty),
-        trait_ty: trait_ty.map(Box::new),
-        assoc_name,
-    })
-}
-
 impl FromAst for TypePath {
     type AstNode = ast::Path;
     type Context<'a> = (&'a LineIndex, &'a mut NameInterner);
 
     fn from_ast(path: &Self::AstNode, (line_index, interner): Self::Context<'_>) -> Self {
         let source_span = Span::from_text_range(path.syntax().text_range());
-        let absolute = path
-            .first_segment()
+        let mut ast_segments = Vec::new();
+        collect_ast_path_segments(path, &mut ast_segments);
+        let mut anchor = None;
+        let mut segment_start = 0;
+        let mut absolute = ast_segments
+            .first()
             .is_some_and(|segment| segment.coloncolon_token().is_some());
-        let mut segments = Vec::new();
-        collect_segments(path, line_index, interner, &mut segments);
+
+        // Rust stores `<T>::Assoc` and `<T as Trait>::Assoc` as a leading type path segment.
+        // Keep that as a path anchor and let the rest of the path use ordinary named segments.
+        if let Some(first_segment) = ast_segments.first()
+            && let Some(anchor_from_segment) =
+                type_path_anchor_from_ast(first_segment, line_index, &mut *interner)
+        {
+            anchor = Some(anchor_from_segment);
+            segment_start = 1;
+            absolute = false;
+        }
+        let segments = ast_segments
+            .iter()
+            .skip(segment_start)
+            .map(|segment| type_path_segment_from_ast(segment, line_index, &mut *interner))
+            .collect();
 
         Self {
             source_span,
             absolute,
+            anchor,
             segments,
         }
     }
 }
 
-fn collect_segments(
-    path: &ast::Path,
-    line_index: &LineIndex,
-    interner: &mut NameInterner,
-    segments: &mut Vec<TypePathSegment>,
-) {
+fn collect_ast_path_segments(path: &ast::Path, segments: &mut Vec<ast::PathSegment>) {
     if let Some(qualifier) = path.qualifier() {
-        collect_segments(&qualifier, line_index, interner, segments);
+        collect_ast_path_segments(&qualifier, segments);
     }
 
     if let Some(segment) = path.segment() {
-        segments.push(type_path_segment_from_ast(&segment, line_index, interner));
+        segments.push(segment);
     }
+}
+
+fn type_path_anchor_from_ast(
+    segment: &ast::PathSegment,
+    line_index: &LineIndex,
+    interner: &mut NameInterner,
+) -> Option<TypePathAnchor> {
+    let ast::PathSegmentKind::Type {
+        type_ref,
+        trait_ref,
+    } = segment.kind()?
+    else {
+        return None;
+    };
+
+    let self_ty = type_ref
+        .as_ref()
+        .map(|ty| TypeRef::from_ast(ty, (line_index, &mut *interner)))?;
+
+    let trait_ty = match trait_ref {
+        Some(trait_ref) => Some(
+            trait_ref
+                .path()
+                .map(|path| TypeRef::Path(TypePath::from_ast(&path, (line_index, interner))))?,
+        ),
+        None => None,
+    };
+
+    Some(TypePathAnchor::from_parts(self_ty, trait_ty))
 }
 
 fn type_path_segment_from_ast(

@@ -125,6 +125,10 @@ impl<'txn, 'db> PathCompletionSiteScanner<'txn, 'db> {
         scope: ScopeId,
         path: &TypePath,
     ) -> Option<PathCompletionSite> {
+        if path.anchor.is_some() {
+            return None;
+        }
+
         for (idx, segment) in path.segments.iter().enumerate().skip(1) {
             if !segment.span.touches(self.offset) {
                 continue;
@@ -133,7 +137,7 @@ impl<'txn, 'db> PathCompletionSiteScanner<'txn, 'db> {
             return Some(PathCompletionSite {
                 body,
                 scope,
-                qualifier: Path::from_type_path_prefix(path, idx - 1),
+                qualifier: Path::from_type_path_prefix(path, idx - 1)?,
                 member_prefix_span: segment.span,
                 namespace: PathCompletionNamespace::Types,
             });
@@ -152,7 +156,7 @@ impl<'txn, 'db> PathCompletionSiteScanner<'txn, 'db> {
         Some(PathCompletionSite {
             body,
             scope,
-            qualifier: Path::from_type_path(path),
+            qualifier: Path::from_type_path(path)?,
             member_prefix_span: span,
             namespace: PathCompletionNamespace::Types,
         })

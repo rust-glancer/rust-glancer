@@ -810,7 +810,7 @@ impl<I> iter::Iterator for iter::Enumerate<I>
 where
     I: iter::Iterator,
 {
-    type Item = (usize, I::Item);
+    type Item = (usize, <I>::Item);
 }
 
 pub fn missing<T>() -> T {}

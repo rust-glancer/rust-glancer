@@ -36,12 +36,19 @@ impl TypePathCursorScanner<'_> {
 
     /// Adds one candidate per path segment so each prefix can resolve independently.
     fn scan_type_path(&mut self, scope: ScopeId, path: &TypePath, file_id: FileId) {
+        if path.anchor.is_some() {
+            return;
+        }
+
         for (idx, segment) in path.segments.iter().enumerate() {
             if self.offset_matches(segment.span) {
+                let Some(path) = Path::from_type_path_prefix(path, idx) else {
+                    continue;
+                };
                 self.candidates.push(BodyCursorCandidate::TypePath {
                     body: self.body_ref,
                     scope,
-                    path: Path::from_type_path_prefix(path, idx),
+                    path,
                     file_id,
                     span: segment.span,
                 });

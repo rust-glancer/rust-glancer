@@ -1,4 +1,4 @@
-use rg_ir_model::items::{GenericArg, TypeBound, TypePath, TypeRef};
+use rg_ir_model::items::{GenericArg, TypeBound, TypePath, TypePathAnchor, TypeRef};
 
 /// Walks every path node nested inside a type reference.
 ///
@@ -8,6 +8,10 @@ pub(crate) fn walk_type_ref_paths<'ty>(ty: &'ty TypeRef, visit: &mut impl FnMut(
     match ty {
         TypeRef::Path(path) => {
             visit(path);
+
+            if let Some(anchor) = &path.anchor {
+                walk_type_path_anchor(anchor, visit);
+            }
 
             for segment in &path.segments {
                 for arg in &segment.args {
@@ -28,14 +32,6 @@ pub(crate) fn walk_type_ref_paths<'ty>(ty: &'ty TypeRef, visit: &mut impl FnMut(
                         | GenericArg::Unsupported(_) => {}
                     }
                 }
-            }
-        }
-        TypeRef::QualifiedAssociatedType {
-            self_ty, trait_ty, ..
-        } => {
-            walk_type_ref_paths(self_ty, visit);
-            if let Some(trait_ty) = trait_ty {
-                walk_type_ref_paths(trait_ty, visit);
             }
         }
         TypeRef::Tuple(types) => {
@@ -61,5 +57,15 @@ pub(crate) fn walk_type_ref_paths<'ty>(ty: &'ty TypeRef, visit: &mut impl FnMut(
             }
         }
         TypeRef::Unknown(_) | TypeRef::Never | TypeRef::Unit | TypeRef::Infer => {}
+    }
+}
+
+fn walk_type_path_anchor<'ty>(anchor: &'ty TypePathAnchor, visit: &mut impl FnMut(&'ty TypePath)) {
+    match anchor {
+        TypePathAnchor::Type(ty) => walk_type_ref_paths(ty, visit),
+        TypePathAnchor::QualifiedTrait { self_ty, trait_ty } => {
+            walk_type_ref_paths(self_ty, visit);
+            walk_type_ref_paths(trait_ty, visit);
+        }
     }
 }

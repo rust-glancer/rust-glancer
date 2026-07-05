@@ -6,7 +6,9 @@
 
 use rg_ir_model::{
     AssocItemId, Path, TraitApplicability, TraitRef, TypeAliasRef, TypePathResolution,
-    items::{GenericArg as ItemGenericArg, TypeBound, TypeRef, WherePredicate},
+    items::{
+        GenericArg as ItemGenericArg, TypeBound, TypePath, TypePathAnchor, TypeRef, WherePredicate,
+    },
 };
 use rg_ir_storage::{DefMapSource, ItemStoreSource, TypePathContext};
 use rg_std::ExpectedUnique;
@@ -325,25 +327,9 @@ where
         }
 
         match ty {
-            TypeRef::QualifiedAssociatedType {
-                self_ty,
-                trait_ty: Some(trait_ty),
-                assoc_name,
-            } => {
-                if remaining_depth == 0 {
-                    return Ok(None);
-                }
-                self.project_qualified_associated_type_ref(
-                    context,
-                    subst,
-                    table,
-                    self_ty,
-                    trait_ty,
-                    assoc_name.as_str(),
-                    remaining_depth,
-                )
+            TypeRef::Path(path) if path.anchor.is_some() => {
+                self.project_anchored_path_type_ref(context, subst, table, path, remaining_depth)
             }
-            TypeRef::QualifiedAssociatedType { trait_ty: None, .. } => Ok(None),
             TypeRef::Tuple(fields) => {
                 let mut table = table.clone();
                 let mut applicability = TraitApplicability::Yes;
@@ -437,6 +423,54 @@ where
                     table,
                 }))
             }
+        }
+    }
+
+    fn project_anchored_path_type_ref(
+        &self,
+        context: TypePathContext,
+        subst: &InferenceTypeSubst,
+        table: &InferenceTable,
+        path: &TypePath,
+        remaining_depth: usize,
+    ) -> Result<Option<ProjectedTypeRef>, I::Error> {
+        if remaining_depth == 0 {
+            return Ok(None);
+        }
+        let Some(anchor) = &path.anchor else {
+            return Ok(None);
+        };
+        let [assoc_segment] = path.segments.as_slice() else {
+            return Ok(None);
+        };
+        if !assoc_segment.args.is_empty() {
+            return Ok(None);
+        }
+
+        match anchor {
+            TypePathAnchor::Type(self_ty) => {
+                let Some(param_name) = self_ty.type_param_name() else {
+                    return Ok(None);
+                };
+                self.project_type_param_associated_path(
+                    context,
+                    subst,
+                    table,
+                    &param_name,
+                    assoc_segment.name.as_str(),
+                    remaining_depth,
+                )
+            }
+            TypePathAnchor::QualifiedTrait { self_ty, trait_ty } => self
+                .project_qualified_associated_type_ref(
+                    context,
+                    subst,
+                    table,
+                    self_ty,
+                    trait_ty,
+                    assoc_segment.name.as_str(),
+                    remaining_depth,
+                ),
         }
     }
 
@@ -646,9 +680,11 @@ where
         let TypeRef::Path(path) = trait_ty else {
             return Ok(None);
         };
-        let TypePathResolution::Trait(trait_ref) = self
-            .item_paths
-            .resolve_type_path(context, &Path::from_type_path(path))?
+        let Some(path_key) = Path::from_type_path(path) else {
+            return Ok(None);
+        };
+        let TypePathResolution::Trait(trait_ref) =
+            self.item_paths.resolve_type_path(context, &path_key)?
         else {
             return Ok(None);
         };

@@ -1,6 +1,96 @@
 mod utils;
 
+use crate::{FromAst, GenericArg, TypePathAnchor, TypeRef};
 use expect_test::expect;
+use rg_parse::LineIndex;
+use rg_syntax::{AstNode as _, Edition, SourceFile, ast};
+use rg_text::NameInterner;
+
+#[test]
+fn lowers_qualified_associated_type_as_anchored_path() {
+    let TypeRef::Path(path) = lower_alias_ty("type Alias<I> = <I as Iterator>::Item;") else {
+        panic!("aliased type should lower to a path");
+    };
+    assert_eq!(path.to_string(), "<I as Iterator>::Item");
+    assert_eq!(path.segments.len(), 1);
+    assert_eq!(path.segments[0].name.as_str(), "Item");
+
+    let Some(TypePathAnchor::QualifiedTrait { self_ty, trait_ty }) = &path.anchor else {
+        panic!("qualified associated type should keep a qualified trait anchor");
+    };
+    assert_eq!(
+        self_ty.type_param_name().map(|name| name.to_string()),
+        Some("I".to_string())
+    );
+    let TypeRef::Path(trait_path) = trait_ty.as_ref() else {
+        panic!("qualified trait anchor should keep the trait as a path type");
+    };
+    assert_eq!(
+        trait_path.single_name().map(|name| name.as_str()),
+        Some("Iterator")
+    );
+}
+
+#[test]
+fn lowers_type_only_associated_type_as_anchored_path() {
+    let TypeRef::Path(path) = lower_alias_ty("type Alias<T> = <T>::Item;") else {
+        panic!("aliased type should lower to a path");
+    };
+    assert_eq!(path.to_string(), "<T>::Item");
+    assert_eq!(path.segments.len(), 1);
+    assert_eq!(path.segments[0].name.as_str(), "Item");
+
+    let Some(TypePathAnchor::Type(self_ty)) = &path.anchor else {
+        panic!("type-only associated path should keep a type anchor");
+    };
+    assert_eq!(
+        self_ty.type_param_name().map(|name| name.to_string()),
+        Some("T".to_string())
+    );
+}
+
+#[test]
+fn preserves_generic_args_on_associated_path_segment() {
+    let TypeRef::Path(path) = lower_alias_ty("type Alias<I> = <I as Iterator>::Item<'static, I>;")
+    else {
+        panic!("aliased type should lower to a path");
+    };
+    assert_eq!(path.to_string(), "<I as Iterator>::Item<'static, I>");
+    assert!(matches!(
+        &path.anchor,
+        Some(TypePathAnchor::QualifiedTrait { .. })
+    ));
+
+    let [assoc_segment] = path.segments.as_slice() else {
+        panic!("associated path should have one associated segment");
+    };
+    assert_eq!(assoc_segment.name.as_str(), "Item");
+    assert_eq!(assoc_segment.args.len(), 2);
+    assert!(matches!(
+        &assoc_segment.args[0],
+        GenericArg::Lifetime(lifetime) if lifetime == "'static"
+    ));
+    assert!(matches!(
+        &assoc_segment.args[1],
+        GenericArg::Type(ty) if ty.type_param_name().is_some_and(|name| name.as_str() == "I")
+    ));
+}
+
+fn lower_alias_ty(source: &str) -> TypeRef {
+    let file = SourceFile::parse(source, Edition::CURRENT)
+        .ok()
+        .expect("fixture should parse");
+    let alias = file
+        .syntax()
+        .descendants()
+        .find_map(ast::TypeAlias::cast)
+        .expect("fixture should contain a type alias");
+    let ty = alias.ty().expect("fixture type alias should have a value");
+    let line_index = LineIndex::new(source);
+    let mut interner = NameInterner::new();
+
+    TypeRef::from_ast(&ty, (&line_index, &mut interner))
+}
 
 #[test]
 fn dumps_lib_and_bin_item_trees() {

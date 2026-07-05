@@ -22,8 +22,8 @@ pub use self::{
         MacroDefinitionAttrs, MacroDefinitionItem, MacroRulesAst, MacroRulesContext, MacroUseAttr,
         MacroUseSelector, MaybeFromAst, ModuleItem, ModuleSource, OuterDocs, ParamItem, ParamKind,
         StaticItem, StructItem, TraitItem, TraitItemContext, TypeAliasItem, TypeBound, TypePath,
-        TypePathSegment, TypeRef, UnionItem, UseImport, UseImportKind, UseItem, UsePath,
-        UsePathSegment, UsePathSegmentKind, VisibilityLevel, WherePredicate,
+        TypePathAnchor, TypePathSegment, TypeRef, UnionItem, UseImport, UseImportKind, UseItem,
+        UsePath, UsePathSegment, UsePathSegmentKind, VisibilityLevel, WherePredicate,
     },
     package::{FileTree, Package, TargetRoot},
 };

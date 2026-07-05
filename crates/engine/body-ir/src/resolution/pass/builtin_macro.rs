@@ -73,6 +73,7 @@ where
             inner: Box::new(TypeRef::Path(TypePath {
                 source_span: synthetic_span,
                 absolute: false,
+                anchor: None,
                 segments: vec![TypePathSegment {
                     name: Name::new("str"),
                     args: Vec::new(),
@@ -123,6 +124,7 @@ where
         TypeRef::Path(TypePath {
             source_span: synthetic_span,
             absolute: false,
+            anchor: None,
             segments: segments
                 .iter()
                 .enumerate()

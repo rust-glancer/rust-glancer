@@ -8,8 +8,8 @@ use rg_ir_model::hir::signature::TypeAliasSignature;
 use rg_ir_model::hir::source::{GeneratedItemRef, GeneratedSourceId, ItemSource, ItemSourceKind};
 use rg_ir_model::items::{
     FieldList, FloatTy, GenericArg as ItemGenericArg, GenericParams, ItemTreeId, SignedIntTy,
-    TypeAliasItem, TypeBound, TypeParamData, TypePath, TypePathSegment, TypeRef, UnsignedIntTy,
-    VisibilityLevel, WherePredicate,
+    TypeAliasItem, TypeBound, TypeParamData, TypePath, TypePathAnchor, TypePathSegment, TypeRef,
+    UnsignedIntTy, VisibilityLevel, WherePredicate,
 };
 use rg_ir_model::{
     AssocItemId, DefId, DefMapRef, FileId, ImplId, ItemId, ItemOwner, LocalDefId, LocalDefRef,
@@ -187,16 +187,26 @@ pub(super) fn path_ty(path: &str, args: Vec<ItemGenericArg>) -> TypeRef {
     TypeRef::Path(TypePath {
         source_span: span,
         absolute: false,
+        anchor: None,
         segments,
     })
 }
 
 pub(super) fn qualified_assoc_ty(self_ty: TypeRef, trait_ty: TypeRef, assoc_name: &str) -> TypeRef {
-    TypeRef::QualifiedAssociatedType {
-        self_ty: Box::new(self_ty),
-        trait_ty: Some(Box::new(trait_ty)),
-        assoc_name: Name::new(assoc_name),
-    }
+    let span = fixture_span();
+    TypeRef::Path(TypePath {
+        source_span: span,
+        absolute: false,
+        anchor: Some(TypePathAnchor::QualifiedTrait {
+            self_ty: Box::new(self_ty),
+            trait_ty: Box::new(trait_ty),
+        }),
+        segments: vec![TypePathSegment {
+            name: Name::new(assoc_name),
+            args: Vec::new(),
+            span,
+        }],
+    })
 }
 
 pub(super) fn type_arg(ty: TypeRef) -> ItemGenericArg {
@@ -458,7 +468,6 @@ fn type_ref_path_name(ty: &TypeRef) -> Option<String> {
         | TypeRef::FnPointer { .. }
         | TypeRef::ImplTrait(_)
         | TypeRef::DynTrait(_)
-        | TypeRef::QualifiedAssociatedType { .. }
         | TypeRef::Unknown(_) => None,
     }
 }

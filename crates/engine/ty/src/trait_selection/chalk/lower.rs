@@ -15,10 +15,11 @@ use chalk_solve::rust_ir::{
     ImplDatum, ImplDatumBound, ImplType, Polarity, TraitDatum, TraitDatumBound, TraitFlags,
 };
 use rg_ir_model::items::{
-    GenericArg as ItemGenericArg, GenericParams, TypeBound, TypeRef, WherePredicate,
+    GenericArg as ItemGenericArg, GenericParams, TypeBound, TypePath, TypePathAnchor, TypeRef,
+    WherePredicate,
 };
 use rg_ir_model::{
-    ImplRef, Mutability, Path, TraitRef, TypeAliasRef, TypeDefId, TypeDefRef, TypePathResolution,
+    ImplRef, Mutability, TraitRef, TypeAliasRef, TypeDefId, TypeDefRef, TypePathResolution,
     hir::items::TypeAliasData,
 };
 use rg_ir_storage::{DefMapSource, ItemStoreSource, TypePathContext};
@@ -468,7 +469,11 @@ where
             TypeRef::Never => Some(TyKind::Never.intern(INTER)),
             TypeRef::Infer | TypeRef::Unknown(_) => None,
             TypeRef::Path(path) => {
-                let path_key = Path::from_type_path(path);
+                if path.anchor.is_some() {
+                    return self.lower_anchored_type_path(path, subst);
+                }
+
+                let path_key = path.as_def_map_path()?;
                 if let Some(name) = path_key.single_name() {
                     if let Some((subst, table)) = subst
                         && let Some(ty) = subst.type_param(name)
@@ -534,12 +539,31 @@ where
                 Some(TyKind::Array(inner, len).intern(INTER))
             }
             TypeRef::FnPointer { .. } | TypeRef::ImplTrait(_) | TypeRef::DynTrait(_) => None,
-            TypeRef::QualifiedAssociatedType {
-                self_ty,
-                trait_ty: Some(trait_ty),
-                assoc_name,
-            } => self.lower_qualified_associated_type(self_ty, trait_ty, assoc_name, subst),
-            TypeRef::QualifiedAssociatedType { trait_ty: None, .. } => None,
+        }
+    }
+
+    fn lower_anchored_type_path(
+        &self,
+        path: &TypePath,
+        subst: Option<(&InferenceTypeSubst, &InferenceTable)>,
+    ) -> Option<ChalkTy> {
+        let Some(anchor) = &path.anchor else {
+            return None;
+        };
+        let [assoc_segment] = path.segments.as_slice() else {
+            return None;
+        };
+
+        match anchor {
+            TypePathAnchor::Type(_) => None,
+            TypePathAnchor::QualifiedTrait { self_ty, trait_ty } => self
+                .lower_qualified_associated_type(
+                    self_ty,
+                    trait_ty,
+                    &assoc_segment.name,
+                    &assoc_segment.args,
+                    subst,
+                ),
         }
     }
 
@@ -548,8 +572,13 @@ where
         self_ty: &TypeRef,
         trait_ty: &TypeRef,
         assoc_name: &Name,
+        assoc_args: &[ItemGenericArg],
         subst: Option<(&InferenceTypeSubst, &InferenceTable)>,
     ) -> Option<ChalkTy> {
+        if !assoc_args.is_empty() {
+            return None;
+        }
+
         let self_ty = self.lower_type_ref(self_ty, subst)?;
         let TypeRef::Path(trait_path) = trait_ty else {
             return None;
@@ -734,7 +763,7 @@ where
     }
 
     fn resolve_trait_path(&self, path: &rg_ir_model::items::TypePath) -> Option<TraitRef> {
-        let path_key = Path::from_type_path(path);
+        let path_key = path.as_def_map_path()?;
         if let TypePathResolution::Trait(trait_ref) = self
             .item_paths
             .resolve_type_path(self.context, &path_key)
