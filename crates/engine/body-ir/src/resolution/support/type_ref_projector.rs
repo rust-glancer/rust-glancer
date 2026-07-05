@@ -263,18 +263,11 @@ where
         self_ty: &TypeRef,
         assoc_name: &Name,
     ) -> Result<LocalProjection, PackageStoreError> {
-        if self.type_param_associated_ty.is_none() {
-            return Ok(LocalProjection::NotBodyLocal);
-        }
-        let Some(param_name) = self_ty.type_param_name() else {
-            return Ok(LocalProjection::Unsupported);
+        let param_name = match self.type_param_assoc_name(self_ty) {
+            Ok(param_name) => param_name,
+            Err(projection) => return Ok(projection),
         };
-        if self.subst.type_param(param_name.as_str()).is_none() {
-            return Ok(LocalProjection::Unsupported);
-        }
-        let Some(projector) = self.type_param_associated_ty.as_mut() else {
-            return Ok(LocalProjection::NotBodyLocal);
-        };
+        let projector = self.type_param_assoc_projector_unchecked();
 
         Ok(LocalProjection::from_attempted_projection(projector(
             &param_name,
@@ -289,30 +282,43 @@ where
         trait_ty: &TypeRef,
         assoc_name: &Name,
     ) -> Result<LocalProjection, PackageStoreError> {
-        if self.type_param_associated_ty.is_none() {
-            return Ok(LocalProjection::NotBodyLocal);
-        }
-        let Some(param_name) = self_ty.type_param_name() else {
-            return Ok(LocalProjection::Unsupported);
+        let param_name = match self.type_param_assoc_name(self_ty) {
+            Ok(param_name) => param_name,
+            Err(projection) => return Ok(projection),
         };
-        if self.subst.type_param(param_name.as_str()).is_none() {
-            return Ok(LocalProjection::Unsupported);
-        }
         let Some((trait_ref, resolved_args)) = self.resolver.resolve_trait_bound(trait_ty)? else {
             return Ok(LocalProjection::Unsupported);
         };
         let Some(args) = self.project_qualified_trait_args(trait_ty, &resolved_args) else {
             return Ok(LocalProjection::Unsupported);
         };
-        let Some(projector) = self.type_param_associated_ty.as_mut() else {
-            return Ok(LocalProjection::NotBodyLocal);
-        };
+        let projector = self.type_param_assoc_projector_unchecked();
 
         Ok(LocalProjection::from_attempted_projection(projector(
             &param_name,
             Some((trait_ref, args)),
             assoc_name,
         )?))
+    }
+
+    fn type_param_assoc_name(&self, self_ty: &TypeRef) -> Result<Name, LocalProjection> {
+        if self.type_param_associated_ty.is_none() {
+            return Err(LocalProjection::NotBodyLocal);
+        }
+        let Some(param_name) = self_ty.type_param_name() else {
+            return Err(LocalProjection::Unsupported);
+        };
+        if self.subst.type_param(param_name.as_str()).is_none() {
+            return Err(LocalProjection::Unsupported);
+        }
+
+        Ok(param_name)
+    }
+
+    fn type_param_assoc_projector_unchecked(&mut self) -> &mut AssociatedTypeProjector<'a> {
+        self.type_param_associated_ty
+            .as_mut()
+            .expect("type-param associated projector must be checked")
     }
 
     fn project_qualified_trait_args(

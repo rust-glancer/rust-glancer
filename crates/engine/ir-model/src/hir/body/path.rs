@@ -6,7 +6,7 @@ use wincode::{SchemaRead, SchemaWrite};
 
 use crate::{
     Path, PathSegment, TargetRef,
-    items::{GenericArg, TypePath, TypePathAnchor, TypePathSegment, TypeRef},
+    items::{GenericArg, TypePath, TypePathSegment, TypeRef},
 };
 use rg_std::{MemorySize, Shrink};
 
@@ -78,12 +78,12 @@ pub enum BodyAssociatedPathPrefix {
 
 impl BodyAssociatedPathPrefix {
     fn from_type_anchor(self_ty: &TypeRef, trait_ref: Option<&TypeRef>) -> Self {
-        match TypePathAnchor::from_parts(self_ty.clone(), trait_ref.cloned()) {
-            TypePathAnchor::Type(ty) => Self::Type(*ty),
-            TypePathAnchor::QualifiedTrait { self_ty, trait_ty } => Self::QualifiedTrait {
-                self_ty: *self_ty,
-                trait_ref: *trait_ty,
+        match trait_ref {
+            Some(trait_ref) => Self::QualifiedTrait {
+                self_ty: self_ty.clone(),
+                trait_ref: trait_ref.clone(),
             },
+            None => Self::Type(self_ty.clone()),
         }
     }
 }
