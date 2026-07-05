@@ -49,24 +49,6 @@
     // a little more CI, but stale dependency PRs are much harder to trust.
     "rebaseWhen": "behind-base-branch",
 
-    // Some CI tools are installed from workflow strings rather than native
-    // package manifests. Teach Renovate about the important ones so they stay
-    // in the same dependency PRs as the libraries that require them.
-    "customManagers": [
-        {
-            "customType": "regex",
-            "description": "Update Rust CLI tools installed by CI",
-            "managerFilePatterns": [
-                "/^\\.github/workflows/.+\\.ya?ml$/"
-            ],
-            "matchStrings": [
-                "tool: (?<depName>gungraun-runner)@(?<currentValue>[^\\s]+)"
-            ],
-            "datasourceTemplate": "crate",
-            "versioningTemplate": "cargo"
-        }
-    ],
-
     // Refresh lockfiles weekly as a separate maintenance PR rather than mixing
     // transitive-only churn into direct dependency updates.
     "lockFileMaintenance": {
@@ -110,6 +92,18 @@
             "enabled": false
         },
         {
+            // Gungraun is only used by CI benchmarks, and its crate plus runner
+            // must stay protocol-compatible. Renovate can pick a stable manifest
+            // version while Cargo resolves a newer pending runner into Cargo.lock,
+            // so automated updates create more work than they save here.
+            "description": "Do not update Gungraun benchmark tooling automatically",
+            "matchDepNames": [
+                "gungraun",
+                "gungraun-runner"
+            ],
+            "enabled": false
+        },
+        {
             "description": "Group non-major Rust dependencies",
             "matchManagers": [
                 "cargo"
@@ -117,16 +111,6 @@
             "matchUpdateTypes": [
                 "minor",
                 "patch"
-            ],
-            "groupName": "rust dependencies"
-        },
-        {
-            "description": "Group CI Rust tools with Rust dependencies",
-            "matchManagers": [
-                "custom.regex"
-            ],
-            "matchDepNames": [
-                "gungraun-runner"
             ],
             "groupName": "rust dependencies"
         },
@@ -200,6 +184,7 @@
                 "digest"
             ],
             "groupName": "github-action digests",
+            "minimumReleaseAge": "0 days",
             "automerge": true
         }
     ]
