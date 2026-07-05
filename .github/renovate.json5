@@ -175,7 +175,8 @@
         {
             // Digest refreshes keep already-pinned GitHub Actions pointing at the
             // current commit behind their version tags. They are intentionally kept
-            // separate from version bumps so this narrow update type can automerge.
+            // separate from version bumps so this narrow update type can automerge
+            // after the repository-wide release-age window has passed.
             "description": "Automerge only GitHub Action digest pin refreshes",
             "matchManagers": [
                 "github-actions"
@@ -184,7 +185,6 @@
                 "digest"
             ],
             "groupName": "github-action digests",
-            "minimumReleaseAge": "0 days",
             "automerge": true
         }
     ]
