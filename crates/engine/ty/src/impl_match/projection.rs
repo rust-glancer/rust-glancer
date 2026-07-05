@@ -314,9 +314,11 @@ where
             module: impl_data.owner,
             impl_ref: Some(impl_ref),
         };
-        let TypePathResolution::Trait(trait_ref) = self
-            .item_paths
-            .resolve_type_path(context, &Path::from_type_path(bound_path))?
+        let Some(path) = Path::from_type_path(bound_path) else {
+            return Ok(false);
+        };
+        let TypePathResolution::Trait(trait_ref) =
+            self.item_paths.resolve_type_path(context, &path)?
         else {
             return Ok(false);
         };

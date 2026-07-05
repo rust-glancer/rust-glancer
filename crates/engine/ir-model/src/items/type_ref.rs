@@ -6,7 +6,7 @@ use rg_parse::Span;
 use rg_std::{MemorySize, Shrink};
 use rg_text::Name;
 
-use crate::Mutability;
+use crate::{Mutability, Path, PathSegment};
 
 /// Unresolved type syntax lowered into the item tree.
 ///
@@ -19,13 +19,6 @@ pub enum TypeRef {
     Unit,
     Infer,
     Path(#[wincode(with = "rg_wincode_utils::WincodeDynamic<TypePath>")] TypePath),
-    QualifiedAssociatedType {
-        #[wincode(with = "rg_wincode_utils::WincodeDynamic<Box<TypeRef>>")]
-        self_ty: Box<TypeRef>,
-        #[wincode(with = "rg_wincode_utils::WincodeDynamic<Option<Box<TypeRef>>>")]
-        trait_ty: Option<Box<TypeRef>>,
-        assoc_name: Name,
-    },
     Tuple(#[wincode(with = "rg_wincode_utils::WincodeDynamic<Vec<TypeRef>>")] Vec<TypeRef>),
     Reference {
         lifetime: Option<String>,
@@ -78,6 +71,7 @@ impl TypeRef {
     /// to decide whether `S` is actually one of the relevant type parameters.
     pub fn as_type_param_assoc_path(&self) -> Option<(&Name, &Name)> {
         if let Self::Path(path) = self
+            && path.anchor.is_none()
             && !path.absolute
             && let [param_segment, assoc_segment] = path.segments.as_slice()
             && param_segment.args.is_empty()
@@ -92,13 +86,7 @@ impl TypeRef {
     /// Returns true when this type syntax contains explicit generic arguments anywhere inside it.
     pub fn has_generic_args(&self) -> bool {
         match self {
-            Self::Path(path) => path.segments.iter().any(|segment| !segment.args.is_empty()),
-            Self::QualifiedAssociatedType {
-                self_ty, trait_ty, ..
-            } => {
-                self_ty.has_generic_args()
-                    || trait_ty.as_deref().is_some_and(Self::has_generic_args)
-            }
+            Self::Path(path) => path.has_generic_args(),
             Self::Tuple(types) => types.iter().any(Self::has_generic_args),
             Self::Reference { inner, .. }
             | Self::RawPointer { inner, .. }
@@ -117,21 +105,7 @@ impl TypeRef {
     /// Returns true when this type syntax mentions one of the provided type parameter names.
     pub fn mentions_type_param(&self, params: &[&str]) -> bool {
         match self {
-            Self::Path(path) => path.segments.iter().any(|segment| {
-                params.contains(&segment.name.as_str())
-                    || segment
-                        .args
-                        .iter()
-                        .any(|arg| arg.mentions_type_param(params))
-            }),
-            Self::QualifiedAssociatedType {
-                self_ty, trait_ty, ..
-            } => {
-                self_ty.mentions_type_param(params)
-                    || trait_ty
-                        .as_deref()
-                        .is_some_and(|trait_ty| trait_ty.mentions_type_param(params))
-            }
+            Self::Path(path) => path.mentions_type_param(params),
             Self::Tuple(types) => types.iter().any(|ty| ty.mentions_type_param(params)),
             Self::Reference { inner, .. }
             | Self::RawPointer { inner, .. }
@@ -161,14 +135,6 @@ impl fmt::Display for TypeRef {
             Self::Unit => write!(f, "()"),
             Self::Infer => write!(f, "_"),
             Self::Path(path) => write!(f, "{path}"),
-            Self::QualifiedAssociatedType {
-                self_ty,
-                trait_ty,
-                assoc_name,
-            } => match trait_ty {
-                Some(trait_ty) => write!(f, "<{self_ty} as {trait_ty}>::{assoc_name}"),
-                None => write!(f, "<{self_ty}>::{assoc_name}"),
-            },
             Self::Tuple(types) => {
                 write!(f, "(")?;
                 for (idx, ty) in types.iter().enumerate() {
@@ -235,14 +201,57 @@ pub struct TypePath {
     #[shrink(skip)]
     pub source_span: Span,
     pub absolute: bool,
+    #[wincode(with = "rg_wincode_utils::WincodeDynamic<Option<TypePathAnchor>>")]
+    pub anchor: Option<TypePathAnchor>,
     #[wincode(with = "rg_wincode_utils::WincodeDynamic<Vec<TypePathSegment>>")]
     pub segments: Vec<TypePathSegment>,
 }
 
 impl TypePath {
+    /// Returns the compact path shape used by DefMap resolution.
+    ///
+    /// Type anchors such as `<T>::Assoc` and `<T as Trait>::Assoc` are real path syntax, but
+    /// there is no honest way to represent the anchor as plain DefMap segments. Callers that need
+    /// associated type semantics should handle the anchored shape directly instead of resolving an
+    /// empty fallback path.
+    pub fn as_def_map_path(&self) -> Option<Path> {
+        if self.anchor.is_some() {
+            return None;
+        }
+
+        Some(Path {
+            absolute: self.absolute,
+            segments: self
+                .segments
+                .iter()
+                .map(|segment| PathSegment::from_type_segment_name(&segment.name))
+                .collect(),
+        })
+    }
+
+    /// Returns the DefMap path prefix ending at `end_idx`.
+    ///
+    /// Like [`Self::as_def_map_path`], anchored paths return `None` because their prefix carries
+    /// type syntax that DefMap paths cannot preserve.
+    pub fn as_def_map_path_prefix(&self, end_idx: usize) -> Option<Path> {
+        if self.anchor.is_some() {
+            return None;
+        }
+
+        Some(Path {
+            absolute: self.absolute,
+            segments: self
+                .segments
+                .iter()
+                .take(end_idx.saturating_add(1))
+                .map(|segment| PathSegment::from_type_segment_name(&segment.name))
+                .collect(),
+        })
+    }
+
     /// Returns the name of a single-segment relative path.
     pub fn single_name(&self) -> Option<&Name> {
-        if self.absolute || self.segments.len() != 1 {
+        if self.anchor.is_some() || self.absolute || self.segments.len() != 1 {
             return None;
         }
 
@@ -253,11 +262,38 @@ impl TypePath {
         self.single_name()
             .is_some_and(|name| name.as_str() == "Self")
     }
+
+    /// Returns true when any path segment or anchor contains explicit generic arguments.
+    pub fn has_generic_args(&self) -> bool {
+        self.anchor
+            .as_ref()
+            .is_some_and(TypePathAnchor::has_generic_args)
+            || self.segments.iter().any(|segment| !segment.args.is_empty())
+    }
+
+    /// Returns true when this path or anchor mentions one of the provided type parameter names.
+    pub fn mentions_type_param(&self, params: &[&str]) -> bool {
+        self.anchor
+            .as_ref()
+            .is_some_and(|anchor| anchor.mentions_type_param(params))
+            || self.segments.iter().any(|segment| {
+                params.contains(&segment.name.as_str())
+                    || segment
+                        .args
+                        .iter()
+                        .any(|arg| arg.mentions_type_param(params))
+            })
+    }
 }
 
 impl fmt::Display for TypePath {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.absolute {
+        if let Some(anchor) = &self.anchor {
+            write!(f, "{anchor}")?;
+            if !self.segments.is_empty() {
+                write!(f, "::")?;
+            }
+        } else if self.absolute {
             write!(f, "::")?;
         }
 
@@ -269,6 +305,60 @@ impl fmt::Display for TypePath {
         }
 
         Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
+pub enum TypePathAnchor {
+    /// `<T>::Assoc`.
+    Type(#[wincode(with = "rg_wincode_utils::WincodeDynamic<Box<TypeRef>>")] Box<TypeRef>),
+    /// `<T as Trait>::Assoc`.
+    QualifiedTrait {
+        #[wincode(with = "rg_wincode_utils::WincodeDynamic<Box<TypeRef>>")]
+        self_ty: Box<TypeRef>,
+        #[wincode(with = "rg_wincode_utils::WincodeDynamic<Box<TypeRef>>")]
+        trait_ty: Box<TypeRef>,
+    },
+}
+
+impl TypePathAnchor {
+    pub fn from_parts(self_ty: TypeRef, trait_ty: Option<TypeRef>) -> Self {
+        match trait_ty {
+            Some(trait_ty) => Self::QualifiedTrait {
+                self_ty: Box::new(self_ty),
+                trait_ty: Box::new(trait_ty),
+            },
+            None => Self::Type(Box::new(self_ty)),
+        }
+    }
+
+    pub fn has_generic_args(&self) -> bool {
+        match self {
+            Self::Type(ty) => ty.has_generic_args(),
+            Self::QualifiedTrait { self_ty, trait_ty } => {
+                self_ty.has_generic_args() || trait_ty.has_generic_args()
+            }
+        }
+    }
+
+    pub fn mentions_type_param(&self, params: &[&str]) -> bool {
+        match self {
+            Self::Type(ty) => ty.mentions_type_param(params),
+            Self::QualifiedTrait { self_ty, trait_ty } => {
+                self_ty.mentions_type_param(params) || trait_ty.mentions_type_param(params)
+            }
+        }
+    }
+}
+
+impl fmt::Display for TypePathAnchor {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Type(ty) => write!(f, "<{ty}>"),
+            Self::QualifiedTrait { self_ty, trait_ty } => {
+                write!(f, "<{self_ty} as {trait_ty}>")
+            }
+        }
     }
 }
 

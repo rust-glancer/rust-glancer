@@ -554,21 +554,12 @@ where
     /// supports that for already-concrete projectable types.
     fn type_ref_mentions_impl_type_param(ty: &TypeRef, generics: &GenericParams) -> bool {
         match ty {
-            TypeRef::Path(path) => path.segments.iter().any(|segment| {
-                Self::is_impl_type_param(generics, &segment.name)
-                    || segment
-                        .args
-                        .iter()
-                        .any(|arg| Self::generic_arg_mentions_impl_type_param(arg, generics))
-            }),
-            TypeRef::QualifiedAssociatedType {
-                self_ty, trait_ty, ..
-            } => {
-                Self::type_ref_mentions_impl_type_param(self_ty, generics)
-                    || trait_ty.as_deref().is_some_and(|trait_ty| {
-                        Self::type_ref_mentions_impl_type_param(trait_ty, generics)
-                    })
-            }
+            TypeRef::Path(path) => path.mentions_type_param(
+                &generics
+                    .type_param_names()
+                    .map(|name| name.as_str())
+                    .collect::<Vec<_>>(),
+            ),
             TypeRef::Tuple(types) => types
                 .iter()
                 .any(|ty| Self::type_ref_mentions_impl_type_param(ty, generics)),
@@ -588,27 +579,6 @@ where
                 .iter()
                 .any(|bound| Self::type_bound_mentions_impl_type_param(bound, generics)),
             TypeRef::Unknown(_) | TypeRef::Never | TypeRef::Unit | TypeRef::Infer => false,
-        }
-    }
-
-    fn generic_arg_mentions_impl_type_param(
-        arg: &ItemGenericArg,
-        generics: &GenericParams,
-    ) -> bool {
-        match arg {
-            ItemGenericArg::Type(ty) => Self::type_ref_mentions_impl_type_param(ty, generics),
-            ItemGenericArg::AssocType { ty, .. } => ty
-                .as_ref()
-                .is_some_and(|ty| Self::type_ref_mentions_impl_type_param(ty, generics)),
-            ItemGenericArg::FnTraitArgs { params, ret } => {
-                params
-                    .iter()
-                    .any(|ty| Self::type_ref_mentions_impl_type_param(ty, generics))
-                    || Self::type_ref_mentions_impl_type_param(ret, generics)
-            }
-            ItemGenericArg::Lifetime(_)
-            | ItemGenericArg::Const(_)
-            | ItemGenericArg::Unsupported(_) => false,
         }
     }
 

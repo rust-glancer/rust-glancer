@@ -31,30 +31,15 @@ impl Path {
             return None;
         };
 
-        Some(Self::from_type_path(path))
+        Self::from_type_path(path)
     }
 
-    pub fn from_type_path(path: &TypePath) -> Self {
-        Self {
-            absolute: path.absolute,
-            segments: path
-                .segments
-                .iter()
-                .map(|segment| PathSegment::from_type_segment_name(&segment.name))
-                .collect(),
-        }
+    pub fn from_type_path(path: &TypePath) -> Option<Self> {
+        path.as_def_map_path()
     }
 
-    pub fn from_type_path_prefix(path: &TypePath, end_idx: usize) -> Self {
-        Self {
-            absolute: path.absolute,
-            segments: path
-                .segments
-                .iter()
-                .take(end_idx.saturating_add(1))
-                .map(|segment| PathSegment::from_type_segment_name(&segment.name))
-                .collect(),
-        }
+    pub fn from_type_path_prefix(path: &TypePath, end_idx: usize) -> Option<Self> {
+        path.as_def_map_path_prefix(end_idx)
     }
 
     pub fn from_use_path(path: &UsePath) -> Self {
@@ -167,7 +152,7 @@ pub enum PathSegment {
 }
 
 impl PathSegment {
-    fn from_type_segment_name(name: &Name) -> Self {
+    pub(crate) fn from_type_segment_name(name: &Name) -> Self {
         match name.as_str() {
             "self" => Self::SelfKw,
             "super" => Self::SuperKw,
@@ -222,7 +207,8 @@ mod tests {
         ];
 
         for (label, path, expected) in cases {
-            assert_eq!(Path::from_type_path(&path).to_string(), expected, "{label}");
+            let actual = Path::from_type_path(&path).map(|path| path.to_string());
+            assert_eq!(actual.as_deref(), Some(expected), "{label}");
         }
     }
 
@@ -290,13 +276,34 @@ mod tests {
         );
 
         assert_eq!(
-            Path::from_type_path_prefix(&type_path, 1).to_string(),
-            "api::User"
+            Path::from_type_path_prefix(&type_path, 1)
+                .map(|path| path.to_string())
+                .as_deref(),
+            Some("api::User")
         );
         assert_eq!(
             Path::from_use_path_prefix(&use_path, 1).to_string(),
             "::api::User"
         );
+    }
+
+    #[test]
+    fn anchored_type_paths_have_no_def_map_path_projection() {
+        let path = TypePath {
+            source_span: span(),
+            absolute: false,
+            anchor: Some(crate::items::TypePathAnchor::Type(Box::new(TypeRef::Path(
+                type_path(false, &["T"]),
+            )))),
+            segments: vec![TypePathSegment {
+                name: Name::new("Assoc"),
+                args: Vec::new(),
+                span: span(),
+            }],
+        };
+
+        assert_eq!(Path::from_type_path(&path), None);
+        assert_eq!(Path::from_type_path_prefix(&path, 0), None);
     }
 
     #[test]
@@ -455,6 +462,7 @@ mod tests {
         TypePath {
             source_span: span(),
             absolute,
+            anchor: None,
             segments: names
                 .iter()
                 .map(|name| TypePathSegment {

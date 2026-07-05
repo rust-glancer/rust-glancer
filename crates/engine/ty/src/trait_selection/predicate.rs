@@ -147,9 +147,11 @@ where
         if !segment.args.is_empty() {
             return Ok(None);
         }
-        if let TypePathResolution::Trait(trait_ref) = self
-            .item_paths
-            .resolve_type_path(context, &Path::from_type_path(path))?
+        let Some(path_key) = Path::from_type_path(path) else {
+            return Ok(None);
+        };
+        if let TypePathResolution::Trait(trait_ref) =
+            self.item_paths.resolve_type_path(context, &path_key)?
         {
             return Ok(Some(trait_ref));
         }

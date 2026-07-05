@@ -9,7 +9,8 @@ use rg_ir_model::{DefMapRef, TargetRef};
 use rg_ir_model::{EnumVariantRef, FieldRef, FunctionRef, ItemOwner, TypeDefId, TypeDefRef};
 use rg_ir_storage::{ItemStoreQuery, TypePathContext};
 use rg_item_tree::{
-    FieldList, GenericArg, GenericParams, TypeBound, TypePath, TypeRef, WherePredicate,
+    FieldList, GenericArg, GenericParams, TypeBound, TypePath, TypePathAnchor, TypeRef,
+    WherePredicate,
 };
 use rg_package_store::PackageStoreError;
 use rg_parse::{FileId, Span};
@@ -430,14 +431,6 @@ impl SignatureCursorScanner<'_, '_> {
     fn push_type_ref(&mut self, context: TypePathContext, ty: &TypeRef, file_id: FileId) {
         match ty {
             TypeRef::Path(path) => self.push_type_path(context, path, file_id),
-            TypeRef::QualifiedAssociatedType {
-                self_ty, trait_ty, ..
-            } => {
-                self.push_type_ref(context, self_ty, file_id);
-                if let Some(trait_ty) = trait_ty {
-                    self.push_type_ref(context, trait_ty, file_id);
-                }
-            }
             TypeRef::Tuple(types) => {
                 for ty in types {
                     self.push_type_ref(context, ty, file_id);
@@ -461,11 +454,18 @@ impl SignatureCursorScanner<'_, '_> {
     }
 
     fn push_type_path(&mut self, context: TypePathContext, path: &TypePath, file_id: FileId) {
+        if let Some(anchor) = &path.anchor {
+            self.push_type_path_anchor(context, anchor, file_id);
+        }
+
         for (idx, segment) in path.segments.iter().enumerate() {
-            if self.offset_matches(segment.span) {
+            if path.anchor.is_none()
+                && self.offset_matches(segment.span)
+                && let Some(def_map_path) = Path::from_type_path_prefix(path, idx)
+            {
                 self.push_candidate(SemanticCursorCandidate::TypePath {
                     context,
-                    path: Path::from_type_path_prefix(path, idx),
+                    path: def_map_path,
                     file_id,
                     span: segment.span,
                 });
@@ -473,6 +473,21 @@ impl SignatureCursorScanner<'_, '_> {
 
             for arg in &segment.args {
                 self.push_generic_arg(context, arg, file_id);
+            }
+        }
+    }
+
+    fn push_type_path_anchor(
+        &mut self,
+        context: TypePathContext,
+        anchor: &TypePathAnchor,
+        file_id: FileId,
+    ) {
+        match anchor {
+            TypePathAnchor::Type(ty) => self.push_type_ref(context, ty, file_id),
+            TypePathAnchor::QualifiedTrait { self_ty, trait_ty } => {
+                self.push_type_ref(context, self_ty, file_id);
+                self.push_type_ref(context, trait_ty, file_id);
             }
         }
     }

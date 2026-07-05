@@ -126,7 +126,9 @@ where
         type_path: &TypePath,
         anchor: TypeRefAnchor,
     ) -> Result<Ty, PackageStoreError> {
-        let path = Path::from_type_path(type_path);
+        let Some(path) = Path::from_type_path(type_path) else {
+            return Ok(Ty::syntax(original_ty.clone()));
+        };
         if let Some(ty) = self.subst_for_single_segment(&path) {
             return Ok(ty);
         }
@@ -325,7 +327,9 @@ where
         };
 
         let anchor = self.anchor_for_use_site(self.use_site)?;
-        let path = Path::from_type_path(type_path);
+        let Some(path) = Path::from_type_path(type_path) else {
+            return Ok(None);
+        };
         let args = self.generic_args_from_type_path(type_path, anchor)?;
         let TypePathResolution::Trait(trait_ref) = self.resolve_type_path(anchor, &path)? else {
             return Ok(None);
@@ -381,6 +385,7 @@ fn prefix_type_ref(path: &TypePath) -> Option<TypeRef> {
     Some(TypeRef::Path(TypePath {
         source_span: path.source_span,
         absolute: path.absolute,
+        anchor: path.anchor.clone(),
         segments: path.segments[..prefix_len].to_vec(),
     }))
 }

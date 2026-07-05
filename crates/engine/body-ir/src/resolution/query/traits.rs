@@ -114,7 +114,9 @@ where
         let TypeRef::Path(type_path) = trait_ty_ref else {
             return Ok(None);
         };
-        let path = Path::from_type_path(type_path);
+        let Some(path) = Path::from_type_path(type_path) else {
+            return Ok(None);
+        };
         let TypePathResolution::Trait(trait_ref) = self
             .context
             .type_path_query()
