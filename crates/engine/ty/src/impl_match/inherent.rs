@@ -3,6 +3,7 @@
 //! These checks decide whether an already-selected inherent item can belong to a nominal receiver.
 //! They may use impl type and const parameters as wildcards, but concrete known args must match.
 
+use crate::generic_arg::item_generic_args_align;
 use crate::{GenericArg, NominalTy, Ty, TypeSubst};
 use rg_ir_model::hir::items::ImplData;
 use rg_ir_model::items::{GenericArg as ItemGenericArg, TypeRef};
@@ -74,7 +75,9 @@ where
         // Type and const parameters in the impl self type act as wildcards. Concrete args such as
         // `impl Wrapper<User>` or `impl Foo<1>` must equal known receiver args, while unknown
         // receiver args stay possible so selected-call inference can constrain them later.
-        // Lifetimes do not select inherent impls, so they only need to line up as lifetime args.
+        // Impl lifetime parameters may be omitted from the receiver path, e.g.
+        // `Builder::new()` for `impl<'a, T> Builder<'a, T>`. Keep them from shifting the
+        // type/const arguments that actually select the impl.
         let TypeRef::Path(self_ty) = &impl_data.self_ty else {
             return Ok(true);
         };
@@ -82,29 +85,29 @@ where
             return Ok(true);
         };
 
-        if segment.args.len() != receiver_ty.args.len() {
-            return Ok(false);
-        }
-
+        let impl_lifetime_params = Self::impl_lifetime_param_names(&impl_data.generics);
         let impl_type_params = Self::impl_type_param_names(&impl_data.generics);
         let impl_const_params = Self::impl_const_param_names(&impl_data.generics);
-        for (impl_arg, receiver_arg) in segment.args.iter().zip(&receiver_ty.args) {
-            if !self.impl_self_arg_matches_receiver(
-                impl_ref,
-                impl_data,
-                impl_arg,
-                receiver_arg,
-                &impl_type_params,
-                &impl_const_params,
-            )? {
-                return Ok(false);
-            }
-        }
-
-        Ok(true)
+        item_generic_args_align(
+            &segment.args,
+            &receiver_ty.args,
+            &impl_lifetime_params,
+            |impl_arg, receiver_arg| {
+                self.non_lifetime_impl_self_arg_matches_receiver(
+                    impl_ref,
+                    impl_data,
+                    impl_arg,
+                    receiver_arg,
+                    &impl_type_params,
+                    &impl_const_params,
+                )
+            },
+        )
     }
 
-    fn impl_self_arg_matches_receiver(
+    /// Match one non-lifetime impl self-type argument against the receiver argument at the same
+    /// effective position.
+    fn non_lifetime_impl_self_arg_matches_receiver(
         &self,
         impl_ref: ImplRef,
         impl_data: &ImplData,
@@ -113,6 +116,11 @@ where
         impl_type_params: &[&str],
         impl_const_params: &[&str],
     ) -> Result<bool, D::Error> {
+        debug_assert!(
+            !matches!(impl_arg, ItemGenericArg::Lifetime(_)),
+            "item_generic_args_align consumes item-side lifetime args"
+        );
+
         match impl_arg {
             ItemGenericArg::Type(impl_arg) => {
                 let Some(receiver_arg) = receiver_arg.as_ty().cloned() else {
@@ -141,7 +149,6 @@ where
                 )?;
                 Ok(impl_arg_ty == receiver_arg)
             }
-            ItemGenericArg::Lifetime(_) => Ok(matches!(receiver_arg, GenericArg::Lifetime(_))),
             ItemGenericArg::Const(impl_arg) => {
                 let GenericArg::Const(receiver_arg) = receiver_arg else {
                     return Ok(false);
@@ -151,6 +158,7 @@ where
             ItemGenericArg::FnTraitArgs { .. }
             | ItemGenericArg::AssocType { .. }
             | ItemGenericArg::Unsupported(_) => Ok(false),
+            _ => Ok(false),
         }
     }
 }

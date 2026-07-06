@@ -1937,9 +1937,34 @@ pub struct Vec<T> {
     value: T,
 }
 
+pub struct Borrowed<'value, T> {
+    value: &'value T,
+}
+
+pub struct Guard<'value> {
+    value: &'value User,
+}
+
+pub trait Label {
+    fn label(self) -> User;
+}
+
 impl<T> Vec<T> {
     pub fn new() -> Self {}
     pub fn singleton(value: T) -> Self {}
+}
+
+impl<'value, T> Borrowed<'value, T> {
+    pub fn new(value: &'value T) -> Self {}
+    pub fn into_value(self) -> T {}
+}
+
+impl<'value> Guard<'value> {
+    pub fn new(value: &'value User) -> Self {}
+}
+
+impl<'value> Label for Guard<'value> {
+    fn label(self) -> User {}
 }
 
 pub fn use_it(user: User) {
@@ -1947,6 +1972,11 @@ pub fn use_it(user: User) {
     let explicit = Vec::<User>::new()$type_explicit$;
     let wildcard = Vec::<_>::new()$type_wildcard$;
     let singleton = Vec::singleton(user)$type_singleton$;
+    let borrowed: Borrowed<User> = Borrowed::ne$hover_lifetime_new$w(&user)$type_lifetime_constructor$;
+    let explicit_borrowed = Borrowed::<User>::new(&user)$type_lifetime_explicit_prefix$;
+    let chained = Borrowed::new(&user).into_$hover_lifetime_method$value();
+    let guard = Guard::new(&user)$type_lifetime_only_constructor$;
+    let label = Guard::new(&user).label()$type_lifetime_trait_method$;
 }
 "#,
         &[
@@ -1966,6 +1996,30 @@ pub fn use_it(user: User) {
                 "associated function impl generic argument",
                 "type_singleton",
             ),
+            AnalysisQuery::hover(
+                "hover lifetime generic associated constructor",
+                "hover_lifetime_new",
+            ),
+            AnalysisQuery::ty(
+                "lifetime generic associated constructor result",
+                "type_lifetime_constructor",
+            ),
+            AnalysisQuery::ty(
+                "lifetime generic explicit prefix constructor result",
+                "type_lifetime_explicit_prefix",
+            ),
+            AnalysisQuery::hover(
+                "hover method after lifetime generic constructor",
+                "hover_lifetime_method",
+            ),
+            AnalysisQuery::ty(
+                "lifetime-only associated constructor result",
+                "type_lifetime_only_constructor",
+            ),
+            AnalysisQuery::ty(
+                "trait method after lifetime-only constructor result",
+                "type_lifetime_trait_method",
+            ),
         ],
         expect![[r#"
             associated function inferred prefix generic
@@ -1979,6 +2033,34 @@ pub fn use_it(user: User) {
 
             associated function impl generic argument
             - nominal struct analysis_associated_function_prefix_generic_inference[lib]::crate::Vec<nominal struct analysis_associated_function_prefix_generic_inference[lib]::crate::User>
+
+            hover lifetime generic associated constructor
+            - range: 42:46-42:49
+            - block:
+              kind: method
+              path: analysis_associated_function_prefix_generic_inference::Borrowed::new
+              signature:
+                pub fn new(value: &'value T) -> Self
+
+            lifetime generic associated constructor result
+            - nominal struct analysis_associated_function_prefix_generic_inference[lib]::crate::Borrowed<nominal struct analysis_associated_function_prefix_generic_inference[lib]::crate::User>
+
+            lifetime generic explicit prefix constructor result
+            - nominal struct analysis_associated_function_prefix_generic_inference[lib]::crate::Borrowed<nominal struct analysis_associated_function_prefix_generic_inference[lib]::crate::User>
+
+            hover method after lifetime generic constructor
+            - range: 44:40-44:50
+            - block:
+              kind: method
+              path: analysis_associated_function_prefix_generic_inference::Borrowed::into_value
+              signature:
+                pub fn into_value(self) -> T
+
+            lifetime-only associated constructor result
+            - nominal struct analysis_associated_function_prefix_generic_inference[lib]::crate::Guard
+
+            trait method after lifetime-only constructor result
+            - nominal struct analysis_associated_function_prefix_generic_inference[lib]::crate::User
         "#]],
     );
 }
