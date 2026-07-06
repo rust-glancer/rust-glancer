@@ -505,9 +505,13 @@ pub struct Result<T, E> {
     err: E,
 }
 
+pub type AliasResult<T> = Result<T, Error>;
+
 pub fn make_vec<T>() -> Vec<T> {}
 pub fn make_option<T>() -> Option<T> {}
 pub fn make_result<T, E>() -> Result<T, E> {}
+pub fn make_result_with_error<T>() -> Result<T, Error> {}
+pub fn make_alias_result<T>() -> AliasResult<T> {}
 
 pub struct Factory;
 
@@ -527,6 +531,10 @@ pub fn use_it(builder: Builder) {
     let method: Vec<User> = builder.build_vec()$type_method$;
     let option: Option<User> = make_option()$type_option$;
     let result: Result<User, Error> = make_result()$type_result$;
+    let try_user: User = make_result_with_error()$type_try_inner$?$type_try_output$;
+    let alias_try_user: User = make_alias_result()$type_alias_try_inner$?$type_alias_try_output$;
+    let explicit_alias_try_user: User =
+        make_alias_result::<_>()$type_explicit_alias_try_inner$?$type_explicit_alias_try_output$;
     let unconstrained = make_vec()$type_unconstrained$;
 }
 "#,
@@ -539,6 +547,21 @@ pub fn use_it(builder: Builder) {
             AnalysisQuery::ty("method generic return shape", "type_method"),
             AnalysisQuery::ty("single-param generic return shape", "type_option"),
             AnalysisQuery::ty("multi-param generic return shape", "type_result"),
+            AnalysisQuery::ty("try inner generic result", "type_try_inner"),
+            AnalysisQuery::ty("try output from generic result", "type_try_output"),
+            AnalysisQuery::ty("alias try inner generic result", "type_alias_try_inner"),
+            AnalysisQuery::ty(
+                "alias try output from generic result",
+                "type_alias_try_output",
+            ),
+            AnalysisQuery::ty(
+                "explicit wildcard alias try inner generic result",
+                "type_explicit_alias_try_inner",
+            ),
+            AnalysisQuery::ty(
+                "explicit wildcard alias try output from generic result",
+                "type_explicit_alias_try_output",
+            ),
             AnalysisQuery::ty("unconstrained generic return shape", "type_unconstrained"),
         ],
         expect![[r#"
@@ -556,6 +579,24 @@ pub fn use_it(builder: Builder) {
 
             multi-param generic return shape
             - nominal struct analysis_generic_call_result_shape_inference[lib]::crate::Result<nominal struct analysis_generic_call_result_shape_inference[lib]::crate::User, nominal struct analysis_generic_call_result_shape_inference[lib]::crate::Error>
+
+            try inner generic result
+            - nominal struct analysis_generic_call_result_shape_inference[lib]::crate::Result<nominal struct analysis_generic_call_result_shape_inference[lib]::crate::User, nominal struct analysis_generic_call_result_shape_inference[lib]::crate::Error>
+
+            try output from generic result
+            - nominal struct analysis_generic_call_result_shape_inference[lib]::crate::User
+
+            alias try inner generic result
+            - nominal struct analysis_generic_call_result_shape_inference[lib]::crate::Result<nominal struct analysis_generic_call_result_shape_inference[lib]::crate::User, nominal struct analysis_generic_call_result_shape_inference[lib]::crate::Error>
+
+            alias try output from generic result
+            - nominal struct analysis_generic_call_result_shape_inference[lib]::crate::User
+
+            explicit wildcard alias try inner generic result
+            - nominal struct analysis_generic_call_result_shape_inference[lib]::crate::Result<nominal struct analysis_generic_call_result_shape_inference[lib]::crate::User, nominal struct analysis_generic_call_result_shape_inference[lib]::crate::Error>
+
+            explicit wildcard alias try output from generic result
+            - nominal struct analysis_generic_call_result_shape_inference[lib]::crate::User
 
             unconstrained generic return shape
             - nominal struct analysis_generic_call_result_shape_inference[lib]::crate::Vec<<unknown>>
@@ -622,6 +663,7 @@ edition = "2024"
 //- /core/src/lib.rs
 pub mod iter {
     pub trait FromIterator<A> {}
+    pub trait UserCollector<S> {}
 
     pub trait Iterator {
         type Item;
@@ -629,6 +671,10 @@ pub mod iter {
         fn collect<B>(self) -> B
         where
             B: FromIterator<Self::Item>;
+
+        fn collect_users<B>(self) -> B
+        where
+            B: UserCollector<Self>;
     }
 }
 
@@ -640,7 +686,15 @@ pub struct Vec<T> {
     value: T,
 }
 
+pub struct User;
+pub struct UserStream;
+
 impl<T> iter::FromIterator<T> for Vec<T> {}
+
+impl<S> iter::UserCollector<S> for Vec<User>
+where
+    S: iter::Iterator<Item = User>,
+{}
 
 impl<T> [T] {
     pub fn iter(&self) -> slice::Iter<'_, T> {
@@ -650,6 +704,10 @@ impl<T> [T] {
 
 impl<'a, T> iter::Iterator for slice::Iter<'a, T> {
     type Item = &'a T;
+}
+
+impl iter::Iterator for UserStream {
+    type Item = User;
 }
 
 //- /storage/Cargo.toml
@@ -680,7 +738,7 @@ core = { package = "fake_core", path = "../core" }
 storage = { path = "../storage" }
 
 //- /app/src/lib.rs
-use core::Vec;
+use core::{UserStream, Vec};
 use storage::DefMap;
 
 pub fn explicit_destination(def_map: &DefMap) {
@@ -692,10 +750,20 @@ pub fn expected_destination(def_map: &DefMap) {
     let imports: Vec<_> = def_map.imports().iter().collect()$type_expected$;
     imports;
 }
+
+pub fn associated_equality_destination(stream: UserStream) {
+    let users = stream.collect_users::<Vec<_>>()$type_assoc_equality$;
+    users;
+}
 "#,
         &[
             AnalysisQuery::ty("explicit collect destination", "type_explicit").in_lib("app"),
             AnalysisQuery::ty("expected collect destination", "type_expected").in_lib("app"),
+            AnalysisQuery::ty(
+                "associated equality collect destination",
+                "type_assoc_equality",
+            )
+            .in_lib("app"),
         ],
         expect![[r#"
             explicit collect destination
@@ -703,6 +771,9 @@ pub fn expected_destination(def_map: &DefMap) {
 
             expected collect destination
             - nominal struct fake_core[lib]::crate::Vec<&nominal struct storage[lib]::crate::ImportData>
+
+            associated equality collect destination
+            - nominal struct fake_core[lib]::crate::Vec<nominal struct fake_core[lib]::crate::User>
         "#]],
     );
 }
@@ -1294,7 +1365,7 @@ pub fn use_it(flag: bool, attr: Attr, user: User, users: &[User], seed: Id) {
             - ()
 
             direct closure inherent associated param
-            - syntax Self::Id
+            - nominal struct analysis_callable_closure_bound_inference[lib]::crate::Id
 
             direct callable closure return body
             - nominal struct analysis_callable_closure_bound_inference[lib]::crate::User
@@ -1866,9 +1937,34 @@ pub struct Vec<T> {
     value: T,
 }
 
+pub struct Borrowed<'value, T> {
+    value: &'value T,
+}
+
+pub struct Guard<'value> {
+    value: &'value User,
+}
+
+pub trait Label {
+    fn label(self) -> User;
+}
+
 impl<T> Vec<T> {
     pub fn new() -> Self {}
     pub fn singleton(value: T) -> Self {}
+}
+
+impl<'value, T> Borrowed<'value, T> {
+    pub fn new(value: &'value T) -> Self {}
+    pub fn into_value(self) -> T {}
+}
+
+impl<'value> Guard<'value> {
+    pub fn new(value: &'value User) -> Self {}
+}
+
+impl<'value> Label for Guard<'value> {
+    fn label(self) -> User {}
 }
 
 pub fn use_it(user: User) {
@@ -1876,6 +1972,11 @@ pub fn use_it(user: User) {
     let explicit = Vec::<User>::new()$type_explicit$;
     let wildcard = Vec::<_>::new()$type_wildcard$;
     let singleton = Vec::singleton(user)$type_singleton$;
+    let borrowed: Borrowed<User> = Borrowed::ne$hover_lifetime_new$w(&user)$type_lifetime_constructor$;
+    let explicit_borrowed = Borrowed::<User>::new(&user)$type_lifetime_explicit_prefix$;
+    let chained = Borrowed::new(&user).into_$hover_lifetime_method$value();
+    let guard = Guard::new(&user)$type_lifetime_only_constructor$;
+    let label = Guard::new(&user).label()$type_lifetime_trait_method$;
 }
 "#,
         &[
@@ -1895,6 +1996,30 @@ pub fn use_it(user: User) {
                 "associated function impl generic argument",
                 "type_singleton",
             ),
+            AnalysisQuery::hover(
+                "hover lifetime generic associated constructor",
+                "hover_lifetime_new",
+            ),
+            AnalysisQuery::ty(
+                "lifetime generic associated constructor result",
+                "type_lifetime_constructor",
+            ),
+            AnalysisQuery::ty(
+                "lifetime generic explicit prefix constructor result",
+                "type_lifetime_explicit_prefix",
+            ),
+            AnalysisQuery::hover(
+                "hover method after lifetime generic constructor",
+                "hover_lifetime_method",
+            ),
+            AnalysisQuery::ty(
+                "lifetime-only associated constructor result",
+                "type_lifetime_only_constructor",
+            ),
+            AnalysisQuery::ty(
+                "trait method after lifetime-only constructor result",
+                "type_lifetime_trait_method",
+            ),
         ],
         expect![[r#"
             associated function inferred prefix generic
@@ -1908,6 +2033,34 @@ pub fn use_it(user: User) {
 
             associated function impl generic argument
             - nominal struct analysis_associated_function_prefix_generic_inference[lib]::crate::Vec<nominal struct analysis_associated_function_prefix_generic_inference[lib]::crate::User>
+
+            hover lifetime generic associated constructor
+            - range: 42:46-42:49
+            - block:
+              kind: method
+              path: analysis_associated_function_prefix_generic_inference::Borrowed::new
+              signature:
+                pub fn new(value: &'value T) -> Self
+
+            lifetime generic associated constructor result
+            - nominal struct analysis_associated_function_prefix_generic_inference[lib]::crate::Borrowed<nominal struct analysis_associated_function_prefix_generic_inference[lib]::crate::User>
+
+            lifetime generic explicit prefix constructor result
+            - nominal struct analysis_associated_function_prefix_generic_inference[lib]::crate::Borrowed<nominal struct analysis_associated_function_prefix_generic_inference[lib]::crate::User>
+
+            hover method after lifetime generic constructor
+            - range: 44:40-44:50
+            - block:
+              kind: method
+              path: analysis_associated_function_prefix_generic_inference::Borrowed::into_value
+              signature:
+                pub fn into_value(self) -> T
+
+            lifetime-only associated constructor result
+            - nominal struct analysis_associated_function_prefix_generic_inference[lib]::crate::Guard
+
+            trait method after lifetime-only constructor result
+            - nominal struct analysis_associated_function_prefix_generic_inference[lib]::crate::User
         "#]],
     );
 }

@@ -19,6 +19,7 @@ use rg_ir_storage::{
     DefMapSource, ItemLookupIndex, ItemStoreSource, TargetItemQuery, TypePathContext,
 };
 use rg_std::ExpectedUnique;
+use rg_text::Name;
 
 use self::chalk::ChalkTraitSolver;
 pub use self::header::TraitSelectionOptions;
@@ -34,6 +35,58 @@ pub struct TraitGoal {
     pub self_ty: Ty,
     pub trait_ref: TraitRef,
     pub args: Vec<GenericArg>,
+}
+
+/// One `Trait<Assoc = Ty>` equality constraint carried by a trait goal.
+pub(crate) struct AssocTypeConstraint<'a> {
+    pub(crate) name: &'a Name,
+    pub(crate) ty: Option<&'a Ty>,
+}
+
+impl TraitGoal {
+    /// Iterate trait input args without associated-type equality constraints.
+    ///
+    /// Rust syntax puts both shapes inside the same angle brackets:
+    ///
+    /// ```text
+    /// Iterator<Item = User>
+    /// Indexed<Key, Item = User>
+    /// ```
+    ///
+    /// Only the positional inputs belong in the trait substitution that Chalk sees as
+    /// `Implemented(Self: Trait<...>)`. Associated equality args are separate projection
+    /// constraints, such as `<Self as Iterator>::Item = User`.
+    pub(crate) fn iter_positional_args(&self) -> impl Iterator<Item = &GenericArg> {
+        self.args
+            .iter()
+            .filter(|arg| !matches!(arg, GenericArg::AssocType { .. }))
+    }
+
+    pub(crate) fn without_assoc_type_constraints(&self) -> Self {
+        Self {
+            self_ty: self.self_ty.clone(),
+            trait_ref: self.trait_ref,
+            args: self.iter_positional_args().cloned().collect(),
+        }
+    }
+
+    pub(crate) fn has_assoc_type_constraints(&self) -> bool {
+        self.args
+            .iter()
+            .any(|arg| matches!(arg, GenericArg::AssocType { .. }))
+    }
+
+    pub(crate) fn assoc_type_constraints(&self) -> impl Iterator<Item = AssocTypeConstraint<'_>> {
+        self.args.iter().filter_map(|arg| {
+            let GenericArg::AssocType { name, ty } = arg else {
+                return None;
+            };
+            Some(AssocTypeConstraint {
+                name,
+                ty: ty.as_deref(),
+            })
+        })
+    }
 }
 
 /// One visible impl whose header is compatible with a trait goal.
@@ -305,6 +358,18 @@ where
             return Ok(None);
         };
         let mut applicability = applicability;
+        if !Self::apply_assoc_type_constraints(
+            item_paths,
+            target_items,
+            goal,
+            trait_impl,
+            impl_data,
+            &mut table,
+            &mut applicability,
+            cache,
+        )? {
+            return Ok(None);
+        }
 
         if options.should_solve_impl_predicates() {
             if !Self::impl_has_chalk_predicates(impl_data) {
@@ -347,6 +412,57 @@ where
             applicability,
             table,
         }))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn apply_assoc_type_constraints(
+        item_paths: &ItemPathQuery<'query, D, I>,
+        target_items: &TargetItemQuery<'query, D, I>,
+        goal: &TraitGoal,
+        trait_impl: TraitImplRef,
+        impl_data: &rg_ir_model::hir::items::ImplData,
+        table: &mut InferenceTable,
+        applicability: &mut TraitApplicability,
+        cache: &TraitSelectionCache,
+    ) -> Result<bool, I::Error> {
+        if !goal.has_assoc_type_constraints() {
+            return Ok(true);
+        }
+
+        let projection_goal = goal.without_assoc_type_constraints();
+        let context = TypePathContext {
+            module: impl_data.owner,
+            impl_ref: Some(trait_impl.impl_ref),
+        };
+
+        for constraint in goal.assoc_type_constraints() {
+            let Some(expected_ty) = constraint.ty else {
+                return Ok(false);
+            };
+            let Some(projection) = cache.normalize_assoc_type(
+                item_paths,
+                target_items,
+                context,
+                &projection_goal,
+                constraint.name.as_str(),
+                table,
+            )?
+            else {
+                return Ok(false);
+            };
+
+            let mut projection_table = projection.table;
+            if projection_table
+                .try_unify(&projection.ty, expected_ty)
+                .is_err()
+            {
+                return Ok(false);
+            }
+            *table = projection_table;
+            *applicability = applicability.and(projection.applicability);
+        }
+
+        Ok(true)
     }
 
     fn impl_has_chalk_predicates(impl_data: &rg_ir_model::hir::items::ImplData) -> bool {

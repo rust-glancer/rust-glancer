@@ -90,6 +90,15 @@ where
             .collect()
     }
 
+    /// Lists the lifetime parameters declared by an impl header.
+    fn impl_lifetime_param_names(generics: &GenericParams) -> Vec<&str> {
+        generics
+            .lifetimes
+            .iter()
+            .map(|param| param.name.as_str())
+            .collect()
+    }
+
     /// Lists the const parameters declared by an impl header.
     fn impl_const_param_names(generics: &GenericParams) -> Vec<&str> {
         generics

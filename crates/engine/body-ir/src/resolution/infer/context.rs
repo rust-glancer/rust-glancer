@@ -4,8 +4,8 @@ use rg_ir_model::{BindingId, ExprId, ExprWrapperKind};
 use rg_ty::{
     ClosureTyId, TraitSelectionCache, Ty,
     inference::{
-        ExplicitTypeArgInstantiationBuilder, GenericReturnInstantiationBuilder, InferenceTable,
-        InferenceTypeSubst, UnknownTypeInstantiationBuilder,
+        ExplicitTypeArgInstantiationBuilder, InferenceTable, InferenceTypeSubst,
+        UnknownTypeInstantiationBuilder,
     },
 };
 
@@ -70,26 +70,6 @@ impl BodyInferenceCtx {
 
     pub(crate) fn root_resolved_ty(&self, ty: &Ty) -> Ty {
         self.table.resolve_root_var(ty)
-    }
-
-    /// Instantiate function type params inside a projected call return.
-    pub(crate) fn instantiate_expr_generic_return_ty(
-        &mut self,
-        expr: ExprId,
-        ret_ty: &TypeRef,
-        resolved_ty: &Ty,
-        generics: &GenericParams,
-    ) -> bool {
-        let (infer_ty, used_vars) = {
-            let mut builder = GenericReturnInstantiationBuilder::new(&mut self.table, generics);
-            let infer_ty = builder.ty_from_return(ret_ty, resolved_ty);
-            (infer_ty, builder.used_type_vars())
-        };
-
-        if used_vars {
-            self.set_expr_infer_ty(expr, infer_ty);
-        }
-        used_vars
     }
 
     /// Instantiate written `_` slots inside a type ref such as `Vec<_>`.

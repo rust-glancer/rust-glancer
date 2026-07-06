@@ -3,6 +3,7 @@
 //! Editor-facing method lookup can preserve useful `Maybe` candidates when a proof would require
 //! deeper solving. Simple direct cases still reuse bounded trait selection for consistency.
 
+use crate::generic_arg::item_generic_args_align;
 use crate::inference::InferenceTable;
 use crate::{
     GenericArg, NominalTy, TraitGoal, TraitSelectionOptions, TraitSelectionQuery, Ty, TypeSubst,
@@ -316,32 +317,39 @@ where
         let Some(segment) = self_ty.segments.last() else {
             return false;
         };
-        if segment.args.len() != receiver_ty.args.len() {
-            return false;
-        }
-
+        let impl_lifetime_params = Self::impl_lifetime_param_names(&impl_data.generics);
         let impl_type_params = Self::impl_type_param_names(&impl_data.generics);
-        segment
-            .args
-            .iter()
-            .zip(&receiver_ty.args)
-            .all(|(impl_arg, receiver_arg)| {
-                Self::trait_selection_can_check_method_lookup_arg(
-                    impl_arg,
-                    receiver_arg,
-                    &impl_type_params,
+
+        item_generic_args_align(
+            &segment.args,
+            &receiver_ty.args,
+            &impl_lifetime_params,
+            |impl_arg, receiver_arg| {
+                Ok::<bool, std::convert::Infallible>(
+                    Self::non_lifetime_trait_selection_can_check_method_lookup_arg(
+                        impl_arg,
+                        receiver_arg,
+                        &impl_type_params,
+                    ),
                 )
-            })
+            },
+        )
+        .expect("method lookup arg alignment is infallible")
     }
 
-    /// Keep consts, assoc bindings, and nested generic patterns on the maybe-compatible path.
-    fn trait_selection_can_check_method_lookup_arg(
+    /// Keep non-lifetime consts, assoc bindings, and nested generic patterns on the
+    /// maybe-compatible path.
+    fn non_lifetime_trait_selection_can_check_method_lookup_arg(
         impl_arg: &ItemGenericArg,
         receiver_arg: &GenericArg,
         impl_type_params: &[&str],
     ) -> bool {
+        debug_assert!(
+            !matches!(impl_arg, ItemGenericArg::Lifetime(_)),
+            "item_generic_args_align consumes item-side lifetime args"
+        );
+
         match (impl_arg, receiver_arg) {
-            (ItemGenericArg::Lifetime(_), GenericArg::Lifetime(_)) => true,
             (ItemGenericArg::Type(impl_ty), GenericArg::Type(_)) => {
                 impl_ty
                     .type_param_name()

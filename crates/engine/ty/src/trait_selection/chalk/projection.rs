@@ -42,7 +42,7 @@ impl ProjectionVariableEnv {
     pub(super) fn from_goal(goal: &TraitGoal, table: &InferenceTable) -> Self {
         let mut env = Self::empty();
         env.collect_ty(&goal.self_ty, table);
-        for arg in &goal.args {
+        for arg in goal.iter_positional_args() {
             env.collect_generic_arg(arg, table);
         }
         env

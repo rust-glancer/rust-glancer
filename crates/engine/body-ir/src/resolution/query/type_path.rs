@@ -83,10 +83,6 @@ where
         context: TypePathContext,
         path: &Path,
     ) -> Result<TypePathResolution, PackageStoreError> {
-        if !matches!(context.module.origin, DefMapRef::Body(_)) {
-            return self.context.item_paths().resolve_type_path(context, path);
-        }
-
         if path.is_self_type() {
             let candidate = self
                 .context
@@ -96,6 +92,8 @@ where
             return Ok(TypePathResolution::self_type(candidate));
         }
 
+        // Associated aliases are not ordinary module-scope path items, so handle `Type::Alias`
+        // before the normal body/semantic item lookup.
         if let Some((prefix, name)) = path.split_prefix_name() {
             let prefix_resolution = self.resolve_in_context(context, &prefix)?;
             let prefix_ty =
@@ -113,6 +111,14 @@ where
             if !aliases.is_empty() {
                 return Ok(TypePathResolution::type_alias(aliases));
             }
+        }
+
+        if !matches!(context.module.origin, DefMapRef::Body(_)) {
+            let items = self
+                .context
+                .item_paths()
+                .semantic_items_for_type_path(context, path)?;
+            return Ok(self.type_resolution_from_items(items));
         }
 
         let body_items = self.resolve_body_type_items_from_module(context.module, path)?;

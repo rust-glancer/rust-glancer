@@ -67,6 +67,138 @@ fn normalize_assoc_type_projects_generic_impl_value() {
 }
 
 #[test]
+fn probe_checks_goal_associated_type_equality_constraints() {
+    check_trait_selection_queries(
+        r#"
+            traits
+              trait#0 Iterator
+            structs
+              struct#0 Iter<T>
+              struct#1 User
+              struct#2 Other
+            impls
+              impl#0 impl<T> Iterator for Iter<T>
+            type aliases
+              type#0 trait#0::Item
+              type#1 impl#0::Item = T
+        "#,
+        vec![
+            TraitSelectionCase::probe(
+                "accept matching associated equality",
+                "Iter<User>: Iterator<Item = User>",
+            ),
+            TraitSelectionCase::probe(
+                "reject mismatched associated equality",
+                "Iter<User>: Iterator<Item = Other>",
+            ),
+            TraitSelectionCase::probe(
+                "solve receiver slot from associated equality",
+                "Iter<?item>: Iterator<Item = User>",
+            ),
+        ],
+        expect![[r#"
+            accept matching associated equality
+              options: default
+              goal: Iter<User>: Iterator<Item = User>
+              result: one
+                impl: impl#0
+                applicability: yes
+
+            reject mismatched associated equality
+              options: default
+              goal: Iter<User>: Iterator<Item = Other>
+              result: empty
+
+            solve receiver slot from associated equality
+              options: default
+              goal: Iter<?item>: Iterator<Item = User>
+              result: one
+                impl: impl#0
+                applicability: yes
+                vars
+                  ?item = User
+        "#]],
+    );
+}
+
+#[test]
+fn probe_checks_custom_trait_associated_type_equality_constraints() {
+    check_trait_selection_queries(
+        r#"
+            traits
+              trait#0 Source
+            structs
+              struct#0 Bag<T>
+              struct#1 User
+            impls
+              impl#0 impl<T> Source for Bag<T>
+            type aliases
+              type#0 trait#0::Output
+              type#1 impl#0::Output = T
+        "#,
+        vec![TraitSelectionCase::probe(
+            "solve custom associated equality",
+            "Bag<?item>: Source<Output = User>",
+        )],
+        expect![[r#"
+            solve custom associated equality
+              options: default
+              goal: Bag<?item>: Source<Output = User>
+              result: one
+                impl: impl#0
+                applicability: yes
+                vars
+                  ?item = User
+        "#]],
+    );
+}
+
+#[test]
+fn chalk_proves_impl_predicate_associated_type_equality_constraints() {
+    check_trait_selection_queries(
+        r#"
+            traits
+              trait#0 Iterator
+              trait#1 AcceptsUserIterator
+            structs
+              struct#0 Iter<T>
+              struct#1 User
+              struct#2 Other
+              struct#3 Adapter<I>
+            impls
+              impl#0 impl<T> Iterator for Iter<T>
+              impl#1 impl<I: Iterator<Item = User>> AcceptsUserIterator for Adapter<I>
+            type aliases
+              type#0 trait#0::Item
+              type#1 impl#0::Item = T
+        "#,
+        vec![
+            TraitSelectionCase::probe(
+                "prove matching impl predicate equality",
+                "Adapter<Iter<User>>: AcceptsUserIterator",
+            ),
+            TraitSelectionCase::probe(
+                "reject mismatched impl predicate equality",
+                "Adapter<Iter<Other>>: AcceptsUserIterator",
+            ),
+        ],
+        expect![[r#"
+            prove matching impl predicate equality
+              options: default
+              goal: Adapter<Iter<User>>: AcceptsUserIterator
+              result: one
+                impl: impl#1
+                applicability: yes
+
+            reject mismatched impl predicate equality
+              options: default
+              goal: Adapter<Iter<Other>>: AcceptsUserIterator
+              result: empty
+        "#]],
+    );
+}
+
+#[test]
 fn probe_prefers_definite_impl_over_maybe_headers() {
     check_trait_selection_queries(
         r#"

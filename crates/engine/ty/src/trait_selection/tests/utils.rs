@@ -568,10 +568,15 @@ impl<'a> TraitSelectionFixtureParser<'a> {
     fn parse_trait(&mut self, line: &str) {
         let (id, rest) = parse_numbered_line(line, "trait#");
         assert_eq!(id, self.traits.len(), "trait fixture ids should be dense");
+        let (rest, super_traits) = split_top_level_keyword(rest, ": ")
+            .map(|(head, tail)| (head, parse_type_bounds(tail)))
+            .unwrap_or((rest, Vec::new()));
         let (name, generics) = parse_named_generics(rest);
         let trait_ref = trait_ref(id);
         self.trait_refs_by_name.insert(name.to_string(), trait_ref);
-        self.traits.push(trait_data(id, name, generics));
+        let mut data = trait_data(id, name, generics);
+        data.super_traits = super_traits;
+        self.traits.push(data);
     }
 
     fn parse_struct(&mut self, line: &str) {
@@ -820,12 +825,18 @@ fn parse_type_ref(text: &str) -> TypeRef {
     }
 
     let (name, args) = parse_path_head_and_args(text);
-    path_ty(
-        name,
-        args.into_iter()
-            .map(|arg| type_arg(parse_type_ref(arg)))
-            .collect(),
-    )
+    path_ty(name, args.into_iter().map(parse_item_generic_arg).collect())
+}
+
+fn parse_item_generic_arg(text: &str) -> ItemGenericArg {
+    if let Some((name, ty)) = split_top_level_keyword(text, " = ") {
+        return ItemGenericArg::AssocType {
+            name: Name::new(name),
+            ty: Some(parse_type_ref(ty)),
+        };
+    }
+
+    type_arg(parse_type_ref(text))
 }
 
 enum ParsedBracketTy<'a> {

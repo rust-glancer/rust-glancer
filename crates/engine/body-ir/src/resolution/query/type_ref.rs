@@ -2,12 +2,12 @@
 
 use rg_ir_model::{
     DefMapRef, FunctionRef, ModuleRef, Path, ScopeId, TraitRef, TypePathResolution,
-    items::{GenericArg as ItemGenericArg, PrimitiveTy, TypePath, TypeRef},
+    items::{GenericArg as ItemGenericArg, PrimitiveTy, TypeBound, TypePath, TypeRef},
 };
 use rg_ir_storage::{DefMapSource, ItemStoreSource, TypePathContext};
 use rg_package_store::PackageStoreError;
-use rg_std::ExpectedUnique;
-use rg_ty::{ExpectedNominalTyExt, GenericArg, NominalTy, Ty, TypeSubst};
+use rg_std::{ExpectedUnique, UniqueVec};
+use rg_ty::{ExpectedNominalTyExt, GenericArg, NominalTy, OpaqueTraitBound, Ty, TypeSubst};
 
 use crate::resolution::BodyResolutionContext;
 
@@ -108,10 +108,6 @@ where
 
     /// Resolve under one anchor so nested types keep the same lookup context.
     fn resolve_at(&self, ty: &TypeRef, anchor: TypeRefAnchor) -> Result<Ty, PackageStoreError> {
-        if let TypeRefAnchor::PlainContext(context) = anchor {
-            return self.resolve_in_plain_context(ty, context);
-        }
-
         let TypeRef::Path(type_path) = ty else {
             return self.resolve_structural_type(ty, anchor);
         };
@@ -172,21 +168,11 @@ where
                 .context
                 .type_path_query()
                 .resolve_in_context(context, path),
-            TypeRefAnchor::PlainContext(context) => {
-                self.context.item_paths().resolve_type_path(context, path)
-            }
+            TypeRefAnchor::PlainContext(context) => self
+                .context
+                .type_path_query()
+                .resolve_in_context(context, path),
         }
-    }
-
-    /// Delegate non-body contexts to item-store type-ref resolution.
-    fn resolve_in_plain_context(
-        &self,
-        ty: &TypeRef,
-        context: TypePathContext,
-    ) -> Result<Ty, PackageStoreError> {
-        self.context
-            .item_paths()
-            .resolve_type_ref(ty, context, Ty::syntax(ty.clone()), &self.subst)
     }
 
     /// Resolve structural types whose children may contain paths.
@@ -213,8 +199,36 @@ where
             TypeRef::Array { inner, len } => {
                 Ok(Ty::array(self.resolve_at(inner, anchor)?, len.clone()))
             }
+            TypeRef::ImplTrait(bounds) => {
+                let opaque_bounds = self.opaque_trait_bounds(bounds, anchor)?;
+                Ok(if opaque_bounds.is_empty() {
+                    Ty::syntax(ty.clone())
+                } else {
+                    Ty::opaque(opaque_bounds)
+                })
+            }
             _ => Ok(Ty::syntax(ty.clone())),
         }
+    }
+
+    /// Resolve `impl Trait` bounds into the opaque type vocabulary.
+    fn opaque_trait_bounds(
+        &self,
+        bounds: &[TypeBound],
+        anchor: TypeRefAnchor,
+    ) -> Result<UniqueVec<OpaqueTraitBound>, PackageStoreError> {
+        let mut opaque_bounds = UniqueVec::new();
+
+        for bound in bounds {
+            let TypeBound::Trait(bound) = bound else {
+                continue;
+            };
+            if let Some((trait_ref, args)) = self.resolve_trait_bound_at(bound, anchor)? {
+                opaque_bounds.push(OpaqueTraitBound { trait_ref, args });
+            }
+        }
+
+        Ok(opaque_bounds)
     }
 
     /// Resolve `Prefix::Alias` by first resolving `Prefix` as a type.
@@ -322,11 +336,20 @@ where
         &self,
         bound: &TypeRef,
     ) -> Result<Option<(TraitRef, Vec<GenericArg>)>, PackageStoreError> {
+        let anchor = self.anchor_for_use_site(self.use_site)?;
+        self.resolve_trait_bound_at(bound, anchor)
+    }
+
+    /// Resolve a trait bound path and its generic args under a known anchor.
+    fn resolve_trait_bound_at(
+        &self,
+        bound: &TypeRef,
+        anchor: TypeRefAnchor,
+    ) -> Result<Option<(TraitRef, Vec<GenericArg>)>, PackageStoreError> {
         let TypeRef::Path(type_path) = bound else {
             return Ok(None);
         };
 
-        let anchor = self.anchor_for_use_site(self.use_site)?;
         let Some(path) = Path::from_type_path(type_path) else {
             return Ok(None);
         };

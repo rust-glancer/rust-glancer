@@ -21,6 +21,7 @@ use rg_text::Name;
 
 use super::TraitGoal;
 use crate::ItemPathQuery;
+use crate::generic_arg::item_generic_args_align;
 use crate::inference::{InferenceConflict, InferenceTable, InferenceTypeSubst};
 use crate::{GenericArg, Ty, TypeSubst};
 
@@ -261,7 +262,9 @@ where
     /// Match trait path arguments after the receiver side was accepted.
     ///
     /// For `impl<T> FromIterator<T> for Vec<T>`, this compares the impl's `T` with the goal's
-    /// `User` in `Vec<?T>: FromIterator<User>`.
+    /// `User` in `Vec<?T>: FromIterator<User>`. Associated equality args, such as
+    /// `Iterator<Item = User>`, are not positional trait inputs; the selection query checks them
+    /// by projecting the selected associated type after the cheap header match succeeds.
     fn match_trait_args(
         &self,
         goal: &TraitGoal,
@@ -271,50 +274,79 @@ where
         subst: &mut InferenceTypeSubst,
     ) -> Result<Option<TraitApplicability>, I::Error> {
         let Some(TypeRef::Path(trait_path)) = impl_data.trait_ref.as_ref() else {
-            return Ok(goal.args.is_empty().then_some(TraitApplicability::Maybe));
+            return Ok(goal
+                .iter_positional_args()
+                .next()
+                .is_none()
+                .then_some(TraitApplicability::Maybe));
         };
 
         let impl_args = trait_path
             .segments
             .last()
-            .map(|segment| segment.args.as_slice())
-            .unwrap_or(&[]);
-        self.match_generic_args(trait_impl, impl_data, impl_args, &goal.args, table, subst)
+            .into_iter()
+            .flat_map(|segment| segment.args.iter())
+            .filter(|arg| !matches!(arg, ItemGenericArg::AssocType { .. }));
+        self.match_generic_args(
+            trait_impl,
+            impl_data,
+            impl_args,
+            goal.iter_positional_args(),
+            table,
+            subst,
+        )
     }
 
     /// Match generic args position-by-position, collecting the weakest applicability.
-    fn match_generic_args(
+    ///
+    /// Lifetime parameter alignment is delegated to `item_generic_args_align`; this method only
+    /// owns the trait-selection policy for each non-lifetime argument pair.
+    fn match_generic_args<'impl_arg, 'goal_arg>(
         &self,
         trait_impl: TraitImplRef,
         impl_data: &ImplData,
-        impl_args: &[ItemGenericArg],
-        goal_args: &[GenericArg],
+        impl_args: impl IntoIterator<Item = &'impl_arg ItemGenericArg>,
+        goal_args: impl IntoIterator<Item = &'goal_arg GenericArg>,
         table: &mut InferenceTable,
         subst: &mut InferenceTypeSubst,
     ) -> Result<Option<TraitApplicability>, I::Error> {
-        if impl_args.len() != goal_args.len() {
-            return Ok(None);
-        }
-
         let mut applicability = TraitApplicability::Yes;
-        for (impl_arg, goal_arg) in impl_args.iter().zip(goal_args) {
-            let Some(arg_applicability) =
-                self.match_generic_arg(trait_impl, impl_data, impl_arg, goal_arg, table, subst)?
-            else {
-                return Ok(None);
-            };
-            applicability = applicability.and(arg_applicability);
+        let impl_lifetime_params = impl_data
+            .generics
+            .lifetimes
+            .iter()
+            .map(|param| param.name.as_str())
+            .collect::<Vec<_>>();
+
+        let matched = item_generic_args_align(
+            impl_args,
+            goal_args,
+            &impl_lifetime_params,
+            |impl_arg, goal_arg| {
+                let Some(arg_applicability) = self.non_lifetime_generic_arg_applicability(
+                    trait_impl, impl_data, impl_arg, goal_arg, table, subst,
+                )?
+                else {
+                    return Ok(false);
+                };
+                applicability = applicability.and(arg_applicability);
+                Ok(true)
+            },
+        )?;
+
+        if !matched {
+            return Ok(None);
         }
 
         Ok(Some(applicability))
     }
 
-    /// Match one generic arg in a trait path or nominal self type.
+    /// Match one non-lifetime generic arg in a trait path or nominal self type.
     ///
     /// Function-trait args and associated-type equality args can appear in bounds such as
     /// `FnOnce(T) -> R` or `Iterator<Item = T>`, so the matcher handles the simple structural
     /// forms even though it does not perform general trait solving here.
-    fn match_generic_arg(
+    fn non_lifetime_generic_arg_applicability(
         &self,
         trait_impl: TraitImplRef,
         impl_data: &ImplData,
@@ -323,12 +355,14 @@ where
         table: &mut InferenceTable,
         subst: &mut InferenceTypeSubst,
     ) -> Result<Option<TraitApplicability>, I::Error> {
+        debug_assert!(
+            !matches!(impl_arg, ItemGenericArg::Lifetime(_)),
+            "item_generic_args_align consumes item-side lifetime args"
+        );
+
         match (impl_arg, goal_arg) {
             (ItemGenericArg::Type(impl_ty), GenericArg::Type(goal_ty)) => {
                 self.match_type_ref(trait_impl, impl_data, impl_ty, goal_ty, table, subst)
-            }
-            (ItemGenericArg::Lifetime(_), GenericArg::Lifetime(_)) => {
-                Ok(Some(TraitApplicability::Yes))
             }
             (ItemGenericArg::Const(lhs), GenericArg::Const(rhs)) if lhs == rhs => {
                 Ok(Some(TraitApplicability::Yes))
