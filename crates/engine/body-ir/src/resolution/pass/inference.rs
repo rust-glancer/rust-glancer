@@ -24,6 +24,7 @@ use crate::{
     resolution::{
         TypeRefUseSite,
         infer::{BodyCallInference, BodyMemberInference, BodyPatternInference},
+        support::TyNormalizer,
     },
 };
 
@@ -299,13 +300,13 @@ where
                     );
                 }
                 ExprKind::Wrapper { kind, inner } => {
-                    let fallback_ty = self.pass.body.expr_ty_unchecked(expr).clone();
-                    self.pass.inference.set_expr_wrapper_from_inner(
-                        expr,
-                        kind,
-                        inner,
-                        &fallback_ty,
-                    );
+                    let ty = if let Some(inner) = inner {
+                        TyNormalizer::new(self.pass.context())
+                            .ty_for_wrapper(kind, self.pass.inference.expr_ty(inner))
+                    } else {
+                        self.pass.body.expr_ty_unchecked(expr).clone()
+                    };
+                    self.pass.inference.set_expr_infer_ty(expr, ty);
                 }
                 ExprKind::Block {
                     statements, tail, ..

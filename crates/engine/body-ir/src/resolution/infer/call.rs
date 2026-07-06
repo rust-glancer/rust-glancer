@@ -4,7 +4,7 @@
 //! know how receiver substitutions and function generic shadows are built.
 
 use rg_ir_model::{
-    DefMapRef, ExprId, ImplRef, ItemOwner, ScopeId, SemanticItemRef,
+    DefMapRef, ExprId, FunctionRef, ImplRef, ItemOwner, ScopeId, SemanticItemRef,
     hir::{items::FunctionData, signature::FunctionSignature},
     identity::DeclarationRef,
     items::{GenericArg as ItemGenericArg, GenericParams, TypeRef},
@@ -83,6 +83,10 @@ where
         // Try instantiation paths from strongest to weakest. Once a branch writes the call slot,
         // later branches must not replace it with an older or less precise projection.
         let mut instantiated = false;
+        let generic_return_mentions_type_param = Self::return_ty_mentions_function_type_param(
+            projection.declared_return_ty(),
+            projection.function_generics(),
+        );
 
         // Method returns that mention `Self` need the live receiver inference type. The call target
         // only stores the receiver snapshot from method lookup, which can still contain stale
@@ -114,8 +118,8 @@ where
             instantiated = self.instantiate_explicit_type_arg_return_fact(
                 inference,
                 call,
+                target.function(),
                 ret_ty,
-                projection.return_ty(),
                 generics,
                 projection.explicit_args(),
             )?;
@@ -126,22 +130,17 @@ where
         // the fallback below.
         if !instantiated
             && projection.explicit_args().is_empty()
+            && generic_return_mentions_type_param
             && let Some(ret_ty) = projection.declared_return_ty()
             && let Some(generics) = projection.function_generics()
         {
-            let type_params = generics
-                .types
-                .iter()
-                .map(|param| param.name.as_str())
-                .collect::<Vec<_>>();
-            if ret_ty.mentions_type_param(&type_params) {
-                instantiated = inference.instantiate_expr_generic_return_ty(
-                    call,
-                    ret_ty,
-                    projection.return_ty(),
-                    generics,
-                );
-            }
+            instantiated = self.instantiate_generic_return_fact(
+                inference,
+                call,
+                target.function(),
+                ret_ty,
+                generics,
+            )?;
         }
 
         // Last fallback for selected returns that already have the right outer shape but contain
@@ -155,6 +154,46 @@ where
         }
 
         Ok(())
+    }
+
+    fn return_ty_mentions_function_type_param(
+        ret_ty: Option<&TypeRef>,
+        generics: Option<&GenericParams>,
+    ) -> bool {
+        let (Some(ret_ty), Some(generics)) = (ret_ty, generics) else {
+            return false;
+        };
+        let type_params = generics
+            .types
+            .iter()
+            .map(|param| param.name.as_str())
+            .collect::<Vec<_>>();
+        ret_ty.mentions_type_param(&type_params)
+    }
+
+    /// Resolve a generic return through inference variables before aliases erase where `T` lived.
+    fn instantiate_generic_return_fact(
+        &self,
+        inference: &mut BodyInferenceCtx,
+        call: ExprId,
+        function: FunctionRef,
+        ret_ty: &TypeRef,
+        generics: &GenericParams,
+    ) -> Result<bool, PackageStoreError> {
+        let subst = Self::generic_return_infer_subst(inference, generics);
+        self.instantiate_return_with_subst(inference, call, function, ret_ty, &subst)
+    }
+
+    /// Build `T = ?T` substitutions for generic return syntax such as `AliasResult<T>`.
+    fn generic_return_infer_subst(
+        inference: &mut BodyInferenceCtx,
+        generics: &GenericParams,
+    ) -> TypeSubst {
+        generics
+            .types
+            .iter()
+            .map(|param| (param.name.clone(), inference.table.new_type_var()))
+            .collect()
     }
 
     /// Re-project method returns like `Enumerate<Self>` from the current receiver inference type.
@@ -209,8 +248,8 @@ where
         &self,
         inference: &mut BodyInferenceCtx,
         call: ExprId,
+        function: FunctionRef,
         ret_ty: &TypeRef,
-        resolved_ret_ty: &Ty,
         generics: &GenericParams,
         explicit_args: &[ItemGenericArg],
     ) -> Result<bool, PackageStoreError> {
@@ -222,8 +261,27 @@ where
             return Ok(false);
         }
 
-        let return_ty =
-            InferenceTypeRefProjector::new(&subst).ty_from_type_ref(ret_ty, resolved_ret_ty);
+        self.instantiate_return_with_subst(inference, call, function, ret_ty, &subst)
+    }
+
+    /// Resolve the declared return type using inference-bearing substitutions.
+    fn instantiate_return_with_subst(
+        &self,
+        inference: &mut BodyInferenceCtx,
+        call: ExprId,
+        function: FunctionRef,
+        ret_ty: &TypeRef,
+        subst: &TypeSubst,
+    ) -> Result<bool, PackageStoreError> {
+        let return_ty = self
+            .context
+            .type_refs(TypeRefUseSite::Function(function))
+            .with_subst(subst)
+            .resolve(ret_ty)?;
+        if !return_ty.has_var() {
+            return Ok(false);
+        }
+
         inference.set_expr_infer_ty(call, return_ty);
         Ok(true)
     }
@@ -235,7 +293,7 @@ where
         generics: &GenericParams,
         explicit_args: &[ItemGenericArg],
         scope: ScopeId,
-    ) -> Result<(InferenceTypeSubst, bool), PackageStoreError> {
+    ) -> Result<(TypeSubst, bool), PackageStoreError> {
         let explicit_subst = self.context.generics().subst_for_explicit_args(
             generics,
             explicit_args,
@@ -243,7 +301,7 @@ where
         )?;
         let mut explicit_type_args = explicit_args.iter().filter_map(ItemGenericArg::type_ref);
 
-        let mut subst = InferenceTypeSubst::new();
+        let mut subst = TypeSubst::new();
         let mut used_vars = false;
         for param in &generics.types {
             let Some(arg_ty) = explicit_type_args.next() else {
@@ -256,7 +314,7 @@ where
             let (infer_ty, arg_used_vars) =
                 inference.instantiate_written_infer_ty(arg_ty, &resolved_ty);
             used_vars |= arg_used_vars;
-            subst.push(&mut inference.table, param.name.clone(), infer_ty);
+            subst.push(param.name.clone(), infer_ty);
         }
 
         Ok((subst, used_vars))

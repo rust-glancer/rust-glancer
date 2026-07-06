@@ -505,9 +505,13 @@ pub struct Result<T, E> {
     err: E,
 }
 
+pub type AliasResult<T> = Result<T, Error>;
+
 pub fn make_vec<T>() -> Vec<T> {}
 pub fn make_option<T>() -> Option<T> {}
 pub fn make_result<T, E>() -> Result<T, E> {}
+pub fn make_result_with_error<T>() -> Result<T, Error> {}
+pub fn make_alias_result<T>() -> AliasResult<T> {}
 
 pub struct Factory;
 
@@ -527,6 +531,10 @@ pub fn use_it(builder: Builder) {
     let method: Vec<User> = builder.build_vec()$type_method$;
     let option: Option<User> = make_option()$type_option$;
     let result: Result<User, Error> = make_result()$type_result$;
+    let try_user: User = make_result_with_error()$type_try_inner$?$type_try_output$;
+    let alias_try_user: User = make_alias_result()$type_alias_try_inner$?$type_alias_try_output$;
+    let explicit_alias_try_user: User =
+        make_alias_result::<_>()$type_explicit_alias_try_inner$?$type_explicit_alias_try_output$;
     let unconstrained = make_vec()$type_unconstrained$;
 }
 "#,
@@ -539,6 +547,21 @@ pub fn use_it(builder: Builder) {
             AnalysisQuery::ty("method generic return shape", "type_method"),
             AnalysisQuery::ty("single-param generic return shape", "type_option"),
             AnalysisQuery::ty("multi-param generic return shape", "type_result"),
+            AnalysisQuery::ty("try inner generic result", "type_try_inner"),
+            AnalysisQuery::ty("try output from generic result", "type_try_output"),
+            AnalysisQuery::ty("alias try inner generic result", "type_alias_try_inner"),
+            AnalysisQuery::ty(
+                "alias try output from generic result",
+                "type_alias_try_output",
+            ),
+            AnalysisQuery::ty(
+                "explicit wildcard alias try inner generic result",
+                "type_explicit_alias_try_inner",
+            ),
+            AnalysisQuery::ty(
+                "explicit wildcard alias try output from generic result",
+                "type_explicit_alias_try_output",
+            ),
             AnalysisQuery::ty("unconstrained generic return shape", "type_unconstrained"),
         ],
         expect![[r#"
@@ -556,6 +579,24 @@ pub fn use_it(builder: Builder) {
 
             multi-param generic return shape
             - nominal struct analysis_generic_call_result_shape_inference[lib]::crate::Result<nominal struct analysis_generic_call_result_shape_inference[lib]::crate::User, nominal struct analysis_generic_call_result_shape_inference[lib]::crate::Error>
+
+            try inner generic result
+            - nominal struct analysis_generic_call_result_shape_inference[lib]::crate::Result<nominal struct analysis_generic_call_result_shape_inference[lib]::crate::User, nominal struct analysis_generic_call_result_shape_inference[lib]::crate::Error>
+
+            try output from generic result
+            - nominal struct analysis_generic_call_result_shape_inference[lib]::crate::User
+
+            alias try inner generic result
+            - nominal struct analysis_generic_call_result_shape_inference[lib]::crate::Result<nominal struct analysis_generic_call_result_shape_inference[lib]::crate::User, nominal struct analysis_generic_call_result_shape_inference[lib]::crate::Error>
+
+            alias try output from generic result
+            - nominal struct analysis_generic_call_result_shape_inference[lib]::crate::User
+
+            explicit wildcard alias try inner generic result
+            - nominal struct analysis_generic_call_result_shape_inference[lib]::crate::Result<nominal struct analysis_generic_call_result_shape_inference[lib]::crate::User, nominal struct analysis_generic_call_result_shape_inference[lib]::crate::Error>
+
+            explicit wildcard alias try output from generic result
+            - nominal struct analysis_generic_call_result_shape_inference[lib]::crate::User
 
             unconstrained generic return shape
             - nominal struct analysis_generic_call_result_shape_inference[lib]::crate::Vec<<unknown>>
@@ -1324,7 +1365,7 @@ pub fn use_it(flag: bool, attr: Attr, user: User, users: &[User], seed: Id) {
             - ()
 
             direct closure inherent associated param
-            - syntax Self::Id
+            - nominal struct analysis_callable_closure_bound_inference[lib]::crate::Id
 
             direct callable closure return body
             - nominal struct analysis_callable_closure_bound_inference[lib]::crate::User
