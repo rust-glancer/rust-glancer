@@ -90,7 +90,8 @@ impl ChalkTraitSolver {
                 impl_ref: Some(trait_impl.impl_ref),
             },
             &binders,
-        );
+        )
+        .with_associated_tys(&self.program.associated_ty_by_trait_name);
         let goals = lowerer.candidate_where_goals(impl_data, subst, table)?;
         if goals.is_empty() {
             return Some(TraitApplicability::Yes);
@@ -129,7 +130,8 @@ impl ChalkTraitSolver {
     {
         let assoc_type_ref = self.program.associated_ty_ref(goal.trait_ref, assoc_name)?;
         let binders = GenericBinderEnv::empty();
-        let lowerer = ChalkLowerer::new(item_paths, context, &binders);
+        let lowerer = ChalkLowerer::new(item_paths, context, &binders)
+            .with_associated_tys(&self.program.associated_ty_by_trait_name);
         let projection = lowerer.projection_alias(assoc_type_ref, goal, table)?;
         // Ask Chalk for the one existential result type in:
         //
@@ -244,6 +246,7 @@ impl ChalkProgram {
         };
 
         let visible_stores = target_items.visible_stores()?;
+        let mut associated_ty_ids_by_trait = HashMap::new();
         for store in &visible_stores {
             for (trait_ref, trait_data) in store.traits_with_refs() {
                 let binders = GenericBinderEnv::empty();
@@ -254,6 +257,24 @@ impl ChalkProgram {
                 );
                 let associated_ty_ids = program
                     .collect_trait_associated_tys(item_paths, &lowerer, trait_ref, trait_data)?;
+                associated_ty_ids_by_trait.insert(trait_ref, associated_ty_ids);
+            }
+        }
+
+        let associated_ty_by_trait_name = program.associated_ty_by_trait_name.clone();
+        for store in &visible_stores {
+            for (trait_ref, trait_data) in store.traits_with_refs() {
+                let binders = GenericBinderEnv::empty();
+                let lowerer = ChalkLowerer::new(
+                    item_paths,
+                    TypePathContext::module(trait_data.owner),
+                    &binders,
+                )
+                .with_associated_tys(&associated_ty_by_trait_name);
+                let associated_ty_ids = associated_ty_ids_by_trait
+                    .get(&trait_ref)
+                    .cloned()
+                    .unwrap_or_default();
                 let Some(datum) = lowerer.trait_datum(
                     trait_ref,
                     &trait_data.generics,
@@ -270,7 +291,6 @@ impl ChalkProgram {
             }
         }
 
-        let associated_ty_by_trait_name = program.associated_ty_by_trait_name.clone();
         for store in &visible_stores {
             for (impl_ref, impl_data) in store.impls_with_refs() {
                 let Some(trait_ref) = impl_data.resolved_trait_ref.as_option().copied() else {

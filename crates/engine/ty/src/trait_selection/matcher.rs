@@ -261,7 +261,9 @@ where
     /// Match trait path arguments after the receiver side was accepted.
     ///
     /// For `impl<T> FromIterator<T> for Vec<T>`, this compares the impl's `T` with the goal's
-    /// `User` in `Vec<?T>: FromIterator<User>`.
+    /// `User` in `Vec<?T>: FromIterator<User>`. Associated equality args, such as
+    /// `Iterator<Item = User>`, are not positional trait inputs; the selection query checks them
+    /// by projecting the selected associated type after the cheap header match succeeds.
     fn match_trait_args(
         &self,
         goal: &TraitGoal,
@@ -271,42 +273,57 @@ where
         subst: &mut InferenceTypeSubst,
     ) -> Result<Option<TraitApplicability>, I::Error> {
         let Some(TypeRef::Path(trait_path)) = impl_data.trait_ref.as_ref() else {
-            return Ok(goal.args.is_empty().then_some(TraitApplicability::Maybe));
+            return Ok(goal
+                .iter_positional_args()
+                .next()
+                .is_none()
+                .then_some(TraitApplicability::Maybe));
         };
 
         let impl_args = trait_path
             .segments
             .last()
-            .map(|segment| segment.args.as_slice())
-            .unwrap_or(&[]);
-        self.match_generic_args(trait_impl, impl_data, impl_args, &goal.args, table, subst)
+            .into_iter()
+            .flat_map(|segment| segment.args.iter())
+            .filter(|arg| !matches!(arg, ItemGenericArg::AssocType { .. }));
+        self.match_generic_args(
+            trait_impl,
+            impl_data,
+            impl_args,
+            goal.iter_positional_args(),
+            table,
+            subst,
+        )
     }
 
     /// Match generic args position-by-position, collecting the weakest applicability.
-    fn match_generic_args(
+    fn match_generic_args<'impl_arg, 'goal_arg>(
         &self,
         trait_impl: TraitImplRef,
         impl_data: &ImplData,
-        impl_args: &[ItemGenericArg],
-        goal_args: &[GenericArg],
+        impl_args: impl IntoIterator<Item = &'impl_arg ItemGenericArg>,
+        goal_args: impl IntoIterator<Item = &'goal_arg GenericArg>,
         table: &mut InferenceTable,
         subst: &mut InferenceTypeSubst,
     ) -> Result<Option<TraitApplicability>, I::Error> {
-        if impl_args.len() != goal_args.len() {
-            return Ok(None);
-        }
-
         let mut applicability = TraitApplicability::Yes;
-        for (impl_arg, goal_arg) in impl_args.iter().zip(goal_args) {
-            let Some(arg_applicability) =
-                self.match_generic_arg(trait_impl, impl_data, impl_arg, goal_arg, table, subst)?
-            else {
-                return Ok(None);
-            };
-            applicability = applicability.and(arg_applicability);
+        let mut impl_args = impl_args.into_iter();
+        let mut goal_args = goal_args.into_iter();
+        loop {
+            match (impl_args.next(), goal_args.next()) {
+                (None, None) => return Ok(Some(applicability)),
+                (None, Some(_)) | (Some(_), None) => return Ok(None),
+                (Some(impl_arg), Some(goal_arg)) => {
+                    let Some(arg_applicability) = self.match_generic_arg(
+                        trait_impl, impl_data, impl_arg, goal_arg, table, subst,
+                    )?
+                    else {
+                        return Ok(None);
+                    };
+                    applicability = applicability.and(arg_applicability);
+                }
+            }
         }
-
-        Ok(Some(applicability))
     }
 
     /// Match one generic arg in a trait path or nominal self type.

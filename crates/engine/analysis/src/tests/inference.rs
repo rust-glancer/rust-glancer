@@ -622,6 +622,7 @@ edition = "2024"
 //- /core/src/lib.rs
 pub mod iter {
     pub trait FromIterator<A> {}
+    pub trait UserCollector<S> {}
 
     pub trait Iterator {
         type Item;
@@ -629,6 +630,10 @@ pub mod iter {
         fn collect<B>(self) -> B
         where
             B: FromIterator<Self::Item>;
+
+        fn collect_users<B>(self) -> B
+        where
+            B: UserCollector<Self>;
     }
 }
 
@@ -640,7 +645,15 @@ pub struct Vec<T> {
     value: T,
 }
 
+pub struct User;
+pub struct UserStream;
+
 impl<T> iter::FromIterator<T> for Vec<T> {}
+
+impl<S> iter::UserCollector<S> for Vec<User>
+where
+    S: iter::Iterator<Item = User>,
+{}
 
 impl<T> [T] {
     pub fn iter(&self) -> slice::Iter<'_, T> {
@@ -650,6 +663,10 @@ impl<T> [T] {
 
 impl<'a, T> iter::Iterator for slice::Iter<'a, T> {
     type Item = &'a T;
+}
+
+impl iter::Iterator for UserStream {
+    type Item = User;
 }
 
 //- /storage/Cargo.toml
@@ -680,7 +697,7 @@ core = { package = "fake_core", path = "../core" }
 storage = { path = "../storage" }
 
 //- /app/src/lib.rs
-use core::Vec;
+use core::{UserStream, Vec};
 use storage::DefMap;
 
 pub fn explicit_destination(def_map: &DefMap) {
@@ -692,10 +709,20 @@ pub fn expected_destination(def_map: &DefMap) {
     let imports: Vec<_> = def_map.imports().iter().collect()$type_expected$;
     imports;
 }
+
+pub fn associated_equality_destination(stream: UserStream) {
+    let users = stream.collect_users::<Vec<_>>()$type_assoc_equality$;
+    users;
+}
 "#,
         &[
             AnalysisQuery::ty("explicit collect destination", "type_explicit").in_lib("app"),
             AnalysisQuery::ty("expected collect destination", "type_expected").in_lib("app"),
+            AnalysisQuery::ty(
+                "associated equality collect destination",
+                "type_assoc_equality",
+            )
+            .in_lib("app"),
         ],
         expect![[r#"
             explicit collect destination
@@ -703,6 +730,9 @@ pub fn expected_destination(def_map: &DefMap) {
 
             expected collect destination
             - nominal struct fake_core[lib]::crate::Vec<&nominal struct storage[lib]::crate::ImportData>
+
+            associated equality collect destination
+            - nominal struct fake_core[lib]::crate::Vec<nominal struct fake_core[lib]::crate::User>
         "#]],
     );
 }

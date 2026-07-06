@@ -4,10 +4,11 @@ use chalk_ir::cast::Cast;
 use chalk_ir::fold::Shift;
 use chalk_ir::visit::VisitExt;
 use chalk_ir::{
-    AdtId, AliasTy, AssocTypeId, BoundVar, ConcreteConst, ConstData, ConstValue, DebruijnIndex,
-    DomainGoal, GenericArg, GenericArgData, Goal, LifetimeData, Mutability as ChalkMutability,
-    ProjectionTy, QuantifiedWhereClause, Scalar, Substitution, TraitId, TraitRef as ChalkTraitRef,
-    TyKind, TyVariableKind, UintTy, VariableKind, VariableKinds, WhereClause,
+    AdtId, AliasEq, AliasTy, AssocTypeId, BoundVar, ConcreteConst, ConstData, ConstValue,
+    DebruijnIndex, DomainGoal, GenericArg, GenericArgData, Goal, LifetimeData,
+    Mutability as ChalkMutability, ProjectionTy, QuantifiedWhereClause, Scalar, Substitution,
+    TraitId, TraitRef as ChalkTraitRef, TyKind, TyVariableKind, UintTy, VariableKind,
+    VariableKinds, WhereClause,
 };
 use chalk_solve::rust_ir::{
     AdtDatum, AdtDatumBound, AdtFlags, AdtKind, AdtVariantDatum, AssociatedTyDatum,
@@ -50,6 +51,16 @@ pub(super) struct GenericBinderEnv {
 enum GenericBinding {
     Type,
     Lifetime,
+}
+
+struct TraitBoundArgs<'a> {
+    positional: Vec<chalk_ir::GenericArg<RgChalkInterner>>,
+    associated_equalities: Vec<TraitBoundAssocEquality<'a>>,
+}
+
+struct TraitBoundAssocEquality<'a> {
+    name: &'a Name,
+    rhs_ty: &'a TypeRef,
 }
 
 impl GenericBinderEnv {
@@ -178,7 +189,7 @@ where
         let lowerer = self.with_binders(&binders);
         let mut where_clauses = lowerer.type_param_bounds(generics, None)?;
         for super_trait in super_traits {
-            where_clauses.push(lowerer.trait_bound_clause(&self_ty, super_trait, None)?);
+            where_clauses.extend(lowerer.trait_bound_clauses(&self_ty, super_trait, None)?);
         }
         where_clauses.extend(lowerer.where_predicates(&generics.where_predicates, None)?);
 
@@ -298,7 +309,7 @@ where
         let self_ty = self.lower_infer_ty_with_projection_vars(&goal.self_ty, table, &variables)?;
         let mut substitution = Vec::with_capacity(1 + goal.args.len());
         substitution.push(GenericArgData::Ty(self_ty).intern(INTER));
-        for arg in &goal.args {
+        for arg in goal.iter_positional_args() {
             substitution
                 .push(self.lower_infer_generic_arg_with_projection_vars(arg, table, &variables)?);
         }
@@ -348,7 +359,7 @@ where
         for param in &generics.types {
             let subject = self.type_param_subject(&param.name, subst)?;
             for bound in &param.bounds {
-                clauses.push(self.trait_bound_clause(&subject, bound, subst)?);
+                clauses.extend(self.trait_bound_clauses(&subject, bound, subst)?);
             }
         }
         Some(clauses)
@@ -365,7 +376,7 @@ where
                 WherePredicate::Type { ty, bounds } => {
                     let subject = self.lower_type_ref(ty, subst)?;
                     for bound in bounds {
-                        clauses.push(self.trait_bound_clause(&subject, bound, subst)?);
+                        clauses.extend(self.trait_bound_clauses(&subject, bound, subst)?);
                     }
                 }
                 WherePredicate::Lifetime { .. } => {}
@@ -406,30 +417,54 @@ where
         let Some(TypeRef::Path(path)) = &impl_data.trait_ref else {
             return Some(Vec::new());
         };
-        self.generic_args_from_final_segment(path, subst)
+        let args = self.trait_bound_args_from_final_segment(path, subst)?;
+        if !args.associated_equalities.is_empty() {
+            return None;
+        }
+        Some(args.positional)
     }
 
-    fn trait_bound_clause(
+    fn trait_bound_clauses(
         &self,
         subject: &ChalkTy,
         bound: &TypeBound,
         subst: Option<(&InferenceTypeSubst, &InferenceTable)>,
-    ) -> Option<QuantifiedWhereClause<RgChalkInterner>> {
+    ) -> Option<Vec<QuantifiedWhereClause<RgChalkInterner>>> {
         let TypeBound::Trait(TypeRef::Path(path)) = bound else {
             return None;
         };
         let path_resolution = self.resolve_trait_path(path)?;
-        let args = self.generic_args_from_final_segment(path, subst)?;
+        let args = self.trait_bound_args_from_final_segment(path, subst)?;
         // `QuantifiedWhereClause` adds its own binder layer around the clause value. Even when it
         // binds zero new variables, references to the surrounding impl/trait parameters must move
         // one De Bruijn level out so Chalk does not treat them as parameters of this empty binder.
-        let trait_ref = self
-            .chalk_trait_ref(path_resolution, subject.clone(), args)
-            .shifted_in(INTER);
-        Some(chalk_ir::Binders::empty(
+        let trait_ref = self.chalk_trait_ref(path_resolution, subject.clone(), args.positional);
+        let mut clauses = vec![chalk_ir::Binders::empty(
             INTER,
-            WhereClause::Implemented(trait_ref),
-        ))
+            WhereClause::Implemented(trait_ref.clone().shifted_in(INTER)),
+        )];
+
+        for equality in args.associated_equalities {
+            let associated_ty_ref = self
+                .associated_ty_by_trait_name?
+                .get(&(path_resolution, equality.name.clone()))
+                .copied()?;
+            let rhs_ty = self.lower_type_ref(equality.rhs_ty, subst)?;
+            let alias_eq = AliasEq {
+                alias: AliasTy::Projection(ProjectionTy {
+                    associated_ty_id: chalk_assoc_type_id(associated_ty_ref),
+                    substitution: trait_ref.substitution.clone(),
+                }),
+                ty: rhs_ty,
+            }
+            .shifted_in(INTER);
+            clauses.push(chalk_ir::Binders::empty(
+                INTER,
+                WhereClause::AliasEq(alias_eq),
+            ));
+        }
+
+        Some(clauses)
     }
 
     fn chalk_trait_ref(
@@ -738,6 +773,43 @@ where
         args.iter()
             .map(|arg| self.generic_arg(arg, subst))
             .collect::<Option<Vec<_>>>()
+    }
+
+    fn trait_bound_args_from_final_segment<'a>(
+        &self,
+        path: &'a rg_ir_model::items::TypePath,
+        subst: Option<(&InferenceTypeSubst, &InferenceTable)>,
+    ) -> Option<TraitBoundArgs<'a>> {
+        let args = path
+            .segments
+            .last()
+            .map(|segment| segment.args.as_slice())
+            .unwrap_or(&[]);
+        let mut positional_args = Vec::new();
+        let mut associated_equalities = Vec::new();
+        for arg in args {
+            match arg {
+                ItemGenericArg::AssocType { name, ty } => {
+                    associated_equalities.push(TraitBoundAssocEquality {
+                        name,
+                        rhs_ty: ty.as_ref()?,
+                    });
+                }
+                ItemGenericArg::Type(_)
+                | ItemGenericArg::Lifetime(_)
+                | ItemGenericArg::Const(_) => {
+                    positional_args.push(self.generic_arg(arg, subst)?);
+                }
+                ItemGenericArg::FnTraitArgs { .. } | ItemGenericArg::Unsupported(_) => {
+                    return None;
+                }
+            }
+        }
+
+        Some(TraitBoundArgs {
+            positional: positional_args,
+            associated_equalities,
+        })
     }
 
     fn generic_arg(
