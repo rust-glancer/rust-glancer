@@ -414,6 +414,7 @@ where
         }))
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn apply_assoc_type_constraints(
         item_paths: &ItemPathQuery<'query, D, I>,
         target_items: &TargetItemQuery<'query, D, I>,
