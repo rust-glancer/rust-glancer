@@ -98,5 +98,9 @@ pub(crate) enum EngineCommand {
     ReindexWorkspace {
         respond_to: EngineResponse<()>,
     },
+    DeferredIndexingFinished {
+        generation: u64,
+        result: anyhow::Result<rg_project::FinishedSplitIndexing>,
+    },
     Shutdown(EngineResponse<()>),
 }

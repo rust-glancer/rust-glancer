@@ -1,13 +1,16 @@
 use std::{
     path::{Path, PathBuf},
-    sync::{Arc, mpsc::Receiver},
+    sync::{
+        Arc,
+        mpsc::{Receiver, Sender},
+    },
     time::{Duration, Instant},
 };
 
 use anyhow::Context as _;
 use rg_analysis::{
     Analysis as QueryAnalysis, CompletionQuery, InlayHint as AnalysisInlayHint, ReferenceQuery,
-    ReferenceSearchFile, RenameEdit, RenameTarget,
+    RenameEdit, RenameTarget,
 };
 use rg_ir_model::TargetRef;
 use rg_lsp_proto::{
@@ -19,7 +22,7 @@ use rg_lsp_proto::{
 use rg_parse::TextSpan;
 use rg_project::{
     FileContext, IndexingPerformancePreference, PackageResidencyPolicy, Project,
-    ProjectMemoryHooks, ProjectSnapshot, SavedFileChange,
+    ProjectMemoryHooks, ProjectSnapshot, SavedFileChange, SplitIndexingMode,
 };
 use rg_workspace::{
     CargoMetadataConfig, RustEdition, SysrootSources, WorkspaceLoweringConfig, WorkspaceMetadata,
@@ -31,6 +34,7 @@ use crate::{
     engine::{
         QueuedEngineCommand,
         command::{EngineCommand, EngineResponse},
+        early_start::{EarlyStart, ReferenceSearchPlan},
         project_proxy::ProjectProxy,
     },
     memory::{MemoryControl, MemoryReporter, ProjectMemoryReporter},
@@ -43,6 +47,7 @@ use crate::{
 
 #[derive(Debug)]
 pub(super) struct EngineWorker {
+    sender: Sender<QueuedEngineCommand>,
     project: ProjectProxy,
     dirty_state: DirtyState,
     memory_control: Arc<dyn MemoryControl>,
@@ -54,21 +59,6 @@ struct QueryContext {
     label: &'static str,
     queue_elapsed: Duration,
     dirty_identity: Option<DirtyDocumentIdentity>,
-}
-
-#[derive(Debug)]
-struct ReferenceSearchPlan {
-    targets: Vec<TargetRef>,
-    files: Option<Vec<ReferenceSearchFile>>,
-}
-
-impl ReferenceSearchPlan {
-    fn query(&self, include_declaration: bool) -> ReferenceQuery<'_> {
-        match self.files.as_deref() {
-            Some(files) => ReferenceQuery::find_references_in_files(files, include_declaration),
-            None => ReferenceQuery::find_references(&self.targets, include_declaration),
-        }
-    }
 }
 
 impl QueryContext {
@@ -100,9 +90,14 @@ impl QueryContext {
 }
 
 impl EngineWorker {
-    pub(super) fn new(memory_control: Arc<dyn MemoryControl>, dirty_state: DirtyState) -> Self {
+    pub(super) fn new(
+        sender: Sender<QueuedEngineCommand>,
+        memory_control: Arc<dyn MemoryControl>,
+        dirty_state: DirtyState,
+    ) -> Self {
         let memory_hooks = Arc::new(ProjectMemoryReporter::new(Arc::clone(&memory_control)));
         Self {
+            sender,
             project: ProjectProxy::new(Arc::clone(&memory_control)),
             dirty_state,
             memory_control,
@@ -363,6 +358,22 @@ impl EngineWorker {
                     tracing::trace!("engine command started: reindex_workspace");
                     let _ = respond_to.send(self.reindex_workspace());
                 }
+                EngineCommand::DeferredIndexingFinished { generation, result } => {
+                    tracing::trace!(
+                        generation,
+                        "engine command started: deferred_indexing_finished"
+                    );
+                    let applied =
+                        EarlyStart::apply_initial_finish(&mut self.project, generation, result);
+                    if applied {
+                        if let Ok(snapshot) = self.project.saved_snapshot() {
+                            Self::log_project_snapshot(
+                                snapshot,
+                                "initial deferred indexing finish",
+                            );
+                        }
+                    }
+                }
                 EngineCommand::Shutdown(respond_to) => {
                     tracing::info!("shutting down LSP engine worker");
                     let _ = respond_to.send(Ok(()));
@@ -474,17 +485,19 @@ impl EngineWorker {
             .workspace_lowering_config(workspace_lowering_config)
             .cargo_metadata_config(cargo_metadata_config)
             .indexing_preference(indexing_preference)
+            .split_indexing_mode(SplitIndexingMode::EarlyStart)
             .package_residency_policy(package_residency_policy)
             .memory_hooks(Arc::clone(&self.memory_hooks))
             .build()
             .context("while attempting to build LSP analysis project")?;
-        self.project.replace_saved(project);
-        Self::log_project_snapshot(self.project.saved_snapshot()?, "initial index");
+        let generation = self.project.replace_saved(project.clone());
+        Self::log_project_snapshot(self.project.saved_snapshot()?, "initial early-start index");
         tracing::info!(
             workspace_root = %workspace_root.display(),
             elapsed_ms = started.elapsed().as_millis(),
-            "workspace indexing finished"
+            "workspace early-start indexing finished"
         );
+        EarlyStart::spawn_initial_finish(&self.sender, generation, project);
 
         Ok(())
     }
@@ -546,6 +559,27 @@ impl EngineWorker {
         Ok(())
     }
 
+    fn reference_search_plans_for_position(
+        &mut self,
+        path: &Path,
+        position: ls_types::Position,
+        dirty: Option<&DirtyDocumentSnapshot>,
+    ) -> anyhow::Result<Vec<ReferenceSearchPlan>> {
+        self.project.with_query_snapshot(dirty, |snapshot| {
+            let target_offsets = Self::target_offsets(snapshot, path, position)?;
+            let analysis = snapshot.full_analysis()?;
+            let mut plans = Vec::new();
+
+            for (context, target, offset) in target_offsets {
+                plans.push(Self::reference_search_plan(
+                    snapshot, &analysis, &context, target, offset,
+                )?);
+            }
+
+            Ok(plans)
+        })
+    }
+
     fn goto_definition(
         &mut self,
         path: PathBuf,
@@ -581,6 +615,10 @@ impl EngineWorker {
         dirty: Option<DirtyDocumentSnapshot>,
     ) -> anyhow::Result<Vec<ls_types::Location>> {
         let started = Instant::now();
+        EarlyStart::ensure_path(&mut self.project, "references", &path)?;
+        let search_plans =
+            self.reference_search_plans_for_position(&path, position, dirty.as_ref())?;
+        EarlyStart::ensure_reference_plans(&mut self.project, "references", &search_plans)?;
         // Dirty overlays lower Body IR only for dirty files. Cross-file body references are
         // intentionally best-effort until the buffer is saved and the normal project catches up.
         let locations = self
@@ -632,6 +670,7 @@ impl EngineWorker {
         dirty: Option<DirtyDocumentSnapshot>,
     ) -> anyhow::Result<Option<ls_types::PrepareRenameResponse>> {
         let started = Instant::now();
+        EarlyStart::ensure_path(&mut self.project, "prepare_rename", &path)?;
         let response = self
             .project
             .with_query_snapshot(dirty.as_ref(), |snapshot| {
@@ -686,6 +725,10 @@ impl EngineWorker {
         dirty: Option<DirtyDocumentSnapshot>,
     ) -> anyhow::Result<Option<ls_types::WorkspaceEdit>> {
         let started = Instant::now();
+        EarlyStart::ensure_path(&mut self.project, "rename", &path)?;
+        let search_plans =
+            self.reference_search_plans_for_position(&path, position, dirty.as_ref())?;
+        EarlyStart::ensure_reference_plans(&mut self.project, "rename", &search_plans)?;
         let edit = self
             .project
             .with_query_snapshot(dirty.as_ref(), |snapshot| {
@@ -754,6 +797,7 @@ impl EngineWorker {
         dirty: Option<DirtyDocumentSnapshot>,
     ) -> anyhow::Result<Vec<ls_types::DocumentHighlight>> {
         let started = Instant::now();
+        EarlyStart::ensure_path(&mut self.project, "document_highlight", &path)?;
         let highlights = self
             .project
             .with_query_snapshot(dirty.as_ref(), |snapshot| {
@@ -814,6 +858,7 @@ impl EngineWorker {
         dirty: Option<DirtyDocumentSnapshot>,
     ) -> anyhow::Result<Vec<ls_types::CompletionItem>> {
         let started = Instant::now();
+        EarlyStart::ensure_path(&mut self.project, "completion", &path)?;
         let source_text = dirty.as_ref().map(DirtyDocumentSnapshot::text);
         let completions = self
             .project
@@ -868,6 +913,7 @@ impl EngineWorker {
         dirty: Option<DirtyDocumentSnapshot>,
     ) -> anyhow::Result<Option<ls_types::Hover>> {
         let started = Instant::now();
+        EarlyStart::ensure_path(&mut self.project, "hover", &path)?;
         let hover = self
             .project
             .with_query_snapshot(dirty.as_ref(), |snapshot| {
@@ -987,6 +1033,7 @@ impl EngineWorker {
         dirty: Option<DirtyDocumentSnapshot>,
     ) -> anyhow::Result<Vec<ls_types::InlayHint>> {
         let started = Instant::now();
+        EarlyStart::ensure_path(&mut self.project, "inlay_hint", &path)?;
         let lsp_hints = self
             .project
             .with_query_snapshot(dirty.as_ref(), |snapshot| {
@@ -1069,6 +1116,7 @@ impl EngineWorker {
         dirty: Option<DirtyDocumentSnapshot>,
     ) -> anyhow::Result<Vec<ls_types::Location>> {
         let started = Instant::now();
+        EarlyStart::ensure_path(&mut self.project, query.name(), &path)?;
         let locations = self
             .project
             .with_query_snapshot(dirty.as_ref(), |snapshot| {
@@ -1173,7 +1221,7 @@ impl EngineWorker {
         let labels = analysis.reference_search_labels(target, context.file, offset)?;
         let files = snapshot.reference_search_files_matching_labels(&targets, &labels)?;
 
-        Ok(ReferenceSearchPlan { targets, files })
+        Ok(ReferenceSearchPlan::new(targets, files))
     }
 
     fn file_contexts(
@@ -1469,7 +1517,8 @@ mod tests {
             panic!("dirty full-sync document should expose a snapshot");
         };
 
-        let mut worker = EngineWorker::new(Arc::new(()), DirtyState::default());
+        let (sender, _receiver) = std::sync::mpsc::channel();
+        let mut worker = EngineWorker::new(sender, Arc::new(()), DirtyState::default());
         let (respond_to, response) = oneshot::channel();
         let context = QueryContext::document("hover", Duration::ZERO, Some(&snapshot));
 

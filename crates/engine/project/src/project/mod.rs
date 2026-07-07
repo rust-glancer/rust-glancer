@@ -5,6 +5,7 @@ pub(crate) mod offloading;
 mod package_set;
 mod reference_search;
 mod snapshot;
+mod split_indexing;
 pub(crate) mod state;
 mod stats;
 pub(crate) mod subset;
@@ -27,9 +28,10 @@ use crate::{
 use rg_std::MemorySize;
 
 pub use self::{
-    build::{ProjectBuilder, StartupCacheLoad},
+    build::{ProjectBuilder, SplitIndexingMode, StartupCacheLoad},
     dirty::DirtyFileChange,
     snapshot::ProjectSnapshot,
+    split_indexing::{AnalysisSurface, FinishedSplitIndexing, SplitIndexing},
     stats::ProjectStats,
 };
 
@@ -91,6 +93,11 @@ impl Project {
     /// Rebuilds the whole project from the current workspace graph and saved source files.
     pub fn reindex_workspace(&mut self) -> anyhow::Result<()> {
         update::reindex_workspace(self)
+    }
+
+    /// Returns the split-indexing control surface for deferred analysis work.
+    pub fn split_indexing(&mut self) -> SplitIndexing<'_> {
+        SplitIndexing::new(self)
     }
 
     /// Applies one saved file replacement and refreshes derived analysis state.

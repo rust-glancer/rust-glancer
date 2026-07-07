@@ -33,7 +33,8 @@ pub use self::{
     },
     resolution::{BodyMethodQuery, BodyResolutionContext, BodyTypePathQuery, BodyValuePathQuery},
     store::{
-        BodyIrDb, BodyIrReadTxn, BodyIrStats, PackageBodies, TargetBodies, TargetBodiesStatus,
+        BodyIrDb, BodyIrReadTxn, BodyIrStats, PackageBodies, TargetBodies, TargetBodiesCoverage,
+        TargetBodiesStatus,
     },
 };
 

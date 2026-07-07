@@ -428,6 +428,30 @@ impl HostFixture {
         writeln!(dump, "body ir stats `{label}`").expect("string writes should not fail");
         writeln!(dump, "- targets {}", stats.body_ir.target_count)
             .expect("string writes should not fail");
+        writeln!(
+            dump,
+            "- complete targets {}",
+            stats.body_ir.complete_target_count
+        )
+        .expect("string writes should not fail");
+        writeln!(
+            dump,
+            "- partial targets {}",
+            stats.body_ir.partial_target_count
+        )
+        .expect("string writes should not fail");
+        writeln!(
+            dump,
+            "- missing targets {}",
+            stats.body_ir.missing_target_count
+        )
+        .expect("string writes should not fail");
+        writeln!(
+            dump,
+            "- targets skipped by policy {}",
+            stats.body_ir.skipped_by_policy_target_count
+        )
+        .expect("string writes should not fail");
         writeln!(dump, "- bodies {}", stats.body_ir.body_count)
             .expect("string writes should not fail");
     }

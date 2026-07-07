@@ -1,6 +1,6 @@
 //! Startup cache probing for fresh project builds.
 
-use rg_body_ir::{BodyIrBuildPolicy, TargetBodiesStatus};
+use rg_body_ir::BodyIrBuildPolicy;
 use rg_def_map::PackageSlot;
 use rg_parse::{PackageParseSnapshot, ParseDb};
 use rg_workspace::WorkspaceMetadata;
@@ -137,7 +137,7 @@ impl<'a> StartupCacheProbe<'a> {
             .body_ir
             .targets()
             .iter()
-            .all(|target| target.status() == TargetBodiesStatus::Built);
+            .all(|target| target.coverage().is_complete());
 
         if !matches_policy {
             metric::CACHE_PROBE_BODY_IR_POLICY_MISMATCHES.inc();

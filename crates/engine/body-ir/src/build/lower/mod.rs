@@ -18,16 +18,16 @@ use rayon::prelude::*;
 use rg_cfg_eval::CfgEvaluator;
 use rg_def_map::{DefMapReadTxn, PackageSlot};
 use rg_ir_model::{ConstRef, StaticRef, TargetRef};
-use rg_parse::{FileId, ParseDb, TargetId};
+use rg_parse::{ParseDb, TargetId};
 use rg_semantic_ir::SemanticIrReadTxn;
 use rg_text::{NameInterner, PackageNameInterners};
 
-use crate::{BodyIrBuildPolicy, BodyIrFile, PackageBodies, TargetBodies};
+use crate::{BodyIrBuildPolicy, PackageBodies, TargetBodies, TargetBodiesCoverage};
 
 pub(super) use self::macro_expansion::BodyMacroExpansion;
 use self::target::TargetLowering;
 pub(super) use self::task::{BodyLoweringTask, BodyTaskLowering};
-use super::local_thread_pool;
+use super::{local_thread_pool, materialization::BodyIrMaterialization};
 
 pub(super) fn build_packages(
     parse: &ParseDb,
@@ -46,7 +46,7 @@ pub(super) fn build_packages(
         parse,
         def_map,
         semantic_ir,
-        BodyIrLoweringScope::PackagePolicy(policy),
+        BodyIrMaterialization::ConfiguredBodies(policy),
         interners,
         &selected,
         &mut packages,
@@ -62,7 +62,7 @@ pub(super) fn build_selected_packages(
     parse: &ParseDb,
     def_map: &DefMapReadTxn<'_>,
     semantic_ir: &SemanticIrReadTxn<'_>,
-    scope: BodyIrLoweringScope<'_>,
+    scope: BodyIrMaterialization<'_>,
     package_slots: &[PackageSlot],
     interners: &mut PackageNameInterners,
 ) -> anyhow::Result<Vec<(PackageSlot, PackageBodies)>> {
@@ -98,7 +98,7 @@ fn build_package_outputs(
     parse: &ParseDb,
     def_map: &DefMapReadTxn<'_>,
     semantic_ir: &SemanticIrReadTxn<'_>,
-    scope: BodyIrLoweringScope<'_>,
+    scope: BodyIrMaterialization<'_>,
     interners: &mut PackageNameInterners,
     selected: &[bool],
     packages: &mut [Option<PackageBodies>],
@@ -147,7 +147,7 @@ fn build_package_with_interner(
     parse_package: &rg_parse::Package,
     def_map: &DefMapReadTxn<'_>,
     semantic_ir: &SemanticIrReadTxn<'_>,
-    scope: BodyIrLoweringScope<'_>,
+    scope: BodyIrMaterialization<'_>,
     package: PackageSlot,
     interner: &mut NameInterner,
 ) -> anyhow::Result<PackageBodies> {
@@ -214,17 +214,24 @@ fn build_package_with_interner(
             })
             .collect::<Vec<_>>();
 
-        // Check if we need lowering in the first place.
+        // Decide both whether this target needs work and how much of its body surface the result
+        // will cover. Selected-file rebuilds are allowed to materialize a target partially, while
+        // package-policy builds keep the historical all-or-nothing behavior.
         let body_files = functions
             .iter()
             .map(|(_, file_id, _)| *file_id)
             .chain(consts.iter().map(|(_, file_id, _)| *file_id))
             .chain(statics.iter().map(|(_, file_id, _)| *file_id))
             .collect::<Vec<_>>();
-        if !scope.should_lower_package(package, parse_package)
-            || !scope.should_lower_target(package, &body_files)
-        {
-            targets.push(TargetBodies::skipped());
+        let coverage = scope.target_coverage(package, parse_package, &body_files);
+        if !coverage.is_materialized() {
+            targets.push(match coverage {
+                TargetBodiesCoverage::Missing => TargetBodies::missing(),
+                TargetBodiesCoverage::SkippedByPolicy => TargetBodies::skipped_by_policy(),
+                TargetBodiesCoverage::Complete | TargetBodiesCoverage::Partial => {
+                    unreachable!("materialized body IR coverage should be lowered")
+                }
+            });
             continue;
         }
 
@@ -239,7 +246,7 @@ fn build_package_with_interner(
                 functions,
                 consts,
                 statics,
-                target_bodies: TargetBodies::new(),
+                target_bodies: TargetBodies::with_coverage(coverage),
                 cfg,
                 interner,
             }
@@ -251,41 +258,6 @@ fn build_package_with_interner(
     }
 
     Ok(PackageBodies::new(targets))
-}
-
-#[derive(Debug, Clone, Copy)]
-pub(super) enum BodyIrLoweringScope<'a> {
-    PackagePolicy(BodyIrBuildPolicy),
-    SelectedFiles(&'a [BodyIrFile]),
-}
-
-impl BodyIrLoweringScope<'_> {
-    fn should_lower_package(self, package: PackageSlot, parse_package: &rg_parse::Package) -> bool {
-        match self {
-            Self::PackagePolicy(policy) => policy.should_lower_package(parse_package),
-            Self::SelectedFiles(files) => files.iter().any(|file| file.package == package),
-        }
-    }
-
-    fn should_lower_target(self, package: PackageSlot, files_with_bodies: &[FileId]) -> bool {
-        match self {
-            Self::PackagePolicy(_) => true,
-            Self::SelectedFiles(files) => files_with_bodies.iter().any(|file_id| {
-                files
-                    .iter()
-                    .any(|file| file.package == package && file.file == *file_id)
-            }),
-        }
-    }
-
-    fn should_lower_body_file(self, package: PackageSlot, file_id: FileId) -> bool {
-        match self {
-            Self::PackagePolicy(_) => true,
-            Self::SelectedFiles(files) => files
-                .iter()
-                .any(|file| file.package == package && file.file == file_id),
-        }
-    }
 }
 
 fn validate_package_inputs(
@@ -329,9 +301,9 @@ fn validate_selected_packages(
 
 fn validate_selected_files(
     package_count: usize,
-    scope: &BodyIrLoweringScope<'_>,
+    scope: &BodyIrMaterialization<'_>,
 ) -> anyhow::Result<()> {
-    let BodyIrLoweringScope::SelectedFiles(files) = scope else {
+    let BodyIrMaterialization::SelectedFiles(files) = scope else {
         return Ok(());
     };
 

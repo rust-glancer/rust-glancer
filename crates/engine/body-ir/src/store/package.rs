@@ -37,33 +37,36 @@ impl PackageBodies {
 /// Resolved bodies for one target.
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct TargetBodies {
-    pub(crate) status: TargetBodiesStatus,
+    pub(crate) coverage: TargetBodiesCoverage,
     pub(crate) semantic_index: ItemLookupIndex,
     pub(crate) bodies: Arena<BodyId, ResolvedBodyData>,
     pub(crate) body_local_items: Arena<BodyId, BodyLocalItems>,
 }
 
 impl TargetBodies {
-    pub(crate) fn new() -> Self {
+    pub(crate) fn with_coverage(coverage: TargetBodiesCoverage) -> Self {
         Self {
-            status: TargetBodiesStatus::Built,
+            coverage,
             semantic_index: ItemLookupIndex::default(),
             bodies: Arena::new(),
             body_local_items: Arena::new(),
         }
     }
 
-    pub(crate) fn skipped() -> Self {
-        Self {
-            status: TargetBodiesStatus::Skipped,
-            semantic_index: ItemLookupIndex::default(),
-            bodies: Arena::new(),
-            body_local_items: Arena::new(),
-        }
+    pub(crate) fn missing() -> Self {
+        Self::with_coverage(TargetBodiesCoverage::Missing)
+    }
+
+    pub(crate) fn skipped_by_policy() -> Self {
+        Self::with_coverage(TargetBodiesCoverage::SkippedByPolicy)
+    }
+
+    pub fn coverage(&self) -> TargetBodiesCoverage {
+        self.coverage
     }
 
     pub fn status(&self) -> TargetBodiesStatus {
-        self.status
+        self.coverage.status()
     }
 
     pub fn body(&self, body: BodyId) -> Option<&ResolvedBodyData> {
@@ -109,6 +112,53 @@ impl TargetBodies {
 
     pub(crate) fn bodies_mut(&mut self) -> &mut [ResolvedBodyData] {
         self.bodies.as_mut_slice()
+    }
+}
+
+/// How much of a target's body surface has been materialized.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    derive_more::Display,
+    SchemaRead,
+    SchemaWrite,
+    MemorySize,
+    Shrink,
+)]
+#[memsize(leaf)]
+#[shrink(leaf)]
+pub enum TargetBodiesCoverage {
+    /// Every semantic item body known for the target was considered for lowering.
+    #[display("complete")]
+    Complete,
+    /// At least one, but not every, known body source file was selected for lowering.
+    #[display("partial")]
+    Partial,
+    /// The target has body sources, but none of them were selected for this materialization pass.
+    #[display("missing")]
+    Missing,
+    /// The configured package policy intentionally did not build bodies for this target.
+    #[display("skipped-by-policy")]
+    SkippedByPolicy,
+}
+
+impl TargetBodiesCoverage {
+    pub fn is_complete(self) -> bool {
+        matches!(self, Self::Complete)
+    }
+
+    pub fn is_materialized(self) -> bool {
+        matches!(self, Self::Complete | Self::Partial)
+    }
+
+    pub fn status(self) -> TargetBodiesStatus {
+        match self {
+            Self::Complete | Self::Partial => TargetBodiesStatus::Built,
+            Self::Missing | Self::SkippedByPolicy => TargetBodiesStatus::Skipped,
+        }
     }
 }
 

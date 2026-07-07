@@ -17,7 +17,10 @@ use crate::{
     cache::{Fingerprint, PackageCacheStore, WorkspaceCachePlan},
     memory::{ProjectMemoryHooks, ProjectMemoryPurgePoint},
     profile::{BuildMemorySampler, metric},
-    project::{StartupCacheLoad, loading::PackageReadLoaders, package_set::PhasePackageSet},
+    project::{
+        SplitIndexingMode, StartupCacheLoad, loading::PackageReadLoaders,
+        package_set::PhasePackageSet,
+    },
 };
 
 use super::{cache_probe::StartupCacheProbe, checkpoint_memory::CheckpointMemory};
@@ -55,6 +58,7 @@ pub(super) fn build(
     cache_plan: &WorkspaceCachePlan,
     cache_store: &PackageCacheStore,
     startup_cache_load: StartupCacheLoad,
+    split_indexing_mode: SplitIndexingMode,
     memory_hooks: &dyn ProjectMemoryHooks,
     sampler: &mut BuildMemorySampler,
 ) -> anyhow::Result<BuiltPhases> {
@@ -219,18 +223,21 @@ pub(super) fn build(
     // ----------------
     let baseline_body_ir =
         BodyIrDb::from_package_store(offloaded_package_store(parse.package_count()));
-    let body_ir = baseline_body_ir
-        .package_rebuilder(
-            &parse,
-            &def_map,
-            &semantic_ir,
-            build_plan.source_packages.as_slice(),
-            &mut names,
-            loaders.def_map,
-            loaders.semantic_ir,
-            &rebuild_subset,
-        )
-        .policy(body_ir_policy)
+    let mut body_rebuilder = baseline_body_ir.package_rebuilder(
+        &parse,
+        &def_map,
+        &semantic_ir,
+        build_plan.source_packages.as_slice(),
+        &mut names,
+        loaders.def_map,
+        loaders.semantic_ir,
+        &rebuild_subset,
+    );
+    body_rebuilder = match split_indexing_mode {
+        SplitIndexingMode::Full => body_rebuilder.configured_bodies(body_ir_policy),
+        SplitIndexingMode::EarlyStart => body_rebuilder.coverage_only(body_ir_policy),
+    };
+    let body_ir = body_rebuilder
         .build()
         .context("while attempting to build body ir db")?;
     memory_hooks.purge(ProjectMemoryPurgePoint::AfterBodyIrBuild);

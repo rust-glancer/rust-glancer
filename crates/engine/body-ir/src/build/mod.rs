@@ -3,6 +3,7 @@
 mod body_def_map;
 mod body_item_store;
 mod lower;
+mod materialization;
 mod query_source;
 mod resolve;
 mod state;
@@ -17,6 +18,8 @@ use rg_std::Shrink;
 use rg_text::PackageNameInterners;
 
 use crate::{BodyIrBuildPolicy, BodyIrDb, BodyIrFile, PackageBodies};
+
+use self::materialization::BodyIrMaterializationPlan;
 
 /// Builder for a fresh Body IR snapshot.
 pub struct BodyIrDbBuilder<'db, 'names> {
@@ -115,8 +118,7 @@ pub struct BodyIrDbPackageRebuilder<'db, 'names> {
     parse: &'db rg_parse::ParseDb,
     def_map: &'db rg_def_map::DefMapDb,
     semantic_ir: &'db rg_semantic_ir::SemanticIrDb,
-    policy: BodyIrBuildPolicy,
-    selected_files: Option<Vec<BodyIrFile>>,
+    materialization: BodyIrMaterializationPlan,
     packages: &'db [PackageSlot],
     interners: &'names mut PackageNameInterners,
     def_map_loader: PackageLoader<'db, DefMapPackage>,
@@ -142,8 +144,9 @@ impl<'db, 'names> BodyIrDbPackageRebuilder<'db, 'names> {
             parse,
             def_map,
             semantic_ir,
-            policy: BodyIrBuildPolicy::default(),
-            selected_files: None,
+            materialization: BodyIrMaterializationPlan::ConfiguredBodies(
+                BodyIrBuildPolicy::default(),
+            ),
             packages,
             interners,
             def_map_loader,
@@ -152,23 +155,27 @@ impl<'db, 'names> BodyIrDbPackageRebuilder<'db, 'names> {
         }
     }
 
-    pub fn policy(mut self, policy: BodyIrBuildPolicy) -> Self {
-        self.policy = policy;
+    /// Lowers body contents selected by the package policy.
+    pub fn configured_bodies(mut self, policy: BodyIrBuildPolicy) -> Self {
+        self.materialization = BodyIrMaterializationPlan::ConfiguredBodies(policy);
+        self
+    }
+
+    /// Builds coverage records without lowering body contents selected by the policy.
+    pub fn coverage_only(mut self, policy: BodyIrBuildPolicy) -> Self {
+        self.materialization = BodyIrMaterializationPlan::CoverageOnly(policy);
         self
     }
 
     pub fn selected_files(mut self, files: Vec<BodyIrFile>) -> Self {
-        self.selected_files = Some(files);
+        self.materialization = BodyIrMaterializationPlan::SelectedFiles(files);
         self
     }
 
     pub fn build(self) -> anyhow::Result<BodyIrDb> {
         let mut next = self.old.clone();
         let packages = normalized_package_slots(self.packages);
-        let lowering_scope = match &self.selected_files {
-            Some(files) => lower::BodyIrLoweringScope::SelectedFiles(files),
-            None => lower::BodyIrLoweringScope::PackagePolicy(self.policy),
-        };
+        let materialization = self.materialization.lowering();
         let semantic_ir_txn = self
             .semantic_ir
             .read_txn_for_subset(self.semantic_ir_loader, self.subset);
@@ -179,7 +186,7 @@ impl<'db, 'names> BodyIrDbPackageRebuilder<'db, 'names> {
             self.parse,
             &def_map_txn,
             &semantic_ir_txn,
-            lowering_scope,
+            materialization,
             &packages,
             self.interners,
         )

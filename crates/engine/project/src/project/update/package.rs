@@ -131,7 +131,9 @@ fn try_rebuild_packages(
         &rebuild_subset,
     );
     body_rebuilder = match plan.body_scope {
-        BodyRebuildScope::Policy => body_rebuilder.policy(state.body_ir_policy),
+        BodyRebuildScope::ConfiguredBodies => {
+            body_rebuilder.configured_bodies(state.body_ir_policy)
+        }
         BodyRebuildScope::DirtyFiles(files) => body_rebuilder.selected_files(files.to_vec()),
     };
     let body_ir = body_rebuilder
@@ -167,7 +169,7 @@ impl<'a> PackageRebuildPlan<'a> {
         Self {
             source_packages: PhasePackageSet::from_slice(packages),
             body_packages: PhasePackageSet::from_slice(packages),
-            body_scope: BodyRebuildScope::Policy,
+            body_scope: BodyRebuildScope::ConfiguredBodies,
             residency: RebuildResidency::RestoreSavedState,
         }
     }
@@ -184,7 +186,7 @@ impl<'a> PackageRebuildPlan<'a> {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum BodyRebuildScope<'a> {
-    Policy,
+    ConfiguredBodies,
     DirtyFiles(&'a [BodyIrFile]),
 }
 
@@ -213,6 +215,7 @@ pub(crate) fn rebuild_resident_from_source(state: &mut ProjectState) -> anyhow::
         cargo_metadata_config,
         cache_instance,
         body_ir_policy,
+        build::SplitIndexingMode::Full,
         indexing_preference,
         package_residency_policy,
         StartupCacheLoad::Disabled,

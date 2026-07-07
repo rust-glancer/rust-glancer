@@ -48,6 +48,10 @@ impl<T> UniqueVec<T> {
         self.items.iter()
     }
 
+    pub fn as_slice(&self) -> &[T] {
+        &self.items
+    }
+
     pub fn into_vec(self) -> Vec<T> {
         self.items
     }

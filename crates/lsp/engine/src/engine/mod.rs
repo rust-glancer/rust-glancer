@@ -1,4 +1,5 @@
 mod command;
+mod early_start;
 mod project_proxy;
 mod worker;
 
@@ -70,7 +71,8 @@ impl EngineHandle {
 
         thread::spawn({
             let dirty_state = dirty_state.clone();
-            move || EngineWorker::new(memory_control, dirty_state).run(receiver)
+            let sender = sender.clone();
+            move || EngineWorker::new(sender, memory_control, dirty_state).run(receiver)
         });
 
         Self {

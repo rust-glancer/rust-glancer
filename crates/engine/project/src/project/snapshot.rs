@@ -1,4 +1,3 @@
-use rg_std::MemorySize;
 use std::path::Path;
 
 use anyhow::Context as _;
@@ -9,6 +8,7 @@ use rg_ir_model::TargetRef;
 #[cfg(test)]
 use rg_parse::ParseDb;
 use rg_parse::{FileId, LineIndex, Span};
+use rg_std::MemorySize;
 use rg_workspace::RustEdition;
 
 use super::{

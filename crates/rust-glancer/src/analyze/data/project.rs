@@ -44,6 +44,10 @@ impl ProjectReport {
                 target_count: stats.body_ir.target_count,
                 built_target_count: stats.body_ir.built_target_count,
                 skipped_target_count: stats.body_ir.skipped_target_count,
+                complete_target_count: stats.body_ir.complete_target_count,
+                partial_target_count: stats.body_ir.partial_target_count,
+                missing_target_count: stats.body_ir.missing_target_count,
+                skipped_by_policy_target_count: stats.body_ir.skipped_by_policy_target_count,
                 body_count: stats.body_ir.body_count,
                 scope_count: stats.body_ir.scope_count,
                 binding_count: stats.body_ir.binding_count,
@@ -140,6 +144,10 @@ pub(crate) struct BodyIrReport {
     pub(crate) target_count: usize,
     pub(crate) built_target_count: usize,
     pub(crate) skipped_target_count: usize,
+    pub(crate) complete_target_count: usize,
+    pub(crate) partial_target_count: usize,
+    pub(crate) missing_target_count: usize,
+    pub(crate) skipped_by_policy_target_count: usize,
     pub(crate) body_count: usize,
     pub(crate) scope_count: usize,
     pub(crate) binding_count: usize,
@@ -160,6 +168,26 @@ impl BodyIrReport {
                 "skipped_target_count",
                 "skipped targets",
                 self.skipped_target_count,
+            )
+            .count_as(
+                "complete_target_count",
+                "complete targets",
+                self.complete_target_count,
+            )
+            .count_as(
+                "partial_target_count",
+                "partial targets",
+                self.partial_target_count,
+            )
+            .count_as(
+                "missing_target_count",
+                "missing targets",
+                self.missing_target_count,
+            )
+            .count_as(
+                "skipped_by_policy_target_count",
+                "targets skipped by policy",
+                self.skipped_by_policy_target_count,
             )
             .count_as("body_count", "bodies", self.body_count)
             .count_as("scope_count", "scopes", self.scope_count)

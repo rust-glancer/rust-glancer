@@ -6,6 +6,6 @@ mod txn;
 
 pub use self::{
     db::{BodyIrDb, BodyIrStats},
-    package::{PackageBodies, TargetBodies, TargetBodiesStatus},
+    package::{PackageBodies, TargetBodies, TargetBodiesCoverage, TargetBodiesStatus},
     txn::BodyIrReadTxn,
 };

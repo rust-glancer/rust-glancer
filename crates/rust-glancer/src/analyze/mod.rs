@@ -4,11 +4,11 @@ use std::{
 };
 
 use anyhow::Context as _;
-use rg_lsp_engine::MemoryControl as _;
+use rg_lsp_engine::MemoryControl;
 use rg_profile::ProfileRun;
 use rg_project::{
     BuildProcessMemory, IndexingPerformancePreference, PackageResidencyPolicy, Project,
-    StartupCacheLoad,
+    SplitIndexingMode, StartupCacheLoad,
 };
 use rg_workspace::{
     CargoMetadataConfig, SysrootSources, WorkspaceLoweringConfig, WorkspaceMetadata,
@@ -79,26 +79,31 @@ pub(crate) fn analyze(
     let builder = Project::builder(workspace)
         .cargo_metadata_config(cargo_metadata_config)
         .indexing_preference(indexing_preference)
+        .split_indexing_mode(SplitIndexingMode::EarlyStart)
         .package_residency_policy(package_residency_policy)
         .startup_cache_load(startup_cache_load)
         .memory_hooks(crate::memory::project_memory_hooks());
     let builder = if include_memory {
-        builder.process_memory_sampler(move || {
-            memory_control
-                .allocator_stats()
-                .map(|stats| BuildProcessMemory {
-                    allocated_bytes: stats.allocated_bytes,
-                    active_bytes: stats.active_bytes,
-                    resident_bytes: stats.resident_bytes,
-                    mapped_bytes: stats.mapped_bytes,
-                })
-        })
+        let build_memory_control = memory_control;
+        builder.process_memory_sampler(move || sample_process_memory(&build_memory_control))
     } else {
         builder
     };
-    let project = builder
+    let mut project = builder
         .build()
         .context("while attempting to build project")?;
+    if include_memory {
+        let finish_memory_control = memory_control;
+        project
+            .split_indexing()
+            .finish_profiled(move || sample_process_memory(&finish_memory_control))
+            .context("while attempting to finish deferred indexing")?;
+    } else {
+        project
+            .split_indexing()
+            .finish()
+            .context("while attempting to finish deferred indexing")?;
+    }
     let profile_snapshot = profile_run.map(ProfileRun::finish);
 
     let analyze_report = data::AnalyzeReport::build(
@@ -110,6 +115,17 @@ pub(crate) fn analyze(
     );
 
     output::write_report(&analyze_report, output_format, include_memory)
+}
+
+fn sample_process_memory(memory_control: &impl MemoryControl) -> Option<BuildProcessMemory> {
+    memory_control
+        .allocator_stats()
+        .map(|stats| BuildProcessMemory {
+            allocated_bytes: stats.allocated_bytes,
+            active_bytes: stats.active_bytes,
+            resident_bytes: stats.resident_bytes,
+            mapped_bytes: stats.mapped_bytes,
+        })
 }
 
 fn measure_time<T>(operation: impl FnOnce() -> anyhow::Result<T>) -> anyhow::Result<(T, Duration)> {

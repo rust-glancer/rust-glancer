@@ -16,9 +16,8 @@ use rg_text::NameInterner;
 
 use crate::{BodyOwner, TargetBodies};
 
-use super::{
-    BodyIrLoweringScope, BodyMacroExpansion, task::BodyLoweringTask, task::BodyTaskLowering,
-};
+use super::{BodyMacroExpansion, task::BodyLoweringTask, task::BodyTaskLowering};
+use crate::build::materialization::BodyIrMaterialization;
 
 type FunctionLoweringTarget = (FunctionRef, FileId, Span);
 type ConstLoweringTarget = (ConstRef, FileId, Span);
@@ -28,7 +27,7 @@ pub(super) struct TargetLowering<'a> {
     pub(super) parse_package: &'a rg_parse::Package,
     pub(super) def_map: &'a DefMapReadTxn<'a>,
     pub(super) semantic_ir: &'a SemanticIrReadTxn<'a>,
-    pub(super) scope: BodyIrLoweringScope<'a>,
+    pub(super) scope: BodyIrMaterialization<'a>,
     pub(super) package: PackageSlot,
     pub(super) functions: Vec<FunctionLoweringTarget>,
     pub(super) consts: Vec<ConstLoweringTarget>,
