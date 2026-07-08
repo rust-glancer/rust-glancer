@@ -10,6 +10,8 @@ use tower_lsp_server::{
     },
 };
 
+use crate::client_notifications::DeferredIndexingFinished;
+
 /// Publishes service side effects to the real LSP client.
 ///
 /// The worker process deliberately only sends protocol-level notifications. This service is the
@@ -102,6 +104,11 @@ async fn publish_service_notification(
                     "failed to request inlay hint refresh after service notification"
                 );
             }
+        }
+        ServiceNotification::DeferredIndexingFinished => {
+            lsp_client
+                .send_notification::<DeferredIndexingFinished>(())
+                .await;
         }
         ServiceNotification::LogMessage { level, message } => {
             lsp_client.log_message(message_type(level), message).await;

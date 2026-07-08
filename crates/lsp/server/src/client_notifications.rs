@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use tower_lsp_server::ls_types::{LSPAny, LSPObject, notification::Notification};
 
 const ACTIVE_WORKSPACE_CHANGED_METHOD: &str = "rust-glancer/activeWorkspaceChanged";
+const DEFERRED_INDEXING_FINISHED_METHOD: &str = "rust-glancer/deferredIndexingFinished";
 
 /// Custom notification that lets the VS Code client show which workspace currently owns requests.
 ///
@@ -32,6 +33,20 @@ impl ActiveWorkspaceChanged {
         }
         LSPAny::Object(params)
     }
+}
+
+/// Custom notification used by tooling that wants to distinguish structural readiness from the
+/// background indexing work that completes shortly after it.
+///
+/// Editors can ignore this notification. `compare-lsp` uses it as a precise post-ready barrier so
+/// its measured query latency does not include the first body-sensitive request materializing
+/// deferred indexes on demand.
+pub(crate) struct DeferredIndexingFinished;
+
+impl Notification for DeferredIndexingFinished {
+    type Params = ();
+
+    const METHOD: &'static str = DEFERRED_INDEXING_FINISHED_METHOD;
 }
 
 /// Client-facing snapshot of the workspace currently selected by document routing.

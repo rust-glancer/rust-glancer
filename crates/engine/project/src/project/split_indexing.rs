@@ -206,6 +206,7 @@ fn materialize_files(
 ) -> anyhow::Result<()> {
     let mut body_files = files
         .iter()
+        .filter(|&&(package, file)| body_file_needs_materialization(state, package, file))
         .map(|&(package, file)| BodyIrFile::new(package, file))
         .collect::<UniqueVec<_>>();
     if body_files.is_empty() {
@@ -254,6 +255,37 @@ fn materialize_files(
         "while attempting to apply residency after preparing deferred analysis for files",
     )?;
     Ok(())
+}
+
+/// Return whether a file-local query still needs source rebuilding before it can run.
+///
+/// Non-resident Body IR packages are already backed by durable cache artifacts. Query transactions
+/// can lazy-load them much more cheaply than rebuilding the package from source, so they are ready
+/// for this on-demand path. Resident complete packages are also ready. Partial packages only need a
+/// rebuild when the requested file's bodies are not among the already-materialized bodies.
+fn body_file_needs_materialization(
+    state: &ProjectState,
+    package: PackageSlot,
+    file: FileId,
+) -> bool {
+    let Some(body_ir) = state.body_ir.resident_package(package) else {
+        return false;
+    };
+
+    if body_ir
+        .targets()
+        .iter()
+        .all(|target| target.coverage().is_complete())
+    {
+        return false;
+    }
+
+    !body_ir.targets().iter().any(|target| {
+        target
+            .bodies()
+            .iter()
+            .any(|body| body.source().is_written() && body.source().file_id == file)
+    })
 }
 
 /// Treat target readiness as package readiness, because deferred payloads are package-shaped.

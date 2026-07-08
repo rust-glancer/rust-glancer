@@ -16,7 +16,7 @@ use rg_ir_model::TargetRef;
 use rg_lsp_proto::{
     AnalysisConfig, CargoMetadataTarget as ProtoCargoMetadataTarget, CompletionClientCapabilities,
     IndexingPerformancePreference as ProtoIndexingPerformancePreference,
-    PackageResidencyPolicy as ProtoPackageResidencyPolicy,
+    PackageResidencyPolicy as ProtoPackageResidencyPolicy, ServiceNotification,
     SysrootDiscovery as ProtoSysrootDiscovery,
 };
 use rg_parse::TextSpan;
@@ -43,6 +43,7 @@ use crate::{
         completion, formatting as formatting_proto, hover, inlay_hint, navigation, position,
         references, rename, symbols,
     },
+    service::ServiceNotificationsSink,
 };
 
 #[derive(Debug)]
@@ -50,6 +51,7 @@ pub(super) struct EngineWorker {
     sender: Sender<QueuedEngineCommand>,
     project: ProjectProxy,
     dirty_state: DirtyState,
+    notifications: ServiceNotificationsSink,
     memory_control: Arc<dyn MemoryControl>,
     memory_hooks: Arc<dyn ProjectMemoryHooks>,
 }
@@ -94,12 +96,14 @@ impl EngineWorker {
         sender: Sender<QueuedEngineCommand>,
         memory_control: Arc<dyn MemoryControl>,
         dirty_state: DirtyState,
+        notifications: ServiceNotificationsSink,
     ) -> Self {
         let memory_hooks = Arc::new(ProjectMemoryReporter::new(Arc::clone(&memory_control)));
         Self {
             sender,
             project: ProjectProxy::new(Arc::clone(&memory_control)),
             dirty_state,
+            notifications,
             memory_control,
             memory_hooks,
         }
@@ -366,6 +370,8 @@ impl EngineWorker {
                     let applied =
                         EarlyStart::apply_initial_finish(&mut self.project, generation, result);
                     if applied {
+                        self.notifications
+                            .send(ServiceNotification::DeferredIndexingFinished);
                         if let Ok(snapshot) = self.project.saved_snapshot() {
                             Self::log_project_snapshot(
                                 snapshot,
@@ -1500,7 +1506,17 @@ mod tests {
     use tokio::sync::oneshot;
 
     use super::*;
-    use crate::documents::{DirtyDocumentSnapshotState, DocumentStore};
+    use crate::{
+        documents::{DirtyDocumentSnapshotState, DocumentStore},
+        service::ServiceNotificationPublisher,
+    };
+
+    #[derive(Debug)]
+    struct NoopNotifications;
+
+    impl ServiceNotificationPublisher for NoopNotifications {
+        fn send(&self, _notification: ServiceNotification) {}
+    }
 
     #[test]
     fn stale_dirty_query_responds_without_running_analysis() {
@@ -1518,7 +1534,9 @@ mod tests {
         };
 
         let (sender, _receiver) = std::sync::mpsc::channel();
-        let mut worker = EngineWorker::new(sender, Arc::new(()), DirtyState::default());
+        let notifications = ServiceNotificationsSink::from_publisher(NoopNotifications);
+        let mut worker =
+            EngineWorker::new(sender, Arc::new(()), DirtyState::default(), notifications);
         let (respond_to, response) = oneshot::channel();
         let context = QueryContext::document("hover", Duration::ZERO, Some(&snapshot));
 

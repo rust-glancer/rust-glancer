@@ -72,7 +72,10 @@ impl EngineHandle {
         thread::spawn({
             let dirty_state = dirty_state.clone();
             let sender = sender.clone();
-            move || EngineWorker::new(sender, memory_control, dirty_state).run(receiver)
+            let notifications = notifications.clone();
+            move || {
+                EngineWorker::new(sender, memory_control, dirty_state, notifications).run(receiver)
+            }
         });
 
         Self {

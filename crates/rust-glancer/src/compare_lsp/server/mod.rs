@@ -12,6 +12,7 @@ mod uri;
 
 use std::time::Duration;
 
+use anyhow::Context as _;
 use serde_json::Value;
 
 use crate::compare_lsp::{fixture::Fixture, lsp_client::RequestOutcome, query::QueryCase};
@@ -43,6 +44,18 @@ impl StartedServers {
         let rust_analyzer_readiness = rust_analyzer_server
             .initialize_fixture(fixture.root(), &source_paths)
             .await?;
+        let rust_glancer_readiness = rust_glancer_readiness.with_settle_latency(
+            rust_glancer_server
+                .settle_after_readiness()
+                .await
+                .context("Waiting for rust-glancer post-ready settle failed")?,
+        );
+        let rust_analyzer_readiness = rust_analyzer_readiness.with_settle_latency(
+            rust_analyzer_server
+                .settle_after_readiness()
+                .await
+                .context("Waiting for rust-analyzer post-ready settle failed")?,
+        );
 
         Ok(Self {
             rust_glancer_server,
@@ -122,6 +135,7 @@ pub(crate) struct ServerReadiness {
     name: &'static str,
     initialize_latency: Duration,
     ready_latency: Duration,
+    settle_latency: Duration,
 }
 
 impl ServerReadiness {
@@ -134,7 +148,13 @@ impl ServerReadiness {
             name,
             initialize_latency,
             ready_latency,
+            settle_latency: Duration::ZERO,
         }
+    }
+
+    pub(super) fn with_settle_latency(mut self, settle_latency: Duration) -> Self {
+        self.settle_latency = settle_latency;
+        self
     }
 
     pub(crate) fn name(&self) -> &'static str {
@@ -147,6 +167,10 @@ impl ServerReadiness {
 
     pub(crate) fn ready_latency(&self) -> Duration {
         self.ready_latency
+    }
+
+    pub(crate) fn settle_latency(&self) -> Duration {
+        self.settle_latency
     }
 }
 

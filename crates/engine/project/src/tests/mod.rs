@@ -590,6 +590,81 @@ pub fn helper() -> usize {
 }
 
 #[test]
+fn file_prepare_keeps_finished_offloaded_payload_lazy() {
+    let fixture = ProjectSourceFixture::build(
+        r#"
+//- /Cargo.toml
+[package]
+name = "finished_offload_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub fn value() -> usize {
+    let value = 1usize;
+    val$ref$ue
+}
+"#,
+    );
+    let workspace = fixture.workspace_metadata();
+
+    let mut project = Project::builder(workspace)
+        .split_indexing_mode(SplitIndexingMode::EarlyStart)
+        .package_residency_policy(PackageResidencyPolicy::AllOffloadable)
+        .build()
+        .expect("early-start project build should succeed");
+    let reference = fixture.markers().position("ref");
+    let context = project
+        .snapshot()
+        .file_contexts_for_path(fixture.path(&reference.path))
+        .expect("fixture file contexts should resolve")
+        .pop()
+        .expect("fixture file should have one context");
+    let target = context
+        .targets
+        .first()
+        .copied()
+        .expect("fixture file should belong to one target");
+
+    project
+        .split_indexing()
+        .finish()
+        .expect("deferred indexing should finish and restore residency");
+    assert!(
+        project
+            .state
+            .body_ir
+            .resident_package(context.package)
+            .is_none(),
+        "finished all-offloadable package should return to lazy cache-backed residency",
+    );
+
+    project
+        .split_indexing()
+        .materialize(AnalysisSurface::Files(&[(context.package, context.file)]))
+        .expect("file-local preparation should treat finished offloaded payload as ready");
+    assert!(
+        project
+            .state
+            .body_ir
+            .resident_package(context.package)
+            .is_none(),
+        "file-local preparation should not rebuild a finished offloaded package from source",
+    );
+
+    assert!(
+        project
+            .snapshot()
+            .full_analysis()
+            .expect("analysis should lazy-load the finished offloaded package")
+            .type_at(target, context.file, reference.offset)
+            .expect("body-local type query should resolve from lazy package data")
+            .is_some(),
+        "finished offloaded body data should still be queryable through lazy loading",
+    );
+}
+
+#[test]
 fn process_memory_sampler_enables_retained_build_memory() {
     let fixture = ProjectSourceFixture::build(
         r#"

@@ -238,6 +238,10 @@ impl LspEngineFixture {
                         rendered_inlay_hint_refresh = true;
                     }
                 }
+                ServiceNotification::DeferredIndexingFinished => {
+                    writeln!(rendered, "- deferred indexing finished")
+                        .expect("snapshot should be writable");
+                }
                 ServiceNotification::LogMessage { level, message } => {
                     writeln!(rendered, "- log {level:?}: {message}")
                         .expect("snapshot should be writable");
