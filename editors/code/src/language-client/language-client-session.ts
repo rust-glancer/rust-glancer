@@ -123,6 +123,9 @@ export class LanguageClientSession implements vscode.Disposable {
           this.isActiveRustDocumentDirty(),
         );
       }),
+      client.onNotification(SERVER_NOTIFICATIONS.deferredIndexingFinished, () => {
+        this.clientStatus.deferredIndexingFinished(this.isActiveRustDocumentDirty());
+      }),
     );
 
     try {

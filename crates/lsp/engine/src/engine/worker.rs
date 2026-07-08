@@ -367,9 +367,9 @@ impl EngineWorker {
                         generation,
                         "engine command started: deferred_indexing_finished"
                     );
-                    let applied =
+                    let current_generation_finished =
                         EarlyStart::apply_initial_finish(&mut self.project, generation, result);
-                    if applied {
+                    if current_generation_finished {
                         self.notifications
                             .send(ServiceNotification::DeferredIndexingFinished);
                         if let Ok(snapshot) = self.project.saved_snapshot() {

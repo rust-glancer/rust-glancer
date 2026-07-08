@@ -62,22 +62,34 @@ describe("client status state precedence", () => {
     assert.equal(status.snapshot().failureReason, undefined);
   });
 
+  it("shows a ready status while deferred indexing finishes", () => {
+    const status = clientStatus();
+    status.starting(DETAILS);
+    status.ready(DETAILS);
+
+    status.activeWorkspace("/workspace/project_c", "ready", undefined, false);
+    assert.equal(render(status), "ready: ~ Rust Glancer: ready [project_c]");
+
+    status.deferredIndexingFinished(false);
+    assert.equal(render(status), "ready: $(check) Rust Glancer: ready [project_c]");
+  });
+
   it("preserves active workspace label across language-client ready transitions", () => {
     const status = clientStatus();
     status.starting(DETAILS);
     status.ready(DETAILS);
-    status.activeWorkspace("/workspace/project_c", "ready", undefined, false);
+    status.activeWorkspace("/workspace/project_d", "ready", undefined, false);
 
     status.ready({
       ...DETAILS,
       workspaceRoot: "/workspace/restarted-window",
     });
 
-    assert.equal(render(status), "ready: $(check) Rust Glancer: ready [project_c]");
+    assert.equal(render(status), "ready: ~ Rust Glancer: ready [project_d]");
     assert.deepEqual(status.snapshot().details, {
       ...DETAILS,
       workspaceRoot: "/workspace/restarted-window",
-      activeWorkspaceRoot: "/workspace/project_c",
+      activeWorkspaceRoot: "/workspace/project_d",
     });
   });
 });
@@ -96,6 +108,7 @@ function noopView(): ClientStatusView {
     starting() {},
     indexing() {},
     ready() {},
+    readyWithDeferredIndexing() {},
     stale() {},
     diagnosticsRunning() {},
     diagnosticsFailed() {},

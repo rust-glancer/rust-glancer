@@ -180,19 +180,16 @@ impl LspEngineFixture {
         let mut rendered = String::new();
         writeln!(rendered, "notifications").expect("snapshot should be writable");
 
-        let notifications = self.notifications.snapshot();
-        if notifications.is_empty() {
-            writeln!(rendered, "- none").expect("snapshot should be writable");
-        }
-
+        let mut rendered_any_notification = false;
         let mut rendered_inlay_hint_refresh = false;
-        for notification in notifications {
+        for notification in self.notifications.snapshot() {
             match notification {
                 ServiceNotification::PublishDiagnostics {
                     path,
                     diagnostics,
                     version,
                 } => {
+                    rendered_any_notification = true;
                     writeln!(
                         rendered,
                         "- publish diagnostics {} version {:?} count {}",
@@ -207,6 +204,7 @@ impl LspEngineFixture {
                     title,
                     message,
                 } => {
+                    rendered_any_notification = true;
                     writeln!(
                         rendered,
                         "- begin progress {token:?}: {title}{}",
@@ -218,6 +216,7 @@ impl LspEngineFixture {
                     .expect("snapshot should be writable");
                 }
                 ServiceNotification::EndWorkDoneProgress { token, message } => {
+                    rendered_any_notification = true;
                     writeln!(
                         rendered,
                         "- end progress {token:?}{}",
@@ -233,20 +232,27 @@ impl LspEngineFixture {
                     // `didChange` may have a pending debounced refresh while `didSave` sends an
                     // immediate refresh, so duplicate invalidations are intentionally collapsed.
                     if !rendered_inlay_hint_refresh {
+                        rendered_any_notification = true;
                         writeln!(rendered, "- inlay hint refresh")
                             .expect("snapshot should be writable");
                         rendered_inlay_hint_refresh = true;
                     }
                 }
                 ServiceNotification::DeferredIndexingFinished => {
-                    writeln!(rendered, "- deferred indexing finished")
-                        .expect("snapshot should be writable");
+                    // Initial deferred indexing finishes on a background thread, so this lifecycle
+                    // notification can race with later fixture operations. These snapshots describe
+                    // stable editor-facing effects of the operation under test, not the whole event
+                    // stream.
                 }
                 ServiceNotification::LogMessage { level, message } => {
+                    rendered_any_notification = true;
                     writeln!(rendered, "- log {level:?}: {message}")
                         .expect("snapshot should be writable");
                 }
             }
+        }
+        if !rendered_any_notification {
+            writeln!(rendered, "- none").expect("snapshot should be writable");
         }
 
         expect.assert_eq(&rendered);

@@ -95,6 +95,10 @@ impl EarlyStart {
     }
 
     /// Merge the initial background finish if it still matches the saved-project generation.
+    ///
+    /// Returning `true` means that the background finish belongs to the current saved project, even
+    /// if there was nothing left to merge. The client-side status indicator cares about that
+    /// lifecycle fact: deferred indexing is no longer pending once this command has been handled.
     pub(super) fn apply_initial_finish(
         project_proxy: &mut ProjectProxy,
         generation: u64,
@@ -109,7 +113,7 @@ impl EarlyStart {
             return false;
         }
 
-        match result {
+        let updated = match result {
             // The merge itself is monotonic: packages finished by query-time materialization win
             // over an equal or older package from the background clone.
             Ok(finished) => project_proxy
@@ -132,7 +136,15 @@ impl EarlyStart {
                 );
                 false
             }
+        };
+
+        if !updated {
+            tracing::trace!(
+                generation,
+                "initial deferred indexing finish completed without saved project changes"
+            );
         }
+        true
     }
 
     /// Materialize the saved analysis surface needed by one path-local query.

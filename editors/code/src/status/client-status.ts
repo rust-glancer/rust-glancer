@@ -32,6 +32,7 @@ export interface ClientStatusView {
   starting(details: StatusDetails): void;
   indexing(details?: StatusDetails): void;
   ready(details?: StatusDetails): void;
+  readyWithDeferredIndexing(details?: StatusDetails): void;
   stale(details?: StatusDetails): void;
   diagnosticsRunning(command: string | undefined, details?: StatusDetails): void;
   diagnosticsFailed(details?: StatusDetails): void;
@@ -54,6 +55,8 @@ export class ClientStatus {
   private failureReason: string | undefined;
   private activeWorkspaceState: ActiveWorkspaceState | undefined;
   private activeWorkspaceFailureReason: string | undefined;
+  private deferredIndexingRunning = false;
+  private deferredIndexingFinishedSeen = false;
   private currentStatus: StatusSnapshot = {
     state: "created",
     text: "",
@@ -80,6 +83,8 @@ export class ClientStatus {
     this.failureReason = undefined;
     this.activeWorkspaceState = undefined;
     this.activeWorkspaceFailureReason = undefined;
+    this.deferredIndexingRunning = false;
+    this.deferredIndexingFinishedSeen = false;
     this.details = details;
     this.show("starting", "$(sync~spin) Rust Glancer: starting", () => this.view.starting(details));
   }
@@ -91,7 +96,7 @@ export class ClientStatus {
     const nextDetails =
       activeWorkspaceRoot === undefined ? details : { ...details, activeWorkspaceRoot };
     this.details = nextDetails;
-    this.show("ready", "$(check) Rust Glancer: ready", () => this.view.ready(nextDetails));
+    this.refresh(false);
   }
 
   public indexing(): void {
@@ -116,6 +121,15 @@ export class ClientStatus {
 
     this.activeWorkspaceState = state;
     this.activeWorkspaceFailureReason = state === "failed" ? message : undefined;
+    if (state === "indexing") {
+      this.deferredIndexingRunning = false;
+      this.deferredIndexingFinishedSeen = false;
+    } else if (state === "failed") {
+      this.deferredIndexingRunning = false;
+      this.deferredIndexingFinishedSeen = false;
+    } else {
+      this.deferredIndexingRunning = state === "ready" && !this.deferredIndexingFinishedSeen;
+    }
     this.details = {
       ...this.details,
       activeWorkspaceRoot: root,
@@ -123,10 +137,22 @@ export class ClientStatus {
     this.refresh(isActiveRustDocumentDirty);
   }
 
+  public deferredIndexingFinished(isActiveRustDocumentDirty: boolean): void {
+    if (this.details === undefined) {
+      return;
+    }
+
+    this.deferredIndexingRunning = false;
+    this.deferredIndexingFinishedSeen = true;
+    this.refresh(isActiveRustDocumentDirty);
+  }
+
   public stopped(reason: string, details: StatusDetails | undefined = this.details): void {
     this.running = false;
     this.resetDiagnostics();
     this.failureReason = undefined;
+    this.deferredIndexingRunning = false;
+    this.deferredIndexingFinishedSeen = false;
     this.details = details;
     this.show("stopped", "$(circle-slash) Rust Glancer: stopped", () =>
       this.view.stopped(reason, details ?? {}),
@@ -137,6 +163,8 @@ export class ClientStatus {
     this.running = false;
     this.resetDiagnostics();
     this.failureReason = reason;
+    this.deferredIndexingRunning = false;
+    this.deferredIndexingFinishedSeen = false;
     this.details = details;
     this.show("failed", "$(error) Rust Glancer: failed", () =>
       this.view.failed(reason, details ?? {}),
@@ -182,6 +210,12 @@ export class ClientStatus {
     } else if (this.diagnosticsFailed) {
       this.show("diagnostics-failed", "$(error) Rust Glancer: cargo check failed", () =>
         this.view.diagnosticsFailed(this.details),
+      );
+    } else if (this.deferredIndexingRunning) {
+      // The engine is already usable here; the marker only says that background indexing has not
+      // sent its finish notification yet.
+      this.show("ready", "~ Rust Glancer: ready", () =>
+        this.view.readyWithDeferredIndexing(this.details),
       );
     } else {
       this.show("ready", "$(check) Rust Glancer: ready", () => this.view.ready(this.details));
