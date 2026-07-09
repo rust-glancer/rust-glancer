@@ -125,10 +125,7 @@ export class LanguageClientSession implements vscode.Disposable {
       }),
       client.onNotification(SERVER_NOTIFICATIONS.deferredIndexingFinished, (params) => {
         const status = params as DeferredIndexingFinishedParams;
-        this.clientStatus.deferredIndexingFinished(
-          status.root,
-          this.isActiveRustDocumentDirty(),
-        );
+        this.clientStatus.deferredIndexingFinished(status.root, this.isActiveRustDocumentDirty());
       }),
     );
 
