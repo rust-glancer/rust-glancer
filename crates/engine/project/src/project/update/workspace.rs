@@ -14,7 +14,7 @@ use crate::project::{AnalysisChangeSummary, ChangedFile, Project, SavedFileChang
 
 pub(super) fn rebuild_workspace_graph(
     project: &mut Project,
-    change: Option<&SavedFileChange>,
+    changes: &[SavedFileChange],
 ) -> anyhow::Result<AnalysisChangeSummary> {
     let manifest_path = project
         .state
@@ -54,7 +54,7 @@ pub(super) fn rebuild_workspace_graph(
         .state;
 
     let mut changed_files = Vec::new();
-    if let Some(change) = change {
+    for change in changes {
         for file in project.state.file_refs_for_path(&change.path) {
             let changed_file = ChangedFile {
                 package: file.package,

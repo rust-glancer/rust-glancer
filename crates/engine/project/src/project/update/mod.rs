@@ -15,28 +15,37 @@ use workspace_graph::WorkspaceGraphChanges;
 pub(crate) use package::rebuild_resident_from_source;
 
 pub(super) fn reindex_workspace(project: &mut Project) -> anyhow::Result<()> {
-    workspace::rebuild_workspace_graph(project, None)
+    workspace::rebuild_workspace_graph(project, &[])
         .context("while attempting to reindex analysis project from workspace root")?;
     Ok(())
 }
 
-pub(super) fn apply_change(
+pub(super) fn apply_changes(
     project: &mut Project,
-    change: SavedFileChange,
+    changes: Vec<SavedFileChange>,
 ) -> anyhow::Result<AnalysisChangeSummary> {
-    let graph_changes = WorkspaceGraphChanges::check(
-        project.state.workspace(),
-        project.state.parse_db(),
-        &project.state.cargo_metadata_config,
-        &change,
-    );
+    if changes.is_empty() {
+        return Ok(AnalysisChangeSummary {
+            changed_files: Vec::new(),
+            affected_packages: Vec::new(),
+            changed_targets: Vec::new(),
+        });
+    }
 
-    match graph_changes {
-        WorkspaceGraphChanges::Changed => {
-            workspace::rebuild_workspace_graph(project, Some(&change))
-                .context("while attempting to rebuild analysis project after workspace change")
-        }
-        WorkspaceGraphChanges::Unchanged => source::apply_source_change(project, change),
+    let graph_changed = changes.iter().any(|change| {
+        WorkspaceGraphChanges::check(
+            project.state.workspace(),
+            project.state.parse_db(),
+            &project.state.cargo_metadata_config,
+            change,
+        ) == WorkspaceGraphChanges::Changed
+    });
+
+    if graph_changed {
+        workspace::rebuild_workspace_graph(project, &changes)
+            .context("while attempting to rebuild analysis project after workspace change")
+    } else {
+        source::apply_source_changes(project, changes)
     }
 }
 

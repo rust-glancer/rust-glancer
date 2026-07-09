@@ -8,75 +8,81 @@ use anyhow::Context as _;
 
 use rg_def_map::PackageSlot;
 use rg_ir_model::TargetRef;
+use rg_std::UniqueVec;
 
 use super::{affected_packages, package};
 use crate::project::{AnalysisChangeSummary, ChangedFile, Project, SavedFileChange, subset};
 
-pub(super) fn apply_source_change(
+pub(super) fn apply_source_changes(
     project: &mut Project,
-    change: SavedFileChange,
+    changes: Vec<SavedFileChange>,
 ) -> anyhow::Result<AnalysisChangeSummary> {
-    let mut changed_files = Vec::new();
-    let mut fallback_package_roots = Vec::new();
-    let changed = project
-        .state
-        .parse_db_mut()
-        .reparse_saved_file(&change.path)
-        .with_context(|| {
-            format!(
-                "while attempting to apply saved file change for {}",
-                change.path.display()
-            )
-        })?;
+    let mut changed_files = UniqueVec::new();
+    let mut fallback_package_roots = UniqueVec::new();
+    let mut fallback_saved_paths = Vec::new();
 
-    let fallback_saved_path = changed.is_empty().then(|| change.path.clone());
-    if fallback_saved_path.is_some() {
-        // A saved file can be new to the graph even though it now exists on disk. In that case,
-        // package roots are the coarse ownership boundary: rebuilding the containing package lets
-        // item-tree lowering rediscover any newly materialized `mod foo;` files through the normal
-        // Rust module rules.
-        for package_slot in project
+    // Reparse every known file first, then rebuild the union of affected packages once. This keeps
+    // large watcher batches proportional to the changed package set instead of to the number of
+    // changed paths in the batch.
+    for change in changes {
+        let changed = project
             .state
-            .workspace()
-            .package_slots_containing_path(&change.path)
-        {
-            let package_slot = PackageSlot(package_slot);
-            if !fallback_package_roots.contains(&package_slot) {
-                fallback_package_roots.push(package_slot);
+            .parse_db_mut()
+            .reparse_saved_file(&change.path)
+            .with_context(|| {
+                format!(
+                    "while attempting to apply saved file change for {}",
+                    change.path.display()
+                )
+            })?;
+
+        if changed.is_empty() {
+            // A saved file can be new to the graph even though it now exists on disk. In that case,
+            // package roots are the coarse ownership boundary: rebuilding the containing package
+            // lets item-tree lowering rediscover any newly materialized `mod foo;` files through
+            // the normal Rust module rules.
+            fallback_saved_paths.push(change.path.clone());
+            for package_slot in project
+                .state
+                .workspace()
+                .package_slots_containing_path(&change.path)
+            {
+                fallback_package_roots.push(PackageSlot(package_slot));
             }
         }
-    }
 
-    for changed_file in changed {
-        let changed_file = ChangedFile {
-            package: PackageSlot(changed_file.package),
-            file: changed_file.file,
-        };
-        if !changed_files.contains(&changed_file) {
-            changed_files.push(changed_file);
+        for changed_file in changed {
+            changed_files.push(ChangedFile {
+                package: PackageSlot(changed_file.package),
+                file: changed_file.file,
+            });
         }
     }
 
-    let affected_packages = affected_packages(project, &changed_files, &fallback_package_roots);
+    let affected_packages = affected_packages(
+        project,
+        changed_files.as_slice(),
+        fallback_package_roots.as_slice(),
+    );
     if !affected_packages.is_empty() {
         package::rebuild_packages(&mut project.state, &affected_packages)
             .context("while attempting to rebuild affected analysis packages")?;
     }
-    if let Some(saved_path) = fallback_saved_path {
+    for saved_path in fallback_saved_paths {
         promote_discovered_fallback_file(
             project,
-            &saved_path,
-            &fallback_package_roots,
+            saved_path.as_path(),
+            fallback_package_roots.as_slice(),
             &mut changed_files,
         );
     }
-    let changed_targets = targets_for_changed_files(project, &changed_files)
+    let changed_targets = targets_for_changed_files(project, changed_files.as_slice())
         .context("while attempting to report changed analysis targets")?;
 
     Ok(AnalysisChangeSummary {
-        changed_files,
+        changed_files: changed_files.into_vec(),
         affected_packages,
-        changed_targets,
+        changed_targets: changed_targets.into_vec(),
     })
 }
 
@@ -84,7 +90,7 @@ fn promote_discovered_fallback_file(
     project: &Project,
     saved_path: &std::path::Path,
     fallback_package_roots: &[PackageSlot],
-    changed_files: &mut Vec<ChangedFile>,
+    changed_files: &mut UniqueVec<ChangedFile>,
 ) {
     for package_slot in fallback_package_roots {
         let Some(package) = project.state.parse_db().package(package_slot.0) else {
@@ -98,13 +104,10 @@ fn promote_discovered_fallback_file(
                 continue;
             }
 
-            let changed_file = ChangedFile {
+            changed_files.push(ChangedFile {
                 package: *package_slot,
                 file: parsed_file.file_id(),
-            };
-            if !changed_files.contains(&changed_file) {
-                changed_files.push(changed_file);
-            }
+            });
         }
     }
 }
@@ -112,26 +115,24 @@ fn promote_discovered_fallback_file(
 fn targets_for_changed_files(
     project: &Project,
     changed_files: &[ChangedFile],
-) -> anyhow::Result<Vec<TargetRef>> {
+) -> anyhow::Result<UniqueVec<TargetRef>> {
     let packages = changed_files
         .iter()
         .map(|changed_file| changed_file.package)
-        .collect::<Vec<_>>();
+        .collect::<UniqueVec<_>>();
 
     // Reporting changed targets only needs package-local file ownership. Avoid materializing
     // dependency closures on the save path when semantic resolution is not involved.
-    let subset = subset::packages_only(project.state.workspace(), &packages);
+    let subset = subset::packages_only(project.state.workspace(), packages.as_slice());
     let def_map = project.state.def_map_read_txn_for_subset(&subset);
-    let mut targets = Vec::new();
+    let mut targets = UniqueVec::new();
 
     for changed_file in changed_files {
         for target_ref in def_map
             .targets_for_file(changed_file.package, changed_file.file)
             .context("while attempting to find target ownership for changed file")?
         {
-            if !targets.contains(&target_ref) {
-                targets.push(target_ref);
-            }
+            targets.push(target_ref);
         }
     }
 

@@ -25,7 +25,7 @@ use crate::{
     indexing::IndexingPerformancePreference,
     residency::{PackageResidency, PackageResidencyPlan},
 };
-use rg_std::MemorySize;
+use rg_std::{MemorySize, UniqueVec};
 
 pub use self::{
     build::{ProjectBuilder, SplitIndexingMode, StartupCacheLoad},
@@ -121,13 +121,28 @@ impl Project {
         &mut self,
         change: SavedFileChange,
     ) -> anyhow::Result<AnalysisChangeSummary> {
-        let path = change.path.canonicalize().with_context(|| {
-            format!(
-                "while attempting to canonicalize changed file {}",
-                change.path.display()
-            )
-        })?;
-        update::apply_change(self, SavedFileChange { path })
+        self.apply_changes([change])
+    }
+
+    /// Applies saved file replacements as one coherent project update.
+    pub fn apply_changes(
+        &mut self,
+        changes: impl IntoIterator<Item = SavedFileChange>,
+    ) -> anyhow::Result<AnalysisChangeSummary> {
+        let mut canonical_changes = UniqueVec::new();
+
+        for change in changes {
+            let path = change.path.canonicalize().with_context(|| {
+                format!(
+                    "while attempting to canonicalize changed file {}",
+                    change.path.display()
+                )
+            })?;
+            let change = SavedFileChange { path };
+            canonical_changes.push(change);
+        }
+
+        update::apply_changes(self, canonical_changes.into_vec())
     }
 
     /// Builds an ephemeral analysis project from dirty editor buffers.

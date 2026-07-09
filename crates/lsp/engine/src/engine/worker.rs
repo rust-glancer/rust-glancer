@@ -1,4 +1,5 @@
 use std::{
+    collections::VecDeque,
     path::{Path, PathBuf},
     sync::{
         Arc,
@@ -115,8 +116,16 @@ impl EngineWorker {
 
     pub(super) fn run(mut self, receiver: Receiver<QueuedEngineCommand>) {
         tracing::debug!("LSP engine worker started");
+        let mut deferred_commands = VecDeque::new();
 
-        while let Ok(queued) = receiver.recv() {
+        loop {
+            let queued = match deferred_commands.pop_front() {
+                Some(queued) => queued,
+                None => match receiver.recv() {
+                    Ok(queued) => queued,
+                    Err(_) => break,
+                },
+            };
             let queue_elapsed = queued.enqueued_at.elapsed();
             let command = queued.command;
             match command {
@@ -129,11 +138,21 @@ impl EngineWorker {
                     let _ = respond_to.send(self.initialize(root, analysis));
                 }
                 EngineCommand::ProjectPathsChanged { paths, respond_to } => {
+                    let (paths, responders) = Self::collect_project_path_changes(
+                        paths,
+                        respond_to,
+                        &receiver,
+                        &mut deferred_commands,
+                    );
                     tracing::trace!(
                         path_count = paths.len(),
+                        request_count = responders.len(),
                         "engine command started: project_paths_changed"
                     );
-                    let _ = respond_to.send(self.project_paths_changed(paths));
+                    Self::respond_to_project_path_changes(
+                        responders,
+                        self.project_paths_changed(paths),
+                    );
                 }
                 EngineCommand::GotoDefinition {
                     path,
@@ -392,6 +411,66 @@ impl EngineWorker {
         tracing::debug!("LSP engine worker stopped");
     }
 
+    fn collect_project_path_changes(
+        paths: Vec<PathBuf>,
+        respond_to: EngineResponse<()>,
+        receiver: &Receiver<QueuedEngineCommand>,
+        deferred_commands: &mut VecDeque<QueuedEngineCommand>,
+    ) -> (Vec<PathBuf>, Vec<EngineResponse<()>>) {
+        let mut paths = paths;
+        let mut responders = vec![respond_to];
+
+        // Native watcher batches can arrive back-to-back while a large filesystem operation is
+        // still settling. Merge immediately adjacent project-change commands before the worker
+        // starts rebuilding, but stop as soon as an interactive command appears so command ordering
+        // stays predictable.
+        while let Ok(queued) = receiver.try_recv() {
+            match queued.command {
+                EngineCommand::ProjectPathsChanged {
+                    paths: next_paths,
+                    respond_to,
+                } => {
+                    paths.extend(next_paths);
+                    responders.push(respond_to);
+                }
+                command => {
+                    deferred_commands.push_back(QueuedEngineCommand {
+                        command,
+                        enqueued_at: queued.enqueued_at,
+                    });
+                    break;
+                }
+            }
+        }
+
+        paths.sort();
+        paths.dedup();
+        (paths, responders)
+    }
+
+    fn respond_to_project_path_changes(
+        responders: Vec<EngineResponse<()>>,
+        result: anyhow::Result<()>,
+    ) {
+        match result {
+            Ok(()) => {
+                for respond_to in responders {
+                    let _ = respond_to.send(Ok(()));
+                }
+            }
+            Err(error) => {
+                let error_message = format!("{error:#}");
+                let mut responders = responders.into_iter();
+                if let Some(respond_to) = responders.next() {
+                    let _ = respond_to.send(Err(error));
+                }
+                for respond_to in responders {
+                    let _ = respond_to.send(Err(anyhow::anyhow!(error_message.clone())));
+                }
+            }
+        }
+    }
+
     fn initialize(&mut self, root: PathBuf, analysis: AnalysisConfig) -> anyhow::Result<()> {
         // Keep protocol DTOs out of the project layer. The engine boundary is where client-facing
         // configuration becomes concrete workspace/project configuration.
@@ -532,24 +611,29 @@ impl EngineWorker {
 
     fn project_paths_changed(&mut self, paths: Vec<PathBuf>) -> anyhow::Result<()> {
         let started = Instant::now();
-        let mut applied_changes = 0usize;
-        let mut changed_files = 0usize;
-        let mut affected_packages = 0usize;
-        let mut changed_targets = 0usize;
 
         tracing::info!(path_count = paths.len(), "processing project path changes");
-
-        for path in paths {
-            let summary = self.mutate_saved_and_schedule_deferred_finish(|project| {
-                project
-                    .apply_change(SavedFileChange::new(&path))
-                    .context("while attempting to apply project path change")
-            })?;
-            applied_changes += 1;
-            changed_files += summary.changed_files.len();
-            affected_packages += summary.affected_packages.len();
-            changed_targets += summary.changed_targets.len();
+        if paths.is_empty() {
+            tracing::info!(
+                applied_changes = 0usize,
+                changed_files = 0usize,
+                affected_packages = 0usize,
+                changed_targets = 0usize,
+                elapsed_ms = started.elapsed().as_millis(),
+                "project path reindex finished"
+            );
+            return Ok(());
         }
+
+        let applied_changes = paths.len();
+        let summary = self.mutate_saved_and_schedule_deferred_finish(|project| {
+            project
+                .apply_changes(paths.into_iter().map(SavedFileChange::new))
+                .context("while attempting to apply project path changes")
+        })?;
+        let changed_files = summary.changed_files.len();
+        let affected_packages = summary.affected_packages.len();
+        let changed_targets = summary.changed_targets.len();
 
         tracing::info!(
             applied_changes,
@@ -1526,7 +1610,11 @@ impl NavigationQuery {
 
 #[cfg(test)]
 mod tests {
-    use std::{path::PathBuf, sync::Arc};
+    use std::{
+        collections::VecDeque,
+        path::PathBuf,
+        sync::{Arc, mpsc},
+    };
 
     use tokio::sync::oneshot;
 
@@ -1541,6 +1629,111 @@ mod tests {
 
     impl ServiceNotificationPublisher for NoopNotifications {
         fn send(&self, _notification: ServiceNotification) {}
+    }
+
+    #[test]
+    fn project_path_change_collection_merges_adjacent_project_commands_and_defers_next_command() {
+        let (sender, receiver) = mpsc::channel();
+        let (first_respond_to, first_response) = oneshot::channel::<anyhow::Result<()>>();
+        let (second_respond_to, second_response) = oneshot::channel::<anyhow::Result<()>>();
+        let (symbol_respond_to, _symbol_response) =
+            oneshot::channel::<anyhow::Result<Vec<ls_types::WorkspaceSymbol>>>();
+        let (third_respond_to, _third_response) = oneshot::channel::<anyhow::Result<()>>();
+
+        sender
+            .send(QueuedEngineCommand::new(
+                EngineCommand::ProjectPathsChanged {
+                    paths: vec![test_path("a"), test_path("b")],
+                    respond_to: second_respond_to,
+                },
+            ))
+            .expect("test command channel should accept adjacent project change");
+        sender
+            .send(QueuedEngineCommand::new(EngineCommand::WorkspaceSymbol {
+                query: "needle".to_string(),
+                respond_to: symbol_respond_to,
+            }))
+            .expect("test command channel should accept non-project command");
+        sender
+            .send(QueuedEngineCommand::new(
+                EngineCommand::ProjectPathsChanged {
+                    paths: vec![test_path("c")],
+                    respond_to: third_respond_to,
+                },
+            ))
+            .expect("test command channel should accept later project change");
+
+        let mut deferred_commands = VecDeque::new();
+        let (paths, responders) = EngineWorker::collect_project_path_changes(
+            vec![test_path("b")],
+            first_respond_to,
+            &receiver,
+            &mut deferred_commands,
+        );
+
+        assert_eq!(
+            paths,
+            vec![test_path("a"), test_path("b")],
+            "adjacent project changes should be merged and deduplicated"
+        );
+        assert_eq!(
+            responders.len(),
+            2,
+            "each merged project-change request needs its own response"
+        );
+
+        let deferred = deferred_commands
+            .pop_front()
+            .expect("first non-project command should be deferred");
+        match deferred.command {
+            EngineCommand::WorkspaceSymbol { query, .. } => {
+                assert_eq!(query, "needle");
+            }
+            command => panic!("unexpected deferred command: {command:?}"),
+        }
+        assert!(
+            deferred_commands.is_empty(),
+            "only the first non-project command should be moved aside"
+        );
+
+        let queued_after_non_project = receiver
+            .try_recv()
+            .expect("commands after the first non-project command should stay queued");
+        match queued_after_non_project.command {
+            EngineCommand::ProjectPathsChanged { paths, .. } => {
+                assert_eq!(paths, vec![test_path("c")]);
+            }
+            command => panic!("unexpected command left in queue: {command:?}"),
+        }
+
+        EngineWorker::respond_to_project_path_changes(responders, Ok(()));
+        futures::executor::block_on(first_response)
+            .expect("first merged project change should receive a response")
+            .expect("first merged project change should succeed");
+        futures::executor::block_on(second_response)
+            .expect("second merged project change should receive a response")
+            .expect("second merged project change should succeed");
+    }
+
+    #[test]
+    fn project_path_change_response_fanout_reports_errors_to_all_callers() {
+        let (first_respond_to, first_response) = oneshot::channel::<anyhow::Result<()>>();
+        let (second_respond_to, second_response) = oneshot::channel::<anyhow::Result<()>>();
+
+        EngineWorker::respond_to_project_path_changes(
+            vec![first_respond_to, second_respond_to],
+            Err(anyhow::anyhow!("batch rebuild failed")),
+        );
+
+        for response in [first_response, second_response] {
+            let error = futures::executor::block_on(response)
+                .expect("merged project change should receive an error response")
+                .expect_err("merged project change should receive the batch error");
+            assert!(
+                format!("{error:#}").contains("batch rebuild failed"),
+                "fanout error should preserve the original message"
+            );
+        }
     }
 
     #[test]
@@ -1573,5 +1766,9 @@ mod tests {
             .expect("stale query should send a response")
             .expect("stale query should send a successful neutral result");
         assert!(result.is_none());
+    }
+
+    fn test_path(name: &str) -> PathBuf {
+        PathBuf::from(format!("/workspace/src/{name}.rs"))
     }
 }

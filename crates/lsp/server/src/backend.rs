@@ -228,15 +228,10 @@ impl LanguageServer for Backend {
 
     #[tracing::instrument(skip_all, fields(rg.method = "didChangeWatchedFiles"))]
     async fn did_change_watched_files(&self, params: DidChangeWatchedFilesParams) {
-        let Some(registry) = self.registry().await.ok() else {
-            return;
-        };
-        methods::workspace::did_change_watched_files::did_change_watched_files(
-            registry,
-            &self.recent_editor_saves,
-            params,
-        )
-        .await;
+        tracing::debug!(
+            change_count = params.changes.len(),
+            "ignored client watched-file notification; server-side project watcher owns disk changes"
+        );
     }
 
     #[tracing::instrument(

@@ -12,7 +12,7 @@ use test_fixture::testonly::MarkedText;
 use self::utils::{HostFixture, HostObservation};
 use crate::{
     AnalysisSurface, BuildProcessMemory, PackageResidencyPolicy, Project, ProjectMemoryHooks,
-    ProjectMemoryPurgePoint, SplitIndexingMode,
+    ProjectMemoryPurgePoint, SavedFileChange, SplitIndexingMode,
     testonly::{ProjectFixture, ProjectSourceFixture},
 };
 
@@ -67,6 +67,82 @@ pub struct User;
             ProjectMemoryPurgePoint::AfterProjectBuild,
         ],
         "fresh builds should expose the high-value transient memory boundaries",
+    );
+}
+
+#[test]
+fn batched_saved_source_changes_rebuild_packages_once() {
+    let fixture = ProjectSourceFixture::build(
+        r#"
+//- /Cargo.toml
+[package]
+name = "batch_rebuild_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+mod account;
+mod user;
+
+//- /src/account.rs
+pub struct Account;
+
+//- /src/user.rs
+pub struct User;
+"#,
+    );
+    let points = Arc::new(Mutex::new(Vec::new()));
+    let hooks: Arc<dyn ProjectMemoryHooks> = Arc::new(RecordingMemoryHooks {
+        points: Arc::clone(&points),
+    });
+    let mut project = Project::builder(fixture.workspace_metadata())
+        .memory_hooks(hooks)
+        .build()
+        .expect("analysis project should build");
+    points
+        .lock()
+        .expect("recorded memory hook points should not be poisoned")
+        .clear();
+
+    let saved_files = fixture.write_fixture_files(
+        r#"
+//- /src/account.rs
+pub struct SavedAccount;
+
+//- /src/user.rs
+pub struct SavedUser;
+"#,
+    );
+    let changes = saved_files
+        .files()
+        .iter()
+        .map(|file| SavedFileChange::new(fixture.path(file.relative_path())))
+        .collect::<Vec<_>>();
+
+    let summary = project
+        .apply_changes(changes)
+        .expect("batched source changes should apply");
+
+    assert_eq!(
+        summary.changed_files.len(),
+        2,
+        "both saved module files should be reported as changed"
+    );
+    assert_eq!(
+        summary.affected_packages.len(),
+        1,
+        "one package should be rebuilt for the source-change batch"
+    );
+    assert_eq!(
+        points
+            .lock()
+            .expect("recorded memory hook points should not be poisoned")
+            .as_slice(),
+        [
+            ProjectMemoryPurgePoint::AfterItemTreeSyntaxEviction,
+            ProjectMemoryPurgePoint::AfterPackageRebuild,
+        ],
+        "a multi-file source batch should rebuild the affected package closure once",
     );
 }
 
