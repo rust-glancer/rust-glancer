@@ -34,7 +34,7 @@ use crate::{
     engine::{
         QueuedEngineCommand,
         command::{EngineCommand, EngineResponse},
-        early_start::{EarlyStart, ReferenceSearchPlan},
+        early_start::{DeferredIndexingFinish, EarlyStart, ReferenceSearchPlan},
         project_proxy::ProjectProxy,
     },
     memory::{MemoryControl, MemoryReporter, ProjectMemoryReporter},
@@ -50,6 +50,8 @@ use crate::{
 pub(super) struct EngineWorker {
     sender: Sender<QueuedEngineCommand>,
     project: ProjectProxy,
+    deferred_indexing_finish: DeferredIndexingFinish,
+    workspace_root: Option<PathBuf>,
     dirty_state: DirtyState,
     notifications: ServiceNotificationsSink,
     memory_control: Arc<dyn MemoryControl>,
@@ -102,6 +104,8 @@ impl EngineWorker {
         Self {
             sender,
             project: ProjectProxy::new(Arc::clone(&memory_control)),
+            deferred_indexing_finish: DeferredIndexingFinish::new(),
+            workspace_root: None,
             dirty_state,
             notifications,
             memory_control,
@@ -367,16 +371,13 @@ impl EngineWorker {
                         generation,
                         "engine command started: deferred_indexing_finished"
                     );
-                    let current_generation_finished =
-                        EarlyStart::apply_initial_finish(&mut self.project, generation, result);
+                    let current_generation_finished = self
+                        .deferred_indexing_finish
+                        .finish_returned(&self.sender, &mut self.project, generation, result);
                     if current_generation_finished {
-                        self.notifications
-                            .send(ServiceNotification::DeferredIndexingFinished);
+                        self.send_deferred_indexing_finished();
                         if let Ok(snapshot) = self.project.saved_snapshot() {
-                            Self::log_project_snapshot(
-                                snapshot,
-                                "initial deferred indexing finish",
-                            );
+                            Self::log_project_snapshot(snapshot, "deferred indexing finish");
                         }
                     }
                 }
@@ -496,14 +497,17 @@ impl EngineWorker {
             .memory_hooks(Arc::clone(&self.memory_hooks))
             .build()
             .context("while attempting to build LSP analysis project")?;
-        let generation = self.project.replace_saved(project.clone());
+        self.workspace_root = Some(workspace_root.clone());
+        let detached = project.detach_split_indexing();
+        let generation = self.project.replace_saved(project);
         Self::log_project_snapshot(self.project.saved_snapshot()?, "initial early-start index");
         tracing::info!(
             workspace_root = %workspace_root.display(),
             elapsed_ms = started.elapsed().as_millis(),
             "workspace early-start indexing finished"
         );
-        EarlyStart::spawn_initial_finish(&self.sender, generation, project);
+        self.deferred_indexing_finish
+            .start_initial(&self.sender, generation, detached);
 
         Ok(())
     }
@@ -512,7 +516,7 @@ impl EngineWorker {
         let started = Instant::now();
 
         tracing::info!("manual workspace reindex started");
-        self.project.mutate_saved(|project| {
+        self.mutate_saved_and_schedule_deferred_finish(|project| {
             project
                 .reindex_workspace()
                 .context("while attempting to manually reindex workspace")
@@ -536,7 +540,7 @@ impl EngineWorker {
         tracing::info!(path_count = paths.len(), "processing project path changes");
 
         for path in paths {
-            let summary = self.project.mutate_saved(|project| {
+            let summary = self.mutate_saved_and_schedule_deferred_finish(|project| {
                 project
                     .apply_change(SavedFileChange::new(&path))
                     .context("while attempting to apply project path change")
@@ -563,6 +567,28 @@ impl EngineWorker {
         }
 
         Ok(())
+    }
+
+    fn mutate_saved_and_schedule_deferred_finish<T>(
+        &mut self,
+        mutation: impl FnOnce(&mut Project) -> anyhow::Result<T>,
+    ) -> anyhow::Result<T> {
+        let result = self.project.mutate_saved(mutation);
+        if self.project.is_initialized() {
+            self.deferred_indexing_finish
+                .saved_project_changed(&self.sender, &self.project);
+        }
+        result
+    }
+
+    fn send_deferred_indexing_finished(&self) {
+        let Some(root) = &self.workspace_root else {
+            tracing::warn!("deferred indexing finished before workspace root was recorded");
+            return;
+        };
+
+        self.notifications
+            .send(ServiceNotification::DeferredIndexingFinished { root: root.clone() });
     }
 
     fn reference_search_plans_for_position(
@@ -1448,10 +1474,9 @@ impl EngineWorker {
             "analysis query hit invalid package cache; rebuilding cache before next command"
         );
 
-        match self
-            .project
-            .mutate_saved(|project| project.recover_after_cache_load_failure())
-        {
+        match self.mutate_saved_and_schedule_deferred_finish(|project| {
+            project.recover_after_cache_load_failure()
+        }) {
             Ok(()) => {
                 let snapshot = self
                     .project

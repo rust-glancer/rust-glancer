@@ -55,8 +55,7 @@ export class ClientStatus {
   private failureReason: string | undefined;
   private activeWorkspaceState: ActiveWorkspaceState | undefined;
   private activeWorkspaceFailureReason: string | undefined;
-  private deferredIndexingRunning = false;
-  private deferredIndexingFinishedSeen = false;
+  private readonly rootsWithFinishedDeferredIndexing = new Set<string>();
   private currentStatus: StatusSnapshot = {
     state: "created",
     text: "",
@@ -83,8 +82,7 @@ export class ClientStatus {
     this.failureReason = undefined;
     this.activeWorkspaceState = undefined;
     this.activeWorkspaceFailureReason = undefined;
-    this.deferredIndexingRunning = false;
-    this.deferredIndexingFinishedSeen = false;
+    this.rootsWithFinishedDeferredIndexing.clear();
     this.details = details;
     this.show("starting", "$(sync~spin) Rust Glancer: starting", () => this.view.starting(details));
   }
@@ -104,6 +102,9 @@ export class ClientStatus {
       return;
     }
 
+    if (this.details.activeWorkspaceRoot !== undefined) {
+      this.rootsWithFinishedDeferredIndexing.delete(this.details.activeWorkspaceRoot);
+    }
     this.show("indexing", "$(sync~spin) Rust Glancer: indexing", () =>
       this.view.indexing(this.details),
     );
@@ -121,14 +122,8 @@ export class ClientStatus {
 
     this.activeWorkspaceState = state;
     this.activeWorkspaceFailureReason = state === "failed" ? message : undefined;
-    if (state === "indexing") {
-      this.deferredIndexingRunning = false;
-      this.deferredIndexingFinishedSeen = false;
-    } else if (state === "failed") {
-      this.deferredIndexingRunning = false;
-      this.deferredIndexingFinishedSeen = false;
-    } else {
-      this.deferredIndexingRunning = state === "ready" && !this.deferredIndexingFinishedSeen;
+    if (state !== "ready") {
+      this.rootsWithFinishedDeferredIndexing.delete(root);
     }
     this.details = {
       ...this.details,
@@ -137,13 +132,12 @@ export class ClientStatus {
     this.refresh(isActiveRustDocumentDirty);
   }
 
-  public deferredIndexingFinished(isActiveRustDocumentDirty: boolean): void {
+  public deferredIndexingFinished(root: string, isActiveRustDocumentDirty: boolean): void {
     if (this.details === undefined) {
       return;
     }
 
-    this.deferredIndexingRunning = false;
-    this.deferredIndexingFinishedSeen = true;
+    this.rootsWithFinishedDeferredIndexing.add(root);
     this.refresh(isActiveRustDocumentDirty);
   }
 
@@ -151,8 +145,7 @@ export class ClientStatus {
     this.running = false;
     this.resetDiagnostics();
     this.failureReason = undefined;
-    this.deferredIndexingRunning = false;
-    this.deferredIndexingFinishedSeen = false;
+    this.rootsWithFinishedDeferredIndexing.clear();
     this.details = details;
     this.show("stopped", "$(circle-slash) Rust Glancer: stopped", () =>
       this.view.stopped(reason, details ?? {}),
@@ -163,8 +156,7 @@ export class ClientStatus {
     this.running = false;
     this.resetDiagnostics();
     this.failureReason = reason;
-    this.deferredIndexingRunning = false;
-    this.deferredIndexingFinishedSeen = false;
+    this.rootsWithFinishedDeferredIndexing.clear();
     this.details = details;
     this.show("failed", "$(error) Rust Glancer: failed", () =>
       this.view.failed(reason, details ?? {}),
@@ -211,7 +203,7 @@ export class ClientStatus {
       this.show("diagnostics-failed", "$(error) Rust Glancer: cargo check failed", () =>
         this.view.diagnosticsFailed(this.details),
       );
-    } else if (this.deferredIndexingRunning) {
+    } else if (this.deferredIndexingIsRunningForActiveWorkspace()) {
       // The engine is already usable here; the marker only says that background indexing has not
       // sent its finish notification yet.
       this.show("ready", "~ Rust Glancer: ready", () =>
@@ -220,6 +212,15 @@ export class ClientStatus {
     } else {
       this.show("ready", "$(check) Rust Glancer: ready", () => this.view.ready(this.details));
     }
+  }
+
+  private deferredIndexingIsRunningForActiveWorkspace(): boolean {
+    const root = this.details?.activeWorkspaceRoot;
+    return (
+      this.activeWorkspaceState === "ready" &&
+      root !== undefined &&
+      !this.rootsWithFinishedDeferredIndexing.has(root)
+    );
   }
 
   public handleWorkDoneProgress(

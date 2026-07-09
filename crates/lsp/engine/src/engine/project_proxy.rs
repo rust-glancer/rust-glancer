@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use anyhow::Context as _;
-use rg_project::{Project, ProjectSnapshot};
+use rg_project::{DetachedSplitIndexing, Project, ProjectSnapshot};
 
 use crate::{
     dirty_state::DirtyOverlayCache, documents::DirtyDocumentSnapshot, memory::MemoryControl,
@@ -44,6 +44,21 @@ impl ProjectProxy {
 
     pub(super) fn generation(&self) -> u64 {
         self.generation
+    }
+
+    /// Clone saved analysis into a generation-paired deferred-finish handle.
+    ///
+    /// The proxy keeps raw `Project` ownership private. Background split-indexing only needs a
+    /// detached finish capability, and the paired generation lets the worker reject results that
+    /// were produced from an older saved-source snapshot.
+    pub(super) fn detach_saved_split_indexing(
+        &self,
+    ) -> anyhow::Result<(u64, DetachedSplitIndexing)> {
+        let saved = self
+            .saved
+            .as_ref()
+            .context("LSP engine is not initialized")?;
+        Ok((self.generation, saved.detach_split_indexing()))
     }
 
     pub(super) fn mutate_saved<T>(

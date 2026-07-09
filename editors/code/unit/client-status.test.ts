@@ -70,8 +70,32 @@ describe("client status state precedence", () => {
     status.activeWorkspace("/workspace/project_c", "ready", undefined, false);
     assert.equal(render(status), "ready: ~ Rust Glancer: ready [project_c]");
 
-    status.deferredIndexingFinished(false);
+    status.deferredIndexingFinished("/workspace/project_c", false);
     assert.equal(render(status), "ready: $(check) Rust Glancer: ready [project_c]");
+  });
+
+  it("keeps deferred indexing state scoped to workspace roots", () => {
+    const status = clientStatus();
+    status.starting(DETAILS);
+    status.ready(DETAILS);
+
+    status.activeWorkspace("/workspace/project_a", "ready", undefined, false);
+    status.deferredIndexingFinished("/workspace/project_b", false);
+    assert.equal(render(status), "ready: ~ Rust Glancer: ready [project_a]");
+
+    status.activeWorkspace("/workspace/project_b", "ready", undefined, false);
+    assert.equal(render(status), "ready: $(check) Rust Glancer: ready [project_b]");
+  });
+
+  it("does not show deferred indexing when finish arrives before ready", () => {
+    const status = clientStatus();
+    status.starting(DETAILS);
+    status.ready(DETAILS);
+
+    status.deferredIndexingFinished("/workspace/project_e", false);
+    status.activeWorkspace("/workspace/project_e", "ready", undefined, false);
+
+    assert.equal(render(status), "ready: $(check) Rust Glancer: ready [project_e]");
   });
 
   it("preserves active workspace label across language-client ready transitions", () => {

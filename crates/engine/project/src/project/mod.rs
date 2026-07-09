@@ -31,7 +31,9 @@ pub use self::{
     build::{ProjectBuilder, SplitIndexingMode, StartupCacheLoad},
     dirty::DirtyFileChange,
     snapshot::ProjectSnapshot,
-    split_indexing::{AnalysisSurface, FinishedSplitIndexing, SplitIndexing},
+    split_indexing::{
+        AnalysisSurface, DetachedSplitIndexing, FinishedSplitIndexing, SplitIndexing,
+    },
     stats::ProjectStats,
 };
 
@@ -98,6 +100,17 @@ impl Project {
     /// Returns the split-indexing control surface for deferred analysis work.
     pub fn split_indexing(&mut self) -> SplitIndexing<'_> {
         SplitIndexing::new(self)
+    }
+
+    /// Clone this project into an owned background-finish handle.
+    ///
+    /// Early-start indexing lets the saved project become queryable while deferred payloads are
+    /// still missing. Background completion must run on a clone so it cannot block the command
+    /// loop, but callers should not receive that clone as a general-purpose `Project`. Returning a
+    /// narrow handle keeps the only supported detached operation explicit: finish deferred indexing
+    /// and later merge the result back into saved state.
+    pub fn detach_split_indexing(&self) -> DetachedSplitIndexing {
+        DetachedSplitIndexing::new(self.clone())
     }
 
     /// Applies one saved file replacement and refreshes derived analysis state.

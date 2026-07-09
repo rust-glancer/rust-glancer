@@ -10,7 +10,7 @@ use std::{path::Path, sync::mpsc::Sender, thread, time::Instant};
 use anyhow::Context as _;
 use rg_analysis::{ReferenceQuery, ReferenceSearchFile};
 use rg_ir_model::TargetRef;
-use rg_project::{AnalysisSurface, FileContext, FinishedSplitIndexing, Project, SplitIndexing};
+use rg_project::{AnalysisSurface, DetachedSplitIndexing, FileContext, FinishedSplitIndexing};
 use rg_std::UniqueVec;
 
 use super::{QueuedEngineCommand, command::EngineCommand, project_proxy::ProjectProxy};
@@ -34,18 +34,106 @@ impl ReferenceSearchPlan {
     }
 }
 
-pub(super) struct EarlyStart;
+#[derive(Debug, Default)]
+pub(super) struct DeferredIndexingFinish {
+    in_flight_generation: Option<u64>,
+    restart_after_in_flight: bool,
+}
 
-impl EarlyStart {
-    /// Finish the deferred part of initial indexing on a detached project clone.
+impl DeferredIndexingFinish {
+    pub(super) fn new() -> Self {
+        Self::default()
+    }
+
+    /// Start deferred indexing for the freshly saved project.
+    ///
+    /// This is called after the worker replaces the saved project during initialization. At that
+    /// point there cannot be an older finish for the same engine, so the clone built by the initial
+    /// index can be handed directly to the background thread.
+    pub(super) fn start_initial(
+        &mut self,
+        sender: &Sender<QueuedEngineCommand>,
+        generation: u64,
+        detached: DetachedSplitIndexing,
+    ) {
+        self.spawn_finish(sender, generation, detached);
+    }
+
+    /// Ensure the current saved project will eventually finish deferred indexing.
+    ///
+    /// Saved-source mutations invalidate any detached clone that is already running. Starting
+    /// another clone immediately would double peak memory, so the worker records that one restart is
+    /// needed and lets the old clone return first.
+    pub(super) fn saved_project_changed(
+        &mut self,
+        sender: &Sender<QueuedEngineCommand>,
+        project_proxy: &ProjectProxy,
+    ) {
+        if self.in_flight_generation.is_some() {
+            self.restart_after_in_flight = true;
+            return;
+        }
+        self.start_current(sender, project_proxy);
+    }
+
+    /// Handle a background result and return whether the editor should see this root as finished.
+    pub(super) fn finish_returned(
+        &mut self,
+        sender: &Sender<QueuedEngineCommand>,
+        project_proxy: &mut ProjectProxy,
+        generation: u64,
+        result: anyhow::Result<FinishedSplitIndexing>,
+    ) -> bool {
+        if self.in_flight_generation != Some(generation) {
+            tracing::info!(
+                generation,
+                current_in_flight_generation = ?self.in_flight_generation,
+                "discarding unknown deferred indexing finish"
+            );
+            return false;
+        }
+        self.in_flight_generation = None;
+
+        let is_current_generation =
+            Self::apply_finish_if_current(project_proxy, generation, result);
+        let should_restart = self.restart_after_in_flight || !is_current_generation;
+        self.restart_after_in_flight = false;
+        if should_restart {
+            self.start_current(sender, project_proxy);
+        }
+
+        is_current_generation
+    }
+
+    fn start_current(
+        &mut self,
+        sender: &Sender<QueuedEngineCommand>,
+        project_proxy: &ProjectProxy,
+    ) {
+        let (generation, detached) = match project_proxy.detach_saved_split_indexing() {
+            Ok(detached) => detached,
+            Err(error) => {
+                tracing::warn!(
+                    error = %format!("{error:#}"),
+                    "failed to detach saved project for deferred indexing finish"
+                );
+                return;
+            }
+        };
+
+        self.spawn_finish(sender, generation, detached);
+    }
+
+    /// Finish deferred indexing on a detached project clone.
     ///
     /// The saved project is already usable when this runs. The background result is sent back to
     /// the command loop instead of mutating saved state directly, so the command loop can keep all
     /// project generation checks in one place.
-    pub(super) fn spawn_initial_finish(
+    fn spawn_finish(
+        &mut self,
         sender: &Sender<QueuedEngineCommand>,
         generation: u64,
-        project: Project,
+        detached: DetachedSplitIndexing,
     ) {
         let sender = sender.clone();
 
@@ -53,21 +141,18 @@ impl EarlyStart {
             .name("rg-deferred-indexing".to_string())
             .spawn(move || {
                 let started = Instant::now();
-                tracing::info!(
-                    generation,
-                    "initial deferred indexing background finish started"
-                );
+                tracing::info!(generation, "deferred indexing background finish started");
 
                 // Finish against the clone. The result still owns that clone, which lets the saved
                 // project later merge only package-wise improvements.
-                let result = SplitIndexing::finish_detached(project);
+                let result = detached.finish();
                 let elapsed_ms = started.elapsed().as_millis();
                 match &result {
                     Ok(_) => {
                         tracing::info!(
                             generation,
                             elapsed_ms,
-                            "initial deferred indexing background finish completed"
+                            "deferred indexing background finish completed"
                         );
                     }
                     Err(error) => {
@@ -75,7 +160,7 @@ impl EarlyStart {
                             generation,
                             elapsed_ms,
                             error = %format!("{error:#}"),
-                            "initial deferred indexing background finish failed"
+                            "deferred indexing background finish failed"
                         );
                     }
                 }
@@ -85,12 +170,17 @@ impl EarlyStart {
                 ));
             });
 
-        if let Err(error) = spawn_result {
-            tracing::warn!(
-                generation,
-                error = %error,
-                "failed to spawn initial deferred indexing background finish"
-            );
+        match spawn_result {
+            Ok(_) => {
+                self.in_flight_generation = Some(generation);
+            }
+            Err(error) => {
+                tracing::warn!(
+                    generation,
+                    error = %error,
+                    "failed to spawn deferred indexing background finish"
+                );
+            }
         }
     }
 
@@ -99,7 +189,7 @@ impl EarlyStart {
     /// Returning `true` means that the background finish belongs to the current saved project, even
     /// if there was nothing left to merge. The client-side status indicator cares about that
     /// lifecycle fact: deferred indexing is no longer pending once this command has been handled.
-    pub(super) fn apply_initial_finish(
+    fn apply_finish_if_current(
         project_proxy: &mut ProjectProxy,
         generation: u64,
         result: anyhow::Result<FinishedSplitIndexing>,
@@ -141,12 +231,16 @@ impl EarlyStart {
         if !updated {
             tracing::trace!(
                 generation,
-                "initial deferred indexing finish completed without saved project changes"
+                "deferred indexing finish completed without saved project changes"
             );
         }
         true
     }
+}
 
+pub(super) struct EarlyStart;
+
+impl EarlyStart {
     /// Materialize the saved analysis surface needed by one path-local query.
     pub(super) fn ensure_path(
         project_proxy: &mut ProjectProxy,

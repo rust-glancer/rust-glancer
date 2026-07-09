@@ -238,7 +238,7 @@ impl LspEngineFixture {
                         rendered_inlay_hint_refresh = true;
                     }
                 }
-                ServiceNotification::DeferredIndexingFinished => {
+                ServiceNotification::DeferredIndexingFinished { .. } => {
                     // Initial deferred indexing finishes on a background thread, so this lifecycle
                     // notification can race with later fixture operations. These snapshots describe
                     // stable editor-facing effects of the operation under test, not the whole event

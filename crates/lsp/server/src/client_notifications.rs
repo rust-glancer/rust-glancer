@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use tower_lsp_server::ls_types::{LSPAny, LSPObject, notification::Notification};
 
@@ -44,9 +44,20 @@ impl ActiveWorkspaceChanged {
 pub(crate) struct DeferredIndexingFinished;
 
 impl Notification for DeferredIndexingFinished {
-    type Params = ();
+    type Params = LSPAny;
 
     const METHOD: &'static str = DEFERRED_INDEXING_FINISHED_METHOD;
+}
+
+impl DeferredIndexingFinished {
+    pub(crate) fn params(root: &Path) -> LSPAny {
+        let mut params = LSPObject::new();
+        params.insert(
+            "root".to_string(),
+            LSPAny::String(root.display().to_string()),
+        );
+        LSPAny::Object(params)
+    }
 }
 
 /// Client-facing snapshot of the workspace currently selected by document routing.
@@ -112,6 +123,14 @@ mod tests {
             let actual = render_params(ActiveWorkspaceChanged::params(&status));
             assert_eq!(actual, expected);
         }
+    }
+
+    #[test]
+    fn deferred_indexing_finished_params_render_root() {
+        let actual = render_params(DeferredIndexingFinished::params(Path::new(
+            "workspace/project_a",
+        )));
+        assert_eq!(actual, "root: workspace/project_a");
     }
 
     fn render_params(params: LSPAny) -> String {

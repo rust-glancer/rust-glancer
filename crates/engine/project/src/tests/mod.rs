@@ -12,7 +12,7 @@ use test_fixture::testonly::MarkedText;
 use self::utils::{HostFixture, HostObservation};
 use crate::{
     AnalysisSurface, BuildProcessMemory, PackageResidencyPolicy, Project, ProjectMemoryHooks,
-    ProjectMemoryPurgePoint, SplitIndexing, SplitIndexingMode,
+    ProjectMemoryPurgePoint, SplitIndexingMode,
     testonly::{ProjectFixture, ProjectSourceFixture},
 };
 
@@ -441,7 +441,9 @@ pub fn dep_value() -> usize {
         .split_indexing_mode(SplitIndexingMode::EarlyStart)
         .build()
         .expect("early-start project build should succeed");
-    let finished = SplitIndexing::finish_detached(project.clone())
+    let finished = project
+        .detach_split_indexing()
+        .finish()
         .expect("background deferred indexing should succeed");
     let dep_ref = fixture.markers().position("dep_ref");
     let dep_context = project

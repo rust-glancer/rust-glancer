@@ -11,8 +11,8 @@
 //!   normal package residency.
 //! - `materialize` makes the analysis surface needed by one query available, such as one file for
 //!   hover or a mix of files and targets for reference search.
-//! - `finish_detached` and `merge_finished` let an LSP background clone finish deferred payloads
-//!   and merge package-wise improvements back into the saved project.
+//! - `DetachedSplitIndexing` and `merge_finished` let an LSP background clone finish deferred
+//!   payloads and merge package-wise improvements back into the saved project.
 //!
 //! That last path has to be monotonic. Query-time materialization may finish a package before the
 //! background clone finishes, so a stale background result must not replace better saved coverage
@@ -64,9 +64,10 @@ pub enum AnalysisSurface<'a> {
 /// - `finish` is the background or batch path. It completes the remaining deferred payloads chosen
 ///   by the project's configured indexing policy and then reapplies package residency.
 ///
-/// Detached finishing uses the same policy, but runs on a cloned `Project`. The clone is wrapped in
-/// `FinishedSplitIndexing` until the saved project can merge package-wise improvements without
-/// losing any on-demand work that happened meanwhile.
+/// Detached finishing uses the same policy, but runs through `DetachedSplitIndexing` so callers
+/// cannot accidentally treat a project clone as an ordinary live project. The clone stays hidden
+/// behind that capability until it becomes `FinishedSplitIndexing` and can be merged back into the
+/// saved project.
 pub struct SplitIndexing<'project> {
     project: &'project mut Project,
 }
@@ -99,10 +100,28 @@ impl<'project> SplitIndexing<'project> {
     pub fn merge_finished(&mut self, finished: FinishedSplitIndexing) -> anyhow::Result<bool> {
         merge_finished_project(&mut self.project.state, finished)
     }
+}
 
-    /// Finish deferred indexing inside a detached project clone.
-    pub fn finish_detached(project: Project) -> anyhow::Result<FinishedSplitIndexing> {
-        finish_detached_project(project)
+/// Owned capability for finishing split indexing away from the saved project.
+///
+/// The detached project is deliberately private. Background workers only need to finish deferred
+/// indexing and hand the result back to the saved project; exposing the raw clone would make it too
+/// easy to bypass generation checks or add query shortcuts that do not see live saved-state
+/// mutations.
+#[must_use]
+#[derive(Debug, MemorySize)]
+pub struct DetachedSplitIndexing {
+    project: Project,
+}
+
+impl DetachedSplitIndexing {
+    pub(super) fn new(project: Project) -> Self {
+        Self { project }
+    }
+
+    /// Finish deferred indexing inside the detached project clone.
+    pub fn finish(self) -> anyhow::Result<FinishedSplitIndexing> {
+        finish_detached_project(self.project)
     }
 }
 

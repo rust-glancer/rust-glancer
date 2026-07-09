@@ -60,12 +60,48 @@ def normalize_optional_report(
 
 
 def normalize_report(report: dict[str, Any]) -> MemoryProfileReport:
+    if not is_current_report(report):
+        return normalize_previous_baseline_report(report)
+
+    return normalize_current_report(report)
+
+
+def is_current_report(report: dict[str, Any]) -> bool:
+    return isinstance(report.get("memory"), list) or isinstance(
+        report.get("profile_snapshot"), dict
+    )
+
+
+def normalize_current_report(report: dict[str, Any]) -> MemoryProfileReport:
     return MemoryProfileReport(
         workspace_root=string_value(report.get("workspace_root")),
         project=dict_value(report.get("project")),
         memory=current_project_memory(report),
         checkpoints=current_build_checkpoints(report),
     )
+
+
+def normalize_previous_baseline_report(report: dict[str, Any]) -> MemoryProfileReport:
+    # Pull-request jobs compare the current report against a baseline artifact produced by `main`.
+    # Keep this one older shape readable until `main` has regenerated baselines with the current
+    # analyze JSON report. This is not a general compatibility layer for older historical reports.
+    memory = dict_value(report.get("memory")).copy()
+    if "by_component" not in memory and "by_phase" in memory:
+        memory["by_component"] = memory["by_phase"]
+
+    return MemoryProfileReport(
+        workspace_root=string_value(report.get("workspace_root")),
+        project=dict_value(report.get("project")),
+        memory=memory,
+        checkpoints=previous_baseline_build_checkpoints(report),
+    )
+
+
+def previous_baseline_build_checkpoints(report: dict[str, Any]) -> list[dict[str, Any]]:
+    checkpoints = dict_value(report.get("build_profile")).get("checkpoints", [])
+    if not isinstance(checkpoints, list):
+        return []
+    return [checkpoint for checkpoint in checkpoints if isinstance(checkpoint, dict)]
 
 
 def current_project_memory(report: dict[str, Any]) -> dict[str, Any]:

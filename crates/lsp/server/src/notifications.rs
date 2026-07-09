@@ -105,9 +105,11 @@ async fn publish_service_notification(
                 );
             }
         }
-        ServiceNotification::DeferredIndexingFinished => {
+        ServiceNotification::DeferredIndexingFinished { root } => {
             lsp_client
-                .send_notification::<DeferredIndexingFinished>(())
+                .send_notification::<DeferredIndexingFinished>(DeferredIndexingFinished::params(
+                    &root,
+                ))
                 .await;
         }
         ServiceNotification::LogMessage { level, message } => {
