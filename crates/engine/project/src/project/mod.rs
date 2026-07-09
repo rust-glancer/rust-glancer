@@ -109,6 +109,9 @@ impl Project {
     /// loop, but callers should not receive that clone as a general-purpose `Project`. Returning a
     /// narrow handle keeps the only supported detached operation explicit: finish deferred indexing
     /// and later merge the result back into saved state.
+    //
+    // TODO: Make project snapshots cheap to detach, especially parse state, so background
+    // completion does not have to clone large parse arenas on the caller thread.
     pub fn detach_split_indexing(&self) -> DetachedSplitIndexing {
         DetachedSplitIndexing::new(self.clone())
     }
