@@ -17,9 +17,12 @@ use tracing::{
 use tracing_subscriber::{EnvFilter, Layer, layer::Context, prelude::*, registry::LookupSpan};
 
 const ENGINE_ID_ENV: &str = "RUST_GLANCER_ENGINE_ID";
+const LOG_FILTER_ENV: &str = "RUST_GLANCER_LOG";
 const LOG_SCHEMA: &str = "rust-glancer-log/v1";
 const RUST_GLANCER_SPAN_FIELD_PREFIX: &str = "rg.";
-const DEFAULT_LOG_FILTER: &str = "info,tarpc=warn,chalk_engine=warn,chalk_solve=warn,chalk_ir=warn";
+const DEFAULT_LOG_FILTER: &str = "info";
+const DEPENDENCY_LOG_GUARDS: &str =
+    "tarpc=warn,chalk_engine=warn,chalk_solve=warn,chalk_ir=warn,log=warn";
 
 /// Identifies which process emitted an LSP-mode log line.
 ///
@@ -44,8 +47,7 @@ impl LogComponent {
 
 /// Initializes the logger in a human-readable form.
 pub(crate) fn init_plain_tracing() {
-    let filter = EnvFilter::try_from_env("RUST_GLANCER_LOG")
-        .unwrap_or_else(|_| EnvFilter::new(DEFAULT_LOG_FILTER));
+    let filter = rust_glancer_log_filter();
     tracing_subscriber::fmt()
         .with_env_filter(filter)
         .with_writer(std::io::stderr)
@@ -56,8 +58,7 @@ pub(crate) fn init_plain_tracing() {
 
 /// Initializes the structured JSON logger consumed by the editor extension.
 pub(crate) fn init_lsp_tracing(component: LogComponent) {
-    let filter = EnvFilter::try_from_env("RUST_GLANCER_LOG")
-        .unwrap_or_else(|_| EnvFilter::new(DEFAULT_LOG_FILTER));
+    let filter = rust_glancer_log_filter();
     tracing_subscriber::registry()
         .with(filter)
         .with(JsonLogLayer {
@@ -66,6 +67,29 @@ pub(crate) fn init_lsp_tracing(component: LogComponent) {
         })
         .try_init()
         .ok();
+}
+
+fn rust_glancer_log_filter() -> EnvFilter {
+    let env_filter = std::env::var(LOG_FILTER_ENV).ok();
+    rust_glancer_log_filter_from(env_filter.as_deref())
+}
+
+fn rust_glancer_log_filter_from(env_filter: Option<&str>) -> EnvFilter {
+    let directives = log_filter_directives(env_filter);
+    EnvFilter::try_new(&directives).unwrap_or_else(|_| EnvFilter::new(log_filter_directives(None)))
+}
+
+fn log_filter_directives(env_filter: Option<&str>) -> String {
+    let user_filter = env_filter
+        .map(str::trim)
+        .filter(|filter| !filter.is_empty())
+        .unwrap_or(DEFAULT_LOG_FILTER);
+
+    // A blanket `debug`/`trace` is useful when debugging rust-glancer itself, but it also turns on
+    // solver and `log`-crate records from dependencies. Chalk and Ena both log inside very hot
+    // paths, often formatting large clauses/types, so keep those targets guarded unless the user
+    // names them explicitly later in the filter string.
+    format!("{DEPENDENCY_LOG_GUARDS},{user_filter}")
 }
 
 /// Emits one editor-facing JSON log record for each tracing event.
@@ -292,6 +316,84 @@ mod tests {
                 .expect("test log buffer should not be poisoned")
                 .push(serde_json::to_string(log).expect("test log should serialize"));
         }
+    }
+
+    fn capture_lsp_logs(filter: EnvFilter, emit_logs: impl FnOnce()) -> Vec<Value> {
+        let lines = Arc::new(Mutex::new(Vec::new()));
+        let subscriber = tracing_subscriber::registry()
+            .with(filter)
+            .with(JsonLogLayer {
+                component: LogComponent::Server,
+                writer: BufferLogWriter {
+                    lines: Arc::clone(&lines),
+                },
+            });
+
+        tracing::subscriber::with_default(subscriber, emit_logs);
+
+        lines
+            .lock()
+            .expect("test log buffer should not be poisoned")
+            .iter()
+            .map(|line| serde_json::from_str(line).expect("structured log line should be JSON"))
+            .collect()
+    }
+
+    fn log_messages(records: &[Value]) -> Vec<&str> {
+        records
+            .iter()
+            .map(|record| {
+                record["message"]
+                    .as_str()
+                    .expect("structured log should contain a string message")
+            })
+            .collect()
+    }
+
+    #[test]
+    fn default_log_filter_keeps_info_but_guards_noisy_dependencies() {
+        let records = capture_lsp_logs(rust_glancer_log_filter_from(None), || {
+            tracing::info!(target: "rg_lsp_engine", "rust-glancer info should pass");
+            tracing::debug!(target: "rg_lsp_engine", "rust-glancer debug should not pass");
+            tracing::info!(target: "chalk_engine", "chalk info should not pass");
+            tracing::debug!(target: "log", "ena debug should not pass");
+        });
+
+        assert_eq!(log_messages(&records), ["rust-glancer info should pass"]);
+    }
+
+    #[test]
+    fn blanket_log_filter_keeps_noisy_dependencies_guarded() {
+        let records = capture_lsp_logs(rust_glancer_log_filter_from(Some("debug")), || {
+            tracing::debug!(target: "rg_lsp_engine", "rust-glancer debug should pass");
+            tracing::info!(target: "chalk_engine", "chalk info should not pass");
+            tracing::debug!(target: "chalk_solve", "chalk debug should not pass");
+            tracing::debug!(target: "log", "ena debug should not pass");
+        });
+
+        assert_eq!(log_messages(&records), ["rust-glancer debug should pass"]);
+    }
+
+    #[test]
+    fn explicit_dependency_filter_can_override_dependency_guard() {
+        let records = capture_lsp_logs(
+            rust_glancer_log_filter_from(Some("debug,chalk_engine=info,log=debug")),
+            || {
+                tracing::debug!(target: "rg_lsp_engine", "rust-glancer debug should pass");
+                tracing::info!(target: "chalk_engine", "explicit chalk info should pass");
+                tracing::debug!(target: "chalk_engine", "chalk debug should not pass");
+                tracing::debug!(target: "log", "explicit bridged log debug should pass");
+            },
+        );
+
+        assert_eq!(
+            log_messages(&records),
+            [
+                "rust-glancer debug should pass",
+                "explicit chalk info should pass",
+                "explicit bridged log debug should pass"
+            ]
+        );
     }
 
     #[test]

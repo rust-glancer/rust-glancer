@@ -29,9 +29,12 @@ use super::{ServerReadiness, command::ServerKind, stderr::StderrCapture, uri::fi
 
 const INITIALIZE_TIMEOUT: Duration = Duration::from_secs(120);
 const READY_TIMEOUT: Duration = Duration::from_secs(120);
+const SETTLE_TIMEOUT: Duration = Duration::from_secs(120);
 const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(10);
 const PROCESS_EXIT_TIMEOUT: Duration = Duration::from_secs(120);
 const RUST_GLANCER_READY_METHOD: &str = "rust-glancer/activeWorkspaceChanged";
+const RUST_GLANCER_DEFERRED_INDEXING_FINISHED_METHOD: &str =
+    "rust-glancer/deferredIndexingFinished";
 const RUST_ANALYZER_READY_METHOD: &str = "experimental/serverStatus";
 
 /// One live LSP server with the client-side transport needed to drive it.
@@ -43,6 +46,7 @@ pub(super) struct RunningServer {
     client: TowerLspTransport,
     stderr: StderrCapture,
     exited: bool,
+    rust_glancer_deferred_indexing_finished: bool,
 }
 
 impl RunningServer {
@@ -91,6 +95,7 @@ impl RunningServer {
             client,
             stderr,
             exited: false,
+            rust_glancer_deferred_indexing_finished: false,
         })
     }
 
@@ -99,6 +104,12 @@ impl RunningServer {
         fixture_root: &Path,
         source_paths: &[&'static str],
     ) -> anyhow::Result<ServerReadiness> {
+        tracing::info!(
+            server = self.kind.display_name(),
+            root = %fixture_root.display(),
+            opened_files = source_paths.len(),
+            "initializing compare-lsp server"
+        );
         let initialize_params = self.initialize_params(fixture_root)?;
         let started_at = Instant::now();
         let initialize = self
@@ -111,6 +122,11 @@ impl RunningServer {
             .await;
         self.expect_success(request::Initialize::METHOD, initialize)?;
         let initialize_latency = started_at.elapsed();
+        tracing::info!(
+            server = self.kind.display_name(),
+            elapsed_ms = initialize_latency.as_millis(),
+            "compare-lsp initialize completed"
+        );
 
         // After `initialized`, both servers should see the same in-memory document set. This keeps
         // the later query requests about server behavior rather than file-watcher timing.
@@ -130,15 +146,67 @@ impl RunningServer {
         for source_path in source_paths {
             self.open_source_file(fixture_root, source_path).await?;
         }
+        tracing::info!(
+            server = self.kind.display_name(),
+            "waiting for compare-lsp server readiness"
+        );
         let ready_started_at = Instant::now();
         self.wait_until_ready().await?;
         let ready_latency = ready_started_at.elapsed();
+        tracing::info!(
+            server = self.kind.display_name(),
+            elapsed_ms = ready_latency.as_millis(),
+            "compare-lsp server readiness observed"
+        );
 
         Ok(ServerReadiness::new(
             self.kind.display_name(),
             initialize_latency,
             ready_latency,
         ))
+    }
+
+    /// Wait for any background work that should not be charged to measured query latency.
+    ///
+    /// Rust-glancer reports structural readiness before deferred body indexes finish. That is the
+    /// behavior users care about for editor responsiveness, so `ready_ms` stops there. The
+    /// comparison harness then waits for the explicit deferred-indexing notification before firing
+    /// measured body-sensitive queries, and reports that extra wait as `settle_ms`.
+    pub(super) async fn settle_after_readiness(&mut self) -> anyhow::Result<Duration> {
+        match self.kind {
+            ServerKind::RustAnalyzer => {
+                tracing::info!(
+                    server = self.kind.display_name(),
+                    "compare-lsp post-ready settle skipped"
+                );
+                Ok(Duration::ZERO)
+            }
+            ServerKind::RustGlancer => {
+                if self.rust_glancer_deferred_indexing_finished {
+                    tracing::info!(
+                        server = self.kind.display_name(),
+                        "compare-lsp post-ready settle already observed"
+                    );
+                    return Ok(Duration::ZERO);
+                }
+
+                tracing::info!(
+                    server = self.kind.display_name(),
+                    "waiting for compare-lsp post-ready settle"
+                );
+                let started_at = Instant::now();
+                self.wait_until_deferred_indexing_finished()
+                    .await
+                    .context("Waiting for rust-glancer deferred indexing after readiness failed")?;
+                let settle_latency = started_at.elapsed();
+                tracing::info!(
+                    server = self.kind.display_name(),
+                    elapsed_ms = settle_latency.as_millis(),
+                    "compare-lsp post-ready settle observed"
+                );
+                Ok(settle_latency)
+            }
+        }
     }
 
     /// Run the LSP shutdown handshake, then wait until the OS process exits.
@@ -291,6 +359,7 @@ impl RunningServer {
                         self.stderr_note(),
                     )
                 })?;
+                self.observe_deferred_indexing_finished(&notification);
                 match self.readiness_notification(&notification) {
                     ReadinessNotification::Ready => return Ok(()),
                     ReadinessNotification::Failed(message) => anyhow::bail!(
@@ -304,10 +373,56 @@ impl RunningServer {
         .await
         .with_context(|| {
             format!(
-                "Waiting for {} readiness notification timed out",
-                self.kind.display_name()
+                "Waiting for {} readiness notification timed out{}",
+                self.kind.display_name(),
+                self.stderr_note(),
             )
         })?
+    }
+
+    async fn wait_until_deferred_indexing_finished(&mut self) -> anyhow::Result<()> {
+        tokio::time::timeout(SETTLE_TIMEOUT, async {
+            loop {
+                let notification = self.client.next_notification().await.with_context(|| {
+                    format!(
+                        "Waiting for {} deferred indexing notification failed{}",
+                        self.kind.display_name(),
+                        self.stderr_note(),
+                    )
+                })?;
+                if self.observe_deferred_indexing_finished(&notification) {
+                    return Ok(());
+                }
+                if let ReadinessNotification::Failed(message) =
+                    self.readiness_notification(&notification)
+                {
+                    anyhow::bail!(
+                        "{} reported readiness failure while deferred indexing was settling: {message}",
+                        self.kind.display_name(),
+                    );
+                }
+            }
+        })
+        .await
+        .with_context(|| {
+            format!(
+                "Waiting for {} deferred indexing notification timed out{}",
+                self.kind.display_name(),
+                self.stderr_note(),
+            )
+        })?
+    }
+
+    fn observe_deferred_indexing_finished(&mut self, notification: &ServerNotification) -> bool {
+        if !matches!(self.kind, ServerKind::RustGlancer) {
+            return false;
+        }
+        if notification.method() != RUST_GLANCER_DEFERRED_INDEXING_FINISHED_METHOD {
+            return false;
+        }
+
+        self.rust_glancer_deferred_indexing_finished = true;
+        true
     }
 
     fn readiness_notification(&self, notification: &ServerNotification) -> ReadinessNotification {

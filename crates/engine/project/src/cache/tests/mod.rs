@@ -468,7 +468,7 @@ fn startup_indexing_rejects_artifacts_when_body_ir_policy_needs_more_bodies() {
         misses 1
         body policy mismatches 1
         body IR target statuses
-        - target 0 built
+        - target 0 built complete
     "#]]);
 }
 

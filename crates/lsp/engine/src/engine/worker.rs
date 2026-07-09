@@ -1,25 +1,28 @@
 use std::{
     path::{Path, PathBuf},
-    sync::{Arc, mpsc::Receiver},
+    sync::{
+        Arc,
+        mpsc::{Receiver, Sender},
+    },
     time::{Duration, Instant},
 };
 
 use anyhow::Context as _;
 use rg_analysis::{
     Analysis as QueryAnalysis, CompletionQuery, InlayHint as AnalysisInlayHint, ReferenceQuery,
-    ReferenceSearchFile, RenameEdit, RenameTarget,
+    RenameEdit, RenameTarget,
 };
 use rg_ir_model::TargetRef;
 use rg_lsp_proto::{
     AnalysisConfig, CargoMetadataTarget as ProtoCargoMetadataTarget, CompletionClientCapabilities,
     IndexingPerformancePreference as ProtoIndexingPerformancePreference,
-    PackageResidencyPolicy as ProtoPackageResidencyPolicy,
+    PackageResidencyPolicy as ProtoPackageResidencyPolicy, ServiceNotification,
     SysrootDiscovery as ProtoSysrootDiscovery,
 };
 use rg_parse::TextSpan;
 use rg_project::{
     FileContext, IndexingPerformancePreference, PackageResidencyPolicy, Project,
-    ProjectMemoryHooks, ProjectSnapshot, SavedFileChange,
+    ProjectMemoryHooks, ProjectSnapshot, SavedFileChange, SplitIndexingMode,
 };
 use rg_workspace::{
     CargoMetadataConfig, RustEdition, SysrootSources, WorkspaceLoweringConfig, WorkspaceMetadata,
@@ -31,6 +34,7 @@ use crate::{
     engine::{
         QueuedEngineCommand,
         command::{EngineCommand, EngineResponse},
+        early_start::{DeferredIndexingFinish, EarlyStart, ReferenceSearchPlan},
         project_proxy::ProjectProxy,
     },
     memory::{MemoryControl, MemoryReporter, ProjectMemoryReporter},
@@ -39,12 +43,17 @@ use crate::{
         completion, formatting as formatting_proto, hover, inlay_hint, navigation, position,
         references, rename, symbols,
     },
+    service::ServiceNotificationsSink,
 };
 
 #[derive(Debug)]
 pub(super) struct EngineWorker {
+    sender: Sender<QueuedEngineCommand>,
     project: ProjectProxy,
+    deferred_indexing_finish: DeferredIndexingFinish,
+    workspace_root: Option<PathBuf>,
     dirty_state: DirtyState,
+    notifications: ServiceNotificationsSink,
     memory_control: Arc<dyn MemoryControl>,
     memory_hooks: Arc<dyn ProjectMemoryHooks>,
 }
@@ -54,21 +63,6 @@ struct QueryContext {
     label: &'static str,
     queue_elapsed: Duration,
     dirty_identity: Option<DirtyDocumentIdentity>,
-}
-
-#[derive(Debug)]
-struct ReferenceSearchPlan {
-    targets: Vec<TargetRef>,
-    files: Option<Vec<ReferenceSearchFile>>,
-}
-
-impl ReferenceSearchPlan {
-    fn query(&self, include_declaration: bool) -> ReferenceQuery<'_> {
-        match self.files.as_deref() {
-            Some(files) => ReferenceQuery::find_references_in_files(files, include_declaration),
-            None => ReferenceQuery::find_references(&self.targets, include_declaration),
-        }
-    }
 }
 
 impl QueryContext {
@@ -100,11 +94,20 @@ impl QueryContext {
 }
 
 impl EngineWorker {
-    pub(super) fn new(memory_control: Arc<dyn MemoryControl>, dirty_state: DirtyState) -> Self {
+    pub(super) fn new(
+        sender: Sender<QueuedEngineCommand>,
+        memory_control: Arc<dyn MemoryControl>,
+        dirty_state: DirtyState,
+        notifications: ServiceNotificationsSink,
+    ) -> Self {
         let memory_hooks = Arc::new(ProjectMemoryReporter::new(Arc::clone(&memory_control)));
         Self {
+            sender,
             project: ProjectProxy::new(Arc::clone(&memory_control)),
+            deferred_indexing_finish: DeferredIndexingFinish::new(),
+            workspace_root: None,
             dirty_state,
+            notifications,
             memory_control,
             memory_hooks,
         }
@@ -363,6 +366,21 @@ impl EngineWorker {
                     tracing::trace!("engine command started: reindex_workspace");
                     let _ = respond_to.send(self.reindex_workspace());
                 }
+                EngineCommand::DeferredIndexingFinished { generation, result } => {
+                    tracing::trace!(
+                        generation,
+                        "engine command started: deferred_indexing_finished"
+                    );
+                    let current_generation_finished = self
+                        .deferred_indexing_finish
+                        .finish_returned(&self.sender, &mut self.project, generation, result);
+                    if current_generation_finished {
+                        self.send_deferred_indexing_finished();
+                        if let Ok(snapshot) = self.project.saved_snapshot() {
+                            Self::log_project_snapshot(snapshot, "deferred indexing finish");
+                        }
+                    }
+                }
                 EngineCommand::Shutdown(respond_to) => {
                     tracing::info!("shutting down LSP engine worker");
                     let _ = respond_to.send(Ok(()));
@@ -474,17 +492,22 @@ impl EngineWorker {
             .workspace_lowering_config(workspace_lowering_config)
             .cargo_metadata_config(cargo_metadata_config)
             .indexing_preference(indexing_preference)
+            .split_indexing_mode(SplitIndexingMode::EarlyStart)
             .package_residency_policy(package_residency_policy)
             .memory_hooks(Arc::clone(&self.memory_hooks))
             .build()
             .context("while attempting to build LSP analysis project")?;
-        self.project.replace_saved(project);
-        Self::log_project_snapshot(self.project.saved_snapshot()?, "initial index");
+        self.workspace_root = Some(workspace_root.clone());
+        let detached = project.detach_split_indexing();
+        let generation = self.project.replace_saved(project);
+        Self::log_project_snapshot(self.project.saved_snapshot()?, "initial early-start index");
         tracing::info!(
             workspace_root = %workspace_root.display(),
             elapsed_ms = started.elapsed().as_millis(),
-            "workspace indexing finished"
+            "workspace early-start indexing finished"
         );
+        self.deferred_indexing_finish
+            .start_initial(&self.sender, generation, detached);
 
         Ok(())
     }
@@ -493,7 +516,7 @@ impl EngineWorker {
         let started = Instant::now();
 
         tracing::info!("manual workspace reindex started");
-        self.project.mutate_saved(|project| {
+        self.mutate_saved_and_schedule_deferred_finish(|project| {
             project
                 .reindex_workspace()
                 .context("while attempting to manually reindex workspace")
@@ -517,7 +540,7 @@ impl EngineWorker {
         tracing::info!(path_count = paths.len(), "processing project path changes");
 
         for path in paths {
-            let summary = self.project.mutate_saved(|project| {
+            let summary = self.mutate_saved_and_schedule_deferred_finish(|project| {
                 project
                     .apply_change(SavedFileChange::new(&path))
                     .context("while attempting to apply project path change")
@@ -544,6 +567,49 @@ impl EngineWorker {
         }
 
         Ok(())
+    }
+
+    fn mutate_saved_and_schedule_deferred_finish<T>(
+        &mut self,
+        mutation: impl FnOnce(&mut Project) -> anyhow::Result<T>,
+    ) -> anyhow::Result<T> {
+        let result = self.project.mutate_saved(mutation);
+        if self.project.is_initialized() {
+            self.deferred_indexing_finish
+                .saved_project_changed(&self.sender, &self.project);
+        }
+        result
+    }
+
+    fn send_deferred_indexing_finished(&self) {
+        let Some(root) = &self.workspace_root else {
+            tracing::warn!("deferred indexing finished before workspace root was recorded");
+            return;
+        };
+
+        self.notifications
+            .send(ServiceNotification::DeferredIndexingFinished { root: root.clone() });
+    }
+
+    fn reference_search_plans_for_position(
+        &mut self,
+        path: &Path,
+        position: ls_types::Position,
+        dirty: Option<&DirtyDocumentSnapshot>,
+    ) -> anyhow::Result<Vec<ReferenceSearchPlan>> {
+        self.project.with_query_snapshot(dirty, |snapshot| {
+            let target_offsets = Self::target_offsets(snapshot, path, position)?;
+            let analysis = snapshot.full_analysis()?;
+            let mut plans = Vec::new();
+
+            for (context, target, offset) in target_offsets {
+                plans.push(Self::reference_search_plan(
+                    snapshot, &analysis, &context, target, offset,
+                )?);
+            }
+
+            Ok(plans)
+        })
     }
 
     fn goto_definition(
@@ -581,6 +647,10 @@ impl EngineWorker {
         dirty: Option<DirtyDocumentSnapshot>,
     ) -> anyhow::Result<Vec<ls_types::Location>> {
         let started = Instant::now();
+        EarlyStart::ensure_path(&mut self.project, "references", &path)?;
+        let search_plans =
+            self.reference_search_plans_for_position(&path, position, dirty.as_ref())?;
+        EarlyStart::ensure_reference_plans(&mut self.project, "references", &search_plans)?;
         // Dirty overlays lower Body IR only for dirty files. Cross-file body references are
         // intentionally best-effort until the buffer is saved and the normal project catches up.
         let locations = self
@@ -632,6 +702,7 @@ impl EngineWorker {
         dirty: Option<DirtyDocumentSnapshot>,
     ) -> anyhow::Result<Option<ls_types::PrepareRenameResponse>> {
         let started = Instant::now();
+        EarlyStart::ensure_path(&mut self.project, "prepare_rename", &path)?;
         let response = self
             .project
             .with_query_snapshot(dirty.as_ref(), |snapshot| {
@@ -686,6 +757,10 @@ impl EngineWorker {
         dirty: Option<DirtyDocumentSnapshot>,
     ) -> anyhow::Result<Option<ls_types::WorkspaceEdit>> {
         let started = Instant::now();
+        EarlyStart::ensure_path(&mut self.project, "rename", &path)?;
+        let search_plans =
+            self.reference_search_plans_for_position(&path, position, dirty.as_ref())?;
+        EarlyStart::ensure_reference_plans(&mut self.project, "rename", &search_plans)?;
         let edit = self
             .project
             .with_query_snapshot(dirty.as_ref(), |snapshot| {
@@ -754,6 +829,7 @@ impl EngineWorker {
         dirty: Option<DirtyDocumentSnapshot>,
     ) -> anyhow::Result<Vec<ls_types::DocumentHighlight>> {
         let started = Instant::now();
+        EarlyStart::ensure_path(&mut self.project, "document_highlight", &path)?;
         let highlights = self
             .project
             .with_query_snapshot(dirty.as_ref(), |snapshot| {
@@ -814,6 +890,7 @@ impl EngineWorker {
         dirty: Option<DirtyDocumentSnapshot>,
     ) -> anyhow::Result<Vec<ls_types::CompletionItem>> {
         let started = Instant::now();
+        EarlyStart::ensure_path(&mut self.project, "completion", &path)?;
         let source_text = dirty.as_ref().map(DirtyDocumentSnapshot::text);
         let completions = self
             .project
@@ -868,6 +945,7 @@ impl EngineWorker {
         dirty: Option<DirtyDocumentSnapshot>,
     ) -> anyhow::Result<Option<ls_types::Hover>> {
         let started = Instant::now();
+        EarlyStart::ensure_path(&mut self.project, "hover", &path)?;
         let hover = self
             .project
             .with_query_snapshot(dirty.as_ref(), |snapshot| {
@@ -987,6 +1065,7 @@ impl EngineWorker {
         dirty: Option<DirtyDocumentSnapshot>,
     ) -> anyhow::Result<Vec<ls_types::InlayHint>> {
         let started = Instant::now();
+        EarlyStart::ensure_path(&mut self.project, "inlay_hint", &path)?;
         let lsp_hints = self
             .project
             .with_query_snapshot(dirty.as_ref(), |snapshot| {
@@ -1069,6 +1148,7 @@ impl EngineWorker {
         dirty: Option<DirtyDocumentSnapshot>,
     ) -> anyhow::Result<Vec<ls_types::Location>> {
         let started = Instant::now();
+        EarlyStart::ensure_path(&mut self.project, query.name(), &path)?;
         let locations = self
             .project
             .with_query_snapshot(dirty.as_ref(), |snapshot| {
@@ -1173,7 +1253,7 @@ impl EngineWorker {
         let labels = analysis.reference_search_labels(target, context.file, offset)?;
         let files = snapshot.reference_search_files_matching_labels(&targets, &labels)?;
 
-        Ok(ReferenceSearchPlan { targets, files })
+        Ok(ReferenceSearchPlan::new(targets, files))
     }
 
     fn file_contexts(
@@ -1394,10 +1474,9 @@ impl EngineWorker {
             "analysis query hit invalid package cache; rebuilding cache before next command"
         );
 
-        match self
-            .project
-            .mutate_saved(|project| project.recover_after_cache_load_failure())
-        {
+        match self.mutate_saved_and_schedule_deferred_finish(|project| {
+            project.recover_after_cache_load_failure()
+        }) {
             Ok(()) => {
                 let snapshot = self
                     .project
@@ -1452,7 +1531,17 @@ mod tests {
     use tokio::sync::oneshot;
 
     use super::*;
-    use crate::documents::{DirtyDocumentSnapshotState, DocumentStore};
+    use crate::{
+        documents::{DirtyDocumentSnapshotState, DocumentStore},
+        service::ServiceNotificationPublisher,
+    };
+
+    #[derive(Debug)]
+    struct NoopNotifications;
+
+    impl ServiceNotificationPublisher for NoopNotifications {
+        fn send(&self, _notification: ServiceNotification) {}
+    }
 
     #[test]
     fn stale_dirty_query_responds_without_running_analysis() {
@@ -1469,7 +1558,10 @@ mod tests {
             panic!("dirty full-sync document should expose a snapshot");
         };
 
-        let mut worker = EngineWorker::new(Arc::new(()), DirtyState::default());
+        let (sender, _receiver) = std::sync::mpsc::channel();
+        let notifications = ServiceNotificationsSink::from_publisher(NoopNotifications);
+        let mut worker =
+            EngineWorker::new(sender, Arc::new(()), DirtyState::default(), notifications);
         let (respond_to, response) = oneshot::channel();
         let context = QueryContext::document("hover", Duration::ZERO, Some(&snapshot));
 

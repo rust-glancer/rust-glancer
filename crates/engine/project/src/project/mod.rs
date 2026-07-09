@@ -5,6 +5,7 @@ pub(crate) mod offloading;
 mod package_set;
 mod reference_search;
 mod snapshot;
+mod split_indexing;
 pub(crate) mod state;
 mod stats;
 pub(crate) mod subset;
@@ -27,9 +28,12 @@ use crate::{
 use rg_std::MemorySize;
 
 pub use self::{
-    build::{ProjectBuilder, StartupCacheLoad},
+    build::{ProjectBuilder, SplitIndexingMode, StartupCacheLoad},
     dirty::DirtyFileChange,
     snapshot::ProjectSnapshot,
+    split_indexing::{
+        AnalysisSurface, DetachedSplitIndexing, FinishedSplitIndexing, SplitIndexing,
+    },
     stats::ProjectStats,
 };
 
@@ -91,6 +95,25 @@ impl Project {
     /// Rebuilds the whole project from the current workspace graph and saved source files.
     pub fn reindex_workspace(&mut self) -> anyhow::Result<()> {
         update::reindex_workspace(self)
+    }
+
+    /// Returns the split-indexing control surface for deferred analysis work.
+    pub fn split_indexing(&mut self) -> SplitIndexing<'_> {
+        SplitIndexing::new(self)
+    }
+
+    /// Clone this project into an owned background-finish handle.
+    ///
+    /// Early-start indexing lets the saved project become queryable while deferred payloads are
+    /// still missing. Background completion must run on a clone so it cannot block the command
+    /// loop, but callers should not receive that clone as a general-purpose `Project`. Returning a
+    /// narrow handle keeps the only supported detached operation explicit: finish deferred indexing
+    /// and later merge the result back into saved state.
+    //
+    // TODO: Make project snapshots cheap to detach, especially parse state, so background
+    // completion does not have to clone large parse arenas on the caller thread.
+    pub fn detach_split_indexing(&self) -> DetachedSplitIndexing {
+        DetachedSplitIndexing::new(self.clone())
     }
 
     /// Applies one saved file replacement and refreshes derived analysis state.

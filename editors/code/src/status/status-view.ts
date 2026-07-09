@@ -50,6 +50,10 @@ export class StatusView implements vscode.Disposable {
     this.showState("ready", "$(check) Rust Glancer: ready", "Ready", details);
   }
 
+  public readyWithDeferredIndexing(details: StatusDetails = this.details): void {
+    this.showState("ready", "~ Rust Glancer: ready", "Ready, finishing deferred indexing", details);
+  }
+
   public stale(details: StatusDetails = this.details): void {
     this.showState(
       "stale",

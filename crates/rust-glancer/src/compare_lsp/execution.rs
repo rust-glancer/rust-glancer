@@ -106,6 +106,15 @@ pub(crate) enum RawOutcome {
 }
 
 impl RawOutcome {
+    fn status_label(&self) -> &'static str {
+        match self {
+            Self::Success { .. } => "success",
+            Self::Error { .. } => "error",
+            Self::Timeout => "timeout",
+            Self::TransportFailure { .. } => "transport_failure",
+        }
+    }
+
     fn from_request(_kind: QueryKind, outcome: RequestOutcome) -> Self {
         match outcome {
             RequestOutcome::Success(value) => Self::Success { raw: value },
@@ -121,13 +130,41 @@ pub(crate) async fn run(
     servers: &mut StartedServers,
 ) -> anyhow::Result<ExecutionSummary> {
     let mut results = Vec::new();
+    let total_queries = fixture.query_cases().len();
 
-    for query_case in fixture.query_cases() {
+    for (query_index, query_case) in fixture.query_cases().iter().enumerate() {
         // Convert compact fixture entries into typed LSP request payloads at the last boundary.
         // The stored vector stays easy to audit while serde/ls_types still own protocol shape.
         let request = QueryRequest::from_case(fixture.root(), query_case)?;
+        tracing::info!(
+            query_index = query_index + 1,
+            total_queries,
+            label = query_case.label(),
+            method = request.method,
+            "compare-lsp query started"
+        );
         let rust_glancer = execute_rust_glancer(servers, query_case.kind(), &request).await;
+        tracing::debug!(
+            query_index = query_index + 1,
+            total_queries,
+            label = query_case.label(),
+            method = request.method,
+            server = "rust-glancer",
+            elapsed_ms = rust_glancer.latency().as_millis(),
+            status = rust_glancer.value().status_label(),
+            "compare-lsp query server completed"
+        );
         let rust_analyzer = execute_rust_analyzer(servers, query_case.kind(), &request).await;
+        tracing::debug!(
+            query_index = query_index + 1,
+            total_queries,
+            label = query_case.label(),
+            method = request.method,
+            server = "rust-analyzer",
+            elapsed_ms = rust_analyzer.latency().as_millis(),
+            status = rust_analyzer.value().status_label(),
+            "compare-lsp query server completed"
+        );
 
         results.push(QueryExecution {
             label: query_case.label(),
@@ -136,6 +173,8 @@ pub(crate) async fn run(
             rust_analyzer,
         });
     }
+
+    tracing::info!(total_queries, "compare-lsp query execution completed");
 
     Ok(ExecutionSummary { results })
 }

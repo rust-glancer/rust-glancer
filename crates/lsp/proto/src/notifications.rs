@@ -21,6 +21,9 @@ pub enum ServiceNotification {
         message: Option<String>,
     },
     InlayHintRefresh,
+    DeferredIndexingFinished {
+        root: PathBuf,
+    },
     LogMessage {
         level: ServiceLogLevel,
         message: String,

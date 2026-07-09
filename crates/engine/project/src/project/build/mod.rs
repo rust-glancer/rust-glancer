@@ -34,12 +34,23 @@ impl StartupCacheLoad {
     }
 }
 
+/// Controls how much indexing work a fresh project build completes before returning.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SplitIndexingMode {
+    /// Build every configured analysis payload before the project becomes usable.
+    #[default]
+    Full,
+    /// Build structural data now and leave deferred payloads for on-demand/background work.
+    EarlyStart,
+}
+
 /// Fluent construction API for a fresh analysis project.
 pub struct ProjectBuilder {
     workspace: WorkspaceMetadata,
     workspace_lowering_config: WorkspaceLoweringConfig,
     cargo_metadata_config: CargoMetadataConfig,
     body_ir_policy: BodyIrBuildPolicy,
+    split_indexing_mode: SplitIndexingMode,
     indexing_preference: IndexingPerformancePreference,
     package_residency_policy: PackageResidencyPolicy,
     startup_cache_load: StartupCacheLoad,
@@ -54,6 +65,7 @@ impl ProjectBuilder {
             workspace_lowering_config: WorkspaceLoweringConfig::default(),
             cargo_metadata_config: CargoMetadataConfig::default(),
             body_ir_policy: BodyIrBuildPolicy::default(),
+            split_indexing_mode: SplitIndexingMode::default(),
             indexing_preference: IndexingPerformancePreference::default(),
             package_residency_policy: PackageResidencyPolicy::default(),
             startup_cache_load: StartupCacheLoad::default(),
@@ -64,6 +76,11 @@ impl ProjectBuilder {
 
     pub fn body_ir_policy(mut self, policy: BodyIrBuildPolicy) -> Self {
         self.body_ir_policy = policy;
+        self
+    }
+
+    pub fn split_indexing_mode(mut self, mode: SplitIndexingMode) -> Self {
+        self.split_indexing_mode = mode;
         self
     }
 
@@ -124,6 +141,7 @@ impl ProjectBuilder {
             self.cargo_metadata_config,
             cache_instance,
             self.body_ir_policy,
+            self.split_indexing_mode,
             self.indexing_preference,
             self.package_residency_policy,
             self.startup_cache_load,
@@ -156,6 +174,7 @@ pub(crate) fn build_resident_state(
     cargo_metadata_config: CargoMetadataConfig,
     cache_instance: PackageCacheInstance,
     body_ir_policy: BodyIrBuildPolicy,
+    split_indexing_mode: SplitIndexingMode,
     indexing_preference: IndexingPerformancePreference,
     package_residency_policy: PackageResidencyPolicy,
     startup_cache_load: StartupCacheLoad,
@@ -173,6 +192,7 @@ pub(crate) fn build_resident_state(
         &cache_plan,
         &cache_store,
         startup_cache_load,
+        split_indexing_mode,
         memory_hooks.as_ref(),
         memory_sampler,
     )?;

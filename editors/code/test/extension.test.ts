@@ -56,15 +56,16 @@ suite("Rust Glancer extension", () => {
 
     const simpleReady = await waitForClientState((state) => readySession(state) !== undefined);
     assert.ok(simpleReady.session);
-    await waitForOutput(
-      /workspace indexing finished.*simple_crate|simple_crate.*workspace indexing finished/,
-    );
+    await waitForOutput(workspaceIndexingFinishedPattern("simple_crate"));
     const activeSimple = await waitForClientState(
       (state) =>
         activeWorkspaceName(readySession(state)) === "simple_crate" &&
         state.status.text.includes("[simple_crate]"),
     );
-    assert.equal(activeSimple.status.text, "$(check) Rust Glancer: ready [simple_crate]");
+    assert.match(
+      activeSimple.status.text,
+      /^(?:~|\$\(check\)) Rust Glancer: ready \[simple_crate\]$/,
+    );
 
     const commands = await vscode.commands.getCommands(true);
     assert.ok(commands.includes(EXTENSION_COMMANDS.restartServer));
@@ -82,9 +83,7 @@ suite("Rust Glancer extension", () => {
     await vscode.window.showTextDocument(document);
 
     await waitForClientState((state) => readySession(state) !== undefined);
-    await waitForOutput(
-      /workspace indexing finished.*moderate_crate|moderate_crate.*workspace indexing finished/,
-    );
+    await waitForOutput(workspaceIndexingFinishedPattern("moderate_crate"));
     const multiRootReady = await waitForClientState(
       (state) =>
         activeWorkspaceName(readySession(state)) === "moderate_crate" &&
@@ -163,6 +162,12 @@ async function waitForOutput(pattern: RegExp): Promise<string> {
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function workspaceIndexingFinishedPattern(workspaceName: string): RegExp {
+  return new RegExp(
+    `workspace (?:early-start )?indexing finished.*${workspaceName}|${workspaceName}.*workspace (?:early-start )?indexing finished`,
+  );
 }
 
 function ensureWorkspaceFolder(uri: vscode.Uri, name: string): void {

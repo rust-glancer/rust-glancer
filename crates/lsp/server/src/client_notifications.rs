@@ -1,8 +1,9 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use tower_lsp_server::ls_types::{LSPAny, LSPObject, notification::Notification};
 
 const ACTIVE_WORKSPACE_CHANGED_METHOD: &str = "rust-glancer/activeWorkspaceChanged";
+const DEFERRED_INDEXING_FINISHED_METHOD: &str = "rust-glancer/deferredIndexingFinished";
 
 /// Custom notification that lets the VS Code client show which workspace currently owns requests.
 ///
@@ -30,6 +31,31 @@ impl ActiveWorkspaceChanged {
         if let Some(message) = &status.message {
             params.insert("message".to_string(), LSPAny::String(message.clone()));
         }
+        LSPAny::Object(params)
+    }
+}
+
+/// Custom notification used by tooling that wants to distinguish structural readiness from the
+/// background indexing work that completes shortly after it.
+///
+/// Editors can ignore this notification. `compare-lsp` uses it as a precise post-ready barrier so
+/// its measured query latency does not include the first body-sensitive request materializing
+/// deferred indexes on demand.
+pub(crate) struct DeferredIndexingFinished;
+
+impl Notification for DeferredIndexingFinished {
+    type Params = LSPAny;
+
+    const METHOD: &'static str = DEFERRED_INDEXING_FINISHED_METHOD;
+}
+
+impl DeferredIndexingFinished {
+    pub(crate) fn params(root: &Path) -> LSPAny {
+        let mut params = LSPObject::new();
+        params.insert(
+            "root".to_string(),
+            LSPAny::String(root.display().to_string()),
+        );
         LSPAny::Object(params)
     }
 }
@@ -97,6 +123,14 @@ mod tests {
             let actual = render_params(ActiveWorkspaceChanged::params(&status));
             assert_eq!(actual, expected);
         }
+    }
+
+    #[test]
+    fn deferred_indexing_finished_params_render_root() {
+        let actual = render_params(DeferredIndexingFinished::params(Path::new(
+            "workspace/project_a",
+        )));
+        assert_eq!(actual, "root: workspace/project_a");
     }
 
     fn render_params(params: LSPAny) -> String {

@@ -6,12 +6,13 @@ use std::{
 };
 
 use expect_test::expect;
+use rg_analysis::ReferenceQuery;
 use test_fixture::testonly::MarkedText;
 
 use self::utils::{HostFixture, HostObservation};
 use crate::{
-    BuildProcessMemory, PackageResidencyPolicy, Project, ProjectMemoryHooks,
-    ProjectMemoryPurgePoint,
+    AnalysisSurface, BuildProcessMemory, PackageResidencyPolicy, Project, ProjectMemoryHooks,
+    ProjectMemoryPurgePoint, SplitIndexingMode,
     testonly::{ProjectFixture, ProjectSourceFixture},
 };
 
@@ -169,6 +170,503 @@ pub struct User;
 }
 
 #[test]
+fn early_start_build_can_finish_split_indexing_later() {
+    let fixture = ProjectSourceFixture::build(
+        r#"
+//- /Cargo.toml
+[package]
+name = "early_start_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub fn value() -> usize {
+    1
+}
+"#,
+    );
+    let workspace = fixture.workspace_metadata();
+
+    let mut project = Project::builder(workspace)
+        .split_indexing_mode(SplitIndexingMode::EarlyStart)
+        .build()
+        .expect("early-start project build should succeed");
+
+    let stats = project.stats().body_ir;
+    assert_eq!(stats.target_count, 1);
+    assert_eq!(stats.complete_target_count, 0);
+    assert_eq!(stats.missing_target_count, 1);
+    assert_eq!(stats.body_count, 0);
+
+    project
+        .split_indexing()
+        .finish()
+        .expect("deferred indexing should succeed");
+
+    let stats = project.stats().body_ir;
+    assert_eq!(stats.target_count, 1);
+    assert_eq!(stats.complete_target_count, 1);
+    assert_eq!(stats.missing_target_count, 0);
+    assert_eq!(stats.body_count, 1);
+}
+
+#[test]
+fn file_prepare_materializes_deferred_analysis_incrementally() {
+    let fixture = ProjectSourceFixture::build(
+        r#"
+//- /Cargo.toml
+[package]
+name = "file_ensure_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+mod other;
+
+pub fn first() -> usize {
+    1
+}
+
+//- /src/other.rs
+pub fn second() -> usize {
+    2
+}
+"#,
+    );
+    let workspace = fixture.workspace_metadata();
+
+    let mut project = Project::builder(workspace)
+        .split_indexing_mode(SplitIndexingMode::EarlyStart)
+        .build()
+        .expect("early-start project build should succeed");
+
+    let stats = project.stats().body_ir;
+    assert_eq!(stats.missing_target_count, 1);
+    assert_eq!(stats.body_count, 0);
+
+    let lib_context = project
+        .snapshot()
+        .file_contexts_for_path(fixture.path("src/lib.rs"))
+        .expect("lib file contexts should resolve")
+        .pop()
+        .expect("lib file should have one context");
+    project
+        .split_indexing()
+        .materialize(AnalysisSurface::Files(&[(
+            lib_context.package,
+            lib_context.file,
+        )]))
+        .expect("lib file deferred analysis should materialize");
+
+    let stats = project.stats().body_ir;
+    assert_eq!(stats.complete_target_count, 0);
+    assert_eq!(stats.partial_target_count, 1);
+    assert_eq!(stats.body_count, 1);
+
+    let other_context = project
+        .snapshot()
+        .file_contexts_for_path(fixture.path("src/other.rs"))
+        .expect("other file contexts should resolve")
+        .pop()
+        .expect("other file should have one context");
+    project
+        .split_indexing()
+        .materialize(AnalysisSurface::Files(&[(
+            other_context.package,
+            other_context.file,
+        )]))
+        .expect("other file deferred analysis should materialize");
+
+    let stats = project.stats().body_ir;
+    assert_eq!(stats.complete_target_count, 1);
+    assert_eq!(stats.partial_target_count, 0);
+    assert_eq!(stats.body_count, 2);
+}
+
+#[test]
+fn split_indexing_prevents_reference_and_rename_false_negatives() {
+    let fixture = ProjectSourceFixture::build(
+        r#"
+//- /Cargo.toml
+[package]
+name = "reference_surface_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+mod other;
+
+pub struct User {
+    pub na$subject$me: usize,
+}
+
+//- /src/other.rs
+use crate::User;
+
+pub fn demo(user: User) -> usize {
+    user.name
+}
+"#,
+    );
+    let workspace = fixture.workspace_metadata();
+
+    let mut project = Project::builder(workspace)
+        .split_indexing_mode(SplitIndexingMode::EarlyStart)
+        .build()
+        .expect("early-start project build should succeed");
+
+    let subject = fixture.markers().position("subject");
+    let lib_context = project
+        .snapshot()
+        .file_contexts_for_path(fixture.path(&subject.path))
+        .expect("subject file contexts should resolve")
+        .pop()
+        .expect("subject file should have one context");
+    let other_context = project
+        .snapshot()
+        .file_contexts_for_path(fixture.path("src/other.rs"))
+        .expect("other file contexts should resolve")
+        .pop()
+        .expect("other file should have one context");
+    let target = lib_context
+        .targets
+        .first()
+        .copied()
+        .expect("subject file should belong to one target");
+
+    let search_files = {
+        let snapshot = project.snapshot();
+        let analysis = snapshot
+            .full_analysis()
+            .expect("early-start analysis should materialize");
+        let declaration_targets = analysis
+            .goto_definition(target, lib_context.file, subject.offset)
+            .expect("definition lookup should resolve")
+            .into_iter()
+            .map(|target| target.target)
+            .collect::<Vec<_>>();
+        let search_targets =
+            snapshot.reference_search_targets(lib_context.package, &declaration_targets);
+        let labels = analysis
+            .reference_search_labels(target, lib_context.file, subject.offset)
+            .expect("reference labels should resolve");
+        let files = snapshot
+            .reference_search_files_matching_labels(&search_targets, &labels)
+            .expect("reference text prefilter should resolve")
+            .expect("reference text prefilter should find label-bearing files");
+
+        assert!(
+            files
+                .iter()
+                .any(|file| file.target == target && file.file_id == other_context.file),
+            "reference scan surface should include the file with body references",
+        );
+
+        files
+    };
+
+    let search_body_files = search_files
+        .iter()
+        .map(|file| (file.target.package, file.file_id))
+        .collect::<Vec<_>>();
+    project
+        .split_indexing()
+        .materialize(AnalysisSurface::Files(&search_body_files))
+        .expect("reference scan files should materialize on demand");
+
+    let snapshot = project.snapshot();
+    let analysis = snapshot
+        .full_analysis()
+        .expect("completed analysis should materialize");
+    let query = ReferenceQuery::find_references_in_files(&search_files, true);
+    let references = analysis
+        .references(target, lib_context.file, subject.offset, query)
+        .expect("references should resolve after on-demand materialization");
+    assert!(
+        references
+            .iter()
+            .any(|reference| reference.file_id == other_context.file),
+        "references should include body occurrences from the on-demand scan surface",
+    );
+
+    let query = ReferenceQuery::find_references_in_files(&search_files, true);
+    let rename = analysis
+        .rename(target, lib_context.file, subject.offset, "label", query)
+        .expect("rename should resolve after on-demand materialization")
+        .expect("rename should be available for the selected field");
+    assert!(
+        rename.edits.iter().any(|edit| {
+            edit.file_id == other_context.file
+                && edit.old_text == "name"
+                && edit.new_text == "label"
+        }),
+        "rename should edit body occurrences from the on-demand scan surface",
+    );
+}
+
+#[test]
+fn merging_finished_split_indexing_does_not_downgrade_on_demand_package() {
+    let fixture = ProjectSourceFixture::build(
+        r#"
+//- /Cargo.toml
+[package]
+name = "background_merge_app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+dep = { path = "dep", package = "background_merge_dep" }
+
+//- /src/lib.rs
+pub fn app_value() -> usize {
+    dep::dep_value()
+}
+
+//- /dep/Cargo.toml
+[package]
+name = "background_merge_dep"
+version = "0.1.0"
+edition = "2024"
+
+//- /dep/src/lib.rs
+pub fn dep_value() -> usize {
+    let value = 1usize;
+    val$dep_ref$ue
+}
+"#,
+    );
+    let workspace = fixture.workspace_metadata();
+
+    let mut project = Project::builder(workspace)
+        .split_indexing_mode(SplitIndexingMode::EarlyStart)
+        .build()
+        .expect("early-start project build should succeed");
+    let finished = project
+        .detach_split_indexing()
+        .finish()
+        .expect("background deferred indexing should succeed");
+    let dep_ref = fixture.markers().position("dep_ref");
+    let dep_context = project
+        .snapshot()
+        .file_contexts_for_path(fixture.path(&dep_ref.path))
+        .expect("dependency file contexts should resolve")
+        .pop()
+        .expect("dependency file should have one context");
+    let dep_target = dep_context
+        .targets
+        .first()
+        .copied()
+        .expect("dependency file should belong to one target");
+
+    project
+        .split_indexing()
+        .materialize(AnalysisSurface::Targets(&dep_context.targets))
+        .expect("on-demand dependency deferred indexing should succeed");
+    assert!(
+        project
+            .snapshot()
+            .full_analysis()
+            .expect("analysis should materialize after on-demand dependency finish")
+            .type_at(dep_target, dep_context.file, dep_ref.offset)
+            .expect("dependency body-local type query should resolve")
+            .is_some(),
+        "dependency body should be queryable after on-demand finish",
+    );
+
+    assert!(
+        project
+            .split_indexing()
+            .merge_finished(finished)
+            .expect("background deferred indexing should merge"),
+        "workspace package finish should still merge",
+    );
+    assert!(
+        project
+            .snapshot()
+            .full_analysis()
+            .expect("analysis should materialize after background merge")
+            .type_at(dep_target, dep_context.file, dep_ref.offset)
+            .expect("dependency body-local type query should resolve after merge")
+            .is_some(),
+        "background finish must not reinstall the clone's skipped dependency bodies",
+    );
+}
+
+#[test]
+fn residency_keeps_partial_deferred_payload_transient_and_resident() {
+    let fixture = ProjectSourceFixture::build(
+        r#"
+//- /Cargo.toml
+[workspace]
+members = ["app", "helper"]
+
+//- /app/Cargo.toml
+[package]
+name = "partial_residency_app"
+version = "0.1.0"
+edition = "2024"
+
+//- /app/src/lib.rs
+mod other;
+
+pub fn first() -> usize {
+    let value = 1usize;
+    val$app_ref$ue
+}
+
+//- /app/src/other.rs
+pub fn second() -> usize {
+    2
+}
+
+//- /helper/Cargo.toml
+[package]
+name = "partial_residency_helper"
+version = "0.1.0"
+edition = "2024"
+
+//- /helper/src/lib.rs
+pub fn helper() -> usize {
+    1
+}
+"#,
+    );
+    let workspace = fixture.workspace_metadata();
+
+    let mut project = Project::builder(workspace)
+        .split_indexing_mode(SplitIndexingMode::EarlyStart)
+        .package_residency_policy(PackageResidencyPolicy::AllOffloadable)
+        .build()
+        .expect("early-start project build should succeed");
+    let app_ref = fixture.markers().position("app_ref");
+    let lib_context = project
+        .snapshot()
+        .file_contexts_for_path(fixture.path(&app_ref.path))
+        .expect("lib file contexts should resolve")
+        .pop()
+        .expect("lib file should have one context");
+    let helper_context = project
+        .snapshot()
+        .file_contexts_for_path(fixture.path("helper/src/lib.rs"))
+        .expect("helper file contexts should resolve")
+        .pop()
+        .expect("helper file should have one context");
+    let app_target = lib_context
+        .targets
+        .first()
+        .copied()
+        .expect("app file should belong to one target");
+
+    project
+        .split_indexing()
+        .materialize(AnalysisSurface::Files(&[(
+            lib_context.package,
+            lib_context.file,
+        )]))
+        .expect("lib file deferred analysis should materialize");
+    let stats = project.stats().body_ir;
+    assert_eq!(stats.partial_target_count, 1);
+    assert_eq!(stats.body_count, 1);
+
+    project
+        .split_indexing()
+        .materialize(AnalysisSurface::Files(&[(
+            helper_context.package,
+            helper_context.file,
+        )]))
+        .expect("helper deferred indexing should apply residency");
+    let stats = project.stats().body_ir;
+    assert_eq!(stats.partial_target_count, 1);
+    assert_eq!(stats.body_count, 1);
+
+    assert!(
+        project
+            .snapshot()
+            .full_analysis()
+            .expect("analysis should materialize after helper residency")
+            .type_at(app_target, lib_context.file, app_ref.offset)
+            .expect("app body-local type query should resolve")
+            .is_some(),
+        "partial on-demand app body should remain resident after another package applies residency",
+    );
+}
+
+#[test]
+fn file_prepare_keeps_finished_offloaded_payload_lazy() {
+    let fixture = ProjectSourceFixture::build(
+        r#"
+//- /Cargo.toml
+[package]
+name = "finished_offload_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub fn value() -> usize {
+    let value = 1usize;
+    val$ref$ue
+}
+"#,
+    );
+    let workspace = fixture.workspace_metadata();
+
+    let mut project = Project::builder(workspace)
+        .split_indexing_mode(SplitIndexingMode::EarlyStart)
+        .package_residency_policy(PackageResidencyPolicy::AllOffloadable)
+        .build()
+        .expect("early-start project build should succeed");
+    let reference = fixture.markers().position("ref");
+    let context = project
+        .snapshot()
+        .file_contexts_for_path(fixture.path(&reference.path))
+        .expect("fixture file contexts should resolve")
+        .pop()
+        .expect("fixture file should have one context");
+    let target = context
+        .targets
+        .first()
+        .copied()
+        .expect("fixture file should belong to one target");
+
+    project
+        .split_indexing()
+        .finish()
+        .expect("deferred indexing should finish and restore residency");
+    assert!(
+        project
+            .state
+            .body_ir
+            .resident_package(context.package)
+            .is_none(),
+        "finished all-offloadable package should return to lazy cache-backed residency",
+    );
+
+    project
+        .split_indexing()
+        .materialize(AnalysisSurface::Files(&[(context.package, context.file)]))
+        .expect("file-local preparation should treat finished offloaded payload as ready");
+    assert!(
+        project
+            .state
+            .body_ir
+            .resident_package(context.package)
+            .is_none(),
+        "file-local preparation should not rebuild a finished offloaded package from source",
+    );
+
+    assert!(
+        project
+            .snapshot()
+            .full_analysis()
+            .expect("analysis should lazy-load the finished offloaded package")
+            .type_at(target, context.file, reference.offset)
+            .expect("body-local type query should resolve from lazy package data")
+            .is_some(),
+        "finished offloaded body data should still be queryable through lazy loading",
+    );
+}
+
+#[test]
 fn process_memory_sampler_enables_retained_build_memory() {
     let fixture = ProjectSourceFixture::build(
         r#"
@@ -211,6 +709,81 @@ pub struct User;
         checkpoint_optional_bytes(after_parse, "allocated_bytes"),
         Some(11),
         "process memory sampling should still record allocator counters"
+    );
+}
+
+#[test]
+fn profiled_split_indexing_reports_finish_and_residency_memory() {
+    let fixture = ProjectSourceFixture::build(
+        r#"
+//- /Cargo.toml
+[package]
+name = "profiled_split_finish_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub fn answer() -> i32 {
+    42
+}
+"#,
+    );
+    let workspace = fixture.workspace_metadata();
+    let run =
+        rg_profile::test_support::ProfileTest::start(crate::profile_descriptors(), "project.build");
+
+    let mut project = Project::builder(workspace)
+        .split_indexing_mode(SplitIndexingMode::EarlyStart)
+        .package_residency_policy(PackageResidencyPolicy::AllOffloadable)
+        .process_memory_sampler(|| {
+            Some(BuildProcessMemory {
+                allocated_bytes: 11,
+                active_bytes: 13,
+                resident_bytes: 17,
+                mapped_bytes: 19,
+            })
+        })
+        .build()
+        .expect("early-start project build should succeed");
+    project
+        .split_indexing()
+        .finish_profiled(|| {
+            Some(BuildProcessMemory {
+                allocated_bytes: 31,
+                active_bytes: 37,
+                resident_bytes: 41,
+                mapped_bytes: 43,
+            })
+        })
+        .expect("profiled deferred indexing should succeed");
+
+    let snapshot = run.finish();
+    let checkpoints = project_build_checkpoints(&snapshot);
+    let finish_labels = checkpoints
+        .iter()
+        .filter(|checkpoint| checkpoint_optional_bytes(checkpoint, "allocated_bytes") == Some(31))
+        .map(|checkpoint| checkpoint.label.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        finish_labels,
+        [
+            "after deferred indexing",
+            "before package cache write",
+            "after package cache write",
+            "after package payload offload",
+            "after package offload cleanup",
+            "after deferred indexing cleanup",
+        ],
+        "deferred indexing should profile both lowering and the follow-up residency pass",
+    );
+
+    let deferred_finish = checkpoints
+        .iter()
+        .find(|checkpoint| checkpoint.label == "after deferred indexing")
+        .expect("profile should contain the deferred indexing checkpoint");
+    assert!(
+        checkpoint_optional_bytes(deferred_finish, "retained_bytes").is_some_and(|bytes| bytes > 0),
+        "profiled deferred indexing should record retained project memory",
     );
 }
 
@@ -669,6 +1242,10 @@ pub fn dirty_body(value: Dirty) {
 
         body ir stats `dirty overlay`
         - targets 1
+        - complete targets 0
+        - partial targets 1
+        - missing targets 0
+        - targets skipped by policy 0
         - bodies 1
 
         workspace symbols `Dirty`

@@ -991,8 +991,13 @@ fn render_artifact(label: &str, artifact: &PackageCacheArtifact, dump: &mut Stri
 fn render_body_ir_target_statuses(artifact: &PackageCacheArtifact, dump: &mut String) {
     writeln!(dump, "body IR target statuses").expect("string writes should not fail");
     for (target_idx, target) in artifact.payload.body_ir.targets().iter().enumerate() {
-        writeln!(dump, "- target {target_idx} {}", target.status())
-            .expect("string writes should not fail");
+        writeln!(
+            dump,
+            "- target {target_idx} {} {}",
+            target.status(),
+            target.coverage()
+        )
+        .expect("string writes should not fail");
     }
 }
 

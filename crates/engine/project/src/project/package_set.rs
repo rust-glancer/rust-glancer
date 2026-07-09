@@ -1,7 +1,8 @@
 use rg_body_ir::BodyIrFile;
 use rg_def_map::PackageSlot;
+use rg_ir_model::TargetRef;
 use rg_package_store::PackageSubset;
-use rg_std::MemorySize;
+use rg_std::{MemorySize, UniqueVec};
 use rg_workspace::WorkspaceMetadata;
 
 use super::subset;
@@ -34,9 +35,22 @@ impl PhasePackageSet {
     }
 
     pub(super) fn from_body_files(files: &[BodyIrFile]) -> Self {
-        let mut packages = files.iter().map(|file| file.package).collect::<Vec<_>>();
+        let mut packages = files
+            .iter()
+            .map(|file| file.package)
+            .collect::<UniqueVec<_>>()
+            .into_vec();
         packages.sort_by_key(|package| package.0);
-        packages.dedup();
+        Self { packages }
+    }
+
+    pub(super) fn from_targets(targets: &[TargetRef]) -> Self {
+        let mut packages = targets
+            .iter()
+            .map(|target| target.package)
+            .collect::<UniqueVec<_>>()
+            .into_vec();
+        packages.sort_by_key(|package| package.0);
         Self { packages }
     }
 

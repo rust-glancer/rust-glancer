@@ -16,8 +16,6 @@ class MemoryProfileReport:
     project: dict[str, Any]
     memory: dict[str, Any]
     checkpoints: list[dict[str, Any]]
-    allocator_name: Optional[str] = None
-    allocator_resident_bytes: Optional[int] = None
 
 
 def main() -> None:
@@ -62,12 +60,16 @@ def normalize_optional_report(
 
 
 def normalize_report(report: dict[str, Any]) -> MemoryProfileReport:
-    if isinstance(report.get("memory"), list) or isinstance(report.get("profile_snapshot"), dict):
-        return normalize_current_report(report)
+    if not is_current_report(report):
+        return normalize_previous_baseline_report(report)
 
-    # TODO: remove this legacy branch after this PR lands and the main branch
-    # memory-profile cache has been regenerated from the new analyze JSON schema.
-    return normalize_legacy_report(report)
+    return normalize_current_report(report)
+
+
+def is_current_report(report: dict[str, Any]) -> bool:
+    return isinstance(report.get("memory"), list) or isinstance(
+        report.get("profile_snapshot"), dict
+    )
 
 
 def normalize_current_report(report: dict[str, Any]) -> MemoryProfileReport:
@@ -77,6 +79,29 @@ def normalize_current_report(report: dict[str, Any]) -> MemoryProfileReport:
         memory=current_project_memory(report),
         checkpoints=current_build_checkpoints(report),
     )
+
+
+def normalize_previous_baseline_report(report: dict[str, Any]) -> MemoryProfileReport:
+    # Pull-request jobs compare the current report against a baseline artifact produced by `main`.
+    # Keep this one older shape readable until `main` has regenerated baselines with the current
+    # analyze JSON report. This is not a general compatibility layer for older historical reports.
+    memory = dict_value(report.get("memory")).copy()
+    if "by_component" not in memory and "by_phase" in memory:
+        memory["by_component"] = memory["by_phase"]
+
+    return MemoryProfileReport(
+        workspace_root=string_value(report.get("workspace_root")),
+        project=dict_value(report.get("project")),
+        memory=memory,
+        checkpoints=previous_baseline_build_checkpoints(report),
+    )
+
+
+def previous_baseline_build_checkpoints(report: dict[str, Any]) -> list[dict[str, Any]]:
+    checkpoints = dict_value(report.get("build_profile")).get("checkpoints", [])
+    if not isinstance(checkpoints, list):
+        return []
+    return [checkpoint for checkpoint in checkpoints if isinstance(checkpoint, dict)]
 
 
 def current_project_memory(report: dict[str, Any]) -> dict[str, Any]:
@@ -149,29 +174,6 @@ def flatten_current_checkpoint(checkpoint: dict[str, Any]) -> dict[str, Any]:
     return row
 
 
-def normalize_legacy_report(report: dict[str, Any]) -> MemoryProfileReport:
-    memory = dict_value(report.get("memory")).copy()
-    if "by_component" not in memory and "by_phase" in memory:
-        memory["by_component"] = memory["by_phase"]
-
-    allocator = dict_value(report.get("allocator"))
-    return MemoryProfileReport(
-        workspace_root=string_value(report.get("workspace_root")),
-        project=dict_value(report.get("project")),
-        memory=memory,
-        checkpoints=legacy_build_checkpoints(report),
-        allocator_name=optional_string(allocator.get("name")),
-        allocator_resident_bytes=nested_int(report, ["allocator", "stats", "resident_bytes"]),
-    )
-
-
-def legacy_build_checkpoints(report: dict[str, Any]) -> list[dict[str, Any]]:
-    checkpoints = dict_value(report.get("build_profile")).get("checkpoints", [])
-    if not isinstance(checkpoints, list):
-        return []
-    return [checkpoint for checkpoint in checkpoints if isinstance(checkpoint, dict)]
-
-
 def render_comment(
     current: MemoryProfileReport,
     base: Optional[MemoryProfileReport],
@@ -210,8 +212,6 @@ def render_context(
         f"- Packages: {packages.get('total_count', '?')} total, {packages.get('workspace_count', '?')} workspace",
         f"- Residency: `{packages.get('residency_policy', '?')}`",
     ]
-    if current.allocator_name is not None:
-        lines.append(f"- Allocator: `{current.allocator_name}`")
     lines.append(f"- Base result: {base_note}")
     return "\n".join(lines)
 
@@ -270,11 +270,7 @@ def render_checkpoint_table(
     if not current_rows:
         return ""
 
-    base_rows = {
-        row.get("label"): row
-        for row in checkpoints_for(base)
-        if isinstance(row.get("label"), str)
-    }
+    base_rows = dict(checkpoint_rows_by_occurrence(checkpoints_for(base)))
 
     rows = [
         "### Build Checkpoints",
@@ -282,9 +278,9 @@ def render_checkpoint_table(
         "| Checkpoint | Phase | Delta | RG sampled | Delta | RG total | Delta | Allocator resident | Delta |",
         "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
-    for row in current_rows:
+    for key, row in checkpoint_rows_by_occurrence(current_rows):
         label = row_label(row)
-        base_row = base_rows.get(label)
+        base_row = base_rows.get(key)
         table_row = (
             "| {label} | {phase} | {phase_delta} | "
             "{rg_sampled} | {rg_sampled_delta} | "
@@ -387,7 +383,7 @@ def final_allocator_resident_bytes(report: Optional[MemoryProfileReport]) -> Opt
         return None
     checkpoints = checkpoints_for(report)
     if not checkpoints:
-        return report.allocator_resident_bytes
+        return None
     return row_number(checkpoints[-1], "resident_bytes")
 
 
@@ -404,6 +400,19 @@ def checkpoints_for(report: Optional[MemoryProfileReport]) -> list[dict[str, Any
     return report.checkpoints
 
 
+def checkpoint_rows_by_occurrence(
+    rows: list[dict[str, Any]],
+) -> list[tuple[tuple[str, int], dict[str, Any]]]:
+    occurrences: dict[str, int] = {}
+    keyed_rows = []
+    for row in rows:
+        label = row_label(row)
+        occurrence = occurrences.get(label, 0)
+        occurrences[label] = occurrence + 1
+        keyed_rows.append(((label, occurrence), row))
+    return keyed_rows
+
+
 def row_label(row: dict[str, Any]) -> str:
     label = row.get("label")
     return label if isinstance(label, str) else "?"
@@ -418,25 +427,12 @@ def row_number(row: Optional[dict[str, Any]], key: str) -> Optional[float]:
     return value if isinstance(value, (int, float)) else None
 
 
-def nested_int(report: Optional[dict[str, Any]], path: list[str]) -> Optional[int]:
-    value: Any = report
-    for key in path:
-        if not isinstance(value, dict):
-            return None
-        value = value.get(key)
-    return value if isinstance(value, int) else None
-
-
 def dict_value(value: Any) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
 def string_value(value: Any, fallback: str = "") -> str:
     return value if isinstance(value, str) else fallback
-
-
-def optional_string(value: Any) -> Optional[str]:
-    return value if isinstance(value, str) else None
 
 
 def number_value(value: Any) -> Optional[float]:

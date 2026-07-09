@@ -12,8 +12,10 @@ pub use self::{
     memory::{ProjectMemoryHooks, ProjectMemoryPurgePoint},
     profile::{BUILD_CHECKPOINTS, BuildProcessMemory, ProcessMemorySampler},
     project::{
-        AnalysisChangeSummary, ChangedFile, DirtyFileChange, FileContext, Project, ProjectBuilder,
-        ProjectSnapshot, ProjectStats, SavedFileChange, StartupCacheLoad,
+        AnalysisChangeSummary, AnalysisSurface, ChangedFile, DetachedSplitIndexing,
+        DirtyFileChange, FileContext, FinishedSplitIndexing, Project, ProjectBuilder,
+        ProjectSnapshot, ProjectStats, SavedFileChange, SplitIndexing, SplitIndexingMode,
+        StartupCacheLoad,
     },
     residency::{PackageResidency, PackageResidencyPlan, PackageResidencyPolicy},
 };

@@ -17,7 +17,7 @@ use crate::{
     profile::{BuildMemorySampler, record_build_checkpoint},
 };
 
-use super::{package_set::PhasePackageSet, state::ProjectState, update};
+use super::{package_set::PhasePackageSet, split_indexing, state::ProjectState, update};
 
 /// Planned residency transition for one mutable project snapshot.
 pub(crate) struct ResidencyApplication<'a> {
@@ -35,7 +35,8 @@ impl<'a> ResidencyApplication<'a> {
     /// offloadable packages whose phase data is actually resident, then offload every package
     /// selected by the residency policy.
     pub(crate) fn fresh(project: &'a mut ProjectState) -> Self {
-        let packages_to_offload = Self::offloadable_packages(project);
+        let packages_to_offload = Self::offloadable_packages(project)
+            .filter(|package| Self::package_can_be_offloaded(project, package));
         // Cache artifacts are the durable backing store for offloadable packages. Resident packages
         // stay in memory and should not pay serialization/write cost until policy asks for it.
         let packages_to_write = packages_to_offload
@@ -58,8 +59,10 @@ impl<'a> ResidencyApplication<'a> {
     pub(crate) fn restore(project: &'a mut ProjectState, rebuilt_packages: &[PackageSlot]) -> Self {
         Self {
             refresh_source_fingerprints_for: PhasePackageSet::from_slice(rebuilt_packages),
-            packages_to_write: Self::rebuilt_offloadable_packages(project, rebuilt_packages),
-            packages_to_offload: Self::offloadable_packages(project),
+            packages_to_write: Self::rebuilt_offloadable_packages(project, rebuilt_packages)
+                .filter(|package| Self::package_artifact_is_resident(project, package)),
+            packages_to_offload: Self::offloadable_packages(project)
+                .filter(|package| Self::package_can_be_offloaded(project, package)),
             project,
         }
     }
@@ -193,11 +196,19 @@ impl<'a> ResidencyApplication<'a> {
         )
     }
 
-    /// Returns whether all artifact-backed phase payloads are resident for this package.
+    /// Returns whether all artifact-backed phase payloads are resident and durable for this package.
     fn package_artifact_is_resident(project: &ProjectState, package: PackageSlot) -> bool {
         project.def_map.resident_package(package).is_some()
             && project.semantic_ir.resident_package(package).is_some()
-            && project.body_ir.resident_package(package).is_some()
+            && split_indexing::package_deferred_payload_is_durable(project, package)
+    }
+
+    fn package_can_be_offloaded(project: &ProjectState, package: PackageSlot) -> bool {
+        let has_resident_payload = project.def_map.resident_package(package).is_some()
+            || project.semantic_ir.resident_package(package).is_some()
+            || project.body_ir.resident_package(package).is_some();
+
+        !has_resident_payload || Self::package_artifact_is_resident(project, package)
     }
 
     /// Writes durable cache artifacts for packages whose resident payloads are about to be dropped.

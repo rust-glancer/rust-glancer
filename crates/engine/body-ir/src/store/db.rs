@@ -6,7 +6,7 @@ use rg_package_store::{PackageLoader, PackageStore, PackageSubset};
 use rg_semantic_ir::PackageIr;
 use rg_text::PackageNameInterners;
 
-use super::{BodyIrReadTxn, PackageBodies, TargetBodiesStatus};
+use super::{BodyIrReadTxn, PackageBodies, TargetBodiesCoverage, TargetBodiesStatus};
 use crate::build::{BodyIrDbBuilder, BodyIrDbPackageRebuilder};
 use rg_std::{MemorySize, Shrink};
 
@@ -16,6 +16,10 @@ pub struct BodyIrStats {
     pub target_count: usize,
     pub built_target_count: usize,
     pub skipped_target_count: usize,
+    pub complete_target_count: usize,
+    pub partial_target_count: usize,
+    pub missing_target_count: usize,
+    pub skipped_by_policy_target_count: usize,
     pub body_count: usize,
     pub scope_count: usize,
     pub binding_count: usize,
@@ -94,6 +98,14 @@ impl BodyIrDb {
                     TargetBodiesStatus::Built => stats.built_target_count += 1,
                     TargetBodiesStatus::Skipped => stats.skipped_target_count += 1,
                 }
+                match target.coverage() {
+                    TargetBodiesCoverage::Complete => stats.complete_target_count += 1,
+                    TargetBodiesCoverage::Partial => stats.partial_target_count += 1,
+                    TargetBodiesCoverage::Missing => stats.missing_target_count += 1,
+                    TargetBodiesCoverage::SkippedByPolicy => {
+                        stats.skipped_by_policy_target_count += 1;
+                    }
+                }
                 stats.body_count += target.bodies().len();
                 for body in target.bodies() {
                     stats.scope_count += body.scopes().len();
@@ -112,6 +124,14 @@ impl BodyIrDb {
         self.packages
             .raw_entry(package)
             .and_then(|entry| entry.as_resident())
+    }
+
+    /// Replaces one package payload while preserving the surrounding package-store shape.
+    ///
+    /// This is used by project-level monotonic Body IR merges, where a background completion
+    /// contributes a package that has strictly better coverage than the current saved project.
+    pub fn replace_package(&mut self, package: PackageSlot, bodies: PackageBodies) -> Option<()> {
+        self.packages.replace(package, bodies)
     }
 
     pub fn read_txn<'db>(
