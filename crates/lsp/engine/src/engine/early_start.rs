@@ -10,10 +10,14 @@ use std::{path::Path, sync::mpsc::Sender, thread, time::Instant};
 use anyhow::Context as _;
 use rg_analysis::{ReferenceQuery, ReferenceSearchFile};
 use rg_ir_model::TargetRef;
-use rg_project::{AnalysisSurface, DetachedSplitIndexing, FileContext, FinishedSplitIndexing};
+use rg_project::{AnalysisSurface, DetachedSplitIndexing, FileContext};
 use rg_std::UniqueVec;
 
-use super::{QueuedEngineCommand, command::EngineCommand, project_proxy::ProjectProxy};
+use super::{
+    QueuedEngineCommand,
+    command::{DeferredIndexingResult, EngineCommand},
+    project_proxy::ProjectProxy,
+};
 
 #[derive(Debug, Clone)]
 pub(super) struct ReferenceSearchPlan {
@@ -82,7 +86,7 @@ impl DeferredIndexingFinish {
         sender: &Sender<QueuedEngineCommand>,
         project_proxy: &mut ProjectProxy,
         generation: u64,
-        result: anyhow::Result<FinishedSplitIndexing>,
+        result: DeferredIndexingResult,
     ) -> bool {
         if self.in_flight_generation != Some(generation) {
             tracing::info!(
@@ -145,7 +149,7 @@ impl DeferredIndexingFinish {
 
                 // Finish against the clone. The result still owns that clone, which lets the saved
                 // project later merge only package-wise improvements.
-                let result = detached.finish();
+                let result = detached.finish().map(Box::new);
                 let elapsed_ms = started.elapsed().as_millis();
                 match &result {
                     Ok(_) => {
@@ -192,7 +196,7 @@ impl DeferredIndexingFinish {
     fn apply_finish_if_current(
         project_proxy: &mut ProjectProxy,
         generation: u64,
-        result: anyhow::Result<FinishedSplitIndexing>,
+        result: DeferredIndexingResult,
     ) -> bool {
         if project_proxy.generation() != generation {
             tracing::info!(
@@ -208,7 +212,7 @@ impl DeferredIndexingFinish {
             // over an equal or older package from the background clone.
             Ok(finished) => project_proxy
                 .mutate_saved_preserving_generation(|saved| {
-                    saved.split_indexing().merge_finished(finished)
+                    saved.split_indexing().merge_finished(*finished)
                 })
                 .unwrap_or_else(|error| {
                     tracing::warn!(

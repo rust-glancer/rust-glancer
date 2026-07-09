@@ -6,6 +6,7 @@ use tokio::sync::oneshot;
 use crate::documents::DirtyDocumentSnapshot;
 
 pub(crate) type EngineResponse<T> = oneshot::Sender<anyhow::Result<T>>;
+pub(crate) type DeferredIndexingResult = anyhow::Result<Box<rg_project::FinishedSplitIndexing>>;
 
 #[derive(Debug)]
 pub(crate) enum EngineCommand {
@@ -100,7 +101,7 @@ pub(crate) enum EngineCommand {
     },
     DeferredIndexingFinished {
         generation: u64,
-        result: anyhow::Result<rg_project::FinishedSplitIndexing>,
+        result: DeferredIndexingResult,
     },
     Shutdown(EngineResponse<()>),
 }
