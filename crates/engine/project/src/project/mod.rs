@@ -176,12 +176,14 @@ impl Project {
             let path = match change.path.canonicalize() {
                 Ok(path) => path,
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                    // A rename-heavy filesystem operation can remove a path after the watcher has
-                    // queued it. The surviving paths still describe useful work, so do not reject
-                    // their whole batch because this event is already obsolete.
+                    // We intentionally do not care about deleted module files. Valid Rust removes
+                    // or changes the surviving `mod foo;` declaration, and saving that file
+                    // rebuilds the graph. If the declaration still names the deleted file, the
+                    // project does not compile and keeping the previous analysis is good enough.
                     //
-                    // TODO: Model deleted Cargo inputs as graph changes instead of treating every
-                    // missing saved path as an obsolete replacement event.
+                    // Deleting an auto-discovered Cargo target or globbed package can technically
+                    // change a valid graph, but that uncommon case is not worth deletion-driven
+                    // reindexing either. Another surviving Cargo change or a full rebuild fixes it.
                     continue;
                 }
                 Err(error) => {

@@ -131,6 +131,12 @@ impl FingerprintBuilder {
         // metadata initially knows only target roots, so using it here would miss edits in
         // out-of-line modules and incorrectly accept stale analysis payloads. Keep the same stable
         // path ordering as fresh source fingerprints so equivalent file sets hash identically.
+        //
+        // We do not care about weird scenarios such as adding `mod foo;`, saving the parent,
+        // disabling the engine, creating `foo.rs` with the editor closed, reopening the engine,
+        // and then being surprised that `foo.rs` is not discovered. Whoever does that can hit
+        // Ctrl+S and enjoy the rebuilt cache. This is an absurd scenario that does not happen in
+        // sane reality and is not worth supporting by persisting negative module paths.
         for file in files {
             builder.path("file.path", workspace_root, file.path());
             builder.bytes(
