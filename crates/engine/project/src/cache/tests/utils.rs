@@ -595,6 +595,323 @@ pub struct Dep;
     expect.assert_eq(&format!("{}\n", dump.trim_end()));
 }
 
+pub(super) fn check_startup_cache_misses_rebuild_reverse_dependents(expect: Expect) {
+    let fixture = ProjectSourceFixture::build(
+        r#"
+//- /Cargo.toml
+[workspace]
+members = ["dep", "mid", "app", "independent"]
+resolver = "3"
+
+//- /dep/Cargo.toml
+[package]
+name = "dep"
+version = "0.1.0"
+edition = "2024"
+
+//- /dep/src/lib.rs
+pub struct Before;
+pub struct Kept;
+
+//- /mid/Cargo.toml
+[package]
+name = "mid"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+dep = { path = "../dep" }
+
+//- /mid/src/lib.rs
+pub use dep::Kept;
+
+//- /app/Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+mid = { path = "../mid" }
+
+//- /app/src/lib.rs
+pub fn keep(value: mid::Ke$usage$pt) -> mid::Kept { value }
+
+//- /independent/Cargo.toml
+[package]
+name = "independent"
+version = "0.1.0"
+edition = "2024"
+
+//- /independent/src/lib.rs
+pub struct Independent;
+"#,
+    );
+    let workspace = fixture.workspace_metadata();
+    let project = Project::builder(workspace.clone())
+        .package_residency_policy(PackageResidencyPolicy::AllOffloadable)
+        .build()
+        .expect("fixture project should write the first cache generation");
+    drop(project);
+
+    // Only the dependency source changes between processes. Its own artifact must miss, and the
+    // cache plan must reject both reverse dependents even though their source files still match.
+    fixture.write_fixture_files(
+        r#"
+//- /dep/src/lib.rs
+pub struct AfterOne;
+pub struct AfterTwo;
+pub struct Kept;
+"#,
+    );
+    let workspace_after_edit = fixture.workspace_metadata();
+    let run = rg_profile::test_support::ProfileTest::start(
+        crate::profile_descriptors(),
+        "project.build.cache_probe",
+    );
+    let project = Project::builder(workspace_after_edit)
+        .package_residency_policy(PackageResidencyPolicy::AllOffloadable)
+        .build()
+        .expect("dependency cache miss should rebuild its reverse dependents");
+    let profile = run.finish();
+
+    let marker = fixture.markers().position("usage");
+    let snapshot = project.snapshot();
+    let context = snapshot
+        .file_contexts_for_path(fixture.path(&marker.path))
+        .expect("app source should resolve to a file context")
+        .pop()
+        .expect("app source should have one file context");
+    let target = context
+        .targets
+        .first()
+        .copied()
+        .expect("app source should belong to one target");
+    let analysis = snapshot
+        .full_analysis()
+        .expect("rebuilt project analysis should materialize");
+    let mut definitions = analysis
+        .goto_definition(target, context.file, marker.offset)
+        .expect("reexported dependency type should resolve");
+    definitions.sort_by_key(|definition| {
+        (
+            definition.target.package.0,
+            definition.target.target.0,
+            definition.name.clone(),
+        )
+    });
+
+    let mut dump = String::new();
+    writeln!(&mut dump, "dependency cache miss closure").expect("string writes should not fail");
+    writeln!(
+        &mut dump,
+        "hits {}",
+        profile_counter(&profile, metric::CACHE_PROBE_HITS),
+    )
+    .expect("string writes should not fail");
+    writeln!(
+        &mut dump,
+        "direct restore misses {}",
+        profile_counter(&profile, metric::CACHE_PROBE_PARSE_RESTORE_ERRORS),
+    )
+    .expect("string writes should not fail");
+    writeln!(
+        &mut dump,
+        "reverse-dependent misses {}",
+        profile_counter(&profile, metric::CACHE_PROBE_PROPAGATED_MISSES),
+    )
+    .expect("string writes should not fail");
+    writeln!(&mut dump, "definitions").expect("string writes should not fail");
+    for definition in definitions {
+        let package = snapshot
+            .parse_db()
+            .package(definition.target.package.0)
+            .expect("definition package should exist");
+        writeln!(
+            &mut dump,
+            "- {} {} {}",
+            package.package_name(),
+            definition.kind,
+            definition.name,
+        )
+        .expect("string writes should not fail");
+    }
+
+    expect.assert_eq(&format!("{}\n", dump.trim_end()));
+}
+
+pub(super) fn check_missing_dependency_artifact_rebuilds_reverse_dependents(expect: Expect) {
+    let fixture = ProjectSourceFixture::build(
+        r#"
+//- /Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+dep = { path = "dep" }
+
+//- /src/lib.rs
+pub struct App(dep::Dep);
+
+//- /dep/Cargo.toml
+[package]
+name = "dep"
+version = "0.1.0"
+edition = "2024"
+
+//- /dep/src/lib.rs
+pub struct Dep;
+"#,
+    );
+    let workspace = fixture.workspace_metadata();
+    let project = Project::builder(workspace.clone())
+        .package_residency_policy(PackageResidencyPolicy::AllOffloadable)
+        .build()
+        .expect("fixture project should write both package artifacts");
+    let dependency = package_cache_artifact_for(&project, "dep");
+    let dependency_path = project
+        .state
+        .cache_store
+        .package_artifact_path(&dependency.header.package);
+    fs::remove_file(&dependency_path).expect("test should remove dependency cache artifact");
+    drop(project);
+
+    let run = rg_profile::test_support::ProfileTest::start(
+        crate::profile_descriptors(),
+        "project.build.cache_probe",
+    );
+    let rebuilt = Project::builder(workspace)
+        .package_residency_policy(PackageResidencyPolicy::AllOffloadable)
+        .build()
+        .expect("missing dependency artifact should rebuild the dependency closure");
+    let profile = run.finish();
+    let symbols = rebuilt
+        .snapshot()
+        .full_analysis()
+        .expect("rebuilt project analysis should materialize")
+        .workspace_symbols("Dep")
+        .expect("dependency symbol query should resolve");
+
+    let mut dump = String::new();
+    writeln!(&mut dump, "missing dependency artifact closure")
+        .expect("string writes should not fail");
+    writeln!(
+        &mut dump,
+        "missing artifacts {}",
+        profile_counter(&profile, metric::CACHE_PROBE_MISSING_ARTIFACTS),
+    )
+    .expect("string writes should not fail");
+    writeln!(
+        &mut dump,
+        "reverse-dependent misses {}",
+        profile_counter(&profile, metric::CACHE_PROBE_PROPAGATED_MISSES),
+    )
+    .expect("string writes should not fail");
+    writeln!(
+        &mut dump,
+        "hits {}",
+        profile_counter(&profile, metric::CACHE_PROBE_HITS),
+    )
+    .expect("string writes should not fail");
+    writeln!(&mut dump, "dependency symbols {}", symbols.len())
+        .expect("string writes should not fail");
+
+    expect.assert_eq(&format!("{}\n", dump.trim_end()));
+}
+
+pub(super) fn check_startup_discards_incomplete_cache_update(expect: Expect) {
+    let fixture = ProjectSourceFixture::build(
+        r#"
+//- /Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+dep = { path = "dep" }
+
+//- /src/lib.rs
+pub struct App(dep::Dep);
+
+//- /dep/Cargo.toml
+[package]
+name = "dep"
+version = "0.1.0"
+edition = "2024"
+
+//- /dep/src/lib.rs
+pub struct Dep;
+"#,
+    );
+    let workspace = fixture.workspace_metadata();
+    let project = Project::builder(workspace.clone())
+        .package_residency_policy(PackageResidencyPolicy::AllOffloadable)
+        .build()
+        .expect("fixture project should write a complete cache generation");
+    let artifact = package_cache_artifact_for(&project, "dep");
+
+    // Start another package-set write and deliberately omit commit. This models a process stopping
+    // after one package replacement while older dependent artifacts still exist.
+    {
+        let update = project
+            .state
+            .cache_store
+            .begin_artifact_update()
+            .expect("test should start an incomplete cache update");
+        update
+            .write_artifact(&artifact)
+            .expect("test should replace one package artifact");
+    }
+    drop(project);
+
+    let recovery_run = rg_profile::test_support::ProfileTest::start(
+        crate::profile_descriptors(),
+        "project.build.cache_probe",
+    );
+    let recovered = Project::builder(workspace.clone())
+        .package_residency_policy(PackageResidencyPolicy::AllOffloadable)
+        .build()
+        .expect("incomplete cache update should fall back to a cold build");
+    let recovery_profile = recovery_run.finish();
+    drop(recovered);
+
+    let clean_run = rg_profile::test_support::ProfileTest::start(
+        crate::profile_descriptors(),
+        "project.build.cache_probe",
+    );
+    let _clean = Project::builder(workspace)
+        .package_residency_policy(PackageResidencyPolicy::AllOffloadable)
+        .build()
+        .expect("cold recovery should publish a reusable cache again");
+    let clean_profile = clean_run.finish();
+
+    let mut dump = String::new();
+    writeln!(&mut dump, "incomplete cache update recovery").expect("string writes should not fail");
+    writeln!(
+        &mut dump,
+        "recovery hits {}",
+        profile_counter(&recovery_profile, metric::CACHE_PROBE_HITS),
+    )
+    .expect("string writes should not fail");
+    writeln!(
+        &mut dump,
+        "recovery missing artifacts {}",
+        profile_counter(&recovery_profile, metric::CACHE_PROBE_MISSING_ARTIFACTS),
+    )
+    .expect("string writes should not fail");
+    writeln!(
+        &mut dump,
+        "next startup hits {}",
+        profile_counter(&clean_profile, metric::CACHE_PROBE_HITS),
+    )
+    .expect("string writes should not fail");
+
+    expect.assert_eq(&format!("{}\n", dump.trim_end()));
+}
+
 pub(super) fn check_startup_cache_rejects_body_ir_policy_mismatch(expect: Expect) {
     let fixture = ProjectSourceFixture::build(
         r#"
@@ -675,6 +992,7 @@ fn cache_probe_misses(snapshot: &rg_profile::test_support::TestSnapshot) -> u64 
         metric::CACHE_PROBE_BODY_IR_POLICY_MISMATCHES,
         metric::CACHE_PROBE_PARSE_RESTORE_ERRORS,
         metric::CACHE_PROBE_UNPLANNED_PACKAGES,
+        metric::CACHE_PROBE_PROPAGATED_MISSES,
     ]
     .into_iter()
     .map(|metric| profile_counter(snapshot, metric))

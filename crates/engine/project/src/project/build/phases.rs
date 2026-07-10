@@ -3,7 +3,7 @@
 use anyhow::Context as _;
 
 use rg_body_ir::{BodyIrBuildPolicy, BodyIrDb};
-use rg_def_map::{DefMapDb, PackageSlot};
+use rg_def_map::DefMapDb;
 use rg_item_tree::ItemTreeDb;
 use rg_package_store::{PackageEntry, PackageStore};
 use rg_parse::ParseDb;
@@ -314,7 +314,6 @@ impl PackageBuildPlan {
             };
         }
 
-        let mut source_packages = Vec::new();
         let mut cache_probe = StartupCacheProbe::new(
             package_count,
             body_ir_policy,
@@ -325,15 +324,8 @@ impl PackageBuildPlan {
             parse,
         );
 
-        for package_idx in 0..package_count {
-            let package = PackageSlot(package_idx);
-            if cache_probe.should_build_from_source(package) {
-                source_packages.push(package);
-            }
-        }
-
         Self {
-            source_packages: PhasePackageSet::from_packages(source_packages),
+            source_packages: PhasePackageSet::from_packages(cache_probe.source_packages()),
         }
     }
 }

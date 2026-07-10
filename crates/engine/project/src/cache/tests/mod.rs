@@ -461,6 +461,39 @@ fn startup_cache_profile_reports_probe_hits() {
 }
 
 #[test]
+fn startup_cache_misses_rebuild_reverse_dependents() {
+    utils::check_startup_cache_misses_rebuild_reverse_dependents(expect![[r#"
+        dependency cache miss closure
+        hits 1
+        direct restore misses 1
+        reverse-dependent misses 2
+        definitions
+        - dep struct Kept
+    "#]]);
+}
+
+#[test]
+fn missing_dependency_artifact_rebuilds_reverse_dependents() {
+    utils::check_missing_dependency_artifact_rebuilds_reverse_dependents(expect![[r#"
+        missing dependency artifact closure
+        missing artifacts 1
+        reverse-dependent misses 1
+        hits 0
+        dependency symbols 1
+    "#]]);
+}
+
+#[test]
+fn startup_discards_incomplete_cache_updates() {
+    utils::check_startup_discards_incomplete_cache_update(expect![[r#"
+        incomplete cache update recovery
+        recovery hits 0
+        recovery missing artifacts 2
+        next startup hits 2
+    "#]]);
+}
+
+#[test]
 fn startup_indexing_rejects_artifacts_when_body_ir_policy_needs_more_bodies() {
     utils::check_startup_cache_rejects_body_ir_policy_mismatch(expect![[r#"
         startup body IR policy mismatch

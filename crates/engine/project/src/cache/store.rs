@@ -23,6 +23,7 @@ use super::{
 const CACHE_PACKAGES_DIR_NAME: &str = "packages";
 const CACHE_GENERATION_DIR_PREFIX: &str = "graph-";
 const PACKAGE_ARTIFACT_EXTENSION: &str = "rgpkg";
+const CACHE_UPDATE_MARKER_FILE_NAME: &str = "update-in-progress";
 
 /// Root and naming policy for package cache artifacts.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -172,10 +173,12 @@ impl PackageCacheStore {
 
     #[cfg(test)]
     pub(crate) fn write_artifact(&self, artifact: &PackageCacheArtifact) -> anyhow::Result<()> {
-        self.prepare_artifact_writes()?.write_artifact(artifact)
+        let update = self.begin_artifact_update()?;
+        update.write_artifact(artifact)?;
+        update.commit()
     }
 
-    pub(crate) fn prepare_artifact_writes(&self) -> anyhow::Result<PreparedPackageCacheWriter<'_>> {
+    pub(crate) fn begin_artifact_update(&self) -> anyhow::Result<PackageCacheUpdate<'_>> {
         let package_dir = self.generation_dir();
         fs::create_dir_all(&package_dir).with_context(|| {
             format!(
@@ -184,7 +187,46 @@ impl PackageCacheStore {
             )
         })?;
 
-        Ok(PreparedPackageCacheWriter { store: self })
+        let marker = self.cache_update_marker_path();
+        if marker.try_exists().with_context(|| {
+            format!(
+                "while attempting to inspect package cache update marker {}",
+                marker.display(),
+            )
+        })? {
+            anyhow::bail!(
+                "package cache update marker already exists at {}",
+                marker.display(),
+            );
+        }
+
+        // The package set is one coarse cache transaction. If the process stops after replacing
+        // only some artifacts, startup sees this marker and discards the whole disposable cache
+        // instead of trying to infer which cross-package IDs still agree.
+        Self::write_bytes_atomically(&marker, b"package cache update in progress\n")?;
+
+        Ok(PackageCacheUpdate { store: self })
+    }
+
+    /// Discards package artifacts left by an interrupted multi-package update.
+    pub(crate) fn recover_incomplete_update(&self) -> anyhow::Result<()> {
+        let marker = self.cache_update_marker_path();
+        if !marker.try_exists().with_context(|| {
+            format!(
+                "while attempting to inspect package cache update marker {}",
+                marker.display(),
+            )
+        })? {
+            return Ok(());
+        }
+
+        self.clear_package_artifacts().with_context(|| {
+            format!(
+                "while attempting to discard incomplete package cache update {}",
+                marker.display(),
+            )
+        })?;
+        Ok(())
     }
 
     pub fn read_artifact(
@@ -265,7 +307,7 @@ impl PackageCacheStore {
         }
     }
 
-    fn write_artifact_bytes(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
+    fn write_bytes_atomically(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
         // Cache artifacts must appear atomically: readers either observe the previous complete
         // payload or the newly committed one, never a partially written file.
         let mut file = AtomicWriteFile::options().open(path).with_context(|| {
@@ -299,17 +341,35 @@ impl PackageCacheStore {
     fn generation_dir_name(&self) -> String {
         format!("{CACHE_GENERATION_DIR_PREFIX}{}", self.generation)
     }
+
+    fn cache_update_marker_path(&self) -> PathBuf {
+        self.generation_dir().join(CACHE_UPDATE_MARKER_FILE_NAME)
+    }
 }
 
-/// Package artifact writer for a cache generation whose directory is already prepared.
-pub(crate) struct PreparedPackageCacheWriter<'a> {
+/// One package-set cache update whose incomplete marker survives unless explicitly committed.
+///
+/// Dropping this value after a write failure deliberately leaves the marker in place. The next
+/// startup then discards every package artifact rather than attempting to salvage a mixed set.
+pub(crate) struct PackageCacheUpdate<'a> {
     store: &'a PackageCacheStore,
 }
 
-impl PreparedPackageCacheWriter<'_> {
+impl PackageCacheUpdate<'_> {
     pub(crate) fn write_artifact(&self, artifact: &PackageCacheArtifact) -> anyhow::Result<()> {
         let bytes = PackageCacheCodec::encode_artifact(artifact)?;
         let path = self.store.package_artifact_path(&artifact.header.package);
-        PackageCacheStore::write_artifact_bytes(&path, bytes.as_ref())
+        PackageCacheStore::write_bytes_atomically(&path, bytes.as_ref())
+    }
+
+    /// Commits the package set by removing the marker only after every artifact is durable.
+    pub(crate) fn commit(self) -> anyhow::Result<()> {
+        let marker = self.store.cache_update_marker_path();
+        fs::remove_file(&marker).with_context(|| {
+            format!(
+                "while attempting to commit package cache update {}",
+                marker.display(),
+            )
+        })
     }
 }

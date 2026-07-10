@@ -13,7 +13,7 @@ use rg_std::Shrink;
 
 use crate::{
     PackageResidency, ProjectMemoryPurgePoint,
-    cache::{PackageCacheArtifact, PackageCachePayload, PreparedPackageCacheWriter},
+    cache::{PackageCacheArtifact, PackageCachePayload, PackageCacheUpdate},
     profile::{BuildMemorySampler, record_build_checkpoint},
 };
 
@@ -217,7 +217,7 @@ impl<'a> ResidencyApplication<'a> {
             return Ok(());
         }
 
-        let writer = self.project.cache_store.prepare_artifact_writes()?;
+        let update = self.project.cache_store.begin_artifact_update()?;
         let thread_pool = Self::local_thread_pool("rg-cache-write")?;
         let project = &*self.project;
 
@@ -226,10 +226,13 @@ impl<'a> ResidencyApplication<'a> {
         thread_pool
             .install(|| {
                 packages.as_slice().par_iter().try_for_each(|package| {
-                    Self::write_package_artifact(project, &writer, *package)
+                    Self::write_package_artifact(project, &update, *package)
                 })
             })
-            .context("while attempting to write package cache artifacts")
+            .context("while attempting to write package cache artifacts")?;
+        update
+            .commit()
+            .context("while attempting to commit package cache artifact update")
     }
 
     /// Drops compactable project data after package payloads have been offloaded.
@@ -252,11 +255,11 @@ impl<'a> ResidencyApplication<'a> {
     /// Writes one package artifact from currently resident phase payloads.
     fn write_package_artifact(
         project: &ProjectState,
-        writer: &PreparedPackageCacheWriter<'_>,
+        update: &PackageCacheUpdate<'_>,
         package: PackageSlot,
     ) -> anyhow::Result<()> {
         let artifact = Self::artifact_from_project(project, package)?;
-        writer.write_artifact(&artifact).with_context(|| {
+        update.write_artifact(&artifact).with_context(|| {
             format!(
                 "while attempting to write package cache artifact for package {}",
                 package.0,
