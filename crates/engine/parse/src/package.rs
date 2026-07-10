@@ -54,12 +54,12 @@ impl Package {
         self.files.get_or_parse_file(file_path)
     }
 
-    /// Reparses a package file from disk when it is already known to this package.
-    pub(crate) fn reparse_saved_file(
+    pub(crate) fn reparse_saved_file_from_source(
         &mut self,
         file_path: &Path,
-    ) -> anyhow::Result<Option<FileId>> {
-        self.files.reparse_file_from_disk(file_path)
+        source: &str,
+    ) -> Option<FileId> {
+        self.files.reparse_saved_file_from_source(file_path, source)
     }
 
     /// Reparses a package file from caller-provided text when it is already known to this package.

@@ -12,7 +12,7 @@ use test_fixture::testonly::MarkedText;
 use self::utils::{HostFixture, HostObservation};
 use crate::{
     AnalysisSurface, BuildProcessMemory, PackageResidencyPolicy, Project, ProjectMemoryHooks,
-    ProjectMemoryPurgePoint, SplitIndexingMode,
+    ProjectMemoryPurgePoint, SavedFileChange, SplitIndexingMode,
     testonly::{ProjectFixture, ProjectSourceFixture},
 };
 
@@ -67,6 +67,150 @@ pub struct User;
             ProjectMemoryPurgePoint::AfterProjectBuild,
         ],
         "fresh builds should expose the high-value transient memory boundaries",
+    );
+}
+
+#[test]
+fn batched_saved_source_changes_skip_missing_paths_and_rebuild_packages_once() {
+    let fixture = ProjectSourceFixture::build(
+        r#"
+//- /Cargo.toml
+[package]
+name = "batch_rebuild_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+mod account;
+mod user;
+
+//- /src/account.rs
+pub struct Account;
+
+//- /src/user.rs
+pub struct User;
+"#,
+    );
+    let points = Arc::new(Mutex::new(Vec::new()));
+    let hooks: Arc<dyn ProjectMemoryHooks> = Arc::new(RecordingMemoryHooks {
+        points: Arc::clone(&points),
+    });
+    let mut project = Project::builder(fixture.workspace_metadata())
+        .memory_hooks(hooks)
+        .build()
+        .expect("analysis project should build");
+    points
+        .lock()
+        .expect("recorded memory hook points should not be poisoned")
+        .clear();
+
+    let saved_files = fixture.write_fixture_files(
+        r#"
+//- /src/account.rs
+pub struct SavedAccount;
+
+//- /src/user.rs
+pub struct SavedUser;
+"#,
+    );
+    let mut changes = saved_files
+        .files()
+        .iter()
+        .map(|file| SavedFileChange::new(fixture.path(file.relative_path())))
+        .collect::<Vec<_>>();
+    changes.insert(1, SavedFileChange::new(fixture.path("src/disappeared.rs")));
+
+    let summary = project
+        .apply_changes(changes)
+        .expect("batched source changes should apply");
+
+    assert_eq!(
+        summary.changed_files.len(),
+        2,
+        "both saved module files should be reported as changed"
+    );
+    assert_eq!(
+        summary.affected_packages.len(),
+        1,
+        "one package should be rebuilt for the source-change batch"
+    );
+    assert_eq!(
+        points
+            .lock()
+            .expect("recorded memory hook points should not be poisoned")
+            .as_slice(),
+        [
+            ProjectMemoryPurgePoint::AfterItemTreeSyntaxEviction,
+            ProjectMemoryPurgePoint::AfterPackageRebuild,
+        ],
+        "a multi-file source batch should rebuild the affected package closure once",
+    );
+}
+
+#[test]
+fn source_batch_skips_file_removed_after_canonicalization() {
+    let fixture = ProjectSourceFixture::build(
+        r#"
+//- /Cargo.toml
+[package]
+name = "removed_during_batch_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+mod user;
+
+//- /src/user.rs
+pub struct User;
+"#,
+    );
+    let mut project = fixture.build_project();
+    let transient = fixture.path("src/transient.rs");
+    let user = fixture.path("src/user.rs");
+    std::fs::write(&transient, "pub struct Transient;\n")
+        .expect("transient fixture should be writable");
+    std::fs::write(&user, "pub struct SavedUser;\n").expect("user fixture should be writable");
+
+    // The iterator removes transient.rs only when Project asks for the second item. This places the
+    // removal after transient.rs was canonicalized and before the source-staging phase begins.
+    let transient_for_changes = transient.clone();
+    let user_for_changes = user.clone();
+    let mut next_change = 0usize;
+    let changes = std::iter::from_fn(move || match next_change {
+        0 => {
+            next_change += 1;
+            Some(SavedFileChange::new(&transient_for_changes))
+        }
+        1 => {
+            next_change += 1;
+            std::fs::remove_file(&transient_for_changes)
+                .expect("transient fixture should be removable between batch phases");
+            Some(SavedFileChange::new(&user_for_changes))
+        }
+        _ => None,
+    });
+
+    let summary = project
+        .apply_changes(changes)
+        .expect("surviving source changes should still apply");
+
+    let [changed_file] = summary.changed_files.as_slice() else {
+        panic!("only the surviving user file should be reported as changed");
+    };
+    let changed_path = project
+        .state
+        .parse_db()
+        .package(changed_file.package.0)
+        .expect("changed package should exist")
+        .parsed_file(changed_file.file)
+        .expect("changed file should exist")
+        .path()
+        .to_path_buf();
+    assert_eq!(
+        changed_path,
+        user.canonicalize()
+            .expect("user fixture should canonicalize"),
+        "a disappeared path should not prevent later batch members from rebuilding"
     );
 }
 

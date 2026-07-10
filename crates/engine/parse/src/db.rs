@@ -149,19 +149,21 @@ impl ParseDb {
         }
     }
 
-    /// Reparses a saved file for every parsed package that already owns `file_path`.
+    /// Reparses a saved file from source staged before the project update began.
     ///
-    /// This keeps package-local `FileId`s stable. Unknown files do not appear in the returned owner
-    /// list yet; if a package rebuild later discovers them through `mod foo;`, ordinary parsing
-    /// reads the same saved filesystem snapshot from disk.
-    pub fn reparse_saved_file(&mut self, file_path: &Path) -> anyhow::Result<Vec<PackageFileRef>> {
-        let canonical_file_path = file_path
-            .canonicalize()
-            .with_context(|| format!("while attempting to canonicalize {}", file_path.display()))?;
+    /// `canonical_file_path` must use the same canonical identity stored in the parse database.
+    /// Unlike dirty-buffer reparsing, the parsed file remains filesystem-backed so staged source
+    /// text is not retained after the update finishes.
+    pub fn reparse_saved_file_from_source(
+        &mut self,
+        canonical_file_path: &Path,
+        source: &str,
+    ) -> Vec<PackageFileRef> {
         let mut changed_files = Vec::new();
 
         for (package_slot, package) in self.packages.iter_mut().enumerate() {
-            let Some(file_id) = package.reparse_saved_file(&canonical_file_path)? else {
+            let Some(file_id) = package.reparse_saved_file_from_source(canonical_file_path, source)
+            else {
                 continue;
             };
 
@@ -171,7 +173,7 @@ impl ParseDb {
             });
         }
 
-        Ok(changed_files)
+        changed_files
     }
 
     /// Reparses a known source file from an in-memory buffer for every package that owns it.

@@ -117,17 +117,55 @@ impl Project {
     }
 
     /// Applies one saved file replacement and refreshes derived analysis state.
+    ///
+    /// A path that disappeared before processing is ignored. Filesystem watchers can observe the
+    /// old side of a rename after the new saved state is already on disk, and that stale event must
+    /// not prevent other paths in the same batch from being applied.
     pub fn apply_change(
         &mut self,
         change: SavedFileChange,
     ) -> anyhow::Result<AnalysisChangeSummary> {
-        let path = change.path.canonicalize().with_context(|| {
-            format!(
-                "while attempting to canonicalize changed file {}",
-                change.path.display()
-            )
-        })?;
-        update::apply_change(self, SavedFileChange { path })
+        self.apply_changes([change])
+    }
+
+    /// Applies existing saved file replacements as one coherent project update.
+    pub fn apply_changes(
+        &mut self,
+        changes: impl IntoIterator<Item = SavedFileChange>,
+    ) -> anyhow::Result<AnalysisChangeSummary> {
+        let mut canonical_changes = Vec::new();
+
+        for change in changes {
+            let path = match change.path.canonicalize() {
+                Ok(path) => path,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    // A rename-heavy filesystem operation can remove a path after the watcher has
+                    // queued it. The surviving paths still describe useful work, so do not reject
+                    // their whole batch because this event is already obsolete.
+                    //
+                    // TODO: Model deleted Cargo inputs as graph changes instead of treating every
+                    // missing saved path as an obsolete replacement event.
+                    continue;
+                }
+                Err(error) => {
+                    return Err(error).with_context(|| {
+                        format!(
+                            "while attempting to canonicalize changed file {}",
+                            change.path.display()
+                        )
+                    });
+                }
+            };
+            canonical_changes.push(SavedFileChange { path });
+        }
+
+        // Watcher and editor notifications can name the same file through separate paths. Sorting
+        // after canonicalization removes aliases in O(n log n), which keeps large checkout batches
+        // away from the quadratic behavior of a Vec-backed ordered set.
+        canonical_changes.sort_by(|left, right| left.path.cmp(&right.path));
+        canonical_changes.dedup_by(|left, right| left.path == right.path);
+
+        update::apply_changes(self, canonical_changes)
     }
 
     /// Builds an ephemeral analysis project from dirty editor buffers.
@@ -183,7 +221,7 @@ impl SavedFileChange {
     }
 }
 
-/// Summary of what one saved-file change touched.
+/// Summary of what one saved-file update touched.
 #[derive(Debug, Clone, PartialEq, Eq, MemorySize)]
 pub struct AnalysisChangeSummary {
     pub changed_files: Vec<ChangedFile>,

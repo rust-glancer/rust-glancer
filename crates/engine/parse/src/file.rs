@@ -220,23 +220,20 @@ impl FileDb {
         Ok(file_id)
     }
 
-    /// Reparses an already known file from the saved filesystem snapshot.
-    pub(super) fn reparse_file_from_disk(
+    /// Reparses an already known saved file from source read before mutation started.
+    pub(super) fn reparse_saved_file_from_source(
         &mut self,
         file_path: &Path,
-    ) -> anyhow::Result<Option<FileId>> {
-        let Some(file_id) = self.file_ids_by_path.get(file_path).copied() else {
-            return Ok(None);
-        };
-
-        let source = Self::read_source(file_path)?;
+        source: &str,
+    ) -> Option<FileId> {
+        let file_id = self.file_ids_by_path.get(file_path).copied()?;
         self.parsed_files[file_id] = Self::parse_source(
             file_path.to_path_buf(),
-            &source,
+            source,
             self.edition,
             ParsedSource::SavedFile,
         );
-        Ok(Some(file_id))
+        Some(file_id)
     }
 
     /// Reparses an already known file from caller-provided source text.
