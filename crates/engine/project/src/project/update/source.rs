@@ -4,6 +4,8 @@
 //! packages and their reverse dependents, and reports changed targets from the updated def-map
 //! snapshot.
 
+use std::{collections::HashSet, path::PathBuf};
+
 use anyhow::Context as _;
 
 use rg_def_map::PackageSlot;
@@ -17,31 +19,49 @@ pub(super) fn apply_source_changes(
     project: &mut Project,
     changes: Vec<SavedFileChange>,
 ) -> anyhow::Result<AnalysisChangeSummary> {
-    let mut changed_files = UniqueVec::new();
+    // Read every source before changing ParseDb. A later I/O error can then reject the update
+    // without leaving parsed files ahead of the package databases built from them.
+    let mut staged_changes = Vec::with_capacity(changes.len());
+    for change in changes {
+        let source = match std::fs::read_to_string(&change.path) {
+            Ok(source) => source,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                // The path disappeared after canonicalization, usually because a checkout or
+                // rename advanced again while this command waited. Other staged paths remain valid.
+                continue;
+            }
+            Err(error) => {
+                return Err(error).with_context(|| {
+                    format!(
+                        "while attempting to stage saved file change for {}",
+                        change.path.display()
+                    )
+                });
+            }
+        };
+        staged_changes.push((change, source));
+    }
+
+    let mut changed_files = Vec::new();
+    let mut changed_files_seen = HashSet::new();
     let mut fallback_package_roots = UniqueVec::new();
-    let mut fallback_saved_paths = Vec::new();
+    let mut fallback_saved_paths = HashSet::new();
 
     // Reparse every known file first, then rebuild the union of affected packages once. This keeps
     // large watcher batches proportional to the changed package set instead of to the number of
     // changed paths in the batch.
-    for change in changes {
+    for (change, source) in staged_changes {
         let changed = project
             .state
             .parse_db_mut()
-            .reparse_saved_file(&change.path)
-            .with_context(|| {
-                format!(
-                    "while attempting to apply saved file change for {}",
-                    change.path.display()
-                )
-            })?;
+            .reparse_saved_file_from_source(&change.path, &source);
 
         if changed.is_empty() {
             // A saved file can be new to the graph even though it now exists on disk. In that case,
             // package roots are the coarse ownership boundary: rebuilding the containing package
             // lets item-tree lowering rediscover any newly materialized `mod foo;` files through
             // the normal Rust module rules.
-            fallback_saved_paths.push(change.path.clone());
+            fallback_saved_paths.insert(change.path.clone());
             for package_slot in project
                 .state
                 .workspace()
@@ -52,10 +72,13 @@ pub(super) fn apply_source_changes(
         }
 
         for changed_file in changed {
-            changed_files.push(ChangedFile {
+            let changed_file = ChangedFile {
                 package: PackageSlot(changed_file.package),
                 file: changed_file.file,
-            });
+            };
+            if changed_files_seen.insert(changed_file) {
+                changed_files.push(changed_file);
+            }
         }
     }
 
@@ -68,29 +91,29 @@ pub(super) fn apply_source_changes(
         package::rebuild_packages(&mut project.state, &affected_packages)
             .context("while attempting to rebuild affected analysis packages")?;
     }
-    for saved_path in fallback_saved_paths {
-        promote_discovered_fallback_file(
-            project,
-            saved_path.as_path(),
-            fallback_package_roots.as_slice(),
-            &mut changed_files,
-        );
-    }
-    let changed_targets = targets_for_changed_files(project, changed_files.as_slice())
+    promote_discovered_fallback_files(
+        project,
+        &fallback_saved_paths,
+        fallback_package_roots.as_slice(),
+        &mut changed_files,
+        &mut changed_files_seen,
+    );
+    let changed_targets = targets_for_changed_files(project, &changed_files)
         .context("while attempting to report changed analysis targets")?;
 
     Ok(AnalysisChangeSummary {
-        changed_files: changed_files.into_vec(),
+        changed_files,
         affected_packages,
         changed_targets: changed_targets.into_vec(),
     })
 }
 
-fn promote_discovered_fallback_file(
+fn promote_discovered_fallback_files(
     project: &Project,
-    saved_path: &std::path::Path,
+    saved_paths: &HashSet<PathBuf>,
     fallback_package_roots: &[PackageSlot],
-    changed_files: &mut UniqueVec<ChangedFile>,
+    changed_files: &mut Vec<ChangedFile>,
+    changed_files_seen: &mut HashSet<ChangedFile>,
 ) {
     for package_slot in fallback_package_roots {
         let Some(package) = project.state.parse_db().package(package_slot.0) else {
@@ -98,16 +121,20 @@ fn promote_discovered_fallback_file(
         };
 
         // Unknown saved files only become target/file diagnostics candidates after a package
-        // rebuild proves they are actually part of the parsed module graph.
+        // rebuild proves they are actually part of the parsed module graph. Scan each rebuilt
+        // package once instead of scanning all parsed files again for every new saved path.
         for parsed_file in package.parsed_files() {
-            if parsed_file.path() != saved_path {
+            if !saved_paths.contains(parsed_file.path()) {
                 continue;
             }
 
-            changed_files.push(ChangedFile {
+            let changed_file = ChangedFile {
                 package: *package_slot,
                 file: parsed_file.file_id(),
-            });
+            };
+            if changed_files_seen.insert(changed_file) {
+                changed_files.push(changed_file);
+            }
         }
     }
 }

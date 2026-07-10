@@ -4,7 +4,7 @@
 //! dangerous than useful. This path reloads metadata and rebuilds every non-sysroot package so the
 //! downstream phase databases return to a single consistent snapshot.
 
-use std::sync::Arc;
+use std::{collections::HashSet, sync::Arc};
 
 use anyhow::Context as _;
 
@@ -54,13 +54,14 @@ pub(super) fn rebuild_workspace_graph(
         .state;
 
     let mut changed_files = Vec::new();
+    let mut changed_files_seen = HashSet::new();
     for change in changes {
         for file in project.state.file_refs_for_path(&change.path) {
             let changed_file = ChangedFile {
                 package: file.package,
                 file: file.file,
             };
-            if !changed_files.contains(&changed_file) {
+            if changed_files_seen.insert(changed_file) {
                 changed_files.push(changed_file);
             }
         }

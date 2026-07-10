@@ -25,6 +25,9 @@ use crate::{
 };
 
 const WATCH_DEBOUNCE: Duration = Duration::from_millis(300);
+// The notify debouncer expires paths independently, so a large checkout can produce a stream of
+// batches one tick apart. Wait for a global quiet period before asking the engine to rebuild.
+const WATCH_SETTLE: Duration = Duration::from_millis(600);
 
 type ProjectDebouncer = Debouncer<RecommendedWatcher, NoCache>;
 
@@ -47,32 +50,29 @@ impl ProjectWatcher {
         registry: EngineRegistry,
         recent_editor_saves: RecentEditorSaves,
     ) -> anyhow::Result<Self> {
+        anyhow::ensure!(
+            !workspace_roots.is_empty(),
+            "no workspace roots were provided for saved-project watching"
+        );
         let mut workspaces = Vec::new();
 
         for root in workspace_roots
             .into_iter()
             .map(WorkspaceWatcher::normalize_root)
         {
-            match WorkspaceWatcher::spawn(
+            let workspace = WorkspaceWatcher::spawn(
                 root.clone(),
                 registry.clone(),
                 recent_editor_saves.clone(),
-            ) {
-                Ok(workspace) => workspaces.push(workspace),
-                Err(error) => {
-                    tracing::warn!(
-                        root = %root.display(),
-                        error = %error,
-                        "failed to watch workspace root for saved project changes"
-                    );
-                }
-            }
+            )
+            .with_context(|| {
+                format!(
+                    "while attempting to start saved-project watcher for {}",
+                    root.display()
+                )
+            })?;
+            workspaces.push(workspace);
         }
-
-        anyhow::ensure!(
-            !workspaces.is_empty(),
-            "no workspace roots could be watched for saved project changes"
-        );
 
         Ok(Self {
             _workspaces: workspaces,
@@ -123,12 +123,13 @@ impl WorkspaceWatcher {
         let mut snapshot = ProjectPathSnapshot::scan(forwarder_root.as_path());
         let forwarder = tokio::spawn(async move {
             while let Some(result) = receiver.recv().await {
-                Self::forward_watcher_result(
+                let results = Self::collect_settled_results(result, &mut receiver).await;
+                Self::forward_watcher_results(
                     &mut snapshot,
                     forwarder_root.as_path(),
                     &registry,
                     &recent_editor_saves,
-                    result,
+                    results,
                 )
                 .await;
             }
@@ -141,87 +142,31 @@ impl WorkspaceWatcher {
         })
     }
 
+    async fn collect_settled_results(
+        first: DebounceEventResult,
+        receiver: &mut mpsc::UnboundedReceiver<DebounceEventResult>,
+    ) -> Vec<DebounceEventResult> {
+        let mut results = vec![first];
+
+        // Reset the wait after every result. This turns notify's per-path debounce stream into one
+        // workspace-level update after a checkout or agent write burst has settled.
+        loop {
+            match tokio::time::timeout(WATCH_SETTLE, receiver.recv()).await {
+                Ok(Some(result)) => results.push(result),
+                Ok(None) | Err(_) => return results,
+            }
+        }
+    }
+
     #[tracing::instrument(level = "trace", skip_all, fields(root = %root.display()))]
-    async fn forward_watcher_result(
+    async fn forward_watcher_results(
         snapshot: &mut ProjectPathSnapshot,
         root: &Path,
         registry: &EngineRegistry,
         recent_editor_saves: &RecentEditorSaves,
-        result: DebounceEventResult,
+        results: Vec<DebounceEventResult>,
     ) {
-        let paths = match result {
-            Ok(events) => {
-                let event_count = events.len();
-                let raw_path_count = events
-                    .iter()
-                    .map(|event| event.event.paths.len())
-                    .sum::<usize>();
-                if events.iter().any(|event| event.need_rescan()) {
-                    tracing::warn!(
-                        events = event_count,
-                        raw_paths = raw_path_count,
-                        "project watcher requested rescan after missed events"
-                    );
-                    let paths = snapshot.changed_paths_after_rescan(root);
-                    tracing::debug!(
-                        events = event_count,
-                        raw_paths = raw_path_count,
-                        relevant_paths = paths.len(),
-                        need_rescan = true,
-                        "processed project watcher batch"
-                    );
-                    paths
-                } else {
-                    let mut ignored_paths = 0usize;
-                    let mut unchanged_paths = 0usize;
-                    let paths = events
-                        .iter()
-                        .flat_map(|event| event.event.paths.iter())
-                        .filter_map(|path| {
-                            let project_path = WatchedProjectPath::from_event(path);
-                            let Some(project_path) = project_path else {
-                                ignored_paths += 1;
-                                return None;
-                            };
-                            if snapshot.refresh_path(&project_path) {
-                                Some(project_path)
-                            } else {
-                                unchanged_paths += 1;
-                                None
-                            }
-                        })
-                        .collect::<BTreeSet<_>>()
-                        .into_iter()
-                        .collect::<Vec<_>>();
-                    tracing::debug!(
-                        events = event_count,
-                        raw_paths = raw_path_count,
-                        ignored_paths,
-                        unchanged_paths,
-                        relevant_paths = paths.len(),
-                        need_rescan = false,
-                        "processed project watcher batch"
-                    );
-                    paths
-                }
-            }
-            Err(errors) => {
-                let error_count = errors.len();
-                for error in errors {
-                    tracing::warn!(
-                        error = %error,
-                        "project watcher reported an error; rescanning workspace root"
-                    );
-                }
-                let paths = snapshot.changed_paths_after_rescan(root);
-                tracing::debug!(
-                    errors = error_count,
-                    relevant_paths = paths.len(),
-                    "processed project watcher error batch"
-                );
-                paths
-            }
-        };
+        let paths = Self::changed_paths_for_results(snapshot, root, results);
         let path_count_before_save_filter = paths.len();
         let paths = recent_editor_saves.saves_to_process(paths).await;
 
@@ -240,6 +185,92 @@ impl WorkspaceWatcher {
             "forwarding server-side watched project changes"
         );
         registry.external_project_paths_changed(paths).await;
+    }
+
+    fn changed_paths_for_results(
+        snapshot: &mut ProjectPathSnapshot,
+        root: &Path,
+        results: Vec<DebounceEventResult>,
+    ) -> Vec<PathBuf> {
+        let batch_count = results.len();
+        let mut events = Vec::new();
+        let mut errors = Vec::new();
+
+        for result in results {
+            match result {
+                Ok(mut batch_events) => events.append(&mut batch_events),
+                Err(mut batch_errors) => errors.append(&mut batch_errors),
+            }
+        }
+
+        let event_count = events.len();
+        let raw_path_count = events
+            .iter()
+            .map(|event| event.event.paths.len())
+            .sum::<usize>();
+        let need_rescan = !errors.is_empty() || events.iter().any(|event| event.need_rescan());
+
+        if need_rescan {
+            if events.iter().any(|event| event.need_rescan()) {
+                tracing::warn!(
+                    batches = batch_count,
+                    events = event_count,
+                    raw_paths = raw_path_count,
+                    "project watcher requested rescan after missed events"
+                );
+            }
+            for error in &errors {
+                tracing::warn!(
+                    error = %error,
+                    "project watcher reported an error; rescanning workspace root"
+                );
+            }
+
+            let paths = snapshot.changed_paths_after_rescan(root);
+            tracing::debug!(
+                batches = batch_count,
+                events = event_count,
+                errors = errors.len(),
+                raw_paths = raw_path_count,
+                relevant_paths = paths.len(),
+                need_rescan = true,
+                "processed settled project watcher results"
+            );
+            return paths;
+        }
+
+        let mut ignored_paths = 0usize;
+        let mut unchanged_paths = 0usize;
+        let paths = events
+            .iter()
+            .flat_map(|event| event.event.paths.iter())
+            .filter_map(|path| {
+                let project_path = WatchedProjectPath::from_event(path);
+                let Some(project_path) = project_path else {
+                    ignored_paths += 1;
+                    return None;
+                };
+                if snapshot.refresh_path(&project_path) {
+                    Some(project_path)
+                } else {
+                    unchanged_paths += 1;
+                    None
+                }
+            })
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>();
+        tracing::debug!(
+            batches = batch_count,
+            events = event_count,
+            raw_paths = raw_path_count,
+            ignored_paths,
+            unchanged_paths,
+            relevant_paths = paths.len(),
+            need_rescan = false,
+            "processed settled project watcher results"
+        );
+        paths
     }
 
     fn normalize_root(path: impl AsRef<Path>) -> PathBuf {
@@ -383,5 +414,83 @@ impl ProjectPathSnapshot {
             }
             None => self.identities.remove(&normalized).is_some(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Instant;
+
+    use notify_debouncer_full::{
+        DebouncedEvent,
+        notify::{
+            Event, EventKind,
+            event::{DataChange, ModifyKind},
+        },
+    };
+    use test_fixture::fixture_crate;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn settled_results_merge_ready_watcher_backlog() {
+        let fixture = fixture_crate(
+            r#"
+            //- /Cargo.toml
+            [package]
+            name = "watcher_batch_fixture"
+            version = "0.1.0"
+            edition = "2024"
+
+            //- /src/account.rs
+            pub struct Account;
+
+            //- /src/user.rs
+            pub struct User;
+            "#,
+        );
+        let root = fixture.path("");
+        let account = fixture.path("src/account.rs");
+        let user = fixture.path("src/user.rs");
+        let mut snapshot = ProjectPathSnapshot::scan(&root);
+
+        std::fs::write(&account, "pub struct SavedAccount;\n")
+            .expect("account fixture should be writable");
+        std::fs::write(&user, "pub struct SavedUser;\n").expect("user fixture should be writable");
+
+        let (sender, mut receiver) = mpsc::unbounded_channel();
+        sender
+            .send(Ok(vec![changed_event(account.clone())]))
+            .expect("first watcher result should queue");
+        sender
+            .send(Ok(vec![changed_event(user.clone())]))
+            .expect("second watcher result should queue");
+        drop(sender);
+
+        let first = receiver
+            .recv()
+            .await
+            .expect("first watcher result should be available");
+        let results = WorkspaceWatcher::collect_settled_results(first, &mut receiver).await;
+        let paths = WorkspaceWatcher::changed_paths_for_results(&mut snapshot, &root, results);
+        let account = account
+            .canonicalize()
+            .expect("account fixture should canonicalize");
+        let user = user
+            .canonicalize()
+            .expect("user fixture should canonicalize");
+
+        assert_eq!(
+            paths,
+            vec![account, user],
+            "ready debounce results should become one project update"
+        );
+    }
+
+    fn changed_event(path: PathBuf) -> DebouncedEvent {
+        DebouncedEvent::new(
+            Event::new(EventKind::Modify(ModifyKind::Data(DataChange::Any))).add_path(path),
+            Instant::now(),
+        )
     }
 }
