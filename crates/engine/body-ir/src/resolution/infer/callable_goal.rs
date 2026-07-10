@@ -190,7 +190,7 @@ mod tests {
     use rg_ty::{GenericArg, NominalTy, TraitGoal, Ty};
 
     use super::*;
-    use crate::{ResolvedBodyData, testonly::BodyIrFixture};
+    use crate::{BodyIrLoader, ResolvedBodyData, testonly::BodyIrFixture};
 
     const FIXTURE: &str = r#"
 //- /Cargo.toml
@@ -331,7 +331,7 @@ pub fn use_it(seed: Name) {
             let body_ir = self
                 .project
                 .body_ir_db()
-                .read_txn(PackageLoader::resident_only("callable goal body ir"));
+                .read_txn(BodyIrLoader::resident_only("callable goal body ir"));
             let target_bodies = body_ir
                 .target_bodies(self.target)
                 .expect("target bodies should load")

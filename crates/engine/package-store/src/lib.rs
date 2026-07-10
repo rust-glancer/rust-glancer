@@ -125,7 +125,7 @@ impl<T> PackageStore<T> {
         PackageStoreReadTxn::from_store_entries(
             self.packages
                 .iter()
-                .map(|entry| (true, entry.resident_arc_for_txn())),
+                .map(|entry| (true, entry.resident_arc())),
             loader,
         )
     }
@@ -151,7 +151,7 @@ impl<T> PackageStore<T> {
                 .enumerate()
                 .map(|(package_idx, entry)| {
                     let package = PackageSlot(package_idx);
-                    let resident_package = entry.resident_arc_for_txn();
+                    let resident_package = entry.resident_arc();
                     (subset.contains(package), resident_package)
                 }),
             loader,
@@ -222,6 +222,14 @@ impl<T> PackageEntry<T> {
         }
     }
 
+    /// Clones the retained handle for a phase-specific read transaction.
+    pub fn resident_arc(&self) -> Option<Arc<T>> {
+        match &self.state {
+            PackageEntryState::Resident(package) => Some(Arc::clone(package)),
+            PackageEntryState::Offloaded => None,
+        }
+    }
+
     /// Returns whether this slot has been intentionally dropped from resident memory.
     pub fn is_offloaded(&self) -> bool {
         matches!(self.state, PackageEntryState::Offloaded)
@@ -231,13 +239,6 @@ impl<T> PackageEntry<T> {
     pub fn as_resident_unique_mut(&mut self) -> Option<&mut T> {
         match &mut self.state {
             PackageEntryState::Resident(package) => Arc::get_mut(package),
-            PackageEntryState::Offloaded => None,
-        }
-    }
-
-    fn resident_arc_for_txn(&self) -> Option<Arc<T>> {
-        match &self.state {
-            PackageEntryState::Resident(package) => Some(Arc::clone(package)),
             PackageEntryState::Offloaded => None,
         }
     }

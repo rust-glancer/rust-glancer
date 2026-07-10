@@ -248,7 +248,8 @@ impl Package {
 /// Serializable parse metadata for one package artifact.
 ///
 /// The file vector is intentionally package-local and ordered by `FileId`; cached item/semantic
-/// payloads can only be reused if those ids keep pointing at the same paths and line indexes.
+/// payloads can only be reused if those ids keep pointing at the same source revisions. Line
+/// indexes are derived lazily from those validated revisions instead of being persisted here.
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
 pub struct PackageParseSnapshot {
     pub(crate) files: Vec<ParsedFileSnapshot>,

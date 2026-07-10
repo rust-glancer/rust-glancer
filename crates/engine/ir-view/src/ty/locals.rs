@@ -411,12 +411,8 @@ impl<'a, 'db> BodyView<'a, 'db> {
         file_id: FileId,
         range: Option<TextSpan>,
     ) -> anyhow::Result<Vec<InferredBindingTy>> {
-        let Some(target_bodies) = self.db.body_ir.target_bodies(target)? else {
-            return Ok(Vec::new());
-        };
-
         let mut bindings = Vec::new();
-        for body in target_bodies.bodies() {
+        for (_, body) in self.db.body_ir.bodies(target, Some(file_id))? {
             for (binding_idx, binding) in body.bindings().iter().enumerate() {
                 if !binding.source.is_written_in_file(file_id) {
                     continue;
@@ -458,17 +454,8 @@ impl<'a, 'db> BodyView<'a, 'db> {
         target: TargetRef,
         file_id: FileId,
     ) -> anyhow::Result<Vec<ResolvedFunctionCall>> {
-        let Some(target_bodies) = self.db.body_ir.target_bodies(target)? else {
-            return Ok(Vec::new());
-        };
-
         let mut calls = Vec::new();
-        for (body_idx, body) in target_bodies.bodies().iter().enumerate() {
-            let body_ref = BodyRef {
-                target,
-                body: rg_ir_model::BodyId(body_idx),
-            };
-
+        for (body_ref, body) in self.db.body_ir.bodies(target, Some(file_id))? {
             for (expr_idx, expr) in body.exprs().iter().enumerate() {
                 if !expr.source.is_written_in_file(file_id) {
                     continue;
@@ -518,22 +505,11 @@ impl<'a, 'db> BodyView<'a, 'db> {
         target: TargetRef,
         file_id: FileId,
     ) -> anyhow::Result<Vec<BodyLocalGroup>> {
-        let Some(target_bodies) = self.db.body_ir.target_bodies(target)? else {
-            return Ok(Vec::new());
-        };
-
         let mut groups = Vec::new();
-        for (body_idx, body) in target_bodies.bodies().iter().enumerate() {
-            if body.source().file_id != file_id {
-                continue;
-            }
-
+        for (body_ref, body) in self.db.body_ir.bodies(target, Some(file_id))? {
             groups.push(BodyLocalGroup {
                 owner: body.owner().declaration(),
-                body: BodyRef {
-                    target,
-                    body: rg_ir_model::BodyId(body_idx),
-                },
+                body: body_ref,
             });
         }
 

@@ -9,11 +9,7 @@ use rg_source::{SourceDescriptor, SourceEntry, SourceInventory, SourcePath};
 use rg_syntax::{Edition, Parse as SyntaxParse, SourceFile};
 use rg_workspace::RustEdition;
 
-use crate::{
-    fs,
-    line_index::{LineIndex, LineIndexSnapshot},
-    span::Span,
-};
+use crate::{fs, line_index::LineIndex, span::Span};
 use rg_std::{MemorySize, Shrink};
 use wincode::{SchemaRead, SchemaWrite};
 
@@ -67,12 +63,11 @@ pub struct ParsedFile<'a> {
 
 /// Serializable file metadata retained after syntax trees are evicted.
 ///
-/// Cache-backed startup restores this data so later queries can still translate file ids into
-/// paths and source coordinates without rebuilding item trees first.
+/// Cache-backed startup only needs the source identity that preserves package-local file ids.
+/// Line indexes are derived from revision-validated source and remain lazy after restoration.
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
 pub struct ParsedFileSnapshot {
     pub(crate) source: SourceDescriptor,
-    pub(crate) line_index: LineIndexSnapshot,
 }
 
 impl ParsedFileSnapshot {
@@ -406,14 +401,14 @@ impl ParsedFileData {
     fn parse_snapshot(&self) -> anyhow::Result<ParsedFileSnapshot> {
         Ok(ParsedFileSnapshot {
             source: self.source.descriptor().clone(),
-            line_index: self.line_index.get(&self.source)?.to_snapshot(),
         })
     }
 
     fn from_parse_snapshot(snapshot: ParsedFileSnapshot, source: Arc<SourceEntry>) -> Self {
+        debug_assert_eq!(snapshot.source, *source.descriptor());
         Self {
             source,
-            line_index: LineIndexState::resident(LineIndex::from_snapshot(snapshot.line_index)),
+            line_index: LineIndexState::Offloaded(OnceLock::new()),
             syntax: None,
         }
     }

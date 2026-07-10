@@ -1,23 +1,36 @@
-//! Filesystem storage for package cache artifacts.
+//! Cache paths and atomic package-set updates.
 //!
-//! This module owns paths and atomic file replacement. Project-level code still owns invalidation:
-//! the store can load bytes for an already-vetted header, but it does not decide whether a package
-//! should be resident, rebuilt, or evicted.
+//! A generation directory belongs to one workspace graph. Individual package files are replaced
+//! atomically, while an update marker extends that guarantee across the package set: an interrupted
+//! update is discarded on the next startup instead of exposing mutually inconsistent artifacts.
+//!
+//! The on-disk shape under one claimed cache instance is:
+//!
+//! ```text
+//! packages/
+//!   graph-<workspace fingerprint>/
+//!     update-in-progress
+//!     package-<slot>-<name>-<package fingerprint>.rgpkg
+//! ```
+//!
+//! The marker is written before the first change and removed only after a successful commit. It is
+//! intentionally coarse: if the process stops after replacing three out of ten artifacts, startup
+//! removes the disposable package cache instead of trying to determine which cross-package ids
+//! still agree.
 
 use std::{
-    fmt, fs,
+    fs,
     io::Write as _,
     path::{Path, PathBuf},
 };
 
 use anyhow::Context as _;
 use atomic_write_file::AtomicWriteFile;
-use rg_package_store::{MalformedCacheError, PackageStoreError};
 use rg_workspace::WorkspaceMetadata;
 
-use super::{
-    CachedPackage, Fingerprint, PackageCacheArtifact, PackageCacheCodec, PackageCacheHeader,
-    PackageCacheInstance, WorkspaceCachePlan,
+use super::super::{
+    CachedPackage, Fingerprint, PackageCacheArtifact, PackageCacheCodec, PackageCacheInstance,
+    WorkspaceCachePlan,
 };
 
 const CACHE_PACKAGES_DIR_NAME: &str = "packages";
@@ -25,7 +38,11 @@ const CACHE_GENERATION_DIR_PREFIX: &str = "graph-";
 const PACKAGE_ARTIFACT_EXTENSION: &str = "rgpkg";
 const CACHE_UPDATE_MARKER_FILE_NAME: &str = "update-in-progress";
 
-/// Root and naming policy for package cache artifacts.
+/// Paths for one cache instance and one workspace-graph generation.
+///
+/// `root` is the already-claimed instance directory. `generation` selects the subdirectory for the
+/// workspace graph. `workspace_root` is kept so package fingerprints can normalize workspace-local
+/// paths the same way when constructing and looking up an artifact.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PackageCacheStore {
     workspace_root: PathBuf,
@@ -33,56 +50,11 @@ pub struct PackageCacheStore {
     generation: Fingerprint,
 }
 
-/// Typed failure from reading a package artifact file.
-#[derive(Debug)]
-pub(crate) enum PackageCacheReadError {
-    Io {
-        path: PathBuf,
-        source: std::io::Error,
-    },
-    Malformed {
-        source: MalformedCacheError,
-    },
-}
-
-impl PackageCacheReadError {
-    pub(crate) fn into_package_store_error(
-        self,
-        slot: rg_workspace::PackageSlot,
-    ) -> PackageStoreError {
-        match self {
-            Self::Io { path, source } => PackageStoreError::io(slot, path, source),
-            Self::Malformed { source } => PackageStoreError::malformed_cache(slot, source),
-        }
-    }
-}
-
-impl fmt::Display for PackageCacheReadError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Io { path, .. } => {
-                write!(
-                    f,
-                    "failed to read package cache artifact {}",
-                    path.display()
-                )
-            }
-            Self::Malformed { source } => write!(f, "{source}"),
-        }
-    }
-}
-
-impl std::error::Error for PackageCacheReadError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::Io { source, .. } => Some(source),
-            Self::Malformed { source } => Some(source),
-        }
-    }
-}
-
 impl PackageCacheStore {
-    /// Plans cache paths under this engine's claimed cache instance.
+    /// Bind a workspace cache plan to the instance directory claimed by this engine process.
+    ///
+    /// This does not touch the filesystem. Directory creation is delayed until an update begins,
+    /// while cache reads can simply observe a missing artifact as a cache miss.
     pub(crate) fn for_instance(
         workspace: &WorkspaceMetadata,
         cache_plan: &WorkspaceCachePlan,
@@ -101,6 +73,10 @@ impl PackageCacheStore {
         &self.root
     }
 
+    /// Return the complete path for one package identity in this graph generation.
+    ///
+    /// The slot and name make paths readable; the package fingerprint prevents two different Cargo
+    /// package descriptions that occupy the same slot from sharing bytes accidentally.
     pub fn package_artifact_path(&self, package: &CachedPackage) -> PathBuf {
         let fingerprint = self.package_fingerprint(package);
         let file_name = format!(
@@ -111,6 +87,7 @@ impl PackageCacheStore {
         self.generation_dir().join(file_name)
     }
 
+    /// Fingerprint package metadata with paths interpreted relative to this workspace root.
     pub fn package_fingerprint(&self, package: &CachedPackage) -> Fingerprint {
         package.fingerprint(&self.workspace_root)
     }
@@ -121,6 +98,7 @@ impl PackageCacheStore {
     /// affected package files inside the same generation directory, while Cargo graph changes pick
     /// a new generation and make the older directories disposable.
     pub(crate) fn cleanup_stale_generations(&self) -> anyhow::Result<()> {
+        // A cache instance may be new or already empty. There is nothing to clean in either case.
         let packages_dir = self.packages_dir();
         let entries = match fs::read_dir(&packages_dir) {
             Ok(entries) => entries,
@@ -136,6 +114,8 @@ impl PackageCacheStore {
         };
         let current_generation = self.generation_dir_name();
 
+        // Only directories created by this generation naming scheme are disposable here. Leave
+        // unrelated files alone, as well as the generation selected by the current workspace plan.
         for entry in entries {
             let entry = entry.with_context(|| {
                 format!(
@@ -178,6 +158,11 @@ impl PackageCacheStore {
         update.commit()
     }
 
+    /// Start a package-set update and publish its incomplete marker before any package write.
+    ///
+    /// The returned guard does not remove the marker on drop. The caller must write every intended
+    /// artifact and call [`PackageCacheUpdate::commit`]. Any early return leaves evidence that the
+    /// next startup should discard the mixed package set.
     pub(crate) fn begin_artifact_update(&self) -> anyhow::Result<PackageCacheUpdate<'_>> {
         let package_dir = self.generation_dir();
         fs::create_dir_all(&package_dir).with_context(|| {
@@ -208,7 +193,10 @@ impl PackageCacheStore {
         Ok(PackageCacheUpdate { store: self })
     }
 
-    /// Discards package artifacts left by an interrupted multi-package update.
+    /// Discard package artifacts left by an interrupted package-set update.
+    ///
+    /// Removing the whole `packages` directory removes the marker as well. This is deliberately
+    /// simpler than attempting to resume or roll back individual package replacements.
     pub(crate) fn recover_incomplete_update(&self) -> anyhow::Result<()> {
         let marker = self.cache_update_marker_path();
         if !marker.try_exists().with_context(|| {
@@ -229,66 +217,6 @@ impl PackageCacheStore {
         Ok(())
     }
 
-    pub fn read_artifact(
-        &self,
-        header: &PackageCacheHeader,
-    ) -> Result<Option<PackageCacheArtifact>, PackageCacheReadError> {
-        let artifact = self.read_artifact_for_package(&header.package)?;
-        let Some(artifact) = artifact else {
-            return Ok(None);
-        };
-
-        if artifact.header != *header {
-            let path = self.package_artifact_path(&header.package);
-            return Err(PackageCacheReadError::Malformed {
-                source: MalformedCacheError::HeaderMismatch {
-                    path,
-                    actual_slot: artifact.header.package.package.0,
-                    actual_name: artifact.header.package.name,
-                    expected_slot: header.package.package.0,
-                    expected_name: header.package.name.clone(),
-                },
-            });
-        }
-
-        Ok(Some(artifact))
-    }
-
-    pub(crate) fn read_artifact_for_package(
-        &self,
-        package: &CachedPackage,
-    ) -> Result<Option<PackageCacheArtifact>, PackageCacheReadError> {
-        let path = self.package_artifact_path(package);
-        let bytes = match fs::read(&path) {
-            Ok(bytes) => bytes,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-            Err(source) => return Err(PackageCacheReadError::Io { path, source }),
-        };
-
-        let artifact = PackageCacheCodec::decode_artifact(&bytes).map_err(|error| {
-            PackageCacheReadError::Malformed {
-                source: MalformedCacheError::Decode {
-                    path: path.clone(),
-                    reason: format!("{error:#}"),
-                },
-            }
-        })?;
-
-        if artifact.header.package != *package {
-            return Err(PackageCacheReadError::Malformed {
-                source: MalformedCacheError::HeaderMismatch {
-                    path,
-                    actual_slot: artifact.header.package.package.0,
-                    actual_name: artifact.header.package.name,
-                    expected_slot: package.package.0,
-                    expected_name: package.name.clone(),
-                },
-            });
-        }
-
-        Ok(Some(artifact))
-    }
-
     /// Removes package artifacts from this cache instance.
     ///
     /// The instance root also contains the live ownership lock, so invalidation only clears the
@@ -307,6 +235,7 @@ impl PackageCacheStore {
         }
     }
 
+    /// Replace one complete file without exposing a partially written payload.
     fn write_bytes_atomically(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
         // Cache artifacts must appear atomically: readers either observe the previous complete
         // payload or the newly committed one, never a partially written file.
@@ -356,13 +285,20 @@ pub(crate) struct PackageCacheUpdate<'a> {
 }
 
 impl PackageCacheUpdate<'_> {
+    /// Encode and atomically replace one artifact inside this still-incomplete package set.
+    ///
+    /// Success here is not a package-set commit. The marker remains until the owner has written all
+    /// affected packages and calls `commit`.
     pub(crate) fn write_artifact(&self, artifact: &PackageCacheArtifact) -> anyhow::Result<()> {
         let bytes = PackageCacheCodec::encode_artifact(artifact)?;
         let path = self.store.package_artifact_path(&artifact.header.package);
         PackageCacheStore::write_bytes_atomically(&path, bytes.as_ref())
     }
 
-    /// Commits the package set by removing the marker only after every artifact is durable.
+    /// Commit the package set by removing the marker only after every artifact is durable.
+    ///
+    /// Marker removal is the final step. A startup that sees no marker may therefore trust that it
+    /// is not observing a package set abandoned halfway through an update.
     pub(crate) fn commit(self) -> anyhow::Result<()> {
         let marker = self.store.cache_update_marker_path();
         fs::remove_file(&marker).with_context(|| {

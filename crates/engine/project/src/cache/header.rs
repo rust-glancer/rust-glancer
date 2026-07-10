@@ -1,8 +1,8 @@
 //! Versioned package artifact headers.
 //!
-//! The header is the first data read from an artifact. It keeps the schema version next to the
-//! cached package metadata so stale or mismatched files can be rejected before loading analysis
-//! payloads.
+//! The header lives inside the small probe, immediately after the fixed container directory. It
+//! keeps schema, package identity, and saved-source identity together so stale or mismatched files
+//! are rejected before any retained IR is loaded.
 
 use rg_std::MemorySize;
 use wincode::{SchemaRead, SchemaWrite};
@@ -18,13 +18,13 @@ use super::{cached::CachedPackage, fingerprint::Fingerprint};
 // save file to reindex relevant chunk. Devs are no babies! Thus, no need to overcomplicate architecture for
 // virtually no gain.
 pub const CURRENT_PACKAGE_CACHE_SCHEMA_VERSION: PackageCacheSchemaVersion =
-    PackageCacheSchemaVersion(4);
+    PackageCacheSchemaVersion(5);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize)]
 #[memsize(leaf)]
 pub struct PackageCacheSchemaVersion(pub u32);
 
-/// Header shared by future package cache artifacts.
+/// Identity and compatibility information for one package artifact revision.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize)]
 pub struct PackageCacheHeader {
     pub schema_version: PackageCacheSchemaVersion,

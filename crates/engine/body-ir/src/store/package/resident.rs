@@ -1,12 +1,14 @@
-use wincode::{SchemaRead, SchemaWrite};
+//! Dense Body IR representation used by resident packages and query code.
 
 use rg_arena::Arena;
 use rg_ir_model::BodyId;
 use rg_ir_storage::{BodyLocalItems, DefMap, ItemLookupIndex, ItemStore};
 use rg_parse::TargetId;
-
-use crate::ir::body::ResolvedBodyData;
 use rg_std::{MemorySize, Shrink};
+use wincode::{SchemaRead, SchemaWrite};
+
+use super::{TargetBodiesCoverage, TargetBodiesStatus};
+use crate::ir::body::ResolvedBodyData;
 
 /// Lowered bodies for all targets inside one parsed package.
 #[derive(Debug, Clone, PartialEq, Eq, Default, SchemaRead, SchemaWrite, MemorySize, Shrink)]
@@ -15,7 +17,7 @@ pub struct PackageBodies {
 }
 
 impl PackageBodies {
-    pub(crate) fn new(targets: Vec<TargetBodies>) -> Self {
+    pub fn new(targets: Vec<TargetBodies>) -> Self {
         Self {
             targets: Arena::from_vec(targets),
         }
@@ -113,73 +115,4 @@ impl TargetBodies {
     pub(crate) fn bodies_mut(&mut self) -> &mut [ResolvedBodyData] {
         self.bodies.as_mut_slice()
     }
-}
-
-/// How much of a target's body surface has been materialized.
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    derive_more::Display,
-    SchemaRead,
-    SchemaWrite,
-    MemorySize,
-    Shrink,
-)]
-#[memsize(leaf)]
-#[shrink(leaf)]
-pub enum TargetBodiesCoverage {
-    /// Every semantic item body known for the target was considered for lowering.
-    #[display("complete")]
-    Complete,
-    /// At least one, but not every, known body source file was selected for lowering.
-    #[display("partial")]
-    Partial,
-    /// The target has body sources, but none of them were selected for this materialization pass.
-    #[display("missing")]
-    Missing,
-    /// The configured package policy intentionally did not build bodies for this target.
-    #[display("skipped-by-policy")]
-    SkippedByPolicy,
-}
-
-impl TargetBodiesCoverage {
-    pub fn is_complete(self) -> bool {
-        matches!(self, Self::Complete)
-    }
-
-    pub fn is_materialized(self) -> bool {
-        matches!(self, Self::Complete | Self::Partial)
-    }
-
-    pub fn status(self) -> TargetBodiesStatus {
-        match self {
-            Self::Complete | Self::Partial => TargetBodiesStatus::Built,
-            Self::Missing | Self::SkippedByPolicy => TargetBodiesStatus::Skipped,
-        }
-    }
-}
-
-/// Whether one target's bodies were eagerly lowered.
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    derive_more::Display,
-    SchemaRead,
-    SchemaWrite,
-    MemorySize,
-    Shrink,
-)]
-#[memsize(leaf)]
-#[shrink(leaf)]
-pub enum TargetBodiesStatus {
-    #[display("built")]
-    Built,
-    #[display("skipped")]
-    Skipped,
 }

@@ -7,7 +7,7 @@ use rg_workspace::WorkspaceMetadata;
 
 use crate::{
     PackageResidency, PackageResidencyPlan,
-    cache::{CachedPackage, PackageCacheArtifact, PackageCacheStore, WorkspaceCachePlan},
+    cache::{CachedPackage, PackageCacheProbe, PackageCacheStore, WorkspaceCachePlan},
     profile::metric,
 };
 
@@ -53,16 +53,16 @@ impl<'a> StartupCacheProbe<'a> {
     /// Parse restoration therefore happens only after the miss closure stops growing.
     pub(super) fn source_packages(&mut self) -> Vec<PackageSlot> {
         let package_count = self.parse.package_count();
-        let mut artifacts = (0..package_count).map(|_| None).collect::<Vec<_>>();
+        let mut probes = (0..package_count).map(|_| None).collect::<Vec<_>>();
         let mut source_packages = vec![false; package_count];
 
         for package_idx in 0..package_count {
             let package = PackageSlot(package_idx);
-            let Some(artifact) = self.probe_package(package) else {
+            let Some(probe) = self.probe_package(package) else {
                 source_packages[package_idx] = true;
                 continue;
             };
-            artifacts[package_idx] = Some(artifact);
+            probes[package_idx] = Some(probe);
         }
 
         loop {
@@ -78,12 +78,12 @@ impl<'a> StartupCacheProbe<'a> {
                     continue;
                 }
                 let package = PackageSlot(package_idx);
-                let Some(artifact) = &artifacts[package_idx] else {
+                let Some(probe) = &probes[package_idx] else {
                     source_packages[package_idx] = true;
                     found_new_miss = true;
                     continue;
                 };
-                if !Self::restore_parse(&mut candidate, package, artifact.payload.parse.clone()) {
+                if !Self::restore_parse(&mut candidate, package, probe.parse.clone()) {
                     source_packages[package_idx] = true;
                     found_new_miss = true;
                 }
@@ -111,7 +111,7 @@ impl<'a> StartupCacheProbe<'a> {
     }
 
     /// Returns a package-local tentative hit without mutating the parse database.
-    fn probe_package(&mut self, package: PackageSlot) -> Option<PackageCacheArtifact> {
+    fn probe_package(&mut self, package: PackageSlot) -> Option<PackageCacheProbe> {
         if self.package_residency.package(package) != Some(PackageResidency::Offloadable) {
             metric::CACHE_PROBE_RESIDENT_PACKAGES.inc();
             return None;
@@ -122,26 +122,26 @@ impl<'a> StartupCacheProbe<'a> {
             metric::CACHE_PROBE_UNPLANNED_PACKAGES.inc();
             return None;
         };
-        let artifact = self.read_artifact(cached_package)?;
-        if !self.snapshot_matches_header(&artifact) {
+        let probe = self.read_probe(cached_package)?;
+        if !self.snapshot_matches_header(&probe) {
             return None;
         }
-        if !self.body_ir_matches_policy(package, &artifact) {
+        if !self.body_ir_matches_policy(package, &probe) {
             return None;
         }
 
-        Some(artifact)
+        Some(probe)
     }
 
-    fn read_artifact(&mut self, package: &CachedPackage) -> Option<PackageCacheArtifact> {
+    fn read_probe(&mut self, package: &CachedPackage) -> Option<PackageCacheProbe> {
         // Cache reads fail open. A stale, corrupt, or missing artifact simply means this
         // offloadable package joins the source build and will overwrite its artifact later.
         let timer = metric::CACHE_PROBE_ARTIFACT_READ.start_timer();
-        let artifact = self.cache_store.read_artifact_for_package(package);
+        let probe = self.cache_store.read_probe_for_package(package);
         timer.finish();
 
-        match artifact {
-            Ok(Some(artifact)) => Some(artifact),
+        match probe {
+            Ok(Some(probe)) => Some(probe),
             Ok(None) => {
                 metric::CACHE_PROBE_MISSING_ARTIFACTS.inc();
                 None
@@ -153,17 +153,17 @@ impl<'a> StartupCacheProbe<'a> {
         }
     }
 
-    fn snapshot_matches_header(&mut self, artifact: &PackageCacheArtifact) -> bool {
+    fn snapshot_matches_header(&mut self, probe: &PackageCacheProbe) -> bool {
         let timer = metric::CACHE_PROBE_SOURCE_FINGERPRINT.start_timer();
         let source_fingerprint = WorkspaceCachePlan::snapshot_source_fingerprint(
             self.workspace.workspace_root(),
-            &artifact.header.package,
-            &artifact.payload.parse,
+            &probe.header.package,
+            &probe.parse,
         );
         timer.finish();
 
         match source_fingerprint {
-            Ok(fingerprint) if fingerprint == artifact.header.source_fingerprint => true,
+            Ok(fingerprint) if fingerprint == probe.header.source_fingerprint => true,
             Ok(_) => {
                 metric::CACHE_PROBE_SOURCE_MISMATCHES.inc();
                 false
@@ -175,11 +175,7 @@ impl<'a> StartupCacheProbe<'a> {
         }
     }
 
-    fn body_ir_matches_policy(
-        &mut self,
-        package: PackageSlot,
-        artifact: &PackageCacheArtifact,
-    ) -> bool {
+    fn body_ir_matches_policy(&mut self, package: PackageSlot, probe: &PackageCacheProbe) -> bool {
         let parse_package = self
             .parse
             .package(package.0)
@@ -190,12 +186,10 @@ impl<'a> StartupCacheProbe<'a> {
 
         // A body artifact produced by a narrower policy can still be structurally valid while
         // containing skipped targets. Reject it so the requested policy gets a full source rebuild.
-        let matches_policy = artifact
-            .payload
-            .body_ir
-            .targets()
+        let matches_policy = probe
+            .body_ir_coverage
             .iter()
-            .all(|target| target.coverage().is_complete());
+            .all(|coverage| coverage.is_complete());
 
         if !matches_policy {
             metric::CACHE_PROBE_BODY_IR_POLICY_MISMATCHES.inc();

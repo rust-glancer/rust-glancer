@@ -3,7 +3,11 @@
 //! The goal is not allocator-perfect accounting. We want stable, tagged measurements that explain
 //! which retained phase data deserves optimization attention.
 
-use std::{any, collections::BTreeMap, mem};
+use std::{
+    any,
+    collections::{BTreeMap, HashSet},
+    mem,
+};
 
 mod default_impls;
 mod ls_types_impls;
@@ -217,6 +221,7 @@ pub struct MemoryRecorder {
     path: Vec<String>,
     records: BTreeMap<MemoryRecordKey, usize>,
     raw_records: Option<Vec<MemoryRecord>>,
+    shared_allocations: HashSet<usize>,
     total_bytes: usize,
 }
 
@@ -242,8 +247,18 @@ impl MemoryRecorder {
                 MemoryRecorderMode::TotalOnly | MemoryRecorderMode::Aggregate => None,
                 MemoryRecorderMode::Detailed => Some(Vec::new()),
             },
+            shared_allocations: HashSet::new(),
             total_bytes: 0,
         }
+    }
+
+    /// Returns `true` the first time this recorder sees a shared heap allocation.
+    ///
+    /// Values such as interned names can appear in many phase structures through cloned `Arc`
+    /// handles. Their `MemorySize` implementations use the allocation address to attribute the
+    /// payload once without requiring the reuse table to remain its accounting owner.
+    pub fn visit_shared_allocation(&mut self, address: *const ()) -> bool {
+        self.shared_allocations.insert(address as usize)
     }
 
     pub fn scope<R>(&mut self, label: impl Into<String>, f: impl FnOnce(&mut Self) -> R) -> R {

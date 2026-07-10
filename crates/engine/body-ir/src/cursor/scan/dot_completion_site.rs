@@ -4,7 +4,7 @@
 //! can host member completions, then return the receiver expression and typed
 //! member prefix.
 
-use rg_ir_model::{BodyId, BodyRef, ExprId, TargetRef};
+use rg_ir_model::{ExprId, TargetRef};
 use rg_package_store::PackageStoreError;
 use rg_parse::{FileId, Span, TextSpan};
 
@@ -37,21 +37,14 @@ impl<'txn, 'db> DotCompletionSiteScanner<'txn, 'db> {
 
     /// Returns the smallest field or method expression that accepts completions at the dot.
     pub(crate) fn site_at_dot(&self) -> Result<Option<DotCompletionSite>, PackageStoreError> {
-        let Some(target_bodies) = self.body_ir.target_bodies(self.target)? else {
-            return Ok(None);
-        };
         let mut best: Option<(DotCompletionSite, u32)> = None;
 
-        for (body_idx, body) in target_bodies.bodies().iter().enumerate() {
+        for (body_ref, body) in self.body_ir.bodies(self.target, Some(self.file_id))? {
             // First narrow the search to bodies that can contain this completion offset.
-            if body.source().file_id != self.file_id || !body.source().span.contains(self.offset) {
+            if !body.source().span.contains(self.offset) {
                 continue;
             }
 
-            let body_ref = BodyRef {
-                target: self.target,
-                body: BodyId(body_idx),
-            };
             for expr in body.exprs().iter() {
                 if !expr.source.is_written_in_file(self.file_id) {
                     continue;

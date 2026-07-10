@@ -4,9 +4,10 @@ use expect_test::Expect;
 
 use crate::ir::resolved::BodyResolution;
 use crate::{
-    BindingData, BodyIrBuildPolicy, BodyIrReadTxn, BodyOwner, BodySource, ClosureCapture,
-    ClosureKind, ClosureParamData, ExprBlockKind, ExprData, ExprKind, LabelData, PatBindingMode,
-    PatData, PatKind, ResolvedBodyData, StmtKind, TargetBodiesStatus, testonly::BodyIrFixture,
+    BindingData, BodyIrBuildPolicy, BodyIrLoader, BodyIrReadTxn, BodyOwner, BodySource,
+    ClosureCapture, ClosureKind, ClosureParamData, ExprBlockKind, ExprData, ExprKind, LabelData,
+    PatBindingMode, PatData, PatKind, ResolvedBodyData, StmtKind, TargetBodiesStatus,
+    testonly::BodyIrFixture,
 };
 use rg_ir_model::items::FieldItem;
 use rg_ir_model::{
@@ -15,7 +16,6 @@ use rg_ir_model::{
     TargetRef, TraitRef, TypeDefId, TypeDefRef, identity::DeclarationRef,
 };
 use rg_ir_storage::ModuleOrigin;
-use rg_package_store::PackageLoader;
 use rg_parse::{Package, ParseDb, Target};
 use rg_ty::{GenericArg, NominalTy, OpaqueTraitBound, Ty};
 
@@ -1449,7 +1449,7 @@ impl TargetBodyIrSnapshot<'_> {
     fn body_ir_txn(&self) -> BodyIrReadTxn<'_> {
         self.project
             .body_ir_db()
-            .read_txn(PackageLoader::resident_only("resident body IR fixture"))
+            .read_txn(BodyIrLoader::resident_only("resident body IR fixture"))
     }
 
     fn render_module_ref(&self, module_ref: ModuleRef) -> String {

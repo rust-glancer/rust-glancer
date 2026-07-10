@@ -3,7 +3,7 @@
 //! Path completion scans recognize partially typed segments in paths such as
 //! `crate::module::Us` and return the qualifier, replacement span, and expected namespace.
 
-use rg_ir_model::{BodyId, BodyRef, Path, ScopeId, TargetRef, items::TypePath};
+use rg_ir_model::{BodyRef, Path, ScopeId, TargetRef, items::TypePath};
 use rg_package_store::PackageStoreError;
 use rg_parse::{FileId, Span, TextSpan};
 
@@ -39,21 +39,14 @@ impl<'txn, 'db> PathCompletionSiteScanner<'txn, 'db> {
 
     /// Returns the smallest type or value path whose segment prefix accepts completions.
     pub(crate) fn site_at_path(&self) -> Result<Option<PathCompletionSite>, PackageStoreError> {
-        let Some(target_bodies) = self.body_ir.target_bodies(self.target)? else {
-            return Ok(None);
-        };
         let mut best: Option<(PathCompletionSite, u32)> = None;
 
-        for (body_idx, body) in target_bodies.bodies().iter().enumerate() {
+        for (body_ref, body) in self.body_ir.bodies(self.target, Some(self.file_id))? {
             // Body spans are a cheap first filter before scanning every expression and statement.
-            if body.source().file_id != self.file_id || !body.source().span.contains(self.offset) {
+            if !body.source().span.contains(self.offset) {
                 continue;
             }
 
-            let body_ref = BodyRef {
-                target: self.target,
-                body: BodyId(body_idx),
-            };
             self.scan_type_paths(body_ref, body, &mut best);
             self.scan_value_paths(body_ref, body, &mut best);
         }

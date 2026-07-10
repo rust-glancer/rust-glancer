@@ -1,10 +1,9 @@
 use expect_test::{Expect, expect};
 use rg_def_map::PackageSlot;
 use rg_ir_model::TargetRef;
-use rg_package_store::PackageLoader;
 
 use crate::{
-    BindingSurface, BodyCursorCandidate, ValueReferenceSource, ValueReferenceSurface,
+    BindingSurface, BodyCursorCandidate, BodyIrLoader, ValueReferenceSource, ValueReferenceSurface,
     testonly::BodyIrFixture,
 };
 
@@ -289,7 +288,7 @@ fn check_source_candidates(ident: &str, fixture: &str, expect: Expect) {
     };
     let body_ir = db
         .body_ir_db()
-        .read_txn(PackageLoader::resident_only("resident body fixture"));
+        .read_txn(BodyIrLoader::resident_only("resident body fixture"));
 
     let mut candidates = Vec::new();
     for candidate in body_ir

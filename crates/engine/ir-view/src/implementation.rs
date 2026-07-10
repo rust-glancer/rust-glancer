@@ -228,11 +228,7 @@ impl<'a, 'db> ImplementationView<'a, 'db> {
 
     /// Return the target-scoped semantic index that backs fast type/member queries.
     fn semantic_index(&self, use_site: TargetRef) -> anyhow::Result<Option<&ItemLookupIndex>> {
-        Ok(self
-            .db
-            .body_ir
-            .target_bodies(use_site)?
-            .map(|target_bodies| target_bodies.semantic_index()))
+        Ok(self.db.body_ir.semantic_index(use_site)?)
     }
 
     /// Extract a function ref from a declaration when it denotes a function.

@@ -4,7 +4,7 @@
 //! as `User { na$0 }` or `let User { na$0 } = user`.
 
 use rg_ir_model::items::FieldKey;
-use rg_ir_model::{BodyId, BodyRef, ScopeId, TargetRef};
+use rg_ir_model::{BodyRef, ScopeId, TargetRef};
 use rg_package_store::PackageStoreError;
 use rg_parse::{FileId, Span, TextSpan};
 
@@ -42,20 +42,13 @@ impl<'txn, 'db> RecordFieldCompletionSiteScanner<'txn, 'db> {
     pub(crate) fn site_at_record_field(
         &self,
     ) -> Result<Option<RecordFieldCompletionSite>, PackageStoreError> {
-        let Some(target_bodies) = self.body_ir.target_bodies(self.target)? else {
-            return Ok(None);
-        };
         let mut best: Option<(RecordFieldCompletionSite, u32)> = None;
 
-        for (body_idx, body) in target_bodies.bodies().iter().enumerate() {
-            if body.source().file_id != self.file_id || !body.source().span.contains(self.offset) {
+        for (body_ref, body) in self.body_ir.bodies(self.target, Some(self.file_id))? {
+            if !body.source().span.contains(self.offset) {
                 continue;
             }
 
-            let body_ref = BodyRef {
-                target: self.target,
-                body: BodyId(body_idx),
-            };
             self.scan_record_exprs(body_ref, body, &mut best);
             self.scan_record_pats(body_ref, body, &mut best);
         }
