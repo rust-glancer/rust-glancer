@@ -1808,7 +1808,7 @@ mod tests {
     fn stale_dirty_query_responds_without_running_analysis() {
         let path = PathBuf::from("/workspace/src/lib.rs");
         let mut documents = DocumentStore::default();
-        documents.did_open(path.clone(), Some(1), "fn main() {}\n");
+        documents.did_open_saved(path.clone(), Some(1), "fn main() {}\n");
         documents.did_change(
             path.clone(),
             Some(2),

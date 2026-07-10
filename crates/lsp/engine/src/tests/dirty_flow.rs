@@ -88,3 +88,73 @@ pub fn demo(user: DirtyUser) {
 
     fixture.shutdown().await;
 }
+
+#[tokio::test]
+async fn restored_unsaved_open_uses_dirty_full_text_overlay() {
+    let fixture = LspEngineFixture::initialized(
+        r#"
+        //- /Cargo.toml
+        [package]
+        name = "lsp_restored_dirty_flow"
+        version = "0.1.0"
+        edition = "2024"
+
+        //- /src/lib.rs
+        pub struct Saved;
+        "#,
+    )
+    .await;
+
+    let dirty = fixture
+        .did_open_dirty(
+            "src/lib.rs",
+            1,
+            MarkedText::parse(
+                r#"
+pub struct Restored {
+    /// Field that exists only in the restored editor buffer.
+    pub restored_field: RestoredName,
+}
+
+pub struct RestoredName;
+
+pub fn demo(value: Restored) {
+    let _hover = value.restored_$hover$field;
+}
+"#,
+            ),
+        )
+        .await;
+
+    fixture
+        .check_dirty(
+            &dirty,
+            &[
+                LspQuery::hover("hover restored field", "hover"),
+                LspQuery::document_symbol("restored document symbols", "src/lib.rs"),
+            ],
+            expect![[r#"
+                hover restored field
+                - range: /src/lib.rs:9:23-9:37
+                - markdown:
+                  ```rust
+                  lsp_restored_dirty_flow::Restored
+                  ```
+
+                  ```rust
+                  pub restored_field: RestoredName
+                  ```
+
+                  Field that exists only in the restored editor buffer.
+
+                restored document symbols
+                - Struct Restored 1:11-1:19
+                  - Field restored_field 3:8-3:22
+                - Struct RestoredName 6:11-6:23
+                - Function demo 8:7-8:11
+            "#]],
+        )
+        .await;
+
+    fixture.shutdown().await;
+}

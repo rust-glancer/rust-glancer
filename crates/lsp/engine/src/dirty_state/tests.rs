@@ -9,7 +9,7 @@ fn dirty_state_rejects_old_dirty_snapshots() {
     let mut store = DocumentStore::default();
     let dirty_state = DirtyState::default();
 
-    store.did_open(path.clone(), Some(1), "fn main() {}\n");
+    store.did_open_saved(path.clone(), Some(1), "fn main() {}\n");
     dirty_state.sync_document(&path, &store.dirty_snapshot(&path));
 
     store.did_change(path.clone(), Some(2), Some("fn main() {\n    v2();\n}\n"));

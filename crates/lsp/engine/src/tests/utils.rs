@@ -127,6 +127,26 @@ impl LspEngineFixture {
             .expect("fixture saved document should open");
     }
 
+    pub(super) async fn did_open_dirty(
+        &self,
+        path: &'static str,
+        version: i32,
+        text: MarkedText,
+    ) -> DirtyDocument {
+        self.service
+            .clone()
+            .did_open(
+                context::current(),
+                self.fixture.path(path),
+                Some(version),
+                text.text().to_string(),
+            )
+            .await
+            .expect("fixture dirty document should open");
+
+        DirtyDocument { path, text }
+    }
+
     pub(super) async fn did_change_full(
         &self,
         path: &'static str,

@@ -26,18 +26,37 @@ pub(crate) struct DocumentStore {
 }
 
 impl DocumentStore {
-    pub(crate) fn did_open(&mut self, path: PathBuf, version: Option<i32>, text: &str) {
-        let fingerprint = TextFingerprint::new(text);
-        self.documents.insert(
-            path,
-            DocumentState {
-                version,
-                saved: Some(fingerprint),
-                live: Some(fingerprint),
-                live_text: Some(Arc::from(text)),
-                dirty: false,
-            },
-        );
+    pub(crate) fn did_open(
+        &mut self,
+        path: PathBuf,
+        version: Option<i32>,
+        live_text: &str,
+        saved_text: Option<&str>,
+    ) {
+        let document = self.documents.entry(path).or_default();
+
+        // Routing waits for engine startup, so a later `didChange` can reach the engine before the
+        // earlier `didOpen`. Do not let that stale open replace a newer live buffer snapshot.
+        if let (Some(current), Some(opened)) = (document.version, version)
+            && opened < current
+        {
+            return;
+        }
+
+        let live = TextFingerprint::new(live_text);
+        let saved = saved_text.map(TextFingerprint::new);
+        *document = DocumentState {
+            version,
+            saved,
+            live: Some(live),
+            live_text: Some(Arc::from(live_text)),
+            dirty: saved != Some(live),
+        };
+    }
+
+    #[cfg(test)]
+    pub(crate) fn did_open_saved(&mut self, path: PathBuf, version: Option<i32>, text: &str) {
+        self.did_open(path, version, text, Some(text));
     }
 
     /// Marks an open document dirty and returns whether this was the clean-to-dirty transition.
