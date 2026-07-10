@@ -33,9 +33,10 @@ use super::{
 /// Lowers all known files for one parsed package and records target entrypoints into them.
 pub(super) fn build_package(
     parse_package: &mut ParsePackage,
+    sources: &rg_source::SourceInventory,
     interner: &mut NameInterner,
 ) -> anyhow::Result<Package> {
-    PackageLowering::new(parse_package, interner).build()
+    PackageLowering::new(parse_package, sources, interner).build()
 }
 
 /// Mutable lowering context shared while walking all target roots in one package.
@@ -44,15 +45,21 @@ pub(super) fn build_package(
 /// following out-of-line `mod foo;` chains.
 struct PackageLowering<'db> {
     parse_package: &'db mut ParsePackage,
+    sources: &'db rg_source::SourceInventory,
     interner: &'db mut NameInterner,
     active_stack: HashSet<FileId>,
     file_trees: Arena<FileId, Option<FileTree>>,
 }
 
 impl<'db> PackageLowering<'db> {
-    fn new(parse_package: &'db mut ParsePackage, interner: &'db mut NameInterner) -> Self {
+    fn new(
+        parse_package: &'db mut ParsePackage,
+        sources: &'db rg_source::SourceInventory,
+        interner: &'db mut NameInterner,
+    ) -> Self {
         Self {
             parse_package,
+            sources,
             interner,
             active_stack: HashSet::default(),
             file_trees: Arena::new(),
@@ -454,7 +461,7 @@ impl<'db> PackageLowering<'db> {
         // This probe is intentionally best-effort. `include` can be a user-defined macro, so an
         // eager filesystem miss or read error must not make item-tree lowering fail before def-map
         // has a chance to resolve the call.
-        let Ok(include_file_id) = self.parse_package.parse_file(&include_path) else {
+        let Ok(include_file_id) = self.parse_package.parse_file(self.sources, &include_path) else {
             return Ok(None);
         };
         if self.lower_file(include_file_id).is_err() {
@@ -550,7 +557,8 @@ impl<'db> PackageLowering<'db> {
             });
         }
 
-        let Some(module_file_path) = module_file_context.resolve_module_file(item) else {
+        let Some(module_file_path) = module_file_context.resolve_module_file(self.sources, item)?
+        else {
             return Ok(ModuleItem {
                 inner_docs: None,
                 macro_use: MacroUseAttr::maybe_from_ast(item, &mut *self.interner),
@@ -562,7 +570,7 @@ impl<'db> PackageLowering<'db> {
 
         let module_file_id = self
             .parse_package
-            .parse_file(&module_file_path)
+            .parse_file(self.sources, &module_file_path)
             .with_context(|| {
                 format!(
                     "while attempting to parse module file {}",

@@ -9,16 +9,15 @@ use crate::{
 
 /// Owns the saved project and the disposable dirty overlay used by read-only queries.
 ///
-/// `generation` is the saved-project identity seen by asynchronous work. It changes when saved
-/// source state is replaced or rebuilt, so background results produced from an older `Project`
-/// clone can be discarded instead of merged into a newer workspace. Split-indexing materialization
-/// intentionally keeps the same generation: it enriches analysis data for the same saved source
-/// snapshot, but it still clears dirty overlays because those overlays borrow from the old project
-/// internals.
+/// The saved project's generation identity is seen by asynchronous work. It changes only when
+/// `Project` successfully publishes saved source state, so background results produced from an
+/// older clone can be discarded instead of merged into a newer workspace. Split-indexing
+/// materialization intentionally keeps the same generation: it enriches analysis data for the same
+/// saved source snapshot, but it still clears dirty overlays because those overlays borrow from the
+/// old project internals.
 #[derive(Debug)]
 pub(super) struct ProjectProxy {
     saved: Option<Project>,
-    generation: u64,
     dirty_overlay: DirtyOverlayCache,
 }
 
@@ -26,7 +25,6 @@ impl ProjectProxy {
     pub(super) fn new(memory_control: Arc<dyn MemoryControl>) -> Self {
         Self {
             saved: None,
-            generation: 0,
             dirty_overlay: DirtyOverlayCache::new(memory_control),
         }
     }
@@ -36,14 +34,17 @@ impl ProjectProxy {
     }
 
     pub(super) fn replace_saved(&mut self, project: Project) -> u64 {
-        self.generation = self.generation.saturating_add(1);
+        let generation = project.generation_id().get();
         self.saved = Some(project);
         self.dirty_overlay.clear();
-        self.generation
+        generation
     }
 
     pub(super) fn generation(&self) -> u64 {
-        self.generation
+        self.saved
+            .as_ref()
+            .map(|project| project.generation_id().get())
+            .unwrap_or(0)
     }
 
     /// Clone saved analysis into a generation-paired deferred-finish handle.
@@ -58,7 +59,7 @@ impl ProjectProxy {
             .saved
             .as_ref()
             .context("LSP engine is not initialized")?;
-        Ok((self.generation, saved.detach_split_indexing()))
+        Ok((saved.generation_id().get(), saved.detach_split_indexing()))
     }
 
     pub(super) fn mutate_saved<T>(
@@ -70,9 +71,8 @@ impl ProjectProxy {
             .as_mut()
             .context("LSP engine is not initialized")?;
 
-        // Any saved-project mutation attempt may leave the project in a different state even if it
-        // returns an error, so discard overlays derived from the previous saved state up front.
-        self.generation = self.generation.saturating_add(1);
+        // Saved-source operations publish through `Project` only after their candidate succeeds.
+        // Clear overlays up front because a successful mutation changes their base generation.
         self.dirty_overlay.clear();
         mutation(saved)
     }

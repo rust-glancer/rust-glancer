@@ -14,8 +14,8 @@ pub use self::{
     project::{
         AnalysisChangeSummary, AnalysisSurface, ChangedFile, DetachedSplitIndexing,
         DirtyFileChange, FileContext, FinishedSplitIndexing, Project, ProjectBuilder,
-        ProjectSnapshot, ProjectStats, SavedFileChange, SplitIndexing, SplitIndexingMode,
-        StartupCacheLoad,
+        ProjectGenerationId, ProjectSnapshot, ProjectStats, SavedFileChange, SplitIndexing,
+        SplitIndexingMode, StartupCacheLoad,
     },
     residency::{PackageResidency, PackageResidencyPlan, PackageResidencyPolicy},
 };

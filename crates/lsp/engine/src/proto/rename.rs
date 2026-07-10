@@ -65,7 +65,7 @@ fn range_for_file(
     span: Span,
 ) -> anyhow::Result<ls_types::Range> {
     let line_index = snapshot
-        .file_line_index(package_slot, file_id)
+        .file_line_index(package_slot, file_id)?
         .context("while attempting to find file for rename range conversion")?;
 
     Ok(position::range(line_index, span))

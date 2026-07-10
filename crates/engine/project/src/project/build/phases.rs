@@ -96,6 +96,7 @@ pub(super) fn build(
     let package_indices = build_plan.source_packages.package_indices();
     let item_tree = ItemTreeDb::build_packages(&mut parse, &package_indices, &mut names)
         .context("while attempting to build item tree db")?;
+    parse.seal_sources();
     let memory = checkpoint_memory!(names, parse, build_plan.source_packages, item_tree);
     memory.checkpoint(sampler, metric::ITEM_TREE_MEMORY, &item_tree);
 
@@ -240,6 +241,9 @@ pub(super) fn build(
     let body_ir = body_rebuilder
         .build()
         .context("while attempting to build body ir db")?;
+    parse
+        .validate_saved_sources()
+        .context("while attempting to validate captured project source generation")?;
     memory_hooks.purge(ProjectMemoryPurgePoint::AfterBodyIrBuild);
     let memory = checkpoint_memory!(
         names,
@@ -257,6 +261,7 @@ pub(super) fn build(
     // 10. Compact retained state
     // --------------------------
     parse.evict_syntax_trees();
+    parse.evict_saved_source_text();
     parse.shrink_to_fit();
     Shrink::shrink_to_fit(&mut names);
     let memory = checkpoint_memory!(

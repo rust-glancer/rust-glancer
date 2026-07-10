@@ -296,7 +296,10 @@ fn check_source_candidates(ident: &str, fixture: &str, expect: Expect) {
         .source_candidates(target, Some(file_id))
         .expect("fixture source candidates should scan")
     {
-        let Some(text) = parsed_file.text_for_span(candidate.span()) else {
+        let Some(text) = parsed_file
+            .text_for_span(candidate.span())
+            .expect("cursor candidate source text should load")
+        else {
             continue;
         };
         if text != ident {

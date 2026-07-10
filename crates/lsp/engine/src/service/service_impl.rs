@@ -174,7 +174,7 @@ impl EngineService for Service {
                 continue;
             }
 
-            let text = match std::fs::read_to_string(&path) {
+            let text = match rg_source::read_source_text(&path) {
                 Ok(text) => text,
                 Err(error) => {
                     tracing::debug!(

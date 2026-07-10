@@ -100,21 +100,33 @@ impl<'a> ProjectSnapshot<'a> {
         package: PackageSlot,
         file: FileId,
         span: Span,
-    ) -> Option<String> {
-        self.state
+    ) -> anyhow::Result<Option<String>> {
+        let Some(parsed_file) = self
+            .state
             .parse_db()
-            .package(package.0)?
-            .parsed_file(file)?
-            .text_for_span(span)
+            .package(package.0)
+            .and_then(|package| package.parsed_file(file))
+        else {
+            return Ok(None);
+        };
+        parsed_file.text_for_span(span)
     }
 
     /// Returns the line index used to convert offsets for a package-local file id.
-    pub fn file_line_index(&self, package: PackageSlot, file: FileId) -> Option<&LineIndex> {
-        self.state
+    pub fn file_line_index(
+        &self,
+        package: PackageSlot,
+        file: FileId,
+    ) -> anyhow::Result<Option<&LineIndex>> {
+        let Some(parsed_file) = self
+            .state
             .parse_db()
-            .package(package.0)?
-            .parsed_file(file)
-            .and_then(|file| file.line_index().ok())
+            .package(package.0)
+            .and_then(|package| package.parsed_file(file))
+        else {
+            return Ok(None);
+        };
+        Ok(Some(parsed_file.line_index()?))
     }
 
     pub fn stats(&self) -> ProjectStats {

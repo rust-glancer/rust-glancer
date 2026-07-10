@@ -126,7 +126,12 @@ fn expr_with_source_text(
         let Some(file) = package.parsed_file(expr.source.file_id) else {
             continue;
         };
-        if file.text_for_span(expr.source.span).as_deref() == Some(text) {
+        if file
+            .text_for_span(expr.source.span)
+            .expect("expression source text should load")
+            .as_deref()
+            == Some(text)
+        {
             return ExprRef::new(body_ref, ExprId(idx));
         }
     }

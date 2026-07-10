@@ -169,7 +169,7 @@ impl EngineWorker {
                     let context =
                         QueryContext::document("goto_definition", queue_elapsed, dirty.as_ref());
                     self.respond_to_query(context, respond_to, |worker| {
-                        worker.goto_definition(path, position, dirty)
+                        worker.goto_definition(path.clone(), position, dirty.clone())
                     });
                 }
                 EngineCommand::GotoTypeDefinition {
@@ -190,7 +190,7 @@ impl EngineWorker {
                         dirty.as_ref(),
                     );
                     self.respond_to_query(context, respond_to, |worker| {
-                        worker.goto_type_definition(path, position, dirty)
+                        worker.goto_type_definition(path.clone(), position, dirty.clone())
                     });
                 }
                 EngineCommand::GotoImplementation {
@@ -211,7 +211,7 @@ impl EngineWorker {
                         dirty.as_ref(),
                     );
                     self.respond_to_query(context, respond_to, |worker| {
-                        worker.goto_implementation(path, position, dirty)
+                        worker.goto_implementation(path.clone(), position, dirty.clone())
                     });
                 }
                 EngineCommand::References {
@@ -231,7 +231,12 @@ impl EngineWorker {
                     let context =
                         QueryContext::document("references", queue_elapsed, dirty.as_ref());
                     self.respond_to_query(context, respond_to, |worker| {
-                        worker.references(path, position, include_declaration, dirty)
+                        worker.references(
+                            path.clone(),
+                            position,
+                            include_declaration,
+                            dirty.clone(),
+                        )
                     });
                 }
                 EngineCommand::PrepareRename {
@@ -249,7 +254,7 @@ impl EngineWorker {
                     let context =
                         QueryContext::document("prepare_rename", queue_elapsed, dirty.as_ref());
                     self.respond_to_query(context, respond_to, |worker| {
-                        worker.prepare_rename(path, position, dirty)
+                        worker.prepare_rename(path.clone(), position, dirty.clone())
                     });
                 }
                 EngineCommand::Rename {
@@ -268,7 +273,7 @@ impl EngineWorker {
                     );
                     let context = QueryContext::document("rename", queue_elapsed, dirty.as_ref());
                     self.respond_to_query(context, respond_to, |worker| {
-                        worker.rename(path, position, new_name, dirty)
+                        worker.rename(path.clone(), position, new_name.clone(), dirty.clone())
                     });
                 }
                 EngineCommand::DocumentHighlight {
@@ -286,7 +291,7 @@ impl EngineWorker {
                     let context =
                         QueryContext::document("document_highlight", queue_elapsed, dirty.as_ref());
                     self.respond_to_query(context, respond_to, |worker| {
-                        worker.document_highlight(path, position, dirty)
+                        worker.document_highlight(path.clone(), position, dirty.clone())
                     });
                 }
                 EngineCommand::Hover {
@@ -303,7 +308,7 @@ impl EngineWorker {
                     );
                     let context = QueryContext::document("hover", queue_elapsed, dirty.as_ref());
                     self.respond_to_query(context, respond_to, |worker| {
-                        worker.hover(path, position, dirty)
+                        worker.hover(path.clone(), position, dirty.clone())
                     });
                 }
                 EngineCommand::Completion {
@@ -322,7 +327,12 @@ impl EngineWorker {
                     let context =
                         QueryContext::document("completion", queue_elapsed, dirty.as_ref());
                     self.respond_to_query(context, respond_to, |worker| {
-                        worker.completion(path, position, client_capabilities, dirty)
+                        worker.completion(
+                            path.clone(),
+                            position,
+                            client_capabilities,
+                            dirty.clone(),
+                        )
                     });
                 }
                 EngineCommand::Formatting {
@@ -336,7 +346,7 @@ impl EngineWorker {
                     );
                     let context = QueryContext::new("formatting", queue_elapsed);
                     self.respond_to_query(context, respond_to, |worker| {
-                        worker.formatting(path, text)
+                        worker.formatting(path.clone(), Arc::clone(&text))
                     });
                 }
                 EngineCommand::DocumentSymbol {
@@ -351,7 +361,7 @@ impl EngineWorker {
                     let context =
                         QueryContext::document("document_symbol", queue_elapsed, dirty.as_ref());
                     self.respond_to_query(context, respond_to, |worker| {
-                        worker.document_symbol(path, dirty)
+                        worker.document_symbol(path.clone(), dirty.clone())
                     });
                 }
                 EngineCommand::InlayHint {
@@ -371,7 +381,7 @@ impl EngineWorker {
                     let context =
                         QueryContext::document("inlay_hint", queue_elapsed, dirty.as_ref());
                     self.respond_to_query(context, respond_to, |worker| {
-                        worker.inlay_hint(path, range, dirty)
+                        worker.inlay_hint(path.clone(), range, dirty.clone())
                     });
                 }
                 EngineCommand::WorkspaceSymbol { query, respond_to } => {
@@ -810,7 +820,7 @@ impl EngineWorker {
                         snapshot,
                         context.package,
                         &rename_target,
-                    ) {
+                    )? {
                         continue;
                     }
 
@@ -874,7 +884,7 @@ impl EngineWorker {
                         snapshot,
                         context.package,
                         &rename_result.target,
-                    ) {
+                    )? {
                         continue;
                     }
                     for edit in rename_result.edits {
@@ -884,7 +894,7 @@ impl EngineWorker {
                     }
                 }
 
-                let Some(edits) = Self::verified_rename_edits(snapshot, edits) else {
+                let Some(edits) = Self::verified_rename_edits(snapshot, edits)? else {
                     return Ok(None);
                 };
                 if edits.is_empty() {
@@ -988,7 +998,8 @@ impl EngineWorker {
                 let mut completions = Vec::new();
 
                 for (context, target, offset) in target_offsets {
-                    let Some(line_index) = snapshot.file_line_index(context.package, context.file)
+                    let Some(line_index) =
+                        snapshot.file_line_index(context.package, context.file)?
                     else {
                         continue;
                     };
@@ -1044,7 +1055,8 @@ impl EngineWorker {
                     let Some(info) = analysis.hover(target, context.file, offset)? else {
                         continue;
                     };
-                    let Some(line_index) = snapshot.file_line_index(context.package, context.file)
+                    let Some(line_index) =
+                        snapshot.file_line_index(context.package, context.file)?
                     else {
                         continue;
                     };
@@ -1162,7 +1174,8 @@ impl EngineWorker {
                 let mut hints = Vec::<(rg_def_map::PackageSlot, AnalysisInlayHint)>::new();
 
                 for context in contexts {
-                    let Some(range) = Self::text_span_for_context(snapshot, &context, range) else {
+                    let Some(range) = Self::text_span_for_context(snapshot, &context, range)?
+                    else {
                         continue;
                     };
 
@@ -1293,7 +1306,7 @@ impl EngineWorker {
 
         let contexts = Self::file_contexts(snapshot, path)?;
         for context in contexts {
-            let Some(offset) = Self::offset_for_context(snapshot, &context, position) else {
+            let Some(offset) = Self::offset_for_context(snapshot, &context, position)? else {
                 tracing::trace!(
                     path = %path.display(),
                     line = position.line,
@@ -1368,8 +1381,10 @@ impl EngineWorker {
         snapshot: ProjectSnapshot<'_>,
         context: &FileContext,
         position: ls_types::Position,
-    ) -> Option<u32> {
-        let line_index = snapshot.file_line_index(context.package, context.file)?;
+    ) -> anyhow::Result<Option<u32>> {
+        let Some(line_index) = snapshot.file_line_index(context.package, context.file)? else {
+            return Ok(None);
+        };
         let offset = line_index.offset_from_utf16_position(position::parse_position(position));
         tracing::trace!(
             package = ?context.package,
@@ -1379,17 +1394,26 @@ impl EngineWorker {
             offset = ?offset,
             "converted LSP position to file offset"
         );
-        offset
+        Ok(offset)
     }
 
     fn text_span_for_context(
         snapshot: ProjectSnapshot<'_>,
         context: &FileContext,
         range: ls_types::Range,
-    ) -> Option<TextSpan> {
-        let line_index = snapshot.file_line_index(context.package, context.file)?;
-        let start = line_index.offset_from_utf16_position(position::parse_position(range.start))?;
-        let end = line_index.offset_from_utf16_position(position::parse_position(range.end))?;
+    ) -> anyhow::Result<Option<TextSpan>> {
+        let Some(line_index) = snapshot.file_line_index(context.package, context.file)? else {
+            return Ok(None);
+        };
+        let Some(start) =
+            line_index.offset_from_utf16_position(position::parse_position(range.start))
+        else {
+            return Ok(None);
+        };
+        let Some(end) = line_index.offset_from_utf16_position(position::parse_position(range.end))
+        else {
+            return Ok(None);
+        };
 
         let span = TextSpan { start, end };
         tracing::trace!(
@@ -1403,23 +1427,23 @@ impl EngineWorker {
             span_end = span.end,
             "converted LSP range to text span"
         );
-        Some(span)
+        Ok(Some(span))
     }
 
     fn rename_target_matches_source(
         snapshot: ProjectSnapshot<'_>,
         package: rg_def_map::PackageSlot,
         target: &RenameTarget,
-    ) -> bool {
-        snapshot
-            .file_text_for_span(package, target.file_id, target.span)
-            .is_some_and(|text| text == target.placeholder)
+    ) -> anyhow::Result<bool> {
+        Ok(snapshot
+            .file_text_for_span(package, target.file_id, target.span)?
+            .is_some_and(|text| text == target.placeholder))
     }
 
     fn verified_rename_edits(
         snapshot: ProjectSnapshot<'_>,
         edits: Vec<RenameEdit>,
-    ) -> Option<Vec<RenameEdit>> {
+    ) -> anyhow::Result<Option<Vec<RenameEdit>>> {
         let mut verified = Vec::new();
 
         for edit in edits {
@@ -1430,18 +1454,18 @@ impl EngineWorker {
                     package = ?edit.target.package,
                     "rename rejected because an edit targets a non-workspace package"
                 );
-                return None;
+                return Ok(None);
             }
 
             let Some(text) =
-                snapshot.file_text_for_span(edit.target.package, edit.file_id, edit.span)
+                snapshot.file_text_for_span(edit.target.package, edit.file_id, edit.span)?
             else {
                 tracing::debug!(
                     package = ?edit.target.package,
                     file = ?edit.file_id,
                     "rename rejected because an edit span has no source text"
                 );
-                return None;
+                return Ok(None);
             };
             if text != edit.old_text {
                 tracing::debug!(
@@ -1451,7 +1475,7 @@ impl EngineWorker {
                     actual = %text,
                     "rename rejected because an edit span did not match the expected source text"
                 );
-                return None;
+                return Ok(None);
             }
 
             if !verified.contains(&edit) {
@@ -1459,7 +1483,7 @@ impl EngineWorker {
             }
         }
 
-        Some(verified)
+        Ok(Some(verified))
     }
 
     /// Runs a read-only request and hides disposable cache churn from the LSP client.
@@ -1467,7 +1491,7 @@ impl EngineWorker {
         &mut self,
         context: QueryContext,
         respond_to: EngineResponse<T>,
-        query: impl FnOnce(&mut Self) -> anyhow::Result<T>,
+        mut query: impl FnMut(&mut Self) -> anyhow::Result<T>,
     ) where
         T: Default + Send + 'static,
     {
@@ -1500,9 +1524,22 @@ impl EngineWorker {
         let started = Instant::now();
         let memory_control = Arc::clone(&self.memory_control);
         let memory_before = MemoryReporter::snapshot(memory_control.as_ref());
-        let result = query(self);
-        let query_elapsed = started.elapsed();
+        let mut result = query(self);
         self.project.release_query_memory();
+        let stale_path = result
+            .as_ref()
+            .err()
+            .and_then(Project::stale_source_path)
+            .map(Path::to_path_buf);
+        let mut retried_stale_source = false;
+        if let Some(stale_path) = stale_path
+            && self.recover_after_stale_source(label, &stale_path)
+        {
+            retried_stale_source = true;
+            result = query(self);
+            self.project.release_query_memory();
+        }
+        let query_elapsed = started.elapsed();
         MemoryReporter::purge_and_report_delta_debug(memory_control.as_ref(), label, memory_before);
         let should_recover = result
             .as_ref()
@@ -1515,6 +1552,7 @@ impl EngineWorker {
                     queued_ms = queue_elapsed.as_millis(),
                     elapsed_ms = query_elapsed.as_millis(),
                     status = "ok",
+                    retried_stale_source,
                     "analysis query completed"
                 );
             }
@@ -1526,6 +1564,7 @@ impl EngineWorker {
                     elapsed_ms = query_elapsed.as_millis(),
                     status = "error",
                     recoverable_cache_failure = should_recover,
+                    retried_stale_source,
                     error = %error,
                     "analysis query completed"
                 );
@@ -1540,6 +1579,35 @@ impl EngineWorker {
             self.recover_after_query_cache_failure(label);
         } else {
             let _ = respond_to.send(result);
+        }
+    }
+
+    /// Rebuilds the package closure for one stale source before retrying the query once.
+    fn recover_after_stale_source(&mut self, label: &'static str, path: &Path) -> bool {
+        if !self.project.is_initialized() {
+            return false;
+        }
+
+        tracing::warn!(
+            label,
+            path = %path.display(),
+            "analysis query observed a stale source generation; rebuilding before one retry"
+        );
+        match self.mutate_saved_and_schedule_deferred_finish(|project| {
+            project
+                .reindex_workspace()
+                .context("while attempting to rebuild stale source generation")
+        }) {
+            Ok(()) => true,
+            Err(error) => {
+                tracing::warn!(
+                    label,
+                    path = %path.display(),
+                    error = %format!("{error:#}"),
+                    "stale source generation could not be rebuilt"
+                );
+                false
+            }
         }
     }
 

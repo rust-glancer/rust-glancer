@@ -97,11 +97,16 @@ impl<'a> StartupCacheProbe<'a> {
 
     fn source_matches(&mut self, artifact: &PackageCacheArtifact) -> bool {
         let timer = metric::CACHE_PROBE_SOURCE_FINGERPRINT.start_timer();
-        let source_fingerprint = WorkspaceCachePlan::snapshot_source_fingerprint(
-            self.workspace.workspace_root(),
-            &artifact.header.package,
-            &artifact.payload.parse,
-        );
+        let source_fingerprint = self
+            .parse
+            .validate_package_parse_snapshot(&artifact.payload.parse)
+            .and_then(|()| {
+                WorkspaceCachePlan::snapshot_source_fingerprint(
+                    self.workspace.workspace_root(),
+                    &artifact.header.package,
+                    &artifact.payload.parse,
+                )
+            });
         timer.finish();
 
         match source_fingerprint {

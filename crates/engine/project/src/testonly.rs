@@ -109,22 +109,14 @@ impl ProjectFixture {
 
     pub fn apply_saved_fixture(&mut self, spec: &str) -> AnalysisChangeSummary {
         let saved_files = self.source.write_fixture_files(spec);
-        let mut summary = AnalysisChangeSummary {
-            changed_files: Vec::new(),
-            affected_packages: Vec::new(),
-            changed_targets: Vec::new(),
-        };
-
-        for file in saved_files.files() {
-            let change = SavedFileChange::new(self.path(file.relative_path()));
-            let change_summary = self
-                .project
-                .apply_change(change)
-                .expect("fixture save change should apply");
-            Self::merge_change_summary(&mut summary, change_summary);
-        }
-
-        summary
+        let changes = saved_files
+            .files()
+            .iter()
+            .map(|file| SavedFileChange::new(self.path(file.relative_path())))
+            .collect::<Vec<_>>();
+        self.project
+            .apply_changes(changes)
+            .expect("fixture save changes should apply as one source generation")
     }
 
     pub fn remove_package_cache_artifacts(&self) {
@@ -201,23 +193,5 @@ impl ProjectFixture {
                 (package.package_name() == package_name).then_some(PackageSlot(idx))
             })
             .unwrap_or_else(|| panic!("fixture package {package_name} should be parsed"))
-    }
-
-    fn merge_change_summary(target: &mut AnalysisChangeSummary, source: AnalysisChangeSummary) {
-        for changed_file in source.changed_files {
-            if !target.changed_files.contains(&changed_file) {
-                target.changed_files.push(changed_file);
-            }
-        }
-        for package in source.affected_packages {
-            if !target.affected_packages.contains(&package) {
-                target.affected_packages.push(package);
-            }
-        }
-        for target_ref in source.changed_targets {
-            if !target.changed_targets.contains(&target_ref) {
-                target.changed_targets.push(target_ref);
-            }
-        }
     }
 }

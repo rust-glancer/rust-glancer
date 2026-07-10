@@ -88,7 +88,7 @@ pub struct DevHelper;
             workspace cache plan
 
             package #0 app
-            schema 3
+            schema 4
             id path+file://./#app@0.1.0
             source workspace
             edition 2024
@@ -105,7 +105,7 @@ pub struct DevHelper;
             - dev_support -> dev-helper (#3) [dev]
 
             package #1 build-helper
-            schema 3
+            schema 4
             id path+file://./build-helper#0.1.0
             source path
             edition 2021
@@ -116,7 +116,7 @@ pub struct DevHelper;
             - <none>
 
             package #2 dep-pkg
-            schema 3
+            schema 4
             id path+file://./dep#dep-pkg@0.1.0
             source path
             edition 2021
@@ -127,7 +127,7 @@ pub struct DevHelper;
             - <none>
 
             package #3 dev-helper
-            schema 3
+            schema 4
             id path+file://./dev-helper#0.1.0
             source path
             edition 2018
@@ -216,7 +216,7 @@ fn package_slot(workspace: &WorkspaceMetadata, package_name: &str) -> PackageSlo
 fn roundtrips_package_cache_header_codec() {
     utils::check_cache_header_codec(expect![[r#"
         encoded header bytes 315
-        0300000007000000000000002000000000000000706174682b66696c653a2f2f
+        0400000007000000000000002000000000000000706174682b66696c653a2f2f
         2f776f726b73706163652361707040302e312e30030000000000000061707000
         0000000300000015000000000000002f776f726b73706163652f436172676f2e
         746f6d6c00000000000000000000000000000000020000000000000003000000
@@ -228,7 +228,7 @@ fn roundtrips_package_cache_header_codec() {
         070707070707070707070707070707070707070707070707070707
 
         decoded header
-        schema 3
+        schema 4
         source fingerprint 0707070707070707070707070707070707070707070707070707070707070707
         package #7 app
         id path+file:///workspace#app@0.1.0
@@ -247,7 +247,7 @@ fn roundtrips_package_cache_header_codec() {
 fn roundtrips_minimal_package_cache_artifact_codec() {
     utils::check_minimal_cache_artifact_codec(expect![[r#"
         encoded artifact has bytes true
-        0300000007000000000000002200000000000000706174682b66696c653a2f2f
+        0400000007000000000000002200000000000000706174682b66696c653a2f2f
         2f776f726b737061636523656d70747940302e312e3000000000000000000000
         00000300000015000000000000002f776f726b73706163652f436172676f2e74
         6f6d6c0000000000000000000000000000000000000000000000000000000000
@@ -257,7 +257,7 @@ fn roundtrips_minimal_package_cache_artifact_codec() {
         000000
 
         decoded artifact
-        schema 3
+        schema 4
         source fingerprint 0707070707070707070707070707070707070707070707070707070707070707
         package #7 
         header targets 0
@@ -285,8 +285,8 @@ pub struct App;
         expect![[r#"
             encoded artifact has bytes true
             decoded artifact
-            schema 3
-            source fingerprint 5cb07c1684eeeb2c51a750cf465c7cd8f62d74e2e1dbdace0df9b4481058d206
+            schema 4
+            source fingerprint c15eefc2727539a098da6dc03624a62761f2c4787b8b0208a27cfbbc61073011
             package #0 app
             header targets 1
             parse files 1
@@ -429,12 +429,12 @@ fn main() {}
 }
 
 #[test]
-fn startup_indexing_uses_matching_offloaded_package_artifacts() {
-    utils::check_startup_cache_uses_matching_artifact(expect![[r#"
+fn startup_indexing_rejects_payload_with_forged_source_fingerprint() {
+    utils::check_startup_cache_rejects_forged_source_fingerprint(expect![[r#"
         startup artifact-backed indexing
         dep resident false
-        old symbols 1
-        new symbols 0
+        old symbols 0
+        new symbols 1
     "#]]);
 }
 

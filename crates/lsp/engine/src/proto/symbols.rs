@@ -16,7 +16,7 @@ pub(crate) fn document_symbol(
     symbol: DocumentSymbol,
 ) -> anyhow::Result<LspDocumentSymbol> {
     let line_index = snapshot
-        .file_line_index(package_slot, symbol.file_id)
+        .file_line_index(package_slot, symbol.file_id)?
         .context("while attempting to find file for document symbol conversion")?;
     let children = symbol
         .children

@@ -219,7 +219,8 @@ impl<'a, 'db> RenameResolver<'a, 'db> {
     fn source_text_for_span(&self, symbol: &SourceSymbol, span: Span) -> anyhow::Result<String> {
         self.analysis
             .source_text_for_span(symbol.target().package, symbol.file_id(), span)
-            .with_context(|| "while attempting to read source text for rename edit")
+            .with_context(|| "while attempting to read source text for rename edit")?
+            .with_context(|| "rename edit span should have source text")
     }
 
     /// Replaces a child span inside already-loaded parent source text.

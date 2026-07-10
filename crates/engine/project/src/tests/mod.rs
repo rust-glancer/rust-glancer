@@ -2,7 +2,11 @@ mod utils;
 
 use std::{
     collections::BTreeSet,
-    sync::{Arc, Mutex},
+    path::PathBuf,
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 
 use expect_test::expect;
@@ -11,8 +15,8 @@ use test_fixture::testonly::MarkedText;
 
 use self::utils::{HostFixture, HostObservation};
 use crate::{
-    AnalysisSurface, BuildProcessMemory, PackageResidencyPolicy, Project, ProjectMemoryHooks,
-    ProjectMemoryPurgePoint, SavedFileChange, SplitIndexingMode,
+    AnalysisChangeSummary, AnalysisSurface, BuildProcessMemory, PackageResidencyPolicy, Project,
+    ProjectMemoryHooks, ProjectMemoryPurgePoint, SavedFileChange, SplitIndexingMode,
     testonly::{ProjectFixture, ProjectSourceFixture},
 };
 
@@ -28,6 +32,276 @@ impl ProjectMemoryHooks for RecordingMemoryHooks {
             .expect("recorded memory hook points should not be poisoned")
             .push(point);
     }
+}
+
+#[derive(Debug)]
+struct SourceMutationMemoryHooks {
+    armed: AtomicBool,
+    path: PathBuf,
+    replacement: &'static str,
+}
+
+impl SourceMutationMemoryHooks {
+    fn new(path: PathBuf, replacement: &'static str, armed: bool) -> Self {
+        Self {
+            armed: AtomicBool::new(armed),
+            path,
+            replacement,
+        }
+    }
+
+    fn arm(&self) {
+        self.armed.store(true, Ordering::Release);
+    }
+}
+
+impl ProjectMemoryHooks for SourceMutationMemoryHooks {
+    fn purge(&self, point: ProjectMemoryPurgePoint) {
+        if point == ProjectMemoryPurgePoint::AfterItemTreeSyntaxEviction
+            && self.armed.swap(false, Ordering::AcqRel)
+        {
+            std::fs::write(&self.path, self.replacement)
+                .expect("source mutation hook should replace fixture source");
+        }
+    }
+}
+
+#[test]
+fn fresh_build_rejects_source_changed_between_item_tree_and_body_ir() {
+    let fixture = ProjectSourceFixture::build(
+        r#"
+//- /Cargo.toml
+[package]
+name = "source_generation_build_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct Before;
+"#,
+    );
+    let hooks: Arc<dyn ProjectMemoryHooks> = Arc::new(SourceMutationMemoryHooks::new(
+        fixture.path("src/lib.rs"),
+        "pub struct After;\n",
+        true,
+    ));
+
+    let error = Project::builder(fixture.workspace_metadata())
+        .memory_hooks(hooks)
+        .build()
+        .expect_err("a source change during construction should invalidate the candidate");
+
+    assert!(
+        error.chain().any(|cause| cause
+            .downcast_ref::<rg_source::SourceError>()
+            .is_some_and(|error| { matches!(error, rg_source::SourceError::Stale { .. }) })),
+        "build failure should retain the typed stale-source cause: {error:#}",
+    );
+}
+
+#[test]
+fn fresh_build_rejects_module_existence_changed_after_discovery() {
+    let fixture = ProjectSourceFixture::build(
+        r#"
+//- /Cargo.toml
+[package]
+name = "source_generation_existence_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+mod later;
+"#,
+    );
+    let hooks: Arc<dyn ProjectMemoryHooks> = Arc::new(SourceMutationMemoryHooks::new(
+        fixture.path("src/later.rs"),
+        "pub struct Appeared;\n",
+        true,
+    ));
+
+    let error = Project::builder(fixture.workspace_metadata())
+        .memory_hooks(hooks)
+        .build()
+        .expect_err("a module appearing during construction should invalidate the candidate");
+    assert!(
+        error.chain().any(|cause| matches!(
+            cause.downcast_ref::<rg_source::SourceError>(),
+            Some(rg_source::SourceError::ExistenceChanged { .. })
+        )),
+        "build failure should retain the source-existence cause: {error:#}",
+    );
+}
+
+#[test]
+fn failed_saved_candidate_preserves_published_generation() {
+    let fixture = ProjectSourceFixture::build(
+        r#"
+//- /Cargo.toml
+[package]
+name = "source_generation_update_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct Published;
+"#,
+    );
+    let path = fixture.path("src/lib.rs");
+    let hooks = Arc::new(SourceMutationMemoryHooks::new(
+        path.clone(),
+        "pub struct Concurrent;\n",
+        false,
+    ));
+    let mut project = Project::builder(fixture.workspace_metadata())
+        .memory_hooks(hooks.clone())
+        .build()
+        .expect("initial project generation should build");
+    let published_generation = project.generation_id();
+    let file_id = ProjectFixture::file_id_for_path_in(project.state.parse_db(), &path);
+
+    std::fs::write(&path, "pub struct Candidate;\n")
+        .expect("candidate fixture source should be written");
+    hooks.arm();
+    let error = project
+        .apply_change(SavedFileChange::new(&path))
+        .expect_err("concurrently changed candidate should not publish");
+    assert!(
+        error.chain().any(|cause| matches!(
+            cause.downcast_ref::<rg_source::SourceError>(),
+            Some(rg_source::SourceError::Stale { .. })
+        )),
+        "saved update failure should retain the typed stale-source cause: {error:#}",
+    );
+    assert_eq!(
+        project.generation_id(),
+        published_generation,
+        "a rejected candidate must not advance project generation identity",
+    );
+
+    // Restoring the old disk bytes proves the published ParseDb still points at the old source
+    // entry rather than at either failed candidate revision.
+    std::fs::write(&path, "pub struct Published;\n")
+        .expect("published fixture source should be restored");
+    let text = project
+        .snapshot()
+        .file_text_for_span(
+            rg_def_map::PackageSlot(0),
+            file_id,
+            rg_parse::Span {
+                text: rg_parse::TextSpan { start: 0, end: 21 },
+            },
+        )
+        .expect("published source should load after rejected candidate")
+        .expect("published source span should exist");
+    assert_eq!(text, "pub struct Published;");
+}
+
+#[test]
+fn missing_only_saved_change_batch_preserves_published_generation() {
+    let fixture = ProjectSourceFixture::build(
+        r#"
+//- /Cargo.toml
+[package]
+name = "source_generation_noop_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct Published;
+"#,
+    );
+    let mut project = fixture.build_project();
+    let published_generation = project.generation_id();
+
+    let summary = project
+        .apply_changes([SavedFileChange::new(fixture.path("src/disappeared.rs"))])
+        .expect("an obsolete saved change should be a successful no-op");
+
+    assert_eq!(summary, AnalysisChangeSummary::default());
+    assert_eq!(
+        project.generation_id(),
+        published_generation,
+        "a no-op batch must not publish a new project generation",
+    );
+}
+
+#[test]
+fn offloaded_line_index_rejects_newer_disk_revision() {
+    let fixture = ProjectSourceFixture::build(
+        r#"
+//- /Cargo.toml
+[package]
+name = "source_generation_line_index_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct Before;
+"#,
+    );
+    let path = fixture.path("src/lib.rs");
+    let project =
+        fixture.build_project_with_package_residency_policy(PackageResidencyPolicy::AllOffloadable);
+    let file_id = ProjectFixture::file_id_for_path_in(project.state.parse_db(), &path);
+    std::fs::write(&path, "\n\npub struct After;\n")
+        .expect("newer fixture source should be written");
+
+    let error = project
+        .snapshot()
+        .file_line_index(rg_def_map::PackageSlot(0), file_id)
+        .expect_err("line index reload should reject a newer source revision");
+    assert!(
+        error.chain().any(|cause| matches!(
+            cause.downcast_ref::<rg_source::SourceError>(),
+            Some(rg_source::SourceError::Stale { .. })
+        )),
+        "line-index failure should retain the typed stale-source cause: {error:#}",
+    );
+}
+
+#[test]
+fn saved_change_without_an_affected_package_still_seals_the_generation() {
+    let fixture = ProjectSourceFixture::build(
+        r#"
+//- /Cargo.toml
+[workspace]
+members = ["crates/app"]
+resolver = "3"
+
+//- /crates/app/Cargo.toml
+[package]
+name = "source_generation_irrelevant_change_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /crates/app/src/lib.rs
+pub struct App;
+"#,
+    );
+    let mut project = fixture.build_project();
+    fixture.write_fixture_files(
+        r#"
+//- /generated/irrelevant.rs
+pub struct Irrelevant;
+"#,
+    );
+    let path = fixture.path("generated/irrelevant.rs");
+
+    let summary = project
+        .apply_change(SavedFileChange::new(path))
+        .expect("irrelevant saved source should produce a valid generation");
+
+    assert!(summary.changed_files.is_empty());
+    assert!(summary.affected_packages.is_empty());
+    assert!(
+        project.state.parse_db().source_inventory().is_sealed(),
+        "a published generation must be sealed even when no package was rebuilt",
+    );
+    project
+        .state
+        .parse_db()
+        .validate_saved_sources()
+        .expect("the published source set should remain valid");
 }
 
 #[test]

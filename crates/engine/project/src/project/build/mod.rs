@@ -18,7 +18,11 @@ use crate::{
     profile::{BuildMemorySampler, record_build_checkpoint},
 };
 
-use super::{Project, offloading::ResidencyApplication, state::ProjectState};
+use super::{
+    Project,
+    offloading::ResidencyApplication,
+    state::{ProjectGenerationId, ProjectState},
+};
 
 /// Controls whether a fresh project build can seed offloadable packages from cache artifacts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -198,6 +202,7 @@ pub(crate) fn build_resident_state(
     )?;
 
     Ok(ProjectState {
+        generation_id: ProjectGenerationId::fresh(),
         workspace,
         workspace_lowering_config,
         cargo_metadata_config,

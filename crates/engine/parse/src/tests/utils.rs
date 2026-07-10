@@ -26,9 +26,10 @@ fn check_parse_db_with(fixture: &str, mode: ParseFixtureMode, expect: Expect) {
             .expect("fixture workspace metadata should build");
     let mut parse = ParseDb::build(&workspace).expect("fixture parse db should build");
     if matches!(mode, ParseFixtureMode::DiscoverModules) {
+        let sources = parse.source_inventory_handle();
         for package in parse.packages_mut() {
             package
-                .discover_modules()
+                .discover_modules(&sources)
                 .expect("fixture module discovery should succeed");
         }
     }

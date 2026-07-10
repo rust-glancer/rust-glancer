@@ -7,8 +7,6 @@ use rg_std::MemorySize;
 use std::{fmt, path::Path};
 use wincode::{SchemaRead, SchemaWrite};
 
-use anyhow::Context as _;
-
 use super::{
     CachedCfgOptions, CachedDependency, CachedPackage, CachedPackageId, CachedTarget,
     WorkspaceCachePlan, cached::CachedCfgKeyValue,
@@ -111,13 +109,7 @@ impl FingerprintBuilder {
         builder.usize("files.len", files.len());
         for file in files {
             builder.path("file.path", workspace_root, file.path());
-            let source = std::fs::read(file.path()).with_context(|| {
-                format!(
-                    "while attempting to read {} for package cache source fingerprint",
-                    file.path().display(),
-                )
-            })?;
-            builder.bytes("file.source", &source);
+            builder.bytes("file.source", file.source_revision().as_bytes());
         }
 
         Ok(builder.finalize())
@@ -141,13 +133,10 @@ impl FingerprintBuilder {
         // path ordering as fresh source fingerprints so equivalent file sets hash identically.
         for file in files {
             builder.path("file.path", workspace_root, file.path());
-            let source = std::fs::read(file.path()).with_context(|| {
-                format!(
-                    "while attempting to read {} for package cache source fingerprint",
-                    file.path().display(),
-                )
-            })?;
-            builder.bytes("file.source", &source);
+            builder.bytes(
+                "file.source",
+                file.source_descriptor().revision().as_bytes(),
+            );
         }
 
         Ok(builder.finalize())

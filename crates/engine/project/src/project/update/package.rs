@@ -82,6 +82,7 @@ fn try_rebuild_packages(
     let item_tree =
         ItemTreeDb::build_packages(&mut state.parse, &package_indices, &mut state.names)
             .context("while attempting to rebuild affected item-tree packages")?;
+    state.parse.seal_sources();
 
     // Rebuilds follow the same lifetime rule as fresh indexing: item-tree owns the lowered
     // declarations, and body lowering reparses only the files it needs.
@@ -139,6 +140,11 @@ fn try_rebuild_packages(
     let body_ir = body_rebuilder
         .build()
         .context("while attempting to rebuild affected body IR packages")?;
+    state
+        .parse
+        .validate_saved_sources()
+        .context("while attempting to validate captured project source generation")?;
+    state.parse.evict_saved_source_text();
 
     // ItemTree is a transient rebuild input. Drop it before pruning the weak interner so names
     // that did not survive into retained DBs are no longer treated as live.

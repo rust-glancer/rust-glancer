@@ -1757,6 +1757,7 @@ dependencies = [
  "rg_ir_model",
  "rg_macro_expand",
  "rg_parse",
+ "rg_source",
  "rg_std",
  "rg_syntax",
  "rg_text",
@@ -1784,6 +1785,7 @@ dependencies = [
  "rg_lsp_proto",
  "rg_parse",
  "rg_project",
+ "rg_source",
  "rg_std",
  "rg_workspace",
  "tarpc",
@@ -1873,6 +1875,7 @@ dependencies = [
  "expect-test",
  "rg_arena",
  "rg_cfg_eval",
+ "rg_source",
  "rg_std",
  "rg_syntax",
  "rg_workspace",
@@ -1923,6 +1926,7 @@ dependencies = [
  "rg_parse",
  "rg_profile",
  "rg_semantic_ir",
+ "rg_source",
  "rg_std",
  "rg_text",
  "rg_ty",
@@ -1950,6 +1954,16 @@ dependencies = [
  "rg_text",
  "rg_ty",
  "rg_workspace",
+ "wincode",
+]
+
+[[package]]
+name = "rg_source"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "rg_std",
+ "tempfile",
  "wincode",
 ]
 

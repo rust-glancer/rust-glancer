@@ -1,0 +1,326 @@
+//! Source capture and validation for one project-generation candidate.
+//!
+//! An inventory has a small lifecycle that mirrors project construction:
+//!
+//! 1. While open, parsing and ItemTree may capture files and remember module-existence checks.
+//! 2. After file discovery, the inventory is sealed. Known entries remain readable, but a later
+//!    phase cannot add a file that earlier phases never saw.
+//! 3. Before publication, validation rereads saved files and repeats existence checks.
+//! 4. After publication, saved text may be evicted while entries keep their revision proof.
+//!
+//! A saved update starts by forking the published inventory. The maps are independent, but
+//! unchanged `SourceEntry` values are shared because an entry's descriptor never changes.
+
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+    sync::{Arc, RwLock},
+};
+
+use rg_std::{MemoryRecorder, MemorySize};
+
+use crate::{SourceDescriptor, SourceEntry, SourceError, read_source_text};
+
+/// Path-indexed source set captured for one project generation.
+///
+/// The inventory is the authority that decides whether a filesystem read belongs to this
+/// generation. Analysis phases may ask it for an already-known entry, but only an open candidate
+/// may capture a new path or replace an entry.
+#[derive(Debug, Default)]
+pub struct SourceInventory {
+    entries: RwLock<HashMap<PathBuf, Arc<SourceEntry>>>,
+    existence: RwLock<HashMap<PathBuf, bool>>,
+    sealed: RwLock<bool>,
+}
+
+impl SourceInventory {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Creates a candidate inventory without giving it access to the published maps.
+    ///
+    /// The new map initially points at the same immutable entries. Replacing `lib.rs` in the
+    /// candidate changes only its map entry; the published inventory continues to point at the
+    /// previous revision.
+    pub fn fork(&self) -> Self {
+        let entries = self
+            .entries
+            .read()
+            .expect("source inventory lock should not be poisoned")
+            .clone();
+        let sealed = *self
+            .sealed
+            .read()
+            .expect("source inventory seal lock should not be poisoned");
+        Self {
+            entries: RwLock::new(entries),
+            existence: RwLock::new(
+                self.existence
+                    .read()
+                    .expect("source existence lock should not be poisoned")
+                    .clone(),
+            ),
+            sealed: RwLock::new(sealed),
+        }
+    }
+
+    /// Opens a private candidate for source replacement and another discovery pass.
+    ///
+    /// Existing entries stay in place because unchanged files still belong to the candidate.
+    /// Existence probes are cleared because a new module may have appeared since the published
+    /// generation decided that `foo.rs` did not exist.
+    pub fn begin_capture(&self) {
+        *self
+            .sealed
+            .write()
+            .expect("source inventory seal lock should not be poisoned") = false;
+        self.existence
+            .write()
+            .expect("source existence lock should not be poisoned")
+            .clear();
+    }
+
+    /// Ends file discovery for this generation.
+    ///
+    /// Sealing does not make known source unreadable. It only prevents later phases or query code
+    /// from silently adding paths that were absent from the generation's discovery pass.
+    pub fn seal(&self) {
+        *self
+            .sealed
+            .write()
+            .expect("source inventory seal lock should not be poisoned") = true;
+    }
+
+    pub fn is_sealed(&self) -> bool {
+        *self
+            .sealed
+            .read()
+            .expect("source inventory seal lock should not be poisoned")
+    }
+
+    /// Returns the generation's existing entry or captures a saved file for an open candidate.
+    pub fn capture_saved(&self, path: &Path) -> Result<Arc<SourceEntry>, SourceError> {
+        let canonical_path = path.canonicalize().map_err(|source| SourceError::Io {
+            path: path.to_path_buf(),
+            source,
+        })?;
+
+        // Known entries are valid in sealed generations. Only the first capture represents file
+        // discovery and therefore needs the inventory to be open.
+        if let Some(entry) = self.entry(&canonical_path) {
+            return Ok(entry);
+        }
+        self.ensure_open(&canonical_path)?;
+
+        // Parallel package lowering can race to capture a shared source. Both reads are valid; the
+        // first entry inserted becomes the one revision used by this generation.
+        let text = read_source_text(&canonical_path)?;
+        self.insert_if_absent(
+            canonical_path.clone(),
+            SourceEntry::saved(canonical_path, text),
+        )
+    }
+
+    /// Replaces one saved path in an open candidate using caller-staged exact text.
+    pub fn replace_saved(
+        &self,
+        canonical_path: &Path,
+        text: impl Into<Arc<str>>,
+    ) -> Result<Arc<SourceEntry>, SourceError> {
+        self.ensure_open(canonical_path)?;
+        let entry = Arc::new(SourceEntry::saved(
+            canonical_path.to_path_buf(),
+            text.into(),
+        ));
+        self.entries
+            .write()
+            .expect("source inventory lock should not be poisoned")
+            .insert(canonical_path.to_path_buf(), Arc::clone(&entry));
+        Ok(entry)
+    }
+
+    /// Replaces one saved path by capturing its disk bytes at the start of candidate rebuilding.
+    pub fn replace_saved_from_disk(
+        &self,
+        canonical_path: &Path,
+    ) -> Result<Arc<SourceEntry>, SourceError> {
+        self.ensure_open(canonical_path)?;
+        let text = read_source_text(canonical_path)?;
+        let entry = Arc::new(SourceEntry::saved(canonical_path.to_path_buf(), text));
+        self.entries
+            .write()
+            .expect("source inventory lock should not be poisoned")
+            .insert(canonical_path.to_path_buf(), Arc::clone(&entry));
+        Ok(entry)
+    }
+
+    /// Replaces one path with editor-owned text in an open dirty-overlay candidate.
+    pub fn replace_in_memory(
+        &self,
+        canonical_path: &Path,
+        text: impl Into<Arc<str>>,
+    ) -> Result<Arc<SourceEntry>, SourceError> {
+        self.ensure_open(canonical_path)?;
+        let entry = Arc::new(SourceEntry::in_memory(
+            canonical_path.to_path_buf(),
+            text.into(),
+        ));
+        self.entries
+            .write()
+            .expect("source inventory lock should not be poisoned")
+            .insert(canonical_path.to_path_buf(), Arc::clone(&entry));
+        Ok(entry)
+    }
+
+    /// Captures a cache snapshot's source and proves that its descriptor still matches.
+    ///
+    /// Cache fingerprints summarize a package, but restoration also checks each file descriptor.
+    /// This prevents a matching or forged header from reconnecting derived data to different
+    /// source bytes.
+    pub fn capture_descriptor(
+        &self,
+        descriptor: &SourceDescriptor,
+    ) -> Result<Arc<SourceEntry>, SourceError> {
+        let entry = self.capture_saved(descriptor.path())?;
+        if entry.revision() != descriptor.revision() || entry.byte_len() != descriptor.byte_len() {
+            return Err(SourceError::Stale {
+                path: descriptor.path().to_path_buf(),
+                expected: descriptor.revision(),
+                actual: entry.revision(),
+            });
+        }
+        Ok(entry)
+    }
+
+    pub fn entry(&self, path: &Path) -> Option<Arc<SourceEntry>> {
+        self.entries
+            .read()
+            .expect("source inventory lock should not be poisoned")
+            .get(path)
+            .cloned()
+    }
+
+    /// Remembers one module-discovery decision made by an open candidate.
+    ///
+    /// Repeated checks return the first answer so one generation cannot observe `foo.rs` as both
+    /// missing and present. Final validation checks the answer again before publication.
+    pub fn probe_exists(&self, path: &Path) -> Result<bool, SourceError> {
+        if let Some(exists) = self
+            .existence
+            .read()
+            .expect("source existence lock should not be poisoned")
+            .get(path)
+            .copied()
+        {
+            return Ok(exists);
+        }
+        self.ensure_open(path)?;
+        let exists = path.is_file();
+        self.existence
+            .write()
+            .expect("source existence lock should not be poisoned")
+            .insert(path.to_path_buf(), exists);
+        Ok(exists)
+    }
+
+    pub fn entries(&self) -> Vec<Arc<SourceEntry>> {
+        self.entries
+            .read()
+            .expect("source inventory lock should not be poisoned")
+            .values()
+            .cloned()
+            .collect()
+    }
+
+    /// Proves that all filesystem observations still match the candidate being published.
+    pub fn validate_saved(&self) -> Result<(), SourceError> {
+        // First prove that every saved file still contains the bytes used by parsing and lowering.
+        for entry in self.entries() {
+            entry.validate_saved()?;
+        }
+
+        // Then repeat module-discovery decisions. A newly created or removed candidate module can
+        // change the reachable file graph even when all already-captured files are unchanged.
+        let existence = self
+            .existence
+            .read()
+            .expect("source existence lock should not be poisoned");
+        for (path, expected) in existence.iter() {
+            let actual = path.is_file();
+            if actual != *expected {
+                return Err(SourceError::ExistenceChanged {
+                    path: path.clone(),
+                    expected: *expected,
+                    actual,
+                });
+            }
+        }
+        Ok(())
+    }
+
+    /// Releases all saved text while preserving the identity needed for verified reloads.
+    pub fn evict_saved_text(&self) {
+        for entry in self.entries() {
+            entry.evict_saved_text();
+        }
+    }
+
+    pub fn shrink_to_fit(&self) {
+        self.entries
+            .write()
+            .expect("source inventory lock should not be poisoned")
+            .shrink_to_fit();
+        self.existence
+            .write()
+            .expect("source existence lock should not be poisoned")
+            .shrink_to_fit();
+    }
+
+    fn ensure_open(&self, path: &Path) -> Result<(), SourceError> {
+        if self.is_sealed() {
+            return Err(SourceError::Sealed {
+                path: path.to_path_buf(),
+            });
+        }
+        Ok(())
+    }
+
+    fn insert_if_absent(
+        &self,
+        path: PathBuf,
+        entry: SourceEntry,
+    ) -> Result<Arc<SourceEntry>, SourceError> {
+        let mut entries = self
+            .entries
+            .write()
+            .expect("source inventory lock should not be poisoned");
+        if let Some(existing) = entries.get(&path) {
+            return Ok(Arc::clone(existing));
+        }
+        let entry = Arc::new(entry);
+        entries.insert(path, Arc::clone(&entry));
+        Ok(entry)
+    }
+}
+
+impl Clone for SourceInventory {
+    fn clone(&self) -> Self {
+        self.fork()
+    }
+}
+
+impl MemorySize for SourceInventory {
+    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
+        let entries = self
+            .entries
+            .read()
+            .expect("source inventory lock should not be poisoned");
+        entries.record_memory_children(recorder);
+        let existence = self
+            .existence
+            .read()
+            .expect("source existence lock should not be poisoned");
+        existence.record_memory_children(recorder);
+    }
+}

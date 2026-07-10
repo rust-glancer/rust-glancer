@@ -1557,6 +1557,7 @@ impl TargetBodyIrSnapshot<'_> {
 
         parsed_file
             .text_for_span(source.span)
+            .expect("body source text should load")
             .unwrap_or_else(|| "<invalid>".to_string())
             .split_whitespace()
             .collect::<Vec<_>>()

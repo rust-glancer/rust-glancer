@@ -48,7 +48,8 @@ impl ItemTreeDb {
             packages: vec![None; parse.package_count()],
         };
 
-        Self::build_packages_parallel(parse, &package_slots, interners, &mut trees)?;
+        let sources = parse.source_inventory_handle();
+        Self::build_packages_parallel(parse, &sources, &package_slots, interners, &mut trees)?;
         Shrink::shrink_to_fit(&mut trees);
 
         Ok(trees)
@@ -61,6 +62,7 @@ impl ItemTreeDb {
 
     fn build_packages_parallel(
         parse: &mut ParseDb,
+        sources: &rg_source::SourceInventory,
         package_slots: &[usize],
         interners: &mut PackageNameInterners,
         trees: &mut Self,
@@ -91,7 +93,12 @@ impl ItemTreeDb {
                             return Ok(());
                         }
 
-                        *output = Some(Self::lower_package(package_slot, parse_package, interner)?);
+                        *output = Some(Self::lower_package(
+                            package_slot,
+                            parse_package,
+                            sources,
+                            interner,
+                        )?);
                         Ok(())
                     },
                 )
@@ -101,16 +108,17 @@ impl ItemTreeDb {
     fn lower_package(
         package_slot: usize,
         package: &mut rg_parse::Package,
+        sources: &rg_source::SourceInventory,
         interner: &mut rg_text::NameInterner,
     ) -> anyhow::Result<Package> {
         let package_name = package.package_name().to_owned();
         // Parse syntax is only needed while this package is being lowered. Drop it at the package
         // boundary so large workspaces do not keep every syntax tree alive until the whole
         // item-tree phase finishes.
-        package.discover_modules().with_context(|| {
+        package.discover_modules(sources).with_context(|| {
             format!("while attempting to discover modules for package {package_name}")
         })?;
-        let item_tree = lower::build_package(package, interner)
+        let item_tree = lower::build_package(package, sources, interner)
             .with_context(|| {
                 format!("while attempting to build item trees for package {package_name}")
             })

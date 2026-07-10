@@ -5,6 +5,7 @@ use rg_arena::Arena;
 use rg_cfg_eval::CfgOptions;
 
 use crate::{FileId, LineIndex, ParsedFile, ParsedFileSnapshot, Target, TargetId, file::FileDb};
+use rg_source::{SourceEntry, SourceInventory};
 use rg_std::MemorySize;
 use rg_workspace::{PackageId, PackageOrigin, RustEdition, TargetKind};
 use wincode::{SchemaRead, SchemaWrite};
@@ -50,14 +51,18 @@ impl Package {
     }
 
     /// Parses a package-local source file, or returns its existing file id if it is already cached.
-    pub fn parse_file(&mut self, file_path: &Path) -> anyhow::Result<FileId> {
-        self.files.get_or_parse_file(file_path)
+    pub fn parse_file(
+        &mut self,
+        sources: &SourceInventory,
+        file_path: &Path,
+    ) -> anyhow::Result<FileId> {
+        self.files.get_or_parse_file(sources, file_path)
     }
 
     pub(crate) fn reparse_saved_file_from_source(
         &mut self,
         file_path: &Path,
-        source: &str,
+        source: Arc<SourceEntry>,
     ) -> Option<FileId> {
         self.files.reparse_saved_file_from_source(file_path, source)
     }
@@ -66,7 +71,7 @@ impl Package {
     pub(crate) fn reparse_file_from_source(
         &mut self,
         file_path: &Path,
-        source: Arc<str>,
+        source: Arc<SourceEntry>,
     ) -> Option<FileId> {
         self.files.reparse_file_from_source(file_path, source)
     }
@@ -121,7 +126,11 @@ impl Package {
     /// The artifact keeps the same package and target slots as the current workspace graph. Once
     /// that shape is checked, restoring the file table is enough for cached phase payloads to keep
     /// using their original file ids.
-    pub fn apply_parse_snapshot(&mut self, snapshot: PackageParseSnapshot) -> anyhow::Result<()> {
+    pub fn apply_parse_snapshot(
+        &mut self,
+        snapshot: PackageParseSnapshot,
+        files: Vec<(ParsedFileSnapshot, Arc<SourceEntry>)>,
+    ) -> anyhow::Result<()> {
         anyhow::ensure!(
             snapshot.target_root_files.len() == self.targets.len(),
             "parse snapshot has {} target roots but package has {} targets",
@@ -137,7 +146,7 @@ impl Package {
             );
         }
 
-        self.files = FileDb::from_parse_snapshot(self.edition, snapshot.files);
+        self.files = FileDb::from_parse_snapshot(self.edition, files);
         for (target, root_file) in self.targets.iter_mut().zip(snapshot.target_root_files) {
             target.root_file = root_file;
         }
@@ -191,18 +200,23 @@ impl Package {
     }
 
     /// Parses package targets and their root files.
-    pub(super) fn build(package: &rg_workspace::Package) -> anyhow::Result<Self> {
+    pub(super) fn build(
+        package: &rg_workspace::Package,
+        sources: &SourceInventory,
+    ) -> anyhow::Result<Self> {
         let mut files = FileDb::new(package.edition);
         let mut parsed_targets = Arena::new();
 
         for target in Self::analyzed_targets(package) {
             let target_id = parsed_targets.next_id();
-            let root_file = files.get_or_parse_file(&target.src_path).with_context(|| {
-                format!(
-                    "while attempting to parse target root {}",
-                    target.src_path.display()
-                )
-            })?;
+            let root_file = files
+                .get_or_parse_file(sources, &target.src_path)
+                .with_context(|| {
+                    format!(
+                        "while attempting to parse target root {}",
+                        target.src_path.display()
+                    )
+                })?;
 
             parsed_targets.alloc(Target {
                 id: target_id,

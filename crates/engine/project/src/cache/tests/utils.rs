@@ -345,7 +345,7 @@ pub(super) fn check_offloaded_dependency_query(fixture: &str, expect: Expect) {
     expect.assert_eq(&format!("{}\n", dump.trim_end()));
 }
 
-pub(super) fn check_startup_cache_uses_matching_artifact(expect: Expect) {
+pub(super) fn check_startup_cache_rejects_forged_source_fingerprint(expect: Expect) {
     let fixture = ProjectSourceFixture::build(
         r#"
 //- /Cargo.toml
@@ -402,9 +402,9 @@ pub struct DepNew;
         .source_fingerprints(workspace_after_edit.workspace_root(), &parse_after_edit)
         .expect("edited source fingerprints should compute");
 
-    // Make the existing artifact look like a valid cache hit for the edited source snapshot.
-    // If startup indexing ignores artifacts and rebuilds from source, only `DepNew` will exist;
-    // if it accepts the matching artifact, the old payload remains visible through lazy reads.
+    // Forge the old artifact header so its package fingerprint claims to describe the edited
+    // source. The per-file source descriptors still prove that the payload belongs to `DepOld`, so
+    // startup must reject it and rebuild `DepNew` rather than trusting the header alone.
     artifact.header.source_fingerprint =
         source_fingerprints[dep.0].expect("edited dependency source should have a fingerprint");
     project

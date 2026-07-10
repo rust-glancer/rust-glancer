@@ -50,7 +50,7 @@ impl<'a> Analysis<'a> {
         package: PackageSlot,
         file: FileId,
         span: Span,
-    ) -> Option<String> {
+    ) -> anyhow::Result<Option<String>> {
         self.source_text.text_for_span(package, file, span)
     }
 
@@ -59,7 +59,7 @@ impl<'a> Analysis<'a> {
         package: PackageSlot,
         file: FileId,
         offset: u32,
-    ) -> Option<u32> {
+    ) -> anyhow::Result<Option<u32>> {
         self.source_text.line_for_offset(package, file, offset)
     }
 
@@ -255,15 +255,35 @@ impl<'a> SourceTextView<'a> {
         Self { parse }
     }
 
-    fn text_for_span(&self, package: PackageSlot, file: FileId, span: Span) -> Option<String> {
-        self.parse
-            .package(package.0)?
-            .parsed_file(file)?
-            .text_for_span(span)
+    fn text_for_span(
+        &self,
+        package: PackageSlot,
+        file: FileId,
+        span: Span,
+    ) -> anyhow::Result<Option<String>> {
+        let Some(parsed_file) = self
+            .parse
+            .package(package.0)
+            .and_then(|package| package.parsed_file(file))
+        else {
+            return Ok(None);
+        };
+        parsed_file.text_for_span(span)
     }
 
-    fn line_for_offset(&self, package: PackageSlot, file: FileId, offset: u32) -> Option<u32> {
-        let parsed_file = self.parse.package(package.0)?.parsed_file(file)?;
-        Some(parsed_file.line_index().ok()?.position(offset).line)
+    fn line_for_offset(
+        &self,
+        package: PackageSlot,
+        file: FileId,
+        offset: u32,
+    ) -> anyhow::Result<Option<u32>> {
+        let Some(parsed_file) = self
+            .parse
+            .package(package.0)
+            .and_then(|package| package.parsed_file(file))
+        else {
+            return Ok(None);
+        };
+        Ok(Some(parsed_file.line_index()?.position(offset).line))
     }
 }

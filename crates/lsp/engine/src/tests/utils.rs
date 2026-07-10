@@ -176,6 +176,11 @@ impl LspEngineFixture {
             .expect("fixture external file change should apply");
     }
 
+    pub(super) fn write_file_without_notification(&self, path: &str, text: &str) {
+        std::fs::write(self.fixture.path(path), text)
+            .expect("fixture source should be writable without a notification");
+    }
+
     pub(super) fn check_notification_effects(&self, expect: Expect) {
         let mut rendered = String::new();
         writeln!(rendered, "notifications").expect("snapshot should be writable");
