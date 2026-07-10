@@ -288,6 +288,11 @@ impl FileDb {
             .map(|(file_id, data)| ParsedFile::new(file_id, self.edition, data))
     }
 
+    /// Returns the package-local id for a canonical source path already known to this package.
+    pub(super) fn file_id_for_path(&self, file_path: &Path) -> Option<FileId> {
+        self.file_ids_by_path.get(file_path).copied()
+    }
+
     pub(super) fn parse_snapshot(&self) -> anyhow::Result<Vec<ParsedFileSnapshot>> {
         self.parsed_files
             .iter()

@@ -120,7 +120,23 @@ impl ParseDb {
     pub fn contains_file_path(&self, file_path: &Path) -> bool {
         self.packages
             .iter()
-            .any(|package| package.parsed_files().any(|file| file.path() == file_path))
+            .any(|package| package.file_id_for_path(file_path).is_some())
+    }
+
+    /// Returns every package-local file reference matching a canonical source path.
+    ///
+    /// One source file can participate in several Cargo packages, so path lookup preserves every
+    /// matching package context while using each package's existing path map.
+    pub fn file_refs_for_path(&self, file_path: &Path) -> Vec<PackageFileRef> {
+        self.packages
+            .iter()
+            .enumerate()
+            .filter_map(|(package, parsed_package)| {
+                parsed_package
+                    .file_id_for_path(file_path)
+                    .map(|file| PackageFileRef { package, file })
+            })
+            .collect()
     }
 
     /// Drops retained syntax trees from all packages after AST-consuming phases have finished.

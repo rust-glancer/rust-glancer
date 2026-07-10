@@ -113,6 +113,11 @@ impl Package {
         self.files.parsed_files()
     }
 
+    /// Returns the package-local id for a canonical source path already known to this package.
+    pub(crate) fn file_id_for_path(&self, file_path: &Path) -> Option<FileId> {
+        self.files.file_id_for_path(file_path)
+    }
+
     /// Captures the package file table after all module discovery for cache-backed startup.
     pub fn parse_snapshot(&self) -> anyhow::Result<PackageParseSnapshot> {
         Ok(PackageParseSnapshot {

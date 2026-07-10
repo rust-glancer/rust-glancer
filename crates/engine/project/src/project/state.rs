@@ -158,22 +158,14 @@ impl ProjectState {
 
     /// Returns all parsed files matching a canonical filesystem path.
     pub(crate) fn file_refs_for_path(&self, canonical_path: &Path) -> Vec<ProjectFileRef> {
-        let mut files = Vec::new();
-
-        for (package_idx, parsed_package) in self.parse.packages().iter().enumerate() {
-            for parsed_file in parsed_package.parsed_files() {
-                if parsed_file.path() != canonical_path {
-                    continue;
-                }
-
-                files.push(ProjectFileRef {
-                    package: PackageSlot(package_idx),
-                    file: parsed_file.file_id(),
-                });
-            }
-        }
-
-        files
+        self.parse
+            .file_refs_for_path(canonical_path)
+            .into_iter()
+            .map(|file| ProjectFileRef {
+                package: PackageSlot(file.package),
+                file: file.file,
+            })
+            .collect()
     }
 
     pub(crate) fn is_recoverable_cache_load_failure(error: &anyhow::Error) -> bool {

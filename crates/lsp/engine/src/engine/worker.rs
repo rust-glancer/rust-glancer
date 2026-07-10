@@ -1495,9 +1495,20 @@ impl EngineWorker {
     ) where
         T: Default + Send + 'static,
     {
+        // LSP cancellation drops the RPC handler waiting on this response. The command may still
+        // be in the worker queue, but there is no reason to materialize packages or run analysis
+        // once nobody can receive the result.
+        if respond_to.is_closed() {
+            tracing::debug!(
+                label = context.label,
+                queued_ms = context.queue_elapsed.as_millis(),
+                "cancelled analysis query skipped"
+            );
+            return;
+        }
+
         // If a newer document version is already available, this queued dirty query can only
-        // produce obsolete results. This is an internal optimization, not a replacement for LSP
-        // request cancellation.
+        // produce obsolete results.
         if let Some(dirty_identity) = context.stale_dirty_identity(&self.dirty_state) {
             tracing::debug!(
                 label = context.label,
@@ -1571,7 +1582,22 @@ impl EngineWorker {
             }
         }
 
-        if should_recover {
+        // The document can change while synchronous analysis is running. Check the identity again
+        // immediately before publication so an older hover, completion, or edit result does not
+        // race a newer editor buffer back to the client.
+        if let Some(dirty_identity) = context.stale_dirty_identity(&self.dirty_state) {
+            tracing::debug!(
+                label,
+                path = %dirty_identity.path().display(),
+                version = ?dirty_identity.version(),
+                text_len = dirty_identity.text_len(),
+                "analysis query result discarded after document changed"
+            );
+            let _ = respond_to.send(Ok(T::default()));
+            if should_recover {
+                self.recover_after_query_cache_failure(label);
+            }
+        } else if should_recover {
             // Lazy package loads can fail when an offloaded artifact becomes stale between
             // indexing and a query. The next command sees a repaired project, while this request
             // degrades to an empty answer instead of a visible JSON-RPC popup in the editor.
@@ -1679,6 +1705,7 @@ impl NavigationQuery {
 #[cfg(test)]
 mod tests {
     use std::{
+        cell::Cell,
         collections::VecDeque,
         path::PathBuf,
         sync::{Arc, mpsc},
@@ -1834,6 +1861,68 @@ mod tests {
             .expect("stale query should send a response")
             .expect("stale query should send a successful neutral result");
         assert!(result.is_none());
+    }
+
+    #[test]
+    fn cancelled_query_does_not_run_analysis() {
+        let (sender, _receiver) = std::sync::mpsc::channel();
+        let notifications = ServiceNotificationsSink::from_publisher(NoopNotifications);
+        let mut worker =
+            EngineWorker::new(sender, Arc::new(()), DirtyState::default(), notifications);
+        let (respond_to, response) = oneshot::channel::<anyhow::Result<Vec<usize>>>();
+        drop(response);
+        let query_ran = Cell::new(false);
+
+        worker.respond_to_query(
+            QueryContext::new("workspace_symbol", Duration::ZERO),
+            respond_to,
+            |_| {
+                query_ran.set(true);
+                Ok(vec![1])
+            },
+        );
+
+        assert!(!query_ran.get(), "cancelled query should not run analysis");
+    }
+
+    #[test]
+    fn dirty_query_result_is_discarded_if_document_changes_during_analysis() {
+        let path = PathBuf::from("/workspace/src/lib.rs");
+        let mut documents = DocumentStore::default();
+        documents.did_open_saved(path.clone(), Some(1), "fn main() {}\n");
+        documents.did_change(
+            path.clone(),
+            Some(2),
+            Some("fn main() {\n    first();\n}\n"),
+        );
+        let first_dirty = documents.dirty_snapshot(&path);
+        let DirtyDocumentSnapshotState::Dirty(first_snapshot) = &first_dirty else {
+            panic!("dirty full-sync document should expose a snapshot");
+        };
+
+        let dirty_state = DirtyState::default();
+        dirty_state.sync_document(&path, &first_dirty);
+        let (sender, _receiver) = std::sync::mpsc::channel();
+        let notifications = ServiceNotificationsSink::from_publisher(NoopNotifications);
+        let mut worker =
+            EngineWorker::new(sender, Arc::new(()), dirty_state.clone(), notifications);
+        let (respond_to, response) = oneshot::channel();
+        let context = QueryContext::document("hover", Duration::ZERO, Some(first_snapshot));
+
+        worker.respond_to_query(context, respond_to, |_| {
+            documents.did_change(
+                path.clone(),
+                Some(3),
+                Some("fn main() {\n    second();\n}\n"),
+            );
+            dirty_state.sync_document(&path, &documents.dirty_snapshot(&path));
+            Ok(vec![1_usize])
+        });
+
+        let result = futures::executor::block_on(response)
+            .expect("superseded query should send a response")
+            .expect("superseded query should send a successful neutral result");
+        assert!(result.is_empty());
     }
 
     fn test_path(name: &str) -> PathBuf {
