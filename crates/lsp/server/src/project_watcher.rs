@@ -93,6 +93,9 @@ impl WorkspaceWatcher {
             WATCH_DEBOUNCE,
             Some(WATCH_DEBOUNCE),
             move |result| {
+                let Some(result) = Self::project_result(result) else {
+                    return;
+                };
                 if sender.send(result).is_err() {
                     tracing::trace!(
                         root = %callback_root.display(),
@@ -142,6 +145,26 @@ impl WorkspaceWatcher {
         })
     }
 
+    fn project_result(result: DebounceEventResult) -> Option<DebounceEventResult> {
+        match result {
+            Ok(mut events) => {
+                // Filter before the async queue so target-directory churn cannot keep extending
+                // the workspace settle window. Rescan events have no useful paths and must always
+                // reach the snapshot recovery path.
+                events.retain(|event| {
+                    event.need_rescan()
+                        || event
+                            .event
+                            .paths
+                            .iter()
+                            .any(|path| WatchedProjectPath::is_watched_project_input(path))
+                });
+                (!events.is_empty()).then_some(Ok(events))
+            }
+            Err(errors) => Some(Err(errors)),
+        }
+    }
+
     async fn collect_settled_results(
         first: DebounceEventResult,
         receiver: &mut mpsc::UnboundedReceiver<DebounceEventResult>,
@@ -171,7 +194,7 @@ impl WorkspaceWatcher {
         let paths = recent_editor_saves.saves_to_process(paths).await;
 
         if paths.is_empty() {
-            tracing::debug!(
+            tracing::trace!(
                 paths_before_save_filter = path_count_before_save_filter,
                 forwarded_paths = 0usize,
                 "server-side watched project changes filtered out"
@@ -260,16 +283,29 @@ impl WorkspaceWatcher {
             .collect::<BTreeSet<_>>()
             .into_iter()
             .collect::<Vec<_>>();
-        tracing::debug!(
-            batches = batch_count,
-            events = event_count,
-            raw_paths = raw_path_count,
-            ignored_paths,
-            unchanged_paths,
-            relevant_paths = paths.len(),
-            need_rescan = false,
-            "processed settled project watcher results"
-        );
+        if paths.is_empty() {
+            tracing::trace!(
+                batches = batch_count,
+                events = event_count,
+                raw_paths = raw_path_count,
+                ignored_paths,
+                unchanged_paths,
+                relevant_paths = 0usize,
+                need_rescan = false,
+                "processed settled project watcher results"
+            );
+        } else {
+            tracing::debug!(
+                batches = batch_count,
+                events = event_count,
+                raw_paths = raw_path_count,
+                ignored_paths,
+                unchanged_paths,
+                relevant_paths = paths.len(),
+                need_rescan = false,
+                "processed settled project watcher results"
+            );
+        }
         paths
     }
 
@@ -283,11 +319,15 @@ struct WatchedProjectPath;
 
 impl WatchedProjectPath {
     fn from_event(path: &Path) -> Option<PathBuf> {
-        if Self::is_ignored(path) || !Self::is_project_input(path) {
+        if !Self::is_watched_project_input(path) {
             return None;
         }
 
         Some(Self::normalize(path))
+    }
+
+    fn is_watched_project_input(path: &Path) -> bool {
+        !Self::is_ignored(path) && Self::is_project_input(path)
     }
 
     fn identity(path: &Path) -> Option<(PathBuf, FileIdentity)> {
@@ -431,6 +471,38 @@ mod tests {
     use test_fixture::fixture_crate;
 
     use super::*;
+
+    #[test]
+    fn watcher_ingress_drops_target_and_non_project_results() {
+        let root = PathBuf::from("/workspace");
+        let target_source = root.join("target/debug/build/generated.rs");
+        let notes = root.join("notes.md");
+
+        assert!(
+            WorkspaceWatcher::project_result(Ok(vec![
+                changed_event(target_source.clone()),
+                changed_event(notes),
+            ]))
+            .is_none(),
+            "target and non-project churn should not enter the async watcher queue"
+        );
+
+        let project_source = root.join("src/lib.rs");
+        let Some(Ok(events)) = WorkspaceWatcher::project_result(Ok(vec![
+            changed_event(target_source),
+            changed_event(project_source.clone()),
+        ])) else {
+            panic!("a project input should keep the watcher result");
+        };
+        assert_eq!(
+            events
+                .iter()
+                .flat_map(|event| event.event.paths.iter())
+                .collect::<Vec<_>>(),
+            vec![&project_source],
+            "ignored event entries should be removed before settling"
+        );
+    }
 
     #[tokio::test]
     async fn settled_results_merge_ready_watcher_backlog() {
