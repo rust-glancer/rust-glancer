@@ -11,6 +11,7 @@ use std::{
 
 use expect_test::expect;
 use rg_analysis::ReferenceQuery;
+use rg_std::MemorySize as _;
 use test_fixture::testonly::MarkedText;
 
 use self::utils::{HostFixture, HostObservation};
@@ -616,6 +617,18 @@ pub fn value() -> usize {
     assert_eq!(stats.missing_target_count, 1);
     assert_eq!(stats.body_count, 0);
 
+    let source_path = fixture
+        .path("src/lib.rs")
+        .canonicalize()
+        .expect("fixture source path should canonicalize");
+    let source_entry = project
+        .state
+        .parse_db()
+        .source_inventory()
+        .entry(&source_path)
+        .expect("fixture source should have a generation entry");
+    let evicted_source_memory = source_entry.memory_size();
+
     project
         .split_indexing()
         .finish()
@@ -626,6 +639,11 @@ pub fn value() -> usize {
     assert_eq!(stats.complete_target_count, 1);
     assert_eq!(stats.missing_target_count, 0);
     assert_eq!(stats.body_count, 1);
+    assert_eq!(
+        source_entry.memory_size(),
+        evicted_source_memory,
+        "deferred finishing should release source text reloaded by Body IR",
+    );
 }
 
 #[test]
@@ -668,6 +686,17 @@ pub fn second() -> usize {
         .expect("lib file contexts should resolve")
         .pop()
         .expect("lib file should have one context");
+    let lib_path = fixture
+        .path("src/lib.rs")
+        .canonicalize()
+        .expect("lib source path should canonicalize");
+    let lib_source = project
+        .state
+        .parse_db()
+        .source_inventory()
+        .entry(&lib_path)
+        .expect("lib source should have a generation entry");
+    let evicted_lib_memory = lib_source.memory_size();
     project
         .split_indexing()
         .materialize(AnalysisSurface::Files(&[(
@@ -680,6 +709,11 @@ pub fn second() -> usize {
     assert_eq!(stats.complete_target_count, 0);
     assert_eq!(stats.partial_target_count, 1);
     assert_eq!(stats.body_count, 1);
+    assert_eq!(
+        lib_source.memory_size(),
+        evicted_lib_memory,
+        "file materialization should release source text reloaded by Body IR",
+    );
 
     let other_context = project
         .snapshot()
@@ -687,6 +721,17 @@ pub fn second() -> usize {
         .expect("other file contexts should resolve")
         .pop()
         .expect("other file should have one context");
+    let other_path = fixture
+        .path("src/other.rs")
+        .canonicalize()
+        .expect("other source path should canonicalize");
+    let other_source = project
+        .state
+        .parse_db()
+        .source_inventory()
+        .entry(&other_path)
+        .expect("other source should have a generation entry");
+    let evicted_other_memory = other_source.memory_size();
     project
         .split_indexing()
         .materialize(AnalysisSurface::Files(&[(
@@ -699,6 +744,11 @@ pub fn second() -> usize {
     assert_eq!(stats.complete_target_count, 1);
     assert_eq!(stats.partial_target_count, 0);
     assert_eq!(stats.body_count, 2);
+    assert_eq!(
+        other_source.memory_size(),
+        evicted_other_memory,
+        "incremental materialization should release newly reloaded source text",
+    );
 }
 
 #[test]

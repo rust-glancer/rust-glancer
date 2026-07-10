@@ -4,13 +4,12 @@
 //! `SourceDescriptor` adds the path and byte length needed to carry that identity through a
 //! package-cache snapshot. Neither type owns source text.
 
-use std::{
-    fmt,
-    path::{Path, PathBuf},
-};
+use std::{fmt, path::Path};
 
-use rg_std::{MemorySize, Shrink};
+use rg_std::{MemoryRecorder, MemorySize, Shrink};
 use wincode::{SchemaRead, SchemaWrite};
+
+use crate::SourcePath;
 
 /// Strong identity of the exact UTF-8 bytes captured for one source file.
 ///
@@ -44,24 +43,28 @@ impl fmt::Display for SourceRevision {
 ///
 /// The path identifies which source to capture during cache restoration. The revision and byte
 /// length then prove that the captured file is the same input that produced the cached analysis.
-#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, Shrink)]
 pub struct SourceDescriptor {
-    path: String,
+    path: SourcePath,
     revision: SourceRevision,
     byte_len: u64,
 }
 
 impl SourceDescriptor {
-    pub(crate) fn new(path: PathBuf, bytes: &[u8]) -> Self {
+    pub(crate) fn new(path: SourcePath, bytes: &[u8]) -> Self {
         Self {
-            path: path.to_string_lossy().into_owned(),
+            path,
             revision: SourceRevision::from_bytes(bytes),
             byte_len: u64::try_from(bytes.len()).unwrap_or(u64::MAX),
         }
     }
 
     pub fn path(&self) -> &Path {
-        Path::new(&self.path)
+        self.path.as_path()
+    }
+
+    pub(crate) fn source_path(&self) -> &SourcePath {
+        &self.path
     }
 
     pub fn revision(&self) -> SourceRevision {
@@ -70,5 +73,11 @@ impl SourceDescriptor {
 
     pub fn byte_len(&self) -> u64 {
         self.byte_len
+    }
+}
+
+impl MemorySize for SourceDescriptor {
+    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
+        recorder.scope("path", |recorder| self.path.record_allocation(recorder));
     }
 }

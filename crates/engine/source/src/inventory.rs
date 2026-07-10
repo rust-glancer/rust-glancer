@@ -5,7 +5,8 @@
 //! 1. While open, parsing and ItemTree may capture files and remember module-existence checks.
 //! 2. After file discovery, the inventory is sealed. Known entries remain readable, but a later
 //!    phase cannot add a file that earlier phases never saw.
-//! 3. Before publication, validation rereads saved files and repeats existence checks.
+//! 3. Before publication, validation rereads saved files and repeats existence checks. Successful
+//!    validation also releases those construction-only existence checks.
 //! 4. After publication, saved text may be evicted while entries keep their revision proof.
 //!
 //! A saved update starts by forking the published inventory. The maps are independent, but
@@ -19,7 +20,7 @@ use std::{
 
 use rg_std::{MemoryRecorder, MemorySize};
 
-use crate::{SourceDescriptor, SourceEntry, SourceError, read_source_text};
+use crate::{SourceDescriptor, SourceEntry, SourceError, SourcePath, read_source_text};
 
 /// Path-indexed source set captured for one project generation.
 ///
@@ -28,7 +29,7 @@ use crate::{SourceDescriptor, SourceEntry, SourceError, read_source_text};
 /// may capture a new path or replace an entry.
 #[derive(Debug, Default)]
 pub struct SourceInventory {
-    entries: RwLock<HashMap<PathBuf, Arc<SourceEntry>>>,
+    entries: RwLock<HashMap<SourcePath, Arc<SourceEntry>>>,
     existence: RwLock<HashMap<PathBuf, bool>>,
     sealed: RwLock<bool>,
 }
@@ -116,10 +117,8 @@ impl SourceInventory {
         // Parallel package lowering can race to capture a shared source. Both reads are valid; the
         // first entry inserted becomes the one revision used by this generation.
         let text = read_source_text(&canonical_path)?;
-        self.insert_if_absent(
-            canonical_path.clone(),
-            SourceEntry::saved(canonical_path, text),
-        )
+        let path = SourcePath::new(canonical_path);
+        self.insert_if_absent(path.clone(), SourceEntry::saved(path, text))
     }
 
     /// Replaces one saved path in an open candidate using caller-staged exact text.
@@ -129,14 +128,12 @@ impl SourceInventory {
         text: impl Into<Arc<str>>,
     ) -> Result<Arc<SourceEntry>, SourceError> {
         self.ensure_open(canonical_path)?;
-        let entry = Arc::new(SourceEntry::saved(
-            canonical_path.to_path_buf(),
-            text.into(),
-        ));
+        let path = SourcePath::new(canonical_path.to_path_buf());
+        let entry = Arc::new(SourceEntry::saved(path.clone(), text.into()));
         self.entries
             .write()
             .expect("source inventory lock should not be poisoned")
-            .insert(canonical_path.to_path_buf(), Arc::clone(&entry));
+            .insert(path, Arc::clone(&entry));
         Ok(entry)
     }
 
@@ -147,11 +144,12 @@ impl SourceInventory {
     ) -> Result<Arc<SourceEntry>, SourceError> {
         self.ensure_open(canonical_path)?;
         let text = read_source_text(canonical_path)?;
-        let entry = Arc::new(SourceEntry::saved(canonical_path.to_path_buf(), text));
+        let path = SourcePath::new(canonical_path.to_path_buf());
+        let entry = Arc::new(SourceEntry::saved(path.clone(), text));
         self.entries
             .write()
             .expect("source inventory lock should not be poisoned")
-            .insert(canonical_path.to_path_buf(), Arc::clone(&entry));
+            .insert(path, Arc::clone(&entry));
         Ok(entry)
     }
 
@@ -162,14 +160,12 @@ impl SourceInventory {
         text: impl Into<Arc<str>>,
     ) -> Result<Arc<SourceEntry>, SourceError> {
         self.ensure_open(canonical_path)?;
-        let entry = Arc::new(SourceEntry::in_memory(
-            canonical_path.to_path_buf(),
-            text.into(),
-        ));
+        let path = SourcePath::new(canonical_path.to_path_buf());
+        let entry = Arc::new(SourceEntry::in_memory(path.clone(), text.into()));
         self.entries
             .write()
             .expect("source inventory lock should not be poisoned")
-            .insert(canonical_path.to_path_buf(), Arc::clone(&entry));
+            .insert(path, Arc::clone(&entry));
         Ok(entry)
     }
 
@@ -224,27 +220,28 @@ impl SourceInventory {
         Ok(exists)
     }
 
-    pub fn entries(&self) -> Vec<Arc<SourceEntry>> {
-        self.entries
-            .read()
-            .expect("source inventory lock should not be poisoned")
-            .values()
-            .cloned()
-            .collect()
-    }
-
     /// Proves that all filesystem observations still match the candidate being published.
+    ///
+    /// Existence probes are needed only while constructing and validating a generation. Once the
+    /// proof succeeds, their paths and map storage are released instead of becoming published
+    /// project state.
     pub fn validate_saved(&self) -> Result<(), SourceError> {
         // First prove that every saved file still contains the bytes used by parsing and lowering.
-        for entry in self.entries() {
+        let entries = self
+            .entries
+            .read()
+            .expect("source inventory lock should not be poisoned");
+        for entry in entries.values() {
             entry.validate_saved()?;
         }
+        drop(entries);
 
         // Then repeat module-discovery decisions. A newly created or removed candidate module can
-        // change the reachable file graph even when all already-captured files are unchanged.
-        let existence = self
+        // change the reachable file graph even when all already-captured files are unchanged. Keep
+        // the probes intact on failure so the error still describes the candidate that was checked.
+        let mut existence = self
             .existence
-            .read()
+            .write()
             .expect("source existence lock should not be poisoned");
         for (path, expected) in existence.iter() {
             let actual = path.is_file();
@@ -256,12 +253,21 @@ impl SourceInventory {
                 });
             }
         }
+
+        // A successfully validated candidate no longer needs its discovery proof. Release both
+        // the path values and the hash table allocation before the candidate is published.
+        existence.clear();
+        existence.shrink_to_fit();
         Ok(())
     }
 
     /// Releases all saved text while preserving the identity needed for verified reloads.
     pub fn evict_saved_text(&self) {
-        for entry in self.entries() {
+        let entries = self
+            .entries
+            .read()
+            .expect("source inventory lock should not be poisoned");
+        for entry in entries.values() {
             entry.evict_saved_text();
         }
     }
@@ -288,7 +294,7 @@ impl SourceInventory {
 
     fn insert_if_absent(
         &self,
-        path: PathBuf,
+        path: SourcePath,
         entry: SourceEntry,
     ) -> Result<Arc<SourceEntry>, SourceError> {
         let mut entries = self
@@ -312,15 +318,19 @@ impl Clone for SourceInventory {
 
 impl MemorySize for SourceInventory {
     fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
-        let entries = self
-            .entries
-            .read()
-            .expect("source inventory lock should not be poisoned");
-        entries.record_memory_children(recorder);
-        let existence = self
-            .existence
-            .read()
-            .expect("source existence lock should not be poisoned");
-        existence.record_memory_children(recorder);
+        recorder.scope("entries", |recorder| {
+            let entries = self
+                .entries
+                .read()
+                .expect("source inventory lock should not be poisoned");
+            entries.record_memory_children(recorder);
+        });
+        recorder.scope("existence", |recorder| {
+            let existence = self
+                .existence
+                .read()
+                .expect("source existence lock should not be poisoned");
+            existence.record_memory_children(recorder);
+        });
     }
 }

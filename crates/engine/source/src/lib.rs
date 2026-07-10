@@ -19,12 +19,14 @@
 mod entry;
 mod error;
 mod inventory;
+mod path;
 mod revision;
 
 pub use self::{
     entry::{SourceEntry, read_source_text},
     error::SourceError,
     inventory::SourceInventory,
+    path::SourcePath,
     revision::{SourceDescriptor, SourceRevision},
 };
 

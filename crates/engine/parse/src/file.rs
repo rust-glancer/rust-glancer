@@ -5,7 +5,7 @@ use std::{
 };
 
 use rg_arena::Arena;
-use rg_source::{SourceDescriptor, SourceEntry, SourceInventory};
+use rg_source::{SourceDescriptor, SourceEntry, SourceInventory, SourcePath};
 use rg_syntax::{Edition, Parse as SyntaxParse, SourceFile};
 use rg_workspace::RustEdition;
 
@@ -36,8 +36,6 @@ impl rg_arena::ArenaId for FileId {
 /// Internal parsed representation used by the parser cache.
 #[derive(Debug, Clone, MemorySize)]
 pub(crate) struct ParsedFileData {
-    /// Canonical filesystem path for this source file.
-    pub(crate) path: PathBuf,
     /// Source backing used when syntax has to be rebuilt after eviction.
     #[memsize(skip)]
     pub(crate) source: Arc<SourceEntry>,
@@ -103,7 +101,7 @@ impl<'a> ParsedFile<'a> {
 
     /// Returns the canonical path for this parsed source file.
     pub fn path(&self) -> &'a Path {
-        self.data.path.as_path()
+        self.data.source.path()
     }
 
     /// Resolves a Rust string literal path relative to this file's directory.
@@ -167,7 +165,7 @@ impl<'a> ParsedFile<'a> {
 pub(super) struct FileDb {
     pub(crate) edition: RustEdition,
     pub(crate) parsed_files: Arena<FileId, ParsedFileData>,
-    pub(crate) file_ids_by_path: HashMap<PathBuf, FileId>,
+    pub(crate) file_ids_by_path: HashMap<SourcePath, FileId>,
 }
 
 impl FileDb {
@@ -186,20 +184,17 @@ impl FileDb {
         file_path: &Path,
     ) -> anyhow::Result<FileId> {
         let source = sources.capture_saved(file_path)?;
-        let canonical_file_path = source.path().to_path_buf();
+        let canonical_file_path = source.source_path().clone();
 
-        if let Some(file_id) = self.file_ids_by_path.get(&canonical_file_path).copied() {
+        if let Some(file_id) = self.file_ids_by_path.get(source.path()).copied() {
             self.ensure_file_syntax(file_id)?;
             return Ok(file_id);
         }
 
         let source_text = source.text()?;
-        let file_id = self.parsed_files.alloc(Self::parse_source(
-            canonical_file_path.clone(),
-            &source_text,
-            self.edition,
-            source,
-        ));
+        let file_id =
+            self.parsed_files
+                .alloc(Self::parse_source(&source_text, self.edition, source));
         self.file_ids_by_path.insert(canonical_file_path, file_id);
 
         Ok(file_id)
@@ -215,8 +210,7 @@ impl FileDb {
         let source_text = source
             .text()
             .expect("freshly replaced saved source should remain resident");
-        self.parsed_files[file_id] =
-            Self::parse_source(file_path.to_path_buf(), &source_text, self.edition, source);
+        self.parsed_files[file_id] = Self::parse_source(&source_text, self.edition, source);
         Some(file_id)
     }
 
@@ -230,8 +224,7 @@ impl FileDb {
         let source_text = source
             .text()
             .expect("in-memory source should remain resident");
-        self.parsed_files[file_id] =
-            Self::parse_source(file_path.to_path_buf(), &source_text, self.edition, source);
+        self.parsed_files[file_id] = Self::parse_source(&source_text, self.edition, source);
         Some(file_id)
     }
 
@@ -245,10 +238,8 @@ impl FileDb {
         }
 
         let source = parsed_file.source.text()?;
-        let path = parsed_file.path.clone();
         let source_backing = parsed_file.source.clone();
-        self.parsed_files[file_id] =
-            Self::parse_source(path, &source, self.edition, source_backing);
+        self.parsed_files[file_id] = Self::parse_source(&source, self.edition, source_backing);
         Ok(())
     }
 
@@ -316,7 +307,7 @@ impl FileDb {
         );
         let file_ids_by_path = parsed_files
             .iter_with_ids()
-            .map(|(file_id, file)| (file.path.clone(), file_id))
+            .map(|(file_id, file)| (file.source.source_path().clone(), file_id))
             .collect::<HashMap<_, _>>();
 
         Self {
@@ -330,11 +321,10 @@ impl FileDb {
     pub(super) fn file_path(&self, file_id: FileId) -> Option<&Path> {
         self.parsed_files
             .get(file_id)
-            .map(|parsed_file| parsed_file.path.as_path())
+            .map(|parsed_file| parsed_file.source.path())
     }
 
     fn parse_source(
-        path: PathBuf,
         source: &str,
         edition: RustEdition,
         source_backing: Arc<SourceEntry>,
@@ -343,7 +333,6 @@ impl FileDb {
         let parsed_file = Self::parse_syntax(source, edition);
 
         ParsedFileData {
-            path,
             source: source_backing,
             line_index: LineIndexState::resident(line_index),
             syntax: Some(parsed_file),
@@ -418,7 +407,6 @@ impl ParsedFileData {
 
     fn from_parse_snapshot(snapshot: ParsedFileSnapshot, source: Arc<SourceEntry>) -> Self {
         Self {
-            path: source.path().to_path_buf(),
             source,
             line_index: LineIndexState::resident(LineIndex::from_snapshot(snapshot.line_index)),
             syntax: None,

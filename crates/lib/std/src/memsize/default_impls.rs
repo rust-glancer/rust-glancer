@@ -4,7 +4,7 @@ use std::{
     ffi::OsString,
     hash::{BuildHasher, Hash},
     mem,
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::Arc,
 };
 
@@ -83,6 +83,22 @@ where
             recorder.record_approximate::<Arc<T>>(approximate_allocation_overhead(payload));
             (**self).record_memory_children(recorder);
         });
+    }
+}
+
+impl MemorySize for Arc<str> {
+    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
+        let payload = self.len();
+        recorder.record_heap::<str>(payload);
+        recorder.record_approximate::<Arc<str>>(approximate_allocation_overhead(payload));
+    }
+}
+
+impl MemorySize for Arc<Path> {
+    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
+        let payload = self.as_os_str().as_encoded_bytes().len();
+        recorder.record_heap::<Path>(payload);
+        recorder.record_approximate::<Arc<Path>>(approximate_allocation_overhead(payload));
     }
 }
 
@@ -350,7 +366,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::{any, collections::BTreeMap, mem, sync::Arc};
+    use std::{any, collections::BTreeMap, mem, path::Path, sync::Arc};
 
     use crate::memsize::{
         MemoryRecordKind, MemoryRecorder, MemorySize, approximate_allocation_overhead,
@@ -481,6 +497,46 @@ mod tests {
                     + approximate_allocation_overhead(5))
             )
         );
+    }
+
+    #[test]
+    fn arc_str_records_exact_payload_without_spare_capacity() {
+        let value: Arc<str> = Arc::from("crate");
+
+        let mut recorder = MemoryRecorder::new("str");
+        value.record_memory_size(&mut recorder);
+        let totals = recorder.totals_by_kind();
+
+        assert_eq!(
+            totals.get(&MemoryRecordKind::Shallow),
+            Some(&mem::size_of::<Arc<str>>())
+        );
+        assert_eq!(totals.get(&MemoryRecordKind::Heap), Some(&5));
+        assert_eq!(
+            totals.get(&MemoryRecordKind::Approximate),
+            Some(&approximate_allocation_overhead(5))
+        );
+        assert!(!totals.contains_key(&MemoryRecordKind::SpareCapacity));
+    }
+
+    #[test]
+    fn arc_path_records_exact_payload_without_spare_capacity() {
+        let value: Arc<Path> = Arc::from(Path::new("/crate"));
+
+        let mut recorder = MemoryRecorder::new("path");
+        value.record_memory_size(&mut recorder);
+        let totals = recorder.totals_by_kind();
+
+        assert_eq!(
+            totals.get(&MemoryRecordKind::Shallow),
+            Some(&mem::size_of::<Arc<Path>>())
+        );
+        assert_eq!(totals.get(&MemoryRecordKind::Heap), Some(&6));
+        assert_eq!(
+            totals.get(&MemoryRecordKind::Approximate),
+            Some(&approximate_allocation_overhead(6))
+        );
+        assert!(!totals.contains_key(&MemoryRecordKind::SpareCapacity));
     }
 
     #[test]

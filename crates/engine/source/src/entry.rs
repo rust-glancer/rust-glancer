@@ -6,14 +6,14 @@
 //! buffer is its only authority.
 
 use std::{
-    path::{Path, PathBuf},
+    path::Path,
     str,
     sync::{Arc, Mutex},
 };
 
 use rg_std::{MemoryRecorder, MemorySize};
 
-use crate::{SourceDescriptor, SourceError, SourceRevision};
+use crate::{SourceDescriptor, SourceError, SourcePath, SourceRevision};
 
 /// Reads one UTF-8 source file through the shared source I/O boundary.
 ///
@@ -45,14 +45,14 @@ enum SourceBacking {
 }
 
 impl SourceEntry {
-    pub(crate) fn saved(path: PathBuf, text: Arc<str>) -> Self {
+    pub(crate) fn saved(path: SourcePath, text: Arc<str>) -> Self {
         Self {
             descriptor: SourceDescriptor::new(path, text.as_bytes()),
             backing: Mutex::new(SourceBacking::Saved { text: Some(text) }),
         }
     }
 
-    pub(crate) fn in_memory(path: PathBuf, text: Arc<str>) -> Self {
+    pub(crate) fn in_memory(path: SourcePath, text: Arc<str>) -> Self {
         Self {
             descriptor: SourceDescriptor::new(path, text.as_bytes()),
             backing: Mutex::new(SourceBacking::InMemory(text)),
@@ -61,6 +61,11 @@ impl SourceEntry {
 
     pub fn path(&self) -> &Path {
         self.descriptor.path()
+    }
+
+    /// Returns the generation's shared canonical path handle for path-indexed analysis storage.
+    pub fn source_path(&self) -> &SourcePath {
+        self.descriptor.source_path()
     }
 
     pub fn descriptor(&self) -> &SourceDescriptor {
