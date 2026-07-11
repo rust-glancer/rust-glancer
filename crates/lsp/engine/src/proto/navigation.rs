@@ -33,7 +33,7 @@ pub(crate) fn range_for_file(
         return Ok(position::zero_range());
     };
     let line_index = snapshot
-        .file_line_index(package_slot, file_id)
+        .file_line_index(package_slot, file_id)?
         .context("while attempting to find file for LSP range conversion")?;
 
     Ok(position::range(line_index, span))

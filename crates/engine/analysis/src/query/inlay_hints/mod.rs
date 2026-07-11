@@ -94,7 +94,7 @@ impl<'a, 'db> InlayHintCollector<'a, 'db> {
                 expr.file_id(),
                 expr_span,
                 expr.parent_dot_span(),
-            ) {
+            )? {
                 continue;
             }
             if matches!(expr.ty(), Ty::Unit | Ty::Never) {
@@ -149,7 +149,7 @@ impl<'a, 'db> InlayHintCollector<'a, 'db> {
                 }
                 if self
                     .0
-                    .source_text_for_span(target.package, call.file_id(), arg_span)
+                    .source_text_for_span(target.package, call.file_id(), arg_span)?
                     .is_some_and(|arg_text| arg_text.trim() == param_name)
                 {
                     continue;
@@ -198,21 +198,22 @@ impl<'a, 'db> InlayHintCollector<'a, 'db> {
         file_id: FileId,
         expr_span: rg_parse::Span,
         parent_dot_span: rg_parse::Span,
-    ) -> bool {
+    ) -> anyhow::Result<bool> {
         let Some(expr_end_line) = self.0.source_line_for_offset(
             target.package,
             file_id,
             expr_span.text.end.saturating_sub(1),
-        ) else {
-            return false;
+        )?
+        else {
+            return Ok(false);
         };
         let Some(parent_dot_line) =
             self.0
-                .source_line_for_offset(target.package, file_id, parent_dot_span.text.start)
+                .source_line_for_offset(target.package, file_id, parent_dot_span.text.start)?
         else {
-            return false;
+            return Ok(false);
         };
 
-        parent_dot_line > expr_end_line
+        Ok(parent_dot_line > expr_end_line)
     }
 }

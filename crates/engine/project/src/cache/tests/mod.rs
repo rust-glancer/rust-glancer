@@ -88,7 +88,7 @@ pub struct DevHelper;
             workspace cache plan
 
             package #0 app
-            schema 3
+            schema 5
             id path+file://./#app@0.1.0
             source workspace
             edition 2024
@@ -105,7 +105,7 @@ pub struct DevHelper;
             - dev_support -> dev-helper (#3) [dev]
 
             package #1 build-helper
-            schema 3
+            schema 5
             id path+file://./build-helper#0.1.0
             source path
             edition 2021
@@ -116,7 +116,7 @@ pub struct DevHelper;
             - <none>
 
             package #2 dep-pkg
-            schema 3
+            schema 5
             id path+file://./dep#dep-pkg@0.1.0
             source path
             edition 2021
@@ -127,7 +127,7 @@ pub struct DevHelper;
             - <none>
 
             package #3 dev-helper
-            schema 3
+            schema 5
             id path+file://./dev-helper#0.1.0
             source path
             edition 2018
@@ -213,51 +213,22 @@ fn package_slot(workspace: &WorkspaceMetadata, package_name: &str) -> PackageSlo
 }
 
 #[test]
-fn roundtrips_package_cache_header_codec() {
-    utils::check_cache_header_codec(expect![[r#"
-        encoded header bytes 315
-        0300000007000000000000002000000000000000706174682b66696c653a2f2f
-        2f776f726b73706163652361707040302e312e30030000000000000061707000
-        0000000300000015000000000000002f776f726b73706163652f436172676f2e
-        746f6d6c00000000000000000000000000000000020000000000000003000000
-        000000006170700000000015000000000000002f776f726b73706163652f7372
-        632f6c69622e727307000000000000006170702d636c69010000001600000000
-        0000002f776f726b73706163652f7372632f6d61696e2e727301000000000000
-        002400000000000000706174682b66696c653a2f2f2f776f726b73706163652f
-        6465702364657040302e312e3003000000000000006465700100000707070707
-        070707070707070707070707070707070707070707070707070707
-
-        decoded header
-        schema 3
-        source fingerprint 0707070707070707070707070707070707070707070707070707070707070707
-        package #7 app
-        id path+file:///workspace#app@0.1.0
-        source workspace
-        edition 2024
-        manifest /workspace/Cargo.toml
-        targets
-        - app [lib] /workspace/src/lib.rs
-        - app-cli [bin] /workspace/src/main.rs
-        dependencies
-        - dep -> path+file:///workspace/dep#dep@0.1.0 [normal]
-    "#]]);
-}
-
-#[test]
 fn roundtrips_minimal_package_cache_artifact_codec() {
     utils::check_minimal_cache_artifact_codec(expect![[r#"
         encoded artifact has bytes true
-        0300000007000000000000002200000000000000706174682b66696c653a2f2f
-        2f776f726b737061636523656d70747940302e312e3000000000000000000000
-        00000300000015000000000000002f776f726b73706163652f436172676f2e74
-        6f6d6c0000000000000000000000000000000000000000000000000000000000
-        0000000707070707070707070707070707070707070707070707070707070707
-        0707070000000000000000000000000000000000000000000000000000000000
+        5247504b47000001bb0000000000000020000000000000000800000000000000
+        2000000000000000050000000700000000000000220000000000000070617468
+        2b66696c653a2f2f2f776f726b737061636523656d70747940302e312e300000
+        000000000000000000000300000015000000000000002f776f726b7370616365
+        2f436172676f2e746f6d6c000000000000000000000000000000000000000000
+        0000000000000000000000070707070707070707070707070707070707070707
+        0707070707070707070707000000000000000000000000000000000000000000
         0000000000000000000000000000000000000000000000000000000000000000
-        000000
+        00000000000000000000005247424f4459000110000000000000000000000000
+        0000000000000000000000
 
         decoded artifact
-        schema 3
+        schema 5
         source fingerprint 0707070707070707070707070707070707070707070707070707070707070707
         package #7 
         header targets 0
@@ -285,8 +256,8 @@ pub struct App;
         expect![[r#"
             encoded artifact has bytes true
             decoded artifact
-            schema 3
-            source fingerprint 5cb07c1684eeeb2c51a750cf465c7cd8f62d74e2e1dbdace0df9b4481058d206
+            schema 5
+            source fingerprint c15eefc2727539a098da6dc03624a62761f2c4787b8b0208a27cfbbc61073011
             package #0 app
             header targets 1
             parse files 1
@@ -320,6 +291,27 @@ pub struct App;
             missing after invalidation true
         "#]],
     );
+}
+
+#[test]
+fn probe_and_def_map_reads_do_not_decode_a_corrupt_body_section() {
+    utils::check_sectioned_cache_reads(
+        r#"
+//- /Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub fn answer() -> usize { 42 }
+"#,
+    );
+}
+
+#[test]
+fn file_local_query_reads_one_body_file_shard() {
+    utils::check_file_local_query_reads_one_body_shard();
 }
 
 #[test]
@@ -388,6 +380,21 @@ pub struct Dep;
 }
 
 #[test]
+fn residency_policy_changes_rebuild_from_source() {
+    utils::check_residency_policy_change_rebuilds_from_source(expect![[r#"
+        residency policy cache invalidation
+        first generation existed true
+        generation changed true
+        transition hits 0
+        transition missing artifacts 1
+        old generation after transition false
+        transition artifact true
+        switch-back hits 0
+        switch-back missing artifacts 2
+    "#]]);
+}
+
+#[test]
 fn lazy_loads_offloaded_packages_for_queries() {
     utils::check_offloaded_dependency_query(
         r#"
@@ -429,12 +436,12 @@ fn main() {}
 }
 
 #[test]
-fn startup_indexing_uses_matching_offloaded_package_artifacts() {
-    utils::check_startup_cache_uses_matching_artifact(expect![[r#"
+fn startup_indexing_rejects_payload_with_forged_source_fingerprint() {
+    utils::check_startup_cache_rejects_forged_source_fingerprint(expect![[r#"
         startup artifact-backed indexing
         dep resident false
-        old symbols 1
-        new symbols 0
+        old symbols 0
+        new symbols 1
     "#]]);
 }
 
@@ -457,6 +464,39 @@ fn startup_cache_profile_reports_probe_hits() {
         offloadable 1
         hits 1
         misses 0
+    "#]]);
+}
+
+#[test]
+fn startup_cache_misses_rebuild_reverse_dependents() {
+    utils::check_startup_cache_misses_rebuild_reverse_dependents(expect![[r#"
+        dependency cache miss closure
+        hits 1
+        direct restore misses 1
+        reverse-dependent misses 2
+        definitions
+        - dep struct Kept
+    "#]]);
+}
+
+#[test]
+fn missing_dependency_artifact_rebuilds_reverse_dependents() {
+    utils::check_missing_dependency_artifact_rebuilds_reverse_dependents(expect![[r#"
+        missing dependency artifact closure
+        missing artifacts 1
+        reverse-dependent misses 1
+        hits 0
+        dependency symbols 1
+    "#]]);
+}
+
+#[test]
+fn startup_discards_incomplete_cache_updates() {
+    utils::check_startup_discards_incomplete_cache_update(expect![[r#"
+        incomplete cache update recovery
+        recovery hits 0
+        recovery missing artifacts 2
+        next startup hits 2
     "#]]);
 }
 

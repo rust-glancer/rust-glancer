@@ -260,8 +260,13 @@ fn materialize_files(
             &rebuild_subset,
         )
         .selected_files(body_files.into_vec())
-        .build()
-        .context("while attempting to materialize deferred analysis for files")?;
+        .build();
+
+    // Body lowering reparses evicted files and repopulates their source entries. The text is not
+    // part of retained deferred analysis, so release it before either publishing the payload or
+    // returning a build error to a direct Project API caller.
+    state.parse.evict_saved_source_text();
+    let body_ir = body_ir.context("while attempting to materialize deferred analysis for files")?;
 
     state.body_ir = body_ir;
     Shrink::shrink_to_fit(&mut state.names);
@@ -338,7 +343,12 @@ fn materialize_packages(state: &mut ProjectState, packages: &[PackageSlot]) -> a
         // Query-driven finishing intentionally overrides the eager indexing policy. If a query
         // needs to scan a package, missing bodies would be false negatives rather than saved work.
         .configured_bodies(BodyIrBuildPolicy::all_packages())
-        .build()
+        .build();
+
+    // Package materialization has the same source lifetime as file-local materialization. Keep
+    // only the derived Body IR after the builder finishes, including on its error path.
+    state.parse.evict_saved_source_text();
+    let body_ir = body_ir
         .context("while attempting to materialize complete deferred analysis for packages")?;
 
     state.body_ir = body_ir;
@@ -375,8 +385,13 @@ fn finish_resident_with_sampler(
             &finish_subset,
         )
         .configured_bodies(state.body_ir_policy)
-        .build()
-        .context("while attempting to finish deferred indexing packages")?;
+        .build();
+
+    // Fresh construction evicts this same reloadable text before exposing retained-state memory.
+    // Deferred finishing must do so before its purge and checkpoints as well; otherwise source
+    // allocations keep their allocator pages live for the rest of the process.
+    state.parse.evict_saved_source_text();
+    let body_ir = body_ir.context("while attempting to finish deferred indexing packages")?;
 
     state.body_ir = body_ir;
     Shrink::shrink_to_fit(&mut state.names);

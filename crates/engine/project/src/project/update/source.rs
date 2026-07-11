@@ -19,29 +19,6 @@ pub(super) fn apply_source_changes(
     project: &mut Project,
     changes: Vec<SavedFileChange>,
 ) -> anyhow::Result<AnalysisChangeSummary> {
-    // Read every source before changing ParseDb. A later I/O error can then reject the update
-    // without leaving parsed files ahead of the package databases built from them.
-    let mut staged_changes = Vec::with_capacity(changes.len());
-    for change in changes {
-        let source = match std::fs::read_to_string(&change.path) {
-            Ok(source) => source,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                // The path disappeared after canonicalization, usually because a checkout or
-                // rename advanced again while this command waited. Other staged paths remain valid.
-                continue;
-            }
-            Err(error) => {
-                return Err(error).with_context(|| {
-                    format!(
-                        "while attempting to stage saved file change for {}",
-                        change.path.display()
-                    )
-                });
-            }
-        };
-        staged_changes.push((change, source));
-    }
-
     let mut changed_files = Vec::new();
     let mut changed_files_seen = HashSet::new();
     let mut fallback_package_roots = UniqueVec::new();
@@ -50,11 +27,27 @@ pub(super) fn apply_source_changes(
     // Reparse every known file first, then rebuild the union of affected packages once. This keeps
     // large watcher batches proportional to the changed package set instead of to the number of
     // changed paths in the batch.
-    for (change, source) in staged_changes {
-        let changed = project
+    for change in changes {
+        let changed = match project
             .state
             .parse_db_mut()
-            .reparse_saved_file_from_source(&change.path, &source);
+            .reparse_saved_file(&change.path)
+        {
+            Ok(changed) => changed,
+            Err(error) if error.io_kind() == Some(std::io::ErrorKind::NotFound) => {
+                // The path disappeared after canonicalization, usually because a checkout or
+                // rename advanced again while this command waited. Other paths remain useful.
+                continue;
+            }
+            Err(error) => {
+                return Err(error).with_context(|| {
+                    format!(
+                        "while attempting to capture saved file change for {}",
+                        change.path.display()
+                    )
+                });
+            }
+        };
 
         if changed.is_empty() {
             // A saved file can be new to the graph even though it now exists on disk. In that case,
@@ -100,6 +93,17 @@ pub(super) fn apply_source_changes(
     );
     let changed_targets = targets_for_changed_files(project, &changed_files)
         .context("while attempting to report changed analysis targets")?;
+
+    // Package rebuilds finalize their source set before writing cache artifacts, but a watcher
+    // event can legitimately affect no package at all. Finalize again at the transaction boundary
+    // so every successfully published candidate has the same sealed-and-validated shape.
+    project.state.parse_db().seal_sources();
+    project
+        .state
+        .parse_db()
+        .validate_saved_sources()
+        .context("while attempting to validate captured project source generation")?;
+    project.state.parse_db().evict_saved_source_text();
 
     Ok(AnalysisChangeSummary {
         changed_files,

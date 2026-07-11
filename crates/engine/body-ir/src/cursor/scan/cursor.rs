@@ -4,8 +4,8 @@
 //! add any extra path-segment candidates visible at the same offset.
 
 use rg_ir_model::{
-    BindingId, BodyId, BodyRef, DefMapRef, EnumVariantRef, ExprId, FieldRef, SemanticItemRef,
-    TargetRef, TypeDefId, hir::source::ItemSourceKind,
+    BindingId, BodyRef, DefMapRef, EnumVariantRef, ExprId, FieldRef, SemanticItemRef, TargetRef,
+    TypeDefId, hir::source::ItemSourceKind,
 };
 use rg_package_store::PackageStoreError;
 use rg_parse::{FileId, Span};
@@ -76,20 +76,13 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
 
     /// Finds the innermost enclosing body at the cursor offset.
     fn body_at(&self) -> Result<Option<BodyRef>, PackageStoreError> {
-        let Some(target_bodies) = self.body_ir.target_bodies(self.target)? else {
-            return Ok(None);
-        };
         let mut best: Option<(BodyRef, u32)> = None;
 
-        for (body_idx, body) in target_bodies.bodies().iter().enumerate() {
-            if body.source().file_id != self.file_id || !body.source().span.contains(self.offset) {
+        for (body_ref, body) in self.body_ir.bodies(self.target, Some(self.file_id))? {
+            if !body.source().span.contains(self.offset) {
                 continue;
             }
 
-            let body_ref = BodyRef {
-                target: self.target,
-                body: BodyId(body_idx),
-            };
             let body_len = body.source().span.len();
             if best.is_none_or(|(_, best_len)| body_len < best_len) {
                 best = Some((body_ref, body_len));

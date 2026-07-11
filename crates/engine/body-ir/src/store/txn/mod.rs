@@ -1,0 +1,189 @@
+//! Query-facing access to resident and offloaded Body IR.
+//!
+//! The retained database still uses the generic package store to record package slots and
+//! residency. Its generic read transaction would have to load an entire [`PackageBodies`] value,
+//! though, which would throw away Body IR's source-file cache granularity. [`BodyIrReadTxn`] is the
+//! Body-specific read view that keeps the same logical package slots while loading smaller units.
+//!
+//! Callers do not branch on residency. The transaction does that once and then exposes Body IR
+//! operations:
+//!
+//! ```text
+//! semantic_index(target)       -> target-global index only
+//! bodies(target, Some(file))   -> one source-file shard
+//! body_data(body_ref)          -> the shard named by the manifest
+//! target_bodies(target)        -> complete target
+//! ```
+//!
+//! Values loaded for an offloaded package are owned by the transaction. This is why these methods
+//! can return borrowed Body IR references without making the package resident in `BodyIrDb`.
+
+mod lazy;
+mod loader;
+
+use std::sync::Arc;
+
+use rg_def_map::PackageSlot;
+use rg_ir_model::{BodyRef, TargetRef};
+use rg_ir_storage::{BodyLocalItems, DefMap, ItemLookupIndex, ItemStore};
+use rg_package_store::PackageStoreError;
+use rg_parse::FileId;
+
+use self::lazy::{LazyPackage, PackageReadEntry};
+pub use self::loader::{BodyIrLoader, LoadBodyIr};
+use crate::{PackageBodies, ResolvedBodyData, TargetBodies};
+
+/// Read-only Body IR access with one stable view of package residency and loaded cache units.
+///
+/// Cloning the transaction shares resident `Arc`s and clones any request-local loaded `Arc`s. It
+/// does not change the retained database or turn an offloaded package into a resident one.
+#[derive(Debug, Clone)]
+pub struct BodyIrReadTxn<'db> {
+    packages: Vec<PackageReadEntry<'db>>,
+}
+
+impl<'db> BodyIrReadTxn<'db> {
+    /// Freeze the package subset and residency states used by this query.
+    ///
+    /// `Some(package)` becomes a resident entry. An included `None` becomes a lazy Body IR entry,
+    /// while an excluded slot stays distinguishable from a missing package slot.
+    pub(crate) fn from_store_entries(
+        packages: impl IntoIterator<Item = (bool, Option<Arc<PackageBodies>>)>,
+        loader: BodyIrLoader<'db>,
+    ) -> Self {
+        Self {
+            packages: packages
+                .into_iter()
+                .map(|(included, package)| {
+                    if !included {
+                        return PackageReadEntry::Excluded;
+                    }
+                    match package {
+                        Some(package) => PackageReadEntry::Resident(package),
+                        None => PackageReadEntry::Lazy(LazyPackage::new(loader.clone())),
+                    }
+                })
+                .collect(),
+        }
+    }
+
+    /// Return the complete target, loading every required Body IR storage unit when offloaded.
+    ///
+    /// Prefer the narrower query methods when the caller needs one body, one file, or only the
+    /// target-global semantic index.
+    pub fn target_bodies(
+        &self,
+        target: TargetRef,
+    ) -> Result<Option<&TargetBodies>, PackageStoreError> {
+        match self.entry(target.package)? {
+            PackageReadEntry::Resident(package) => Ok(package.target(target.target)),
+            PackageReadEntry::Lazy(package) => package.target(target),
+            PackageReadEntry::Excluded => unreachable!("excluded entries fail in entry()"),
+        }
+    }
+
+    /// Return the target-global lookup index without materializing body payloads.
+    ///
+    /// The index answers item-to-body lookup questions. It is stored separately because those
+    /// questions should not decode every body in a large target.
+    pub fn semantic_index(
+        &self,
+        target: TargetRef,
+    ) -> Result<Option<&ItemLookupIndex>, PackageStoreError> {
+        match self.entry(target.package)? {
+            PackageReadEntry::Resident(package) => Ok(package
+                .target(target.target)
+                .map(TargetBodies::semantic_index)),
+            PackageReadEntry::Lazy(package) => package.semantic_index(target),
+            PackageReadEntry::Excluded => unreachable!("excluded entries fail in entry()"),
+        }
+    }
+
+    /// Enumerate bodies from one file, or every body when `file` is absent.
+    ///
+    /// Returning stable `BodyRef` values here keeps file-local scanners out of the physical shard
+    /// layout and prevents them from accidentally requesting the rest of a large target.
+    pub fn bodies(
+        &self,
+        target: TargetRef,
+        file: Option<FileId>,
+    ) -> Result<Vec<(BodyRef, &ResolvedBodyData)>, PackageStoreError> {
+        match self.entry(target.package)? {
+            PackageReadEntry::Resident(package) => {
+                let Some(target_bodies) = package.target(target.target) else {
+                    return Ok(Vec::new());
+                };
+                Ok(target_bodies
+                    .bodies
+                    .iter_with_ids()
+                    .filter(|(_, body)| file.is_none_or(|file| body.source().file_id == file))
+                    .map(|(body, data)| (BodyRef { target, body }, data))
+                    .collect())
+            }
+            PackageReadEntry::Lazy(package) => package.bodies(target, file),
+            PackageReadEntry::Excluded => unreachable!("excluded entries fail in entry()"),
+        }
+    }
+
+    /// Return one body by project-wide body reference.
+    ///
+    /// For an offloaded package, the manifest maps the `BodyId` to its source file and only that
+    /// file shard is loaded.
+    pub fn body_data(
+        &self,
+        body_ref: BodyRef,
+    ) -> Result<Option<&ResolvedBodyData>, PackageStoreError> {
+        match self.entry(body_ref.target.package)? {
+            PackageReadEntry::Resident(package) => Ok(package
+                .target(body_ref.target.target)
+                .and_then(|target| target.body(body_ref.body))),
+            PackageReadEntry::Lazy(package) => package.body_data(body_ref),
+            PackageReadEntry::Excluded => unreachable!("excluded entries fail in entry()"),
+        }
+    }
+
+    /// Return the DefMap and item store created inside one body.
+    ///
+    /// These values are paired with the body in the same file shard, so the lookup has the same
+    /// narrow loading behavior as `body_data`.
+    pub fn body_local_items(
+        &self,
+        body_ref: BodyRef,
+    ) -> Result<Option<&BodyLocalItems>, PackageStoreError> {
+        match self.entry(body_ref.target.package)? {
+            PackageReadEntry::Resident(package) => Ok(package
+                .target(body_ref.target.target)
+                .and_then(|target| target.body_local_items(body_ref.body))),
+            PackageReadEntry::Lazy(package) => package.body_local_items(body_ref),
+            PackageReadEntry::Excluded => unreachable!("excluded entries fail in entry()"),
+        }
+    }
+
+    /// Return the body-local DefMap without exposing the containing storage object.
+    pub fn body_def_map(&self, body_ref: BodyRef) -> Result<Option<&DefMap>, PackageStoreError> {
+        Ok(self
+            .body_local_items(body_ref)?
+            .map(BodyLocalItems::def_map))
+    }
+
+    /// Return the body-local item store without exposing the containing storage object.
+    pub fn body_item_store(
+        &self,
+        body_ref: BodyRef,
+    ) -> Result<Option<&ItemStore>, PackageStoreError> {
+        Ok(self
+            .body_local_items(body_ref)?
+            .map(BodyLocalItems::item_store))
+    }
+
+    /// Distinguish an invalid slot from a valid slot omitted by this transaction's subset.
+    fn entry(&self, package: PackageSlot) -> Result<&PackageReadEntry<'db>, PackageStoreError> {
+        let Some(entry) = self.packages.get(package.0) else {
+            return Err(PackageStoreError::MissingSlot { slot: package });
+        };
+        if matches!(entry, PackageReadEntry::Excluded) {
+            return Err(PackageStoreError::ExcludedSlot { slot: package });
+        }
+        Ok(entry)
+    }
+}

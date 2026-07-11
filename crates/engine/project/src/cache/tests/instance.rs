@@ -2,6 +2,7 @@ use rg_def_map::PackageSlot;
 use rg_parse::ParseDb;
 
 use crate::{
+    PackageResidencyPolicy,
     cache::{PackageCacheInstance, PackageCacheStore, WorkspaceCachePlan},
     testonly::ProjectSourceFixture,
 };
@@ -50,8 +51,18 @@ fn cache_stores_under_distinct_instances_use_distinct_artifact_paths() {
         .expect("first cache instance should claim a slot");
     let second = PackageCacheInstance::for_workspace(&workspace)
         .expect("second cache instance should claim a slot");
-    let first_store = PackageCacheStore::for_instance(&workspace, &cache_plan, &first);
-    let second_store = PackageCacheStore::for_instance(&workspace, &cache_plan, &second);
+    let first_store = PackageCacheStore::for_instance(
+        &workspace,
+        &cache_plan,
+        PackageResidencyPolicy::default(),
+        &first,
+    );
+    let second_store = PackageCacheStore::for_instance(
+        &workspace,
+        &cache_plan,
+        PackageResidencyPolicy::default(),
+        &second,
+    );
     let header = package_header(&workspace, &cache_plan);
 
     assert_ne!(

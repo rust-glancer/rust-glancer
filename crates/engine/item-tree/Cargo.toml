@@ -21,6 +21,7 @@ rg_ir_model.workspace = true
 rg_macro_expand.workspace = true
 rg_std.workspace = true
 rg_parse.workspace = true
+rg_source.workspace = true
 rg_text.workspace = true
 rg_tt.workspace = true
 rg_wincode_utils.workspace = true

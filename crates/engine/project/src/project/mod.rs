@@ -27,6 +27,7 @@ use crate::{
 };
 use rg_std::MemorySize;
 
+pub use self::state::ProjectGenerationId;
 pub use self::{
     build::{ProjectBuilder, SplitIndexingMode, StartupCacheLoad},
     dirty::DirtyFileChange,
@@ -61,6 +62,11 @@ impl Project {
         ProjectSnapshot { state: &self.state }
     }
 
+    /// Returns the identity of the successfully published saved-source generation.
+    pub fn generation_id(&self) -> ProjectGenerationId {
+        self.state.generation_id()
+    }
+
     /// Returns the normalized workspace metadata this project was built from.
     pub fn workspace(&self) -> &WorkspaceMetadata {
         self.state.workspace()
@@ -86,15 +92,46 @@ impl Project {
         ProjectState::is_recoverable_cache_load_failure(error)
     }
 
+    /// Returns the saved path whose current disk bytes no longer match a frozen source revision.
+    pub fn stale_source_path(error: &anyhow::Error) -> Option<&Path> {
+        error.chain().find_map(|cause| {
+            cause
+                .downcast_ref::<rg_source::SourceError>()
+                .and_then(rg_source::SourceError::stale_path)
+        })
+    }
+
+    /// Builds a private candidate and publishes it as a new generation only after success.
+    ///
+    /// Candidate internals remain unreachable while `build` runs. Assigning the public generation
+    /// id immediately before the state swap makes that swap the single publication point: failed
+    /// work cannot advance live generation identity or leave partially rebuilt phase databases in
+    /// the project.
+    fn try_publish_generation<T>(
+        &mut self,
+        build: impl FnOnce(&mut Project) -> anyhow::Result<T>,
+    ) -> anyhow::Result<T> {
+        let mut candidate = self.clone();
+        let output = build(&mut candidate)
+            .context("while attempting to build project generation candidate")?;
+
+        candidate.state.generation_id = ProjectGenerationId::fresh();
+        self.state = candidate.state;
+        Ok(output)
+    }
+
     /// Rebuilds the project from source and rewrites offloadable package cache artifacts.
     pub fn recover_after_cache_load_failure(&mut self) -> anyhow::Result<()> {
-        offloading::ResidencyApplication::failure_recovery(&mut self.state)
-            .context("while attempting to recover analysis project after package cache load failed")
+        self.try_publish_generation(|candidate| {
+            offloading::ResidencyApplication::failure_recovery(&mut candidate.state).context(
+                "while attempting to recover analysis project after package cache load failed",
+            )
+        })
     }
 
     /// Rebuilds the whole project from the current workspace graph and saved source files.
     pub fn reindex_workspace(&mut self) -> anyhow::Result<()> {
-        update::reindex_workspace(self)
+        self.try_publish_generation(update::reindex_workspace)
     }
 
     /// Returns the split-indexing control surface for deferred analysis work.
@@ -139,12 +176,14 @@ impl Project {
             let path = match change.path.canonicalize() {
                 Ok(path) => path,
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                    // A rename-heavy filesystem operation can remove a path after the watcher has
-                    // queued it. The surviving paths still describe useful work, so do not reject
-                    // their whole batch because this event is already obsolete.
+                    // We intentionally do not care about deleted module files. Valid Rust removes
+                    // or changes the surviving `mod foo;` declaration, and saving that file
+                    // rebuilds the graph. If the declaration still names the deleted file, the
+                    // project does not compile and keeping the previous analysis is good enough.
                     //
-                    // TODO: Model deleted Cargo inputs as graph changes instead of treating every
-                    // missing saved path as an obsolete replacement event.
+                    // Deleting an auto-discovered Cargo target or globbed package can technically
+                    // change a valid graph, but that uncommon case is not worth deletion-driven
+                    // reindexing either. Another surviving Cargo change or a full rebuild fixes it.
                     continue;
                 }
                 Err(error) => {
@@ -165,7 +204,13 @@ impl Project {
         canonical_changes.sort_by(|left, right| left.path.cmp(&right.path));
         canonical_changes.dedup_by(|left, right| left.path == right.path);
 
-        update::apply_changes(self, canonical_changes)
+        if canonical_changes.is_empty() {
+            return Ok(AnalysisChangeSummary::default());
+        }
+
+        self.try_publish_generation(move |candidate| {
+            update::apply_canonical_changes(candidate, canonical_changes)
+        })
     }
 
     /// Builds an ephemeral analysis project from dirty editor buffers.
@@ -200,6 +245,7 @@ impl Project {
         self.state
             .parse
             .offload_line_indexes_for_packages(&offloadable_packages);
+        self.state.parse.evict_saved_source_text();
     }
 }
 
@@ -222,7 +268,7 @@ impl SavedFileChange {
 }
 
 /// Summary of what one saved-file update touched.
-#[derive(Debug, Clone, PartialEq, Eq, MemorySize)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, MemorySize)]
 pub struct AnalysisChangeSummary {
     pub changed_files: Vec<ChangedFile>,
     pub affected_packages: Vec<PackageSlot>,

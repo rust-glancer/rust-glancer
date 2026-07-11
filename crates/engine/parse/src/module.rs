@@ -14,11 +14,12 @@ use anyhow::Context as _;
 use rg_syntax::ast::{self, HasAttrs, HasModuleItem, HasName};
 
 use crate::{FileId, Package, fs};
+use rg_source::SourceInventory;
 
 impl Package {
     /// Discovers reachable out-of-line module files before AST-consuming lowering allocates.
-    pub fn discover_modules(&mut self) -> anyhow::Result<()> {
-        ModuleDiscovery::new(self).discover()
+    pub fn discover_modules(&mut self, sources: &SourceInventory) -> anyhow::Result<()> {
+        ModuleDiscovery::new(self, sources).discover()
     }
 }
 
@@ -62,46 +63,66 @@ impl ModuleFileContext {
     ///
     /// The resolver intentionally handles only the module forms that lowering already supports.
     /// More advanced attribute expansion belongs with a broader module-system implementation.
-    pub fn resolve_module_file(&self, module: &ast::Module) -> Option<PathBuf> {
-        let module_name = module.name().map(|name| name.text().to_string())?;
+    pub fn resolve_module_file(
+        &self,
+        sources: &SourceInventory,
+        module: &ast::Module,
+    ) -> anyhow::Result<Option<PathBuf>> {
+        let Some(module_name) = module.name().map(|name| name.text().to_string()) else {
+            return Ok(None);
+        };
         if let Some(path_attr) = module_path_attr(module) {
-            return self.resolve_path_attr_file(&path_attr);
+            return self.resolve_path_attr_file(sources, &path_attr);
         }
 
-        self.resolve_child_file(&module_name)
+        self.resolve_child_file(sources, &module_name)
     }
 
     /// Resolves `mod name;` according to conventional Rust module file rules.
-    fn resolve_child_file(&self, module_name: &str) -> Option<PathBuf> {
+    fn resolve_child_file(
+        &self,
+        sources: &SourceInventory,
+        module_name: &str,
+    ) -> anyhow::Result<Option<PathBuf>> {
         let flat_file = self.child_module_dir.join(format!("{module_name}.rs"));
-        if flat_file.exists() {
-            return Some(flat_file);
+        if sources.probe_exists(&flat_file)? {
+            return Ok(Some(flat_file));
         }
 
         let nested_file = self.child_module_dir.join(module_name).join("mod.rs");
-        if nested_file.exists() {
-            return Some(nested_file);
+        if sources.probe_exists(&nested_file)? {
+            return Ok(Some(nested_file));
         }
 
-        None
+        Ok(None)
     }
 
     /// Resolves the basic literal form of `#[path = "..."]` relative to the current module.
-    fn resolve_path_attr_file(&self, path_attr: &str) -> Option<PathBuf> {
-        fs::resolve_relative_path_literal(&self.child_module_dir, path_attr)
+    fn resolve_path_attr_file(
+        &self,
+        sources: &SourceInventory,
+        path_attr: &str,
+    ) -> anyhow::Result<Option<PathBuf>> {
+        let Some(path) = fs::resolve_relative_path_literal(&self.child_module_dir, path_attr)
+        else {
+            return Ok(None);
+        };
+        Ok(sources.probe_exists(&path)?.then_some(path))
     }
 }
 
 struct ModuleDiscovery<'db> {
     package: &'db mut Package,
+    sources: &'db SourceInventory,
     visited: HashSet<FileId>,
     active_stack: HashSet<FileId>,
 }
 
 impl<'db> ModuleDiscovery<'db> {
-    fn new(package: &'db mut Package) -> Self {
+    fn new(package: &'db mut Package, sources: &'db SourceInventory) -> Self {
         Self {
             package,
+            sources,
             visited: HashSet::default(),
             active_stack: HashSet::default(),
         }
@@ -207,12 +228,14 @@ impl<'db> ModuleDiscovery<'db> {
                 .context("while attempting to discover inline module items");
         }
 
-        let Some(module_file_path) = module_file_context.resolve_module_file(module) else {
+        let Some(module_file_path) =
+            module_file_context.resolve_module_file(self.sources, module)?
+        else {
             return Ok(());
         };
         let module_file_id = self
             .package
-            .parse_file(&module_file_path)
+            .parse_file(self.sources, &module_file_path)
             .with_context(|| {
                 format!(
                     "while attempting to parse module file {}",

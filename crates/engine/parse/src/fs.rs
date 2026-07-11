@@ -2,7 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
-/// Resolves a string literal path against `base_dir` and keeps only existing files.
+/// Resolves a string literal path against `base_dir` without observing filesystem state.
 pub(crate) fn resolve_path_literal(base_dir: &Path, path_literal: &str) -> Option<PathBuf> {
     let path = Path::new(path_literal);
     if path.as_os_str().is_empty() {
@@ -14,7 +14,7 @@ pub(crate) fn resolve_path_literal(base_dir: &Path, path_literal: &str) -> Optio
     } else {
         base_dir.join(path)
     };
-    path.exists().then_some(path)
+    Some(path)
 }
 
 /// Resolves a relative-only string literal path against `base_dir`.
@@ -27,6 +27,5 @@ pub(crate) fn resolve_relative_path_literal(
         return None;
     }
 
-    let path = base_dir.join(path);
-    path.exists().then_some(path)
+    Some(base_dir.join(path))
 }

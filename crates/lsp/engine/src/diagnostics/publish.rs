@@ -161,7 +161,7 @@ mod tests {
         let diagnostics =
             CargoDiagnostics::from_map(BTreeMap::from([(path.clone(), vec![diagnostic("new")])]));
         let mut documents = DocumentStore::default();
-        documents.did_open(path.clone(), Some(1), "fn main() {}\n");
+        documents.did_open_saved(path.clone(), Some(1), "fn main() {}\n");
         documents.did_change(path.clone(), Some(2), Some("fn main() {\n}\n"));
 
         let workspace_diagnostics =
@@ -180,7 +180,7 @@ mod tests {
         )]));
         let previous_paths = BTreeSet::from([path.clone()]);
         let mut documents = DocumentStore::default();
-        documents.did_open(path.clone(), Some(1), "fn main() {}\n");
+        documents.did_open_saved(path.clone(), Some(1), "fn main() {}\n");
         documents.did_change(path.clone(), Some(2), Some("fn main() {\n}\n"));
 
         let workspace_diagnostics =
@@ -196,7 +196,7 @@ mod tests {
         let diagnostics = CargoDiagnostics::default();
         let previous_paths = BTreeSet::from([path.clone()]);
         let mut documents = DocumentStore::default();
-        documents.did_open(path.clone(), Some(1), "fn main() {}\n");
+        documents.did_open_saved(path.clone(), Some(1), "fn main() {}\n");
         documents.did_change(path, Some(2), Some("fn main() {\n}\n"));
 
         let workspace_diagnostics =

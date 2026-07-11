@@ -71,10 +71,20 @@ declare_metrics! {
             counter CACHE_PROBE_BODY_IR_POLICY_MISMATCHES = "misses.body_ir_policy_mismatch";
             counter CACHE_PROBE_PARSE_RESTORE_ERRORS = "misses.parse_restore_error";
             counter CACHE_PROBE_UNPLANNED_PACKAGES = "misses.unplanned_package";
+            counter CACHE_PROBE_PROPAGATED_MISSES = "misses.reverse_dependent";
 
             duration CACHE_PROBE_ARTIFACT_READ = "timings.artifact_read";
             duration CACHE_PROBE_SOURCE_FINGERPRINT = "timings.source_fingerprint";
             duration CACHE_PROBE_PARSE_RESTORE = "timings.parse_restore";
+        }
+
+        scope "project.cache.sections" {
+            /// Encoded bytes read, grouped by probe or analysis phase.
+            keyed_counter CACHE_SECTION_BYTES = "bytes" [title "Cache section bytes read"];
+            /// Filesystem read time, grouped by probe or analysis phase.
+            keyed_duration CACHE_SECTION_READ = "timings.read" [title "Cache section read time"];
+            /// Wincode decode and structural validation time, grouped by probe or analysis phase.
+            keyed_duration CACHE_SECTION_DECODE = "timings.decode" [title "Cache section decode time"];
         }
     }
 }

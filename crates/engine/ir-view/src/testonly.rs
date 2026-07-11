@@ -1,4 +1,4 @@
-use rg_body_ir::{ResolvedBodyData, testonly::BodyIrFixture};
+use rg_body_ir::{BodyIrLoader, ResolvedBodyData, testonly::BodyIrFixture};
 use rg_def_map::DefMapDb;
 use rg_ir_model::{
     BodyId, BodyOwner, BodyRef, BodySource, DefMapRef, ExprData, ExprId, FunctionRef, ItemOwner,
@@ -42,7 +42,7 @@ impl ViewFixture {
                 .read_txn(PackageLoader::resident_only("resident view fixture")),
             self.body_ir
                 .body_ir_db()
-                .read_txn(PackageLoader::resident_only("resident view fixture")),
+                .read_txn(BodyIrLoader::resident_only("resident view fixture")),
         )
     }
 

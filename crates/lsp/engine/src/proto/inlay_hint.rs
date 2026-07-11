@@ -12,7 +12,7 @@ pub(crate) fn inlay_hint(
     hint: AnalysisInlayHint,
 ) -> anyhow::Result<Option<InlayHint>> {
     let line_index = snapshot
-        .file_line_index(package_slot, hint.file_id)
+        .file_line_index(package_slot, hint.file_id)?
         .context("while attempting to find file for inlay hint conversion")?;
     let kind = match hint.kind {
         AnalysisInlayHintKind::Type => Some(InlayHintKind::TYPE),

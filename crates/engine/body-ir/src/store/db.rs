@@ -6,7 +6,7 @@ use rg_package_store::{PackageLoader, PackageStore, PackageSubset};
 use rg_semantic_ir::PackageIr;
 use rg_text::PackageNameInterners;
 
-use super::{BodyIrReadTxn, PackageBodies, TargetBodiesCoverage, TargetBodiesStatus};
+use super::{BodyIrLoader, BodyIrReadTxn, PackageBodies, TargetBodiesCoverage, TargetBodiesStatus};
 use crate::build::{BodyIrDbBuilder, BodyIrDbPackageRebuilder};
 use rg_std::{MemorySize, Shrink};
 
@@ -134,19 +134,31 @@ impl BodyIrDb {
         self.packages.replace(package, bodies)
     }
 
-    pub fn read_txn<'db>(
-        &'db self,
-        loader: PackageLoader<'db, PackageBodies>,
-    ) -> BodyIrReadTxn<'db> {
-        BodyIrReadTxn::from_package_store(self.packages.read_txn(loader))
+    pub fn read_txn<'db>(&'db self, loader: BodyIrLoader<'db>) -> BodyIrReadTxn<'db> {
+        BodyIrReadTxn::from_store_entries(
+            self.packages
+                .raw_entries()
+                .map(|entry| (true, entry.resident_arc())),
+            loader,
+        )
     }
 
     pub fn read_txn_for_subset<'db>(
         &'db self,
-        loader: PackageLoader<'db, PackageBodies>,
+        loader: BodyIrLoader<'db>,
         subset: &PackageSubset,
     ) -> BodyIrReadTxn<'db> {
-        BodyIrReadTxn::from_package_store(self.packages.read_txn_for_subset(loader, subset))
+        debug_assert_eq!(
+            subset.raw_len(),
+            self.packages.len(),
+            "package subset should belong to the same Body IR snapshot",
+        );
+        BodyIrReadTxn::from_store_entries(
+            self.packages
+                .raw_entries_with_slots()
+                .map(|(package, entry)| (subset.contains(package), entry.resident_arc())),
+            loader,
+        )
     }
 
     pub fn offload_package(&mut self, package: PackageSlot) -> Option<()> {

@@ -18,7 +18,11 @@ use crate::{
     profile::{BuildMemorySampler, record_build_checkpoint},
 };
 
-use super::{Project, offloading::ResidencyApplication, state::ProjectState};
+use super::{
+    Project,
+    offloading::ResidencyApplication,
+    state::{ProjectGenerationId, ProjectState},
+};
 
 /// Controls whether a fresh project build can seed offloadable packages from cache artifacts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -183,7 +187,15 @@ pub(crate) fn build_resident_state(
 ) -> anyhow::Result<ProjectState> {
     let package_residency = PackageResidencyPlan::build(&workspace, package_residency_policy);
     let cache_plan = WorkspaceCachePlan::build(&workspace);
-    let cache_store = PackageCacheStore::for_instance(&workspace, &cache_plan, &cache_instance);
+    let cache_store = PackageCacheStore::for_instance(
+        &workspace,
+        &cache_plan,
+        package_residency_policy,
+        &cache_instance,
+    );
+    cache_store
+        .recover_incomplete_update()
+        .context("while attempting to recover an incomplete package cache update")?;
     let phases = phases::build(
         &workspace,
         body_ir_policy,
@@ -198,6 +210,7 @@ pub(crate) fn build_resident_state(
     )?;
 
     Ok(ProjectState {
+        generation_id: ProjectGenerationId::fresh(),
         workspace,
         workspace_lowering_config,
         cargo_metadata_config,

@@ -312,7 +312,11 @@ impl EngineRegistry {
                         let engine_client = engine.process.engine_client().clone();
                         return Ok(Some(engine_client));
                     }
-                    Some(EngineSlot::Starting { notify, .. }) => Some(notify.clone()),
+                    // Create the waiter under the publication lock. `notify_waiters` keeps no
+                    // permit, so creating it after unlock could miss the startup transition.
+                    Some(EngineSlot::Starting { notify, .. }) => {
+                        Some(notify.clone().notified_owned())
+                    }
                     Some(EngineSlot::Failed { root, error }) => {
                         return Err(anyhow::anyhow!(
                             "rust-glancer engine for `{}` is unavailable: {error}",
@@ -326,7 +330,6 @@ impl EngineRegistry {
             // Existing ids can point at a reserved-but-not-ready slot. Wait outside the registry
             // lock so the task that is starting the engine can mark the slot ready or failed.
             wait.expect("starting engine should provide notification")
-                .notified()
                 .await;
         }
     }

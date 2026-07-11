@@ -93,12 +93,8 @@ impl<'a, 'db> BodyStructureView<'a, 'db> {
         target: TargetRef,
         file_id: FileId,
     ) -> anyhow::Result<Vec<MethodChainExprTy>> {
-        let Some(target_bodies) = self.db.body_ir.target_bodies(target)? else {
-            return Ok(Vec::new());
-        };
-
         let mut expr_tys = Vec::new();
-        for body in target_bodies.bodies() {
+        for (_, body) in self.db.body_ir.bodies(target, Some(file_id))? {
             let parent_dot_by_receiver = Self::method_parent_dots_by_receiver(body);
 
             for (expr_idx, expr) in body.exprs().iter().enumerate() {
@@ -141,13 +137,9 @@ impl<'a, 'db> BodyStructureView<'a, 'db> {
         // The source span and structural kind are enough for callers to place block-end annotations
         // without reaching back to the body syntax tree that originally produced the facts.
 
-        let Some(target_bodies) = self.db.body_ir.target_bodies(target)? else {
-            return Ok(Vec::new());
-        };
-
         let items = ItemStoreQuery::new(self.db);
         let mut blocks = Vec::new();
-        for body in target_bodies.bodies() {
+        for (_, body) in self.db.body_ir.bodies(target, Some(file_id))? {
             let body_source = body.source();
             if body_source.file_id == file_id
                 && let Some(function) = body.function_owner()

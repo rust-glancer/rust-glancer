@@ -4,7 +4,7 @@
 //! Qualified paths are left to the path-completion scanner because their
 //! candidate set comes from the resolved qualifier rather than lexical scope.
 
-use rg_ir_model::{BodyId, BodyRef, ScopeId, TargetRef, items::TypePath};
+use rg_ir_model::{BodyRef, ScopeId, TargetRef, items::TypePath};
 use rg_package_store::PackageStoreError;
 use rg_parse::FileId;
 
@@ -42,20 +42,13 @@ impl<'txn, 'db> UnqualifiedCompletionSiteScanner<'txn, 'db> {
     pub(crate) fn site_at_name(
         &self,
     ) -> Result<Option<UnqualifiedCompletionSite>, PackageStoreError> {
-        let Some(target_bodies) = self.body_ir.target_bodies(self.target)? else {
-            return Ok(None);
-        };
         let mut best: Option<(UnqualifiedCompletionSite, u32)> = None;
 
-        for (body_idx, body) in target_bodies.bodies().iter().enumerate() {
-            if body.source().file_id != self.file_id || !body.source().span.contains(self.offset) {
+        for (body_ref, body) in self.body_ir.bodies(self.target, Some(self.file_id))? {
+            if !body.source().span.contains(self.offset) {
                 continue;
             }
 
-            let body_ref = BodyRef {
-                target: self.target,
-                body: BodyId(body_idx),
-            };
             self.scan_type_names(body_ref, body, &mut best);
             self.scan_value_names(body_ref, body, &mut best);
         }

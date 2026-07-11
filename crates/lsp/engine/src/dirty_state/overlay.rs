@@ -40,8 +40,11 @@ impl DirtyOverlayCache {
         dirty: &DirtyDocumentSnapshot,
     ) -> anyhow::Result<&Project> {
         let identity = DirtyDocumentIdentity::from_snapshot(dirty);
+        let base_generation = base.generation_id();
         let should_rebuild = match &self.cached {
-            Some(cached) => cached.identity != identity,
+            Some(cached) => {
+                cached.identity != identity || cached.base_generation != base_generation
+            }
             None => true,
         };
 
@@ -79,7 +82,11 @@ impl DirtyOverlayCache {
                 dirty_overlay_build_ms = started.elapsed().as_millis(),
                 "dirty analysis overlay rebuilt"
             );
-            self.cached = Some(CachedDirtyOverlay { identity, project });
+            self.cached = Some(CachedDirtyOverlay {
+                identity,
+                base_generation,
+                project,
+            });
         } else {
             tracing::debug!(
                 path = %dirty.path().display(),
@@ -102,5 +109,6 @@ impl DirtyOverlayCache {
 #[derive(Debug)]
 struct CachedDirtyOverlay {
     identity: DirtyDocumentIdentity,
+    base_generation: rg_project::ProjectGenerationId,
     project: Project,
 }

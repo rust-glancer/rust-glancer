@@ -73,15 +73,28 @@ fn try_rebuild_packages(
     let rebuild_subset = plan
         .source_packages
         .visible_dependency_subset(&state.workspace);
+    let package_indices = plan.source_packages.package_indices();
+
+    // Saved rebuilding replaces the package file table before discovering modules again. Keeping
+    // the old table would make removed modules permanent members of source validation and cache
+    // snapshots even after the new ItemTree stopped reaching them. Dirty overlays are ephemeral
+    // and deliberately preserve the published file ids instead.
+    if matches!(plan.residency, RebuildResidency::RestoreSavedState) {
+        state
+            .parse
+            .reset_packages_from_workspace(&state.workspace, &package_indices)
+            .context("while attempting to reset rebuilt package source roots")?;
+    }
+
     let loaders = PackageReadLoaders::new(state);
     let old_def_map_txn = state
         .def_map
         .read_txn_for_subset(loaders.def_map.clone(), &rebuild_subset);
 
-    let package_indices = plan.source_packages.package_indices();
     let item_tree =
         ItemTreeDb::build_packages(&mut state.parse, &package_indices, &mut state.names)
             .context("while attempting to rebuild affected item-tree packages")?;
+    state.parse.seal_sources();
 
     // Rebuilds follow the same lifetime rule as fresh indexing: item-tree owns the lowered
     // declarations, and body lowering reparses only the files it needs.
@@ -139,6 +152,11 @@ fn try_rebuild_packages(
     let body_ir = body_rebuilder
         .build()
         .context("while attempting to rebuild affected body IR packages")?;
+    state
+        .parse
+        .validate_saved_sources()
+        .context("while attempting to validate captured project source generation")?;
+    state.parse.evict_saved_source_text();
 
     // ItemTree is a transient rebuild input. Drop it before pruning the weak interner so names
     // that did not survive into retained DBs are no longer treated as live.

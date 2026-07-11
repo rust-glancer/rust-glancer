@@ -1255,6 +1255,7 @@ impl<'a> AnalysisQuerySnapshot<'a> {
 
         parsed_file
             .text_for_span(span)
+            .expect("analysis source text should load")
             .unwrap_or_else(|| "<invalid>".to_string())
             .split_whitespace()
             .collect::<Vec<_>>()

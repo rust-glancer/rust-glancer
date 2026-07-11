@@ -46,17 +46,37 @@ impl EngineService for Service {
         text: String,
     ) -> EngineResult<()> {
         let text_len = text.len();
+        // `didOpen` carries the editor buffer, which can contain restored unsaved changes. Read
+        // disk separately so the document store can decide whether this is a clean saved snapshot
+        // or a dirty overlay over the project generation.
+        let saved_text = match rg_source::read_source_text(&path) {
+            Ok(saved_text) => Some(saved_text),
+            Err(error) => {
+                tracing::trace!(
+                    path = %path.display(),
+                    error = %error,
+                    "opened document has no readable saved source"
+                );
+                None
+            }
+        };
         let mut documents = self.engine.documents.lock().await;
-        documents.did_open(path.clone(), version, &text);
+        documents.did_open(path.clone(), version, &text, saved_text.as_deref());
+        let freshness = documents.freshness(&path);
         let dirty = documents.dirty_snapshot(&path);
         self.engine.sync_dirty_state(&path, &dirty);
         drop(documents);
 
-        tracing::debug!(path = %path.display(), "opened clean document snapshot");
+        tracing::debug!(
+            path = %path.display(),
+            dirty = freshness.dirty(),
+            "recorded opened document snapshot"
+        );
         tracing::trace!(
             path = %path.display(),
             version,
             text_len,
+            saved_len = ?freshness.saved_len(),
             "recorded open document freshness"
         );
 
@@ -174,7 +194,7 @@ impl EngineService for Service {
                 continue;
             }
 
-            let text = match std::fs::read_to_string(&path) {
+            let text = match rg_source::read_source_text(&path) {
                 Ok(text) => text,
                 Err(error) => {
                     tracing::debug!(

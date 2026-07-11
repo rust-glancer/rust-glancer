@@ -4,8 +4,8 @@
 //! that can participate in navigation, references, and symbol queries.
 
 use rg_ir_model::{
-    BindingId, BodyId, BodyRef, EnumVariantRef, ExprId, FieldRef, SemanticItemRef, TargetRef,
-    TypeDefId, hir::source::ItemSourceKind,
+    BindingId, BodyRef, EnumVariantRef, ExprId, FieldRef, SemanticItemRef, TargetRef, TypeDefId,
+    hir::source::ItemSourceKind,
 };
 use rg_ir_storage::BodyLocalItems;
 use rg_package_store::PackageStoreError;
@@ -42,22 +42,9 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
 
     /// Returns all body-local candidates in this target, optionally limited to one file.
     pub(crate) fn scan(&self) -> Result<Vec<BodyCursorCandidate>, PackageStoreError> {
-        let Some(target_bodies) = self.body_ir.target_bodies(self.target)? else {
-            return Ok(Vec::new());
-        };
-
         let mut candidates = Vec::new();
-        for (body_idx, body) in target_bodies.bodies().iter().enumerate() {
-            if !self.file_matches(body.source().file_id) {
-                continue;
-            }
-
-            let body_ref = BodyRef {
-                target: self.target,
-                body: BodyId(body_idx),
-            };
-
-            let body_local_items = target_bodies.body_local_items(body_ref.body);
+        for (body_ref, body) in self.body_ir.bodies(self.target, self.file_id)? {
+            let body_local_items = self.body_ir.body_local_items(body_ref)?;
 
             self.push_declaration_candidates(body_ref, body, body_local_items, &mut candidates);
             self.push_macro_call_candidates(body, &mut candidates);

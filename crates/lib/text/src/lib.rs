@@ -8,6 +8,7 @@
 use rg_std::Shrink;
 use std::{
     borrow::Borrow,
+    cell::RefCell,
     collections::{HashMap, hash_map::DefaultHasher},
     fmt,
     hash::{Hash as _, Hasher as _},
@@ -110,7 +111,14 @@ where
         dst: &mut std::mem::MaybeUninit<Self::Dst>,
     ) -> wincode::ReadResult<()> {
         let text = <String as SchemaRead<C>>::get(reader)?;
-        dst.write(Name::from(text));
+        let name = DECODE_NAME_INTERNER.with(|interner| {
+            interner
+                .borrow_mut()
+                .as_mut()
+                .map(|interner| interner.intern(&text))
+                .unwrap_or_else(|| Name::from(text))
+        });
+        dst.write(name);
         Ok(())
     }
 }
@@ -144,6 +152,48 @@ pub struct NameInterner {
 #[derive(Debug, Clone, Default)]
 pub struct PackageNameInterners {
     packages: Vec<NameInterner>,
+}
+
+thread_local! {
+    static DECODE_NAME_INTERNER: RefCell<Option<NameInterner>> = const { RefCell::new(None) };
+}
+
+/// Runs one decode operation through an explicit reusable name table.
+///
+/// Wincode's schema reader does not carry runtime context, so the table is installed only for the
+/// dynamic extent of `decode`. Callers retain ownership and can reuse it across independently
+/// decoded sections of the same logical package.
+pub fn with_decode_name_interner<R>(
+    interner: NameInterner,
+    decode: impl FnOnce() -> R,
+) -> (NameInterner, R) {
+    struct DecodeNameInternerGuard;
+
+    impl Drop for DecodeNameInternerGuard {
+        fn drop(&mut self) {
+            DECODE_NAME_INTERNER.with(|interner| {
+                interner.borrow_mut().take();
+            });
+        }
+    }
+
+    DECODE_NAME_INTERNER.with(|active| {
+        assert!(
+            active.borrow().is_none(),
+            "name decode interner scopes must not be nested",
+        );
+        active.borrow_mut().replace(interner);
+    });
+    let guard = DecodeNameInternerGuard;
+    let result = decode();
+    let interner = DECODE_NAME_INTERNER.with(|active| {
+        active
+            .borrow_mut()
+            .take()
+            .expect("name decode interner should remain installed during decode")
+    });
+    drop(guard);
+    (interner, result)
 }
 
 impl NameInterner {
@@ -246,14 +296,22 @@ impl Shrink for PackageNameInterners {
 }
 
 mod memsize {
-    use std::{mem, sync::Weak};
+    use std::{
+        mem,
+        sync::{Arc, Weak},
+    };
 
     use rg_std::{MemoryRecorder, MemorySize};
 
     use crate::{Name, NameInterner, PackageNameInterners};
 
     impl MemorySize for Name {
-        fn record_memory_children(&self, _recorder: &mut MemoryRecorder) {}
+        fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
+            if recorder.visit_shared_allocation(Arc::as_ptr(&self.0).cast::<()>()) {
+                recorder.record_heap::<str>(self.0.len());
+                recorder.record_approximate::<Name>(mem::size_of::<usize>() * 2);
+            }
+        }
     }
 
     impl MemorySize for NameInterner {
@@ -283,26 +341,6 @@ mod memsize {
                     capacity
                         .saturating_sub(len)
                         .saturating_mul(mem::size_of::<Weak<str>>()),
-                );
-            });
-
-            recorder.scope("live_text", |recorder| {
-                let mut live_count = 0usize;
-                for name in self
-                    .buckets
-                    .values()
-                    .flat_map(|bucket| bucket.iter())
-                    .filter_map(Weak::upgrade)
-                {
-                    live_count += 1;
-                    recorder.record_heap::<str>(name.len());
-                }
-
-                // Arc's ref-count header lives with the string allocation, but `Name` itself is a
-                // cheap handle and deliberately does not record it. Counting it here keeps interned
-                // text attributed once, next to the reuse table that can enumerate live names.
-                recorder.record_approximate::<Name>(
-                    live_count.saturating_mul(mem::size_of::<usize>() * 2),
                 );
             });
         }
@@ -427,6 +465,9 @@ mod tests {
 
         let mut recorder = MemoryRecorder::new("names");
         interner.record_memory_size(&mut recorder);
+        user.record_memory_children(&mut recorder);
+        duplicate.record_memory_children(&mut recorder);
+        thing.record_memory_children(&mut recorder);
         let totals = recorder.totals_by_kind();
 
         assert!(
@@ -436,6 +477,44 @@ mod tests {
         );
 
         drop((user, duplicate, thing));
+    }
+
+    #[test]
+    fn names_account_for_each_shared_allocation_once() {
+        use rg_std::{MemoryRecordKind, MemoryRecorder, MemorySize};
+
+        let mut interner = NameInterner::new();
+        let first = interner.intern("User");
+        let duplicate = interner.intern("User");
+        let second = interner.intern("Thing");
+        let mut recorder = MemoryRecorder::new("names");
+        first.record_memory_children(&mut recorder);
+        duplicate.record_memory_children(&mut recorder);
+        second.record_memory_children(&mut recorder);
+
+        assert_eq!(
+            recorder.totals_by_kind().get(&MemoryRecordKind::Heap),
+            Some(&"UserThing".len()),
+        );
+    }
+
+    #[test]
+    fn schema_decode_reuses_names_through_the_supplied_interner() {
+        let config = wincode::config::Configuration::default();
+        let bytes = wincode::config::serialize(&Name::new("User"), config)
+            .expect("fixture name should serialize");
+
+        let (interner, first) = super::with_decode_name_interner(NameInterner::new(), || {
+            wincode::config::deserialize_exact::<Name, _>(&bytes, config)
+                .expect("first fixture name should deserialize")
+        });
+        let (_interner, second) = super::with_decode_name_interner(interner, || {
+            wincode::config::deserialize_exact::<Name, _>(&bytes, config)
+                .expect("second fixture name should deserialize")
+        });
+
+        assert_eq!(first, second);
+        assert_eq!(first.as_str().as_ptr(), second.as_str().as_ptr());
     }
 
     fn stored_weak_count(interner: &NameInterner) -> usize {

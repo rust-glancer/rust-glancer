@@ -3,7 +3,7 @@
 use anyhow::Context as _;
 
 use rg_body_ir::{BodyIrBuildPolicy, BodyIrDb};
-use rg_def_map::{DefMapDb, PackageSlot};
+use rg_def_map::DefMapDb;
 use rg_item_tree::ItemTreeDb;
 use rg_package_store::{PackageEntry, PackageStore};
 use rg_parse::ParseDb;
@@ -96,6 +96,7 @@ pub(super) fn build(
     let package_indices = build_plan.source_packages.package_indices();
     let item_tree = ItemTreeDb::build_packages(&mut parse, &package_indices, &mut names)
         .context("while attempting to build item tree db")?;
+    parse.seal_sources();
     let memory = checkpoint_memory!(names, parse, build_plan.source_packages, item_tree);
     memory.checkpoint(sampler, metric::ITEM_TREE_MEMORY, &item_tree);
 
@@ -240,6 +241,9 @@ pub(super) fn build(
     let body_ir = body_rebuilder
         .build()
         .context("while attempting to build body ir db")?;
+    parse
+        .validate_saved_sources()
+        .context("while attempting to validate captured project source generation")?;
     memory_hooks.purge(ProjectMemoryPurgePoint::AfterBodyIrBuild);
     let memory = checkpoint_memory!(
         names,
@@ -257,6 +261,7 @@ pub(super) fn build(
     // 10. Compact retained state
     // --------------------------
     parse.evict_syntax_trees();
+    parse.evict_saved_source_text();
     parse.shrink_to_fit();
     Shrink::shrink_to_fit(&mut names);
     let memory = checkpoint_memory!(
@@ -309,7 +314,6 @@ impl PackageBuildPlan {
             };
         }
 
-        let mut source_packages = Vec::new();
         let mut cache_probe = StartupCacheProbe::new(
             package_count,
             body_ir_policy,
@@ -320,15 +324,8 @@ impl PackageBuildPlan {
             parse,
         );
 
-        for package_idx in 0..package_count {
-            let package = PackageSlot(package_idx);
-            if cache_probe.should_build_from_source(package) {
-                source_packages.push(package);
-            }
-        }
-
         Self {
-            source_packages: PhasePackageSet::from_packages(source_packages),
+            source_packages: PhasePackageSet::from_packages(cache_probe.source_packages()),
         }
     }
 }

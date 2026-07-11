@@ -1,18 +1,19 @@
-//! Lazy package loading from cache artifacts.
+//! Lazy phase loading from sectioned package cache artifacts.
 //!
-//! The phase databases work with phase-specific package stores. Cache artifacts are bundled across
-//! phases, so this module adapts one artifact read into the three package loaders used by project
-//! queries and rebuilds.
+//! One request shares an open artifact revision across its phase-specific package stores. DefMap,
+//! Semantic IR, and Body IR are decoded independently, but every section comes from the same file
+//! handle and probe manifest.
 
 use std::sync::{Arc, OnceLock};
 
-use rg_body_ir::PackageBodies;
+use rg_body_ir::{BodyFileShard, BodyIrLoader, LoadBodyIr, PackageBodiesManifest, TargetBodies};
 use rg_def_map::PackageSlot;
-use rg_ir_storage::PackageDefMaps as DefMapPackage;
+use rg_ir_storage::{ItemLookupIndex, PackageDefMaps as DefMapPackage};
 use rg_package_store::{LoadPackage, PackageLoader, PackageStoreError};
+use rg_parse::{FileId, TargetId};
 use rg_semantic_ir::PackageIr;
 
-use crate::cache::{Fingerprint, PackageCacheArtifact, PackageCacheStore, WorkspaceCachePlan};
+use crate::cache::{Fingerprint, PackageArtifactReader, PackageCacheStore, WorkspaceCachePlan};
 
 use super::state::ProjectState;
 
@@ -21,7 +22,7 @@ use super::state::ProjectState;
 pub(crate) struct PackageReadLoaders {
     pub(crate) def_map: PackageLoader<'static, DefMapPackage>,
     pub(crate) semantic_ir: PackageLoader<'static, PackageIr>,
-    pub(crate) body_ir: PackageLoader<'static, PackageBodies>,
+    pub(crate) body_ir: BodyIrLoader<'static>,
 }
 
 impl PackageReadLoaders {
@@ -38,35 +39,33 @@ impl PackageReadLoaders {
         cache_store: PackageCacheStore,
         package_source_fingerprints: Vec<Option<Fingerprint>>,
     ) -> Self {
-        let bundle_loader = Arc::new(PackageBundleLoader::new(
+        let artifacts = Arc::new(PackageArtifactReaders::new(
             cache_plan,
             cache_store,
             package_source_fingerprints,
         ));
         Self {
             def_map: PackageLoader::new(DefMapPackageLoader {
-                bundles: Arc::clone(&bundle_loader),
+                artifacts: Arc::clone(&artifacts),
             }),
             semantic_ir: PackageLoader::new(SemanticIrPackageLoader {
-                bundles: Arc::clone(&bundle_loader),
+                artifacts: Arc::clone(&artifacts),
             }),
-            body_ir: PackageLoader::new(BodyIrPackageLoader {
-                bundles: bundle_loader,
-            }),
+            body_ir: BodyIrLoader::new(BodyIrPackageLoader { artifacts }),
         }
     }
 }
 
-/// Shared request cache for package artifacts read by the phase-specific loaders.
+/// Shared request cache for open package artifact revisions.
 #[derive(Debug)]
-struct PackageBundleLoader {
+struct PackageArtifactReaders {
     cache_plan: WorkspaceCachePlan,
     cache_store: PackageCacheStore,
     package_source_fingerprints: Vec<Option<Fingerprint>>,
-    bundles: Vec<OnceLock<Arc<LoadedPackageBundle>>>,
+    readers: Vec<OnceLock<PackageArtifactReader>>,
 }
 
-impl PackageBundleLoader {
+impl PackageArtifactReaders {
     fn new(
         cache_plan: WorkspaceCachePlan,
         cache_store: PackageCacheStore,
@@ -77,45 +76,30 @@ impl PackageBundleLoader {
             cache_plan,
             cache_store,
             package_source_fingerprints,
-            bundles: (0..package_count).map(|_| OnceLock::new()).collect(),
+            readers: (0..package_count).map(|_| OnceLock::new()).collect(),
         }
     }
 
-    fn load_bundle(&self, package: PackageSlot) -> Result<&LoadedPackageBundle, PackageStoreError> {
-        let Some(cell) = self.bundles.get(package.0) else {
+    fn reader(&self, package: PackageSlot) -> Result<&PackageArtifactReader, PackageStoreError> {
+        let Some(cell) = self.readers.get(package.0) else {
             return Err(PackageStoreError::MissingSlot { slot: package });
         };
 
-        if let Some(bundle) = cell.get() {
-            return Ok(bundle.as_ref());
+        if let Some(reader) = cell.get() {
+            return Ok(reader);
         }
 
-        let bundle = Arc::new(self.load_bundle_uncached(package)?);
-        let _ = cell.set(bundle);
+        let reader = self.open_reader(package)?;
+        let _ = cell.set(reader);
         Ok(cell
             .get()
-            .expect("package bundle cell should be initialized after successful load")
-            .as_ref())
+            .expect("package artifact reader cell should be initialized after successful open"))
     }
 
-    fn load_bundle_uncached(
+    fn open_reader(
         &self,
         package: PackageSlot,
-    ) -> Result<LoadedPackageBundle, PackageStoreError> {
-        let artifact = self.read_artifact(package)?;
-        let payload = artifact.payload;
-
-        Ok(LoadedPackageBundle {
-            def_map: Arc::new(payload.def_map),
-            semantic_ir: Arc::new(payload.semantic_ir),
-            body_ir: Arc::new(payload.body_ir),
-        })
-    }
-
-    fn read_artifact(
-        &self,
-        package: PackageSlot,
-    ) -> Result<PackageCacheArtifact, PackageStoreError> {
+    ) -> Result<PackageArtifactReader, PackageStoreError> {
         let Some(header) = self
             .cache_plan
             .artifact_header(package, &self.package_source_fingerprints)
@@ -126,8 +110,8 @@ impl PackageBundleLoader {
             ));
         };
 
-        match self.cache_store.read_artifact(&header) {
-            Ok(Some(artifact)) => Ok(artifact),
+        match self.cache_store.open_artifact(&header) {
+            Ok(Some(reader)) => Ok(reader),
             Ok(None) => Err(PackageStoreError::missing_package(package)),
             Err(error) => Err(error.into_package_store_error(package)),
         }
@@ -135,41 +119,86 @@ impl PackageBundleLoader {
 }
 
 #[derive(Debug)]
-struct LoadedPackageBundle {
-    def_map: Arc<DefMapPackage>,
-    semantic_ir: Arc<PackageIr>,
-    body_ir: Arc<PackageBodies>,
-}
-
-#[derive(Debug)]
 struct DefMapPackageLoader {
-    bundles: Arc<PackageBundleLoader>,
+    artifacts: Arc<PackageArtifactReaders>,
 }
 
 impl LoadPackage<DefMapPackage> for DefMapPackageLoader {
     fn load(&self, slot: PackageSlot) -> Result<Arc<DefMapPackage>, PackageStoreError> {
-        Ok(Arc::clone(&self.bundles.load_bundle(slot)?.def_map))
+        self.artifacts
+            .reader(slot)?
+            .read_def_map()
+            .map(Arc::new)
+            .map_err(|error| error.into_package_store_error(slot))
     }
 }
 
 #[derive(Debug)]
 struct SemanticIrPackageLoader {
-    bundles: Arc<PackageBundleLoader>,
+    artifacts: Arc<PackageArtifactReaders>,
 }
 
 impl LoadPackage<PackageIr> for SemanticIrPackageLoader {
     fn load(&self, slot: PackageSlot) -> Result<Arc<PackageIr>, PackageStoreError> {
-        Ok(Arc::clone(&self.bundles.load_bundle(slot)?.semantic_ir))
+        self.artifacts
+            .reader(slot)?
+            .read_semantic_ir()
+            .map(Arc::new)
+            .map_err(|error| error.into_package_store_error(slot))
     }
 }
 
 #[derive(Debug)]
 struct BodyIrPackageLoader {
-    bundles: Arc<PackageBundleLoader>,
+    artifacts: Arc<PackageArtifactReaders>,
 }
 
-impl LoadPackage<PackageBodies> for BodyIrPackageLoader {
-    fn load(&self, slot: PackageSlot) -> Result<Arc<PackageBodies>, PackageStoreError> {
-        Ok(Arc::clone(&self.bundles.load_bundle(slot)?.body_ir))
+impl LoadBodyIr for BodyIrPackageLoader {
+    fn load_manifest(
+        &self,
+        package: PackageSlot,
+    ) -> Result<Arc<PackageBodiesManifest>, PackageStoreError> {
+        self.artifacts
+            .reader(package)?
+            .read_body_ir_manifest()
+            .map(Arc::new)
+            .map_err(|error| error.into_package_store_error(package))
+    }
+
+    fn load_semantic_index(
+        &self,
+        package: PackageSlot,
+        target: TargetId,
+    ) -> Result<Arc<ItemLookupIndex>, PackageStoreError> {
+        self.artifacts
+            .reader(package)?
+            .read_body_semantic_index(target)
+            .map(Arc::new)
+            .map_err(|error| error.into_package_store_error(package))
+    }
+
+    fn load_file_shard(
+        &self,
+        package: PackageSlot,
+        target: TargetId,
+        file: FileId,
+    ) -> Result<Arc<BodyFileShard>, PackageStoreError> {
+        self.artifacts
+            .reader(package)?
+            .read_body_file_shard(target, file)
+            .map(Arc::new)
+            .map_err(|error| error.into_package_store_error(package))
+    }
+
+    fn load_target(
+        &self,
+        package: PackageSlot,
+        target: TargetId,
+    ) -> Result<Arc<TargetBodies>, PackageStoreError> {
+        self.artifacts
+            .reader(package)?
+            .read_body_target(target)
+            .map(Arc::new)
+            .map_err(|error| error.into_package_store_error(package))
     }
 }

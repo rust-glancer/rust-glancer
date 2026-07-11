@@ -20,17 +20,15 @@ pub(super) fn reindex_workspace(project: &mut Project) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub(super) fn apply_changes(
+/// Applies one nonempty canonicalized change batch to a private project candidate.
+pub(super) fn apply_canonical_changes(
     project: &mut Project,
     changes: Vec<SavedFileChange>,
 ) -> anyhow::Result<AnalysisChangeSummary> {
-    if changes.is_empty() {
-        return Ok(AnalysisChangeSummary {
-            changed_files: Vec::new(),
-            affected_packages: Vec::new(),
-            changed_targets: Vec::new(),
-        });
-    }
+    debug_assert!(
+        !changes.is_empty(),
+        "candidate updates should contain at least one canonical change",
+    );
 
     let graph_changed = changes.iter().any(|change| {
         WorkspaceGraphChanges::check(

@@ -4,15 +4,19 @@ use expect_test::Expect;
 use rg_body_ir::{BodyIrBuildPolicy, PackageBodies};
 use rg_def_map::PackageSlot;
 use rg_ir_storage::PackageDefMaps;
-use rg_parse::PackageParseSnapshot;
+use rg_parse::{PackageParseSnapshot, TargetId};
 use rg_semantic_ir::PackageIr;
 use rg_workspace::WorkspaceMetadata;
 
+use crate::cache::codec::{
+    BODY_CACHE_CONTAINER_PREFIX_BYTES, PACKAGE_CACHE_CONTAINER_PREFIX_BYTES, PackageCacheLayout,
+    PackageCacheSectionRange,
+};
 use crate::cache::{
     CURRENT_PACKAGE_CACHE_SCHEMA_VERSION, CachedCfgOptions, CachedDependency, CachedPackage,
     CachedPackageId, CachedPackageSlot, CachedPackageSource, CachedPath, CachedRustEdition,
-    CachedTarget, CachedTargetKind, Fingerprint, PackageCacheArtifact, PackageCacheCodec,
-    PackageCacheHeader, PackageCachePayload, WorkspaceCachePlan,
+    CachedTarget, Fingerprint, PackageArtifactReader, PackageCacheCodec, PackageCacheHeader,
+    PackageCacheUpdate, PackageCacheWriteInput, WorkspaceCachePlan,
 };
 use crate::profile::metric;
 use crate::{
@@ -29,84 +33,73 @@ pub(super) fn check_cache_plan(fixture: &str, expect: Expect) {
     expect.assert_eq(&format!("{}\n", actual.trim_end()));
 }
 
-pub(super) fn check_cache_header_codec(expect: Expect) {
+pub(super) fn check_minimal_cache_artifact_codec(expect: Expect) {
     let header = PackageCacheHeader::new(
         CachedPackage {
             package: CachedPackageSlot(7),
-            package_id: CachedPackageId("path+file:///workspace#app@0.1.0".into()),
-            name: "app".to_string(),
+            package_id: CachedPackageId("path+file:///workspace#empty@0.1.0".into()),
+            name: String::new(),
             source: CachedPackageSource::Workspace,
             edition: CachedRustEdition::Edition2024,
             manifest_path: CachedPath("/workspace/Cargo.toml".into()),
             cfg_options: CachedCfgOptions::default(),
-            targets: vec![
-                CachedTarget {
-                    name: "app".to_string(),
-                    kind: CachedTargetKind::Lib,
-                    src_path: CachedPath("/workspace/src/lib.rs".into()),
-                },
-                CachedTarget {
-                    name: "app-cli".to_string(),
-                    kind: CachedTargetKind::Bin,
-                    src_path: CachedPath("/workspace/src/main.rs".into()),
-                },
-            ],
-            dependencies: vec![CachedDependency {
-                package_id: CachedPackageId("path+file:///workspace/dep#dep@0.1.0".into()),
-                name: "dep".to_string(),
-                is_normal: true,
-                is_build: false,
-                is_dev: false,
-            }],
+            targets: Vec::new(),
+            dependencies: Vec::new(),
         },
         Fingerprint::from_stable_bytes([7; 32]),
     );
+    let parse = PackageParseSnapshot::empty();
+    let def_map = PackageDefMaps::default();
+    let semantic_ir = PackageIr::default();
+    let body_ir = PackageBodies::default();
 
-    let bytes =
-        PackageCacheCodec::encode_header(&header).expect("package cache header should serialize");
-    let decoded =
-        PackageCacheCodec::decode_header(&bytes).expect("package cache header should deserialize");
-    assert_eq!(decoded, header);
+    // Even the byte-level format snapshot starts from the production borrowed input and uses the
+    // same fragment writer as the filesystem store.
+    let encoded = PackageCacheCodec::encode_write_input(PackageCacheWriteInput::new(
+        &header,
+        &parse,
+        &def_map,
+        &semantic_ir,
+        &body_ir,
+    ))
+    .expect("minimal package cache input should encode");
+    let mut bytes = Vec::new();
+    encoded
+        .write_to(&mut bytes)
+        .expect("encoded package cache fragments should write");
 
-    let mut dump = String::new();
-    writeln!(&mut dump, "encoded header bytes {}", bytes.len())
-        .expect("string writes should not fail");
-    render_hex(&bytes, &mut dump);
-    writeln!(&mut dump).expect("string writes should not fail");
-    render_header("decoded header", &decoded, &mut dump);
+    let layout = PackageCacheLayout::decode_prefix(
+        &bytes[..PACKAGE_CACHE_CONTAINER_PREFIX_BYTES],
+        bytes.len() as u64,
+    )
+    .expect("minimal package cache layout should decode");
+    let probe = PackageCacheCodec::decode_probe(cache_section_bytes(&bytes, layout.probe))
+        .expect("minimal package cache probe should decode");
+    let decoded_def_map =
+        PackageCacheCodec::decode_def_map(cache_section_bytes(&bytes, layout.def_map), &probe)
+            .expect("minimal package cache DefMap should decode");
+    let decoded_semantic_ir = PackageCacheCodec::decode_semantic_ir(
+        cache_section_bytes(&bytes, layout.semantic_ir),
+        &probe,
+    )
+    .expect("minimal package cache Semantic IR should decode");
+    let body_bytes = cache_section_bytes(&bytes, layout.body_ir);
+    let body_prefix = &body_bytes[..BODY_CACHE_CONTAINER_PREFIX_BYTES];
+    let manifest_len = PackageCacheCodec::decode_body_prefix(body_prefix)
+        .expect("minimal Body IR prefix should decode");
+    let manifest_end = BODY_CACHE_CONTAINER_PREFIX_BYTES + manifest_len;
+    let body_index = PackageCacheCodec::decode_body_index(
+        &body_bytes[BODY_CACHE_CONTAINER_PREFIX_BYTES..manifest_end],
+        body_bytes.len() as u64,
+        &probe,
+    )
+    .expect("minimal Body IR manifest should decode");
 
-    expect.assert_eq(&format!("{}\n", dump.trim_end()));
-}
-
-pub(super) fn check_minimal_cache_artifact_codec(expect: Expect) {
-    let artifact = PackageCacheArtifact::new(
-        PackageCacheHeader::new(
-            CachedPackage {
-                package: CachedPackageSlot(7),
-                package_id: CachedPackageId("path+file:///workspace#empty@0.1.0".into()),
-                name: String::new(),
-                source: CachedPackageSource::Workspace,
-                edition: CachedRustEdition::Edition2024,
-                manifest_path: CachedPath("/workspace/Cargo.toml".into()),
-                cfg_options: CachedCfgOptions::default(),
-                targets: Vec::new(),
-                dependencies: Vec::new(),
-            },
-            Fingerprint::from_stable_bytes([7; 32]),
-        ),
-        PackageCachePayload::new(
-            PackageParseSnapshot::empty(),
-            PackageDefMaps::default(),
-            PackageIr::default(),
-            PackageBodies::default(),
-        ),
-    );
-
-    let bytes = PackageCacheCodec::encode_artifact(&artifact)
-        .expect("package cache artifact should serialize");
-    let decoded = PackageCacheCodec::decode_artifact(&bytes)
-        .expect("package cache artifact should deserialize");
-    assert_eq!(decoded, artifact);
+    assert_eq!(probe.header, header);
+    assert_eq!(probe.parse, parse);
+    assert_eq!(decoded_def_map, def_map);
+    assert_eq!(decoded_semantic_ir, semantic_ir);
+    assert!(body_index.manifest().targets().is_empty());
 
     let mut dump = String::new();
     writeln!(
@@ -117,7 +110,14 @@ pub(super) fn check_minimal_cache_artifact_codec(expect: Expect) {
     .expect("string writes should not fail");
     render_hex(&bytes, &mut dump);
     writeln!(&mut dump).expect("string writes should not fail");
-    render_artifact("decoded artifact", &decoded, &mut dump);
+    render_decoded_artifact(
+        "decoded artifact",
+        &probe,
+        &decoded_def_map,
+        &decoded_semantic_ir,
+        body_index.manifest().targets().len(),
+        &mut dump,
+    );
 
     expect.assert_eq(&format!("{}\n", dump.trim_end()));
 }
@@ -125,22 +125,30 @@ pub(super) fn check_minimal_cache_artifact_codec(expect: Expect) {
 pub(super) fn check_fixture_cache_artifact_codec(fixture: &str, expect: Expect) {
     let fixture = ProjectSourceFixture::build(fixture);
     let project = fixture.build_project();
-    let artifact = package_artifact_from_project(&project, PackageSlot(0));
-
-    let bytes = PackageCacheCodec::encode_artifact(&artifact)
-        .expect("package cache artifact should serialize");
-    let decoded = PackageCacheCodec::decode_artifact(&bytes)
-        .expect("package cache artifact should deserialize");
-    assert_eq!(decoded, artifact);
+    let header = write_resident_package_artifact(&project, PackageSlot(0));
+    let path = project
+        .state
+        .cache_store
+        .package_artifact_path(&header.package);
+    let reader = project
+        .state
+        .cache_store
+        .open_artifact(&header)
+        .expect("fixture package cache artifact should open")
+        .expect("fixture package cache artifact should exist");
+    assert_reader_matches_resident_package(&reader, &project, PackageSlot(0));
 
     let mut dump = String::new();
     writeln!(
         &mut dump,
         "encoded artifact has bytes {}",
-        !bytes.is_empty()
+        fs::metadata(path)
+            .expect("fixture package cache artifact should have metadata")
+            .len()
+            > 0,
     )
     .expect("string writes should not fail");
-    render_artifact("decoded artifact", &decoded, &mut dump);
+    render_cached_artifact("decoded artifact", &reader, &mut dump);
 
     expect.assert_eq(&format!("{}\n", dump.trim_end()));
 }
@@ -148,26 +156,25 @@ pub(super) fn check_fixture_cache_artifact_codec(fixture: &str, expect: Expect) 
 pub(super) fn check_cache_store_artifact_io(fixture: &str, expect: Expect) {
     let fixture = ProjectSourceFixture::build(fixture);
     let project = fixture.build_project();
-    let artifact = package_artifact_from_project(&project, PackageSlot(0));
     let store = project.state.cache_store.clone();
-    let path = store.package_artifact_path(&artifact.header.package);
+    let header = package_cache_header(&project, PackageSlot(0));
+    let path = store.package_artifact_path(&header.package);
 
     store
         .clear_package_artifacts()
         .expect("fixture cache namespace should start empty for direct store I/O");
     let missing_before_write = store
-        .read_artifact(&artifact.header)
+        .open_artifact(&header)
         .expect("missing package cache artifact should not fail")
         .is_none();
 
-    store
-        .write_artifact(&artifact)
-        .expect("package cache artifact should write to disk");
+    let written_header = write_resident_package_artifact(&project, PackageSlot(0));
+    assert_eq!(written_header, header);
     let loaded = store
-        .read_artifact(&artifact.header)
+        .open_artifact(&header)
         .expect("written package cache artifact should read from disk")
         .expect("written package cache artifact should exist");
-    assert_eq!(loaded, artifact);
+    assert_reader_matches_resident_package(&loaded, &project, PackageSlot(0));
     let written_len = fs::metadata(&path)
         .expect("written package cache artifact should have file metadata")
         .len();
@@ -177,7 +184,7 @@ pub(super) fn check_cache_store_artifact_io(fixture: &str, expect: Expect) {
     fs::write(&path, b"not a package cache artifact")
         .expect("test should overwrite package cache artifact with invalid bytes");
     let corrupt_error = store
-        .read_artifact(&artifact.header)
+        .open_artifact(&header)
         .expect_err("corrupted package cache artifact should fail to decode");
     let corrupt_error_text = format!("{corrupt_error:#}");
 
@@ -185,7 +192,7 @@ pub(super) fn check_cache_store_artifact_io(fixture: &str, expect: Expect) {
         .clear_package_artifacts()
         .expect("package cache artifacts should be removable");
     let missing_after_invalidation = store
-        .read_artifact(&artifact.header)
+        .open_artifact(&header)
         .expect("missing package cache artifact should not fail after invalidation")
         .is_none();
 
@@ -198,7 +205,8 @@ pub(super) fn check_cache_store_artifact_io(fixture: &str, expect: Expect) {
     writeln!(
         &mut dump,
         "loaded package #{} {}",
-        loaded.header.package.package.0, loaded.header.package.name,
+        loaded.probe().header.package.package.0,
+        loaded.probe().header.package.name,
     )
     .expect("string writes should not fail");
     writeln!(
@@ -216,16 +224,143 @@ pub(super) fn check_cache_store_artifact_io(fixture: &str, expect: Expect) {
     expect.assert_eq(&format!("{}\n", dump.trim_end()));
 }
 
+pub(super) fn check_sectioned_cache_reads(fixture: &str) {
+    let fixture = ProjectSourceFixture::build(fixture);
+    let project = fixture.build_project();
+    let store = project.state.cache_store.clone();
+    let header = write_resident_package_artifact(&project, PackageSlot(0));
+    let path = store.package_artifact_path(&header.package);
+
+    // Break only Body IR. The fixed prefix and probe remain readable, and DefMap has its own
+    // independently encoded range before the corrupt bytes.
+    let mut bytes = fs::read(&path).expect("written package cache artifact should be readable");
+    let prefix = bytes
+        .get(..PACKAGE_CACHE_CONTAINER_PREFIX_BYTES)
+        .expect("written artifact should contain its fixed prefix");
+    let layout = PackageCacheLayout::decode_prefix(prefix, bytes.len() as u64)
+        .expect("written artifact should have a valid section layout");
+    let body_start =
+        usize::try_from(layout.body_ir.offset).expect("test Body IR offset should fit into usize");
+    bytes[body_start] ^= 0xff;
+    fs::write(&path, bytes).expect("test should overwrite the Body IR section");
+
+    let probe = store
+        .read_probe_for_package(&header.package)
+        .expect("probe should not decode the corrupt Body IR section")
+        .expect("written probe should exist");
+    assert_eq!(probe.header, header);
+
+    let reader = store
+        .open_artifact(&header)
+        .expect("opening the artifact should only decode its probe")
+        .expect("written artifact should exist");
+    assert_eq!(
+        reader
+            .read_def_map()
+            .expect("DefMap should decode independently"),
+        *project
+            .state
+            .def_map
+            .resident_package(PackageSlot(0))
+            .expect("fixture package should have resident DefMap"),
+    );
+    let body_error = reader
+        .read_body_target(TargetId(0))
+        .expect_err("corrupt Body IR should fail when that section is requested");
+    assert!(
+        format!("{body_error:#}").contains("Body IR"),
+        "Body IR decode failure should retain section context: {body_error:#}",
+    );
+}
+
+pub(super) fn check_file_local_query_reads_one_body_shard() {
+    let fixture = ProjectSourceFixture::build(
+        r#"
+//- /Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+mod a;
+mod b;
+
+//- /src/a.rs
+pub fn selected() {
+    let value = 42u32;
+    let _copy = val$0ue;
+}
+
+//- /src/b.rs
+pub fn unrelated() {
+    let text = "not selected";
+    let _copy = text;
+}
+"#,
+    );
+    let project =
+        fixture.build_project_with_package_residency_policy(PackageResidencyPolicy::AllOffloadable);
+    assert!(
+        project
+            .state
+            .body_ir
+            .resident_package(PackageSlot(0))
+            .is_none(),
+        "all-offloadable fixture should exercise cache-backed Body IR",
+    );
+    let marker = fixture.markers().position("0");
+    let snapshot = project.snapshot();
+    let file =
+        ProjectFixture::file_id_for_path_in(snapshot.parse_db(), &fixture.path(&marker.path));
+    let target = snapshot
+        .targets_for_file(PackageSlot(0), file)
+        .expect("fixture target lookup should start")
+        .into_iter()
+        .next()
+        .expect("fixture file should belong to a target");
+
+    let run = rg_profile::test_support::ProfileTest::start(
+        crate::profile_descriptors(),
+        "project.cache.sections",
+    );
+    let analysis = snapshot
+        .analysis_for_targets(&[target])
+        .expect("fixture analysis should construct");
+    assert!(
+        analysis
+            .type_at(target, file, marker.offset)
+            .expect("fixture type query should resolve")
+            .is_some(),
+        "fixture marker should resolve through Body IR",
+    );
+    let profile = run.finish();
+
+    profile.assert_keyed_duration_count(metric::CACHE_SECTION_READ, "body_ir.file", 1);
+    profile.assert_keyed_duration_count(metric::CACHE_SECTION_DECODE, "body_ir.file", 1);
+    assert!(
+        profile
+            .inner()
+            .keyed_counter(metric::CACHE_SECTION_BYTES.path(), "body_ir.file")
+            .is_some_and(|bytes| bytes > 0),
+        "file-local query should read a non-empty Body IR file shard",
+    );
+    assert_eq!(
+        profile
+            .inner()
+            .keyed_counter(metric::CACHE_SECTION_BYTES.path(), "body_ir"),
+        None,
+        "file-local query must not read the package-wide Body IR section",
+    );
+}
+
 pub(super) fn check_cache_store_generation_cleanup(fixture: &str, expect: Expect) {
     let fixture = ProjectSourceFixture::build(fixture);
     let project = fixture.build_project();
-    let artifact = package_artifact_from_project(&project, PackageSlot(0));
     let store = project.state.cache_store.clone();
-    let current_artifact = store.package_artifact_path(&artifact.header.package);
+    let header = write_resident_package_artifact(&project, PackageSlot(0));
+    let current_artifact = store.package_artifact_path(&header.package);
 
-    store
-        .write_artifact(&artifact)
-        .expect("package cache artifact should write to disk");
     let packages_dir = store.root().join("packages");
     let stale_generation = packages_dir.join("graph-stale");
     fs::create_dir_all(&stale_generation).expect("stale generation dir should be creatable");
@@ -291,6 +426,131 @@ pub(super) fn check_residency_policy_controls_artifact_writes(fixture: &str, exp
     expect.assert_eq(&format!("{}\n", dump.trim_end()));
 }
 
+pub(super) fn check_residency_policy_change_rebuilds_from_source(expect: Expect) {
+    let fixture = ProjectSourceFixture::build(
+        r#"
+//- /Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+dep = { path = "dep" }
+
+//- /src/lib.rs
+pub struct App(dep::Dep);
+
+//- /dep/Cargo.toml
+[package]
+name = "dep"
+version = "0.1.0"
+edition = "2024"
+
+//- /dep/src/lib.rs
+pub struct Dep;
+"#,
+    );
+    let workspace = fixture.workspace_metadata();
+    let first = Project::builder(workspace.clone())
+        .package_residency_policy(PackageResidencyPolicy::AllOffloadable)
+        .build()
+        .expect("fixture project should write the first residency generation");
+    let first_artifact = first
+        .state
+        .cache_store
+        .package_artifact_path(&package_cache_header_for(&first, "dep").package);
+    let first_generation = first_artifact
+        .parent()
+        .expect("package artifact should belong to a generation directory")
+        .to_path_buf();
+    let first_generation_existed = first_generation.exists();
+    drop(first);
+
+    let transition_run = rg_profile::test_support::ProfileTest::start(
+        crate::profile_descriptors(),
+        "project.build.cache_probe",
+    );
+    let transitioned = Project::builder(workspace.clone())
+        .package_residency_policy(PackageResidencyPolicy::WorkspaceResident)
+        .build()
+        .expect("residency change should rebuild into a fresh cache generation");
+    let transition_profile = transition_run.finish();
+    let transition_artifact = transitioned
+        .state
+        .cache_store
+        .package_artifact_path(&package_cache_header_for(&transitioned, "dep").package);
+    let transition_generation = transition_artifact
+        .parent()
+        .expect("package artifact should belong to a generation directory")
+        .to_path_buf();
+
+    let mut dump = String::new();
+    writeln!(&mut dump, "residency policy cache invalidation")
+        .expect("string writes should not fail");
+    writeln!(
+        &mut dump,
+        "first generation existed {first_generation_existed}",
+    )
+    .expect("string writes should not fail");
+    writeln!(
+        &mut dump,
+        "generation changed {}",
+        first_generation != transition_generation,
+    )
+    .expect("string writes should not fail");
+    writeln!(
+        &mut dump,
+        "transition hits {}",
+        profile_counter(&transition_profile, metric::CACHE_PROBE_HITS),
+    )
+    .expect("string writes should not fail");
+    writeln!(
+        &mut dump,
+        "transition missing artifacts {}",
+        profile_counter(&transition_profile, metric::CACHE_PROBE_MISSING_ARTIFACTS,),
+    )
+    .expect("string writes should not fail");
+    writeln!(
+        &mut dump,
+        "old generation after transition {}",
+        first_generation.exists(),
+    )
+    .expect("string writes should not fail");
+    writeln!(
+        &mut dump,
+        "transition artifact {}",
+        transition_artifact.exists(),
+    )
+    .expect("string writes should not fail");
+    drop(transitioned);
+
+    // Switching back must not resurrect the generation used before the first policy change.
+    let switch_back_run = rg_profile::test_support::ProfileTest::start(
+        crate::profile_descriptors(),
+        "project.build.cache_probe",
+    );
+    let _switched_back = Project::builder(workspace)
+        .package_residency_policy(PackageResidencyPolicy::AllOffloadable)
+        .build()
+        .expect("switching residency back should rebuild from source again");
+    let switch_back_profile = switch_back_run.finish();
+    writeln!(
+        &mut dump,
+        "switch-back hits {}",
+        profile_counter(&switch_back_profile, metric::CACHE_PROBE_HITS),
+    )
+    .expect("string writes should not fail");
+    writeln!(
+        &mut dump,
+        "switch-back missing artifacts {}",
+        profile_counter(&switch_back_profile, metric::CACHE_PROBE_MISSING_ARTIFACTS,),
+    )
+    .expect("string writes should not fail");
+
+    expect.assert_eq(&format!("{}\n", dump.trim_end()));
+}
+
 pub(super) fn check_offloaded_dependency_query(fixture: &str, expect: Expect) {
     let fixture = ProjectSourceFixture::build(fixture);
     let project = fixture
@@ -345,7 +605,7 @@ pub(super) fn check_offloaded_dependency_query(fixture: &str, expect: Expect) {
     expect.assert_eq(&format!("{}\n", dump.trim_end()));
 }
 
-pub(super) fn check_startup_cache_uses_matching_artifact(expect: Expect) {
+pub(super) fn check_startup_cache_rejects_forged_source_fingerprint(expect: Expect) {
     let fixture = ProjectSourceFixture::build(
         r#"
 //- /Cargo.toml
@@ -381,10 +641,10 @@ pub struct DepOld;
         .cache_plan
         .artifact_header(dep, &project.state.package_source_fingerprints)
         .expect("dependency should have a cache artifact header");
-    let mut artifact = project
+    let reader = project
         .state
         .cache_store
-        .read_artifact(&old_header)
+        .open_artifact(&old_header)
         .expect("written dependency artifact should be readable")
         .expect("written dependency artifact should exist");
 
@@ -402,16 +662,21 @@ pub struct DepNew;
         .source_fingerprints(workspace_after_edit.workspace_root(), &parse_after_edit)
         .expect("edited source fingerprints should compute");
 
-    // Make the existing artifact look like a valid cache hit for the edited source snapshot.
-    // If startup indexing ignores artifacts and rebuilds from source, only `DepNew` will exist;
-    // if it accepts the matching artifact, the old payload remains visible through lazy reads.
-    artifact.header.source_fingerprint =
+    // Forge the old artifact header so its package fingerprint claims to describe the edited
+    // source. The per-file source descriptors still prove that the payload belongs to `DepOld`, so
+    // startup must reject it and rebuild `DepNew` rather than trusting the header alone.
+    let mut forged_header = old_header.clone();
+    forged_header.source_fingerprint =
         source_fingerprints[dep.0].expect("edited dependency source should have a fingerprint");
-    project
+    let update = project
         .state
         .cache_store
-        .write_artifact(&artifact)
-        .expect("test should rewrite dependency artifact header");
+        .begin_artifact_update()
+        .expect("test should start forged artifact update");
+    write_cached_package_artifact(&update, &reader, &forged_header);
+    update
+        .commit()
+        .expect("test should commit forged dependency artifact");
 
     drop(project);
     let cached_project = Project::builder(workspace_after_edit)
@@ -481,16 +746,16 @@ pub struct DepChild;
         .cache_plan
         .artifact_header(dep, &project.state.package_source_fingerprints)
         .expect("dependency should have a cache artifact header");
-    let artifact = project
+    let reader = project
         .state
         .cache_store
-        .read_artifact(&header)
+        .open_artifact(&header)
         .expect("written dependency artifact should be readable")
         .expect("written dependency artifact should exist");
     let snapshot_fingerprint = WorkspaceCachePlan::snapshot_source_fingerprint(
         project.workspace().workspace_root(),
-        &artifact.header.package,
-        &artifact.payload.parse,
+        &reader.probe().header.package,
+        &reader.probe().parse,
     )
     .expect("artifact parse snapshot source fingerprint should compute");
     let source_fingerprint = project.state.package_source_fingerprints[dep.0]
@@ -509,7 +774,7 @@ pub struct DepChild;
     writeln!(
         &mut dump,
         "parse files {}",
-        artifact.payload.parse.files().len(),
+        reader.probe().parse.files().len(),
     )
     .expect("string writes should not fail");
     writeln!(
@@ -595,6 +860,327 @@ pub struct Dep;
     expect.assert_eq(&format!("{}\n", dump.trim_end()));
 }
 
+pub(super) fn check_startup_cache_misses_rebuild_reverse_dependents(expect: Expect) {
+    let fixture = ProjectSourceFixture::build(
+        r#"
+//- /Cargo.toml
+[workspace]
+members = ["dep", "mid", "app", "independent"]
+resolver = "3"
+
+//- /dep/Cargo.toml
+[package]
+name = "dep"
+version = "0.1.0"
+edition = "2024"
+
+//- /dep/src/lib.rs
+pub struct Before;
+pub struct Kept;
+
+//- /mid/Cargo.toml
+[package]
+name = "mid"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+dep = { path = "../dep" }
+
+//- /mid/src/lib.rs
+pub use dep::Kept;
+
+//- /app/Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+mid = { path = "../mid" }
+
+//- /app/src/lib.rs
+pub fn keep(value: mid::Ke$usage$pt) -> mid::Kept { value }
+
+//- /independent/Cargo.toml
+[package]
+name = "independent"
+version = "0.1.0"
+edition = "2024"
+
+//- /independent/src/lib.rs
+pub struct Independent;
+"#,
+    );
+    let workspace = fixture.workspace_metadata();
+    let project = Project::builder(workspace.clone())
+        .package_residency_policy(PackageResidencyPolicy::AllOffloadable)
+        .build()
+        .expect("fixture project should write the first cache generation");
+    drop(project);
+
+    // Only the dependency source changes between processes. Its own artifact must miss, and the
+    // cache plan must reject both reverse dependents even though their source files still match.
+    fixture.write_fixture_files(
+        r#"
+//- /dep/src/lib.rs
+pub struct AfterOne;
+pub struct AfterTwo;
+pub struct Kept;
+"#,
+    );
+    let workspace_after_edit = fixture.workspace_metadata();
+    let run = rg_profile::test_support::ProfileTest::start(
+        crate::profile_descriptors(),
+        "project.build.cache_probe",
+    );
+    let project = Project::builder(workspace_after_edit)
+        .package_residency_policy(PackageResidencyPolicy::AllOffloadable)
+        .build()
+        .expect("dependency cache miss should rebuild its reverse dependents");
+    let profile = run.finish();
+
+    let marker = fixture.markers().position("usage");
+    let snapshot = project.snapshot();
+    let context = snapshot
+        .file_contexts_for_path(fixture.path(&marker.path))
+        .expect("app source should resolve to a file context")
+        .pop()
+        .expect("app source should have one file context");
+    let target = context
+        .targets
+        .first()
+        .copied()
+        .expect("app source should belong to one target");
+    let analysis = snapshot
+        .full_analysis()
+        .expect("rebuilt project analysis should materialize");
+    let mut definitions = analysis
+        .goto_definition(target, context.file, marker.offset)
+        .expect("reexported dependency type should resolve");
+    definitions.sort_by_key(|definition| {
+        (
+            definition.target.package.0,
+            definition.target.target.0,
+            definition.name.clone(),
+        )
+    });
+
+    let mut dump = String::new();
+    writeln!(&mut dump, "dependency cache miss closure").expect("string writes should not fail");
+    writeln!(
+        &mut dump,
+        "hits {}",
+        profile_counter(&profile, metric::CACHE_PROBE_HITS),
+    )
+    .expect("string writes should not fail");
+    writeln!(
+        &mut dump,
+        "direct restore misses {}",
+        profile_counter(&profile, metric::CACHE_PROBE_PARSE_RESTORE_ERRORS),
+    )
+    .expect("string writes should not fail");
+    writeln!(
+        &mut dump,
+        "reverse-dependent misses {}",
+        profile_counter(&profile, metric::CACHE_PROBE_PROPAGATED_MISSES),
+    )
+    .expect("string writes should not fail");
+    writeln!(&mut dump, "definitions").expect("string writes should not fail");
+    for definition in definitions {
+        let package = snapshot
+            .parse_db()
+            .package(definition.target.package.0)
+            .expect("definition package should exist");
+        writeln!(
+            &mut dump,
+            "- {} {} {}",
+            package.package_name(),
+            definition.kind,
+            definition.name,
+        )
+        .expect("string writes should not fail");
+    }
+
+    expect.assert_eq(&format!("{}\n", dump.trim_end()));
+}
+
+pub(super) fn check_missing_dependency_artifact_rebuilds_reverse_dependents(expect: Expect) {
+    let fixture = ProjectSourceFixture::build(
+        r#"
+//- /Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+dep = { path = "dep" }
+
+//- /src/lib.rs
+pub struct App(dep::Dep);
+
+//- /dep/Cargo.toml
+[package]
+name = "dep"
+version = "0.1.0"
+edition = "2024"
+
+//- /dep/src/lib.rs
+pub struct Dep;
+"#,
+    );
+    let workspace = fixture.workspace_metadata();
+    let project = Project::builder(workspace.clone())
+        .package_residency_policy(PackageResidencyPolicy::AllOffloadable)
+        .build()
+        .expect("fixture project should write both package artifacts");
+    let dependency = package_cache_header_for(&project, "dep");
+    let dependency_path = project
+        .state
+        .cache_store
+        .package_artifact_path(&dependency.package);
+    fs::remove_file(&dependency_path).expect("test should remove dependency cache artifact");
+    drop(project);
+
+    let run = rg_profile::test_support::ProfileTest::start(
+        crate::profile_descriptors(),
+        "project.build.cache_probe",
+    );
+    let rebuilt = Project::builder(workspace)
+        .package_residency_policy(PackageResidencyPolicy::AllOffloadable)
+        .build()
+        .expect("missing dependency artifact should rebuild the dependency closure");
+    let profile = run.finish();
+    let symbols = rebuilt
+        .snapshot()
+        .full_analysis()
+        .expect("rebuilt project analysis should materialize")
+        .workspace_symbols("Dep")
+        .expect("dependency symbol query should resolve");
+
+    let mut dump = String::new();
+    writeln!(&mut dump, "missing dependency artifact closure")
+        .expect("string writes should not fail");
+    writeln!(
+        &mut dump,
+        "missing artifacts {}",
+        profile_counter(&profile, metric::CACHE_PROBE_MISSING_ARTIFACTS),
+    )
+    .expect("string writes should not fail");
+    writeln!(
+        &mut dump,
+        "reverse-dependent misses {}",
+        profile_counter(&profile, metric::CACHE_PROBE_PROPAGATED_MISSES),
+    )
+    .expect("string writes should not fail");
+    writeln!(
+        &mut dump,
+        "hits {}",
+        profile_counter(&profile, metric::CACHE_PROBE_HITS),
+    )
+    .expect("string writes should not fail");
+    writeln!(&mut dump, "dependency symbols {}", symbols.len())
+        .expect("string writes should not fail");
+
+    expect.assert_eq(&format!("{}\n", dump.trim_end()));
+}
+
+pub(super) fn check_startup_discards_incomplete_cache_update(expect: Expect) {
+    let fixture = ProjectSourceFixture::build(
+        r#"
+//- /Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+dep = { path = "dep" }
+
+//- /src/lib.rs
+pub struct App(dep::Dep);
+
+//- /dep/Cargo.toml
+[package]
+name = "dep"
+version = "0.1.0"
+edition = "2024"
+
+//- /dep/src/lib.rs
+pub struct Dep;
+"#,
+    );
+    let workspace = fixture.workspace_metadata();
+    let project = Project::builder(workspace.clone())
+        .package_residency_policy(PackageResidencyPolicy::AllOffloadable)
+        .build()
+        .expect("fixture project should write a complete cache generation");
+    let header = package_cache_header_for(&project, "dep");
+    let reader = project
+        .state
+        .cache_store
+        .open_artifact(&header)
+        .expect("dependency package cache artifact should open")
+        .expect("dependency package cache artifact should exist");
+
+    // Start another package-set write and deliberately omit commit. This models a process stopping
+    // after one package replacement while older dependent artifacts still exist.
+    {
+        let update = project
+            .state
+            .cache_store
+            .begin_artifact_update()
+            .expect("test should start an incomplete cache update");
+        write_cached_package_artifact(&update, &reader, &header);
+    }
+    drop(project);
+
+    let recovery_run = rg_profile::test_support::ProfileTest::start(
+        crate::profile_descriptors(),
+        "project.build.cache_probe",
+    );
+    let recovered = Project::builder(workspace.clone())
+        .package_residency_policy(PackageResidencyPolicy::AllOffloadable)
+        .build()
+        .expect("incomplete cache update should fall back to a cold build");
+    let recovery_profile = recovery_run.finish();
+    drop(recovered);
+
+    let clean_run = rg_profile::test_support::ProfileTest::start(
+        crate::profile_descriptors(),
+        "project.build.cache_probe",
+    );
+    let _clean = Project::builder(workspace)
+        .package_residency_policy(PackageResidencyPolicy::AllOffloadable)
+        .build()
+        .expect("cold recovery should publish a reusable cache again");
+    let clean_profile = clean_run.finish();
+
+    let mut dump = String::new();
+    writeln!(&mut dump, "incomplete cache update recovery").expect("string writes should not fail");
+    writeln!(
+        &mut dump,
+        "recovery hits {}",
+        profile_counter(&recovery_profile, metric::CACHE_PROBE_HITS),
+    )
+    .expect("string writes should not fail");
+    writeln!(
+        &mut dump,
+        "recovery missing artifacts {}",
+        profile_counter(&recovery_profile, metric::CACHE_PROBE_MISSING_ARTIFACTS),
+    )
+    .expect("string writes should not fail");
+    writeln!(
+        &mut dump,
+        "next startup hits {}",
+        profile_counter(&clean_profile, metric::CACHE_PROBE_HITS),
+    )
+    .expect("string writes should not fail");
+
+    expect.assert_eq(&format!("{}\n", dump.trim_end()));
+}
+
 pub(super) fn check_startup_cache_rejects_body_ir_policy_mismatch(expect: Expect) {
     let fixture = ProjectSourceFixture::build(
         r#"
@@ -636,7 +1222,13 @@ pub fn dep_value() -> usize { 2 }
         .build()
         .expect("fixture project should reject body-policy-mismatched artifact");
     let snapshot = run.finish();
-    let artifact = package_cache_artifact_for(&project, "dep");
+    let header = package_cache_header_for(&project, "dep");
+    let reader = project
+        .state
+        .cache_store
+        .open_artifact(&header)
+        .expect("dependency package cache artifact should open")
+        .expect("dependency package cache artifact should exist");
 
     let mut dump = String::new();
     writeln!(&mut dump, "startup body IR policy mismatch").expect("string writes should not fail");
@@ -654,7 +1246,7 @@ pub fn dep_value() -> usize { 2 }
         profile_counter(&snapshot, metric::CACHE_PROBE_BODY_IR_POLICY_MISMATCHES),
     )
     .expect("string writes should not fail");
-    render_body_ir_target_statuses(&artifact, &mut dump);
+    render_body_ir_target_statuses(&reader, &mut dump);
 
     expect.assert_eq(&format!("{}\n", dump.trim_end()));
 }
@@ -675,6 +1267,7 @@ fn cache_probe_misses(snapshot: &rg_profile::test_support::TestSnapshot) -> u64 
         metric::CACHE_PROBE_BODY_IR_POLICY_MISMATCHES,
         metric::CACHE_PROBE_PARSE_RESTORE_ERRORS,
         metric::CACHE_PROBE_UNPLANNED_PACKAGES,
+        metric::CACHE_PROBE_PROPAGATED_MISSES,
     ]
     .into_iter()
     .map(|metric| profile_counter(snapshot, metric))
@@ -786,58 +1379,160 @@ fn render_artifact_existence_for_policy(
         .unwrap_or_else(|error| panic!("{label} fixture cache artifacts should clean up: {error}"));
 }
 
-fn package_artifact_from_project(project: &Project, package: PackageSlot) -> PackageCacheArtifact {
+fn package_cache_header(project: &Project, package: PackageSlot) -> PackageCacheHeader {
     let state = &project.state;
-    let header = state
+    state
         .cache_plan
         .artifact_header(package, &state.package_source_fingerprints)
-        .expect("cache-planned fixture package should have an artifact header");
+        .expect("cache-planned fixture package should have an artifact header")
+}
+
+/// Write one resident fixture package through the same borrowed transaction path as production.
+fn write_resident_package_artifact(project: &Project, package: PackageSlot) -> PackageCacheHeader {
+    let state = &project.state;
+    let header = package_cache_header(project, package);
+    let parse = state
+        .parse
+        .package(package.0)
+        .expect("fixture package should have parse data")
+        .parse_snapshot()
+        .expect("fixture parse metadata should snapshot");
     let def_map = state
         .def_map
         .resident_package(package)
-        .expect("fixture package should have def-map data")
-        .clone();
+        .expect("fixture package should have def-map data");
     let semantic_ir = state
         .semantic_ir
         .resident_package(package)
-        .expect("fixture package should have semantic IR data")
-        .clone();
+        .expect("fixture package should have semantic IR data");
     let body_ir = state
         .body_ir
         .resident_package(package)
-        .expect("fixture package should have body IR data")
-        .clone();
+        .expect("fixture package should have body IR data");
 
-    PackageCacheArtifact::new(
-        header,
-        PackageCachePayload::new(
-            state
-                .parse
-                .package(package.0)
-                .expect("fixture package should have parse data")
-                .parse_snapshot()
-                .expect("fixture parse metadata should snapshot"),
+    let update = state
+        .cache_store
+        .begin_artifact_update()
+        .expect("fixture package cache update should start");
+    update
+        .write_input(PackageCacheWriteInput::new(
+            &header,
+            &parse,
             def_map,
             semantic_ir,
             body_ir,
-        ),
-    )
+        ))
+        .expect("fixture resident package should write to cache");
+    update
+        .commit()
+        .expect("fixture package cache update should commit");
+    header
 }
 
-fn package_cache_artifact_for(project: &Project, package_name: &str) -> PackageCacheArtifact {
+fn package_cache_header_for(project: &Project, package_name: &str) -> PackageCacheHeader {
     let package = ProjectFixture::package_slot_by_name_in(project.state.parse_db(), package_name);
-    let header = project
-        .state
-        .cache_plan
-        .artifact_header(package, &project.state.package_source_fingerprints)
-        .expect("fixture package should have a cache artifact header");
+    package_cache_header(project, package)
+}
 
-    project
-        .state
-        .cache_store
-        .read_artifact(&header)
-        .expect("fixture package cache artifact should read")
-        .expect("fixture package cache artifact should exist")
+/// Re-emit one cached package through the production lazy reader and borrowed writer.
+fn write_cached_package_artifact(
+    update: &PackageCacheUpdate<'_>,
+    reader: &PackageArtifactReader,
+    header: &PackageCacheHeader,
+) {
+    let def_map = reader
+        .read_def_map()
+        .expect("cached fixture DefMap should read");
+    let semantic_ir = reader
+        .read_semantic_ir()
+        .expect("cached fixture Semantic IR should read");
+    let manifest = reader
+        .read_body_ir_manifest()
+        .expect("cached fixture Body IR manifest should read");
+    let body_ir = PackageBodies::new(
+        (0..manifest.targets().len())
+            .map(|target| {
+                reader
+                    .read_body_target(TargetId(target))
+                    .expect("cached fixture Body IR target should read")
+            })
+            .collect(),
+    );
+
+    update
+        .write_input(PackageCacheWriteInput::new(
+            header,
+            &reader.probe().parse,
+            &def_map,
+            &semantic_ir,
+            &body_ir,
+        ))
+        .expect("cached fixture package should write")
+}
+
+fn assert_reader_matches_resident_package(
+    reader: &PackageArtifactReader,
+    project: &Project,
+    package: PackageSlot,
+) {
+    let state = &project.state;
+    let expected_header = package_cache_header(project, package);
+    let expected_parse = state
+        .parse
+        .package(package.0)
+        .expect("fixture package should have parse data")
+        .parse_snapshot()
+        .expect("fixture parse metadata should snapshot");
+    assert_eq!(reader.probe().header, expected_header);
+    assert_eq!(reader.probe().parse, expected_parse);
+    assert_eq!(
+        reader
+            .read_def_map()
+            .expect("fixture cached DefMap should read"),
+        *state
+            .def_map
+            .resident_package(package)
+            .expect("fixture package should have resident DefMap"),
+    );
+    assert_eq!(
+        reader
+            .read_semantic_ir()
+            .expect("fixture cached Semantic IR should read"),
+        *state
+            .semantic_ir
+            .resident_package(package)
+            .expect("fixture package should have resident Semantic IR"),
+    );
+
+    let expected_body_ir = state
+        .body_ir
+        .resident_package(package)
+        .expect("fixture package should have resident Body IR");
+    assert_eq!(
+        reader
+            .read_body_ir_manifest()
+            .expect("fixture cached Body IR manifest should read"),
+        expected_body_ir.manifest(),
+    );
+    for (target, expected) in expected_body_ir.targets().iter().enumerate() {
+        assert_eq!(
+            reader
+                .read_body_target(TargetId(target))
+                .expect("fixture cached Body IR target should read"),
+            *expected,
+        );
+    }
+}
+
+fn cache_section_bytes(bytes: &[u8], range: PackageCacheSectionRange) -> &[u8] {
+    let start = usize::try_from(range.offset).expect("test cache section offset should fit usize");
+    let len = usize::try_from(range.len).expect("test cache section length should fit usize");
+    let end = start
+        .checked_add(len)
+        .expect("test cache section range should not overflow");
+    bytes
+        .get(start..end)
+        .expect("test cache section should be inside encoded bytes")
 }
 
 fn package_cache_artifact_exists_for(project: &Project, package_name: &str) -> bool {
@@ -896,7 +1591,35 @@ fn render_package(
     render_dependencies(workspace, cache_plan, package, dump);
 }
 
-fn render_header(label: &str, header: &PackageCacheHeader, dump: &mut String) {
+fn render_cached_artifact(label: &str, reader: &PackageArtifactReader, dump: &mut String) {
+    let def_map = reader
+        .read_def_map()
+        .expect("cached fixture DefMap should render");
+    let semantic_ir = reader
+        .read_semantic_ir()
+        .expect("cached fixture Semantic IR should render");
+    let body_manifest = reader
+        .read_body_ir_manifest()
+        .expect("cached fixture Body IR manifest should render");
+    render_decoded_artifact(
+        label,
+        reader.probe(),
+        &def_map,
+        &semantic_ir,
+        body_manifest.targets().len(),
+        dump,
+    );
+}
+
+fn render_decoded_artifact(
+    label: &str,
+    probe: &crate::cache::PackageCacheProbe,
+    def_map: &PackageDefMaps,
+    semantic_ir: &PackageIr,
+    body_target_count: usize,
+    dump: &mut String,
+) {
+    let header = &probe.header;
     writeln!(dump, "{label}").expect("string writes should not fail");
     writeln!(dump, "schema {}", header.schema_version.0).expect("string writes should not fail");
     writeln!(dump, "source fingerprint {}", header.source_fingerprint)
@@ -907,95 +1630,38 @@ fn render_header(label: &str, header: &PackageCacheHeader, dump: &mut String) {
         header.package.package.0, header.package.name,
     )
     .expect("string writes should not fail");
-    writeln!(dump, "id {}", header.package.package_id).expect("string writes should not fail");
-    writeln!(dump, "source {}", header.package.source).expect("string writes should not fail");
-    writeln!(dump, "edition {}", header.package.edition).expect("string writes should not fail");
-    writeln!(dump, "manifest {}", header.package.manifest_path)
+    writeln!(dump, "header targets {}", header.package.targets.len())
         .expect("string writes should not fail");
-
-    writeln!(dump, "targets").expect("string writes should not fail");
-    for target in CachedTarget::sorted(&header.package.targets) {
-        writeln!(
-            dump,
-            "- {} [{}] {}",
-            target.name, target.kind, target.src_path,
-        )
-        .expect("string writes should not fail");
-    }
-
-    writeln!(dump, "dependencies").expect("string writes should not fail");
-    for dependency in CachedDependency::sorted(&header.package.dependencies) {
-        writeln!(
-            dump,
-            "- {} -> {} {}",
-            dependency.name,
-            dependency.package_id,
-            render_dependency_kinds(dependency),
-        )
-        .expect("string writes should not fail");
-    }
-}
-
-fn render_artifact(label: &str, artifact: &PackageCacheArtifact, dump: &mut String) {
-    writeln!(dump, "{label}").expect("string writes should not fail");
-    writeln!(dump, "schema {}", artifact.header.schema_version.0)
-        .expect("string writes should not fail");
-    writeln!(
-        dump,
-        "source fingerprint {}",
-        artifact.header.source_fingerprint,
-    )
-    .expect("string writes should not fail");
-    writeln!(
-        dump,
-        "package #{} {}",
-        artifact.header.package.package.0, artifact.header.package.name,
-    )
-    .expect("string writes should not fail");
-    writeln!(
-        dump,
-        "header targets {}",
-        artifact.header.package.targets.len()
-    )
-    .expect("string writes should not fail");
-    writeln!(dump, "parse files {}", artifact.payload.parse.files().len())
+    writeln!(dump, "parse files {}", probe.parse.files().len())
         .expect("string writes should not fail");
     writeln!(
         dump,
         "parse target roots {}",
-        artifact.payload.parse.target_root_count()
+        probe.parse.target_root_count()
     )
     .expect("string writes should not fail");
     writeln!(
         dump,
         "def-map package {} targets {}",
-        artifact.payload.def_map.package_name(),
-        artifact.payload.def_map.def_maps().len(),
+        def_map.package_name(),
+        def_map.def_maps().len(),
     )
     .expect("string writes should not fail");
-    writeln!(
-        dump,
-        "semantic IR targets {}",
-        artifact.payload.semantic_ir.targets().len(),
-    )
-    .expect("string writes should not fail");
+    writeln!(dump, "semantic IR targets {}", semantic_ir.targets().len(),)
+        .expect("string writes should not fail");
 
-    writeln!(
-        dump,
-        "body IR built targets {}",
-        artifact.payload.body_ir.targets().len()
-    )
-    .expect("string writes should not fail");
+    writeln!(dump, "body IR built targets {body_target_count}")
+        .expect("string writes should not fail");
 }
 
-fn render_body_ir_target_statuses(artifact: &PackageCacheArtifact, dump: &mut String) {
+fn render_body_ir_target_statuses(reader: &PackageArtifactReader, dump: &mut String) {
     writeln!(dump, "body IR target statuses").expect("string writes should not fail");
-    for (target_idx, target) in artifact.payload.body_ir.targets().iter().enumerate() {
+    for (target_idx, &coverage) in reader.probe().body_ir_coverage.iter().enumerate() {
         writeln!(
             dump,
             "- target {target_idx} {} {}",
-            target.status(),
-            target.coverage()
+            coverage.status(),
+            coverage,
         )
         .expect("string writes should not fail");
     }

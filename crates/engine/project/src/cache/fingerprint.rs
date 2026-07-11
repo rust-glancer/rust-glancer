@@ -7,7 +7,7 @@ use rg_std::MemorySize;
 use std::{fmt, path::Path};
 use wincode::{SchemaRead, SchemaWrite};
 
-use anyhow::Context as _;
+use crate::PackageResidencyPolicy;
 
 use super::{
     CachedCfgOptions, CachedDependency, CachedPackage, CachedPackageId, CachedTarget,
@@ -45,6 +45,25 @@ pub(super) struct FingerprintBuilder {
 }
 
 impl FingerprintBuilder {
+    /// Builds the stable identity of one reusable package-cache generation.
+    pub(super) fn cache_generation(
+        workspace_root: &Path,
+        cache_plan: &WorkspaceCachePlan,
+        residency_policy: PackageResidencyPolicy,
+    ) -> Fingerprint {
+        let mut builder = Self::new("cache-generation");
+
+        builder.bytes(
+            "workspace.graph",
+            Self::workspace_graph(workspace_root, cache_plan).as_bytes(),
+        );
+        // Different residency policies require different data to be cached. Including the policy
+        // here intentionally invalidates the cache when the configuration changes.
+        builder.str("package.residency", residency_policy.config_name());
+
+        builder.finalize()
+    }
+
     pub(super) fn workspace_graph(
         workspace_root: &Path,
         cache_plan: &WorkspaceCachePlan,
@@ -111,13 +130,7 @@ impl FingerprintBuilder {
         builder.usize("files.len", files.len());
         for file in files {
             builder.path("file.path", workspace_root, file.path());
-            let source = std::fs::read(file.path()).with_context(|| {
-                format!(
-                    "while attempting to read {} for package cache source fingerprint",
-                    file.path().display(),
-                )
-            })?;
-            builder.bytes("file.source", &source);
+            builder.bytes("file.source", file.source_revision().as_bytes());
         }
 
         Ok(builder.finalize())
@@ -139,15 +152,18 @@ impl FingerprintBuilder {
         // metadata initially knows only target roots, so using it here would miss edits in
         // out-of-line modules and incorrectly accept stale analysis payloads. Keep the same stable
         // path ordering as fresh source fingerprints so equivalent file sets hash identically.
+        //
+        // We do not care about weird scenarios such as adding `mod foo;`, saving the parent,
+        // disabling the engine, creating `foo.rs` with the editor closed, reopening the engine,
+        // and then being surprised that `foo.rs` is not discovered. Whoever does that can hit
+        // Ctrl+S and enjoy the rebuilt cache. This is an absurd scenario that does not happen in
+        // sane reality and is not worth supporting by persisting negative module paths.
         for file in files {
             builder.path("file.path", workspace_root, file.path());
-            let source = std::fs::read(file.path()).with_context(|| {
-                format!(
-                    "while attempting to read {} for package cache source fingerprint",
-                    file.path().display(),
-                )
-            })?;
-            builder.bytes("file.source", &source);
+            builder.bytes(
+                "file.source",
+                file.source_descriptor().revision().as_bytes(),
+            );
         }
 
         Ok(builder.finalize())

@@ -9,12 +9,14 @@ use std::{
 use anyhow::Context as _;
 
 use crate::{FileId, LineIndex, Package, PackageParseSnapshot};
+use rg_source::{SourceError, SourceInventory};
 use rg_std::MemorySize;
 
 /// Parsed project metadata, packages, and source files.
-#[derive(Debug, Clone, MemorySize)]
+#[derive(Debug, MemorySize)]
 pub struct ParseDb {
     pub(crate) workspace_root: PathBuf,
+    pub(crate) sources: Arc<SourceInventory>,
     pub(crate) packages: Vec<Package>,
 }
 
@@ -28,21 +30,20 @@ pub struct PackageFileRef {
 impl ParseDb {
     /// Builds parsed packages for one normalized workspace metadata graph.
     pub fn build(workspace: &rg_workspace::WorkspaceMetadata) -> anyhow::Result<Self> {
-        let packages = workspace
-            .packages()
-            .iter()
-            .map(|package| {
-                Package::build(package).with_context(|| {
-                    format!(
-                        "while attempting to build parsed package for {}",
-                        package.id
-                    )
-                })
-            })
-            .collect::<Result<Vec<_>, _>>()?;
+        let sources = Arc::new(SourceInventory::new());
+        let mut packages = Vec::with_capacity(workspace.packages().len());
+        for package in workspace.packages() {
+            packages.push(Package::build(package, &sources).with_context(|| {
+                format!(
+                    "while attempting to build parsed package for {}",
+                    package.id
+                )
+            })?);
+        }
 
         Ok(Self {
             workspace_root: workspace.workspace_root().to_path_buf(),
+            sources,
             packages,
         })
     }
@@ -83,23 +84,88 @@ impl ParseDb {
         self.packages.get_mut(package_slot)
     }
 
+    /// Recreates selected package file tables from their workspace target roots.
+    ///
+    /// ItemTree module discovery runs immediately after this reset and repopulates only source
+    /// files reachable by the new module graph. Downstream phases rebuild the same package set, so
+    /// assigning fresh package-local file ids does not reconnect retained IR to different files.
+    pub fn reset_packages_from_workspace(
+        &mut self,
+        workspace: &rg_workspace::WorkspaceMetadata,
+        package_slots: &[usize],
+    ) -> anyhow::Result<()> {
+        for &package_slot in package_slots {
+            let workspace_package = workspace.packages().get(package_slot).with_context(|| {
+                format!("while attempting to fetch workspace package {package_slot}")
+            })?;
+            let replacement =
+                Package::build(workspace_package, &self.sources).with_context(|| {
+                    format!(
+                        "while attempting to reset parsed package {} from target roots",
+                        workspace_package.id,
+                    )
+                })?;
+            let package = self.packages.get_mut(package_slot).with_context(|| {
+                format!("while attempting to fetch parsed package {package_slot}")
+            })?;
+            *package = replacement;
+        }
+        Ok(())
+    }
+
     /// Restores package-local file ids and source maps from a validated package artifact.
     pub fn apply_package_parse_snapshot(
         &mut self,
         package_slot: usize,
         snapshot: PackageParseSnapshot,
     ) -> anyhow::Result<()> {
+        let files = snapshot
+            .files()
+            .iter()
+            .map(|file| {
+                self.sources
+                    .capture_descriptor(file.source_descriptor())
+                    .map(|source| (file.clone(), source))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
         let package = self
             .package_mut(package_slot)
             .with_context(|| format!("while attempting to fetch parsed package {package_slot}"))?;
-        package.apply_parse_snapshot(snapshot)
+        package.apply_parse_snapshot(snapshot, files)
+    }
+
+    /// Captures every file named by a package artifact and verifies its exact source revision.
+    pub fn validate_package_parse_snapshot(
+        &self,
+        snapshot: &PackageParseSnapshot,
+    ) -> anyhow::Result<()> {
+        for file in snapshot.files() {
+            self.sources.capture_descriptor(file.source_descriptor())?;
+        }
+        Ok(())
     }
 
     /// Returns whether a canonical path is already known to any parsed package.
     pub fn contains_file_path(&self, file_path: &Path) -> bool {
         self.packages
             .iter()
-            .any(|package| package.parsed_files().any(|file| file.path() == file_path))
+            .any(|package| package.file_id_for_path(file_path).is_some())
+    }
+
+    /// Returns every package-local file reference matching a canonical source path.
+    ///
+    /// One source file can participate in several Cargo packages, so path lookup preserves every
+    /// matching package context while using each package's existing path map.
+    pub fn file_refs_for_path(&self, file_path: &Path) -> Vec<PackageFileRef> {
+        self.packages
+            .iter()
+            .enumerate()
+            .filter_map(|(package, parsed_package)| {
+                parsed_package
+                    .file_id_for_path(file_path)
+                    .map(|file| PackageFileRef { package, file })
+            })
+            .collect()
     }
 
     /// Drops retained syntax trees from all packages after AST-consuming phases have finished.
@@ -112,6 +178,7 @@ impl ParseDb {
     /// Compacts saved parse metadata after a project snapshot has finished building.
     pub fn shrink_to_fit(&mut self) {
         self.packages.shrink_to_fit();
+        self.sources.shrink_to_fit();
         for package in &mut self.packages {
             package.shrink_to_fit();
         }
@@ -154,15 +221,17 @@ impl ParseDb {
     /// `canonical_file_path` must use the same canonical identity stored in the parse database.
     /// Unlike dirty-buffer reparsing, the parsed file remains filesystem-backed so staged source
     /// text is not retained after the update finishes.
-    pub fn reparse_saved_file_from_source(
+    pub fn reparse_saved_file(
         &mut self,
         canonical_file_path: &Path,
-        source: &str,
-    ) -> Vec<PackageFileRef> {
+    ) -> Result<Vec<PackageFileRef>, SourceError> {
+        self.sources.begin_capture();
+        let source = self.sources.replace_saved_from_disk(canonical_file_path)?;
         let mut changed_files = Vec::new();
 
         for (package_slot, package) in self.packages.iter_mut().enumerate() {
-            let Some(file_id) = package.reparse_saved_file_from_source(canonical_file_path, source)
+            let Some(file_id) =
+                package.reparse_saved_file_from_source(canonical_file_path, Arc::clone(&source))
             else {
                 continue;
             };
@@ -173,7 +242,7 @@ impl ParseDb {
             });
         }
 
-        changed_files
+        Ok(changed_files)
     }
 
     /// Reparses a known source file from an in-memory buffer for every package that owns it.
@@ -190,6 +259,10 @@ impl ParseDb {
             .canonicalize()
             .with_context(|| format!("while attempting to canonicalize {}", file_path.display()))?;
         let source = Arc::<str>::from(source);
+        self.sources.begin_capture();
+        let source = self
+            .sources
+            .replace_in_memory(&canonical_file_path, source)?;
         let mut changed_files = Vec::new();
 
         for (package_slot, package) in self.packages.iter_mut().enumerate() {
@@ -206,6 +279,50 @@ impl ParseDb {
         }
 
         Ok(changed_files)
+    }
+
+    /// Returns the source inventory shared by every package-local file entry.
+    pub fn source_inventory(&self) -> &SourceInventory {
+        &self.sources
+    }
+
+    /// Returns a shared handle for parallel source discovery during item-tree lowering.
+    pub fn source_inventory_handle(&self) -> Arc<SourceInventory> {
+        Arc::clone(&self.sources)
+    }
+
+    /// Seals the source set after all file-discovering phases have completed.
+    pub fn seal_sources(&self) {
+        // Source capture can start before package ownership is known, and saved rebuilds can replace
+        // an older module graph. The package file tables are authoritative after discovery, so
+        // retire everything outside their union before validating or snapshotting the generation.
+        self.sources.retain_paths(
+            self.packages
+                .iter()
+                .flat_map(Package::parsed_files)
+                .map(|file| file.path().to_path_buf()),
+        );
+        self.sources.seal();
+    }
+
+    /// Rejects a generation candidate if any captured saved source changed during construction.
+    pub fn validate_saved_sources(&self) -> anyhow::Result<()> {
+        Ok(self.sources.validate_saved()?)
+    }
+
+    /// Releases exact saved text while retaining strong source identity for verified reloads.
+    pub fn evict_saved_source_text(&self) {
+        self.sources.evict_saved_text();
+    }
+}
+
+impl Clone for ParseDb {
+    fn clone(&self) -> Self {
+        Self {
+            workspace_root: self.workspace_root.clone(),
+            sources: Arc::new(self.sources.fork()),
+            packages: self.packages.clone(),
+        }
     }
 }
 

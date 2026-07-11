@@ -24,14 +24,16 @@ pub(super) fn closing_brace_hints(
             target.package,
             candidate.file_id,
             candidate.open_offset(),
-        ) else {
+        )?
+        else {
             continue;
         };
         let Some(close_line) = analysis.source_line_for_offset(
             target.package,
             candidate.file_id,
             candidate.close_offset(),
-        ) else {
+        )?
+        else {
             continue;
         };
         if close_line.saturating_sub(open_line) < MIN_LINE_DELTA {
@@ -76,7 +78,7 @@ impl ClosingBraceCandidate {
         for block in
             BodyStructureView::new(analysis.view_db()).closing_brace_blocks(target, file_id)?
         {
-            let label = Self::body_block_label(analysis, target, &block);
+            let label = Self::body_block_label(analysis, target, &block)?;
             if let Some(candidate) = Self::from_block_span(block.file_id(), block.span(), label) {
                 candidates.push(candidate);
             }
@@ -122,20 +124,21 @@ impl ClosingBraceCandidate {
         analysis: &Analysis<'_>,
         target: TargetRef,
         block: &BodyClosingBraceBlock,
-    ) -> String {
-        match block.kind() {
+    ) -> anyhow::Result<String> {
+        let label = match block.kind() {
             BodyClosingBraceBlockKind::Function { name } => format!("// fn {name}"),
             BodyClosingBraceBlockKind::Match { scrutinee } => {
-                Self::control_flow_label(analysis, target, block.file_id(), "// match", *scrutinee)
+                Self::control_flow_label(analysis, target, block.file_id(), "// match", *scrutinee)?
             }
             BodyClosingBraceBlockKind::Loop => "// loop".to_string(),
             BodyClosingBraceBlockKind::While { condition } => {
-                Self::control_flow_label(analysis, target, block.file_id(), "// while", *condition)
+                Self::control_flow_label(analysis, target, block.file_id(), "// while", *condition)?
             }
             BodyClosingBraceBlockKind::For { pat, iterable } => {
-                Self::for_label(analysis, target, block.file_id(), *pat, *iterable)
+                Self::for_label(analysis, target, block.file_id(), *pat, *iterable)?
             }
-        }
+        };
+        Ok(label)
     }
 
     fn control_flow_label(
@@ -144,18 +147,18 @@ impl ClosingBraceCandidate {
         file_id: FileId,
         label: &str,
         detail_span: Option<Span>,
-    ) -> String {
+    ) -> anyhow::Result<String> {
         let Some(detail_span) = detail_span else {
-            return label.to_string();
+            return Ok(label.to_string());
         };
         let Some(detail) = analysis
-            .source_text_for_span(target.package, file_id, detail_span)
+            .source_text_for_span(target.package, file_id, detail_span)?
             .and_then(Self::compact_source_label)
         else {
-            return label.to_string();
+            return Ok(label.to_string());
         };
 
-        format!("{label} {detail}")
+        Ok(format!("{label} {detail}"))
     }
 
     fn for_label(
@@ -164,29 +167,29 @@ impl ClosingBraceCandidate {
         file_id: FileId,
         pat: Option<Span>,
         iterable: Option<Span>,
-    ) -> String {
-        let Some(pat) = pat.and_then(|span| Self::source_detail(analysis, target, file_id, span))
-        else {
-            return "// for".to_string();
+    ) -> anyhow::Result<String> {
+        let Some(pat) = Self::source_detail(analysis, target, file_id, pat)? else {
+            return Ok("// for".to_string());
         };
-        let Some(iterable) =
-            iterable.and_then(|span| Self::source_detail(analysis, target, file_id, span))
-        else {
-            return format!("// for {pat}");
+        let Some(iterable) = Self::source_detail(analysis, target, file_id, iterable)? else {
+            return Ok(format!("// for {pat}"));
         };
 
-        format!("// for {pat} in {iterable}")
+        Ok(format!("// for {pat} in {iterable}"))
     }
 
     fn source_detail(
         analysis: &Analysis<'_>,
         target: TargetRef,
         file_id: FileId,
-        span: Span,
-    ) -> Option<String> {
-        analysis
-            .source_text_for_span(target.package, file_id, span)
-            .and_then(Self::compact_source_label)
+        span: Option<Span>,
+    ) -> anyhow::Result<Option<String>> {
+        let Some(span) = span else {
+            return Ok(None);
+        };
+        Ok(analysis
+            .source_text_for_span(target.package, file_id, span)?
+            .and_then(Self::compact_source_label))
     }
 
     fn compact_source_label(text: String) -> Option<String> {

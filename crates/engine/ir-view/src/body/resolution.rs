@@ -25,14 +25,14 @@ impl<'a, 'db> BodyResolutionView<'a, 'db> {
         &self,
         body_ref: BodyRef,
     ) -> anyhow::Result<Option<(&ResolvedBodyData, &ItemLookupIndex)>> {
-        let Some(target_bodies) = self.db.body_ir.target_bodies(body_ref.target)? else {
+        let Some(body) = self.db.body_ir.body_data(body_ref)? else {
             return Ok(None);
         };
-        let Some(body) = target_bodies.body(body_ref.body) else {
+        let Some(semantic_index) = self.db.body_ir.semantic_index(body_ref.target)? else {
             return Ok(None);
         };
 
-        Ok(Some((body, target_bodies.semantic_index())))
+        Ok(Some((body, semantic_index)))
     }
 
     /// Resolve a type path in a body scope.

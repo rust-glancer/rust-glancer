@@ -127,6 +127,26 @@ impl LspEngineFixture {
             .expect("fixture saved document should open");
     }
 
+    pub(super) async fn did_open_dirty(
+        &self,
+        path: &'static str,
+        version: i32,
+        text: MarkedText,
+    ) -> DirtyDocument {
+        self.service
+            .clone()
+            .did_open(
+                context::current(),
+                self.fixture.path(path),
+                Some(version),
+                text.text().to_string(),
+            )
+            .await
+            .expect("fixture dirty document should open");
+
+        DirtyDocument { path, text }
+    }
+
     pub(super) async fn did_change_full(
         &self,
         path: &'static str,
@@ -174,6 +194,11 @@ impl LspEngineFixture {
             .external_project_paths_changed(context::current(), vec![self.fixture.path(path)])
             .await
             .expect("fixture external file change should apply");
+    }
+
+    pub(super) fn write_file_without_notification(&self, path: &str, text: &str) {
+        std::fs::write(self.fixture.path(path), text)
+            .expect("fixture source should be writable without a notification");
     }
 
     pub(super) fn check_notification_effects(&self, expect: Expect) {
