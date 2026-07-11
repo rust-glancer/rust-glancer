@@ -380,6 +380,21 @@ pub struct Dep;
 }
 
 #[test]
+fn residency_policy_changes_rebuild_from_source() {
+    utils::check_residency_policy_change_rebuilds_from_source(expect![[r#"
+        residency policy cache invalidation
+        first generation existed true
+        generation changed true
+        transition hits 0
+        transition missing artifacts 1
+        old generation after transition false
+        transition artifact true
+        switch-back hits 0
+        switch-back missing artifacts 2
+    "#]]);
+}
+
+#[test]
 fn lazy_loads_offloaded_packages_for_queries() {
     utils::check_offloaded_dependency_query(
         r#"

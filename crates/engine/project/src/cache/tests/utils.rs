@@ -426,6 +426,131 @@ pub(super) fn check_residency_policy_controls_artifact_writes(fixture: &str, exp
     expect.assert_eq(&format!("{}\n", dump.trim_end()));
 }
 
+pub(super) fn check_residency_policy_change_rebuilds_from_source(expect: Expect) {
+    let fixture = ProjectSourceFixture::build(
+        r#"
+//- /Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+dep = { path = "dep" }
+
+//- /src/lib.rs
+pub struct App(dep::Dep);
+
+//- /dep/Cargo.toml
+[package]
+name = "dep"
+version = "0.1.0"
+edition = "2024"
+
+//- /dep/src/lib.rs
+pub struct Dep;
+"#,
+    );
+    let workspace = fixture.workspace_metadata();
+    let first = Project::builder(workspace.clone())
+        .package_residency_policy(PackageResidencyPolicy::AllOffloadable)
+        .build()
+        .expect("fixture project should write the first residency generation");
+    let first_artifact = first
+        .state
+        .cache_store
+        .package_artifact_path(&package_cache_header_for(&first, "dep").package);
+    let first_generation = first_artifact
+        .parent()
+        .expect("package artifact should belong to a generation directory")
+        .to_path_buf();
+    let first_generation_existed = first_generation.exists();
+    drop(first);
+
+    let transition_run = rg_profile::test_support::ProfileTest::start(
+        crate::profile_descriptors(),
+        "project.build.cache_probe",
+    );
+    let transitioned = Project::builder(workspace.clone())
+        .package_residency_policy(PackageResidencyPolicy::WorkspaceResident)
+        .build()
+        .expect("residency change should rebuild into a fresh cache generation");
+    let transition_profile = transition_run.finish();
+    let transition_artifact = transitioned
+        .state
+        .cache_store
+        .package_artifact_path(&package_cache_header_for(&transitioned, "dep").package);
+    let transition_generation = transition_artifact
+        .parent()
+        .expect("package artifact should belong to a generation directory")
+        .to_path_buf();
+
+    let mut dump = String::new();
+    writeln!(&mut dump, "residency policy cache invalidation")
+        .expect("string writes should not fail");
+    writeln!(
+        &mut dump,
+        "first generation existed {first_generation_existed}",
+    )
+    .expect("string writes should not fail");
+    writeln!(
+        &mut dump,
+        "generation changed {}",
+        first_generation != transition_generation,
+    )
+    .expect("string writes should not fail");
+    writeln!(
+        &mut dump,
+        "transition hits {}",
+        profile_counter(&transition_profile, metric::CACHE_PROBE_HITS),
+    )
+    .expect("string writes should not fail");
+    writeln!(
+        &mut dump,
+        "transition missing artifacts {}",
+        profile_counter(&transition_profile, metric::CACHE_PROBE_MISSING_ARTIFACTS,),
+    )
+    .expect("string writes should not fail");
+    writeln!(
+        &mut dump,
+        "old generation after transition {}",
+        first_generation.exists(),
+    )
+    .expect("string writes should not fail");
+    writeln!(
+        &mut dump,
+        "transition artifact {}",
+        transition_artifact.exists(),
+    )
+    .expect("string writes should not fail");
+    drop(transitioned);
+
+    // Switching back must not resurrect the generation used before the first policy change.
+    let switch_back_run = rg_profile::test_support::ProfileTest::start(
+        crate::profile_descriptors(),
+        "project.build.cache_probe",
+    );
+    let _switched_back = Project::builder(workspace)
+        .package_residency_policy(PackageResidencyPolicy::AllOffloadable)
+        .build()
+        .expect("switching residency back should rebuild from source again");
+    let switch_back_profile = switch_back_run.finish();
+    writeln!(
+        &mut dump,
+        "switch-back hits {}",
+        profile_counter(&switch_back_profile, metric::CACHE_PROBE_HITS),
+    )
+    .expect("string writes should not fail");
+    writeln!(
+        &mut dump,
+        "switch-back missing artifacts {}",
+        profile_counter(&switch_back_profile, metric::CACHE_PROBE_MISSING_ARTIFACTS,),
+    )
+    .expect("string writes should not fail");
+
+    expect.assert_eq(&format!("{}\n", dump.trim_end()));
+}
+
 pub(super) fn check_offloaded_dependency_query(fixture: &str, expect: Expect) {
     let fixture = ProjectSourceFixture::build(fixture);
     let project = fixture

@@ -7,6 +7,8 @@ use rg_std::MemorySize;
 use std::{fmt, path::Path};
 use wincode::{SchemaRead, SchemaWrite};
 
+use crate::PackageResidencyPolicy;
+
 use super::{
     CachedCfgOptions, CachedDependency, CachedPackage, CachedPackageId, CachedTarget,
     WorkspaceCachePlan, cached::CachedCfgKeyValue,
@@ -43,6 +45,25 @@ pub(super) struct FingerprintBuilder {
 }
 
 impl FingerprintBuilder {
+    /// Builds the stable identity of one reusable package-cache generation.
+    pub(super) fn cache_generation(
+        workspace_root: &Path,
+        cache_plan: &WorkspaceCachePlan,
+        residency_policy: PackageResidencyPolicy,
+    ) -> Fingerprint {
+        let mut builder = Self::new("cache-generation");
+
+        builder.bytes(
+            "workspace.graph",
+            Self::workspace_graph(workspace_root, cache_plan).as_bytes(),
+        );
+        // Different residency policies require different data to be cached. Including the policy
+        // here intentionally invalidates the cache when the configuration changes.
+        builder.str("package.residency", residency_policy.config_name());
+
+        builder.finalize()
+    }
+
     pub(super) fn workspace_graph(
         workspace_root: &Path,
         cache_plan: &WorkspaceCachePlan,

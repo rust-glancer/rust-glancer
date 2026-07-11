@@ -1,8 +1,9 @@
 //! Cache paths and atomic package-set updates.
 //!
-//! A generation directory belongs to one workspace graph. Individual package files are replaced
-//! atomically, while an update marker extends that guarantee across the package set: an interrupted
-//! update is discarded on the next startup instead of exposing mutually inconsistent artifacts.
+//! A generation directory belongs to one workspace graph and residency policy. Individual package
+//! files are replaced atomically, while an update marker extends that guarantee across the package
+//! set: an interrupted update is discarded on the next startup instead of exposing mutually
+//! inconsistent artifacts.
 //!
 //! The on-disk shape under one claimed cache instance is:
 //!
@@ -28,6 +29,8 @@ use anyhow::Context as _;
 use atomic_write_file::AtomicWriteFile;
 use rg_workspace::WorkspaceMetadata;
 
+use crate::PackageResidencyPolicy;
+
 use super::super::{
     CachedPackage, Fingerprint, PackageCacheCodec, PackageCacheInstance, PackageCacheWriteInput,
     WorkspaceCachePlan,
@@ -38,11 +41,11 @@ const CACHE_GENERATION_DIR_PREFIX: &str = "graph-";
 const PACKAGE_ARTIFACT_EXTENSION: &str = "rgpkg";
 const CACHE_UPDATE_MARKER_FILE_NAME: &str = "update-in-progress";
 
-/// Paths for one cache instance and one workspace-graph generation.
+/// Paths for one cache instance and one cache generation.
 ///
 /// `root` is the already-claimed instance directory. `generation` selects the subdirectory for the
-/// workspace graph. `workspace_root` is kept so package fingerprints can normalize workspace-local
-/// paths the same way when constructing and looking up an artifact.
+/// workspace graph and residency policy. `workspace_root` is kept so package fingerprints can
+/// normalize workspace-local paths the same way when constructing and looking up an artifact.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PackageCacheStore {
     workspace_root: PathBuf,
@@ -51,19 +54,26 @@ pub struct PackageCacheStore {
 }
 
 impl PackageCacheStore {
-    /// Bind a workspace cache plan to the instance directory claimed by this engine process.
+    /// Bind a workspace cache plan and residency policy to the claimed instance directory.
     ///
     /// This does not touch the filesystem. Directory creation is delayed until an update begins,
     /// while cache reads can simply observe a missing artifact as a cache miss.
     pub(crate) fn for_instance(
         workspace: &WorkspaceMetadata,
         cache_plan: &WorkspaceCachePlan,
+        residency_policy: PackageResidencyPolicy,
         instance: &PackageCacheInstance,
     ) -> Self {
+        // Users do not change residency policy during normal operation. Although we could reuse
+        // packages that remain offloadable under both policies, preserving that cache state is not
+        // worth the additional transition complexity. Even for a big project, reindexing takes
+        // ~10 seconds, so a residency-policy change simply selects a fresh cache generation and
+        // rebuilds from source.
         Self {
             workspace_root: workspace.workspace_root().to_path_buf(),
             root: instance.root().to_path_buf(),
-            generation: cache_plan.fingerprint(workspace.workspace_root()),
+            generation: cache_plan
+                .generation_fingerprint(workspace.workspace_root(), residency_policy),
         }
     }
 
@@ -73,7 +83,7 @@ impl PackageCacheStore {
         &self.root
     }
 
-    /// Return the complete path for one package identity in this graph generation.
+    /// Return the complete path for one package identity in this cache generation.
     ///
     /// The slot and name make paths readable; the package fingerprint prevents two different Cargo
     /// package descriptions that occupy the same slot from sharing bytes accidentally.
@@ -92,7 +102,7 @@ impl PackageCacheStore {
         package.fingerprint(&self.workspace_root)
     }
 
-    /// Removes cache data that cannot be reached through the current workspace graph generation.
+    /// Removes cache data that cannot be reached through the current cache generation.
     ///
     /// The store deliberately does not track individual artifacts. A source-only save rewrites the
     /// affected package files inside the same generation directory, while Cargo graph changes pick

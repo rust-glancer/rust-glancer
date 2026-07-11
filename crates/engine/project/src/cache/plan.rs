@@ -15,6 +15,7 @@ use super::{
     CachedPath, CachedRustEdition, CachedTarget, CachedTargetKind, Fingerprint, PackageCacheHeader,
     fingerprint,
 };
+use crate::PackageResidencyPolicy;
 
 /// Cache-schema plan for the package artifacts belonging to one workspace graph.
 ///
@@ -26,6 +27,18 @@ pub struct WorkspaceCachePlan {
 }
 
 impl WorkspaceCachePlan {
+    /// Returns the cache generation selected by graph and residency configuration.
+    ///
+    /// Saved source changes keep this identity stable. Cargo graph or residency-policy changes
+    /// select a different artifact directory and make the previous generation disposable.
+    pub(crate) fn generation_fingerprint(
+        &self,
+        workspace_root: &Path,
+        residency_policy: PackageResidencyPolicy,
+    ) -> Fingerprint {
+        fingerprint::FingerprintBuilder::cache_generation(workspace_root, self, residency_policy)
+    }
+
     /// Builds cache metadata for the package targets analyzed by the current project.
     ///
     /// Cargo metadata can list dependency examples, tests, benches, and binaries that we do not
@@ -150,14 +163,6 @@ impl WorkspaceCachePlan {
             self.package(package)?.clone(),
             source_fingerprint,
         ))
-    }
-
-    /// Returns the cache generation fingerprint for this workspace graph.
-    ///
-    /// Source edits keep this stable, while package/target/dependency metadata changes select a
-    /// new artifact directory and make old generations eligible for cleanup.
-    pub fn fingerprint(&self, workspace_root: &Path) -> Fingerprint {
-        fingerprint::FingerprintBuilder::workspace_graph(workspace_root, self)
     }
 }
 
