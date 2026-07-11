@@ -37,6 +37,8 @@ impl DocumentStore {
 
         // Routing waits for engine startup, so a later `didChange` can reach the engine before the
         // earlier `didOpen`. Do not let that stale open replace a newer live buffer snapshot.
+        // TODO(#127): Scope this ordering to an explicit open-session epoch so delayed events from
+        // a closed session cannot interfere with a legitimate reopen whose versions reset.
         if let (Some(current), Some(opened)) = (document.version, version)
             && opened < current
         {

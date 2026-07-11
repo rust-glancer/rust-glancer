@@ -13,7 +13,7 @@
 //! unchanged `SourceEntry` values are shared because an entry's descriptor never changes.
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     path::{Path, PathBuf},
     sync::{Arc, RwLock},
 };
@@ -195,6 +195,24 @@ impl SourceInventory {
             .expect("source inventory lock should not be poisoned")
             .get(path)
             .cloned()
+    }
+
+    /// Drops entries that are no longer part of any parsed package file table.
+    ///
+    /// Package rebuilding can replace its module graph, so a source captured by an older
+    /// generation is not automatically part of the new one. Retiring it here keeps final
+    /// validation and persistent source snapshots tied to the newly discovered file union.
+    pub fn retain_paths(&self, paths: impl IntoIterator<Item = PathBuf>) {
+        let paths = paths.into_iter().collect::<HashSet<_>>();
+        let mut entries = self
+            .entries
+            .write()
+            .expect("source inventory lock should not be poisoned");
+        let previous_len = entries.len();
+        entries.retain(|path, _| paths.contains(path.as_path()));
+        if entries.len() != previous_len {
+            entries.shrink_to_fit();
+        }
     }
 
     /// Remembers one module-discovery decision made by an open candidate.

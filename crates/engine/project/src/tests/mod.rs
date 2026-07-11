@@ -227,6 +227,61 @@ pub struct Published;
 }
 
 #[test]
+fn saved_module_rename_retires_historical_source() {
+    let fixture = ProjectSourceFixture::build(
+        r#"
+//- /Cargo.toml
+[package]
+name = "source_generation_module_rename_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+mod old;
+
+//- /src/old.rs
+pub struct Before;
+"#,
+    );
+    let mut project = fixture.build_project();
+    let root = fixture.path("src/lib.rs");
+    let old = fixture.path("src/old.rs");
+    let old_canonical = old
+        .canonicalize()
+        .expect("old module path should canonicalize before rename");
+    let new = fixture.path("src/new.rs");
+
+    std::fs::rename(&old, &new).expect("fixture module should be renamed");
+    std::fs::write(&root, "mod new;\n").expect("fixture root should name the new module");
+    let summary = project
+        .apply_changes([SavedFileChange::new(&root), SavedFileChange::new(&new)])
+        .expect("module rename should publish a new source generation");
+
+    assert_eq!(summary.affected_packages, [rg_def_map::PackageSlot(0)]);
+    assert!(
+        project
+            .state
+            .parse_db()
+            .source_inventory()
+            .entry(&old_canonical)
+            .is_none(),
+        "renamed module source should leave the published inventory",
+    );
+    assert!(
+        !project.state.parse_db().contains_file_path(&old_canonical),
+        "renamed module source should leave the package file table",
+    );
+
+    // A later save proves that the retired path cannot poison every candidate forked from this
+    // generation.
+    std::fs::write(&new, "pub struct After;\n")
+        .expect("renamed module should accept a later saved edit");
+    project
+        .apply_change(SavedFileChange::new(&new))
+        .expect("later save should not validate the retired module path");
+}
+
+#[test]
 fn offloaded_line_index_rejects_newer_disk_revision() {
     let fixture = ProjectSourceFixture::build(
         r#"
@@ -289,7 +344,7 @@ pub struct Irrelevant;
     let path = fixture.path("generated/irrelevant.rs");
 
     let summary = project
-        .apply_change(SavedFileChange::new(path))
+        .apply_change(SavedFileChange::new(&path))
         .expect("irrelevant saved source should produce a valid generation");
 
     assert!(summary.changed_files.is_empty());
@@ -303,6 +358,23 @@ pub struct Irrelevant;
         .parse_db()
         .validate_saved_sources()
         .expect("the published source set should remain valid");
+
+    assert!(
+        project
+            .state
+            .parse_db()
+            .source_inventory()
+            .entry(&path)
+            .is_none(),
+        "an unrelated watcher path should not become part of the published inventory",
+    );
+    std::fs::remove_file(&path).expect("irrelevant fixture source should be removable");
+    let root = fixture.path("crates/app/src/lib.rs");
+    std::fs::write(&root, "pub struct Updated;\n")
+        .expect("known fixture source should accept a later edit");
+    project
+        .apply_change(SavedFileChange::new(root))
+        .expect("removed unrelated source must not poison later saved updates");
 }
 
 #[test]

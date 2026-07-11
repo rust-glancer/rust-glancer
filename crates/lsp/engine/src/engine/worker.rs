@@ -1543,6 +1543,8 @@ impl EngineWorker {
             .and_then(Project::stale_source_path)
             .map(Path::to_path_buf);
         let mut retried_stale_source = false;
+        // TODO(#126): Carry clean-document identity into the worker and avoid rerunning a
+        // document request against disk bytes newer than the editor snapshot that issued it.
         if let Some(stale_path) = stale_path
             && self.recover_after_stale_source(label, &stale_path)
         {

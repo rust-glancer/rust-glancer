@@ -172,6 +172,8 @@ impl PackageCacheStore {
                 marker.display(),
             )
         })? {
+            // TODO(#128): Recover failed cache transactions in-process by rebuilding coherent
+            // backing for every offloaded package, rather than requiring an engine restart.
             anyhow::bail!(
                 "package cache update marker already exists at {}",
                 marker.display(),

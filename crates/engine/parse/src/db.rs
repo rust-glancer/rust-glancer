@@ -84,6 +84,35 @@ impl ParseDb {
         self.packages.get_mut(package_slot)
     }
 
+    /// Recreates selected package file tables from their workspace target roots.
+    ///
+    /// ItemTree module discovery runs immediately after this reset and repopulates only source
+    /// files reachable by the new module graph. Downstream phases rebuild the same package set, so
+    /// assigning fresh package-local file ids does not reconnect retained IR to different files.
+    pub fn reset_packages_from_workspace(
+        &mut self,
+        workspace: &rg_workspace::WorkspaceMetadata,
+        package_slots: &[usize],
+    ) -> anyhow::Result<()> {
+        for &package_slot in package_slots {
+            let workspace_package = workspace.packages().get(package_slot).with_context(|| {
+                format!("while attempting to fetch workspace package {package_slot}")
+            })?;
+            let replacement =
+                Package::build(workspace_package, &self.sources).with_context(|| {
+                    format!(
+                        "while attempting to reset parsed package {} from target roots",
+                        workspace_package.id,
+                    )
+                })?;
+            let package = self.packages.get_mut(package_slot).with_context(|| {
+                format!("while attempting to fetch parsed package {package_slot}")
+            })?;
+            *package = replacement;
+        }
+        Ok(())
+    }
+
     /// Restores package-local file ids and source maps from a validated package artifact.
     pub fn apply_package_parse_snapshot(
         &mut self,
@@ -264,6 +293,15 @@ impl ParseDb {
 
     /// Seals the source set after all file-discovering phases have completed.
     pub fn seal_sources(&self) {
+        // Source capture can start before package ownership is known, and saved rebuilds can replace
+        // an older module graph. The package file tables are authoritative after discovery, so
+        // retire everything outside their union before validating or snapshotting the generation.
+        self.sources.retain_paths(
+            self.packages
+                .iter()
+                .flat_map(Package::parsed_files)
+                .map(|file| file.path().to_path_buf()),
+        );
         self.sources.seal();
     }
 
