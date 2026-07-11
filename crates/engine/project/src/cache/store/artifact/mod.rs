@@ -33,8 +33,6 @@ use rg_text::NameInterner;
 use crate::profile::metric;
 
 pub(crate) use self::error::PackageCacheReadError;
-#[cfg(test)]
-use super::super::{PackageCacheArtifact, PackageCachePayload};
 use super::super::{
     PackageCacheCodec, PackageCacheProbe,
     codec::{PackageBodyCacheIndex, PackageCacheLayout, PackageCacheSectionRange},
@@ -95,19 +93,6 @@ impl PackageArtifactReader {
             .map_err(|error| self.decode_error(error));
         metric::CACHE_SECTION_DECODE.record("semantic_ir", started.elapsed());
         decoded
-    }
-
-    #[cfg(test)]
-    fn read_artifact(&self) -> Result<PackageCacheArtifact, PackageCacheReadError> {
-        Ok(PackageCacheArtifact::new(
-            self.inner.probe.header.clone(),
-            PackageCachePayload::new(
-                self.inner.probe.parse.clone(),
-                self.read_def_map()?,
-                self.read_semantic_ir()?,
-                self.read_body_ir()?,
-            ),
-        ))
     }
 
     /// Read one labeled outer-file range and record its I/O cost.

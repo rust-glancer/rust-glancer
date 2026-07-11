@@ -24,8 +24,6 @@
 //! relative to the beginning of the Body IR section.
 
 use anyhow::Context as _;
-#[cfg(test)]
-use rg_body_ir::TargetBodies;
 use rg_body_ir::{BodyFileShard, PackageBodies, PackageBodiesManifest, TargetBodiesManifest};
 use rg_ir_storage::ItemLookupIndex;
 use rg_parse::{FileId, TargetId};
@@ -71,6 +69,28 @@ struct TargetBodyCacheLayout {
 struct BodyFileCacheRange {
     file: FileId,
     range: PackageCacheSectionRange,
+}
+
+/// Encoded Body IR pieces in their final on-disk order.
+///
+/// Keeping the prefix, manifest, and payload separate avoids allocating another Body-IR-sized
+/// vector merely to concatenate bytes that the atomic file writer can write sequentially.
+#[derive(Debug)]
+pub(super) struct EncodedBodyIr {
+    prefix: [u8; BODY_CACHE_CONTAINER_PREFIX_BYTES],
+    manifest: Vec<u8>,
+    payload: Vec<u8>,
+    encoded_len: usize,
+}
+
+impl EncodedBodyIr {
+    pub(super) fn encoded_len(&self) -> usize {
+        self.encoded_len
+    }
+
+    pub(super) fn fragments(&self) -> [&[u8]; 3] {
+        [&self.prefix, &self.manifest, &self.payload]
+    }
 }
 
 impl PackageBodyCacheIndex {
@@ -120,7 +140,7 @@ impl PackageCacheCodec {
     ///
     /// Body ids stay stable throughout this transformation. A file shard carries the original ids,
     /// while the logical manifest records which file owns each id.
-    pub(super) fn encode_body_ir(body_ir: &PackageBodies) -> anyhow::Result<Vec<u8>> {
+    pub(super) fn encode_body_ir(body_ir: &PackageBodies) -> anyhow::Result<EncodedBodyIr> {
         // 1. Build the logical directory first. It tells us which source-file shards each target
         // needs, but does not contain encoded byte ranges yet.
         let bodies = body_ir.manifest();
@@ -130,11 +150,15 @@ impl PackageCacheCodec {
         // 2. Serialize one target index and one source file at a time. Each append returns its range
         // relative to `payload`. This avoids a second package-sized set of temporary shard objects.
         for (target_idx, target) in body_ir.targets().iter().enumerate() {
-            let semantic_index =
-                wincode::config::serialize(target.semantic_index(), Self::wincode_config())
-                    .map_err(|error| anyhow::anyhow!("{error}"))
-                    .context("while attempting to serialize package cache Body IR target index")?;
-            let semantic_index = Self::append_body_payload(&mut payload, &semantic_index)?;
+            let semantic_index_start = payload.len();
+            wincode::config::serialize_into(
+                &mut payload,
+                target.semantic_index(),
+                Self::wincode_config(),
+            )
+            .map_err(|error| anyhow::anyhow!("{error}"))
+            .context("while attempting to serialize package cache Body IR target index")?;
+            let semantic_index = Self::body_payload_range(semantic_index_start, payload.len())?;
 
             let target_id = TargetId(target_idx);
             let target_manifest = bodies
@@ -143,12 +167,13 @@ impl PackageCacheCodec {
             let mut files = Vec::with_capacity(target_manifest.files().len());
             for &file in target_manifest.files() {
                 let shard = target.file_shard(file);
-                let shard = wincode::config::serialize(&shard, Self::wincode_config())
+                let shard_start = payload.len();
+                wincode::config::serialize_into(&mut payload, &shard, Self::wincode_config())
                     .map_err(|error| anyhow::anyhow!("{error}"))
                     .context("while attempting to serialize package cache Body IR file shard")?;
                 files.push(BodyFileCacheRange {
                     file,
-                    range: Self::append_body_payload(&mut payload, &shard)?,
+                    range: Self::body_payload_range(shard_start, payload.len())?,
                 });
             }
             targets.push(TargetBodyCacheLayout {
@@ -173,88 +198,28 @@ impl PackageCacheCodec {
             "package cache Body IR section has {total_len} bytes, limit is {PACKAGE_CACHE_SECTION_LIMIT_BYTES}",
         );
 
-        // 4. Publish one Body IR section: fixed prefix, variable manifest, then all payload units.
-        let mut bytes = Vec::with_capacity(total_len);
-        bytes.extend_from_slice(&BODY_CACHE_CONTAINER_MAGIC);
-        bytes.extend_from_slice(&manifest_len.to_le_bytes());
-        bytes.extend_from_slice(&manifest);
-        bytes.extend_from_slice(&payload);
-        Ok(bytes)
+        // 4. Keep the three final fragments separate. The package writer can emit them in this
+        // order without allocating and copying another complete Body IR buffer.
+        let mut prefix = [0_u8; BODY_CACHE_CONTAINER_PREFIX_BYTES];
+        prefix[..BODY_CACHE_CONTAINER_MAGIC.len()].copy_from_slice(&BODY_CACHE_CONTAINER_MAGIC);
+        prefix[BODY_CACHE_CONTAINER_MAGIC.len()..].copy_from_slice(&manifest_len.to_le_bytes());
+        Ok(EncodedBodyIr {
+            prefix,
+            manifest,
+            payload,
+            encoded_len: total_len,
+        })
     }
 
-    /// Append one encoded unit and return its range relative to the payload start.
-    fn append_body_payload(
-        payload: &mut Vec<u8>,
-        bytes: &[u8],
-    ) -> anyhow::Result<PackageCacheSectionRange> {
-        let range = PackageCacheSectionRange {
-            offset: u64::try_from(payload.len())
-                .context("Body IR payload offset does not fit u64")?,
-            len: u64::try_from(bytes.len()).context("Body IR payload length does not fit u64")?,
-        };
-        payload.extend_from_slice(bytes);
-        Ok(range)
-    }
-
-    /// Eagerly decode every Body IR unit for round-trip tests.
-    ///
-    /// Production queries use the smaller decoding entrypoints below. Keeping an eager path in
-    /// tests verifies that the directory can reconstruct the ordinary resident representation.
-    #[cfg(test)]
-    pub(crate) fn decode_body_ir(
-        bytes: &[u8],
-        probe: &PackageCacheProbe,
-    ) -> anyhow::Result<PackageBodies> {
-        let prefix = bytes
-            .get(..BODY_CACHE_CONTAINER_PREFIX_BYTES)
-            .context("package cache Body IR section is shorter than its fixed prefix")?;
-        let manifest_len = Self::decode_body_prefix(prefix)?;
-        let manifest_end = BODY_CACHE_CONTAINER_PREFIX_BYTES
-            .checked_add(manifest_len)
-            .context("package cache Body IR manifest range overflows usize")?;
-        let manifest_bytes = bytes
-            .get(BODY_CACHE_CONTAINER_PREFIX_BYTES..manifest_end)
-            .context("package cache Body IR manifest is truncated")?;
-        let index = Self::decode_body_index(
-            manifest_bytes,
-            u64::try_from(bytes.len()).context("Body IR section length does not fit u64")?,
-            probe,
-        )?;
-
-        // Follow the same path a target-wide query would use: index first, then every declared file
-        // shard, then reconstruction of the dense resident target.
-        let mut targets = Vec::with_capacity(index.manifest.targets().len());
-        for target_idx in 0..index.manifest.targets().len() {
-            let target = TargetId(target_idx);
-            let target_manifest = index
-                .manifest
-                .target(target)
-                .expect("Body IR target manifest should exist while iterating its target count");
-            let semantic_range = index
-                .semantic_index_range(target)
-                .expect("validated Body IR target should have an index range");
-            let semantic_index =
-                Self::decode_body_semantic_index(Self::section_bytes(bytes, semantic_range)?)?;
-            let mut shards = Vec::with_capacity(target_manifest.files().len());
-            for &file in target_manifest.files() {
-                let file_range = index
-                    .file_range(target, file)
-                    .expect("validated Body IR file should have a shard range");
-                shards.push(Self::decode_body_file_shard(
-                    Self::section_bytes(bytes, file_range)?,
-                    target_manifest,
-                    file,
-                )?);
-            }
-            targets.push(TargetBodies::from_storage_parts(
-                target_manifest,
-                semantic_index,
-                shards,
-            )?);
-        }
-        let body_ir = PackageBodies::new(targets);
-        Self::validate_body_ir(&body_ir, probe)?;
-        Ok(body_ir)
+    /// Describe bytes appended directly to the combined payload.
+    fn body_payload_range(start: usize, end: usize) -> anyhow::Result<PackageCacheSectionRange> {
+        let len = end
+            .checked_sub(start)
+            .context("Body IR payload end precedes its start")?;
+        Ok(PackageCacheSectionRange {
+            offset: u64::try_from(start).context("Body IR payload offset does not fit u64")?,
+            len: u64::try_from(len).context("Body IR payload length does not fit u64")?,
+        })
     }
 
     /// Validate the fixed Body IR prefix and return the following manifest length.

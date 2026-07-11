@@ -23,17 +23,6 @@ use crate::{
 };
 
 impl PackageArtifactReader {
-    #[cfg(test)]
-    pub(crate) fn read_body_ir(&self) -> Result<rg_body_ir::PackageBodies, PackageCacheReadError> {
-        let bytes = self.read_section("body_ir", self.inner.layout.body_ir)?;
-        let started = Instant::now();
-        let decoded = self
-            .decode_with_names(|| PackageCacheCodec::decode_body_ir(&bytes, &self.inner.probe))
-            .map_err(|error| self.decode_error(error));
-        metric::CACHE_SECTION_DECODE.record("body_ir", started.elapsed());
-        decoded
-    }
-
     /// Return the logical body-to-file directory without decoding target or file payloads.
     ///
     /// The returned value is cloned out of the cached physical index so the Body IR transaction can

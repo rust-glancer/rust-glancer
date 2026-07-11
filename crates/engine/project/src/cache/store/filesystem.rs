@@ -29,7 +29,7 @@ use atomic_write_file::AtomicWriteFile;
 use rg_workspace::WorkspaceMetadata;
 
 use super::super::{
-    CachedPackage, Fingerprint, PackageCacheArtifact, PackageCacheCodec, PackageCacheInstance,
+    CachedPackage, Fingerprint, PackageCacheCodec, PackageCacheInstance, PackageCacheWriteInput,
     WorkspaceCachePlan,
 };
 
@@ -151,13 +151,6 @@ impl PackageCacheStore {
         Ok(())
     }
 
-    #[cfg(test)]
-    pub(crate) fn write_artifact(&self, artifact: &PackageCacheArtifact) -> anyhow::Result<()> {
-        let update = self.begin_artifact_update()?;
-        update.write_artifact(artifact)?;
-        update.commit()
-    }
-
     /// Start a package-set update and publish its incomplete marker before any package write.
     ///
     /// The returned guard does not remove the marker on drop. The caller must write every intended
@@ -188,7 +181,9 @@ impl PackageCacheStore {
         // The package set is one coarse cache transaction. If the process stops after replacing
         // only some artifacts, startup sees this marker and discards the whole disposable cache
         // instead of trying to infer which cross-package IDs still agree.
-        Self::write_bytes_atomically(&marker, b"package cache update in progress\n")?;
+        Self::write_atomically(&marker, |file| {
+            file.write_all(b"package cache update in progress\n")
+        })?;
 
         Ok(PackageCacheUpdate { store: self })
     }
@@ -236,7 +231,10 @@ impl PackageCacheStore {
     }
 
     /// Replace one complete file without exposing a partially written payload.
-    fn write_bytes_atomically(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
+    fn write_atomically(
+        path: &Path,
+        write: impl FnOnce(&mut AtomicWriteFile) -> std::io::Result<()>,
+    ) -> anyhow::Result<()> {
         // Cache artifacts must appear atomically: readers either observe the previous complete
         // payload or the newly committed one, never a partially written file.
         let mut file = AtomicWriteFile::options().open(path).with_context(|| {
@@ -245,7 +243,7 @@ impl PackageCacheStore {
                 path.display(),
             )
         })?;
-        file.write_all(bytes).with_context(|| {
+        write(&mut file).with_context(|| {
             format!(
                 "while attempting to write package cache artifact {}",
                 path.display(),
@@ -289,10 +287,11 @@ impl PackageCacheUpdate<'_> {
     ///
     /// Success here is not a package-set commit. The marker remains until the owner has written all
     /// affected packages and calls `commit`.
-    pub(crate) fn write_artifact(&self, artifact: &PackageCacheArtifact) -> anyhow::Result<()> {
-        let bytes = PackageCacheCodec::encode_artifact(artifact)?;
-        let path = self.store.package_artifact_path(&artifact.header.package);
-        PackageCacheStore::write_bytes_atomically(&path, bytes.as_ref())
+    /// Encode borrowed resident phases and write their final fragments in format order.
+    pub(crate) fn write_input(&self, input: PackageCacheWriteInput<'_>) -> anyhow::Result<()> {
+        let encoded = PackageCacheCodec::encode_write_input(input)?;
+        let path = self.store.package_artifact_path(&input.header.package);
+        PackageCacheStore::write_atomically(&path, |file| encoded.write_to(file))
     }
 
     /// Commit the package set by removing the marker only after every artifact is durable.

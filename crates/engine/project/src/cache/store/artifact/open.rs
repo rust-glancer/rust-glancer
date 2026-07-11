@@ -16,8 +16,6 @@ use rg_package_store::MalformedCacheError;
 use rg_text::NameInterner;
 
 use super::{PackageArtifactReader, PackageArtifactReaderInner, PackageCacheReadError};
-#[cfg(test)]
-use crate::cache::PackageCacheArtifact;
 use crate::{
     cache::{
         CachedPackage, PackageCacheCodec, PackageCacheHeader, PackageCacheProbe, PackageCacheStore,
@@ -27,18 +25,6 @@ use crate::{
 };
 
 impl PackageCacheStore {
-    #[cfg(test)]
-    pub fn read_artifact(
-        &self,
-        header: &PackageCacheHeader,
-    ) -> Result<Option<PackageCacheArtifact>, PackageCacheReadError> {
-        let reader = self.open_artifact(header)?;
-        let Some(reader) = reader else {
-            return Ok(None);
-        };
-        Ok(Some(reader.read_artifact()?))
-    }
-
     /// Open an artifact expected to match this complete header.
     ///
     /// `open_artifact_for_package` first checks the package identity stored in the file. This second

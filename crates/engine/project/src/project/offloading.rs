@@ -13,7 +13,7 @@ use rg_std::Shrink;
 
 use crate::{
     PackageResidency, ProjectMemoryPurgePoint,
-    cache::{PackageCacheArtifact, PackageCachePayload, PackageCacheUpdate},
+    cache::{PackageCacheUpdate, PackageCacheWriteInput},
     profile::{BuildMemorySampler, record_build_checkpoint},
 };
 
@@ -258,49 +258,6 @@ impl<'a> ResidencyApplication<'a> {
         update: &PackageCacheUpdate<'_>,
         package: PackageSlot,
     ) -> anyhow::Result<()> {
-        let artifact = Self::artifact_from_project(project, package)?;
-        update.write_artifact(&artifact).with_context(|| {
-            format!(
-                "while attempting to write package cache artifact for package {}",
-                package.0,
-            )
-        })
-    }
-
-    /// Offloads one package from every artifact-backed phase database.
-    fn offload_package(&mut self, package: PackageSlot) -> anyhow::Result<()> {
-        // Only drop resident data after the full cross-phase package artifact is durable. If a
-        // future implementation downgrades write errors to warnings, this invariant should remain.
-        self.project
-            .def_map
-            .offload_package(package)
-            .with_context(|| {
-                format!("while attempting to offload def-map package {}", package.0)
-            })?;
-        self.project
-            .semantic_ir
-            .offload_package(package)
-            .with_context(|| {
-                format!(
-                    "while attempting to offload semantic IR package {}",
-                    package.0
-                )
-            })?;
-        self.project
-            .body_ir
-            .offload_package(package)
-            .with_context(|| {
-                format!("while attempting to offload body IR package {}", package.0)
-            })?;
-
-        Ok(())
-    }
-
-    /// Builds the cross-phase artifact payload for one resident package.
-    fn artifact_from_project(
-        project: &ProjectState,
-        package: PackageSlot,
-    ) -> anyhow::Result<PackageCacheArtifact> {
         let header = project
             .cache_plan
             .artifact_header(package, &project.package_source_fingerprints)
@@ -338,20 +295,56 @@ impl<'a> ResidencyApplication<'a> {
             )
         })?;
 
-        Ok(PackageCacheArtifact::new(
-            header,
-            PackageCachePayload::new(
-                parse.parse_snapshot().with_context(|| {
-                    format!(
-                        "while attempting to snapshot parse metadata for package {}",
-                        package.0,
-                    )
-                })?,
-                def_map.clone(),
-                semantic_ir.clone(),
-                body_ir.clone(),
-            ),
-        ))
+        let parse = parse.parse_snapshot().with_context(|| {
+            format!(
+                "while attempting to snapshot parse metadata for package {}",
+                package.0,
+            )
+        })?;
+
+        update
+            .write_input(PackageCacheWriteInput::new(
+                &header,
+                &parse,
+                def_map,
+                semantic_ir,
+                body_ir,
+            ))
+            .with_context(|| {
+                format!(
+                    "while attempting to write package cache artifact for package {}",
+                    package.0,
+                )
+            })
+    }
+
+    /// Offloads one package from every artifact-backed phase database.
+    fn offload_package(&mut self, package: PackageSlot) -> anyhow::Result<()> {
+        // Only drop resident data after the full cross-phase package artifact is durable. If a
+        // future implementation downgrades write errors to warnings, this invariant should remain.
+        self.project
+            .def_map
+            .offload_package(package)
+            .with_context(|| {
+                format!("while attempting to offload def-map package {}", package.0)
+            })?;
+        self.project
+            .semantic_ir
+            .offload_package(package)
+            .with_context(|| {
+                format!(
+                    "while attempting to offload semantic IR package {}",
+                    package.0
+                )
+            })?;
+        self.project
+            .body_ir
+            .offload_package(package)
+            .with_context(|| {
+                format!("while attempting to offload body IR package {}", package.0)
+            })?;
+
+        Ok(())
     }
 
     /// Creates a short-lived Rayon pool for package artifact serialization.

@@ -30,13 +30,12 @@ use wincode::{SchemaRead, SchemaWrite};
 
 mod body;
 
+use self::body::EncodedBodyIr;
 pub(crate) use self::body::{BODY_CACHE_CONTAINER_PREFIX_BYTES, PackageBodyCacheIndex};
 
-#[cfg(test)]
-use super::PackageCachePayload;
 use super::{
-    CURRENT_PACKAGE_CACHE_SCHEMA_VERSION, PackageCacheArtifact, PackageCacheHeader,
-    PackageCacheProbe,
+    CURRENT_PACKAGE_CACHE_SCHEMA_VERSION, PackageCacheHeader, PackageCacheProbe,
+    PackageCacheWriteInput,
 };
 const PACKAGE_CACHE_CONTAINER_MAGIC: [u8; 8] = *b"RGPKG\0\0\x01";
 /// Bytes needed to discover every outer section without decoding wincode data.
@@ -69,6 +68,42 @@ pub(crate) struct PackageCacheLayout {
     pub(crate) def_map: PackageCacheSectionRange,
     pub(crate) semantic_ir: PackageCacheSectionRange,
     pub(crate) body_ir: PackageCacheSectionRange,
+}
+
+/// Encoded package sections in their final on-disk order.
+///
+/// The fragments stay separate until `write_to` sends them to an atomic file or another byte sink.
+/// This preserves one write path without allocating a final contiguous artifact buffer.
+#[derive(Debug)]
+pub(crate) struct EncodedPackageCacheArtifact {
+    prefix: [u8; PACKAGE_CACHE_CONTAINER_PREFIX_BYTES],
+    probe: Vec<u8>,
+    def_map: Vec<u8>,
+    semantic_ir: Vec<u8>,
+    body_ir: EncodedBodyIr,
+}
+
+impl EncodedPackageCacheArtifact {
+    fn fragments(&self) -> [&[u8]; 7] {
+        let [body_prefix, body_manifest, body_payload] = self.body_ir.fragments();
+        [
+            &self.prefix,
+            &self.probe,
+            &self.def_map,
+            &self.semantic_ir,
+            body_prefix,
+            body_manifest,
+            body_payload,
+        ]
+    }
+
+    /// Write the final fragments without first joining them into another artifact-sized buffer.
+    pub(crate) fn write_to(&self, writer: &mut impl std::io::Write) -> std::io::Result<()> {
+        for fragment in self.fragments() {
+            writer.write_all(fragment)?;
+        }
+        Ok(())
+    }
 }
 
 impl PackageCacheLayout {
@@ -169,90 +204,40 @@ impl PackageCacheLayout {
 pub struct PackageCacheCodec;
 
 impl PackageCacheCodec {
-    #[cfg(test)]
-    pub(super) fn encode_header(header: &PackageCacheHeader) -> anyhow::Result<Vec<u8>> {
-        wincode::config::serialize(header, Self::wincode_config())
-            .map_err(|error| anyhow::anyhow!("{error}"))
-            .context("while attempting to serialize package cache header")
-    }
-
-    #[cfg(test)]
-    pub(super) fn decode_header(bytes: &[u8]) -> anyhow::Result<PackageCacheHeader> {
-        let header = wincode::config::deserialize_exact::<PackageCacheHeader, _>(
-            bytes,
-            Self::wincode_config(),
-        )
-        .map_err(|error| anyhow::anyhow!("{error}"))
-        .context("while attempting to deserialize package cache header")?;
-        Self::validate_header(&header)?;
-        Ok(header)
-    }
-
-    /// Encode one complete package revision while preserving independent section boundaries.
-    ///
-    /// Validation runs against the in-memory values first. This avoids publishing an artifact whose
-    /// sections are individually serializable but disagree about package identity or target count.
-    pub fn encode_artifact(artifact: &PackageCacheArtifact) -> anyhow::Result<Vec<u8>> {
-        Self::validate_artifact(artifact)?;
+    /// Encode independently writable fragments from borrowed resident phase data.
+    pub(crate) fn encode_write_input(
+        input: PackageCacheWriteInput<'_>,
+    ) -> anyhow::Result<EncodedPackageCacheArtifact> {
+        let probe = PackageCacheProbe::from_write_input(input);
+        Self::validate_write_input(input, &probe)?;
 
         // Encode every phase separately. The resulting lengths become the fixed outer directory,
         // so readers can later decode one phase without walking through the preceding phases.
-        let probe = PackageCacheProbe::from_artifact(artifact);
         let probe = wincode::config::serialize(&probe, Self::wincode_config())
             .map_err(|error| anyhow::anyhow!("{error}"))
             .context("while attempting to serialize package cache probe")?;
-        let def_map = wincode::config::serialize(&artifact.payload.def_map, Self::wincode_config())
+        let def_map = wincode::config::serialize(input.def_map, Self::wincode_config())
             .map_err(|error| anyhow::anyhow!("{error}"))
             .context("while attempting to serialize package cache def-map section")?;
-        let semantic_ir =
-            wincode::config::serialize(&artifact.payload.semantic_ir, Self::wincode_config())
-                .map_err(|error| anyhow::anyhow!("{error}"))
-                .context("while attempting to serialize package cache semantic IR section")?;
-        let body_ir = Self::encode_body_ir(&artifact.payload.body_ir)?;
+        let semantic_ir = wincode::config::serialize(input.semantic_ir, Self::wincode_config())
+            .map_err(|error| anyhow::anyhow!("{error}"))
+            .context("while attempting to serialize package cache semantic IR section")?;
+        let body_ir = Self::encode_body_ir(input.body_ir)?;
 
-        // The prefix is written only after every section has a final length.
+        // The prefix is built only after every section has a final length.
         let prefix = PackageCacheLayout::encode_prefix([
             probe.len(),
             def_map.len(),
             semantic_ir.len(),
-            body_ir.len(),
+            body_ir.encoded_len(),
         ])?;
-        let total_len = prefix
-            .len()
-            .checked_add(probe.len())
-            .and_then(|len| len.checked_add(def_map.len()))
-            .and_then(|len| len.checked_add(semantic_ir.len()))
-            .and_then(|len| len.checked_add(body_ir.len()))
-            .context("package cache artifact length overflows usize")?;
-        // Finally concatenate the directory and sections in the order promised by the format.
-        let mut bytes = Vec::with_capacity(total_len);
-        bytes.extend_from_slice(&prefix);
-        bytes.extend_from_slice(&probe);
-        bytes.extend_from_slice(&def_map);
-        bytes.extend_from_slice(&semantic_ir);
-        bytes.extend_from_slice(&body_ir);
-        Ok(bytes)
-    }
-
-    #[cfg(test)]
-    pub fn decode_artifact(bytes: &[u8]) -> anyhow::Result<PackageCacheArtifact> {
-        let prefix = bytes
-            .get(..PACKAGE_CACHE_CONTAINER_PREFIX_BYTES)
-            .context("package cache artifact is shorter than its fixed prefix")?;
-        let layout = PackageCacheLayout::decode_prefix(
+        Ok(EncodedPackageCacheArtifact {
             prefix,
-            u64::try_from(bytes.len()).context("package cache artifact length does not fit u64")?,
-        )?;
-        let probe = Self::decode_probe(Self::section_bytes(bytes, layout.probe)?)?;
-        let def_map = Self::decode_def_map(Self::section_bytes(bytes, layout.def_map)?, &probe)?;
-        let semantic_ir =
-            Self::decode_semantic_ir(Self::section_bytes(bytes, layout.semantic_ir)?, &probe)?;
-        let body_ir = Self::decode_body_ir(Self::section_bytes(bytes, layout.body_ir)?, &probe)?;
-
-        Ok(PackageCacheArtifact::new(
-            probe.header,
-            PackageCachePayload::new(probe.parse, def_map, semantic_ir, body_ir),
-        ))
+            probe,
+            def_map,
+            semantic_ir,
+            body_ir,
+        })
     }
 
     /// Decode the small startup section and validate its package-wide counts.
@@ -291,20 +276,6 @@ impl PackageCacheCodec {
                 .context("while attempting to deserialize package cache semantic IR section")?;
         Self::validate_semantic_ir(&semantic_ir, probe)?;
         Ok(semantic_ir)
-    }
-
-    #[cfg(test)]
-    fn section_bytes(bytes: &[u8], range: PackageCacheSectionRange) -> anyhow::Result<&[u8]> {
-        let start = usize::try_from(range.offset)
-            .context("package cache section offset does not fit usize")?;
-        let len = usize::try_from(range.len)
-            .context("package cache section length does not fit usize")?;
-        let end = start
-            .checked_add(len)
-            .context("package cache section range overflows usize")?;
-        bytes
-            .get(start..end)
-            .context("package cache section range is outside artifact bytes")
     }
 
     /// Use one bounded wincode configuration for every independently decoded storage unit.
@@ -396,11 +367,13 @@ impl PackageCacheCodec {
     }
 
     /// Check all cross-section relationships before writing bytes.
-    fn validate_artifact(artifact: &PackageCacheArtifact) -> anyhow::Result<()> {
-        let probe = PackageCacheProbe::from_artifact(artifact);
-        Self::validate_probe(&probe)?;
-        Self::validate_def_map(&artifact.payload.def_map, &probe)?;
-        Self::validate_semantic_ir(&artifact.payload.semantic_ir, &probe)?;
-        Self::validate_body_ir(&artifact.payload.body_ir, &probe)
+    fn validate_write_input(
+        input: PackageCacheWriteInput<'_>,
+        probe: &PackageCacheProbe,
+    ) -> anyhow::Result<()> {
+        Self::validate_probe(probe)?;
+        Self::validate_def_map(input.def_map, probe)?;
+        Self::validate_semantic_ir(input.semantic_ir, probe)?;
+        Self::validate_body_ir(input.body_ir, probe)
     }
 }

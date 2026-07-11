@@ -213,37 +213,6 @@ fn package_slot(workspace: &WorkspaceMetadata, package_name: &str) -> PackageSlo
 }
 
 #[test]
-fn roundtrips_package_cache_header_codec() {
-    utils::check_cache_header_codec(expect![[r#"
-        encoded header bytes 315
-        0500000007000000000000002000000000000000706174682b66696c653a2f2f
-        2f776f726b73706163652361707040302e312e30030000000000000061707000
-        0000000300000015000000000000002f776f726b73706163652f436172676f2e
-        746f6d6c00000000000000000000000000000000020000000000000003000000
-        000000006170700000000015000000000000002f776f726b73706163652f7372
-        632f6c69622e727307000000000000006170702d636c69010000001600000000
-        0000002f776f726b73706163652f7372632f6d61696e2e727301000000000000
-        002400000000000000706174682b66696c653a2f2f2f776f726b73706163652f
-        6465702364657040302e312e3003000000000000006465700100000707070707
-        070707070707070707070707070707070707070707070707070707
-
-        decoded header
-        schema 5
-        source fingerprint 0707070707070707070707070707070707070707070707070707070707070707
-        package #7 app
-        id path+file:///workspace#app@0.1.0
-        source workspace
-        edition 2024
-        manifest /workspace/Cargo.toml
-        targets
-        - app [lib] /workspace/src/lib.rs
-        - app-cli [bin] /workspace/src/main.rs
-        dependencies
-        - dep -> path+file:///workspace/dep#dep@0.1.0 [normal]
-    "#]]);
-}
-
-#[test]
 fn roundtrips_minimal_package_cache_artifact_codec() {
     utils::check_minimal_cache_artifact_codec(expect![[r#"
         encoded artifact has bytes true
