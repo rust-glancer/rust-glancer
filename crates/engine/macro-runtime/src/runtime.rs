@@ -11,8 +11,8 @@ use anyhow::Context as _;
 use rg_ir_model::LocalDefRef;
 use rg_ir_storage::MacroDefinitionData;
 use rg_parse::{FileId, Span};
+use rg_text::RustEdition;
 use rg_tt::TopSubtree;
-use rg_workspace::RustEdition;
 
 use super::{
     ExpansionParseKind, ExpansionSyntax,

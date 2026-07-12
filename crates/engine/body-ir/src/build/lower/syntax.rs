@@ -57,19 +57,19 @@ impl BodyLowering<'_> {
     }
 
     pub(super) fn intern_ast_name(&mut self, name: ast::Name) -> Name {
-        self.intern_name_text(name.text())
+        self.interner.intern(name.text())
     }
 
     pub(super) fn intern_ast_name_ref(&mut self, name_ref: ast::NameRef) -> Name {
-        self.intern_name_text(name_ref.text())
+        self.interner.intern(name_ref.text())
     }
 
     pub(super) fn intern_ast_name_or_name_ref(&mut self, name: ast::NameOrNameRef) -> Name {
-        self.intern_name_text(name.text())
+        self.interner.intern(name.text())
     }
 
     pub(super) fn intern_ast_lifetime(&mut self, lifetime: ast::Lifetime) -> Name {
-        self.intern_name_text(lifetime.text())
+        self.interner.intern(lifetime.text())
     }
 
     pub(super) fn lower_label(&mut self, label: Option<ast::Label>) -> Option<LabelData> {
@@ -232,12 +232,6 @@ impl BodyLowering<'_> {
         }
 
         Some(BodyPathSegmentArgs::Parenthesized(text))
-    }
-
-    fn intern_name_text(&mut self, text: impl AsRef<str>) -> Name {
-        let text = text.as_ref();
-        self.interner
-            .intern(text.strip_prefix("r#").unwrap_or(text))
     }
 }
 

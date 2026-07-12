@@ -22,7 +22,7 @@ use rg_syntax::{
     AstNode as _,
     ast::{self, HasDocComments, HasModuleItem, HasName, HasVisibility},
 };
-use rg_text::{Name, NameInterner};
+use rg_text::{Name, NameInterner, RustEdition};
 use rg_tt::{
     Span as TtSpan,
     syntax_bridge::{ExpansionSpanMap, SpanFactory},
@@ -34,7 +34,7 @@ use super::generated::GeneratedOrigin;
 pub(super) struct GeneratedSourceLowering<'a> {
     origin: &'a GeneratedOrigin,
     interner: &'a mut NameInterner,
-    edition: rg_workspace::RustEdition,
+    edition: RustEdition,
     span_map: ExpansionSpanMap,
     line_index: LineIndex,
     items: Arena<ItemTreeId, ItemNode>,
@@ -45,7 +45,7 @@ impl<'a> GeneratedSourceLowering<'a> {
         origin: &'a GeneratedOrigin,
         expansion: ExpansionSyntax,
         interner: &'a mut NameInterner,
-        edition: rg_workspace::RustEdition,
+        edition: RustEdition,
     ) -> Result<GeneratedSourceData> {
         let ExpansionSyntax { parse, span_map } = expansion;
         let source_text = parse.syntax_node().text().to_string();
@@ -282,9 +282,8 @@ impl<'a> GeneratedSourceLowering<'a> {
             }
             ast::Item::Use(item) => {
                 let kind = ItemKind::Use(UseItem::from_ast(&item, &mut *self.interner));
-                let name = normalized_use_name(&item).map(|name| self.intern_name(name));
                 let visibility = VisibilityLevel::from_ast(&item.visibility(), ());
-                Some(self.alloc_documented_item(kind, name, None, visibility, &item))
+                Some(self.alloc_documented_item(kind, None, None, visibility, &item))
             }
         };
 
@@ -394,16 +393,12 @@ impl<'a> GeneratedSourceLowering<'a> {
         Ok(item_ids)
     }
 
-    fn intern_name(&mut self, text: impl AsRef<str>) -> Name {
-        self.interner.intern(text)
-    }
-
     fn intern_ast_name(&mut self, name: Option<ast::Name>) -> Option<Name> {
-        name.map(|name| self.intern_name(name.text()))
+        name.map(|name| self.interner.intern(name.text()))
     }
 
     fn intern_ast_name_ref(&mut self, name: Option<ast::NameRef>) -> Option<Name> {
-        name.map(|name| self.intern_name(name.syntax().text().to_string()))
+        name.map(|name| self.interner.intern(name.text()))
     }
 
     fn alloc_item(
@@ -480,7 +475,7 @@ fn tt_span_for_range(
     span_map: &ExpansionSpanMap,
     origin_file_id: FileId,
     origin_span: Span,
-    edition: rg_workspace::RustEdition,
+    edition: RustEdition,
     range: rg_syntax::TextRange,
 ) -> TtSpan {
     if let Some(span) = span_map.span_for_range(range) {
@@ -494,12 +489,4 @@ fn tt_span_for_range(
         macro_edition(edition),
     )
     .span_for(text_range)
-}
-
-/// Keeps the original `use ...` text in a compact, human-readable form for debugging and tests.
-fn normalized_use_name(use_item: &ast::Use) -> Option<String> {
-    let use_tree = use_item.use_tree()?;
-    let text = use_tree.syntax().text().to_string();
-
-    Some(text.split_whitespace().collect::<Vec<_>>().join(" "))
 }

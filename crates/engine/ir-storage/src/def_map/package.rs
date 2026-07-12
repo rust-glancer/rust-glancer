@@ -5,7 +5,7 @@ use wincode::{SchemaRead, SchemaWrite};
 use rg_arena::Arena;
 use rg_ir_model::{ModuleId, ModuleRef};
 use rg_parse::TargetId;
-use rg_text::Name;
+use rg_text::{Name, RustEdition};
 
 use super::store::DefMap;
 
@@ -52,6 +52,7 @@ impl TargetData {
 #[derive(Debug, Clone, PartialEq, Eq, Default, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct PackageDefMaps {
     pub(crate) name: String,
+    pub(crate) edition: RustEdition,
     pub(crate) target_names: Arena<TargetId, String>,
     pub(crate) target_data: Arena<TargetId, TargetData>,
     pub(crate) targets: Arena<TargetId, DefMap>,
@@ -60,6 +61,7 @@ pub struct PackageDefMaps {
 impl PackageDefMaps {
     pub fn new(
         name: String,
+        edition: RustEdition,
         target_names: Vec<String>,
         target_data: Vec<TargetData>,
         targets: Vec<DefMap>,
@@ -77,6 +79,7 @@ impl PackageDefMaps {
 
         Self {
             name,
+            edition,
             target_names: Arena::from_vec(target_names),
             target_data: Arena::from_vec(target_data),
             targets: Arena::from_vec(targets),
@@ -86,6 +89,11 @@ impl PackageDefMaps {
     /// Returns the Cargo package name this def-map package belongs to.
     pub fn package_name(&self) -> &str {
         &self.name
+    }
+
+    /// Returns the Rust edition shared by all targets in this Cargo package.
+    pub fn edition(&self) -> RustEdition {
+        self.edition
     }
 
     /// Returns the crate name for one target, if that target exists.

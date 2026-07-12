@@ -1,8 +1,8 @@
 //! Shared syntax helpers for declarative macro expansion call sites.
 
 use rg_parse::{FileId, Span};
+use rg_text::RustEdition;
 use rg_tt::{Edition, Span as TtSpan, syntax_bridge::SpanFactory};
-use rg_workspace::RustEdition;
 
 pub fn macro_edition(edition: RustEdition) -> Edition {
     match edition {

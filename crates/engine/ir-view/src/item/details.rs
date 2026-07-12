@@ -11,9 +11,12 @@ use rg_ir_model::{
     identity::DeclarationRef,
 };
 use rg_ir_storage::{DefMapQuery, DefMapSource, ItemStoreQuery};
+use rg_text::RustEdition;
 
 use crate::{
-    IndexedViewDb, SymbolKind, display::signature::SignatureRenderer, item::path::PathView,
+    IndexedViewDb, SymbolKind,
+    display::{signature::SignatureRenderer, syntax::SyntaxRenderer},
+    item::path::PathView,
     member::MemberView,
 };
 
@@ -61,11 +64,12 @@ impl DeclarationDetails {
 /// Builds hover/detail facts for declaration refs.
 pub struct DeclarationDetailsView<'a, 'db> {
     db: &'a IndexedViewDb<'db>,
+    edition: RustEdition,
 }
 
 impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
-    pub fn new(db: &'a IndexedViewDb<'db>) -> Self {
-        Self { db }
+    pub fn new(db: &'a IndexedViewDb<'db>, edition: RustEdition) -> Self {
+        Self { db, edition }
     }
 
     /// Return details for one declaration.
@@ -99,7 +103,7 @@ impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
         Ok(Some(DeclarationDetails {
             kind: SymbolKind::Variable,
             path: None,
-            signature: Some(SignatureRenderer::binding_signature(
+            signature: Some(SignatureRenderer::new(self.edition).binding_signature(
                 self.db,
                 binding_data,
                 body.binding_ty(binding_ref.binding),
@@ -130,7 +134,9 @@ impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
         let Some(items) = item_query.item_store_for_origin(ty.origin)? else {
             return Ok(None);
         };
-        let path = PathView::new(self.db).type_def_path(ty)?;
+        let paths = PathView::new(self.db, self.edition);
+        let signatures = SignatureRenderer::new(self.edition);
+        let path = paths.type_def_path(ty)?;
         match ty.id {
             TypeDefId::Struct(id) => {
                 let Some(data) = items.struct_data(id) else {
@@ -139,7 +145,7 @@ impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
                 Ok(Some(DeclarationDetails {
                     kind: SymbolKind::Struct,
                     path,
-                    signature: Some(SignatureRenderer::struct_signature(data)),
+                    signature: Some(signatures.struct_signature(data)),
                     docs: data.docs.as_ref().map(Documentation::text),
                 }))
             }
@@ -150,7 +156,7 @@ impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
                 Ok(Some(DeclarationDetails {
                     kind: SymbolKind::Enum,
                     path,
-                    signature: Some(SignatureRenderer::enum_signature(data)),
+                    signature: Some(signatures.enum_signature(data)),
                     docs: data.docs.as_ref().map(Documentation::text),
                 }))
             }
@@ -161,7 +167,7 @@ impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
                 Ok(Some(DeclarationDetails {
                     kind: SymbolKind::Union,
                     path,
-                    signature: Some(SignatureRenderer::union_signature(data)),
+                    signature: Some(signatures.union_signature(data)),
                     docs: data.docs.as_ref().map(Documentation::text),
                 }))
             }
@@ -175,8 +181,8 @@ impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
         };
         Ok(Some(DeclarationDetails {
             kind: SymbolKind::Trait,
-            path: PathView::new(self.db).trait_path(trait_ref)?,
-            signature: Some(SignatureRenderer::trait_signature(data)),
+            path: PathView::new(self.db, self.edition).trait_path(trait_ref)?,
+            signature: Some(SignatureRenderer::new(self.edition).trait_signature(data)),
             docs: data.docs.as_ref().map(Documentation::text),
         }))
     }
@@ -192,8 +198,10 @@ impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
         };
         Ok(Some(DeclarationDetails {
             kind: function.symbol_kind(),
-            path: function.display_path(&PathView::new(self.db))?,
-            signature: Some(SignatureRenderer::function_signature(function.data())),
+            path: function.display_path(&PathView::new(self.db, self.edition))?,
+            signature: Some(
+                SignatureRenderer::new(self.edition).function_signature(function.data()),
+            ),
             docs: function.docs_text(),
         }))
     }
@@ -206,8 +214,8 @@ impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
         };
         Ok(Some(DeclarationDetails {
             kind: SymbolKind::Field,
-            path: field.display_path(&PathView::new(self.db))?,
-            signature: SignatureRenderer::field_signature(field.data()),
+            path: field.display_path(&PathView::new(self.db, self.edition))?,
+            signature: SignatureRenderer::new(self.edition).field_signature(field.data()),
             docs: field.docs_text(),
         }))
     }
@@ -222,8 +230,10 @@ impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
         };
         Ok(Some(DeclarationDetails {
             kind: SymbolKind::EnumVariant,
-            path: PathView::new(self.db).enum_variant_path(data)?,
-            signature: Some(SignatureRenderer::enum_variant_signature(data.variant)),
+            path: PathView::new(self.db, self.edition).enum_variant_path(data)?,
+            signature: Some(
+                SignatureRenderer::new(self.edition).enum_variant_signature(data.variant),
+            ),
             docs: data.variant.docs.as_ref().map(Documentation::text),
         }))
     }
@@ -238,8 +248,8 @@ impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
         };
         Ok(Some(DeclarationDetails {
             kind: SymbolKind::TypeAlias,
-            path: PathView::new(self.db).type_alias_path(type_alias_ref)?,
-            signature: Some(SignatureRenderer::type_alias_signature(data)),
+            path: PathView::new(self.db, self.edition).type_alias_path(type_alias_ref)?,
+            signature: Some(SignatureRenderer::new(self.edition).type_alias_signature(data)),
             docs: data.docs.as_ref().map(Documentation::text),
         }))
     }
@@ -251,8 +261,8 @@ impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
         };
         Ok(Some(DeclarationDetails {
             kind: SymbolKind::Const,
-            path: PathView::new(self.db).const_path(const_ref)?,
-            signature: Some(SignatureRenderer::const_signature(data)),
+            path: PathView::new(self.db, self.edition).const_path(const_ref)?,
+            signature: Some(SignatureRenderer::new(self.edition).const_signature(data)),
             docs: data.docs.as_ref().map(Documentation::text),
         }))
     }
@@ -264,8 +274,8 @@ impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
         };
         Ok(Some(DeclarationDetails {
             kind: SymbolKind::Static,
-            path: PathView::new(self.db).static_path(static_ref)?,
-            signature: Some(SignatureRenderer::static_signature(data)),
+            path: PathView::new(self.db, self.edition).static_path(static_ref)?,
+            signature: Some(SignatureRenderer::new(self.edition).static_signature(data)),
             docs: data.docs.as_ref().map(Documentation::text),
         }))
     }
@@ -284,9 +294,10 @@ impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
             .as_deref()
             .or(module.name.as_deref())
             .unwrap_or("crate");
+        let name = SyntaxRenderer::new(self.edition).identifier(name);
         Ok(Some(DeclarationDetails {
             kind: SymbolKind::Module,
-            path: PathView::new(self.db).module_path(module_ref)?,
+            path: PathView::new(self.db, self.edition).module_path(module_ref)?,
             signature: Some(format!("mod {name}")),
             docs: module.docs.as_ref().map(Documentation::text),
         }))
@@ -300,19 +311,21 @@ impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
         let Some(data) = self.db.local_def_data(local_def_ref)? else {
             return Ok(None);
         };
-        let path = PathView::new(self.db)
+        let syntax = SyntaxRenderer::new(self.edition);
+        let name = syntax.identifier(&data.name);
+        let path = PathView::new(self.db, self.edition)
             .module_path(ModuleRef {
                 origin: local_def_ref.origin,
                 module: data.module,
             })?
-            .map(|module| format!("{module}::{}", data.name));
+            .map(|module| format!("{module}::{name}"));
         let docs = DefMapQuery::new(self.db)
             .macro_definition_view(DefId::Local(local_def_ref))?
             .and_then(|macro_| macro_.data.docs.as_ref().map(Documentation::text));
         Ok(Some(DeclarationDetails {
             kind: SymbolKind::from_local_def_kind(data.kind),
             path,
-            signature: Some(format!("{} {}", data.kind, data.name)),
+            signature: Some(format!("{} {name}", data.kind)),
             docs,
         }))
     }

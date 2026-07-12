@@ -1741,6 +1741,8 @@ dependencies = [
  "rg_package_store",
  "rg_parse",
  "rg_semantic_ir",
+ "rg_syntax",
+ "rg_text",
  "rg_ty",
 ]
 
@@ -1787,6 +1789,7 @@ dependencies = [
  "rg_project",
  "rg_source",
  "rg_std",
+ "rg_text",
  "rg_workspace",
  "tarpc",
  "test_fixture",
@@ -1854,8 +1857,8 @@ dependencies = [
  "rg_macro_expand",
  "rg_parse",
  "rg_syntax",
+ "rg_text",
  "rg_tt",
- "rg_workspace",
 ]
 
 [[package]]
@@ -1878,6 +1881,7 @@ dependencies = [
  "rg_source",
  "rg_std",
  "rg_syntax",
+ "rg_text",
  "rg_workspace",
  "test_fixture",
  "wincode",
@@ -2060,6 +2064,7 @@ dependencies = [
  "expect-test",
  "rg_cfg_eval",
  "rg_std",
+ "rg_text",
  "serde",
  "test_fixture",
  "wincode",

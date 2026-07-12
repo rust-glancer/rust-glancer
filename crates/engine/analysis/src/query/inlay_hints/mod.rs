@@ -48,7 +48,8 @@ impl<'a, 'db> InlayHintCollector<'a, 'db> {
     ) -> anyhow::Result<Vec<InlayHint>> {
         // Binding hints depend on body-level type facts and type rendering, so keep that
         // projection separate from hint families backed by declaration metadata.
-        let renderer = TypeRenderer::new(self.0.view_db());
+        let renderer =
+            TypeRenderer::new(self.0.view_db(), self.0.view_db().target_edition(target)?);
         let mut hints = Vec::new();
         for binding in
             BodyView::new(self.0.view_db()).inferred_binding_tys(target, file_id, range)?
@@ -80,7 +81,8 @@ impl<'a, 'db> InlayHintCollector<'a, 'db> {
         file_id: FileId,
         range: Option<TextSpan>,
     ) -> anyhow::Result<Vec<InlayHint>> {
-        let renderer = TypeRenderer::new(self.0.view_db());
+        let renderer =
+            TypeRenderer::new(self.0.view_db(), self.0.view_db().target_edition(target)?);
         let mut hints = Vec::new();
         for expr in
             BodyStructureView::new(self.0.view_db()).method_chain_expr_tys(target, file_id)?

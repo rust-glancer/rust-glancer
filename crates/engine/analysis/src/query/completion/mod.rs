@@ -169,7 +169,8 @@ impl<'a, 'db, 'source> CompletionResolver<'a, 'db, 'source> {
                 Ok(completions)
             }
             CompletionSite::RecordField(site) => {
-                RecordFieldCompletionResolver::new(self.analysis.view_db()).completions(site)
+                RecordFieldCompletionResolver::new(self.analysis.view_db(), self.query.target)
+                    .completions(site)
             }
         }
     }

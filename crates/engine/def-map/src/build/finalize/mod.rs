@@ -475,6 +475,7 @@ pub(super) fn finalize_target_states(
 pub(super) fn freeze_package(package: &Package, package_states: &[TargetState]) -> DefMapPackage {
     DefMapPackage::new(
         package.package_name().to_string(),
+        package.edition(),
         package_states
             .iter()
             .map(|state| state.target_name.clone())

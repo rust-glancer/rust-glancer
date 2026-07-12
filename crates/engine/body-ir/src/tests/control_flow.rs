@@ -639,7 +639,7 @@ pub fn use_it(def_map: &DefMap) {
 }
 
 #[test]
-fn lowers_labeled_block_control_flow() {
+fn canonicalizes_raw_labels_in_labeled_control_flow() {
     check_project_body_ir(
         r#"
 //- /Cargo.toml
@@ -652,8 +652,8 @@ edition = "2024"
 pub struct UserId(u64);
 
 pub fn choose(value: UserId) -> UserId {
-    'done: {
-        break 'done value;
+    'r#break: {
+        break 'r#break value;
     }
 }
 "#,
@@ -671,11 +671,11 @@ pub fn choose(value: UserId) -> UserId {
             body
             expr e3 block s1 => () @ 3:40-7:2
               tail
-                expr e2 block 'done s2 => () @ 4:5-6:6
-                  stmt s0 expr; @ 5:9-5:27
-                    expr e1 break 'done => ! @ 5:9-5:26
+                expr e2 block 'break s2 => () @ 4:5-6:6
+                  stmt s0 expr; @ 5:9-5:30
+                    expr e1 break 'break => ! @ 5:9-5:29
                       value
-                        expr e0 path value -> local v0 => nominal struct body_labeled_block_fixture[lib]::crate::UserId @ 5:21-5:26
+                        expr e0 path value -> local v0 => nominal struct body_labeled_block_fixture[lib]::crate::UserId @ 5:24-5:29
         "#]],
     );
 }

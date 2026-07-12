@@ -4,7 +4,10 @@
 //! details for display and turn parameter names into LSP snippet placeholders.
 
 use rg_ir_model::items::ParamItem;
-use rg_ir_view::{display::signature::SignatureRenderer, member::MemberFunction};
+use rg_ir_view::{
+    display::{signature::SignatureRenderer, syntax::SyntaxRenderer},
+    member::MemberFunction,
+};
 
 use crate::model::{
     CompletionApplicability, CompletionEdit, CompletionInsertText, CompletionItem, CompletionKind,
@@ -46,11 +49,12 @@ pub(super) struct FunctionCompletionRequest<'label, 'member> {
 
 pub(super) struct FunctionCompletionRenderer<'source> {
     query: CompletionQuery<'source>,
+    syntax: SyntaxRenderer,
 }
 
 impl<'source> FunctionCompletionRenderer<'source> {
-    pub(super) fn new(query: CompletionQuery<'source>) -> Self {
-        Self { query }
+    pub(super) fn new(query: CompletionQuery<'source>, syntax: SyntaxRenderer) -> Self {
+        Self { query, syntax }
     }
 
     /// Builds display and snippet metadata for a resolved function declaration.
@@ -99,10 +103,13 @@ impl<'source> FunctionCompletionRenderer<'source> {
         let label = label_override
             .unwrap_or_else(|| function.name())
             .to_string();
+        let label = self.syntax.identifier(&label).to_string();
 
         FunctionCompletionMetadata {
             label: label.clone(),
-            detail: Some(SignatureRenderer::function_signature(function.data())),
+            detail: Some(
+                SignatureRenderer::new(self.syntax.edition()).function_signature(function.data()),
+            ),
             documentation: function.docs_text(),
             insert_text: self.insert_text(&label, function.params(), call_completion, edit),
             has_self_receiver: function.has_self_receiver(),

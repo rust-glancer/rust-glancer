@@ -538,7 +538,7 @@ impl BodyLowering<'_> {
         let method_name = name_ref
             .clone()
             .map(|name| self.intern_ast_name_ref(name))
-            .unwrap_or_else(|| self.interner.intern("<missing>"));
+            .unwrap_or_else(|| self.interner.intern_missing());
         let method_name_span = name_ref
             .as_ref()
             .map(|name| self.source(name.syntax()).span);

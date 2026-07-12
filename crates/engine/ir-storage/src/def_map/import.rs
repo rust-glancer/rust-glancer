@@ -9,8 +9,7 @@ use rg_ir_model::{
     last_segment_name,
 };
 use rg_parse::Span;
-use rg_text::{Name, NameInterner};
-use rg_workspace::RustEdition;
+use rg_text::{Name, NameInterner, RustEdition};
 
 /// One lowered import declaration.
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]

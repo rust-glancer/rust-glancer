@@ -213,6 +213,7 @@ mod tests {
     fn package_with_one_target(name: &str) -> PackageDefMaps {
         PackageDefMaps::new(
             name.to_string(),
+            rg_text::RustEdition::Edition2024,
             vec![format!("{name}_lib")],
             vec![TargetData::default()],
             vec![

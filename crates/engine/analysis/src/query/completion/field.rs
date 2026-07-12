@@ -1,6 +1,9 @@
 //! Shared field-completion rendering.
 
-use rg_ir_view::{display::signature::SignatureRenderer, member::MemberField};
+use rg_ir_view::{
+    display::{signature::SignatureRenderer, syntax::SyntaxRenderer},
+    member::MemberField,
+};
 
 use crate::model::{
     CompletionApplicability, CompletionEdit, CompletionInsertText, CompletionItem, CompletionKind,
@@ -9,11 +12,13 @@ use crate::model::{
 
 use super::completion_sort::CompletionSortPolicy;
 
-pub(super) struct FieldCompletionRenderer;
+pub(super) struct FieldCompletionRenderer {
+    syntax: SyntaxRenderer,
+}
 
 impl FieldCompletionRenderer {
-    pub(super) fn new() -> Self {
-        Self
+    pub(super) fn new(syntax: SyntaxRenderer) -> Self {
+        Self { syntax }
     }
 
     /// Builds one completion item for a resolved field declaration.
@@ -23,14 +28,14 @@ impl FieldCompletionRenderer {
         edit: CompletionEdit,
     ) -> Option<CompletionItem> {
         let target = CompletionTarget::Field(field.field_ref());
-        let label = field.key()?.to_string();
+        let label = self.syntax.field_key(field.key()?).to_string();
 
         Some(CompletionItem {
             label: label.clone(),
             kind: CompletionKind::Field,
             target,
             applicability: CompletionApplicability::Known,
-            detail: SignatureRenderer::field_signature(field.data()),
+            detail: SignatureRenderer::new(self.syntax.edition()).field_signature(field.data()),
             documentation: field.docs_text(),
             sort_text: CompletionSortPolicy::General.sort_text(
                 None,

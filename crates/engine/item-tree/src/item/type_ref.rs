@@ -78,7 +78,9 @@ impl FromAst for TypeRef {
                 ),
             },
             ast::Type::RefType(ty) => Self::Reference {
-                lifetime: ty.lifetime().map(|lifetime| normalized_syntax(&lifetime)),
+                lifetime: ty
+                    .lifetime()
+                    .map(|lifetime| interner.intern(lifetime.text())),
                 mutability: Mutability::from_mut_token(ty.mut_token().is_some()),
                 inner: Box::new(
                     ty.ty()
@@ -191,8 +193,8 @@ fn type_path_segment_from_ast(
 ) -> TypePathSegment {
     let name = segment
         .name_ref()
-        .map(|name| interner.intern(name.syntax().text().to_string().trim()))
-        .unwrap_or_else(|| interner.intern(normalized_syntax(segment)));
+        .map(|name| interner.intern(name.text()))
+        .unwrap_or_else(|| interner.intern_missing());
     let span = segment
         .name_ref()
         .map(|name| name.syntax().text_range())
@@ -244,8 +246,8 @@ impl FromAst for GenericArg {
             ast::GenericArg::AssocTypeArg(arg) => Self::AssocType {
                 name: arg
                     .name_ref()
-                    .map(|name| interner.intern(name.syntax().text().to_string()))
-                    .unwrap_or_else(|| interner.intern("<missing>")),
+                    .map(|name| interner.intern(name.text()))
+                    .unwrap_or_else(|| interner.intern_missing()),
                 ty: arg
                     .ty()
                     .map(|ty| TypeRef::from_ast(&ty, (line_index, &mut *interner))),
@@ -253,7 +255,7 @@ impl FromAst for GenericArg {
             ast::GenericArg::ConstArg(arg) => Self::Const(normalized_syntax(&arg)),
             ast::GenericArg::LifetimeArg(arg) => arg
                 .lifetime()
-                .map(|lifetime| Self::Lifetime(normalized_syntax(&lifetime)))
+                .map(|lifetime| Self::Lifetime(interner.intern(lifetime.text())))
                 .unwrap_or_else(|| Self::Unsupported(normalized_syntax(&arg))),
             ast::GenericArg::TypeArg(arg) => arg
                 .ty()
@@ -282,7 +284,7 @@ fn type_bound_from_ast(
     interner: &mut NameInterner,
 ) -> TypeBound {
     if let Some(lifetime) = bound.lifetime() {
-        return TypeBound::Lifetime(normalized_syntax(&lifetime));
+        return TypeBound::Lifetime(interner.intern(lifetime.text()));
     }
 
     if let Some(ty) = bound.ty() {

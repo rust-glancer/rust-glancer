@@ -44,7 +44,7 @@ const INTER: RgChalkInterner = RgChalkInterner;
 pub(super) struct GenericBinderEnv {
     bindings: Vec<GenericBinding>,
     type_indices: HashMap<Name, usize>,
-    lifetime_indices: HashMap<String, usize>,
+    lifetime_indices: HashMap<Name, usize>,
 }
 
 #[derive(Debug, Clone)]
@@ -102,7 +102,7 @@ impl GenericBinderEnv {
             env.push_type(Name::new("Self"));
         }
         for lifetime in &generics.lifetimes {
-            env.push_lifetime(lifetime.name.to_string());
+            env.push_lifetime(lifetime.name.clone());
         }
         for param in &generics.types {
             env.push_type(param.name.clone());
@@ -116,7 +116,7 @@ impl GenericBinderEnv {
         self.type_indices.insert(name, index);
     }
 
-    fn push_lifetime(&mut self, name: String) {
+    fn push_lifetime(&mut self, name: Name) {
         let index = self.bindings.len();
         self.bindings.push(GenericBinding::Lifetime);
         self.lifetime_indices.insert(name, index);
@@ -128,7 +128,7 @@ impl GenericBinderEnv {
         })
     }
 
-    fn lifetime_var(&self, lifetime: &str) -> Option<chalk_ir::Lifetime<RgChalkInterner>> {
+    fn lifetime_var(&self, lifetime: &Name) -> Option<chalk_ir::Lifetime<RgChalkInterner>> {
         self.lifetime_indices.get(lifetime).map(|index| {
             BoundVar::new(DebruijnIndex::INNERMOST, *index).to_lifetime::<RgChalkInterner>(INTER)
         })
@@ -554,7 +554,7 @@ where
                 inner,
             } => {
                 let lifetime = lifetime
-                    .as_deref()
+                    .as_ref()
                     .and_then(|lifetime| self.binders.lifetime_var(lifetime))
                     .unwrap_or_else(|| LifetimeData::Erased.intern(INTER));
                 let inner = self.lower_type_ref(inner, subst)?;

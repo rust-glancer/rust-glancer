@@ -2,6 +2,7 @@ use rg_ir_model::TargetRef;
 use rg_ir_view::{
     SymbolKind,
     body::{BodyClosingBraceBlock, BodyClosingBraceBlockKind, BodyStructureView},
+    display::syntax::SyntaxRenderer,
 };
 use rg_parse::{FileId, Span, TextSpan};
 
@@ -126,7 +127,10 @@ impl ClosingBraceCandidate {
         block: &BodyClosingBraceBlock,
     ) -> anyhow::Result<String> {
         let label = match block.kind() {
-            BodyClosingBraceBlockKind::Function { name } => format!("// fn {name}"),
+            BodyClosingBraceBlockKind::Function { name } => {
+                let syntax = SyntaxRenderer::new(analysis.view_db().target_edition(target)?);
+                format!("// fn {}", syntax.identifier(name))
+            }
             BodyClosingBraceBlockKind::Match { scrutinee } => {
                 Self::control_flow_label(analysis, target, block.file_id(), "// match", *scrutinee)?
             }

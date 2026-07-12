@@ -37,7 +37,16 @@ impl fmt::Display for GenericParams {
             if param.bounds.is_empty() {
                 param.name.to_string()
             } else {
-                format!("{}: {}", param.name, param.bounds.join(" + "))
+                format!(
+                    "{}: {}",
+                    param.name,
+                    param
+                        .bounds
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>()
+                        .join(" + ")
+                )
             }
         }));
         params.extend(self.types.iter().map(|param| {
@@ -93,7 +102,7 @@ impl fmt::Display for GenericParams {
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct LifetimeParamData {
     pub name: Name,
-    pub bounds: Vec<String>,
+    pub bounds: Vec<Name>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
@@ -113,14 +122,8 @@ pub struct ConstParamData {
 /// Where-clause predicate that can affect later signature resolution.
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub enum WherePredicate {
-    Type {
-        ty: TypeRef,
-        bounds: Vec<TypeBound>,
-    },
-    Lifetime {
-        lifetime: String,
-        bounds: Vec<String>,
-    },
+    Type { ty: TypeRef, bounds: Vec<TypeBound> },
+    Lifetime { lifetime: Name, bounds: Vec<Name> },
     Unsupported(String),
 }
 
@@ -129,7 +132,14 @@ impl fmt::Display for WherePredicate {
         match self {
             Self::Type { ty, bounds } => write_bound_list(f, &ty.to_string(), bounds),
             Self::Lifetime { lifetime, bounds } => {
-                write!(f, "{lifetime}: {}", bounds.join(" + "))
+                write!(f, "{lifetime}: ")?;
+                for (index, bound) in bounds.iter().enumerate() {
+                    if index > 0 {
+                        write!(f, " + ")?;
+                    }
+                    write!(f, "{bound}")?;
+                }
+                Ok(())
             }
             Self::Unsupported(text) => write!(f, "<unsupported:{text}>"),
         }

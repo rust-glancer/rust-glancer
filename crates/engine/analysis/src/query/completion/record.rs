@@ -1,6 +1,7 @@
 //! Record-field completion assembly for struct literals and record patterns.
 
-use rg_ir_view::{IndexedViewDb, member::MemberView};
+use rg_ir_model::TargetRef;
+use rg_ir_view::{IndexedViewDb, display::syntax::SyntaxRenderer, member::MemberView};
 
 use crate::{
     completion_site::RecordFieldCompletionSite,
@@ -9,11 +10,14 @@ use crate::{
 
 use super::{candidates::CompletionCandidateSource, field::FieldCompletionRenderer};
 
-pub(super) struct RecordFieldCompletionResolver<'a, 'db>(&'a IndexedViewDb<'db>);
+pub(super) struct RecordFieldCompletionResolver<'a, 'db> {
+    db: &'a IndexedViewDb<'db>,
+    target: TargetRef,
+}
 
 impl<'a, 'db> RecordFieldCompletionResolver<'a, 'db> {
-    pub(super) fn new(db: &'a IndexedViewDb<'db>) -> Self {
-        Self(db)
+    pub(super) fn new(db: &'a IndexedViewDb<'db>, target: TargetRef) -> Self {
+        Self { db, target }
     }
 
     /// Collects named fields for a record site like `User { na$0 }`.
@@ -24,9 +28,10 @@ impl<'a, 'db> RecordFieldCompletionResolver<'a, 'db> {
         let edit = CompletionEdit {
             replace: site.replace_span(),
         };
-        let completion_candidates = CompletionCandidateSource::new(self.0);
-        let members = MemberView::new(self.0);
-        let renderer = FieldCompletionRenderer::new();
+        let completion_candidates = CompletionCandidateSource::new(self.db);
+        let members = MemberView::new(self.db);
+        let renderer =
+            FieldCompletionRenderer::new(SyntaxRenderer::new(self.db.target_edition(self.target)?));
         let mut completions = Vec::new();
 
         for field_ref in completion_candidates.field_candidates_for_record(&site)? {

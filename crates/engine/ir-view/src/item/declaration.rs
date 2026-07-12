@@ -1,31 +1,50 @@
 //! Source-level declaration lookup shared by editor queries.
 
-use rg_ir_model::items::TypeRef;
+use std::{borrow::Cow, fmt};
+
+use anyhow::Context as _;
+use rg_ir_model::items::{FieldKey, TypeRef};
 use rg_ir_model::{
     BodyBindingRef, EnumVariantRef, FieldRef, FunctionRef, ItemOwner, LocalDefRef, ModuleRef,
     SemanticItemKind, SemanticItemRef, TargetRef, identity::DeclarationRef,
 };
 use rg_ir_storage::{DefMapSource, ItemStoreQuery, ModuleOrigin};
 use rg_parse::{FileId, Span};
+use rg_text::Name;
 
-use crate::{IndexedViewDb, SymbolKind};
+use crate::{
+    IndexedViewDb, SymbolKind,
+    display::syntax::{NameDisplay, SyntaxRenderer},
+};
+
+/// The semantic or structural label carried by one declaration projection.
+///
+/// Most declarations keep their interned semantic name. Tuple fields retain their index, while
+/// impls retain the stable item identity used to borrow their header only during presentation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum DeclarationLabel {
+    Name(Name),
+    TupleField(usize),
+    Unsupported,
+    Impl(SemanticItemRef),
+}
 
 /// Composite declaration facts shared by editor queries.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Declaration {
     target: TargetRef,
     kind: SymbolKind,
-    name: String,
+    label: DeclarationLabel,
     file_id: FileId,
     span: Span,
     selection_span: Span,
 }
 
 impl Declaration {
-    pub fn new(
+    fn named(
         target: TargetRef,
         kind: SymbolKind,
-        name: String,
+        name: Name,
         file_id: FileId,
         span: Span,
         selection_span: Span,
@@ -33,7 +52,25 @@ impl Declaration {
         Self {
             target,
             kind,
-            name,
+            label: DeclarationLabel::Name(name),
+            file_id,
+            span,
+            selection_span,
+        }
+    }
+
+    fn tuple_field(
+        target: TargetRef,
+        kind: SymbolKind,
+        index: usize,
+        file_id: FileId,
+        span: Span,
+        selection_span: Span,
+    ) -> Self {
+        Self {
+            target,
+            kind,
+            label: DeclarationLabel::TupleField(index),
             file_id,
             span,
             selection_span,
@@ -48,8 +85,26 @@ impl Declaration {
         self.kind
     }
 
-    pub fn name(&self) -> &str {
-        &self.name
+    /// Returns the canonical identifier identity when this declaration actually has one.
+    pub fn semantic_name(&self) -> Option<&Name> {
+        match &self.label {
+            DeclarationLabel::Name(name) => Some(name),
+            DeclarationLabel::TupleField(_)
+            | DeclarationLabel::Unsupported
+            | DeclarationLabel::Impl(_) => None,
+        }
+    }
+
+    /// Returns the canonical text used for name-based search.
+    ///
+    /// Anonymous impl containers deliberately have no searchable name.
+    pub fn search_name(&self) -> Option<Cow<'_, str>> {
+        match &self.label {
+            DeclarationLabel::Name(name) => Some(Cow::Borrowed(name)),
+            DeclarationLabel::TupleField(index) => Some(Cow::Owned(format!("#{index}"))),
+            DeclarationLabel::Unsupported => Some(Cow::Borrowed("<unsupported>")),
+            DeclarationLabel::Impl(_) => None,
+        }
     }
 
     pub fn file_id(&self) -> FileId {
@@ -62,6 +117,41 @@ impl Declaration {
 
     pub fn selection_span(&self) -> Span {
         self.selection_span
+    }
+}
+
+/// Borrowed edition-aware presentation of one declaration label.
+pub enum DeclarationDisplayName<'a> {
+    Name(NameDisplay<'a>),
+    TupleField(usize),
+    Unsupported,
+    Impl {
+        syntax: SyntaxRenderer,
+        self_ty: &'a TypeRef,
+        trait_ref: Option<&'a TypeRef>,
+    },
+}
+
+impl fmt::Display for DeclarationDisplayName<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Name(name) => name.fmt(f),
+            Self::TupleField(index) => write!(f, "#{index}"),
+            Self::Unsupported => f.write_str("<unsupported>"),
+            Self::Impl {
+                syntax,
+                self_ty,
+                trait_ref,
+            } => match trait_ref {
+                Some(trait_ref) => write!(
+                    f,
+                    "impl {} for {}",
+                    syntax.type_ref(trait_ref),
+                    syntax.type_ref(self_ty)
+                ),
+                None => write!(f, "impl {}", syntax.type_ref(self_ty)),
+            },
+        }
     }
 }
 
@@ -87,6 +177,34 @@ impl<'a, 'db> DeclarationView<'a, 'db> {
         }
     }
 
+    /// Creates the declaration-site Rust-syntax label without storing a second spelling.
+    ///
+    /// Occurrence-oriented features must use that occurrence's source or edition instead.
+    pub fn declaration_site_name<'display>(
+        &'display self,
+        declaration: &'display Declaration,
+    ) -> anyhow::Result<DeclarationDisplayName<'display>> {
+        let syntax = SyntaxRenderer::new(self.db.target_edition(declaration.target)?);
+        Ok(match &declaration.label {
+            DeclarationLabel::Name(name) => DeclarationDisplayName::Name(syntax.name(name)),
+            DeclarationLabel::TupleField(index) => DeclarationDisplayName::TupleField(*index),
+            DeclarationLabel::Unsupported => DeclarationDisplayName::Unsupported,
+            DeclarationLabel::Impl(item) => {
+                let view = ItemStoreQuery::new(self.db)
+                    .semantic_item_view(*item)?
+                    .context("impl declaration item is unavailable")?;
+                let (self_ty, trait_ref) = view
+                    .impl_header()
+                    .context("impl declaration has no impl header")?;
+                DeclarationDisplayName::Impl {
+                    syntax,
+                    self_ty,
+                    trait_ref,
+                }
+            }
+        })
+    }
+
     /// Return the file backing a root module.
     pub fn root_module_file(&self, module_ref: ModuleRef) -> anyhow::Result<Option<FileId>> {
         let Some(module) = self.db.module_data(module_ref)? else {
@@ -103,7 +221,7 @@ impl<'a, 'db> DeclarationView<'a, 'db> {
         let Some(module) = self.db.module_data(module_ref)? else {
             return Ok(None);
         };
-        let Some(name) = module.name.as_ref().map(ToString::to_string) else {
+        let Some(name) = module.name.clone() else {
             return Ok(None);
         };
         let (file_id, span) = match module.origin {
@@ -119,14 +237,14 @@ impl<'a, 'db> DeclarationView<'a, 'db> {
             } => (declaration_file, declaration_span),
         };
 
-        Ok(Some(Declaration {
-            target: module_ref.origin.origin_target(),
-            kind: SymbolKind::Module,
+        Ok(Some(Declaration::named(
+            module_ref.origin.origin_target(),
+            SymbolKind::Module,
             name,
             file_id,
             span,
-            selection_span: module.name_span.unwrap_or(span),
-        }))
+            module.name_span.unwrap_or(span),
+        )))
     }
 
     /// Return declaration facts for a DefMap local item.
@@ -135,14 +253,14 @@ impl<'a, 'db> DeclarationView<'a, 'db> {
             return Ok(None);
         };
 
-        Ok(Some(Declaration {
-            target: local_def.origin.origin_target(),
-            kind: SymbolKind::from_local_def_kind(data.kind),
-            name: data.name.to_string(),
-            file_id: data.file_id,
-            span: data.span,
-            selection_span: data.name_span.unwrap_or(data.span),
-        }))
+        Ok(Some(Declaration::named(
+            local_def.origin.origin_target(),
+            SymbolKind::from_local_def_kind(data.kind),
+            data.name.clone(),
+            data.file_id,
+            data.span,
+            data.name_span.unwrap_or(data.span),
+        )))
     }
 
     /// Return declaration facts for a semantic item.
@@ -168,14 +286,10 @@ impl<'a, 'db> DeclarationView<'a, 'db> {
                 let Some(local_impl) = self.db.local_impl_data(local_impl_ref)? else {
                     return Ok(None);
                 };
-                let Some((self_ty, trait_ref)) = view.impl_header() else {
-                    return Ok(None);
-                };
-
                 Ok(Some(Declaration {
                     target: item.origin().origin_target(),
                     kind: SymbolKind::Impl,
-                    name: Self::impl_label(self_ty, trait_ref),
+                    label: DeclarationLabel::Impl(item),
                     file_id: local_impl.file_id,
                     span: local_impl.span,
                     selection_span: local_impl.span,
@@ -191,21 +305,21 @@ impl<'a, 'db> DeclarationView<'a, 'db> {
                 | SemanticItemRef::Static(_) => Ok(None),
             },
             SemanticItemKind::TypeAlias | SemanticItemKind::Const | SemanticItemKind::Static => {
-                let Some(name) = view.name() else {
+                let Some(name) = view.name().cloned() else {
                     return Ok(None);
                 };
                 let Some(span) = view.span() else {
                     return Ok(None);
                 };
 
-                Ok(Some(Declaration {
-                    target: item.origin().origin_target(),
-                    kind: SymbolKind::from_semantic_item_kind(view.kind()),
-                    name: name.to_string(),
-                    file_id: view.source().file_id,
+                Ok(Some(Declaration::named(
+                    item.origin().origin_target(),
+                    SymbolKind::from_semantic_item_kind(view.kind()),
+                    name,
+                    view.source().file_id,
                     span,
-                    selection_span: view.name_span().unwrap_or(span),
-                }))
+                    view.name_span().unwrap_or(span),
+                )))
             }
         }
     }
@@ -219,17 +333,24 @@ impl<'a, 'db> DeclarationView<'a, 'db> {
             return Ok(None);
         };
 
-        Ok(Some(Declaration {
-            target: binding_ref.body.target,
-            kind: SymbolKind::Variable,
-            name: binding
-                .name
-                .as_deref()
-                .unwrap_or("<unsupported>")
-                .to_string(),
-            file_id: binding.source.file_id,
-            span: binding.source.span,
-            selection_span: binding.name_span.unwrap_or(binding.source.span),
+        let selection_span = binding.name_span.unwrap_or(binding.source.span);
+        Ok(Some(match &binding.name {
+            Some(name) => Declaration::named(
+                binding_ref.body.target,
+                SymbolKind::Variable,
+                name.clone(),
+                binding.source.file_id,
+                binding.source.span,
+                selection_span,
+            ),
+            None => Declaration {
+                target: binding_ref.body.target,
+                kind: SymbolKind::Variable,
+                label: DeclarationLabel::Unsupported,
+                file_id: binding.source.file_id,
+                span: binding.source.span,
+                selection_span,
+            },
         }))
     }
 
@@ -242,14 +363,14 @@ impl<'a, 'db> DeclarationView<'a, 'db> {
             return Ok(None);
         };
 
-        Ok(Some(Declaration {
-            target: variant_ref.origin.origin_target(),
-            kind: SymbolKind::EnumVariant,
-            name: data.variant.name.to_string(),
-            file_id: data.file_id,
-            span: data.variant.span,
-            selection_span: data.variant.name_span,
-        }))
+        Ok(Some(Declaration::named(
+            variant_ref.origin.origin_target(),
+            SymbolKind::EnumVariant,
+            data.variant.name.clone(),
+            data.file_id,
+            data.variant.span,
+            data.variant.name_span,
+        )))
     }
 
     /// Return declaration facts for a declared field.
@@ -261,13 +382,24 @@ impl<'a, 'db> DeclarationView<'a, 'db> {
             return Ok(None);
         };
 
-        Ok(Some(Declaration {
-            target: field.owner.origin.origin_target(),
-            kind: SymbolKind::Field,
-            name: key.declaration_label(),
-            file_id: data.file_id,
-            span: data.field.span,
-            selection_span: data.field.span,
+        let target = field.owner.origin.origin_target();
+        Ok(Some(match key {
+            FieldKey::Named(name) => Declaration::named(
+                target,
+                SymbolKind::Field,
+                name.clone(),
+                data.file_id,
+                data.field.span,
+                data.field.span,
+            ),
+            FieldKey::Tuple(index) => Declaration::tuple_field(
+                target,
+                SymbolKind::Field,
+                *index,
+                data.file_id,
+                data.field.span,
+                data.field.span,
+            ),
         }))
     }
 
@@ -277,24 +409,16 @@ impl<'a, 'db> DeclarationView<'a, 'db> {
             return Ok(None);
         };
 
-        Ok(Some(Declaration {
-            target: function.origin.origin_target(),
-            kind: match data.owner {
+        Ok(Some(Declaration::named(
+            function.origin.origin_target(),
+            match data.owner {
                 ItemOwner::Module(_) => SymbolKind::Function,
                 ItemOwner::Trait(_) | ItemOwner::Impl(_) => SymbolKind::Method,
             },
-            name: data.name.to_string(),
-            file_id: data.source.file_id,
-            span: data.span,
-            selection_span: data.name_span.unwrap_or(data.span),
-        }))
-    }
-
-    /// Render the label used when an impl itself is the declaration.
-    fn impl_label(self_ty: &TypeRef, trait_ref: Option<&TypeRef>) -> String {
-        match trait_ref {
-            Some(trait_ref) => format!("impl {trait_ref} for {self_ty}"),
-            None => format!("impl {self_ty}"),
-        }
+            data.name.clone(),
+            data.source.file_id,
+            data.span,
+            data.name_span.unwrap_or(data.span),
+        )))
     }
 }

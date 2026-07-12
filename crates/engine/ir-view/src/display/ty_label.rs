@@ -5,16 +5,23 @@
 //! are useful while reading code.
 
 use rg_ir_storage::ItemStoreQuery;
+use rg_text::RustEdition;
 use rg_ty::{GenericArg, NominalTy, OpaqueTraitBound, Ty};
 
-use crate::{IndexedViewDb, item::path::PathView};
+use crate::{IndexedViewDb, display::syntax::SyntaxRenderer, item::path::PathView};
 
 /// Renders compact user-facing labels for `Ty`.
-pub struct TypeRenderer<'a, 'db>(&'a IndexedViewDb<'db>);
+pub struct TypeRenderer<'a, 'db> {
+    db: &'a IndexedViewDb<'db>,
+    syntax: SyntaxRenderer,
+}
 
 impl<'a, 'db> TypeRenderer<'a, 'db> {
-    pub fn new(db: &'a IndexedViewDb<'db>) -> Self {
-        Self(db)
+    pub fn new(db: &'a IndexedViewDb<'db>, edition: RustEdition) -> Self {
+        Self {
+            db,
+            syntax: SyntaxRenderer::new(edition),
+        }
     }
 
     /// Render a type, returning `None` for unknown types.
@@ -43,7 +50,7 @@ impl<'a, 'db> TypeRenderer<'a, 'db> {
                 "[{}]",
                 self.render(inner)?.unwrap_or_else(|| "_".to_string())
             ))),
-            Ty::Syntax(ty) => Ok(Some(ty.to_string())),
+            Ty::Syntax(ty) => Ok(Some(self.syntax.type_ref(ty).to_string())),
             Ty::Reference { mutability, inner } => Ok(self
                 .render(inner)?
                 .map(|inner| format!("{}{inner}", mutability.render_prefix()))),
@@ -55,7 +62,7 @@ impl<'a, 'db> TypeRenderer<'a, 'db> {
                 Ok((!bounds.is_empty()).then(|| format!("impl {}", bounds.join(" + "))))
             }
             Ty::Closure(id) => Ok(Some(format!("{{closure#{id}}}"))),
-            Ty::FunctionItem(function) => Ok(PathView::new(self.0)
+            Ty::FunctionItem(function) => Ok(PathView::new(self.db, self.syntax.edition())
                 .function_path(*function)?
                 .map(|path| format!("{{fn {path}}}"))),
             Ty::Nominal(ty) | Ty::SelfTy(ty) => self.render_nominal(ty),
@@ -67,19 +74,20 @@ impl<'a, 'db> TypeRenderer<'a, 'db> {
 
     /// Render a nominal type by declared name and generic arguments.
     fn render_nominal(&self, ty: &NominalTy) -> anyhow::Result<Option<String>> {
-        let Some(name) = ItemStoreQuery::new(self.0).type_def_name(ty.def)? else {
+        let Some(name) = ItemStoreQuery::new(self.db).type_def_name(ty.def)? else {
             return Ok(None);
         };
 
         Ok(Some(format!(
-            "{name}{}",
+            "{}{}",
+            self.syntax.identifier(name),
             self.render_generic_args(&ty.args)?
         )))
     }
 
     /// Render one bound inside an `impl Trait` type.
     fn render_opaque_bound(&self, bound: &OpaqueTraitBound) -> anyhow::Result<String> {
-        let trait_path = PathView::new(self.0)
+        let trait_path = PathView::new(self.db, self.syntax.edition())
             .trait_path(bound.trait_ref)?
             .unwrap_or_else(|| "<trait>".to_string());
         Ok(format!(
@@ -106,7 +114,7 @@ impl<'a, 'db> TypeRenderer<'a, 'db> {
     fn render_generic_arg(&self, arg: &GenericArg) -> anyhow::Result<String> {
         match arg {
             GenericArg::Type(ty) => Ok(self.render(ty)?.unwrap_or_else(|| "_".to_string())),
-            GenericArg::Lifetime(lifetime) => Ok(lifetime.clone()),
+            GenericArg::Lifetime(lifetime) => Ok(self.syntax.name(lifetime).to_string()),
             GenericArg::Const(value) => Ok(value.clone()),
             GenericArg::FnTraitArgs { params, ret } => {
                 let params = params
@@ -126,10 +134,11 @@ impl<'a, 'db> TypeRenderer<'a, 'db> {
             }
             GenericArg::AssocType { name, ty } => match ty {
                 Some(ty) => Ok(format!(
-                    "{name} = {}",
+                    "{} = {}",
+                    self.syntax.identifier(name),
                     self.render(ty)?.unwrap_or_else(|| "_".to_string())
                 )),
-                None => Ok(name.to_string()),
+                None => Ok(self.syntax.identifier(name).to_string()),
             },
             GenericArg::Unsupported(text) => Ok(text.clone()),
         }

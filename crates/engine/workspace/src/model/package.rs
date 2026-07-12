@@ -1,12 +1,13 @@
 use std::path::{Path, PathBuf};
 
 use rg_cfg_eval::CfgOptions;
+use rg_text::RustEdition;
 
 use crate::SysrootCrate;
 use rg_std::MemorySize;
 use wincode::{SchemaRead, SchemaWrite};
 
-use super::{dependency::PackageDependency, edition::RustEdition, target::Target};
+use super::{dependency::PackageDependency, target::Target};
 
 /// Stable package identifier inside a normalized workspace metadata snapshot.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, derive_more::Display, MemorySize)]

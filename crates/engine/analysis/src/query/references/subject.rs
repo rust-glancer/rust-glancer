@@ -126,9 +126,9 @@ impl ReferenceSearchHints {
         declaration: &Declaration,
     ) -> Option<ReferenceSearchLabel> {
         match declaration.kind() {
-            SymbolKind::Field | SymbolKind::Method | SymbolKind::Variable => {
-                ReferenceSearchLabel::new(declaration.name())
-            }
+            SymbolKind::Field | SymbolKind::Method | SymbolKind::Variable => declaration
+                .semantic_name()
+                .and_then(|name| ReferenceSearchLabel::new(name)),
             SymbolKind::Const
             | SymbolKind::Enum
             | SymbolKind::EnumVariant
@@ -141,7 +141,11 @@ impl ReferenceSearchHints {
             | SymbolKind::Trait
             | SymbolKind::TypeAlias
             | SymbolKind::Union => matches!(declaration_ref, DeclarationRef::BodyBinding(_))
-                .then(|| ReferenceSearchLabel::new(declaration.name()))
+                .then(|| {
+                    declaration
+                        .semantic_name()
+                        .and_then(|name| ReferenceSearchLabel::new(name))
+                })
                 .flatten(),
         }
     }

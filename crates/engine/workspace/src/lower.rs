@@ -6,11 +6,11 @@ use std::{
 
 use rg_cfg_eval::CfgOptions;
 use rg_std::MemorySize;
+use rg_text::RustEdition;
 
 use crate::{
-    Package, PackageDependency, PackageId, PackageOrigin, PackageSource, RustEdition, Target,
-    TargetKind, WorkspaceMetadata, WorkspaceMetadataError, WorkspaceMetadataResult,
-    path::canonicalize_path,
+    Package, PackageDependency, PackageId, PackageOrigin, PackageSource, Target, TargetKind,
+    WorkspaceMetadata, WorkspaceMetadataError, WorkspaceMetadataResult, path::canonicalize_path,
 };
 
 /// Analysis-facing cfg options applied while lowering Cargo metadata.
@@ -80,17 +80,16 @@ impl From<&cargo_metadata::PackageId> for PackageId {
     }
 }
 
-impl From<cargo_metadata::Edition> for RustEdition {
-    fn from(edition: cargo_metadata::Edition) -> Self {
-        match edition {
-            cargo_metadata::Edition::E2015 => Self::Edition2015,
-            cargo_metadata::Edition::E2018 => Self::Edition2018,
-            cargo_metadata::Edition::E2021 => Self::Edition2021,
-            cargo_metadata::Edition::E2024 => Self::Edition2024,
-            // Cargo parses a few future-edition placeholders. Until rust-src exposes matching
-            // prelude modules, resolve them through the newest edition we understand.
-            _ => Self::Edition2024,
-        }
+/// Converts Cargo's transport enum without making the language edition depend on Cargo.
+fn rust_edition(edition: cargo_metadata::Edition) -> RustEdition {
+    match edition {
+        cargo_metadata::Edition::E2015 => RustEdition::Edition2015,
+        cargo_metadata::Edition::E2018 => RustEdition::Edition2018,
+        cargo_metadata::Edition::E2021 => RustEdition::Edition2021,
+        cargo_metadata::Edition::E2024 => RustEdition::Edition2024,
+        // Cargo parses a few future-edition placeholders. Until rust-src exposes matching
+        // prelude modules, resolve them through the newest edition we understand.
+        _ => RustEdition::Edition2024,
     }
 }
 
@@ -196,7 +195,7 @@ impl CargoMetadataLowerer {
         Ok(Package {
             id: package_id.clone(),
             name: package.name.to_string(),
-            edition: RustEdition::from(package.edition),
+            edition: rust_edition(package.edition),
             origin: if is_workspace_member {
                 PackageOrigin::Workspace
             } else {

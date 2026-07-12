@@ -7,9 +7,8 @@ use rg_ir_model::{
 };
 use rg_parse::{FileId, Span};
 use rg_std::{MemorySize, Shrink};
-use rg_text::Name;
+use rg_text::{Name, RustEdition};
 use rg_tt::TopSubtree;
-use rg_workspace::RustEdition;
 use wincode::{SchemaRead, SchemaWrite};
 
 use super::scope::Namespace;

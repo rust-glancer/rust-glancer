@@ -25,8 +25,9 @@ use rg_project::{
     FileContext, IndexingPerformancePreference, PackageResidencyPolicy, Project,
     ProjectMemoryHooks, ProjectSnapshot, SavedFileChange, SplitIndexingMode,
 };
+use rg_text::RustEdition;
 use rg_workspace::{
-    CargoMetadataConfig, RustEdition, SysrootSources, WorkspaceLoweringConfig, WorkspaceMetadata,
+    CargoMetadataConfig, SysrootSources, WorkspaceLoweringConfig, WorkspaceMetadata,
 };
 
 use crate::{

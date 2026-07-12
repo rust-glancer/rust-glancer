@@ -7,7 +7,8 @@ use rg_cfg_eval::CfgOptions;
 use crate::{FileId, LineIndex, ParsedFile, ParsedFileSnapshot, Target, TargetId, file::FileDb};
 use rg_source::{SourceEntry, SourceInventory};
 use rg_std::MemorySize;
-use rg_workspace::{PackageId, PackageOrigin, RustEdition, TargetKind};
+use rg_text::RustEdition;
+use rg_workspace::{PackageId, PackageOrigin, TargetKind};
 use wincode::{SchemaRead, SchemaWrite};
 
 /// Parsed package, including package-local files and target entrypoints.

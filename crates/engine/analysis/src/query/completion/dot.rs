@@ -1,6 +1,6 @@
 //! Dot-completion assembly for member access sites.
 
-use rg_ir_view::member::MemberView;
+use rg_ir_view::{display::syntax::SyntaxRenderer, member::MemberView};
 
 use crate::{
     Analysis,
@@ -38,7 +38,9 @@ impl<'a, 'db, 'source> DotCompletionResolver<'a, 'db, 'source> {
         let members = MemberView::new(self.analysis.view_db());
         let mut completions = Vec::new();
 
-        let field_renderer = FieldCompletionRenderer::new();
+        let syntax =
+            SyntaxRenderer::new(self.analysis.view_db().target_edition(self.query.target)?);
+        let field_renderer = FieldCompletionRenderer::new(syntax);
         for field_ref in completion_candidates.field_candidates_for_dot(&site)? {
             let Some(field) = members.field(field_ref)? else {
                 continue;
@@ -56,7 +58,7 @@ impl<'a, 'db, 'source> DotCompletionResolver<'a, 'db, 'source> {
             completions.push(completion);
         }
 
-        let function_renderer = FunctionCompletionRenderer::new(self.query);
+        let function_renderer = FunctionCompletionRenderer::new(self.query, syntax);
         for method in completion_candidates.method_candidates_for_dot(&site)? {
             let Some(function) = members.function(method.function_ref())? else {
                 continue;

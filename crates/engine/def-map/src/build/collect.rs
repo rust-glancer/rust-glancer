@@ -29,8 +29,8 @@ use rg_item_tree::{
     VisibilityLevel,
 };
 use rg_parse::{Package, Target};
-use rg_text::Name;
-use rg_workspace::{RustEdition, TargetKind};
+use rg_text::{Name, RustEdition};
+use rg_workspace::TargetKind;
 
 use crate::PackageSlot;
 

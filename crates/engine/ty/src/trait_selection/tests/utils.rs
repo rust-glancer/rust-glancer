@@ -1591,7 +1591,7 @@ impl TraitSelectionSnapshot {
     ) -> String {
         match arg {
             GenericArg::Type(ty) => self.render_infer_ty_with_vars(ty, var_names),
-            GenericArg::Lifetime(lifetime) => lifetime.clone(),
+            GenericArg::Lifetime(lifetime) => lifetime.to_string(),
             GenericArg::Const(value) => value.clone(),
             GenericArg::FnTraitArgs { params, ret } => {
                 let params = params
@@ -1615,7 +1615,7 @@ impl TraitSelectionSnapshot {
     fn render_generic_arg(&self, arg: &GenericArg) -> String {
         match arg {
             GenericArg::Type(ty) => self.render_ty(ty),
-            GenericArg::Lifetime(lifetime) => lifetime.clone(),
+            GenericArg::Lifetime(lifetime) => lifetime.to_string(),
             GenericArg::Const(value) => value.clone(),
             GenericArg::FnTraitArgs { params, ret } => {
                 let params = params

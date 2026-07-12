@@ -151,15 +151,68 @@ fn main() {
             - pub module model [out_of_line model.rs]
 
             file main.rs
-            - use std::path::PathBuf
+            - use
               - import named std::path::PathBuf
-            - use moderate_crate::cli::run
+            - use
               - import named moderate_crate::cli::run
             - fn main
 
             file model.rs
             - pub struct Model
             - impl
+        "#]],
+    );
+}
+
+#[test]
+fn lowers_raw_identifier_tokens_to_semantic_names() {
+    utils::check_project_item_tree_with_declarations(
+        r#"
+        //- /Cargo.toml
+        [package]
+        name = "raw_item_names"
+        version = "0.1.0"
+        edition = "2024"
+
+        //- /src/lib.rs
+        pub struct r#type<'r#fn, r#match> {
+            pub r#struct: &'r#fn r#match,
+        }
+
+        pub mod r#mod {
+            pub enum r#enum {
+                r#variant { pub r#field: super::r#type<'static, u8> },
+            }
+        }
+
+        use r#mod::r#enum as r#trait;
+
+        macro_rules! r#macro {
+            () => {};
+        }
+        r#macro!();
+        "#,
+        expect![[r#"
+            package raw_item_names
+
+            targets
+            - raw_item_names [lib] -> lib.rs
+
+            files
+            file lib.rs
+            - pub struct type
+              - generics <'fn, match>
+              - pub field struct: &'fn match
+            - pub module mod [inline]
+              - pub enum enum
+                - variant variant
+                  - pub field field: super::type<'static, u8>
+            - use
+              - import named mod::enum as trait
+            - macro_definition macro
+              - body {() => {} ;}
+            - macro_call [r#macro]
+              - args ()
         "#]],
     );
 }
@@ -375,7 +428,7 @@ pub fn work() {}
             file lib.rs
             - pub module outer [inline]
               - pub module child [out_of_line child.rs]
-            - pub use outer::child::work
+            - pub use
               - import named outer::child::work
 
             file child.rs
@@ -426,9 +479,9 @@ pub fn work() {}
             - pub module api [out_of_line api_file.rs]
             - pub module outer [inline]
               - pub module implementation [out_of_line implementation.rs]
-            - pub use api::Api
+            - pub use
               - import named api::Api
-            - pub use outer::implementation::work
+            - pub use
               - import named outer::implementation::work
 
             file implementation.rs
@@ -474,14 +527,14 @@ use ::bar::foo;
               - pub module foo [inline]
             - extern_crate self [self as current] [macro_use(current_macro)]
             - extern_crate self [self as _] [macro_use]
-            - use bar::foo::{self, self as imported_foo, work as _, *}
+            - use
               - import self bar::foo
               - import self bar::foo as imported_foo
               - import named bar::foo::work as _
               - import glob bar::foo
-            - use crate::bar::foo::work as run
+            - use
               - import named crate::bar::foo::work as run
-            - use ::bar::foo
+            - use
               - import named ::bar::foo
         "#]],
     );
@@ -513,7 +566,7 @@ enum CliInvocation {
 
             files
             file lib.rs
-            - use std::collections:: #
+            - use
               - import named std::collections
             - enum CliInvocation
         "#]],

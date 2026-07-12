@@ -118,7 +118,7 @@ fn infer_generic_arg_from_chalk(
         GenericArgData::Ty(ty) => Some(GenericArg::Type(Box::new(infer_ty_from_chalk_with_vars(
             ty, variables,
         )?))),
-        GenericArgData::Lifetime(_) => Some(GenericArg::Lifetime("_".to_owned())),
+        GenericArgData::Lifetime(_) => Some(GenericArg::Lifetime(rg_text::Name::new("_"))),
         GenericArgData::Const(_) => None,
     }
 }

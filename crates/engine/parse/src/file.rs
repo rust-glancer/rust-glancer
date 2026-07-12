@@ -7,7 +7,7 @@ use std::{
 use rg_arena::Arena;
 use rg_source::{SourceDescriptor, SourceEntry, SourceInventory, SourcePath};
 use rg_syntax::{Edition, Parse as SyntaxParse, SourceFile};
-use rg_workspace::RustEdition;
+use rg_text::RustEdition;
 
 use crate::{fs, line_index::LineIndex, span::Span};
 use rg_std::{MemorySize, Shrink};

@@ -4,13 +4,13 @@ use std::{
 };
 
 use rg_cfg_eval::CfgOptions;
+use rg_text::RustEdition;
 
 use crate::{SysrootCrate, SysrootSources};
 use rg_std::MemorySize;
 
 use super::{
     dependency::PackageDependency,
-    edition::RustEdition,
     package::{Package, PackageId, PackageOrigin, PackageSource},
     target::{Target, TargetKind},
 };

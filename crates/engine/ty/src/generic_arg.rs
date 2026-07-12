@@ -9,7 +9,7 @@ use crate::Ty;
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub enum GenericArg {
     Type(#[wincode(with = "rg_wincode_utils::WincodeDynamic<Box<Ty>>")] Box<Ty>),
-    Lifetime(String),
+    Lifetime(Name),
     Const(String),
     /// Parenthesized argument syntax on function-trait paths, such as `FnOnce(T) -> R`.
     FnTraitArgs {

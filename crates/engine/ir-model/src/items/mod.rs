@@ -23,7 +23,10 @@ pub use self::{
     },
     module::{ModuleItem, ModuleSource},
     primitive::{FloatTy, PrimitiveTy, SignedIntTy, UnsignedIntTy},
-    type_ref::{GenericArg, TypeBound, TypePath, TypePathAnchor, TypePathSegment, TypeRef},
+    type_ref::{
+        GenericArg, TypeBound, TypeBoundListDisplay, TypeNameFormatter, TypePath, TypePathAnchor,
+        TypePathSegment, TypeRef, TypeRefDisplay,
+    },
     visibility::VisibilityLevel,
 };
 

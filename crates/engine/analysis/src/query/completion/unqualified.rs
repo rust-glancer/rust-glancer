@@ -3,6 +3,7 @@
 use std::collections::HashSet;
 
 use rg_ir_view::{
+    display::syntax::SyntaxRenderer,
     item::details::{DeclarationDetailsContext, DeclarationDetailsView},
     member::MemberView,
 };
@@ -47,13 +48,22 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
         };
         let mut completions = Vec::new();
         let mut hidden = HashSet::new();
+        let syntax =
+            SyntaxRenderer::new(self.analysis.view_db().target_edition(self.query.target)?);
 
         let completion_candidates = CompletionCandidateSource::new(self.analysis.view_db());
         for candidate in completion_candidates.lexical_candidates_for_unqualified(&site)? {
             if !filter.accepts_scope_namespace(candidate.namespace()) {
                 continue;
             }
-            self.push_lexical_completion(candidate, filter, edit, &mut hidden, &mut completions)?;
+            self.push_lexical_completion(
+                syntax,
+                candidate,
+                filter,
+                edit,
+                &mut hidden,
+                &mut completions,
+            )?;
         }
 
         self.push_module_completions(
@@ -91,6 +101,7 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
 
     fn push_lexical_completion(
         &self,
+        syntax: SyntaxRenderer,
         candidate: LexicalCompletionCandidate,
         filter: UnqualifiedCompletionFilter,
         edit: CompletionEdit,
@@ -106,8 +117,8 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
             let Some(function) = members.function(function_ref)? else {
                 return Ok(());
             };
-            let completion =
-                FunctionCompletionRenderer::new(self.query).completion(FunctionCompletionRequest {
+            let completion = FunctionCompletionRenderer::new(self.query, syntax).completion(
+                FunctionCompletionRequest {
                     function,
                     label_override: Some(candidate.label()),
                     kind: candidate.kind(),
@@ -118,7 +129,8 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
                     sort_priority: Some(CompletionSortPriority::body_scope(
                         candidate.scope_distance(),
                     )),
-                });
+                },
+            );
             completions.push(completion.item);
             return Ok(());
         }
@@ -126,7 +138,7 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
         let Some(declaration_ref) = candidate.declaration_ref() else {
             return Ok(());
         };
-        let Some(details) = DeclarationDetailsView::new(self.analysis.view_db())
+        let Some(details) = DeclarationDetailsView::new(self.analysis.view_db(), syntax.edition())
             .details_for_declaration(declaration_ref, &DeclarationDetailsContext::default())?
         else {
             return Ok(());
@@ -135,8 +147,9 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
         let documentation = details.docs().map(ToString::to_string);
         let target = candidate.target();
         let kind = candidate.kind();
+        let label = syntax.identifier(candidate.label()).to_string();
         completions.push(CompletionItem {
-            label: candidate.label().to_string(),
+            label: label.clone(),
             kind,
             target,
             applicability: CompletionApplicability::Known,
@@ -146,7 +159,7 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
                 Some(CompletionSortPriority::body_scope(
                     candidate.scope_distance(),
                 )),
-                candidate.label(),
+                &label,
                 kind,
                 CompletionApplicability::Known,
                 target,
@@ -164,7 +177,7 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
         hidden: &HashSet<(String, CompletionScopeNamespace)>,
         completions: &mut Vec<CompletionItem>,
     ) -> anyhow::Result<()> {
-        let renderer = ModuleCompletionRenderer::new(self.analysis, self.query);
+        let renderer = ModuleCompletionRenderer::new(self.analysis, self.query)?;
         for candidate in candidates {
             if !options
                 .filter

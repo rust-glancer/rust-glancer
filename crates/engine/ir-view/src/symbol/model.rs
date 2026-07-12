@@ -1,5 +1,7 @@
 //! Symbol projection result models.
 
+use std::borrow::Cow;
+
 use rg_parse::{FileId, Span};
 
 use crate::item::declaration::Declaration;
@@ -20,6 +22,16 @@ pub struct SourceOutlineDeclaration {
 }
 
 impl SourceOutlineDeclaration {
+    pub(crate) fn from_declaration(declaration: Declaration, name: String) -> Self {
+        Self {
+            name,
+            kind: declaration.kind(),
+            file_id: declaration.file_id(),
+            span: declaration.span(),
+            selection_span: declaration.selection_span(),
+        }
+    }
+
     pub(crate) fn field(file_id: FileId, name: String, span: Span) -> Self {
         Self {
             name,
@@ -61,18 +73,6 @@ impl SourceOutlineDeclaration {
     }
 }
 
-impl From<Declaration> for SourceOutlineDeclaration {
-    fn from(declaration: Declaration) -> Self {
-        Self {
-            name: declaration.name().to_string(),
-            kind: declaration.kind(),
-            file_id: declaration.file_id(),
-            span: declaration.span(),
-            selection_span: declaration.selection_span(),
-        }
-    }
-}
-
 /// Hierarchical source outline node for a single file.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SourceOutlineNode {
@@ -81,9 +81,9 @@ pub struct SourceOutlineNode {
 }
 
 impl SourceOutlineNode {
-    pub(crate) fn new(declaration: impl Into<SourceOutlineDeclaration>) -> Self {
+    pub(crate) fn new(declaration: SourceOutlineDeclaration) -> Self {
         Self {
-            declaration: declaration.into(),
+            declaration,
             children: Vec::new(),
         }
     }
@@ -133,8 +133,10 @@ impl IndexedSymbolEntry {
         self.container_name.as_deref()
     }
 
-    pub fn name(&self) -> &str {
-        self.declaration.name()
+    pub fn name(&self) -> Cow<'_, str> {
+        self.declaration
+            .search_name()
+            .expect("workspace symbol entries should always have searchable names")
     }
 
     pub fn into_parts(self) -> (Declaration, Option<String>) {

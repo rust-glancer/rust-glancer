@@ -6,6 +6,7 @@ use rg_ir_model::{DefMapRef, ModuleRef, TargetRef};
 use rg_ir_storage::{DefMap, DefMapSource, ItemStore, ItemStoreSource};
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::SemanticIrReadTxn;
+use rg_text::RustEdition;
 
 /// Read-only database handle used by all indexed-data views.
 ///
@@ -30,6 +31,16 @@ impl<'db> IndexedViewDb<'db> {
             semantic_ir,
             body_ir,
         }
+    }
+
+    /// Returns the edition whose syntax rules apply at a target use site.
+    pub fn target_edition(&self, target: TargetRef) -> Result<RustEdition, PackageStoreError> {
+        self.def_map.package_edition(target.package)
+    }
+
+    /// Returns the edition whose syntax rules apply to declarations owned by this origin.
+    pub fn origin_edition(&self, origin: DefMapRef) -> Result<RustEdition, PackageStoreError> {
+        self.target_edition(origin.origin_target())
     }
 }
 

@@ -9,7 +9,7 @@ use rg_ir_model::TargetRef;
 use rg_parse::ParseDb;
 use rg_parse::{FileId, LineIndex, Span};
 use rg_std::MemorySize;
-use rg_workspace::RustEdition;
+use rg_text::RustEdition;
 
 use super::{
     FileContext, reference_search::ReferenceSearchPlanner, state::ProjectState,

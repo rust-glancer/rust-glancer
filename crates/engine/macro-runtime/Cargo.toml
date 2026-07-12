@@ -17,5 +17,5 @@ rg_ir_storage.workspace = true
 rg_macro_expand.workspace = true
 rg_parse.workspace = true
 rg_syntax.workspace = true
+rg_text.workspace = true
 rg_tt.workspace = true
-rg_workspace.workspace = true

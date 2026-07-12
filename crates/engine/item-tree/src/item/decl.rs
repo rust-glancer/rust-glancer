@@ -12,7 +12,7 @@ use rg_syntax::{
     AstNode as _,
     ast::{self, HasGenericParams, HasName, HasTypeBounds, HasVisibility},
 };
-use rg_text::NameInterner;
+use rg_text::{Name, NameInterner};
 
 use super::{FromAst, MaybeFromAst, OuterDocs, normalized_syntax, type_bound_list_from_ast};
 
@@ -43,7 +43,7 @@ impl FromAst for GenericParams {
                             name: param
                                 .name()
                                 .map(|name| interner.intern(name.text()))
-                                .unwrap_or_else(|| interner.intern("<missing>")),
+                                .unwrap_or_else(|| interner.intern_missing()),
                             ty: param
                                 .ty()
                                 .map(|ty| TypeRef::from_ast(&ty, (line_index, &mut *interner))),
@@ -54,9 +54,12 @@ impl FromAst for GenericParams {
                         params.lifetimes.push(LifetimeParamData {
                             name: param
                                 .lifetime()
-                                .map(|lifetime| interner.intern(normalized_syntax(&lifetime)))
-                                .unwrap_or_else(|| interner.intern("<missing>")),
-                            bounds: lifetime_bounds_from_ast(param.type_bound_list()),
+                                .map(|lifetime| interner.intern(lifetime.text()))
+                                .unwrap_or_else(|| interner.intern_missing()),
+                            bounds: lifetime_bounds_from_ast(
+                                param.type_bound_list(),
+                                &mut *interner,
+                            ),
                         });
                     }
                     ast::GenericParam::TypeParam(param) => {
@@ -64,7 +67,7 @@ impl FromAst for GenericParams {
                             name: param
                                 .name()
                                 .map(|name| interner.intern(name.text()))
-                                .unwrap_or_else(|| interner.intern("<missing>")),
+                                .unwrap_or_else(|| interner.intern_missing()),
                             bounds: type_bound_list_from_ast(
                                 param.type_bound_list(),
                                 line_index,
@@ -97,8 +100,8 @@ impl FromAst for WherePredicate {
     fn from_ast(predicate: &Self::AstNode, (line_index, interner): Self::Context<'_>) -> Self {
         if let Some(lifetime) = predicate.lifetime() {
             return Self::Lifetime {
-                lifetime: normalized_syntax(&lifetime),
-                bounds: lifetime_bounds_from_ast(predicate.type_bound_list()),
+                lifetime: interner.intern(lifetime.text()),
+                bounds: lifetime_bounds_from_ast(predicate.type_bound_list(), interner),
             };
         }
 
@@ -198,7 +201,7 @@ impl FromAst for EnumVariantItem {
         Self {
             name: name
                 .map(|name| interner.intern(name.text()))
-                .unwrap_or_else(|| interner.intern("<missing>")),
+                .unwrap_or_else(|| interner.intern_missing()),
             span,
             name_span,
             docs: <Documentation as MaybeFromAst<OuterDocs>>::maybe_from_ast(variant, OuterDocs),
@@ -422,14 +425,17 @@ fn impl_header_from_ast(
     (None, self_ty)
 }
 
-fn lifetime_bounds_from_ast(bound_list: Option<ast::TypeBoundList>) -> Vec<String> {
+fn lifetime_bounds_from_ast(
+    bound_list: Option<ast::TypeBoundList>,
+    interner: &mut NameInterner,
+) -> Vec<Name> {
     bound_list
         .into_iter()
         .flat_map(|bound_list| bound_list.bounds())
         .filter_map(|bound| {
             bound
                 .lifetime()
-                .map(|lifetime| normalized_syntax(&lifetime))
+                .map(|lifetime| interner.intern(lifetime.text()))
         })
         .collect()
 }

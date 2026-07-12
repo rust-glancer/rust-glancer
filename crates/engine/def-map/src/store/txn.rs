@@ -23,6 +23,14 @@ impl<'db> DefMapReadTxn<'db> {
         self.packages.read(package_slot)
     }
 
+    /// Returns the Rust edition used by one frozen package.
+    pub fn package_edition(
+        &self,
+        package_slot: PackageSlot,
+    ) -> Result<rg_text::RustEdition, PackageStoreError> {
+        Ok(self.package(package_slot)?.edition())
+    }
+
     /// Returns one target def map by project-wide target reference.
     pub fn def_map(&self, target: TargetRef) -> Result<Option<&DefMap>, PackageStoreError> {
         let package = self.package(target.package)?;

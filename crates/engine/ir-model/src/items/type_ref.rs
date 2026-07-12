@@ -21,7 +21,7 @@ pub enum TypeRef {
     Path(#[wincode(with = "rg_wincode_utils::WincodeDynamic<TypePath>")] TypePath),
     Tuple(#[wincode(with = "rg_wincode_utils::WincodeDynamic<Vec<TypeRef>>")] Vec<TypeRef>),
     Reference {
-        lifetime: Option<String>,
+        lifetime: Option<Name>,
         mutability: Mutability,
         #[wincode(with = "rg_wincode_utils::WincodeDynamic<Box<TypeRef>>")]
         inner: Box<TypeRef>,
@@ -124,74 +124,22 @@ impl TypeRef {
             Self::Unknown(_) | Self::Never | Self::Unit | Self::Infer => false,
         }
     }
+
+    /// Displays this type through one caller-provided semantic-name policy.
+    ///
+    /// The IR model owns the recursive type-syntax traversal. Presentation layers only decide how
+    /// canonical names are spelled, such as whether the use-site edition requires `r#`.
+    pub fn display_with<F>(&self, names: F) -> TypeRefDisplay<'_, F>
+    where
+        F: TypeNameFormatter,
+    {
+        TypeRefDisplay { ty: self, names }
+    }
 }
 
 impl fmt::Display for TypeRef {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Unknown(text) if text.is_empty() => write!(f, "<unknown>"),
-            Self::Unknown(text) => write!(f, "<unsupported:{text}>"),
-            Self::Never => write!(f, "!"),
-            Self::Unit => write!(f, "()"),
-            Self::Infer => write!(f, "_"),
-            Self::Path(path) => write!(f, "{path}"),
-            Self::Tuple(types) => {
-                write!(f, "(")?;
-                for (idx, ty) in types.iter().enumerate() {
-                    if idx > 0 {
-                        write!(f, ", ")?;
-                    }
-                    write!(f, "{ty}")?;
-                }
-                if types.len() == 1 {
-                    write!(f, ",")?;
-                }
-                write!(f, ")")
-            }
-            Self::Reference {
-                lifetime,
-                mutability,
-                inner,
-            } => {
-                write!(f, "&")?;
-                if let Some(lifetime) = lifetime {
-                    write!(f, "{lifetime} ")?;
-                }
-                if matches!(mutability, Mutability::Mutable) {
-                    write!(f, "mut ")?;
-                }
-                write!(f, "{inner}")
-            }
-            Self::RawPointer { mutability, inner } => match mutability {
-                Mutability::Shared => write!(f, "*const {inner}"),
-                Mutability::Mutable => write!(f, "*mut {inner}"),
-            },
-            Self::Slice(inner) => write!(f, "[{inner}]"),
-            Self::Array { inner, len } => {
-                write!(f, "[{inner}; ")?;
-                match len {
-                    Some(len) => write!(f, "{len}")?,
-                    None => write!(f, "<unknown>")?,
-                }
-                write!(f, "]")
-            }
-            Self::FnPointer { params, ret } => {
-                write!(f, "fn(")?;
-                for (idx, param) in params.iter().enumerate() {
-                    if idx > 0 {
-                        write!(f, ", ")?;
-                    }
-                    write!(f, "{param}")?;
-                }
-                write!(f, ")")?;
-                if !matches!(ret.as_ref(), TypeRef::Unit) {
-                    write!(f, " -> {ret}")?;
-                }
-                Ok(())
-            }
-            Self::ImplTrait(bounds) => write_bounds(f, "impl ", bounds),
-            Self::DynTrait(bounds) => write_bounds(f, "dyn ", bounds),
-        }
+        TypeFormatter::canonical().fmt_type_ref(self, f)
     }
 }
 
@@ -288,23 +236,7 @@ impl TypePath {
 
 impl fmt::Display for TypePath {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if let Some(anchor) = &self.anchor {
-            write!(f, "{anchor}")?;
-            if !self.segments.is_empty() {
-                write!(f, "::")?;
-            }
-        } else if self.absolute {
-            write!(f, "::")?;
-        }
-
-        for (idx, segment) in self.segments.iter().enumerate() {
-            if idx > 0 {
-                write!(f, "::")?;
-            }
-            write!(f, "{segment}")?;
-        }
-
-        Ok(())
+        TypeFormatter::canonical().fmt_type_path(self, f)
     }
 }
 
@@ -353,12 +285,7 @@ impl TypePathAnchor {
 
 impl fmt::Display for TypePathAnchor {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Type(ty) => write!(f, "<{ty}>"),
-            Self::QualifiedTrait { self_ty, trait_ty } => {
-                write!(f, "<{self_ty} as {trait_ty}>")
-            }
-        }
+        TypeFormatter::canonical().fmt_type_path_anchor(self, f)
     }
 }
 
@@ -373,30 +300,14 @@ pub struct TypePathSegment {
 
 impl fmt::Display for TypePathSegment {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.name)?;
-        if let [GenericArg::FnTraitArgs { params, ret }] = self.args.as_slice() {
-            write_fn_trait_args(f, params, ret)?;
-            return Ok(());
-        }
-
-        if !self.args.is_empty() {
-            write!(f, "<")?;
-            for (idx, arg) in self.args.iter().enumerate() {
-                if idx > 0 {
-                    write!(f, ", ")?;
-                }
-                write!(f, "{arg}")?;
-            }
-            write!(f, ">")?;
-        }
-        Ok(())
+        TypeFormatter::canonical().fmt_type_path_segment(self, f)
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub enum GenericArg {
     Type(#[wincode(with = "rg_wincode_utils::WincodeDynamic<TypeRef>")] TypeRef),
-    Lifetime(String),
+    Lifetime(Name),
     Const(String),
     /// Parenthesized argument syntax on function-trait paths, such as `FnOnce(T) -> R`.
     FnTraitArgs {
@@ -447,43 +358,14 @@ impl GenericArg {
 
 impl fmt::Display for GenericArg {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Type(ty) => write!(f, "{ty}"),
-            Self::Lifetime(lifetime) => write!(f, "{lifetime}"),
-            Self::Const(value) => write!(f, "{value}"),
-            Self::AssocType { name, ty } => match ty {
-                Some(ty) => write!(f, "{name} = {ty}"),
-                None => write!(f, "{name}"),
-            },
-            Self::FnTraitArgs { params, ret } => write_fn_trait_args(f, params, ret),
-            Self::Unsupported(text) => write!(f, "<unsupported:{text}>"),
-        }
+        TypeFormatter::canonical().fmt_generic_arg(self, f)
     }
-}
-
-fn write_fn_trait_args(
-    f: &mut fmt::Formatter<'_>,
-    params: &[TypeRef],
-    ret: &TypeRef,
-) -> fmt::Result {
-    write!(f, "(")?;
-    for (idx, param) in params.iter().enumerate() {
-        if idx > 0 {
-            write!(f, ", ")?;
-        }
-        write!(f, "{param}")?;
-    }
-    write!(f, ")")?;
-    if !matches!(ret, TypeRef::Unit) {
-        write!(f, " -> {ret}")?;
-    }
-    Ok(())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub enum TypeBound {
     Trait(#[wincode(with = "rg_wincode_utils::WincodeDynamic<TypeRef>")] TypeRef),
-    Lifetime(String),
+    Lifetime(Name),
     Unsupported(String),
 }
 
@@ -503,25 +385,280 @@ impl TypeBound {
             Self::Lifetime(_) | Self::Unsupported(_) => false,
         }
     }
+
+    /// Displays one `+`-separated bound list through a semantic-name policy.
+    pub fn display_list_with<F>(bounds: &[Self], names: F) -> TypeBoundListDisplay<'_, F>
+    where
+        F: TypeNameFormatter,
+    {
+        TypeBoundListDisplay { bounds, names }
+    }
 }
 
 impl fmt::Display for TypeBound {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Trait(ty) => write!(f, "{ty}"),
-            Self::Lifetime(lifetime) => write!(f, "{lifetime}"),
-            Self::Unsupported(text) => write!(f, "<unsupported:{text}>"),
-        }
+        TypeFormatter::canonical().fmt_type_bound(self, f)
     }
 }
 
-fn write_bounds(f: &mut fmt::Formatter<'_>, prefix: &str, bounds: &[TypeBound]) -> fmt::Result {
-    write!(f, "{prefix}")?;
-    for (idx, bound) in bounds.iter().enumerate() {
-        if idx > 0 {
-            write!(f, " + ")?;
-        }
-        write!(f, "{bound}")?;
+/// Controls how canonical semantic names are written inside type syntax.
+///
+/// `TypeRef` owns the structural traversal. Renderers that know about a source edition can supply
+/// only this policy instead of reimplementing tuples, paths, generic arguments, and bounds.
+pub trait TypeNameFormatter {
+    fn fmt_name(&self, name: &Name, f: &mut fmt::Formatter<'_>) -> fmt::Result;
+}
+
+/// Borrowed display of one type using a caller-provided name policy.
+pub struct TypeRefDisplay<'a, F> {
+    ty: &'a TypeRef,
+    names: F,
+}
+
+impl<F> fmt::Display for TypeRefDisplay<'_, F>
+where
+    F: TypeNameFormatter,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        TypeFormatter::new(&self.names).fmt_type_ref(self.ty, f)
     }
-    Ok(())
+}
+
+/// Borrowed display of one `+`-separated bound list using a caller-provided name policy.
+pub struct TypeBoundListDisplay<'a, F> {
+    bounds: &'a [TypeBound],
+    names: F,
+}
+
+impl<F> fmt::Display for TypeBoundListDisplay<'_, F>
+where
+    F: TypeNameFormatter,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        TypeFormatter::new(&self.names).fmt_type_bounds(self.bounds, f)
+    }
+}
+
+struct CanonicalTypeNames;
+
+impl TypeNameFormatter for CanonicalTypeNames {
+    fn fmt_name(&self, name: &Name, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(name, f)
+    }
+}
+
+/// One structural traversal serves both canonical/debug output and edition-aware presentation.
+struct TypeFormatter<'a, F> {
+    names: &'a F,
+}
+
+impl<'a, F> TypeFormatter<'a, F>
+where
+    F: TypeNameFormatter,
+{
+    fn new(names: &'a F) -> Self {
+        Self { names }
+    }
+
+    fn fmt_type_ref(&self, ty: &TypeRef, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match ty {
+            TypeRef::Unknown(text) if text.is_empty() => f.write_str("<unknown>"),
+            TypeRef::Unknown(text) => write!(f, "<unsupported:{text}>"),
+            TypeRef::Never => f.write_str("!"),
+            TypeRef::Unit => f.write_str("()"),
+            TypeRef::Infer => f.write_str("_"),
+            TypeRef::Path(path) => self.fmt_type_path(path, f),
+            TypeRef::Tuple(types) => {
+                f.write_str("(")?;
+                for (index, ty) in types.iter().enumerate() {
+                    if index > 0 {
+                        f.write_str(", ")?;
+                    }
+                    self.fmt_type_ref(ty, f)?;
+                }
+                if types.len() == 1 {
+                    f.write_str(",")?;
+                }
+                f.write_str(")")
+            }
+            TypeRef::Reference {
+                lifetime,
+                mutability,
+                inner,
+            } => {
+                f.write_str("&")?;
+                if let Some(lifetime) = lifetime {
+                    self.names.fmt_name(lifetime, f)?;
+                    f.write_str(" ")?;
+                }
+                if matches!(mutability, Mutability::Mutable) {
+                    f.write_str("mut ")?;
+                }
+                self.fmt_type_ref(inner, f)
+            }
+            TypeRef::RawPointer { mutability, inner } => {
+                f.write_str(match mutability {
+                    Mutability::Shared => "*const ",
+                    Mutability::Mutable => "*mut ",
+                })?;
+                self.fmt_type_ref(inner, f)
+            }
+            TypeRef::Slice(inner) => {
+                f.write_str("[")?;
+                self.fmt_type_ref(inner, f)?;
+                f.write_str("]")
+            }
+            TypeRef::Array { inner, len } => {
+                f.write_str("[")?;
+                self.fmt_type_ref(inner, f)?;
+                write!(f, "; {}]", len.as_deref().unwrap_or("<unknown>"))
+            }
+            TypeRef::FnPointer { params, ret } => {
+                f.write_str("fn(")?;
+                for (index, param) in params.iter().enumerate() {
+                    if index > 0 {
+                        f.write_str(", ")?;
+                    }
+                    self.fmt_type_ref(param, f)?;
+                }
+                f.write_str(")")?;
+                if !matches!(ret.as_ref(), TypeRef::Unit) {
+                    f.write_str(" -> ")?;
+                    self.fmt_type_ref(ret, f)?;
+                }
+                Ok(())
+            }
+            TypeRef::ImplTrait(bounds) => {
+                f.write_str("impl ")?;
+                self.fmt_type_bounds(bounds, f)
+            }
+            TypeRef::DynTrait(bounds) => {
+                f.write_str("dyn ")?;
+                self.fmt_type_bounds(bounds, f)
+            }
+        }
+    }
+
+    fn fmt_type_path(&self, path: &TypePath, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if let Some(anchor) = &path.anchor {
+            self.fmt_type_path_anchor(anchor, f)?;
+            if !path.segments.is_empty() {
+                f.write_str("::")?;
+            }
+        } else if path.absolute {
+            f.write_str("::")?;
+        }
+
+        for (index, segment) in path.segments.iter().enumerate() {
+            if index > 0 {
+                f.write_str("::")?;
+            }
+            self.fmt_type_path_segment(segment, f)?;
+        }
+        Ok(())
+    }
+
+    fn fmt_type_path_anchor(
+        &self,
+        anchor: &TypePathAnchor,
+        f: &mut fmt::Formatter<'_>,
+    ) -> fmt::Result {
+        f.write_str("<")?;
+        match anchor {
+            TypePathAnchor::Type(ty) => self.fmt_type_ref(ty, f)?,
+            TypePathAnchor::QualifiedTrait { self_ty, trait_ty } => {
+                self.fmt_type_ref(self_ty, f)?;
+                f.write_str(" as ")?;
+                self.fmt_type_ref(trait_ty, f)?;
+            }
+        }
+        f.write_str(">")
+    }
+
+    fn fmt_type_path_segment(
+        &self,
+        segment: &TypePathSegment,
+        f: &mut fmt::Formatter<'_>,
+    ) -> fmt::Result {
+        self.names.fmt_name(&segment.name, f)?;
+        if let [GenericArg::FnTraitArgs { params, ret }] = segment.args.as_slice() {
+            return self.fmt_fn_trait_args(params, ret, f);
+        }
+
+        if !segment.args.is_empty() {
+            f.write_str("<")?;
+            for (index, arg) in segment.args.iter().enumerate() {
+                if index > 0 {
+                    f.write_str(", ")?;
+                }
+                self.fmt_generic_arg(arg, f)?;
+            }
+            f.write_str(">")?;
+        }
+        Ok(())
+    }
+
+    fn fmt_generic_arg(&self, arg: &GenericArg, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match arg {
+            GenericArg::Type(ty) => self.fmt_type_ref(ty, f),
+            GenericArg::Lifetime(lifetime) => self.names.fmt_name(lifetime, f),
+            GenericArg::Const(value) => f.write_str(value),
+            GenericArg::FnTraitArgs { params, ret } => self.fmt_fn_trait_args(params, ret, f),
+            GenericArg::AssocType { name, ty } => {
+                self.names.fmt_name(name, f)?;
+                if let Some(ty) = ty {
+                    f.write_str(" = ")?;
+                    self.fmt_type_ref(ty, f)?;
+                }
+                Ok(())
+            }
+            GenericArg::Unsupported(text) => write!(f, "<unsupported:{text}>"),
+        }
+    }
+
+    fn fmt_fn_trait_args(
+        &self,
+        params: &[TypeRef],
+        ret: &TypeRef,
+        f: &mut fmt::Formatter<'_>,
+    ) -> fmt::Result {
+        f.write_str("(")?;
+        for (index, param) in params.iter().enumerate() {
+            if index > 0 {
+                f.write_str(", ")?;
+            }
+            self.fmt_type_ref(param, f)?;
+        }
+        f.write_str(")")?;
+        if !matches!(ret, TypeRef::Unit) {
+            f.write_str(" -> ")?;
+            self.fmt_type_ref(ret, f)?;
+        }
+        Ok(())
+    }
+
+    fn fmt_type_bound(&self, bound: &TypeBound, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match bound {
+            TypeBound::Trait(ty) => self.fmt_type_ref(ty, f),
+            TypeBound::Lifetime(lifetime) => self.names.fmt_name(lifetime, f),
+            TypeBound::Unsupported(text) => write!(f, "<unsupported:{text}>"),
+        }
+    }
+
+    fn fmt_type_bounds(&self, bounds: &[TypeBound], f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for (index, bound) in bounds.iter().enumerate() {
+            if index > 0 {
+                f.write_str(" + ")?;
+            }
+            self.fmt_type_bound(bound, f)?;
+        }
+        Ok(())
+    }
+}
+
+impl TypeFormatter<'static, CanonicalTypeNames> {
+    fn canonical() -> Self {
+        static NAMES: CanonicalTypeNames = CanonicalTypeNames;
+        Self::new(&NAMES)
+    }
 }
