@@ -3,7 +3,7 @@
 //! Target and body IR store item data in the same `ItemStore` shape. This layer owns the
 //! item-shaped queries, while callers provide only the origin-to-store routing policy.
 
-use rg_ir_model::items::{FieldKey, FieldList, GenericParams};
+use rg_ir_model::items::{FieldKey, GenericParams};
 use rg_ir_model::{
     ConstRef, DefMapRef, EnumVariantRef, FieldRef, FunctionRef, ImplRef, ItemOwner, LocalDefRef,
     LocalEnumVariantRef, ModuleRef, SemanticItemRef, StaticRef, TargetRef, TraitRef, TypeAliasRef,
@@ -192,7 +192,7 @@ where
         Ok(match ty.id {
             TypeDefId::Struct(id) => items
                 .struct_data(id)
-                .is_some_and(|data| matches!(data.fields, FieldList::Tuple(_) | FieldList::Unit)),
+                .is_some_and(|data| data.fields.has_value_constructor()),
             TypeDefId::Enum(_) | TypeDefId::Union(_) => false,
         })
     }

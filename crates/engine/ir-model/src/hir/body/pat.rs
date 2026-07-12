@@ -137,13 +137,15 @@ impl PatKind {
     }
 
     /// Returns the pattern path when it should behave as an editor-visible value path.
+    ///
+    /// Record patterns resolve their constructor through the type namespace and are exposed
+    /// separately by [`Self::record_path`].
     pub fn value_path(&self) -> Option<&BodyPath> {
         match self {
-            Self::TupleStruct { path, .. } | Self::Record { path, .. } | Self::Path { path } => {
-                path.as_ref()
-            }
+            Self::TupleStruct { path, .. } | Self::Path { path } => path.as_ref(),
             Self::Binding { binding, path, .. } if binding.is_none() => path.as_ref(),
             Self::Binding { .. }
+            | Self::Record { .. }
             | Self::Tuple { .. }
             | Self::Or { .. }
             | Self::Slice { .. }
@@ -156,5 +158,13 @@ impl PatKind {
             | Self::Wildcard
             | Self::Unsupported => None,
         }
+    }
+
+    /// Returns the type-namespace constructor path owned by a record pattern.
+    pub fn record_path(&self) -> Option<&BodyPath> {
+        let Self::Record { path, .. } = self else {
+            return None;
+        };
+        path.as_ref()
     }
 }

@@ -61,7 +61,9 @@ pub use dep::api::Api as Renamed;
         .expect("rebuilt app root should contain the renamed import");
 
     assert!(
-        !renamed_entry.types().is_empty(),
+        !renamed_entry
+            .bindings(rg_ir_storage::Namespace::Types)
+            .is_empty(),
         "dirty app import should resolve through the clean frozen dependency package"
     );
     assert!(
@@ -86,7 +88,8 @@ version = "0.1.0"
 edition = "2024"
 
 //- /crates/dep/src/lib.rs
-pub macro make_dep_item {
+#[macro_export]
+macro_rules! make_dep_item {
     () => {
         pub struct GeneratedFromDep;
     };

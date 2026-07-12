@@ -73,7 +73,7 @@ impl User {
                 initializer
                   expr e3 call => nominal struct body_expr_fixture[lib]::crate::UserId @ 14:29-14:38
                     callee
-                      expr e1 path UserId -> item struct body_expr_fixture[lib]::crate::UserId => nominal struct body_expr_fixture[lib]::crate::UserId @ 14:29-14:35
+                      expr e1 path UserId -> struct body_expr_fixture[lib]::crate::UserId => nominal struct body_expr_fixture[lib]::crate::UserId @ 14:29-14:35
                     arg
                       expr e2 literal int `1` => i32 @ 14:36-14:37
               stmt s2 let v4: UserId @ 15:9-15:43
@@ -596,10 +596,95 @@ pub fn use_it() {
                   expr e0 path Named => <unknown> @ 9:17-9:22
               stmt s1 let v1 @ 10:5-10:23
                 initializer
-                  expr e1 path Tuple -> item struct body_value_constructor_fixture[lib]::crate::Tuple => nominal struct body_value_constructor_fixture[lib]::crate::Tuple @ 10:17-10:22
+                  expr e1 path Tuple -> struct body_value_constructor_fixture[lib]::crate::Tuple => nominal struct body_value_constructor_fixture[lib]::crate::Tuple @ 10:17-10:22
               stmt s2 let v2 @ 11:5-11:21
                 initializer
-                  expr e2 path Unit -> item struct body_value_constructor_fixture[lib]::crate::Unit => nominal struct body_value_constructor_fixture[lib]::crate::Unit @ 11:16-11:20
+                  expr e2 path Unit -> struct body_value_constructor_fixture[lib]::crate::Unit => nominal struct body_value_constructor_fixture[lib]::crate::Unit @ 11:16-11:20
+        "#]],
+    );
+}
+
+#[test]
+fn enum_variant_shape_controls_value_and_record_paths() {
+    check_project_body_ir(
+        r#"
+//- /Cargo.toml
+[package]
+name = "body_variant_namespace_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub fn use_it() {
+    enum Choice {
+        Record { value: u8 },
+        Tuple(u8),
+        Unit,
+    }
+    use Choice::{Record, Tuple, Unit};
+
+    let record_value = Record;
+    let qualified_record_value = Choice::Record;
+    let record = Record { value: 1 };
+    let qualified_record = Choice::Record { value: 2 };
+    let tuple = Tuple;
+    let qualified_tuple = Choice::Tuple;
+    let unit = Unit;
+    let qualified_unit = Choice::Unit;
+}
+"#,
+        expect![[r#"
+            package body_variant_namespace_fixture
+
+            body_variant_namespace_fixture [lib]
+            body b0 fn body_variant_namespace_fixture[lib]::crate::use_it @ 1:1-17:2
+            scopes
+            - s0 parent <none>: <none>
+            - s1 parent s0: v0, v1, v2, v3, v4, v5, v6, v7; source_items i0, i1
+            source_items
+            - i0 enum Choice @ 2:5-6:6
+            - i1 use <unnamed> @ 7:5-7:39
+            bindings
+            - v0 let record_value `record_value` => <unknown> @ 9:9-9:21
+            - v1 let qualified_record_value `qualified_record_value` => <unknown> @ 10:9-10:31
+            - v2 let record `record` => nominal enum fn body_variant_namespace_fixture[lib]::crate::use_it::Choice @ 2:5-6:6 @ 11:9-11:15
+            - v3 let qualified_record `qualified_record` => nominal enum fn body_variant_namespace_fixture[lib]::crate::use_it::Choice @ 2:5-6:6 @ 12:9-12:25
+            - v4 let tuple `tuple` => nominal enum fn body_variant_namespace_fixture[lib]::crate::use_it::Choice @ 2:5-6:6 @ 13:9-13:14
+            - v5 let qualified_tuple `qualified_tuple` => nominal enum fn body_variant_namespace_fixture[lib]::crate::use_it::Choice @ 2:5-6:6 @ 14:9-14:24
+            - v6 let unit `unit` => nominal enum fn body_variant_namespace_fixture[lib]::crate::use_it::Choice @ 2:5-6:6 @ 15:9-15:13
+            - v7 let qualified_unit `qualified_unit` => nominal enum fn body_variant_namespace_fixture[lib]::crate::use_it::Choice @ 2:5-6:6 @ 16:9-16:23
+            body
+            expr e10 block s1 => () @ 1:17-17:2
+              stmt s0 source_item i0 @ 2:5-6:6
+              stmt s1 source_item i1 @ 7:5-7:39
+              stmt s2 let v0 @ 9:5-9:31
+                initializer
+                  expr e0 path Record => <unknown> @ 9:24-9:30
+              stmt s3 let v1 @ 10:5-10:49
+                initializer
+                  expr e1 path Choice::Record => <unknown> @ 10:34-10:48
+              stmt s4 let v2 @ 11:5-11:38
+                initializer
+                  expr e3 record Record -> variant enum fn body_variant_namespace_fixture[lib]::crate::use_it::Choice @ 2:5-6:6::Record => nominal enum fn body_variant_namespace_fixture[lib]::crate::use_it::Choice @ 2:5-6:6 @ 11:18-11:37
+                    field value
+                      expr e2 literal int `1` => i32 @ 11:34-11:35
+              stmt s5 let v3 @ 12:5-12:56
+                initializer
+                  expr e5 record Choice::Record -> variant enum fn body_variant_namespace_fixture[lib]::crate::use_it::Choice @ 2:5-6:6::Record => nominal enum fn body_variant_namespace_fixture[lib]::crate::use_it::Choice @ 2:5-6:6 @ 12:28-12:55
+                    field value
+                      expr e4 literal int `2` => i32 @ 12:52-12:53
+              stmt s6 let v4 @ 13:5-13:23
+                initializer
+                  expr e6 path Tuple -> variant enum fn body_variant_namespace_fixture[lib]::crate::use_it::Choice @ 2:5-6:6::Tuple => nominal enum fn body_variant_namespace_fixture[lib]::crate::use_it::Choice @ 2:5-6:6 @ 13:17-13:22
+              stmt s7 let v5 @ 14:5-14:41
+                initializer
+                  expr e7 path Choice::Tuple -> variant enum fn body_variant_namespace_fixture[lib]::crate::use_it::Choice @ 2:5-6:6::Tuple => nominal enum fn body_variant_namespace_fixture[lib]::crate::use_it::Choice @ 2:5-6:6 @ 14:27-14:40
+              stmt s8 let v6 @ 15:5-15:21
+                initializer
+                  expr e8 path Unit -> variant enum fn body_variant_namespace_fixture[lib]::crate::use_it::Choice @ 2:5-6:6::Unit => nominal enum fn body_variant_namespace_fixture[lib]::crate::use_it::Choice @ 2:5-6:6 @ 15:16-15:20
+              stmt s9 let v7 @ 16:5-16:39
+                initializer
+                  expr e9 path Choice::Unit -> variant enum fn body_variant_namespace_fixture[lib]::crate::use_it::Choice @ 2:5-6:6::Unit => nominal enum fn body_variant_namespace_fixture[lib]::crate::use_it::Choice @ 2:5-6:6 @ 16:26-16:38
         "#]],
     );
 }
@@ -809,7 +894,7 @@ pub fn use_it(user: User) {
             body
             expr e1 block s1 => nominal struct body_rich_path_fixture[lib]::crate::User @ 14:23-16:6
               tail
-                expr e0 path User -> item struct body_rich_path_fixture[lib]::crate::User => nominal struct body_rich_path_fixture[lib]::crate::User @ 15:9-15:13
+                expr e0 path User -> struct body_rich_path_fixture[lib]::crate::User => nominal struct body_rich_path_fixture[lib]::crate::User @ 15:9-15:13
 
 
             body b2 fn impl Factory<Project> for User::make @ 20:5-22:6
@@ -820,7 +905,7 @@ pub fn use_it(user: User) {
             body
             expr e1 block s1 => nominal struct body_rich_path_fixture[lib]::crate::Project @ 20:26-22:6
               tail
-                expr e0 path Project -> item struct body_rich_path_fixture[lib]::crate::Project => nominal struct body_rich_path_fixture[lib]::crate::Project @ 21:9-21:16
+                expr e0 path Project -> struct body_rich_path_fixture[lib]::crate::Project => nominal struct body_rich_path_fixture[lib]::crate::Project @ 21:9-21:16
         "#]],
     );
 }
@@ -1214,7 +1299,7 @@ pub fn use_it() {
             body
             expr e1 block s1 => nominal struct body_associated_path_fixture[lib]::crate::Widget @ 4:29-6:6
               tail
-                expr e0 path Widget -> item struct body_associated_path_fixture[lib]::crate::Widget => nominal struct body_associated_path_fixture[lib]::crate::Widget @ 5:9-5:15
+                expr e0 path Widget -> struct body_associated_path_fixture[lib]::crate::Widget => nominal struct body_associated_path_fixture[lib]::crate::Widget @ 5:9-5:15
         "#]],
     );
 }

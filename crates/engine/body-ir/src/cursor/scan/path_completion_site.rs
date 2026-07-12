@@ -48,7 +48,7 @@ impl<'txn, 'db> PathCompletionSiteScanner<'txn, 'db> {
             }
 
             self.scan_type_paths(body_ref, body, &mut best);
-            self.scan_value_paths(body_ref, body, &mut best);
+            self.scan_body_paths(body_ref, body, &mut best);
         }
 
         Ok(best.map(|(site, _)| site))
@@ -70,8 +70,8 @@ impl<'txn, 'db> PathCompletionSiteScanner<'txn, 'db> {
         });
     }
 
-    /// Scans expression and pattern paths where value-namespace completions can appear.
-    fn scan_value_paths(
+    /// Scans expression and pattern paths, preserving the namespace selected by their syntax.
+    fn scan_body_paths(
         &self,
         body_ref: BodyRef,
         body: &ResolvedBodyData,
@@ -82,12 +82,22 @@ impl<'txn, 'db> PathCompletionSiteScanner<'txn, 'db> {
                 continue;
             }
             match &expr_data.kind {
-                ExprKind::Path { path }
-                | ExprKind::Record {
+                ExprKind::Path { path } => self.scan_body_path(
+                    body_ref,
+                    expr_data.scope,
+                    path,
+                    PathCompletionNamespace::Values,
+                    best,
+                ),
+                ExprKind::Record {
                     path: Some(path), ..
-                } => {
-                    self.scan_body_path(body_ref, expr_data.scope, path, best);
-                }
+                } => self.scan_body_path(
+                    body_ref,
+                    expr_data.scope,
+                    path,
+                    PathCompletionNamespace::Types,
+                    best,
+                ),
                 _ => {}
             }
         }
@@ -98,7 +108,7 @@ impl<'txn, 'db> PathCompletionSiteScanner<'txn, 'db> {
         });
     }
 
-    /// Visits value paths directly owned by one pattern node.
+    /// Visits constructor paths directly owned by one pattern node.
     fn scan_pat_data(
         &self,
         body_ref: BodyRef,
@@ -106,8 +116,10 @@ impl<'txn, 'db> PathCompletionSiteScanner<'txn, 'db> {
         data: &PatData,
         best: &mut Option<(PathCompletionSite, u32)>,
     ) {
-        if let Some(path) = data.kind.value_path() {
-            self.scan_body_path(body_ref, scope, path, best);
+        if let Some(path) = data.kind.record_path() {
+            self.scan_body_path(body_ref, scope, path, PathCompletionNamespace::Types, best);
+        } else if let Some(path) = data.kind.value_path() {
+            self.scan_body_path(body_ref, scope, path, PathCompletionNamespace::Values, best);
         }
     }
 
@@ -181,28 +193,30 @@ impl<'txn, 'db> PathCompletionSiteScanner<'txn, 'db> {
         body: BodyRef,
         scope: ScopeId,
         path: &BodyPath,
+        namespace: PathCompletionNamespace,
     ) -> Option<PathCompletionSite> {
         let last_segment_span = path.segment_span(path.segment_count().checked_sub(1)?)?;
         let span = self.empty_member_span(path.source_span, last_segment_span)?;
         let qualifier = path.prefix_through(path.segment_count() - 1)?;
 
-        // Expression and pattern paths can use modules and types as intermediate qualifiers, even
-        // when the final completed path must eventually denote a value.
+        // Expression and pattern paths can use modules and types as intermediate qualifiers. The
+        // surrounding syntax determines whether the missing final segment is a type or a value.
         Some(PathCompletionSite {
             body,
             scope,
             qualifier,
             member_prefix_span: span,
-            namespace: PathCompletionNamespace::Values,
+            namespace,
         })
     }
 
-    /// Finds a partially typed value path segment after at least one qualifier segment.
+    /// Finds a partially typed constructor path segment after at least one qualifier segment.
     fn scan_body_path(
         &self,
         body: BodyRef,
         scope: ScopeId,
         path: &BodyPath,
+        namespace: PathCompletionNamespace,
         best: &mut Option<(PathCompletionSite, u32)>,
     ) {
         for idx in 1..path.segment_count() {
@@ -222,14 +236,14 @@ impl<'txn, 'db> PathCompletionSiteScanner<'txn, 'db> {
                     scope,
                     qualifier,
                     member_prefix_span: span,
-                    namespace: PathCompletionNamespace::Values,
+                    namespace,
                 },
                 path.source_span.len(),
                 best,
             );
         }
 
-        if let Some(site) = self.empty_member_site_for_body_path(body, scope, path) {
+        if let Some(site) = self.empty_member_site_for_body_path(body, scope, path, namespace) {
             Self::remember_site(site, path.source_span.len(), best);
         }
     }

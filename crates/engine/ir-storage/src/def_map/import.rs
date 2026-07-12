@@ -1,24 +1,31 @@
-use rg_std::{MemorySize, Shrink};
+//! Lowered import facts used by both name resolution and source-site queries.
+//!
+//! Resolution needs a semantic `Path`, while cursor and completion queries need the exact source
+//! span for each segment. `ImportPath` keeps both views together so macro expansion cannot rewrite
+//! one path representation and leave another one stale.
+
 use std::fmt;
+
+use rg_std::{MemorySize, Shrink};
 use wincode::{SchemaRead, SchemaWrite};
 
 use rg_ir_model::{
     ModuleId, Path, PathSegment, TargetRef,
     hir::source::ItemSource,
-    items::{ImportAlias, UseImportKind, UsePath, VisibilityLevel},
-    last_segment_name,
+    items::{ImportAlias, UseImportKind, UsePath},
 };
 use rg_parse::Span;
-use rg_text::{Name, NameInterner, RustEdition};
+use rg_text::Name;
+
+use super::scope::Visibility;
 
 /// One lowered import declaration.
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct ImportData {
     pub module: ModuleId,
-    pub visibility: VisibilityLevel,
+    pub visibility: Visibility,
     pub kind: ImportKind,
     pub path: ImportPath,
-    pub source_path: ImportSourcePath,
     pub binding: ImportBinding,
     pub alias_span: Option<Span>,
     pub source: ItemSource,
@@ -29,8 +36,7 @@ impl ImportData {
     /// Returns the binding name introduced by this import when it is not a glob import.
     pub fn binding_name(&self) -> Option<Name> {
         let inferred_name = match self.kind {
-            ImportKind::Named => self.path.last_name(),
-            ImportKind::SelfImport => self.path.last_name(),
+            ImportKind::Named | ImportKind::SelfImport => self.path.semantic().last_name(),
             ImportKind::Glob => None,
         };
 
@@ -89,168 +95,76 @@ impl ImportKind {
     }
 }
 
-/// Structured path used during import resolution.
+/// One semantic import path paired with source spans for the same segments.
+///
+/// The resolver reads `semantic`; source queries use `segments_with_spans`. Both segment lists stay
+/// private so rebasing and `$crate` rewriting cannot accidentally make them disagree.
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct ImportPath {
-    pub absolute: bool,
-    pub segments: Vec<PathSegment>,
+    semantic: Path,
+    source_span: Option<Span>,
+    segment_spans: Vec<Span>,
 }
 
 impl ImportPath {
     pub fn from_use_path(path: &UsePath) -> Self {
-        let path = Path::from_use_path(path);
         Self {
-            absolute: path.absolute,
-            segments: path.segments,
-        }
-    }
-
-    pub fn standard_prelude(
-        crate_name: &'static str,
-        edition: RustEdition,
-        interner: &mut NameInterner,
-    ) -> Self {
-        Self {
-            absolute: true,
-            segments: vec![
-                PathSegment::Name(interner.intern(crate_name)),
-                PathSegment::Name(interner.intern("prelude")),
-                PathSegment::Name(interner.intern(edition.prelude_module())),
-            ],
-        }
-    }
-
-    pub fn crate_relative_standard_prelude(
-        edition: RustEdition,
-        interner: &mut NameInterner,
-    ) -> Self {
-        Self {
-            absolute: false,
-            segments: vec![
-                PathSegment::Name(interner.intern("prelude")),
-                PathSegment::Name(interner.intern(edition.prelude_module())),
-            ],
-        }
-    }
-
-    /// Parses the textual callee path stored in item-tree or AST macro-call data.
-    ///
-    /// A `$crate` segment only has meaning after resolution has selected the macro definition crate.
-    /// Callers that do not have that origin pass `None`, and `$crate` paths are rejected instead of
-    /// being guessed from the call site.
-    pub fn from_macro_path_text(
-        path: &str,
-        dollar_crate_target: Option<TargetRef>,
-    ) -> Option<Self> {
-        let path = path.trim();
-        let absolute = path.starts_with("::");
-        let path = path.trim_start_matches("::");
-        let mut segments = Vec::new();
-
-        for segment in path.split("::") {
-            let segment = segment.trim();
-            if segment.is_empty() {
-                return None;
-            }
-            segments.push(match segment {
-                "$crate" => PathSegment::DollarCrate(dollar_crate_target?),
-                "self" => PathSegment::SelfKw,
-                "super" => PathSegment::SuperKw,
-                "crate" => PathSegment::CrateKw,
-                name => PathSegment::Name(Name::new(name)),
-            });
-        }
-
-        (!segments.is_empty()).then_some(Self { absolute, segments })
-    }
-
-    pub(super) fn last_name(&self) -> Option<Name> {
-        last_segment_name(&self.segments)
-    }
-
-    /// Returns the name for a path that is exactly one relative named segment.
-    pub fn relative_single_name(&self) -> Option<&Name> {
-        if self.absolute || self.segments.len() != 1 {
-            return None;
-        }
-
-        match self.segments.first()? {
-            PathSegment::Name(name) => Some(name),
-            PathSegment::SelfKw
-            | PathSegment::SuperKw
-            | PathSegment::CrateKw
-            | PathSegment::DollarCrate(_) => None,
-        }
-    }
-}
-
-/// Import path plus source spans for each segment.
-#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
-pub struct ImportSourcePath {
-    pub source_span: Option<Span>,
-    pub absolute: bool,
-    pub segments: Vec<ImportSourcePathSegment>,
-}
-
-impl ImportSourcePath {
-    pub fn from_use_path(path: &UsePath) -> Self {
-        let def_map_path = Path::from_use_path(path);
-        let segments = def_map_path
-            .segments
-            .into_iter()
-            .zip(path.segments.iter())
-            .map(|(segment, source_segment)| ImportSourcePathSegment {
-                segment,
-                span: source_segment.span,
-            })
-            .collect();
-
-        Self {
+            semantic: Path::from_use_path(path),
             source_span: path.source_span,
-            absolute: path.absolute,
-            segments,
+            segment_spans: path.segments.iter().map(|segment| segment.span).collect(),
         }
     }
 
-    pub fn segments(&self) -> &[ImportSourcePathSegment] {
-        &self.segments
+    pub fn semantic(&self) -> &Path {
+        &self.semantic
     }
 
     pub fn source_span(&self) -> Option<Span> {
         self.source_span
     }
 
-    pub fn prefix_path(&self, segment_idx: usize) -> Path {
-        Path {
-            absolute: self.absolute,
-            segments: self
+    /// Pair each semantic segment with the source span that produced it.
+    ///
+    /// Normal construction keeps both lists the same length. Decoded data is still checked so a
+    /// source query skips an invalid path instead of attaching a cursor to the wrong segment.
+    pub fn segments_with_spans(
+        &self,
+    ) -> Option<impl ExactSizeIterator<Item = (&PathSegment, Span)>> {
+        if self.semantic.segments.len() != self.segment_spans.len() {
+            return None;
+        }
+
+        Some(
+            self.semantic
                 .segments
                 .iter()
-                .take(segment_idx + 1)
-                .map(|segment| segment.segment.clone())
-                .collect(),
-        }
+                .zip(self.segment_spans.iter().copied()),
+        )
     }
-}
 
-/// One source-spanned import path segment.
-#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
-pub struct ImportSourcePathSegment {
-    pub segment: PathSegment,
-    pub span: Span,
-}
+    /// Generated imports point back to the macro call rather than synthetic token-tree spans.
+    pub fn rebase(&mut self, span: Span) {
+        self.source_span = Some(span);
+        self.segment_spans.fill(span);
+    }
 
-impl From<&ImportPath> for Path {
-    fn from(path: &ImportPath) -> Self {
-        Self {
-            absolute: path.absolute,
-            segments: path.segments.clone(),
+    /// Rewrites the generated leading `$crate` marker without changing its source projection.
+    ///
+    /// The original span still points at the written `$crate` token, while semantic lookup uses the
+    /// selected macro definition's target.
+    pub fn rewrite_dollar_crate(&mut self, target: TargetRef) {
+        let Some(first) = self.semantic.segments.first_mut() else {
+            return;
+        };
+        if matches!(first, PathSegment::Name(name) if name.as_str() == "$crate") {
+            *first = PathSegment::DollarCrate(target);
+            self.semantic.absolute = false;
         }
     }
 }
 
 impl fmt::Display for ImportPath {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        Path::from(self).fmt(f)
+        self.semantic.fmt(f)
     }
 }

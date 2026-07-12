@@ -5,10 +5,10 @@
 
 use anyhow::Result;
 
-use rg_ir_model::{DefId, DefMapRef, LocalDefRef, ModuleRef, TargetRef};
+use rg_ir_model::{DefId, DefMapRef, LocalDefRef, ModuleRef, Path, TargetRef};
 use rg_ir_storage::{
-    ImportPath, LocalDefData, MacroDefinitionData, MacroDefinitionEnv, ScopeBinding,
-    ScopeBindingOrigin, ScopeResolver, TargetResolutionEnv,
+    LocalDefData, MacroDefinitionData, MacroDefinitionEnv, ScopeBinding, ScopeResolver,
+    TargetResolutionEnv,
 };
 use rg_std::ExpectedUnique;
 use rg_text::Name;
@@ -22,7 +22,7 @@ pub(super) struct ResolvedMacroDefinition<'a> {
     pub(super) local_def: &'a LocalDefData,
     pub(super) data: &'a MacroDefinitionData,
     pub(super) order: Option<&'a ItemOrder>,
-    pub(super) origin: ScopeBindingOrigin,
+    pub(super) direct_only: bool,
 }
 
 impl PartialEq for ResolvedMacroDefinition<'_> {
@@ -65,7 +65,7 @@ where
     pub(super) fn resolve(
         &self,
         call: &MacroCallSite,
-        path: &ImportPath,
+        path: &Path,
     ) -> Result<ExpectedUnique<ResolvedMacroDefinition<'a>>> {
         if let Some(name) = path.relative_single_name() {
             // Unqualified calls have special `macro_rules!` textual visibility before they behave
@@ -159,7 +159,7 @@ where
                         origin: DefMapRef::Target(self.state.target),
                         local_def,
                     }),
-                    ScopeBindingOrigin::Direct,
+                    true,
                 );
             }
 
@@ -209,9 +209,7 @@ where
                 // Treat the fallback as an import-like binding. The source binding may be direct
                 // inside the exporting crate, but macro-use lookup is not source-order sensitive in
                 // the caller.
-                if let Some(resolved) =
-                    self.macro_record_for_def(binding.def, ScopeBindingOrigin::Import)?
-                {
+                if let Some(resolved) = self.macro_record_for_def(binding.def, false)? {
                     macros.push(resolved);
                 }
             }
@@ -245,14 +243,14 @@ where
         &self,
         binding: &ScopeBinding,
     ) -> Result<Option<ResolvedMacroDefinition<'a>>> {
-        self.macro_record_for_def(binding.def, binding.origin)
+        self.macro_record_for_def(binding.def, binding.is_direct_only())
     }
 
     /// Converts a resolved definition id into the macro payload needed by expansion.
     fn macro_record_for_def(
         &self,
         def: DefId,
-        origin: ScopeBindingOrigin,
+        direct_only: bool,
     ) -> Result<Option<ResolvedMacroDefinition<'a>>> {
         let Some(payload) = MacroDefinitionEnv::macro_definition_view(self.env, def)? else {
             return Ok(None);
@@ -270,7 +268,7 @@ where
             local_def: payload.local_def,
             data: payload.data,
             order,
-            origin,
+            direct_only,
         }))
     }
 }
@@ -307,7 +305,7 @@ fn macro_definition_is_visible_by_order(
     target: TargetRef,
     call: &MacroCallSite,
 ) -> bool {
-    if macro_.origin != ScopeBindingOrigin::Direct {
+    if !macro_.direct_only {
         return true;
     }
 

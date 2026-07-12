@@ -5,7 +5,9 @@
 //! member facts.
 
 use rg_body_ir::{BodyResolutionContext, ResolvedBodyData};
-use rg_ir_model::{BodyRef, Path, ScopeId, TypePathResolution, identity::DeclarationRef};
+use rg_ir_model::{
+    BodyRef, EnumVariantRef, Path, ScopeId, TypePathResolution, identity::DeclarationRef,
+};
 use rg_ir_storage::ItemLookupIndex;
 use rg_ty::{MemberMethodCandidateRef, Ty};
 
@@ -51,6 +53,23 @@ impl<'a, 'db> BodyResolutionView<'a, 'db> {
                 .type_path_query()
                 .resolve_in_scope(scope, path)?,
         ))
+    }
+
+    /// Resolve an enum variant selected through a body-local type path.
+    pub(crate) fn type_path_enum_variant(
+        &self,
+        body_ref: BodyRef,
+        scope: ScopeId,
+        path: &Path,
+    ) -> anyhow::Result<Option<EnumVariantRef>> {
+        let Some((body, semantic_index)) = self.body_with_index(body_ref)? else {
+            return Ok(None);
+        };
+
+        BodyResolutionContext::new(self.db, self.db, body_ref, body, semantic_index)
+            .type_path_query()
+            .resolve_enum_variant_in_scope(scope, path)
+            .map_err(Into::into)
     }
 
     /// Find declarations for a body value path without local binding ordering.

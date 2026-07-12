@@ -8,8 +8,8 @@ use std::collections::HashMap;
 
 use anyhow::Context as _;
 
-use rg_ir_model::{TargetRef, items::BuiltinMacroKind};
-use rg_ir_storage::{ImportPath, MacroDefinitionEnv, TargetResolutionEnv};
+use rg_ir_model::{Path, TargetRef, items::BuiltinMacroKind};
+use rg_ir_storage::{MacroDefinitionEnv, TargetResolutionEnv};
 use rg_item_tree::{BuiltinMacroItem, CfgSelectArmPayload, ItemTreeDb, ItemTreeId};
 use rg_macro_runtime::{
     ExpansionParseKind, ExpansionSyntax, MacroCompileRecord, MacroExpandRecord,
@@ -496,8 +496,7 @@ impl MacroExpansionAttempt {
         let Some(args) = call.args.as_ref() else {
             return Ok(Self::skipped(state.target, call_id, call));
         };
-        let Some(path) = ImportPath::from_macro_path_text(path_text, call.dollar_crate_target)
-        else {
+        let Some(path) = Path::from_macro_path_text(path_text, call.dollar_crate_target) else {
             return Ok(Self::skipped(state.target, call_id, call));
         };
 

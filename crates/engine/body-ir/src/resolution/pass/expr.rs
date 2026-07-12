@@ -343,6 +343,30 @@ where
             | TypePathResolution::Unknown => {}
         }
 
+        // Record enum variants live in the type namespace even though they are not themselves
+        // types. Resolve that identity separately so `Choice::Record { ... }` does not depend on
+        // the bare-value constructor path used by tuple and unit variants.
+        if let Some(variant_ref) = self
+            .pass
+            .context()
+            .type_path_query()
+            .resolve_enum_variant_in_scope(scope, &def_map_path)?
+            && let Some(variant) = self
+                .pass
+                .context()
+                .item_query()
+                .enum_variant_data(variant_ref)?
+        {
+            return Ok((
+                BodyResolution::Declarations(
+                    [DeclarationRef::EnumVariant(variant_ref)]
+                        .into_iter()
+                        .collect(),
+                ),
+                Ty::nominal(self.record_nominal_ty(scope, path, variant.owner)?),
+            ));
+        }
+
         self.pass
             .context()
             .value_paths()

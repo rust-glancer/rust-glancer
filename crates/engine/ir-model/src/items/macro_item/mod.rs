@@ -17,6 +17,9 @@ pub enum MacroDefinitionItem {
         #[shrink(skip)]
         body: Option<TopSubtree>,
     },
+    /// Deprecated Macro 2.0 syntax retained for compatibility with definitions still present in
+    /// supported sysroots. Prefer extending and testing `macro_rules!` unless a sysroot case
+    /// specifically requires this form.
     MacroDef {
         #[shrink(skip)]
         args: Option<TopSubtree>,

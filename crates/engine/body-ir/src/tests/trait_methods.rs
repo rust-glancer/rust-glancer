@@ -98,7 +98,7 @@ pub fn use_it(user: User, wrapper: Wrapper<Error>) {
             body
             expr e1 block s1 => nominal struct body_trait_applicability_fixture[lib]::crate::User @ 13:30-15:6
               tail
-                expr e0 path User -> item struct body_trait_applicability_fixture[lib]::crate::User => nominal struct body_trait_applicability_fixture[lib]::crate::User @ 14:9-14:13
+                expr e0 path User -> struct body_trait_applicability_fixture[lib]::crate::User => nominal struct body_trait_applicability_fixture[lib]::crate::User @ 14:9-14:13
 
 
             body b2 fn impl GenericTrait for Wrapper<T>::generic @ 23:5-25:6
@@ -110,7 +110,7 @@ pub fn use_it(user: User, wrapper: Wrapper<Error>) {
             body
             expr e1 block s1 => nominal struct body_trait_applicability_fixture[lib]::crate::User @ 23:31-25:6
               tail
-                expr e0 path User -> item struct body_trait_applicability_fixture[lib]::crate::User => nominal struct body_trait_applicability_fixture[lib]::crate::User @ 24:9-24:13
+                expr e0 path User -> struct body_trait_applicability_fixture[lib]::crate::User => nominal struct body_trait_applicability_fixture[lib]::crate::User @ 24:9-24:13
 
 
             body b3 fn impl UserOnlyTrait for Wrapper<User>::user_only @ 33:5-35:6
@@ -122,7 +122,7 @@ pub fn use_it(user: User, wrapper: Wrapper<Error>) {
             body
             expr e1 block s1 => nominal struct body_trait_applicability_fixture[lib]::crate::User @ 33:33-35:6
               tail
-                expr e0 path User -> item struct body_trait_applicability_fixture[lib]::crate::User => nominal struct body_trait_applicability_fixture[lib]::crate::User @ 34:9-34:13
+                expr e0 path User -> struct body_trait_applicability_fixture[lib]::crate::User => nominal struct body_trait_applicability_fixture[lib]::crate::User @ 34:9-34:13
         "#]],
     );
 }

@@ -1,16 +1,21 @@
-//! Value-path lookup.
+//! Value-path lookup from body scopes to declarations and types.
+//!
+//! DefMap owns namespace selection and shadowing. This layer gives ordinary local bindings lexical
+//! priority, then projects selected value definitions into `BodyResolution` and `Ty`. Unit and
+//! tuple struct constructors arrive through the value namespace like functions and constants;
+//! this query does not recover them by falling back to a type-name match.
 
 use rg_ir_model::{
     BindingId, ConstRef, DefId, DefMapRef, EnumVariantRef, FunctionRef, LocalEnumVariantRef,
-    ModuleId, ModuleRef, Path, ScopeId, SemanticItemRef, StaticRef, TypePathResolution,
+    ModuleId, ModuleRef, Path, ScopeId, SemanticItemRef, StaticRef, TypeDefRef, TypePathResolution,
     identity::DeclarationRef,
 };
 use rg_ir_storage::{
-    DefMapSource, ItemStoreSource, NameResolutionFilter, ResolvePathResult, TypePathContext,
+    DefMapSource, ItemStoreSource, NamespaceSet, ResolvePathResult, TypePathContext,
 };
 use rg_package_store::PackageStoreError;
 use rg_std::{ExpectedUnique, UniqueVec};
-use rg_ty::{ExpectedNominalTyExt, ExpectedTyExt, GenericArg, NominalTy, Ty};
+use rg_ty::{ExpectedTyExt, GenericArg, NominalTy, Ty};
 
 use crate::ir::resolved::BodyResolution;
 use crate::resolution::{BodyResolutionContext, TypeRefUseSite};
@@ -33,6 +38,8 @@ enum BodyValueCandidate {
     Function(FunctionRef),
     Const(ConstRef),
     Static(StaticRef),
+    /// Unit or tuple struct selected through the value namespace.
+    TypeConstructor(TypeDefRef, NominalTy),
     EnumVariant(EnumVariantRef, Ty),
 }
 
@@ -92,9 +99,8 @@ where
             return Ok((resolution, ty));
         }
 
-        // Value paths can start with type-like names: tuple/unit struct constructors, `Self`, and
-        // the prefix of associated paths all need type resolution before falling back to ordinary
-        // module/DefMap lookup.
+        // `Self` and associated-value prefixes still need type resolution. Ordinary tuple/unit
+        // constructors have already taken the value-namespace path above.
         match self
             .context
             .type_path_query()
@@ -106,22 +112,8 @@ where
                     Ty::self_ty(NominalTy::bare(type_def)),
                 ));
             }
-            TypePathResolution::TypeDef(type_def) => {
-                if type_def.origin == DefMapRef::Body(self.context.body_ref())
-                    && self
-                        .context
-                        .item_query()
-                        .type_def_has_value_constructor(type_def)?
-                {
-                    return Ok((
-                        BodyResolution::Declarations(
-                            [DeclarationRef::from(type_def)].into_iter().collect(),
-                        ),
-                        Ty::nominal(NominalTy::bare(type_def)),
-                    ));
-                }
-            }
-            TypePathResolution::TypeAlias(_)
+            TypePathResolution::TypeDef(_)
+            | TypePathResolution::TypeAlias(_)
             | TypePathResolution::Trait(_)
             | TypePathResolution::Unknown => {}
         }
@@ -153,21 +145,11 @@ where
             return Ok((BodyResolution::Unknown, Ty::Unknown));
         }
 
-        // Functions/consts/statics are true value items. Resolve them before the type-constructor
-        // fallback below, which only admits unit and tuple structs.
-        if let Some((resolution, ty)) =
-            self.semantic_value_resolution_from_defs(&result.resolved)?
-        {
-            return Ok((resolution, ty));
-        }
-
-        // Unit and tuple structs are type defs in DefMap, but value expressions should see their
-        // constructor type.
-        let (declarations, ty) = self.constructor_resolution_from_defs(&result.resolved)?;
-        if declarations.is_empty() {
-            return Ok((BodyResolution::Unknown, Ty::Unknown));
-        }
-        Ok((BodyResolution::Declarations(declarations), ty))
+        Ok(self
+            .value_name_resolution(BodyValueName::Candidates(
+                self.value_candidates_for_defs(result.resolved)?,
+            ))?
+            .unwrap_or((BodyResolution::Unknown, Ty::Unknown)))
     }
 
     /// Search one value name through parent scopes, with an optional local binding cutoff.
@@ -212,12 +194,7 @@ where
                 .context
                 .def_map_query()
                 .scope_resolver()
-                .resolve_lexical_name_in_module(
-                    from,
-                    module,
-                    name,
-                    NameResolutionFilter::ValuesOnly,
-                )?;
+                .resolve_lexical_name_in_module(from, module, name, NamespaceSet::VALUES)?;
             let value_name = BodyValueName::Candidates(self.value_candidates_for_defs(defs)?);
             if let Some(resolution) = self.value_name_resolution(value_name)? {
                 return Ok(Some(resolution));
@@ -236,11 +213,10 @@ where
     ) -> Result<ResolvePathResult, PackageStoreError> {
         let owner_module = self.context.body().owner_module();
         let def_maps = self.context.def_map_query();
-        let result = def_maps.scope_resolver().resolve_path(
-            owner_module,
-            path,
-            NameResolutionFilter::AllNamespaces,
-        )?;
+        let result =
+            def_maps
+                .scope_resolver()
+                .resolve_path(owner_module, path, NamespaceSet::VALUES)?;
         if !result.resolved.is_empty() {
             return Ok(result);
         }
@@ -250,11 +226,9 @@ where
             return Ok(result);
         }
 
-        def_maps.scope_resolver().resolve_path(
-            fallback_module,
-            path,
-            NameResolutionFilter::AllNamespaces,
-        )
+        def_maps
+            .scope_resolver()
+            .resolve_path(fallback_module, path, NamespaceSet::VALUES)
     }
 
     /// Resolve a multi-segment value path through the body def map.
@@ -271,14 +245,17 @@ where
             .context
             .def_map_query()
             .scope_resolver()
-            .resolve_lexical_path(from, path, NameResolutionFilter::ValuesOnly)?
+            .resolve_lexical_path(from, path, NamespaceSet::VALUES)?
             .resolved;
         self.value_name_resolution(BodyValueName::Candidates(
             self.value_candidates_for_defs(defs)?,
         ))
     }
 
-    /// Keep only definitions that can be used as value expressions.
+    /// Project selected value-namespace definitions into Body IR candidates.
+    ///
+    /// DefMap has already decided which namespace and route won. This step only attaches semantic
+    /// declaration identities and types; it never searches the type namespace for a constructor.
     fn value_candidates_for_defs(
         &self,
         defs: impl IntoIterator<Item = DefId>,
@@ -304,8 +281,19 @@ where
                         SemanticItemRef::Static(static_ref) => {
                             candidates.push(BodyValueCandidate::Static(static_ref));
                         }
-                        SemanticItemRef::TypeDef(_)
-                        | SemanticItemRef::Trait(_)
+                        SemanticItemRef::TypeDef(type_def) => {
+                            if self
+                                .context
+                                .item_query()
+                                .type_def_has_value_constructor(type_def)?
+                            {
+                                candidates.push(BodyValueCandidate::TypeConstructor(
+                                    type_def,
+                                    NominalTy::bare(type_def),
+                                ));
+                            }
+                        }
+                        SemanticItemRef::Trait(_)
                         | SemanticItemRef::Impl(_)
                         | SemanticItemRef::TypeAlias(_) => {}
                     }
@@ -333,16 +321,14 @@ where
                 Ok(Some((BodyResolution::Binding(binding), ty)))
             }
             BodyValueName::Candidates(candidates) => {
-                let mut functions = UniqueVec::new();
                 let mut declarations = UniqueVec::new();
                 let mut tys = ExpectedUnique::new();
-                let mut function_tys = ExpectedUnique::new();
 
                 for candidate in candidates {
                     match candidate {
                         BodyValueCandidate::Function(function) => {
-                            functions.push(DeclarationRef::from(function));
-                            function_tys.push(Ty::function_item(function));
+                            declarations.push(DeclarationRef::from(function));
+                            tys.push(Ty::function_item(function));
                         }
                         BodyValueCandidate::Const(const_ref) => {
                             declarations.push(DeclarationRef::from(const_ref));
@@ -351,6 +337,10 @@ where
                         BodyValueCandidate::Static(static_ref) => {
                             declarations.push(DeclarationRef::from(static_ref));
                             tys.push(self.semantic_static_ty(static_ref)?);
+                        }
+                        BodyValueCandidate::TypeConstructor(type_def, ty) => {
+                            declarations.push(DeclarationRef::from(type_def));
+                            tys.push(Ty::nominal(ty));
                         }
                         BodyValueCandidate::EnumVariant(variant_ref, ty) => {
                             declarations.push(DeclarationRef::EnumVariant(variant_ref));
@@ -365,26 +355,10 @@ where
                         tys.into_ty(),
                     )));
                 }
-                if !functions.is_empty() {
-                    return Ok(Some((
-                        BodyResolution::Declarations(functions),
-                        function_tys.into_ty(),
-                    )));
-                }
 
                 Ok(None)
             }
         }
-    }
-
-    /// Resolve owner-module functions, consts, and statics before constructor fallback.
-    fn semantic_value_resolution_from_defs(
-        &self,
-        defs: &[DefId],
-    ) -> Result<Option<(BodyResolution, Ty)>, PackageStoreError> {
-        self.value_name_resolution(BodyValueName::Candidates(
-            self.value_candidates_for_defs(defs.iter().copied())?,
-        ))
     }
 
     /// Resolve the declared type of a const item.
@@ -453,37 +427,5 @@ where
         } else {
             Ok(None)
         }
-    }
-
-    /// Turn constructor-capable type defs into value declarations and their nominal type.
-    fn constructor_resolution_from_defs(
-        &self,
-        defs: &[DefId],
-    ) -> Result<(UniqueVec<DeclarationRef>, Ty), PackageStoreError> {
-        let mut declarations = UniqueVec::new();
-        let mut type_defs = ExpectedUnique::new();
-        for def in defs {
-            let DefId::Local(local_def) = def else {
-                continue;
-            };
-            let Some(SemanticItemRef::TypeDef(type_def)) = self
-                .context
-                .item_query()
-                .semantic_item_for_local_def(*local_def)?
-            else {
-                continue;
-            };
-            if !self
-                .context
-                .item_query()
-                .type_def_has_value_constructor(type_def)?
-            {
-                continue;
-            }
-            declarations.push(DeclarationRef::LocalDef(*local_def));
-            type_defs.push(NominalTy::bare(type_def));
-        }
-
-        Ok((declarations, type_defs.into_nominal_ty()))
     }
 }

@@ -5,7 +5,7 @@
 
 use rg_ir_model::Path;
 use rg_ir_model::{DefMapRef, ModuleRef, TargetRef};
-use rg_ir_storage::{DefMap, ImportSourcePath};
+use rg_ir_storage::{DefMap, ImportPath};
 use rg_package_store::PackageStoreError;
 use rg_parse::{FileId, Span, TextSpan};
 
@@ -99,7 +99,7 @@ impl PathCompletionSiteScanner<'_, '_> {
                 module: import.module,
             };
             let Some((site, source_len)) =
-                self.unqualified_site_for_import_path(module, &import.source_path)
+                self.unqualified_site_for_import_path(module, &import.path)
             else {
                 continue;
             };
@@ -128,8 +128,7 @@ impl PathCompletionSiteScanner<'_, '_> {
                 origin: DefMapRef::Target(self.target),
                 module: import.module,
             };
-            let Some((site, source_len)) = self.site_for_import_path(module, &import.source_path)
-            else {
+            let Some((site, source_len)) = self.site_for_import_path(module, &import.path) else {
                 continue;
             };
 
@@ -146,10 +145,12 @@ impl PathCompletionSiteScanner<'_, '_> {
     fn site_for_import_path(
         &self,
         module: ModuleRef,
-        path: &ImportSourcePath,
+        path: &ImportPath,
     ) -> Option<(DefMapPathCompletionSite, u32)> {
-        for (idx, segment) in path.segments.iter().enumerate().skip(1) {
-            if !segment.span.touches(self.offset) {
+        let semantic = path.semantic();
+
+        for (idx, (_, span)) in path.segments_with_spans()?.enumerate().skip(1) {
+            if !span.touches(self.offset) {
                 continue;
             }
 
@@ -157,25 +158,20 @@ impl PathCompletionSiteScanner<'_, '_> {
                 DefMapPathCompletionSite {
                     module,
                     qualifier: Path {
-                        absolute: path.absolute,
-                        segments: path
-                            .segments
-                            .iter()
-                            .take(idx)
-                            .map(|segment| segment.segment.clone())
-                            .collect(),
+                        absolute: semantic.absolute,
+                        segments: semantic.segments[..idx].to_vec(),
                     },
-                    member_prefix_span: segment.span,
+                    member_prefix_span: span,
                 },
-                path.source_span.unwrap_or(segment.span).len(),
+                path.source_span().unwrap_or(span).len(),
             ));
         }
 
         let source_span = path.source_span()?;
-        let last_segment = path.segments.last()?;
+        let last_segment_span = path.segments_with_spans()?.last()?.1;
         let offset_after_last_segment =
-            last_segment.span.text.end <= self.offset && self.offset <= source_span.text.end;
-        if source_span.text.end <= last_segment.span.text.end || !offset_after_last_segment {
+            last_segment_span.text.end <= self.offset && self.offset <= source_span.text.end;
+        if source_span.text.end <= last_segment_span.text.end || !offset_after_last_segment {
             return None;
         }
 
@@ -183,12 +179,8 @@ impl PathCompletionSiteScanner<'_, '_> {
             DefMapPathCompletionSite {
                 module,
                 qualifier: Path {
-                    absolute: path.absolute,
-                    segments: path
-                        .segments
-                        .iter()
-                        .map(|segment| segment.segment.clone())
-                        .collect(),
+                    absolute: semantic.absolute,
+                    segments: semantic.segments.clone(),
                 },
                 member_prefix_span: Span {
                     text: TextSpan {
@@ -205,22 +197,24 @@ impl PathCompletionSiteScanner<'_, '_> {
     fn unqualified_site_for_import_path(
         &self,
         module: ModuleRef,
-        path: &ImportSourcePath,
+        path: &ImportPath,
     ) -> Option<(DefMapUnqualifiedCompletionSite, u32)> {
-        if path.absolute || path.segments.len() != 1 {
+        let semantic = path.semantic();
+        let mut segments = path.segments_with_spans()?;
+        if semantic.absolute || segments.len() != 1 {
             return None;
         }
-        let segment = path.segments.first()?;
-        if !segment.span.touches(self.offset) {
+        let segment_span = segments.next()?.1;
+        if !segment_span.touches(self.offset) {
             return None;
         }
 
         Some((
             DefMapUnqualifiedCompletionSite {
                 module,
-                member_prefix_span: segment.span,
+                member_prefix_span: segment_span,
             },
-            path.source_span.unwrap_or(segment.span).len(),
+            path.source_span().unwrap_or(segment_span).len(),
         ))
     }
 }

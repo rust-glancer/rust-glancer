@@ -221,6 +221,14 @@ impl FieldList {
             Self::Unit => &[],
         }
     }
+
+    /// Whether this shape introduces a constructor in the value namespace.
+    ///
+    /// Record-shaped structs and variants are named only through the type namespace. Tuple and
+    /// unit shapes additionally provide a callable or bare value constructor.
+    pub fn has_value_constructor(&self) -> bool {
+        matches!(self, Self::Tuple(_) | Self::Unit)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]

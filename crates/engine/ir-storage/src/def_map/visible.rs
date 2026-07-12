@@ -2,7 +2,7 @@
 
 use rg_ir_model::DefId;
 
-use super::scope::ModuleScopeBuilder;
+use super::scope::{ModuleScopeBuilder, Namespace};
 
 /// Where a visible definition came from during unqualified lookup.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -12,29 +12,11 @@ pub enum VisibleScopeOrigin {
     ExternRoot,
 }
 
-/// Namespace slot occupied by a visible module-scope definition.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum ScopeNamespace {
-    Types,
-    Values,
-    Macros,
-}
-
-impl ScopeNamespace {
-    fn sort_rank(self) -> u8 {
-        match self {
-            Self::Types => 0,
-            Self::Values => 1,
-            Self::Macros => 2,
-        }
-    }
-}
-
 /// One definition visible from a module through another module's scope.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VisibleScopeDef {
     pub label: String,
-    pub namespace: ScopeNamespace,
+    pub namespace: Namespace,
     pub def: DefId,
     /// Lookup source used by unqualified completions to rank familiar names first.
     pub origin: VisibleScopeOrigin,
@@ -61,41 +43,20 @@ impl VisibleScopeDefs {
         origin: VisibleScopeOrigin,
         skip_shadowed: bool,
     ) {
-        // The visibility-aware builder keeps namespace buckets separate. Analysis filters those
-        // buckets according to the syntactic context where completion was requested.
+        // Completion keeps namespace identity so a same-spelling value does not shadow a type.
         for (name, entry) in scope.entries() {
-            for binding in entry.types() {
-                self.push(
-                    VisibleScopeDef {
-                        label: name.to_string(),
-                        namespace: ScopeNamespace::Types,
-                        def: binding.def,
-                        origin,
-                    },
-                    skip_shadowed,
-                );
-            }
-            for binding in entry.values() {
-                self.push(
-                    VisibleScopeDef {
-                        label: name.to_string(),
-                        namespace: ScopeNamespace::Values,
-                        def: binding.def,
-                        origin,
-                    },
-                    skip_shadowed,
-                );
-            }
-            for binding in entry.macros() {
-                self.push(
-                    VisibleScopeDef {
-                        label: name.to_string(),
-                        namespace: ScopeNamespace::Macros,
-                        def: binding.def,
-                        origin,
-                    },
-                    skip_shadowed,
-                );
+            for namespace in Namespace::ALL {
+                for binding in entry.bindings(namespace) {
+                    self.push(
+                        VisibleScopeDef {
+                            label: name.to_string(),
+                            namespace,
+                            def: binding.def,
+                            origin,
+                        },
+                        skip_shadowed,
+                    );
+                }
             }
         }
     }

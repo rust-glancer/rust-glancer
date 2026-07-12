@@ -293,7 +293,6 @@ pub fn use_it() {
             qualified record constructor completions
             - enum Action
             - struct User
-            - fn build_user
 
             record variant constructor completions
             - variant Start

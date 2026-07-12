@@ -19,7 +19,8 @@ use rg_ir_model::{
 use rg_ir_storage::{
     DefMap, DefMapBuilder, DefMapSource, ItemLookupIndex, ItemStore, ItemStoreBuilder,
     ItemStoreSource, LocalDefData, LocalDefKind, ModuleData, ModuleOrigin, ModuleScopeBuilder,
-    Namespace, ScopeBinding, ScopeBindingOrigin, TargetItemQuery, TypePathContext,
+    Namespace, NamespaceSet, ScopeBinding, ScopeBindingProvenance, TargetItemQuery,
+    TypePathContext, Visibility,
 };
 use rg_std::ExpectedUnique;
 use rg_text::Name;
@@ -318,6 +319,7 @@ fn fixture_with_traits_impls_aliases_and_structs(
         name: None,
         name_span: None,
         docs: None,
+        visibility: Visibility::Public,
         parent: None,
         children: Vec::new(),
         local_defs: Vec::new(),
@@ -341,6 +343,7 @@ fn fixture_with_traits_impls_aliases_and_structs(
             module: root_module,
             name: struct_data.name.clone(),
             kind: LocalDefKind::Struct,
+            namespaces: NamespaceSet::TYPES,
             visibility: VisibilityLevel::Public,
             source: struct_data.source,
             file_id: FileId(0),
@@ -356,12 +359,11 @@ fn fixture_with_traits_impls_aliases_and_structs(
         scope.insert_binding(
             &struct_data.name,
             Namespace::Types,
-            ScopeBinding {
-                def: DefId::Local(local_def_ref),
-                visibility: VisibilityLevel::Public,
-                owner: module(),
-                origin: ScopeBindingOrigin::Direct,
-            },
+            ScopeBinding::new(
+                DefId::Local(local_def_ref),
+                Visibility::Public,
+                ScopeBindingProvenance::Direct,
+            ),
         );
     }
 
@@ -370,6 +372,7 @@ fn fixture_with_traits_impls_aliases_and_structs(
             module: root_module,
             name: trait_data.name.clone(),
             kind: LocalDefKind::Trait,
+            namespaces: NamespaceSet::TYPES,
             visibility: VisibilityLevel::Public,
             source: trait_data.source,
             file_id: FileId(0),
@@ -385,12 +388,11 @@ fn fixture_with_traits_impls_aliases_and_structs(
         scope.insert_binding(
             &trait_data.name,
             Namespace::Types,
-            ScopeBinding {
-                def: DefId::Local(local_def_ref),
-                visibility: VisibilityLevel::Public,
-                owner: module(),
-                origin: ScopeBindingOrigin::Direct,
-            },
+            ScopeBinding::new(
+                DefId::Local(local_def_ref),
+                Visibility::Public,
+                ScopeBindingProvenance::Direct,
+            ),
         );
     }
 

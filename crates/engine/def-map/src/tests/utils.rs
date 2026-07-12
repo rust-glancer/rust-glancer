@@ -6,8 +6,8 @@ use rg_ir_model::{
     hir::source::{ItemSource, ItemSourceKind},
 };
 use rg_ir_storage::{
-    DefMap, ImportData, ImportKind, NameResolutionFilter, ResolvePathResult, ScopeBinding,
-    ScopeEntry,
+    DefMap, ImportData, ImportKind, LocalDefKind, Namespace, NamespaceSet, ResolvePathResult,
+    ScopeBinding, ScopeBindingProvenance, ScopeEntry, ScopeResolutionRef, Visibility,
 };
 use rg_item_tree::VisibilityLevel;
 use rg_package_store::PackageLoader;
@@ -55,6 +55,7 @@ pub(super) struct PathResolutionQuery {
     target_kind: TargetKind,
     module_path: &'static str,
     path: &'static str,
+    namespaces: NamespaceSet,
 }
 
 impl PathResolutionQuery {
@@ -68,6 +69,7 @@ impl PathResolutionQuery {
             target_kind: TargetKind::Lib,
             module_path,
             path,
+            namespaces: NamespaceSet::ALL,
         }
     }
 
@@ -81,7 +83,18 @@ impl PathResolutionQuery {
             target_kind: TargetKind::Bin,
             module_path,
             path,
+            namespaces: NamespaceSet::ALL,
         }
+    }
+
+    pub(super) fn types(mut self) -> Self {
+        self.namespaces = NamespaceSet::TYPES;
+        self
+    }
+
+    pub(super) fn values(mut self) -> Self {
+        self.namespaces = NamespaceSet::VALUES;
+        self
     }
 }
 
@@ -108,6 +121,12 @@ impl DefMapFixtureDb {
     pub(super) fn build_with_sysroot(fixture: &str) -> Self {
         Self {
             fixture: DefMapFixture::build_with_sysroot(fixture),
+        }
+    }
+
+    pub(super) fn build_with_fake_sysroot(fixture: &str) -> Self {
+        Self {
+            fixture: DefMapFixture::build_with_fake_sysroot(fixture),
         }
     }
 
@@ -217,7 +236,7 @@ impl<'a> FixtureEntry<'a> {
     /// Asserts that the entry has at least one visible type binding.
     pub(super) fn assert_type_exists(&self, reason: &str) -> &Self {
         assert!(
-            !self.scope_entry().types().is_empty(),
+            !self.scope_entry().bindings(Namespace::Types).is_empty(),
             "{reason}: expected {} to have a type binding",
             self.context(),
         );
@@ -227,8 +246,32 @@ impl<'a> FixtureEntry<'a> {
     /// Asserts that the entry has at least one visible value binding.
     pub(super) fn assert_value_exists(&self, reason: &str) -> &Self {
         assert!(
-            !self.scope_entry().values().is_empty(),
+            !self.scope_entry().bindings(Namespace::Values).is_empty(),
             "{reason}: expected {} to have a value binding",
+            self.context(),
+        );
+        self
+    }
+
+    /// Asserts that the entry has no selected value binding.
+    pub(super) fn assert_value_missing(&self, reason: &str) -> &Self {
+        assert!(
+            self.scope_entry().bindings(Namespace::Values).is_empty(),
+            "{reason}: expected {} not to have a value binding",
+            self.context(),
+        );
+        self
+    }
+
+    /// Asserts that one selected value binding has the requested local definition kind.
+    pub(super) fn assert_value_kind(&self, kind: LocalDefKind, reason: &str) -> &Self {
+        assert!(
+            self.scope_entry()
+                .bindings(Namespace::Values)
+                .iter()
+                .filter_map(|binding| self.binding_origin(binding))
+                .any(|origin| origin.local_def_kind() == Some(kind)),
+            "{reason}: expected {} to have a `{kind}` value binding",
             self.context(),
         );
         self
@@ -238,7 +281,7 @@ impl<'a> FixtureEntry<'a> {
     pub(super) fn assert_module_named(&self, module_name: &str, reason: &str) -> &Self {
         assert!(
             self.scope_entry()
-                .types()
+                .bindings(Namespace::Types)
                 .iter()
                 .filter_map(|binding| self.binding_origin(binding))
                 .any(|origin| origin.module_name() == Some(module_name)),
@@ -252,11 +295,46 @@ impl<'a> FixtureEntry<'a> {
     pub(super) fn assert_type_source_file(&self, file_name: &str, reason: &str) -> &Self {
         assert!(
             self.scope_entry()
-                .types()
+                .bindings(Namespace::Types)
                 .iter()
                 .filter_map(|binding| self.binding_origin(binding))
                 .any(|origin| origin.source_file_name().as_deref() == Some(file_name)),
             "{reason}: expected {} to have a type binding from `{file_name}`",
+            self.context(),
+        );
+        self
+    }
+
+    /// Asserts that the type namespace selected one definition with the requested route count.
+    pub(super) fn assert_type_resolved_with_routes(
+        &self,
+        route_count: usize,
+        reason: &str,
+    ) -> &Self {
+        let ScopeResolutionRef::Resolved(binding) = self.scope_entry().resolution(Namespace::Types)
+        else {
+            panic!("{reason}: expected {} to resolve uniquely", self.context());
+        };
+        assert_eq!(
+            binding.routes().len(),
+            route_count,
+            "{reason}: unexpected route count for {}",
+            self.context(),
+        );
+        self
+    }
+
+    /// Asserts that the type namespace retained an explicit ambiguity.
+    pub(super) fn assert_type_ambiguous(&self, candidate_count: usize, reason: &str) -> &Self {
+        let ScopeResolutionRef::Ambiguous(bindings) =
+            self.scope_entry().resolution(Namespace::Types)
+        else {
+            panic!("{reason}: expected {} to be ambiguous", self.context());
+        };
+        assert_eq!(
+            bindings.len(),
+            candidate_count,
+            "{reason}: unexpected candidate count for {}",
             self.context(),
         );
         self
@@ -302,6 +380,17 @@ struct FixtureBindingOrigin<'a> {
 }
 
 impl FixtureBindingOrigin<'_> {
+    fn local_def_kind(&self) -> Option<LocalDefKind> {
+        let DefId::Local(local_def_ref) = self.def else {
+            return None;
+        };
+
+        self.db
+            .resident_def_map(local_def_ref.origin.as_target_ref()?)?
+            .local_def(local_def_ref.local_def)
+            .map(|data| data.kind)
+    }
+
     fn module_name(&self) -> Option<&str> {
         let DefId::Module(module_ref) = self.def else {
             return None;
@@ -394,16 +483,25 @@ impl<'a> ProjectPathResolutionSnapshot<'a> {
                     module: module_id,
                 },
                 &path,
-                NameResolutionFilter::AllNamespaces,
+                query.namespaces,
             )
             .expect("path resolution fixture should load def-map packages");
 
+        let namespace_suffix = if query.namespaces == NamespaceSet::TYPES {
+            " [types]"
+        } else if query.namespaces == NamespaceSet::VALUES {
+            " [values]"
+        } else {
+            ""
+        };
+
         format!(
-            "{} [{}] {} resolves {} -> {}",
+            "{} [{}] {} resolves {}{} -> {}",
             query.package_name,
             target.kind,
             query.module_path,
             path,
+            namespace_suffix,
             self.render_result(&result),
         )
     }
@@ -654,24 +752,24 @@ impl<'a> TargetDefMapSnapshot<'a> {
     fn render_scope_entry(&self, entry: &ScopeEntry) -> String {
         let mut parts = Vec::new();
 
-        if !entry.types().is_empty() {
+        if !entry.bindings(Namespace::Types).is_empty() {
             parts.push(format!(
                 "type [{}]",
-                self.render_namespace_bindings(entry.types())
+                self.render_namespace_bindings(entry.bindings(Namespace::Types))
             ));
         }
 
-        if !entry.values().is_empty() {
+        if !entry.bindings(Namespace::Values).is_empty() {
             parts.push(format!(
                 "value [{}]",
-                self.render_namespace_bindings(entry.values())
+                self.render_namespace_bindings(entry.bindings(Namespace::Values))
             ));
         }
 
-        if !entry.macros().is_empty() {
+        if !entry.bindings(Namespace::Macros).is_empty() {
             parts.push(format!(
                 "macro [{}]",
-                self.render_namespace_bindings(entry.macros())
+                self.render_namespace_bindings(entry.bindings(Namespace::Macros))
             ));
         }
 
@@ -681,14 +779,23 @@ impl<'a> TargetDefMapSnapshot<'a> {
     fn render_namespace_bindings(&self, bindings: &[ScopeBinding]) -> String {
         let mut rendered = bindings
             .iter()
-            .filter_map(|binding| self.binding_origin(binding))
+            .flat_map(|binding| {
+                binding.routes().iter().filter_map(|route| {
+                    self.binding_origin_with_visibility(binding, route.visibility, route.provenance)
+                })
+            })
             .map(|origin| origin.render())
             .collect::<Vec<_>>();
         rendered.sort();
         rendered.join("; ")
     }
 
-    fn binding_origin(&self, binding: &'a ScopeBinding) -> Option<BindingOrigin<'a>> {
+    fn binding_origin_with_visibility(
+        &self,
+        binding: &'a ScopeBinding,
+        visibility: Visibility,
+        provenance: ScopeBindingProvenance,
+    ) -> Option<BindingOrigin<'a>> {
         let origin = match binding.def {
             DefId::Module(module_ref) => module_ref.origin,
             DefId::Local(local_def_ref) => local_def_ref.origin,
@@ -701,17 +808,34 @@ impl<'a> TargetDefMapSnapshot<'a> {
             .get(target_ref.package.0)?;
         self.project.resident_def_map(target_ref)?;
 
+        let visibility_prefix = if provenance.is_direct() {
+            match binding.def {
+                DefId::Local(local_def) => self
+                    .project
+                    .resident_def_map(target_ref)?
+                    .local_def(local_def.local_def)
+                    .map(|data| BindingOrigin::source_visibility_prefix(&data.visibility))
+                    .unwrap_or_else(|| BindingOrigin::semantic_visibility_prefix(visibility)),
+                DefId::Module(_) | DefId::EnumVariant(_) => {
+                    BindingOrigin::semantic_visibility_prefix(visibility)
+                }
+            }
+        } else {
+            BindingOrigin::semantic_visibility_prefix(visibility)
+        };
+
         Some(BindingOrigin {
             project: self.project,
             def: binding.def,
-            binding_visibility: &binding.visibility,
+            visibility_prefix,
         })
     }
 
     fn render_unresolved_import(&self, import: &ImportData) -> String {
-        let visibility = match &import.visibility {
-            VisibilityLevel::Private => String::new(),
-            visibility => format!("{visibility} "),
+        let visibility = match import.visibility {
+            Visibility::Module(_) => String::new(),
+            Visibility::Public => "pub ".to_string(),
+            Visibility::Invisible => "invisible ".to_string(),
         };
         let path = match import.kind {
             ImportKind::Glob => format!("{}::*", import.path),
@@ -763,22 +887,29 @@ impl<'a> TargetDefMapSnapshot<'a> {
 struct BindingOrigin<'a> {
     project: &'a DefMapFixtureDb,
     def: DefId,
-    binding_visibility: &'a VisibilityLevel,
+    visibility_prefix: String,
 }
 
 impl BindingOrigin<'_> {
     fn render(&self) -> String {
-        let visibility = Self::visibility_prefix(self.binding_visibility);
         let origin = ResolvedDefOrigin {
             project: self.project,
             def: self.def,
         }
         .render();
 
-        format!("{visibility}{origin}")
+        format!("{}{origin}", self.visibility_prefix)
     }
 
-    fn visibility_prefix(visibility: &VisibilityLevel) -> String {
+    fn semantic_visibility_prefix(visibility: Visibility) -> String {
+        match visibility {
+            Visibility::Module(_) => String::new(),
+            Visibility::Public => "pub ".to_string(),
+            Visibility::Invisible => "invisible ".to_string(),
+        }
+    }
+
+    fn source_visibility_prefix(visibility: &VisibilityLevel) -> String {
         match visibility {
             VisibilityLevel::Private => String::new(),
             _ => format!("{visibility} "),

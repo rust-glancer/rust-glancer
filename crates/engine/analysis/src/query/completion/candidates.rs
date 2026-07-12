@@ -197,12 +197,9 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
         &self,
         site: &PathCompletionSite,
     ) -> anyhow::Result<Vec<EnumVariantRef>> {
-        let IndexedQualifiedPathScope::Body { scope, namespace } = site.source().scope() else {
+        let IndexedQualifiedPathScope::Body { scope, .. } = site.source().scope() else {
             return Ok(Vec::new());
         };
-        if !matches!(namespace, IndexedNameNamespace::Values) {
-            return Ok(Vec::new());
-        }
 
         MemberView::new(self.db).enum_variant_candidates_for_body_type_path(
             scope.body_ir(),

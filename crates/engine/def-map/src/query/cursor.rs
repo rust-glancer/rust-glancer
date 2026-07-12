@@ -164,13 +164,19 @@ impl NamespaceCursorScanner<'_, '_> {
                 origin: DefMapRef::Target(self.target),
                 module: import.module,
             };
-            for (idx, segment) in import.source_path.segments().iter().enumerate() {
-                if self.offset_matches(segment.span) {
+            let Some(segments) = import.path.segments_with_spans() else {
+                continue;
+            };
+            for (idx, (_, span)) in segments.enumerate() {
+                if self.offset_matches(span) {
                     candidates.push(DefMapCursorCandidate::UsePath {
                         module,
-                        path: import.source_path.prefix_path(idx),
+                        path: Path {
+                            absolute: import.path.semantic().absolute,
+                            segments: import.path.semantic().segments[..=idx].to_vec(),
+                        },
                         file_id: import.source.file_id,
-                        span: segment.span,
+                        span,
                     });
                 }
             }
@@ -180,7 +186,7 @@ impl NamespaceCursorScanner<'_, '_> {
             {
                 candidates.push(DefMapCursorCandidate::ImportAlias {
                     module,
-                    path: Path::from(&import.path),
+                    path: import.path.semantic().clone(),
                     file_id: import.source.file_id,
                     span: alias_span,
                 });

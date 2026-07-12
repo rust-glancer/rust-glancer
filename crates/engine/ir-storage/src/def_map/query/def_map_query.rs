@@ -16,8 +16,8 @@ use super::{
 
 use super::super::{
     DefMap, LocalDefData, LocalEnumVariantData, LocalEnumVariantEntry, LocalImplData,
-    MacroDefinitionView, ModuleData, ScopeEntryRef, ScopeNamespace, VisibleScopeDef,
-    VisibleScopeDefs, VisibleScopeOrigin,
+    MacroDefinitionView, ModuleData, Namespace, ScopeEntryRef, VisibleScopeDef, VisibleScopeDefs,
+    VisibleScopeOrigin,
 };
 
 /// Routes DefMap-origin refs and target-level facts to concrete storage.
@@ -217,11 +217,11 @@ where
             defs.push(
                 VisibleScopeDef {
                     label,
-                    namespace: ScopeNamespace::Types,
+                    namespace: Namespace::Types,
                     def: rg_ir_model::DefId::Module(module_ref),
                     origin: VisibleScopeOrigin::ExternRoot,
                 },
-                false,
+                true,
             );
         }
 
@@ -275,6 +275,13 @@ where
         local_def_ref: LocalDefRef,
     ) -> Result<Option<&LocalDefData>, Self::Error> {
         self.source.local_def_data(local_def_ref)
+    }
+
+    fn local_enum_variant_data(
+        &self,
+        variant_ref: LocalEnumVariantRef,
+    ) -> Result<Option<&LocalEnumVariantData>, Self::Error> {
+        self.source.local_enum_variant_data(variant_ref)
     }
 
     fn local_enum_variant_entries_for_enum<'a>(

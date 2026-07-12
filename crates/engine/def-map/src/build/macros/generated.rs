@@ -7,18 +7,17 @@
 use anyhow::{Context as _, Result};
 
 use rg_ir_model::{
-    DefId, DefMapRef, LocalDefId, LocalDefRef, ModuleId, ModuleRef, PathSegment, TargetRef,
+    DefId, DefMapRef, LocalDefId, LocalDefRef, ModuleId, ModuleRef, TargetRef,
     hir::source::{GeneratedItemRef, GeneratedSourceId, ItemSource},
 };
 use rg_ir_storage::{
-    ImportBinding, ImportData, ImportKind, ImportPath, ImportSourcePath, LocalDefData,
-    LocalDefKind, LocalImplData, MacroDefinitionData, ModuleData, ModuleOrigin, ModuleScope,
-    Namespace, ScopeBinding, ScopeBindingOrigin,
+    ImportBinding, ImportData, ImportKind, ImportPath, LocalDefData, LocalDefKind, LocalImplData,
+    MacroDefinitionData, ModuleData, ModuleOrigin, ModuleScope, Namespace, ScopeBinding,
+    ScopeBindingProvenance, Visibility,
 };
 use rg_item_tree::{
     Documentation, ImportAlias, ItemKind, ItemNode, ItemTreeId, ItemTreeRef, MacroCallItem,
     MacroDefinitionAttrs, MacroDefinitionItem, ModuleItem, ModuleSource, UseImport, UseItem,
-    VisibilityLevel,
 };
 use rg_macro_runtime::ExpansionSyntax;
 use rg_parse::{FileId, Span};
@@ -147,12 +146,21 @@ impl GeneratedCollector<'_> {
                 self.collect_inline_module(module_id, &item, module_item, generated_source, order);
             }
             ItemKind::Use(use_item) => self.collect_use(module_id, &item, use_item),
+            ItemKind::Enum(enum_item) => {
+                self.collect_enum(module_id, &item, enum_item, generated_source, item_id)
+            }
             ItemKind::Impl(_) => {
                 self.collect_local_impl(module_id, &item, generated_source, item_id)
             }
             ItemKind::AsmExpr | ItemKind::ExternBlock | ItemKind::ExternCrate(_) => {}
             _ => {
-                self.collect_named_def(module_id, &item, generated_source, item_id);
+                self.collect_named_def(
+                    module_id,
+                    &item,
+                    generated_source,
+                    item_id,
+                    ScopeBindingProvenance::Direct,
+                );
             }
         }
     }
@@ -167,15 +175,22 @@ impl GeneratedCollector<'_> {
         item: &ItemNode,
         generated_source: GeneratedSourceId,
         item_id: ItemTreeId,
+        provenance: ScopeBindingProvenance,
     ) -> Option<LocalDefId> {
         let kind = LocalDefKind::from_item_tag(item.kind.tag())?;
-        let namespace = kind.namespace();
+        let namespaces = kind.scope_namespaces(&item.kind);
         let name = item.name.clone()?;
         let visibility = item.visibility.clone();
+        let visibilities = self.state.def_map_builder.resolve_local_def_visibilities(
+            module_id,
+            &item.kind,
+            &visibility,
+        );
         let local_def_id = self.state.def_map_builder.alloc_local_def(LocalDefData {
             module: module_id,
             name: name.clone(),
             kind,
+            namespaces,
             visibility: visibility.clone(),
             source: self.item_source(generated_source, item_id),
             file_id: item.file_id,
@@ -188,32 +203,60 @@ impl GeneratedCollector<'_> {
             .expect("module should exist for generated local definition")
             .local_defs
             .push(local_def_id);
-        let binding = ScopeBinding {
-            def: DefId::Local(LocalDefRef {
-                origin: DefMapRef::Target(self.state.target),
-                local_def: local_def_id,
-            }),
-            visibility,
-            owner: ModuleRef {
-                origin: DefMapRef::Target(self.state.target),
-                module: module_id,
-            },
-            origin: ScopeBindingOrigin::Direct,
-        };
+        let def = DefId::Local(LocalDefRef {
+            origin: DefMapRef::Target(self.state.target),
+            local_def: local_def_id,
+        });
         // Update both the base scopes and the current snapshot. The base scopes make future import
         // refreshes see the generated name; the current snapshot lets later generated calls in this
         // pass resolve it immediately.
-        self.state
+        let base_scope = self
+            .state
             .base_scopes
             .get_mut(module_id.0)
-            .expect("base scope should exist for generated local definition")
-            .insert_binding(&name, namespace, binding.clone());
-        self.current_scopes
+            .expect("base scope should exist for generated local definition");
+        let current_scope = self
+            .current_scopes
             .module_scope_mut(self.state.target, module_id)
-            .expect("current scope should exist for generated local definition")
-            .insert_binding(&name, namespace, binding);
+            .expect("current scope should exist for generated local definition");
+        for namespace in namespaces.iter() {
+            let binding = ScopeBinding::new(def, *visibilities.get(namespace), provenance);
+            base_scope.insert_binding(&name, namespace, binding.clone());
+            current_scope.insert_binding(&name, namespace, binding);
+        }
 
         Some(local_def_id)
+    }
+
+    /// Record generated enum variants with the same namespace facts as source variants.
+    fn collect_enum(
+        &mut self,
+        module_id: ModuleId,
+        item: &ItemNode,
+        enum_item: &rg_item_tree::EnumItem,
+        generated_source: GeneratedSourceId,
+        item_id: ItemTreeId,
+    ) {
+        let Some(local_def_id) = self.collect_named_def(
+            module_id,
+            item,
+            generated_source,
+            item_id,
+            ScopeBindingProvenance::Direct,
+        ) else {
+            return;
+        };
+        let visibility = self
+            .state
+            .def_map_builder
+            .resolve_visibility(module_id, &item.visibility);
+        self.state.def_map_builder.alloc_local_enum_variants(
+            module_id,
+            local_def_id,
+            enum_item,
+            visibility,
+            item.file_id,
+        );
     }
 
     fn collect_macro_definition(
@@ -225,7 +268,17 @@ impl GeneratedCollector<'_> {
         item_id: ItemTreeId,
         order: ItemOrder,
     ) {
-        let Some(local_def_id) = self.collect_named_def(module_id, item, generated_source, item_id)
+        let provenance = match macro_definition {
+            MacroDefinitionItem::MacroRules { attrs, .. }
+                if self.macro_definition_is_exported(attrs) =>
+            {
+                ScopeBindingProvenance::DirectMacroExport
+            }
+            MacroDefinitionItem::MacroRules { .. } => ScopeBindingProvenance::DirectMacroRules,
+            MacroDefinitionItem::MacroDef { .. } => ScopeBindingProvenance::Direct,
+        };
+        let Some(local_def_id) =
+            self.collect_named_def(module_id, item, generated_source, item_id, provenance)
         else {
             return;
         };
@@ -269,18 +322,14 @@ impl GeneratedCollector<'_> {
     /// Updates both scope snapshots for a generated `#[macro_export]` definition.
     fn export_macro_definition_to_root(&mut self, name: &Name, local_def_id: LocalDefId) {
         let root_module = self.state.root_module;
-        let binding = ScopeBinding {
-            def: DefId::Local(LocalDefRef {
+        let binding = ScopeBinding::new(
+            DefId::Local(LocalDefRef {
                 origin: DefMapRef::Target(self.state.target),
                 local_def: local_def_id,
             }),
-            visibility: VisibilityLevel::Public,
-            owner: ModuleRef {
-                origin: DefMapRef::Target(self.state.target),
-                module: root_module,
-            },
-            origin: ScopeBindingOrigin::MacroExport,
-        };
+            Visibility::Public,
+            ScopeBindingProvenance::MacroExport,
+        );
 
         self.state
             .base_scopes
@@ -323,10 +372,15 @@ impl GeneratedCollector<'_> {
         };
 
         let visibility = item.visibility.clone();
+        let semantic_visibility = self
+            .state
+            .def_map_builder
+            .resolve_visibility(parent_module, &visibility);
         let child_module = self.state.def_map_builder.alloc_module(ModuleData {
             name: Some(module_name.clone()),
             name_span: item.name_span,
             docs: Documentation::concat(item.docs.clone(), module_item.inner_docs.clone()),
+            visibility: semantic_visibility,
             parent: Some(parent_module),
             children: Vec::new(),
             local_defs: Vec::new(),
@@ -354,18 +408,14 @@ impl GeneratedCollector<'_> {
             .expect("parent module should exist for generated child link")
             .children
             .push((module_name.clone(), child_module));
-        let binding = ScopeBinding {
-            def: DefId::Module(ModuleRef {
+        let binding = ScopeBinding::new(
+            DefId::Module(ModuleRef {
                 origin: DefMapRef::Target(self.state.target),
                 module: child_module,
             }),
-            visibility,
-            owner: ModuleRef {
-                origin: DefMapRef::Target(self.state.target),
-                module: parent_module,
-            },
-            origin: ScopeBindingOrigin::Direct,
-        };
+            semantic_visibility,
+            ScopeBindingProvenance::Direct,
+        );
         self.state
             .base_scopes
             .get_mut(parent_module.0)
@@ -435,26 +485,26 @@ impl GeneratedCollector<'_> {
 
         for (import_index, import) in imports.iter().enumerate() {
             let mut path = ImportPath::from_use_path(&import.path);
-            self.rewrite_dollar_crate_path(&mut path);
-            if path.segments.is_empty() {
+            if let Some(target) = self.origin.dollar_crate_target {
+                path.rewrite_dollar_crate(target);
+            }
+            if path.semantic().segments.is_empty() {
                 continue;
             }
 
             // The generated import's textual source is synthetic. Keep spans at the macro call site
             // so diagnostics and navigation have a real file location to point at.
-            let mut source_path = ImportSourcePath::from_use_path(&import.path);
-            self.rewrite_dollar_crate_source_path(&mut source_path);
-            source_path.source_span = Some(self.origin.span);
-            for segment in &mut source_path.segments {
-                segment.span = self.origin.span;
-            }
+            path.rebase(self.origin.span);
+            let visibility = self
+                .state
+                .def_map_builder
+                .resolve_visibility(module_id, &item.visibility);
 
             let import_id = self.state.def_map_builder.alloc_import(ImportData {
                 module: module_id,
-                visibility: item.visibility.clone(),
+                visibility,
                 kind: ImportKind::from_use_kind(import.kind),
                 path,
-                source_path,
                 binding: ImportBinding::from_alias(&import.alias),
                 alias_span: match &import.alias {
                     ImportAlias::Explicit { .. } => Some(self.origin.span),
@@ -480,33 +530,5 @@ impl GeneratedCollector<'_> {
                 item,
             },
         )
-    }
-
-    fn rewrite_dollar_crate_path(&self, path: &mut ImportPath) {
-        let Some(target) = self.origin.dollar_crate_target else {
-            return;
-        };
-        let Some(first) = path.segments.first_mut() else {
-            return;
-        };
-
-        if matches!(first, PathSegment::Name(name) if name.as_str() == "$crate") {
-            *first = PathSegment::DollarCrate(target);
-            path.absolute = false;
-        }
-    }
-
-    fn rewrite_dollar_crate_source_path(&self, path: &mut ImportSourcePath) {
-        let Some(target) = self.origin.dollar_crate_target else {
-            return;
-        };
-        let Some(first) = path.segments.first_mut() else {
-            return;
-        };
-
-        if matches!(&first.segment, PathSegment::Name(name) if name.as_str() == "$crate") {
-            first.segment = PathSegment::DollarCrate(target);
-            path.absolute = false;
-        }
     }
 }

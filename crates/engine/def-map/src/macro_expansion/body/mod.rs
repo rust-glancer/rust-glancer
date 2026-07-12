@@ -6,8 +6,8 @@
 
 use anyhow::Context as _;
 
-use rg_ir_model::{DefMapRef, ModuleId, ModuleRef, TargetRef, items::BuiltinMacroKind};
-use rg_ir_storage::{DefMapQuery, ImportPath, MacroDefinitionView, ScopeResolutionEnv};
+use rg_ir_model::{DefMapRef, ModuleId, ModuleRef, Path, TargetRef, items::BuiltinMacroKind};
+use rg_ir_storage::{DefMapQuery, MacroDefinitionView, ScopeResolutionEnv};
 use rg_macro_runtime::{CfgSelect, ExpansionParseKind, ExpansionSyntax, MacroExpansionRuntime};
 use rg_std::ExpectedUnique;
 use rg_syntax::{AstNode, Parse, SyntaxNode, ast};
@@ -210,11 +210,11 @@ impl<'db, 'txn> BodyMacroExpander<'db, 'txn> {
         // syntax. Source calls do not have such a definition context, so `$crate` remains invalid
         // for them here.
         // TODO: soft hack, we are not inside of macro resolution context here, so we use this
-        // for the lack of better method; probably we should get rid of `ImportPath` whatsoever
+        // Macro calls retain textual paths, so normalize them into the shared semantic path here.
         // (it exists for historical reasons mostly, and it's equivalent to `Path`) and introduce
         // appropriate constructors.
         let Some(path) =
-            ImportPath::from_macro_path_text(&path_text, site.dollar_crate_target_for_path())
+            Path::from_macro_path_text(&path_text, site.dollar_crate_target_for_path())
         else {
             return Ok(None);
         };
@@ -276,7 +276,7 @@ impl<'db, 'txn> BodyMacroExpander<'db, 'txn> {
     fn resolve_macro_definition<'a>(
         query: &'a DefMapQuery<&DefMapReadTxn<'_>>,
         module: ModuleRef,
-        path: &ImportPath,
+        path: &Path,
     ) -> anyhow::Result<ExpectedUnique<MacroDefinitionView<'a>>> {
         // Body expansion is target-local. Synthetic body modules resolve through their semantic
         // fallback before reaching this facade.

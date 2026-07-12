@@ -1,5 +1,5 @@
 use rg_ir_model::items::{
-    BuiltinMacroKind, Documentation, ItemTag, MacroDefinitionItem, VisibilityLevel,
+    BuiltinMacroKind, Documentation, ItemKind, ItemTag, MacroDefinitionItem, VisibilityLevel,
 };
 use rg_ir_model::{
     DefMapRef, LocalDefId, LocalDefRef, LocalEnumVariantId, LocalEnumVariantRef, ModuleId,
@@ -11,7 +11,7 @@ use rg_text::{Name, RustEdition};
 use rg_tt::TopSubtree;
 use wincode::{SchemaRead, SchemaWrite};
 
-use super::scope::Namespace;
+use super::scope::{NamespaceSet, Visibility};
 
 /// One module-scope definition collected from source.
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
@@ -19,6 +19,11 @@ pub struct LocalDefData {
     pub module: ModuleId,
     pub name: Name,
     pub kind: LocalDefKind,
+    /// Namespace slots occupied by this declaration.
+    ///
+    /// Most declarations occupy one slot. Unit and tuple structs also contribute their constructor
+    /// to the value namespace, so imports and shadowing must retain the set independently of kind.
+    pub namespaces: NamespaceSet,
     pub visibility: VisibilityLevel,
     pub source: ItemSource,
     pub file_id: FileId,
@@ -26,7 +31,7 @@ pub struct LocalDefData {
     pub span: Span,
 }
 
-/// One enum variant that can be named through imports and value paths.
+/// One enum variant that can be named through qualified paths and imports.
 ///
 /// Variants stay semantically owned by `EnumData`, but def-map import resolution runs earlier than
 /// semantic lowering. This record gives the name resolver a small, source-shaped handle that can
@@ -37,7 +42,12 @@ pub struct LocalEnumVariantData {
     pub enum_def: LocalDefId,
     pub name: Name,
     pub index: usize,
-    pub visibility: VisibilityLevel,
+    /// Namespace slots occupied by this variant's source shape.
+    ///
+    /// Record variants are record-constructor paths in the type namespace. Tuple and unit variants
+    /// additionally behave as values, so imports must retain both slots for them.
+    pub namespaces: NamespaceSet,
+    pub visibility: Visibility,
     pub file_id: FileId,
     pub name_span: Span,
     pub span: Span,
@@ -252,13 +262,21 @@ impl LocalDefKind {
         }
     }
 
-    pub fn namespace(self) -> Namespace {
+    /// Return every scope slot contributed by the source declaration.
+    ///
+    /// `struct Unit;` and `struct Tuple(u8);` contribute both a type and a value constructor.
+    /// `struct Record { value: u8 }` contributes only its type identity.
+    pub fn scope_namespaces(self, item: &ItemKind) -> NamespaceSet {
         match self {
-            Self::Const | Self::Function | Self::Static => Namespace::Values,
-            Self::Enum | Self::Struct | Self::Trait | Self::TypeAlias | Self::Union => {
-                Namespace::Types
+            Self::Const | Self::Function | Self::Static => NamespaceSet::VALUES,
+            Self::Struct => {
+                let ItemKind::Struct(struct_item) = item else {
+                    return NamespaceSet::TYPES;
+                };
+                NamespaceSet::for_field_list(&struct_item.fields)
             }
-            Self::MacroDefinition => Namespace::Macros,
+            Self::Enum | Self::Trait | Self::TypeAlias | Self::Union => NamespaceSet::TYPES,
+            Self::MacroDefinition => NamespaceSet::MACROS,
         }
     }
 }

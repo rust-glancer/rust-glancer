@@ -33,6 +33,13 @@ pub(super) fn check_project_body_ir_with_sysroot(fixture: &str, expect: Expect) 
     expect.assert_eq(&actual);
 }
 
+pub(super) fn check_project_body_ir_with_fake_sysroot(fixture: &str, expect: Expect) {
+    let db = BodyIrFixtureDb::build_with_fake_sysroot(fixture);
+    let actual = ProjectBodyIrSnapshot::new(&db).render();
+    let actual = format!("{}\n", actual.trim_end());
+    expect.assert_eq(&actual);
+}
+
 pub(super) fn check_project_body_ir_patterns(fixture: &str, expect: Expect) {
     let db = BodyIrFixtureDb::build(fixture);
     let actual = ProjectBodyIrSnapshot::new(&db).render_patterns();

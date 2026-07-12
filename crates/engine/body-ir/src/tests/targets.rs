@@ -44,7 +44,7 @@ fn main() {
             body
             expr e1 block s1 => nominal struct body_bin_fixture[lib]::crate::Api @ 3:22-5:2
               tail
-                expr e0 path Api -> item struct body_bin_fixture[lib]::crate::Api => nominal struct body_bin_fixture[lib]::crate::Api @ 4:5-4:8
+                expr e0 path Api -> struct body_bin_fixture[lib]::crate::Api => nominal struct body_bin_fixture[lib]::crate::Api @ 4:5-4:8
 
 
             body-bin-fixture [bin]

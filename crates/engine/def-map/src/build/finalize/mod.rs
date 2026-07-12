@@ -11,9 +11,11 @@ mod rebuild;
 
 use anyhow::Context as _;
 
-use rg_ir_model::{DefId, DefMapRef, LocalDefRef, ModuleId, ModuleRef, TargetRef};
+use rg_ir_model::{
+    DefId, DefMapRef, LocalDefRef, LocalEnumVariantRef, ModuleId, ModuleRef, Path, TargetRef,
+};
 use rg_ir_storage::{
-    DefMap, ImportPath, LocalDefData, LocalEnumVariantEntry, MacroDefinitionEnv,
+    DefMap, LocalDefData, LocalEnumVariantData, LocalEnumVariantEntry, MacroDefinitionEnv,
     MacroDefinitionView, ModuleData, ModuleScopeBuilder, PackageDefMaps as DefMapPackage,
     ScopeEntryRef, ScopeResolutionEnv, ScopeResolver, TargetData, TargetResolutionEnv,
 };
@@ -311,6 +313,32 @@ impl ScopeResolutionEnv for FinalizeResolutionEnv<'_> {
             .map(Option::flatten)
     }
 
+    fn local_enum_variant_data(
+        &self,
+        variant_ref: LocalEnumVariantRef,
+    ) -> Result<Option<&LocalEnumVariantData>, rg_package_store::PackageStoreError> {
+        if let Some(target) = variant_ref.origin.as_target_ref()
+            && let Some(state) = self.states.target(target)
+        {
+            return Ok(state
+                .def_map_builder
+                .partial()
+                .local_enum_variant(variant_ref.local_enum_variant));
+        }
+
+        let Some(target) = variant_ref.origin.as_target_ref() else {
+            return Ok(None);
+        };
+        self.old
+            .map(|old| {
+                Ok(old
+                    .def_map(target)?
+                    .and_then(|def_map| def_map.local_enum_variant(variant_ref.local_enum_variant)))
+            })
+            .transpose()
+            .map(Option::flatten)
+    }
+
     fn local_enum_variant_entries_for_enum<'a>(
         &'a self,
         enum_def: LocalDefRef,
@@ -538,18 +566,18 @@ fn select_preludes(
             // TODO: Parse crate-level `#![no_std]` and use it to select `core` prelude directly
             // and avoid exposing `std` as an automatic extern root for that crate.
             let prelude_paths = [
-                Some(ImportPath::standard_prelude(
+                Some(Path::standard_prelude(
                     "std",
                     workspace_package.edition,
                     interner,
                 )),
-                Some(ImportPath::standard_prelude(
+                Some(Path::standard_prelude(
                     "core",
                     workspace_package.edition,
                     interner,
                 )),
                 (workspace_package.name == "core").then(|| {
-                    ImportPath::crate_relative_standard_prelude(workspace_package.edition, interner)
+                    Path::crate_relative_standard_prelude(workspace_package.edition, interner)
                 }),
             ];
 

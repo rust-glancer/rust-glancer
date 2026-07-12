@@ -5,7 +5,7 @@ use rg_std::{MemorySize, Shrink};
 use rg_text::Name;
 use wincode::{SchemaRead, SchemaWrite};
 
-use super::scope::ModuleScope;
+use super::scope::{ModuleScope, Visibility};
 
 /// One module in the frozen namespace graph.
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
@@ -13,6 +13,11 @@ pub struct ModuleData {
     pub name: Option<Name>,
     pub name_span: Option<Span>,
     pub docs: Option<Documentation>,
+    /// Visibility of the declaration that introduced this module identity.
+    ///
+    /// Keyword imports such as `use super as parent` do not pass through the parent's textual name,
+    /// so the module itself must retain the same visibility ceiling as its direct scope binding.
+    pub visibility: Visibility,
     pub parent: Option<ModuleId>,
     pub children: Vec<(Name, ModuleId)>,
     pub local_defs: Vec<LocalDefId>,

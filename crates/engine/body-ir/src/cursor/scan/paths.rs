@@ -61,8 +61,8 @@ impl TypePathCursorScanner<'_> {
     }
 }
 
-/// Adds value-namespace path candidates from body-local expressions and patterns.
-pub(super) struct ValuePathCursorScanner<'a> {
+/// Adds path candidates from body-local expressions and patterns.
+pub(super) struct BodyPathCursorScanner<'a> {
     pub(super) body_ref: BodyRef,
     pub(super) body: &'a ResolvedBodyData,
     pub(super) file_id: Option<FileId>,
@@ -71,8 +71,8 @@ pub(super) struct ValuePathCursorScanner<'a> {
     pub(super) candidates: &'a mut Vec<BodyCursorCandidate>,
 }
 
-impl ValuePathCursorScanner<'_> {
-    /// Scans every source form where a body-local value path can appear.
+impl BodyPathCursorScanner<'_> {
+    /// Scans every source form where a body-local constructor or value path can appear.
     pub(super) fn scan(&mut self) {
         // Expression source-node lookup deliberately picks one smallest AST-ish node. Qualified
         // paths need finer granularity: in `Action::Start()`, `Action` and `Start` should produce
@@ -82,12 +82,22 @@ impl ValuePathCursorScanner<'_> {
                 continue;
             }
             match &expr_data.kind {
-                ExprKind::Path { path }
-                | ExprKind::Record {
+                ExprKind::Path { path } => self.scan_body_path(
+                    expr_data.scope,
+                    path,
+                    expr_data.source.file_id,
+                    false,
+                    false,
+                ),
+                ExprKind::Record {
                     path: Some(path), ..
-                } => {
-                    self.scan_body_path(expr_data.scope, path, expr_data.source.file_id, false);
-                }
+                } => self.scan_body_path(
+                    expr_data.scope,
+                    path,
+                    expr_data.source.file_id,
+                    false,
+                    true,
+                ),
                 _ => {}
             }
             if let ExprKind::Record { fields, .. } = &expr_data.kind {
@@ -108,25 +118,35 @@ impl ValuePathCursorScanner<'_> {
         });
     }
 
-    /// Visits value paths directly owned by one pattern node.
+    /// Visits constructor paths directly owned by one pattern node.
     fn scan_pat_data(&mut self, scope: ScopeId, data: &PatData) {
-        if let Some(path) = data.kind.value_path() {
+        if let Some(path) = data.kind.record_path() {
             self.scan_body_path(
                 scope,
                 path,
                 data.source.file_id,
                 self.include_single_segment,
+                true,
+            );
+        } else if let Some(path) = data.kind.value_path() {
+            self.scan_body_path(
+                scope,
+                path,
+                data.source.file_id,
+                self.include_single_segment,
+                false,
             );
         }
     }
 
-    /// Adds one candidate per value path segment so associated items and variants stay distinct.
+    /// Adds one candidate per path segment so qualifiers and constructors stay distinct.
     fn scan_body_path(
         &mut self,
         scope: ScopeId,
         path: &BodyPath,
         file_id: FileId,
         include_single_segment: bool,
+        final_segment_is_type: bool,
     ) {
         // Expression paths already have an expression candidate for single-segment names. Segment
         // candidates are only needed for qualified expressions or for pattern paths, which do not
@@ -144,9 +164,9 @@ impl ValuePathCursorScanner<'_> {
                 let Some(path) = path.prefix_through(idx) else {
                     continue;
                 };
-                if idx + 1 < segment_count {
+                if idx + 1 < segment_count || final_segment_is_type {
                     // In `Action::Start`, the prefix is still a user-visible type/module path.
-                    // Keep it navigable without treating `Action` as a value expression.
+                    // Record constructors also resolve their final segment as a type path.
                     self.candidates.push(BodyCursorCandidate::TypePath {
                         body: self.body_ref,
                         scope,

@@ -281,7 +281,7 @@ where
         )
     }
 
-    /// Find an enum variant constructor for an enum receiver type.
+    /// Find a tuple or unit enum variant that can be used as a bare value.
     fn enum_variant_candidate_for_type(
         &self,
         ty: &NominalTy,
@@ -291,13 +291,21 @@ where
             return Ok(None);
         }
 
-        Ok(self
-            .context
-            .item_query()
-            .enum_variant_ref_for_type_def(ty.def, name)?
-            .map(|variant_ref| {
-                BodyAssociatedItemCandidate::EnumVariant(variant_ref, Ty::nominal(ty.clone()))
-            }))
+        let item_query = self.context.item_query();
+        let Some(variant_ref) = item_query.enum_variant_ref_for_type_def(ty.def, name)? else {
+            return Ok(None);
+        };
+        let Some(variant) = item_query.enum_variant_data(variant_ref)? else {
+            return Ok(None);
+        };
+        if !variant.variant.fields.has_value_constructor() {
+            return Ok(None);
+        }
+
+        Ok(Some(BodyAssociatedItemCandidate::EnumVariant(
+            variant_ref,
+            Ty::nominal(ty.clone()),
+        )))
     }
 
     /// Find an inherent associated const in body-local then target impls.

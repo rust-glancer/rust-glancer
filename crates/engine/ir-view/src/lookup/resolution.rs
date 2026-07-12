@@ -10,9 +10,7 @@ use rg_ir_model::{
     BodyRef, DefId, LocalDefRef, ModuleRef, ScopeId, TypePathResolution,
     identity::{DeclarationRef, ExprRef},
 };
-use rg_ir_storage::{
-    DefMapQuery, DefMapSource, ItemStoreQuery, NameResolutionFilter, TypePathContext,
-};
+use rg_ir_storage::{DefMapQuery, DefMapSource, ItemStoreQuery, NamespaceSet, TypePathContext};
 use rg_ty::ItemPathQuery;
 
 use crate::{IndexedViewDb, body::BodyResolutionView, source::IndexedTypePathScope};
@@ -139,7 +137,7 @@ impl<'a, 'db> ResolutionView<'a, 'db> {
         let def_maps = DefMapQuery::new(self.0);
         for def in def_maps
             .scope_resolver()
-            .resolve_path(module, path, NameResolutionFilter::AllNamespaces)?
+            .resolve_path(module, path, NamespaceSet::ALL)?
             .resolved
         {
             declarations.extend(self.declarations_for_def(def)?);
@@ -166,6 +164,14 @@ impl<'a, 'db> ResolutionView<'a, 'db> {
         let declarations = self.declarations_for_body_type_path_resolution(resolution);
         if !declarations.is_empty() {
             return Ok(declarations);
+        }
+
+        // Enum variants participate in type-name resolution without themselves being types. Keep
+        // that identity available to editor queries, especially for body-local record variants.
+        if let Some(variant) =
+            BodyResolutionView::new(self.0).type_path_enum_variant(body_ref, scope, path)?
+        {
+            return Ok(vec![DeclarationRef::EnumVariant(variant)]);
         }
 
         self.declarations_for_use_path(body.owner_module(), path)

@@ -6,8 +6,8 @@
 use rg_ir_model::items::Documentation;
 use rg_ir_model::{DefId, FunctionRef, ModuleRef, Path, SemanticItemRef, identity::DeclarationRef};
 use rg_ir_storage::{
-    DefMapQuery, DefMapSource, ItemStoreQuery, NameResolutionFilter, ScopeNamespace,
-    VisibleScopeDef, VisibleScopeOrigin,
+    DefMapQuery, DefMapSource, ItemStoreQuery, Namespace, NamespaceSet, VisibleScopeDef,
+    VisibleScopeOrigin,
 };
 
 use crate::{IndexedViewDb, SymbolKind};
@@ -20,12 +20,12 @@ pub enum NameNamespace {
     Macros,
 }
 
-impl From<ScopeNamespace> for NameNamespace {
-    fn from(namespace: ScopeNamespace) -> Self {
+impl From<Namespace> for NameNamespace {
+    fn from(namespace: Namespace) -> Self {
         match namespace {
-            ScopeNamespace::Types => Self::Types,
-            ScopeNamespace::Values => Self::Values,
-            ScopeNamespace::Macros => Self::Macros,
+            Namespace::Types => Self::Types,
+            Namespace::Values => Self::Values,
+            Namespace::Macros => Self::Macros,
         }
     }
 }
@@ -110,7 +110,7 @@ impl<'a, 'db> NameLookupView<'a, 'db> {
         let resolved = def_maps.scope_resolver().resolve_path(
             importing_module,
             qualifier,
-            NameResolutionFilter::TypesOnly,
+            NamespaceSet::TYPES,
         )?;
         let mut names = Vec::new();
 

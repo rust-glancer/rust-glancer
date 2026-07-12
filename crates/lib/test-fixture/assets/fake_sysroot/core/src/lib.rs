@@ -1,6 +1,8 @@
 extern crate self as core;
 
+pub mod fmt;
 pub mod iter;
+mod macros;
 pub mod ops;
 pub mod option;
 pub mod prelude;

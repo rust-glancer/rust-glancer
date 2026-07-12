@@ -30,6 +30,47 @@ make_user!();
 }
 
 #[test]
+fn generated_enum_variants_keep_shape_namespace_occupancy() {
+    let project = utils::DefMapFixtureDb::build(
+        r#"
+//- /Cargo.toml
+[package]
+name = "generated_variant_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+macro_rules! make_choice {
+    () => {
+        pub enum Choice {
+            Record { value: u8 },
+            Tuple(u8),
+            Unit,
+        }
+    };
+}
+
+make_choice!();
+use Choice::{Record, Tuple, Unit};
+"#,
+    );
+    let target = project.lib("generated_variant_fixture");
+
+    target
+        .entry("Record")
+        .assert_type_exists("generated record variants should be importable as record paths")
+        .assert_value_missing("generated record variants should not become bare values");
+    for name in ["Tuple", "Unit"] {
+        target
+            .entry(name)
+            .assert_type_exists("generated tuple and unit variants should retain type bindings")
+            .assert_value_exists(
+                "generated tuple and unit variants should retain value constructors",
+            );
+    }
+}
+
+#[test]
 fn generated_impls_keep_generated_source_identity() {
     utils::check_project_def_map(
         r#"
@@ -59,7 +100,7 @@ make_user!();
 
             macro_impl_fixture [lib]
             crate
-            - User : type [pub struct macro_impl_fixture[lib]::crate::User]
+            - User : type [pub struct macro_impl_fixture[lib]::crate::User] | value [pub struct macro_impl_fixture[lib]::crate::User]
             - make_user : macro [macro_definition macro_impl_fixture[lib]::crate::make_user]
             impls
             - impl generated#0:2
@@ -118,13 +159,12 @@ pub mod source {
     pub struct Thing;
 }
 
+#[macro_export]
 macro_rules! import_thing {
     () => {
         pub use $crate::source::Thing;
     };
 }
-
-pub use import_thing;
 
 //- /crates/app/Cargo.toml
 [package]
@@ -168,6 +208,7 @@ pub mod source {
     pub struct Thing;
 }
 
+#[macro_export]
 macro_rules! define_inner {
     () => {
         macro_rules! inner {
@@ -177,8 +218,6 @@ macro_rules! define_inner {
         }
     };
 }
-
-pub use define_inner;
 
 //- /crates/app/Cargo.toml
 [package]
@@ -377,7 +416,7 @@ macros::include!();
 
 #[test]
 fn unqualified_macro_can_resolve_from_standard_prelude() {
-    let project = utils::DefMapFixtureDb::build_with_sysroot(
+    let project = utils::DefMapFixtureDb::build_with_fake_sysroot(
         r#"
 //- /Cargo.toml
 [package]
@@ -386,29 +425,8 @@ version = "0.1.0"
 edition = "2024"
 
 //- /src/lib.rs
-make_item!();
-
-//- /sysroot/library/core/src/lib.rs
-pub struct Core;
-
-//- /sysroot/library/alloc/src/lib.rs
-pub struct Alloc;
-
-//- /sysroot/library/std/src/lib.rs
-pub mod macros {
-    macro_rules! make_item {
-        () => {
-            pub struct FromPrelude;
-        };
-    }
-
-    pub use make_item;
-}
-
-pub mod prelude {
-    pub mod rust_2024 {
-        pub use crate::macros::make_item;
-    }
+cfg_select! {
+    _ => { pub struct FromPrelude; },
 }
 "#,
     );
@@ -421,7 +439,7 @@ pub mod prelude {
 
 #[test]
 fn imported_macro_shadows_standard_prelude_macro() {
-    let project = utils::DefMapFixtureDb::build_with_sysroot(
+    let project = utils::DefMapFixtureDb::build_with_fake_sysroot(
         r#"
 //- /Cargo.toml
 [package]
@@ -431,40 +449,19 @@ edition = "2024"
 
 //- /src/lib.rs
 mod local {
-    macro_rules! make_item {
-        () => {
+    macro_rules! cfg_select {
+        ($($tt:tt)*) => {
             pub struct FromLocal;
         };
     }
 
-    pub(crate) use make_item;
+    pub(crate) use cfg_select;
 }
 
-use local::make_item;
+use local::cfg_select;
 
-make_item!();
-
-//- /sysroot/library/core/src/lib.rs
-pub struct Core;
-
-//- /sysroot/library/alloc/src/lib.rs
-pub struct Alloc;
-
-//- /sysroot/library/std/src/lib.rs
-pub mod macros {
-    macro_rules! make_item {
-        () => {
-            pub struct FromPrelude;
-        };
-    }
-
-    pub use make_item;
-}
-
-pub mod prelude {
-    pub mod rust_2024 {
-        pub use crate::macros::make_item;
-    }
+cfg_select! {
+    _ => { pub struct FromPrelude; },
 }
 "#,
     );
@@ -480,7 +477,7 @@ pub mod prelude {
 
 #[test]
 fn standard_prelude_macro_resolves_before_later_local_macro() {
-    let project = utils::DefMapFixtureDb::build_with_sysroot(
+    let project = utils::DefMapFixtureDb::build_with_fake_sysroot(
         r#"
 //- /Cargo.toml
 [package]
@@ -489,35 +486,14 @@ version = "0.1.0"
 edition = "2024"
 
 //- /src/lib.rs
-make_item!();
+cfg_select! {
+    _ => { pub struct FromPrelude; },
+}
 
-macro_rules! make_item {
-    () => {
+macro_rules! cfg_select {
+    ($($tt:tt)*) => {
         pub struct FromLaterLocal;
     };
-}
-
-//- /sysroot/library/core/src/lib.rs
-pub struct Core;
-
-//- /sysroot/library/alloc/src/lib.rs
-pub struct Alloc;
-
-//- /sysroot/library/std/src/lib.rs
-pub mod macros {
-    macro_rules! make_item {
-        () => {
-            pub struct FromPrelude;
-        };
-    }
-
-    pub use make_item;
-}
-
-pub mod prelude {
-    pub mod rust_2024 {
-        pub use crate::macros::make_item;
-    }
 }
 "#,
     );
@@ -533,7 +509,7 @@ pub mod prelude {
 
 #[test]
 fn standard_prelude_macro_shadows_macro_use_extern_crate_fallback() {
-    let project = utils::DefMapFixtureDb::build_with_sysroot(
+    let project = utils::DefMapFixtureDb::build_with_fake_sysroot(
         r#"
 //- /Cargo.toml
 [workspace]
@@ -548,8 +524,8 @@ edition = "2024"
 
 //- /crates/dep/src/lib.rs
 #[macro_export]
-macro_rules! make_item {
-    () => {
+macro_rules! cfg_select {
+    ($($tt:tt)*) => {
         pub struct FromMacroUse;
     };
 }
@@ -567,29 +543,8 @@ dep = { path = "../dep" }
 #[macro_use]
 extern crate dep as _;
 
-make_item!();
-
-//- /sysroot/library/core/src/lib.rs
-pub struct Core;
-
-//- /sysroot/library/alloc/src/lib.rs
-pub struct Alloc;
-
-//- /sysroot/library/std/src/lib.rs
-pub mod macros {
-    macro_rules! make_item {
-        () => {
-            pub struct FromPrelude;
-        };
-    }
-
-    pub use make_item;
-}
-
-pub mod prelude {
-    pub mod rust_2024 {
-        pub use crate::macros::make_item;
-    }
+cfg_select! {
+    _ => { pub struct FromPrelude; },
 }
 "#,
     );
@@ -605,7 +560,7 @@ pub mod prelude {
 
 #[test]
 fn standard_prelude_macro_resolves_before_macro_use_when_local_macro_is_later() {
-    let project = utils::DefMapFixtureDb::build_with_sysroot(
+    let project = utils::DefMapFixtureDb::build_with_fake_sysroot(
         r#"
 //- /Cargo.toml
 [workspace]
@@ -620,8 +575,8 @@ edition = "2024"
 
 //- /crates/dep/src/lib.rs
 #[macro_export]
-macro_rules! make_item {
-    () => {
+macro_rules! cfg_select {
+    ($($tt:tt)*) => {
         pub struct FromMacroUse;
     };
 }
@@ -639,35 +594,14 @@ dep = { path = "../dep" }
 #[macro_use]
 extern crate dep as _;
 
-make_item!();
+cfg_select! {
+    _ => { pub struct FromPrelude; },
+}
 
-macro_rules! make_item {
-    () => {
+macro_rules! cfg_select {
+    ($($tt:tt)*) => {
         pub struct FromLaterLocal;
     };
-}
-
-//- /sysroot/library/core/src/lib.rs
-pub struct Core;
-
-//- /sysroot/library/alloc/src/lib.rs
-pub struct Alloc;
-
-//- /sysroot/library/std/src/lib.rs
-pub mod macros {
-    macro_rules! make_item {
-        () => {
-            pub struct FromPrelude;
-        };
-    }
-
-    pub use make_item;
-}
-
-pub mod prelude {
-    pub mod rust_2024 {
-        pub use crate::macros::make_item;
-    }
 }
 "#,
     );
@@ -723,36 +657,28 @@ extern crate dep as _;
 make_item!();
 
 //- /sysroot/library/core/src/lib.rs
-pub struct Core;
+#[macro_export]
+macro_rules! make_item {
+    () => {
+        pub struct FromFirstPrelude;
+    };
+}
 
 //- /sysroot/library/alloc/src/lib.rs
 pub struct Alloc;
 
 //- /sysroot/library/std/src/lib.rs
-pub mod first {
-    macro_rules! make_item {
-        () => {
-            pub struct FromFirstPrelude;
-        };
-    }
-
-    pub use make_item;
-}
-
-pub mod second {
-    macro_rules! make_item {
-        () => {
-            pub struct FromSecondPrelude;
-        };
-    }
-
-    pub use make_item;
+#[macro_export]
+macro_rules! make_item {
+    () => {
+        pub struct FromSecondPrelude;
+    };
 }
 
 pub mod prelude {
     pub mod rust_2024 {
-        pub use crate::first::make_item;
-        pub use crate::second::make_item;
+        pub use core::make_item;
+        pub use crate::make_item;
     }
 }
 "#,

@@ -2,7 +2,7 @@ use std::fmt;
 
 use wincode::{SchemaRead, SchemaWrite};
 
-use rg_text::Name;
+use rg_text::{Name, NameInterner, RustEdition};
 
 use crate::{
     TargetRef,
@@ -50,6 +50,84 @@ impl Path {
                 .iter()
                 .map(PathSegment::from_use_segment)
                 .collect(),
+        }
+    }
+
+    pub fn standard_prelude(
+        crate_name: &'static str,
+        edition: RustEdition,
+        interner: &mut NameInterner,
+    ) -> Self {
+        Self {
+            absolute: true,
+            segments: vec![
+                PathSegment::Name(interner.intern(crate_name)),
+                PathSegment::Name(interner.intern("prelude")),
+                PathSegment::Name(interner.intern(edition.prelude_module())),
+            ],
+        }
+    }
+
+    pub fn crate_relative_standard_prelude(
+        edition: RustEdition,
+        interner: &mut NameInterner,
+    ) -> Self {
+        Self {
+            absolute: false,
+            segments: vec![
+                PathSegment::Name(interner.intern("prelude")),
+                PathSegment::Name(interner.intern(edition.prelude_module())),
+            ],
+        }
+    }
+
+    /// Parses the textual callee path stored in item-tree or AST macro-call data.
+    ///
+    /// A `$crate` segment only has meaning after resolution has selected the macro definition crate.
+    /// Callers that do not have that origin pass `None`, and `$crate` paths are rejected instead of
+    /// being guessed from the call site.
+    pub fn from_macro_path_text(
+        path: &str,
+        dollar_crate_target: Option<TargetRef>,
+    ) -> Option<Self> {
+        let path = path.trim();
+        let absolute = path.starts_with("::");
+        let path = path.trim_start_matches("::");
+        let mut segments = Vec::new();
+
+        for segment in path.split("::") {
+            let segment = segment.trim();
+            if segment.is_empty() {
+                return None;
+            }
+            segments.push(match segment {
+                "$crate" => PathSegment::DollarCrate(dollar_crate_target?),
+                "self" => PathSegment::SelfKw,
+                "super" => PathSegment::SuperKw,
+                "crate" => PathSegment::CrateKw,
+                name => PathSegment::Name(Name::new(name)),
+            });
+        }
+
+        (!segments.is_empty()).then_some(Self { absolute, segments })
+    }
+
+    pub fn last_name(&self) -> Option<Name> {
+        last_segment_name(&self.segments)
+    }
+
+    /// Returns the name for a path that is exactly one relative named segment.
+    pub fn relative_single_name(&self) -> Option<&Name> {
+        if self.absolute || self.segments.len() != 1 {
+            return None;
+        }
+
+        match self.segments.first()? {
+            PathSegment::Name(name) => Some(name),
+            PathSegment::SelfKw
+            | PathSegment::SuperKw
+            | PathSegment::CrateKw
+            | PathSegment::DollarCrate(_) => None,
         }
     }
 

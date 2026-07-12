@@ -3,6 +3,277 @@ use expect_test::expect;
 use super::utils;
 
 #[test]
+fn explicit_bindings_shadow_globs_independent_of_import_order() {
+    let project = utils::DefMapFixtureDb::build(
+        r#"
+//- /Cargo.toml
+[workspace]
+members = ["crates/named-first", "crates/glob-first"]
+resolver = "3"
+
+//- /crates/named-first/Cargo.toml
+[package]
+name = "named-first"
+version = "0.1.0"
+edition = "2024"
+
+//- /crates/named-first/src/lib.rs
+mod explicit;
+mod globbed;
+
+use explicit::Thing;
+use globbed::*;
+
+//- /crates/named-first/src/explicit.rs
+pub struct Thing;
+
+//- /crates/named-first/src/globbed.rs
+pub struct Thing;
+
+//- /crates/glob-first/Cargo.toml
+[package]
+name = "glob-first"
+version = "0.1.0"
+edition = "2024"
+
+//- /crates/glob-first/src/lib.rs
+mod explicit;
+mod globbed;
+
+use globbed::*;
+use explicit::Thing;
+
+//- /crates/glob-first/src/explicit.rs
+pub struct Thing;
+
+//- /crates/glob-first/src/globbed.rs
+pub struct Thing;
+"#,
+    );
+
+    for package in ["named-first", "glob-first"] {
+        project.lib(package).entry("Thing").assert_type_source_file(
+            "explicit.rs",
+            "a named import should replace a glob binding in either source order",
+        );
+    }
+}
+
+#[test]
+fn imports_preserve_constructor_namespace_occupancy_and_value_precedence() {
+    let project = utils::DefMapFixtureDb::build(
+        r#"
+//- /Cargo.toml
+[package]
+name = "constructor_import_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+mod named {
+    pub struct Unit;
+    pub struct Record { pub value: u8 }
+    pub struct RestrictedTuple(u8);
+}
+
+use named::{
+    Record as NamedRecord,
+    RestrictedTuple as NamedRestrictedTuple,
+    Unit as NamedUnit,
+};
+
+mod glob {
+    pub struct Tuple(pub u8);
+}
+
+use glob::*;
+
+mod shadowed {
+    pub struct Choice;
+}
+
+use shadowed::*;
+
+#[allow(non_snake_case)]
+fn Choice() {}
+"#,
+    );
+    let target = project.lib("constructor_import_fixture");
+
+    target
+        .entry("NamedUnit")
+        .assert_type_exists("named imports should retain the unit struct type")
+        .assert_value_exists("named imports should retain the unit constructor");
+    target
+        .entry("NamedRecord")
+        .assert_type_exists("named imports should retain record struct types")
+        .assert_value_missing("record structs should not gain a value binding through imports");
+    target
+        .entry("NamedRestrictedTuple")
+        .assert_type_exists("the visibility of a tuple struct type follows its declaration")
+        .assert_value_missing(
+            "a tuple constructor should not be imported beyond its positional fields' visibility",
+        );
+    target
+        .entry("Tuple")
+        .assert_type_exists("glob imports should retain tuple struct types")
+        .assert_value_exists("glob imports should retain tuple constructors");
+    target
+        .entry("Choice")
+        .assert_type_exists("the glob constructor's type slot should remain visible")
+        .assert_value_kind(
+            rg_ir_storage::LocalDefKind::Function,
+            "a direct function should outrank a glob-imported constructor only in value space",
+        );
+}
+
+#[test]
+fn enum_variant_imports_preserve_shape_namespace_occupancy() {
+    let project = utils::DefMapFixtureDb::build(
+        r#"
+//- /Cargo.toml
+[package]
+name = "variant_import_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+mod source {
+    pub enum Choice {
+        Record { value: u8 },
+        Tuple(u8),
+        Unit,
+    }
+}
+
+use source::Choice::{
+    Record as NamedRecord,
+    Tuple as NamedTuple,
+    Unit as NamedUnit,
+};
+use source::Choice::*;
+"#,
+    );
+    let target = project.lib("variant_import_fixture");
+
+    for name in ["NamedRecord", "Record"] {
+        target
+            .entry(name)
+            .assert_type_exists("record variant imports should occupy the type namespace")
+            .assert_value_missing("record variant imports should not create bare values");
+    }
+    for name in ["NamedTuple", "Tuple", "NamedUnit", "Unit"] {
+        target
+            .entry(name)
+            .assert_type_exists("tuple and unit variant imports should retain their type binding")
+            .assert_value_exists(
+                "tuple and unit variant imports should retain their value constructor",
+            );
+    }
+}
+
+#[test]
+fn direct_bindings_shadow_globs() {
+    let project = utils::DefMapFixtureDb::build(
+        r#"
+//- /Cargo.toml
+[package]
+name = "direct_over_glob_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+mod globbed;
+
+pub struct Thing;
+use globbed::*;
+
+//- /src/globbed.rs
+pub struct Thing;
+"#,
+    );
+
+    project
+        .lib("direct_over_glob_fixture")
+        .entry("Thing")
+        .assert_type_source_file(
+            "lib.rs",
+            "a direct declaration should remain selected over a glob binding",
+        );
+}
+
+#[test]
+fn equal_priority_imports_record_ambiguity() {
+    let project = utils::DefMapFixtureDb::build(
+        r#"
+//- /Cargo.toml
+[package]
+name = "ambiguous_import_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+mod first;
+mod second;
+
+use first::Thing;
+use second::Thing;
+
+//- /src/first.rs
+pub struct Thing;
+
+//- /src/second.rs
+pub struct Thing;
+"#,
+    );
+
+    project
+        .lib("ambiguous_import_fixture")
+        .entry("Thing")
+        .assert_type_ambiguous(
+            2,
+            "distinct named imports should remain an explicit ambiguity",
+        );
+}
+
+#[test]
+fn duplicate_glob_routes_to_one_definition_are_not_ambiguous() {
+    let project = utils::DefMapFixtureDb::build(
+        r#"
+//- /Cargo.toml
+[package]
+name = "duplicate_glob_route_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+mod source {
+    pub struct Thing;
+}
+
+mod first {
+    pub use crate::source::Thing;
+}
+
+mod second {
+    pub use crate::source::Thing;
+}
+
+use first::*;
+use second::*;
+"#,
+    );
+
+    project
+        .lib("duplicate_glob_route_fixture")
+        .entry("Thing")
+        .assert_type_resolved_with_routes(
+            2,
+            "two glob routes to one definition should merge under one selected binding",
+        );
+}
+
+#[test]
 fn resolves_nested_self_imports_without_binding_literal_self() {
     let project = utils::DefMapFixtureDb::build(
         r#"
@@ -90,7 +361,7 @@ use bar::work as _;
 }
 
 #[test]
-fn imports_enum_variants_as_values() {
+fn imports_tuple_and_unit_enum_variants_in_both_namespaces() {
     utils::check_project_def_map(
         r#"
 //- /Cargo.toml
@@ -118,12 +389,12 @@ use Result::*;
 
             enum_variant_import_fixture [lib]
             crate
-            - Err : value [variant enum_variant_import_fixture[lib]::crate::Result::Err]
+            - Err : type [variant enum_variant_import_fixture[lib]::crate::Result::Err] | value [variant enum_variant_import_fixture[lib]::crate::Result::Err]
             - Maybe : type [pub enum enum_variant_import_fixture[lib]::crate::Maybe]
-            - Nothing : value [variant enum_variant_import_fixture[lib]::crate::Maybe::None]
-            - Ok : value [variant enum_variant_import_fixture[lib]::crate::Result::Ok]
+            - Nothing : type [variant enum_variant_import_fixture[lib]::crate::Maybe::None] | value [variant enum_variant_import_fixture[lib]::crate::Maybe::None]
+            - Ok : type [variant enum_variant_import_fixture[lib]::crate::Result::Ok] | value [variant enum_variant_import_fixture[lib]::crate::Result::Ok]
             - Result : type [pub enum enum_variant_import_fixture[lib]::crate::Result]
-            - Some : value [variant enum_variant_import_fixture[lib]::crate::Maybe::Some]
+            - Some : type [variant enum_variant_import_fixture[lib]::crate::Maybe::Some] | value [variant enum_variant_import_fixture[lib]::crate::Maybe::Some]
         "#]],
     );
 }

@@ -15,7 +15,7 @@ use crate::{BodyIrReadTxn, ExprKind, PatKind, ResolvedBodyData};
 
 use super::{
     super::{BindingSurface, BodyCursorCandidate, RecordFieldKeySurface},
-    paths::{TypePathCursorScanner, ValuePathCursorScanner},
+    paths::{BodyPathCursorScanner, TypePathCursorScanner},
     record_pat_shorthand::RecordPatShorthandBinding,
     sites::BodyScanSites,
 };
@@ -59,7 +59,7 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
                 candidates: &mut candidates,
             }
             .scan();
-            ValuePathCursorScanner {
+            BodyPathCursorScanner {
                 body_ref,
                 body,
                 file_id: self.file_id,

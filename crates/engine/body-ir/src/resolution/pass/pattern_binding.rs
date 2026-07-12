@@ -16,7 +16,7 @@ use rg_ir_model::{
     identity::DeclarationRef,
     items::{FieldKey, FieldList, TypeRef},
 };
-use rg_ir_storage::{DefMapSource, ItemStoreSource, NameResolutionFilter};
+use rg_ir_storage::{DefMapSource, ItemStoreSource, NamespaceSet};
 use rg_package_store::PackageStoreError;
 use rg_std::ExpectedUnique;
 use rg_ty::{ExpectedNominalTyExt, ReferencePeelingCandidates, Ty};
@@ -514,7 +514,7 @@ where
         let def_maps = self.context().def_map_query();
         let body_defs = def_maps
             .scope_resolver()
-            .resolve_lexical_path(from, path, NameResolutionFilter::ValuesOnly)?
+            .resolve_lexical_path(from, path, NamespaceSet::VALUES)?
             .resolved;
         if self.semantic_items_include_const_like(body_defs)? {
             return Ok(true);
@@ -523,7 +523,7 @@ where
         let owner_module = self.body.owner_module();
         let owner_defs = def_maps
             .scope_resolver()
-            .resolve_path(owner_module, path, NameResolutionFilter::AllNamespaces)?
+            .resolve_path(owner_module, path, NamespaceSet::VALUES)?
             .resolved;
         if self.semantic_items_include_const_like(owner_defs)? {
             return Ok(true);
@@ -536,7 +536,7 @@ where
 
         let fallback_defs = def_maps
             .scope_resolver()
-            .resolve_path(fallback_module, path, NameResolutionFilter::AllNamespaces)?
+            .resolve_path(fallback_module, path, NamespaceSet::VALUES)?
             .resolved;
         self.semantic_items_include_const_like(fallback_defs)
     }

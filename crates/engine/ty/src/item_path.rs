@@ -9,8 +9,7 @@ use rg_ir_model::{
     DefId, ModuleRef, Path, SemanticItemRef, TraitRef, TypeDefRef, TypePathResolution,
 };
 use rg_ir_storage::{
-    DefMapQuery, DefMapSource, ItemStoreQuery, ItemStoreSource, NameResolutionFilter,
-    TypePathContext,
+    DefMapQuery, DefMapSource, ItemStoreQuery, ItemStoreSource, NamespaceSet, TypePathContext,
 };
 use rg_std::{ExpectedUnique, UniqueVec};
 
@@ -202,11 +201,10 @@ where
         from: ModuleRef,
         path: &Path,
     ) -> Result<UniqueVec<SemanticItemRef>, D::Error> {
-        let result = self.def_maps.scope_resolver().resolve_path(
-            from,
-            path,
-            NameResolutionFilter::TypesOnly,
-        )?;
+        let result =
+            self.def_maps
+                .scope_resolver()
+                .resolve_path(from, path, NamespaceSet::TYPES)?;
         let mut resolved_items = UniqueVec::new();
         for def in result.resolved {
             if let DefId::Local(local_def) = def

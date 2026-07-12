@@ -4,12 +4,12 @@
 //! separately in `path_resolution`, while each storage owner implements this contract next to its
 //! own data access methods.
 
-use rg_ir_model::{DefId, LocalDefRef, ModuleRef, TargetRef};
+use rg_ir_model::{DefId, LocalDefRef, LocalEnumVariantRef, ModuleRef, TargetRef};
 use rg_text::Name;
 
 use super::super::{
-    LocalDefData, LocalDefKind, LocalEnumVariantEntry, MacroDefinitionView, ModuleData,
-    ScopeEntryRef,
+    LocalDefData, LocalDefKind, LocalEnumVariantData, LocalEnumVariantEntry, MacroDefinitionView,
+    ModuleData, ScopeEntryRef,
 };
 
 /// Minimal scope graph required by path and visibility lookup.
@@ -33,6 +33,11 @@ pub trait ScopeResolutionEnv {
         &self,
         local_def_ref: LocalDefRef,
     ) -> Result<Option<&LocalDefData>, Self::Error>;
+
+    fn local_enum_variant_data(
+        &self,
+        variant_ref: LocalEnumVariantRef,
+    ) -> Result<Option<&LocalEnumVariantData>, Self::Error>;
 
     fn local_enum_variant_entries_for_enum<'a>(
         &'a self,

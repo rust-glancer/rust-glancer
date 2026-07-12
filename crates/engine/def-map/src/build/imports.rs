@@ -1,14 +1,12 @@
 //! Applies and records imports during scope finalization.
 //!
-//! Import resolution is a fixed-point process driven by `scope.rs`. This module owns the work done
-//! inside one pass: resolving named/self/glob imports against the previous scope snapshot, writing
-//! the imported bindings into the next scope snapshot, and recording imports that still fail once
-//! the fixed point has stabilized.
+//! The shared scope resolver decides what named, self, and glob imports mean. This module only
+//! drives that operation for target DefMaps: it writes returned binding facts into the next
+//! fixed-point snapshot, then uses the same result shape to record imports that remain unresolved
+//! after the scopes stop changing.
 
-use rg_ir_model::{ImportId, ModuleRef, TargetRef};
-use rg_ir_storage::{
-    ImportKind, ScopeBinding, ScopeBindingOrigin, ScopeResolver, TargetResolutionEnv,
-};
+use rg_ir_model::{DefMapRef, ImportId, ImportRef, ModuleRef, TargetRef};
+use rg_ir_storage::{ScopeResolver, TargetResolutionEnv};
 
 use super::{
     collect::TargetState,
@@ -63,69 +61,28 @@ impl UnresolvedImports {
     }
 }
 
-/// Applies one target's imports using the previously computed scope snapshot.
+/// Apply one target's resolved import facts to the next scope snapshot.
 ///
-/// Named/self imports add a binding under one textual name. Glob imports copy every visible
-/// binding from the source module into the target module.
+/// One directive may return several names or namespace slots. The resolver owns those decisions;
+/// this function only inserts the facts into the target's mutable scope.
 pub(super) fn apply_imports(
     state: &TargetState,
     env: &impl TargetResolutionEnv<Error = rg_package_store::PackageStoreError>,
     next_scopes: &mut ScopeMatrix,
 ) -> anyhow::Result<()> {
     let resolver = ScopeResolver::new(env);
-    for import in state.def_map_builder.partial().imports().iter() {
+    for (import_id, import) in state.def_map_builder.partial().imports_with_ids() {
         let import_owner = ModuleRef::target(state.target, import.module);
-        match import.kind {
-            ImportKind::Glob => {
-                let glob_sources = resolver.import_glob_sources(import_owner, &import.path)?;
-
-                for glob_source in glob_sources {
-                    let target_scope = next_scopes
-                        .module_scope_mut(state.target, import.module)
-                        .expect("target scope should exist for every import");
-                    let source_scope =
-                        resolver.visible_glob_source_scope(import_owner, glob_source)?;
-
-                    // Visibility is attached to the binding introduced by the glob import,
-                    // not to the original definition.
-                    for (name, entry) in source_scope.entries() {
-                        target_scope.copy_visible_bindings(
-                            name,
-                            entry,
-                            import.visibility.clone(),
-                            import_owner,
-                        );
-                    }
-                }
-            }
-            ImportKind::Named | ImportKind::SelfImport => {
-                let resolved_defs = resolver.import_defs(import_owner, &import.path)?;
-
-                let Some(binding_name) = import.binding_name() else {
-                    continue;
-                };
-                let target_scope = next_scopes
-                    .module_scope_mut(state.target, import.module)
-                    .expect("target scope should exist for every import");
-
-                for resolved_def in resolved_defs {
-                    // Resolution is namespace-aware, but the target textual name is shared across
-                    // namespaces inside one scope entry.
-                    let Some(namespace) = resolver.namespace_for_def(resolved_def)? else {
-                        continue;
-                    };
-                    target_scope.insert_binding(
-                        &binding_name,
-                        namespace,
-                        ScopeBinding {
-                            def: resolved_def,
-                            visibility: import.visibility.clone(),
-                            owner: import_owner,
-                            origin: ScopeBindingOrigin::Import,
-                        },
-                    );
-                }
-            }
+        let import_ref = ImportRef {
+            origin: DefMapRef::Target(state.target),
+            import: import_id,
+        };
+        let resolution = resolver.resolve_import(import_owner, import_ref, import)?;
+        let target_scope = next_scopes
+            .module_scope_mut(state.target, import.module)
+            .expect("target scope should exist for every import");
+        for introduced in resolution.introduced {
+            target_scope.insert_binding(&introduced.name, introduced.namespace, introduced.binding);
         }
     }
 
@@ -141,15 +98,14 @@ fn unresolved_imports_for_target(
 
     for (import_id, import) in state.def_map_builder.partial().imports_with_ids() {
         let import_owner = ModuleRef::target(state.target, import.module);
-        let is_unresolved = match import.kind {
-            ImportKind::Glob => resolver
-                .import_glob_sources(import_owner, &import.path)?
-                .is_empty(),
-            ImportKind::Named | ImportKind::SelfImport => {
-                resolver.import_defs(import_owner, &import.path)?.is_empty()
-            }
+        let import_ref = ImportRef {
+            origin: DefMapRef::Target(state.target),
+            import: import_id,
         };
-        if is_unresolved {
+        if !resolver
+            .resolve_import(import_owner, import_ref, import)?
+            .is_resolved()
+        {
             module_imports
                 .get_mut(import.module.0)
                 .expect("import module should exist while collecting unresolved imports")
