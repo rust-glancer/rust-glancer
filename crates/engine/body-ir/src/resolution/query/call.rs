@@ -6,8 +6,8 @@ use rg_ir_model::{
     identity::DeclarationRef,
     items::{GenericArg as ItemGenericArg, GenericParams, TypeRef},
 };
-use rg_ir_storage::ItemStoreSource;
 use rg_package_store::PackageStoreError;
+use rg_semantic_ir::ItemStoreSource;
 use rg_std::{ExpectedUnique, UniqueVec};
 use rg_text::Name;
 use rg_ty::{

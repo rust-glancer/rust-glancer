@@ -34,8 +34,8 @@ pub use self::{
     resolution::{BodyMethodQuery, BodyResolutionContext, BodyTypePathQuery, BodyValuePathQuery},
     store::{
         BodyFileEntry, BodyFileShard, BodyIrDb, BodyIrLoader, BodyIrReadTxn, BodyIrStats,
-        LoadBodyIr, PackageBodies, PackageBodiesManifest, TargetBodies, TargetBodiesCoverage,
-        TargetBodiesManifest, TargetBodiesStatus,
+        BodyLocalItems, CrateBodies, CrateBodiesCoverage, CrateBodiesManifest, CrateBodiesStatus,
+        LoadBodyIr, PackageBodies, PackageBodiesManifest,
     },
 };
 

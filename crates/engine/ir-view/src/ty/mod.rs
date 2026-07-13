@@ -9,7 +9,7 @@ use rg_ir_model::{
     BodyRef, EnumVariantRef, FieldRef, Path, ScopeId, SemanticItemRef, TypePathResolution,
     identity::DeclarationRef, identity::ExprRef, items::PrimitiveTy,
 };
-use rg_ir_storage::{ItemStoreQuery, TypePathContext};
+use rg_semantic_ir::{ItemStoreQuery, TypePathContext};
 use rg_ty::{ItemPathQuery, NominalTy, ReferencePeelingCandidates, Ty, TypeSubst};
 
 use crate::{

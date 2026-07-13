@@ -6,7 +6,7 @@
 
 use rg_def_map::DefMapSource;
 use rg_ir_model::{AssocItemId, FunctionRef, ImplRef, ItemOwner, TraitRef, TypeDefRef};
-use rg_ir_storage::{ItemLookupIndex, ItemStoreSource, TargetItemQuery};
+use rg_semantic_ir::{CrateItemQuery, ItemLookupIndex, ItemStoreSource};
 use rg_std::UniqueVec;
 
 use crate::{Autoderef, AutoderefMode, ImplMatcher, ItemPathQuery, ReferencePeelingCandidates, Ty};
@@ -14,7 +14,7 @@ use crate::{Autoderef, AutoderefMode, ImplMatcher, ItemPathQuery, ReferencePeeli
 /// Ref-level implementation lookup shared by view and analysis adapters.
 pub struct ImplementationQuery<'query, D, I> {
     item_paths: ItemPathQuery<'query, D, I>,
-    target_items: TargetItemQuery<'query, D, I>,
+    crate_items: CrateItemQuery<'query, D, I>,
     lookup_index: &'query ItemLookupIndex,
 }
 
@@ -26,12 +26,12 @@ where
     /// Creates an implementation query over a target-scoped receiver lookup index.
     pub fn with_index(
         item_paths: ItemPathQuery<'query, D, I>,
-        target_items: TargetItemQuery<'query, D, I>,
+        crate_items: CrateItemQuery<'query, D, I>,
         lookup_index: &'query ItemLookupIndex,
     ) -> Self {
         Self {
             item_paths,
-            target_items,
+            crate_items,
             lookup_index,
         }
     }
@@ -109,10 +109,10 @@ where
     ) -> Result<UniqueVec<FunctionRef>, D::Error> {
         let autoderef = Autoderef::with_index(
             self.item_paths.clone(),
-            self.target_items.clone(),
+            self.crate_items.clone(),
             self.lookup_index,
         );
-        let matcher = ImplMatcher::new(self.item_paths.clone(), self.target_items.clone());
+        let matcher = ImplMatcher::new(self.item_paths.clone(), self.crate_items.clone());
         let mut functions = UniqueVec::new();
 
         for candidate in autoderef.candidates(AutoderefMode::MethodReceiver, receiver_ty) {

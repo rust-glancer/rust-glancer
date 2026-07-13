@@ -1,6 +1,6 @@
 //! Goto-type-definition query flow.
 
-use rg_ir_model::TargetRef;
+use rg_ir_model::CrateRef;
 use rg_ir_view::ty::TyView;
 use rg_parse::FileId;
 
@@ -20,11 +20,11 @@ impl<'a, 'db> TypeDefinitionResolver<'a, 'db> {
 
     pub(crate) fn goto_type_definition(
         &self,
-        target: TargetRef,
+        crate_ref: CrateRef,
         file_id: FileId,
         offset: u32,
     ) -> anyhow::Result<Vec<NavigationTarget>> {
-        let Some(symbol) = self.0.symbol_at_for_query(target, file_id, offset)? else {
+        let Some(symbol) = self.0.symbol_at_for_query(crate_ref, file_id, offset)? else {
             return Ok(Vec::new());
         };
 

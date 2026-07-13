@@ -4,7 +4,7 @@
 // tests here, though it doesn't have usual snapshot-driven flow.
 
 use rg_ir_model::{
-    BodyOwner, ExprId, PackageSlot, TargetRef,
+    BodyOwner, CrateRef, ExprId, PackageSlot,
     identity::{DeclarationRef, ExprRef},
     items::{PrimitiveTy, SignedIntTy},
 };
@@ -67,7 +67,7 @@ pub fn read() -> i32 {
 
     let target = first_target(&fixture);
     let body_ref = fixture
-        .body_refs_for_target(target)
+        .body_refs_for_crate(target)
         .into_iter()
         .find(|body_ref| {
             matches!(
@@ -90,7 +90,7 @@ pub fn read() -> i32 {
     Ok(())
 }
 
-fn first_target(fixture: &ViewFixture) -> TargetRef {
+fn first_target(fixture: &ViewFixture) -> CrateRef {
     let (package_idx, package) = fixture
         .parse_db()
         .packages()
@@ -103,9 +103,9 @@ fn first_target(fixture: &ViewFixture) -> TargetRef {
         .iter()
         .next()
         .expect("fixture package should contain a target");
-    TargetRef {
+    CrateRef {
         package: PackageSlot(package_idx),
-        target: target.id,
+        crate_id: rg_ir_model::CrateId(target.id.0),
     }
 }
 
@@ -119,7 +119,7 @@ fn expr_with_source_text(
         .expect("fixture body should be resident");
     let package = fixture
         .parse_db()
-        .package(body_ref.target.package.0)
+        .package(body_ref.crate_ref.package.0)
         .expect("fixture body package should exist");
 
     for (idx, expr) in body.exprs().iter().enumerate() {

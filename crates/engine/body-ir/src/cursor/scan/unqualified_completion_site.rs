@@ -4,7 +4,7 @@
 //! Qualified paths are left to the path-completion scanner because their
 //! candidate set comes from the resolved qualifier rather than lexical scope.
 
-use rg_ir_model::{BodyRef, ScopeId, TargetRef, items::TypePath};
+use rg_ir_model::{BodyRef, CrateRef, ScopeId, items::TypePath};
 use rg_package_store::PackageStoreError;
 use rg_parse::FileId;
 
@@ -18,7 +18,7 @@ use super::sites::BodyScanSites;
 /// Finds the source site that belongs to an unqualified completion offset.
 pub(crate) struct UnqualifiedCompletionSiteScanner<'txn, 'db> {
     body_ir: &'txn BodyIrReadTxn<'db>,
-    target: TargetRef,
+    crate_ref: CrateRef,
     file_id: FileId,
     offset: u32,
 }
@@ -26,13 +26,13 @@ pub(crate) struct UnqualifiedCompletionSiteScanner<'txn, 'db> {
 impl<'txn, 'db> UnqualifiedCompletionSiteScanner<'txn, 'db> {
     pub(crate) fn new(
         body_ir: &'txn BodyIrReadTxn<'db>,
-        target: TargetRef,
+        crate_ref: CrateRef,
         file_id: FileId,
         offset: u32,
     ) -> Self {
         Self {
             body_ir,
-            target,
+            crate_ref,
             file_id,
             offset,
         }
@@ -44,7 +44,7 @@ impl<'txn, 'db> UnqualifiedCompletionSiteScanner<'txn, 'db> {
     ) -> Result<Option<UnqualifiedCompletionSite>, PackageStoreError> {
         let mut best: Option<(UnqualifiedCompletionSite, u32)> = None;
 
-        for (body_ref, body) in self.body_ir.bodies(self.target, Some(self.file_id))? {
+        for (body_ref, body) in self.body_ir.bodies(self.crate_ref, Some(self.file_id))? {
             if !body.source().span.contains(self.offset) {
                 continue;
             }

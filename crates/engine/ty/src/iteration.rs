@@ -4,8 +4,8 @@
 //! trait-selection projection API for their associated `Item` type.
 
 use rg_def_map::DefMapSource;
-use rg_ir_model::{Path, PathSegment, TraitImplRef, TraitRef, hir::items::ImplData};
-use rg_ir_storage::{ItemLookupIndex, ItemStoreSource, TargetItemQuery};
+use rg_ir_model::{Path, PathSegment, TraitImplRef, TraitRef};
+use rg_semantic_ir::{CrateItemQuery, ImplData, ItemLookupIndex, ItemStoreSource};
 use rg_std::{ExpectedUnique, UniqueVec};
 use rg_text::Name;
 
@@ -18,7 +18,7 @@ use crate::{
 #[derive(Clone)]
 pub struct IterationItemResolver<'query, D, I> {
     item_paths: ItemPathQuery<'query, D, I>,
-    target_items: TargetItemQuery<'query, D, I>,
+    crate_items: CrateItemQuery<'query, D, I>,
     lookup_index: &'query ItemLookupIndex,
     trait_selection_cache: TraitSelectionCache,
 }
@@ -31,12 +31,12 @@ where
     /// Creates an iteration resolver over a target-scoped item lookup index.
     pub fn with_index(
         item_paths: ItemPathQuery<'query, D, I>,
-        target_items: TargetItemQuery<'query, D, I>,
+        crate_items: CrateItemQuery<'query, D, I>,
         lookup_index: &'query ItemLookupIndex,
     ) -> Self {
         Self {
             item_paths,
-            target_items,
+            crate_items,
             lookup_index,
             trait_selection_cache: TraitSelectionCache::default(),
         }
@@ -60,7 +60,7 @@ where
 
     /// Returns true when a selected trait is the canonical `core::iter::Iterator`.
     pub fn is_iterator_trait_ref(&self, trait_ref: TraitRef) -> Result<bool, D::Error> {
-        let resolver = AssociatedTypeResolver::new(&self.item_paths, &self.target_items);
+        let resolver = AssociatedTypeResolver::new(&self.item_paths, &self.crate_items);
         let canonical_traits =
             self.canonical_trait_refs_from_use_site(&resolver, CanonicalIteratorTrait::Iterator)?;
         Ok(canonical_traits.contains(&trait_ref))
@@ -75,7 +75,7 @@ where
             return Ok(Ty::Unknown);
         }
 
-        let resolver = AssociatedTypeResolver::new(&self.item_paths, &self.target_items);
+        let resolver = AssociatedTypeResolver::new(&self.item_paths, &self.crate_items);
         let canonical_traits = self.canonical_trait_refs_for_lookup(&resolver, trait_kind)?;
         let mut candidates = ExpectedUnique::new();
         self.push_solver_projected_items(&mut candidates, ty, &canonical_traits)?;
@@ -106,7 +106,7 @@ where
             };
             let Some(projection) = TraitSelectionQuery::with_index(
                 self.item_paths.clone(),
-                self.target_items.clone(),
+                self.crate_items.clone(),
                 self.lookup_index,
             )
             .with_cache(self.trait_selection_cache.clone())

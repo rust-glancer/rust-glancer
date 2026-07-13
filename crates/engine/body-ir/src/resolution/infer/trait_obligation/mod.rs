@@ -18,8 +18,8 @@ mod obligation;
 mod selected_call;
 
 use rg_def_map::DefMapSource;
-use rg_ir_storage::ItemStoreSource;
 use rg_package_store::PackageStoreError;
+use rg_semantic_ir::ItemStoreSource;
 use rg_std::ExpectedUnique;
 use rg_ty::{TraitGoal, TraitSelection, TraitSelectionQuery};
 
@@ -46,7 +46,7 @@ where
         Self { context }
     }
 
-    /// Probe a trait goal using the target lookup index persisted with Body IR.
+    /// Probe a trait goal using the crate lookup index persisted with Body IR.
     ///
     /// Keeping this as probe mode matters: callers decide when an `ExpectedUnique::One` result is
     /// strong enough to commit the returned inference table.
@@ -57,7 +57,7 @@ where
     ) -> Result<ExpectedUnique<TraitSelection>, PackageStoreError> {
         TraitSelectionQuery::with_index(
             self.context.item_paths(),
-            self.context.target_items(),
+            self.context.crate_items(),
             self.context.semantic_index(),
         )
         // The returned table may be committed below, so this path uses full predicate solving

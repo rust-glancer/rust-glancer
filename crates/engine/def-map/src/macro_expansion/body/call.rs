@@ -1,6 +1,6 @@
 use crate::MacroDefinitionView;
 use rg_cfg_eval::CfgEvaluator;
-use rg_ir_model::{BodySource, LocalDefRef, ModuleRef, TargetRef, items::BuiltinMacroKind};
+use rg_ir_model::{BodySource, CrateRef, LocalDefRef, ModuleRef, items::BuiltinMacroKind};
 use rg_macro_runtime::{
     DeclarativeMacroDefinition, ExpansionParseKind, MacroExpansionRequest, macro_edition,
 };
@@ -15,26 +15,22 @@ use rg_tt::syntax_bridge::{SpanFactory, syntax_node_to_token_tree_with_span};
 pub enum BodyMacroCallOrigin {
     /// A macro invocation written in the original source file.
     Source,
-    /// A macro invocation produced by expanding syntax from a macro definition target.
-    Generated { dollar_crate_target: TargetRef },
+    /// A macro invocation produced by expanding syntax from a macro definition crate.
+    Generated { dollar_crate: CrateRef },
 }
 
 impl BodyMacroCallOrigin {
-    fn dollar_crate_target_for_path(self) -> Option<TargetRef> {
+    fn dollar_crate_for_path(self) -> Option<CrateRef> {
         match self {
             Self::Source => None,
-            Self::Generated {
-                dollar_crate_target,
-            } => Some(dollar_crate_target),
+            Self::Generated { dollar_crate } => Some(dollar_crate),
         }
     }
 
-    fn dollar_crate_target_for_expansion(self, caller_target: TargetRef) -> TargetRef {
+    fn dollar_crate_for_expansion(self, caller_target: CrateRef) -> CrateRef {
         match self {
             Self::Source => caller_target,
-            Self::Generated {
-                dollar_crate_target,
-            } => dollar_crate_target,
+            Self::Generated { dollar_crate } => dollar_crate,
         }
     }
 }
@@ -74,8 +70,8 @@ impl<'cfg> BodyMacroCallSite<'cfg> {
         }
     }
 
-    pub(super) fn target(self) -> Option<TargetRef> {
-        self.module.origin.as_target_ref()
+    pub(super) fn crate_ref(self) -> Option<CrateRef> {
+        self.module.origin.as_crate_ref()
     }
 
     pub(super) fn module(self) -> ModuleRef {
@@ -104,15 +100,12 @@ impl<'cfg> BodyMacroCallSite<'cfg> {
         )
     }
 
-    pub(super) fn dollar_crate_target_for_path(self) -> Option<TargetRef> {
-        self.origin.dollar_crate_target_for_path()
+    pub(super) fn dollar_crate_for_path(self) -> Option<CrateRef> {
+        self.origin.dollar_crate_for_path()
     }
 
-    pub(super) fn dollar_crate_target_for_expansion(self) -> Option<TargetRef> {
-        Some(
-            self.origin
-                .dollar_crate_target_for_expansion(self.target()?),
-        )
+    pub(super) fn dollar_crate_for_expansion(self) -> Option<CrateRef> {
+        Some(self.origin.dollar_crate_for_expansion(self.crate_ref()?))
     }
 }
 

@@ -31,8 +31,8 @@ impl<'a, 'db> WorkspaceSymbolCollector<'a, 'db> {
                 symbol.name.to_lowercase(),
                 symbol.kind,
                 symbol.container_name.clone(),
-                symbol.target.package.0,
-                symbol.target.target.0,
+                symbol.crate_ref.package.0,
+                symbol.crate_ref.crate_id.0,
                 symbol.file_id.0,
                 symbol.span.map(|span| span.text.start),
             )

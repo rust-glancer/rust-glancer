@@ -1,16 +1,16 @@
 //! Body-aware routing for shared DefMap and item-store queries.
 
 use rg_def_map::{DefMap, DefMapSource};
-use rg_ir_model::{BodyRef, DefMapRef, ModuleRef, TargetRef};
-use rg_ir_storage::{ItemStore, ItemStoreSource};
+use rg_ir_model::{BodyRef, CrateRef, DefMapRef, ModuleRef};
 use rg_package_store::PackageStoreError;
+use rg_semantic_ir::{ItemStore, ItemStoreSource};
 
 use crate::ir::body::ResolvedBodyData;
 
 /// Routes semantic-shaped queries while keeping the active body available for lexical lookup.
 ///
 /// DefMap and item-store storage is owned by the provider. During indexing that provider reads the
-/// build state; after indexing it reads frozen target body-local storage.
+/// build state; after indexing it reads frozen crate_ref body-local storage.
 #[derive(Clone, Copy)]
 pub(crate) struct BodyQuerySource<'a, D, I> {
     def_maps: D,
@@ -55,25 +55,25 @@ where
 
     fn extern_root(
         &self,
-        target: TargetRef,
+        crate_ref: CrateRef,
         name: &str,
     ) -> Result<Option<ModuleRef>, PackageStoreError> {
-        self.def_maps.extern_root(target, name)
+        self.def_maps.extern_root(crate_ref, name)
     }
 
     fn extern_roots(
         &self,
-        target: TargetRef,
+        crate_ref: CrateRef,
     ) -> Result<Vec<(String, ModuleRef)>, PackageStoreError> {
-        self.def_maps.extern_roots(target)
+        self.def_maps.extern_roots(crate_ref)
     }
 
-    fn prelude_module(&self, target: TargetRef) -> Result<Option<ModuleRef>, PackageStoreError> {
-        self.def_maps.prelude_module(target)
+    fn prelude_module(&self, crate_ref: CrateRef) -> Result<Option<ModuleRef>, PackageStoreError> {
+        self.def_maps.prelude_module(crate_ref)
     }
 
-    fn root_module(&self, target: TargetRef) -> Result<Option<ModuleRef>, PackageStoreError> {
-        self.def_maps.root_module(target)
+    fn root_module(&self, crate_ref: CrateRef) -> Result<Option<ModuleRef>, PackageStoreError> {
+        self.def_maps.root_module(crate_ref)
     }
 }
 

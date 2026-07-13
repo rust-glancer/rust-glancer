@@ -6,7 +6,7 @@
 
 use crate::{DefMap, ModuleOrigin};
 use rg_ir_model::Path;
-use rg_ir_model::{DefId, DefMapRef, LocalDefId, LocalDefRef, ModuleId, ModuleRef, TargetRef};
+use rg_ir_model::{CrateRef, DefId, DefMapRef, LocalDefId, LocalDefRef, ModuleId, ModuleRef};
 use rg_parse::{FileId, Span};
 
 use rg_package_store::PackageStoreError;
@@ -39,28 +39,28 @@ impl DefMapReadTxn<'_> {
     /// Returns namespace-level cursor candidates at `offset`.
     pub fn cursor_candidates(
         &self,
-        target: TargetRef,
+        crate_ref: CrateRef,
         file_id: FileId,
         offset: u32,
     ) -> Result<Vec<DefMapCursorCandidate>, PackageStoreError> {
         NamespaceCursorScanner {
             def_map: self,
-            target,
+            crate_ref,
             file_id: Some(file_id),
             offset: Some(offset),
         }
         .scan()
     }
 
-    /// Returns namespace-level source candidates for one target.
+    /// Returns namespace-level source candidates for one crate.
     pub fn source_candidates(
         &self,
-        target: TargetRef,
+        crate_ref: CrateRef,
         file_id: Option<FileId>,
     ) -> Result<Vec<DefMapCursorCandidate>, PackageStoreError> {
         NamespaceCursorScanner {
             def_map: self,
-            target,
+            crate_ref,
             file_id,
             offset: None,
         }
@@ -71,7 +71,7 @@ impl DefMapReadTxn<'_> {
 /// Scans module declarations, item names, and import path segments owned by DefMap.
 struct NamespaceCursorScanner<'txn, 'db> {
     def_map: &'txn DefMapReadTxn<'db>,
-    target: TargetRef,
+    crate_ref: CrateRef,
     file_id: Option<FileId>,
     offset: Option<u32>,
 }
@@ -79,7 +79,7 @@ struct NamespaceCursorScanner<'txn, 'db> {
 impl NamespaceCursorScanner<'_, '_> {
     fn scan(&self) -> Result<Vec<DefMapCursorCandidate>, PackageStoreError> {
         let mut candidates = Vec::new();
-        let Some(def_map) = self.def_map.def_map(self.target)? else {
+        let Some(def_map) = self.def_map.def_map(self.crate_ref)? else {
             return Ok(candidates);
         };
 
@@ -96,7 +96,7 @@ impl NamespaceCursorScanner<'_, '_> {
     ) {
         for (module_idx, module) in def_map.modules().iter().enumerate() {
             let module_ref = ModuleRef {
-                origin: DefMapRef::Target(self.target),
+                origin: DefMapRef::Crate(self.crate_ref),
                 module: ModuleId(module_idx),
             };
             let declaration_file = match module.origin {
@@ -132,7 +132,7 @@ impl NamespaceCursorScanner<'_, '_> {
     ) {
         for (local_def_idx, local_def) in def_map.local_defs().iter().enumerate() {
             let local_def_ref = LocalDefRef {
-                origin: DefMapRef::Target(self.target),
+                origin: DefMapRef::Crate(self.crate_ref),
                 local_def: LocalDefId(local_def_idx),
             };
             if !self.file_matches(local_def.file_id) {
@@ -161,7 +161,7 @@ impl NamespaceCursorScanner<'_, '_> {
             }
 
             let module = ModuleRef {
-                origin: DefMapRef::Target(self.target),
+                origin: DefMapRef::Crate(self.crate_ref),
                 module: import.module,
             };
             let Some(segments) = import.path.segments_with_spans() else {

@@ -17,8 +17,8 @@ use rg_ir_model::{
     identity::DeclarationRef,
     items::{FieldKey, FieldList, TypeRef},
 };
-use rg_ir_storage::ItemStoreSource;
 use rg_package_store::PackageStoreError;
+use rg_semantic_ir::ItemStoreSource;
 use rg_std::ExpectedUnique;
 use rg_ty::{ExpectedNominalTyExt, ReferencePeelingCandidates, Ty};
 
@@ -507,7 +507,7 @@ where
         path: &Path,
     ) -> Result<bool, PackageStoreError> {
         // Check the body-local lexical module first, then the owner/fallback modules used by
-        // ordinary body lookup. This keeps body-local consts visible without losing target items.
+        // ordinary body lookup. This keeps body-local consts visible without losing crate items.
         let from = ModuleRef {
             origin: DefMapRef::Body(self.providers.body_ref()),
             module: ModuleId(scope.0),

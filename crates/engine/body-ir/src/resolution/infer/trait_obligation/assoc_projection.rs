@@ -8,11 +8,10 @@
 use rg_def_map::DefMapSource;
 use rg_ir_model::{
     TraitRef,
-    hir::items::ImplData,
     items::{GenericParams, TypeBound, TypeRef},
 };
-use rg_ir_storage::{ItemStoreSource, TypePathContext};
 use rg_package_store::PackageStoreError;
+use rg_semantic_ir::{ImplData, ItemStoreSource, TypePathContext};
 use rg_text::Name;
 use rg_ty::{
     GenericArg, TraitGoal, TraitSelection, TraitSelectionCache, TraitSelectionOptions, Ty,

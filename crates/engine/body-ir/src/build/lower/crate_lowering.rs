@@ -1,6 +1,6 @@
-//! Target-level body selection.
+//! Crate-level body selection.
 //!
-//! This module starts from Semantic IR target items and turns the selected functions, consts, and
+//! This module starts from Semantic IR crate items and turns the selected functions, consts, and
 //! statics into lowering tasks. Nested body-local tasks are discovered later, after each parent
 //! body's local item store exists.
 
@@ -9,12 +9,12 @@ use anyhow::Context as _;
 use rg_cfg_eval::CfgEvaluator;
 use rg_def_map::{DefMapReadTxn, PackageSlot};
 use rg_ir_model::{ConstRef, FunctionRef, ImplRef, ItemOwner, ModuleRef, StaticRef, TraitRef};
-use rg_ir_storage::ItemStoreQuery;
 use rg_parse::{FileId, Span};
+use rg_semantic_ir::ItemStoreQuery;
 use rg_semantic_ir::SemanticIrReadTxn;
 use rg_text::NameInterner;
 
-use crate::{BodyOwner, TargetBodies};
+use crate::{BodyOwner, CrateBodies};
 
 use super::{BodyMacroExpansion, task::BodyLoweringTask, task::BodyTaskLowering};
 use crate::build::materialization::BodyIrMaterialization;
@@ -23,7 +23,7 @@ type FunctionLoweringTarget = (FunctionRef, FileId, Span);
 type ConstLoweringTarget = (ConstRef, FileId, Span);
 type StaticLoweringTarget = (StaticRef, FileId, Span);
 
-pub(super) struct TargetLowering<'a> {
+pub(super) struct CrateLowering<'a> {
     pub(super) parse_package: &'a rg_parse::Package,
     pub(super) def_map: &'a DefMapReadTxn<'a>,
     pub(super) semantic_ir: &'a SemanticIrReadTxn<'a>,
@@ -32,27 +32,27 @@ pub(super) struct TargetLowering<'a> {
     pub(super) functions: Vec<FunctionLoweringTarget>,
     pub(super) consts: Vec<ConstLoweringTarget>,
     pub(super) statics: Vec<StaticLoweringTarget>,
-    pub(super) target_bodies: TargetBodies,
+    pub(super) crate_bodies: CrateBodies,
     pub(super) cfg: CfgEvaluator<'a>,
     pub(super) interner: &'a mut NameInterner,
 }
 
-impl<'a> TargetLowering<'a> {
-    pub(super) fn lower(mut self) -> anyhow::Result<TargetBodies> {
+impl<'a> CrateLowering<'a> {
+    pub(super) fn lower(mut self) -> anyhow::Result<CrateBodies> {
         let tasks = self.selected_body_tasks()?;
         let mut macro_expansion =
             BodyMacroExpansion::new(self.parse_package, self.def_map, self.cfg);
         BodyTaskLowering::new(
             self.parse_package,
-            &mut self.target_bodies,
+            &mut self.crate_bodies,
             self.cfg,
             self.interner,
         )
         .lower_tasks(&tasks, &mut macro_expansion)?;
-        Ok(self.target_bodies)
+        Ok(self.crate_bodies)
     }
 
-    /// Converts target semantic items into the same task shape used by nested body discovery.
+    /// Converts crate semantic items into the same task shape used by nested body discovery.
     ///
     /// Body IDs are assigned in lowering order, not from Semantic IR item IDs. Resolve a body by
     /// inspecting `ResolvedBodyData::owner`; never cast item IDs to `BodyId`.

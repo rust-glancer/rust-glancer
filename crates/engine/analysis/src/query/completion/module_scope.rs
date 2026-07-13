@@ -41,7 +41,7 @@ impl<'a, 'db, 'source> ModuleCompletionRenderer<'a, 'db, 'source> {
         Ok(Self {
             analysis,
             query,
-            syntax: SyntaxRenderer::new(analysis.view_db().target_edition(query.target)?),
+            syntax: SyntaxRenderer::new(analysis.view_db().crate_edition(query.crate_ref)?),
         })
     }
 

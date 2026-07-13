@@ -2,20 +2,16 @@ use std::marker::PhantomData;
 
 use anyhow::Context as _;
 
+use super::{
+    ConstData, ConstSignature, EnumData, FunctionData, FunctionSignature, ImplData, ItemStore,
+    ItemStoreBuilder, StaticData, StructData, TraitData, TypeAliasData, TypeAliasSignature,
+    UnionData,
+};
 use rg_def_map::DefMap;
 use rg_ir_model::{
     AssocItemId, ConstId, FunctionId, ItemId, ItemOwner, LocalDefRef, LocalImplRef, ModuleRef,
-    StaticId, TraitId, TypeAliasId,
-    hir::{
-        items::{
-            ConstData, EnumData, FunctionData, ImplData, StaticData, StructData, TraitData,
-            TypeAliasData, UnionData,
-        },
-        signature::{ConstSignature, FunctionSignature, TypeAliasSignature},
-        source::ItemSource,
-    },
+    StaticId, TraitId, TypeAliasId, hir::source::ItemSource,
 };
-use rg_ir_storage::{ItemStore, ItemStoreBuilder};
 use rg_item_tree::{
     ConstItem, FunctionItem, ImplItem, ItemKind, ItemNode, ItemTreeId, StaticItem, TraitItem,
     TypeAliasItem,
@@ -30,8 +26,7 @@ pub trait ItemStoreSourceReader<'item> {
 
 /// Lowers a collected DefMap into item-shaped semantic storage.
 ///
-/// This structure is inetnionally generic enough to allow reuse across
-/// both semantic and body layers.
+/// This structure is intentionally generic enough to allow reuse across crate and body lowering.
 pub struct ItemStoreLowerer<'def_map, 'item, R> {
     def_map: &'def_map DefMap,
     reader: R,
@@ -54,7 +49,8 @@ where
 
     pub fn lower(mut self) -> anyhow::Result<ItemStore> {
         // DefMap local definitions provide the stable item identity. The source reader supplies the
-        // syntax-shaped payload from target item trees, generated sources, or body-local arenas.
+        // syntax-shaped payload from Cargo-target item trees, generated sources, or body-local
+        // arenas.
         for local_def_ref in self.def_map.local_def_refs() {
             let local_def = self
                 .def_map

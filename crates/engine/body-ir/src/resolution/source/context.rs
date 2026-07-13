@@ -1,13 +1,13 @@
 //! Shared provider construction for body resolution.
 //!
-//! Resolution components should not each remember how to wire DefMap, item-store, target, and body
+//! Resolution components should not each remember how to wire DefMap, item-store, crate, and body
 //! lookup providers together. This context keeps that routing in one place while still exposing
 //! only read-only access to the active body.
 
 use rg_def_map::{DefMapQuery, DefMapSource};
 use rg_ir_model::BodyRef;
-use rg_ir_storage::{ItemLookupIndex, ItemStoreQuery, ItemStoreSource, TargetItemQuery};
 use rg_package_store::PackageStoreError;
+use rg_semantic_ir::{CrateItemQuery, ItemLookupIndex, ItemStoreQuery, ItemStoreSource};
 use rg_ty::{Autoderef, ImplMatcher, ItemPathQuery, IterationItemResolver};
 
 use crate::ir::body::ResolvedBodyData;
@@ -77,11 +77,11 @@ where
         ItemPathQuery::new(source, source)
     }
 
-    pub(crate) fn target_items(
+    pub(crate) fn crate_items(
         &self,
-    ) -> TargetItemQuery<'a, BodyQuerySource<'a, D, I>, BodyQuerySource<'a, D, I>> {
+    ) -> CrateItemQuery<'a, BodyQuerySource<'a, D, I>, BodyQuerySource<'a, D, I>> {
         let source = self.source;
-        TargetItemQuery::new(source, source, self.source.body_ref().target)
+        CrateItemQuery::new(source, source, self.source.body_ref().crate_ref)
     }
 
     pub fn type_path_query(&self) -> BodyTypePathQuery<'a, D, I> {
@@ -139,13 +139,13 @@ where
     pub(crate) fn impl_matcher(
         &self,
     ) -> ImplMatcher<'a, BodyQuerySource<'a, D, I>, BodyQuerySource<'a, D, I>> {
-        ImplMatcher::new(self.item_paths(), self.target_items())
+        ImplMatcher::new(self.item_paths(), self.crate_items())
     }
 
     pub(crate) fn autoderef(
         &self,
     ) -> Autoderef<'a, BodyQuerySource<'a, D, I>, BodyQuerySource<'a, D, I>> {
-        Autoderef::with_index(self.item_paths(), self.target_items(), self.semantic_index)
+        Autoderef::with_index(self.item_paths(), self.crate_items(), self.semantic_index)
     }
 
     pub(crate) fn iteration_items(
@@ -153,7 +153,7 @@ where
     ) -> IterationItemResolver<'a, BodyQuerySource<'a, D, I>, BodyQuerySource<'a, D, I>> {
         IterationItemResolver::with_index(
             self.item_paths(),
-            self.target_items(),
+            self.crate_items(),
             self.semantic_index,
         )
     }

@@ -3,14 +3,13 @@
 use anyhow::Context as _;
 use rayon::prelude::*;
 use rg_def_map::{DefMapReadTxn, PackageSlot};
-use rg_ir_model::TargetRef;
-use rg_parse::TargetId;
+use rg_ir_model::{CrateId, CrateRef};
 use rg_semantic_ir::SemanticIrReadTxn;
 use rg_text::{NameInterner, PackageNameInterners};
 
-use crate::{PackageBodies, TargetBodiesStatus};
+use crate::{CrateBodiesStatus, PackageBodies};
 
-use super::{local_thread_pool, state::TargetBodyBuildState};
+use super::{local_thread_pool, state::CrateBodyBuildState};
 
 pub(super) fn resolve_packages(
     packages: &mut [PackageBodies],
@@ -116,19 +115,19 @@ fn resolve_package(
     def_map_txn: &DefMapReadTxn<'_>,
     semantic_ir: &SemanticIrReadTxn<'_>,
 ) -> anyhow::Result<()> {
-    // Resolution is a mutation pass over already-lowered bodies. Skipped targets intentionally
+    // Resolution is a mutation pass over already-lowered bodies. Skipped crates intentionally
     // keep their body stores empty so dependency body internals stay cheap by default.
-    for (target_idx, target) in package.targets_mut().iter_mut().enumerate() {
-        if matches!(target.status(), TargetBodiesStatus::Skipped) {
+    for (crate_idx, crate_bodies) in package.crates_mut().iter_mut().enumerate() {
+        if matches!(crate_bodies.status(), CrateBodiesStatus::Skipped) {
             continue;
         }
 
-        let target_ref = TargetRef {
+        let crate_ref = CrateRef {
             package: package_slot,
-            target: TargetId(target_idx),
+            crate_id: CrateId(crate_idx),
         };
 
-        TargetBodyBuildState::new(target_ref, parse_package, target, interner)
+        CrateBodyBuildState::new(crate_ref, parse_package, crate_bodies, interner)
             .resolve(def_map_txn, semantic_ir)?;
     }
 

@@ -2,8 +2,8 @@ use rg_ir_model::items::{
     BuiltinMacroKind, Documentation, ItemKind, ItemTag, MacroDefinitionItem, VisibilityLevel,
 };
 use rg_ir_model::{
-    DefMapRef, LocalDefId, LocalDefRef, LocalEnumVariantId, LocalEnumVariantRef, ModuleId,
-    TargetRef, hir::source::ItemSource,
+    CrateRef, DefMapRef, LocalDefId, LocalDefRef, LocalEnumVariantId, LocalEnumVariantRef,
+    ModuleId, hir::source::ItemSource,
 };
 use rg_macro_runtime::DeclarativeMacroDefinition;
 use rg_parse::{FileId, Span};
@@ -81,8 +81,8 @@ impl<'a> LocalEnumVariantEntry<'a> {
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct MacroDefinitionData {
     pub edition: RustEdition,
-    /// Target that `$crate` inside this macro body should resolve to when expanded.
-    pub dollar_crate_target: TargetRef,
+    /// Crate that `$crate` inside this macro body should resolve to when expanded.
+    pub dollar_crate: CrateRef,
     /// User-facing documentation attached to the macro definition item.
     pub docs: Option<Documentation>,
     /// Compiler hook that should run instead of declarative expansion, if any.
@@ -96,11 +96,11 @@ impl MacroDefinitionData {
         item: &MacroDefinitionItem,
         docs: Option<Documentation>,
         edition: RustEdition,
-        dollar_crate_target: TargetRef,
+        dollar_crate: CrateRef,
     ) -> Self {
         Self {
             edition,
-            dollar_crate_target,
+            dollar_crate,
             docs,
             builtin: Self::builtin_from_item(item),
             payload: MacroDefinitionPayload::from_item(item),

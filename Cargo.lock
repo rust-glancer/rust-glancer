@@ -1637,7 +1637,6 @@ dependencies = [
  "rg_cfg_eval",
  "rg_def_map",
  "rg_ir_model",
- "rg_ir_storage",
  "rg_item_tree",
  "rg_package_store",
  "rg_parse",
@@ -1715,22 +1714,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "rg_ir_storage"
-version = "0.1.0"
-dependencies = [
- "derive_more",
- "rg_arena",
- "rg_def_map",
- "rg_ir_model",
- "rg_parse",
- "rg_std",
- "rg_text",
- "rg_tt",
- "rg_workspace",
- "wincode",
-]
-
-[[package]]
 name = "rg_ir_view"
 version = "0.1.0"
 dependencies = [
@@ -1739,10 +1722,10 @@ dependencies = [
  "rg_body_ir",
  "rg_def_map",
  "rg_ir_model",
- "rg_ir_storage",
  "rg_package_store",
  "rg_parse",
  "rg_semantic_ir",
+ "rg_std",
  "rg_syntax",
  "rg_text",
  "rg_ty",
@@ -1924,7 +1907,6 @@ dependencies = [
  "rg_cfg_eval",
  "rg_def_map",
  "rg_ir_model",
- "rg_ir_storage",
  "rg_ir_view",
  "rg_item_tree",
  "rg_package_store",
@@ -1951,13 +1933,11 @@ dependencies = [
  "rg_arena",
  "rg_def_map",
  "rg_ir_model",
- "rg_ir_storage",
  "rg_item_tree",
  "rg_package_store",
  "rg_parse",
  "rg_std",
  "rg_text",
- "rg_ty",
  "rg_workspace",
  "wincode",
 ]
@@ -2042,8 +2022,8 @@ dependencies = [
  "expect-test",
  "rg_def_map",
  "rg_ir_model",
- "rg_ir_storage",
  "rg_profile",
+ "rg_semantic_ir",
  "rg_std",
  "rg_text",
  "rg_wincode_utils",

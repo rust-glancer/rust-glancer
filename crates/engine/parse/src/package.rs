@@ -4,7 +4,9 @@ use anyhow::Context as _;
 use rg_arena::Arena;
 use rg_cfg_eval::CfgOptions;
 
-use crate::{FileId, LineIndex, ParsedFile, ParsedFileSnapshot, Target, TargetId, file::FileDb};
+use crate::{
+    CargoTarget, CargoTargetId, FileId, LineIndex, ParsedFile, ParsedFileSnapshot, file::FileDb,
+};
 use rg_source::{SourceEntry, SourceInventory};
 use rg_std::MemorySize;
 use rg_text::RustEdition;
@@ -29,7 +31,7 @@ pub struct Package {
     /// All parsed files known to this package.
     pub(crate) files: FileDb,
     /// Parsed targets rooted in this package.
-    pub(crate) targets: Arena<TargetId, Target>,
+    pub(crate) targets: Arena<CargoTargetId, CargoTarget>,
 }
 
 impl Package {
@@ -38,7 +40,7 @@ impl Package {
     /// Workspace packages keep all user-facing targets, while dependencies keep only their library
     /// target. This selection must stay shared by parse construction and cache planning, because
     /// package artifacts are keyed by the targets that actually appear in analysis payloads.
-    pub fn analyzed_targets(package: &rg_workspace::Package) -> Vec<rg_workspace::Target> {
+    pub fn analyzed_targets(package: &rg_workspace::Package) -> Vec<rg_workspace::CargoTarget> {
         if package.is_workspace_member {
             return package.targets.clone();
         }
@@ -196,12 +198,12 @@ impl Package {
     }
 
     /// Returns all parsed targets for this package.
-    pub fn targets(&self) -> &[Target] {
+    pub fn targets(&self) -> &[CargoTarget] {
         self.targets.as_slice()
     }
 
     /// Returns one parsed target by stable id.
-    pub fn target(&self, target_id: TargetId) -> Option<&Target> {
+    pub fn target(&self, target_id: CargoTargetId) -> Option<&CargoTarget> {
         self.targets.get(target_id)
     }
 
@@ -224,7 +226,7 @@ impl Package {
                     )
                 })?;
 
-            parsed_targets.alloc(Target {
+            parsed_targets.alloc(CargoTarget {
                 id: target_id,
                 name: target.name,
                 kind: target.kind,

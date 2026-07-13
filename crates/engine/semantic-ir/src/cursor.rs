@@ -4,10 +4,10 @@
 //! signatures. Keeping this scan here prevents analysis from knowing how every semantic item stores
 //! generic params, field types, enum variants, impl headers, and associated function declarations.
 
+use crate::{ItemStoreQuery, TypePathContext};
 use rg_ir_model::Path;
-use rg_ir_model::{DefMapRef, TargetRef};
+use rg_ir_model::{CrateRef, DefMapRef};
 use rg_ir_model::{EnumVariantRef, FieldRef, FunctionRef, ItemOwner, TypeDefId, TypeDefRef};
-use rg_ir_storage::{ItemStoreQuery, TypePathContext};
 use rg_item_tree::{
     FieldList, GenericArg, GenericParams, TypeBound, TypePath, TypePathAnchor, TypeRef,
     WherePredicate,
@@ -55,14 +55,14 @@ impl SemanticIrReadTxn<'_> {
     /// Returns cursor candidates inside semantic item signatures.
     pub fn signature_cursor_candidates(
         &self,
-        target: TargetRef,
+        crate_ref: CrateRef,
         file_id: FileId,
         offset: u32,
     ) -> Result<Vec<SemanticCursorCandidate>, PackageStoreError> {
         let mut candidates = Vec::new();
         SignatureCursorScanner {
             semantic_ir: self,
-            target,
+            crate_ref,
             file_id: Some(file_id),
             offset: Some(offset),
             candidates: &mut candidates,
@@ -72,16 +72,16 @@ impl SemanticIrReadTxn<'_> {
         Ok(candidates)
     }
 
-    /// Returns source candidates inside semantic item signatures for one target.
+    /// Returns source candidates inside semantic item signatures for one crate.
     pub fn signature_source_candidates(
         &self,
-        target: TargetRef,
+        crate_ref: CrateRef,
         file_id: Option<FileId>,
     ) -> Result<Vec<SemanticCursorCandidate>, PackageStoreError> {
         let mut candidates = Vec::new();
         SignatureCursorScanner {
             semantic_ir: self,
-            target,
+            crate_ref,
             file_id,
             offset: None,
             candidates: &mut candidates,
@@ -95,7 +95,7 @@ impl SemanticIrReadTxn<'_> {
 /// Scans semantic item signatures for names and type paths under the cursor.
 struct SignatureCursorScanner<'txn, 'db> {
     semantic_ir: &'txn SemanticIrReadTxn<'db>,
-    target: TargetRef,
+    crate_ref: CrateRef,
     file_id: Option<FileId>,
     offset: Option<u32>,
     candidates: &'txn mut Vec<SemanticCursorCandidate>,
@@ -116,11 +116,11 @@ impl SignatureCursorScanner<'_, '_> {
     }
 
     fn scan_structs(&mut self) -> Result<(), PackageStoreError> {
-        let target = self.target;
-        let origin = DefMapRef::Target(target);
+        let crate_ref = self.crate_ref;
+        let origin = DefMapRef::Crate(crate_ref);
         for (ty, data) in self
             .semantic_ir
-            .items(target)?
+            .items(crate_ref)?
             .into_iter()
             .flat_map(move |items| {
                 items.structs().iter_with_ids().map(move |(id, data)| {
@@ -146,11 +146,11 @@ impl SignatureCursorScanner<'_, '_> {
     }
 
     fn scan_unions(&mut self) -> Result<(), PackageStoreError> {
-        let target = self.target;
-        let origin = DefMapRef::Target(target);
+        let crate_ref = self.crate_ref;
+        let origin = DefMapRef::Crate(crate_ref);
         for (ty, data) in self
             .semantic_ir
-            .items(target)?
+            .items(crate_ref)?
             .into_iter()
             .flat_map(move |items| {
                 items.unions().iter_with_ids().map(move |(id, data)| {
@@ -185,11 +185,11 @@ impl SignatureCursorScanner<'_, '_> {
     }
 
     fn scan_enums(&mut self) -> Result<(), PackageStoreError> {
-        let target = self.target;
-        let origin = DefMapRef::Target(target);
+        let crate_ref = self.crate_ref;
+        let origin = DefMapRef::Crate(crate_ref);
         for (ty, data) in self
             .semantic_ir
-            .items(target)?
+            .items(crate_ref)?
             .into_iter()
             .flat_map(move |items| {
                 items.enums().iter_with_ids().map(move |(id, data)| {
@@ -214,7 +214,7 @@ impl SignatureCursorScanner<'_, '_> {
             for (variant_idx, variant) in data.variants.iter().enumerate() {
                 self.push_enum_variant(
                     EnumVariantRef {
-                        origin: DefMapRef::Target(self.target),
+                        origin: DefMapRef::Crate(self.crate_ref),
                         enum_id,
                         index: variant_idx,
                     },
@@ -228,7 +228,7 @@ impl SignatureCursorScanner<'_, '_> {
     }
 
     fn scan_traits(&mut self) -> Result<(), PackageStoreError> {
-        let Some(items) = self.semantic_ir.items(self.target)? else {
+        let Some(items) = self.semantic_ir.items(self.crate_ref)? else {
             return Ok(());
         };
 
@@ -245,7 +245,7 @@ impl SignatureCursorScanner<'_, '_> {
     }
 
     fn scan_impls(&mut self) -> Result<(), PackageStoreError> {
-        let Some(items) = self.semantic_ir.items(self.target)? else {
+        let Some(items) = self.semantic_ir.items(self.crate_ref)? else {
             return Ok(());
         };
 
@@ -267,7 +267,7 @@ impl SignatureCursorScanner<'_, '_> {
     }
 
     fn scan_functions(&mut self) -> Result<(), PackageStoreError> {
-        let Some(items) = self.semantic_ir.items(self.target)? else {
+        let Some(items) = self.semantic_ir.items(self.crate_ref)? else {
             return Ok(());
         };
 
@@ -301,7 +301,7 @@ impl SignatureCursorScanner<'_, '_> {
     fn scan_type_aliases(&mut self) -> Result<(), PackageStoreError> {
         for data in self
             .semantic_ir
-            .items(self.target)?
+            .items(self.crate_ref)?
             .into_iter()
             .flat_map(move |items| items.type_aliases().iter())
         {
@@ -326,7 +326,7 @@ impl SignatureCursorScanner<'_, '_> {
     fn scan_consts(&mut self) -> Result<(), PackageStoreError> {
         for data in self
             .semantic_ir
-            .items(self.target)?
+            .items(self.crate_ref)?
             .into_iter()
             .flat_map(move |items| items.consts().iter())
         {
@@ -347,7 +347,7 @@ impl SignatureCursorScanner<'_, '_> {
     fn scan_statics(&mut self) -> Result<(), PackageStoreError> {
         for data in self
             .semantic_ir
-            .items(self.target)?
+            .items(self.crate_ref)?
             .into_iter()
             .flat_map(move |items| items.statics().iter())
         {
@@ -534,7 +534,7 @@ impl SignatureCursorScanner<'_, '_> {
         owner: ItemOwner,
     ) -> Result<Option<TypePathContext>, PackageStoreError> {
         ItemStoreQuery::new(self.semantic_ir)
-            .type_path_context_for_owner(DefMapRef::Target(self.target), owner)
+            .type_path_context_for_owner(DefMapRef::Crate(self.crate_ref), owner)
     }
 
     fn file_matches(&self, file_id: FileId) -> bool {

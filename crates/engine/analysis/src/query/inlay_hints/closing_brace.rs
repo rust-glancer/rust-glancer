@@ -1,4 +1,4 @@
-use rg_ir_model::TargetRef;
+use rg_ir_model::CrateRef;
 use rg_ir_view::{
     SymbolKind,
     body::{BodyClosingBraceBlock, BodyClosingBraceBlockKind, BodyStructureView},
@@ -13,16 +13,16 @@ use crate::{
 
 pub(super) fn closing_brace_hints(
     analysis: &Analysis<'_>,
-    target: TargetRef,
+    crate_ref: CrateRef,
     file_id: FileId,
     range: Option<TextSpan>,
 ) -> anyhow::Result<Vec<InlayHint>> {
     const MIN_LINE_DELTA: u32 = 20;
 
     let mut hints = Vec::new();
-    for candidate in ClosingBraceCandidate::collect(analysis, target, file_id)? {
+    for candidate in ClosingBraceCandidate::collect(analysis, crate_ref, file_id)? {
         let Some(open_line) = analysis.source_line_for_offset(
-            target.package,
+            crate_ref.package,
             candidate.file_id,
             candidate.open_offset(),
         )?
@@ -30,7 +30,7 @@ pub(super) fn closing_brace_hints(
             continue;
         };
         let Some(close_line) = analysis.source_line_for_offset(
-            target.package,
+            crate_ref.package,
             candidate.file_id,
             candidate.close_offset(),
         )?
@@ -69,17 +69,17 @@ struct ClosingBraceCandidate {
 impl ClosingBraceCandidate {
     fn collect(
         analysis: &Analysis<'_>,
-        target: TargetRef,
+        crate_ref: CrateRef,
         file_id: FileId,
     ) -> anyhow::Result<Vec<Self>> {
         let mut candidates = Vec::new();
-        for symbol in analysis.document_symbols(target, file_id)? {
+        for symbol in analysis.document_symbols(crate_ref, file_id)? {
             Self::collect_document_symbol(&symbol, &mut candidates);
         }
         for block in
-            BodyStructureView::new(analysis.view_db()).closing_brace_blocks(target, file_id)?
+            BodyStructureView::new(analysis.view_db()).closing_brace_blocks(crate_ref, file_id)?
         {
-            let label = Self::body_block_label(analysis, target, &block)?;
+            let label = Self::body_block_label(analysis, crate_ref, &block)?;
             if let Some(candidate) = Self::from_block_span(block.file_id(), block.span(), label) {
                 candidates.push(candidate);
             }
@@ -123,23 +123,31 @@ impl ClosingBraceCandidate {
 
     fn body_block_label(
         analysis: &Analysis<'_>,
-        target: TargetRef,
+        crate_ref: CrateRef,
         block: &BodyClosingBraceBlock,
     ) -> anyhow::Result<String> {
         let label = match block.kind() {
             BodyClosingBraceBlockKind::Function { name } => {
-                let syntax = SyntaxRenderer::new(analysis.view_db().target_edition(target)?);
+                let syntax = SyntaxRenderer::new(analysis.view_db().crate_edition(crate_ref)?);
                 format!("// fn {}", syntax.identifier(name))
             }
-            BodyClosingBraceBlockKind::Match { scrutinee } => {
-                Self::control_flow_label(analysis, target, block.file_id(), "// match", *scrutinee)?
-            }
+            BodyClosingBraceBlockKind::Match { scrutinee } => Self::control_flow_label(
+                analysis,
+                crate_ref,
+                block.file_id(),
+                "// match",
+                *scrutinee,
+            )?,
             BodyClosingBraceBlockKind::Loop => "// loop".to_string(),
-            BodyClosingBraceBlockKind::While { condition } => {
-                Self::control_flow_label(analysis, target, block.file_id(), "// while", *condition)?
-            }
+            BodyClosingBraceBlockKind::While { condition } => Self::control_flow_label(
+                analysis,
+                crate_ref,
+                block.file_id(),
+                "// while",
+                *condition,
+            )?,
             BodyClosingBraceBlockKind::For { pat, iterable } => {
-                Self::for_label(analysis, target, block.file_id(), *pat, *iterable)?
+                Self::for_label(analysis, crate_ref, block.file_id(), *pat, *iterable)?
             }
         };
         Ok(label)
@@ -147,7 +155,7 @@ impl ClosingBraceCandidate {
 
     fn control_flow_label(
         analysis: &Analysis<'_>,
-        target: TargetRef,
+        crate_ref: CrateRef,
         file_id: FileId,
         label: &str,
         detail_span: Option<Span>,
@@ -156,7 +164,7 @@ impl ClosingBraceCandidate {
             return Ok(label.to_string());
         };
         let Some(detail) = analysis
-            .source_text_for_span(target.package, file_id, detail_span)?
+            .source_text_for_span(crate_ref.package, file_id, detail_span)?
             .and_then(Self::compact_source_label)
         else {
             return Ok(label.to_string());
@@ -167,15 +175,15 @@ impl ClosingBraceCandidate {
 
     fn for_label(
         analysis: &Analysis<'_>,
-        target: TargetRef,
+        crate_ref: CrateRef,
         file_id: FileId,
         pat: Option<Span>,
         iterable: Option<Span>,
     ) -> anyhow::Result<String> {
-        let Some(pat) = Self::source_detail(analysis, target, file_id, pat)? else {
+        let Some(pat) = Self::source_detail(analysis, crate_ref, file_id, pat)? else {
             return Ok("// for".to_string());
         };
-        let Some(iterable) = Self::source_detail(analysis, target, file_id, iterable)? else {
+        let Some(iterable) = Self::source_detail(analysis, crate_ref, file_id, iterable)? else {
             return Ok(format!("// for {pat}"));
         };
 
@@ -184,7 +192,7 @@ impl ClosingBraceCandidate {
 
     fn source_detail(
         analysis: &Analysis<'_>,
-        target: TargetRef,
+        crate_ref: CrateRef,
         file_id: FileId,
         span: Option<Span>,
     ) -> anyhow::Result<Option<String>> {
@@ -192,7 +200,7 @@ impl ClosingBraceCandidate {
             return Ok(None);
         };
         Ok(analysis
-            .source_text_for_span(target.package, file_id, span)?
+            .source_text_for_span(crate_ref.package, file_id, span)?
             .and_then(Self::compact_source_label))
     }
 

@@ -5,7 +5,7 @@ use wincode::{SchemaRead, SchemaWrite};
 use rg_text::{Name, NameInterner, RustEdition};
 
 use crate::{
-    TargetRef,
+    CrateRef,
     items::{TypePath, TypeRef, UsePath, UsePathSegment, UsePathSegmentKind},
 };
 use rg_std::{MemorySize, Shrink};
@@ -86,10 +86,7 @@ impl Path {
     /// A `$crate` segment only has meaning after resolution has selected the macro definition crate.
     /// Callers that do not have that origin pass `None`, and `$crate` paths are rejected instead of
     /// being guessed from the call site.
-    pub fn from_macro_path_text(
-        path: &str,
-        dollar_crate_target: Option<TargetRef>,
-    ) -> Option<Self> {
+    pub fn from_macro_path_text(path: &str, dollar_crate: Option<CrateRef>) -> Option<Self> {
         let path = path.trim();
         let absolute = path.starts_with("::");
         let path = path.trim_start_matches("::");
@@ -101,7 +98,7 @@ impl Path {
                 return None;
             }
             segments.push(match segment {
-                "$crate" => PathSegment::DollarCrate(dollar_crate_target?),
+                "$crate" => PathSegment::DollarCrate(dollar_crate?),
                 "self" => PathSegment::SelfKw,
                 "super" => PathSegment::SuperKw,
                 "crate" => PathSegment::CrateKw,
@@ -226,7 +223,7 @@ pub enum PathSegment {
     CrateKw,
     #[display("$crate")]
     #[memsize(skip)]
-    DollarCrate(TargetRef),
+    DollarCrate(CrateRef),
 }
 
 impl PathSegment {

@@ -17,5 +17,5 @@ pub use self::{
     module::ModuleFileContext,
     package::{Package, PackageParseSnapshot},
     span::{LineColumnSpan, Position, Span, TextSpan},
-    target::{Target, TargetId},
+    target::{CargoTarget, CargoTargetId},
 };

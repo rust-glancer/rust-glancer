@@ -7,5 +7,5 @@ pub use self::{
     dependency::PackageDependency,
     metadata::WorkspaceMetadata,
     package::{Package, PackageId, PackageOrigin, PackageSlot, PackageSource},
-    target::{Target, TargetKind},
+    target::{CargoTarget, TargetKind},
 };

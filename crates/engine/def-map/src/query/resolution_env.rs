@@ -4,7 +4,7 @@
 //! separately in `path_resolution`, while each storage owner implements this contract next to its
 //! own data access methods.
 
-use rg_ir_model::{DefId, LocalDefRef, LocalEnumVariantRef, ModuleRef, TargetRef};
+use rg_ir_model::{CrateRef, DefId, LocalDefRef, LocalEnumVariantRef, ModuleRef};
 use rg_text::Name;
 
 use crate::{
@@ -82,11 +82,15 @@ pub trait MacroDefinitionEnv: ScopeResolutionEnv {
     ) -> Result<Option<MacroDefinitionView<'a>>, Self::Error>;
 }
 
-/// Target-level graph facts needed by normal Rust module path lookup.
-pub trait TargetResolutionEnv: ScopeResolutionEnv {
-    fn extern_root(&self, target: TargetRef, name: &str) -> Result<Option<ModuleRef>, Self::Error>;
+/// Crate-level graph facts needed by normal Rust module path lookup.
+pub trait CrateResolutionEnv: ScopeResolutionEnv {
+    fn extern_root(
+        &self,
+        crate_ref: CrateRef,
+        name: &str,
+    ) -> Result<Option<ModuleRef>, Self::Error>;
 
-    fn prelude_module(&self, target: TargetRef) -> Result<Option<ModuleRef>, Self::Error>;
+    fn prelude_module(&self, crate_ref: CrateRef) -> Result<Option<ModuleRef>, Self::Error>;
 
-    fn root_module(&self, target: TargetRef) -> Result<Option<ModuleRef>, Self::Error>;
+    fn root_module(&self, crate_ref: CrateRef) -> Result<Option<ModuleRef>, Self::Error>;
 }

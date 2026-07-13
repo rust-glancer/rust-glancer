@@ -9,8 +9,8 @@ use rg_ir_model::{
     TraitRef,
     items::{GenericArg as ItemGenericArg, TypePathAnchor, TypeRef},
 };
-use rg_ir_storage::ItemStoreSource;
 use rg_package_store::PackageStoreError;
+use rg_semantic_ir::ItemStoreSource;
 use rg_text::Name;
 use rg_ty::{
     GenericArg, Ty,

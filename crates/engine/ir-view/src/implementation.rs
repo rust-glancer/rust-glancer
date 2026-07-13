@@ -1,13 +1,14 @@
 //! Implementation lookup over indexed views.
 //!
-//! Goto-implementation is an editor query, but the lookup itself needs direct access to target item
+//! Goto-implementation is an editor query, but the lookup itself needs direct access to crate item
 //! indexes and body expression facts. This view keeps those storage-shaped queries out of analysis.
 
 use rg_ir_model::{
-    BodyRef, DefMapRef, ExprKind, FunctionRef, SemanticItemRef, TargetRef, TraitRef, TypeDefRef,
+    BodyRef, CrateRef, DefMapRef, ExprKind, FunctionRef, SemanticItemRef, TraitRef, TypeDefRef,
     identity::{DeclarationRef, ExprRef},
 };
-use rg_ir_storage::{ItemLookupIndex, ItemStoreQuery, TargetItemQuery, UniqueVec};
+use rg_semantic_ir::{CrateItemQuery, ItemLookupIndex, ItemStoreQuery};
+use rg_std::UniqueVec;
 use rg_ty::{ImplementationQuery, ItemPathQuery, ReferencePeelingCandidates, Ty};
 
 use crate::{IndexedViewDb, lookup::resolution::ResolutionView};
@@ -47,7 +48,7 @@ impl<'a, 'db> ImplementationView<'a, 'db> {
             return Ok(None);
         }
 
-        let Some(implementation_query) = self.implementation_query(body_ref.target)? else {
+        let Some(implementation_query) = self.implementation_query(body_ref.crate_ref)? else {
             return Ok(None);
         };
         let mut implementations = UniqueVec::new();
@@ -67,7 +68,7 @@ impl<'a, 'db> ImplementationView<'a, 'db> {
     /// Return implementations related to a declaration.
     pub fn implementations_for_declaration(
         &self,
-        use_site: TargetRef,
+        use_site: CrateRef,
         declaration: DeclarationRef,
     ) -> anyhow::Result<UniqueVec<DeclarationRef>> {
         let mut implementations = UniqueVec::new();
@@ -142,7 +143,7 @@ impl<'a, 'db> ImplementationView<'a, 'db> {
     /// Return impl blocks that apply to a type.
     pub fn implementations_for_ty(
         &self,
-        use_site: TargetRef,
+        use_site: CrateRef,
         ty: &Ty,
     ) -> anyhow::Result<UniqueVec<DeclarationRef>> {
         let mut implementations = UniqueVec::new();
@@ -210,10 +211,10 @@ impl<'a, 'db> ImplementationView<'a, 'db> {
         Ok(())
     }
 
-    /// Build the lower implementation query for one target.
+    /// Build the lower implementation query for one crate.
     fn implementation_query(
         &self,
-        use_site: TargetRef,
+        use_site: CrateRef,
     ) -> anyhow::Result<Option<ImplementationQuery<'_, &IndexedViewDb<'_>, &IndexedViewDb<'_>>>>
     {
         let Some(semantic_index) = self.semantic_index(use_site)? else {
@@ -221,13 +222,13 @@ impl<'a, 'db> ImplementationView<'a, 'db> {
         };
         Ok(Some(ImplementationQuery::with_index(
             ItemPathQuery::new(self.db, self.db),
-            TargetItemQuery::new(self.db, self.db, use_site),
+            CrateItemQuery::new(self.db, self.db, use_site),
             semantic_index,
         )))
     }
 
-    /// Return the target-scoped semantic index that backs fast type/member queries.
-    fn semantic_index(&self, use_site: TargetRef) -> anyhow::Result<Option<&ItemLookupIndex>> {
+    /// Return the crate-scoped semantic index that backs fast type/member queries.
+    fn semantic_index(&self, use_site: CrateRef) -> anyhow::Result<Option<&ItemLookupIndex>> {
         Ok(self.db.body_ir.semantic_index(use_site)?)
     }
 

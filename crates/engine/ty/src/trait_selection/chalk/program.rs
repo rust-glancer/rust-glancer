@@ -20,11 +20,11 @@ use chalk_solve::rust_ir::{
 };
 use chalk_solve::{RustIrDatabase, Solver};
 use rg_def_map::DefMapSource;
-use rg_ir_model::hir::items::ImplData;
 use rg_ir_model::{
     AssocItemId, ImplRef, TraitApplicability, TraitImplRef, TraitRef, TypeAliasRef, TypeDefRef,
 };
-use rg_ir_storage::{ItemStoreSource, TargetItemQuery, TypePathContext};
+use rg_semantic_ir::ImplData;
+use rg_semantic_ir::{CrateItemQuery, ItemStoreSource, TypePathContext};
 use rg_text::Name;
 
 use super::interner::{ChalkDefId, RgChalkInterner};
@@ -51,7 +51,7 @@ pub(crate) struct ChalkTraitSolver {
 impl ChalkTraitSolver {
     pub(crate) fn new<'query, D, I>(
         item_paths: &ItemPathQuery<'query, D, I>,
-        target_items: &TargetItemQuery<'query, D, I>,
+        crate_items: &CrateItemQuery<'query, D, I>,
     ) -> Result<Self, I::Error>
     where
         D: DefMapSource<Error = I::Error>,
@@ -59,7 +59,7 @@ impl ChalkTraitSolver {
     {
         crate::profile::metric::PROGRAM_BUILDS.inc();
         let started = Instant::now();
-        let program = ChalkProgram::build(item_paths, target_items);
+        let program = ChalkProgram::build(item_paths, crate_items);
         crate::profile::metric::PROGRAM_BUILD_TIME.record(started.elapsed());
         program.map(|program| Self {
             program,
@@ -227,7 +227,7 @@ struct ChalkProgram {
 impl ChalkProgram {
     fn build<'query, D, I>(
         item_paths: &ItemPathQuery<'query, D, I>,
-        target_items: &TargetItemQuery<'query, D, I>,
+        crate_items: &CrateItemQuery<'query, D, I>,
     ) -> Result<Self, I::Error>
     where
         D: DefMapSource<Error = I::Error>,
@@ -246,7 +246,7 @@ impl ChalkProgram {
             impls_by_trait: HashMap::new(),
         };
 
-        let visible_stores = target_items.visible_stores()?;
+        let visible_stores = crate_items.visible_stores()?;
         let mut associated_ty_ids_by_trait = HashMap::new();
         for store in &visible_stores {
             for (trait_ref, trait_data) in store.traits_with_refs() {
@@ -284,7 +284,7 @@ impl ChalkProgram {
                 ) else {
                     continue;
                 };
-                program.ensure_trait_datum_adts(target_items, &datum)?;
+                program.ensure_trait_datum_adts(crate_items, &datum)?;
                 program
                     .trait_arities
                     .insert(trait_ref, datum.binders.len(INTER));
@@ -309,7 +309,7 @@ impl ChalkProgram {
                 .with_associated_tys(&associated_ty_by_trait_name);
                 let associated_ty_value_ids = program.collect_impl_associated_ty_values(
                     item_paths,
-                    target_items,
+                    crate_items,
                     &lowerer,
                     impl_ref,
                     impl_data,
@@ -317,7 +317,7 @@ impl ChalkProgram {
                 let Some(datum) = lowerer.impl_datum(impl_data, associated_ty_value_ids) else {
                     continue;
                 };
-                program.ensure_impl_datum_adts(target_items, &datum)?;
+                program.ensure_impl_datum_adts(crate_items, &datum)?;
                 program.trait_arities.entry(trait_ref).or_insert_with(|| {
                     datum
                         .binders
@@ -343,7 +343,7 @@ impl ChalkProgram {
         item_paths: &ItemPathQuery<'query, D, I>,
         lowerer: &ChalkLowerer<'_, 'query, D, I>,
         trait_ref: TraitRef,
-        trait_data: &rg_ir_model::hir::items::TraitData,
+        trait_data: &rg_semantic_ir::TraitData,
     ) -> Result<Vec<AssocTypeId<RgChalkInterner>>, I::Error>
     where
         D: DefMapSource<Error = I::Error>,
@@ -381,7 +381,7 @@ impl ChalkProgram {
     fn collect_impl_associated_ty_values<'query, D, I>(
         &mut self,
         item_paths: &ItemPathQuery<'query, D, I>,
-        target_items: &TargetItemQuery<'query, D, I>,
+        crate_items: &CrateItemQuery<'query, D, I>,
         lowerer: &ChalkLowerer<'_, 'query, D, I>,
         impl_ref: ImplRef,
         impl_data: &ImplData,
@@ -422,7 +422,7 @@ impl ChalkProgram {
                 continue;
             };
 
-            self.ensure_ty_adts(target_items, &value.value.skip_binders().ty)?;
+            self.ensure_ty_adts(crate_items, &value.value.skip_binders().ty)?;
             self.associated_ty_value_by_impl
                 .insert((impl_ref, associated_ty_ref), type_alias_ref);
             self.associated_ty_values
@@ -434,7 +434,7 @@ impl ChalkProgram {
 
     fn ensure_adt<'query, D, I>(
         &mut self,
-        target_items: &TargetItemQuery<'query, D, I>,
+        crate_items: &CrateItemQuery<'query, D, I>,
         type_def: TypeDefRef,
     ) -> Result<(), I::Error>
     where
@@ -444,7 +444,7 @@ impl ChalkProgram {
         if self.adts.contains_key(&type_def) {
             return Ok(());
         }
-        let generics = target_items.items().generic_params_for_type_def(type_def)?;
+        let generics = crate_items.items().generic_params_for_type_def(type_def)?;
         let Some(datum) = adt_datum(type_def, generics) else {
             return Ok(());
         };
@@ -465,7 +465,7 @@ impl ChalkProgram {
 
     fn ensure_trait_datum_adts<'query, D, I>(
         &mut self,
-        target_items: &TargetItemQuery<'query, D, I>,
+        crate_items: &CrateItemQuery<'query, D, I>,
         datum: &TraitDatum<RgChalkInterner>,
     ) -> Result<(), I::Error>
     where
@@ -476,14 +476,14 @@ impl ChalkProgram {
         // impl `Self` type. Register the ADTs that appear in substitutions up front so generic
         // shapes like `Vec<User>` keep their real arity and variance slots.
         for clause in &datum.binders.skip_binders().where_clauses {
-            self.ensure_where_clause_adts(target_items, clause.skip_binders())?;
+            self.ensure_where_clause_adts(crate_items, clause.skip_binders())?;
         }
         Ok(())
     }
 
     fn ensure_impl_datum_adts<'query, D, I>(
         &mut self,
-        target_items: &TargetItemQuery<'query, D, I>,
+        crate_items: &CrateItemQuery<'query, D, I>,
         datum: &ImplDatum<RgChalkInterner>,
     ) -> Result<(), I::Error>
     where
@@ -491,16 +491,16 @@ impl ChalkProgram {
         I: ItemStoreSource<'query>,
     {
         let bound = datum.binders.skip_binders();
-        self.ensure_trait_ref_adts(target_items, &bound.trait_ref)?;
+        self.ensure_trait_ref_adts(crate_items, &bound.trait_ref)?;
         for clause in &bound.where_clauses {
-            self.ensure_where_clause_adts(target_items, clause.skip_binders())?;
+            self.ensure_where_clause_adts(crate_items, clause.skip_binders())?;
         }
         Ok(())
     }
 
     fn ensure_where_clause_adts<'query, D, I>(
         &mut self,
-        target_items: &TargetItemQuery<'query, D, I>,
+        crate_items: &CrateItemQuery<'query, D, I>,
         clause: &WhereClause<RgChalkInterner>,
     ) -> Result<(), I::Error>
     where
@@ -509,15 +509,15 @@ impl ChalkProgram {
     {
         match clause {
             WhereClause::Implemented(trait_ref) => {
-                self.ensure_trait_ref_adts(target_items, trait_ref)?;
+                self.ensure_trait_ref_adts(crate_items, trait_ref)?;
             }
             WhereClause::AliasEq(alias_eq) => {
-                self.ensure_alias_ty_adts(target_items, &alias_eq.alias)?;
-                self.ensure_ty_adts(target_items, &alias_eq.ty)?;
+                self.ensure_alias_ty_adts(crate_items, &alias_eq.alias)?;
+                self.ensure_ty_adts(crate_items, &alias_eq.ty)?;
             }
             WhereClause::LifetimeOutlives(_) => {}
             WhereClause::TypeOutlives(type_outlives) => {
-                self.ensure_ty_adts(target_items, &type_outlives.ty)?;
+                self.ensure_ty_adts(crate_items, &type_outlives.ty)?;
             }
         }
         Ok(())
@@ -525,7 +525,7 @@ impl ChalkProgram {
 
     fn ensure_trait_ref_adts<'query, D, I>(
         &mut self,
-        target_items: &TargetItemQuery<'query, D, I>,
+        crate_items: &CrateItemQuery<'query, D, I>,
         trait_ref: &chalk_ir::TraitRef<RgChalkInterner>,
     ) -> Result<(), I::Error>
     where
@@ -533,14 +533,14 @@ impl ChalkProgram {
         I: ItemStoreSource<'query>,
     {
         for ty in trait_ref.type_parameters(INTER) {
-            self.ensure_ty_adts(target_items, &ty)?;
+            self.ensure_ty_adts(crate_items, &ty)?;
         }
         Ok(())
     }
 
     fn ensure_substitution_adts<'query, D, I>(
         &mut self,
-        target_items: &TargetItemQuery<'query, D, I>,
+        crate_items: &CrateItemQuery<'query, D, I>,
         substitution: &Substitution<RgChalkInterner>,
     ) -> Result<(), I::Error>
     where
@@ -548,14 +548,14 @@ impl ChalkProgram {
         I: ItemStoreSource<'query>,
     {
         for ty in substitution.type_parameters(INTER) {
-            self.ensure_ty_adts(target_items, &ty)?;
+            self.ensure_ty_adts(crate_items, &ty)?;
         }
         Ok(())
     }
 
     fn ensure_alias_ty_adts<'query, D, I>(
         &mut self,
-        target_items: &TargetItemQuery<'query, D, I>,
+        crate_items: &CrateItemQuery<'query, D, I>,
         alias: &AliasTy<RgChalkInterner>,
     ) -> Result<(), I::Error>
     where
@@ -564,10 +564,10 @@ impl ChalkProgram {
     {
         match alias {
             AliasTy::Projection(projection) => {
-                self.ensure_substitution_adts(target_items, &projection.substitution)?;
+                self.ensure_substitution_adts(crate_items, &projection.substitution)?;
             }
             AliasTy::Opaque(opaque) => {
-                self.ensure_substitution_adts(target_items, &opaque.substitution)?;
+                self.ensure_substitution_adts(crate_items, &opaque.substitution)?;
             }
         }
         Ok(())
@@ -575,7 +575,7 @@ impl ChalkProgram {
 
     fn ensure_ty_adts<'query, D, I>(
         &mut self,
-        target_items: &TargetItemQuery<'query, D, I>,
+        crate_items: &CrateItemQuery<'query, D, I>,
         ty: &Ty<RgChalkInterner>,
     ) -> Result<(), I::Error>
     where
@@ -584,8 +584,8 @@ impl ChalkProgram {
     {
         match ty.kind(INTER) {
             TyKind::Adt(adt_id, substitution) => {
-                self.ensure_adt(target_items, adt_id.0)?;
-                self.ensure_substitution_adts(target_items, substitution)?;
+                self.ensure_adt(crate_items, adt_id.0)?;
+                self.ensure_substitution_adts(crate_items, substitution)?;
             }
             TyKind::AssociatedType(_, substitution)
             | TyKind::Tuple(_, substitution)
@@ -594,16 +594,16 @@ impl ChalkProgram {
             | TyKind::Closure(_, substitution)
             | TyKind::Coroutine(_, substitution)
             | TyKind::CoroutineWitness(_, substitution) => {
-                self.ensure_substitution_adts(target_items, substitution)?;
+                self.ensure_substitution_adts(crate_items, substitution)?;
             }
             TyKind::Array(inner, _)
             | TyKind::Slice(inner)
             | TyKind::Raw(_, inner)
             | TyKind::Ref(_, _, inner) => {
-                self.ensure_ty_adts(target_items, inner)?;
+                self.ensure_ty_adts(crate_items, inner)?;
             }
             TyKind::Alias(alias) => {
-                self.ensure_alias_ty_adts(target_items, alias)?;
+                self.ensure_alias_ty_adts(crate_items, alias)?;
             }
             TyKind::Scalar(_)
             | TyKind::Str
@@ -667,9 +667,9 @@ impl RustIrDatabase<RgChalkInterner> for ChalkProgram {
 
         Arc::new(AssociatedTyDatum {
             trait_id: chalk_trait_id(TraitRef {
-                origin: rg_ir_model::DefMapRef::Target(rg_ir_model::TargetRef {
+                origin: rg_ir_model::DefMapRef::Crate(rg_ir_model::CrateRef {
                     package: rg_ir_model::PackageSlot(0),
-                    target: rg_ir_model::TargetId(0),
+                    crate_id: rg_ir_model::CrateId(0),
                 }),
                 id: rg_ir_model::TraitId(0),
             }),
@@ -691,9 +691,9 @@ impl RustIrDatabase<RgChalkInterner> for ChalkProgram {
     ) -> Arc<TraitDatum<RgChalkInterner>> {
         let ChalkDefId::Trait(trait_ref) = trait_id.0 else {
             return self.stub_trait(TraitRef {
-                origin: rg_ir_model::DefMapRef::Target(rg_ir_model::TargetRef {
+                origin: rg_ir_model::DefMapRef::Crate(rg_ir_model::CrateRef {
                     package: rg_ir_model::PackageSlot(0),
-                    target: rg_ir_model::TargetId(0),
+                    crate_id: rg_ir_model::CrateId(0),
                 }),
                 id: rg_ir_model::TraitId(0),
             });
@@ -799,9 +799,9 @@ impl RustIrDatabase<RgChalkInterner> for ChalkProgram {
                     chalk_solve::rust_ir::ImplDatumBound {
                         trait_ref: chalk_solve::rust_ir::TraitBound {
                             trait_id: chalk_trait_id(TraitRef {
-                                origin: rg_ir_model::DefMapRef::Target(rg_ir_model::TargetRef {
+                                origin: rg_ir_model::DefMapRef::Crate(rg_ir_model::CrateRef {
                                     package: rg_ir_model::PackageSlot(0),
-                                    target: rg_ir_model::TargetId(0),
+                                    crate_id: rg_ir_model::CrateId(0),
                                 }),
                                 id: rg_ir_model::TraitId(0),
                             }),
@@ -868,16 +868,16 @@ impl RustIrDatabase<RgChalkInterner> for ChalkProgram {
 
         Arc::new(AssociatedTyValue {
             impl_id: chalk_impl_id(ImplRef {
-                origin: rg_ir_model::DefMapRef::Target(rg_ir_model::TargetRef {
+                origin: rg_ir_model::DefMapRef::Crate(rg_ir_model::CrateRef {
                     package: rg_ir_model::PackageSlot(0),
-                    target: rg_ir_model::TargetId(0),
+                    crate_id: rg_ir_model::CrateId(0),
                 }),
                 id: rg_ir_model::ImplId(0),
             }),
             associated_ty_id: AssocTypeId(ChalkDefId::AssocType(TypeAliasRef {
-                origin: rg_ir_model::DefMapRef::Target(rg_ir_model::TargetRef {
+                origin: rg_ir_model::DefMapRef::Crate(rg_ir_model::CrateRef {
                     package: rg_ir_model::PackageSlot(0),
-                    target: rg_ir_model::TargetId(0),
+                    crate_id: rg_ir_model::CrateId(0),
                 }),
                 id: rg_ir_model::TypeAliasId(0),
             })),

@@ -9,10 +9,10 @@ use crate::{
     GenericArg, NominalTy, TraitGoal, TraitSelectionOptions, TraitSelectionQuery, Ty, TypeSubst,
 };
 use rg_def_map::DefMapSource;
-use rg_ir_model::hir::items::ImplData;
 use rg_ir_model::items::{GenericArg as ItemGenericArg, TypeRef};
 use rg_ir_model::{FunctionRef, ImplRef, TraitApplicability, TraitImplRef};
-use rg_ir_storage::{ItemLookupIndex, ItemStoreSource, TypePathContext};
+use rg_semantic_ir::ImplData;
+use rg_semantic_ir::{ItemLookupIndex, ItemStoreSource, TypePathContext};
 use rg_std::UniqueVec;
 
 use super::ImplMatcher;
@@ -208,7 +208,7 @@ where
         let table = InferenceTable::new();
         let Some(selection) = TraitSelectionQuery::probe_visible_trait_impl(
             &self.item_paths,
-            &self.target_items,
+            &self.crate_items,
             &goal,
             &table,
             trait_impl,

@@ -575,8 +575,8 @@ impl<'a> ScopeEntryRef<'a> {
 
 #[cfg(test)]
 mod tests {
-    use rg_ir_model::{DefId, DefMapRef, ImportId, ImportRef, ModuleId, ModuleRef, TargetRef};
-    use rg_parse::TargetId;
+    use rg_ir_model::CrateId;
+    use rg_ir_model::{CrateRef, DefId, DefMapRef, ImportId, ImportRef, ModuleId, ModuleRef};
     use rg_text::Name;
     use rg_workspace::PackageSlot;
 
@@ -696,20 +696,20 @@ mod tests {
             DefId::Module(owner(module)),
             Visibility::Public,
             ScopeBindingProvenance::GlobImport(ImportRef {
-                origin: DefMapRef::Target(target()),
+                origin: DefMapRef::Crate(crate_ref()),
                 import: ImportId(0),
             }),
         )
     }
 
     fn owner(module: usize) -> ModuleRef {
-        ModuleRef::target(target(), ModuleId(module))
+        ModuleRef::krate(crate_ref(), ModuleId(module))
     }
 
-    fn target() -> TargetRef {
-        TargetRef {
+    fn crate_ref() -> CrateRef {
+        CrateRef {
             package: PackageSlot(0),
-            target: TargetId(0),
+            crate_id: CrateId(0),
         }
     }
 }

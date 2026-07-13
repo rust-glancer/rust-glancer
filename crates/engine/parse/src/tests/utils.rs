@@ -4,7 +4,7 @@ use expect_test::Expect;
 use rg_workspace::{WorkspaceLoweringConfig, WorkspaceMetadata};
 use test_fixture::fixture_crate;
 
-use crate::{Package, ParseDb, Target};
+use crate::{CargoTarget, Package, ParseDb};
 
 pub(super) fn check_parse_db(fixture: &str, expect: Expect) {
     check_parse_db_with(fixture, ParseFixtureMode::RootsOnly, expect);
@@ -124,7 +124,7 @@ impl<'a> ProjectParseSnapshot<'a> {
         }
     }
 
-    fn sorted_targets(package: &Package) -> Vec<&Target> {
+    fn sorted_targets(package: &Package) -> Vec<&CargoTarget> {
         let mut targets = package.targets().iter().collect::<Vec<_>>();
         targets.sort_by(|left, right| {
             left.kind

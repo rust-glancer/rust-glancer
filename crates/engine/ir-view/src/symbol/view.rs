@@ -6,12 +6,12 @@ use anyhow::Result;
 use rg_def_map::DefMapSource;
 use rg_ir_model::items::FieldKey;
 use rg_ir_model::{
-    AssocItemId, ConstRef, DefMapRef, EnumVariantRef as SemanticEnumVariantRef,
-    FunctionRef as SemanticFunctionRef, ModuleId, ModuleRef, SemanticItemKind, TargetRef,
-    TypeAliasRef, TypeDefId, TypeDefRef, identity::DeclarationRef,
+    AssocItemId, ConstRef, CrateRef, DefMapRef, EnumVariantRef as SemanticEnumVariantRef,
+    FunctionRef as SemanticFunctionRef, ModuleId, ModuleRef, SemanticItemKind, TypeAliasRef,
+    TypeDefId, TypeDefRef, identity::DeclarationRef,
 };
-use rg_ir_storage::{ItemStoreQuery, SemanticItemView};
 use rg_parse::{FileId, Span};
+use rg_semantic_ir::{ItemStoreQuery, SemanticItemView};
 
 use crate::{
     IndexedViewDb,
@@ -116,16 +116,16 @@ impl<'a, 'db> SymbolItemIndex<'a, 'db> {
         Self { db }
     }
 
-    /// Return targets included in the indexed view.
-    fn included_targets(&self) -> Result<Vec<TargetRef>> {
-        Ok(ItemStoreQuery::new(self.db).included_target_refs()?)
+    /// Return crates included in the indexed view.
+    fn included_crates(&self) -> Result<Vec<CrateRef>> {
+        Ok(ItemStoreQuery::new(self.db).included_crate_refs()?)
     }
 
-    /// Return module declarations for one target.
-    fn module_declarations(&self, target: TargetRef) -> Result<Vec<DeclarationRef>> {
+    /// Return module declarations for one crate.
+    fn module_declarations(&self, crate_ref: CrateRef) -> Result<Vec<DeclarationRef>> {
         Ok(self
             .db
-            .module_refs(target)?
+            .module_refs(crate_ref)?
             .into_iter()
             .map(DeclarationRef::module)
             .collect())
@@ -149,12 +149,12 @@ impl<'a, 'db> SymbolItemIndex<'a, 'db> {
     /// Return module-owned items, optionally restricted to one file.
     fn module_owned_items(
         &self,
-        target: TargetRef,
+        crate_ref: CrateRef,
         file_id: Option<FileId>,
     ) -> Result<Vec<IndexedItem>> {
         let mut items = Vec::new();
         for item in
-            ItemStoreQuery::new(self.db).semantic_items_for_origin(DefMapRef::Target(target))?
+            ItemStoreQuery::new(self.db).semantic_items_for_origin(DefMapRef::Crate(crate_ref))?
         {
             if item.module_owner().is_none() {
                 continue;
@@ -172,13 +172,13 @@ impl<'a, 'db> SymbolItemIndex<'a, 'db> {
     /// Return body-local item groups in one file.
     fn body_local_groups(
         &self,
-        target: TargetRef,
+        crate_ref: CrateRef,
         file_id: FileId,
     ) -> Result<Vec<IndexedBodyLocalGroup>> {
         let body_view = BodyView::new(self.db);
         let mut groups = Vec::new();
 
-        for group in body_view.local_groups(target, file_id)? {
+        for group in body_view.local_groups(crate_ref, file_id)? {
             let mut children = Vec::new();
             for declaration in body_view.local_scope_declarations(group.body(), file_id)? {
                 if let Some(item) = self.item_for_declaration(declaration)? {
@@ -393,13 +393,13 @@ impl<'a, 'db> SymbolView<'a, 'db> {
     /// Return source-outline symbols for one file.
     pub fn source_outline(
         &self,
-        target: TargetRef,
+        crate_ref: CrateRef,
         file_id: FileId,
     ) -> Result<Vec<SourceOutlineNode>> {
         let index = SymbolItemIndex::new(self.db);
         let mut symbols = Vec::new();
 
-        for declaration in index.module_declarations(target)? {
+        for declaration in index.module_declarations(crate_ref)? {
             if let Some(symbol) = self.declaration_source_outline_node(declaration)?
                 && symbol.declaration().file_id() == file_id
             {
@@ -407,7 +407,7 @@ impl<'a, 'db> SymbolView<'a, 'db> {
             }
         }
 
-        for item in index.module_owned_items(target, Some(file_id))? {
+        for item in index.module_owned_items(crate_ref, Some(file_id))? {
             if let Some(symbol) = self.source_outline_item(&item, Some(file_id))? {
                 symbols.push(symbol);
             }
@@ -415,7 +415,7 @@ impl<'a, 'db> SymbolView<'a, 'db> {
 
         // Body-local items belong to their owning function in a source outline. The owner may
         // already be nested under a trait or impl, so attachment searches the built tree.
-        for group in index.body_local_groups(target, file_id)? {
+        for group in index.body_local_groups(crate_ref, file_id)? {
             let Some(owner) = self.declaration(group.owner())? else {
                 continue;
             };
@@ -439,13 +439,13 @@ impl<'a, 'db> SymbolView<'a, 'db> {
         Ok(symbols)
     }
 
-    /// Return workspace-wide symbols for all included targets.
+    /// Return workspace-wide symbols for all included crates.
     pub fn workspace_symbols(&self) -> Result<Vec<IndexedSymbolEntry>> {
         let index = SymbolItemIndex::new(self.db);
         let mut symbols = Vec::new();
 
-        for target in index.included_targets()? {
-            for declaration in index.module_declarations(target)? {
+        for crate_ref in index.included_crates()? {
+            for declaration in index.module_declarations(crate_ref)? {
                 let Some(module) = self.declaration(declaration)? else {
                     continue;
                 };
@@ -462,7 +462,7 @@ impl<'a, 'db> SymbolView<'a, 'db> {
                 symbols.push(IndexedSymbolEntry::new(module, container_name));
             }
 
-            for item in index.module_owned_items(target, None)? {
+            for item in index.module_owned_items(crate_ref, None)? {
                 self.push_workspace_item(&item, None, &mut symbols)?;
             }
         }

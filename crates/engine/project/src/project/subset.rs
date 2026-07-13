@@ -6,7 +6,7 @@
 use std::collections::HashSet;
 
 use rg_def_map::PackageSlot;
-use rg_ir_model::TargetRef;
+use rg_ir_model::CrateRef;
 use rg_package_store::PackageSubset;
 use rg_workspace::{PackageId, TargetKind, WorkspaceMetadata};
 
@@ -53,23 +53,23 @@ pub(crate) fn rebuild_packages_with_visible_dependencies(
     subset
 }
 
-/// Includes target packages plus the transitive dependencies visible from those targets.
-pub(crate) fn targets_with_visible_dependencies(
+/// Includes crate packages plus the transitive dependencies visible from those crates.
+pub(crate) fn crates_with_visible_dependencies(
     workspace: &WorkspaceMetadata,
-    targets: &[TargetRef],
+    crates: &[CrateRef],
 ) -> PackageSubset {
     let mut subset = empty(workspace);
     let mut expanded = HashSet::new();
     let mut stack = Vec::new();
 
-    for target in targets {
-        subset.insert(target.package);
+    for crate_ref in crates {
+        subset.insert(crate_ref.package);
 
-        let Some(target_kind) = target_kind(workspace, *target) else {
+        let Some(target_kind) = crate_target_kind(workspace, *crate_ref) else {
             continue;
         };
-        if expanded.insert((target.package, target_kind.clone())) {
-            stack.push((target.package, target_kind.clone()));
+        if expanded.insert((crate_ref.package, target_kind.clone())) {
+            stack.push((crate_ref.package, target_kind.clone()));
         }
     }
 
@@ -98,7 +98,7 @@ fn expand_visible_dependencies(
             };
             subset.insert(dependency_slot);
             // Dependencies are reached as library crates. Their own dev/build dependencies are not
-            // visible to the original target query.
+            // visible to the original crate query.
             if expanded.insert((dependency_slot, TargetKind::Lib)) {
                 stack.push((dependency_slot, TargetKind::Lib));
             }
@@ -110,12 +110,17 @@ fn empty(workspace: &WorkspaceMetadata) -> PackageSubset {
     PackageSubset::empty(workspace.packages().len())
 }
 
-fn target_kind(workspace: &WorkspaceMetadata, target: TargetRef) -> Option<&TargetKind> {
+/// Returns the Cargo-target kind from which this semantic crate was allocated.
+///
+/// DefMap assigns `CrateId`s in normalized Cargo-target order. Keeping this positional conversion
+/// here makes the project-model boundary explicit instead of letting semantic queries index Cargo
+/// metadata directly throughout the engine.
+fn crate_target_kind(workspace: &WorkspaceMetadata, crate_ref: CrateRef) -> Option<&TargetKind> {
     workspace
         .packages()
-        .get(target.package.0)?
+        .get(crate_ref.package.0)?
         .targets
-        .get(target.target.0)
+        .get(crate_ref.crate_id.0)
         .map(|target| &target.kind)
 }
 

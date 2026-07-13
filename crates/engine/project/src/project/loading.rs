@@ -6,12 +6,13 @@
 
 use std::sync::{Arc, OnceLock};
 
-use rg_body_ir::{BodyFileShard, BodyIrLoader, LoadBodyIr, PackageBodiesManifest, TargetBodies};
+use rg_body_ir::{BodyFileShard, BodyIrLoader, CrateBodies, LoadBodyIr, PackageBodiesManifest};
 use rg_def_map::PackageDefMaps as DefMapPackage;
 use rg_def_map::PackageSlot;
-use rg_ir_storage::ItemLookupIndex;
+use rg_ir_model::CrateId;
 use rg_package_store::{LoadPackage, PackageLoader, PackageStoreError};
-use rg_parse::{FileId, TargetId};
+use rg_parse::FileId;
+use rg_semantic_ir::ItemLookupIndex;
 use rg_semantic_ir::PackageIr;
 
 use crate::cache::{Fingerprint, PackageArtifactReader, PackageCacheStore, WorkspaceCachePlan};
@@ -169,11 +170,11 @@ impl LoadBodyIr for BodyIrPackageLoader {
     fn load_semantic_index(
         &self,
         package: PackageSlot,
-        target: TargetId,
+        crate_id: CrateId,
     ) -> Result<Arc<ItemLookupIndex>, PackageStoreError> {
         self.artifacts
             .reader(package)?
-            .read_body_semantic_index(target)
+            .read_body_semantic_index(crate_id)
             .map(Arc::new)
             .map_err(|error| error.into_package_store_error(package))
     }
@@ -181,24 +182,24 @@ impl LoadBodyIr for BodyIrPackageLoader {
     fn load_file_shard(
         &self,
         package: PackageSlot,
-        target: TargetId,
+        crate_id: CrateId,
         file: FileId,
     ) -> Result<Arc<BodyFileShard>, PackageStoreError> {
         self.artifacts
             .reader(package)?
-            .read_body_file_shard(target, file)
+            .read_body_file_shard(crate_id, file)
             .map(Arc::new)
             .map_err(|error| error.into_package_store_error(package))
     }
 
-    fn load_target(
+    fn load_crate(
         &self,
         package: PackageSlot,
-        target: TargetId,
-    ) -> Result<Arc<TargetBodies>, PackageStoreError> {
+        crate_id: CrateId,
+    ) -> Result<Arc<CrateBodies>, PackageStoreError> {
         self.artifacts
             .reader(package)?
-            .read_body_target(target)
+            .read_body_crate(crate_id)
             .map(Arc::new)
             .map_err(|error| error.into_package_store_error(package))
     }

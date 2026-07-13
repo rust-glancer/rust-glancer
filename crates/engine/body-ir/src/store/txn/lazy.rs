@@ -7,28 +7,31 @@
 //! ```text
 //! first Body IR query
 //!     -> package manifest
-//!     -> target index, one file shard, or the complete target
+//!     -> crate index, one file shard, or the complete crate
 //! ```
 //!
 //! For example, scanning `src/foo.rs` loads the manifest and the shard for `foo.rs`. Asking for all
-//! bodies in the target loads every file shard. Asking for [`TargetBodies`] explicitly loads the
-//! complete target representation instead.
+//! bodies in the crate loads every file shard. Asking for [`CrateBodies`] explicitly loads the
+//! complete crate representation instead.
 //!
 //! The loaded values live only for this read transaction. `OnceLock` lets methods return ordinary
 //! borrowed references without promoting decoded shards into the retained project snapshot. A
-//! failed load leaves its cell empty, so a later call can try again. If the complete target is
+//! failed load leaves its cell empty, so a later call can try again. If the complete crate is
 //! loaded, later queries read from it instead of loading another copy of the same body data.
 
 use std::sync::{Arc, OnceLock};
 
 use rg_def_map::PackageSlot;
-use rg_ir_model::{BodyRef, TargetRef};
-use rg_ir_storage::{BodyLocalItems, ItemLookupIndex};
+use rg_ir_model::{BodyRef, CrateId, CrateRef};
 use rg_package_store::PackageStoreError;
-use rg_parse::{FileId, TargetId};
+use rg_parse::FileId;
+use rg_semantic_ir::ItemLookupIndex;
 
 use super::BodyIrLoader;
-use crate::{BodyFileShard, PackageBodies, PackageBodiesManifest, ResolvedBodyData, TargetBodies};
+use crate::{
+    BodyFileShard, BodyLocalItems, CrateBodies, PackageBodies, PackageBodiesManifest,
+    ResolvedBodyData,
+};
 
 /// One package slot as seen by this Body IR read transaction.
 ///
@@ -47,7 +50,7 @@ pub(super) enum PackageReadEntry<'db> {
 /// Lazily decoded pieces of one offloaded package.
 ///
 /// Loading begins with `loaded`, which contains the manifest and creates empty cells for every
-/// target index and file shard described by it. Those cells are then filled independently as query
+/// crate index and file shard described by it. Those cells are then filled independently as query
 /// methods need them.
 #[derive(Debug, Clone)]
 pub(super) struct LazyPackage<'db> {
@@ -63,78 +66,89 @@ impl<'db> LazyPackage<'db> {
         }
     }
 
-    /// Load the complete target representation.
+    /// Load the complete crate representation.
     ///
-    /// This is the expensive path used by callers that genuinely need `TargetBodies`. File-local
+    /// This is the expensive path used by callers that genuinely need `CrateBodies`. File-local
     /// access goes through `bodies`, `body_data`, or `body_local_items` and normally loads less.
-    pub(super) fn target(
+    pub(super) fn crate_bodies(
         &self,
-        target: TargetRef,
-    ) -> Result<Option<&TargetBodies>, PackageStoreError> {
-        let Some(loaded_target) = self.loaded(target.package)?.target(target.target) else {
+        crate_ref: CrateRef,
+    ) -> Result<Option<&CrateBodies>, PackageStoreError> {
+        let Some(loaded_crate) = self
+            .loaded(crate_ref.package)?
+            .crate_data(crate_ref.crate_id)
+        else {
             return Ok(None);
         };
-        if loaded_target.target.get().is_none() {
-            let target_bodies = self.loader.load_target(target.package, target.target)?;
-            let _ = loaded_target.target.set(target_bodies);
+        if loaded_crate.bodies.get().is_none() {
+            let crate_bodies = self
+                .loader
+                .load_crate(crate_ref.package, crate_ref.crate_id)?;
+            let _ = loaded_crate.bodies.set(crate_bodies);
         }
-        Ok(loaded_target.target.get().map(Arc::as_ref))
+        Ok(loaded_crate.bodies.get().map(Arc::as_ref))
     }
 
-    /// Return the target-global item index without loading its body shards.
+    /// Return the crate-global item index without loading its body shards.
     ///
-    /// A complete target already contains the same index, so prefer it when another query loaded
-    /// the target first. Otherwise the index remains an independent cache unit.
+    /// A complete crate already contains the same index, so prefer it when another query loaded
+    /// the crate first. Otherwise the index remains an independent cache unit.
     pub(super) fn semantic_index(
         &self,
-        target: TargetRef,
+        crate_ref: CrateRef,
     ) -> Result<Option<&ItemLookupIndex>, PackageStoreError> {
-        let Some(loaded_target) = self.loaded(target.package)?.target(target.target) else {
+        let Some(loaded_crate) = self
+            .loaded(crate_ref.package)?
+            .crate_data(crate_ref.crate_id)
+        else {
             return Ok(None);
         };
-        if let Some(target_bodies) = loaded_target.target.get() {
-            return Ok(Some(target_bodies.semantic_index()));
+        if let Some(crate_bodies) = loaded_crate.bodies.get() {
+            return Ok(Some(crate_bodies.semantic_index()));
         }
-        if loaded_target.semantic_index.get().is_none() {
+        if loaded_crate.semantic_index.get().is_none() {
             let index = self
                 .loader
-                .load_semantic_index(target.package, target.target)?;
-            let _ = loaded_target.semantic_index.set(index);
+                .load_semantic_index(crate_ref.package, crate_ref.crate_id)?;
+            let _ = loaded_crate.semantic_index.set(index);
         }
-        Ok(loaded_target.semantic_index.get().map(Arc::as_ref))
+        Ok(loaded_crate.semantic_index.get().map(Arc::as_ref))
     }
 
-    /// Enumerate one file's bodies, or all target bodies when `file` is absent.
+    /// Enumerate one file's bodies, or all crate bodies when `file` is absent.
     ///
-    /// A resident complete target can be filtered directly. For a still-sharded target, the file
+    /// A resident complete crate can be filtered directly. For a still-sharded crate, the file
     /// argument decides whether this visits one shard or every shard from the manifest.
     pub(super) fn bodies(
         &self,
-        target: TargetRef,
+        crate_ref: CrateRef,
         file: Option<FileId>,
     ) -> Result<Vec<(BodyRef, &ResolvedBodyData)>, PackageStoreError> {
-        let Some(loaded_target) = self.loaded(target.package)?.target(target.target) else {
+        let Some(loaded_crate) = self
+            .loaded(crate_ref.package)?
+            .crate_data(crate_ref.crate_id)
+        else {
             return Ok(Vec::new());
         };
-        if let Some(target_bodies) = loaded_target.target.get() {
-            return Ok(target_bodies
+        if let Some(crate_bodies) = loaded_crate.bodies.get() {
+            return Ok(crate_bodies
                 .bodies
                 .iter_with_ids()
                 .filter(|(_, body)| file.is_none_or(|file| body.source().file_id == file))
-                .map(|(body, data)| (BodyRef { target, body }, data))
+                .map(|(body, data)| (BodyRef { crate_ref, body }, data))
                 .collect());
         }
 
         let mut bodies = Vec::new();
-        for &(shard_file, _) in &loaded_target.shards {
+        for &(shard_file, _) in &loaded_crate.shards {
             if file.is_some_and(|file| file != shard_file) {
                 continue;
             }
-            let shard = self.file_shard(target, shard_file)?;
+            let shard = self.file_shard(crate_ref, shard_file)?;
             bodies.extend(shard.entries().iter().map(|entry| {
                 (
                     BodyRef {
-                        target,
+                        crate_ref,
                         body: entry.body(),
                     },
                     entry.data(),
@@ -151,13 +165,15 @@ impl<'db> LazyPackage<'db> {
         &self,
         body_ref: BodyRef,
     ) -> Result<Option<&ResolvedBodyData>, PackageStoreError> {
-        let Some((loaded_target, file)) = self.body_location(body_ref)? else {
+        let Some((loaded_crate, file)) = self.body_location(body_ref)? else {
             return Ok(None);
         };
-        if let Some(target_bodies) = loaded_target.target.get() {
-            return Ok(target_bodies.body(body_ref.body));
+        if let Some(crate_bodies) = loaded_crate.bodies.get() {
+            return Ok(crate_bodies.body(body_ref.body));
         }
-        Ok(self.file_shard(body_ref.target, file)?.body(body_ref.body))
+        Ok(self
+            .file_shard(body_ref.crate_ref, file)?
+            .body(body_ref.body))
     }
 
     /// Find the body-local DefMap and item store paired with one body.
@@ -168,67 +184,68 @@ impl<'db> LazyPackage<'db> {
         &self,
         body_ref: BodyRef,
     ) -> Result<Option<&BodyLocalItems>, PackageStoreError> {
-        let Some((loaded_target, file)) = self.body_location(body_ref)? else {
+        let Some((loaded_crate, file)) = self.body_location(body_ref)? else {
             return Ok(None);
         };
-        if let Some(target_bodies) = loaded_target.target.get() {
-            return Ok(target_bodies.body_local_items(body_ref.body));
+        if let Some(crate_bodies) = loaded_crate.bodies.get() {
+            return Ok(crate_bodies.body_local_items(body_ref.body));
         }
         Ok(self
-            .file_shard(body_ref.target, file)?
+            .file_shard(body_ref.crate_ref, file)?
             .body_local_items(body_ref.body))
     }
 
-    /// Resolve a stable body id to the target state and file recorded by the manifest.
+    /// Resolve a stable body id to the crate state and file recorded by the manifest.
     fn body_location(
         &self,
         body_ref: BodyRef,
-    ) -> Result<Option<(&LoadedTarget, FileId)>, PackageStoreError> {
-        let loaded = self.loaded(body_ref.target.package)?;
-        let Some(target_manifest) = loaded.manifest.target(body_ref.target.target) else {
+    ) -> Result<Option<(&LoadedCrate, FileId)>, PackageStoreError> {
+        let loaded = self.loaded(body_ref.crate_ref.package)?;
+        let Some(crate_manifest) = loaded.manifest.crate_manifest(body_ref.crate_ref.crate_id)
+        else {
             return Ok(None);
         };
-        let Some(file) = target_manifest.body_file(body_ref.body) else {
+        let Some(file) = crate_manifest.body_file(body_ref.body) else {
             return Ok(None);
         };
         Ok(loaded
-            .target(body_ref.target.target)
-            .map(|target| (target, file)))
+            .crate_data(body_ref.crate_ref.crate_id)
+            .map(|crate_data| (crate_data, file)))
     }
 
     /// Load one declared file shard and keep it alive for the rest of the transaction.
     ///
-    /// A missing target or file means the loader and manifest disagree. Treat that as a stale
+    /// A missing crate or file means the loader and manifest disagree. Treat that as a stale
     /// package rather than quietly returning no bodies from a malformed cache revision.
     fn file_shard(
         &self,
-        target: TargetRef,
+        crate_ref: CrateRef,
         file: FileId,
     ) -> Result<&BodyFileShard, PackageStoreError> {
-        let loaded = self.loaded(target.package)?;
-        let Some(loaded_target) = loaded.target(target.target) else {
+        let loaded = self.loaded(crate_ref.package)?;
+        let Some(loaded_crate) = loaded.crate_data(crate_ref.crate_id) else {
             return Err(PackageStoreError::stale_package(
-                target.package,
+                crate_ref.package,
                 format!(
-                    "Body IR target {:?} is absent from its manifest",
-                    target.target
+                    "Body IR crate {:?} is absent from its manifest",
+                    crate_ref.crate_id
                 ),
             ));
         };
-        let Some((_, shard)) = loaded_target
+        let Some((_, shard)) = loaded_crate
             .shards
             .iter()
             .find(|(shard_file, _)| *shard_file == file)
         else {
             return Err(PackageStoreError::stale_package(
-                target.package,
-                format!("Body IR file {:?} is absent from its target manifest", file),
+                crate_ref.package,
+                format!("Body IR file {:?} is absent from its crate manifest", file),
             ));
         };
         if shard.get().is_none() {
-            let loaded_shard = self
-                .loader
-                .load_file_shard(target.package, target.target, file)?;
+            let loaded_shard =
+                self.loader
+                    .load_file_shard(crate_ref.package, crate_ref.crate_id, file)?;
             let _ = shard.set(loaded_shard);
         }
         Ok(shard
@@ -236,7 +253,7 @@ impl<'db> LazyPackage<'db> {
             .expect("Body IR shard cell should be initialized after successful load"))
     }
 
-    /// Load the package manifest and use it to allocate the request-local target cells.
+    /// Load the package manifest and use it to allocate the request-local crate cells.
     fn loaded(&self, package: PackageSlot) -> Result<&LoadedPackage, PackageStoreError> {
         if self.loaded.get().is_none() {
             let manifest = self.loader.load_manifest(package)?;
@@ -250,45 +267,45 @@ impl<'db> LazyPackage<'db> {
     }
 }
 
-/// Manifest plus empty-or-loaded state for every target declared by it.
+/// Manifest plus empty-or-loaded state for every crate declared by it.
 #[derive(Debug, Clone)]
 struct LoadedPackage {
     manifest: Arc<PackageBodiesManifest>,
-    targets: Vec<LoadedTarget>,
+    crates: Vec<LoadedCrate>,
 }
 
 impl LoadedPackage {
     fn new(manifest: Arc<PackageBodiesManifest>) -> Self {
-        let targets = manifest
-            .targets()
+        let crates = manifest
+            .crates()
             .iter()
-            .map(|target| LoadedTarget {
+            .map(|crate_manifest| LoadedCrate {
                 semantic_index: OnceLock::new(),
-                shards: target
+                shards: crate_manifest
                     .files()
                     .iter()
                     .copied()
                     .map(|file| (file, OnceLock::new()))
                     .collect(),
-                target: OnceLock::new(),
+                bodies: OnceLock::new(),
             })
             .collect();
-        Self { manifest, targets }
+        Self { manifest, crates }
     }
 
-    fn target(&self, target: TargetId) -> Option<&LoadedTarget> {
-        self.targets.get(target.0)
+    fn crate_data(&self, crate_id: CrateId) -> Option<&LoadedCrate> {
+        self.crates.get(crate_id.0)
     }
 }
 
-/// Independently loadable pieces of one target.
+/// Independently loadable pieces of one crate.
 ///
-/// `target` is the complete fallback representation. Once it is present, query methods prefer it
+/// `bodies` is the complete fallback representation. Once it is present, query methods prefer it
 /// over `semantic_index` and `shards`, but already-loaded smaller pieces remain harmless and keep
 /// any references returned earlier by the transaction valid.
 #[derive(Debug, Clone)]
-struct LoadedTarget {
+struct LoadedCrate {
     semantic_index: OnceLock<Arc<ItemLookupIndex>>,
     shards: Vec<(FileId, OnceLock<Arc<BodyFileShard>>)>,
-    target: OnceLock<Arc<TargetBodies>>,
+    bodies: OnceLock<Arc<CrateBodies>>,
 }

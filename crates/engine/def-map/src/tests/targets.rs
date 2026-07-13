@@ -1,6 +1,57 @@
 use expect_test::expect;
+use rg_workspace::TargetKind;
 
 use super::utils;
+use crate::testonly::DefMapFixture;
+
+#[test]
+fn semantic_crates_retain_their_originating_cargo_targets() {
+    let fixture = DefMapFixture::build(
+        r#"
+//- /Cargo.toml
+[package]
+name = "multi_target"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "tool"
+path = "src/main.rs"
+
+//- /src/lib.rs
+pub fn library() {}
+
+//- /src/main.rs
+fn main() {}
+"#,
+    );
+    let package_slot = fixture.package_slot_by_name("multi_target");
+    let parsed = fixture
+        .package(package_slot)
+        .expect("fixture package should be parsed");
+    let def_maps = fixture
+        .def_map_db()
+        .resident_package(package_slot)
+        .expect("fixture def-map package should be resident");
+
+    assert_eq!(def_maps.crates().len(), parsed.targets().len());
+    for cargo_target in parsed.targets() {
+        let crate_id = def_maps
+            .crate_for_cargo_target(cargo_target.id)
+            .expect("every parsed Cargo target should produce one semantic crate");
+        assert_eq!(
+            def_maps
+                .crate_data(crate_id)
+                .expect("allocated semantic crate should exist")
+                .cargo_target(),
+            cargo_target.id,
+        );
+    }
+
+    let lib = fixture.crate_ref("multi_target", TargetKind::Lib);
+    let bin = fixture.crate_ref("multi_target", TargetKind::Bin);
+    assert_ne!(lib.crate_id, bin.crate_id);
+}
 
 #[test]
 fn target_kind_controls_visible_dependency_roots() {

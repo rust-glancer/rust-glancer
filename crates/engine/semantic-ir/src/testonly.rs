@@ -1,7 +1,7 @@
+use crate::ItemStore;
 use rg_def_map::DefMap;
 use rg_def_map::testonly::DefMapFixture;
-use rg_ir_model::TargetRef;
-use rg_ir_storage::ItemStore;
+use rg_ir_model::CrateRef;
 use rg_parse::ParseDb;
 
 use crate::SemanticIrDb;
@@ -52,13 +52,13 @@ impl SemanticIrFixture {
         &self.semantic_ir
     }
 
-    pub fn resident_def_map(&self, target: TargetRef) -> Option<&DefMap> {
-        self.def_map.resident_def_map(target)
+    pub fn resident_def_map(&self, crate_ref: CrateRef) -> Option<&DefMap> {
+        self.def_map.resident_def_map(crate_ref)
     }
 
-    pub fn resident_target_ir(&self, target: TargetRef) -> Option<&ItemStore> {
+    pub fn resident_crate_ir(&self, crate_ref: CrateRef) -> Option<&ItemStore> {
         self.semantic_ir
-            .resident_package(target.package)?
-            .target(target.target)
+            .resident_package(crate_ref.package)?
+            .crate_items(crate_ref.crate_id)
     }
 }

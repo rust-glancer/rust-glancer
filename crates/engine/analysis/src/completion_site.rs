@@ -4,7 +4,7 @@
 //! "which source site should this cursor use?", so this module wraps indexed sites behind a small
 //! completion vocabulary.
 
-use rg_ir_model::TargetRef;
+use rg_ir_model::CrateRef;
 use rg_parse::{FileId, Span};
 
 use rg_ir_view::{
@@ -167,7 +167,7 @@ impl<'a, 'db> CompletionSiteDetector<'a, 'db> {
     /// Classifies the cursor offset by asking the scanner that owns each syntax shape.
     pub(crate) fn site_at(
         &self,
-        target: TargetRef,
+        crate_ref: CrateRef,
         file_id: FileId,
         offset: u32,
         syntax: Option<CompletionSiteSyntax>,
@@ -175,24 +175,26 @@ impl<'a, 'db> CompletionSiteDetector<'a, 'db> {
         let source = SourceCompletionView::new(self.db);
         if let Some(syntax) = syntax {
             if syntax.inside_use_item {
-                if let Some(site) = source.import_qualified_path_site_at(target, file_id, offset)? {
+                if let Some(site) =
+                    source.import_qualified_path_site_at(crate_ref, file_id, offset)?
+                {
                     return Ok(Some(CompletionSite::Path(PathCompletionSite::new(site))));
                 }
 
                 return Ok(source
-                    .import_unqualified_name_site_at(target, file_id, offset)?
+                    .import_unqualified_name_site_at(crate_ref, file_id, offset)?
                     .map(UnqualifiedCompletionSite::new)
                     .map(CompletionSite::Unqualified));
             }
             if syntax.after_dot {
                 return Ok(source
-                    .member_access_site_at(target, file_id, offset)?
+                    .member_access_site_at(crate_ref, file_id, offset)?
                     .map(DotCompletionSite::new)
                     .map(CompletionSite::Dot));
             }
             if syntax.after_colon_colon {
                 return Ok(source
-                    .body_qualified_path_site_at(target, file_id, offset)?
+                    .body_qualified_path_site_at(crate_ref, file_id, offset)?
                     .map(PathCompletionSite::new)
                     .map(CompletionSite::Path));
             }
@@ -201,32 +203,32 @@ impl<'a, 'db> CompletionSiteDetector<'a, 'db> {
         // Without a decisive syntax hint, ask scanners in the order that preserves the most
         // specific source interpretation: member access, qualified path, record field, lexical
         // body name, then import path fallback.
-        if let Some(site) = source.member_access_site_at(target, file_id, offset)? {
+        if let Some(site) = source.member_access_site_at(crate_ref, file_id, offset)? {
             return Ok(Some(CompletionSite::Dot(DotCompletionSite::new(site))));
         }
 
-        if let Some(site) = source.body_qualified_path_site_at(target, file_id, offset)? {
+        if let Some(site) = source.body_qualified_path_site_at(crate_ref, file_id, offset)? {
             return Ok(Some(CompletionSite::Path(PathCompletionSite::new(site))));
         }
 
-        if let Some(site) = source.record_field_list_site_at(target, file_id, offset)? {
+        if let Some(site) = source.record_field_list_site_at(crate_ref, file_id, offset)? {
             return Ok(Some(CompletionSite::RecordField(
                 RecordFieldCompletionSite::new(site),
             )));
         }
 
-        if let Some(site) = source.body_unqualified_name_site_at(target, file_id, offset)? {
+        if let Some(site) = source.body_unqualified_name_site_at(crate_ref, file_id, offset)? {
             return Ok(Some(CompletionSite::Unqualified(
                 UnqualifiedCompletionSite::new(site),
             )));
         }
 
-        if let Some(site) = source.import_qualified_path_site_at(target, file_id, offset)? {
+        if let Some(site) = source.import_qualified_path_site_at(crate_ref, file_id, offset)? {
             return Ok(Some(CompletionSite::Path(PathCompletionSite::new(site))));
         }
 
         Ok(source
-            .import_unqualified_name_site_at(target, file_id, offset)?
+            .import_unqualified_name_site_at(crate_ref, file_id, offset)?
             .map(UnqualifiedCompletionSite::new)
             .map(CompletionSite::Unqualified))
     }

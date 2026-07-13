@@ -4,7 +4,8 @@ use expect_test::Expect;
 use rg_body_ir::{BodyIrBuildPolicy, PackageBodies};
 use rg_def_map::PackageDefMaps;
 use rg_def_map::PackageSlot;
-use rg_parse::{PackageParseSnapshot, TargetId};
+use rg_ir_model::CrateId;
+use rg_parse::PackageParseSnapshot;
 use rg_semantic_ir::PackageIr;
 use rg_workspace::WorkspaceMetadata;
 
@@ -99,7 +100,7 @@ pub(super) fn check_minimal_cache_artifact_codec(expect: Expect) {
     assert_eq!(probe.parse, parse);
     assert_eq!(decoded_def_map, def_map);
     assert_eq!(decoded_semantic_ir, semantic_ir);
-    assert!(body_index.manifest().targets().is_empty());
+    assert!(body_index.manifest().crates().is_empty());
 
     let mut dump = String::new();
     writeln!(
@@ -115,7 +116,7 @@ pub(super) fn check_minimal_cache_artifact_codec(expect: Expect) {
         &probe,
         &decoded_def_map,
         &decoded_semantic_ir,
-        body_index.manifest().targets().len(),
+        body_index.manifest().crates().len(),
         &mut dump,
     );
 
@@ -265,7 +266,7 @@ pub(super) fn check_sectioned_cache_reads(fixture: &str) {
             .expect("fixture package should have resident DefMap"),
     );
     let body_error = reader
-        .read_body_target(TargetId(0))
+        .read_body_crate(CrateId(0))
         .expect_err("corrupt Body IR should fail when that section is requested");
     assert!(
         format!("{body_error:#}").contains("Body IR"),
@@ -314,7 +315,7 @@ pub fn unrelated() {
     let file =
         ProjectFixture::file_id_for_path_in(snapshot.parse_db(), &fixture.path(&marker.path));
     let target = snapshot
-        .targets_for_file(PackageSlot(0), file)
+        .crates_for_file(PackageSlot(0), file)
         .expect("fixture target lookup should start")
         .into_iter()
         .next()
@@ -325,7 +326,7 @@ pub fn unrelated() {
         "project.cache.sections",
     );
     let analysis = snapshot
-        .analysis_for_targets(&[target])
+        .analysis_for_crates(&[target])
         .expect("fixture analysis should construct");
     assert!(
         analysis
@@ -567,8 +568,8 @@ pub(super) fn check_offloaded_dependency_query(fixture: &str, expect: Expect) {
         (
             symbol.kind,
             symbol.name.clone(),
-            symbol.target.package.0,
-            symbol.target.target.0,
+            symbol.crate_ref.package.0,
+            symbol.crate_ref.crate_id.0,
         )
     });
 
@@ -586,10 +587,13 @@ pub(super) fn check_offloaded_dependency_query(fixture: &str, expect: Expect) {
         let package = project
             .snapshot()
             .parse_db()
-            .package(symbol.target.package.0)
+            .package(symbol.crate_ref.package.0)
             .expect("workspace symbol package should be parsed");
+        // Crate ids are allocated in parsed Cargo-target order. The DefMap payload is deliberately
+        // offloaded in this fixture, so render through the stable parsed package shape instead.
         let target = package
-            .target(symbol.target.target)
+            .targets()
+            .get(symbol.crate_ref.crate_id.0)
             .expect("workspace symbol target should be parsed");
         writeln!(
             &mut dump,
@@ -948,7 +952,7 @@ pub struct Kept;
         .pop()
         .expect("app source should have one file context");
     let target = context
-        .targets
+        .crates
         .first()
         .copied()
         .expect("app source should belong to one target");
@@ -960,8 +964,8 @@ pub struct Kept;
         .expect("reexported dependency type should resolve");
     definitions.sort_by_key(|definition| {
         (
-            definition.target.package.0,
-            definition.target.target.0,
+            definition.crate_ref.package.0,
+            definition.crate_ref.crate_id.0,
             definition.name.clone(),
         )
     });
@@ -990,7 +994,7 @@ pub struct Kept;
     for definition in definitions {
         let package = snapshot
             .parse_db()
-            .package(definition.target.package.0)
+            .package(definition.crate_ref.package.0)
             .expect("definition package should exist");
         writeln!(
             &mut dump,
@@ -1246,7 +1250,7 @@ pub fn dep_value() -> usize { 2 }
         profile_counter(&snapshot, metric::CACHE_PROBE_BODY_IR_POLICY_MISMATCHES),
     )
     .expect("string writes should not fail");
-    render_body_ir_target_statuses(&reader, &mut dump);
+    render_body_ir_crate_statuses(&reader, &mut dump);
 
     expect.assert_eq(&format!("{}\n", dump.trim_end()));
 }
@@ -1450,10 +1454,10 @@ fn write_cached_package_artifact(
         .read_body_ir_manifest()
         .expect("cached fixture Body IR manifest should read");
     let body_ir = PackageBodies::new(
-        (0..manifest.targets().len())
+        (0..manifest.crates().len())
             .map(|target| {
                 reader
-                    .read_body_target(TargetId(target))
+                    .read_body_crate(CrateId(target))
                     .expect("cached fixture Body IR target should read")
             })
             .collect(),
@@ -1514,10 +1518,10 @@ fn assert_reader_matches_resident_package(
             .expect("fixture cached Body IR manifest should read"),
         expected_body_ir.manifest(),
     );
-    for (target, expected) in expected_body_ir.targets().iter().enumerate() {
+    for (target, expected) in expected_body_ir.crates().iter().enumerate() {
         assert_eq!(
             reader
-                .read_body_target(TargetId(target))
+                .read_body_crate(CrateId(target))
                 .expect("fixture cached Body IR target should read"),
             *expected,
         );
@@ -1606,7 +1610,7 @@ fn render_cached_artifact(label: &str, reader: &PackageArtifactReader, dump: &mu
         reader.probe(),
         &def_map,
         &semantic_ir,
-        body_manifest.targets().len(),
+        body_manifest.crates().len(),
         dump,
     );
 }
@@ -1616,7 +1620,7 @@ fn render_decoded_artifact(
     probe: &crate::cache::PackageCacheProbe,
     def_map: &PackageDefMaps,
     semantic_ir: &PackageIr,
-    body_target_count: usize,
+    body_crate_count: usize,
     dump: &mut String,
 ) {
     let header = &probe.header;
@@ -1642,24 +1646,24 @@ fn render_decoded_artifact(
     .expect("string writes should not fail");
     writeln!(
         dump,
-        "def-map package {} targets {}",
+        "def-map package {} crates {}",
         def_map.package_name(),
-        def_map.def_maps().len(),
+        def_map.crates().len(),
     )
     .expect("string writes should not fail");
-    writeln!(dump, "semantic IR targets {}", semantic_ir.targets().len(),)
+    writeln!(dump, "semantic IR crates {}", semantic_ir.crates().len(),)
         .expect("string writes should not fail");
 
-    writeln!(dump, "body IR built targets {body_target_count}")
+    writeln!(dump, "body IR built crates {body_crate_count}")
         .expect("string writes should not fail");
 }
 
-fn render_body_ir_target_statuses(reader: &PackageArtifactReader, dump: &mut String) {
-    writeln!(dump, "body IR target statuses").expect("string writes should not fail");
-    for (target_idx, &coverage) in reader.probe().body_ir_coverage.iter().enumerate() {
+fn render_body_ir_crate_statuses(reader: &PackageArtifactReader, dump: &mut String) {
+    writeln!(dump, "body IR crate statuses").expect("string writes should not fail");
+    for (crate_idx, &coverage) in reader.probe().body_ir_coverage.iter().enumerate() {
         writeln!(
             dump,
-            "- target {target_idx} {} {}",
+            "- crate {crate_idx} {} {}",
             coverage.status(),
             coverage,
         )

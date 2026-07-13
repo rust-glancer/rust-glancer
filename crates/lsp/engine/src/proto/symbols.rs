@@ -40,14 +40,18 @@ pub(crate) fn workspace_symbol(
     snapshot: ProjectSnapshot<'_>,
     symbol: WorkspaceSymbol,
 ) -> anyhow::Result<Option<LspWorkspaceSymbol>> {
-    let Some(path) = snapshot.file_path(symbol.target.package, symbol.file_id) else {
+    let Some(path) = snapshot.file_path(symbol.crate_ref.package, symbol.file_id) else {
         return Ok(None);
     };
     let Some(uri) = Uri::from_file_path(path) else {
         return Ok(None);
     };
-    let range =
-        navigation::range_for_file(snapshot, symbol.target.package, symbol.file_id, symbol.span)?;
+    let range = navigation::range_for_file(
+        snapshot,
+        symbol.crate_ref.package,
+        symbol.file_id,
+        symbol.span,
+    )?;
 
     Ok(Some(LspWorkspaceSymbol {
         name: symbol.name,

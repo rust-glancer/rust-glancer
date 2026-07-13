@@ -149,7 +149,7 @@ impl BodyLowering<'_> {
                 // `$crate` is meaningful only for macro-generated syntax, where the temporary
                 // lowering context knows which crate defined the macro.
                 let kind = if name.as_str() == "$crate" {
-                    BodyPathSegmentKind::DollarCrate(self.dollar_crate_target()?)
+                    BodyPathSegmentKind::DollarCrate(self.dollar_crate()?)
                 } else {
                     BodyPathSegmentKind::Name(name)
                 };

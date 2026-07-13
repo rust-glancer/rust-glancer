@@ -1,7 +1,9 @@
+//! Definition and semantic-item storage declared inside one body.
+
 use rg_def_map::DefMap;
 use rg_ir_model::{ImplId, TraitRef, TypeDefRef};
 
-use crate::ItemStore;
+use rg_semantic_ir::ItemStore;
 use rg_std::{ExpectedUnique, MemorySize, Shrink};
 use wincode::{SchemaRead, SchemaWrite};
 

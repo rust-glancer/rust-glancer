@@ -1,16 +1,15 @@
 use rg_ir_model::{
-    BindingId, DefMapRef, ExprId, PackageSlot, StructId, TargetRef, TypeDefId, TypeDefRef,
+    BindingId, CrateId, CrateRef, DefMapRef, ExprId, PackageSlot, StructId, TypeDefId, TypeDefRef,
 };
-use rg_parse::TargetId;
 use rg_ty::{ClosureTyId, GenericArg, NominalTy, PrimitiveTy, Ty, UnsignedIntTy};
 
 use super::context::BodyInferenceCtx;
 
 fn type_def(index: usize) -> TypeDefRef {
     TypeDefRef {
-        origin: DefMapRef::Target(TargetRef {
+        origin: DefMapRef::Crate(CrateRef {
             package: PackageSlot(0),
-            target: TargetId(0),
+            crate_id: CrateId(0),
         }),
         id: TypeDefId::Struct(StructId(index)),
     }

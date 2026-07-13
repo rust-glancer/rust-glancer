@@ -40,7 +40,7 @@ pub(super) fn workspace_symbol(
         .declaration_site_name(&declaration)?
         .to_string();
     Ok(WorkspaceSymbol {
-        target: declaration.target(),
+        crate_ref: declaration.crate_ref(),
         name,
         kind: declaration.kind(),
         file_id: declaration.file_id(),

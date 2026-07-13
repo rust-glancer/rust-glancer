@@ -1,20 +1,23 @@
 //! Shared queries over semantic-shaped item stores.
 //!
-//! Target and body IR store item data in the same `ItemStore` shape. This module separates raw
+//! Crate and body IR store item data in the same `ItemStore` shape. This module separates raw
 //! store routing from queries that need a concrete Rust visibility universe.
 
+mod crate_item;
 mod item_store;
-mod target;
+mod resolution;
 
 use rg_ir_model::DefMapRef;
 
 use crate::ItemStore;
 
-pub use self::{item_store::ItemStoreQuery, target::TargetItemQuery};
+pub use self::{
+    crate_item::CrateItemQuery, item_store::ItemStoreQuery, resolution::ItemResolutionQuery,
+};
 
 /// Provides the stores that semantic-shaped item refs can point into.
 ///
-/// Layer-specific code implements this once, and the query modules can then treat target items and
+/// Layer-specific code implements this once, and the query modules can then treat crate items and
 /// body-local items as the same kind of data.
 pub trait ItemStoreSource<'a> {
     type Error;
@@ -30,7 +33,7 @@ pub trait ItemStoreSource<'a> {
     /// Enumerates all stores materialized by the source.
     ///
     /// This is a storage boundary, not a language visibility boundary. Impl and method lookup use
-    /// `TargetItemQuery`, which derives visibility from a concrete use-site target through DefMap
+    /// `CrateItemQuery`, which derives visibility from a concrete use-site crate through DefMap
     /// data.
     fn included_stores(&self) -> Result<Vec<&'a ItemStore>, Self::Error>;
 }

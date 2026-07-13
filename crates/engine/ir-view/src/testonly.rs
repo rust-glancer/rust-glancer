@@ -2,12 +2,12 @@ use rg_body_ir::{BodyIrLoader, ResolvedBodyData, testonly::BodyIrFixture};
 use rg_def_map::DefMap;
 use rg_def_map::DefMapDb;
 use rg_ir_model::{
-    BodyId, BodyOwner, BodyRef, BodySource, DefMapRef, ExprData, ExprId, FunctionRef, ItemOwner,
-    ModuleRef, TargetRef, TraitRef, TypeDefId, TypeDefRef,
+    BodyId, BodyOwner, BodyRef, BodySource, CrateRef, DefMapRef, ExprData, ExprId, FunctionRef,
+    ItemOwner, ModuleRef, TraitRef, TypeDefId, TypeDefRef,
 };
-use rg_ir_storage::ItemStore;
 use rg_package_store::PackageLoader;
 use rg_parse::ParseDb;
+use rg_semantic_ir::ItemStore;
 use rg_semantic_ir::{SemanticIrDb, testonly::SemanticIrFixture};
 
 use crate::IndexedViewDb;
@@ -59,12 +59,12 @@ impl ViewFixture {
         self.body_ir.semantic_ir_db()
     }
 
-    pub fn resident_def_map(&self, target: TargetRef) -> Option<&DefMap> {
-        self.body_ir.resident_def_map(target)
+    pub fn resident_def_map(&self, crate_ref: CrateRef) -> Option<&DefMap> {
+        self.body_ir.resident_def_map(crate_ref)
     }
 
-    pub fn resident_target_ir(&self, target: TargetRef) -> Option<&ItemStore> {
-        self.body_ir.resident_target_ir(target)
+    pub fn resident_crate_ir(&self, crate_ref: CrateRef) -> Option<&ItemStore> {
+        self.body_ir.resident_crate_ir(crate_ref)
     }
 
     pub fn resident_body(&self, body_ref: BodyRef) -> Option<&ResolvedBodyData> {
@@ -87,31 +87,35 @@ impl ViewFixture {
         self.body_ir.resident_body_item_store(body_ref)
     }
 
-    pub fn first_body_ref(&self, target: TargetRef) -> Option<BodyRef> {
-        self.body_refs_for_target(target).into_iter().next()
+    pub fn first_body_ref(&self, crate_ref: CrateRef) -> Option<BodyRef> {
+        self.body_refs_for_crate(crate_ref).into_iter().next()
     }
 
-    pub fn body_refs_for_target(&self, target: TargetRef) -> Vec<BodyRef> {
-        let Some(package) = self.body_ir.body_ir_db().resident_package(target.package) else {
+    pub fn body_refs_for_crate(&self, crate_ref: CrateRef) -> Vec<BodyRef> {
+        let Some(package) = self
+            .body_ir
+            .body_ir_db()
+            .resident_package(crate_ref.package)
+        else {
             return Vec::new();
         };
-        let Some(target_bodies) = package.target(target.target) else {
+        let Some(crate_bodies) = package.crate_bodies(crate_ref.crate_id) else {
             return Vec::new();
         };
 
-        target_bodies
+        crate_bodies
             .bodies()
             .iter()
             .enumerate()
             .map(|(idx, _)| BodyRef {
-                target,
+                crate_ref,
                 body: BodyId(idx),
             })
             .collect()
     }
 
-    pub fn target_owns_file(&self, target: TargetRef, file_id: rg_parse::FileId) -> bool {
-        self.resident_def_map(target).is_some_and(|def_map| {
+    pub fn crate_owns_file(&self, crate_ref: CrateRef, file_id: rg_parse::FileId) -> bool {
+        self.resident_def_map(crate_ref).is_some_and(|def_map| {
             def_map
                 .modules()
                 .iter()
@@ -180,14 +184,20 @@ impl ViewFixture {
             return self.render_body_owner(owner);
         }
 
-        let target_ref = module_ref.origin.origin_target();
+        let crate_ref = module_ref.origin.origin_crate();
         let package = self
             .parse_db()
             .packages()
-            .get(target_ref.package.0)
+            .get(crate_ref.package.0)
             .expect("package slot should exist while rendering view fixture module");
+        let cargo_target = self
+            .def_map_db()
+            .resident_package(crate_ref.package)
+            .and_then(|package| package.crate_data(crate_ref.crate_id))
+            .expect("semantic crate should exist while rendering view fixture module")
+            .cargo_target();
         let target = package
-            .target(target_ref.target)
+            .target(cargo_target)
             .expect("target id should exist while rendering view fixture module");
 
         format!(
@@ -265,7 +275,7 @@ impl ViewFixture {
 
     fn module_path(&self, module_ref: ModuleRef) -> String {
         let module = self
-            .resident_def_map(module_ref.origin.origin_target())
+            .resident_def_map(module_ref.origin.origin_crate())
             .expect("target def map should exist while rendering view fixture module path")
             .module(module_ref.module)
             .expect("module id should exist while rendering view fixture module path");

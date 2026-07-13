@@ -6,14 +6,13 @@
 
 use anyhow::Context as _;
 
+use crate::ItemStore;
 use rg_def_map::{DefMapDb, DefMapReadTxn, PackageSlot};
 use rg_ir_model::{
-    TargetRef,
+    CrateId, CrateRef,
     hir::source::{ItemSource, ItemSourceKind},
 };
-use rg_ir_storage::ItemStore;
 use rg_item_tree::{ItemNode, ItemTreeDb, Package as ItemTreePackage};
-use rg_parse::TargetId;
 
 use crate::{ItemStoreLowerer, ItemStoreSourceReader, PackageIr};
 
@@ -41,41 +40,41 @@ pub(super) fn build_package(
     let item_tree_package = item_tree
         .package(package.0)
         .with_context(|| format!("while attempting to fetch item tree package {}", package.0))?;
-    let mut targets = Vec::with_capacity(def_map_package.def_maps().len());
+    let mut crates = Vec::with_capacity(def_map_package.crates().len());
     let def_map_txn = def_map.read_txn(super::unexpected_package_loader());
 
-    for (target_idx, _) in def_map_package.def_maps().iter().enumerate() {
-        let target_ref = TargetRef {
+    for (crate_idx, _) in def_map_package.crates().iter().enumerate() {
+        let crate_ref = CrateRef {
             package,
-            target: TargetId(target_idx),
+            crate_id: CrateId(crate_idx),
         };
-        targets.push(
-            TargetLowering::new(item_tree_package, target_ref, &def_map_txn)
+        crates.push(
+            CrateLowering::new(item_tree_package, crate_ref, &def_map_txn)
                 .lower()
                 .with_context(|| {
-                    format!("while attempting to lower semantic IR for target {target_idx}")
+                    format!("while attempting to lower semantic IR for crate {crate_idx}")
                 })?,
         );
     }
 
-    Ok(PackageIr::new(targets))
+    Ok(PackageIr::new(crates))
 }
 
-struct TargetLowering<'a, 'db> {
+struct CrateLowering<'a, 'db> {
     item_tree: &'a ItemTreePackage,
-    target: TargetRef,
+    crate_ref: CrateRef,
     def_map_txn: &'a DefMapReadTxn<'db>,
 }
 
-impl<'a, 'db> TargetLowering<'a, 'db> {
+impl<'a, 'db> CrateLowering<'a, 'db> {
     fn new(
         item_tree: &'a ItemTreePackage,
-        target: TargetRef,
+        crate_ref: CrateRef,
         def_map_txn: &'a DefMapReadTxn<'db>,
     ) -> Self {
         Self {
             item_tree,
-            target,
+            crate_ref,
             def_map_txn,
         }
     }
@@ -85,11 +84,11 @@ impl<'a, 'db> TargetLowering<'a, 'db> {
         // order and only asks the item tree for declaration payloads.
         let def_map = self
             .def_map_txn
-            .def_map(self.target)
+            .def_map(self.crate_ref)
             .with_context(|| {
                 format!(
-                    "while attempting to fetch def-map local definitions for target {:?}",
-                    self.target.target,
+                    "while attempting to fetch def-map local definitions for crate {:?}",
+                    self.crate_ref.crate_id,
                 )
             })?
             .context("No defmap to lower from")?;
@@ -97,7 +96,7 @@ impl<'a, 'db> TargetLowering<'a, 'db> {
     }
 }
 
-impl<'a, 'db> ItemStoreSourceReader<'a> for TargetLowering<'a, 'db> {
+impl<'a, 'db> ItemStoreSourceReader<'a> for CrateLowering<'a, 'db> {
     fn item(&self, source: ItemSource) -> anyhow::Result<&'a ItemNode> {
         let item = match source.kind {
             ItemSourceKind::ItemTree(item_ref) => {
@@ -110,7 +109,7 @@ impl<'a, 'db> ItemStoreSourceReader<'a> for TargetLowering<'a, 'db> {
             }
             ItemSourceKind::Generated(item_ref) => self
                 .def_map_txn
-                .def_map(self.target)
+                .def_map(self.crate_ref)
                 .with_context(|| {
                     format!(
                         "while attempting to fetch generated item {:?} from generated source {:?}",

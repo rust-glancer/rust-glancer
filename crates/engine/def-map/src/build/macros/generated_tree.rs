@@ -1,7 +1,7 @@
 //! Lowers declarative macro output into an item-tree-shaped generated source.
 //!
 //! The generated payload intentionally lives in def-map, not item-tree: macro expansion is
-//! target-local, import-dependent, and `$crate`-sensitive. Keeping the payload item-tree-shaped
+//! crate-local, import-dependent, and `$crate`-sensitive. Keeping the payload item-tree-shaped
 //! lets later phases reuse normal semantic lowering without pretending generated items came from a
 //! real parsed file.
 

@@ -4,7 +4,7 @@
 //! as `User { na$0 }` or `let User { na$0 } = user`.
 
 use rg_ir_model::items::FieldKey;
-use rg_ir_model::{BodyRef, ScopeId, TargetRef};
+use rg_ir_model::{BodyRef, CrateRef, ScopeId};
 use rg_package_store::PackageStoreError;
 use rg_parse::{FileId, Span, TextSpan};
 
@@ -18,7 +18,7 @@ use super::{super::RecordFieldCompletionSite, sites::BodyScanSites};
 /// Finds the record field-list site that belongs to a completion offset.
 pub(crate) struct RecordFieldCompletionSiteScanner<'txn, 'db> {
     body_ir: &'txn BodyIrReadTxn<'db>,
-    target: TargetRef,
+    crate_ref: CrateRef,
     file_id: FileId,
     offset: u32,
 }
@@ -26,13 +26,13 @@ pub(crate) struct RecordFieldCompletionSiteScanner<'txn, 'db> {
 impl<'txn, 'db> RecordFieldCompletionSiteScanner<'txn, 'db> {
     pub(crate) fn new(
         body_ir: &'txn BodyIrReadTxn<'db>,
-        target: TargetRef,
+        crate_ref: CrateRef,
         file_id: FileId,
         offset: u32,
     ) -> Self {
         Self {
             body_ir,
-            target,
+            crate_ref,
             file_id,
             offset,
         }
@@ -44,7 +44,7 @@ impl<'txn, 'db> RecordFieldCompletionSiteScanner<'txn, 'db> {
     ) -> Result<Option<RecordFieldCompletionSite>, PackageStoreError> {
         let mut best: Option<(RecordFieldCompletionSite, u32)> = None;
 
-        for (body_ref, body) in self.body_ir.bodies(self.target, Some(self.file_id))? {
+        for (body_ref, body) in self.body_ir.bodies(self.crate_ref, Some(self.file_id))? {
             if !body.source().span.contains(self.offset) {
                 continue;
             }

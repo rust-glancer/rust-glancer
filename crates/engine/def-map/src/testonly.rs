@@ -1,7 +1,7 @@
 use crate::DefMap;
-use rg_ir_model::TargetRef;
+use rg_ir_model::CrateRef;
 use rg_item_tree::{ItemTreeDb, testonly::ItemTreeFixture};
-use rg_parse::{Package, ParseDb, Target};
+use rg_parse::{CargoTarget, Package, ParseDb};
 use rg_workspace::{SysrootSources, TargetKind, WorkspaceLoweringConfig, WorkspaceMetadata};
 use test_fixture::{CrateFixture, fixture_crate};
 
@@ -72,10 +72,10 @@ impl DefMapFixture {
         &self.def_map
     }
 
-    pub fn resident_def_map(&self, target: TargetRef) -> Option<&DefMap> {
+    pub fn resident_def_map(&self, crate_ref: CrateRef) -> Option<&DefMap> {
         self.def_map
-            .resident_package(target.package)?
-            .def_map(target.target)
+            .resident_package(crate_ref.package)?
+            .def_map(crate_ref.crate_id)
     }
 
     pub fn package_slot_by_name(&self, package_name: &str) -> PackageSlot {
@@ -89,15 +89,24 @@ impl DefMapFixture {
             .unwrap_or_else(|| panic!("fixture package `{package_name}` should exist"))
     }
 
-    pub fn target_ref(&self, package_name: &str, expected_kind: TargetKind) -> TargetRef {
+    pub fn crate_ref(&self, package_name: &str, expected_kind: TargetKind) -> CrateRef {
         let (package_slot, target) = self.target(package_name, expected_kind);
-        TargetRef {
+        let crate_id = self
+            .def_map
+            .resident_package(package_slot)
+            .and_then(|package| package.crate_for_cargo_target(target.id))
+            .expect("fixture target should have a semantic crate");
+        CrateRef {
             package: package_slot,
-            target: target.id,
+            crate_id,
         }
     }
 
-    pub fn target(&self, package_name: &str, expected_kind: TargetKind) -> (PackageSlot, &Target) {
+    pub fn target(
+        &self,
+        package_name: &str,
+        expected_kind: TargetKind,
+    ) -> (PackageSlot, &CargoTarget) {
         let package_slot = self.package_slot_by_name(package_name);
         let package = self
             .parse_db()

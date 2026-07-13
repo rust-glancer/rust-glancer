@@ -48,8 +48,11 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
         };
         let mut completions = Vec::new();
         let mut hidden = HashSet::new();
-        let syntax =
-            SyntaxRenderer::new(self.analysis.view_db().target_edition(self.query.target)?);
+        let syntax = SyntaxRenderer::new(
+            self.analysis
+                .view_db()
+                .crate_edition(self.query.crate_ref)?,
+        );
 
         let completion_candidates = CompletionCandidateSource::new(self.analysis.view_db());
         for candidate in completion_candidates.lexical_candidates_for_unqualified(&site)? {

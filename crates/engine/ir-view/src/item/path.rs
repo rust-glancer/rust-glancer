@@ -9,9 +9,9 @@ use std::fmt::Write as _;
 use rg_def_map::DefMapSource;
 use rg_ir_model::{
     ConstRef, DefMapRef, FunctionRef, ImplId, ImplRef, ItemOwner, ModuleRef, StaticRef, TraitRef,
-    TypeAliasRef, TypeDefId, TypeDefRef, hir::items::EnumVariantData,
+    TypeAliasRef, TypeDefId, TypeDefRef,
 };
-use rg_ir_storage::ItemStoreQuery;
+use rg_semantic_ir::{EnumVariantData, ItemStoreQuery};
 use rg_text::RustEdition;
 
 use crate::{IndexedViewDb, display::syntax::SyntaxRenderer};
@@ -30,16 +30,16 @@ impl<'a, 'db> PathView<'a, 'db> {
         }
     }
 
-    /// Return the full path for a target-owned module.
+    /// Return the full path for a crate-owned module.
     pub fn module_path(&self, module_ref: ModuleRef) -> anyhow::Result<Option<String>> {
-        let Some(target) = module_ref.origin.as_target_ref() else {
+        let Some(crate_ref) = module_ref.origin.as_crate_ref() else {
             return Ok(None);
         };
-        let package = self.db.def_map.package(target.package)?;
+        let package = self.db.def_map.package(crate_ref.package)?;
         let mut names = Vec::new();
         let mut current = module_ref.module;
 
-        // Module ids form a parent chain rooted at the target module. Walking it upward and then
+        // Module ids form a parent chain rooted at the crate module. Walking it upward and then
         // reversing gives us the same crate::item::module::child shape users see in Rust paths.
         loop {
             let Some(module) = self.db.module_data(ModuleRef {
@@ -60,7 +60,8 @@ impl<'a, 'db> PathView<'a, 'db> {
         }
 
         let root_name = package
-            .target_name(target.target)
+            .crate_data(crate_ref.crate_id)
+            .map(|data| data.name())
             .unwrap_or_else(|| package.package_name());
         let mut path = self.syntax.identifier(root_name).to_string();
         for name in names.iter().rev() {

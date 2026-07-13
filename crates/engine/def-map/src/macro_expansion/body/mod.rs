@@ -7,7 +7,7 @@
 use anyhow::Context as _;
 
 use crate::{DefMapQuery, MacroDefinitionView, ScopeResolutionEnv};
-use rg_ir_model::{DefMapRef, ModuleId, ModuleRef, Path, TargetRef, items::BuiltinMacroKind};
+use rg_ir_model::{CrateRef, DefMapRef, ModuleId, ModuleRef, Path, items::BuiltinMacroKind};
 use rg_macro_runtime::{CfgSelect, ExpansionParseKind, ExpansionSyntax, MacroExpansionRuntime};
 use rg_std::ExpectedUnique;
 use rg_syntax::{AstNode, Parse, SyntaxNode, ast};
@@ -213,8 +213,7 @@ impl<'db, 'txn> BodyMacroExpander<'db, 'txn> {
         // Macro calls retain textual paths, so normalize them into the shared semantic path here.
         // (it exists for historical reasons mostly, and it's equivalent to `Path`) and introduce
         // appropriate constructors.
-        let Some(path) =
-            Path::from_macro_path_text(&path_text, site.dollar_crate_target_for_path())
+        let Some(path) = Path::from_macro_path_text(&path_text, site.dollar_crate_for_path())
         else {
             return Ok(None);
         };
@@ -253,7 +252,7 @@ impl<'db, 'txn> BodyMacroExpander<'db, 'txn> {
         Some(ExpandedBodyMacro::new(
             parse,
             span_map,
-            site.dollar_crate_target_for_expansion()?,
+            site.dollar_crate_for_expansion()?,
         ))
     }
 
@@ -273,7 +272,7 @@ impl<'db, 'txn> BodyMacroExpander<'db, 'txn> {
         Some(ExpandedBodyMacro::new(
             parse,
             span_map,
-            resolved.data.dollar_crate_target,
+            resolved.data.dollar_crate,
         ))
     }
 
@@ -282,14 +281,14 @@ impl<'db, 'txn> BodyMacroExpander<'db, 'txn> {
         module: ModuleRef,
         path: &Path,
     ) -> anyhow::Result<ExpectedUnique<MacroDefinitionView<'a>>> {
-        // Body expansion is target-local. Synthetic body modules resolve through their semantic
+        // Body expansion is crate-local. Synthetic body modules resolve through their semantic
         // fallback before reaching this facade.
-        let Some(target) = module.origin.as_target_ref() else {
+        let Some(crate_ref) = module.origin.as_crate_ref() else {
             return Ok(ExpectedUnique::Empty);
         };
 
         if let Some(name) = path.relative_single_name() {
-            return Self::resolve_single_name_macro(query, target, module.module, name);
+            return Self::resolve_single_name_macro(query, crate_ref, module.module, name);
         }
 
         let bindings = query
@@ -313,12 +312,12 @@ impl<'db, 'txn> BodyMacroExpander<'db, 'txn> {
 
     fn resolve_single_name_macro<'a>(
         query: &'a DefMapQuery<&DefMapReadTxn<'_>>,
-        target: TargetRef,
+        crate_ref: CrateRef,
         module: ModuleId,
         name: &Name,
     ) -> anyhow::Result<ExpectedUnique<MacroDefinitionView<'a>>> {
         let importing_module = ModuleRef {
-            origin: DefMapRef::Target(target),
+            origin: DefMapRef::Crate(crate_ref),
             module,
         };
         let mut module_scope_modules = Vec::new();
@@ -330,7 +329,7 @@ impl<'db, 'txn> BodyMacroExpander<'db, 'txn> {
         // while real projects overwhelmingly use macros that are already module-visible.
         while let Some(module) = current {
             let module_ref = ModuleRef {
-                origin: DefMapRef::Target(target),
+                origin: DefMapRef::Crate(crate_ref),
                 module,
             };
             module_scope_modules.push(module_ref);

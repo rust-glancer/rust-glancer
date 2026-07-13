@@ -2,8 +2,8 @@
 
 use rg_def_map::DefMapSource;
 use rg_ir_model::FunctionRef;
-use rg_ir_storage::ItemStoreSource;
 use rg_package_store::PackageStoreError;
+use rg_semantic_ir::ItemStoreSource;
 use rg_std::ExpectedUnique;
 use rg_ty::{ExpectedNominalTyExt, NominalTy, Ty, function_generic_shadow_subst};
 

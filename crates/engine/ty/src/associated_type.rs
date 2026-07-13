@@ -7,11 +7,8 @@
 //! - read a selected impl associated type for strict adjustment paths such as `Deref`.
 
 use rg_def_map::DefMapSource;
-use rg_ir_model::{
-    AssocItemId, Path, TraitImplRef, TraitRef, TypeAliasRef, TypePathResolution,
-    hir::items::ImplData,
-};
-use rg_ir_storage::{ItemStoreSource, TargetItemQuery, TypePathContext};
+use rg_ir_model::{AssocItemId, Path, TraitImplRef, TraitRef, TypeAliasRef, TypePathResolution};
+use rg_semantic_ir::{CrateItemQuery, ImplData, ItemStoreSource, TypePathContext};
 use rg_std::UniqueVec;
 
 use crate::{ItemPathQuery, Ty, TypeSubst};
@@ -23,7 +20,7 @@ use crate::{ItemPathQuery, Ty, TypeSubst};
 /// are asking about.
 pub(crate) struct AssociatedTypeResolver<'a, 'query, D, I> {
     item_paths: &'a ItemPathQuery<'query, D, I>,
-    target_items: &'a TargetItemQuery<'query, D, I>,
+    crate_items: &'a CrateItemQuery<'query, D, I>,
 }
 
 impl<'a, 'query, D, I> AssociatedTypeResolver<'a, 'query, D, I>
@@ -33,11 +30,11 @@ where
 {
     pub(crate) fn new(
         item_paths: &'a ItemPathQuery<'query, D, I>,
-        target_items: &'a TargetItemQuery<'query, D, I>,
+        crate_items: &'a CrateItemQuery<'query, D, I>,
     ) -> Self {
         Self {
             item_paths,
-            target_items,
+            crate_items,
         }
     }
 
@@ -90,7 +87,7 @@ where
         };
         self.push_trait_refs_for_path(impl_context, trait_path, &mut traits)?;
 
-        if let Some(use_site_root) = self.target_items.use_site_root_module()? {
+        if let Some(use_site_root) = self.crate_items.use_site_root_module()? {
             self.push_trait_refs_for_path(
                 TypePathContext {
                     module: use_site_root,
@@ -110,7 +107,7 @@ where
         trait_path: &Path,
     ) -> Result<UniqueVec<TraitRef>, D::Error> {
         let mut traits = UniqueVec::new();
-        let Some(use_site_root) = self.target_items.use_site_root_module()? else {
+        let Some(use_site_root) = self.crate_items.use_site_root_module()? else {
             return Ok(traits);
         };
 

@@ -11,7 +11,7 @@ use rg_ir_model::{
         GenericArg as ItemGenericArg, TypeBound, TypePath, TypePathAnchor, TypeRef, WherePredicate,
     },
 };
-use rg_ir_storage::{ItemStoreSource, TypePathContext};
+use rg_semantic_ir::{ItemStoreSource, TypePathContext};
 use rg_std::ExpectedUnique;
 use rg_text::Name;
 
@@ -110,7 +110,7 @@ where
             return Ok(None);
         };
         let Some(impl_data) = self
-            .target_items
+            .crate_items
             .items()
             .impl_data(selection.trait_impl.impl_ref)?
         else {
@@ -122,7 +122,7 @@ where
         };
         if let Some(mut projection) = self.cache.normalize_assoc_type(
             &self.item_paths,
-            &self.target_items,
+            &self.crate_items,
             context,
             goal,
             assoc_name,
@@ -258,7 +258,7 @@ where
             return Ok(None);
         }
         let Some(impl_data) = self
-            .target_items
+            .crate_items
             .items()
             .impl_data(selection.trait_impl.impl_ref)?
         else {
@@ -493,7 +493,7 @@ where
         let Some(impl_ref) = context.impl_ref else {
             return Ok(None);
         };
-        let Some(impl_data) = self.target_items.items().impl_data(impl_ref)? else {
+        let Some(impl_data) = self.crate_items.items().impl_data(impl_ref)? else {
             return Ok(None);
         };
 
@@ -597,7 +597,7 @@ where
         trait_ref: TraitRef,
         assoc_name: &str,
     ) -> Result<bool, I::Error> {
-        let Some(trait_data) = self.target_items.items().trait_data(trait_ref)? else {
+        let Some(trait_data) = self.crate_items.items().trait_data(trait_ref)? else {
             return Ok(false);
         };
         for item in &trait_data.items {

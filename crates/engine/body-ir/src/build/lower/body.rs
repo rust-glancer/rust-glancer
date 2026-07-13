@@ -4,7 +4,7 @@ use rg_syntax::{AstNode as _, ast};
 
 use rg_cfg_eval::CfgEvaluator;
 use rg_def_map::{BodyMacroCallOrigin, BodyMacroExprExpansion, ExpandedBodyMacro};
-use rg_ir_model::{BodyMacroCallData, ExprId, LocalDefRef, ModuleRef, ScopeId, TargetRef};
+use rg_ir_model::{BodyMacroCallData, CrateRef, ExprId, LocalDefRef, ModuleRef, ScopeId};
 use rg_parse::LineIndex;
 use rg_text::NameInterner;
 
@@ -160,20 +160,20 @@ impl BodyLowering<'_> {
         source_for(self.body_source.file_id, syntax)
     }
 
-    pub(super) fn dollar_crate_target(&self) -> Option<TargetRef> {
+    pub(super) fn dollar_crate(&self) -> Option<CrateRef> {
         self.generated_context
             .as_ref()
-            .map(|context| context.expanded.dollar_crate_target())
+            .map(|context| context.expanded.dollar_crate())
     }
 
     /// Classify the macro call syntax that is about to be expanded.
     ///
     /// User-written calls have no macro-definition crate. Calls found while recursively lowering
-    /// generated syntax keep the generating definition's `$crate` target.
+    /// generated syntax keep the generating definition's `$crate` identity.
     pub(super) fn macro_call_origin(&self) -> BodyMacroCallOrigin {
         match &self.generated_context {
             Some(context) => BodyMacroCallOrigin::Generated {
-                dollar_crate_target: context.expanded.dollar_crate_target(),
+                dollar_crate: context.expanded.dollar_crate(),
             },
             None => BodyMacroCallOrigin::Source,
         }
@@ -187,7 +187,7 @@ impl BodyLowering<'_> {
     /// Example: a macro inside a normal function resolves from that function's module, while a
     /// macro inside a generated nested body still resolves from the nearest real module.
     pub(super) fn macro_resolution_module(&self) -> ModuleRef {
-        if self.owner_module.origin.as_target_ref().is_some() {
+        if self.owner_module.origin.as_crate_ref().is_some() {
             self.owner_module
         } else {
             self.fallback_module

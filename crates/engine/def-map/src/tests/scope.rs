@@ -329,7 +329,7 @@ use crate::reexports::{exposed, hidden};
 }
 
 #[test]
-fn public_reexports_do_not_widen_crate_visibility_across_targets() {
+fn public_reexports_do_not_widen_crate_visibility_across_crates() {
     let project = utils::DefMapFixtureDb::build(
         r#"
 //- /Cargo.toml
@@ -365,10 +365,10 @@ use dep::Thing;
     );
 
     project.lib("dep").entry("Thing").assert_type_exists(
-        "the re-export remains usable inside the target where its source is visible",
+        "the re-export remains usable inside the crate where its source is visible",
     );
     project
         .lib("app")
         .entry("Thing")
-        .assert_missing("a public import must not widen a crate-visible source across targets");
+        .assert_missing("a public import must not widen a crate-visible source across crates");
 }

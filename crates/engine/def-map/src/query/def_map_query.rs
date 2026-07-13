@@ -1,17 +1,17 @@
 //! Higher-level queries over routed DefMap storage.
 //!
-//! DefMaps only know about one scope graph. `DefMapSource` routes origin and target refs to the
+//! DefMaps only know about one scope graph. `DefMapSource` routes origin and crate refs to the
 //! concrete storage that owns them; this query object keeps the operations that compose those raw
 //! maps into language-shaped answers.
 
 use rg_ir_model::{
-    DefId, DefMapRef, LocalDefRef, LocalEnumVariantRef, LocalImplRef, ModuleRef, TargetRef,
+    CrateRef, DefId, DefMapRef, LocalDefRef, LocalEnumVariantRef, LocalImplRef, ModuleRef,
 };
 use rg_text::Name;
 
 use super::{
     path_resolution::ScopeResolver,
-    resolution_env::{MacroDefinitionEnv, ScopeResolutionEnv, TargetResolutionEnv},
+    resolution_env::{CrateResolutionEnv, MacroDefinitionEnv, ScopeResolutionEnv},
 };
 
 use crate::{
@@ -20,9 +20,9 @@ use crate::{
     VisibleScopeOrigin,
 };
 
-/// Routes DefMap-origin refs and target-level facts to concrete storage.
+/// Routes DefMap-origin refs and crate-level facts to concrete storage.
 ///
-/// Target-only callers usually delegate to `DefMapReadTxn`; body-aware callers can additionally
+/// Crate-only callers usually delegate to `DefMapReadTxn`; body-aware callers can additionally
 /// route the active body origin to its local DefMap without changing the lookup algorithm.
 pub trait DefMapSource {
     type Error;
@@ -35,9 +35,9 @@ pub trait DefMapSource {
             .and_then(|def_map| def_map.module(module_ref.module)))
     }
 
-    fn module_refs(&self, target: TargetRef) -> Result<Vec<ModuleRef>, Self::Error> {
+    fn module_refs(&self, crate_ref: CrateRef) -> Result<Vec<ModuleRef>, Self::Error> {
         Ok(self
-            .def_map_for_origin(DefMapRef::Target(target))?
+            .def_map_for_origin(DefMapRef::Crate(crate_ref))?
             .map(|def_map| def_map.module_refs().collect())
             .unwrap_or_default())
     }
@@ -83,13 +83,17 @@ pub trait DefMapSource {
             .unwrap_or_default())
     }
 
-    fn extern_root(&self, target: TargetRef, name: &str) -> Result<Option<ModuleRef>, Self::Error>;
+    fn extern_root(
+        &self,
+        crate_ref: CrateRef,
+        name: &str,
+    ) -> Result<Option<ModuleRef>, Self::Error>;
 
-    fn extern_roots(&self, target: TargetRef) -> Result<Vec<(String, ModuleRef)>, Self::Error>;
+    fn extern_roots(&self, crate_ref: CrateRef) -> Result<Vec<(String, ModuleRef)>, Self::Error>;
 
-    fn prelude_module(&self, target: TargetRef) -> Result<Option<ModuleRef>, Self::Error>;
+    fn prelude_module(&self, crate_ref: CrateRef) -> Result<Option<ModuleRef>, Self::Error>;
 
-    fn root_module(&self, target: TargetRef) -> Result<Option<ModuleRef>, Self::Error>;
+    fn root_module(&self, crate_ref: CrateRef) -> Result<Option<ModuleRef>, Self::Error>;
 }
 
 impl<T: DefMapSource + ?Sized> DefMapSource for &T {
@@ -99,20 +103,24 @@ impl<T: DefMapSource + ?Sized> DefMapSource for &T {
         (**self).def_map_for_origin(origin)
     }
 
-    fn extern_root(&self, target: TargetRef, name: &str) -> Result<Option<ModuleRef>, Self::Error> {
-        (**self).extern_root(target, name)
+    fn extern_root(
+        &self,
+        crate_ref: CrateRef,
+        name: &str,
+    ) -> Result<Option<ModuleRef>, Self::Error> {
+        (**self).extern_root(crate_ref, name)
     }
 
-    fn extern_roots(&self, target: TargetRef) -> Result<Vec<(String, ModuleRef)>, Self::Error> {
-        (**self).extern_roots(target)
+    fn extern_roots(&self, crate_ref: CrateRef) -> Result<Vec<(String, ModuleRef)>, Self::Error> {
+        (**self).extern_roots(crate_ref)
     }
 
-    fn prelude_module(&self, target: TargetRef) -> Result<Option<ModuleRef>, Self::Error> {
-        (**self).prelude_module(target)
+    fn prelude_module(&self, crate_ref: CrateRef) -> Result<Option<ModuleRef>, Self::Error> {
+        (**self).prelude_module(crate_ref)
     }
 
-    fn root_module(&self, target: TargetRef) -> Result<Option<ModuleRef>, Self::Error> {
-        (**self).root_module(target)
+    fn root_module(&self, crate_ref: CrateRef) -> Result<Option<ModuleRef>, Self::Error> {
+        (**self).root_module(crate_ref)
     }
 }
 
@@ -135,35 +143,35 @@ where
         ScopeResolver::new(self)
     }
 
-    /// Returns targets whose DefMap roots are visible from `root`.
+    /// Returns crates whose DefMap roots are visible from `root`.
     ///
-    /// This is the target-level language visibility closure: the target itself plus targets named
+    /// This is the crate-level language visibility closure: the crate itself plus crates named
     /// by external roots and preludes reachable from it. It is intentionally separate from package
     /// transaction inclusion, which is only a storage/materialization boundary.
-    pub fn visible_targets_from(&self, root: TargetRef) -> Result<Vec<TargetRef>, S::Error> {
-        let mut visible_targets = Vec::new();
-        let mut pending_targets = vec![root];
+    pub fn visible_crates_from(&self, root: CrateRef) -> Result<Vec<CrateRef>, S::Error> {
+        let mut visible_crates = Vec::new();
+        let mut pending_crates = vec![root];
 
-        while let Some(target) = pending_targets.pop() {
-            if visible_targets.contains(&target) {
+        while let Some(crate_ref) = pending_crates.pop() {
+            if visible_crates.contains(&crate_ref) {
                 continue;
             }
-            visible_targets.push(target);
+            visible_crates.push(crate_ref);
 
-            for (_, module) in self.source.extern_roots(target)? {
-                if let Some(target) = module.origin.as_target_ref() {
-                    pending_targets.push(target);
+            for (_, module) in self.source.extern_roots(crate_ref)? {
+                if let Some(crate_ref) = module.origin.as_crate_ref() {
+                    pending_crates.push(crate_ref);
                 }
             }
 
-            if let Some(module) = self.source.prelude_module(target)?
-                && let Some(target) = module.origin.as_target_ref()
+            if let Some(module) = self.source.prelude_module(crate_ref)?
+                && let Some(crate_ref) = module.origin.as_crate_ref()
             {
-                pending_targets.push(target);
+                pending_crates.push(crate_ref);
             }
         }
 
-        Ok(visible_targets)
+        Ok(visible_crates)
     }
 
     /// Classify a resolved definition as a declarative macro and borrow its expansion payload.
@@ -209,8 +217,8 @@ where
         let mut defs =
             VisibleScopeDefs::new(&current_scope, VisibleScopeOrigin::ModuleScope, false);
 
-        let target = importing_module.origin.origin_target();
-        let mut extern_roots = self.source.extern_roots(target)?;
+        let crate_ref = importing_module.origin.origin_crate();
+        let mut extern_roots = self.source.extern_roots(crate_ref)?;
         extern_roots.sort_by(|(left, _), (right, _)| left.as_str().cmp(right.as_str()));
         for (name, module_ref) in extern_roots {
             let label = name;
@@ -225,7 +233,7 @@ where
             );
         }
 
-        if let Some(prelude) = self.source.prelude_module(target)? {
+        if let Some(prelude) = self.source.prelude_module(crate_ref)? {
             let prelude_scope = resolver.visible_scope(importing_module, prelude)?;
             defs.extend(&prelude_scope, VisibleScopeOrigin::Prelude, true);
         }
@@ -304,19 +312,23 @@ where
     }
 }
 
-impl<S> TargetResolutionEnv for DefMapQuery<S>
+impl<S> CrateResolutionEnv for DefMapQuery<S>
 where
     S: DefMapSource,
 {
-    fn extern_root(&self, target: TargetRef, name: &str) -> Result<Option<ModuleRef>, Self::Error> {
-        self.source.extern_root(target, name)
+    fn extern_root(
+        &self,
+        crate_ref: CrateRef,
+        name: &str,
+    ) -> Result<Option<ModuleRef>, Self::Error> {
+        self.source.extern_root(crate_ref, name)
     }
 
-    fn prelude_module(&self, target: TargetRef) -> Result<Option<ModuleRef>, Self::Error> {
-        self.source.prelude_module(target)
+    fn prelude_module(&self, crate_ref: CrateRef) -> Result<Option<ModuleRef>, Self::Error> {
+        self.source.prelude_module(crate_ref)
     }
 
-    fn root_module(&self, target: TargetRef) -> Result<Option<ModuleRef>, Self::Error> {
-        self.source.root_module(target)
+    fn root_module(&self, crate_ref: CrateRef) -> Result<Option<ModuleRef>, Self::Error> {
+        self.source.root_module(crate_ref)
     }
 }

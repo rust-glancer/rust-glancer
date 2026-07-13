@@ -13,5 +13,5 @@ pub use self::{
     path_resolution::{
         GlobImportSource, ImportResolution, ImportedScopeBinding, ResolvePathResult, ScopeResolver,
     },
-    resolution_env::{MacroDefinitionEnv, ScopeResolutionEnv, TargetResolutionEnv},
+    resolution_env::{CrateResolutionEnv, MacroDefinitionEnv, ScopeResolutionEnv},
 };

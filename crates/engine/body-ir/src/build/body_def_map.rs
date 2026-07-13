@@ -4,18 +4,18 @@
 //! resolved in a fixed-point loop before the final DefMap is frozen.
 
 use rg_def_map::{
-    DefMap, DefMapBuilder, DefMapSource, ImportBinding, ImportData, ImportKind, ImportPath,
-    LocalDefData, LocalDefKind, LocalEnumVariantData, LocalEnumVariantEntry, LocalImplData,
-    MacroDefinitionEnv, MacroDefinitionView, ModuleData, ModuleOrigin, ModuleScope,
+    CrateResolutionEnv, DefMap, DefMapBuilder, DefMapSource, ImportBinding, ImportData, ImportKind,
+    ImportPath, LocalDefData, LocalDefKind, LocalEnumVariantData, LocalEnumVariantEntry,
+    LocalImplData, MacroDefinitionEnv, MacroDefinitionView, ModuleData, ModuleOrigin, ModuleScope,
     ModuleScopeBuilder, Namespace, ScopeBinding, ScopeBindingProvenance, ScopeEntryRef,
-    ScopeResolutionEnv, ScopeResolver, TargetResolutionEnv, Visibility,
+    ScopeResolutionEnv, ScopeResolver, Visibility,
 };
 use rg_ir_model::items::{
     Documentation, EnumItem, ImportAlias, ItemKind, ItemNode, ItemTreeId, ModuleSource,
 };
 use rg_ir_model::{
-    BodyRef, DefId, DefMapRef, ImportRef, LocalDefRef, LocalEnumVariantRef, ModuleId, ModuleRef,
-    TargetRef,
+    BodyRef, CrateRef, DefId, DefMapRef, ImportRef, LocalDefRef, LocalEnumVariantRef, ModuleId,
+    ModuleRef,
     hir::source::{BodyItemSourceRef, ItemSource},
 };
 use rg_package_store::PackageStoreError;
@@ -63,7 +63,7 @@ impl<'body> BodyDefMapCollector<'body> {
                 docs: None,
                 // Synthetic body scopes are reachable only through their owning body DefMap.
                 // Public here means "no narrower module-declaration ceiling" inside that origin;
-                // it cannot expose the synthetic identity to another body or target.
+                // it cannot expose the synthetic identity to another body or crate_ref.
                 visibility: Visibility::Public,
                 parent,
                 children: Vec::new(),
@@ -408,7 +408,7 @@ impl BodyDefMapBuildState {
             let resolution = resolver.resolve_import(importing_module, import_ref, import)?;
             let target_scope = next_scopes
                 .get_mut(import.module.0)
-                .expect("target scope should exist for body import");
+                .expect("crate scope should exist for body import");
             for introduced in resolution.introduced {
                 target_scope.insert_binding(
                     &introduced.name,
@@ -617,19 +617,23 @@ where
     }
 }
 
-impl<S> TargetResolutionEnv for BodyDefMapFinalizationEnv<'_, S>
+impl<S> CrateResolutionEnv for BodyDefMapFinalizationEnv<'_, S>
 where
     S: DefMapSource<Error = PackageStoreError> + Copy,
 {
-    fn extern_root(&self, target: TargetRef, name: &str) -> Result<Option<ModuleRef>, Self::Error> {
-        self.def_maps.extern_root(target, name)
+    fn extern_root(
+        &self,
+        crate_ref: CrateRef,
+        name: &str,
+    ) -> Result<Option<ModuleRef>, Self::Error> {
+        self.def_maps.extern_root(crate_ref, name)
     }
 
-    fn prelude_module(&self, target: TargetRef) -> Result<Option<ModuleRef>, Self::Error> {
-        self.def_maps.prelude_module(target)
+    fn prelude_module(&self, crate_ref: CrateRef) -> Result<Option<ModuleRef>, Self::Error> {
+        self.def_maps.prelude_module(crate_ref)
     }
 
-    fn root_module(&self, target: TargetRef) -> Result<Option<ModuleRef>, Self::Error> {
-        self.def_maps.root_module(target)
+    fn root_module(&self, crate_ref: CrateRef) -> Result<Option<ModuleRef>, Self::Error> {
+        self.def_maps.root_module(crate_ref)
     }
 }

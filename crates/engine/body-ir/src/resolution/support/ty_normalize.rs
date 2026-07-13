@@ -5,7 +5,7 @@
 //! `Try` trait, or `Future::Output` projection.
 
 use rg_def_map::DefMapSource;
-use rg_ir_storage::ItemStoreSource;
+use rg_semantic_ir::ItemStoreSource;
 use rg_std::ExpectedUnique;
 use rg_ty::{ExpectedTyExt, GenericArg, Ty};
 

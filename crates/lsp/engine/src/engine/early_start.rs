@@ -9,7 +9,7 @@ use std::{path::Path, sync::mpsc::Sender, thread, time::Instant};
 
 use anyhow::Context as _;
 use rg_analysis::{ReferenceQuery, ReferenceSearchFile};
-use rg_ir_model::TargetRef;
+use rg_ir_model::CrateRef;
 use rg_project::{AnalysisSurface, DetachedSplitIndexing, FileContext};
 use rg_std::UniqueVec;
 
@@ -21,12 +21,12 @@ use super::{
 
 #[derive(Debug, Clone)]
 pub(super) struct ReferenceSearchPlan {
-    targets: Vec<TargetRef>,
+    targets: Vec<CrateRef>,
     files: Option<Vec<ReferenceSearchFile>>,
 }
 
 impl ReferenceSearchPlan {
-    pub(super) fn new(targets: Vec<TargetRef>, files: Option<Vec<ReferenceSearchFile>>) -> Self {
+    pub(super) fn new(targets: Vec<CrateRef>, files: Option<Vec<ReferenceSearchFile>>) -> Self {
         Self { targets, files }
     }
 
@@ -292,7 +292,7 @@ impl EarlyStart {
     ) -> anyhow::Result<()> {
         let started = Instant::now();
         let mut files = UniqueVec::<(rg_def_map::PackageSlot, rg_parse::FileId)>::new();
-        let mut targets = UniqueVec::<TargetRef>::new();
+        let mut targets = UniqueVec::<CrateRef>::new();
 
         // `ReferenceSearchPlan::files == None` means "scan the targets normally". `Some(files)`
         // means the text prefilter already selected the exact source files worth materializing.
@@ -302,7 +302,7 @@ impl EarlyStart {
                     files.extend(
                         plan_files
                             .iter()
-                            .map(|file| (file.target.package, file.file_id)),
+                            .map(|file| (file.crate_ref.package, file.file_id)),
                     );
                 }
                 None => targets.extend(plan.targets.iter().copied()),
@@ -315,9 +315,9 @@ impl EarlyStart {
             .mutate_saved_preserving_generation(|project| {
                 project
                     .split_indexing()
-                    .materialize(AnalysisSurface::FilesAndTargets {
+                    .materialize(AnalysisSurface::FilesAndCrates {
                         files: &files,
-                        targets: &targets,
+                        crates: &targets,
                     })
             })
             .with_context(|| {

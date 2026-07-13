@@ -4,7 +4,7 @@
 //! can host member completions, then return the receiver expression and typed
 //! member prefix.
 
-use rg_ir_model::{ExprId, TargetRef};
+use rg_ir_model::{CrateRef, ExprId};
 use rg_package_store::PackageStoreError;
 use rg_parse::{FileId, Span, TextSpan};
 
@@ -15,7 +15,7 @@ use super::super::DotCompletionSite;
 /// Finds the source site that belongs to a dot-completion offset.
 pub(crate) struct DotCompletionSiteScanner<'txn, 'db> {
     body_ir: &'txn BodyIrReadTxn<'db>,
-    target: TargetRef,
+    crate_ref: CrateRef,
     file_id: FileId,
     offset: u32,
 }
@@ -23,13 +23,13 @@ pub(crate) struct DotCompletionSiteScanner<'txn, 'db> {
 impl<'txn, 'db> DotCompletionSiteScanner<'txn, 'db> {
     pub(crate) fn new(
         body_ir: &'txn BodyIrReadTxn<'db>,
-        target: TargetRef,
+        crate_ref: CrateRef,
         file_id: FileId,
         offset: u32,
     ) -> Self {
         Self {
             body_ir,
-            target,
+            crate_ref,
             file_id,
             offset,
         }
@@ -39,7 +39,7 @@ impl<'txn, 'db> DotCompletionSiteScanner<'txn, 'db> {
     pub(crate) fn site_at_dot(&self) -> Result<Option<DotCompletionSite>, PackageStoreError> {
         let mut best: Option<(DotCompletionSite, u32)> = None;
 
-        for (body_ref, body) in self.body_ir.bodies(self.target, Some(self.file_id))? {
+        for (body_ref, body) in self.body_ir.bodies(self.crate_ref, Some(self.file_id))? {
             // First narrow the search to bodies that can contain this completion offset.
             if !body.source().span.contains(self.offset) {
                 continue;

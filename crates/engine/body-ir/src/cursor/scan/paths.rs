@@ -1,7 +1,7 @@
 //! Shared path-segment scanning for body-local cursor candidates.
 //!
 //! Path scanners provide reusable type-path and value-path traversal for point
-//! queries and whole-target scans after those queries choose their scope.
+//! queries and whole-crate scans after those queries choose their scope.
 
 use rg_ir_model::{
     BodyRef, Path, ScopeId,

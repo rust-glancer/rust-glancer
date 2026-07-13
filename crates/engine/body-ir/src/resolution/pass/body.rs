@@ -5,8 +5,8 @@
 
 use rg_def_map::DefMapSource;
 use rg_ir_model::{BindingId, BodyRef, ExprId};
-use rg_ir_storage::{ItemLookupIndex, ItemStoreSource};
 use rg_package_store::PackageStoreError;
+use rg_semantic_ir::{ItemLookupIndex, ItemStoreSource};
 use rg_ty::{ExpectedNominalTyExt, PrimitiveTy, TraitSelectionCache, Ty};
 
 use crate::{

@@ -7,7 +7,7 @@ use crate::SysrootCrate;
 use rg_std::MemorySize;
 use wincode::{SchemaRead, SchemaWrite};
 
-use super::{dependency::PackageDependency, target::Target};
+use super::{dependency::PackageDependency, target::CargoTarget};
 
 /// Stable package identifier inside a normalized workspace metadata snapshot.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, derive_more::Display, MemorySize)]
@@ -77,7 +77,7 @@ pub struct Package {
     pub is_workspace_member: bool,
     pub manifest_path: PathBuf,
     pub cfg_options: CfgOptions,
-    pub targets: Vec<Target>,
+    pub targets: Vec<CargoTarget>,
     pub dependencies: Vec<PackageDependency>,
 }
 

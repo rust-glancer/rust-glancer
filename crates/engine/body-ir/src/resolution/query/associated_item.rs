@@ -6,8 +6,8 @@ use rg_ir_model::{
     FunctionRef, ImplRef, ItemOwner, Path, ScopeId, TraitImplRef, TypeDefId,
     identity::DeclarationRef,
 };
-use rg_ir_storage::{ItemStoreSource, TypePathContext};
 use rg_package_store::PackageStoreError;
+use rg_semantic_ir::{ItemStoreSource, TypePathContext};
 use rg_std::{ExpectedUnique, UniqueVec};
 use rg_ty::{ExpectedTyExt, GenericArg, NominalTy, Ty, TypeSubst};
 
@@ -309,7 +309,7 @@ where
         )))
     }
 
-    /// Find an inherent associated const in body-local then target impls.
+    /// Find an inherent associated const in body-local then crate impls.
     fn inherent_associated_const_candidate_for_type(
         &self,
         ty: &NominalTy,
@@ -391,7 +391,7 @@ where
             }
         }
 
-        if ty.def.origin.as_target_ref().is_some() {
+        if ty.def.origin.as_crate_ref().is_some() {
             for function_ref in self.semantic_inherent_function_items_for_type(ty, name)? {
                 if matcher.function_applies_to_receiver(function_ref, ty)? {
                     self.push_associated_function(&mut functions, ty, function_ref, name)?;
@@ -409,7 +409,7 @@ where
             self.push_associated_function(&mut functions, ty, function_ref, name)?;
         }
 
-        if ty.def.origin.as_target_ref().is_some() {
+        if ty.def.origin.as_crate_ref().is_some() {
             for (function_ref, _) in matcher.trait_function_candidates_for_receiver(
                 self.context.semantic_index(),
                 ty,
@@ -470,7 +470,7 @@ where
         Ok(consts)
     }
 
-    /// Read target-visible inherent functions from the persisted lookup index.
+    /// Read crate-visible inherent functions from the persisted lookup index.
     fn semantic_inherent_function_items_for_type(
         &self,
         ty: &NominalTy,

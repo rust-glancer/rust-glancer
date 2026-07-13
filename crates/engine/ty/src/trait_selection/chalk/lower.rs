@@ -22,9 +22,8 @@ use rg_ir_model::items::{
 };
 use rg_ir_model::{
     ImplRef, Mutability, TraitRef, TypeAliasRef, TypeDefId, TypeDefRef, TypePathResolution,
-    hir::items::TypeAliasData,
 };
-use rg_ir_storage::{ItemStoreSource, TypePathContext};
+use rg_semantic_ir::{ItemStoreSource, TypeAliasData, TypePathContext};
 use rg_text::Name;
 
 use super::interner::{ChalkDefId, RgChalkInterner};
@@ -246,7 +245,7 @@ where
 
     pub(super) fn impl_datum(
         &self,
-        impl_data: &rg_ir_model::hir::items::ImplData,
+        impl_data: &rg_semantic_ir::ImplData,
         associated_ty_value_ids: Vec<AssociatedTyValueId<RgChalkInterner>>,
     ) -> Option<ImplDatum<RgChalkInterner>> {
         let binders = GenericBinderEnv::for_impl(&impl_data.generics)?;
@@ -278,7 +277,7 @@ where
         impl_ref: ImplRef,
         associated_ty_ref: TypeAliasRef,
         type_alias_data: &TypeAliasData,
-        impl_data: &rg_ir_model::hir::items::ImplData,
+        impl_data: &rg_semantic_ir::ImplData,
     ) -> Option<AssociatedTyValue<RgChalkInterner>> {
         let binders = GenericBinderEnv::for_impl(&impl_data.generics)?;
         // Keep impl values aligned with the declaration support above: `type Item = T` is in,
@@ -324,7 +323,7 @@ where
 
     pub(super) fn candidate_where_goals(
         &self,
-        impl_data: &rg_ir_model::hir::items::ImplData,
+        impl_data: &rg_semantic_ir::ImplData,
         subst: &InferenceTypeSubst,
         table: &InferenceTable,
     ) -> Option<Vec<ChalkGoal>> {
@@ -389,7 +388,7 @@ where
 
     fn impl_self_ty(
         &self,
-        impl_data: &rg_ir_model::hir::items::ImplData,
+        impl_data: &rg_semantic_ir::ImplData,
         subst: Option<(&InferenceTypeSubst, &InferenceTable)>,
     ) -> Option<ChalkTy> {
         if let Some(name) = impl_data.self_ty.type_param_name()
@@ -412,7 +411,7 @@ where
 
     fn impl_trait_args(
         &self,
-        impl_data: &rg_ir_model::hir::items::ImplData,
+        impl_data: &rg_semantic_ir::ImplData,
         subst: Option<(&InferenceTypeSubst, &InferenceTable)>,
     ) -> Option<Vec<chalk_ir::GenericArg<RgChalkInterner>>> {
         let Some(TypeRef::Path(path)) = &impl_data.trait_ref else {

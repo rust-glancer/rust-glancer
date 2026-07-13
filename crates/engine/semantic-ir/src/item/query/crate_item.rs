@@ -1,8 +1,8 @@
-//! Target-scoped item lookup.
+//! Crate-scoped item lookup.
 
-use rg_def_map::{DefMapQuery, DefMapSource, TargetResolutionEnv};
+use rg_def_map::{CrateResolutionEnv, DefMapQuery, DefMapSource};
 use rg_ir_model::{
-    DefMapRef, FunctionRef, ImplRef, ModuleRef, TargetRef, TraitImplRef, TraitRef, TypeDefRef,
+    CrateRef, DefMapRef, FunctionRef, ImplRef, ModuleRef, TraitImplRef, TraitRef, TypeDefRef,
 };
 use rg_std::UniqueVec;
 
@@ -12,20 +12,20 @@ use crate::ItemStore;
 /// Item queries that need a Rust language visibility context.
 ///
 /// Raw item refs can be read directly from `ItemStoreQuery`. Impl and method lookup are different:
-/// they need the set of item stores visible from the target where lookup happens.
+/// they need the set of item stores visible from the crate where lookup happens.
 #[derive(Clone)]
-pub struct TargetItemQuery<'item, D, I> {
+pub struct CrateItemQuery<'item, D, I> {
     def_maps: DefMapQuery<D>,
     items: ItemStoreQuery<'item, I>,
-    use_site: TargetRef,
+    use_site: CrateRef,
 }
 
-impl<'item, D, I> TargetItemQuery<'item, D, I>
+impl<'item, D, I> CrateItemQuery<'item, D, I>
 where
     D: DefMapSource<Error = I::Error>,
     I: ItemStoreSource<'item>,
 {
-    pub fn new(def_maps: D, items: I, use_site: TargetRef) -> Self {
+    pub fn new(def_maps: D, items: I, use_site: CrateRef) -> Self {
         Self {
             def_maps: DefMapQuery::new(def_maps),
             items: ItemStoreQuery::new(items),
@@ -37,18 +37,18 @@ where
         &self.items
     }
 
-    /// Returns the root module of the target where lookup is performed.
+    /// Returns the root module of the crate where lookup is performed.
     pub fn use_site_root_module(&self) -> Result<Option<ModuleRef>, I::Error> {
         self.def_maps.root_module(self.use_site)
     }
 
-    /// Returns stores visible from this query's use-site target.
+    /// Returns stores visible from this query's use-site crate.
     pub fn visible_stores(&self) -> Result<Vec<&'item ItemStore>, I::Error> {
-        let targets = self.def_maps.visible_targets_from(self.use_site)?;
-        self.items.stores_for_targets(&targets)
+        let crates = self.def_maps.visible_crates_from(self.use_site)?;
+        self.items.stores_for_crates(&crates)
     }
 
-    /// Searches impls visible from the use-site target, not from the receiver type's origin.
+    /// Searches impls visible from the use-site crate, not from the receiver type's origin.
     pub fn impls_for_type(&self, ty: TypeDefRef) -> Result<UniqueVec<ImplRef>, I::Error> {
         let mut impls = UniqueVec::new();
         for store in self.impl_stores_for_origin(ty.origin)? {
@@ -194,10 +194,10 @@ where
         Ok(functions)
     }
 
-    /// Target-origin impl lookup sees the use-site target's visible semantic stores; body-local refs
+    /// Crate-origin impl lookup sees the use-site crate's visible semantic stores; body-local refs
     /// stay scoped to their owning body store.
     fn impl_stores_for_origin(&self, origin: DefMapRef) -> Result<Vec<&'item ItemStore>, I::Error> {
-        if origin.as_target_ref().is_some() {
+        if origin.as_crate_ref().is_some() {
             return self.visible_stores();
         }
 

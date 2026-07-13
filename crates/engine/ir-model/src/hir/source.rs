@@ -22,7 +22,7 @@ impl rg_arena::ArenaId for GeneratedSourceId {
     }
 }
 
-/// Target-local reference to one generated item payload.
+/// Crate-local reference to one generated item payload.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 #[shrink(leaf)]
 pub struct GeneratedItemRef {

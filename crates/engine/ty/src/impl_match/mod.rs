@@ -12,14 +12,14 @@ mod trait_methods;
 use crate::{GenericArg, ItemPathQuery, NominalTy, Ty, TypeSubst};
 use rg_def_map::DefMapSource;
 use rg_ir_model::TraitApplicability;
-use rg_ir_model::hir::items::ImplData;
 use rg_ir_model::items::{GenericArg as ItemGenericArg, GenericParams, TypeRef};
-use rg_ir_storage::{ItemStoreSource, TargetItemQuery};
+use rg_semantic_ir::ImplData;
+use rg_semantic_ir::{CrateItemQuery, ItemStoreSource};
 
 /// Matcher for impl headers stored in semantic-shaped item stores.
 pub struct ImplMatcher<'query, D, I> {
     item_paths: ItemPathQuery<'query, D, I>,
-    target_items: TargetItemQuery<'query, D, I>,
+    crate_items: CrateItemQuery<'query, D, I>,
 }
 
 impl<'query, D, I> ImplMatcher<'query, D, I>
@@ -30,11 +30,11 @@ where
     /// Creates a matcher over the same path/item routing used by type conversion.
     pub fn new(
         item_paths: ItemPathQuery<'query, D, I>,
-        target_items: TargetItemQuery<'query, D, I>,
+        crate_items: CrateItemQuery<'query, D, I>,
     ) -> Self {
         Self {
             item_paths,
-            target_items,
+            crate_items,
         }
     }
 

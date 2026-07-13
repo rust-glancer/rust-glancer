@@ -2,52 +2,51 @@
 
 use rg_arena::Arena;
 use rg_def_map::DefMap;
-use rg_ir_model::BodyId;
-use rg_ir_storage::{BodyLocalItems, ItemLookupIndex, ItemStore};
-use rg_parse::TargetId;
+use rg_ir_model::{BodyId, CrateId};
+use rg_semantic_ir::{ItemLookupIndex, ItemStore};
 use rg_std::{MemorySize, Shrink};
 use wincode::{SchemaRead, SchemaWrite};
 
-use super::{TargetBodiesCoverage, TargetBodiesStatus};
+use super::{BodyLocalItems, CrateBodiesCoverage, CrateBodiesStatus};
 use crate::ir::body::ResolvedBodyData;
 
-/// Lowered bodies for all targets inside one parsed package.
+/// Lowered bodies for all semantic crates inside one package.
 #[derive(Debug, Clone, PartialEq, Eq, Default, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct PackageBodies {
-    pub(crate) targets: Arena<TargetId, TargetBodies>,
+    pub(crate) crates: Arena<CrateId, CrateBodies>,
 }
 
 impl PackageBodies {
-    pub fn new(targets: Vec<TargetBodies>) -> Self {
+    pub fn new(crates: Vec<CrateBodies>) -> Self {
         Self {
-            targets: Arena::from_vec(targets),
+            crates: Arena::from_vec(crates),
         }
     }
 
-    pub fn targets(&self) -> &[TargetBodies] {
-        self.targets.as_slice()
+    pub fn crates(&self) -> &[CrateBodies] {
+        self.crates.as_slice()
     }
 
-    pub fn target(&self, target: TargetId) -> Option<&TargetBodies> {
-        self.targets.get(target)
+    pub fn crate_bodies(&self, crate_id: CrateId) -> Option<&CrateBodies> {
+        self.crates.get(crate_id)
     }
 
-    pub(crate) fn targets_mut(&mut self) -> &mut [TargetBodies] {
-        self.targets.as_mut_slice()
+    pub(crate) fn crates_mut(&mut self) -> &mut [CrateBodies] {
+        self.crates.as_mut_slice()
     }
 }
 
-/// Resolved bodies for one target.
+/// Resolved bodies for one semantic crate.
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
-pub struct TargetBodies {
-    pub(crate) coverage: TargetBodiesCoverage,
+pub struct CrateBodies {
+    pub(crate) coverage: CrateBodiesCoverage,
     pub(crate) semantic_index: ItemLookupIndex,
     pub(crate) bodies: Arena<BodyId, ResolvedBodyData>,
     pub(crate) body_local_items: Arena<BodyId, BodyLocalItems>,
 }
 
-impl TargetBodies {
-    pub(crate) fn with_coverage(coverage: TargetBodiesCoverage) -> Self {
+impl CrateBodies {
+    pub(crate) fn with_coverage(coverage: CrateBodiesCoverage) -> Self {
         Self {
             coverage,
             semantic_index: ItemLookupIndex::default(),
@@ -57,18 +56,18 @@ impl TargetBodies {
     }
 
     pub(crate) fn missing() -> Self {
-        Self::with_coverage(TargetBodiesCoverage::Missing)
+        Self::with_coverage(CrateBodiesCoverage::Missing)
     }
 
     pub(crate) fn skipped_by_policy() -> Self {
-        Self::with_coverage(TargetBodiesCoverage::SkippedByPolicy)
+        Self::with_coverage(CrateBodiesCoverage::SkippedByPolicy)
     }
 
-    pub fn coverage(&self) -> TargetBodiesCoverage {
+    pub fn coverage(&self) -> CrateBodiesCoverage {
         self.coverage
     }
 
-    pub fn status(&self) -> TargetBodiesStatus {
+    pub fn status(&self) -> CrateBodiesStatus {
         self.coverage.status()
     }
 

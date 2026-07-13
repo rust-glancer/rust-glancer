@@ -9,7 +9,7 @@ use rg_std::MemorySize;
 use rg_text::RustEdition;
 
 use crate::{
-    Package, PackageDependency, PackageId, PackageOrigin, PackageSource, Target, TargetKind,
+    CargoTarget, Package, PackageDependency, PackageId, PackageOrigin, PackageSource, TargetKind,
     WorkspaceMetadata, WorkspaceMetadataError, WorkspaceMetadataResult, path::canonicalize_path,
 };
 
@@ -259,7 +259,7 @@ impl CargoMetadataLowerer {
         raw_package_root: &Path,
         package_root: &Path,
         is_workspace_member: bool,
-    ) -> WorkspaceMetadataResult<Option<Target>> {
+    ) -> WorkspaceMetadataResult<Option<CargoTarget>> {
         let Some(src_path) = Self::normalize_target_src_path(
             target.src_path.as_std_path(),
             raw_package_root,
@@ -270,7 +270,7 @@ impl CargoMetadataLowerer {
             return Ok(None);
         };
 
-        Ok(Some(Target {
+        Ok(Some(CargoTarget {
             name: target.name.to_string(),
             kind: self.target_kind(target),
             src_path,

@@ -17,11 +17,10 @@
 use rg_def_map::DefMapSource;
 use rg_ir_model::{
     AssocItemId, TraitApplicability, TraitRef, TypeAliasRef,
-    hir::items::ImplData,
     items::{GenericParams, TypeBound, TypeRef},
 };
-use rg_ir_storage::{ItemStoreSource, TypePathContext};
 use rg_package_store::PackageStoreError;
+use rg_semantic_ir::{ImplData, ItemStoreSource, TypePathContext};
 use rg_std::ExpectedUnique;
 use rg_text::Name;
 use rg_ty::{
@@ -223,7 +222,7 @@ where
     ) -> Result<ExpectedUnique<TraitSelection>, PackageStoreError> {
         TraitSelectionQuery::with_index(
             self.context.item_paths(),
-            self.context.target_items(),
+            self.context.crate_items(),
             self.context.semantic_index(),
         )
         .with_cache(self.trait_selection_cache.clone())
@@ -552,7 +551,7 @@ where
         // `<slice::Iter<T> as Iterator>::Item = T`.
         TraitSelectionQuery::with_index(
             self.context.item_paths(),
-            self.context.target_items(),
+            self.context.crate_items(),
             self.context.semantic_index(),
         )
         .with_cache(self.trait_selection_cache.clone())

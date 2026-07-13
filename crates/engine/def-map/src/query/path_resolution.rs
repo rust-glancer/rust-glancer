@@ -6,7 +6,7 @@
 //! macro-namespace queries needed before macro-specific precedence is applied.
 //!
 //! The resolver does not own scopes. It reads through `ScopeResolutionEnv` and
-//! `TargetResolutionEnv`, so finalization can pass current fixed-point snapshots while frozen
+//! `CrateResolutionEnv`, so finalization can pass current fixed-point snapshots while frozen
 //! queries read persisted DefMaps.
 
 use rg_ir_model::{DefId, ImportRef, LocalDefRef, ModuleRef, Path, PathSegment};
@@ -18,7 +18,7 @@ use crate::{
     NamespaceSet, ScopeBinding, ScopeBindingProvenance, Visibility,
 };
 
-use super::resolution_env::{ScopeResolutionEnv, TargetResolutionEnv};
+use super::resolution_env::{CrateResolutionEnv, ScopeResolutionEnv};
 
 /// Macro candidates kept in the buckets required by Rust lookup precedence.
 ///
@@ -118,7 +118,7 @@ impl<E: ScopeResolutionEnv + ?Sized> ScopeResolver<'_, E> {
         }
     }
 
-    /// Walk a path through lexical scopes without module-keyword or target fallback rules.
+    /// Walk a path through lexical scopes without module-keyword or crate fallback rules.
     ///
     /// Body-local paths use this form because synthetic modules represent nested lexical scopes,
     /// not full Rust modules with extern roots and preludes.
@@ -427,10 +427,10 @@ impl<E: ScopeResolutionEnv + ?Sized> ScopeResolver<'_, E> {
     }
 }
 
-impl<E: TargetResolutionEnv + ?Sized> ScopeResolver<'_, E> {
+impl<E: CrateResolutionEnv + ?Sized> ScopeResolver<'_, E> {
     /// Resolve one import and return every binding it introduces.
     ///
-    /// Both target and body DefMap builders apply these facts to their own mutable scope storage.
+    /// Both crate and body DefMap builders apply these facts to their own mutable scope storage.
     /// This method does not mutate either scope: the same operation can be used again after the
     /// fixed point to classify unresolved imports. Lookup, provenance, and visibility intersection
     /// therefore have one authority.
@@ -587,7 +587,7 @@ impl<E: TargetResolutionEnv + ?Sized> ScopeResolver<'_, E> {
     ) -> Result<Vec<ScopeBinding>, E::Error> {
         let Some(prelude_module) = self
             .env
-            .prelude_module(importing_module.origin.origin_target())?
+            .prelude_module(importing_module.origin.origin_crate())?
         else {
             return Ok(Vec::new());
         };
@@ -907,9 +907,9 @@ impl<E: TargetResolutionEnv + ?Sized> ScopeResolver<'_, E> {
         }
 
         match segment {
-            PathSegment::DollarCrate(target) => Ok(self
+            PathSegment::DollarCrate(crate_ref) => Ok(self
                 .env
-                .root_module(*target)?
+                .root_module(*crate_ref)?
                 .map(DefId::Module)
                 .into_iter()
                 .collect()),
@@ -922,7 +922,7 @@ impl<E: TargetResolutionEnv + ?Sized> ScopeResolver<'_, E> {
                 .collect()),
             PathSegment::CrateKw => Ok(self
                 .env
-                .root_module(importing_module.origin.origin_target())?
+                .root_module(importing_module.origin.origin_crate())?
                 .map(DefId::Module)
                 .into_iter()
                 .collect()),
@@ -964,7 +964,7 @@ impl<E: TargetResolutionEnv + ?Sized> ScopeResolver<'_, E> {
                     }
                     PathSegment::CrateKw => {
                         if let Some(root) =
-                            self.env.root_module(module_ref.origin.origin_target())?
+                            self.env.root_module(module_ref.origin.origin_crate())?
                         {
                             next_defs.push(DefId::Module(root));
                         }
@@ -1025,7 +1025,7 @@ impl<E: TargetResolutionEnv + ?Sized> ScopeResolver<'_, E> {
             }
             return Ok(self
                 .env
-                .extern_root(importing_module.origin.origin_target(), name)?
+                .extern_root(importing_module.origin.origin_crate(), name)?
                 .map(|module_ref| {
                     vec![(
                         Namespace::Types,
@@ -1070,7 +1070,7 @@ impl<E: TargetResolutionEnv + ?Sized> ScopeResolver<'_, E> {
                 .any(|(namespace, _)| *namespace == Namespace::Types)
             && let Some(module_ref) = self
                 .env
-                .extern_root(importing_module.origin.origin_target(), name)?
+                .extern_root(importing_module.origin.origin_crate(), name)?
         {
             bindings.push((
                 Namespace::Types,
@@ -1084,7 +1084,7 @@ impl<E: TargetResolutionEnv + ?Sized> ScopeResolver<'_, E> {
 
         if let Some(prelude_module) = self
             .env
-            .prelude_module(importing_module.origin.origin_target())?
+            .prelude_module(importing_module.origin.origin_crate())?
         {
             let occupied_before = Namespace::ALL
                 .map(|namespace| bindings.iter().any(|(occupied, _)| *occupied == namespace));

@@ -2,8 +2,8 @@
 
 use rg_def_map::DefMapSource;
 use rg_ir_model::{AssocItemId, DefMapRef, FunctionRef, ImplRef, TraitImplRef, TypeDefRef};
-use rg_ir_storage::{ItemStore, ItemStoreSource};
 use rg_package_store::PackageStoreError;
+use rg_semantic_ir::{ItemStore, ItemStoreSource};
 use rg_std::UniqueVec;
 
 use crate::resolution::BodyResolutionContext;
@@ -95,7 +95,7 @@ where
         let mut origins = UniqueVec::new();
 
         // Check the active body first, then the body-local modules that own this declaration and
-        // its fallback. Target modules are still handled by TargetItemQuery.
+        // its fallback. Target modules are still handled by CrateItemQuery.
         origins.push(DefMapRef::Body(self.context.body_ref()));
         for module in [
             self.context.body().owner_module(),

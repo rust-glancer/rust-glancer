@@ -1,0 +1,29 @@
+//! Semantic item data, storage, and definition-only queries.
+//!
+//! These modules form one ownership boundary: item data and compact signatures are stored here,
+//! local DefMap identities are indexed here, and path resolution stops at semantic item refs here.
+//! Callers that need a `Ty` can project the resulting refs in the type engine without pulling type
+//! machinery into definition lowering.
+
+mod context;
+mod data;
+mod lookup_index;
+mod lowering;
+mod query;
+mod signature;
+mod store;
+mod view;
+
+pub use self::{
+    context::TypePathContext,
+    data::{
+        ConstData, EnumData, EnumVariantData, FieldData, FunctionData, ImplData, StaticData,
+        StructData, TraitData, TypeAliasData, UnionData,
+    },
+    lookup_index::ItemLookupIndex,
+    lowering::{ItemStoreLowerer, ItemStoreSourceReader},
+    query::{CrateItemQuery, ItemResolutionQuery, ItemStoreQuery, ItemStoreSource},
+    signature::{ConstSignature, FunctionSignature, TypeAliasSignature},
+    store::{ItemStore, ItemStoreBuilder},
+    view::SemanticItemView,
+};

@@ -9,8 +9,8 @@ use rg_ir_model::{
     BindingId, BodyPath, ExprId, Mutability, PatId, Path, PathSegment, ScopeId, StmtId, TypeDefId,
     items::{FieldKey, TypeRef},
 };
-use rg_ir_storage::ItemStoreSource;
 use rg_package_store::PackageStoreError;
+use rg_semantic_ir::ItemStoreSource;
 use rg_std::ExpectedUnique;
 use rg_ty::{ReferencePeelingCandidates, TraitSelectionCache, Ty};
 

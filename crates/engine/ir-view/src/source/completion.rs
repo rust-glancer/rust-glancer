@@ -10,7 +10,7 @@ use rg_body_ir::{
 use rg_ir_model::Path;
 use rg_ir_model::items::FieldKey;
 use rg_ir_model::{
-    ModuleRef, TargetRef,
+    CrateRef, ModuleRef,
     identity::{ExprRef, LexicalScopeRef},
 };
 use rg_parse::{FileId, Span};
@@ -164,14 +164,14 @@ impl<'a, 'db> SourceCompletionView<'a, 'db> {
     /// Return the member-access site at a cursor offset.
     pub fn member_access_site_at(
         &self,
-        target: TargetRef,
+        crate_ref: CrateRef,
         file_id: FileId,
         offset: u32,
     ) -> anyhow::Result<Option<IndexedMemberAccessSite>> {
         Ok(self
             .db
             .body_ir
-            .dot_completion_site(target, file_id, offset)?
+            .dot_completion_site(crate_ref, file_id, offset)?
             .map(|site| IndexedMemberAccessSite {
                 receiver: ExprRef::new(site.body, site.receiver),
                 member_prefix_span: site.member_prefix_span,
@@ -181,14 +181,14 @@ impl<'a, 'db> SourceCompletionView<'a, 'db> {
     /// Return a body qualified-path site at a cursor offset.
     pub fn body_qualified_path_site_at(
         &self,
-        target: TargetRef,
+        crate_ref: CrateRef,
         file_id: FileId,
         offset: u32,
     ) -> anyhow::Result<Option<IndexedQualifiedPathSite>> {
         Ok(self
             .db
             .body_ir
-            .path_completion_site(target, file_id, offset)?
+            .path_completion_site(crate_ref, file_id, offset)?
             .map(|site| IndexedQualifiedPathSite {
                 scope: IndexedQualifiedPathScope::Body {
                     scope: LexicalScopeRef::new(site.body, site.scope),
@@ -202,14 +202,14 @@ impl<'a, 'db> SourceCompletionView<'a, 'db> {
     /// Return an import qualified-path site at a cursor offset.
     pub fn import_qualified_path_site_at(
         &self,
-        target: TargetRef,
+        crate_ref: CrateRef,
         file_id: FileId,
         offset: u32,
     ) -> anyhow::Result<Option<IndexedQualifiedPathSite>> {
         Ok(self
             .db
             .def_map
-            .path_completion_site(target, file_id, offset)?
+            .path_completion_site(crate_ref, file_id, offset)?
             .map(|site| IndexedQualifiedPathSite {
                 scope: IndexedQualifiedPathScope::Import {
                     module: site.module,
@@ -222,14 +222,14 @@ impl<'a, 'db> SourceCompletionView<'a, 'db> {
     /// Return a body unqualified-name site at a cursor offset.
     pub fn body_unqualified_name_site_at(
         &self,
-        target: TargetRef,
+        crate_ref: CrateRef,
         file_id: FileId,
         offset: u32,
     ) -> anyhow::Result<Option<IndexedUnqualifiedNameSite>> {
         Ok(self
             .db
             .body_ir
-            .unqualified_completion_site(target, file_id, offset)?
+            .unqualified_completion_site(crate_ref, file_id, offset)?
             .map(|site| IndexedUnqualifiedNameSite {
                 scope: IndexedUnqualifiedNameScope::Body {
                     scope: LexicalScopeRef::new(site.body, site.scope),
@@ -244,14 +244,14 @@ impl<'a, 'db> SourceCompletionView<'a, 'db> {
     /// Return an import unqualified-name site at a cursor offset.
     pub fn import_unqualified_name_site_at(
         &self,
-        target: TargetRef,
+        crate_ref: CrateRef,
         file_id: FileId,
         offset: u32,
     ) -> anyhow::Result<Option<IndexedUnqualifiedNameSite>> {
         Ok(self
             .db
             .def_map
-            .unqualified_completion_site(target, file_id, offset)?
+            .unqualified_completion_site(crate_ref, file_id, offset)?
             .map(|site| IndexedUnqualifiedNameSite {
                 scope: IndexedUnqualifiedNameScope::Import {
                     module: site.module,
@@ -263,14 +263,14 @@ impl<'a, 'db> SourceCompletionView<'a, 'db> {
     /// Return a record field-list site at a cursor offset.
     pub fn record_field_list_site_at(
         &self,
-        target: TargetRef,
+        crate_ref: CrateRef,
         file_id: FileId,
         offset: u32,
     ) -> anyhow::Result<Option<IndexedRecordFieldListSite>> {
         Ok(self
             .db
             .body_ir
-            .record_field_completion_site(target, file_id, offset)?
+            .record_field_completion_site(crate_ref, file_id, offset)?
             .map(|site| IndexedRecordFieldListSite {
                 scope: LexicalScopeRef::new(site.body, site.scope),
                 owner: site.owner,

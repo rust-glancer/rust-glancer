@@ -7,7 +7,7 @@ use crate::{
     ItemTreeId, MacroDefinitionItem, MacroUseAttr, MacroUseSelector, ModuleSource,
     Package as ItemTreePackage, ParamKind, TargetRoot, VisibilityLevel, testonly::ItemTreeFixture,
 };
-use rg_parse::{FileId, Package, ParseDb, Target};
+use rg_parse::{CargoTarget, FileId, Package, ParseDb};
 
 pub(super) fn check_project_item_tree(fixture: &str, expect: Expect) {
     let db = ItemTreeFixtureDb::build(fixture);
@@ -106,7 +106,7 @@ impl<'a> PackageItemTreeSnapshot<'a> {
         )
     }
 
-    fn render_target_root(&self, target: &Target, root_file: rg_parse::FileId) -> String {
+    fn render_target_root(&self, target: &CargoTarget, root_file: rg_parse::FileId) -> String {
         let mut dump = String::new();
         writeln!(
             &mut dump,

@@ -9,8 +9,8 @@ use rg_ir_model::{
     identity::DeclarationRef,
     items::{FieldKey, GenericArg as ItemGenericArg},
 };
-use rg_ir_storage::ItemStoreSource;
 use rg_package_store::PackageStoreError;
+use rg_semantic_ir::ItemStoreSource;
 use rg_std::ExpectedUnique;
 use rg_ty::{
     AutoderefMode, ExpectedTyExt, GenericArg, NominalTy, PrimitiveTy, ReferencePeelingCandidates,

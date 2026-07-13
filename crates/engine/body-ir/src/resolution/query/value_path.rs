@@ -11,8 +11,8 @@ use rg_ir_model::{
     ModuleId, ModuleRef, Path, ScopeId, SemanticItemRef, StaticRef, TypeDefRef, TypePathResolution,
     identity::DeclarationRef,
 };
-use rg_ir_storage::{ItemStoreSource, TypePathContext};
 use rg_package_store::PackageStoreError;
+use rg_semantic_ir::{ItemStoreSource, TypePathContext};
 use rg_std::{ExpectedUnique, UniqueVec};
 use rg_ty::{ExpectedTyExt, GenericArg, NominalTy, Ty};
 

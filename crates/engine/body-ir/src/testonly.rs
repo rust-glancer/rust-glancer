@@ -1,8 +1,8 @@
 use rg_def_map::DefMap;
 use rg_def_map::DefMapDb;
-use rg_ir_model::{BodyRef, DefMapRef, TargetRef};
-use rg_ir_storage::ItemStore;
+use rg_ir_model::{BodyRef, CrateRef, DefMapRef};
 use rg_parse::ParseDb;
+use rg_semantic_ir::ItemStore;
 use rg_semantic_ir::{SemanticIrDb, testonly::SemanticIrFixture};
 use rg_text::PackageNameInterners;
 
@@ -72,38 +72,38 @@ impl BodyIrFixture {
         &self.body_ir
     }
 
-    pub fn resident_def_map(&self, target: TargetRef) -> Option<&DefMap> {
-        self.semantic_ir.resident_def_map(target)
+    pub fn resident_def_map(&self, crate_ref: CrateRef) -> Option<&DefMap> {
+        self.semantic_ir.resident_def_map(crate_ref)
     }
 
-    pub fn resident_target_ir(&self, target: TargetRef) -> Option<&ItemStore> {
-        self.semantic_ir.resident_target_ir(target)
+    pub fn resident_crate_ir(&self, crate_ref: CrateRef) -> Option<&ItemStore> {
+        self.semantic_ir.resident_crate_ir(crate_ref)
     }
 
     pub fn resident_body(&self, body_ref: BodyRef) -> Option<&ResolvedBodyData> {
         self.body_ir
-            .resident_package(body_ref.target.package)?
-            .target(body_ref.target.target)?
+            .resident_package(body_ref.crate_ref.package)?
+            .crate_bodies(body_ref.crate_ref.crate_id)?
             .body(body_ref.body)
     }
 
     pub fn resident_body_item_store(&self, body_ref: BodyRef) -> Option<&ItemStore> {
         self.body_ir
-            .resident_package(body_ref.target.package)?
-            .target(body_ref.target.target)?
+            .resident_package(body_ref.crate_ref.package)?
+            .crate_bodies(body_ref.crate_ref.crate_id)?
             .body_item_store(body_ref.body)
     }
 
     pub fn resident_body_def_map(&self, body_ref: BodyRef) -> Option<&DefMap> {
         self.body_ir
-            .resident_package(body_ref.target.package)?
-            .target(body_ref.target.target)?
+            .resident_package(body_ref.crate_ref.package)?
+            .crate_bodies(body_ref.crate_ref.crate_id)?
             .body_def_map(body_ref.body)
     }
 
     pub fn resident_item_store(&self, origin: DefMapRef) -> Option<&ItemStore> {
         match origin {
-            DefMapRef::Target(target) => self.resident_target_ir(target),
+            DefMapRef::Crate(crate_ref) => self.resident_crate_ir(crate_ref),
             DefMapRef::Body(body_ref) => self.resident_body_item_store(body_ref),
         }
     }

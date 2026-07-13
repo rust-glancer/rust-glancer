@@ -1849,7 +1849,7 @@ impl<'a> PartialDefMap<'a> {
     }
 }
 
-pub struct TargetState {
+pub struct CrateState {
     pub def_map_builder: DefMapBuilder,
 }
 
@@ -1864,9 +1864,9 @@ core = { package = "fake_core", path = "../core" }
 storage = { path = "../storage" }
 
 //- /app/src/lib.rs
-use storage::TargetState;
+use storage::CrateState;
 
-pub fn use_it(state: &TargetState) {
+pub fn use_it(state: &CrateState) {
     for imp$hover_iter_import$ort in state.def_map_builder.partial().imports().iter() {
         let _import = imp$type_iter_import$ort;
     }

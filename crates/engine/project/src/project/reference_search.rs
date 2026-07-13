@@ -12,7 +12,7 @@
 use anyhow::Context as _;
 use rg_analysis::{ReferenceSearchFile, ReferenceSearchLabel};
 use rg_def_map::PackageSlot;
-use rg_ir_model::TargetRef;
+use rg_ir_model::CrateRef;
 use rg_std::UniqueVec;
 
 use super::{state::ProjectState, subset};
@@ -27,40 +27,40 @@ impl<'a> ReferenceSearchPlanner<'a> {
         Self { state }
     }
 
-    /// Returns targets whose source should be scanned for an explicit references query.
+    /// Returns crates whose source should be scanned for an explicit references query.
     ///
     /// Queries scan the selected declaration packages and their package reverse-dependency
     /// closure. Workspace-origin queries keep that closure focused on workspace members, falling
     /// back to the whole workspace only when the declaration package is graph-opaque.
-    pub(super) fn targets(
+    pub(super) fn crates(
         &self,
         origin_package: PackageSlot,
-        declaration_targets: &[TargetRef],
-    ) -> Vec<TargetRef> {
-        let packages = self.packages(origin_package, declaration_targets);
-        let mut targets = UniqueVec::new();
+        declaration_crates: &[CrateRef],
+    ) -> Vec<CrateRef> {
+        let packages = self.packages(origin_package, declaration_crates);
+        let mut crates = UniqueVec::new();
         for package in packages {
-            for target in self.state.target_refs_for_package(package) {
-                targets.push(target);
+            for crate_ref in self.state.crate_refs_for_package(package) {
+                crates.push(crate_ref);
             }
         }
-        targets.into_vec()
+        crates.into_vec()
     }
 
-    /// Returns target/file pairs whose source text contains one of the safe reference labels.
+    /// Returns crate/file pairs whose source text contains one of the safe reference labels.
     ///
     /// This is a request-local text prefilter. It narrows expensive semantic scans without storing
     /// a persistent text index or changing the declaration matcher that proves each result.
     pub(super) fn files_matching_labels(
         &self,
-        search_targets: &[TargetRef],
+        search_crates: &[CrateRef],
         labels: &[ReferenceSearchLabel],
     ) -> anyhow::Result<Option<Vec<ReferenceSearchFile>>> {
         let Some(prefilter) = ReferenceTextPrefilter::new(labels) else {
             return Ok(None);
         };
 
-        let packages = Self::unique_target_packages(search_targets);
+        let packages = Self::unique_crate_packages(search_crates);
         let subset = subset::packages_only(self.state.workspace(), &packages);
         let def_map = self.state.def_map_read_txn_for_subset(&subset);
 
@@ -81,15 +81,15 @@ impl<'a> ReferenceSearchPlanner<'a> {
                     continue;
                 }
 
-                for target in def_map
-                    .targets_for_file(package, parsed_file.file_id())
-                    .context("while attempting to find target ownership for source file")?
+                for crate_ref in def_map
+                    .crates_for_file(package, parsed_file.file_id())
+                    .context("while attempting to find crate ownership for source file")?
                 {
-                    if !search_targets.contains(&target) {
+                    if !search_crates.contains(&crate_ref) {
                         continue;
                     }
                     let file = ReferenceSearchFile {
-                        target,
+                        crate_ref,
                         file_id: parsed_file.file_id(),
                     };
                     files.push(file);
@@ -100,11 +100,11 @@ impl<'a> ReferenceSearchPlanner<'a> {
         Ok(Some(files.into_vec()))
     }
 
-    /// Returns packages whose targets should be scanned for references.
+    /// Returns packages whose crates should be scanned for references.
     fn packages(
         &self,
         origin_package: PackageSlot,
-        declaration_targets: &[TargetRef],
+        declaration_crates: &[CrateRef],
     ) -> Vec<PackageSlot> {
         let workspace = self.state.workspace();
         let origin_is_workspace = workspace
@@ -115,8 +115,8 @@ impl<'a> ReferenceSearchPlanner<'a> {
         // Start from the declaration package rather than the cursor package: references can only
         // appear in packages that either define the item or depend on the package that defines it.
         let mut root_packages = UniqueVec::new();
-        for target in declaration_targets {
-            root_packages.push(target.package);
+        for crate_ref in declaration_crates {
+            root_packages.push(crate_ref.package);
         }
         if root_packages.is_empty() {
             root_packages.push(origin_package);
@@ -158,10 +158,10 @@ impl<'a> ReferenceSearchPlanner<'a> {
         packages
     }
 
-    fn unique_target_packages(targets: &[TargetRef]) -> Vec<PackageSlot> {
-        targets
+    fn unique_crate_packages(crates: &[CrateRef]) -> Vec<PackageSlot> {
+        crates
             .iter()
-            .map(|target| target.package)
+            .map(|crate_ref| crate_ref.package)
             .collect::<UniqueVec<_>>()
             .into_vec()
     }

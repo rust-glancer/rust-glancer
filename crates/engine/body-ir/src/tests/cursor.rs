@@ -1,6 +1,6 @@
 use expect_test::{Expect, expect};
 use rg_def_map::PackageSlot;
-use rg_ir_model::TargetRef;
+use rg_ir_model::CrateRef;
 
 use crate::{
     BindingSurface, BodyCursorCandidate, BodyIrLoader, ValueReferenceSource, ValueReferenceSurface,
@@ -282,9 +282,9 @@ fn check_source_candidates(ident: &str, fixture: &str, expect: Expect) {
     let parsed_file = package
         .parsed_file(file_id)
         .expect("fixture source file should be parsed");
-    let target = TargetRef {
+    let crate_ref = CrateRef {
         package: PackageSlot(0),
-        target: target.id,
+        crate_id: rg_ir_model::CrateId(target.id.0),
     };
     let body_ir = db
         .body_ir_db()
@@ -292,7 +292,7 @@ fn check_source_candidates(ident: &str, fixture: &str, expect: Expect) {
 
     let mut candidates = Vec::new();
     for candidate in body_ir
-        .source_candidates(target, Some(file_id))
+        .source_candidates(crate_ref, Some(file_id))
         .expect("fixture source candidates should scan")
     {
         let Some(text) = parsed_file

@@ -7,8 +7,6 @@ use rg_def_map::{
     DefMap, DefMapBuilder, DefMapSource, LocalDefData, LocalDefKind, ModuleData, ModuleOrigin,
     ModuleScopeBuilder, Namespace, NamespaceSet, ScopeBinding, ScopeBindingProvenance, Visibility,
 };
-use rg_ir_model::hir::items::{ImplData, StructData, TraitData, TypeAliasData};
-use rg_ir_model::hir::signature::TypeAliasSignature;
 use rg_ir_model::hir::source::{GeneratedItemRef, GeneratedSourceId, ItemSource, ItemSourceKind};
 use rg_ir_model::items::{
     FieldList, FloatTy, GenericArg as ItemGenericArg, GenericParams, ItemTreeId, SignedIntTy,
@@ -16,12 +14,13 @@ use rg_ir_model::items::{
     UnsignedIntTy, VisibilityLevel, WherePredicate,
 };
 use rg_ir_model::{
-    AssocItemId, DefId, DefMapRef, FileId, ImplId, ItemId, ItemOwner, LocalDefId, LocalDefRef,
-    LocalImplId, LocalImplRef, ModuleId, ModuleRef, PackageSlot, Span, StructId, TargetId,
-    TargetRef, TextSpan, TraitApplicability, TraitId, TraitRef, TypeAliasId, TypeDefId, TypeDefRef,
+    AssocItemId, CrateRef, DefId, DefMapRef, FileId, ImplId, ItemId, ItemOwner, LocalDefId,
+    LocalDefRef, LocalImplId, LocalImplRef, ModuleId, ModuleRef, PackageSlot, Span, StructId,
+    TextSpan, TraitApplicability, TraitId, TraitRef, TypeAliasId, TypeDefId, TypeDefRef,
 };
-use rg_ir_storage::{
-    ItemLookupIndex, ItemStore, ItemStoreBuilder, ItemStoreSource, TargetItemQuery, TypePathContext,
+use rg_semantic_ir::{
+    CrateItemQuery, ImplData, ItemLookupIndex, ItemStore, ItemStoreBuilder, ItemStoreSource,
+    StructData, TraitData, TypeAliasData, TypeAliasSignature, TypePathContext,
 };
 use rg_std::ExpectedUnique;
 use rg_text::Name;
@@ -33,7 +32,7 @@ use crate::{GenericArg, ItemPathQuery, NominalTy, OpaqueTraitBound, PrimitiveTy,
 pub(super) struct TraitSelectionFixture {
     def_map: DefMap,
     pub(super) store: ItemStore,
-    pub(super) target: TargetRef,
+    pub(super) target: CrateRef,
     lookup_index: ItemLookupIndex,
     type_names: HashMap<TypeDefRef, String>,
     trait_names: HashMap<TraitRef, String>,
@@ -73,21 +72,21 @@ impl DefMapSource for TraitSelectionFixture {
 
     fn extern_root(
         &self,
-        _target: TargetRef,
+        _target: CrateRef,
         _name: &str,
     ) -> Result<Option<ModuleRef>, Self::Error> {
         Ok(None)
     }
 
-    fn extern_roots(&self, _target: TargetRef) -> Result<Vec<(String, ModuleRef)>, Self::Error> {
+    fn extern_roots(&self, _target: CrateRef) -> Result<Vec<(String, ModuleRef)>, Self::Error> {
         Ok(Vec::new())
     }
 
-    fn prelude_module(&self, _target: TargetRef) -> Result<Option<ModuleRef>, Self::Error> {
+    fn prelude_module(&self, _target: CrateRef) -> Result<Option<ModuleRef>, Self::Error> {
         Ok(None)
     }
 
-    fn root_module(&self, _target: TargetRef) -> Result<Option<ModuleRef>, Self::Error> {
+    fn root_module(&self, _target: CrateRef) -> Result<Option<ModuleRef>, Self::Error> {
         Ok(None)
     }
 }
@@ -99,7 +98,7 @@ impl<'a> ItemStoreSource<'a> for &'a TraitSelectionFixture {
         &self,
         origin: DefMapRef,
     ) -> Result<Option<&'a ItemStore>, Self::Error> {
-        Ok((origin == DefMapRef::Target(self.target)).then_some(&self.store))
+        Ok((origin == DefMapRef::Crate(self.target)).then_some(&self.store))
     }
 
     fn included_stores(&self) -> Result<Vec<&'a ItemStore>, Self::Error> {
@@ -107,15 +106,15 @@ impl<'a> ItemStoreSource<'a> for &'a TraitSelectionFixture {
     }
 }
 
-pub(super) fn target() -> TargetRef {
-    TargetRef {
+pub(super) fn target() -> CrateRef {
+    CrateRef {
         package: PackageSlot(0),
-        target: TargetId(0),
+        crate_id: rg_ir_model::CrateId(0),
     }
 }
 
 pub(super) fn origin() -> DefMapRef {
-    DefMapRef::Target(target())
+    DefMapRef::Crate(target())
 }
 
 pub(super) fn module() -> ModuleRef {
@@ -450,9 +449,9 @@ fn fixture_with_traits_impls_aliases_and_structs(
             .insert(data.name.to_string(), trait_ref);
     }
     {
-        let target_items = TargetItemQuery::new(&fixture, &fixture, fixture.target);
+        let crate_items = CrateItemQuery::new(&fixture, &fixture, fixture.target);
         fixture.lookup_index =
-            ItemLookupIndex::build_from(&target_items).expect("fixture lookup index should build");
+            ItemLookupIndex::build_from(&crate_items).expect("fixture lookup index should build");
     }
     fixture
 }
@@ -480,7 +479,7 @@ pub(super) fn query(
 ) -> TraitSelectionQuery<'_, &TraitSelectionFixture, &TraitSelectionFixture> {
     TraitSelectionQuery::with_index(
         ItemPathQuery::new(fixture, fixture),
-        TargetItemQuery::new(fixture, fixture, fixture.target),
+        CrateItemQuery::new(fixture, fixture, fixture.target),
         &fixture.lookup_index,
     )
 }
@@ -1287,9 +1286,9 @@ impl TraitSelectionSnapshot {
 
         let projection = if chalk_direct {
             let item_paths = ItemPathQuery::new(&self.fixture, &self.fixture);
-            let target_items =
-                TargetItemQuery::new(&self.fixture, &self.fixture, self.fixture.target);
-            let mut solver = ChalkTraitSolver::new(&item_paths, &target_items)
+            let crate_items =
+                CrateItemQuery::new(&self.fixture, &self.fixture, self.fixture.target);
+            let mut solver = ChalkTraitSolver::new(&item_paths, &crate_items)
                 .expect("Chalk fixture solver should build");
             solver.normalize_assoc_type(
                 &item_paths,

@@ -12,9 +12,9 @@ use rg_std::{MemorySize, Shrink, UniqueVec};
 use rg_text::Name;
 use wincode::{SchemaRead, SchemaWrite};
 
-use crate::{ItemStoreQuery, ItemStoreSource, TargetItemQuery};
+use crate::{CrateItemQuery, ItemStoreQuery, ItemStoreSource};
 
-/// Receiver-oriented lookup cache built from the stores visible from one use-site target.
+/// Receiver-oriented lookup cache built from the stores visible from one use-site crate.
 #[derive(Debug, Clone, PartialEq, Eq, Default, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct ItemLookupIndex {
     // Method lookup starts from a receiver type. These maps let callers jump directly to impls
@@ -31,9 +31,9 @@ pub struct ItemLookupIndex {
 }
 
 impl ItemLookupIndex {
-    /// Builds an index from the stores visible from one use-site target.
+    /// Builds an index from the stores visible from one use-site crate.
     pub fn build_from<'item, D, I>(
-        target_items: &TargetItemQuery<'item, D, I>,
+        crate_items: &CrateItemQuery<'item, D, I>,
     ) -> Result<Self, I::Error>
     where
         D: DefMapSource<Error = I::Error>,
@@ -41,9 +41,9 @@ impl ItemLookupIndex {
     {
         let mut index = Self::default();
 
-        // The index mirrors target-scoped item-store lookup helpers, but pays the store scan once
+        // The index mirrors crate-scoped item-store lookup helpers, but pays the store scan once
         // up front instead of once per method expression.
-        for store in target_items.visible_stores()? {
+        for store in crate_items.visible_stores()? {
             // Trait methods are independent of a receiver type, so cache them by trait before
             // processing impls that later point back to these traits.
             for (trait_ref, trait_data) in store.traits_with_refs() {
@@ -61,7 +61,7 @@ impl ItemLookupIndex {
                         };
                         functions.push(function_ref);
                         if let Some(function_data) =
-                            target_items.items().function_data(function_ref)?
+                            crate_items.items().function_data(function_ref)?
                         {
                             index
                                 .trait_functions_by_trait_and_name
@@ -100,7 +100,7 @@ impl ItemLookupIndex {
                                     id: *id,
                                 };
                                 let Some(function_data) =
-                                    target_items.items().function_data(function_ref)?
+                                    crate_items.items().function_data(function_ref)?
                                 else {
                                     continue;
                                 };

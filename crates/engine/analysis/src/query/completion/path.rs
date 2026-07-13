@@ -55,8 +55,11 @@ impl<'a, 'db, 'source> PathCompletionResolver<'a, 'db, 'source> {
         )?;
 
         let members = MemberView::new(self.analysis.view_db());
-        let syntax =
-            SyntaxRenderer::new(self.analysis.view_db().target_edition(self.query.target)?);
+        let syntax = SyntaxRenderer::new(
+            self.analysis
+                .view_db()
+                .crate_edition(self.query.crate_ref)?,
+        );
         for variant in completion_candidates.enum_variant_candidates_for_path(&site)? {
             let Some(variant) = members.enum_variant(variant)? else {
                 continue;

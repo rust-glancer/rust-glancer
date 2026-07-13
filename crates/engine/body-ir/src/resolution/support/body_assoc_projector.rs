@@ -11,8 +11,8 @@
 //! selected-call, selected-method, and nested projection paths from drifting apart.
 
 use rg_def_map::DefMapSource;
-use rg_ir_storage::ItemStoreSource;
 use rg_package_store::PackageStoreError;
+use rg_semantic_ir::ItemStoreSource;
 use rg_ty::{
     AssocProjectionResult, TraitGoal, TraitSelectionCache, TraitSelectionQuery,
     inference::InferenceTable,
@@ -64,7 +64,7 @@ where
 
         TraitSelectionQuery::with_index(
             self.context.item_paths(),
-            self.context.target_items(),
+            self.context.crate_items(),
             self.context.semantic_index(),
         )
         // This fallback can return an inference table to the caller, so it must prove explicit impl

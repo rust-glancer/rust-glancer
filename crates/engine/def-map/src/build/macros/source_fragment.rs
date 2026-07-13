@@ -20,9 +20,7 @@ use rg_item_tree::{
 use rg_parse::FileId;
 use rg_text::Name;
 
-use crate::build::{
-    collect::TargetState, finalize::ScopeMatrix, macros::MacroExpansionApplyResult,
-};
+use crate::build::{collect::CrateState, finalize::ScopeMatrix, macros::MacroExpansionApplyResult};
 
 use super::{
     ItemOrder, MacroCallSite, MacroDefinitionRecord, MacroDirective, MacroDirectiveState,
@@ -37,7 +35,7 @@ pub(super) struct SourceFragmentOrigin {
 
 /// Collector for item-tree nodes that should behave like ordinary source at the call site.
 pub(super) struct SourceFragmentCollector<'a> {
-    pub(super) state: &'a mut TargetState,
+    pub(super) state: &'a mut CrateState,
     pub(super) current_scopes: &'a mut ScopeMatrix,
     pub(super) item_tree: &'a ItemTreePackage,
     pub(super) origin: SourceFragmentOrigin,
@@ -179,7 +177,7 @@ impl SourceFragmentCollector<'_> {
             .local_defs
             .push(local_def_id);
         let def = DefId::Local(LocalDefRef {
-            origin: DefMapRef::Target(self.state.target),
+            origin: DefMapRef::Crate(self.state.crate_ref),
             local_def: local_def_id,
         });
         let base_scope = self
@@ -189,7 +187,7 @@ impl SourceFragmentCollector<'_> {
             .expect("base scope should exist for source fragment local definition");
         let current_scope = self
             .current_scopes
-            .module_scope_mut(self.state.target, module_id)
+            .module_scope_mut(self.state.crate_ref, module_id)
             .expect("current scope should exist for source fragment local definition");
         for namespace in namespaces.iter() {
             let binding = ScopeBinding::new(def, *visibilities.get(namespace), provenance);
@@ -274,7 +272,7 @@ impl SourceFragmentCollector<'_> {
                 macro_definition,
                 item.docs.clone(),
                 self.state.edition,
-                self.state.target,
+                self.state.crate_ref,
             ),
         );
     }
@@ -283,7 +281,7 @@ impl SourceFragmentCollector<'_> {
         let root_module = self.state.root_module;
         let binding = ScopeBinding::new(
             DefId::Local(LocalDefRef {
-                origin: DefMapRef::Target(self.state.target),
+                origin: DefMapRef::Crate(self.state.crate_ref),
                 local_def: local_def_id,
             }),
             Visibility::Public,
@@ -296,7 +294,7 @@ impl SourceFragmentCollector<'_> {
             .expect("root scope should exist before source fragment macro export collection")
             .insert_binding(name, Namespace::Macros, binding.clone());
         self.current_scopes
-            .module_scope_mut(self.state.target, root_module)
+            .module_scope_mut(self.state.crate_ref, root_module)
             .expect("current root scope should exist for source fragment macro export")
             .insert_binding(name, Namespace::Macros, binding);
     }
@@ -331,7 +329,7 @@ impl SourceFragmentCollector<'_> {
                 callee: macro_call.callee.clone(),
                 args: macro_call.args.clone(),
                 builtin: macro_call.builtin.clone(),
-                dollar_crate_target: None,
+                dollar_crate: None,
                 file_id: item.file_id,
                 span: item.span,
                 order,
@@ -496,8 +494,8 @@ impl SourceFragmentCollector<'_> {
         });
         self.state.base_scopes.push(Default::default());
         self.current_scopes
-            .push_module_scope(self.state.target, Default::default())
-            .expect("current scopes should have a target slot for source fragment module");
+            .push_module_scope(self.state.crate_ref, Default::default())
+            .expect("current scopes should have a crate slot for source fragment module");
         module_id
     }
 
@@ -516,7 +514,7 @@ impl SourceFragmentCollector<'_> {
             .push((module_name.clone(), child_module));
         let binding = ScopeBinding::new(
             DefId::Module(ModuleRef {
-                origin: DefMapRef::Target(self.state.target),
+                origin: DefMapRef::Crate(self.state.crate_ref),
                 module: child_module,
             }),
             visibility,
@@ -528,7 +526,7 @@ impl SourceFragmentCollector<'_> {
             .expect("base scope should exist for source fragment child link")
             .insert_binding(module_name, Namespace::Types, binding.clone());
         self.current_scopes
-            .module_scope_mut(self.state.target, parent_module)
+            .module_scope_mut(self.state.crate_ref, parent_module)
             .expect("current scope should exist for source fragment child link")
             .insert_binding(module_name, Namespace::Types, binding);
     }
@@ -588,7 +586,7 @@ impl SourceFragmentCollector<'_> {
         // applying aliases such as `extern crate dep as _`.
         let module_ref = if extern_name == "self" {
             ModuleRef {
-                origin: DefMapRef::Target(self.state.target),
+                origin: DefMapRef::Crate(self.state.crate_ref),
                 module: self.state.root_module,
             }
         } else {
@@ -627,7 +625,7 @@ impl SourceFragmentCollector<'_> {
             .expect("base scope should exist for source fragment extern crate binding")
             .insert_binding(&binding_name, Namespace::Types, binding.clone());
         self.current_scopes
-            .module_scope_mut(self.state.target, module_id)
+            .module_scope_mut(self.state.crate_ref, module_id)
             .expect("current scope should exist for source fragment extern crate binding")
             .insert_binding(&binding_name, Namespace::Types, binding);
     }

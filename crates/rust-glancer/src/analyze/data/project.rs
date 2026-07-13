@@ -20,7 +20,7 @@ impl ProjectReport {
             indexing_preference: project.indexing_preference().config_name().to_string(),
             packages: PackageReport::capture(project),
             def_map: DefMapReport {
-                target_count: stats.def_map.target_count,
+                crate_count: stats.def_map.crate_count,
                 module_count: stats.def_map.module_count,
                 local_def_count: stats.def_map.local_def_count,
                 local_impl_count: stats.def_map.local_impl_count,
@@ -28,7 +28,7 @@ impl ProjectReport {
                 unresolved_import_count: stats.def_map.unresolved_import_count,
             },
             semantic_ir: SemanticIrReport {
-                target_count: stats.semantic_ir.target_count,
+                crate_count: stats.semantic_ir.crate_count,
                 struct_count: stats.semantic_ir.struct_count,
                 union_count: stats.semantic_ir.union_count,
                 enum_count: stats.semantic_ir.enum_count,
@@ -41,13 +41,13 @@ impl ProjectReport {
             },
             // TODO: We're missing local items in the body IR report (e.g. items/impls/functions).
             body_ir: BodyIrReport {
-                target_count: stats.body_ir.target_count,
-                built_target_count: stats.body_ir.built_target_count,
-                skipped_target_count: stats.body_ir.skipped_target_count,
-                complete_target_count: stats.body_ir.complete_target_count,
-                partial_target_count: stats.body_ir.partial_target_count,
-                missing_target_count: stats.body_ir.missing_target_count,
-                skipped_by_policy_target_count: stats.body_ir.skipped_by_policy_target_count,
+                crate_count: stats.body_ir.crate_count,
+                built_crate_count: stats.body_ir.built_crate_count,
+                skipped_crate_count: stats.body_ir.skipped_crate_count,
+                complete_crate_count: stats.body_ir.complete_crate_count,
+                partial_crate_count: stats.body_ir.partial_crate_count,
+                missing_crate_count: stats.body_ir.missing_crate_count,
+                skipped_by_policy_crate_count: stats.body_ir.skipped_by_policy_crate_count,
                 body_count: stats.body_ir.body_count,
                 scope_count: stats.body_ir.scope_count,
                 binding_count: stats.body_ir.binding_count,
@@ -80,7 +80,7 @@ impl ProjectReport {
 
 #[derive(Debug, Serialize)]
 pub(crate) struct DefMapReport {
-    pub(crate) target_count: usize,
+    pub(crate) crate_count: usize,
     pub(crate) module_count: usize,
     pub(crate) local_def_count: usize,
     pub(crate) local_impl_count: usize,
@@ -91,7 +91,7 @@ pub(crate) struct DefMapReport {
 impl DefMapReport {
     fn append_fields(&self, fields: &mut ReportFieldsBuilder) {
         fields
-            .count_as("target_count", "targets", self.target_count)
+            .count_as("crate_count", "crates", self.crate_count)
             .count_as("module_count", "modules", self.module_count)
             .count_as("local_def_count", "local definitions", self.local_def_count)
             .count_as("local_impl_count", "local impls", self.local_impl_count)
@@ -106,7 +106,7 @@ impl DefMapReport {
 
 #[derive(Debug, Serialize)]
 pub(crate) struct SemanticIrReport {
-    pub(crate) target_count: usize,
+    pub(crate) crate_count: usize,
     pub(crate) struct_count: usize,
     pub(crate) union_count: usize,
     pub(crate) enum_count: usize,
@@ -121,7 +121,7 @@ pub(crate) struct SemanticIrReport {
 impl SemanticIrReport {
     fn append_fields(&self, fields: &mut ReportFieldsBuilder) {
         fields
-            .count_as("target_count", "targets", self.target_count)
+            .count_as("crate_count", "crates", self.crate_count)
             .count_as(
                 "type_def_count",
                 "type definitions",
@@ -141,13 +141,13 @@ impl SemanticIrReport {
 
 #[derive(Debug, Serialize)]
 pub(crate) struct BodyIrReport {
-    pub(crate) target_count: usize,
-    pub(crate) built_target_count: usize,
-    pub(crate) skipped_target_count: usize,
-    pub(crate) complete_target_count: usize,
-    pub(crate) partial_target_count: usize,
-    pub(crate) missing_target_count: usize,
-    pub(crate) skipped_by_policy_target_count: usize,
+    pub(crate) crate_count: usize,
+    pub(crate) built_crate_count: usize,
+    pub(crate) skipped_crate_count: usize,
+    pub(crate) complete_crate_count: usize,
+    pub(crate) partial_crate_count: usize,
+    pub(crate) missing_crate_count: usize,
+    pub(crate) skipped_by_policy_crate_count: usize,
     pub(crate) body_count: usize,
     pub(crate) scope_count: usize,
     pub(crate) binding_count: usize,
@@ -158,36 +158,32 @@ pub(crate) struct BodyIrReport {
 impl BodyIrReport {
     fn append_fields(&self, fields: &mut ReportFieldsBuilder) {
         fields
-            .count_as("target_count", "targets", self.target_count)
+            .count_as("crate_count", "crates", self.crate_count)
+            .count_as("built_crate_count", "built crates", self.built_crate_count)
             .count_as(
-                "built_target_count",
-                "built targets",
-                self.built_target_count,
+                "skipped_crate_count",
+                "skipped crates",
+                self.skipped_crate_count,
             )
             .count_as(
-                "skipped_target_count",
-                "skipped targets",
-                self.skipped_target_count,
+                "complete_crate_count",
+                "complete crates",
+                self.complete_crate_count,
             )
             .count_as(
-                "complete_target_count",
-                "complete targets",
-                self.complete_target_count,
+                "partial_crate_count",
+                "partial crates",
+                self.partial_crate_count,
             )
             .count_as(
-                "partial_target_count",
-                "partial targets",
-                self.partial_target_count,
+                "missing_crate_count",
+                "missing crates",
+                self.missing_crate_count,
             )
             .count_as(
-                "missing_target_count",
-                "missing targets",
-                self.missing_target_count,
-            )
-            .count_as(
-                "skipped_by_policy_target_count",
-                "targets skipped by policy",
-                self.skipped_by_policy_target_count,
+                "skipped_by_policy_crate_count",
+                "crates skipped by policy",
+                self.skipped_by_policy_crate_count,
             )
             .count_as("body_count", "bodies", self.body_count)
             .count_as("scope_count", "scopes", self.scope_count)

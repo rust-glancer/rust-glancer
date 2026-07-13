@@ -3,7 +3,7 @@ use std::path::PathBuf;
 
 /// Normalized target metadata with one target kind per target.
 #[derive(Debug, Clone, PartialEq, Eq, MemorySize)]
-pub struct Target {
+pub struct CargoTarget {
     pub name: String,
     pub kind: TargetKind,
     pub src_path: PathBuf,

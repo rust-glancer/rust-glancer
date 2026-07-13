@@ -1,6 +1,6 @@
 //! Adapter from indexed source occurrences into analysis cursor symbols.
 
-use rg_ir_model::{TargetRef, identity::DeclarationRef};
+use rg_ir_model::{CrateRef, identity::DeclarationRef};
 use rg_ir_view::source::{IndexedSourceFact, IndexedSourceOccurrence, IndexedSourceSurface};
 use rg_parse::{FileId, Span};
 
@@ -12,7 +12,7 @@ pub(crate) use rg_ir_view::source::IndexedSourceRole as SourceSymbolRole;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct SourceSymbol {
     symbol: SymbolAt,
-    target: TargetRef,
+    crate_ref: CrateRef,
     file_id: FileId,
     span: Span,
     role: SourceSymbolRole,
@@ -28,8 +28,8 @@ impl SourceSymbol {
         self.symbol
     }
 
-    pub(crate) fn target(&self) -> TargetRef {
-        self.target
+    pub(crate) fn crate_ref(&self) -> CrateRef {
+        self.crate_ref
     }
 
     pub(crate) fn file_id(&self) -> FileId {
@@ -50,13 +50,13 @@ impl SourceSymbol {
 
     pub(crate) fn plain_declaration(
         declaration: DeclarationRef,
-        target: TargetRef,
+        crate_ref: CrateRef,
         file_id: FileId,
         span: Span,
     ) -> Self {
         Self {
             symbol: SymbolAt::Declaration { declaration, span },
-            target,
+            crate_ref,
             file_id,
             span,
             role: SourceSymbolRole::Declaration,
@@ -65,7 +65,7 @@ impl SourceSymbol {
     }
 
     pub(super) fn from_occurrence(occurrence: IndexedSourceOccurrence) -> Self {
-        let (fact, target, file_id, span, role, surface) = occurrence.into_parts();
+        let (fact, crate_ref, file_id, span, role, surface) = occurrence.into_parts();
         let symbol = match fact {
             IndexedSourceFact::Declaration(declaration) => {
                 SymbolAt::Declaration { declaration, span }
@@ -86,7 +86,7 @@ impl SourceSymbol {
         };
         Self {
             symbol,
-            target,
+            crate_ref,
             file_id,
             span,
             role,

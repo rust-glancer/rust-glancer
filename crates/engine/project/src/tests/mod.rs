@@ -684,9 +684,9 @@ pub fn value() -> usize {
         .expect("early-start project build should succeed");
 
     let stats = project.stats().body_ir;
-    assert_eq!(stats.target_count, 1);
-    assert_eq!(stats.complete_target_count, 0);
-    assert_eq!(stats.missing_target_count, 1);
+    assert_eq!(stats.crate_count, 1);
+    assert_eq!(stats.complete_crate_count, 0);
+    assert_eq!(stats.missing_crate_count, 1);
     assert_eq!(stats.body_count, 0);
 
     let source_path = fixture
@@ -707,9 +707,9 @@ pub fn value() -> usize {
         .expect("deferred indexing should succeed");
 
     let stats = project.stats().body_ir;
-    assert_eq!(stats.target_count, 1);
-    assert_eq!(stats.complete_target_count, 1);
-    assert_eq!(stats.missing_target_count, 0);
+    assert_eq!(stats.crate_count, 1);
+    assert_eq!(stats.complete_crate_count, 1);
+    assert_eq!(stats.missing_crate_count, 0);
     assert_eq!(stats.body_count, 1);
     assert_eq!(
         source_entry.memory_size(),
@@ -749,7 +749,7 @@ pub fn second() -> usize {
         .expect("early-start project build should succeed");
 
     let stats = project.stats().body_ir;
-    assert_eq!(stats.missing_target_count, 1);
+    assert_eq!(stats.missing_crate_count, 1);
     assert_eq!(stats.body_count, 0);
 
     let lib_context = project
@@ -778,8 +778,8 @@ pub fn second() -> usize {
         .expect("lib file deferred analysis should materialize");
 
     let stats = project.stats().body_ir;
-    assert_eq!(stats.complete_target_count, 0);
-    assert_eq!(stats.partial_target_count, 1);
+    assert_eq!(stats.complete_crate_count, 0);
+    assert_eq!(stats.partial_crate_count, 1);
     assert_eq!(stats.body_count, 1);
     assert_eq!(
         lib_source.memory_size(),
@@ -813,8 +813,8 @@ pub fn second() -> usize {
         .expect("other file deferred analysis should materialize");
 
     let stats = project.stats().body_ir;
-    assert_eq!(stats.complete_target_count, 1);
-    assert_eq!(stats.partial_target_count, 0);
+    assert_eq!(stats.complete_crate_count, 1);
+    assert_eq!(stats.partial_crate_count, 0);
     assert_eq!(stats.body_count, 2);
     assert_eq!(
         other_source.memory_size(),
@@ -869,7 +869,7 @@ pub fn demo(user: User) -> usize {
         .pop()
         .expect("other file should have one context");
     let target = lib_context
-        .targets
+        .crates
         .first()
         .copied()
         .expect("subject file should belong to one target");
@@ -883,10 +883,10 @@ pub fn demo(user: User) -> usize {
             .goto_definition(target, lib_context.file, subject.offset)
             .expect("definition lookup should resolve")
             .into_iter()
-            .map(|target| target.target)
+            .map(|target| target.crate_ref)
             .collect::<Vec<_>>();
         let search_targets =
-            snapshot.reference_search_targets(lib_context.package, &declaration_targets);
+            snapshot.reference_search_crates(lib_context.package, &declaration_targets);
         let labels = analysis
             .reference_search_labels(target, lib_context.file, subject.offset)
             .expect("reference labels should resolve");
@@ -898,7 +898,7 @@ pub fn demo(user: User) -> usize {
         assert!(
             files
                 .iter()
-                .any(|file| file.target == target && file.file_id == other_context.file),
+                .any(|file| file.crate_ref == target && file.file_id == other_context.file),
             "reference scan surface should include the file with body references",
         );
 
@@ -907,7 +907,7 @@ pub fn demo(user: User) -> usize {
 
     let search_body_files = search_files
         .iter()
-        .map(|file| (file.target.package, file.file_id))
+        .map(|file| (file.crate_ref.package, file.file_id))
         .collect::<Vec<_>>();
     project
         .split_indexing()
@@ -993,14 +993,14 @@ pub fn dep_value() -> usize {
         .pop()
         .expect("dependency file should have one context");
     let dep_target = dep_context
-        .targets
+        .crates
         .first()
         .copied()
         .expect("dependency file should belong to one target");
 
     project
         .split_indexing()
-        .materialize(AnalysisSurface::Targets(&dep_context.targets))
+        .materialize(AnalysisSurface::Crates(&dep_context.crates))
         .expect("on-demand dependency deferred indexing should succeed");
     assert!(
         project
@@ -1092,7 +1092,7 @@ pub fn helper() -> usize {
         .pop()
         .expect("helper file should have one context");
     let app_target = lib_context
-        .targets
+        .crates
         .first()
         .copied()
         .expect("app file should belong to one target");
@@ -1105,7 +1105,7 @@ pub fn helper() -> usize {
         )]))
         .expect("lib file deferred analysis should materialize");
     let stats = project.stats().body_ir;
-    assert_eq!(stats.partial_target_count, 1);
+    assert_eq!(stats.partial_crate_count, 1);
     assert_eq!(stats.body_count, 1);
 
     project
@@ -1116,7 +1116,7 @@ pub fn helper() -> usize {
         )]))
         .expect("helper deferred indexing should apply residency");
     let stats = project.stats().body_ir;
-    assert_eq!(stats.partial_target_count, 1);
+    assert_eq!(stats.partial_crate_count, 1);
     assert_eq!(stats.body_count, 1);
 
     assert!(
@@ -1163,7 +1163,7 @@ pub fn value() -> usize {
         .pop()
         .expect("fixture file should have one context");
     let target = context
-        .targets
+        .crates
         .first()
         .copied()
         .expect("fixture file should belong to one target");
@@ -1423,7 +1423,7 @@ make_item!(Admin);
 }
 
 #[test]
-fn reference_search_targets_follow_workspace_reverse_dependencies() {
+fn reference_search_crates_follow_workspace_reverse_dependencies() {
     let fixture = ProjectSourceFixture::build(
         r#"
 //- /Cargo.toml
@@ -1483,14 +1483,14 @@ pub struct Independent;
         &fixture.path("crates/dep/src/lib.rs"),
     );
     let dep_target = snapshot
-        .targets_for_file(dep_package, dep_file)
+        .crates_for_file(dep_package, dep_file)
         .expect("dep target lookup should succeed")
         .into_iter()
         .next()
         .expect("dep lib file should belong to the dep lib target");
 
     let package_names = snapshot
-        .reference_search_targets(app_package, &[dep_target])
+        .reference_search_crates(app_package, &[dep_target])
         .into_iter()
         .map(|target| {
             snapshot
@@ -1763,9 +1763,9 @@ pub fn dirty_body(value: Dirty) {
     expect![[r#"
         saved project before dirty overlay
         resident stats `saved before dirty overlay`
-        - def-map targets 0
-        - semantic targets 0
-        - body targets 0
+        - def-map crates 0
+        - semantic crates 0
+        - body crates 0
 
         workspace symbols `Saved`
         - fn saved_body @ dirty_overlay_fixture[lib] src/lib.rs
@@ -1776,16 +1776,16 @@ pub fn dirty_body(value: Dirty) {
 
         dirty overlay
         resident stats `dirty overlay`
-        - def-map targets 1
-        - semantic targets 1
-        - body targets 1
+        - def-map crates 1
+        - semantic crates 1
+        - body crates 1
 
         body ir stats `dirty overlay`
-        - targets 1
-        - complete targets 0
-        - partial targets 1
-        - missing targets 0
-        - targets skipped by policy 0
+        - crates 1
+        - complete crates 0
+        - partial crates 1
+        - missing crates 0
+        - crates skipped by policy 0
         - bodies 1
 
         workspace symbols `Dirty`
@@ -1800,9 +1800,9 @@ pub fn dirty_body(value: Dirty) {
 
         saved project after dirty overlay
         resident stats `saved after dirty overlay`
-        - def-map targets 0
-        - semantic targets 0
-        - body targets 0
+        - def-map crates 0
+        - semantic crates 0
+        - body crates 0
 
         workspace symbols `Saved`
         - fn saved_body @ dirty_overlay_fixture[lib] src/lib.rs
@@ -2202,7 +2202,7 @@ pub struct NewType;
 }
 
 #[test]
-fn workspace_graph_rebuild_reports_changed_targets_when_packages_are_offloaded() {
+fn workspace_graph_rebuild_reports_changed_crates_when_packages_are_offloaded() {
     let mut fixture = HostFixture::build_with_package_residency_policy(
         r#"
 //- /Cargo.toml
@@ -2972,9 +2972,9 @@ pub fn use_dep(_: dep::Api) {}
             - app[lib]
 
             resident stats `after save`
-            - def-map targets 0
-            - semantic targets 0
-            - body targets 0
+            - def-map crates 0
+            - semantic crates 0
+            - body crates 0
         "#]],
     );
 
@@ -3147,9 +3147,9 @@ pub struct Api;
         &[HostObservation::resident_stats("after build")],
         expect![[r#"
             resident stats `after build`
-            - def-map targets 0
-            - semantic targets 0
-            - body targets 0
+            - def-map crates 0
+            - semantic crates 0
+            - body crates 0
         "#]],
     );
 
@@ -3174,9 +3174,9 @@ pub fn use_dep(_: dep::Api) {}
             - app[lib]
 
             resident stats `after save`
-            - def-map targets 0
-            - semantic targets 0
-            - body targets 0
+            - def-map crates 0
+            - semantic crates 0
+            - body crates 0
 
             workspace symbols `After`
             - struct After @ app[lib] src/lib.rs

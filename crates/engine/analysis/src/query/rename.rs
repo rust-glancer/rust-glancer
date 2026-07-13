@@ -38,13 +38,13 @@ impl<'a, 'db> RenameResolver<'a, 'db> {
     /// Returns the source span and placeholder shown by editor prepare-rename requests.
     pub(crate) fn prepare_rename(
         &self,
-        target: rg_ir_model::TargetRef,
+        crate_ref: rg_ir_model::CrateRef,
         file_id: rg_parse::FileId,
         offset: u32,
     ) -> anyhow::Result<Option<RenameTarget>> {
         let Some(symbol) = self
             .analysis
-            .source_symbol_at_for_query(target, file_id, offset)?
+            .source_symbol_at_for_query(crate_ref, file_id, offset)?
         else {
             return Ok(None);
         };
@@ -55,7 +55,7 @@ impl<'a, 'db> RenameResolver<'a, 'db> {
     /// Produces all text edits needed to rename the symbol selected at `offset`.
     pub(crate) fn rename(
         &self,
-        target: rg_ir_model::TargetRef,
+        crate_ref: rg_ir_model::CrateRef,
         file_id: rg_parse::FileId,
         offset: u32,
         new_name: &str,
@@ -73,7 +73,7 @@ impl<'a, 'db> RenameResolver<'a, 'db> {
         // symbol under the cursor, rename is simply unavailable at this position.
         let Some(symbol) = self
             .analysis
-            .source_symbol_at_for_query(target, file_id, offset)?
+            .source_symbol_at_for_query(crate_ref, file_id, offset)?
         else {
             return Ok(None);
         };
@@ -128,7 +128,8 @@ impl<'a, 'db> RenameResolver<'a, 'db> {
             return Ok(None);
         }
 
-        let syntax = SyntaxRenderer::new(self.analysis.view_db().target_edition(symbol.target())?);
+        let syntax =
+            SyntaxRenderer::new(self.analysis.view_db().crate_edition(symbol.crate_ref())?);
         let new_name = syntax.identifier(new_name).to_string();
         let source_name = self.source_text_for_span(&symbol, symbol.span())?;
 
@@ -180,7 +181,7 @@ impl<'a, 'db> RenameResolver<'a, 'db> {
         };
 
         Ok(Some(RenameEdit {
-            target: symbol.target(),
+            crate_ref: symbol.crate_ref(),
             file_id: symbol.file_id(),
             span,
             old_text,
@@ -227,7 +228,7 @@ impl<'a, 'db> RenameResolver<'a, 'db> {
     /// Reads the exact source text covered by a rename surface span.
     fn source_text_for_span(&self, symbol: &SourceSymbol, span: Span) -> anyhow::Result<String> {
         self.analysis
-            .source_text_for_span(symbol.target().package, symbol.file_id(), span)
+            .source_text_for_span(symbol.crate_ref().package, symbol.file_id(), span)
             .with_context(|| "while attempting to read source text for rename edit")?
             .with_context(|| "rename edit span should have source text")
     }
@@ -266,8 +267,8 @@ impl<'a, 'db> RenameResolver<'a, 'db> {
     fn normalize_rename_edits(mut edits: Vec<RenameEdit>) -> anyhow::Result<Vec<RenameEdit>> {
         edits.sort_by_key(|edit| {
             (
-                edit.target.package.0,
-                edit.target.target.0,
+                edit.crate_ref.package.0,
+                edit.crate_ref.crate_id.0,
                 edit.file_id.0,
                 edit.span.text.start,
                 edit.span.text.end,
@@ -280,7 +281,7 @@ impl<'a, 'db> RenameResolver<'a, 'db> {
                 normalized.push(edit);
                 continue;
             };
-            if previous.target != edit.target || previous.file_id != edit.file_id {
+            if previous.crate_ref != edit.crate_ref || previous.file_id != edit.file_id {
                 normalized.push(edit);
                 continue;
             }
@@ -379,7 +380,7 @@ impl<'a, 'db> RenameResolver<'a, 'db> {
             return true;
         }
 
-        symbol.target() == declaration.target()
+        symbol.crate_ref() == declaration.crate_ref()
             && symbol.file_id() == declaration.file_id()
             && symbol.span() == declaration.selection_span()
     }

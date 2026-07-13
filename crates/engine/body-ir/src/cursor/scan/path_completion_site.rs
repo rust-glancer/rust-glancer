@@ -3,7 +3,7 @@
 //! Path completion scans recognize partially typed segments in paths such as
 //! `crate::module::Us` and return the qualifier, replacement span, and expected namespace.
 
-use rg_ir_model::{BodyRef, Path, ScopeId, TargetRef, items::TypePath};
+use rg_ir_model::{BodyRef, CrateRef, Path, ScopeId, items::TypePath};
 use rg_package_store::PackageStoreError;
 use rg_parse::{FileId, Span, TextSpan};
 
@@ -17,7 +17,7 @@ use super::{
 /// Finds the source site that belongs to a qualified-path completion offset.
 pub(crate) struct PathCompletionSiteScanner<'txn, 'db> {
     body_ir: &'txn BodyIrReadTxn<'db>,
-    target: TargetRef,
+    crate_ref: CrateRef,
     file_id: FileId,
     offset: u32,
 }
@@ -25,13 +25,13 @@ pub(crate) struct PathCompletionSiteScanner<'txn, 'db> {
 impl<'txn, 'db> PathCompletionSiteScanner<'txn, 'db> {
     pub(crate) fn new(
         body_ir: &'txn BodyIrReadTxn<'db>,
-        target: TargetRef,
+        crate_ref: CrateRef,
         file_id: FileId,
         offset: u32,
     ) -> Self {
         Self {
             body_ir,
-            target,
+            crate_ref,
             file_id,
             offset,
         }
@@ -41,7 +41,7 @@ impl<'txn, 'db> PathCompletionSiteScanner<'txn, 'db> {
     pub(crate) fn site_at_path(&self) -> Result<Option<PathCompletionSite>, PackageStoreError> {
         let mut best: Option<(PathCompletionSite, u32)> = None;
 
-        for (body_ref, body) in self.body_ir.bodies(self.target, Some(self.file_id))? {
+        for (body_ref, body) in self.body_ir.bodies(self.crate_ref, Some(self.file_id))? {
             // Body spans are a cheap first filter before scanning every expression and statement.
             if !body.source().span.contains(self.offset) {
                 continue;

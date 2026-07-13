@@ -14,10 +14,10 @@
 //! not "the whole impl is proven".
 
 use rg_def_map::DefMapSource;
-use rg_ir_model::hir::items::ImplData;
 use rg_ir_model::items::{GenericArg as ItemGenericArg, GenericParams, TypeBound, TypeRef};
 use rg_ir_model::{TraitApplicability, TraitImplRef, TypeDefRef};
-use rg_ir_storage::{ItemStoreSource, TypePathContext};
+use rg_semantic_ir::ImplData;
+use rg_semantic_ir::{ItemStoreSource, TypePathContext};
 use rg_text::Name;
 
 use super::TraitGoal;

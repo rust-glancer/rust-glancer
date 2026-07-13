@@ -10,7 +10,7 @@ use rg_std::{MemorySize, Shrink};
 use wincode::{SchemaRead, SchemaWrite};
 
 use rg_ir_model::{
-    ModuleId, Path, PathSegment, TargetRef,
+    CrateRef, ModuleId, Path, PathSegment,
     hir::source::ItemSource,
     items::{ImportAlias, UseImportKind, UsePath},
 };
@@ -151,13 +151,13 @@ impl ImportPath {
     /// Rewrites the generated leading `$crate` marker without changing its source projection.
     ///
     /// The original span still points at the written `$crate` token, while semantic lookup uses the
-    /// selected macro definition's target.
-    pub fn rewrite_dollar_crate(&mut self, target: TargetRef) {
+    /// selected macro definition's crate_ref.
+    pub fn rewrite_dollar_crate(&mut self, crate_ref: CrateRef) {
         let Some(first) = self.semantic.segments.first_mut() else {
             return;
         };
         if matches!(first, PathSegment::Name(name) if name.as_str() == "$crate") {
-            *first = PathSegment::DollarCrate(target);
+            *first = PathSegment::DollarCrate(crate_ref);
             self.semantic.absolute = false;
         }
     }

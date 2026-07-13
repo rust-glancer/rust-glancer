@@ -348,7 +348,7 @@ pub mod prelude {
 }
 
 #[test]
-fn target_queries_exclude_impls_from_unrelated_workspace_targets() {
+fn crate_queries_exclude_impls_from_unrelated_workspace_crates() {
     check_project_semantic_queries(
         r#"
 //- /Cargo.toml

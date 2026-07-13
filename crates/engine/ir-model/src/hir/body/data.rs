@@ -295,10 +295,10 @@ fn rewrite_binding_list(bindings: &mut Vec<BindingId>, old_to_new: &[Option<Bind
 
 #[cfg(test)]
 mod tests {
-    use rg_parse::{FileId, Span, TargetId, TextSpan};
+    use rg_parse::{FileId, Span, TextSpan};
 
     use crate::{
-        BindingKind, DefMapRef, FunctionId, FunctionRef, PackageSlot, TargetRef,
+        BindingKind, CrateId, CrateRef, DefMapRef, FunctionId, FunctionRef, PackageSlot,
         hir::body::{BodyData, BodyOwner, BodySource, BodySourceItems, ExprData, ExprKind},
     };
 
@@ -315,9 +315,9 @@ mod tests {
 
     fn module() -> ModuleRef {
         ModuleRef {
-            origin: DefMapRef::Target(TargetRef {
+            origin: DefMapRef::Crate(CrateRef {
                 package: PackageSlot(0),
-                target: TargetId(0),
+                crate_id: CrateId(0),
             }),
             module: crate::ModuleId(0),
         }

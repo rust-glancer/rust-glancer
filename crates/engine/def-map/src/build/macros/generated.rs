@@ -1,4 +1,4 @@
-//! Collects syntax produced by macro expansion back into mutable target state.
+//! Collects syntax produced by macro expansion back into mutable crate state.
 //!
 //! Generated definitions belong to the macro call's module and file identity. Their retained item
 //! payloads carry expansion spans where available, while generated imports and other provenance-only
@@ -12,7 +12,7 @@ use crate::{
     ScopeBindingProvenance, Visibility,
 };
 use rg_ir_model::{
-    DefId, DefMapRef, LocalDefId, LocalDefRef, ModuleId, ModuleRef, TargetRef,
+    CrateRef, DefId, DefMapRef, LocalDefId, LocalDefRef, ModuleId, ModuleRef,
     hir::source::{GeneratedItemRef, GeneratedSourceId, ItemSource},
 };
 use rg_item_tree::{
@@ -23,7 +23,7 @@ use rg_macro_runtime::ExpansionSyntax;
 use rg_parse::{FileId, Span};
 use rg_text::{Name, NameInterner};
 
-use crate::build::{collect::TargetState, finalize::ScopeMatrix};
+use crate::build::{collect::CrateState, finalize::ScopeMatrix};
 use crate::profile::metric;
 
 use super::{
@@ -39,12 +39,12 @@ pub(super) struct GeneratedOrigin {
     pub(super) file_id: FileId,
     pub(super) span: Span,
     pub(super) order: ItemOrder,
-    pub(super) dollar_crate_target: Option<TargetRef>,
+    pub(super) dollar_crate: Option<CrateRef>,
 }
 
 /// Small collector that mirrors normal def-map collection for already-expanded syntax.
 pub(super) struct GeneratedCollector<'a> {
-    pub(super) state: &'a mut TargetState,
+    pub(super) state: &'a mut CrateState,
     pub(super) interner: &'a mut NameInterner,
     pub(super) current_scopes: &'a mut ScopeMatrix,
     pub(super) origin: GeneratedOrigin,
@@ -204,7 +204,7 @@ impl GeneratedCollector<'_> {
             .local_defs
             .push(local_def_id);
         let def = DefId::Local(LocalDefRef {
-            origin: DefMapRef::Target(self.state.target),
+            origin: DefMapRef::Crate(self.state.crate_ref),
             local_def: local_def_id,
         });
         // Update both the base scopes and the current snapshot. The base scopes make future import
@@ -217,7 +217,7 @@ impl GeneratedCollector<'_> {
             .expect("base scope should exist for generated local definition");
         let current_scope = self
             .current_scopes
-            .module_scope_mut(self.state.target, module_id)
+            .module_scope_mut(self.state.crate_ref, module_id)
             .expect("current scope should exist for generated local definition");
         for namespace in namespaces.iter() {
             let binding = ScopeBinding::new(def, *visibilities.get(namespace), provenance);
@@ -307,14 +307,14 @@ impl GeneratedCollector<'_> {
         }
         // Generated macro definitions inherit `$crate` from the macro that produced them, not from
         // the module where the generated definition is inserted.
-        let dollar_crate_target = self.origin.dollar_crate_target.unwrap_or(self.state.target);
+        let dollar_crate = self.origin.dollar_crate.unwrap_or(self.state.crate_ref);
         self.state.def_map_builder.insert_macro_definition(
             local_def_id,
             MacroDefinitionData::from_item(
                 macro_definition,
                 item.docs.clone(),
                 self.state.edition,
-                dollar_crate_target,
+                dollar_crate,
             ),
         );
     }
@@ -324,7 +324,7 @@ impl GeneratedCollector<'_> {
         let root_module = self.state.root_module;
         let binding = ScopeBinding::new(
             DefId::Local(LocalDefRef {
-                origin: DefMapRef::Target(self.state.target),
+                origin: DefMapRef::Crate(self.state.crate_ref),
                 local_def: local_def_id,
             }),
             Visibility::Public,
@@ -337,7 +337,7 @@ impl GeneratedCollector<'_> {
             .expect("root scope should exist before generated macro export collection")
             .insert_binding(name, Namespace::Macros, binding.clone());
         self.current_scopes
-            .module_scope_mut(self.state.target, root_module)
+            .module_scope_mut(self.state.crate_ref, root_module)
             .expect("current root scope should exist for generated macro export")
             .insert_binding(name, Namespace::Macros, binding);
     }
@@ -400,8 +400,8 @@ impl GeneratedCollector<'_> {
             .textual_macro_scopes
             .record_module_declaration(child_module, order.clone());
         self.current_scopes
-            .push_module_scope(self.state.target, Default::default())
-            .expect("current scopes should have a target slot for generated module");
+            .push_module_scope(self.state.crate_ref, Default::default())
+            .expect("current scopes should have a crate slot for generated module");
         self.state
             .def_map_builder
             .module_mut(parent_module)
@@ -410,7 +410,7 @@ impl GeneratedCollector<'_> {
             .push((module_name.clone(), child_module));
         let binding = ScopeBinding::new(
             DefId::Module(ModuleRef {
-                origin: DefMapRef::Target(self.state.target),
+                origin: DefMapRef::Crate(self.state.crate_ref),
                 module: child_module,
             }),
             semantic_visibility,
@@ -422,7 +422,7 @@ impl GeneratedCollector<'_> {
             .expect("base scope should exist for generated child link")
             .insert_binding(&module_name, Namespace::Types, binding.clone());
         self.current_scopes
-            .module_scope_mut(self.state.target, parent_module)
+            .module_scope_mut(self.state.crate_ref, parent_module)
             .expect("current scope should exist for generated child link")
             .insert_binding(&module_name, Namespace::Types, binding);
 
@@ -452,7 +452,7 @@ impl GeneratedCollector<'_> {
             callee: macro_call.callee.clone(),
             args: macro_call.args.clone(),
             builtin: macro_call.builtin.clone(),
-            dollar_crate_target: self.origin.dollar_crate_target,
+            dollar_crate: self.origin.dollar_crate,
             file_id: item.file_id,
             span: item.span,
             order,
@@ -485,8 +485,8 @@ impl GeneratedCollector<'_> {
 
         for (import_index, import) in imports.iter().enumerate() {
             let mut path = ImportPath::from_use_path(&import.path);
-            if let Some(target) = self.origin.dollar_crate_target {
-                path.rewrite_dollar_crate(target);
+            if let Some(crate_ref) = self.origin.dollar_crate {
+                path.rewrite_dollar_crate(crate_ref);
             }
             if path.semantic().segments.is_empty() {
                 continue;

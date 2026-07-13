@@ -1,5 +1,5 @@
 use rg_ir_model::BodyRef;
-use rg_ir_storage::ItemLookupIndex;
+use rg_semantic_ir::ItemLookupIndex;
 
 use crate::ir::body::ResolvedBodyData;
 

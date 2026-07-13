@@ -2,14 +2,14 @@ use std::fmt::Write as _;
 
 use expect_test::Expect;
 
+use crate::ItemResolutionQuery;
+use crate::{CrateItemQuery, ItemStore, ItemStoreQuery};
 use crate::{SemanticIrReadTxn, testonly::SemanticIrFixture};
-use rg_ir_model::{DefMapRef, ModuleId, ModuleRef, TargetRef, TypeAliasId};
+use rg_ir_model::{CrateId, CrateRef, DefMapRef, ModuleId, ModuleRef, TypeAliasId};
 use rg_ir_model::{Path, PathSegment};
-use rg_ir_storage::{ItemStore, ItemStoreQuery, TargetItemQuery};
 use rg_item_tree::{FieldItem, FieldList, ParamKind, VisibilityLevel};
 use rg_package_store::PackageLoader;
-use rg_parse::{Package, ParseDb, Target};
-use rg_ty::ItemPathQuery;
+use rg_parse::{CargoTarget, Package, ParseDb};
 use rg_workspace::TargetKind;
 
 use rg_ir_model::{
@@ -104,14 +104,14 @@ impl<'a> ProjectSemanticIrSnapshot<'a> {
         sorted_packages(self.project.parse_db())
             .into_iter()
             .map(|(package_slot, package)| {
-                let target_dumps = sorted_targets(package)
+                let crate_dumps = sorted_targets(package)
                     .into_iter()
                     .map(|target| {
-                        TargetSemanticIrSnapshot {
+                        CrateSemanticIrSnapshot {
                             project: self.project,
-                            target_ref: TargetRef {
+                            crate_ref: CrateRef {
                                 package: rg_def_map::PackageSlot(package_slot),
-                                target: target.id,
+                                crate_id: CrateId(target.id.0),
                             },
                             target_name: &target.name,
                             target_kind: target.kind.to_string(),
@@ -121,7 +121,7 @@ impl<'a> ProjectSemanticIrSnapshot<'a> {
                     .collect::<Vec<_>>()
                     .join("\n\n");
 
-                format!("package {}\n\n{target_dumps}", package.package_name())
+                format!("package {}\n\n{crate_dumps}", package.package_name())
             })
             .collect::<Vec<_>>()
             .join("\n\n")
@@ -147,8 +147,8 @@ impl<'a> ProjectSemanticQuerySnapshot<'a> {
     }
 
     fn render_query(&self, query: &SemanticQuery) -> String {
-        let (target_ref, target) = self.target_ref(query);
-        let module_id = self.module_id(target_ref, query.module_path);
+        let (crate_ref, target) = self.crate_ref(query);
+        let module_id = self.module_id(crate_ref, query.module_path);
         let path = Self::parse_path(query.path);
         let def_map_txn = self
             .project
@@ -158,11 +158,11 @@ impl<'a> ProjectSemanticQuerySnapshot<'a> {
             .project
             .semantic_ir_db()
             .read_txn(PackageLoader::resident_only("resident semantic IR fixture"));
-        let target_items = TargetItemQuery::new(&def_map_txn, &semantic_ir_txn, target_ref);
-        let type_defs = ItemPathQuery::new(&def_map_txn, &semantic_ir_txn)
+        let crate_items = CrateItemQuery::new(&def_map_txn, &semantic_ir_txn, crate_ref);
+        let type_defs = ItemResolutionQuery::new(&def_map_txn, &semantic_ir_txn)
             .type_defs_for_path(
                 ModuleRef {
-                    origin: DefMapRef::Target(target_ref),
+                    origin: DefMapRef::Crate(crate_ref),
                     module: module_id,
                 },
                 &path,
@@ -192,7 +192,7 @@ impl<'a> ProjectSemanticQuerySnapshot<'a> {
                 self.render_query_section(
                     &mut dump,
                     "impls",
-                    target_items
+                    crate_items
                         .impls_for_type(ty)
                         .expect("fixture semantic query should find impls for type")
                         .into_iter()
@@ -202,7 +202,7 @@ impl<'a> ProjectSemanticQuerySnapshot<'a> {
                 self.render_query_section(
                     &mut dump,
                     "trait impls",
-                    target_items
+                    crate_items
                         .trait_impls_for_type(ty)
                         .expect("fixture semantic query should find trait impls for type")
                         .into_iter()
@@ -218,7 +218,7 @@ impl<'a> ProjectSemanticQuerySnapshot<'a> {
                 self.render_query_section(
                     &mut dump,
                     "traits",
-                    target_items
+                    crate_items
                         .traits_for_type(ty)
                         .expect("fixture semantic query should find traits for type")
                         .into_iter()
@@ -228,7 +228,7 @@ impl<'a> ProjectSemanticQuerySnapshot<'a> {
                 self.render_query_section(
                     &mut dump,
                     "inherent functions",
-                    target_items
+                    crate_items
                         .inherent_functions_for_type(ty)
                         .expect("fixture semantic query should find inherent functions for type")
                         .into_iter()
@@ -240,7 +240,7 @@ impl<'a> ProjectSemanticQuerySnapshot<'a> {
                 self.render_query_section(
                     &mut dump,
                     "trait functions",
-                    target_items
+                    crate_items
                         .trait_functions_for_type(ty)
                         .expect("fixture semantic query should find trait functions for type")
                         .into_iter()
@@ -252,7 +252,7 @@ impl<'a> ProjectSemanticQuerySnapshot<'a> {
                 self.render_query_section(
                     &mut dump,
                     "trait impl functions",
-                    target_items
+                    crate_items
                         .trait_impl_functions_for_type(ty)
                         .expect("fixture semantic query should find trait impl functions for type")
                         .into_iter()
@@ -284,7 +284,7 @@ impl<'a> ProjectSemanticQuerySnapshot<'a> {
         }
     }
 
-    fn target_ref(&self, query: &SemanticQuery) -> (TargetRef, &'a rg_parse::Target) {
+    fn crate_ref(&self, query: &SemanticQuery) -> (CrateRef, &'a rg_parse::CargoTarget) {
         let (package_slot, package) = self
             .project
             .parse_db()
@@ -305,19 +305,19 @@ impl<'a> ProjectSemanticQuerySnapshot<'a> {
             });
 
         (
-            TargetRef {
+            CrateRef {
                 package: rg_def_map::PackageSlot(package_slot),
-                target: target.id,
+                crate_id: CrateId(target.id.0),
             },
             target,
         )
     }
 
-    fn module_id(&self, target_ref: TargetRef, module_path: &str) -> ModuleId {
+    fn module_id(&self, crate_ref: CrateRef, module_path: &str) -> ModuleId {
         let def_map = self
             .project
-            .resident_def_map(target_ref)
-            .expect("target def map should exist while rendering semantic query");
+            .resident_def_map(crate_ref)
+            .expect("crate def map should exist while rendering semantic query");
 
         def_map
             .modules()
@@ -326,7 +326,7 @@ impl<'a> ProjectSemanticQuerySnapshot<'a> {
             .find_map(|(module_idx, _)| {
                 let module_id = ModuleId(module_idx);
                 (self.module_path(ModuleRef {
-                    origin: DefMapRef::Target(target_ref),
+                    origin: DefMapRef::Crate(crate_ref),
                     module: module_id,
                 }) == module_path)
                     .then_some(module_id)
@@ -354,14 +354,14 @@ impl<'a> ProjectSemanticQuerySnapshot<'a> {
     }
 
     fn render_type_def_ref(&self, semantic_ir: &SemanticIrReadTxn<'_>, ty: TypeDefRef) -> String {
-        let target_ref = ty
+        let crate_ref = ty
             .origin
-            .as_target_ref()
-            .expect("type ref should belong to a target while rendering query");
+            .as_crate_ref()
+            .expect("type ref should belong to a crate while rendering query");
         let items = semantic_ir
-            .items(target_ref)
-            .expect("target semantic IR should load while rendering type ref")
-            .expect("target semantic IR should exist while rendering type ref");
+            .items(crate_ref)
+            .expect("crate semantic IR should load while rendering type ref")
+            .expect("crate semantic IR should exist while rendering type ref");
 
         match ty.id {
             TypeDefId::Struct(id) => {
@@ -449,15 +449,22 @@ impl<'a> ProjectSemanticQuerySnapshot<'a> {
     }
 
     fn render_module_ref(&self, module_ref: ModuleRef) -> String {
-        let target_ref = module_ref.origin.origin_target();
+        let crate_ref = module_ref.origin.origin_crate();
         let package = self
             .project
             .parse_db()
             .packages()
-            .get(target_ref.package.0)
+            .get(crate_ref.package.0)
             .expect("package slot should exist while rendering query");
         let target = package
-            .target(target_ref.target)
+            .target(
+                self.project
+                    .def_map_db()
+                    .resident_package(crate_ref.package)
+                    .and_then(|package| package.crate_data(crate_ref.crate_id))
+                    .expect("semantic crate should exist while rendering")
+                    .cargo_target(),
+            )
             .expect("target id should exist while rendering query");
 
         format!(
@@ -471,8 +478,8 @@ impl<'a> ProjectSemanticQuerySnapshot<'a> {
     fn module_path(&self, module_ref: ModuleRef) -> String {
         let module = self
             .project
-            .resident_def_map(module_ref.origin.origin_target())
-            .expect("target def map should exist while rendering query module path")
+            .resident_def_map(module_ref.origin.origin_crate())
+            .expect("crate def map should exist while rendering query module path")
             .module(module_ref.module)
             .expect("module id should exist while rendering query module path");
 
@@ -493,24 +500,24 @@ impl<'a> ProjectSemanticQuerySnapshot<'a> {
     }
 }
 
-struct TargetSemanticIrSnapshot<'a> {
+struct CrateSemanticIrSnapshot<'a> {
     project: &'a SemanticIrFixtureDb,
-    target_ref: TargetRef,
+    crate_ref: CrateRef,
     target_name: &'a str,
     target_kind: String,
 }
 
-impl TargetSemanticIrSnapshot<'_> {
+impl CrateSemanticIrSnapshot<'_> {
     fn render(&self) -> String {
         let mut dump = format!("{} [{}]\n", self.target_name, self.target_kind);
         let def_map = self
             .project
-            .resident_def_map(self.target_ref)
-            .expect("target def map should exist while rendering semantic IR");
+            .resident_def_map(self.crate_ref)
+            .expect("crate def map should exist while rendering semantic IR");
         let items = self
             .project
-            .resident_target_ir(self.target_ref)
-            .expect("target semantic IR should exist while rendering");
+            .resident_crate_ir(self.crate_ref)
+            .expect("crate semantic IR should exist while rendering");
 
         for (idx, (module_path, module_id)) in self.sorted_modules().into_iter().enumerate() {
             if idx > 0 {
@@ -824,8 +831,8 @@ impl TargetSemanticIrSnapshot<'_> {
     fn sorted_modules(&self) -> Vec<(String, ModuleId)> {
         let def_map = self
             .project
-            .resident_def_map(self.target_ref)
-            .expect("target def map should exist while sorting semantic IR modules");
+            .resident_def_map(self.crate_ref)
+            .expect("crate def map should exist while sorting semantic IR modules");
         let mut modules = def_map
             .modules()
             .iter()
@@ -842,8 +849,8 @@ impl TargetSemanticIrSnapshot<'_> {
     fn module_path(&self, module_id: ModuleId) -> String {
         let module = self
             .project
-            .resident_def_map(self.target_ref)
-            .expect("target def map should exist while rendering module path")
+            .resident_def_map(self.crate_ref)
+            .expect("crate def map should exist while rendering module path")
             .module(module_id)
             .expect("module id should exist while rendering module path");
 
@@ -862,8 +869,8 @@ impl TargetSemanticIrSnapshot<'_> {
 
     fn items(&self) -> &ItemStore {
         self.project
-            .resident_target_ir(self.target_ref)
-            .expect("target semantic IR should exist while rendering items")
+            .resident_crate_ir(self.crate_ref)
+            .expect("crate semantic IR should exist while rendering items")
     }
 }
 
@@ -922,7 +929,7 @@ fn sorted_packages(parse: &ParseDb) -> Vec<(usize, &Package)> {
     packages
 }
 
-fn sorted_targets(package: &Package) -> Vec<&Target> {
+fn sorted_targets(package: &Package) -> Vec<&CargoTarget> {
     let mut targets = package.targets().iter().collect::<Vec<_>>();
     targets.sort_by(|left, right| {
         (

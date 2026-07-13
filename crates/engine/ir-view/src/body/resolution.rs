@@ -8,7 +8,7 @@ use rg_body_ir::{BodyResolutionContext, ResolvedBodyData};
 use rg_ir_model::{
     BodyRef, EnumVariantRef, Path, ScopeId, TypePathResolution, identity::DeclarationRef,
 };
-use rg_ir_storage::ItemLookupIndex;
+use rg_semantic_ir::ItemLookupIndex;
 use rg_ty::{MemberMethodCandidateRef, Ty};
 
 use crate::IndexedViewDb;
@@ -30,7 +30,7 @@ impl<'a, 'db> BodyResolutionView<'a, 'db> {
         let Some(body) = self.db.body_ir.body_data(body_ref)? else {
             return Ok(None);
         };
-        let Some(semantic_index) = self.db.body_ir.semantic_index(body_ref.target)? else {
+        let Some(semantic_index) = self.db.body_ir.semantic_index(body_ref.crate_ref)? else {
             return Ok(None);
         };
 

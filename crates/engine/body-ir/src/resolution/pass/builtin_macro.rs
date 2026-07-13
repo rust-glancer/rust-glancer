@@ -9,8 +9,8 @@ use rg_ir_model::{
     BuiltinMacroExprKind, ExprId, Mutability, Span, TextSpan,
     items::{GenericArg as ItemGenericArg, TypePath, TypePathSegment, TypeRef},
 };
-use rg_ir_storage::ItemStoreSource;
 use rg_package_store::PackageStoreError;
+use rg_semantic_ir::ItemStoreSource;
 use rg_text::Name;
 use rg_ty::{PrimitiveTy, Ty, UnsignedIntTy};
 

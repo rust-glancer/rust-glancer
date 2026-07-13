@@ -9,7 +9,7 @@ use crate::{
     RenameResult, RenameTarget, SourceTextView, SymbolAt, WorkspaceSymbol,
 };
 use rg_def_map::testonly::DefMapFixture;
-use rg_ir_model::{BodySource, ExprData, ExprKind, PackageSlot, TargetRef};
+use rg_ir_model::{BodySource, CrateRef, ExprData, ExprKind, PackageSlot};
 use rg_ir_view::testonly::ViewFixture;
 use rg_parse::{FileId, ParseDb, Span};
 use rg_semantic_ir::testonly::SemanticIrFixture;
@@ -362,7 +362,7 @@ impl AnalysisFixtureDb {
         &self,
         selected: &AnalysisTarget,
         path: &str,
-    ) -> (TargetRef, FileId) {
+    ) -> (CrateRef, FileId) {
         let mut matches = Vec::new();
         let normalized_path = path.trim_start_matches('/');
 
@@ -384,12 +384,12 @@ impl AnalysisFixtureDb {
                     continue;
                 };
 
-                let target_ref = TargetRef {
+                let crate_ref = CrateRef {
                     package: PackageSlot(package_slot),
-                    target: target.id,
+                    crate_id: rg_ir_model::CrateId(target.id.0),
                 };
-                if self.target_owns_file(target_ref, file_id) {
-                    matches.push((target_ref, file_id));
+                if self.crate_owns_file(crate_ref, file_id) {
+                    matches.push((crate_ref, file_id));
                 }
             }
         }
@@ -403,7 +403,7 @@ impl AnalysisFixtureDb {
         matches.pop().expect("one match should be present")
     }
 
-    fn target_for(&self, selected: &AnalysisTarget) -> TargetRef {
+    fn target_for(&self, selected: &AnalysisTarget) -> CrateRef {
         let mut matches = Vec::new();
 
         for (package_slot, package) in self.parse_db().packages().iter().enumerate() {
@@ -416,9 +416,9 @@ impl AnalysisFixtureDb {
                 .iter()
                 .filter(|target| target.kind == selected.kind)
             {
-                matches.push(TargetRef {
+                matches.push(CrateRef {
                     package: PackageSlot(package_slot),
-                    target: target.id,
+                    crate_id: rg_ir_model::CrateId(target.id.0),
                 });
             }
         }
@@ -432,22 +432,22 @@ impl AnalysisFixtureDb {
         matches.pop().expect("one match should be present")
     }
 
-    fn all_targets(&self) -> Vec<TargetRef> {
+    fn all_targets(&self) -> Vec<CrateRef> {
         self.parse_db()
             .packages()
             .iter()
             .enumerate()
             .flat_map(|(package_slot, package)| {
-                package.targets().iter().map(move |target| TargetRef {
+                package.targets().iter().map(move |target| CrateRef {
                     package: PackageSlot(package_slot),
-                    target: target.id,
+                    crate_id: rg_ir_model::CrateId(target.id.0),
                 })
             })
             .collect()
     }
 
-    fn target_owns_file(&self, target: TargetRef, file_id: FileId) -> bool {
-        self.fixture.target_owns_file(target, file_id)
+    fn crate_owns_file(&self, target: CrateRef, file_id: FileId) -> bool {
+        self.fixture.crate_owns_file(target, file_id)
     }
 }
 
@@ -580,7 +580,10 @@ impl<'a> AnalysisQuerySnapshot<'a> {
                             .map(|path| {
                                 let (target, file_id) =
                                     self.db.target_and_file_for_path(&query.target, path);
-                                ReferenceSearchFile { target, file_id }
+                                ReferenceSearchFile {
+                                    crate_ref: target,
+                                    file_id,
+                                }
                             })
                             .collect::<Vec<_>>();
                         let reference_query = AnalysisReferenceQuery::find_references_in_files(
@@ -685,7 +688,7 @@ impl<'a> AnalysisQuerySnapshot<'a> {
         dump
     }
 
-    fn query_location(&self, query: &AnalysisQuery) -> (TargetRef, FileId, u32) {
+    fn query_location(&self, query: &AnalysisQuery) -> (CrateRef, FileId, u32) {
         let marker = self.markers.position(query.marker);
         let (target, file_id) = self
             .db
@@ -717,7 +720,7 @@ impl<'a> AnalysisQuerySnapshot<'a> {
                 writeln!(
                     dump,
                     "\n- body @ {}",
-                    self.render_source_span(body.target.package, source.file_id, source.span)
+                    self.render_source_span(body.crate_ref.package, source.file_id, source.span)
                 )
                 .expect("string writes should not fail");
             }
@@ -748,7 +751,7 @@ impl<'a> AnalysisQuerySnapshot<'a> {
                 writeln!(
                     dump,
                     "\n- {}",
-                    self.render_expr_symbol(body.target.package, expr_data)
+                    self.render_expr_symbol(body.crate_ref.package, expr_data)
                 )
                 .expect("string writes should not fail");
             }
@@ -891,8 +894,8 @@ impl<'a> AnalysisQuerySnapshot<'a> {
             (
                 target.kind,
                 target.name.clone(),
-                target.target.package.0,
-                target.target.target.0,
+                target.crate_ref.package.0,
+                target.crate_ref.crate_id.0,
                 target.file_id.0,
                 target.span.map(|span| span.text.start),
             )
@@ -913,7 +916,7 @@ impl<'a> AnalysisQuerySnapshot<'a> {
             writeln!(
                 dump,
                 "- {label} @ {}",
-                self.render_optional_span(target.target.package, target.file_id, target.span)
+                self.render_optional_span(target.crate_ref.package, target.file_id, target.span)
             )
             .expect("string writes should not fail");
         }
@@ -992,11 +995,15 @@ impl<'a> AnalysisQuerySnapshot<'a> {
                 dump,
                 "- `{}` @ {}",
                 self.render_source_text_for_span(
-                    reference.target.package,
+                    reference.crate_ref.package,
                     reference.file_id,
                     reference.span,
                 ),
-                self.render_file_span(reference.target.package, reference.file_id, reference.span,)
+                self.render_file_span(
+                    reference.crate_ref.package,
+                    reference.file_id,
+                    reference.span,
+                )
             )
             .expect("string writes should not fail");
         }
@@ -1044,8 +1051,8 @@ impl<'a> AnalysisQuerySnapshot<'a> {
         let mut edits = result.edits;
         edits.sort_by_key(|edit| {
             (
-                edit.target.package.0,
-                edit.target.target.0,
+                edit.crate_ref.package.0,
+                edit.crate_ref.crate_id.0,
                 edit.file_id.0,
                 edit.span.text.start,
             )
@@ -1062,7 +1069,7 @@ impl<'a> AnalysisQuerySnapshot<'a> {
             "- `{}` -> `{}` @ {}",
             edit.old_text,
             edit.new_text,
-            self.render_file_span(edit.target.package, edit.file_id, edit.span)
+            self.render_file_span(edit.crate_ref.package, edit.file_id, edit.span)
         )
         .expect("string writes should not fail");
     }
@@ -1427,8 +1434,8 @@ impl<'a> AnalysisSymbolSnapshot<'a> {
             symbol.kind,
             symbol.name,
             container,
-            self.render_target_ref(symbol.target),
-            self.render_file_span(symbol.target.package, symbol.file_id, symbol.span)
+            self.render_crate_ref(symbol.crate_ref),
+            self.render_file_span(symbol.crate_ref.package, symbol.file_id, symbol.span)
         )
         .expect("string writes should not fail");
     }
@@ -1443,15 +1450,23 @@ impl<'a> AnalysisSymbolSnapshot<'a> {
         .expect("string writes should not fail");
     }
 
-    fn render_target_ref(&self, target_ref: TargetRef) -> String {
+    fn render_crate_ref(&self, crate_ref: CrateRef) -> String {
         let package = self
             .db
             .parse_db()
             .packages()
-            .get(target_ref.package.0)
+            .get(crate_ref.package.0)
             .expect("target package should exist while rendering workspace symbol");
+        let cargo_target = self
+            .db
+            .fixture
+            .def_map_db()
+            .resident_package(crate_ref.package)
+            .and_then(|package| package.crate_data(crate_ref.crate_id))
+            .expect("semantic crate should exist while rendering workspace symbol")
+            .cargo_target();
         let target = package
-            .target(target_ref.target)
+            .target(cargo_target)
             .expect("target should exist while rendering workspace symbol");
 
         format!("{}[{}]", package.package_name(), target.kind)

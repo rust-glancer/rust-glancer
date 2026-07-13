@@ -28,22 +28,22 @@ pub(crate) fn workspace_edit(
 
     for edit in edits {
         let path = snapshot
-            .file_path(edit.target.package, edit.file_id)
+            .file_path(edit.crate_ref.package, edit.file_id)
             .with_context(|| {
                 format!(
                     "while attempting to find file path for rename edit in package {:?}, file {:?}",
-                    edit.target.package, edit.file_id
+                    edit.crate_ref.package, edit.file_id
                 )
             })?;
         let uri = Uri::from_file_path(path).with_context(|| {
             format!(
                 "while attempting to convert file path `{}` to URI for rename edit in package {:?}, file {:?}",
                 path.display(),
-                edit.target.package,
+                edit.crate_ref.package,
                 edit.file_id
             )
         })?;
-        let range = range_for_file(snapshot, edit.target.package, edit.file_id, edit.span)?;
+        let range = range_for_file(snapshot, edit.crate_ref.package, edit.file_id, edit.span)?;
         let text_edit = TextEdit {
             range,
             new_text: edit.new_text,

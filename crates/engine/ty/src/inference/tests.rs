@@ -1,6 +1,6 @@
 use rg_ir_model::{
-    DefMapRef, ExprId, FunctionId, FunctionRef, PackageSlot, StructId, TargetId, TargetRef,
-    TraitId, TraitRef, TypeDefId, TypeDefRef,
+    CrateRef, DefMapRef, ExprId, FunctionId, FunctionRef, PackageSlot, StructId, TraitId, TraitRef,
+    TypeDefId, TypeDefRef,
     items::{FloatTy, SignedIntTy, TypeRef, UnsignedIntTy},
 };
 
@@ -8,9 +8,9 @@ use super::{ExplicitTypeArgInstantiationBuilder, InferenceTable, UnknownTypeInst
 use crate::{ClosureTyId, GenericArg, NominalTy, OpaqueTraitBound, PrimitiveTy, Ty};
 
 fn def_map_ref() -> DefMapRef {
-    DefMapRef::Target(TargetRef {
+    DefMapRef::Crate(CrateRef {
         package: PackageSlot(0),
-        target: TargetId(0),
+        crate_id: rg_ir_model::CrateId(0),
     })
 }
 

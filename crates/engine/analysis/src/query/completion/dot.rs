@@ -38,8 +38,11 @@ impl<'a, 'db, 'source> DotCompletionResolver<'a, 'db, 'source> {
         let members = MemberView::new(self.analysis.view_db());
         let mut completions = Vec::new();
 
-        let syntax =
-            SyntaxRenderer::new(self.analysis.view_db().target_edition(self.query.target)?);
+        let syntax = SyntaxRenderer::new(
+            self.analysis
+                .view_db()
+                .crate_edition(self.query.crate_ref)?,
+        );
         let field_renderer = FieldCompletionRenderer::new(syntax);
         for field_ref in completion_candidates.field_candidates_for_dot(&site)? {
             let Some(field) = members.field(field_ref)? else {

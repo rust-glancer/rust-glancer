@@ -1,6 +1,6 @@
 //! Cursor/source symbol indexing over indexed source occurrences.
 
-use rg_ir_model::TargetRef;
+use rg_ir_model::CrateRef;
 use rg_ir_view::{IndexedViewDb, source::SourceOccurrenceView};
 use rg_parse::FileId;
 
@@ -17,24 +17,24 @@ impl<'a, 'db> SourceSymbolIndex<'a, 'db> {
 
     pub(crate) fn symbols_at(
         &self,
-        target: TargetRef,
+        crate_ref: CrateRef,
         file_id: FileId,
         offset: u32,
     ) -> anyhow::Result<Vec<SourceSymbol>> {
         Ok(SourceOccurrenceView::new(self.db)
-            .occurrences_at(target, file_id, offset)?
+            .occurrences_at(crate_ref, file_id, offset)?
             .into_iter()
             .map(SourceSymbol::from_occurrence)
             .collect())
     }
 
-    pub(crate) fn symbols_in_target(
+    pub(crate) fn symbols_in_crate(
         &self,
-        target: TargetRef,
+        crate_ref: CrateRef,
         file_id: Option<FileId>,
     ) -> anyhow::Result<Vec<SourceSymbol>> {
         Ok(SourceOccurrenceView::new(self.db)
-            .occurrences_in_target(target, file_id)?
+            .occurrences_in_crate(crate_ref, file_id)?
             .into_iter()
             .map(SourceSymbol::from_occurrence)
             .collect())

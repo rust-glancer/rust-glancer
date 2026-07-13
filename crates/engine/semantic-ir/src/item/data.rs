@@ -1,5 +1,7 @@
-use crate::{
-    Mutability,
+use rg_ir_model::{
+    AssocItemId, FunctionRef, ItemOwner, LocalDefRef, LocalImplRef, ModuleRef, Mutability,
+    TraitRef, TypeDefRef,
+    hir::source::ItemSource,
     items::{
         Documentation, EnumVariantItem, FieldItem, FieldList, GenericParams, ParamKind, TypeBound,
         TypeRef, VisibilityLevel,
@@ -10,14 +12,7 @@ use rg_std::{ExpectedUnique, MemorySize, Shrink};
 use rg_text::Name;
 use wincode::{SchemaRead, SchemaWrite};
 
-use crate::{
-    AssocItemId, FunctionRef, ItemOwner, LocalDefRef, LocalImplRef, ModuleRef, TraitRef, TypeDefRef,
-};
-
-use super::{
-    signature::{ConstSignature, FunctionSignature, TypeAliasSignature},
-    source::ItemSource,
-};
+use super::signature::{ConstSignature, FunctionSignature, TypeAliasSignature};
 
 /// Borrowed view over one field plus the semantic owner facts needed by analysis.
 #[derive(Debug, Clone, Copy)]
@@ -111,7 +106,7 @@ impl TraitData {
 /// Impl block header and associated items.
 ///
 /// `resolved_*` fields are intentionally lossy: invalid or ambiguous headers stay visible until
-/// query code decides whether it needs a single known target.
+/// query code decides whether it needs a single known definition.
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct ImplData {
     pub local_impl: LocalImplRef,

@@ -128,7 +128,7 @@ pub fn use_it(user: User, wrapper: Wrapper<Error>) {
 }
 
 #[test]
-fn method_lookup_excludes_traits_from_unrelated_workspace_targets() {
+fn method_lookup_excludes_traits_from_unrelated_workspace_crates() {
     check_project_body_ir(
         r#"
 //- /Cargo.toml

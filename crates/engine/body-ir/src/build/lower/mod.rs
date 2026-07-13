@@ -4,12 +4,12 @@
 //! and visibility-order binding boundaries so the later resolution pass can stay focused.
 
 mod body;
+mod crate_lowering;
 mod expr;
 mod macro_expansion;
 mod pat;
 mod stmt;
 mod syntax;
-mod target;
 mod task;
 
 use anyhow::Context as _;
@@ -17,15 +17,15 @@ use rayon::prelude::*;
 
 use rg_cfg_eval::CfgEvaluator;
 use rg_def_map::{DefMapReadTxn, PackageSlot};
-use rg_ir_model::{ConstRef, StaticRef, TargetRef};
-use rg_parse::{ParseDb, TargetId};
+use rg_ir_model::{ConstRef, CrateId, CrateRef, StaticRef};
+use rg_parse::ParseDb;
 use rg_semantic_ir::SemanticIrReadTxn;
 use rg_text::{NameInterner, PackageNameInterners};
 
-use crate::{BodyIrBuildPolicy, PackageBodies, TargetBodies, TargetBodiesCoverage};
+use crate::{BodyIrBuildPolicy, CrateBodies, CrateBodiesCoverage, PackageBodies};
 
+use self::crate_lowering::CrateLowering;
 pub(super) use self::macro_expansion::BodyMacroExpansion;
-use self::target::TargetLowering;
 pub(super) use self::task::{BodyLoweringTask, BodyTaskLowering};
 use super::{local_thread_pool, materialization::BodyIrMaterialization};
 
@@ -157,28 +157,36 @@ fn build_package_with_interner(
             package.0,
         )
     })?;
-    let target_count = package_ir.targets().len();
-    let mut targets = Vec::with_capacity(target_count);
+    let crate_count = package_ir.crates().len();
+    let mut crates = Vec::with_capacity(crate_count);
+    let def_map_package = def_map.package(package).with_context(|| {
+        format!(
+            "while attempting to fetch def-map package {} for body lowering",
+            package.0
+        )
+    })?;
 
-    // Go through all targets
-    for target_idx in 0..target_count {
-        let target_id = TargetId(target_idx);
+    // A semantic crate retains the Cargo target that provides its source and cfg context. Keep the
+    // conversion at this boundary instead of relying on matching arena indexes in later phases.
+    for crate_idx in 0..crate_count {
+        let crate_id = CrateId(crate_idx);
+        let cargo_target = def_map_package
+            .crate_data(crate_id)
+            .context("semantic crate should have definition data")?
+            .cargo_target();
 
         // Build cfg evaluator to support `#[cfg]` in bodies
-        let parse_target = parse_package.target(target_id).with_context(|| {
-            format!("while attempting to fetch parsed target {target_idx} for body lowering")
+        let parse_target = parse_package.target(cargo_target).with_context(|| {
+            format!("while attempting to fetch parsed target for crate {crate_idx}")
         })?;
-        let target_ref = TargetRef {
-            package,
-            target: target_id,
-        };
+        let crate_ref = CrateRef { package, crate_id };
         let cfg = CfgEvaluator::new(parse_package.cfg_options(), parse_target.enables_test_cfg());
 
         // Collect known semantic items.
         let store = semantic_ir
-            .items(target_ref)
+            .items(crate_ref)
             .with_context(|| {
-                format!("while attempting to fetch semantic IR items for target {target_idx}")
+                format!("while attempting to fetch semantic IR items for crate {crate_idx}")
             })?
             .context("store must be present")?;
         let functions = store
@@ -214,8 +222,8 @@ fn build_package_with_interner(
             })
             .collect::<Vec<_>>();
 
-        // Decide both whether this target needs work and how much of its body surface the result
-        // will cover. Selected-file rebuilds are allowed to materialize a target partially, while
+        // Decide both whether this crate needs work and how much of its body surface the result
+        // will cover. Selected-file rebuilds are allowed to materialize a crate partially, while
         // package-policy builds keep the historical all-or-nothing behavior.
         let body_files = functions
             .iter()
@@ -223,12 +231,12 @@ fn build_package_with_interner(
             .chain(consts.iter().map(|(_, file_id, _)| *file_id))
             .chain(statics.iter().map(|(_, file_id, _)| *file_id))
             .collect::<Vec<_>>();
-        let coverage = scope.target_coverage(package, parse_package, &body_files);
+        let coverage = scope.crate_coverage(package, parse_package, &body_files);
         if !coverage.is_materialized() {
-            targets.push(match coverage {
-                TargetBodiesCoverage::Missing => TargetBodies::missing(),
-                TargetBodiesCoverage::SkippedByPolicy => TargetBodies::skipped_by_policy(),
-                TargetBodiesCoverage::Complete | TargetBodiesCoverage::Partial => {
+            crates.push(match coverage {
+                CrateBodiesCoverage::Missing => CrateBodies::missing(),
+                CrateBodiesCoverage::SkippedByPolicy => CrateBodies::skipped_by_policy(),
+                CrateBodiesCoverage::Complete | CrateBodiesCoverage::Partial => {
                     unreachable!("materialized body IR coverage should be lowered")
                 }
             });
@@ -236,8 +244,8 @@ fn build_package_with_interner(
         }
 
         // Lower.
-        targets.push(
-            TargetLowering {
+        crates.push(
+            CrateLowering {
                 parse_package,
                 def_map,
                 semantic_ir,
@@ -246,18 +254,16 @@ fn build_package_with_interner(
                 functions,
                 consts,
                 statics,
-                target_bodies: TargetBodies::with_coverage(coverage),
+                crate_bodies: CrateBodies::with_coverage(coverage),
                 cfg,
                 interner,
             }
             .lower()
-            .with_context(|| {
-                format!("while attempting to lower body IR for target {target_idx}")
-            })?,
+            .with_context(|| format!("while attempting to lower body IR for crate {crate_idx}"))?,
         );
     }
 
-    Ok(PackageBodies::new(targets))
+    Ok(PackageBodies::new(crates))
 }
 
 fn validate_package_inputs(

@@ -11,8 +11,8 @@ use rg_macro_runtime::MacroExpansionPerformancePreference;
 use rg_text::PackageNameInterners;
 use rg_workspace::WorkspaceMetadata;
 
-use super::super::{collect::collect_package_target_states, implicit_roots::build_implicit_roots};
-use super::{FinalizeTargetStates, finalize_target_states, freeze_package};
+use super::super::{collect::collect_package_crate_states, implicit_roots::build_implicit_roots};
+use super::{FinalizeCrateStates, finalize_crate_states, freeze_package};
 use crate::{DefMapDb, DefMapReadTxn, PackageSlot};
 
 /// Rebuilds selected package def maps against the previous frozen graph.
@@ -33,13 +33,13 @@ pub(crate) fn rebuild_packages(
     }
 
     // Implicit roots are still recomputed from metadata even for package-scoped source rebuilds,
-    // because the rebuilt targets need the same cross-target root map shape as a clean build.
+    // because the rebuilt crates need the same cross-crate root map shape as a clean build.
     let implicit_roots = build_implicit_roots(workspace, parse.packages(), interners)
-        .context("while attempting to rebuild implicit target roots")?;
+        .context("while attempting to rebuild implicit crate roots")?;
 
     // Only affected packages get mutable state. Unaffected packages remain frozen in `old` and
     // are read through the shared finalization environment.
-    let mut target_states = FinalizeTargetStates::empty(parse.packages().len());
+    let mut crate_states = FinalizeCrateStates::empty(parse.packages().len());
 
     for package_slot in &packages {
         let parse_package = parse.package(package_slot.0).with_context(|| {
@@ -54,7 +54,7 @@ pub(crate) fn rebuild_packages(
                 package_slot.0
             )
         })?;
-        let package_states = collect_package_target_states(
+        let package_states = collect_package_crate_states(
             package_slot.0,
             parse_package,
             item_tree_package,
@@ -62,39 +62,39 @@ pub(crate) fn rebuild_packages(
         )
         .with_context(|| {
             format!(
-                "while attempting to rebuild target states for package {}",
+                "while attempting to rebuild crate states for package {}",
                 parse_package.package_name()
             )
         })?;
 
-        target_states
+        crate_states
             .replace_package(*package_slot, package_states)
             .with_context(|| {
                 format!(
-                    "while attempting to replace target states for package {}",
+                    "while attempting to replace crate states for package {}",
                     package_slot.0
                 )
             })?;
     }
 
-    finalize_target_states(
+    finalize_crate_states(
         Some(old_read),
         workspace,
         parse.packages(),
         item_tree,
-        &mut target_states,
+        &mut crate_states,
         interners,
         performance_preference,
     )
-    .context("while attempting to finish rebuilt target states")?;
+    .context("while attempting to finish rebuilt crate states")?;
 
     // Preserve the old snapshot shape and swap in only rebuilt package payloads. This keeps the DB
     // immutable from query consumers' point of view while avoiding a whole-workspace replacement.
     let mut next = old.clone();
     for package_slot in packages {
-        let package_states = target_states.take_package(package_slot).with_context(|| {
+        let package_states = crate_states.take_package(package_slot).with_context(|| {
             format!(
-                "while attempting to fetch rebuilt target states for package {}",
+                "while attempting to fetch rebuilt crate states for package {}",
                 package_slot.0
             )
         })?;

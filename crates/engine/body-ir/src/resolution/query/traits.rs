@@ -4,8 +4,8 @@ use rg_def_map::DefMapSource;
 use rg_ir_model::{
     ItemOwner, Path, ScopeId, TraitImplRef, TraitRef, TypePathResolution, items::TypeRef,
 };
-use rg_ir_storage::{ItemStoreSource, TypePathContext};
 use rg_package_store::PackageStoreError;
+use rg_semantic_ir::{ItemStoreSource, TypePathContext};
 use rg_std::UniqueVec;
 use rg_ty::{GenericArg, NominalTy, Ty, TypeSubst};
 
@@ -155,7 +155,7 @@ where
             trait_args,
         )?;
 
-        if ty.def.origin.as_target_ref().is_some() {
+        if ty.def.origin.as_crate_ref().is_some() {
             let semantic_impls = self
                 .context
                 .semantic_index()

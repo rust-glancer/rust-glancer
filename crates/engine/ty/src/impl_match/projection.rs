@@ -8,12 +8,12 @@ use crate::{
     GenericArg, NominalTy, TraitGoal, TraitSelectionOptions, TraitSelectionQuery, Ty, TypeSubst,
 };
 use rg_def_map::DefMapSource;
-use rg_ir_model::hir::items::ImplData;
 use rg_ir_model::items::{GenericArg as ItemGenericArg, TypeBound, TypePath, TypeRef};
 use rg_ir_model::{
     ImplRef, Mutability, Path, TraitApplicability, TraitImplRef, TypePathResolution,
 };
-use rg_ir_storage::{ItemStoreSource, TypePathContext};
+use rg_semantic_ir::ImplData;
+use rg_semantic_ir::{ItemStoreSource, TypePathContext};
 use rg_text::Name;
 
 use super::ImplMatcher;
@@ -335,10 +335,10 @@ where
         };
         let table = InferenceTable::new();
         let mut definite_matches = 0usize;
-        for trait_impl in self.target_items.trait_impls_for_trait(trait_ref)? {
+        for trait_impl in self.crate_items.trait_impls_for_trait(trait_ref)? {
             let Some(selection) = TraitSelectionQuery::probe_visible_trait_impl(
                 &self.item_paths,
-                &self.target_items,
+                &self.crate_items,
                 &goal,
                 &table,
                 trait_impl,

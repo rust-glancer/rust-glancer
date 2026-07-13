@@ -1,17 +1,16 @@
 use rg_arena::Arena;
 use rg_ir_model::{
-    ConstId, ConstRef, DefMapRef, EnumId, FunctionId, FunctionRef, ImplId, ImplRef, ItemId,
-    LocalDefId, SemanticItemRef, StaticId, StaticRef, StructId, TargetRef, TraitId, TraitRef,
+    ConstId, ConstRef, CrateRef, DefMapRef, EnumId, FunctionId, FunctionRef, ImplId, ImplRef,
+    ItemId, LocalDefId, SemanticItemRef, StaticId, StaticRef, StructId, TraitId, TraitRef,
     TypeAliasId, TypeAliasRef, TypeDefId, TypeDefRef, UnionId,
-    hir::items::{
-        ConstData, EnumData, FunctionData, ImplData, StaticData, StructData, TraitData,
-        TypeAliasData, UnionData,
-    },
 };
 use rg_std::{ExpectedUnique, MemorySize, Shrink};
 use wincode::{SchemaRead, SchemaWrite};
 
-use super::{SemanticItemView, view::SemanticItemData};
+use super::{
+    ConstData, EnumData, FunctionData, ImplData, SemanticItemView, StaticData, StructData,
+    TraitData, TypeAliasData, UnionData, view::SemanticItemData,
+};
 
 #[derive(Debug)]
 pub struct ItemStoreBuilder {
@@ -78,7 +77,7 @@ impl ItemStoreBuilder {
     }
 }
 
-/// Target-local storage for semantic items.
+/// Crate-local storage for semantic items.
 ///
 /// Semantic ids are dense indexes into these vectors. Keeping all item families in one store lets
 /// lowering allocate ids cheaply while the public query surface exposes stable typed references.
@@ -106,8 +105,8 @@ impl ItemStore {
         self.origin
     }
 
-    pub fn target_ref(&self) -> TargetRef {
-        self.origin.origin_target()
+    pub fn crate_ref(&self) -> CrateRef {
+        self.origin.origin_crate()
     }
 
     pub fn structs(&self) -> &Arena<StructId, StructData> {

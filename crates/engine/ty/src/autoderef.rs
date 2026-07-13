@@ -7,7 +7,7 @@
 use std::{borrow::Cow, collections::VecDeque};
 
 use rg_def_map::DefMapSource;
-use rg_ir_storage::{ItemLookupIndex, ItemStoreSource, TargetItemQuery};
+use rg_semantic_ir::{CrateItemQuery, ItemLookupIndex, ItemStoreSource};
 
 use crate::{ItemPathQuery, Mutability, Ty, deref::DerefResolver};
 use rg_std::UniqueVec;
@@ -18,7 +18,7 @@ const AUTODEREF_LIMIT: usize = 8;
 #[derive(Clone)]
 pub struct Autoderef<'query, D, I> {
     item_paths: ItemPathQuery<'query, D, I>,
-    target_items: TargetItemQuery<'query, D, I>,
+    crate_items: CrateItemQuery<'query, D, I>,
     lookup_index: &'query ItemLookupIndex,
 }
 
@@ -30,12 +30,12 @@ where
     /// Creates an autoderef engine over a target-scoped receiver lookup index.
     pub fn with_index(
         item_paths: ItemPathQuery<'query, D, I>,
-        target_items: TargetItemQuery<'query, D, I>,
+        crate_items: CrateItemQuery<'query, D, I>,
         lookup_index: &'query ItemLookupIndex,
     ) -> Self {
         Self {
             item_paths,
-            target_items,
+            crate_items,
             lookup_index,
         }
     }
@@ -73,7 +73,7 @@ where
     fn deref_targets(&self, ty: &Ty) -> Result<UniqueVec<Ty>, D::Error> {
         DerefResolver::new(
             self.item_paths.clone(),
-            self.target_items.clone(),
+            self.crate_items.clone(),
             self.lookup_index,
         )
         .targets_for_ty(ty)

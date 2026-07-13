@@ -3,10 +3,10 @@
 use rg_body_ir::BodyIrReadTxn;
 use rg_def_map::DefMapReadTxn;
 use rg_def_map::{DefMap, DefMapSource};
-use rg_ir_model::{DefMapRef, ModuleRef, TargetRef};
-use rg_ir_storage::{ItemStore, ItemStoreSource};
+use rg_ir_model::{CrateRef, DefMapRef, ModuleRef};
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::SemanticIrReadTxn;
+use rg_semantic_ir::{ItemStore, ItemStoreSource};
 use rg_text::RustEdition;
 
 /// Read-only database handle used by all indexed-data views.
@@ -34,14 +34,14 @@ impl<'db> IndexedViewDb<'db> {
         }
     }
 
-    /// Returns the edition whose syntax rules apply at a target use site.
-    pub fn target_edition(&self, target: TargetRef) -> Result<RustEdition, PackageStoreError> {
-        self.def_map.package_edition(target.package)
+    /// Returns the edition whose syntax rules apply at a crate_ref use site.
+    pub fn crate_edition(&self, crate_ref: CrateRef) -> Result<RustEdition, PackageStoreError> {
+        self.def_map.package_edition(crate_ref.package)
     }
 
     /// Returns the edition whose syntax rules apply to declarations owned by this origin.
     pub fn origin_edition(&self, origin: DefMapRef) -> Result<RustEdition, PackageStoreError> {
-        self.target_edition(origin.origin_target())
+        self.crate_edition(origin.origin_crate())
     }
 }
 
@@ -53,7 +53,7 @@ impl<'a, 'db> ItemStoreSource<'a> for &'a IndexedViewDb<'db> {
         origin: DefMapRef,
     ) -> Result<Option<&'a ItemStore>, PackageStoreError> {
         match origin {
-            DefMapRef::Target(target) => self.semantic_ir.items(target),
+            DefMapRef::Crate(crate_ref) => self.semantic_ir.items(crate_ref),
             DefMapRef::Body(body_ref) => self.body_ir.body_item_store(body_ref),
         }
     }
@@ -68,31 +68,31 @@ impl DefMapSource for &IndexedViewDb<'_> {
 
     fn def_map_for_origin(&self, origin: DefMapRef) -> Result<Option<&DefMap>, PackageStoreError> {
         match origin {
-            DefMapRef::Target(target) => self.def_map.def_map(target),
+            DefMapRef::Crate(crate_ref) => self.def_map.def_map(crate_ref),
             DefMapRef::Body(body_ref) => self.body_ir.body_def_map(body_ref),
         }
     }
 
     fn extern_root(
         &self,
-        target: TargetRef,
+        crate_ref: CrateRef,
         name: &str,
     ) -> Result<Option<ModuleRef>, PackageStoreError> {
-        self.def_map.extern_root(target, name)
+        self.def_map.extern_root(crate_ref, name)
     }
 
     fn extern_roots(
         &self,
-        target: TargetRef,
+        crate_ref: CrateRef,
     ) -> Result<Vec<(String, ModuleRef)>, PackageStoreError> {
-        self.def_map.extern_roots(target)
+        self.def_map.extern_roots(crate_ref)
     }
 
-    fn prelude_module(&self, target: TargetRef) -> Result<Option<ModuleRef>, PackageStoreError> {
-        self.def_map.prelude_module(target)
+    fn prelude_module(&self, crate_ref: CrateRef) -> Result<Option<ModuleRef>, PackageStoreError> {
+        self.def_map.prelude_module(crate_ref)
     }
 
-    fn root_module(&self, target: TargetRef) -> Result<Option<ModuleRef>, PackageStoreError> {
-        self.def_map.root_module(target)
+    fn root_module(&self, crate_ref: CrateRef) -> Result<Option<ModuleRef>, PackageStoreError> {
+        self.def_map.root_module(crate_ref)
     }
 }

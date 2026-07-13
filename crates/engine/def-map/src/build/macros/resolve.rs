@@ -6,14 +6,14 @@
 use anyhow::Result;
 
 use crate::{
-    MacroDefinitionEnv, MacroDefinitionView, ScopeBinding, ScopeResolver, TargetResolutionEnv,
+    CrateResolutionEnv, MacroDefinitionEnv, MacroDefinitionView, ScopeBinding, ScopeResolver,
 };
-use rg_ir_model::{DefId, DefMapRef, LocalDefRef, ModuleRef, Path, TargetRef};
+use rg_ir_model::{CrateRef, DefId, DefMapRef, LocalDefRef, ModuleRef, Path};
 use rg_std::ExpectedUnique;
 use rg_text::Name;
 
 use super::{ItemOrder, MacroCallSite};
-use crate::build::{collect::TargetState, finalize::FinalizeTargetStates};
+use crate::build::{collect::CrateState, finalize::FinalizeCrateStates};
 
 /// Macro definition resolved through the ordinary macro namespace.
 pub(super) struct ResolvedMacroDefinition<'a> {
@@ -40,21 +40,17 @@ impl Eq for ResolvedMacroDefinition<'_> {}
 /// for the ordinary namespace work.
 pub(super) struct ItemMacroResolver<'a, E: ?Sized> {
     env: &'a E,
-    states: &'a FinalizeTargetStates,
-    state: &'a TargetState,
+    states: &'a FinalizeCrateStates,
+    state: &'a CrateState,
 }
 
 impl<'a, E> ItemMacroResolver<'a, E>
 where
-    E: TargetResolutionEnv<Error = rg_package_store::PackageStoreError>
+    E: CrateResolutionEnv<Error = rg_package_store::PackageStoreError>
         + MacroDefinitionEnv
         + ?Sized,
 {
-    pub(super) fn new(
-        env: &'a E,
-        states: &'a FinalizeTargetStates,
-        state: &'a TargetState,
-    ) -> Self {
+    pub(super) fn new(env: &'a E, states: &'a FinalizeCrateStates, state: &'a CrateState) -> Self {
         Self { env, states, state }
     }
 
@@ -73,7 +69,7 @@ where
         // Qualified calls follow ordinary path resolution for the prefix, then keep the final macro
         // binding so order filtering can distinguish direct definitions from exports/imports.
         let resolved_bindings = ScopeResolver::new(self.env)
-            .macro_bindings(ModuleRef::target(self.state.target, call.module), path)?;
+            .macro_bindings(ModuleRef::krate(self.state.crate_ref, call.module), path)?;
         let mut macros = Vec::new();
 
         for binding in resolved_bindings {
@@ -84,7 +80,7 @@ where
 
         Ok(unique_macro_definition(visible_macro_definitions(
             macros,
-            self.state.target,
+            self.state.crate_ref,
             call,
         )))
     }
@@ -117,7 +113,7 @@ where
         name: &Name,
     ) -> Result<ExpectedUnique<ResolvedMacroDefinition<'a>>> {
         let importing_module = ModuleRef {
-            origin: DefMapRef::Target(self.state.target),
+            origin: DefMapRef::Crate(self.state.crate_ref),
             module: call.module,
         };
         let bindings = ScopeResolver::new(self.env).visible_unqualified_macro_bindings(
@@ -153,7 +149,7 @@ where
             {
                 return self.macro_record_for_def(
                     DefId::Local(LocalDefRef {
-                        origin: DefMapRef::Target(self.state.target),
+                        origin: DefMapRef::Crate(self.state.crate_ref),
                         local_def,
                     }),
                     true,
@@ -163,7 +159,7 @@ where
             // A parent module contributes only declarations that appeared before the child module
             // was declared, matching the textual file view used by `macro_rules!`.
             let Some(parent) = self.env.parent_module(ModuleRef {
-                origin: DefMapRef::Target(self.state.target),
+                origin: DefMapRef::Crate(self.state.crate_ref),
                 module,
             })?
             else {
@@ -195,7 +191,7 @@ where
             }
 
             let import_owner = ModuleRef {
-                origin: DefMapRef::Target(self.state.target),
+                origin: DefMapRef::Crate(self.state.crate_ref),
                 module: macro_use.module,
             };
             for binding in ScopeResolver::new(self.env).visible_macro_bindings(
@@ -230,7 +226,7 @@ where
 
         Ok(unique_macro_definition(visible_macro_definitions(
             macros,
-            self.state.target,
+            self.state.crate_ref,
             call,
         )))
     }
@@ -255,8 +251,8 @@ where
         let order = payload
             .def_ref
             .origin
-            .as_target_ref()
-            .and_then(|target| self.states.target(target))
+            .as_crate_ref()
+            .and_then(|crate_ref| self.states.crate_state(crate_ref))
             .and_then(|state| state.macro_definitions.get(&payload.def_ref.local_def))
             .map(|record| &record.order);
 
@@ -270,7 +266,7 @@ where
 
 fn visible_macro_definitions<'a, 'call, I>(
     macros: I,
-    target: TargetRef,
+    crate_ref: CrateRef,
     call: &'call MacroCallSite,
 ) -> impl Iterator<Item = ResolvedMacroDefinition<'a>> + 'call
 where
@@ -278,7 +274,7 @@ where
 {
     macros
         .into_iter()
-        .filter(move |macro_| macro_definition_is_visible_by_order(macro_, target, call))
+        .filter(move |macro_| macro_definition_is_visible_by_order(macro_, crate_ref, call))
 }
 
 fn unique_macro_definition<'a>(
@@ -297,14 +293,14 @@ fn unique_macro_definition<'a>(
 /// Filters ordinary namespace candidates that are textually later than the call site.
 fn macro_definition_is_visible_by_order(
     macro_: &ResolvedMacroDefinition<'_>,
-    target: TargetRef,
+    crate_ref: CrateRef,
     call: &MacroCallSite,
 ) -> bool {
     if !macro_.direct_only {
         return true;
     }
 
-    !(macro_.definition.def_ref.origin == DefMapRef::Target(target)
+    !(macro_.definition.def_ref.origin == DefMapRef::Crate(crate_ref)
         && macro_.definition.local_def.module == call.module
         && macro_.order.is_some_and(|order| order > &call.order))
 }

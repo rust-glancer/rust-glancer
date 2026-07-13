@@ -8,11 +8,12 @@
 use rg_ir_model::Path;
 use rg_ir_model::items::{Documentation, FieldKey, ParamItem};
 use rg_ir_model::{
-    BodyRef, EnumVariantRef, FieldRef, FunctionRef, ItemOwner, ScopeId, TargetRef, TypeDefId,
+    BodyRef, CrateRef, EnumVariantRef, FieldRef, FunctionRef, ItemOwner, ScopeId, TypeDefId,
     TypePathResolution,
-    hir::items::{EnumVariantData, FieldData, FunctionData},
 };
-use rg_ir_storage::{ItemLookupIndex, ItemStoreQuery, TargetItemQuery};
+use rg_semantic_ir::{
+    CrateItemQuery, EnumVariantData, FieldData, FunctionData, ItemLookupIndex, ItemStoreQuery,
+};
 use rg_ty::MemberMethodOrigin;
 use rg_ty::{ItemPathQuery, MemberMethodCandidateRef, MemberQuery, Ty};
 
@@ -140,13 +141,13 @@ impl<'a> MemberMethodCandidate<'a> {
 /// Place where member lookup is requested.
 #[derive(Debug, Clone, Copy)]
 pub enum MemberUseSite {
-    Target(TargetRef),
+    Crate(CrateRef),
     Body(BodyRef),
 }
 
 impl MemberUseSite {
-    pub fn target(target: TargetRef) -> Self {
-        Self::Target(target)
+    pub fn krate(crate_ref: CrateRef) -> Self {
+        Self::Crate(crate_ref)
     }
 
     pub fn body(body: BodyRef) -> Self {
@@ -164,10 +165,10 @@ impl<'a, 'db> MemberView<'a, 'db> {
         Self { db }
     }
 
-    /// Return fields visible for a type at a target use site.
+    /// Return fields visible for a type at a crate use site.
     pub fn field_candidates_for_ty<'view>(
         &'view self,
-        use_site: TargetRef,
+        use_site: CrateRef,
         ty: &Ty,
     ) -> anyhow::Result<Vec<MemberField<'view>>> {
         let mut fields = Vec::new();
@@ -176,7 +177,7 @@ impl<'a, 'db> MemberView<'a, 'db> {
         };
         let member_query = MemberQuery::with_index(
             ItemPathQuery::new(self.db, self.db),
-            TargetItemQuery::new(self.db, self.db, use_site),
+            CrateItemQuery::new(self.db, self.db, use_site),
             semantic_index,
         );
         for field_ref in member_query.fields_for_ty(ty)? {
@@ -202,12 +203,12 @@ impl<'a, 'db> MemberView<'a, 'db> {
         };
 
         let mut fields = Vec::new();
-        let Some(semantic_index) = self.semantic_index(body.target)? else {
+        let Some(semantic_index) = self.semantic_index(body.crate_ref)? else {
             return Ok(fields);
         };
         let member_query = MemberQuery::with_index(
             ItemPathQuery::new(self.db, self.db),
-            TargetItemQuery::new(self.db, self.db, body.target),
+            CrateItemQuery::new(self.db, self.db, body.crate_ref),
             semantic_index,
         );
         if let TypePathResolution::SelfType(ty) | TypePathResolution::TypeDef(ty) = resolution {
@@ -279,7 +280,7 @@ impl<'a, 'db> MemberView<'a, 'db> {
         Ok(variants)
     }
 
-    /// Return methods visible for a type at a target or body use site.
+    /// Return methods visible for a type at a crate or body use site.
     pub fn method_candidates_for_ty<'view>(
         &'view self,
         use_site: MemberUseSite,
@@ -296,15 +297,17 @@ impl<'a, 'db> MemberView<'a, 'db> {
         ty: &Ty,
     ) -> anyhow::Result<Vec<MemberMethodCandidateRef>> {
         match use_site {
-            MemberUseSite::Target(target) => self.target_method_candidate_refs_for_ty(target, ty),
+            MemberUseSite::Crate(crate_ref) => {
+                self.crate_method_candidate_refs_for_ty(crate_ref, ty)
+            }
             MemberUseSite::Body(body) => self.body_method_candidate_refs_for_ty(body, ty),
         }
     }
 
-    /// Return target-level method refs.
-    fn target_method_candidate_refs_for_ty(
+    /// Return crate-level method refs.
+    fn crate_method_candidate_refs_for_ty(
         &self,
-        use_site: TargetRef,
+        use_site: CrateRef,
         ty: &Ty,
     ) -> anyhow::Result<Vec<MemberMethodCandidateRef>> {
         let Some(semantic_index) = self.semantic_index(use_site)? else {
@@ -312,13 +315,13 @@ impl<'a, 'db> MemberView<'a, 'db> {
         };
         let member_query = MemberQuery::with_index(
             ItemPathQuery::new(self.db, self.db),
-            TargetItemQuery::new(self.db, self.db, use_site),
+            CrateItemQuery::new(self.db, self.db, use_site),
             semantic_index,
         );
         Ok(member_query.method_candidates_for_ty(ty)?)
     }
 
-    /// Return body-aware method refs, falling back to target-level refs if the body is absent.
+    /// Return body-aware method refs, falling back to crate-level refs if the body is absent.
     fn body_method_candidate_refs_for_ty(
         &self,
         body: BodyRef,
@@ -327,8 +330,8 @@ impl<'a, 'db> MemberView<'a, 'db> {
         let Some(candidates) =
             BodyResolutionView::new(self.db).method_candidate_refs_for_ty(body, ty)?
         else {
-            // Missing body facts should not hide target-level methods from editor queries.
-            return self.target_method_candidate_refs_for_ty(body.target, ty);
+            // Missing body facts should not hide crate-level methods from editor queries.
+            return self.crate_method_candidate_refs_for_ty(body.crate_ref, ty);
         };
 
         Ok(candidates)
@@ -361,8 +364,8 @@ impl<'a, 'db> MemberView<'a, 'db> {
         }
     }
 
-    /// Return the target-scoped semantic index that backs fast type/member queries.
-    fn semantic_index(&self, use_site: TargetRef) -> anyhow::Result<Option<&ItemLookupIndex>> {
+    /// Return the crate-scoped semantic index that backs fast type/member queries.
+    fn semantic_index(&self, use_site: CrateRef) -> anyhow::Result<Option<&ItemLookupIndex>> {
         Ok(self.db.body_ir.semantic_index(use_site)?)
     }
 }

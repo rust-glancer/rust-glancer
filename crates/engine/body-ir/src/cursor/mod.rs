@@ -8,8 +8,8 @@ mod scan;
 
 use rg_ir_model::items::FieldKey;
 use rg_ir_model::{
-    BindingId, BodyRef, EnumVariantRef, ExprId, FieldRef, FunctionRef, LocalDefRef, Path, ScopeId,
-    SemanticItemRef, TargetRef,
+    BindingId, BodyRef, CrateRef, EnumVariantRef, ExprId, FieldRef, FunctionRef, LocalDefRef, Path,
+    ScopeId, SemanticItemRef,
 };
 use rg_package_store::PackageStoreError;
 use rg_parse::{FileId, Span};
@@ -236,59 +236,60 @@ impl BodyIrReadTxn<'_> {
     /// Returns body-local cursor candidates at `offset`, including let-annotation type paths.
     pub fn cursor_candidates(
         &self,
-        target: TargetRef,
+        crate_ref: CrateRef,
         file_id: FileId,
         offset: u32,
     ) -> Result<Vec<BodyCursorCandidate>, PackageStoreError> {
-        BodyCursorScanner::new(self, target, file_id, offset).scan()
+        BodyCursorScanner::new(self, crate_ref, file_id, offset).scan()
     }
 
-    /// Returns body-local source candidates in one target.
+    /// Returns body-local source candidates in one crate.
     pub fn source_candidates(
         &self,
-        target: TargetRef,
+        crate_ref: CrateRef,
         file_id: Option<FileId>,
     ) -> Result<Vec<BodyCursorCandidate>, PackageStoreError> {
-        BodySourceScanner::new(self, target, file_id).scan()
+        BodySourceScanner::new(self, crate_ref, file_id).scan()
     }
 
     /// Returns the source site for a dot-completion query.
     pub fn dot_completion_site(
         &self,
-        target: TargetRef,
+        crate_ref: CrateRef,
         file_id: FileId,
         offset: u32,
     ) -> Result<Option<DotCompletionSite>, PackageStoreError> {
-        DotCompletionSiteScanner::new(self, target, file_id, offset).site_at_dot()
+        DotCompletionSiteScanner::new(self, crate_ref, file_id, offset).site_at_dot()
     }
 
     /// Returns the source site for a qualified-path completion query inside a body.
     pub fn path_completion_site(
         &self,
-        target: TargetRef,
+        crate_ref: CrateRef,
         file_id: FileId,
         offset: u32,
     ) -> Result<Option<PathCompletionSite>, PackageStoreError> {
-        PathCompletionSiteScanner::new(self, target, file_id, offset).site_at_path()
+        PathCompletionSiteScanner::new(self, crate_ref, file_id, offset).site_at_path()
     }
 
     /// Returns the source site for an unqualified completion query inside a body.
     pub fn unqualified_completion_site(
         &self,
-        target: TargetRef,
+        crate_ref: CrateRef,
         file_id: FileId,
         offset: u32,
     ) -> Result<Option<UnqualifiedCompletionSite>, PackageStoreError> {
-        UnqualifiedCompletionSiteScanner::new(self, target, file_id, offset).site_at_name()
+        UnqualifiedCompletionSiteScanner::new(self, crate_ref, file_id, offset).site_at_name()
     }
 
     /// Returns the source site for a record-field completion query inside a body.
     pub fn record_field_completion_site(
         &self,
-        target: TargetRef,
+        crate_ref: CrateRef,
         file_id: FileId,
         offset: u32,
     ) -> Result<Option<RecordFieldCompletionSite>, PackageStoreError> {
-        RecordFieldCompletionSiteScanner::new(self, target, file_id, offset).site_at_record_field()
+        RecordFieldCompletionSiteScanner::new(self, crate_ref, file_id, offset)
+            .site_at_record_field()
     }
 }

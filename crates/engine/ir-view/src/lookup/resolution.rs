@@ -11,7 +11,7 @@ use rg_ir_model::{
     BodyRef, DefId, LocalDefRef, ModuleRef, ScopeId, TypePathResolution,
     identity::{DeclarationRef, ExprRef},
 };
-use rg_ir_storage::{ItemStoreQuery, TypePathContext};
+use rg_semantic_ir::{ItemStoreQuery, TypePathContext};
 use rg_ty::ItemPathQuery;
 
 use crate::{IndexedViewDb, body::BodyResolutionView, source::IndexedTypePathScope};

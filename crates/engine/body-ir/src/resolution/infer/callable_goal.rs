@@ -6,8 +6,8 @@
 
 use rg_def_map::DefMapSource;
 use rg_ir_model::ExprId;
-use rg_ir_storage::ItemStoreSource;
 use rg_package_store::PackageStoreError;
+use rg_semantic_ir::ItemStoreSource;
 use rg_ty::{GenericArg, TraitGoal, Ty, function_generic_shadow_subst};
 
 use crate::{
@@ -185,9 +185,8 @@ where
 #[cfg(test)]
 mod tests {
     use rg_def_map::PackageSlot;
-    use rg_ir_model::{BindingId, BodyId, BodyRef, TargetRef, TraitRef, TypeDefRef};
+    use rg_ir_model::{BindingId, BodyId, BodyRef, CrateId, CrateRef, TraitRef, TypeDefRef};
     use rg_package_store::PackageLoader;
-    use rg_parse::TargetId;
     use rg_ty::{GenericArg, NominalTy, TraitGoal, Ty};
 
     use super::*;
@@ -294,24 +293,24 @@ pub fn use_it(seed: Name) {
 
     struct GoalFixture {
         project: BodyIrFixture,
-        target: TargetRef,
+        crate_ref: CrateRef,
         body_ref: BodyRef,
     }
 
     impl GoalFixture {
         fn new() -> Self {
             let project = BodyIrFixture::build(FIXTURE);
-            let target = TargetRef {
+            let crate_ref = CrateRef {
                 package: PackageSlot(0),
-                target: TargetId(0),
+                crate_id: CrateId(0),
             };
             let body_ref = BodyRef {
-                target,
+                crate_ref,
                 body: BodyId(0),
             };
             Self {
                 project,
-                target,
+                crate_ref,
                 body_ref,
             }
         }
@@ -333,11 +332,11 @@ pub fn use_it(seed: Name) {
                 .project
                 .body_ir_db()
                 .read_txn(BodyIrLoader::resident_only("callable goal body ir"));
-            let target_bodies = body_ir
-                .target_bodies(self.target)
-                .expect("target bodies should load")
-                .expect("target bodies should exist");
-            let body = target_bodies
+            let crate_bodies = body_ir
+                .crate_bodies(self.crate_ref)
+                .expect("crate bodies should load")
+                .expect("crate bodies should exist");
+            let body = crate_bodies
                 .body(self.body_ref.body)
                 .expect("body should exist");
             let context = BodyResolutionContext::new(
@@ -345,7 +344,7 @@ pub fn use_it(seed: Name) {
                 &item_stores,
                 self.body_ref,
                 body,
-                target_bodies.semantic_index(),
+                crate_bodies.semantic_index(),
             );
             BodyCallableGoalSolver::new(context).solve_goal(inference, goal)
         }
@@ -430,8 +429,8 @@ pub fn use_it(seed: Name) {
         fn type_def(&self, name: &str) -> TypeDefRef {
             let item_store = self
                 .project
-                .resident_target_ir(self.target)
-                .expect("target item store should exist");
+                .resident_crate_ir(self.crate_ref)
+                .expect("crate item store should exist");
             item_store
                 .structs()
                 .iter_with_ids()
@@ -445,8 +444,8 @@ pub fn use_it(seed: Name) {
         fn trait_ref(&self, name: &str) -> TraitRef {
             let item_store = self
                 .project
-                .resident_target_ir(self.target)
-                .expect("target item store should exist");
+                .resident_crate_ir(self.crate_ref)
+                .expect("crate item store should exist");
             item_store
                 .traits_with_refs()
                 .find_map(|(trait_ref, data)| (data.name.as_str() == name).then_some(trait_ref))

@@ -1,6 +1,6 @@
 //! Goto-implementation query flow.
 
-use rg_ir_model::TargetRef;
+use rg_ir_model::CrateRef;
 use rg_ir_view::implementation::ImplementationView;
 use rg_parse::FileId;
 use rg_std::UniqueVec;
@@ -26,11 +26,11 @@ impl<'a, 'db> ImplementationResolver<'a, 'db> {
 
     pub(crate) fn goto_implementation(
         &self,
-        target: TargetRef,
+        crate_ref: CrateRef,
         file_id: FileId,
         offset: u32,
     ) -> anyhow::Result<Vec<NavigationTarget>> {
-        let Some(symbol) = self.0.symbol_at_for_query(target, file_id, offset)? else {
+        let Some(symbol) = self.0.symbol_at_for_query(crate_ref, file_id, offset)? else {
             return Ok(Vec::new());
         };
 
@@ -46,13 +46,13 @@ impl<'a, 'db> ImplementationResolver<'a, 'db> {
         let source_symbols = SourceSymbolResolver::new(self.0.view_db());
         for declaration in source_symbols.declarations_for_symbol(symbol.clone())? {
             declarations
-                .extend(implementations.implementations_for_declaration(target, declaration)?);
+                .extend(implementations.implementations_for_declaration(crate_ref, declaration)?);
         }
 
         if declarations.is_empty()
             && let Some(ty) = source_symbols.ty_for_symbol(symbol)?
         {
-            declarations.extend(implementations.implementations_for_ty(target, &ty)?);
+            declarations.extend(implementations.implementations_for_ty(crate_ref, &ty)?);
         }
 
         NavigationTargetProjection::new(self.0.view_db()).targets_for_declarations(declarations)

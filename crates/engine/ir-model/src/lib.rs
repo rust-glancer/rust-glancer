@@ -21,11 +21,10 @@ pub use self::hir::body::{
     RecordFieldSyntax, RecordPatField, ScopeData, StmtData, StmtKind,
 };
 pub use self::ids::{
-    TargetId,
     body::{BindingId, BodyBindingRef, BodyId, BodyRef, ExprId, PatId, ScopeId, StmtId},
     def_map::{
-        DefId, DefMapRef, ImportId, ImportRef, LocalDefId, LocalDefRef, LocalEnumVariantId,
-        LocalEnumVariantRef, LocalImplId, LocalImplRef, ModuleId, ModuleRef, TargetRef,
+        CrateId, CrateRef, DefId, DefMapRef, ImportId, ImportRef, LocalDefId, LocalDefRef,
+        LocalEnumVariantId, LocalEnumVariantRef, LocalImplId, LocalImplRef, ModuleId, ModuleRef,
     },
     identity,
     semantic::{

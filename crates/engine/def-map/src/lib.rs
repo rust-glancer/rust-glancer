@@ -30,13 +30,13 @@ pub use self::{
     },
     map::{DefMap, DefMapBuilder, PartialDefMap},
     module::{ModuleData, ModuleOrigin},
-    package::{PackageDefMaps, TargetData},
+    package::{CrateData, PackageDefMaps},
     profile::profile_descriptors,
     query::{
-        DefMapCursorCandidate, DefMapPathCompletionSite, DefMapQuery, DefMapSource,
-        DefMapUnqualifiedCompletionSite, GlobImportSource, ImportResolution, ImportedScopeBinding,
-        MacroDefinitionEnv, ResolvePathResult, ScopeResolutionEnv, ScopeResolver,
-        TargetResolutionEnv,
+        CrateResolutionEnv, DefMapCursorCandidate, DefMapPathCompletionSite, DefMapQuery,
+        DefMapSource, DefMapUnqualifiedCompletionSite, GlobImportSource, ImportResolution,
+        ImportedScopeBinding, MacroDefinitionEnv, ResolvePathResult, ScopeResolutionEnv,
+        ScopeResolver,
     },
     scope::{
         ModuleScope, ModuleScopeBuilder, Namespace, NamespaceSet, PerNs, ScopeBinding,

@@ -7,12 +7,12 @@ use std::collections::HashSet;
 
 use rg_body_ir::BindingKind;
 use rg_ir_model::{
-    BindingId, BodyBindingRef, BodyRef, DefMapRef, ExprId, ExprKind, FunctionRef, ModuleId,
-    ModuleRef, ScopeId, SemanticItemKind, SemanticItemRef, TargetRef, hir::source::ItemSourceKind,
+    BindingId, BodyBindingRef, BodyRef, CrateRef, DefMapRef, ExprId, ExprKind, FunctionRef,
+    ModuleId, ModuleRef, ScopeId, SemanticItemKind, SemanticItemRef, hir::source::ItemSourceKind,
     identity::DeclarationRef,
 };
-use rg_ir_storage::ItemStoreQuery;
 use rg_parse::{FileId, Span, TextSpan};
+use rg_semantic_ir::ItemStoreQuery;
 use rg_ty::Ty;
 
 use crate::IndexedViewDb;
@@ -407,12 +407,12 @@ impl<'a, 'db> BodyView<'a, 'db> {
     /// bindings, `let else` and match-pattern bindings, and `for` loop pattern bindings.
     pub fn inferred_binding_tys(
         &self,
-        target: TargetRef,
+        crate_ref: CrateRef,
         file_id: FileId,
         range: Option<TextSpan>,
     ) -> anyhow::Result<Vec<InferredBindingTy>> {
         let mut bindings = Vec::new();
-        for (_, body) in self.db.body_ir.bodies(target, Some(file_id))? {
+        for (_, body) in self.db.body_ir.bodies(crate_ref, Some(file_id))? {
             for (binding_idx, binding) in body.bindings().iter().enumerate() {
                 if !binding.source.is_written_in_file(file_id) {
                     continue;
@@ -451,11 +451,11 @@ impl<'a, 'db> BodyView<'a, 'db> {
     /// as parameter names, onto concrete argument expressions without owning call resolution.
     pub fn resolved_function_calls(
         &self,
-        target: TargetRef,
+        crate_ref: CrateRef,
         file_id: FileId,
     ) -> anyhow::Result<Vec<ResolvedFunctionCall>> {
         let mut calls = Vec::new();
-        for (body_ref, body) in self.db.body_ir.bodies(target, Some(file_id))? {
+        for (body_ref, body) in self.db.body_ir.bodies(crate_ref, Some(file_id))? {
             for (expr_idx, expr) in body.exprs().iter().enumerate() {
                 if !expr.source.is_written_in_file(file_id) {
                     continue;
@@ -502,11 +502,11 @@ impl<'a, 'db> BodyView<'a, 'db> {
     /// Return bodies that own body-local item groups in one file.
     pub fn local_groups(
         &self,
-        target: TargetRef,
+        crate_ref: CrateRef,
         file_id: FileId,
     ) -> anyhow::Result<Vec<BodyLocalGroup>> {
         let mut groups = Vec::new();
-        for (body_ref, body) in self.db.body_ir.bodies(target, Some(file_id))? {
+        for (body_ref, body) in self.db.body_ir.bodies(crate_ref, Some(file_id))? {
             groups.push(BodyLocalGroup {
                 owner: body.owner().declaration(),
                 body: body_ref,

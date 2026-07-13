@@ -5,8 +5,8 @@ use rg_ir_model::{
     DefMapRef, ImplRef, ItemOwner,
     items::{GenericArg as ItemGenericArg, GenericParams},
 };
-use rg_ir_storage::ItemStoreSource;
 use rg_package_store::PackageStoreError;
+use rg_semantic_ir::ItemStoreSource;
 use rg_ty::{GenericArg, NominalTy, TypeSubst};
 
 use crate::resolution::{BodyResolutionContext, TypeRefUseSite};

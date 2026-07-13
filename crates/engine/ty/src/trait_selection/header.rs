@@ -1,4 +1,4 @@
-use rg_ir_model::hir::items::ImplData;
+use rg_semantic_ir::ImplData;
 
 /// Controls where impl predicates are solved during trait selection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

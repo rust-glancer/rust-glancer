@@ -8,7 +8,7 @@ use rg_def_map::{
 };
 use rg_ir_model::items::Documentation;
 use rg_ir_model::{DefId, FunctionRef, ModuleRef, Path, SemanticItemRef, identity::DeclarationRef};
-use rg_ir_storage::ItemStoreQuery;
+use rg_semantic_ir::ItemStoreQuery;
 
 use crate::{IndexedViewDb, SymbolKind};
 

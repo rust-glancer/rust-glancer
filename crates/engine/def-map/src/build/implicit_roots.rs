@@ -2,13 +2,13 @@
 //!
 //! A root is a textual first path segment that can start resolution outside the current module
 //! tree, such as a dependency crate name. An implicit root is not declared by a `mod` item in the
-//! current target; it is injected from package metadata so paths like `serde::Serialize` can begin
+//! current crate; it is injected from package metadata so paths like `serde::Serialize` can begin
 //! at the dependency's library root module.
 //!
-//! Target collection needs to know which implicit roots are visible before import resolution can
-//! start. This pass derives that map from Cargo metadata: sibling targets can see their package
+//! Crate collection needs to know which implicit roots are visible before import resolution can
+//! start. This pass derives that map from Cargo metadata: sibling crates can see their package
 //! library by crate name, and dependencies expose their library target when they apply to the
-//! current target kind.
+//! originating Cargo target kind.
 
 use std::collections::HashMap;
 
@@ -18,35 +18,35 @@ use rg_parse::Package;
 use rg_text::{Name, PackageNameInterners};
 use rg_workspace::WorkspaceMetadata;
 
-use rg_ir_model::{DefMapRef, ModuleId, ModuleRef, TargetRef};
+use rg_ir_model::{CrateId, CrateRef, DefMapRef, ModuleId, ModuleRef};
 
 use crate::PackageSlot;
 
-/// Implicit roots for one target.
-type TargetImplicitRoots = HashMap<Name, ModuleRef>;
+/// Implicit roots for one semantic crate.
+type CrateImplicitRoots = HashMap<Name, ModuleRef>;
 
-/// Implicit roots for every target inside one package.
-type PackageImplicitRoots = Vec<TargetImplicitRoots>;
+/// Implicit roots for every semantic crate inside one package.
+type PackageCrateImplicitRoots = Vec<CrateImplicitRoots>;
 
-/// Implicit crate roots available to each package target.
+/// Implicit crate roots available to each semantic crate.
 ///
-/// The axes mirror the parsed package graph: package slot, then target slot, then textual root
-/// name. Each root points at the referenced library root module.
+/// The axes mirror DefMap allocation: package slot, then crate slot assigned in normalized Cargo
+/// target order, then textual root name. Each root points at the referenced library root module.
 pub(super) struct ImplicitRoots {
-    package_roots: Vec<PackageImplicitRoots>,
+    package_roots: Vec<PackageCrateImplicitRoots>,
 }
 
 impl ImplicitRoots {
-    fn new(package_roots: Vec<PackageImplicitRoots>) -> Self {
+    fn new(package_roots: Vec<PackageCrateImplicitRoots>) -> Self {
         Self { package_roots }
     }
 
-    pub(super) fn as_slice(&self) -> &[PackageImplicitRoots] {
+    pub(super) fn as_slice(&self) -> &[PackageCrateImplicitRoots] {
         &self.package_roots
     }
 }
 
-/// Builds the per-target root-name map used as the first step of cross-target resolution.
+/// Builds the per-crate root-name map used as the first step of cross-crate resolution.
 pub(super) fn build_implicit_roots(
     workspace: &WorkspaceMetadata,
     packages: &[Package],
@@ -63,10 +63,13 @@ pub(super) fn build_implicit_roots(
                 .map(|target| {
                     (
                         package.id().clone(),
-                        TargetRef {
-                            package: PackageSlot(package_slot),
-                            target: target.id,
-                        },
+                        (
+                            CrateRef {
+                                package: PackageSlot(package_slot),
+                                crate_id: CrateId(target.id.0),
+                            },
+                            target.id,
+                        ),
                     )
                 })
         })
@@ -86,23 +89,23 @@ pub(super) fn build_implicit_roots(
         })?;
 
         for target in package.targets() {
-            let mut target_roots = HashMap::new();
+            let mut crate_roots = HashMap::new();
 
             // Cargo lets package targets refer to their sibling library by crate name, but build
             // scripts are separate crates and only see explicit build-dependencies.
-            if let Some(&lib_target) = lib_targets.get(package.id())
-                && lib_target.target != target.id
+            if let Some(&(lib_crate, lib_target)) = lib_targets.get(package.id())
+                && lib_target != target.id
                 && !target.kind.is_custom_build()
             {
                 let lib_name = package
-                    .target(lib_target.target)
+                    .target(lib_target)
                     .expect("library target should exist")
                     .name
                     .clone();
-                target_roots.insert(
+                crate_roots.insert(
                     interner.intern(lib_name),
                     ModuleRef {
-                        origin: DefMapRef::Target(lib_target),
+                        origin: DefMapRef::Crate(lib_crate),
                         module: ModuleId(0),
                     },
                 );
@@ -113,20 +116,20 @@ pub(super) fn build_implicit_roots(
                     continue;
                 }
 
-                let Some(&lib_target) = lib_targets.get(dependency.package_id()) else {
+                let Some(&(lib_crate, _)) = lib_targets.get(dependency.package_id()) else {
                     continue;
                 };
 
-                target_roots.insert(
+                crate_roots.insert(
                     interner.intern(dependency.name()),
                     ModuleRef {
-                        origin: DefMapRef::Target(lib_target),
+                        origin: DefMapRef::Crate(lib_crate),
                         module: ModuleId(0),
                     },
                 );
             }
 
-            package_roots.push(target_roots);
+            package_roots.push(crate_roots);
         }
 
         roots.push(package_roots);

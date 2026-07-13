@@ -16,7 +16,7 @@ mod projection;
 
 use rg_def_map::DefMapSource;
 use rg_ir_model::{TraitApplicability, TraitImplRef, TraitRef};
-use rg_ir_storage::{ItemLookupIndex, ItemStoreSource, TargetItemQuery, TypePathContext};
+use rg_semantic_ir::{CrateItemQuery, ItemLookupIndex, ItemStoreSource, TypePathContext};
 use rg_std::ExpectedUnique;
 use rg_text::Name;
 
@@ -123,9 +123,9 @@ impl TraitSelectionCache {
     fn impl_bounds_applicability<'query, D, I>(
         &self,
         item_paths: &ItemPathQuery<'query, D, I>,
-        target_items: &TargetItemQuery<'query, D, I>,
+        crate_items: &CrateItemQuery<'query, D, I>,
         trait_impl: TraitImplRef,
-        impl_data: &rg_ir_model::hir::items::ImplData,
+        impl_data: &rg_semantic_ir::ImplData,
         subst: &InferenceTypeSubst,
         table: &InferenceTable,
     ) -> Result<Option<TraitApplicability>, I::Error>
@@ -138,7 +138,7 @@ impl TraitSelectionCache {
             .lock()
             .expect("trait selection solver cache lock should not be poisoned");
         if solver.is_none() {
-            *solver = Some(ChalkTraitSolver::new(item_paths, target_items)?);
+            *solver = Some(ChalkTraitSolver::new(item_paths, crate_items)?);
         }
         let solver = solver
             .as_mut()
@@ -149,7 +149,7 @@ impl TraitSelectionCache {
     fn normalize_assoc_type<'query, D, I>(
         &self,
         item_paths: &ItemPathQuery<'query, D, I>,
-        target_items: &TargetItemQuery<'query, D, I>,
+        crate_items: &CrateItemQuery<'query, D, I>,
         context: TypePathContext,
         goal: &TraitGoal,
         assoc_name: &str,
@@ -164,7 +164,7 @@ impl TraitSelectionCache {
             .lock()
             .expect("trait selection solver cache lock should not be poisoned");
         if solver.is_none() {
-            *solver = Some(ChalkTraitSolver::new(item_paths, target_items)?);
+            *solver = Some(ChalkTraitSolver::new(item_paths, crate_items)?);
         }
         let solver = solver
             .as_mut()
@@ -176,7 +176,7 @@ impl TraitSelectionCache {
 /// Shared bounded trait-selection query.
 pub struct TraitSelectionQuery<'query, D, I> {
     item_paths: ItemPathQuery<'query, D, I>,
-    target_items: TargetItemQuery<'query, D, I>,
+    crate_items: CrateItemQuery<'query, D, I>,
     lookup_index: &'query ItemLookupIndex,
     options: TraitSelectionOptions,
     cache: TraitSelectionCache,
@@ -189,12 +189,12 @@ where
 {
     pub fn with_index(
         item_paths: ItemPathQuery<'query, D, I>,
-        target_items: TargetItemQuery<'query, D, I>,
+        crate_items: CrateItemQuery<'query, D, I>,
         lookup_index: &'query ItemLookupIndex,
     ) -> Self {
         Self {
             item_paths,
-            target_items,
+            crate_items,
             lookup_index,
             options: TraitSelectionOptions::new(),
             cache: TraitSelectionCache::default(),
@@ -238,7 +238,7 @@ where
         for trait_impl in trait_impls {
             let Some(selection) = Self::probe_impl(
                 &self.item_paths,
-                &self.target_items,
+                &self.crate_items,
                 goal,
                 table,
                 trait_impl,
@@ -287,7 +287,7 @@ where
     ) -> Result<Option<TraitSelection>, I::Error> {
         Self::probe_impl(
             &self.item_paths,
-            &self.target_items,
+            &self.crate_items,
             goal,
             table,
             trait_impl,
@@ -304,7 +304,7 @@ where
     /// policy than `probe` / `probe_trait_impl`.
     pub(crate) fn probe_visible_trait_impl(
         item_paths: &ItemPathQuery<'query, D, I>,
-        target_items: &TargetItemQuery<'query, D, I>,
+        crate_items: &CrateItemQuery<'query, D, I>,
         goal: &TraitGoal,
         table: &InferenceTable,
         trait_impl: TraitImplRef,
@@ -313,7 +313,7 @@ where
         let cache = TraitSelectionCache::default();
         Self::probe_impl(
             item_paths,
-            target_items,
+            crate_items,
             goal,
             table,
             trait_impl,
@@ -332,14 +332,14 @@ where
 
     fn probe_impl(
         item_paths: &ItemPathQuery<'query, D, I>,
-        target_items: &TargetItemQuery<'query, D, I>,
+        crate_items: &CrateItemQuery<'query, D, I>,
         goal: &TraitGoal,
         table: &InferenceTable,
         trait_impl: TraitImplRef,
         options: TraitSelectionOptions,
         cache: &TraitSelectionCache,
     ) -> Result<Option<TraitSelection>, I::Error> {
-        let Some(impl_data) = target_items.items().impl_data(trait_impl.impl_ref)? else {
+        let Some(impl_data) = crate_items.items().impl_data(trait_impl.impl_ref)? else {
             return Ok(None);
         };
         if !impl_data.resolved_trait_ref.is(&goal.trait_ref)
@@ -359,7 +359,7 @@ where
         let mut applicability = applicability;
         if !Self::apply_assoc_type_constraints(
             item_paths,
-            target_items,
+            crate_items,
             goal,
             trait_impl,
             impl_data,
@@ -391,7 +391,7 @@ where
                 ImplPredicateProof::NotApplicable => {
                     let Some(predicate_applicability) = cache.impl_bounds_applicability(
                         item_paths,
-                        target_items,
+                        crate_items,
                         trait_impl,
                         impl_data,
                         &subst,
@@ -416,10 +416,10 @@ where
     #[allow(clippy::too_many_arguments)]
     fn apply_assoc_type_constraints(
         item_paths: &ItemPathQuery<'query, D, I>,
-        target_items: &TargetItemQuery<'query, D, I>,
+        crate_items: &CrateItemQuery<'query, D, I>,
         goal: &TraitGoal,
         trait_impl: TraitImplRef,
-        impl_data: &rg_ir_model::hir::items::ImplData,
+        impl_data: &rg_semantic_ir::ImplData,
         table: &mut InferenceTable,
         applicability: &mut TraitApplicability,
         cache: &TraitSelectionCache,
@@ -440,7 +440,7 @@ where
             };
             let Some(projection) = cache.normalize_assoc_type(
                 item_paths,
-                target_items,
+                crate_items,
                 context,
                 &projection_goal,
                 constraint.name.as_str(),
@@ -464,7 +464,7 @@ where
         Ok(true)
     }
 
-    fn impl_has_chalk_predicates(impl_data: &rg_ir_model::hir::items::ImplData) -> bool {
+    fn impl_has_chalk_predicates(impl_data: &rg_semantic_ir::ImplData) -> bool {
         impl_data
             .generics
             .types

@@ -4,7 +4,7 @@
 //! The analysis layer already returns stable IDs; inlay hints and future hovers need labels that
 //! are useful while reading code.
 
-use rg_ir_storage::ItemStoreQuery;
+use rg_semantic_ir::ItemStoreQuery;
 use rg_text::RustEdition;
 use rg_ty::{GenericArg, NominalTy, OpaqueTraitBound, Ty};
 

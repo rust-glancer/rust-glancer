@@ -1,7 +1,7 @@
 //! Private scanners that translate body source spans into cursor candidates.
 //!
 //! Scanner implementations are organized by query shape: point lookups,
-//! whole-target source scans, dot-completion receiver scans, and shared path
+//! whole-crate source scans, dot-completion receiver scans, and shared path
 //! scanners.
 
 mod cursor;

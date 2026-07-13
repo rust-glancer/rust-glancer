@@ -10,7 +10,7 @@ use crate::{
     PackageIr, SemanticIrReadTxn, SemanticIrStats,
     build::{SemanticIrDbBuilder, SemanticIrDbPackageRebuilder},
 };
-/// Semantic item graph for all analyzed packages and targets.
+/// Semantic item graph for all analyzed packages and semantic crates.
 ///
 /// Semantic IR is the signature layer: it keeps named items, fields, impl headers, function
 /// signatures, and enough resolution metadata to answer LSP-shaped questions without parsing AST
@@ -74,8 +74,8 @@ impl SemanticIrDb {
             let Some(package) = entry.as_resident() else {
                 continue;
             };
-            for items in package.targets() {
-                stats.target_count += 1;
+            for items in package.crates() {
+                stats.crate_count += 1;
                 stats.struct_count += items.structs().len();
                 stats.union_count += items.unions().len();
                 stats.enum_count += items.enums().len();
@@ -153,9 +153,9 @@ impl SemanticIrDbMutator<'_> {
         resolved_self_ty: ExpectedUnique<TypeDefRef>,
         resolved_trait_ref: ExpectedUnique<TraitRef>,
     ) -> Option<()> {
-        let target = impl_ref.origin.as_target_ref()?;
-        self.package_mut(target.package)?
-            .target_mut(target.target)?
+        let crate_ref = impl_ref.origin.as_crate_ref()?;
+        self.package_mut(crate_ref.package)?
+            .crate_items_mut(crate_ref.crate_id)?
             .set_impl_header_facts(impl_ref.id, resolved_self_ty, resolved_trait_ref)
     }
 

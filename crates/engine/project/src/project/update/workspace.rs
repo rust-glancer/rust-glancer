@@ -67,19 +67,19 @@ pub(super) fn rebuild_workspace_graph(
         }
     }
     let mut affected_packages = Vec::new();
-    let mut changed_targets = Vec::new();
+    let mut changed_crates = Vec::new();
 
     // The rebuilt project has already restored its package residency, so payload-heavy phase
     // databases may be empty under aggressive offloading. ProjectState keeps the small graph
     // metadata that change summaries need resident.
     for package_slot in project.state.non_sysroot_package_slots() {
         affected_packages.push(package_slot);
-        changed_targets.extend(project.state.target_refs_for_package(package_slot));
+        changed_crates.extend(project.state.crate_refs_for_package(package_slot));
     }
 
     Ok(AnalysisChangeSummary {
         changed_files,
         affected_packages,
-        changed_targets,
+        changed_crates,
     })
 }

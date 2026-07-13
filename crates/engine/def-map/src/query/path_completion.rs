@@ -5,7 +5,7 @@
 
 use crate::{DefMap, ImportPath};
 use rg_ir_model::Path;
-use rg_ir_model::{DefMapRef, ModuleRef, TargetRef};
+use rg_ir_model::{CrateRef, DefMapRef, ModuleRef};
 use rg_package_store::PackageStoreError;
 use rg_parse::{FileId, Span, TextSpan};
 
@@ -33,13 +33,13 @@ impl DefMapReadTxn<'_> {
     /// Returns the source site for a qualified import-path completion query.
     pub fn path_completion_site(
         &self,
-        target: TargetRef,
+        crate_ref: CrateRef,
         file_id: FileId,
         offset: u32,
     ) -> Result<Option<DefMapPathCompletionSite>, PackageStoreError> {
         PathCompletionSiteScanner {
             def_map: self,
-            target,
+            crate_ref,
             file_id,
             offset,
         }
@@ -49,13 +49,13 @@ impl DefMapReadTxn<'_> {
     /// Returns the source site for an unqualified import-path completion query.
     pub fn unqualified_completion_site(
         &self,
-        target: TargetRef,
+        crate_ref: CrateRef,
         file_id: FileId,
         offset: u32,
     ) -> Result<Option<DefMapUnqualifiedCompletionSite>, PackageStoreError> {
         PathCompletionSiteScanner {
             def_map: self,
-            target,
+            crate_ref,
             file_id,
             offset,
         }
@@ -66,14 +66,14 @@ impl DefMapReadTxn<'_> {
 /// Scans import paths owned by DefMap.
 struct PathCompletionSiteScanner<'txn, 'db> {
     def_map: &'txn DefMapReadTxn<'db>,
-    target: TargetRef,
+    crate_ref: CrateRef,
     file_id: FileId,
     offset: u32,
 }
 
 impl PathCompletionSiteScanner<'_, '_> {
     fn scan(&self) -> Result<Option<DefMapPathCompletionSite>, PackageStoreError> {
-        let Some(def_map) = self.def_map.def_map(self.target)? else {
+        let Some(def_map) = self.def_map.def_map(self.crate_ref)? else {
             return Ok(None);
         };
         let mut best: Option<(DefMapPathCompletionSite, u32)> = None;
@@ -85,7 +85,7 @@ impl PathCompletionSiteScanner<'_, '_> {
     fn scan_unqualified(
         &self,
     ) -> Result<Option<DefMapUnqualifiedCompletionSite>, PackageStoreError> {
-        let Some(def_map) = self.def_map.def_map(self.target)? else {
+        let Some(def_map) = self.def_map.def_map(self.crate_ref)? else {
             return Ok(None);
         };
         let mut best: Option<(DefMapUnqualifiedCompletionSite, u32)> = None;
@@ -95,7 +95,7 @@ impl PathCompletionSiteScanner<'_, '_> {
                 continue;
             }
             let module = ModuleRef {
-                origin: DefMapRef::Target(self.target),
+                origin: DefMapRef::Crate(self.crate_ref),
                 module: import.module,
             };
             let Some((site, source_len)) =
@@ -125,7 +125,7 @@ impl PathCompletionSiteScanner<'_, '_> {
                 continue;
             }
             let module = ModuleRef {
-                origin: DefMapRef::Target(self.target),
+                origin: DefMapRef::Crate(self.crate_ref),
                 module: import.module,
             };
             let Some((site, source_len)) = self.site_for_import_path(module, &import.path) else {

@@ -4,7 +4,7 @@
 //! add any extra path-segment candidates visible at the same offset.
 
 use rg_ir_model::{
-    BindingId, BodyRef, DefMapRef, EnumVariantRef, ExprId, FieldRef, SemanticItemRef, TargetRef,
+    BindingId, BodyRef, CrateRef, DefMapRef, EnumVariantRef, ExprId, FieldRef, SemanticItemRef,
     TypeDefId, hir::source::ItemSourceKind,
 };
 use rg_package_store::PackageStoreError;
@@ -22,7 +22,7 @@ use super::{
 /// Scans one Body IR transaction for all cursor candidates at a source offset.
 pub(crate) struct BodyCursorScanner<'txn, 'db> {
     body_ir: &'txn BodyIrReadTxn<'db>,
-    target: TargetRef,
+    crate_ref: CrateRef,
     file_id: FileId,
     offset: u32,
 }
@@ -30,13 +30,13 @@ pub(crate) struct BodyCursorScanner<'txn, 'db> {
 impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
     pub(crate) fn new(
         body_ir: &'txn BodyIrReadTxn<'db>,
-        target: TargetRef,
+        crate_ref: CrateRef,
         file_id: FileId,
         offset: u32,
     ) -> Self {
         Self {
             body_ir,
-            target,
+            crate_ref,
             file_id,
             offset,
         }
@@ -78,7 +78,7 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
     fn body_at(&self) -> Result<Option<BodyRef>, PackageStoreError> {
         let mut best: Option<(BodyRef, u32)> = None;
 
-        for (body_ref, body) in self.body_ir.bodies(self.target, Some(self.file_id))? {
+        for (body_ref, body) in self.body_ir.bodies(self.crate_ref, Some(self.file_id))? {
             if !body.source().span.contains(self.offset) {
                 continue;
             }
@@ -498,7 +498,7 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
 
     fn consider_fields(
         &self,
-        item_store: &rg_ir_storage::ItemStore,
+        item_store: &rg_semantic_ir::ItemStore,
         ty: rg_ir_model::TypeDefRef,
         best: &mut BestCursorCandidate,
     ) {
@@ -547,7 +547,7 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
 
     fn consider_variants(
         &self,
-        item_store: &rg_ir_storage::ItemStore,
+        item_store: &rg_semantic_ir::ItemStore,
         ty: rg_ir_model::TypeDefRef,
         best: &mut BestCursorCandidate,
     ) {

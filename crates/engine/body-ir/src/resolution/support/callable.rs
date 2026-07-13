@@ -15,8 +15,8 @@ use rg_ir_model::{
     ExprId, FunctionRef, ItemOwner,
     items::{GenericArg, GenericParams, TypeBound, TypeRef, WherePredicate},
 };
-use rg_ir_storage::ItemStoreSource;
 use rg_package_store::PackageStoreError;
+use rg_semantic_ir::ItemStoreSource;
 use rg_std::ExpectedUnique;
 use rg_ty::{TraitSelectionCache, Ty};
 

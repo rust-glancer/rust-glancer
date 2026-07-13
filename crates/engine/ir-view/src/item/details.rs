@@ -11,7 +11,7 @@ use rg_ir_model::{
     SemanticItemRef, StaticRef, TraitRef, TypeAliasRef, TypeDefId, TypeDefRef,
     identity::DeclarationRef,
 };
-use rg_ir_storage::ItemStoreQuery;
+use rg_semantic_ir::ItemStoreQuery;
 use rg_text::RustEdition;
 
 use crate::{

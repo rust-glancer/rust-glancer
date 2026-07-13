@@ -5,7 +5,7 @@ use rg_text::Name;
 use wincode::{SchemaRead, SchemaWrite};
 
 use crate::{
-    Path, PathSegment, TargetRef,
+    CrateRef, Path, PathSegment,
     items::{GenericArg, TypePath, TypePathSegment, TypeRef},
 };
 use rg_std::{MemorySize, Shrink};
@@ -34,7 +34,7 @@ pub enum BodyPathSegmentKind {
     /// `name` in `module::name`.
     Name(Name),
     /// `$crate` in macro-generated syntax, resolved to the macro definition crate.
-    DollarCrate(TargetRef),
+    DollarCrate(CrateRef),
     /// `Self` in type position.
     SelfType,
     /// `self` in value/module path position.

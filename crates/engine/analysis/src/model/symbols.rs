@@ -1,8 +1,8 @@
-use rg_ir_model::TargetRef;
+use rg_ir_model::CrateRef;
 use rg_ir_view::SymbolKind;
 use rg_parse::{FileId, Span};
 
-/// Hierarchical source outline for one file under one target context.
+/// Hierarchical source outline for one file under one crate context.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DocumentSymbol {
     pub name: String,
@@ -16,7 +16,7 @@ pub struct DocumentSymbol {
 /// Flat symbol row suitable for workspace-wide search.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkspaceSymbol {
-    pub target: TargetRef,
+    pub crate_ref: CrateRef,
     pub name: String,
     pub kind: SymbolKind,
     pub file_id: FileId,

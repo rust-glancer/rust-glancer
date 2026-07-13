@@ -15,7 +15,7 @@ use rg_ir_model::{BodyId, ModuleRef};
 use rg_parse::{FileId, Span};
 use rg_text::NameInterner;
 
-use crate::{BodyOwner, TargetBodies};
+use crate::{BodyOwner, CrateBodies};
 
 use super::{body::BodyLowering, macro_expansion::BodyMacroExpansionContext, syntax::source_for};
 
@@ -40,7 +40,7 @@ pub(crate) struct BodyLoweringTask {
 
 pub(crate) struct BodyTaskLowering<'a> {
     parse_package: &'a rg_parse::Package,
-    target_bodies: &'a mut TargetBodies,
+    crate_bodies: &'a mut CrateBodies,
     cfg: CfgEvaluator<'a>,
     interner: &'a mut NameInterner,
 }
@@ -48,13 +48,13 @@ pub(crate) struct BodyTaskLowering<'a> {
 impl<'a> BodyTaskLowering<'a> {
     pub(crate) fn new(
         parse_package: &'a rg_parse::Package,
-        target_bodies: &'a mut TargetBodies,
+        crate_bodies: &'a mut CrateBodies,
         cfg: CfgEvaluator<'a>,
         interner: &'a mut NameInterner,
     ) -> Self {
         Self {
             parse_package,
-            target_bodies,
+            crate_bodies,
             cfg,
             interner,
         }
@@ -147,7 +147,7 @@ impl<'a> BodyTaskLowering<'a> {
                         &mut *macro_expansion,
                     )
                     .lower_function(ast_fn, body_ast);
-                    lowered.push(self.target_bodies.alloc_body(body));
+                    lowered.push(self.crate_bodies.alloc_body(body));
                 }
                 BodyOwner::Const(_) => {
                     let Some(ast_const) = consts_by_span.get(&Self::span_key(task.span)).cloned()
@@ -170,7 +170,7 @@ impl<'a> BodyTaskLowering<'a> {
                         &mut *macro_expansion,
                     )
                     .lower_initializer(body_ast);
-                    lowered.push(self.target_bodies.alloc_body(body));
+                    lowered.push(self.crate_bodies.alloc_body(body));
                 }
                 BodyOwner::Static(_) => {
                     let Some(ast_static) = statics_by_span.get(&Self::span_key(task.span)).cloned()
@@ -193,7 +193,7 @@ impl<'a> BodyTaskLowering<'a> {
                         &mut *macro_expansion,
                     )
                     .lower_initializer(body_ast);
-                    lowered.push(self.target_bodies.alloc_body(body));
+                    lowered.push(self.crate_bodies.alloc_body(body));
                 }
             }
         }

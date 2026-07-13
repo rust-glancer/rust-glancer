@@ -2,8 +2,8 @@
 
 use rg_def_map::DefMapSource;
 use rg_ir_model::{AssocItemId, FunctionRef, ImplRef, ItemOwner};
-use rg_ir_storage::{ItemStoreQuery, ItemStoreSource};
 use rg_package_store::PackageStoreError;
+use rg_semantic_ir::{ItemStoreQuery, ItemStoreSource};
 use rg_std::UniqueVec;
 use rg_ty::{
     AutoderefMode, ImplMatcher, MemberMethodCandidateRef, MemberMethodOrigin, NominalTy, Ty,
@@ -169,7 +169,7 @@ where
             }
         }
 
-        if receiver_ty.def.origin.as_target_ref().is_some() {
+        if receiver_ty.def.origin.as_crate_ref().is_some() {
             for function in self.semantic_inherent_functions(receiver_ty, method_name)? {
                 if matcher.function_applies_to_receiver(function, receiver_ty)? {
                     Self::push_candidate(
@@ -193,7 +193,7 @@ where
             );
         }
 
-        if receiver_ty.def.origin.as_target_ref().is_some() {
+        if receiver_ty.def.origin.as_crate_ref().is_some() {
             for (function, applicability) in matcher.trait_function_candidates_for_receiver(
                 self.context.semantic_index(),
                 receiver_ty,
@@ -312,7 +312,7 @@ where
         self.filter_functions_by_name(functions, method_name)
     }
 
-    /// Read target-visible inherent functions, optionally filtered by name.
+    /// Read crate-visible inherent functions, optionally filtered by name.
     fn semantic_inherent_functions(
         &self,
         receiver_ty: &NominalTy,

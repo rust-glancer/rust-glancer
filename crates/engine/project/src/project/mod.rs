@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Context as _;
 use rg_def_map::PackageSlot;
-use rg_ir_model::TargetRef;
+use rg_ir_model::CrateRef;
 use rg_parse::FileId;
 use rg_workspace::WorkspaceMetadata;
 
@@ -272,7 +272,7 @@ impl SavedFileChange {
 pub struct AnalysisChangeSummary {
     pub changed_files: Vec<ChangedFile>,
     pub affected_packages: Vec<PackageSlot>,
-    pub changed_targets: Vec<TargetRef>,
+    pub changed_crates: Vec<CrateRef>,
 }
 
 /// One known package-local source file that was reparsed in place.
@@ -284,12 +284,12 @@ pub struct ChangedFile {
 
 /// Analysis-ready context for one filesystem path.
 ///
-/// The same file can be reachable from more than one target, for example when a package library
+/// The same file can be reachable from more than one crate, for example when a package library
 /// and binary both declare `mod shared;`. Unreachable parsed-cache files are intentionally omitted
-/// by path lookups, because LSP queries need a current target context to answer semantic questions.
+/// by path lookups, because LSP queries need a current crate context to answer semantic questions.
 #[derive(Debug, Clone, PartialEq, Eq, MemorySize)]
 pub struct FileContext {
     pub package: PackageSlot,
     pub file: FileId,
-    pub targets: Vec<TargetRef>,
+    pub crates: Vec<CrateRef>,
 }

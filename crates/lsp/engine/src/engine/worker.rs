@@ -13,7 +13,7 @@ use rg_analysis::{
     Analysis as QueryAnalysis, CompletionQuery, InlayHint as AnalysisInlayHint, ReferenceQuery,
     RenameEdit, RenameTarget,
 };
-use rg_ir_model::TargetRef;
+use rg_ir_model::CrateRef;
 use rg_lsp_proto::{
     AnalysisConfig, CargoMetadataTarget as ProtoCargoMetadataTarget, CompletionClientCapabilities,
     IndexingPerformancePreference as ProtoIndexingPerformancePreference,
@@ -629,7 +629,7 @@ impl EngineWorker {
                 applied_changes = 0usize,
                 changed_files = 0usize,
                 affected_packages = 0usize,
-                changed_targets = 0usize,
+                changed_crates = 0usize,
                 elapsed_ms = started.elapsed().as_millis(),
                 "project path reindex finished"
             );
@@ -644,13 +644,13 @@ impl EngineWorker {
         })?;
         let changed_files = summary.changed_files.len();
         let affected_packages = summary.affected_packages.len();
-        let changed_targets = summary.changed_targets.len();
+        let changed_crates = summary.changed_crates.len();
 
         tracing::info!(
             applied_changes,
             changed_files,
             affected_packages,
-            changed_targets,
+            changed_crates,
             elapsed_ms = started.elapsed().as_millis(),
             "project path reindex finished"
         );
@@ -693,13 +693,13 @@ impl EngineWorker {
         dirty: Option<&DirtyDocumentSnapshot>,
     ) -> anyhow::Result<Vec<ReferenceSearchPlan>> {
         self.project.with_query_snapshot(dirty, |snapshot| {
-            let target_offsets = Self::target_offsets(snapshot, path, position)?;
+            let crate_offsets = Self::crate_offsets(snapshot, path, position)?;
             let analysis = snapshot.full_analysis()?;
             let mut plans = Vec::new();
 
-            for (context, target, offset) in target_offsets {
+            for (context, crate_ref, offset) in crate_offsets {
                 plans.push(Self::reference_search_plan(
-                    snapshot, &analysis, &context, target, offset,
+                    snapshot, &analysis, &context, crate_ref, offset,
                 )?);
             }
 
@@ -751,17 +751,18 @@ impl EngineWorker {
         let locations = self
             .project
             .with_query_snapshot(dirty.as_ref(), |snapshot| {
-                let target_offsets = Self::target_offsets(snapshot, &path, position)?;
+                let crate_offsets = Self::crate_offsets(snapshot, &path, position)?;
                 let analysis = snapshot.full_analysis()?;
                 let mut locations = Vec::new();
 
-                for (context, target, offset) in target_offsets {
-                    let search_plan =
-                        Self::reference_search_plan(snapshot, &analysis, &context, target, offset)?;
+                for (context, crate_ref, offset) in crate_offsets {
+                    let search_plan = Self::reference_search_plan(
+                        snapshot, &analysis, &context, crate_ref, offset,
+                    )?;
                     let reference_query = search_plan.query(include_declaration);
 
                     for reference in
-                        analysis.references(target, context.file, offset, reference_query)?
+                        analysis.references(crate_ref, context.file, offset, reference_query)?
                     {
                         let Some(location) =
                             references::location_for_reference(snapshot, &reference)?
@@ -801,19 +802,19 @@ impl EngineWorker {
         let response = self
             .project
             .with_query_snapshot(dirty.as_ref(), |snapshot| {
-                let target_offsets = Self::target_offsets(snapshot, &path, position)?;
-                let analysis_targets = target_offsets
+                let crate_offsets = Self::crate_offsets(snapshot, &path, position)?;
+                let analysis_crates = crate_offsets
                     .iter()
-                    .map(|(_, target, _)| *target)
+                    .map(|(_, crate_ref, _)| *crate_ref)
                     .collect::<Vec<_>>();
-                let analysis = snapshot.analysis_for_targets(&analysis_targets)?;
+                let analysis = snapshot.analysis_for_crates(&analysis_crates)?;
 
-                for (context, target, offset) in target_offsets {
+                for (context, crate_ref, offset) in crate_offsets {
                     if !snapshot.package_is_workspace_member(context.package) {
                         continue;
                     }
                     let Some(rename_target) =
-                        analysis.prepare_rename(target, context.file, offset)?
+                        analysis.prepare_rename(crate_ref, context.file, offset)?
                     else {
                         continue;
                     };
@@ -859,19 +860,20 @@ impl EngineWorker {
         let edit = self
             .project
             .with_query_snapshot(dirty.as_ref(), |snapshot| {
-                let target_offsets = Self::target_offsets(snapshot, &path, position)?;
+                let crate_offsets = Self::crate_offsets(snapshot, &path, position)?;
                 let analysis = snapshot.full_analysis()?;
                 let mut edits = Vec::new();
 
-                for (context, target, offset) in target_offsets {
+                for (context, crate_ref, offset) in crate_offsets {
                     if !snapshot.package_is_workspace_member(context.package) {
                         continue;
                     }
-                    let search_plan =
-                        Self::reference_search_plan(snapshot, &analysis, &context, target, offset)?;
+                    let search_plan = Self::reference_search_plan(
+                        snapshot, &analysis, &context, crate_ref, offset,
+                    )?;
                     let reference_query = search_plan.query(true);
                     let Some(rename_result) = analysis.rename(
-                        target,
+                        crate_ref,
                         context.file,
                         offset,
                         &new_name,
@@ -928,23 +930,23 @@ impl EngineWorker {
         let highlights = self
             .project
             .with_query_snapshot(dirty.as_ref(), |snapshot| {
-                let target_offsets = Self::target_offsets(snapshot, &path, position)?;
+                let crate_offsets = Self::crate_offsets(snapshot, &path, position)?;
 
-                let analysis_targets = target_offsets
+                let analysis_crates = crate_offsets
                     .iter()
-                    .map(|(_, target, _)| *target)
+                    .map(|(_, crate_ref, _)| *crate_ref)
                     .collect::<Vec<_>>();
-                let analysis = snapshot.analysis_for_targets(&analysis_targets)?;
+                let analysis = snapshot.analysis_for_crates(&analysis_crates)?;
                 let mut highlights = Vec::new();
 
-                for (context, target, offset) in target_offsets {
+                for (context, crate_ref, offset) in crate_offsets {
                     for reference in analysis.references(
-                        target,
+                        crate_ref,
                         context.file,
                         offset,
-                        ReferenceQuery::file_scoped(target, context.file),
+                        ReferenceQuery::file_scoped(crate_ref, context.file),
                     )? {
-                        if reference.target.package != context.package
+                        if reference.crate_ref.package != context.package
                             || reference.file_id != context.file
                         {
                             continue;
@@ -990,21 +992,21 @@ impl EngineWorker {
         let completions = self
             .project
             .with_query_snapshot(dirty.as_ref(), |snapshot| {
-                let target_offsets = Self::target_offsets(snapshot, &path, position)?;
-                let analysis_targets = target_offsets
+                let crate_offsets = Self::crate_offsets(snapshot, &path, position)?;
+                let analysis_crates = crate_offsets
                     .iter()
-                    .map(|(_, target, _)| *target)
+                    .map(|(_, crate_ref, _)| *crate_ref)
                     .collect::<Vec<_>>();
-                let analysis = snapshot.analysis_for_targets(&analysis_targets)?;
+                let analysis = snapshot.analysis_for_crates(&analysis_crates)?;
                 let mut completions = Vec::new();
 
-                for (context, target, offset) in target_offsets {
+                for (context, crate_ref, offset) in crate_offsets {
                     let Some(line_index) =
                         snapshot.file_line_index(context.package, context.file)?
                     else {
                         continue;
                     };
-                    let mut query = CompletionQuery::new(target, context.file, offset)
+                    let mut query = CompletionQuery::new(crate_ref, context.file, offset)
                         .with_client_capabilities(rg_analysis::CompletionClientCapabilities {
                             snippet_support: client_capabilities.snippet_support,
                         });
@@ -1045,15 +1047,15 @@ impl EngineWorker {
         let hover = self
             .project
             .with_query_snapshot(dirty.as_ref(), |snapshot| {
-                let target_offsets = Self::target_offsets(snapshot, &path, position)?;
-                let analysis_targets = target_offsets
+                let crate_offsets = Self::crate_offsets(snapshot, &path, position)?;
+                let analysis_crates = crate_offsets
                     .iter()
-                    .map(|(_, target, _)| *target)
+                    .map(|(_, crate_ref, _)| *crate_ref)
                     .collect::<Vec<_>>();
-                let analysis = snapshot.analysis_for_targets(&analysis_targets)?;
+                let analysis = snapshot.analysis_for_crates(&analysis_crates)?;
 
-                for (context, target, offset) in target_offsets {
-                    let Some(info) = analysis.hover(target, context.file, offset)? else {
+                for (context, crate_ref, offset) in crate_offsets {
+                    let Some(info) = analysis.hover(crate_ref, context.file, offset)? else {
                         continue;
                     };
                     let Some(line_index) =
@@ -1091,16 +1093,16 @@ impl EngineWorker {
             .project
             .with_query_snapshot(dirty.as_ref(), |snapshot| {
                 let contexts = Self::file_contexts(snapshot, &path)?;
-                let analysis_targets = contexts
+                let analysis_crates = contexts
                     .iter()
-                    .flat_map(|context| context.targets.iter().copied())
+                    .flat_map(|context| context.crates.iter().copied())
                     .collect::<Vec<_>>();
-                let analysis = snapshot.analysis_for_targets(&analysis_targets)?;
+                let analysis = snapshot.analysis_for_crates(&analysis_crates)?;
                 let mut lsp_symbols = Vec::new();
 
                 for context in contexts {
-                    for target in context.targets {
-                        let symbols = analysis.document_symbols(target, context.file)?;
+                    for crate_ref in context.crates {
+                        let symbols = analysis.document_symbols(crate_ref, context.file)?;
                         for symbol in symbols {
                             let symbol =
                                 symbols::document_symbol(snapshot, context.package, symbol)?;
@@ -1167,11 +1169,11 @@ impl EngineWorker {
             .project
             .with_query_snapshot(dirty.as_ref(), |snapshot| {
                 let contexts = Self::file_contexts(snapshot, &path)?;
-                let analysis_targets = contexts
+                let analysis_crates = contexts
                     .iter()
-                    .flat_map(|context| context.targets.iter().copied())
+                    .flat_map(|context| context.crates.iter().copied())
                     .collect::<Vec<_>>();
-                let analysis = snapshot.analysis_for_targets(&analysis_targets)?;
+                let analysis = snapshot.analysis_for_crates(&analysis_crates)?;
                 let mut hints = Vec::<(rg_def_map::PackageSlot, AnalysisInlayHint)>::new();
 
                 for context in contexts {
@@ -1180,8 +1182,8 @@ impl EngineWorker {
                         continue;
                     };
 
-                    for target in context.targets {
-                        for hint in analysis.inlay_hints(target, context.file, Some(range))? {
+                    for crate_ref in context.crates {
+                        for hint in analysis.inlay_hints(crate_ref, context.file, Some(range))? {
                             if !hints
                                 .iter()
                                 .any(|(_, existing_hint)| existing_hint == &hint)
@@ -1250,24 +1252,24 @@ impl EngineWorker {
         let locations = self
             .project
             .with_query_snapshot(dirty.as_ref(), |snapshot| {
-                let target_offsets = Self::target_offsets(snapshot, &path, position)?;
-                let analysis_targets = target_offsets
+                let crate_offsets = Self::crate_offsets(snapshot, &path, position)?;
+                let analysis_crates = crate_offsets
                     .iter()
-                    .map(|(_, target, _)| *target)
+                    .map(|(_, crate_ref, _)| *crate_ref)
                     .collect::<Vec<_>>();
-                let analysis = snapshot.analysis_for_targets(&analysis_targets)?;
+                let analysis = snapshot.analysis_for_crates(&analysis_crates)?;
                 let mut locations = Vec::new();
 
-                for (context, target, offset) in target_offsets {
+                for (context, crate_ref, offset) in crate_offsets {
                     let targets = match query {
                         NavigationQuery::Definition => {
-                            analysis.goto_definition(target, context.file, offset)?
+                            analysis.goto_definition(crate_ref, context.file, offset)?
                         }
                         NavigationQuery::TypeDefinition => {
-                            analysis.goto_type_definition(target, context.file, offset)?
+                            analysis.goto_type_definition(crate_ref, context.file, offset)?
                         }
                         NavigationQuery::Implementation => {
-                            analysis.goto_implementation(target, context.file, offset)?
+                            analysis.goto_implementation(crate_ref, context.file, offset)?
                         }
                     };
 
@@ -1298,12 +1300,12 @@ impl EngineWorker {
         Ok(locations)
     }
 
-    fn target_offsets(
+    fn crate_offsets(
         snapshot: ProjectSnapshot<'_>,
         path: &Path,
         position: ls_types::Position,
-    ) -> anyhow::Result<Vec<(FileContext, TargetRef, u32)>> {
-        let mut targets = Vec::new();
+    ) -> anyhow::Result<Vec<(FileContext, CrateRef, u32)>> {
+        let mut crates = Vec::new();
 
         let contexts = Self::file_contexts(snapshot, path)?;
         for context in contexts {
@@ -1319,8 +1321,8 @@ impl EngineWorker {
                 continue;
             };
 
-            for target in &context.targets {
-                targets.push((context.clone(), *target, offset));
+            for crate_ref in &context.crates {
+                crates.push((context.clone(), *crate_ref, offset));
             }
         }
 
@@ -1328,27 +1330,27 @@ impl EngineWorker {
             path = %path.display(),
             line = position.line,
             character = position.character,
-            target_offset_count = targets.len(),
-            "resolved request target offsets"
+            crate_offset_count = crates.len(),
+            "resolved request crate offsets"
         );
 
-        Ok(targets)
+        Ok(crates)
     }
 
     fn reference_search_plan(
         snapshot: ProjectSnapshot<'_>,
         analysis: &QueryAnalysis<'_>,
         context: &FileContext,
-        target: TargetRef,
+        crate_ref: CrateRef,
         offset: u32,
     ) -> anyhow::Result<ReferenceSearchPlan> {
         let declaration_targets = analysis
-            .goto_definition(target, context.file, offset)?
+            .goto_definition(crate_ref, context.file, offset)?
             .into_iter()
-            .map(|target| target.target)
+            .map(|target| target.crate_ref)
             .collect::<Vec<_>>();
-        let targets = snapshot.reference_search_targets(context.package, &declaration_targets);
-        let labels = analysis.reference_search_labels(target, context.file, offset)?;
+        let targets = snapshot.reference_search_crates(context.package, &declaration_targets);
+        let labels = analysis.reference_search_labels(crate_ref, context.file, offset)?;
         let files = snapshot.reference_search_files_matching_labels(&targets, &labels)?;
 
         Ok(ReferenceSearchPlan::new(targets, files))
@@ -1366,7 +1368,7 @@ impl EngineWorker {
         let contexts = snapshot.file_contexts_for_path(path)?;
         let target_count = contexts
             .iter()
-            .map(|context| context.targets.len())
+            .map(|context| context.crates.len())
             .sum::<usize>();
         tracing::trace!(
             path = %path.display(),
@@ -1450,19 +1452,19 @@ impl EngineWorker {
         for edit in edits {
             // Keep this query limited to workspace-owned files. References may legitimately see
             // dependency declarations, but rename should not edit source outside this workspace.
-            if !snapshot.package_is_workspace_member(edit.target.package) {
+            if !snapshot.package_is_workspace_member(edit.crate_ref.package) {
                 tracing::debug!(
-                    package = ?edit.target.package,
+                    package = ?edit.crate_ref.package,
                     "rename rejected because an edit targets a non-workspace package"
                 );
                 return Ok(None);
             }
 
             let Some(text) =
-                snapshot.file_text_for_span(edit.target.package, edit.file_id, edit.span)?
+                snapshot.file_text_for_span(edit.crate_ref.package, edit.file_id, edit.span)?
             else {
                 tracing::debug!(
-                    package = ?edit.target.package,
+                    package = ?edit.crate_ref.package,
                     file = ?edit.file_id,
                     "rename rejected because an edit span has no source text"
                 );
@@ -1470,7 +1472,7 @@ impl EngineWorker {
             };
             if text != edit.old_text {
                 tracing::debug!(
-                    package = ?edit.target.package,
+                    package = ?edit.crate_ref.package,
                     file = ?edit.file_id,
                     expected = %edit.old_text,
                     actual = %text,

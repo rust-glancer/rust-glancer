@@ -5,8 +5,8 @@ use rg_ir_model::{
     DefId, DefMapRef, EnumVariantRef, ModuleId, ModuleRef, Path, ScopeId, SemanticItemRef,
     TypePathResolution,
 };
-use rg_ir_storage::{ItemStoreSource, TypePathContext};
 use rg_package_store::PackageStoreError;
+use rg_semantic_ir::{ItemStoreSource, TypePathContext};
 use rg_std::{ExpectedUnique, UniqueVec};
 use rg_ty::Ty;
 

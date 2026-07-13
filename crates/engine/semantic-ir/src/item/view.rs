@@ -1,19 +1,18 @@
 //! Borrowed semantic item views shared by read transactions and downstream queries.
 
+use rg_ir_model::hir::source::ItemSource;
 use rg_ir_model::items::{Documentation, GenericParams, TypeRef, VisibilityLevel};
 use rg_ir_model::{
     AssocItemId, ItemOwner, LocalDefRef, LocalImplRef, ModuleRef, SemanticItemKind,
     SemanticItemRef, TypeDefRef,
-    hir::{
-        items::{
-            ConstData, EnumData, FunctionData, ImplData, StaticData, StructData, TraitData,
-            TypeAliasData, UnionData,
-        },
-        source::ItemSource,
-    },
 };
 use rg_parse::Span;
 use rg_text::Name;
+
+use super::{
+    ConstData, EnumData, FunctionData, ImplData, StaticData, StructData, TraitData, TypeAliasData,
+    UnionData,
+};
 
 /// Borrowed item-shaped facts for one semantic item.
 #[derive(Debug, Clone, Copy)]

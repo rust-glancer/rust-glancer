@@ -7,7 +7,7 @@ use rg_text::PackageNameInterners;
 use rg_workspace::{WorkspaceLoweringConfig, WorkspaceMetadata};
 use test_fixture::{CrateFixture, fixture_crate};
 
-use rg_ir_model::TargetRef;
+use rg_ir_model::{CrateId, CrateRef};
 
 use crate::PackageDefMaps;
 use crate::{DefMapDb, PackageSlot};
@@ -210,18 +210,18 @@ struct RebuiltDefMaps {
 impl RebuiltDefMaps {
     fn lib_root_module(&self, package_name: &str) -> &crate::ModuleData {
         let package_slot = package_slot(&self.parse, package_name);
-        let target = lib_target(&self.parse, package_slot);
+        let crate_ref = lib_crate_ref(&self.parse, package_slot);
         let package = self
             .def_map
-            .resident_package(target.package)
+            .resident_package(crate_ref.package)
             .expect("rebuilt package should exist");
         let def_map = package
-            .def_map(target.target)
-            .expect("rebuilt target def-map should exist");
+            .def_map(crate_ref.crate_id)
+            .expect("rebuilt crate def-map should exist");
         let root_module = package
-            .target_data(target.target)
-            .and_then(|target_data| target_data.root_module())
-            .expect("rebuilt target def-map should have a root module");
+            .crate_data(crate_ref.crate_id)
+            .and_then(|crate_data| crate_data.root_module())
+            .expect("rebuilt crate def-map should have a root module");
 
         def_map
             .module(root_module)
@@ -240,7 +240,7 @@ fn package_slot(parse: &ParseDb, name: &str) -> PackageSlot {
         .expect("fixture package should exist")
 }
 
-fn lib_target(parse: &ParseDb, package_slot: PackageSlot) -> TargetRef {
+fn lib_crate_ref(parse: &ParseDb, package_slot: PackageSlot) -> CrateRef {
     let package = parse
         .package(package_slot.0)
         .expect("fixture package should exist");
@@ -249,9 +249,9 @@ fn lib_target(parse: &ParseDb, package_slot: PackageSlot) -> TargetRef {
         .iter()
         .find(|target| target.kind.is_lib())
         .expect("fixture package should have a library target");
-    TargetRef {
+    CrateRef {
         package: package_slot,
-        target: target.id,
+        crate_id: CrateId(target.id.0),
     }
 }
 

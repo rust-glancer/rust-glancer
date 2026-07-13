@@ -2,9 +2,9 @@
 
 use std::collections::HashMap;
 
-use rg_ir_model::{ExprId, ExprKind, ExprWrapperKind, TargetRef};
-use rg_ir_storage::ItemStoreQuery;
+use rg_ir_model::{CrateRef, ExprId, ExprKind, ExprWrapperKind};
 use rg_parse::{FileId, Span};
+use rg_semantic_ir::ItemStoreQuery;
 use rg_ty::Ty;
 
 use crate::IndexedViewDb;
@@ -90,11 +90,11 @@ impl<'a, 'db> BodyStructureView<'a, 'db> {
     /// Return known types for method calls that feed another method call.
     pub fn method_chain_expr_tys(
         &self,
-        target: TargetRef,
+        crate_ref: CrateRef,
         file_id: FileId,
     ) -> anyhow::Result<Vec<MethodChainExprTy>> {
         let mut expr_tys = Vec::new();
-        for (_, body) in self.db.body_ir.bodies(target, Some(file_id))? {
+        for (_, body) in self.db.body_ir.bodies(crate_ref, Some(file_id))? {
             let parent_dot_by_receiver = Self::method_parent_dots_by_receiver(body);
 
             for (expr_idx, expr) in body.exprs().iter().enumerate() {
@@ -130,7 +130,7 @@ impl<'a, 'db> BodyStructureView<'a, 'db> {
     /// Return body-owned blocks whose source extent ends at their closing brace.
     pub fn closing_brace_blocks(
         &self,
-        target: TargetRef,
+        crate_ref: CrateRef,
         file_id: FileId,
     ) -> anyhow::Result<Vec<BodyClosingBraceBlock>> {
         // Design note:
@@ -139,7 +139,7 @@ impl<'a, 'db> BodyStructureView<'a, 'db> {
 
         let items = ItemStoreQuery::new(self.db);
         let mut blocks = Vec::new();
-        for (_, body) in self.db.body_ir.bodies(target, Some(file_id))? {
+        for (_, body) in self.db.body_ir.bodies(crate_ref, Some(file_id))? {
             let body_source = body.source();
             if body_source.file_id == file_id
                 && let Some(function) = body.function_owner()

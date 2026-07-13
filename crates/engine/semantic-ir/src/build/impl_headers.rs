@@ -1,14 +1,13 @@
 //! Resolves impl headers after semantic item identities are available.
 
+use crate::ItemResolutionQuery;
+use crate::ItemStoreQuery;
 use rg_def_map::{DefMapDb, DefMapReadTxn, PackageSlot};
 use rg_ir_model::Path;
-use rg_ir_model::{ImplRef, ModuleRef, TargetRef, TraitRef, TypeDefRef};
-use rg_ir_storage::ItemStoreQuery;
+use rg_ir_model::{CrateId, CrateRef, ImplRef, ModuleRef, TraitRef, TypeDefRef};
 use rg_item_tree::TypeRef;
 use rg_package_store::PackageStoreError;
-use rg_parse::TargetId;
 use rg_std::ExpectedUnique;
-use rg_ty::ItemPathQuery;
 
 use crate::{SemanticIrReadTxn, store::SemanticIrDbMutator};
 
@@ -43,13 +42,13 @@ pub(super) fn impl_header_resolutions_for_packages(
     for package in packages {
         let package_ir = semantic_ir.package(*package)?;
 
-        for (target_idx, _) in package_ir.targets().iter().enumerate() {
-            let target = TargetRef {
+        for (crate_idx, _) in package_ir.crates().iter().enumerate() {
+            let crate_ref = CrateRef {
                 package: *package,
-                target: TargetId(target_idx),
+                crate_id: CrateId(crate_idx),
             };
             for (impl_ref, _) in semantic_ir
-                .items(target)?
+                .items(crate_ref)?
                 .into_iter()
                 .flat_map(|i| i.impls_with_refs())
             {
@@ -102,7 +101,7 @@ fn resolve_type_defs_from_ref(
     };
 
     let mut result = ExpectedUnique::new();
-    for type_def in ItemPathQuery::new(def_map, db).type_defs_for_path(owner, &path)? {
+    for type_def in ItemResolutionQuery::new(def_map, db).type_defs_for_path(owner, &path)? {
         result.push(type_def);
     }
     Ok(result)
@@ -119,7 +118,7 @@ fn resolve_traits_from_ref(
     };
 
     let mut result = ExpectedUnique::new();
-    for trait_ref in ItemPathQuery::new(def_map, db).traits_for_path(owner, &path)? {
+    for trait_ref in ItemResolutionQuery::new(def_map, db).traits_for_path(owner, &path)? {
         result.push(trait_ref);
     }
     Ok(result)

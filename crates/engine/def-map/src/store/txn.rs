@@ -1,9 +1,9 @@
 //! Read transactions over frozen def-map package data.
 
 use crate::{DefMap, DefMapSource, PackageDefMaps};
-use rg_ir_model::{DefMapRef, ModuleRef, TargetRef};
+use rg_ir_model::{CrateId, CrateRef, DefMapRef, ModuleRef};
 use rg_package_store::{PackageStoreError, PackageStoreReadTxn};
-use rg_parse::{FileId, TargetId};
+use rg_parse::FileId;
 
 use crate::PackageSlot;
 
@@ -31,35 +31,36 @@ impl<'db> DefMapReadTxn<'db> {
         Ok(self.package(package_slot)?.edition())
     }
 
-    /// Returns one target def map by project-wide target reference.
-    pub fn def_map(&self, target: TargetRef) -> Result<Option<&DefMap>, PackageStoreError> {
-        let package = self.package(target.package)?;
-        Ok(package.def_map(target.target))
+    /// Returns one crate def map by project-wide crate reference.
+    pub fn def_map(&self, crate_ref: CrateRef) -> Result<Option<&DefMap>, PackageStoreError> {
+        let package = self.package(crate_ref.package)?;
+        Ok(package.def_map(crate_ref.crate_id))
     }
 
-    /// Returns target contexts whose module tree contains a package-local file.
-    pub fn targets_for_file(
+    /// Returns crate contexts whose module tree contains a package-local file.
+    pub fn crates_for_file(
         &self,
         package: PackageSlot,
         file: FileId,
-    ) -> Result<Vec<TargetRef>, PackageStoreError> {
-        let mut targets = Vec::new();
+    ) -> Result<Vec<CrateRef>, PackageStoreError> {
+        let mut crates = Vec::new();
         let def_map_package = self.package(package)?;
 
-        for (target_idx, def_map) in def_map_package.def_maps().iter().enumerate() {
+        for (crate_idx, crate_data) in def_map_package.crates().iter().enumerate() {
+            let def_map = crate_data.def_map();
             let owns_file = def_map
                 .modules()
                 .iter()
                 .any(|module| module.origin.contains_file(file));
             if owns_file {
-                targets.push(TargetRef {
+                crates.push(CrateRef {
                     package,
-                    target: TargetId(target_idx),
+                    crate_id: CrateId(crate_idx),
                 });
             }
         }
 
-        Ok(targets)
+        Ok(crates)
     }
 }
 
@@ -67,30 +68,30 @@ impl DefMapSource for DefMapReadTxn<'_> {
     type Error = PackageStoreError;
 
     fn def_map_for_origin(&self, origin: DefMapRef) -> Result<Option<&DefMap>, PackageStoreError> {
-        let Some(target) = origin.as_target_ref() else {
+        let Some(crate_ref) = origin.as_crate_ref() else {
             return Ok(None);
         };
-        self.def_map(target)
+        self.def_map(crate_ref)
     }
 
     fn extern_root(
         &self,
-        target: TargetRef,
+        crate_ref: CrateRef,
         name: &str,
     ) -> Result<Option<ModuleRef>, PackageStoreError> {
         Ok(self
-            .package(target.package)?
-            .target_data(target.target)
+            .package(crate_ref.package)?
+            .crate_data(crate_ref.crate_id)
             .and_then(|data| data.extern_prelude().get(name).copied()))
     }
 
     fn extern_roots(
         &self,
-        target: TargetRef,
+        crate_ref: CrateRef,
     ) -> Result<Vec<(String, ModuleRef)>, PackageStoreError> {
         Ok(self
-            .package(target.package)?
-            .target_data(target.target)
+            .package(crate_ref.package)?
+            .crate_data(crate_ref.crate_id)
             .map(|data| {
                 data.extern_prelude()
                     .iter()
@@ -100,20 +101,20 @@ impl DefMapSource for DefMapReadTxn<'_> {
             .unwrap_or_default())
     }
 
-    fn prelude_module(&self, target: TargetRef) -> Result<Option<ModuleRef>, PackageStoreError> {
+    fn prelude_module(&self, crate_ref: CrateRef) -> Result<Option<ModuleRef>, PackageStoreError> {
         Ok(self
-            .package(target.package)?
-            .target_data(target.target)
+            .package(crate_ref.package)?
+            .crate_data(crate_ref.crate_id)
             .and_then(|data| data.prelude()))
     }
 
-    fn root_module(&self, target: TargetRef) -> Result<Option<ModuleRef>, PackageStoreError> {
+    fn root_module(&self, crate_ref: CrateRef) -> Result<Option<ModuleRef>, PackageStoreError> {
         Ok(self
-            .package(target.package)?
-            .target_data(target.target)
+            .package(crate_ref.package)?
+            .crate_data(crate_ref.crate_id)
             .and_then(|data| {
                 Some(ModuleRef {
-                    origin: DefMapRef::Target(target),
+                    origin: DefMapRef::Crate(crate_ref),
                     module: data.root_module()?,
                 })
             }))

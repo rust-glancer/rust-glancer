@@ -4,8 +4,8 @@
 //! nominal receiver and resolves the impl's associated `Target` type with the receiver substitution.
 
 use rg_def_map::DefMapSource;
-use rg_ir_model::{Path, PathSegment, TraitImplRef, hir::items::ImplData};
-use rg_ir_storage::{ItemLookupIndex, ItemStoreSource, TargetItemQuery, TypePathContext};
+use rg_ir_model::{Path, PathSegment, TraitImplRef};
+use rg_semantic_ir::{CrateItemQuery, ImplData, ItemLookupIndex, ItemStoreSource, TypePathContext};
 use rg_std::UniqueVec;
 use rg_text::Name;
 
@@ -17,7 +17,7 @@ use crate::{
 #[derive(Clone)]
 pub(crate) struct DerefResolver<'query, D, I> {
     item_paths: ItemPathQuery<'query, D, I>,
-    target_items: TargetItemQuery<'query, D, I>,
+    crate_items: CrateItemQuery<'query, D, I>,
     lookup_index: &'query ItemLookupIndex,
 }
 
@@ -28,12 +28,12 @@ where
 {
     pub(crate) fn new(
         item_paths: ItemPathQuery<'query, D, I>,
-        target_items: TargetItemQuery<'query, D, I>,
+        crate_items: CrateItemQuery<'query, D, I>,
         lookup_index: &'query ItemLookupIndex,
     ) -> Self {
         Self {
             item_paths,
-            target_items,
+            crate_items,
             lookup_index,
         }
     }
@@ -56,7 +56,7 @@ where
     /// For `impl<T> core::ops::Deref for Wrapper<T> { type Target = T; }` and receiver
     /// `Wrapper<User>`, this resolves the target as `User`.
     fn targets_for_nominal(&self, receiver_ty: &NominalTy) -> Result<UniqueVec<Ty>, D::Error> {
-        let matcher = ImplMatcher::new(self.item_paths.clone(), self.target_items.clone());
+        let matcher = ImplMatcher::new(self.item_paths.clone(), self.crate_items.clone());
         let item_query = self.item_paths.items();
         let mut targets = UniqueVec::new();
         let trait_impls = self
@@ -108,7 +108,7 @@ where
             impl_ref: Some(trait_impl.impl_ref),
         };
 
-        AssociatedTypeResolver::new(&self.item_paths, &self.target_items)
+        AssociatedTypeResolver::new(&self.item_paths, &self.crate_items)
             .trait_impl_resolves_to_path(trait_impl, context, &path)
     }
 
@@ -119,7 +119,7 @@ where
         impl_data: &ImplData,
         subst: &TypeSubst,
     ) -> Result<Option<Ty>, D::Error> {
-        AssociatedTypeResolver::new(&self.item_paths, &self.target_items)
+        AssociatedTypeResolver::new(&self.item_paths, &self.crate_items)
             .associated_type_from_impl(trait_impl, impl_data, "Target", subst)
     }
 }

@@ -1,20 +1,20 @@
-//! Target-local mutable state used while Body IR resolution is assembled.
+//! Crate-local mutable state used while Body IR resolution is assembled.
 
 use anyhow::Context as _;
 use rg_cfg_eval::CfgEvaluator;
 use rg_def_map::DefMapReadTxn;
 use rg_ir_model::{
-    BodyId, BodyRef, ConstRef, DefMapRef, ItemOwner, ModuleRef, Path, StaticRef, TargetRef,
+    BodyId, BodyRef, ConstRef, CrateRef, DefMapRef, ItemOwner, ModuleRef, Path, StaticRef,
     TypePathResolution,
 };
-use rg_ir_storage::{BodyLocalItems, ItemLookupIndex, ItemStore, TargetItemQuery};
 use rg_semantic_ir::SemanticIrReadTxn;
+use rg_semantic_ir::{CrateItemQuery, ItemLookupIndex, ItemStore};
 use rg_std::ExpectedUnique;
 use rg_text::NameInterner;
 use rg_ty::TraitSelectionCache;
 
 use crate::{
-    BodyOwner, TargetBodies,
+    BodyLocalItems, BodyOwner, CrateBodies,
     resolution::{BodyResolutionContext, BodyResolutionPass, TypeRefUseSite},
 };
 
@@ -25,26 +25,26 @@ use super::{
     query_source::BodyBuildQuerySource,
 };
 
-/// Coordinates all body-local facts needed to resolve one target's bodies.
-pub(super) struct TargetBodyBuildState<'target> {
-    target: TargetRef,
-    parse_package: &'target rg_parse::Package,
-    target_bodies: &'target mut TargetBodies,
+/// Coordinates all body-local facts needed to resolve one crate's bodies.
+pub(super) struct CrateBodyBuildState<'crate_data> {
+    crate_ref: CrateRef,
+    parse_package: &'crate_data rg_parse::Package,
+    crate_bodies: &'crate_data mut CrateBodies,
     body_local_items: Vec<Option<BodyLocalItems>>,
-    interner: &'target mut NameInterner,
+    interner: &'crate_data mut NameInterner,
 }
 
-impl<'target> TargetBodyBuildState<'target> {
+impl<'crate_data> CrateBodyBuildState<'crate_data> {
     pub(super) fn new(
-        target: TargetRef,
-        parse_package: &'target rg_parse::Package,
-        target_bodies: &'target mut TargetBodies,
-        interner: &'target mut NameInterner,
+        crate_ref: CrateRef,
+        parse_package: &'crate_data rg_parse::Package,
+        crate_bodies: &'crate_data mut CrateBodies,
+        interner: &'crate_data mut NameInterner,
     ) -> Self {
         Self {
-            target,
+            crate_ref,
             parse_package,
-            target_bodies,
+            crate_bodies,
             body_local_items: Vec::new(),
             interner,
         }
@@ -60,16 +60,16 @@ impl<'target> TargetBodyBuildState<'target> {
         // blocks to their corresponding `Self` types.
         self.materialize_body_local_items(def_map, semantic_ir)?;
 
-        // Build a target-semantic lookup index once and persist it with Body IR. Body-local items
+        // Build a crate-semantic lookup index once and persist it with Body IR. Body-local items
         // are deliberately overlaid through `BodyBuildQuerySource` instead of being part of this
-        // target-scoped cache.
-        let target_items = TargetItemQuery::new(def_map, semantic_ir, self.target);
-        let semantic_index = ItemLookupIndex::build_from(&target_items)?;
+        // crate-scoped cache.
+        let crate_items = CrateItemQuery::new(def_map, semantic_ir, self.crate_ref);
+        let semantic_index = ItemLookupIndex::build_from(&crate_items)?;
         self.resolve_body_local_impl_headers(def_map, semantic_ir, &semantic_index)?;
 
         // Do a pass on resolving body expressions.
         self.resolve_bodies(def_map, semantic_ir, &semantic_index)?;
-        self.target_bodies.set_semantic_index(semantic_index);
+        self.crate_bodies.set_semantic_index(semantic_index);
 
         // Finalize the build state, e.g. associate each body with its corresponding
         // defmap/item store.
@@ -87,34 +87,36 @@ impl<'target> TargetBodyBuildState<'target> {
         semantic_ir: &SemanticIrReadTxn<'_>,
     ) -> anyhow::Result<()> {
         self.body_local_items.clear();
-        // `body_local_items` is the cursor into `target_bodies`: each collected slot means that
-        // body has its local DefMap/item store ready. Nested lowering may extend `target_bodies`,
+        // `body_local_items` is the cursor into `crate_bodies`: each collected slot means that
+        // body has its local DefMap/item store ready. Nested lowering may extend `crate_bodies`,
         // so the loop stops only once every appended body has been collected too.
-        let parse_target = self
-            .parse_package
-            .target(self.target.target)
-            .with_context(|| {
-                format!(
-                    "while attempting to fetch parsed target {:?} for nested body lowering",
-                    self.target.target,
-                )
-            })?;
+        let cargo_target = def_map
+            .package(self.crate_ref.package)?
+            .crate_data(self.crate_ref.crate_id)
+            .context("semantic crate should have definition data")?
+            .cargo_target();
+        let parse_target = self.parse_package.target(cargo_target).with_context(|| {
+            format!(
+                "while attempting to fetch parsed target {:?} for nested body lowering",
+                self.crate_ref.crate_id,
+            )
+        })?;
         let cfg = CfgEvaluator::new(
             self.parse_package.cfg_options(),
             parse_target.enables_test_cfg(),
         );
         let mut macro_expansion = BodyMacroExpansion::new(self.parse_package, def_map, cfg);
-        while self.body_local_items.len() < self.target_bodies.bodies().len() {
+        while self.body_local_items.len() < self.crate_bodies.bodies().len() {
             let body_idx = self.body_local_items.len();
             let body_ref = self.body_ref(body_idx);
             let items = self.collect_body_local_items(body_idx, def_map, semantic_ir)?;
-            let fallback_module = self.target_bodies.bodies()[body_idx].fallback_module();
+            let fallback_module = self.crate_bodies.bodies()[body_idx].fallback_module();
             let nested_tasks =
                 Self::nested_body_tasks(body_ref, fallback_module, items.item_store());
             self.body_local_items.push(Some(items));
 
             if !nested_tasks.is_empty() {
-                BodyTaskLowering::new(self.parse_package, self.target_bodies, cfg, self.interner)
+                BodyTaskLowering::new(self.parse_package, self.crate_bodies, cfg, self.interner)
                     .lower_tasks(&nested_tasks, &mut macro_expansion)?;
             }
         }
@@ -130,12 +132,12 @@ impl<'target> TargetBodyBuildState<'target> {
         semantic_ir: &SemanticIrReadTxn<'_>,
     ) -> anyhow::Result<BodyLocalItems> {
         let body_ref = self.body_ref(body_idx);
-        let body = &self.target_bodies.bodies()[body_idx];
+        let body = &self.crate_bodies.bodies()[body_idx];
 
         // Finalization can see previously collected body-local DefMaps. This is what lets nested
         // bodies import names from the body scope that declared them.
         let source =
-            BodyBuildQuerySource::new(def_map, semantic_ir, self.target, &self.body_local_items);
+            BodyBuildQuerySource::new(def_map, semantic_ir, self.crate_ref, &self.body_local_items);
         let def_map = BodyDefMapCollector::new(body_ref, body)
             .collect()
             .finalize(source)?;
@@ -226,9 +228,9 @@ impl<'target> TargetBodyBuildState<'target> {
         semantic_ir: &SemanticIrReadTxn<'_>,
         semantic_index: &ItemLookupIndex,
     ) -> anyhow::Result<()> {
-        for body_idx in 0..self.target_bodies.bodies().len() {
+        for body_idx in 0..self.crate_bodies.bodies().len() {
             let body_ref = self.body_ref(body_idx);
-            let body = &self.target_bodies.bodies()[body_idx];
+            let body = &self.crate_bodies.bodies()[body_idx];
             let resolved_headers = {
                 let Some(items) = self.body_local_items.get(body_idx).and_then(Option::as_ref)
                 else {
@@ -252,7 +254,7 @@ impl<'target> TargetBodyBuildState<'target> {
                 let source = BodyBuildQuerySource::new(
                     def_map,
                     semantic_ir,
-                    self.target,
+                    self.crate_ref,
                     &self.body_local_items,
                 );
                 let context =
@@ -315,14 +317,14 @@ impl<'target> TargetBodyBuildState<'target> {
     ) -> anyhow::Result<()> {
         // Make the body resolution pass aware of body-local items.
         let source =
-            BodyBuildQuerySource::new(def_map, semantic_ir, self.target, &self.body_local_items);
-        let target = self.target;
-        let target_bodies = &mut *self.target_bodies;
+            BodyBuildQuerySource::new(def_map, semantic_ir, self.crate_ref, &self.body_local_items);
+        let crate_ref = self.crate_ref;
+        let crate_bodies = &mut *self.crate_bodies;
         let trait_selection_cache = TraitSelectionCache::default();
 
-        for (body_idx, body) in target_bodies.bodies_mut().iter_mut().enumerate() {
+        for (body_idx, body) in crate_bodies.bodies_mut().iter_mut().enumerate() {
             let body_ref = BodyRef {
-                target,
+                crate_ref,
                 body: BodyId(body_idx),
             };
             BodyResolutionPass::new(
@@ -341,7 +343,7 @@ impl<'target> TargetBodyBuildState<'target> {
 
     fn finish(mut self) {
         let mut body_local_items = Vec::with_capacity(self.body_local_items.len());
-        for body_idx in 0..self.target_bodies.bodies().len() {
+        for body_idx in 0..self.crate_bodies.bodies().len() {
             let items = self
                 .body_local_items
                 .get_mut(body_idx)
@@ -349,12 +351,12 @@ impl<'target> TargetBodyBuildState<'target> {
                 .expect("every built body should have collected body-local items");
             body_local_items.push(items);
         }
-        self.target_bodies.set_body_local_items(body_local_items);
+        self.crate_bodies.set_body_local_items(body_local_items);
     }
 
     fn body_ref(&self, body_idx: usize) -> BodyRef {
         BodyRef {
-            target: self.target,
+            crate_ref: self.crate_ref,
             body: BodyId(body_idx),
         }
     }

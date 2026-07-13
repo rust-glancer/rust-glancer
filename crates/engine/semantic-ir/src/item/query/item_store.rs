@@ -1,22 +1,21 @@
 //! Shared queries over semantic-shaped item stores.
 //!
-//! Target and body IR store item data in the same `ItemStore` shape. This layer owns the
+//! Crate and body IR store item data in the same `ItemStore` shape. This layer owns the
 //! item-shaped queries, while callers provide only the origin-to-store routing policy.
 
 use rg_def_map::LocalEnumVariantData;
 use rg_ir_model::items::{FieldKey, GenericParams};
 use rg_ir_model::{
-    ConstRef, DefMapRef, EnumVariantRef, FieldRef, FunctionRef, ImplRef, ItemOwner, LocalDefRef,
-    LocalEnumVariantRef, ModuleRef, SemanticItemRef, StaticRef, TargetRef, TraitRef, TypeAliasRef,
-    TypeDefId, TypeDefRef,
-    hir::items::{
-        ConstData, EnumData, EnumVariantData, FieldData, FunctionData, ImplData, StaticData,
-        TraitData, TypeAliasData,
-    },
+    ConstRef, CrateRef, DefMapRef, EnumVariantRef, FieldRef, FunctionRef, ImplRef, ItemOwner,
+    LocalDefRef, LocalEnumVariantRef, ModuleRef, SemanticItemRef, StaticRef, TraitRef,
+    TypeAliasRef, TypeDefId, TypeDefRef,
 };
 
 use super::ItemStoreSource;
-use crate::{ItemStore, SemanticItemView, TypePathContext};
+use crate::{
+    ConstData, EnumData, EnumVariantData, FieldData, FunctionData, ImplData, ItemStore,
+    SemanticItemView, StaticData, TraitData, TypeAliasData, TypePathContext,
+};
 
 /// Shared item queries over any storage that can route `DefMapRef` origins to item stores.
 ///
@@ -53,23 +52,20 @@ where
         self.source.included_stores()
     }
 
-    /// Returns target refs for all stores materialized by this query source.
-    pub fn included_target_refs(&self) -> Result<Vec<TargetRef>, S::Error> {
+    /// Returns crate refs for all stores materialized by this query source.
+    pub fn included_crate_refs(&self) -> Result<Vec<CrateRef>, S::Error> {
         Ok(self
             .included_stores()?
             .into_iter()
-            .map(|store| store.target_ref())
+            .map(|store| store.crate_ref())
             .collect())
     }
 
-    /// Returns stores for the exact targets selected by a language-visibility query.
-    pub fn stores_for_targets(
-        &self,
-        targets: &[TargetRef],
-    ) -> Result<Vec<&'a ItemStore>, S::Error> {
+    /// Returns stores for the exact crates selected by a language-visibility query.
+    pub fn stores_for_crates(&self, crates: &[CrateRef]) -> Result<Vec<&'a ItemStore>, S::Error> {
         let mut stores = Vec::new();
-        for target in targets {
-            if let Some(store) = self.item_store_for_origin(DefMapRef::Target(*target))? {
+        for crate_ref in crates {
+            if let Some(store) = self.item_store_for_origin(DefMapRef::Crate(*crate_ref))? {
                 stores.push(store);
             }
         }

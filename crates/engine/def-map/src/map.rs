@@ -5,8 +5,8 @@ use wincode::{SchemaRead, SchemaWrite};
 
 use rg_arena::Arena;
 use rg_ir_model::{
-    BodyRef, DefMapRef, ImportId, LocalDefId, LocalDefRef, LocalEnumVariantId, LocalEnumVariantRef,
-    LocalImplId, LocalImplRef, ModuleId, ModuleRef, TargetRef,
+    BodyRef, CrateRef, DefMapRef, ImportId, LocalDefId, LocalDefRef, LocalEnumVariantId,
+    LocalEnumVariantRef, LocalImplId, LocalImplRef, ModuleId, ModuleRef,
     hir::source::{GeneratedSourceData, GeneratedSourceId},
     items::{EnumItem, FieldList, ItemKind, VisibilityLevel},
 };
@@ -39,9 +39,9 @@ pub struct DefMapBuilder {
 }
 
 impl DefMapBuilder {
-    pub fn new(target: TargetRef) -> Self {
+    pub fn new(crate_ref: CrateRef) -> Self {
         Self {
-            def_map: DefMap::target(target),
+            def_map: DefMap::krate(crate_ref),
         }
     }
 
@@ -331,7 +331,7 @@ impl<'a> PartialDefMap<'a> {
 
 /// Frozen namespace map for one analyzed scope.
 ///
-/// There might be several defmaps per target:
+/// There might be several defmaps per crate:
 /// the root defmap represents the semantic layer, but also
 /// each body function has its own defmap that tracks the body-local items.
 /// While functions are not really modules, they work similarly, and we model
@@ -345,9 +345,9 @@ pub struct DefMap {
 }
 
 impl DefMap {
-    fn target(target: TargetRef) -> Self {
+    fn krate(crate_ref: CrateRef) -> Self {
         Self {
-            own_ref: DefMapRef::Target(target),
+            own_ref: DefMapRef::Crate(crate_ref),
             data: DefMapData::default(),
         }
     }

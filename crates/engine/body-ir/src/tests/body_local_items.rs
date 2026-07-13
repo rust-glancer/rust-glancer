@@ -1,6 +1,6 @@
 use expect_test::expect;
 use rg_def_map::PackageSlot;
-use rg_ir_model::{BodyId, BodyRef, TargetRef};
+use rg_ir_model::{BodyId, BodyRef, CrateRef};
 
 use crate::testonly::BodyIrFixture;
 
@@ -1558,9 +1558,9 @@ pub fn use_it() {
         .first()
         .expect("fixture package should contain one target");
     let body_ref = BodyRef {
-        target: TargetRef {
+        crate_ref: CrateRef {
             package: PackageSlot(0),
-            target: target.id,
+            crate_id: rg_ir_model::CrateId(target.id.0),
         },
         body: BodyId(0),
     };

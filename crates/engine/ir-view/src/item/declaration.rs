@@ -6,11 +6,11 @@ use anyhow::Context as _;
 use rg_def_map::{DefMapSource, ModuleOrigin};
 use rg_ir_model::items::{FieldKey, TypeRef};
 use rg_ir_model::{
-    BodyBindingRef, EnumVariantRef, FieldRef, FunctionRef, ItemOwner, LocalDefRef, ModuleRef,
-    SemanticItemKind, SemanticItemRef, TargetRef, identity::DeclarationRef,
+    BodyBindingRef, CrateRef, EnumVariantRef, FieldRef, FunctionRef, ItemOwner, LocalDefRef,
+    ModuleRef, SemanticItemKind, SemanticItemRef, identity::DeclarationRef,
 };
-use rg_ir_storage::ItemStoreQuery;
 use rg_parse::{FileId, Span};
+use rg_semantic_ir::ItemStoreQuery;
 use rg_text::Name;
 
 use crate::{
@@ -33,7 +33,7 @@ enum DeclarationLabel {
 /// Composite declaration facts shared by editor queries.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Declaration {
-    target: TargetRef,
+    crate_ref: CrateRef,
     kind: SymbolKind,
     label: DeclarationLabel,
     file_id: FileId,
@@ -43,7 +43,7 @@ pub struct Declaration {
 
 impl Declaration {
     fn named(
-        target: TargetRef,
+        crate_ref: CrateRef,
         kind: SymbolKind,
         name: Name,
         file_id: FileId,
@@ -51,7 +51,7 @@ impl Declaration {
         selection_span: Span,
     ) -> Self {
         Self {
-            target,
+            crate_ref,
             kind,
             label: DeclarationLabel::Name(name),
             file_id,
@@ -61,7 +61,7 @@ impl Declaration {
     }
 
     fn tuple_field(
-        target: TargetRef,
+        crate_ref: CrateRef,
         kind: SymbolKind,
         index: usize,
         file_id: FileId,
@@ -69,7 +69,7 @@ impl Declaration {
         selection_span: Span,
     ) -> Self {
         Self {
-            target,
+            crate_ref,
             kind,
             label: DeclarationLabel::TupleField(index),
             file_id,
@@ -78,8 +78,8 @@ impl Declaration {
         }
     }
 
-    pub fn target(&self) -> TargetRef {
-        self.target
+    pub fn crate_ref(&self) -> CrateRef {
+        self.crate_ref
     }
 
     pub fn kind(&self) -> SymbolKind {
@@ -185,7 +185,7 @@ impl<'a, 'db> DeclarationView<'a, 'db> {
         &'display self,
         declaration: &'display Declaration,
     ) -> anyhow::Result<DeclarationDisplayName<'display>> {
-        let syntax = SyntaxRenderer::new(self.db.target_edition(declaration.target)?);
+        let syntax = SyntaxRenderer::new(self.db.crate_edition(declaration.crate_ref)?);
         Ok(match &declaration.label {
             DeclarationLabel::Name(name) => DeclarationDisplayName::Name(syntax.name(name)),
             DeclarationLabel::TupleField(index) => DeclarationDisplayName::TupleField(*index),
@@ -239,7 +239,7 @@ impl<'a, 'db> DeclarationView<'a, 'db> {
         };
 
         Ok(Some(Declaration::named(
-            module_ref.origin.origin_target(),
+            module_ref.origin.origin_crate(),
             SymbolKind::Module,
             name,
             file_id,
@@ -255,7 +255,7 @@ impl<'a, 'db> DeclarationView<'a, 'db> {
         };
 
         Ok(Some(Declaration::named(
-            local_def.origin.origin_target(),
+            local_def.origin.origin_crate(),
             SymbolKind::from_local_def_kind(data.kind),
             data.name.clone(),
             data.file_id,
@@ -288,7 +288,7 @@ impl<'a, 'db> DeclarationView<'a, 'db> {
                     return Ok(None);
                 };
                 Ok(Some(Declaration {
-                    target: item.origin().origin_target(),
+                    crate_ref: item.origin().origin_crate(),
                     kind: SymbolKind::Impl,
                     label: DeclarationLabel::Impl(item),
                     file_id: local_impl.file_id,
@@ -314,7 +314,7 @@ impl<'a, 'db> DeclarationView<'a, 'db> {
                 };
 
                 Ok(Some(Declaration::named(
-                    item.origin().origin_target(),
+                    item.origin().origin_crate(),
                     SymbolKind::from_semantic_item_kind(view.kind()),
                     name,
                     view.source().file_id,
@@ -337,7 +337,7 @@ impl<'a, 'db> DeclarationView<'a, 'db> {
         let selection_span = binding.name_span.unwrap_or(binding.source.span);
         Ok(Some(match &binding.name {
             Some(name) => Declaration::named(
-                binding_ref.body.target,
+                binding_ref.body.crate_ref,
                 SymbolKind::Variable,
                 name.clone(),
                 binding.source.file_id,
@@ -345,7 +345,7 @@ impl<'a, 'db> DeclarationView<'a, 'db> {
                 selection_span,
             ),
             None => Declaration {
-                target: binding_ref.body.target,
+                crate_ref: binding_ref.body.crate_ref,
                 kind: SymbolKind::Variable,
                 label: DeclarationLabel::Unsupported,
                 file_id: binding.source.file_id,
@@ -365,7 +365,7 @@ impl<'a, 'db> DeclarationView<'a, 'db> {
         };
 
         Ok(Some(Declaration::named(
-            variant_ref.origin.origin_target(),
+            variant_ref.origin.origin_crate(),
             SymbolKind::EnumVariant,
             data.variant.name.clone(),
             data.file_id,
@@ -383,10 +383,10 @@ impl<'a, 'db> DeclarationView<'a, 'db> {
             return Ok(None);
         };
 
-        let target = field.owner.origin.origin_target();
+        let crate_ref = field.owner.origin.origin_crate();
         Ok(Some(match key {
             FieldKey::Named(name) => Declaration::named(
-                target,
+                crate_ref,
                 SymbolKind::Field,
                 name.clone(),
                 data.file_id,
@@ -394,7 +394,7 @@ impl<'a, 'db> DeclarationView<'a, 'db> {
                 data.field.span,
             ),
             FieldKey::Tuple(index) => Declaration::tuple_field(
-                target,
+                crate_ref,
                 SymbolKind::Field,
                 *index,
                 data.file_id,
@@ -411,7 +411,7 @@ impl<'a, 'db> DeclarationView<'a, 'db> {
         };
 
         Ok(Some(Declaration::named(
-            function.origin.origin_target(),
+            function.origin.origin_crate(),
             match data.owner {
                 ItemOwner::Module(_) => SymbolKind::Function,
                 ItemOwner::Trait(_) | ItemOwner::Impl(_) => SymbolKind::Method,

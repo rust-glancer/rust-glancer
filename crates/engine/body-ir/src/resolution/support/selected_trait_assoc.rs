@@ -15,8 +15,8 @@
 
 use rg_def_map::DefMapSource;
 use rg_ir_model::{FunctionRef, ItemOwner, TraitRef, items::TypeRef};
-use rg_ir_storage::ItemStoreSource;
 use rg_package_store::PackageStoreError;
+use rg_semantic_ir::ItemStoreSource;
 use rg_ty::{TraitGoal, TraitSelectionCache, Ty, inference::InferenceTable};
 
 use crate::resolution::BodyResolutionContext;

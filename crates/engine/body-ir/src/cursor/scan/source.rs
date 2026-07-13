@@ -1,17 +1,16 @@
-//! Whole-target source scanning for project-wide body-local queries.
+//! Whole-crate_ref source scanning for project-wide body-local queries.
 //!
 //! Source scans collect every body-local declaration and reference-like span
 //! that can participate in navigation, references, and symbol queries.
 
 use rg_ir_model::{
-    BindingId, BodyRef, EnumVariantRef, ExprId, FieldRef, SemanticItemRef, TargetRef, TypeDefId,
+    BindingId, BodyRef, CrateRef, EnumVariantRef, ExprId, FieldRef, SemanticItemRef, TypeDefId,
     hir::source::ItemSourceKind,
 };
-use rg_ir_storage::BodyLocalItems;
 use rg_package_store::PackageStoreError;
 use rg_parse::FileId;
 
-use crate::{BodyIrReadTxn, ExprKind, PatKind, ResolvedBodyData};
+use crate::{BodyIrReadTxn, BodyLocalItems, ExprKind, PatKind, ResolvedBodyData};
 
 use super::{
     super::{BindingSurface, BodyCursorCandidate, RecordFieldKeySurface},
@@ -20,30 +19,30 @@ use super::{
     sites::BodyScanSites,
 };
 
-/// Scans one target for every body-local source candidate used by whole-project queries.
+/// Scans one crate for every body-local source candidate used by whole-project queries.
 pub(crate) struct BodySourceScanner<'txn, 'db> {
     body_ir: &'txn BodyIrReadTxn<'db>,
-    target: TargetRef,
+    crate_ref: CrateRef,
     file_id: Option<FileId>,
 }
 
 impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
     pub(crate) fn new(
         body_ir: &'txn BodyIrReadTxn<'db>,
-        target: TargetRef,
+        crate_ref: CrateRef,
         file_id: Option<FileId>,
     ) -> Self {
         Self {
             body_ir,
-            target,
+            crate_ref,
             file_id,
         }
     }
 
-    /// Returns all body-local candidates in this target, optionally limited to one file.
+    /// Returns all body-local candidates in this crate_ref, optionally limited to one file.
     pub(crate) fn scan(&self) -> Result<Vec<BodyCursorCandidate>, PackageStoreError> {
         let mut candidates = Vec::new();
-        for (body_ref, body) in self.body_ir.bodies(self.target, self.file_id)? {
+        for (body_ref, body) in self.body_ir.bodies(self.crate_ref, self.file_id)? {
             let body_local_items = self.body_ir.body_local_items(body_ref)?;
 
             self.push_declaration_candidates(body_ref, body, body_local_items, &mut candidates);
@@ -211,7 +210,7 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
 
     fn push_field_candidates(
         &self,
-        item_store: &rg_ir_storage::ItemStore,
+        item_store: &rg_semantic_ir::ItemStore,
         ty: rg_ir_model::TypeDefRef,
         candidates: &mut Vec<BodyCursorCandidate>,
     ) {
@@ -250,7 +249,7 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
 
     fn push_variant_candidates(
         &self,
-        item_store: &rg_ir_storage::ItemStore,
+        item_store: &rg_semantic_ir::ItemStore,
         ty: rg_ir_model::TypeDefRef,
         candidates: &mut Vec<BodyCursorCandidate>,
     ) {

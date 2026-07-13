@@ -2,8 +2,8 @@
 
 use rg_def_map::DefMapSource;
 use rg_ir_model::{AssocItemId, DefMapRef, ImplRef, TypeAliasRef};
-use rg_ir_storage::{ItemStoreSource, TypePathContext};
 use rg_package_store::PackageStoreError;
+use rg_semantic_ir::{ItemStoreSource, TypePathContext};
 use rg_std::UniqueVec;
 use rg_ty::{GenericArg, NominalTy, Ty, TypeSubst};
 
@@ -31,7 +31,7 @@ where
         ty: &NominalTy,
         name: &str,
     ) -> Result<Option<TypeAliasRef>, PackageStoreError> {
-        // Block-local impls can add aliases even to target-origin types, e.g.
+        // Block-local impls can add aliases even to crate-origin types, e.g.
         // `impl TargetType { type LocalAlias = ... }` inside a function.
         let body_alias = self.associated_alias_for_impls(
             self.context

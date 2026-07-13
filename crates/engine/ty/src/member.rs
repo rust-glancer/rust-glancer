@@ -6,7 +6,7 @@
 
 use rg_def_map::DefMapSource;
 use rg_ir_model::{FieldRef, FunctionRef, TraitApplicability, TypeDefRef};
-use rg_ir_storage::{ItemLookupIndex, ItemStoreSource, TargetItemQuery};
+use rg_semantic_ir::{CrateItemQuery, ItemLookupIndex, ItemStoreSource};
 use rg_std::UniqueVec;
 
 use crate::{Autoderef, AutoderefMode, ImplMatcher, ItemPathQuery, NominalTy, Ty};
@@ -52,7 +52,7 @@ pub enum MemberMethodOrigin {
 /// Ref-level member lookup shared by analysis and view adapters.
 pub struct MemberQuery<'query, D, I> {
     item_paths: ItemPathQuery<'query, D, I>,
-    target_items: TargetItemQuery<'query, D, I>,
+    crate_items: CrateItemQuery<'query, D, I>,
     lookup_index: &'query ItemLookupIndex,
 }
 
@@ -64,12 +64,12 @@ where
     /// Creates a member query over a target-scoped receiver lookup index.
     pub fn with_index(
         item_paths: ItemPathQuery<'query, D, I>,
-        target_items: TargetItemQuery<'query, D, I>,
+        crate_items: CrateItemQuery<'query, D, I>,
         lookup_index: &'query ItemLookupIndex,
     ) -> Self {
         Self {
             item_paths,
-            target_items,
+            crate_items,
             lookup_index,
         }
     }
@@ -114,7 +114,7 @@ where
         receiver_ty: &NominalTy,
     ) -> Result<Vec<MemberMethodCandidateRef>, D::Error> {
         let mut candidates = Vec::new();
-        let matcher = ImplMatcher::new(self.item_paths.clone(), self.target_items.clone());
+        let matcher = ImplMatcher::new(self.item_paths.clone(), self.crate_items.clone());
 
         for function in self.inherent_functions_for_nominal(receiver_ty)? {
             if !matcher.function_applies_to_receiver(function, receiver_ty)? {
@@ -148,7 +148,7 @@ where
     fn autoderef(&self) -> Autoderef<'query, D, I> {
         Autoderef::with_index(
             self.item_paths.clone(),
-            self.target_items.clone(),
+            self.crate_items.clone(),
             self.lookup_index,
         )
     }
