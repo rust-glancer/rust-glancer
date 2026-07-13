@@ -5,10 +5,11 @@
 
 use crate::generic_arg::item_generic_args_align;
 use crate::{GenericArg, NominalTy, Ty, TypeSubst};
+use rg_def_map::DefMapSource;
 use rg_ir_model::hir::items::ImplData;
 use rg_ir_model::items::{GenericArg as ItemGenericArg, TypeRef};
 use rg_ir_model::{FunctionRef, ImplRef, ItemOwner};
-use rg_ir_storage::{DefMapSource, ItemStoreSource, TypePathContext};
+use rg_ir_storage::{ItemStoreSource, TypePathContext};
 
 use super::ImplMatcher;
 

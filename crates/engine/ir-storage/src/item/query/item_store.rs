@@ -3,6 +3,7 @@
 //! Target and body IR store item data in the same `ItemStore` shape. This layer owns the
 //! item-shaped queries, while callers provide only the origin-to-store routing policy.
 
+use rg_def_map::LocalEnumVariantData;
 use rg_ir_model::items::{FieldKey, GenericParams};
 use rg_ir_model::{
     ConstRef, DefMapRef, EnumVariantRef, FieldRef, FunctionRef, ImplRef, ItemOwner, LocalDefRef,
@@ -15,7 +16,7 @@ use rg_ir_model::{
 };
 
 use super::ItemStoreSource;
-use crate::{ItemStore, LocalEnumVariantData, SemanticItemView, TypePathContext};
+use crate::{ItemStore, SemanticItemView, TypePathContext};
 
 /// Shared item queries over any storage that can route `DefMapRef` origins to item stores.
 ///

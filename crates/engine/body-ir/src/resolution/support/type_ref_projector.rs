@@ -4,11 +4,12 @@
 //! view: `T` should stay as the same `?T` slot that the call result uses, and associated
 //! projections such as `Self::Item` or `S::Item` may need body-local solver evidence.
 
+use rg_def_map::DefMapSource;
 use rg_ir_model::{
     TraitRef,
     items::{GenericArg as ItemGenericArg, TypePathAnchor, TypeRef},
 };
-use rg_ir_storage::{DefMapSource, ItemStoreSource};
+use rg_ir_storage::ItemStoreSource;
 use rg_package_store::PackageStoreError;
 use rg_text::Name;
 use rg_ty::{

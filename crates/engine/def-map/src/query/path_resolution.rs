@@ -13,7 +13,7 @@ use rg_ir_model::{DefId, ImportRef, LocalDefRef, ModuleRef, Path, PathSegment};
 use rg_std::UniqueVec;
 use rg_text::Name;
 
-use super::super::{
+use crate::{
     ImportData, ImportKind, LocalDefKind, ModuleOrigin, ModuleScopeBuilder, Namespace,
     NamespaceSet, ScopeBinding, ScopeBindingProvenance, Visibility,
 };

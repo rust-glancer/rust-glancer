@@ -1,7 +1,8 @@
 //! Body-local item lookup for body-aware resolution.
 
+use rg_def_map::DefMapSource;
 use rg_ir_model::{AssocItemId, DefMapRef, FunctionRef, ImplRef, TraitImplRef, TypeDefRef};
-use rg_ir_storage::{DefMapSource, ItemStore, ItemStoreSource};
+use rg_ir_storage::{ItemStore, ItemStoreSource};
 use rg_package_store::PackageStoreError;
 use rg_std::UniqueVec;
 

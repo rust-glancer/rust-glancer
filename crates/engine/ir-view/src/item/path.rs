@@ -6,11 +6,12 @@
 
 use std::fmt::Write as _;
 
+use rg_def_map::DefMapSource;
 use rg_ir_model::{
     ConstRef, DefMapRef, FunctionRef, ImplId, ImplRef, ItemOwner, ModuleRef, StaticRef, TraitRef,
     TypeAliasRef, TypeDefId, TypeDefRef, hir::items::EnumVariantData,
 };
-use rg_ir_storage::{DefMapSource, ItemStoreQuery};
+use rg_ir_storage::ItemStoreQuery;
 use rg_text::RustEdition;
 
 use crate::{IndexedViewDb, display::syntax::SyntaxRenderer};

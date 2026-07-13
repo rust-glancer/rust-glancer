@@ -10,13 +10,14 @@
 //! 2. Use known pattern input types to catch unit variants such as `None`.
 //! 3. Rewrite every binding reference from pending slot ids to final binding ids.
 
+use rg_def_map::{DefMapSource, NamespaceSet};
 use rg_ir_model::{
     BindingId, DefId, DefMapRef, ExprId, ModuleId, ModuleRef, Path, PathSegment, ScopeId,
     SemanticItemRef, TypeDefId,
     identity::DeclarationRef,
     items::{FieldKey, FieldList, TypeRef},
 };
-use rg_ir_storage::{DefMapSource, ItemStoreSource, NamespaceSet};
+use rg_ir_storage::ItemStoreSource;
 use rg_package_store::PackageStoreError;
 use rg_std::ExpectedUnique;
 use rg_ty::{ExpectedNominalTyExt, ReferencePeelingCandidates, Ty};

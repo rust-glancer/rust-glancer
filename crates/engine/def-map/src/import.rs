@@ -17,7 +17,7 @@ use rg_ir_model::{
 use rg_parse::Span;
 use rg_text::Name;
 
-use super::scope::Visibility;
+use crate::scope::Visibility;
 
 /// One lowered import declaration.
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]

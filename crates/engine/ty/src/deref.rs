@@ -3,10 +3,9 @@
 //! This module deliberately stays narrow: it recognizes `core::ops::Deref` impls for a known
 //! nominal receiver and resolves the impl's associated `Target` type with the receiver substitution.
 
+use rg_def_map::DefMapSource;
 use rg_ir_model::{Path, PathSegment, TraitImplRef, hir::items::ImplData};
-use rg_ir_storage::{
-    DefMapSource, ItemLookupIndex, ItemStoreSource, TargetItemQuery, TypePathContext,
-};
+use rg_ir_storage::{ItemLookupIndex, ItemStoreSource, TargetItemQuery, TypePathContext};
 use rg_std::UniqueVec;
 use rg_text::Name;
 

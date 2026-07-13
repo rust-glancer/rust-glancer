@@ -10,7 +10,8 @@
 //! Callers should use this instead of open-coding that order. Keeping the policy here prevents
 //! selected-call, selected-method, and nested projection paths from drifting apart.
 
-use rg_ir_storage::{DefMapSource, ItemStoreSource};
+use rg_def_map::DefMapSource;
+use rg_ir_storage::ItemStoreSource;
 use rg_package_store::PackageStoreError;
 use rg_ty::{
     AssocProjectionResult, TraitGoal, TraitSelectionCache, TraitSelectionQuery,

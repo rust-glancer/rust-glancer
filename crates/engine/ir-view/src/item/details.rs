@@ -4,13 +4,14 @@
 //! as well: docs, display path, symbol kind, and a compact signature. Keeping those projections in
 //! the view crate prevents editor-facing analysis code from reaching into storage queries directly.
 
+use rg_def_map::{DefMapQuery, DefMapSource};
 use rg_ir_model::items::Documentation;
 use rg_ir_model::{
     BodyBindingRef, ConstRef, DefId, EnumVariantRef, FieldRef, FunctionRef, LocalDefRef, ModuleRef,
     SemanticItemRef, StaticRef, TraitRef, TypeAliasRef, TypeDefId, TypeDefRef,
     identity::DeclarationRef,
 };
-use rg_ir_storage::{DefMapQuery, DefMapSource, ItemStoreQuery};
+use rg_ir_storage::ItemStoreQuery;
 use rg_text::RustEdition;
 
 use crate::{

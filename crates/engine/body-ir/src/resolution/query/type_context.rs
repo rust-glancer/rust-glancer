@@ -1,7 +1,8 @@
 //! Type-resolution context lookup.
 
+use rg_def_map::DefMapSource;
 use rg_ir_model::FunctionRef;
-use rg_ir_storage::{DefMapSource, ItemStoreSource, TypePathContext};
+use rg_ir_storage::{ItemStoreSource, TypePathContext};
 use rg_package_store::PackageStoreError;
 use rg_std::ExpectedUnique;
 use rg_ty::{NominalTy, Ty, TypeSubst};

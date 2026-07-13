@@ -4,13 +4,14 @@
 //! projection: once a unique impl is selected, ask Chalk for the associated alias first, then use a
 //! narrow project-side fallback for source type-ref shapes the Chalk adapter still declines.
 
+use rg_def_map::DefMapSource;
 use rg_ir_model::{
     AssocItemId, Path, TraitApplicability, TraitRef, TypeAliasRef, TypePathResolution,
     items::{
         GenericArg as ItemGenericArg, TypeBound, TypePath, TypePathAnchor, TypeRef, WherePredicate,
     },
 };
-use rg_ir_storage::{DefMapSource, ItemStoreSource, TypePathContext};
+use rg_ir_storage::{ItemStoreSource, TypePathContext};
 use rg_std::ExpectedUnique;
 use rg_text::Name;
 

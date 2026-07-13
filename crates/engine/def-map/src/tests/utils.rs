@@ -1,13 +1,13 @@
 use expect_test::Expect;
 
+use crate::{
+    DefMap, ImportData, ImportKind, LocalDefKind, Namespace, NamespaceSet, ResolvePathResult,
+    ScopeBinding, ScopeBindingProvenance, ScopeEntry, ScopeResolutionRef, Visibility,
+};
 use crate::{DefMapDb, testonly::DefMapFixture};
 use rg_ir_model::{
     DefId, DefMapRef, ModuleId, ModuleRef, Path, PathSegment, TargetRef,
     hir::source::{ItemSource, ItemSourceKind},
-};
-use rg_ir_storage::{
-    DefMap, ImportData, ImportKind, LocalDefKind, Namespace, NamespaceSet, ResolvePathResult,
-    ScopeBinding, ScopeBindingProvenance, ScopeEntry, ScopeResolutionRef, Visibility,
 };
 use rg_item_tree::VisibilityLevel;
 use rg_package_store::PackageLoader;
@@ -475,7 +475,7 @@ impl<'a> ProjectPathResolutionSnapshot<'a> {
             .project
             .def_map_db()
             .read_txn(PackageLoader::resident_only("def-map fixture query"));
-        let result = rg_ir_storage::DefMapQuery::new(&def_map)
+        let result = crate::DefMapQuery::new(&def_map)
             .scope_resolver()
             .resolve_path(
                 ModuleRef {
@@ -740,7 +740,7 @@ impl<'a> TargetDefMapSnapshot<'a> {
         modules
     }
 
-    fn sorted_scope_names(&self, scope: &rg_ir_storage::ModuleScope) -> Vec<String> {
+    fn sorted_scope_names(&self, scope: &crate::ModuleScope) -> Vec<String> {
         let mut names = scope
             .entries()
             .map(|(name, _)| name.clone())

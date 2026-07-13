@@ -1,6 +1,7 @@
+use rg_def_map::DefMap;
 use rg_def_map::testonly::DefMapFixture;
 use rg_ir_model::TargetRef;
-use rg_ir_storage::{DefMap, ItemStore};
+use rg_ir_storage::ItemStore;
 use rg_parse::ParseDb;
 
 use crate::SemanticIrDb;

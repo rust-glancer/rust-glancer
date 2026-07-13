@@ -1,10 +1,11 @@
 //! Type-ref resolution.
 
+use rg_def_map::DefMapSource;
 use rg_ir_model::{
     DefMapRef, FunctionRef, ModuleRef, Path, ScopeId, TraitRef, TypePathResolution,
     items::{GenericArg as ItemGenericArg, PrimitiveTy, TypeBound, TypePath, TypeRef},
 };
-use rg_ir_storage::{DefMapSource, ItemStoreSource, TypePathContext};
+use rg_ir_storage::{ItemStoreSource, TypePathContext};
 use rg_package_store::PackageStoreError;
 use rg_std::{ExpectedUnique, UniqueVec};
 use rg_ty::{ExpectedNominalTyExt, GenericArg, NominalTy, OpaqueTraitBound, Ty, TypeSubst};

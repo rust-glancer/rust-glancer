@@ -2,7 +2,7 @@
 
 use rg_ir_model::DefId;
 
-use super::scope::{ModuleScopeBuilder, Namespace};
+use crate::scope::{ModuleScopeBuilder, Namespace};
 
 /// Where a visible definition came from during unqualified lookup.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

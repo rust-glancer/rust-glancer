@@ -4,8 +4,9 @@
 //! item/path providers, but it does not need source spans or UI labels. This query returns stable
 //! item refs so higher layers can decide how to present them.
 
+use rg_def_map::DefMapSource;
 use rg_ir_model::{FieldRef, FunctionRef, TraitApplicability, TypeDefRef};
-use rg_ir_storage::{DefMapSource, ItemLookupIndex, ItemStoreSource, TargetItemQuery};
+use rg_ir_storage::{ItemLookupIndex, ItemStoreSource, TargetItemQuery};
 use rg_std::UniqueVec;
 
 use crate::{Autoderef, AutoderefMode, ImplMatcher, ItemPathQuery, NominalTy, Ty};

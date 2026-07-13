@@ -1,11 +1,12 @@
 //! Function and method call resolution.
 
+use rg_def_map::DefMapSource;
 use rg_ir_model::{
     DefId, ExprData, ExprId, FunctionRef, ScopeId, SemanticItemRef,
     identity::DeclarationRef,
     items::{GenericArg as ItemGenericArg, GenericParams, TypeRef},
 };
-use rg_ir_storage::{DefMapSource, ItemStoreSource};
+use rg_ir_storage::ItemStoreSource;
 use rg_package_store::PackageStoreError;
 use rg_std::{ExpectedUnique, UniqueVec};
 use rg_text::Name;

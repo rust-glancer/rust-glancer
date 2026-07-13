@@ -1,7 +1,8 @@
 //! Function declaration properties needed while resolving a body.
 
+use rg_def_map::DefMapSource;
 use rg_ir_model::FunctionRef;
-use rg_ir_storage::{DefMapSource, ItemStoreSource};
+use rg_ir_storage::ItemStoreSource;
 use rg_package_store::PackageStoreError;
 use rg_std::ExpectedUnique;
 use rg_ty::{ExpectedNominalTyExt, NominalTy, Ty, function_generic_shadow_subst};

@@ -3,12 +3,13 @@
 use std::{borrow::Cow, fmt};
 
 use anyhow::Context as _;
+use rg_def_map::{DefMapSource, ModuleOrigin};
 use rg_ir_model::items::{FieldKey, TypeRef};
 use rg_ir_model::{
     BodyBindingRef, EnumVariantRef, FieldRef, FunctionRef, ItemOwner, LocalDefRef, ModuleRef,
     SemanticItemKind, SemanticItemRef, TargetRef, identity::DeclarationRef,
 };
-use rg_ir_storage::{DefMapSource, ItemStoreQuery, ModuleOrigin};
+use rg_ir_storage::ItemStoreQuery;
 use rg_parse::{FileId, Span};
 use rg_text::Name;
 

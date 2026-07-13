@@ -7,8 +7,9 @@
 use std::sync::{Arc, OnceLock};
 
 use rg_body_ir::{BodyFileShard, BodyIrLoader, LoadBodyIr, PackageBodiesManifest, TargetBodies};
+use rg_def_map::PackageDefMaps as DefMapPackage;
 use rg_def_map::PackageSlot;
-use rg_ir_storage::{ItemLookupIndex, PackageDefMaps as DefMapPackage};
+use rg_ir_storage::ItemLookupIndex;
 use rg_package_store::{LoadPackage, PackageLoader, PackageStoreError};
 use rg_parse::{FileId, TargetId};
 use rg_semantic_ir::PackageIr;

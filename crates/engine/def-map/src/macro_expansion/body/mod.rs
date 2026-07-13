@@ -6,8 +6,8 @@
 
 use anyhow::Context as _;
 
+use crate::{DefMapQuery, MacroDefinitionView, ScopeResolutionEnv};
 use rg_ir_model::{DefMapRef, ModuleId, ModuleRef, Path, TargetRef, items::BuiltinMacroKind};
-use rg_ir_storage::{DefMapQuery, MacroDefinitionView, ScopeResolutionEnv};
 use rg_macro_runtime::{CfgSelect, ExpansionParseKind, ExpansionSyntax, MacroExpansionRuntime};
 use rg_std::ExpectedUnique;
 use rg_syntax::{AstNode, Parse, SyntaxNode, ast};
@@ -263,7 +263,11 @@ impl<'db, 'txn> BodyMacroExpander<'db, 'txn> {
         resolved: MacroDefinitionView<'_>,
         parse_kind: ExpansionParseKind,
     ) -> Option<ExpandedBodyMacro<Parse<SyntaxNode>>> {
-        let request = invocation.expansion_request(resolved.def_ref, resolved.data, parse_kind);
+        let request = invocation.expansion_request(
+            resolved.def_ref,
+            resolved.declarative_definition()?,
+            parse_kind,
+        );
         let ExpansionSyntax { parse, span_map } = self.runtime.expand_now(request)?;
 
         Some(ExpandedBodyMacro::new(
@@ -351,7 +355,7 @@ impl<'db, 'txn> BodyMacroExpander<'db, 'txn> {
 
     fn resolve_macro_bindings<'a>(
         query: &'a DefMapQuery<&DefMapReadTxn<'_>>,
-        bindings: Vec<rg_ir_storage::ScopeBinding>,
+        bindings: Vec<crate::ScopeBinding>,
     ) -> anyhow::Result<ExpectedUnique<MacroDefinitionView<'a>>> {
         let mut resolved = ExpectedUnique::new();
 

@@ -9,13 +9,13 @@ use crate::{
     PatBindingMode, PatData, PatKind, ResolvedBodyData, StmtKind, TargetBodiesStatus,
     testonly::BodyIrFixture,
 };
+use rg_def_map::ModuleOrigin;
 use rg_ir_model::items::FieldItem;
 use rg_ir_model::{
     BindingId, BodyId, BodyRef, DefId, DefMapRef, EnumVariantRef, ExprId, FieldRef, FunctionRef,
     ImplRef, ItemId, ItemOwner, LocalDefRef, ModuleId, ModuleRef, PatId, SemanticItemRef, StmtId,
     TargetRef, TraitRef, TypeDefId, TypeDefRef, identity::DeclarationRef,
 };
-use rg_ir_storage::ModuleOrigin;
 use rg_parse::{Package, ParseDb, Target};
 use rg_ty::{GenericArg, NominalTy, OpaqueTraitBound, Ty};
 

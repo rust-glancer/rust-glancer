@@ -1,11 +1,12 @@
 //! Associated item lookup in value position.
 
+use rg_def_map::DefMapSource;
 use rg_ir_model::{
     AssocItemId, BodyAssociatedPathPrefix, BodyPath, ConstRef, DefMapRef, EnumVariantRef,
     FunctionRef, ImplRef, ItemOwner, Path, ScopeId, TraitImplRef, TypeDefId,
     identity::DeclarationRef,
 };
-use rg_ir_storage::{DefMapSource, ItemStoreSource, TypePathContext};
+use rg_ir_storage::{ItemStoreSource, TypePathContext};
 use rg_package_store::PackageStoreError;
 use rg_std::{ExpectedUnique, UniqueVec};
 use rg_ty::{ExpectedTyExt, GenericArg, NominalTy, Ty, TypeSubst};

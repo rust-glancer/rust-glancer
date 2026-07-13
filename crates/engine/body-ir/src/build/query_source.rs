@@ -1,8 +1,9 @@
 //! Build-time body-aware routing for shared DefMap and item-store queries.
 
 use rg_def_map::DefMapReadTxn;
+use rg_def_map::{DefMap, DefMapSource};
 use rg_ir_model::{BodyRef, DefMapRef, ModuleRef, TargetRef};
-use rg_ir_storage::{BodyLocalItems, DefMap, DefMapSource, ItemStore, ItemStoreSource};
+use rg_ir_storage::{BodyLocalItems, ItemStore, ItemStoreSource};
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::SemanticIrReadTxn;
 

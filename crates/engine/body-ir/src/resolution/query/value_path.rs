@@ -5,14 +5,13 @@
 //! tuple struct constructors arrive through the value namespace like functions and constants;
 //! this query does not recover them by falling back to a type-name match.
 
+use rg_def_map::{DefMapSource, NamespaceSet, ResolvePathResult};
 use rg_ir_model::{
     BindingId, ConstRef, DefId, DefMapRef, EnumVariantRef, FunctionRef, LocalEnumVariantRef,
     ModuleId, ModuleRef, Path, ScopeId, SemanticItemRef, StaticRef, TypeDefRef, TypePathResolution,
     identity::DeclarationRef,
 };
-use rg_ir_storage::{
-    DefMapSource, ItemStoreSource, NamespaceSet, ResolvePathResult, TypePathContext,
-};
+use rg_ir_storage::{ItemStoreSource, TypePathContext};
 use rg_package_store::PackageStoreError;
 use rg_std::{ExpectedUnique, UniqueVec};
 use rg_ty::{ExpectedTyExt, GenericArg, NominalTy, Ty};

@@ -4,10 +4,9 @@
 //! lookup providers together. This context keeps that routing in one place while still exposing
 //! only read-only access to the active body.
 
+use rg_def_map::{DefMapQuery, DefMapSource};
 use rg_ir_model::BodyRef;
-use rg_ir_storage::{
-    DefMapQuery, DefMapSource, ItemLookupIndex, ItemStoreQuery, ItemStoreSource, TargetItemQuery,
-};
+use rg_ir_storage::{ItemLookupIndex, ItemStoreQuery, ItemStoreSource, TargetItemQuery};
 use rg_package_store::PackageStoreError;
 use rg_ty::{Autoderef, ImplMatcher, ItemPathQuery, IterationItemResolver};
 

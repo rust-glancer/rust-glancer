@@ -13,8 +13,9 @@
 //! To resolve that, we build a selected-method trait goal and delegate actual projection policy to
 //! the body associated type projector.
 
+use rg_def_map::DefMapSource;
 use rg_ir_model::{FunctionRef, ItemOwner, TraitRef, items::TypeRef};
-use rg_ir_storage::{DefMapSource, ItemStoreSource};
+use rg_ir_storage::ItemStoreSource;
 use rg_package_store::PackageStoreError;
 use rg_ty::{TraitGoal, TraitSelectionCache, Ty, inference::InferenceTable};
 

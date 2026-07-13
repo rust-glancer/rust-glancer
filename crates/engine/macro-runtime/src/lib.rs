@@ -16,8 +16,9 @@ pub use self::{
     cache::{MacroCompileRecord, MacroExpandRecord},
     executor::MacroExpansionPerformancePreference,
     runtime::{
-        CompletedMacroExpansion, MacroExpansionRequest, MacroExpansionRuntime,
-        PendingMacroExpansion, PreparedMacroExpansion, PreparedMacroExpansionResult,
+        CompletedMacroExpansion, DeclarativeMacroDefinition, MacroExpansionRequest,
+        MacroExpansionRuntime, PendingMacroExpansion, PreparedMacroExpansion,
+        PreparedMacroExpansionResult,
     },
     syntax::macro_edition,
 };

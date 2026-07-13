@@ -14,12 +14,13 @@
 //! intentionally stays shallow: callable predicates are skipped here because closure evidence is
 //! owned by the body-obligation pass.
 
+use rg_def_map::DefMapSource;
 use rg_ir_model::{
     AssocItemId, TraitApplicability, TraitRef, TypeAliasRef,
     hir::items::ImplData,
     items::{GenericParams, TypeBound, TypeRef},
 };
-use rg_ir_storage::{DefMapSource, ItemStoreSource, TypePathContext};
+use rg_ir_storage::{ItemStoreSource, TypePathContext};
 use rg_package_store::PackageStoreError;
 use rg_std::ExpectedUnique;
 use rg_text::Name;

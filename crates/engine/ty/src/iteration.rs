@@ -3,8 +3,9 @@
 //! This module recognizes canonical iterator traits from the use site and asks the shared
 //! trait-selection projection API for their associated `Item` type.
 
+use rg_def_map::DefMapSource;
 use rg_ir_model::{Path, PathSegment, TraitImplRef, TraitRef, hir::items::ImplData};
-use rg_ir_storage::{DefMapSource, ItemLookupIndex, ItemStoreSource, TargetItemQuery};
+use rg_ir_storage::{ItemLookupIndex, ItemStoreSource, TargetItemQuery};
 use rg_std::{ExpectedUnique, UniqueVec};
 use rg_text::Name;
 

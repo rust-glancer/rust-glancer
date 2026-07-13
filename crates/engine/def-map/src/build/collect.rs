@@ -14,13 +14,13 @@ use std::collections::HashMap;
 
 use anyhow::Context as _;
 
-use rg_cfg_eval::{CfgEvaluator, CfgOptions};
-use rg_ir_model::{DefId, DefMapRef, LocalDefId, LocalDefRef, ModuleId, ModuleRef, TargetRef};
-use rg_ir_storage::{
+use crate::{
     DefMapBuilder, ImportBinding, ImportData, ImportKind, ImportPath, LocalDefData, LocalDefKind,
     LocalImplData, MacroDefinitionData, ModuleData, ModuleOrigin, ModuleScope, ModuleScopeBuilder,
     Namespace, ScopeBinding, ScopeBindingProvenance, Visibility,
 };
+use rg_cfg_eval::{CfgEvaluator, CfgOptions};
+use rg_ir_model::{DefId, DefMapRef, LocalDefId, LocalDefRef, ModuleId, ModuleRef, TargetRef};
 use rg_item_tree::{
     Documentation, EnumItem, ExternCrateItem, ItemKind, ItemNode, ItemTreeDb, ItemTreeId,
     ItemTreeRef, MacroCallItem, MacroDefinitionAttrs, MacroDefinitionItem, MacroUseAttr,

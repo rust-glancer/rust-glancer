@@ -12,7 +12,7 @@ use rg_ir_model::{
 };
 use rg_parse::FileId;
 
-use super::{
+use crate::{
     import::ImportData,
     local::{
         LocalDefData, LocalEnumVariantData, LocalEnumVariantEntry, LocalImplData,

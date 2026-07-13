@@ -4,13 +4,14 @@
 //! rules that turn paths, declaration refs, and body resolutions into canonical declaration
 //! identities.
 
+use rg_def_map::{DefMapQuery, DefMapSource, NamespaceSet};
 use rg_ir_model::Path;
 use rg_ir_model::items::FieldKey;
 use rg_ir_model::{
     BodyRef, DefId, LocalDefRef, ModuleRef, ScopeId, TypePathResolution,
     identity::{DeclarationRef, ExprRef},
 };
-use rg_ir_storage::{DefMapQuery, DefMapSource, ItemStoreQuery, NamespaceSet, TypePathContext};
+use rg_ir_storage::{ItemStoreQuery, TypePathContext};
 use rg_ty::ItemPathQuery;
 
 use crate::{IndexedViewDb, body::BodyResolutionView, source::IndexedTypePathScope};

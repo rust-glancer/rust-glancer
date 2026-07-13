@@ -9,8 +9,8 @@ use test_fixture::{CrateFixture, fixture_crate};
 
 use rg_ir_model::TargetRef;
 
+use crate::PackageDefMaps;
 use crate::{DefMapDb, PackageSlot};
-use rg_ir_storage::PackageDefMaps;
 
 #[test]
 fn rebuild_resolves_dirty_imports_through_clean_packages() {
@@ -61,9 +61,7 @@ pub use dep::api::Api as Renamed;
         .expect("rebuilt app root should contain the renamed import");
 
     assert!(
-        !renamed_entry
-            .bindings(rg_ir_storage::Namespace::Types)
-            .is_empty(),
+        !renamed_entry.bindings(crate::Namespace::Types).is_empty(),
         "dirty app import should resolve through the clean frozen dependency package"
     );
     assert!(
@@ -210,7 +208,7 @@ struct RebuiltDefMaps {
 }
 
 impl RebuiltDefMaps {
-    fn lib_root_module(&self, package_name: &str) -> &rg_ir_storage::ModuleData {
+    fn lib_root_module(&self, package_name: &str) -> &crate::ModuleData {
         let package_slot = package_slot(&self.parse, package_name);
         let target = lib_target(&self.parse, package_slot);
         let package = self

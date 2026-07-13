@@ -5,12 +5,13 @@
 //! impls where the associated alias mentions an impl-only generic, and a callable where-clause
 //! must solve that generic from a closure witness before the alias is useful.
 
+use rg_def_map::DefMapSource;
 use rg_ir_model::{
     TraitRef,
     hir::items::ImplData,
     items::{GenericParams, TypeBound, TypeRef},
 };
-use rg_ir_storage::{DefMapSource, ItemStoreSource, TypePathContext};
+use rg_ir_storage::{ItemStoreSource, TypePathContext};
 use rg_package_store::PackageStoreError;
 use rg_text::Name;
 use rg_ty::{

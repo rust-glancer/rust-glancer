@@ -3,6 +3,10 @@ use std::convert::Infallible;
 use std::fmt::{Debug, Write as _};
 
 use expect_test::Expect;
+use rg_def_map::{
+    DefMap, DefMapBuilder, DefMapSource, LocalDefData, LocalDefKind, ModuleData, ModuleOrigin,
+    ModuleScopeBuilder, Namespace, NamespaceSet, ScopeBinding, ScopeBindingProvenance, Visibility,
+};
 use rg_ir_model::hir::items::{ImplData, StructData, TraitData, TypeAliasData};
 use rg_ir_model::hir::signature::TypeAliasSignature;
 use rg_ir_model::hir::source::{GeneratedItemRef, GeneratedSourceId, ItemSource, ItemSourceKind};
@@ -17,10 +21,7 @@ use rg_ir_model::{
     TargetRef, TextSpan, TraitApplicability, TraitId, TraitRef, TypeAliasId, TypeDefId, TypeDefRef,
 };
 use rg_ir_storage::{
-    DefMap, DefMapBuilder, DefMapSource, ItemLookupIndex, ItemStore, ItemStoreBuilder,
-    ItemStoreSource, LocalDefData, LocalDefKind, ModuleData, ModuleOrigin, ModuleScopeBuilder,
-    Namespace, NamespaceSet, ScopeBinding, ScopeBindingProvenance, TargetItemQuery,
-    TypePathContext, Visibility,
+    ItemLookupIndex, ItemStore, ItemStoreBuilder, ItemStoreSource, TargetItemQuery, TypePathContext,
 };
 use rg_std::ExpectedUnique;
 use rg_text::Name;

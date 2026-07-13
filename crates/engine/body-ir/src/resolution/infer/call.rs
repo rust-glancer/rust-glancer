@@ -3,13 +3,14 @@
 //! This layer turns selected call targets into inference constraints without making the main pass
 //! know how receiver substitutions and function generic shadows are built.
 
+use rg_def_map::DefMapSource;
 use rg_ir_model::{
     DefMapRef, ExprId, FunctionRef, ImplRef, ItemOwner, ScopeId, SemanticItemRef,
     hir::{items::FunctionData, signature::FunctionSignature},
     identity::DeclarationRef,
     items::{GenericArg as ItemGenericArg, GenericParams, TypeRef},
 };
-use rg_ir_storage::{DefMapSource, ItemStoreSource, TypePathContext};
+use rg_ir_storage::{ItemStoreSource, TypePathContext};
 use rg_package_store::PackageStoreError;
 use rg_text::Name;
 use rg_ty::{

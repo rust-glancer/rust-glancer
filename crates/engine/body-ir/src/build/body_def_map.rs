@@ -3,6 +3,13 @@
 //! Body scopes become synthetic modules. Direct declarations are collected first, then imports are
 //! resolved in a fixed-point loop before the final DefMap is frozen.
 
+use rg_def_map::{
+    DefMap, DefMapBuilder, DefMapSource, ImportBinding, ImportData, ImportKind, ImportPath,
+    LocalDefData, LocalDefKind, LocalEnumVariantData, LocalEnumVariantEntry, LocalImplData,
+    MacroDefinitionEnv, MacroDefinitionView, ModuleData, ModuleOrigin, ModuleScope,
+    ModuleScopeBuilder, Namespace, ScopeBinding, ScopeBindingProvenance, ScopeEntryRef,
+    ScopeResolutionEnv, ScopeResolver, TargetResolutionEnv, Visibility,
+};
 use rg_ir_model::items::{
     Documentation, EnumItem, ImportAlias, ItemKind, ItemNode, ItemTreeId, ModuleSource,
 };
@@ -10,13 +17,6 @@ use rg_ir_model::{
     BodyRef, DefId, DefMapRef, ImportRef, LocalDefRef, LocalEnumVariantRef, ModuleId, ModuleRef,
     TargetRef,
     hir::source::{BodyItemSourceRef, ItemSource},
-};
-use rg_ir_storage::{
-    DefMap, DefMapBuilder, DefMapSource, ImportBinding, ImportData, ImportKind, ImportPath,
-    LocalDefData, LocalDefKind, LocalEnumVariantData, LocalEnumVariantEntry, LocalImplData,
-    MacroDefinitionEnv, MacroDefinitionView, ModuleData, ModuleOrigin, ModuleScope,
-    ModuleScopeBuilder, Namespace, ScopeBinding, ScopeBindingProvenance, ScopeEntryRef,
-    ScopeResolutionEnv, ScopeResolver, TargetResolutionEnv, Visibility,
 };
 use rg_package_store::PackageStoreError;
 use rg_text::Name;

@@ -1,6 +1,7 @@
+use rg_def_map::DefMap;
 use rg_def_map::DefMapDb;
 use rg_ir_model::{BodyRef, DefMapRef, TargetRef};
-use rg_ir_storage::{DefMap, ItemStore};
+use rg_ir_storage::ItemStore;
 use rg_parse::ParseDb;
 use rg_semantic_ir::{SemanticIrDb, testonly::SemanticIrFixture};
 use rg_text::PackageNameInterners;

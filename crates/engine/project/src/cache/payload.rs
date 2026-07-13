@@ -8,7 +8,7 @@
 //! those phase values through [`PackageCacheWriteInput`] instead of assembling an owned aggregate.
 
 use rg_body_ir::{PackageBodies, TargetBodiesCoverage};
-use rg_ir_storage::PackageDefMaps as DefMapPackage;
+use rg_def_map::PackageDefMaps as DefMapPackage;
 use rg_parse::PackageParseSnapshot;
 use rg_semantic_ir::PackageIr;
 use rg_std::MemorySize;

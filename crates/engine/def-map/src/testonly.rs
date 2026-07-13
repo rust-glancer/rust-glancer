@@ -1,5 +1,5 @@
+use crate::DefMap;
 use rg_ir_model::TargetRef;
-use rg_ir_storage::DefMap;
 use rg_item_tree::{ItemTreeDb, testonly::ItemTreeFixture};
 use rg_parse::{Package, ParseDb, Target};
 use rg_workspace::{SysrootSources, TargetKind, WorkspaceLoweringConfig, WorkspaceMetadata};

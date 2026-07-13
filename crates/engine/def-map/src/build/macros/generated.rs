@@ -6,14 +6,14 @@
 
 use anyhow::{Context as _, Result};
 
-use rg_ir_model::{
-    DefId, DefMapRef, LocalDefId, LocalDefRef, ModuleId, ModuleRef, TargetRef,
-    hir::source::{GeneratedItemRef, GeneratedSourceId, ItemSource},
-};
-use rg_ir_storage::{
+use crate::{
     ImportBinding, ImportData, ImportKind, ImportPath, LocalDefData, LocalDefKind, LocalImplData,
     MacroDefinitionData, ModuleData, ModuleOrigin, ModuleScope, Namespace, ScopeBinding,
     ScopeBindingProvenance, Visibility,
+};
+use rg_ir_model::{
+    DefId, DefMapRef, LocalDefId, LocalDefRef, ModuleId, ModuleRef, TargetRef,
+    hir::source::{GeneratedItemRef, GeneratedSourceId, ItemSource},
 };
 use rg_item_tree::{
     Documentation, ImportAlias, ItemKind, ItemNode, ItemTreeId, ItemTreeRef, MacroCallItem,

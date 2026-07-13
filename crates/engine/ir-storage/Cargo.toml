@@ -13,6 +13,7 @@ description.workspace = true
 derive_more = { workspace = true, features = ["display"] }
 wincode.workspace = true
 rg_arena.workspace = true
+rg_def_map.workspace = true
 rg_std.workspace = true
 rg_ir_model.workspace = true
 rg_parse.workspace = true

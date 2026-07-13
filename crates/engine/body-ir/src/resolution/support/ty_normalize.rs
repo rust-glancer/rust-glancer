@@ -4,7 +4,8 @@
 //! parentheses, `.await`, and `?`, but it does not try to implement borrow checking, autoderef, the
 //! `Try` trait, or `Future::Output` projection.
 
-use rg_ir_storage::{DefMapSource, ItemStoreSource};
+use rg_def_map::DefMapSource;
+use rg_ir_storage::ItemStoreSource;
 use rg_std::ExpectedUnique;
 use rg_ty::{ExpectedTyExt, GenericArg, Ty};
 

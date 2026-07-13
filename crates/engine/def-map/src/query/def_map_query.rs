@@ -14,7 +14,7 @@ use super::{
     resolution_env::{MacroDefinitionEnv, ScopeResolutionEnv, TargetResolutionEnv},
 };
 
-use super::super::{
+use crate::{
     DefMap, LocalDefData, LocalEnumVariantData, LocalEnumVariantEntry, LocalImplData,
     MacroDefinitionView, ModuleData, Namespace, ScopeEntryRef, VisibleScopeDef, VisibleScopeDefs,
     VisibleScopeOrigin,

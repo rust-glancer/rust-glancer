@@ -1,9 +1,10 @@
 //! Trait lookup in body context.
 
+use rg_def_map::DefMapSource;
 use rg_ir_model::{
     ItemOwner, Path, ScopeId, TraitImplRef, TraitRef, TypePathResolution, items::TypeRef,
 };
-use rg_ir_storage::{DefMapSource, ItemStoreSource, TypePathContext};
+use rg_ir_storage::{ItemStoreSource, TypePathContext};
 use rg_package_store::PackageStoreError;
 use rg_std::UniqueVec;
 use rg_ty::{GenericArg, NominalTy, Ty, TypeSubst};

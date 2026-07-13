@@ -1,6 +1,7 @@
+use rg_def_map::DefMap;
 use rg_ir_model::{ImplId, TraitRef, TypeDefRef};
 
-use crate::{DefMap, ItemStore};
+use crate::ItemStore;
 use rg_std::{ExpectedUnique, MemorySize, Shrink};
 use wincode::{SchemaRead, SchemaWrite};
 

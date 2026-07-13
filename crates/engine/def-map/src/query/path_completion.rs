@@ -3,9 +3,9 @@
 //! Completion still uses DefMap queries for lookup. This module only finds the source location
 //! that should be completed.
 
+use crate::{DefMap, ImportPath};
 use rg_ir_model::Path;
 use rg_ir_model::{DefMapRef, ModuleRef, TargetRef};
-use rg_ir_storage::{DefMap, ImportPath};
 use rg_package_store::PackageStoreError;
 use rg_parse::{FileId, Span, TextSpan};
 

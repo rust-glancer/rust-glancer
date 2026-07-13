@@ -3,12 +3,13 @@
 //! This module owns expression-shaped traversal and the small type facts derived while walking
 //! expressions. The parent pass still drives ordering and binding propagation.
 
+use rg_def_map::DefMapSource;
 use rg_ir_model::{
     BodyPath, DefMapRef, ExprId, Path, ScopeId, TypeDefRef, TypePathResolution,
     identity::DeclarationRef,
     items::{FieldKey, GenericArg as ItemGenericArg},
 };
-use rg_ir_storage::{DefMapSource, ItemStoreSource};
+use rg_ir_storage::ItemStoreSource;
 use rg_package_store::PackageStoreError;
 use rg_std::ExpectedUnique;
 use rg_ty::{

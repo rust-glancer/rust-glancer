@@ -15,6 +15,7 @@ use chalk_solve::rust_ir::{
     AssociatedTyDatumBound, AssociatedTyValue, AssociatedTyValueBound, AssociatedTyValueId,
     ImplDatum, ImplDatumBound, ImplType, Polarity, TraitDatum, TraitDatumBound, TraitFlags,
 };
+use rg_def_map::DefMapSource;
 use rg_ir_model::items::{
     GenericArg as ItemGenericArg, GenericParams, TypeBound, TypePath, TypePathAnchor, TypeRef,
     WherePredicate,
@@ -23,7 +24,7 @@ use rg_ir_model::{
     ImplRef, Mutability, TraitRef, TypeAliasRef, TypeDefId, TypeDefRef, TypePathResolution,
     hir::items::TypeAliasData,
 };
-use rg_ir_storage::{DefMapSource, ItemStoreSource, TypePathContext};
+use rg_ir_storage::{ItemStoreSource, TypePathContext};
 use rg_text::Name;
 
 use super::interner::{ChalkDefId, RgChalkInterner};

@@ -10,11 +10,12 @@
 //! closure really implements `Fn`, `FnMut`, or `FnOnce`; final inference turns
 //! the parsed syntax into body-local callable goals.
 
+use rg_def_map::DefMapSource;
 use rg_ir_model::{
     ExprId, FunctionRef, ItemOwner,
     items::{GenericArg, GenericParams, TypeBound, TypeRef, WherePredicate},
 };
-use rg_ir_storage::{DefMapSource, ItemStoreSource};
+use rg_ir_storage::ItemStoreSource;
 use rg_package_store::PackageStoreError;
 use rg_std::ExpectedUnique;
 use rg_ty::{TraitSelectionCache, Ty};

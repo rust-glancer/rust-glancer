@@ -8,8 +8,8 @@ use std::collections::HashMap;
 
 use anyhow::Context as _;
 
+use crate::{MacroDefinitionEnv, TargetResolutionEnv};
 use rg_ir_model::{Path, TargetRef, items::BuiltinMacroKind};
-use rg_ir_storage::{MacroDefinitionEnv, TargetResolutionEnv};
 use rg_item_tree::{BuiltinMacroItem, CfgSelectArmPayload, ItemTreeDb, ItemTreeId};
 use rg_macro_runtime::{
     ExpansionParseKind, ExpansionSyntax, MacroCompileRecord, MacroExpandRecord,
@@ -513,7 +513,7 @@ impl MacroExpansionAttempt {
             }
         };
 
-        if let Some(kind) = resolved.data.builtin {
+        if let Some(kind) = resolved.definition.data.builtin {
             return Ok(Self::builtin(
                 kind,
                 state.target,
@@ -528,8 +528,11 @@ impl MacroExpansionAttempt {
         // visibility policy, while the runtime owns compilation, expansion caching, and pending
         // worker-pool jobs.
         let prepared_expansion = runtime.prepare_expansion(MacroExpansionRequest {
-            def_ref: resolved.def_ref,
-            definition: resolved.data,
+            def_ref: resolved.definition.def_ref,
+            definition: resolved
+                .definition
+                .declarative_definition()
+                .expect("compiler builtin returned before declarative expansion"),
             path_text,
             args,
             call_file_id: call.file_id,
@@ -558,7 +561,7 @@ impl MacroExpansionAttempt {
             prepared_expansion.compile,
             prepared_expansion.expand,
         );
-        attempt.origin.dollar_crate_target = Some(resolved.data.dollar_crate_target);
+        attempt.origin.dollar_crate_target = Some(resolved.definition.data.dollar_crate_target);
         Ok(attempt)
     }
 

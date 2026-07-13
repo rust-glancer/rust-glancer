@@ -1,7 +1,9 @@
+use crate::MacroDefinitionView;
 use rg_cfg_eval::CfgEvaluator;
 use rg_ir_model::{BodySource, LocalDefRef, ModuleRef, TargetRef, items::BuiltinMacroKind};
-use rg_ir_storage::{MacroDefinitionData, MacroDefinitionView};
-use rg_macro_runtime::{ExpansionParseKind, MacroExpansionRequest, macro_edition};
+use rg_macro_runtime::{
+    DeclarativeMacroDefinition, ExpansionParseKind, MacroExpansionRequest, macro_edition,
+};
 use rg_parse::{FileId, Span};
 use rg_syntax::{ast, utils::normalized_syntax_text};
 use rg_text::RustEdition;
@@ -202,7 +204,7 @@ impl BodyMacroInvocation {
     pub(super) fn expansion_request<'a>(
         &'a self,
         def_ref: LocalDefRef,
-        definition: &'a MacroDefinitionData,
+        definition: DeclarativeMacroDefinition<'a>,
         parse_kind: ExpansionParseKind,
     ) -> MacroExpansionRequest<'a> {
         MacroExpansionRequest {

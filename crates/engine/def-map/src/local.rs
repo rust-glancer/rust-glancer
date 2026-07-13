@@ -5,13 +5,14 @@ use rg_ir_model::{
     DefMapRef, LocalDefId, LocalDefRef, LocalEnumVariantId, LocalEnumVariantRef, ModuleId,
     TargetRef, hir::source::ItemSource,
 };
+use rg_macro_runtime::DeclarativeMacroDefinition;
 use rg_parse::{FileId, Span};
 use rg_std::{MemorySize, Shrink};
 use rg_text::{Name, RustEdition};
 use rg_tt::TopSubtree;
 use wincode::{SchemaRead, SchemaWrite};
 
-use super::scope::{NamespaceSet, Visibility};
+use crate::scope::{NamespaceSet, Visibility};
 
 /// One module-scope definition collected from source.
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
@@ -173,6 +174,30 @@ impl<'a> MacroDefinitionView<'a> {
             def_ref,
             local_def,
             data,
+        })
+    }
+
+    /// Projects retained DefMap data into the syntax-only input accepted by the macro runtime.
+    ///
+    /// Compiler builtins have no declarative implementation to compile, so callers must handle
+    /// their builtin identity before asking for this view.
+    pub fn declarative_definition(self) -> Option<DeclarativeMacroDefinition<'a>> {
+        if self.data.builtin.is_some() {
+            return None;
+        }
+
+        Some(match &self.data.payload {
+            MacroDefinitionPayload::MacroRules { body } => DeclarativeMacroDefinition::MacroRules {
+                edition: self.data.edition,
+                body: body.as_ref(),
+            },
+            MacroDefinitionPayload::MacroDef { args, body } => {
+                DeclarativeMacroDefinition::MacroDef {
+                    edition: self.data.edition,
+                    args: args.as_ref(),
+                    body: body.as_ref(),
+                }
+            }
         })
     }
 }

@@ -5,8 +5,8 @@
 //! fixed-point snapshot, then uses the same result shape to record imports that remain unresolved
 //! after the scopes stop changing.
 
+use crate::{ScopeResolver, TargetResolutionEnv};
 use rg_ir_model::{DefMapRef, ImportId, ImportRef, ModuleRef, TargetRef};
-use rg_ir_storage::{ScopeResolver, TargetResolutionEnv};
 
 use super::{
     collect::TargetState,

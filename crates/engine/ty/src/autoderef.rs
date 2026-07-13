@@ -6,7 +6,8 @@
 
 use std::{borrow::Cow, collections::VecDeque};
 
-use rg_ir_storage::{DefMapSource, ItemLookupIndex, ItemStoreSource, TargetItemQuery};
+use rg_def_map::DefMapSource;
+use rg_ir_storage::{ItemLookupIndex, ItemStoreSource, TargetItemQuery};
 
 use crate::{ItemPathQuery, Mutability, Ty, deref::DerefResolver};
 use rg_std::UniqueVec;

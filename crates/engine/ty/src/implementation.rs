@@ -4,8 +4,9 @@
 //! query keeps the reusable search at the ref level so view code can project results into the
 //! declaration shape that UI-facing analysis expects.
 
+use rg_def_map::DefMapSource;
 use rg_ir_model::{AssocItemId, FunctionRef, ImplRef, ItemOwner, TraitRef, TypeDefRef};
-use rg_ir_storage::{DefMapSource, ItemLookupIndex, ItemStoreSource, TargetItemQuery};
+use rg_ir_storage::{ItemLookupIndex, ItemStoreSource, TargetItemQuery};
 use rg_std::UniqueVec;
 
 use crate::{Autoderef, AutoderefMode, ImplMatcher, ItemPathQuery, ReferencePeelingCandidates, Ty};

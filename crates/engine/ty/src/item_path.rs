@@ -4,13 +4,12 @@
 //! answers "which semantic item does this local definition lower to?". Type algorithms use this
 //! query to stay independent from the concrete target/body storage that provided those answers.
 
+use rg_def_map::{DefMapQuery, DefMapSource, NamespaceSet};
 use rg_ir_model::items::{GenericArg as ItemGenericArg, TypeBound, TypePath, TypeRef};
 use rg_ir_model::{
     DefId, ModuleRef, Path, SemanticItemRef, TraitRef, TypeDefRef, TypePathResolution,
 };
-use rg_ir_storage::{
-    DefMapQuery, DefMapSource, ItemStoreQuery, ItemStoreSource, NamespaceSet, TypePathContext,
-};
+use rg_ir_storage::{ItemStoreQuery, ItemStoreSource, TypePathContext};
 use rg_std::{ExpectedUnique, UniqueVec};
 
 use crate::{GenericArg, OpaqueTraitBound, PrimitiveTy, Ty, TypeSubst};

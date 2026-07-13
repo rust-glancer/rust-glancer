@@ -23,9 +23,10 @@ mod loader;
 
 use std::sync::Arc;
 
+use rg_def_map::DefMap;
 use rg_def_map::PackageSlot;
 use rg_ir_model::{BodyRef, TargetRef};
-use rg_ir_storage::{BodyLocalItems, DefMap, ItemLookupIndex, ItemStore};
+use rg_ir_storage::{BodyLocalItems, ItemLookupIndex, ItemStore};
 use rg_package_store::PackageStoreError;
 use rg_parse::FileId;
 

@@ -122,7 +122,7 @@ fn Choice() {}
         .entry("Choice")
         .assert_type_exists("the glob constructor's type slot should remain visible")
         .assert_value_kind(
-            rg_ir_storage::LocalDefKind::Function,
+            crate::LocalDefKind::Function,
             "a direct function should outrank a glob-imported constructor only in value space",
         );
 }

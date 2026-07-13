@@ -4,11 +4,12 @@
 //! resolution only needs the conservative type fact for that lowered builtin expression, so this
 //! module keeps the synthetic type construction out of the general expression walker.
 
+use rg_def_map::DefMapSource;
 use rg_ir_model::{
     BuiltinMacroExprKind, ExprId, Mutability, Span, TextSpan,
     items::{GenericArg as ItemGenericArg, TypePath, TypePathSegment, TypeRef},
 };
-use rg_ir_storage::{DefMapSource, ItemStoreSource};
+use rg_ir_storage::ItemStoreSource;
 use rg_package_store::PackageStoreError;
 use rg_text::Name;
 use rg_ty::{PrimitiveTy, Ty, UnsignedIntTy};

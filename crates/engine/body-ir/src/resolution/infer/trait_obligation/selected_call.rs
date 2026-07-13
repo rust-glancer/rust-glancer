@@ -4,11 +4,12 @@
 //! were instantiated, and which receiver type selected a trait method. This module turns those
 //! facts into shallow trait goals and commits only unique solutions back into body inference.
 
+use rg_def_map::DefMapSource;
 use rg_ir_model::{
     FunctionRef, ItemOwner,
     items::{GenericParams, TypeBound, TypeRef, WherePredicate},
 };
-use rg_ir_storage::{DefMapSource, ItemStoreSource};
+use rg_ir_storage::ItemStoreSource;
 use rg_package_store::PackageStoreError;
 use rg_ty::{TraitGoal, Ty, TypeSubst, inference::InferenceTypeSubst};
 

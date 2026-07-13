@@ -1,10 +1,11 @@
 use rg_body_ir::{BodyIrLoader, ResolvedBodyData, testonly::BodyIrFixture};
+use rg_def_map::DefMap;
 use rg_def_map::DefMapDb;
 use rg_ir_model::{
     BodyId, BodyOwner, BodyRef, BodySource, DefMapRef, ExprData, ExprId, FunctionRef, ItemOwner,
     ModuleRef, TargetRef, TraitRef, TypeDefId, TypeDefRef,
 };
-use rg_ir_storage::{DefMap, ItemStore};
+use rg_ir_storage::ItemStore;
 use rg_package_store::PackageLoader;
 use rg_parse::ParseDb;
 use rg_semantic_ir::{SemanticIrDb, testonly::SemanticIrFixture};

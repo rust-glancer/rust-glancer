@@ -24,7 +24,7 @@
 
 use anyhow::Context as _;
 use rg_body_ir::PackageBodies;
-use rg_ir_storage::PackageDefMaps as DefMapPackage;
+use rg_def_map::PackageDefMaps as DefMapPackage;
 use rg_semantic_ir::PackageIr;
 use wincode::{SchemaRead, SchemaWrite};
 

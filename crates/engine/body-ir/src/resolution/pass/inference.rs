@@ -4,12 +4,13 @@
 //! constraints over the parallel inference view and writes the finalized inference facts back into
 //! Body IR.
 
+use rg_def_map::DefMapSource;
 use rg_ir_model::{
     BindingId, EnumVariantRef, ExprId, PatId, ScopeId, StmtId,
     identity::DeclarationRef,
     items::{FieldKey, FieldList, GenericParams, TypeRef},
 };
-use rg_ir_storage::{DefMapSource, ItemStoreSource};
+use rg_ir_storage::ItemStoreSource;
 use rg_package_store::PackageStoreError;
 use rg_ty::{
     NominalTy, Ty,

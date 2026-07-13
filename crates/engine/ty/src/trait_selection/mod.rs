@@ -14,10 +14,9 @@ mod matcher;
 mod predicate;
 mod projection;
 
+use rg_def_map::DefMapSource;
 use rg_ir_model::{TraitApplicability, TraitImplRef, TraitRef};
-use rg_ir_storage::{
-    DefMapSource, ItemLookupIndex, ItemStoreSource, TargetItemQuery, TypePathContext,
-};
+use rg_ir_storage::{ItemLookupIndex, ItemStoreSource, TargetItemQuery, TypePathContext};
 use rg_std::ExpectedUnique;
 use rg_text::Name;
 

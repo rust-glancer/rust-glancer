@@ -6,6 +6,7 @@
 
 use std::collections::HashMap;
 
+use rg_def_map::DefMapSource;
 use rg_ir_model::{AssocItemId, FunctionRef, ImplRef, TraitImplRef, TraitRef, TypeDefRef};
 use rg_std::{MemorySize, Shrink, UniqueVec};
 use rg_text::Name;
@@ -35,7 +36,7 @@ impl ItemLookupIndex {
         target_items: &TargetItemQuery<'item, D, I>,
     ) -> Result<Self, I::Error>
     where
-        D: crate::DefMapSource<Error = I::Error>,
+        D: DefMapSource<Error = I::Error>,
         I: ItemStoreSource<'item>,
     {
         let mut index = Self::default();

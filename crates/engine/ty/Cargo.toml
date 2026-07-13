@@ -13,6 +13,7 @@ description.workspace = true
 chalk-engine.workspace = true
 chalk-ir.workspace = true
 chalk-solve.workspace = true
+rg_def_map.workspace = true
 rg_ir_model.workspace = true
 rg_ir_storage.workspace = true
 rg_profile.workspace = true

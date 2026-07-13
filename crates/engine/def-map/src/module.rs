@@ -5,7 +5,7 @@ use rg_std::{MemorySize, Shrink};
 use rg_text::Name;
 use wincode::{SchemaRead, SchemaWrite};
 
-use super::scope::{ModuleScope, Visibility};
+use crate::scope::{ModuleScope, Visibility};
 
 /// One module in the frozen namespace graph.
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]

@@ -4,8 +4,9 @@
 //! not try to prove capture semantics. For now, a closure witness can provide evidence for any of
 //! `Fn`, `FnMut`, or `FnOnce` when the goal's argument shape fits the closure's written params.
 
+use rg_def_map::DefMapSource;
 use rg_ir_model::ExprId;
-use rg_ir_storage::{DefMapSource, ItemStoreSource};
+use rg_ir_storage::ItemStoreSource;
 use rg_package_store::PackageStoreError;
 use rg_ty::{GenericArg, TraitGoal, Ty, function_generic_shadow_subst};
 

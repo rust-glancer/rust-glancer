@@ -12,10 +12,11 @@
 //! bound. Proving that locally lets selection reach the associated projection path without making
 //! the Chalk adapter pretend it has real opaque-type data.
 
+use rg_def_map::DefMapSource;
 use rg_ir_model::hir::items::ImplData;
 use rg_ir_model::items::{TypeBound, TypeRef, WherePredicate};
 use rg_ir_model::{Path, TraitApplicability, TraitRef, TypePathResolution};
-use rg_ir_storage::{DefMapSource, ItemStoreSource, TypePathContext};
+use rg_ir_storage::{ItemStoreSource, TypePathContext};
 
 use crate::inference::{InferenceTable, InferenceTypeSubst};
 use crate::{ItemPathQuery, Ty};

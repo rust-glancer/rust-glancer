@@ -7,7 +7,7 @@
 use rg_ir_model::{DefId, LocalDefRef, LocalEnumVariantRef, ModuleRef, TargetRef};
 use rg_text::Name;
 
-use super::super::{
+use crate::{
     LocalDefData, LocalDefKind, LocalEnumVariantData, LocalEnumVariantEntry, MacroDefinitionView,
     ModuleData, ScopeEntryRef,
 };

@@ -2,8 +2,9 @@
 
 use rg_body_ir::BodyIrReadTxn;
 use rg_def_map::DefMapReadTxn;
+use rg_def_map::{DefMap, DefMapSource};
 use rg_ir_model::{DefMapRef, ModuleRef, TargetRef};
-use rg_ir_storage::{DefMap, DefMapSource, ItemStore, ItemStoreSource};
+use rg_ir_storage::{ItemStore, ItemStoreSource};
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::SemanticIrReadTxn;
 use rg_text::RustEdition;

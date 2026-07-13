@@ -10,10 +10,11 @@ mod projection;
 mod trait_methods;
 
 use crate::{GenericArg, ItemPathQuery, NominalTy, Ty, TypeSubst};
+use rg_def_map::DefMapSource;
 use rg_ir_model::TraitApplicability;
 use rg_ir_model::hir::items::ImplData;
 use rg_ir_model::items::{GenericArg as ItemGenericArg, GenericParams, TypeRef};
-use rg_ir_storage::{DefMapSource, ItemStoreSource, TargetItemQuery};
+use rg_ir_storage::{ItemStoreSource, TargetItemQuery};
 
 /// Matcher for impl headers stored in semantic-shaped item stores.
 pub struct ImplMatcher<'query, D, I> {

@@ -1,12 +1,13 @@
 //! Target-scoped item lookup.
 
+use rg_def_map::{DefMapQuery, DefMapSource, TargetResolutionEnv};
 use rg_ir_model::{
     DefMapRef, FunctionRef, ImplRef, ModuleRef, TargetRef, TraitImplRef, TraitRef, TypeDefRef,
 };
 use rg_std::UniqueVec;
 
 use super::{ItemStoreQuery, ItemStoreSource};
-use crate::{DefMapQuery, DefMapSource, ItemStore, TargetResolutionEnv};
+use crate::ItemStore;
 
 /// Item queries that need a Rust language visibility context.
 ///

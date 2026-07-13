@@ -11,13 +11,13 @@ mod rebuild;
 
 use anyhow::Context as _;
 
-use rg_ir_model::{
-    DefId, DefMapRef, LocalDefRef, LocalEnumVariantRef, ModuleId, ModuleRef, Path, TargetRef,
-};
-use rg_ir_storage::{
+use crate::{
     DefMap, LocalDefData, LocalEnumVariantData, LocalEnumVariantEntry, MacroDefinitionEnv,
     MacroDefinitionView, ModuleData, ModuleScopeBuilder, PackageDefMaps as DefMapPackage,
     ScopeEntryRef, ScopeResolutionEnv, ScopeResolver, TargetData, TargetResolutionEnv,
+};
+use rg_ir_model::{
+    DefId, DefMapRef, LocalDefRef, LocalEnumVariantRef, ModuleId, ModuleRef, Path, TargetRef,
 };
 use rg_item_tree::ItemTreeDb;
 use rg_macro_runtime::{MacroExpansionPerformancePreference, MacroExpansionRuntime};

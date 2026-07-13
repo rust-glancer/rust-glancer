@@ -5,8 +5,7 @@
 //! merges multiple routes to the same definition. Frozen scopes retain that decision so queries do
 //! not have to reconstruct precedence from a list of candidates.
 
-use std::cmp::Ordering;
-use std::collections::HashMap;
+use std::{cmp::Ordering, collections::HashMap};
 
 use rg_ir_model::{DefId, ImportRef, ModuleRef, items::FieldList};
 use rg_std::{MemorySize, Shrink};

@@ -1679,11 +1679,11 @@ name = "rg_def_map"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "derive_more",
  "expect-test",
  "rg_arena",
  "rg_cfg_eval",
  "rg_ir_model",
- "rg_ir_storage",
  "rg_item_tree",
  "rg_macro_runtime",
  "rg_package_store",
@@ -1695,6 +1695,7 @@ dependencies = [
  "rg_tt",
  "rg_workspace",
  "test_fixture",
+ "wincode",
 ]
 
 [[package]]
@@ -1719,6 +1720,7 @@ version = "0.1.0"
 dependencies = [
  "derive_more",
  "rg_arena",
+ "rg_def_map",
  "rg_ir_model",
  "rg_parse",
  "rg_std",
@@ -1853,7 +1855,6 @@ dependencies = [
  "anyhow",
  "rayon",
  "rg_ir_model",
- "rg_ir_storage",
  "rg_macro_expand",
  "rg_parse",
  "rg_syntax",
@@ -2039,6 +2040,7 @@ dependencies = [
  "chalk-ir",
  "chalk-solve",
  "expect-test",
+ "rg_def_map",
  "rg_ir_model",
  "rg_ir_storage",
  "rg_profile",

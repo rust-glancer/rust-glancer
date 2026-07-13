@@ -7,12 +7,13 @@ use crate::inference::InferenceTable;
 use crate::{
     GenericArg, NominalTy, TraitGoal, TraitSelectionOptions, TraitSelectionQuery, Ty, TypeSubst,
 };
+use rg_def_map::DefMapSource;
 use rg_ir_model::hir::items::ImplData;
 use rg_ir_model::items::{GenericArg as ItemGenericArg, TypeBound, TypePath, TypeRef};
 use rg_ir_model::{
     ImplRef, Mutability, Path, TraitApplicability, TraitImplRef, TypePathResolution,
 };
-use rg_ir_storage::{DefMapSource, ItemStoreSource, TypePathContext};
+use rg_ir_storage::{ItemStoreSource, TypePathContext};
 use rg_text::Name;
 
 use super::ImplMatcher;

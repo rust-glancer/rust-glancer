@@ -13,7 +13,6 @@ description = "Rust Glancer declarative macro runtime."
 anyhow.workspace = true
 rayon.workspace = true
 rg_ir_model.workspace = true
-rg_ir_storage.workspace = true
 rg_macro_expand.workspace = true
 rg_parse.workspace = true
 rg_syntax.workspace = true

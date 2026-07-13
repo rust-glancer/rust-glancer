@@ -1,8 +1,9 @@
 //! Dense Body IR representation used by resident packages and query code.
 
 use rg_arena::Arena;
+use rg_def_map::DefMap;
 use rg_ir_model::BodyId;
-use rg_ir_storage::{BodyLocalItems, DefMap, ItemLookupIndex, ItemStore};
+use rg_ir_storage::{BodyLocalItems, ItemLookupIndex, ItemStore};
 use rg_parse::TargetId;
 use rg_std::{MemorySize, Shrink};
 use wincode::{SchemaRead, SchemaWrite};

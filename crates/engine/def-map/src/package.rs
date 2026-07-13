@@ -7,7 +7,7 @@ use rg_ir_model::{ModuleId, ModuleRef};
 use rg_parse::TargetId;
 use rg_text::{Name, RustEdition};
 
-use super::store::DefMap;
+use crate::map::DefMap;
 
 #[derive(Debug, Clone, PartialEq, Eq, Default, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct TargetData {

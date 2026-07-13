@@ -6,11 +6,12 @@
 //! - resolve canonical trait paths from impl and use-site contexts;
 //! - read a selected impl associated type for strict adjustment paths such as `Deref`.
 
+use rg_def_map::DefMapSource;
 use rg_ir_model::{
     AssocItemId, Path, TraitImplRef, TraitRef, TypeAliasRef, TypePathResolution,
     hir::items::ImplData,
 };
-use rg_ir_storage::{DefMapSource, ItemStoreSource, TargetItemQuery, TypePathContext};
+use rg_ir_storage::{ItemStoreSource, TargetItemQuery, TypePathContext};
 use rg_std::UniqueVec;
 
 use crate::{ItemPathQuery, Ty, TypeSubst};

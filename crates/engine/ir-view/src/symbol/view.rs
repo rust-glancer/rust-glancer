@@ -3,13 +3,14 @@
 use std::fmt::Write as _;
 
 use anyhow::Result;
+use rg_def_map::DefMapSource;
 use rg_ir_model::items::FieldKey;
 use rg_ir_model::{
     AssocItemId, ConstRef, DefMapRef, EnumVariantRef as SemanticEnumVariantRef,
     FunctionRef as SemanticFunctionRef, ModuleId, ModuleRef, SemanticItemKind, TargetRef,
     TypeAliasRef, TypeDefId, TypeDefRef, identity::DeclarationRef,
 };
-use rg_ir_storage::{DefMapSource, ItemStoreQuery, SemanticItemView};
+use rg_ir_storage::{ItemStoreQuery, SemanticItemView};
 use rg_parse::{FileId, Span};
 
 use crate::{

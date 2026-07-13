@@ -3,8 +3,9 @@
 //! This module walks lowered bodies and fills resolution/type slots on bindings and expressions.
 //! Specialized helpers live in sibling modules so this file can read like the pass itself.
 
+use rg_def_map::DefMapSource;
 use rg_ir_model::{BindingId, BodyRef, ExprId};
-use rg_ir_storage::{DefMapSource, ItemLookupIndex, ItemStoreSource};
+use rg_ir_storage::{ItemLookupIndex, ItemStoreSource};
 use rg_package_store::PackageStoreError;
 use rg_ty::{ExpectedNominalTyExt, PrimitiveTy, TraitSelectionCache, Ty};
 

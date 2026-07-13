@@ -19,11 +19,12 @@ use chalk_solve::rust_ir::{
     TraitDatum, WellKnownAssocType, WellKnownTrait,
 };
 use chalk_solve::{RustIrDatabase, Solver};
+use rg_def_map::DefMapSource;
 use rg_ir_model::hir::items::ImplData;
 use rg_ir_model::{
     AssocItemId, ImplRef, TraitApplicability, TraitImplRef, TraitRef, TypeAliasRef, TypeDefRef,
 };
-use rg_ir_storage::{DefMapSource, ItemStoreSource, TargetItemQuery, TypePathContext};
+use rg_ir_storage::{ItemStoreSource, TargetItemQuery, TypePathContext};
 use rg_text::Name;
 
 use super::interner::{ChalkDefId, RgChalkInterner};

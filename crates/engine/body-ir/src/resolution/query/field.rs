@@ -1,11 +1,12 @@
 //! Field access resolution.
 
+use rg_def_map::DefMapSource;
 use rg_ir_model::{
     EnumVariantRef, ExprId, FieldRef, TypeDefId,
     identity::DeclarationRef,
     items::{FieldItem, FieldKey, FieldList, TypeRef},
 };
-use rg_ir_storage::{DefMapSource, ItemStoreSource};
+use rg_ir_storage::ItemStoreSource;
 use rg_package_store::PackageStoreError;
 use rg_std::{ExpectedUnique, UniqueVec};
 use rg_ty::{AutoderefMode, ExpectedTyExt, NominalTy, Ty};

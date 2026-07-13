@@ -5,11 +5,10 @@
 
 use anyhow::Result;
 
-use rg_ir_model::{DefId, DefMapRef, LocalDefRef, ModuleRef, Path, TargetRef};
-use rg_ir_storage::{
-    LocalDefData, MacroDefinitionData, MacroDefinitionEnv, ScopeBinding, ScopeResolver,
-    TargetResolutionEnv,
+use crate::{
+    MacroDefinitionEnv, MacroDefinitionView, ScopeBinding, ScopeResolver, TargetResolutionEnv,
 };
+use rg_ir_model::{DefId, DefMapRef, LocalDefRef, ModuleRef, Path, TargetRef};
 use rg_std::ExpectedUnique;
 use rg_text::Name;
 
@@ -18,9 +17,7 @@ use crate::build::{collect::TargetState, finalize::FinalizeTargetStates};
 
 /// Macro definition resolved through the ordinary macro namespace.
 pub(super) struct ResolvedMacroDefinition<'a> {
-    pub(super) def_ref: LocalDefRef,
-    pub(super) local_def: &'a LocalDefData,
-    pub(super) data: &'a MacroDefinitionData,
+    pub(super) definition: MacroDefinitionView<'a>,
     pub(super) order: Option<&'a ItemOrder>,
     pub(super) direct_only: bool,
 }
@@ -28,7 +25,7 @@ pub(super) struct ResolvedMacroDefinition<'a> {
 impl PartialEq for ResolvedMacroDefinition<'_> {
     fn eq(&self, other: &Self) -> bool {
         // Collapse duplicate bindings to the same macro definition, e.g. macro-export root aliases.
-        self.def_ref == other.def_ref
+        self.definition == other.definition
     }
 }
 
@@ -264,9 +261,7 @@ where
             .map(|record| &record.order);
 
         Ok(Some(ResolvedMacroDefinition {
-            def_ref: payload.def_ref,
-            local_def: payload.local_def,
-            data: payload.data,
+            definition: payload,
             order,
             direct_only,
         }))
@@ -309,7 +304,7 @@ fn macro_definition_is_visible_by_order(
         return true;
     }
 
-    !(macro_.def_ref.origin == DefMapRef::Target(target)
-        && macro_.local_def.module == call.module
+    !(macro_.definition.def_ref.origin == DefMapRef::Target(target)
+        && macro_.definition.local_def.module == call.module
         && macro_.order.is_some_and(|order| order > &call.order))
 }

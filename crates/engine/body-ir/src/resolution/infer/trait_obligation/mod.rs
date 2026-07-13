@@ -17,7 +17,8 @@ mod assoc_projection;
 mod obligation;
 mod selected_call;
 
-use rg_ir_storage::{DefMapSource, ItemStoreSource};
+use rg_def_map::DefMapSource;
+use rg_ir_storage::ItemStoreSource;
 use rg_package_store::PackageStoreError;
 use rg_std::ExpectedUnique;
 use rg_ty::{TraitGoal, TraitSelection, TraitSelectionQuery};

@@ -1,7 +1,8 @@
 //! Method lookup for receiver types.
 
+use rg_def_map::DefMapSource;
 use rg_ir_model::{AssocItemId, FunctionRef, ImplRef, ItemOwner};
-use rg_ir_storage::{DefMapSource, ItemStoreQuery, ItemStoreSource};
+use rg_ir_storage::{ItemStoreQuery, ItemStoreSource};
 use rg_package_store::PackageStoreError;
 use rg_std::UniqueVec;
 use rg_ty::{

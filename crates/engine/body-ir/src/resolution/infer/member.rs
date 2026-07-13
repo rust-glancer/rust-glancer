@@ -3,11 +3,12 @@
 //! This layer turns `base.field` and `base[index]` into inference facts that still share vars with
 //! `base`, so later evidence on the projected value can solve the owner.
 
+use rg_def_map::DefMapSource;
 use rg_ir_model::{
     ExprId,
     items::{FieldKey, GenericParams},
 };
-use rg_ir_storage::{DefMapSource, ItemStoreSource};
+use rg_ir_storage::ItemStoreSource;
 use rg_package_store::PackageStoreError;
 use rg_ty::{
     GenericArg, NominalTy, Ty,
