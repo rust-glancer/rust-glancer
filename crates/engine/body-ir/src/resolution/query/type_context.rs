@@ -4,8 +4,6 @@ use rg_def_map::DefMapSource;
 use rg_ir_model::FunctionRef;
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::{ItemStoreSource, TypePathContext};
-use rg_std::ExpectedUnique;
-use rg_ty::{NominalTy, Ty, TypeSubst};
 
 use crate::{ir::BodyOwner, resolution::BodyResolutionContext};
 
@@ -52,41 +50,5 @@ where
             }
             BodyOwner::Static(_) => Ok(TypePathContext::module(fallback_module)),
         }
-    }
-
-    /// Resolve type-level `Self` inside an impl context.
-    pub(crate) fn nominal_self_ty_for_context(
-        &self,
-        context: TypePathContext,
-    ) -> Result<ExpectedUnique<NominalTy>, PackageStoreError> {
-        let Some(impl_ref) = context.impl_ref else {
-            return Ok(ExpectedUnique::new());
-        };
-        let item_query = self.context.item_query();
-        let Some(impl_data) = item_query.impl_data(impl_ref)? else {
-            return Ok(ExpectedUnique::new());
-        };
-
-        let resolved = self.context.item_paths().resolve_type_ref(
-            &impl_data.self_ty,
-            context,
-            Ty::Unknown,
-            &TypeSubst::new(),
-        )?;
-
-        let mut self_tys = ExpectedUnique::new();
-        for ty in resolved.as_nominals() {
-            if impl_data.resolved_self_ty.is(&ty.def) {
-                self_tys.push(ty.clone());
-            }
-        }
-
-        if self_tys.is_empty()
-            && let Some(ty) = impl_data.resolved_self_ty.as_option()
-        {
-            self_tys.push(NominalTy::bare(*ty));
-        }
-
-        Ok(self_tys)
     }
 }

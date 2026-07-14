@@ -1,6 +1,3 @@
-mod type_ref;
 mod unknown;
 
-pub use self::{
-    type_ref::ExplicitTypeArgInstantiationBuilder, unknown::UnknownTypeInstantiationBuilder,
-};
+pub use self::unknown::UnknownTypeInstantiationBuilder;

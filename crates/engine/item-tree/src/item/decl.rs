@@ -39,7 +39,7 @@ impl FromAst for GenericParams {
             for param in param_list.generic_params() {
                 match param {
                     ast::GenericParam::ConstParam(param) => {
-                        params.consts.push(ConstParamData {
+                        params.push_const(ConstParamData {
                             name: param
                                 .name()
                                 .map(|name| interner.intern(name.text()))
@@ -63,7 +63,7 @@ impl FromAst for GenericParams {
                         });
                     }
                     ast::GenericParam::TypeParam(param) => {
-                        params.types.push(TypeParamData {
+                        params.push_type(TypeParamData {
                             name: param
                                 .name()
                                 .map(|name| interner.intern(name.text()))
@@ -317,12 +317,24 @@ fn param_list_from_ast(
     let mut params = Vec::new();
 
     if let Some(self_param) = param_list.self_param() {
+        let ty = self_param
+            .ty()
+            .map(|ty| TypeRef::from_ast(&ty, (line_index, &mut *interner)));
+        let self_kind = if ty.is_some() {
+            rg_ir_model::items::SelfParamKind::Explicit
+        } else if self_param.amp_token().is_some() {
+            rg_ir_model::items::SelfParamKind::Reference {
+                mutability: rg_ir_model::Mutability::from_mut_token(
+                    self_param.mut_token().is_some(),
+                ),
+            }
+        } else {
+            rg_ir_model::items::SelfParamKind::Value
+        };
         params.push(ParamItem {
             pat: normalized_syntax(&self_param),
-            ty: self_param
-                .ty()
-                .map(|ty| TypeRef::from_ast(&ty, (line_index, &mut *interner))),
-            kind: ParamKind::SelfParam,
+            ty,
+            kind: ParamKind::SelfParam(self_kind),
         });
     }
 

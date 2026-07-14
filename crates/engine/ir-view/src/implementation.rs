@@ -4,7 +4,7 @@
 //! indexes and body expression facts. This view keeps those storage-shaped queries out of analysis.
 
 use rg_ir_model::{
-    BodyRef, CrateRef, DefMapRef, ExprKind, FunctionRef, SemanticItemRef, TraitRef, TypeDefRef,
+    BodyRef, CrateRef, DefMapRef, ExprKind, FunctionRef, SemanticItemRef, TraitDefRef, TypeDefRef,
     identity::{DeclarationRef, ExprRef},
 };
 use rg_semantic_ir::{CrateItemQuery, ItemLookupIndex, ItemStoreQuery};
@@ -183,7 +183,7 @@ impl<'a, 'db> ImplementationView<'a, 'db> {
         ty: &Ty,
     ) -> anyhow::Result<()> {
         for candidate in ReferencePeelingCandidates::new(ty) {
-            for nominal in candidate.ty().as_nominals() {
+            for nominal in candidate.ty().as_adts() {
                 self.push_body_local_impls_for_type_def(implementations, body_ref, nominal.def)?;
             }
         }
@@ -194,7 +194,7 @@ impl<'a, 'db> ImplementationView<'a, 'db> {
     fn push_body_local_impls_for_trait(
         &self,
         implementations: &mut UniqueVec<DeclarationRef>,
-        trait_ref: TraitRef,
+        trait_ref: TraitDefRef,
     ) -> anyhow::Result<()> {
         let DefMapRef::Body(body_ref) = trait_ref.origin else {
             return Ok(());

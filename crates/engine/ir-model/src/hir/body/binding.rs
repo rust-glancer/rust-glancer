@@ -3,7 +3,10 @@ use wincode::{SchemaRead, SchemaWrite};
 use rg_parse::Span;
 use rg_text::Name;
 
-use crate::{Mutability, ScopeId, items::TypeRef};
+use crate::{
+    ScopeId,
+    items::{SelfParamKind, TypeRef},
+};
 use rg_std::{MemorySize, Shrink};
 
 use super::BodySource;
@@ -40,17 +43,8 @@ pub enum BindingKind {
     Param,
     /// `self`, `&self`, or another receiver parameter.
     #[display("self_param")]
-    SelfParam(BodySelfParamKind),
+    SelfParam(SelfParamKind),
     /// `let name = value`.
     #[display("let")]
     Let,
-}
-
-/// Receiver form written by a function's self parameter.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, SchemaRead, SchemaWrite, Shrink)]
-#[shrink(leaf)]
-pub enum BodySelfParamKind {
-    Value,
-    Reference { mutability: Mutability },
-    Explicit,
 }

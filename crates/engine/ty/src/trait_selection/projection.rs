@@ -1,25 +1,23 @@
-//! Associated type projection for `TraitSelectionQuery`.
+//! Associated-type and canonical type normalization for `TraitSelectionQuery`.
 //!
-//! The query root owns candidate enumeration and impl probing. This module owns the second half of
-//! projection: once a unique impl is selected, ask Chalk for the associated alias first, then use a
-//! narrow project-side fallback for source type-ref shapes the Chalk adapter still declines.
+//! Candidate matching first identifies one impl and preserves its trial inference table. Chalk is
+//! the primary projection engine. When Chalk cannot finish a transitive alias, the already-selected
+//! impl's canonical semantic value can expose the next projection without returning to `TypeRef`
+//! syntax. Recursive normalization then submits that projection to Chalk as an ordinary goal.
 
 use rg_def_map::DefMapSource;
 use rg_ir_model::{
-    AssocItemId, Path, TraitApplicability, TraitRef, TypeAliasRef, TypePathResolution,
-    items::{
-        GenericArg as ItemGenericArg, TypeBound, TypePath, TypePathAnchor, TypeRef, WherePredicate,
-    },
+    AssocItemId, GenericDefRef, ImplRef, ItemOwner, TraitApplicability, TraitDefRef, TypeAliasRef,
 };
-use rg_semantic_ir::{ItemStoreSource, TypePathContext};
+use rg_semantic_ir::ItemStoreSource;
 use rg_std::ExpectedUnique;
-use rg_text::Name;
 
-use super::{TraitGoal, TraitSelection, TraitSelectionQuery};
-use crate::inference::{InferenceTable, InferenceTypeRefProjector, InferenceTypeSubst};
-use crate::{GenericArg, Ty};
-
-const ASSOCIATED_TYPE_PROJECTION_DEPTH: usize = 8;
+use super::{TraitGoal, TraitSelectionQuery};
+use crate::inference::{InferenceSubstitution, InferenceTable};
+use crate::{
+    AdtTy, AliasTy, FnDefTy, GenericArg, GenericArgs, ItemPathQuery, OpaqueTy, ProjectionTy,
+    SemanticSignatureQuery, Substitution, TraitApplication, Ty,
+};
 
 /// Result of normalizing one selected associated type projection.
 ///
@@ -46,29 +44,6 @@ impl AssocProjectionResult {
     }
 }
 
-/// Projected type syntax plus the table/applicability learned while projecting it.
-struct ProjectedTypeRef {
-    ty: Ty,
-    applicability: TraitApplicability,
-    table: InferenceTable,
-}
-
-/// Trait path syntax after resolving the trait and projecting its generic args.
-#[derive(PartialEq, Eq)]
-struct ProjectedTraitRef {
-    trait_ref: TraitRef,
-    args: Vec<GenericArg>,
-    applicability: TraitApplicability,
-    table: InferenceTable,
-}
-
-/// Generic arg syntax after any nested associated projections were applied.
-struct ProjectedGenericArg {
-    arg: GenericArg,
-    applicability: TraitApplicability,
-    table: InferenceTable,
-}
-
 impl<'query, D, I> TraitSelectionQuery<'query, D, I>
 where
     D: DefMapSource<Error = I::Error>,
@@ -76,695 +51,285 @@ where
 {
     /// Normalize a named associated type through the unique impl selected for this trait goal.
     ///
-    /// This is the narrow projection API used by higher layers. It deliberately returns `None`
-    /// for empty or ambiguous selection, and it carries the trial table so the caller can commit
-    /// receiver/header evidence only when the whole projection is useful.
+    /// Chalk owns normal projection. Its bounded solver can leave a transitive value such as
+    /// `type Item = I::Item` unresolved. In that case we read the same canonical `Ty` stored for
+    /// the uniquely selected impl and apply its owner-scoped substitution. This fallback only
+    /// reveals another semantic type; it never reinterprets declaration syntax.
+    ///
+    /// A selected leaf value such as `type Item = T` needs no solver at all: once every impl
+    /// parameter is bound, applying the canonical substitution is already the final projection.
     pub fn normalize_assoc_type(
         &self,
         goal: &TraitGoal,
         assoc_name: &str,
         table: &InferenceTable,
     ) -> Result<Option<AssocProjectionResult>, I::Error> {
-        self.normalize_assoc_type_with_depth(
-            goal,
-            assoc_name,
-            table,
-            ASSOCIATED_TYPE_PROJECTION_DEPTH,
-        )
-    }
-
-    fn normalize_assoc_type_with_depth(
-        &self,
-        goal: &TraitGoal,
-        assoc_name: &str,
-        table: &InferenceTable,
-        remaining_depth: usize,
-    ) -> Result<Option<AssocProjectionResult>, I::Error> {
-        if let Some(projection) =
-            Self::project_associated_type_from_opaque_bound(goal, assoc_name, table)
-        {
-            return Ok(Some(projection));
-        }
-
         let ExpectedUnique::One(selection) = self.probe(goal, table)? else {
             return Ok(None);
         };
-        let Some(impl_data) = self
-            .crate_items
-            .items()
-            .impl_data(selection.trait_impl.impl_ref)?
-        else {
-            return Ok(None);
-        };
-        let context = TypePathContext {
-            module: impl_data.owner,
-            impl_ref: Some(selection.trait_impl.impl_ref),
-        };
+        let selected_value = Self::canonical_impl_assoc_value(
+            &self.item_paths,
+            selection.trait_impl.impl_ref,
+            &selection.subst,
+            assoc_name,
+        )?;
+        if let Some(ty) = selected_value.as_ref()
+            && !ty.has_projection()
+        {
+            return Ok(Some(AssocProjectionResult {
+                ty: ty.clone(),
+                applicability: selection.applicability,
+                table: selection.table,
+            }));
+        }
         if let Some(mut projection) = self.cache.normalize_assoc_type(
             &self.item_paths,
             &self.crate_items,
-            context,
             goal,
             assoc_name,
             &selection.table,
-        )? {
+        )? && !matches!(projection.ty, Ty::Unknown)
+        {
             projection.applicability = selection.applicability.and(projection.applicability);
             return Ok(Some(projection));
         }
 
-        if remaining_depth == 0 {
-            return Ok(None);
-        }
-
-        // Keep the old project-side alias reader as a bridge for syntax that the Chalk adapter
-        // intentionally declines, for example value-side type refs containing source syntax we do
-        // not lower yet. The solver is still the first owner for the supported projection path.
-        let Some(projection) =
-            self.project_associated_type_from_selection(&selection, assoc_name, remaining_depth)?
-        else {
+        let Some(ty) = selected_value else {
             return Ok(None);
         };
-
-        Ok(Some(projection))
+        Ok(Some(AssocProjectionResult {
+            ty,
+            applicability: selection.applicability,
+            table: selection.table,
+        }))
     }
 
-    fn project_associated_type_from_opaque_bound(
-        goal: &TraitGoal,
-        assoc_name: &str,
-        table: &InferenceTable,
-    ) -> Option<AssocProjectionResult> {
-        let Ty::Opaque { bounds } = &goal.self_ty else {
-            return None;
-        };
-
-        // An `impl Trait<Assoc = Ty>` type hides the concrete self type, but the bound itself is a
-        // precise projection fact. Treat it as the base case for recursive projection through
-        // blanket impls such as `impl<I: Iterator> IntoIterator for I { type Item = I::Item; }`.
-        let mut candidates = ExpectedUnique::new();
-        for bound in bounds {
-            if bound.trait_ref != goal.trait_ref {
-                continue;
-            }
-
-            let Some(bound_table) =
-                Self::match_opaque_bound_goal_args(table, &bound.args, &goal.args)
-            else {
-                continue;
-            };
-            for arg in &bound.args {
-                let GenericArg::AssocType { name, ty: Some(ty) } = arg else {
-                    continue;
-                };
-                if name.as_str() != assoc_name || ty.has_unknown_or_syntax() {
-                    continue;
-                }
-
-                let projection = AssocProjectionResult {
-                    ty: bound_table.canonicalize(ty),
-                    applicability: TraitApplicability::Yes,
-                    table: bound_table.clone(),
-                };
-                candidates.push(projection);
-            }
-        }
-
-        candidates.into_option()
-    }
-
-    fn match_opaque_bound_goal_args(
-        table: &InferenceTable,
-        bound_args: &[GenericArg],
-        goal_args: &[GenericArg],
-    ) -> Option<InferenceTable> {
-        let mut table = table.clone();
-        let mut goal_args = goal_args.iter();
-        for bound_arg in bound_args {
-            if matches!(bound_arg, GenericArg::AssocType { .. }) {
-                continue;
-            }
-            let goal_arg = goal_args.next()?;
-            if !Self::match_opaque_bound_goal_arg(&mut table, bound_arg, goal_arg) {
-                return None;
-            }
-        }
-        if goal_args.next().is_some() {
-            return None;
-        }
-
-        Some(table)
-    }
-
-    fn match_opaque_bound_goal_arg(
-        table: &mut InferenceTable,
-        bound_arg: &GenericArg,
-        goal_arg: &GenericArg,
-    ) -> bool {
-        match (bound_arg, goal_arg) {
-            (GenericArg::Type(bound_ty), GenericArg::Type(goal_ty)) => {
-                table.try_unify(bound_ty, goal_ty).is_ok()
-            }
-            (GenericArg::Lifetime(lhs), GenericArg::Lifetime(rhs)) => lhs == rhs,
-            (GenericArg::Const(lhs), GenericArg::Const(rhs)) => lhs == rhs,
-            (
-                GenericArg::FnTraitArgs {
-                    params: bound_params,
-                    ret: bound_ret,
-                },
-                GenericArg::FnTraitArgs {
-                    params: goal_params,
-                    ret: goal_ret,
-                },
-            ) if bound_params.len() == goal_params.len() => {
-                for (bound_param, goal_param) in bound_params.iter().zip(goal_params) {
-                    if table.try_unify(bound_param, goal_param).is_err() {
-                        return false;
-                    }
-                }
-
-                table.try_unify(bound_ret, goal_ret).is_ok()
-            }
-            (GenericArg::Unsupported(lhs), GenericArg::Unsupported(rhs)) => lhs == rhs,
-            _ => false,
-        }
-    }
-
-    fn project_associated_type_from_selection(
+    /// Normalize every associated projection reachable inside one semantic type.
+    ///
+    /// Unsupported and cyclic projections stay as aliases. The returned table includes only
+    /// evidence from unique successful projections, so a body caller can adopt it atomically.
+    pub fn normalize_ty(
         &self,
-        selection: &TraitSelection,
+        ty: &Ty,
+        table: &InferenceTable,
+    ) -> Result<(Ty, InferenceTable), I::Error> {
+        let mut table = table.clone();
+        let ty = self.normalize_ty_with_table(ty, &mut table, &mut Vec::new())?;
+        Ok((ty, table))
+    }
+
+    /// Read one associated value from the selected impl after every impl parameter is known.
+    ///
+    /// Requiring a full impl substitution keeps params that exist only in unsolved where-clauses
+    /// from escaping as declaration-owned `Ty::Param` values. Chalk remains responsible for those
+    /// cases; this path is for values whose selected header already supplied all inputs.
+    pub(super) fn canonical_impl_assoc_value(
+        item_paths: &ItemPathQuery<'query, D, I>,
+        impl_ref: ImplRef,
+        subst: &InferenceSubstitution,
         assoc_name: &str,
-        remaining_depth: usize,
-    ) -> Result<Option<AssocProjectionResult>, I::Error> {
-        if remaining_depth == 0 {
+    ) -> Result<Option<Ty>, I::Error> {
+        let generics = item_paths
+            .generics()
+            .generics(GenericDefRef::Impl(impl_ref))?;
+        if generics
+            .iter_self()
+            .any(|param| subst.as_substitution().get(param.param()).is_none())
+        {
             return Ok(None);
         }
-        let Some(impl_data) = self
-            .crate_items
-            .items()
-            .impl_data(selection.trait_impl.impl_ref)?
-        else {
+
+        let Some(impl_data) = item_paths.items().impl_data(impl_ref)? else {
             return Ok(None);
         };
-
         for item in &impl_data.items {
-            let AssocItemId::TypeAlias(type_alias_id) = item else {
+            let AssocItemId::TypeAlias(id) = item else {
                 continue;
             };
-            let type_alias_ref = TypeAliasRef {
-                origin: selection.trait_impl.impl_ref.origin,
-                id: *type_alias_id,
+            let alias = TypeAliasRef {
+                origin: impl_ref.origin,
+                id: *id,
             };
-            let Some(type_alias_data) = self.item_paths.items().type_alias_data(type_alias_ref)?
-            else {
+            let Some(data) = item_paths.items().type_alias_data(alias)? else {
                 continue;
             };
-            if type_alias_data.name.as_str() != assoc_name {
+            if data.name.as_str() != assoc_name {
                 continue;
             }
-            let Some(aliased_ty) = type_alias_data.signature.aliased_ty() else {
-                continue;
-            };
-
-            let context = TypePathContext {
-                module: impl_data.owner,
-                impl_ref: Some(selection.trait_impl.impl_ref),
-            };
-            let Some(projected) = self.project_associated_type_ref(
-                context,
-                &selection.subst,
-                &selection.table,
-                aliased_ty,
-                remaining_depth - 1,
-            )?
-            else {
+            let Some(ty) = SemanticSignatureQuery::type_alias_ty_from(item_paths, alias)? else {
                 return Ok(None);
             };
-            return Ok(Some(AssocProjectionResult {
-                ty: projected.ty,
-                applicability: selection.applicability.and(projected.applicability),
-                table: projected.table,
-            }));
+            return Ok(Some(subst.as_substitution().apply(&ty)));
         }
 
         Ok(None)
     }
 
-    fn project_associated_type_ref(
+    fn normalize_ty_with_table(
         &self,
-        context: TypePathContext,
-        subst: &InferenceTypeSubst,
-        table: &InferenceTable,
-        ty: &TypeRef,
-        remaining_depth: usize,
-    ) -> Result<Option<ProjectedTypeRef>, I::Error> {
-        if let Some((param_name, assoc_name)) = ty.as_type_param_assoc_path() {
-            return self.project_type_param_associated_path(
-                context,
-                subst,
-                table,
-                param_name,
-                assoc_name.as_str(),
-                remaining_depth,
-            );
-        }
-
-        match ty {
-            TypeRef::Path(path) if path.anchor.is_some() => {
-                self.project_anchored_path_type_ref(context, subst, table, path, remaining_depth)
-            }
-            TypeRef::Tuple(fields) => {
-                let mut table = table.clone();
-                let mut applicability = TraitApplicability::Yes;
-                let mut projected_fields = Vec::with_capacity(fields.len());
-                for field in fields {
-                    let Some(field) = self.project_associated_type_ref(
-                        context,
-                        subst,
-                        &table,
-                        field,
-                        remaining_depth,
-                    )?
-                    else {
-                        return Ok(None);
-                    };
-                    applicability = applicability.and(field.applicability);
-                    table = field.table;
-                    projected_fields.push(field.ty);
+        ty: &Ty,
+        table: &mut InferenceTable,
+        active: &mut Vec<ProjectionTy>,
+    ) -> Result<Ty, I::Error> {
+        Ok(match ty {
+            Ty::Tuple(fields) => Ty::tuple(
+                fields
+                    .iter()
+                    .map(|field| self.normalize_ty_with_table(field, table, active))
+                    .collect::<Result<_, _>>()?,
+            ),
+            Ty::Array { inner, len } => Ty::Array {
+                inner: Box::new(self.normalize_ty_with_table(inner, table, active)?),
+                len: *len,
+            },
+            Ty::Slice(inner) => Ty::slice(self.normalize_ty_with_table(inner, table, active)?),
+            Ty::Reference {
+                lifetime,
+                mutability,
+                inner,
+            } => Ty::reference_with_lifetime(
+                *lifetime,
+                *mutability,
+                self.normalize_ty_with_table(inner, table, active)?,
+            ),
+            Ty::RawPointer { mutability, inner } => Ty::raw_pointer(
+                *mutability,
+                self.normalize_ty_with_table(inner, table, active)?,
+            ),
+            Ty::FnPointer { params, ret } => Ty::fn_pointer(
+                params
+                    .iter()
+                    .map(|param| self.normalize_ty_with_table(param, table, active))
+                    .collect::<Result<_, _>>()?,
+                self.normalize_ty_with_table(ret, table, active)?,
+            ),
+            Ty::Adt(ty) => Ty::Adt(AdtTy {
+                def: ty.def,
+                args: self.normalize_args(&ty.args, table, active)?,
+            }),
+            Ty::FnDef(function) => Ty::FnDef(FnDefTy {
+                def: function.def,
+                args: self.normalize_args(&function.args, table, active)?,
+            }),
+            Ty::Alias(AliasTy::Opaque(opaque)) => Ty::Alias(AliasTy::Opaque(OpaqueTy {
+                opaque: opaque.opaque,
+                args: self.normalize_args(&opaque.args, table, active)?,
+            })),
+            Ty::Alias(AliasTy::Projection(alias)) => {
+                let alias = ProjectionTy {
+                    associated_ty: alias.associated_ty,
+                    args: self.normalize_args(&alias.args, table, active)?,
+                };
+                if active.contains(&alias) {
+                    return Ok(Ty::Alias(AliasTy::Projection(alias)));
                 }
-                Ok(Some(ProjectedTypeRef {
-                    ty: Ty::Tuple(projected_fields),
-                    applicability,
-                    table,
-                }))
-            }
-            TypeRef::Reference {
-                mutability, inner, ..
-            } => {
-                let Some(inner) = self.project_associated_type_ref(
-                    context,
-                    subst,
-                    table,
-                    inner,
-                    remaining_depth,
-                )?
+
+                // An opaque return type exposes only its declared bounds. Those bounds already
+                // contain canonical associated equalities, so `<impl Iterator<Item = T> as
+                // Iterator>::Item` can be answered directly without inventing an impl identity.
+                if let Some(ty) = self.opaque_assoc_value(&alias)? {
+                    active.push(alias);
+                    let ty = self.normalize_ty_with_table(&ty, table, active)?;
+                    active.pop();
+                    return Ok(ty);
+                }
+
+                let Some(data) = self
+                    .item_paths
+                    .items()
+                    .type_alias_data(alias.associated_ty)?
                 else {
-                    return Ok(None);
+                    return Ok(Ty::Alias(AliasTy::Projection(alias)));
                 };
-                Ok(Some(ProjectedTypeRef {
-                    ty: Ty::Reference {
-                        mutability: *mutability,
-                        inner: Box::new(inner.ty),
+                let ItemOwner::Trait(trait_id) = data.owner else {
+                    return Ok(Ty::Alias(AliasTy::Projection(alias)));
+                };
+                let goal = TraitGoal {
+                    application: TraitApplication {
+                        def: TraitDefRef {
+                            origin: alias.associated_ty.origin,
+                            id: trait_id,
+                        },
+                        args: alias.args.clone(),
                     },
-                    applicability: inner.applicability,
-                    table: inner.table,
-                }))
-            }
-            TypeRef::Slice(inner) => {
-                let Some(inner) = self.project_associated_type_ref(
-                    context,
-                    subst,
-                    table,
-                    inner,
-                    remaining_depth,
-                )?
-                else {
-                    return Ok(None);
+                    associated_types: Vec::new(),
                 };
-                Ok(Some(ProjectedTypeRef {
-                    ty: Ty::Slice(Box::new(inner.ty)),
-                    applicability: inner.applicability,
-                    table: inner.table,
-                }))
-            }
-            TypeRef::Array { inner, len } => {
-                let Some(inner) = self.project_associated_type_ref(
-                    context,
-                    subst,
-                    table,
-                    inner,
-                    remaining_depth,
-                )?
-                else {
-                    return Ok(None);
+
+                // Associated values can form cycles across multiple aliases. Stop at the first
+                // repeated semantic projection and keep that alias visible to the caller.
+                active.push(alias.clone());
+                let normalized = self.normalize_assoc_type(&goal, data.name.as_str(), table)?;
+                let ty = if let Some(normalized) = normalized {
+                    let (ty, _applicability, normalized_table) = normalized.into_parts();
+                    *table = normalized_table;
+                    self.normalize_ty_with_table(&ty, table, active)?
+                } else {
+                    Ty::Alias(AliasTy::Projection(alias))
                 };
-                Ok(Some(ProjectedTypeRef {
-                    ty: Ty::Array {
-                        inner: Box::new(inner.ty),
-                        len: len.clone(),
-                    },
-                    applicability: inner.applicability,
-                    table: inner.table,
-                }))
+                active.pop();
+                ty
             }
-            _ => {
-                let (ty, table) =
-                    self.project_plain_associated_type_ref(context, subst, table, ty)?;
-                Ok(Some(ProjectedTypeRef {
-                    ty,
-                    applicability: TraitApplicability::Yes,
-                    table,
-                }))
-            }
-        }
+            Ty::Unit
+            | Ty::Never
+            | Ty::Primitive(_)
+            | Ty::Param(_)
+            | Ty::Closure(_)
+            | Ty::Unknown
+            | Ty::InferVar { .. } => ty.clone(),
+        })
     }
 
-    fn project_anchored_path_type_ref(
+    fn normalize_args(
         &self,
-        context: TypePathContext,
-        subst: &InferenceTypeSubst,
-        table: &InferenceTable,
-        path: &TypePath,
-        remaining_depth: usize,
-    ) -> Result<Option<ProjectedTypeRef>, I::Error> {
-        if remaining_depth == 0 {
-            return Ok(None);
-        }
-        let Some(anchor) = &path.anchor else {
-            return Ok(None);
-        };
-        let [assoc_segment] = path.segments.as_slice() else {
-            return Ok(None);
-        };
-        if !assoc_segment.args.is_empty() {
-            return Ok(None);
-        }
-
-        match anchor {
-            TypePathAnchor::Type(self_ty) => {
-                let Some(param_name) = self_ty.type_param_name() else {
-                    return Ok(None);
-                };
-                self.project_type_param_associated_path(
-                    context,
-                    subst,
-                    table,
-                    &param_name,
-                    assoc_segment.name.as_str(),
-                    remaining_depth,
-                )
-            }
-            TypePathAnchor::QualifiedTrait { self_ty, trait_ty } => self
-                .project_qualified_associated_type_ref(
-                    context,
-                    subst,
-                    table,
-                    self_ty,
-                    trait_ty,
-                    assoc_segment.name.as_str(),
-                    remaining_depth,
-                ),
-        }
+        args: &GenericArgs,
+        table: &mut InferenceTable,
+        active: &mut Vec<ProjectionTy>,
+    ) -> Result<GenericArgs, I::Error> {
+        args.iter()
+            .map(|arg| {
+                Ok(match arg {
+                    GenericArg::Type(ty) => {
+                        GenericArg::Type(Box::new(self.normalize_ty_with_table(ty, table, active)?))
+                    }
+                    GenericArg::Lifetime(_) | GenericArg::Const(_) => arg.clone(),
+                })
+            })
+            .collect()
     }
 
-    fn project_type_param_associated_path(
-        &self,
-        context: TypePathContext,
-        subst: &InferenceTypeSubst,
-        table: &InferenceTable,
-        param_name: &Name,
-        assoc_name: &str,
-        remaining_depth: usize,
-    ) -> Result<Option<ProjectedTypeRef>, I::Error> {
-        if remaining_depth == 0 {
-            return Ok(None);
-        }
-        let Some(self_ty) = subst.type_param(param_name.as_str()) else {
+    /// Read an associated equality from the bounds attached to an opaque `Self` type.
+    fn opaque_assoc_value(&self, alias: &ProjectionTy) -> Result<Option<Ty>, I::Error> {
+        let Some(Ty::Alias(AliasTy::Opaque(opaque))) =
+            alias.args.first().and_then(GenericArg::as_ty)
+        else {
             return Ok(None);
         };
-        let Some(impl_ref) = context.impl_ref else {
+        let bounds = SemanticSignatureQuery::opaque_bounds_for_owner_from(
+            &self.item_paths,
+            opaque.opaque.owner,
+        )?;
+        let Some((_, bounds)) = bounds
+            .into_iter()
+            .find(|(candidate, _)| candidate.opaque == opaque.opaque)
+        else {
             return Ok(None);
         };
-        let Some(impl_data) = self.crate_items.items().impl_data(impl_ref)? else {
-            return Ok(None);
-        };
+        let generics = self.item_paths.generics().generics(opaque.opaque.owner)?;
+        let subst = Substitution::from_args(&generics, &opaque.args);
 
-        // `I::Item` is only useful when the selected impl tells us which trait bound owns `Item`.
-        // Keep this unique: if two bounds could own the same associated type name, guessing would
-        // leak invented evidence into projection.
-        let mut selected_traits = ExpectedUnique::new();
-        for param in &impl_data.generics.types {
-            if param.name != *param_name {
+        for bound in bounds {
+            let bound = subst.apply_trait_ref(&bound);
+            if bound.application.args != alias.args {
                 continue;
             }
-            for bound in &param.bounds {
-                let Some(projected_trait) = self.project_type_param_assoc_bound(
-                    context,
-                    subst,
-                    table,
-                    bound,
-                    assoc_name,
-                    remaining_depth,
-                )?
-                else {
-                    continue;
-                };
-                selected_traits.push(projected_trait);
+            if let Some(binding) = bound
+                .associated_types
+                .into_iter()
+                .find(|binding| binding.associated_ty == alias.associated_ty)
+            {
+                return Ok(Some(binding.ty));
             }
         }
-        for predicate in &impl_data.generics.where_predicates {
-            let WherePredicate::Type { ty, bounds } = predicate else {
-                continue;
-            };
-            if ty.type_param_name().as_ref() != Some(param_name) {
-                continue;
-            }
-            for bound in bounds {
-                let Some(projected_trait) = self.project_type_param_assoc_bound(
-                    context,
-                    subst,
-                    table,
-                    bound,
-                    assoc_name,
-                    remaining_depth,
-                )?
-                else {
-                    continue;
-                };
-                selected_traits.push(projected_trait);
-            }
-        }
-
-        let Some(selected_trait) = selected_traits.into_option() else {
-            return Ok(None);
-        };
-        let goal = TraitGoal {
-            self_ty,
-            trait_ref: selected_trait.trait_ref,
-            args: selected_trait.args,
-        };
-        let Some(projection) = self.normalize_assoc_type_with_depth(
-            &goal,
-            assoc_name,
-            &selected_trait.table,
-            remaining_depth - 1,
-        )?
-        else {
-            return Ok(None);
-        };
-
-        Ok(Some(ProjectedTypeRef {
-            ty: projection.ty,
-            applicability: selected_trait.applicability.and(projection.applicability),
-            table: projection.table,
-        }))
-    }
-
-    fn project_type_param_assoc_bound(
-        &self,
-        context: TypePathContext,
-        subst: &InferenceTypeSubst,
-        table: &InferenceTable,
-        bound: &TypeBound,
-        assoc_name: &str,
-        remaining_depth: usize,
-    ) -> Result<Option<ProjectedTraitRef>, I::Error> {
-        let TypeBound::Trait(trait_ty) = bound else {
-            return Ok(None);
-        };
-        let Some(projected_trait) =
-            self.project_qualified_trait_ref(context, subst, table, trait_ty, remaining_depth)?
-        else {
-            return Ok(None);
-        };
-        if !self.trait_declares_assoc_type(projected_trait.trait_ref, assoc_name)? {
-            return Ok(None);
-        }
-
-        Ok(Some(projected_trait))
-    }
-
-    fn trait_declares_assoc_type(
-        &self,
-        trait_ref: TraitRef,
-        assoc_name: &str,
-    ) -> Result<bool, I::Error> {
-        let Some(trait_data) = self.crate_items.items().trait_data(trait_ref)? else {
-            return Ok(false);
-        };
-        for item in &trait_data.items {
-            let AssocItemId::TypeAlias(type_alias_id) = item else {
-                continue;
-            };
-            let type_alias_ref = TypeAliasRef {
-                origin: trait_ref.origin,
-                id: *type_alias_id,
-            };
-            let Some(type_alias_data) = self.item_paths.items().type_alias_data(type_alias_ref)?
-            else {
-                continue;
-            };
-            if type_alias_data.name.as_str() == assoc_name {
-                return Ok(true);
-            }
-        }
-
-        Ok(false)
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn project_qualified_associated_type_ref(
-        &self,
-        context: TypePathContext,
-        subst: &InferenceTypeSubst,
-        table: &InferenceTable,
-        self_ty: &TypeRef,
-        trait_ty: &TypeRef,
-        assoc_name: &str,
-        remaining_depth: usize,
-    ) -> Result<Option<ProjectedTypeRef>, I::Error> {
-        let Some(self_ty) =
-            self.project_associated_type_ref(context, subst, table, self_ty, remaining_depth)?
-        else {
-            return Ok(None);
-        };
-        let Some(trait_projection) = self.project_qualified_trait_ref(
-            context,
-            subst,
-            &self_ty.table,
-            trait_ty,
-            remaining_depth,
-        )?
-        else {
-            return Ok(None);
-        };
-        let applicability = self_ty.applicability.and(trait_projection.applicability);
-
-        let goal = TraitGoal {
-            self_ty: self_ty.ty,
-            trait_ref: trait_projection.trait_ref,
-            args: trait_projection.args,
-        };
-        let Some(projection) = self.normalize_assoc_type_with_depth(
-            &goal,
-            assoc_name,
-            &trait_projection.table,
-            remaining_depth,
-        )?
-        else {
-            return Ok(None);
-        };
-
-        Ok(Some(ProjectedTypeRef {
-            ty: projection.ty,
-            applicability: applicability.and(projection.applicability),
-            table: projection.table,
-        }))
-    }
-
-    fn project_qualified_trait_ref(
-        &self,
-        context: TypePathContext,
-        subst: &InferenceTypeSubst,
-        table: &InferenceTable,
-        trait_ty: &TypeRef,
-        remaining_depth: usize,
-    ) -> Result<Option<ProjectedTraitRef>, I::Error> {
-        let TypeRef::Path(path) = trait_ty else {
-            return Ok(None);
-        };
-        let Some(path_key) = Path::from_type_path(path) else {
-            return Ok(None);
-        };
-        let TypePathResolution::Trait(trait_ref) =
-            self.item_paths.resolve_type_path(context, &path_key)?
-        else {
-            return Ok(None);
-        };
-        let Some(segment) = path.segments.last() else {
-            return Ok(None);
-        };
-        let mut table = table.clone();
-        let mut applicability = TraitApplicability::Yes;
-        let mut args = Vec::with_capacity(segment.args.len());
-        for arg in &segment.args {
-            let Some(projected_arg) =
-                self.project_associated_generic_arg(context, subst, &table, arg, remaining_depth)?
-            else {
-                return Ok(None);
-            };
-            applicability = applicability.and(projected_arg.applicability);
-            table = projected_arg.table;
-            args.push(projected_arg.arg);
-        }
-
-        Ok(Some(ProjectedTraitRef {
-            trait_ref,
-            args,
-            applicability,
-            table,
-        }))
-    }
-
-    fn project_associated_generic_arg(
-        &self,
-        context: TypePathContext,
-        subst: &InferenceTypeSubst,
-        table: &InferenceTable,
-        arg: &ItemGenericArg,
-        remaining_depth: usize,
-    ) -> Result<Option<ProjectedGenericArg>, I::Error> {
-        match arg {
-            ItemGenericArg::Type(ty) => {
-                let Some(projected) =
-                    self.project_associated_type_ref(context, subst, table, ty, remaining_depth)?
-                else {
-                    return Ok(None);
-                };
-                Ok(Some(ProjectedGenericArg {
-                    arg: GenericArg::Type(Box::new(projected.ty)),
-                    applicability: projected.applicability,
-                    table: projected.table,
-                }))
-            }
-            ItemGenericArg::Lifetime(lifetime) => Ok(Some(ProjectedGenericArg {
-                arg: GenericArg::Lifetime(lifetime.clone()),
-                applicability: TraitApplicability::Yes,
-                table: table.clone(),
-            })),
-            ItemGenericArg::Const(value) => Ok(Some(ProjectedGenericArg {
-                arg: GenericArg::Const(value.clone()),
-                applicability: TraitApplicability::Yes,
-                table: table.clone(),
-            })),
-            ItemGenericArg::FnTraitArgs { .. }
-            | ItemGenericArg::AssocType { .. }
-            | ItemGenericArg::Unsupported(_) => Ok(None),
-        }
-    }
-
-    fn project_plain_associated_type_ref(
-        &self,
-        context: TypePathContext,
-        subst: &InferenceTypeSubst,
-        table: &InferenceTable,
-        ty: &TypeRef,
-    ) -> Result<(Ty, InferenceTable), I::Error> {
-        let type_subst = subst.finalize_type_subst(table);
-        let resolved_ty =
-            self.item_paths
-                .resolve_type_ref(ty, context, Ty::syntax(ty.clone()), &type_subst)?;
-        Ok((
-            InferenceTypeRefProjector::new(subst).ty_from_type_ref(ty, &resolved_ty),
-            table.clone(),
-        ))
+        Ok(None)
     }
 }

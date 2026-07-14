@@ -5,7 +5,7 @@
 //! declaration shape that UI-facing analysis expects.
 
 use rg_def_map::DefMapSource;
-use rg_ir_model::{AssocItemId, FunctionRef, ImplRef, ItemOwner, TraitRef, TypeDefRef};
+use rg_ir_model::{AssocItemId, FunctionRef, ImplRef, ItemOwner, TraitDefRef, TypeDefRef};
 use rg_semantic_ir::{CrateItemQuery, ItemLookupIndex, ItemStoreSource};
 use rg_std::UniqueVec;
 
@@ -40,7 +40,7 @@ where
     pub fn impls_for_ty(&self, ty: &Ty) -> Result<UniqueVec<ImplRef>, D::Error> {
         let mut impls = UniqueVec::new();
         for candidate in ReferencePeelingCandidates::new(ty) {
-            for ty in candidate.ty().as_nominals() {
+            for ty in candidate.ty().as_adts() {
                 for impl_ref in self.impls_for_type_def(ty.def)? {
                     impls.push(impl_ref);
                 }
@@ -55,7 +55,7 @@ where
     }
 
     /// Returns impl blocks that resolve to the requested trait.
-    pub fn impls_for_trait(&self, trait_ref: TraitRef) -> Result<UniqueVec<ImplRef>, D::Error> {
+    pub fn impls_for_trait(&self, trait_ref: TraitDefRef) -> Result<UniqueVec<ImplRef>, D::Error> {
         Ok(self.lookup_index.impls_for_trait(trait_ref))
     }
 
@@ -74,7 +74,7 @@ where
 
         match data.owner {
             ItemOwner::Trait(trait_id) => self.impl_methods_for_trait_method(
-                TraitRef {
+                TraitDefRef {
                     origin: function.origin,
                     id: trait_id,
                 },
@@ -89,7 +89,7 @@ where
     /// Returns impl methods matching a trait method, optionally narrowed to one receiver type.
     pub fn impl_methods_for_trait_method(
         &self,
-        trait_ref: TraitRef,
+        trait_ref: TraitDefRef,
         method_name: &str,
         receiver_ty: Option<&Ty>,
     ) -> Result<UniqueVec<FunctionRef>, D::Error> {
@@ -103,7 +103,7 @@ where
 
     fn impl_methods_for_trait_method_receiver(
         &self,
-        trait_ref: TraitRef,
+        trait_ref: TraitDefRef,
         method_name: &str,
         receiver_ty: &Ty,
     ) -> Result<UniqueVec<FunctionRef>, D::Error> {
@@ -117,7 +117,7 @@ where
 
         for candidate in autoderef.candidates(AutoderefMode::MethodReceiver, receiver_ty) {
             let candidate = candidate?;
-            for ty in candidate.ty().as_nominals() {
+            for ty in candidate.ty().as_adts() {
                 let trait_impls = self
                     .lookup_index
                     .trait_impls_for_type(ty.def)
@@ -148,7 +148,7 @@ where
 
     fn impl_methods_for_trait_method_any_receiver(
         &self,
-        trait_ref: TraitRef,
+        trait_ref: TraitDefRef,
         method_name: &str,
     ) -> Result<UniqueVec<FunctionRef>, D::Error> {
         let mut functions = UniqueVec::new();

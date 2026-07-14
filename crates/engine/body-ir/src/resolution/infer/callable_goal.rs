@@ -8,12 +8,9 @@ use rg_def_map::DefMapSource;
 use rg_ir_model::ExprId;
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::ItemStoreSource;
-use rg_ty::{GenericArg, TraitGoal, Ty, function_generic_shadow_subst};
+use rg_ty::{GenericArg, Substitution, TraitGoal, Ty, inference::InferVarKind};
 
-use crate::{
-    ir::ExprKind,
-    resolution::{BodyResolutionContext, TypeRefUseSite},
-};
+use crate::{ir::ExprKind, resolution::BodyResolutionContext};
 
 use super::{BodyInferenceCtx, BodyPatternInference};
 
@@ -29,6 +26,16 @@ pub(crate) struct BodyCallableGoalSolver<'query, D, I> {
     context: BodyResolutionContext<'query, D, I>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum BodyCallableGoalOutcome {
+    /// The goal is not a supported `Fn*` application over a body-local callable witness.
+    NotApplicable,
+    /// The callable shape supplied all evidence this bounded solver needs.
+    Solved,
+    /// The closure is callable, but its body and expected output are both unresolved type slots.
+    Deferred,
+}
+
 impl<'query, D, I> BodyCallableGoalSolver<'query, D, I>
 where
     D: DefMapSource<Error = PackageStoreError> + Copy,
@@ -41,19 +48,21 @@ where
     /// Use a goal like `Closure#n: FnOnce(User) -> R` as closure-local inference evidence.
     ///
     /// The goal is consumed only when it is really a callable trait goal on a closure witness.
-    /// Unsupported or malformed goals return `false` so ordinary trait selection may still try to
-    /// handle them. A callable arity mismatch is consumed but produces no evidence: we know this is
-    /// the closure-callable approximation, but the written function shape does not fit this
-    /// closure expression.
+    /// Unsupported or malformed goals are `NotApplicable` so ordinary trait selection may still
+    /// try to handle them. A callable arity mismatch is consumed but produces no evidence: we know
+    /// this is the closure-callable approximation, but the written function shape does not fit
+    /// this closure expression. `Deferred` keeps an otherwise valid goal available to the next
+    /// fixed-point pass rather than committing an impl-only output variable with no durable body
+    /// evidence.
     pub(super) fn solve_goal(
         &self,
         inference: &mut BodyInferenceCtx,
         goal: &TraitGoal,
-    ) -> Result<bool, PackageStoreError> {
+    ) -> Result<BodyCallableGoalOutcome, PackageStoreError> {
         let Some((params, ret)) = self.callable_goal_args(goal)? else {
-            return Ok(false);
+            return Ok(BodyCallableGoalOutcome::NotApplicable);
         };
-        self.solve_fn_trait_goal(inference, &goal.self_ty, params, ret)
+        self.solve_fn_trait_goal(inference, goal.self_ty(), params, ret)
     }
 
     /// Use already-projected callable fn-trait args as closure-local inference evidence.
@@ -63,16 +72,22 @@ where
         self_ty: &Ty,
         params: &[Ty],
         ret: &Ty,
-    ) -> Result<bool, PackageStoreError> {
-        if let Ty::FunctionItem(function) = inference.root_resolved_ty(self_ty) {
-            return self.solve_function_item_goal(inference, function, params, ret);
+    ) -> Result<BodyCallableGoalOutcome, PackageStoreError> {
+        if let Ty::FnDef(function) = inference.root_resolved_ty(self_ty) {
+            return Ok(
+                if self.solve_fn_def_goal(inference, &function, params, ret)? {
+                    BodyCallableGoalOutcome::Solved
+                } else {
+                    BodyCallableGoalOutcome::NotApplicable
+                },
+            );
         }
 
         let Some(closure) = Self::closure_expr(inference, self_ty) else {
-            return Ok(false);
+            return Ok(BodyCallableGoalOutcome::NotApplicable);
         };
         let Some(closure_data) = self.context.body().expr(closure).cloned() else {
-            return Ok(false);
+            return Ok(BodyCallableGoalOutcome::NotApplicable);
         };
         let ExprKind::Closure {
             params: closure_params,
@@ -80,10 +95,10 @@ where
             ..
         } = closure_data.kind
         else {
-            return Ok(false);
+            return Ok(BodyCallableGoalOutcome::NotApplicable);
         };
         if closure_params.len() != params.len() {
-            return Ok(true);
+            return Ok(BodyCallableGoalOutcome::Solved);
         }
 
         // Function-call syntax gives parameter evidence positionally, so `FnOnce(User)` links the
@@ -95,7 +110,7 @@ where
                 continue;
             };
             let expected_ty = inference.root_resolved_ty(expected_ty);
-            if expected_ty.has_unknown_or_syntax() {
+            if expected_ty.has_unknown() {
                 continue;
             }
             let _ = pattern_inference.link_pat(inference, pat, &expected_ty);
@@ -103,38 +118,62 @@ where
 
         // Return evidence flows in the opposite direction too: if `ret` is `?R` and the closure
         // body is known to be `Name`, this solves `?R = Name` for the caller that owns the goal.
+        //
+        // A body call can still be an unresolved ordinary type slot at this point. Linking two
+        // such slots is not enough to finish the obligation: method resolution may replace the
+        // temporary body fact later, leaving the impl-only return slot orphaned. Keep the goal
+        // pending so the fixed-point pass retries it after the closure body gains a real shape.
         if let Some(body) = body {
-            let _ = inference.constrain_expr_infer_ty(body, ret);
+            let body_ty = inference.root_resolved_expr_ty(body);
+            let ret_ty = inference.root_resolved_ty(ret);
+            let body_is_pending = matches!(
+                body_ty,
+                Ty::Unknown
+                    | Ty::InferVar {
+                        kind: InferVarKind::Type,
+                        ..
+                    }
+            );
+            let ret_is_pending = matches!(
+                ret_ty,
+                Ty::Unknown
+                    | Ty::InferVar {
+                        kind: InferVarKind::Type,
+                        ..
+                    }
+            );
+            if body_is_pending && ret_is_pending {
+                return Ok(BodyCallableGoalOutcome::Deferred);
+            }
+            let _ = inference.constrain_expr_ty(body, ret);
         }
 
-        Ok(true)
+        Ok(BodyCallableGoalOutcome::Solved)
     }
 
-    fn solve_function_item_goal(
+    fn solve_fn_def_goal(
         &self,
         inference: &mut BodyInferenceCtx,
-        function: rg_ir_model::FunctionRef,
+        function: &rg_ty::FnDefTy,
         params: &[Ty],
         ret: &Ty,
     ) -> Result<bool, PackageStoreError> {
-        let Some(function_data) = self.context.item_query().function_data(function)? else {
+        let Some(signature) = self.context.signatures().function(function.def)? else {
             return Ok(false);
         };
-        if function_data.signature.params().len() != params.len() {
+        if signature.params.len() != params.len() {
             return Ok(false);
         }
 
-        let subst = function_generic_shadow_subst(function_data.signature.generics());
-        let resolver = self
+        let generics = self
             .context
-            .type_refs(TypeRefUseSite::Function(function))
-            .with_subst(&subst);
-        for (written_param, expected_param) in function_data.signature.params().iter().zip(params) {
-            let Some(param_ty) = &written_param.ty else {
-                return Ok(false);
-            };
-            let param_ty = resolver.resolve(param_ty)?;
-            if param_ty.has_unknown_or_syntax() {
+            .item_paths()
+            .generics()
+            .generics(rg_ir_model::GenericDefRef::Function(function.def))?;
+        let subst = Substitution::from_args(&generics, &function.args);
+        for (param_ty, expected_param) in signature.params.iter().zip(params) {
+            let param_ty = subst.apply(param_ty);
+            if param_ty.has_unknown() {
                 continue;
             }
             if inference
@@ -146,11 +185,8 @@ where
             }
         }
 
-        let ret_ty = match function_data.signature.ret_ty() {
-            Some(ret_ty) => resolver.resolve(ret_ty)?,
-            None => Ty::Unit,
-        };
-        if !ret_ty.has_unknown_or_syntax() && inference.table.try_unify(ret, &ret_ty).is_err() {
+        let ret_ty = subst.apply(&signature.ret);
+        if !ret_ty.has_unknown() && inference.table.try_unify(ret, &ret_ty).is_err() {
             return Ok(false);
         }
 
@@ -161,14 +197,40 @@ where
         &self,
         goal: &'goal TraitGoal,
     ) -> Result<Option<(&'goal [Ty], &'goal Ty)>, PackageStoreError> {
-        let Some(trait_data) = self.context.item_query().trait_data(goal.trait_ref)? else {
+        let Some(trait_data) = self.context.item_query().trait_data(goal.trait_ref())? else {
             return Ok(None);
         };
         if !matches!(trait_data.name.as_str(), "Fn" | "FnMut" | "FnOnce") {
             return Ok(None);
         }
 
-        let [GenericArg::FnTraitArgs { params, ret }] = goal.args.as_slice() else {
+        let mut args = goal.iter_positional_args();
+        let Some(GenericArg::Type(input)) = args.next() else {
+            return Ok(None);
+        };
+        if args.next().is_some() {
+            return Ok(None);
+        }
+        let params = match input.as_ref() {
+            Ty::Unit => &[][..],
+            Ty::Tuple(params) => params,
+            _ => return Ok(None),
+        };
+        let mut ret = None;
+        for binding in &goal.associated_types {
+            let Some(data) = self
+                .context
+                .item_query()
+                .type_alias_data(binding.associated_ty)?
+            else {
+                continue;
+            };
+            if data.name.as_str() == "Output" {
+                ret = Some(&binding.ty);
+                break;
+            }
+        }
+        let Some(ret) = ret else {
             return Ok(None);
         };
         Ok(Some((params, ret)))
@@ -185,9 +247,12 @@ where
 #[cfg(test)]
 mod tests {
     use rg_def_map::PackageSlot;
-    use rg_ir_model::{BindingId, BodyId, BodyRef, CrateId, CrateRef, TraitRef, TypeDefRef};
+    use rg_ir_model::{
+        AssocItemId, BindingId, BodyId, BodyRef, CrateId, CrateRef, TraitDefRef, TypeAliasRef,
+        TypeDefRef,
+    };
     use rg_package_store::PackageLoader;
-    use rg_ty::{GenericArg, NominalTy, TraitGoal, Ty};
+    use rg_ty::{AdtTy, GenericArg, TraitGoal, Ty};
 
     use super::*;
     use crate::{BodyIrLoader, ResolvedBodyData, testonly::BodyIrFixture};
@@ -200,7 +265,7 @@ version = "0.1.0"
 edition = "2024"
 
 //- /src/lib.rs
-pub trait FnOnce {}
+pub trait FnOnce { type Output; }
 pub trait NotCallable {}
 
 pub struct User;
@@ -217,10 +282,11 @@ pub fn use_it(seed: Name) {
         let mut inference = fixture.inference();
         let goal = fixture.callable_goal(&inference, vec![fixture.user_ty()], fixture.name_ty());
 
-        assert!(
+        assert_eq!(
             fixture
                 .solve_goal(&mut inference, &goal)
-                .expect("callable goal should solve")
+                .expect("callable goal should solve"),
+            BodyCallableGoalOutcome::Solved
         );
 
         assert_eq!(
@@ -240,10 +306,11 @@ pub fn use_it(seed: Name) {
         let ret = inference.table.new_type_var();
         let goal = fixture.callable_goal(&inference, vec![fixture.user_ty()], ret.clone());
 
-        assert!(
+        assert_eq!(
             fixture
                 .solve_goal(&mut inference, &goal)
-                .expect("callable goal should solve")
+                .expect("callable goal should solve"),
+            BodyCallableGoalOutcome::Solved
         );
 
         assert_eq!(inference.table.finalize(&ret), fixture.name_ty());
@@ -253,16 +320,17 @@ pub fn use_it(seed: Name) {
     fn non_callable_trait_goal_does_not_touch_closure() {
         let fixture = GoalFixture::new();
         let mut inference = fixture.inference();
-        let goal = TraitGoal {
-            self_ty: inference.expr_ty(fixture.closure_expr()),
-            trait_ref: fixture.trait_ref("NotCallable"),
-            args: Vec::new(),
-        };
+        let goal = TraitGoal::new(
+            inference.expr_ty(fixture.closure_expr()),
+            fixture.trait_ref("NotCallable"),
+            Vec::new(),
+        );
 
-        assert!(
-            !fixture
+        assert_eq!(
+            fixture
                 .solve_goal(&mut inference, &goal)
-                .expect("non-callable goal should not fail")
+                .expect("non-callable goal should not fail"),
+            BodyCallableGoalOutcome::NotApplicable
         );
 
         assert_eq!(
@@ -278,15 +346,34 @@ pub fn use_it(seed: Name) {
         let ret = inference.table.new_type_var();
         let goal = fixture.callable_goal(&inference, Vec::new(), ret.clone());
 
-        assert!(
+        assert_eq!(
             fixture
                 .solve_goal(&mut inference, &goal)
-                .expect("callable goal should be recognized")
+                .expect("callable goal should be recognized"),
+            BodyCallableGoalOutcome::Solved
         );
 
         assert_eq!(
             inference.finalize_binding_ty(fixture.closure_param_binding()),
             Ty::Unknown
+        );
+        assert_eq!(inference.table.finalize(&ret), Ty::Unknown);
+    }
+
+    #[test]
+    fn callable_goal_waits_for_an_unresolved_closure_body() {
+        let fixture = GoalFixture::new();
+        let mut inference = fixture.inference();
+        let unresolved_body = inference.table.new_type_var();
+        inference.set_expr_infer_ty(fixture.closure_body(), unresolved_body);
+        let ret = inference.table.new_type_var();
+        let goal = fixture.callable_goal(&inference, vec![fixture.user_ty()], ret.clone());
+
+        assert_eq!(
+            fixture
+                .solve_goal(&mut inference, &goal)
+                .expect("callable goal should defer"),
+            BodyCallableGoalOutcome::Deferred
         );
         assert_eq!(inference.table.finalize(&ret), Ty::Unknown);
     }
@@ -319,7 +406,7 @@ pub fn use_it(seed: Name) {
             &self,
             inference: &mut BodyInferenceCtx,
             goal: &TraitGoal,
-        ) -> Result<bool, PackageStoreError> {
+        ) -> Result<BodyCallableGoalOutcome, PackageStoreError> {
             let def_maps = self
                 .project
                 .def_map_db()
@@ -375,14 +462,16 @@ pub fn use_it(seed: Name) {
             params: Vec<Ty>,
             ret: Ty,
         ) -> TraitGoal {
-            TraitGoal {
-                self_ty: inference.expr_ty(self.closure_expr()),
-                trait_ref: self.trait_ref("FnOnce"),
-                args: vec![GenericArg::FnTraitArgs {
-                    params,
-                    ret: Box::new(ret),
-                }],
-            }
+            let mut goal = TraitGoal::new(
+                inference.expr_ty(self.closure_expr()),
+                self.trait_ref("FnOnce"),
+                vec![GenericArg::Type(Box::new(Ty::tuple(params)))],
+            );
+            goal.associated_types.push(rg_ty::AssocTypeBinding {
+                associated_ty: self.output_alias(),
+                ty: ret,
+            });
+            goal
         }
 
         fn closure_expr(&self) -> ExprId {
@@ -419,11 +508,11 @@ pub fn use_it(seed: Name) {
         }
 
         fn user_ty(&self) -> Ty {
-            Ty::nominal(NominalTy::bare(self.type_def("User")))
+            Ty::adt(AdtTy::bare(self.type_def("User")))
         }
 
         fn name_ty(&self) -> Ty {
-            Ty::nominal(NominalTy::bare(self.type_def("Name")))
+            Ty::adt(AdtTy::bare(self.type_def("Name")))
         }
 
         fn type_def(&self, name: &str) -> TypeDefRef {
@@ -441,7 +530,7 @@ pub fn use_it(seed: Name) {
                 .expect("fixture type should exist")
         }
 
-        fn trait_ref(&self, name: &str) -> TraitRef {
+        fn trait_ref(&self, name: &str) -> TraitDefRef {
             let item_store = self
                 .project
                 .resident_crate_ir(self.crate_ref)
@@ -450,6 +539,28 @@ pub fn use_it(seed: Name) {
                 .traits_with_refs()
                 .find_map(|(trait_ref, data)| (data.name.as_str() == name).then_some(trait_ref))
                 .expect("fixture trait should exist")
+        }
+
+        fn output_alias(&self) -> TypeAliasRef {
+            let item_store = self
+                .project
+                .resident_crate_ir(self.crate_ref)
+                .expect("crate item store should exist");
+            let trait_ref = self.trait_ref("FnOnce");
+            let trait_data = item_store
+                .trait_data(trait_ref.id)
+                .expect("FnOnce trait should exist");
+            trait_data
+                .items
+                .iter()
+                .find_map(|item| match item {
+                    AssocItemId::TypeAlias(id) => Some(TypeAliasRef {
+                        origin: trait_ref.origin,
+                        id: *id,
+                    }),
+                    AssocItemId::Function(_) | AssocItemId::Const(_) => None,
+                })
+                .expect("FnOnce Output alias should exist")
         }
     }
 }

@@ -13,7 +13,7 @@ use rg_parse::{CargoTarget, Package, ParseDb};
 use rg_workspace::TargetKind;
 
 use rg_ir_model::{
-    AssocItemId, ConstId, FunctionId, FunctionRef, ImplId, ImplRef, ItemId, TraitRef, TypeDefId,
+    AssocItemId, ConstId, FunctionId, FunctionRef, ImplId, ImplRef, ItemId, TraitDefRef, TypeDefId,
     TypeDefRef,
 };
 
@@ -393,7 +393,11 @@ impl<'a> ProjectSemanticQuerySnapshot<'a> {
         }
     }
 
-    fn render_trait_ref(&self, semantic_ir: &SemanticIrReadTxn<'_>, trait_ref: TraitRef) -> String {
+    fn render_trait_ref(
+        &self,
+        semantic_ir: &SemanticIrReadTxn<'_>,
+        trait_ref: TraitDefRef,
+    ) -> String {
         let data = ItemStoreQuery::new(semantic_ir)
             .trait_data(trait_ref)
             .expect("trait id should load while rendering query")
@@ -431,7 +435,7 @@ impl<'a> ProjectSemanticQuerySnapshot<'a> {
             rg_ir_model::ItemOwner::Module(module_ref) => self.render_module_ref(module_ref),
             rg_ir_model::ItemOwner::Trait(trait_id) => self.render_trait_ref(
                 semantic_ir,
-                TraitRef {
+                TraitDefRef {
                     origin: function_ref.origin,
                     id: trait_id,
                 },
@@ -876,7 +880,7 @@ impl CrateSemanticIrSnapshot<'_> {
 
 fn render_param(param: &rg_item_tree::ParamItem) -> String {
     match (param.kind, &param.ty) {
-        (ParamKind::SelfParam, _) => param.pat.clone(),
+        (ParamKind::SelfParam(_), _) => param.pat.clone(),
         (ParamKind::Normal, Some(ty)) => format!("{}: {ty}", param.pat),
         (ParamKind::Normal, None) => param.pat.clone(),
     }

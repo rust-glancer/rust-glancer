@@ -308,7 +308,7 @@ pub fn use_it() {
             - s0 parent <none>: v0
             - s1 parent s0: <none>
             bindings
-            - v0 self_param self `&self` => &Self struct fn body_local_impl_fixture[lib]::crate::use_it::User @ 4:5-4:17 @ 7:15-7:20
+            - v0 self_param self `&self` => &nominal struct fn body_local_impl_fixture[lib]::crate::use_it::User @ 4:5-4:17 @ 7:15-7:20
             body
             expr e2 block s1 => <unknown> @ 7:34-9:10
               tail
@@ -322,7 +322,7 @@ pub fn use_it() {
             - s0 parent <none>: v0
             - s1 parent s0: <none>
             bindings
-            - v0 self_param self `&self` => &Self struct fn body_local_impl_fixture[lib]::crate::use_it::User @ 4:5-4:17 @ 11:18-11:23
+            - v0 self_param self `&self` => &nominal struct fn body_local_impl_fixture[lib]::crate::use_it::User @ 4:5-4:17 @ 11:18-11:23
             body
             expr e2 block s1 => <unknown> @ 11:33-13:10
               tail
@@ -436,7 +436,7 @@ pub fn use_it(id: GlobalId) {
             - s0 parent <none>: v0
             - s1 parent s0: <none>
             bindings
-            - v0 self_param self `&self` => &Self struct body_local_target_impl_fixture[lib]::crate::GlobalId @ 9:18-9:23
+            - v0 self_param self `&self` => &nominal struct body_local_target_impl_fixture[lib]::crate::GlobalId @ 9:18-9:23
             body
             expr e2 block s1 => <unknown> @ 9:36-11:10
               tail
@@ -450,7 +450,7 @@ pub fn use_it(id: GlobalId) {
             - s0 parent <none>: v0
             - s1 parent s0: <none>
             bindings
-            - v0 self_param self `&self` => &Self struct body_local_target_impl_fixture[lib]::crate::GlobalId @ 13:18-13:23
+            - v0 self_param self `&self` => &nominal struct body_local_target_impl_fixture[lib]::crate::GlobalId @ 13:18-13:23
             body
             expr e2 block s1 => <unknown> @ 13:33-15:10
               tail
@@ -497,7 +497,7 @@ pub fn use_it() {
             - i2 impl <unnamed> @ 4:5-6:6
             bindings
             - v0 let user `user`: User => nominal struct fn body_local_impl_alias_self_fixture[lib]::crate::use_it::User @ 2:5-2:17 @ 8:9-8:13
-            - v1 let pair `pair`: User::Pair => (Self struct fn body_local_impl_alias_self_fixture[lib]::crate::use_it::User @ 2:5-2:17,) @ 9:9-9:13
+            - v1 let pair `pair`: User::Pair => (nominal struct fn body_local_impl_alias_self_fixture[lib]::crate::use_it::User @ 2:5-2:17,) @ 9:9-9:13
             body
             expr e2 block s1 => () @ 1:17-10:2
               stmt s0 source_item i0 @ 2:5-2:17
@@ -586,7 +586,7 @@ pub fn use_it(id: GlobalId) {
             - s0 parent <none>: v0
             - s1 parent s0: <none>
             bindings
-            - v0 self_param self `&self` => &Self struct body_local_trait_impl_fixture[lib]::crate::GlobalId @ 11:18-11:23
+            - v0 self_param self `&self` => &nominal struct body_local_trait_impl_fixture[lib]::crate::GlobalId @ 11:18-11:23
             body
             expr e2 block s1 => <unknown> @ 11:34-13:10
               tail
@@ -976,7 +976,7 @@ pub fn use_it() {
             - s0 parent <none>: v0
             - s1 parent s0: <none>
             bindings
-            - v0 self_param self `&self` => &Self struct fn nested_body_parent_impl_items_fixture[lib]::crate::use_it::User @ 4:5-4:17 @ 7:15-7:20
+            - v0 self_param self `&self` => &nominal struct fn nested_body_parent_impl_items_fixture[lib]::crate::use_it::User @ 4:5-4:17 @ 7:15-7:20
             body
             expr e1 block s1 => nominal struct nested_body_parent_impl_items_fixture[lib]::crate::GlobalId @ 7:34-9:10
               tail
@@ -1639,7 +1639,7 @@ pub fn use_it(id: GlobalId) {
             - s0 parent <none>: v0
             - s1 parent s0: <none>
             bindings
-            - v0 self_param self `&self` => &Self struct body_local_imported_impl_header_fixture[lib]::crate::GlobalId @ 8:18-8:23
+            - v0 self_param self `&self` => &nominal struct body_local_imported_impl_header_fixture[lib]::crate::GlobalId @ 8:18-8:23
             body
             expr e2 block s1 => <unknown> @ 8:36-10:10
               tail

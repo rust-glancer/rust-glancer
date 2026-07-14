@@ -2,7 +2,7 @@
 
 use rg_def_map::{CrateResolutionEnv, DefMapQuery, DefMapSource};
 use rg_ir_model::{
-    CrateRef, DefMapRef, FunctionRef, ImplRef, ModuleRef, TraitImplRef, TraitRef, TypeDefRef,
+    CrateRef, DefMapRef, FunctionRef, ImplRef, ModuleRef, TraitDefRef, TraitImplRef, TypeDefRef,
 };
 use rg_std::UniqueVec;
 
@@ -62,7 +62,7 @@ where
     }
 
     /// Searches visible impls for a trait ref while keeping duplicate refs out of the result.
-    pub fn impls_for_trait(&self, trait_ref: TraitRef) -> Result<UniqueVec<ImplRef>, I::Error> {
+    pub fn impls_for_trait(&self, trait_ref: TraitDefRef) -> Result<UniqueVec<ImplRef>, I::Error> {
         let mut impls = UniqueVec::new();
         for store in self.impl_stores_for_origin(trait_ref.origin)? {
             for (impl_ref, data) in store.impls_with_refs() {
@@ -77,7 +77,7 @@ where
     /// Searches visible impls for a trait ref and returns the trait identity used by each impl.
     pub fn trait_impls_for_trait(
         &self,
-        trait_ref: TraitRef,
+        trait_ref: TraitDefRef,
     ) -> Result<UniqueVec<TraitImplRef>, I::Error> {
         let mut trait_impls = UniqueVec::new();
         for impl_ref in self.impls_for_trait(trait_ref)? {
@@ -154,7 +154,7 @@ where
     }
 
     /// Lists trait declarations implemented by the visible impls for a nominal type.
-    pub fn traits_for_type(&self, ty: TypeDefRef) -> Result<UniqueVec<TraitRef>, I::Error> {
+    pub fn traits_for_type(&self, ty: TypeDefRef) -> Result<UniqueVec<TraitDefRef>, I::Error> {
         let mut traits = UniqueVec::new();
         for trait_impl in self.trait_impls_for_type(ty)? {
             traits.push(trait_impl.trait_ref);

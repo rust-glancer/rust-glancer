@@ -13,19 +13,51 @@ use rg_text::Name;
 use super::{Documentation, ItemTreeId, TypeBound, TypeRef, VisibilityLevel};
 use crate::Mutability;
 
-/// Generic parameter data attached to an item declaration.
+/// Generic parameters as they were written on one item declaration.
+///
+/// Lifetimes form a separate leading group. Type and const parameters share one list because they
+/// can interleave: `struct Buffer<T, const N: usize, U>` must retain the order `T, N, U`. Splitting
+/// them into separate type and const lists would lose the positional order later used by
+/// `Buffer<Key, 16, Value>`.
 #[derive(Debug, Clone, PartialEq, Eq, Default, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct GenericParams {
     pub lifetimes: Vec<LifetimeParamData>,
-    pub types: Vec<TypeParamData>,
-    pub consts: Vec<ConstParamData>,
+    pub type_or_consts: Vec<TypeOrConstParamData>,
     pub where_predicates: Vec<WherePredicate>,
 }
 
 impl GenericParams {
     /// Iterates type parameter names in declaration order.
     pub fn type_param_names(&self) -> impl Iterator<Item = &Name> {
-        self.types.iter().map(|param| &param.name)
+        self.types().map(|param| &param.name)
+    }
+
+    pub fn types(&self) -> impl DoubleEndedIterator<Item = &TypeParamData> {
+        self.type_or_consts.iter().filter_map(|param| match param {
+            TypeOrConstParamData::Type(param) => Some(param),
+            TypeOrConstParamData::Const(_) => None,
+        })
+    }
+
+    pub fn consts(&self) -> impl DoubleEndedIterator<Item = &ConstParamData> {
+        self.type_or_consts.iter().filter_map(|param| match param {
+            TypeOrConstParamData::Type(_) => None,
+            TypeOrConstParamData::Const(param) => Some(param),
+        })
+    }
+
+    pub fn push_type(&mut self, param: TypeParamData) {
+        self.type_or_consts.push(TypeOrConstParamData::Type(param));
+    }
+
+    pub fn push_const(&mut self, param: ConstParamData) {
+        self.type_or_consts.push(TypeOrConstParamData::Const(param));
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.lifetimes.is_empty()
+            && self.type_or_consts.is_empty()
+            && self.where_predicates.is_empty()
     }
 }
 
@@ -49,36 +81,38 @@ impl fmt::Display for GenericParams {
                 )
             }
         }));
-        params.extend(self.types.iter().map(|param| {
-            let mut text = param.name.to_string();
-            if !param.bounds.is_empty() {
-                text.push_str(": ");
-                text.push_str(
-                    &param
-                        .bounds
-                        .iter()
-                        .map(ToString::to_string)
-                        .collect::<Vec<_>>()
-                        .join(" + "),
-                );
+        params.extend(self.type_or_consts.iter().map(|param| match param {
+            TypeOrConstParamData::Type(param) => {
+                let mut text = param.name.to_string();
+                if !param.bounds.is_empty() {
+                    text.push_str(": ");
+                    text.push_str(
+                        &param
+                            .bounds
+                            .iter()
+                            .map(ToString::to_string)
+                            .collect::<Vec<_>>()
+                            .join(" + "),
+                    );
+                }
+                if let Some(default) = &param.default {
+                    text.push_str(" = ");
+                    text.push_str(&default.to_string());
+                }
+                text
             }
-            if let Some(default) = &param.default {
-                text.push_str(" = ");
-                text.push_str(&default.to_string());
+            TypeOrConstParamData::Const(param) => {
+                let mut text = format!("const {}", param.name);
+                if let Some(ty) = &param.ty {
+                    text.push_str(": ");
+                    text.push_str(&ty.to_string());
+                }
+                if let Some(default) = &param.default {
+                    text.push_str(" = ");
+                    text.push_str(default);
+                }
+                text
             }
-            text
-        }));
-        params.extend(self.consts.iter().map(|param| {
-            let mut text = format!("const {}", param.name);
-            if let Some(ty) = &param.ty {
-                text.push_str(": ");
-                text.push_str(&ty.to_string());
-            }
-            if let Some(default) = &param.default {
-                text.push_str(" = ");
-                text.push_str(default);
-            }
-            text
         }));
 
         if !params.is_empty() {
@@ -117,6 +151,13 @@ pub struct ConstParamData {
     pub name: Name,
     pub ty: Option<TypeRef>,
     pub default: Option<String>,
+}
+
+/// Type and const parameters in their shared source declaration order.
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
+pub enum TypeOrConstParamData {
+    Type(TypeParamData),
+    Const(ConstParamData),
 }
 
 /// Where-clause predicate that can affect later signature resolution.
@@ -175,8 +216,18 @@ pub struct ParamItem {
 #[memsize(leaf)]
 #[shrink(leaf)]
 pub enum ParamKind {
-    SelfParam,
+    SelfParam(SelfParamKind),
     Normal,
+}
+
+/// Receiver form written by a function's self parameter.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
+#[memsize(leaf)]
+#[shrink(leaf)]
+pub enum SelfParamKind {
+    Value,
+    Reference { mutability: crate::Mutability },
+    Explicit,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]

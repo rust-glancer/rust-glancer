@@ -4,14 +4,14 @@
 //! trait-selection projection API for their associated `Item` type.
 
 use rg_def_map::DefMapSource;
-use rg_ir_model::{Path, PathSegment, TraitImplRef, TraitRef};
+use rg_ir_model::{Path, PathSegment, TraitDefRef, TraitImplRef};
 use rg_semantic_ir::{CrateItemQuery, ImplData, ItemLookupIndex, ItemStoreSource};
 use rg_std::{ExpectedUnique, UniqueVec};
 use rg_text::Name;
 
 use crate::{
-    ExpectedTyExt, ItemPathQuery, TraitGoal, TraitSelectionCache, TraitSelectionQuery, Ty,
-    associated_type::AssociatedTypeResolver, inference::InferenceTable,
+    ExpectedTyExt, GenericArgs, ItemPathQuery, TraitGoal, TraitSelectionCache, TraitSelectionQuery,
+    Ty, associated_type::AssociatedTypeResolver, inference::InferenceTable,
 };
 
 /// Resolves the associated `Item` type for applicable iterator-shaped trait impls.
@@ -59,7 +59,7 @@ where
     }
 
     /// Returns true when a selected trait is the canonical `core::iter::Iterator`.
-    pub fn is_iterator_trait_ref(&self, trait_ref: TraitRef) -> Result<bool, D::Error> {
+    pub fn is_iterator_trait_ref(&self, trait_ref: TraitDefRef) -> Result<bool, D::Error> {
         let resolver = AssociatedTypeResolver::new(&self.item_paths, &self.crate_items);
         let canonical_traits =
             self.canonical_trait_refs_from_use_site(&resolver, CanonicalIteratorTrait::Iterator)?;
@@ -71,7 +71,7 @@ where
         ty: &Ty,
         trait_kind: CanonicalIteratorTrait,
     ) -> Result<Ty, D::Error> {
-        if matches!(ty, Ty::Unknown | Ty::Syntax(_)) {
+        if matches!(ty, Ty::Unknown) {
             return Ok(Ty::Unknown);
         }
 
@@ -95,26 +95,24 @@ where
         &self,
         candidates: &mut ExpectedUnique<Ty>,
         ty: &Ty,
-        canonical_traits: &UniqueVec<TraitRef>,
+        canonical_traits: &UniqueVec<TraitDefRef>,
     ) -> Result<(), D::Error> {
         let table = InferenceTable::new();
         for trait_ref in canonical_traits {
-            let goal = TraitGoal {
-                self_ty: ty.clone(),
-                trait_ref: *trait_ref,
-                args: Vec::new(),
-            };
-            let Some(projection) = TraitSelectionQuery::with_index(
+            let goal = TraitGoal::new(ty.clone(), *trait_ref, GenericArgs::empty());
+            let query = TraitSelectionQuery::with_index(
                 self.item_paths.clone(),
                 self.crate_items.clone(),
                 self.lookup_index,
             )
-            .with_cache(self.trait_selection_cache.clone())
-            .normalize_assoc_type(&goal, "Item", &table)?
-            else {
+            .with_cache(self.trait_selection_cache.clone());
+            let Some(projection) = query.normalize_assoc_type(&goal, "Item", &table)? else {
                 continue;
             };
-            let item_ty = projection.table.finalize(&projection.ty);
+            // Adapter impls often define `IntoIterator::Item` as another semantic projection.
+            // Normalize that canonical value recursively before deciding whether it is useful.
+            let (item_ty, table) = query.normalize_ty(&projection.ty, &projection.table)?;
+            let item_ty = table.finalize(&item_ty);
             if item_ty.is_projectable() {
                 candidates.push(item_ty);
             }
@@ -132,7 +130,7 @@ where
         &self,
         resolver: &AssociatedTypeResolver<'_, 'query, D, I>,
         trait_kind: CanonicalIteratorTrait,
-    ) -> Result<UniqueVec<TraitRef>, D::Error> {
+    ) -> Result<UniqueVec<TraitDefRef>, D::Error> {
         let mut canonical_traits = self.canonical_trait_refs_from_use_site(resolver, trait_kind)?;
         if !canonical_traits.is_empty() {
             return Ok(canonical_traits);
@@ -171,7 +169,7 @@ where
         resolver: &AssociatedTypeResolver<'_, 'query, D, I>,
         impl_data: &ImplData,
         trait_kind: CanonicalIteratorTrait,
-    ) -> Result<UniqueVec<TraitRef>, D::Error> {
+    ) -> Result<UniqueVec<TraitDefRef>, D::Error> {
         resolver
             .trait_refs_for_path_from_impl_and_use_site(impl_data, &trait_kind.absolute_core_path())
     }
@@ -180,7 +178,7 @@ where
         &self,
         resolver: &AssociatedTypeResolver<'_, 'query, D, I>,
         trait_kind: CanonicalIteratorTrait,
-    ) -> Result<UniqueVec<TraitRef>, D::Error> {
+    ) -> Result<UniqueVec<TraitDefRef>, D::Error> {
         resolver.trait_refs_for_path_from_use_site(&trait_kind.absolute_core_path())
     }
 }

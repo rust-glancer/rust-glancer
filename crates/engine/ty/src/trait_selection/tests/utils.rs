@@ -9,25 +9,33 @@ use rg_def_map::{
 };
 use rg_ir_model::hir::source::{GeneratedItemRef, GeneratedSourceId, ItemSource, ItemSourceKind};
 use rg_ir_model::items::{
-    FieldList, FloatTy, GenericArg as ItemGenericArg, GenericParams, ItemTreeId, SignedIntTy,
-    TypeAliasItem, TypeBound, TypeParamData, TypePath, TypePathAnchor, TypePathSegment, TypeRef,
-    UnsignedIntTy, VisibilityLevel, WherePredicate,
+    FieldList, FloatTy, FunctionItem, FunctionQualifiers, GenericArg as ItemGenericArg,
+    GenericParams, ItemTreeId, SignedIntTy, TypeAliasItem, TypeBound, TypeOrConstParamData,
+    TypeParamData, TypePath, TypePathAnchor, TypePathSegment, TypeRef, UnsignedIntTy,
+    VisibilityLevel, WherePredicate,
 };
 use rg_ir_model::{
-    AssocItemId, CrateRef, DefId, DefMapRef, FileId, ImplId, ItemId, ItemOwner, LocalDefId,
-    LocalDefRef, LocalImplId, LocalImplRef, ModuleId, ModuleRef, PackageSlot, Span, StructId,
-    TextSpan, TraitApplicability, TraitId, TraitRef, TypeAliasId, TypeDefId, TypeDefRef,
+    AssocItemId, CrateRef, DefId, DefMapRef, FileId, FunctionId, FunctionRef, GenericParamRef,
+    ImplId, ItemId, ItemOwner, LocalDefId, LocalDefRef, LocalImplId, LocalImplRef, ModuleId,
+    ModuleRef, PackageSlot, Span, StructId, TextSpan, TraitApplicability, TraitDefRef, TraitId,
+    TypeAliasId, TypeAliasRef, TypeDefId, TypeDefRef,
 };
 use rg_semantic_ir::{
-    CrateItemQuery, ImplData, ItemLookupIndex, ItemStore, ItemStoreBuilder, ItemStoreSource,
-    StructData, TraitData, TypeAliasData, TypeAliasSignature, TypePathContext,
+    CrateItemQuery, FunctionData, FunctionSignature, GenericParamSource, GenericsQuery, ImplData,
+    ItemLookupIndex, ItemStore, ItemStoreBuilder, ItemStoreSource, StructData, TraitData,
+    TypeAliasData, TypeAliasSignature,
 };
 use rg_std::ExpectedUnique;
 use rg_text::Name;
 
-use super::super::{ChalkTraitSolver, TraitGoal, TraitSelectionOptions, TraitSelectionQuery};
+use super::super::{
+    ChalkTraitSolver, TraitGoal, TraitSelectionCache, TraitSelectionOptions, TraitSelectionQuery,
+};
 use crate::inference::{InferVarKind, InferenceTable};
-use crate::{GenericArg, ItemPathQuery, NominalTy, OpaqueTraitBound, PrimitiveTy, Ty};
+use crate::{
+    AdtTy, AliasTy, AssocTypeBinding, GenericArg, ItemPathQuery, OpaqueTy, PrimitiveTy,
+    SemanticSignatureQuery, Ty,
+};
 
 pub(super) struct TraitSelectionFixture {
     def_map: DefMap,
@@ -35,9 +43,9 @@ pub(super) struct TraitSelectionFixture {
     pub(super) target: CrateRef,
     lookup_index: ItemLookupIndex,
     type_names: HashMap<TypeDefRef, String>,
-    trait_names: HashMap<TraitRef, String>,
+    trait_names: HashMap<TraitDefRef, String>,
     type_refs_by_name: HashMap<String, TypeDefRef>,
-    trait_refs_by_name: HashMap<String, TraitRef>,
+    trait_refs_by_name: HashMap<String, TraitDefRef>,
 }
 
 impl TraitSelectionFixture {
@@ -52,8 +60,22 @@ impl TraitSelectionFixture {
         self.type_refs_by_name.get(name).copied()
     }
 
-    fn trait_ref_by_name(&self, name: &str) -> Option<TraitRef> {
+    fn trait_ref_by_name(&self, name: &str) -> Option<TraitDefRef> {
         self.trait_refs_by_name.get(name).copied()
+    }
+
+    fn associated_ty_by_name(&self, trait_ref: TraitDefRef, name: &str) -> Option<TypeAliasRef> {
+        let trait_data = self.store.trait_data(trait_ref.id)?;
+        trait_data.items.iter().find_map(|item| {
+            let AssocItemId::TypeAlias(id) = item else {
+                return None;
+            };
+            let data = self.store.type_alias_data(*id)?;
+            (data.name.as_str() == name).then_some(TypeAliasRef {
+                origin: trait_ref.origin,
+                id: *id,
+            })
+        })
     }
 }
 
@@ -138,8 +160,8 @@ pub(super) fn type_def(index: usize) -> TypeDefRef {
     }
 }
 
-pub(super) fn trait_ref(index: usize) -> TraitRef {
-    TraitRef {
+pub(super) fn trait_ref(index: usize) -> TraitDefRef {
+    TraitDefRef {
         origin: origin(),
         id: TraitId(index),
     }
@@ -232,13 +254,16 @@ pub(super) fn type_param_with_bounds(name: &str, bounds: Vec<TypeBound>) -> Type
 
 pub(super) fn generics(types: Vec<TypeParamData>) -> GenericParams {
     GenericParams {
-        types,
+        type_or_consts: types.into_iter().map(TypeOrConstParamData::Type).collect(),
         ..GenericParams::default()
     }
 }
 
 pub(super) fn nominal_infer_ty(def: TypeDefRef, args: Vec<GenericArg>) -> Ty {
-    Ty::Nominal(NominalTy { def, args })
+    Ty::Adt(AdtTy {
+        def,
+        args: args.into(),
+    })
 }
 
 fn resolved_one<T: PartialEq>(value: T) -> ExpectedUnique<T> {
@@ -287,6 +312,7 @@ pub(super) fn struct_data(index: usize, name: &str, generics: GenericParams) -> 
 pub(super) fn type_alias_data(
     name: &str,
     owner: ItemOwner,
+    bounds: Vec<TypeBound>,
     aliased_ty: Option<TypeRef>,
 ) -> TypeAliasData {
     TypeAliasData {
@@ -302,7 +328,7 @@ pub(super) fn type_alias_data(
         docs: None,
         signature: TypeAliasSignature::from_item(&TypeAliasItem {
             generics: GenericParams::default(),
-            bounds: Vec::new(),
+            bounds,
             aliased_ty,
         }),
     }
@@ -311,6 +337,7 @@ pub(super) fn type_alias_data(
 fn fixture_with_traits_impls_aliases_and_structs(
     mut traits: Vec<TraitData>,
     impls: Vec<ImplData>,
+    functions: Vec<FunctionData>,
     type_aliases: Vec<TypeAliasData>,
     mut structs: Vec<StructData>,
 ) -> TraitSelectionFixture {
@@ -420,6 +447,9 @@ fn fixture_with_traits_impls_aliases_and_structs(
     for impl_data in impls {
         builder.impls.alloc(impl_data);
     }
+    for function_data in functions {
+        builder.functions.alloc(function_data);
+    }
     let mut fixture = TraitSelectionFixture {
         def_map: def_map_builder.build(),
         store: builder.build(),
@@ -439,7 +469,7 @@ fn fixture_with_traits_impls_aliases_and_structs(
         fixture.type_refs_by_name.insert(data.name.to_string(), def);
     }
     for (trait_id, data) in fixture.store.traits().iter_with_ids() {
-        let trait_ref = TraitRef {
+        let trait_ref = TraitDefRef {
             origin: origin(),
             id: trait_id,
         };
@@ -489,6 +519,7 @@ enum FixtureSection {
     Traits,
     Structs,
     Impls,
+    Functions,
     TypeAliases,
 }
 
@@ -498,8 +529,9 @@ struct TraitSelectionFixtureParser<'a> {
     traits: Vec<TraitData>,
     structs: Vec<StructData>,
     impls: Vec<ImplData>,
+    functions: Vec<FunctionData>,
     type_aliases: Vec<TypeAliasData>,
-    trait_refs_by_name: HashMap<String, TraitRef>,
+    trait_refs_by_name: HashMap<String, TraitDefRef>,
     type_refs_by_name: HashMap<String, TypeDefRef>,
 }
 
@@ -511,6 +543,7 @@ impl<'a> TraitSelectionFixtureParser<'a> {
             traits: Vec::new(),
             structs: Vec::new(),
             impls: Vec::new(),
+            functions: Vec::new(),
             type_aliases: Vec::new(),
             trait_refs_by_name: HashMap::new(),
             type_refs_by_name: HashMap::new(),
@@ -530,6 +563,7 @@ impl<'a> TraitSelectionFixtureParser<'a> {
         fixture_with_traits_impls_aliases_and_structs(
             self.traits,
             self.impls,
+            self.functions,
             self.type_aliases,
             self.structs,
         )
@@ -549,6 +583,10 @@ impl<'a> TraitSelectionFixtureParser<'a> {
                 self.section = Some(FixtureSection::Impls);
                 return;
             }
+            "functions" => {
+                self.section = Some(FixtureSection::Functions);
+                return;
+            }
             "type aliases" => {
                 self.section = Some(FixtureSection::TypeAliases);
                 return;
@@ -563,6 +601,7 @@ impl<'a> TraitSelectionFixtureParser<'a> {
             FixtureSection::Traits => self.parse_trait(line),
             FixtureSection::Structs => self.parse_struct(line),
             FixtureSection::Impls => self.parse_impl(line),
+            FixtureSection::Functions => self.parse_function(line),
             FixtureSection::TypeAliases => self.parse_type_alias(line),
         }
     }
@@ -636,6 +675,34 @@ impl<'a> TraitSelectionFixtureParser<'a> {
         self.impls.push(impl_data);
     }
 
+    fn parse_function(&mut self, line: &str) {
+        let (id, rest) = parse_numbered_line(line, "fn#");
+        assert_eq!(
+            id,
+            self.functions.len(),
+            "function fixture ids should be dense"
+        );
+        let (name, ret_ty) = rest
+            .split_once(" -> ")
+            .expect("function fixture should be written as `name -> ReturnType`");
+        self.functions.push(FunctionData {
+            local_def: None,
+            source: dummy_source(),
+            span: fixture_span(),
+            name_span: None,
+            owner: ItemOwner::Module(module()),
+            name: Name::new(name),
+            visibility: VisibilityLevel::Public,
+            docs: None,
+            signature: FunctionSignature::from_item(&FunctionItem {
+                generics: GenericParams::default(),
+                params: Vec::new(),
+                ret_ty: Some(parse_type_ref(ret_ty)),
+                qualifiers: FunctionQualifiers::default(),
+            }),
+        });
+    }
+
     fn parse_type_alias(&mut self, line: &str) {
         let (id, rest) = parse_numbered_line(line, "type#");
         assert_eq!(
@@ -647,6 +714,9 @@ impl<'a> TraitSelectionFixtureParser<'a> {
             .split_once(" = ")
             .map(|(lhs, rhs)| (lhs, Some(parse_type_ref(rhs))))
             .unwrap_or((rest, None));
+        let (owner_and_name, bounds) = split_top_level_keyword(owner_and_name, ": ")
+            .map(|(owner_and_name, bounds)| (owner_and_name, parse_type_bounds(bounds)))
+            .unwrap_or((owner_and_name, Vec::new()));
         let (owner, name) = owner_and_name
             .split_once("::")
             .expect("type alias fixture should be written as owner::Name");
@@ -667,7 +737,7 @@ impl<'a> TraitSelectionFixtureParser<'a> {
         };
 
         self.type_aliases
-            .push(type_alias_data(name, owner, aliased_ty));
+            .push(type_alias_data(name, owner, bounds, aliased_ty));
     }
 
     fn resolve_impl_self_ty(
@@ -802,6 +872,9 @@ fn parse_type_ref(text: &str) -> TypeRef {
     }
     if text == "!" {
         return TypeRef::Never;
+    }
+    if let Some(bounds) = text.strip_prefix("impl ") {
+        return TypeRef::ImplTrait(parse_type_bounds(bounds));
     }
     if let Some(ty) = parse_bracket_ty(text) {
         return match ty {
@@ -1046,12 +1119,9 @@ impl<'a> TraitSelectionQueryParser<'a> {
     fn parse_goal(mut self, text: &str) -> ParsedTraitQuery {
         let (self_ty, trait_path) = split_top_level_keyword(text, ": ")
             .expect("trait query should be written as `Self: Trait<Args>`");
-        let (trait_ref, args) = self.parse_trait_path(trait_path);
-        let goal = TraitGoal {
-            self_ty: self.parse_infer_ty(self_ty),
-            trait_ref,
-            args,
-        };
+        let (trait_ref, args, associated_types) = self.parse_trait_path(trait_path);
+        let mut goal = TraitGoal::new(self.parse_infer_ty(self_ty), trait_ref, args);
+        goal.associated_types = associated_types;
         let var_names = self.var_name_map();
         ParsedTraitQuery {
             goal,
@@ -1074,12 +1144,9 @@ impl<'a> TraitSelectionQueryParser<'a> {
         let inner = &text[1..angle_end];
         let (self_ty, trait_path) = split_top_level_keyword(inner, " as ")
             .expect("associated projection query should contain ` as `");
-        let (trait_ref, args) = self.parse_trait_path(trait_path);
-        let goal = TraitGoal {
-            self_ty: self.parse_infer_ty(self_ty),
-            trait_ref,
-            args,
-        };
+        let (trait_ref, args, associated_types) = self.parse_trait_path(trait_path);
+        let mut goal = TraitGoal::new(self.parse_infer_ty(self_ty), trait_ref, args);
+        goal.associated_types = associated_types;
         let var_names = self.var_name_map();
         ParsedAssocQuery {
             goal,
@@ -1090,17 +1157,36 @@ impl<'a> TraitSelectionQueryParser<'a> {
         }
     }
 
-    fn parse_trait_path(&mut self, text: &str) -> (TraitRef, Vec<GenericArg>) {
-        let (name, args) = parse_path_head_and_args(text.trim());
+    fn parse_trait_path(
+        &mut self,
+        text: &str,
+    ) -> (TraitDefRef, Vec<GenericArg>, Vec<AssocTypeBinding>) {
+        let (trait_name, args) = parse_path_head_and_args(text.trim());
         let trait_ref = self
             .fixture
-            .trait_ref_by_name(name)
-            .unwrap_or_else(|| panic!("query refers to unknown trait `{name}`"));
-        let args = args
-            .into_iter()
-            .map(|arg| self.parse_infer_generic_arg(arg))
-            .collect();
-        (trait_ref, args)
+            .trait_ref_by_name(trait_name)
+            .unwrap_or_else(|| panic!("query refers to unknown trait `{trait_name}`"));
+        let mut positional = Vec::new();
+        let mut associated_types = Vec::new();
+        for arg in args {
+            if let Some((name, ty)) = split_top_level_keyword(arg, " = ") {
+                let associated_ty = self
+                    .fixture
+                    .associated_ty_by_name(trait_ref, name)
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "query refers to unknown associated type `{name}` on trait `{trait_name}`"
+                        )
+                    });
+                associated_types.push(AssocTypeBinding {
+                    associated_ty,
+                    ty: self.parse_infer_ty(ty),
+                });
+            } else {
+                positional.push(GenericArg::Type(Box::new(self.parse_infer_ty(arg))));
+            }
+        }
+        (trait_ref, positional, associated_types)
     }
 
     fn parse_infer_ty(&mut self, text: &str) -> Ty {
@@ -1120,20 +1206,23 @@ impl<'a> TraitSelectionQueryParser<'a> {
                 "closure id",
             ))));
         }
-        if let Some(bounds) = text.strip_prefix("impl ") {
-            return Ty::Opaque {
-                bounds: split_top_level(bounds, '+')
-                    .into_iter()
-                    .map(|bound| self.parse_infer_opaque_bound(bound))
-                    .collect(),
+        if let Some(index) = text.strip_prefix("opaque#") {
+            let function = FunctionRef {
+                origin: origin(),
+                id: FunctionId(parse_usize(index, "opaque function id")),
             };
+            return SemanticSignatureQuery::new(self.fixture, self.fixture)
+                .function(function)
+                .expect("fixture opaque signature should lower")
+                .unwrap_or_else(|| panic!("query refers to unknown opaque function `{index}`"))
+                .ret;
         }
         if let Some(ty) = parse_bracket_ty(text) {
             return match ty {
                 ParsedBracketTy::Slice(inner) => Ty::Slice(Box::new(self.parse_infer_ty(inner))),
                 ParsedBracketTy::Array { inner, len } => Ty::Array {
                     inner: Box::new(self.parse_infer_ty(inner)),
-                    len,
+                    len: len.into(),
                 },
             };
         }
@@ -1148,22 +1237,6 @@ impl<'a> TraitSelectionQueryParser<'a> {
             .map(|arg| GenericArg::Type(Box::new(self.parse_infer_ty(arg))))
             .collect();
         nominal_infer_ty(def, args)
-    }
-
-    fn parse_infer_opaque_bound(&mut self, text: &str) -> OpaqueTraitBound {
-        let (trait_ref, args) = self.parse_trait_path(text);
-        OpaqueTraitBound { trait_ref, args }
-    }
-
-    fn parse_infer_generic_arg(&mut self, text: &str) -> GenericArg {
-        if let Some((name, ty)) = split_top_level_keyword(text, " = ") {
-            return GenericArg::AssocType {
-                name: Name::new(name),
-                ty: Some(Box::new(self.parse_infer_ty(ty))),
-            };
-        }
-
-        GenericArg::Type(Box::new(self.parse_infer_ty(text)))
     }
 
     fn type_var(&mut self, name: &str) -> Ty {
@@ -1274,12 +1347,8 @@ impl TraitSelectionSnapshot {
         writeln!(
             dump,
             "  goal: <{} as {}>::{}",
-            self.render_infer_ty_with_vars(&parsed.goal.self_ty, &parsed.var_names),
-            self.render_trait_path_with_vars(
-                parsed.goal.trait_ref,
-                &parsed.goal.args,
-                &parsed.var_names
-            ),
+            self.render_infer_ty_with_vars(parsed.goal.self_ty(), &parsed.var_names),
+            self.render_trait_path_with_vars(&parsed.goal, &parsed.var_names),
             parsed.assoc_name
         )
         .expect("string writes should not fail");
@@ -1288,15 +1357,18 @@ impl TraitSelectionSnapshot {
             let item_paths = ItemPathQuery::new(&self.fixture, &self.fixture);
             let crate_items =
                 CrateItemQuery::new(&self.fixture, &self.fixture, self.fixture.target);
-            let mut solver = ChalkTraitSolver::new(&item_paths, &crate_items)
-                .expect("Chalk fixture solver should build");
-            solver.normalize_assoc_type(
-                &item_paths,
-                TypePathContext::module(module()),
-                &parsed.goal,
-                &parsed.assoc_name,
-                &parsed.table,
-            )
+            let cache = TraitSelectionCache::default();
+            let solver = ChalkTraitSolver::new();
+            solver
+                .normalize_assoc_type(
+                    &item_paths,
+                    &crate_items,
+                    &cache,
+                    &parsed.goal,
+                    &parsed.assoc_name,
+                    &parsed.table,
+                )
+                .expect("Chalk fixture projection should not fail")
         } else {
             query(&self.fixture)
                 .with_options(case.options)
@@ -1347,33 +1419,70 @@ impl TraitSelectionSnapshot {
     fn render_goal(&self, goal: &TraitGoal, var_names: &HashMap<String, String>) -> String {
         format!(
             "{}: {}",
-            self.render_infer_ty_with_vars(&goal.self_ty, var_names),
-            self.render_trait_path_with_vars(goal.trait_ref, &goal.args, var_names)
+            self.render_infer_ty_with_vars(goal.self_ty(), var_names),
+            self.render_trait_path_with_vars(goal, var_names)
         )
     }
 
     fn render_trait_path_with_vars(
         &self,
-        trait_ref: TraitRef,
-        args: &[GenericArg],
+        goal: &TraitGoal,
         var_names: &HashMap<String, String>,
     ) -> String {
-        let name = self.render_trait_ref(trait_ref);
+        let name = self.render_trait_ref(goal.trait_ref());
+        let mut args = goal
+            .iter_positional_args()
+            .map(|arg| self.render_infer_generic_arg_with_vars(arg, var_names))
+            .collect::<Vec<_>>();
+        for binding in &goal.associated_types {
+            args.push(format!(
+                "{} = {}",
+                self.render_associated_ty_name(binding.associated_ty),
+                self.render_infer_ty_with_vars(&binding.ty, var_names)
+            ));
+        }
         if args.is_empty() {
             return name;
         }
 
-        format!(
-            "{}<{}>",
-            name,
-            args.iter()
-                .map(|arg| self.render_infer_generic_arg_with_vars(arg, var_names))
-                .collect::<Vec<_>>()
-                .join(", ")
-        )
+        format!("{}<{}>", name, args.join(", "))
     }
 
-    fn render_trait_ref(&self, trait_ref: TraitRef) -> String {
+    fn render_associated_ty_name(&self, associated_ty: TypeAliasRef) -> String {
+        self.fixture
+            .store
+            .type_alias_data(associated_ty.id)
+            .map(|data| data.name.to_string())
+            .unwrap_or_else(|| format!("type#{}", associated_ty.id.0))
+    }
+
+    fn render_infer_opaque_with_vars(
+        &self,
+        opaque: &OpaqueTy,
+        var_names: &HashMap<String, String>,
+    ) -> String {
+        let mut bounds = SemanticSignatureQuery::new(&self.fixture, &self.fixture)
+            .opaque_bounds(opaque)
+            .expect("fixture opaque predicates should lower while rendering a type")
+            .unwrap_or_default()
+            .into_iter()
+            .map(|bound| {
+                self.render_trait_path_with_vars(&TraitGoal::from_lowering(bound), var_names)
+            })
+            .collect::<Vec<_>>();
+        bounds.sort();
+        if bounds.is_empty() {
+            "impl _".to_string()
+        } else {
+            format!("impl {}", bounds.join(" + "))
+        }
+    }
+
+    fn render_opaque(&self, opaque: &OpaqueTy) -> String {
+        self.render_infer_opaque_with_vars(opaque, &HashMap::new())
+    }
+
+    fn render_trait_ref(&self, trait_ref: TraitDefRef) -> String {
         if trait_ref.origin != origin() {
             return format!("{trait_ref:?}");
         }
@@ -1425,36 +1534,58 @@ impl TraitSelectionSnapshot {
                 format!(
                     "[{}; {}]",
                     self.render_infer_ty_with_vars(inner, var_names),
-                    len.as_deref().unwrap_or("_")
+                    len
                 )
             }
             Ty::Slice(inner) => {
                 format!("[{}]", self.render_infer_ty_with_vars(inner, var_names))
             }
-            Ty::Reference { mutability, inner } => {
+            Ty::Reference {
+                mutability, inner, ..
+            } => {
                 format!(
                     "{}{}",
                     mutability.render_prefix(),
                     self.render_infer_ty_with_vars(inner, var_names)
                 )
             }
-            Ty::Opaque { bounds } => {
-                let bounds = bounds
+            Ty::RawPointer { mutability, inner } => {
+                let qualifier = if matches!(mutability, rg_ir_model::Mutability::Mutable) {
+                    "mut"
+                } else {
+                    "const"
+                };
+                format!(
+                    "*{qualifier} {}",
+                    self.render_infer_ty_with_vars(inner, var_names)
+                )
+            }
+            Ty::FnPointer { params, ret } => {
+                let params = params
                     .iter()
-                    .map(|bound| self.render_infer_opaque_bound_with_vars(bound, var_names))
+                    .map(|param| self.render_infer_ty_with_vars(param, var_names))
                     .collect::<Vec<_>>()
-                    .join(" + ");
-                format!("impl {bounds}")
+                    .join(", ");
+                format!(
+                    "fn({params}) -> {}",
+                    self.render_infer_ty_with_vars(ret, var_names)
+                )
             }
             Ty::Closure(id) => format!("{{closure#{id}}}"),
-            Ty::FunctionItem(function) => format!("{{fn-item:{function:?}}}"),
-            Ty::Syntax(ty) => ty.to_string(),
-            Ty::Nominal(ty) => self.render_infer_nominal_ty_with_vars(ty, var_names),
-            Ty::SelfTy(ty) => {
-                format!(
-                    "Self({})",
-                    self.render_infer_nominal_ty_with_vars(ty, var_names)
-                )
+            Ty::FnDef(function) => format!(
+                "{{fn-item:{:?}{}}}",
+                function.def,
+                self.render_infer_generic_args_with_vars(&function.args, var_names)
+            ),
+            Ty::Adt(ty) => self.render_infer_nominal_ty_with_vars(ty, var_names),
+            Ty::Param(param) => self.render_type_param(*param),
+            Ty::Alias(AliasTy::Projection(alias)) => format!(
+                "projection {}{}",
+                self.render_associated_ty_name(alias.associated_ty),
+                self.render_infer_generic_args_with_vars(&alias.args, var_names)
+            ),
+            Ty::Alias(AliasTy::Opaque(opaque)) => {
+                self.render_infer_opaque_with_vars(opaque, var_names)
             }
             Ty::Unknown => "_".to_string(),
         }
@@ -1500,29 +1631,44 @@ impl TraitSelectionSnapshot {
             Ty::Primitive(primitive) => Self::render_primitive(*primitive),
             Ty::Tuple(fields) => self.render_tuple(fields, Self::render_ty),
             Ty::Array { inner, len } => {
-                format!(
-                    "[{}; {}]",
-                    self.render_ty(inner),
-                    len.as_deref().unwrap_or("_")
-                )
+                format!("[{}; {}]", self.render_ty(inner), len)
             }
             Ty::Slice(inner) => format!("[{}]", self.render_ty(inner)),
-            Ty::Reference { mutability, inner } => {
+            Ty::Reference {
+                mutability, inner, ..
+            } => {
                 format!("{}{}", mutability.render_prefix(), self.render_ty(inner))
             }
-            Ty::Opaque { bounds } => {
-                let bounds = bounds
+            Ty::RawPointer { mutability, inner } => {
+                let qualifier = if matches!(mutability, rg_ir_model::Mutability::Mutable) {
+                    "mut"
+                } else {
+                    "const"
+                };
+                format!("*{qualifier} {}", self.render_ty(inner))
+            }
+            Ty::FnPointer { params, ret } => {
+                let params = params
                     .iter()
-                    .map(|bound| self.render_opaque_bound(bound))
+                    .map(|param| self.render_ty(param))
                     .collect::<Vec<_>>()
-                    .join(" + ");
-                format!("impl {bounds}")
+                    .join(", ");
+                format!("fn({params}) -> {}", self.render_ty(ret))
             }
             Ty::Closure(id) => format!("{{closure#{id}}}"),
-            Ty::FunctionItem(function) => format!("{{fn-item:{function:?}}}"),
-            Ty::Syntax(ty) => ty.to_string(),
-            Ty::Nominal(ty) => self.render_nominal_ty(ty),
-            Ty::SelfTy(ty) => format!("Self({})", self.render_nominal_ty(ty)),
+            Ty::FnDef(function) => format!(
+                "{{fn-item:{:?}{}}}",
+                function.def,
+                self.render_generic_args(&function.args)
+            ),
+            Ty::Adt(ty) => self.render_nominal_ty(ty),
+            Ty::Param(param) => self.render_type_param(*param),
+            Ty::Alias(AliasTy::Projection(alias)) => format!(
+                "projection {}{}",
+                self.render_associated_ty_name(alias.associated_ty),
+                self.render_generic_args(&alias.args)
+            ),
+            Ty::Alias(AliasTy::Opaque(opaque)) => self.render_opaque(opaque),
             Ty::InferVar { kind, id } => match kind {
                 InferVarKind::Type => Self::render_named_var("?", id, &HashMap::new()),
                 InferVarKind::Integer => Self::render_named_var("?int", id, &HashMap::new()),
@@ -1550,7 +1696,7 @@ impl TraitSelectionSnapshot {
 
     fn render_infer_nominal_ty_with_vars(
         &self,
-        ty: &NominalTy,
+        ty: &AdtTy,
         var_names: &HashMap<String, String>,
     ) -> String {
         let name = self.render_type_def_ref(ty.def);
@@ -1569,7 +1715,7 @@ impl TraitSelectionSnapshot {
         )
     }
 
-    fn render_nominal_ty(&self, ty: &NominalTy) -> String {
+    fn render_nominal_ty(&self, ty: &AdtTy) -> String {
         let name = self.render_type_def_ref(ty.def);
         if ty.args.is_empty() {
             return name;
@@ -1586,6 +1732,54 @@ impl TraitSelectionSnapshot {
         )
     }
 
+    fn render_type_param(&self, param: rg_ir_model::TypeParamRef) -> String {
+        let generics = GenericsQuery::new(&self.fixture)
+            .generics(param.owner)
+            .expect("fixture generic declarations should be available while rendering a type");
+        generics
+            .iter()
+            .find(|data| data.param() == GenericParamRef::Type(param))
+            .map(|data| match data.source() {
+                GenericParamSource::Type(source) => source.name.to_string(),
+                GenericParamSource::TraitSelf => "Self".to_string(),
+                GenericParamSource::ArgumentImplTrait(_) => "<argument impl Trait>".to_string(),
+                GenericParamSource::Lifetime(_) | GenericParamSource::Const(_) => {
+                    unreachable!("a type parameter should have type-like provenance")
+                }
+            })
+            .unwrap_or_else(|| "<missing-param>".to_string())
+    }
+
+    fn render_infer_generic_args_with_vars(
+        &self,
+        args: &[GenericArg],
+        var_names: &HashMap<String, String>,
+    ) -> String {
+        if args.is_empty() {
+            return String::new();
+        }
+        format!(
+            "<{}>",
+            args.iter()
+                .map(|arg| self.render_infer_generic_arg_with_vars(arg, var_names))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    }
+
+    fn render_generic_args(&self, args: &[GenericArg]) -> String {
+        if args.is_empty() {
+            return String::new();
+        }
+        format!(
+            "<{}>",
+            args.iter()
+                .map(|arg| self.render_generic_arg(arg))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    }
+
     fn render_infer_generic_arg_with_vars(
         &self,
         arg: &GenericArg,
@@ -1594,23 +1788,7 @@ impl TraitSelectionSnapshot {
         match arg {
             GenericArg::Type(ty) => self.render_infer_ty_with_vars(ty, var_names),
             GenericArg::Lifetime(lifetime) => lifetime.to_string(),
-            GenericArg::Const(value) => value.clone(),
-            GenericArg::FnTraitArgs { params, ret } => {
-                let params = params
-                    .iter()
-                    .map(|param| self.render_infer_ty_with_vars(param, var_names))
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                format!(
-                    "({params}) -> {}",
-                    self.render_infer_ty_with_vars(ret, var_names)
-                )
-            }
-            GenericArg::AssocType { name, ty } => match ty {
-                Some(ty) => format!("{name} = {}", self.render_infer_ty_with_vars(ty, var_names)),
-                None => name.to_string(),
-            },
-            GenericArg::Unsupported(text) => format!("<unsupported:{text}>"),
+            GenericArg::Const(value) => value.to_string(),
         }
     }
 
@@ -1618,47 +1796,8 @@ impl TraitSelectionSnapshot {
         match arg {
             GenericArg::Type(ty) => self.render_ty(ty),
             GenericArg::Lifetime(lifetime) => lifetime.to_string(),
-            GenericArg::Const(value) => value.clone(),
-            GenericArg::FnTraitArgs { params, ret } => {
-                let params = params
-                    .iter()
-                    .map(|param| self.render_ty(param))
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                format!("({params}) -> {}", self.render_ty(ret))
-            }
-            GenericArg::AssocType { name, ty } => match ty {
-                Some(ty) => format!("{name} = {}", self.render_ty(ty)),
-                None => name.to_string(),
-            },
-            GenericArg::Unsupported(text) => format!("<unsupported:{text}>"),
+            GenericArg::Const(value) => value.to_string(),
         }
-    }
-
-    fn render_infer_opaque_bound_with_vars(
-        &self,
-        bound: &OpaqueTraitBound,
-        var_names: &HashMap<String, String>,
-    ) -> String {
-        self.render_trait_path_with_vars(bound.trait_ref, &bound.args, var_names)
-    }
-
-    fn render_opaque_bound(&self, bound: &OpaqueTraitBound) -> String {
-        let name = self.render_trait_ref(bound.trait_ref);
-        if bound.args.is_empty() {
-            return name;
-        }
-
-        format!(
-            "{}<{}>",
-            name,
-            bound
-                .args
-                .iter()
-                .map(|arg| self.render_generic_arg(arg))
-                .collect::<Vec<_>>()
-                .join(", ")
-        )
     }
 
     fn render_options(options: TraitSelectionOptions) -> &'static str {

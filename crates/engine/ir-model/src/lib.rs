@@ -13,8 +13,8 @@ mod resolution;
 
 pub use self::hir::body::{
     BindingData, BindingKind, BodyAssociatedPathPrefix, BodyData, BodyMacroCallData, BodyOwner,
-    BodyPath, BodyPathSegment, BodyPathSegmentArgs, BodyPathSegmentKind, BodySelfParamKind,
-    BodySource, BodySourceItem, BodySourceItems, BuiltinMacroExprKind, ClosureCapture, ClosureKind,
+    BodyPath, BodyPathSegment, BodyPathSegmentArgs, BodyPathSegmentKind, BodySource,
+    BodySourceItem, BodySourceItems, BuiltinMacroExprKind, ClosureCapture, ClosureKind,
     ClosureParamData, ExprAssignOp, ExprBinaryOp, ExprBlockKind, ExprData, ExprKind, ExprRangeKind,
     ExprUnaryOp, ExprWrapperKind, FunctionParamData, LabelData, LiteralKind, MatchArmData,
     PatBindingMode, PatData, PatKind, PatRangeKind, RecordExprField, RecordExprSpread,
@@ -28,10 +28,12 @@ pub use self::ids::{
     },
     identity,
     semantic::{
-        AssocItemId, ConstId, ConstRef, EnumId, EnumVariantRef, FieldRef, FunctionId, FunctionRef,
-        ImplId, ImplRef, ItemId, ItemOwner, SemanticItemKind, SemanticItemRef, StaticId, StaticRef,
-        StructId, TraitApplicability, TraitId, TraitImplRef, TraitRef, TypeAliasId, TypeAliasRef,
-        TypeDefId, TypeDefRef, UnionId,
+        AssocItemId, ConstId, ConstParamRef, ConstRef, EnumId, EnumVariantRef, FieldRef,
+        FunctionId, FunctionRef, GenericDefRef, GenericParamRef, ImplId, ImplRef, ItemId,
+        ItemOwner, LifetimeParamRef, LocalLifetimeParamId, LocalTypeOrConstParamId, OpaqueTyId,
+        OpaqueTyRef, SemanticItemKind, SemanticItemRef, StaticId, StaticRef, StructId,
+        TraitApplicability, TraitDefRef, TraitId, TraitImplRef, TypeAliasId, TypeAliasRef,
+        TypeDefId, TypeDefRef, TypeParamRef, UnionId,
     },
 };
 pub use self::mutability::Mutability;

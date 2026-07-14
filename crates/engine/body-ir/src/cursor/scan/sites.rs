@@ -374,7 +374,7 @@ where
                     self.emit_type_ref(context, ty);
                 }
             }
-            ItemKind::Function(item) => self.walk_function_item_type_refs(context, item),
+            ItemKind::Function(item) => self.walk_fn_def_type_refs(context, item),
             ItemKind::Impl(item) => self.walk_impl_item_type_refs(context, item),
             ItemKind::Module(item) => self.walk_module_item_type_refs(context, item),
             ItemKind::AsmExpr
@@ -406,7 +406,7 @@ where
         }
     }
 
-    fn walk_function_item_type_refs(&mut self, context: TypeRefContext, item: &'body FunctionItem) {
+    fn walk_fn_def_type_refs(&mut self, context: TypeRefContext, item: &'body FunctionItem) {
         self.walk_generic_params_type_refs(context, &item.generics);
         for param in &item.params {
             if let Some(ty) = &param.ty {
@@ -423,13 +423,13 @@ where
         context: TypeRefContext,
         generics: &'body GenericParams,
     ) {
-        for param in &generics.types {
+        for param in generics.types() {
             self.walk_type_bounds_type_refs(context, &param.bounds);
             if let Some(ty) = &param.default {
                 self.emit_type_ref(context, ty);
             }
         }
-        for param in &generics.consts {
+        for param in generics.consts() {
             if let Some(ty) = &param.ty {
                 self.emit_type_ref(context, ty);
             }

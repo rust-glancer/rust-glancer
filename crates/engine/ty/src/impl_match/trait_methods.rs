@@ -3,16 +3,12 @@
 //! Editor-facing method lookup can preserve useful `Maybe` candidates when a proof would require
 //! deeper solving. Simple direct cases still reuse bounded trait selection for consistency.
 
-use crate::generic_arg::item_generic_args_align;
-use crate::inference::InferenceTable;
 use crate::{
-    GenericArg, NominalTy, TraitGoal, TraitSelectionOptions, TraitSelectionQuery, Ty, TypeSubst,
+    AdtTy, Substitution, TraitSelectionOptions, TraitSelectionQuery, Ty, TypePathResolver,
 };
 use rg_def_map::DefMapSource;
-use rg_ir_model::items::{GenericArg as ItemGenericArg, TypeRef};
-use rg_ir_model::{FunctionRef, ImplRef, TraitApplicability, TraitImplRef};
-use rg_semantic_ir::ImplData;
-use rg_semantic_ir::{ItemLookupIndex, ItemStoreSource, TypePathContext};
+use rg_ir_model::{FunctionRef, TraitApplicability, TraitImplRef};
+use rg_semantic_ir::{ItemLookupIndex, ItemStoreSource};
 use rg_std::UniqueVec;
 
 use super::ImplMatcher;
@@ -20,12 +16,12 @@ use super::ImplMatcher;
 /// Result of matching one trait impl header against a receiver type.
 struct TraitImplMatch {
     applicability: TraitApplicability,
-    subst: TypeSubst,
+    subst: Substitution,
 }
 
 impl TraitImplMatch {
     /// Creates a match result from the computed confidence and receiver substitutions.
-    fn new(applicability: TraitApplicability, subst: TypeSubst) -> Self {
+    fn new(applicability: TraitApplicability, subst: Substitution) -> Self {
         Self {
             applicability,
             subst,
@@ -38,24 +34,29 @@ impl TraitImplMatch {
     }
 
     /// Splits the result into the match confidence and substitutions for associated signatures.
-    fn into_parts(self) -> (TraitApplicability, TypeSubst) {
+    fn into_parts(self) -> (TraitApplicability, Substitution) {
         (self.applicability, self.subst)
     }
 }
 
-impl<'query, D, I> ImplMatcher<'query, D, I>
+impl<'query, D, I, R> ImplMatcher<'query, D, I, R>
 where
     D: DefMapSource,
     I: ItemStoreSource<'query, Error = D::Error>,
+    R: TypePathResolver<Error = D::Error>,
 {
     /// Returns only the yes/maybe/no part of `trait_impl_match`.
     pub fn trait_impl_applicability(
         &self,
         trait_impl: TraitImplRef,
-        receiver_ty: &NominalTy,
+        receiver_ty: &AdtTy,
     ) -> Result<TraitApplicability, D::Error> {
         Ok(self
-            .trait_impl_match(trait_impl, receiver_ty)?
+            .trait_impl_match(
+                trait_impl,
+                receiver_ty,
+                TraitSelectionOptions::new().header_only(),
+            )?
             .map(|trait_impl_match| trait_impl_match.applicability())
             .unwrap_or(TraitApplicability::No))
     }
@@ -64,7 +65,7 @@ where
     pub fn trait_function_candidates_for_receiver(
         &self,
         index: &ItemLookupIndex,
-        receiver_ty: &NominalTy,
+        receiver_ty: &AdtTy,
         method_name: Option<&str>,
     ) -> Result<Vec<(FunctionRef, TraitApplicability)>, D::Error> {
         let trait_impls = index
@@ -72,6 +73,27 @@ where
             .cloned()
             .unwrap_or_default();
         self.trait_function_candidates_from_impls(index, trait_impls, receiver_ty, method_name)
+    }
+
+    /// Returns named trait methods while leaving impl predicates for body inference to validate.
+    pub fn trait_function_candidates_for_receiver_with_options(
+        &self,
+        index: &ItemLookupIndex,
+        receiver_ty: &AdtTy,
+        method_name: &str,
+        options: TraitSelectionOptions,
+    ) -> Result<Vec<(FunctionRef, TraitApplicability)>, D::Error> {
+        let trait_impls = index
+            .trait_impls_for_type(receiver_ty.def)
+            .cloned()
+            .unwrap_or_default();
+        self.trait_function_candidates_from_impls_with_options(
+            index,
+            trait_impls,
+            receiver_ty,
+            Some(method_name),
+            options,
+        )
     }
 
     /// Expands already-collected trait impl candidates into trait function candidates.
@@ -82,8 +104,26 @@ where
         &self,
         index: &ItemLookupIndex,
         trait_impls: UniqueVec<TraitImplRef>,
-        receiver_ty: &NominalTy,
+        receiver_ty: &AdtTy,
         method_name: Option<&str>,
+    ) -> Result<Vec<(FunctionRef, TraitApplicability)>, D::Error> {
+        self.trait_function_candidates_from_impls_with_options(
+            index,
+            trait_impls,
+            receiver_ty,
+            method_name,
+            TraitSelectionOptions::new().header_only(),
+        )
+    }
+
+    /// Expands trait impls under an explicit predicate-ownership policy.
+    pub fn trait_function_candidates_from_impls_with_options(
+        &self,
+        index: &ItemLookupIndex,
+        trait_impls: UniqueVec<TraitImplRef>,
+        receiver_ty: &AdtTy,
+        method_name: Option<&str>,
+        options: TraitSelectionOptions,
     ) -> Result<Vec<(FunctionRef, TraitApplicability)>, D::Error> {
         let item_query = self.item_paths.items();
         let mut functions = Vec::new();
@@ -102,7 +142,8 @@ where
                 indexed_trait_functions = indexed_functions.functions().cloned();
             }
 
-            let Some(trait_impl_match) = self.trait_impl_match(trait_impl, receiver_ty)? else {
+            let Some(trait_impl_match) = self.trait_impl_match(trait_impl, receiver_ty, options)?
+            else {
                 continue;
             };
             let (applicability, _) = trait_impl_match.into_parts();
@@ -150,7 +191,8 @@ where
     fn trait_impl_match(
         &self,
         trait_impl: TraitImplRef,
-        receiver_ty: &NominalTy,
+        receiver_ty: &AdtTy,
+        options: TraitSelectionOptions,
     ) -> Result<Option<TraitImplMatch>, D::Error> {
         let item_query = self.item_paths.items();
         let Some(impl_data) = item_query.impl_data(trait_impl.impl_ref)? else {
@@ -158,208 +200,65 @@ where
         };
         if !impl_data.resolved_self_ty.is(&receiver_ty.def)
             || !impl_data.resolved_trait_ref.is(&trait_impl.trait_ref)
+            || !options.accepts_impl_header(impl_data)
         {
             return Ok(None);
         }
 
-        let header_applicability = Self::impl_header_applicability(impl_data);
-        if Self::trait_selection_can_check_method_lookup_impl(impl_data, receiver_ty) {
-            return self.trait_selection_impl_match(
-                trait_impl,
-                impl_data,
-                receiver_ty,
-                header_applicability,
-            );
-        }
-
-        let applicability = header_applicability.and(self.impl_self_args_applicability(
-            trait_impl.impl_ref,
-            impl_data,
-            receiver_ty,
-        )?);
-        if !applicability.is_applicable() {
+        let Some(header) = self.impl_header(trait_impl.impl_ref)? else {
             return Ok(None);
-        }
-
-        Ok(Some(TraitImplMatch::new(
-            applicability,
-            self.impl_self_subst_for_impl(impl_data, receiver_ty),
-        )))
-    }
-
-    /// Reuse bounded trait selection for the receiver-proof part of trait method lookup.
-    ///
-    /// Method lookup starts from visible impls and only asks whether their self type can apply to a
-    /// receiver. Generic trait arguments are not caller-supplied here, so this bridge is limited to
-    /// non-generic trait paths and direct/concrete receiver headers. More uncertain headers keep
-    /// using the older maybe-applicable path below.
-    fn trait_selection_impl_match(
-        &self,
-        trait_impl: TraitImplRef,
-        impl_data: &ImplData,
-        receiver_ty: &NominalTy,
-        header_applicability: TraitApplicability,
-    ) -> Result<Option<TraitImplMatch>, D::Error> {
-        let goal = TraitGoal {
-            self_ty: Ty::nominal(receiver_ty.clone()),
-            trait_ref: trait_impl.trait_ref,
-            args: Vec::new(),
         };
-        let table = InferenceTable::new();
-        let Some(selection) = TraitSelectionQuery::probe_visible_trait_impl(
-            &self.item_paths,
-            &self.crate_items,
-            &goal,
-            &table,
-            trait_impl,
-            TraitSelectionOptions::new().header_only(),
-        )?
+        let Some((subst, self_applicability)) =
+            Self::impl_self_subst(&header, &Ty::adt(receiver_ty.clone()))
         else {
             return Ok(None);
         };
+        let mut applicability = self_applicability;
 
-        Ok(Some(TraitImplMatch::new(
-            header_applicability.and(selection.applicability),
-            self.impl_self_subst_for_impl(impl_data, receiver_ty),
-        )))
-    }
-
-    /// Performs the trait-impl self-type argument check with uncertainty preserved.
-    ///
-    /// Generic or syntax-only pieces produce `Maybe` instead of being rejected, because callers can
-    /// still show useful trait-method candidates when a full proof is outside this small model.
-    fn impl_self_args_applicability(
-        &self,
-        impl_ref: ImplRef,
-        impl_data: &ImplData,
-        receiver_ty: &NominalTy,
-    ) -> Result<TraitApplicability, D::Error> {
-        // This mirrors inherent impl matching, but returns `Maybe` instead of rejecting patterns
-        // that contain generic parameters or unsupported pieces we intentionally do not solve.
-        let TypeRef::Path(self_ty) = &impl_data.self_ty else {
-            return Ok(TraitApplicability::Maybe);
-        };
-        let Some(segment) = self_ty.segments.last() else {
-            return Ok(TraitApplicability::Maybe);
-        };
-
-        let Some(impl_type_args) = Self::item_tree_type_args(&segment.args) else {
-            return Ok(TraitApplicability::Maybe);
-        };
-        let Some(receiver_type_args) = Self::ty_args(&receiver_ty.args) else {
-            return Ok(TraitApplicability::Maybe);
-        };
-        if impl_type_args.len() != receiver_type_args.len() {
-            return Ok(TraitApplicability::Maybe);
-        }
-
-        let impl_type_params = Self::impl_type_param_names(&impl_data.generics);
-        let mut applicability = TraitApplicability::Yes;
-
-        for (impl_arg, receiver_arg) in impl_type_args.into_iter().zip(receiver_type_args) {
-            if impl_arg.mentions_type_param(&impl_type_params) {
-                applicability = applicability.and(TraitApplicability::Maybe);
-                continue;
-            }
-
-            let context = TypePathContext {
-                module: impl_data.owner,
-                impl_ref: Some(impl_ref),
+        // Receiver matching above already used this exact canonical header. Method lookup either
+        // rejects predicates or deliberately leaves them to Body IR, so submitting a goal rebuilt
+        // from the same impl would only match the candidate against itself a second time. Keep the
+        // full selection path for strict callers that actually ask Chalk to prove the predicates.
+        if options.should_solve_impl_predicates() {
+            let Some(mut trait_ref) = header.trait_ref.clone() else {
+                return Ok(None);
             };
-            let impl_arg_ty = self.item_paths.resolve_type_ref(
-                impl_arg,
-                context,
-                Ty::syntax(impl_arg.clone()),
-                &TypeSubst::new(),
-            )?;
-            if Self::type_arg_comparison_is_uncertain(&impl_arg_ty)
-                || Self::type_arg_comparison_is_uncertain(&receiver_arg)
-            {
-                applicability = applicability.and(TraitApplicability::Maybe);
-                continue;
-            }
-
-            if impl_arg_ty != receiver_arg {
-                return Ok(TraitApplicability::No);
-            }
-        }
-
-        Ok(applicability)
-    }
-
-    /// Return whether method lookup can use bounded trait selection without losing maybe-results.
-    fn trait_selection_can_check_method_lookup_impl(
-        impl_data: &ImplData,
-        receiver_ty: &NominalTy,
-    ) -> bool {
-        let header_is_supported = impl_data.generics.where_predicates.is_empty()
-            && impl_data
-                .generics
-                .lifetimes
+            trait_ref.application.args = trait_ref
+                .application
+                .args
                 .iter()
-                .all(|param| param.bounds.is_empty())
-            && impl_data
-                .generics
-                .types
-                .iter()
-                .all(|param| param.bounds.is_empty() && param.default.is_none())
-            && impl_data.generics.consts.is_empty()
-            && impl_data
-                .trait_ref
-                .as_ref()
-                .is_some_and(|trait_ref| !trait_ref.has_generic_args());
-        if !header_is_supported {
-            return false;
+                .map(|arg| subst.apply_arg(arg))
+                .collect();
+            trait_ref.associated_types = trait_ref
+                .associated_types
+                .into_iter()
+                .map(|binding| crate::AssocTypeBinding {
+                    associated_ty: binding.associated_ty,
+                    ty: subst.apply(&binding.ty),
+                })
+                .collect();
+            let goal = crate::TraitGoal::from_lowering(trait_ref);
+            let table = crate::inference::InferenceTable::new();
+            let Some(selection) = TraitSelectionQuery::probe_visible_trait_impl(
+                &self.item_paths,
+                &self.crate_items,
+                &goal,
+                &table,
+                trait_impl,
+                &header,
+                options,
+                &self.trait_selection_cache,
+            )?
+            else {
+                return Ok(None);
+            };
+            applicability = applicability.and(selection.applicability);
         }
 
-        let TypeRef::Path(self_ty) = &impl_data.self_ty else {
-            return false;
-        };
-        let Some(segment) = self_ty.segments.last() else {
-            return false;
-        };
-        let impl_lifetime_params = Self::impl_lifetime_param_names(&impl_data.generics);
-        let impl_type_params = Self::impl_type_param_names(&impl_data.generics);
-
-        item_generic_args_align(
-            &segment.args,
-            &receiver_ty.args,
-            &impl_lifetime_params,
-            |impl_arg, receiver_arg| {
-                Ok::<bool, std::convert::Infallible>(
-                    Self::non_lifetime_trait_selection_can_check_method_lookup_arg(
-                        impl_arg,
-                        receiver_arg,
-                        &impl_type_params,
-                    ),
-                )
-            },
-        )
-        .expect("method lookup arg alignment is infallible")
-    }
-
-    /// Keep non-lifetime consts, assoc bindings, and nested generic patterns on the
-    /// maybe-compatible path.
-    fn non_lifetime_trait_selection_can_check_method_lookup_arg(
-        impl_arg: &ItemGenericArg,
-        receiver_arg: &GenericArg,
-        impl_type_params: &[&str],
-    ) -> bool {
-        debug_assert!(
-            !matches!(impl_arg, ItemGenericArg::Lifetime(_)),
-            "item_generic_args_align consumes item-side lifetime args"
-        );
-
-        match (impl_arg, receiver_arg) {
-            (ItemGenericArg::Type(impl_ty), GenericArg::Type(_)) => {
-                impl_ty
-                    .type_param_name()
-                    .as_deref()
-                    .is_some_and(|name| impl_type_params.contains(&name))
-                    || !impl_ty.mentions_type_param(impl_type_params)
-            }
-            _ => false,
+        if options.leaves_impl_predicates_to_caller() && !header.clauses.is_empty() {
+            applicability = applicability.and(TraitApplicability::Maybe);
         }
+        Ok(Some(TraitImplMatch::new(applicability, subst)))
     }
 
     fn push_function_candidate(

@@ -3,11 +3,11 @@
 use rg_def_map::DefMapSource;
 use rg_ir_model::{AssocItemId, DefMapRef, ImplRef, TypeAliasRef};
 use rg_package_store::PackageStoreError;
-use rg_semantic_ir::{ItemStoreSource, TypePathContext};
+use rg_semantic_ir::ItemStoreSource;
 use rg_std::UniqueVec;
-use rg_ty::{GenericArg, NominalTy, Ty, TypeSubst};
+use rg_ty::AdtTy;
 
-use crate::resolution::{BodyResolutionContext, TypeRefUseSite};
+use crate::resolution::BodyResolutionContext;
 
 /// Projects type aliases into concrete types.
 ///
@@ -28,7 +28,7 @@ where
     /// Find an associated type alias with this name for the given type.
     pub(crate) fn associated_alias_for_type(
         &self,
-        ty: &NominalTy,
+        ty: &AdtTy,
         name: &str,
     ) -> Result<Option<TypeAliasRef>, PackageStoreError> {
         // Block-local impls can add aliases even to crate-origin types, e.g.
@@ -60,7 +60,7 @@ where
     fn associated_alias_for_impls(
         &self,
         impls: UniqueVec<ImplRef>,
-        ty: &NominalTy,
+        ty: &AdtTy,
         name: &str,
     ) -> Result<Option<TypeAliasRef>, PackageStoreError> {
         let item_query = self.context.item_query();
@@ -94,73 +94,5 @@ where
         }
 
         Ok(None)
-    }
-
-    /// Project an associated alias using receiver substitutions.
-    pub(crate) fn ty_from_associated_alias(
-        &self,
-        alias_ref: TypeAliasRef,
-        receiver_ty: &NominalTy,
-        args: &[GenericArg],
-    ) -> Result<Ty, PackageStoreError> {
-        let item_query = self.context.item_query();
-        let Some(alias_data) = item_query.type_alias_data(alias_ref)? else {
-            return Ok(Ty::Unknown);
-        };
-        let Some(aliased_ty) = alias_data.signature.aliased_ty() else {
-            return Ok(Ty::Unknown);
-        };
-        if aliased_ty.is_self_type() {
-            return Ok(Ty::nominal(receiver_ty.clone()));
-        }
-
-        let mut alias_subst = self.context.generics().subst_for_receiver_owner(
-            alias_ref.origin,
-            alias_data.owner,
-            receiver_ty,
-        )?;
-        if let Some(generics) = alias_data.signature.generics() {
-            alias_subst.extend(TypeSubst::from_generics(generics, args));
-        }
-
-        let context = item_query
-            .type_path_context_for_owner(alias_ref.origin, alias_data.owner)?
-            .unwrap_or_else(|| TypePathContext::module(self.context.body().owner_module()));
-        self.context
-            .type_refs(TypeRefUseSite::OwnerContext(context))
-            .with_subst(&alias_subst)
-            .resolve(aliased_ty)
-    }
-
-    /// Project one ordinary type alias into a type.
-    pub(crate) fn ty_from_alias(
-        &self,
-        alias_ref: TypeAliasRef,
-        args: &[GenericArg],
-        subst: &TypeSubst,
-    ) -> Result<Ty, PackageStoreError> {
-        let item_query = self.context.item_query();
-        let Some(alias_data) = item_query.type_alias_data(alias_ref)? else {
-            return Ok(Ty::Unknown);
-        };
-        let Some(aliased_ty) = alias_data.signature.aliased_ty() else {
-            return Ok(Ty::Unknown);
-        };
-        if aliased_ty.is_self_type() {
-            return Ok(Ty::Unknown);
-        }
-
-        let mut alias_subst = subst.clone();
-        if let Some(generics) = alias_data.signature.generics() {
-            alias_subst.extend(TypeSubst::from_generics(generics, args));
-        }
-
-        let context = item_query
-            .type_path_context_for_owner(alias_ref.origin, alias_data.owner)?
-            .unwrap_or_else(|| TypePathContext::module(self.context.body().owner_module()));
-        self.context
-            .type_refs(TypeRefUseSite::OwnerContext(context))
-            .with_subst(&alias_subst)
-            .resolve(aliased_ty)
     }
 }

@@ -103,15 +103,9 @@ where
         // Builtins produce compiler-known types, but some fixtures and partial workspaces cannot
         // resolve the corresponding `core` paths. Keep those cases unknown instead of surfacing
         // synthetic syntax as if the user had written it.
-        let ty = self
-            .context
+        self.context
             .type_refs(TypeRefUseSite::Scope(expr_data.scope))
-            .resolve(&ty)?;
-        Ok(if matches!(ty, Ty::Syntax(_)) {
-            Ty::Unknown
-        } else {
-            ty
-        })
+            .resolve(&ty)
     }
 
     fn synthetic_type_path(

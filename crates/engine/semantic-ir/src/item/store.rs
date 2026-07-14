@@ -1,7 +1,7 @@
 use rg_arena::Arena;
 use rg_ir_model::{
     ConstId, ConstRef, CrateRef, DefMapRef, EnumId, FunctionId, FunctionRef, ImplId, ImplRef,
-    ItemId, LocalDefId, SemanticItemRef, StaticId, StaticRef, StructId, TraitId, TraitRef,
+    ItemId, LocalDefId, SemanticItemRef, StaticId, StaticRef, StructId, TraitDefRef, TraitId,
     TypeAliasId, TypeAliasRef, TypeDefId, TypeDefRef, UnionId,
 };
 use rg_std::{ExpectedUnique, MemorySize, Shrink};
@@ -134,7 +134,7 @@ impl ItemStore {
         &mut self,
         id: ImplId,
         resolved_self_ty: ExpectedUnique<TypeDefRef>,
-        resolved_trait_ref: ExpectedUnique<TraitRef>,
+        resolved_trait_ref: ExpectedUnique<TraitDefRef>,
     ) -> Option<()> {
         let data = self.impls.get_mut(id)?;
         data.resolved_self_ty = resolved_self_ty;
@@ -163,10 +163,10 @@ impl ItemStore {
         self.local_items.get(local_def).copied().flatten()
     }
 
-    pub fn traits_with_refs(&self) -> impl Iterator<Item = (TraitRef, &TraitData)> {
+    pub fn traits_with_refs(&self) -> impl Iterator<Item = (TraitDefRef, &TraitData)> {
         self.traits
             .iter_with_ids()
-            .map(move |(id, data)| (TraitRef::new(self.origin, id), data))
+            .map(move |(id, data)| (TraitDefRef::new(self.origin, id), data))
     }
 
     pub fn impls_with_refs(&self) -> impl Iterator<Item = (ImplRef, &ImplData)> {
@@ -273,7 +273,7 @@ impl ItemStore {
             }))
             .chain(self.traits.iter_with_ids().map(move |(id, data)| {
                 SemanticItemView::new(
-                    TraitRef { origin, id }.into(),
+                    TraitDefRef { origin, id }.into(),
                     SemanticItemData::Trait(data),
                 )
             }))

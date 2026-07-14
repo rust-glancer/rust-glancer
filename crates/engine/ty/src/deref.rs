@@ -10,7 +10,8 @@ use rg_std::UniqueVec;
 use rg_text::Name;
 
 use crate::{
-    ImplMatcher, ItemPathQuery, NominalTy, Ty, TypeSubst, associated_type::AssociatedTypeResolver,
+    AdtTy, ImplMatcher, ItemPathQuery, Substitution, TraitSelectionCache, Ty,
+    associated_type::AssociatedTypeResolver,
 };
 
 /// Resolves the associated `Target` type for applicable `core::ops::Deref` impls.
@@ -19,6 +20,7 @@ pub(crate) struct DerefResolver<'query, D, I> {
     item_paths: ItemPathQuery<'query, D, I>,
     crate_items: CrateItemQuery<'query, D, I>,
     lookup_index: &'query ItemLookupIndex,
+    trait_selection_cache: TraitSelectionCache,
 }
 
 impl<'query, D, I> DerefResolver<'query, D, I>
@@ -30,11 +32,13 @@ where
         item_paths: ItemPathQuery<'query, D, I>,
         crate_items: CrateItemQuery<'query, D, I>,
         lookup_index: &'query ItemLookupIndex,
+        trait_selection_cache: TraitSelectionCache,
     ) -> Self {
         Self {
             item_paths,
             crate_items,
             lookup_index,
+            trait_selection_cache,
         }
     }
 
@@ -43,7 +47,7 @@ where
         // TODO: Add `DerefMut` once receiver contexts carry enough mutability information to
         // distinguish mutable adjustment from shared `Deref`.
         let mut targets = UniqueVec::new();
-        for receiver_ty in ty.as_nominals() {
+        for receiver_ty in ty.as_adts() {
             for target in self.targets_for_nominal(receiver_ty)? {
                 targets.push(target);
             }
@@ -55,8 +59,9 @@ where
     ///
     /// For `impl<T> core::ops::Deref for Wrapper<T> { type Target = T; }` and receiver
     /// `Wrapper<User>`, this resolves the target as `User`.
-    fn targets_for_nominal(&self, receiver_ty: &NominalTy) -> Result<UniqueVec<Ty>, D::Error> {
-        let matcher = ImplMatcher::new(self.item_paths.clone(), self.crate_items.clone());
+    fn targets_for_nominal(&self, receiver_ty: &AdtTy) -> Result<UniqueVec<Ty>, D::Error> {
+        let matcher = ImplMatcher::new(self.item_paths.clone(), self.crate_items.clone())
+            .with_cache(self.trait_selection_cache.clone());
         let item_query = self.item_paths.items();
         let mut targets = UniqueVec::new();
         let trait_impls = self
@@ -117,7 +122,7 @@ where
         &self,
         trait_impl: TraitImplRef,
         impl_data: &ImplData,
-        subst: &TypeSubst,
+        subst: &Substitution,
     ) -> Result<Option<Ty>, D::Error> {
         AssociatedTypeResolver::new(&self.item_paths, &self.crate_items)
             .associated_type_from_impl(trait_impl, impl_data, "Target", subst)

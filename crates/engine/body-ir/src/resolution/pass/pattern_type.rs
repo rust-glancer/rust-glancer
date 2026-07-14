@@ -43,15 +43,33 @@ where
         let mut updates = Vec::new();
 
         // Function parameters are flattened into bindings for body consumers, but
-        // destructuring annotations still need the original root pattern.
-        for param in self.context.body().function_params() {
-            let (Some(pat), Some(annotation)) = (param.pat, param.annotation.as_ref()) else {
+        // destructuring still needs the original root pattern. Use the canonical signature so
+        // APIT, inherited generics, and inherent `Self` keep the same identity as call inference.
+        let signature = self
+            .context
+            .body()
+            .function_owner()
+            .map(|function| self.context.signatures().function(function))
+            .transpose()?
+            .flatten();
+        for (param_index, param) in self.context.body().function_params().iter().enumerate() {
+            let Some(pat) = param.pat else {
                 continue;
             };
-            let expected_ty = self
-                .context
-                .type_refs(TypeRefUseSite::Scope(self.context.body().param_scope()))
-                .resolve(annotation)?;
+            let expected_ty = match signature
+                .as_ref()
+                .and_then(|signature| signature.params.get(param_index))
+            {
+                Some(ty) => ty.clone(),
+                None => {
+                    let Some(annotation) = param.annotation.as_ref() else {
+                        continue;
+                    };
+                    self.context
+                        .type_refs(TypeRefUseSite::Scope(self.context.body().param_scope()))
+                        .resolve(annotation)?
+                }
+            };
             self.propagate_pat(pat, &expected_ty, &mut updates)?;
         }
 
@@ -386,7 +404,7 @@ where
         // Record patterns project a field out of the expected nominal type. References are peeled
         // here as pattern matching does, without using receiver autoderef.
         for candidate in ReferencePeelingCandidates::new(expected_ty) {
-            for nominal_ty in candidate.ty().as_nominals() {
+            for nominal_ty in candidate.ty().as_adts() {
                 match nominal_ty.def.id {
                     TypeDefId::Struct(_) | TypeDefId::Union(_) => {
                         if let Some(field_ty) = self
@@ -439,7 +457,7 @@ where
         for deref_candidate in ReferencePeelingCandidates::new(expected_ty) {
             for enum_ty in deref_candidate
                 .ty()
-                .as_nominals()
+                .as_adts()
                 .iter()
                 .filter(|ty| matches!(ty.def.id, TypeDefId::Enum(_)))
             {

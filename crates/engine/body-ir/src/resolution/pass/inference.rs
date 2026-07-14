@@ -6,16 +6,13 @@
 
 use rg_def_map::DefMapSource;
 use rg_ir_model::{
-    BindingId, EnumVariantRef, ExprId, PatId, ScopeId, StmtId,
+    BindingId, EnumVariantRef, ExprId, GenericDefRef, PatId, ScopeId, StmtId,
     identity::DeclarationRef,
-    items::{FieldKey, FieldList, GenericParams, TypeRef},
+    items::{FieldKey, TypeRef},
 };
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::ItemStoreSource;
-use rg_ty::{
-    NominalTy, Ty,
-    inference::{InferenceTypeRefProjector, InferenceTypeSubst},
-};
+use rg_ty::{AdtTy, Substitution, Ty};
 
 use crate::{
     ir::{
@@ -162,20 +159,85 @@ where
     }
 
     /// Rebuild copied expression facts after child slots may have gained `?T`.
-    fn refresh_inference_dependent_expr_facts(&mut self) -> Result<(), PackageStoreError> {
+    fn refresh_inference_dependent_expr_facts(&mut self) -> Result<bool, PackageStoreError> {
+        let mut any_changed = false;
         let max_passes = self.pass.body.bindings().len() + self.pass.body.exprs().len() + 1;
         for _ in 0..max_passes {
             self.refresh_shape_expr_facts();
 
-            let mut changed = false;
-            changed |= self.refresh_member_projection_facts()?;
-            changed |= self.refresh_binding_flow_facts();
+            let member_changed = self.refresh_member_projection_facts()?;
+            let binding_changed = self.refresh_binding_flow_facts();
+            let method_changed = self.resolve_inference_unlocked_method_calls()?;
+            let changed = member_changed || binding_changed || method_changed;
+            any_changed |= changed;
             if !changed {
                 break;
             }
         }
 
-        Ok(())
+        Ok(any_changed)
+    }
+
+    /// Resolve method calls whose receiver only became known from body-local constraints.
+    fn resolve_inference_unlocked_method_calls(&mut self) -> Result<bool, PackageStoreError> {
+        let mut changed = false;
+
+        for expr_idx in 0..self.pass.body.exprs().len() {
+            let expr = ExprId(expr_idx);
+            if !matches!(
+                self.pass.body.expr_resolution(expr),
+                BodyResolution::Unknown
+            ) {
+                continue;
+            }
+            let ExprKind::MethodCall {
+                receiver: Some(receiver),
+                args,
+                ..
+            } = self.pass.body.expr_unchecked(expr).kind.clone()
+            else {
+                continue;
+            };
+
+            let receiver_ty = self.pass.inference.root_resolved_expr_ty(receiver);
+            if receiver_ty.has_var() || matches!(receiver_ty, Ty::Unknown) {
+                continue;
+            }
+
+            // A later call in the same chain can constrain a closure parameter used by an earlier
+            // method expression. Select from that live receiver fact so stored resolution and the
+            // inference target cannot disagree merely because the first body walk saw `unknown`.
+            let resolution = {
+                let context = self.pass.providers.context(self.pass.body);
+                let targets = context
+                    .calls()
+                    .method_targets_with_receiver_ty(expr, &receiver_ty)?;
+                if targets.is_empty() {
+                    continue;
+                }
+                targets.resolution()
+            };
+            self.pass.body.set_expr_resolution(expr, resolution);
+
+            let context = self.pass.providers.context(self.pass.body);
+            let calls = BodyCallInference::new(context);
+            calls.instantiate_return_fact(&mut self.pass.inference, expr, &args, Some(receiver))?;
+            calls.solve_generic_trait_obligations(
+                &mut self.pass.inference,
+                expr,
+                &args,
+                Some(receiver),
+            )?;
+            calls.project_selected_trait_associated_return_type(
+                &mut self.pass.inference,
+                expr,
+                &args,
+                Some(receiver),
+            )?;
+            changed = true;
+        }
+
+        Ok(changed)
     }
 
     /// Make `let second = first;` chains share one inference slot graph.
@@ -186,9 +248,9 @@ where
         let mut any_changed = false;
         let max_passes = self.pass.body.bindings().len() + self.pass.body.exprs().len() + 1;
         for _ in 0..max_passes {
-            let mut changed = false;
-            changed |= self.link_let_binding_initializers();
-            changed |= self.refresh_binding_path_expr_facts();
+            let initializer_changed = self.link_let_binding_initializers();
+            let path_changed = self.refresh_binding_path_expr_facts();
+            let changed = initializer_changed || path_changed;
             any_changed |= changed;
             if !changed {
                 break;
@@ -379,8 +441,12 @@ where
         args: &[ExprId],
     ) -> Result<(), PackageStoreError> {
         // Concrete parameter types can immediately constrain literals and transparent shapes.
-        let concrete_expectations =
-            BodyCallInference::new(self.pass.context()).argument_expected_tys(call, args)?;
+        let context = self.pass.providers.context(self.pass.body);
+        let concrete_expectations = BodyCallInference::new(context).argument_expected_tys(
+            &mut self.pass.inference,
+            call,
+            args,
+        )?;
         for (arg, expected_ty) in concrete_expectations {
             self.constrain_expr_with_expected(arg, &expected_ty);
         }
@@ -390,24 +456,6 @@ where
         let context = self.pass.providers.context(self.pass.body);
         // Generic parameter evidence needs the inference view so shared `?T` slots stay linked.
         BodyCallInference::new(context).constrain_function_generic_arguments(
-            &mut self.pass.inference,
-            call,
-            args,
-        )
-    }
-
-    /// Use inline `impl Fn*` syntax to solve matching closure arguments.
-    ///
-    /// Parameter expectations run earlier because they can affect method lookup inside the
-    /// closure body. This final inference hook exists for the inline `impl FnOnce(...) -> R`
-    /// shape: it can preserve shared slots such as `?R` and then reuse the callable-goal solver.
-    fn solve_direct_callable_closure_arguments(
-        &mut self,
-        call: ExprId,
-        args: &[ExprId],
-    ) -> Result<(), PackageStoreError> {
-        let context = self.pass.providers.context(self.pass.body);
-        BodyCallInference::new(context).solve_direct_callable_closure_arguments(
             &mut self.pass.inference,
             call,
             args,
@@ -446,17 +494,27 @@ where
 
     /// Visit all places that can provide expected types to already-created inference slots.
     fn constrain_expected_types(&mut self) -> Result<(), PackageStoreError> {
+        // Written annotations allocate inference variables for `_`. They are stable inputs to the
+        // body, so lower them once before the fixed point instead of replacing those variables on
+        // every pass.
         for statement_idx in 0..self.pass.body.statements().len() {
             self.constrain_statement_expected_types(StmtId(statement_idx))?;
         }
-        for expr_idx in 0..self.pass.body.exprs().len() {
-            self.constrain_expr_expected_types(ExprId(expr_idx))?;
-        }
         self.constrain_function_return_expected_types()?;
 
-        // Some constraints solve binding slots that path expressions copied before inference ran.
-        // Refresh dependent facts once so finalization sees those solved locals through later reads.
-        self.refresh_inference_dependent_expr_facts()?;
+        let max_passes = self.pass.body.bindings().len() + self.pass.body.exprs().len() + 1;
+        for _ in 0..max_passes {
+            for expr_idx in 0..self.pass.body.exprs().len() {
+                self.constrain_expr_expected_types(ExprId(expr_idx))?;
+            }
+
+            // Calls can constrain closure parameters, which can unlock method resolution inside
+            // those closures and in turn provide return evidence to a later adapter in the chain.
+            // Repeat only while such dependent facts actually change.
+            if !self.refresh_inference_dependent_expr_facts()? {
+                break;
+            }
+        }
 
         Ok(())
     }
@@ -493,23 +551,23 @@ where
         annotation: TypeRef,
         initializer: ExprId,
     ) -> Result<(), PackageStoreError> {
-        let expected_ty = self
-            .pass
-            .context()
+        let (providers, body, inference) = (
+            &self.pass.providers,
+            &*self.pass.body,
+            &mut self.pass.inference,
+        );
+        let expected_ty = providers
+            .context(body)
             .type_refs(TypeRefUseSite::Scope(scope))
-            .resolve(&annotation)?;
-        let (expected_infer_ty, used_annotation_vars) = self
-            .pass
-            .inference
-            .instantiate_written_infer_ty(&annotation, &expected_ty);
+            .resolve_with_inference(&annotation, inference.table_mut())?;
 
         // `let value: Vec<_> = make_vec();` needs the written `_` to become a real inference
         // slot before call obligations run, otherwise `Vec<unknown>` cannot absorb trait evidence.
-        if used_annotation_vars {
+        if expected_ty.has_var() {
             self.pass
                 .inference
-                .constrain_expr_infer_ty(initializer, &expected_infer_ty);
-            self.constrain_single_binding_annotation(pat, &expected_infer_ty);
+                .constrain_expr_ty(initializer, &expected_ty);
+            self.constrain_single_binding_annotation(pat, &expected_ty);
         }
 
         self.constrain_expr_with_expected(initializer, &expected_ty);
@@ -549,9 +607,8 @@ where
                 args,
             } => {
                 self.constrain_call_target_argument_expected_types(expr, &args)?;
-                self.solve_direct_callable_closure_arguments(expr, &args)?;
-                self.project_selected_trait_associated_return_type(expr, &args, None)?;
                 self.solve_call_target_generic_trait_obligations(expr, &args, None)?;
+                self.project_selected_trait_associated_return_type(expr, &args, None)?;
                 self.constrain_enum_variant_payload_expected_types(expr, callee, args)
             }
             ExprKind::MethodCall {
@@ -560,7 +617,6 @@ where
                 ..
             } => {
                 self.constrain_call_target_argument_expected_types(expr, &args)?;
-                self.solve_direct_callable_closure_arguments(expr, &args)?;
 
                 let context = self.pass.providers.context(self.pass.body);
                 BodyCallInference::new(context).constrain_selected_method_receiver_and_arguments(
@@ -569,14 +625,13 @@ where
                     receiver,
                     &args,
                 )?;
-                self.project_selected_trait_associated_return_type(expr, &args, Some(receiver))?;
-                self.solve_call_target_generic_trait_obligations(expr, &args, Some(receiver))
+                self.solve_call_target_generic_trait_obligations(expr, &args, Some(receiver))?;
+                self.project_selected_trait_associated_return_type(expr, &args, Some(receiver))
             }
             ExprKind::MethodCall { args, .. } => {
                 self.constrain_call_target_argument_expected_types(expr, &args)?;
-                self.solve_direct_callable_closure_arguments(expr, &args)?;
-                self.project_selected_trait_associated_return_type(expr, &args, None)?;
-                self.solve_call_target_generic_trait_obligations(expr, &args, None)
+                self.solve_call_target_generic_trait_obligations(expr, &args, None)?;
+                self.project_selected_trait_associated_return_type(expr, &args, None)
             }
             ExprKind::Record { fields, .. } => {
                 self.constrain_record_field_initializer_expected_types(expr, fields)
@@ -624,7 +679,7 @@ where
         };
         let (variant_ref, enum_ty) = if let Some(DeclarationRef::EnumVariant(variant_ref)) =
             declarations.as_one()
-            && let [enum_ty] = self.pass.body.expr_ty_unchecked(call).as_nominals()
+            && let [enum_ty] = self.pass.body.expr_ty_unchecked(call).as_adts()
         {
             (*variant_ref, enum_ty.clone())
         } else {
@@ -646,14 +701,7 @@ where
             };
 
             self.constrain_expr_with_expected(arg, &expected_ty);
-            self.constrain_enum_variant_payload_infer_ty(
-                call,
-                arg,
-                &enum_ty,
-                variant_ref,
-                index,
-                &expected_ty,
-            )?;
+            self.constrain_enum_variant_payload_infer_ty(call, arg, &enum_ty, variant_ref, index)?;
         }
 
         Ok(())
@@ -666,69 +714,46 @@ where
         &mut self,
         call: ExprId,
         arg: ExprId,
-        enum_ty: &NominalTy,
+        enum_ty: &AdtTy,
         variant_ref: EnumVariantRef,
         field_index: usize,
-        resolved_field_ty: &Ty,
     ) -> Result<(), PackageStoreError> {
-        let item_query = self.pass.context().item_query();
-        let Some(variant_data) = item_query.enum_variant_data(variant_ref)? else {
+        let Some(subst) = self.live_nominal_subst(call, enum_ty)? else {
             return Ok(());
         };
-        let Some(field_ty) =
-            Self::tuple_variant_field_ty_ref(&variant_data.variant.fields, field_index).cloned()
+        let Some(field_ty) = self
+            .pass
+            .context()
+            .signatures()
+            .enum_variant_field_ty(variant_ref, field_index)?
         else {
             return Ok(());
         };
-        let Some(generics) = item_query
-            .generic_params_for_type_def(enum_ty.def)?
-            .cloned()
-        else {
-            return Ok(());
-        };
-
-        let subst = self
-            .infer_subst_for_nominal_expr(call, enum_ty, &generics)
-            .unwrap_or_default();
-
-        let expected_ty =
-            InferenceTypeRefProjector::new(&subst).ty_from_type_ref(&field_ty, resolved_field_ty);
-        self.pass
-            .inference
-            .constrain_expr_infer_ty(arg, &expected_ty);
+        let expected_ty = subst.apply(&field_ty);
+        self.pass.inference.constrain_expr_ty(arg, &expected_ty);
         Ok(())
     }
 
-    /// Bind generic params from a nominal expression result such as `Pair<?T>`.
-    fn infer_subst_for_nominal_expr(
-        &mut self,
+    /// Bind canonical generic identities from a nominal result such as `Pair<?T>`.
+    fn live_nominal_subst(
+        &self,
         expr: ExprId,
-        nominal_ty: &NominalTy,
-        generics: &GenericParams,
-    ) -> Option<InferenceTypeSubst> {
+        nominal_ty: &AdtTy,
+    ) -> Result<Option<Substitution>, PackageStoreError> {
         let infer_ty = self.pass.inference.expr_ty(expr);
         let infer_args = match infer_ty {
-            Ty::Nominal(infer_nominal_ty) | Ty::SelfTy(infer_nominal_ty)
-                if infer_nominal_ty.def == nominal_ty.def =>
-            {
+            Ty::Adt(infer_nominal_ty) if infer_nominal_ty.def == nominal_ty.def => {
                 infer_nominal_ty.args
             }
-            _ => return None,
+            _ => return Ok(None),
         };
-
-        let mut subst = InferenceTypeSubst::new();
-        self.pass
-            .inference
-            .bind_type_params_from_infer_args(&mut subst, generics, &infer_args);
-        Some(subst)
-    }
-
-    /// Find a variant field type syntax by the call-site payload position.
-    fn tuple_variant_field_ty_ref(fields: &FieldList, index: usize) -> Option<&TypeRef> {
-        match fields {
-            FieldList::Tuple(fields) => fields.get(index).map(|field| &field.ty),
-            FieldList::Named(_) | FieldList::Unit => None,
-        }
+        let generics = self
+            .pass
+            .context()
+            .item_paths()
+            .generics()
+            .generics(GenericDefRef::TypeDef(nominal_ty.def))?;
+        Ok(Some(Substitution::from_args(&generics, &infer_args)))
     }
 
     /// Use record type and field key to push declared field types into initializers.
@@ -737,7 +762,7 @@ where
         record: ExprId,
         fields: Vec<RecordExprField>,
     ) -> Result<(), PackageStoreError> {
-        let [record_ty] = self.pass.body.expr_ty_unchecked(record).as_nominals() else {
+        let [record_ty] = self.pass.body.expr_ty_unchecked(record).as_adts() else {
             return Ok(());
         };
         let record_ty = record_ty.clone();
@@ -761,15 +786,12 @@ where
             };
 
             self.constrain_expr_with_expected(value, &expected_ty);
-            if let Some(field_ty_ref) = target.ty_ref().cloned() {
-                self.constrain_record_field_initializer_infer_ty(
-                    record,
-                    value,
-                    &record_ty,
-                    &field_ty_ref,
-                    &expected_ty,
-                )?;
-            }
+            self.constrain_record_field_initializer_infer_ty(
+                record,
+                value,
+                &record_ty,
+                target.field(),
+            )?;
         }
 
         Ok(())
@@ -782,28 +804,17 @@ where
         &mut self,
         record: ExprId,
         value: ExprId,
-        record_ty: &NominalTy,
-        field_ty: &TypeRef,
-        resolved_field_ty: &Ty,
+        record_ty: &AdtTy,
+        field: rg_ir_model::FieldRef,
     ) -> Result<(), PackageStoreError> {
-        let Some(generics) = self
-            .pass
-            .context()
-            .item_query()
-            .generic_params_for_type_def(record_ty.def)?
-            .cloned()
-        else {
+        let Some(subst) = self.live_nominal_subst(record, record_ty)? else {
             return Ok(());
         };
-        let Some(subst) = self.infer_subst_for_nominal_expr(record, record_ty, &generics) else {
+        let Some(field_ty) = self.pass.context().signatures().field_ty(field)? else {
             return Ok(());
         };
-
-        let expected_ty =
-            InferenceTypeRefProjector::new(&subst).ty_from_type_ref(field_ty, resolved_field_ty);
-        self.pass
-            .inference
-            .constrain_expr_infer_ty(value, &expected_ty);
+        let expected_ty = subst.apply(&field_ty);
+        self.pass.inference.constrain_expr_ty(value, &expected_ty);
         Ok(())
     }
 
@@ -924,6 +935,7 @@ where
                 Ty::Reference {
                     mutability: expected_mutability,
                     inner: expected_inner,
+                    ..
                 },
             ) if mutability == *expected_mutability => {
                 self.constrain_expr_with_expected(inner, expected_inner);
@@ -972,17 +984,21 @@ where
     }
 
     /// Accept missing array length, otherwise match it against element count.
-    fn array_len_matches_count(expected_len: &Option<String>, element_count: usize) -> bool {
-        expected_len
-            .as_deref()
-            .is_none_or(|len| len == element_count.to_string())
+    fn array_len_matches_count(expected_len: &rg_ty::ConstValue, element_count: usize) -> bool {
+        match expected_len {
+            rg_ty::ConstValue::Scalar(value) => *value == element_count as u128,
+            rg_ty::ConstValue::Param(_) | rg_ty::ConstValue::Unknown => true,
+        }
     }
 
     /// Accept missing array length, otherwise match it against repeat syntax text.
-    fn array_len_matches_text(expected_len: &Option<String>, len_text: Option<&str>) -> bool {
-        expected_len
-            .as_deref()
-            .is_none_or(|expected| len_text.is_none_or(|actual| actual == expected))
+    fn array_len_matches_text(expected_len: &rg_ty::ConstValue, len_text: Option<&str>) -> bool {
+        len_text.is_none_or(|actual| match expected_len {
+            rg_ty::ConstValue::Scalar(value) => {
+                rg_ty::ConstValue::from_syntax(actual) == rg_ty::ConstValue::Scalar(*value)
+            }
+            rg_ty::ConstValue::Param(_) | rg_ty::ConstValue::Unknown => true,
+        })
     }
 
     /// Writes finalized inference facts back into the body.

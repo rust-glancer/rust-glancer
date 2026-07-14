@@ -42,7 +42,7 @@ pub fn use_it(user: User) {
             - s0 parent <none>: v0
             - s1 parent s0: <none>
             bindings
-            - v0 param value `value`: T => syntax T @ 4:14-4:19
+            - v0 param value `value`: T => param T @ 4:14-4:19
             body
             expr e0 block s1 => () @ 4:29-4:31
 
@@ -188,9 +188,50 @@ pub fn use_it(user: User) {
             - s0 parent <none>: v0
             - s1 parent s0: <none>
             bindings
-            - v0 param value `value`: T => syntax T @ 8:22-8:27
+            - v0 param value `value`: T => param T @ 8:22-8:27
             body
             expr e0 block s1 => () @ 8:40-8:42
+        "#]],
+    );
+}
+
+#[test]
+fn keeps_impl_generic_self_type_when_clause_uses_self() {
+    check_project_body_ir(
+        r#"
+//- /Cargo.toml
+[package]
+name = "body_impl_clause_self_type"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub trait Marker {}
+pub struct Wrapper<T>(T);
+
+impl<T> Wrapper<T>
+where
+    Self: Marker,
+{
+    pub fn keep(self) -> Self {
+        self
+    }
+}
+"#,
+        expect![[r#"
+            package body_impl_clause_self_type
+
+            body_impl_clause_self_type [lib]
+            body b0 fn impl Wrapper<T>::keep @ 8:5-10:6
+            scopes
+            - s0 parent <none>: v0
+            - s1 parent s0: <none>
+            bindings
+            - v0 self_param self `self` => nominal struct body_impl_clause_self_type[lib]::crate::Wrapper<param T> @ 8:17-8:21
+            body
+            expr e1 block s1 => nominal struct body_impl_clause_self_type[lib]::crate::Wrapper<param T> @ 8:31-10:6
+              tail
+                expr e0 path self -> local v0 => nominal struct body_impl_clause_self_type[lib]::crate::Wrapper<param T> @ 9:9-9:13
         "#]],
     );
 }
@@ -340,7 +381,7 @@ pub fn expected_destination(def_map: &DefMap) {
             - s0 parent <none>: v0
             - s1 parent s0: <none>
             bindings
-            - v0 self_param self `&self` => <unknown> @ 24:17-24:22
+            - v0 self_param self `&self` => &[param T] @ 24:17-24:22
             body
             expr e2 block s1 => <unknown> @ 24:46-26:6
               tail
@@ -357,7 +398,7 @@ pub fn expected_destination(def_map: &DefMap) {
             - s0 parent <none>: v0
             - s1 parent s0: <none>
             bindings
-            - v0 self_param self `&self` => &Self struct storage[lib]::crate::DefMap @ 6:20-6:25
+            - v0 self_param self `&self` => &nominal struct storage[lib]::crate::DefMap @ 6:20-6:25
             body
             expr e2 block s1 => <unknown> @ 6:44-8:6
               tail
@@ -479,11 +520,11 @@ pub fn unrelated_collect(iter: NotIterator<User>) {
             - s0 parent <none>: v0
             - s1 parent s0: <none>
             bindings
-            - v0 self_param self `self` => Self struct body_conservative_trait_obligation_solving[lib]::crate::Iter<syntax T> @ 14:23-14:27
+            - v0 self_param self `self` => nominal struct body_conservative_trait_obligation_solving[lib]::crate::Iter<param T> @ 14:23-14:27
             body
-            expr e2 block s1 => <unknown> @ 17:5-19:6
+            expr e2 block s1 => param B @ 17:5-19:6
               tail
-                expr e1 call => <unknown> @ 18:9-18:18
+                expr e1 call => param B @ 18:9-18:18
                   callee
                     expr e0 path missing -> fn body_conservative_trait_obligation_solving[lib]::crate::missing => function item fn body_conservative_trait_obligation_solving[lib]::crate::missing @ 18:9-18:16
 
@@ -493,11 +534,11 @@ pub fn unrelated_collect(iter: NotIterator<User>) {
             - s0 parent <none>: v0
             - s1 parent s0: <none>
             bindings
-            - v0 self_param self `self` => Self struct body_conservative_trait_obligation_solving[lib]::crate::NotIterator<syntax T> @ 27:23-27:27
+            - v0 self_param self `self` => nominal struct body_conservative_trait_obligation_solving[lib]::crate::NotIterator<param T> @ 27:23-27:27
             body
-            expr e2 block s1 => <unknown> @ 27:34-29:6
+            expr e2 block s1 => param B @ 27:34-29:6
               tail
-                expr e1 call => <unknown> @ 28:9-28:18
+                expr e1 call => param B @ 28:9-28:18
                   callee
                     expr e0 path missing -> fn body_conservative_trait_obligation_solving[lib]::crate::missing => function item fn body_conservative_trait_obligation_solving[lib]::crate::missing @ 28:9-28:16
         "#]],

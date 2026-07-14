@@ -130,12 +130,12 @@ where
                 });
                 Some(ItemId::Enum(id))
             }
-            ItemKind::Function(function_item) => Some(ItemId::Function(self.lower_function(
+            ItemKind::Function(fn_def) => Some(ItemId::Function(self.lower_function(
                 Some(local_def),
                 source,
                 ItemOwner::Module(owner),
                 item,
-                function_item,
+                fn_def,
             ))),
             ItemKind::Static(static_item) => Some(ItemId::Static(self.lower_static(
                 local_def,
@@ -259,14 +259,10 @@ where
                         self.lower_const(None, source, owner, item, const_item),
                     ));
                 }
-                ItemKind::Function(function_item) => {
-                    assoc_items.push(AssocItemId::Function(self.lower_function(
-                        None,
-                        source,
-                        owner,
-                        item,
-                        function_item,
-                    )));
+                ItemKind::Function(fn_def) => {
+                    assoc_items.push(AssocItemId::Function(
+                        self.lower_function(None, source, owner, item, fn_def),
+                    ));
                 }
                 ItemKind::TypeAlias(type_alias) => {
                     assoc_items.push(AssocItemId::TypeAlias(

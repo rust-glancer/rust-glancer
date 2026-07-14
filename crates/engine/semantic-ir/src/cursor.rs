@@ -392,13 +392,13 @@ impl SignatureCursorScanner<'_, '_> {
         generics: &GenericParams,
         file_id: FileId,
     ) {
-        for param in &generics.types {
+        for param in generics.types() {
             self.scan_type_bounds(context, &param.bounds, file_id);
             if let Some(default) = &param.default {
                 self.push_type_ref(context, default, file_id);
             }
         }
-        for param in &generics.consts {
+        for param in generics.consts() {
             if let Some(ty) = &param.ty {
                 self.push_type_ref(context, ty, file_id);
             }

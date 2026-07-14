@@ -9,7 +9,7 @@ use rg_ir_model::{FieldRef, FunctionRef, TraitApplicability, TypeDefRef};
 use rg_semantic_ir::{CrateItemQuery, ItemLookupIndex, ItemStoreSource};
 use rg_std::UniqueVec;
 
-use crate::{Autoderef, AutoderefMode, ImplMatcher, ItemPathQuery, NominalTy, Ty};
+use crate::{AdtTy, Autoderef, AutoderefMode, ImplMatcher, ItemPathQuery, Ty};
 
 /// One callable member selected for a receiver type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -79,7 +79,7 @@ where
         let mut fields = Vec::new();
         for candidate in self.autoderef().candidates(AutoderefMode::FieldLookup, ty) {
             let candidate = candidate?;
-            for receiver_ty in candidate.ty().as_nominals() {
+            for receiver_ty in candidate.ty().as_adts() {
                 fields.extend(self.fields_for_type_def(receiver_ty.def)?);
             }
         }
@@ -102,7 +102,7 @@ where
             .candidates(AutoderefMode::MethodReceiver, ty)
         {
             let candidate = candidate?;
-            for receiver_ty in candidate.ty().as_nominals() {
+            for receiver_ty in candidate.ty().as_adts() {
                 methods.extend(self.method_candidates_for_nominal(receiver_ty)?);
             }
         }
@@ -111,7 +111,7 @@ where
 
     fn method_candidates_for_nominal(
         &self,
-        receiver_ty: &NominalTy,
+        receiver_ty: &AdtTy,
     ) -> Result<Vec<MemberMethodCandidateRef>, D::Error> {
         let mut candidates = Vec::new();
         let matcher = ImplMatcher::new(self.item_paths.clone(), self.crate_items.clone());
@@ -139,7 +139,7 @@ where
 
     fn inherent_functions_for_nominal(
         &self,
-        receiver_ty: &NominalTy,
+        receiver_ty: &AdtTy,
     ) -> Result<UniqueVec<FunctionRef>, D::Error> {
         self.lookup_index
             .inherent_functions_for_type(self.item_paths.items(), receiver_ty.def)

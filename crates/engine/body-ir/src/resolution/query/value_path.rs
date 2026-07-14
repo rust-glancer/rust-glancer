@@ -14,7 +14,7 @@ use rg_ir_model::{
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::{ItemStoreSource, TypePathContext};
 use rg_std::{ExpectedUnique, UniqueVec};
-use rg_ty::{ExpectedTyExt, GenericArg, NominalTy, Ty};
+use rg_ty::{AdtTy, ExpectedTyExt, GenericArg, Ty};
 
 use crate::ir::resolved::BodyResolution;
 use crate::resolution::{BodyResolutionContext, TypeRefUseSite};
@@ -38,7 +38,7 @@ enum BodyValueCandidate {
     Const(ConstRef),
     Static(StaticRef),
     /// Unit or tuple struct selected through the value namespace.
-    TypeConstructor(TypeDefRef, NominalTy),
+    TypeConstructor(TypeDefRef, AdtTy),
     EnumVariant(EnumVariantRef, Ty),
 }
 
@@ -106,10 +106,7 @@ where
             .resolve_in_scope(scope, path)?
         {
             TypePathResolution::SelfType(type_def) => {
-                return Ok((
-                    BodyResolution::Unknown,
-                    Ty::self_ty(NominalTy::bare(type_def)),
-                ));
+                return Ok((BodyResolution::Unknown, Ty::adt(AdtTy::bare(type_def))));
             }
             TypePathResolution::TypeDef(_)
             | TypePathResolution::TypeAlias(_)
@@ -288,7 +285,7 @@ where
                             {
                                 candidates.push(BodyValueCandidate::TypeConstructor(
                                     type_def,
-                                    NominalTy::bare(type_def),
+                                    AdtTy::bare(type_def),
                                 ));
                             }
                         }
@@ -327,7 +324,7 @@ where
                     match candidate {
                         BodyValueCandidate::Function(function) => {
                             declarations.push(DeclarationRef::from(function));
-                            tys.push(Ty::function_item(function));
+                            tys.push(Ty::fn_def(function));
                         }
                         BodyValueCandidate::Const(const_ref) => {
                             declarations.push(DeclarationRef::from(const_ref));
@@ -339,7 +336,7 @@ where
                         }
                         BodyValueCandidate::TypeConstructor(type_def, ty) => {
                             declarations.push(DeclarationRef::from(type_def));
-                            tys.push(Ty::nominal(ty));
+                            tys.push(Ty::adt(ty));
                         }
                         BodyValueCandidate::EnumVariant(variant_ref, ty) => {
                             declarations.push(DeclarationRef::EnumVariant(variant_ref));
@@ -409,8 +406,7 @@ where
                 .generic_params_for_type_def(variant_data.owner)?
                 .map(|generics| {
                     generics
-                        .types
-                        .iter()
+                        .types()
                         .map(|_| GenericArg::Type(Box::new(Ty::Unknown)))
                         .collect()
                 })
@@ -418,7 +414,7 @@ where
 
             Ok(Some(BodyValueCandidate::EnumVariant(
                 variant_ref,
-                Ty::nominal(NominalTy {
+                Ty::adt(AdtTy {
                     def: variant_data.owner,
                     args,
                 }),

@@ -79,6 +79,7 @@ where
 
 impl<'a, D, I> ItemStoreSource<'a> for BodyQuerySource<'a, D, I>
 where
+    D: Clone,
     I: ItemStoreSource<'a, Error = PackageStoreError>,
 {
     type Error = PackageStoreError;

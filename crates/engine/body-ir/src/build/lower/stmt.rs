@@ -5,7 +5,7 @@ use rg_syntax::{
     ast::{self, HasModuleItem as _, HasName as _, HasVisibility as _},
 };
 
-use rg_ir_model::{ExprId, FunctionParamData, Mutability, ScopeId, StmtId};
+use rg_ir_model::{ExprId, FunctionParamData, Mutability, ScopeId, StmtId, items::SelfParamKind};
 use rg_item_tree::{
     ConstItem, Documentation, EnumItem, ExternCrateItem, FromAst as _, FunctionItem, ImplItem,
     ImplItemContext, InnerDocs, ItemKind, ItemNode, ItemTreeId, MacroUseAttr, MaybeFromAst,
@@ -16,8 +16,7 @@ use rg_parse::Span;
 use rg_text::Name;
 
 use crate::ir::{
-    BindingData, BindingKind, BodySelfParamKind, BodySource, ExprBlockKind, ExprKind, StmtData,
-    StmtKind,
+    BindingData, BindingKind, BodySource, ExprBlockKind, ExprKind, StmtData, StmtKind,
 };
 
 use super::body::BodyLowering;
@@ -53,13 +52,13 @@ impl BodyLowering<'_> {
         let source = self.source(param.syntax());
         let annotation = param.ty().map(|ty| self.lower_type_ref(ty));
         let self_kind = if annotation.is_some() {
-            BodySelfParamKind::Explicit
+            SelfParamKind::Explicit
         } else if param.amp_token().is_some() {
-            BodySelfParamKind::Reference {
+            SelfParamKind::Reference {
                 mutability: Mutability::from_mut_token(param.mut_token().is_some()),
             }
         } else {
-            BodySelfParamKind::Value
+            SelfParamKind::Value
         };
         let binding = self.builder.alloc_binding(BindingData {
             source,

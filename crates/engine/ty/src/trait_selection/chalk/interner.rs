@@ -10,7 +10,7 @@ use chalk_ir::{
     ProjectionTy, QuantifiedWhereClause, QuantifiedWhereClauses, SeparatorTraitRef, Substitution,
     TraitId, TyData, TyKind, VariableKind, Variance, Variances,
 };
-use rg_ir_model::{FunctionRef, ImplRef, TraitRef, TypeAliasRef, TypeDefRef};
+use rg_ir_model::{FunctionRef, ImplRef, OpaqueTyRef, TraitDefRef, TypeAliasRef, TypeDefRef};
 
 use crate::ClosureTyId;
 
@@ -19,11 +19,11 @@ use crate::ClosureTyId;
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(super) enum ChalkDefId {
-    Trait(TraitRef),
+    Trait(TraitDefRef),
     Impl(ImplRef),
     AssocType(TypeAliasRef),
     AssocTypeValue(TypeAliasRef),
-    Opaque(u32),
+    Opaque(OpaqueTyRef),
     Function(FunctionRef),
     Closure(ClosureTyId),
     Coroutine(u32),

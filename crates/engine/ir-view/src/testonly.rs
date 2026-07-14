@@ -3,7 +3,7 @@ use rg_def_map::DefMap;
 use rg_def_map::DefMapDb;
 use rg_ir_model::{
     BodyId, BodyOwner, BodyRef, BodySource, CrateRef, DefMapRef, ExprData, ExprId, FunctionRef,
-    ItemOwner, ModuleRef, TraitRef, TypeDefId, TypeDefRef,
+    ItemOwner, ModuleRef, TraitDefRef, TypeDefId, TypeDefRef,
 };
 use rg_package_store::PackageLoader;
 use rg_parse::ParseDb;
@@ -159,7 +159,7 @@ impl ViewFixture {
         }
     }
 
-    pub fn render_trait_ref(&self, trait_ref: TraitRef) -> String {
+    pub fn render_trait_ref(&self, trait_ref: TraitDefRef) -> String {
         let items = self
             .body_ir
             .resident_item_store(trait_ref.origin)

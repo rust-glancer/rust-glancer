@@ -52,3 +52,100 @@ pub fn use_it() {
         "#]],
     );
 }
+
+#[test]
+fn preserves_instantiated_args_in_associated_projection_alias() {
+    check_project_body_ir(
+        r#"
+//- /Cargo.toml
+[package]
+name = "body_alias_projection_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub trait Iterator {
+    type Item;
+}
+
+pub struct Iter<T>(T);
+pub struct User;
+
+impl<T> Iterator for Iter<T> {
+    type Item = T;
+}
+
+pub type ItemOf<I: Iterator> = I::Item;
+
+pub fn use_it(value: ItemOf<Iter<User>>) {
+    value;
+}
+"#,
+        expect![[r#"
+            package body_alias_projection_fixture
+
+            body_alias_projection_fixture [lib]
+            body b0 fn body_alias_projection_fixture[lib]::crate::use_it @ 14:1-16:2
+            scopes
+            - s0 parent <none>: v0
+            - s1 parent s0: <none>
+            bindings
+            - v0 param value `value`: ItemOf<Iter<User>> => projection type trait body_alias_projection_fixture[lib]::crate::Iterator::Item<nominal struct body_alias_projection_fixture[lib]::crate::Iter<nominal struct body_alias_projection_fixture[lib]::crate::User>> @ 14:15-14:20
+            body
+            expr e1 block s1 => () @ 14:42-16:2
+              stmt s0 expr; @ 15:5-15:11
+                expr e0 path value -> local v0 => projection type trait body_alias_projection_fixture[lib]::crate::Iterator::Item<nominal struct body_alias_projection_fixture[lib]::crate::Iter<nominal struct body_alias_projection_fixture[lib]::crate::User>> @ 15:5-15:10
+        "#]],
+    );
+}
+
+#[test]
+fn resolves_associated_type_used_by_another_bound() {
+    check_project_body_ir(
+        r#"
+//- /Cargo.toml
+[package]
+name = "body_bound_projection_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub trait SchemaRead {
+    type Dst;
+}
+
+pub trait IntoIterator {
+    type Item;
+}
+
+pub trait FromIterator<T> {}
+
+pub struct CollectionReader<Coll>(Coll);
+
+impl<Coll> CollectionReader<Coll>
+where
+    Coll: IntoIterator<Item: SchemaRead>,
+    Coll: FromIterator<<Coll::Item as SchemaRead>::Dst>,
+{
+    pub fn read(item: Coll::Item) {
+        item;
+    }
+}
+"#,
+        expect![[r#"
+            package body_bound_projection_fixture
+
+            body_bound_projection_fixture [lib]
+            body b0 fn impl CollectionReader<Coll>::read @ 18:5-20:6
+            scopes
+            - s0 parent <none>: v0
+            - s1 parent s0: <none>
+            bindings
+            - v0 param item `item`: Coll::Item => projection type trait body_bound_projection_fixture[lib]::crate::IntoIterator::Item<param Coll> @ 18:17-18:21
+            body
+            expr e1 block s1 => () @ 18:35-20:6
+              stmt s0 expr; @ 19:9-19:14
+                expr e0 path item -> local v0 => projection type trait body_bound_projection_fixture[lib]::crate::IntoIterator::Item<param Coll> @ 19:9-19:13
+        "#]],
+    );
+}

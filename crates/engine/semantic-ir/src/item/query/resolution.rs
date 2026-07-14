@@ -5,7 +5,7 @@
 
 use rg_def_map::{DefMapQuery, DefMapSource, NamespaceSet};
 use rg_ir_model::{
-    DefId, ModuleRef, Path, SemanticItemRef, TraitRef, TypeDefRef, TypePathResolution,
+    DefId, ModuleRef, Path, SemanticItemRef, TraitDefRef, TypeDefRef, TypePathResolution,
 };
 use rg_std::{ExpectedUnique, UniqueVec};
 
@@ -104,7 +104,7 @@ where
         &self,
         from: ModuleRef,
         path: &Path,
-    ) -> Result<UniqueVec<TraitRef>, D::Error> {
+    ) -> Result<UniqueVec<TraitDefRef>, D::Error> {
         Ok(self
             .semantic_items_for_path(from, path)?
             .into_iter()

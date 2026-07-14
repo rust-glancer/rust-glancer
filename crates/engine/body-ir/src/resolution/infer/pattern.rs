@@ -99,7 +99,10 @@ impl<'query, D, I> BodyPatternInference<'query, D, I> {
         pat_mutability: Mutability,
         ty: &Ty,
     ) -> bool {
-        let Ty::Reference { mutability, inner } = ty else {
+        let Ty::Reference {
+            mutability, inner, ..
+        } = ty
+        else {
             return false;
         };
         if *mutability != pat_mutability {

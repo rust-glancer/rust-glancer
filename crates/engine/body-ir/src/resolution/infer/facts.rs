@@ -1,4 +1,4 @@
-use std::marker::PhantomData;
+use std::{marker::PhantomData, sync::Arc};
 
 use rg_ir_model::{BindingId, ExprId};
 use rg_ty::{Ty, inference::InferenceTable};
@@ -20,15 +20,18 @@ impl InferenceFactId for BindingId {
 }
 
 /// Body-owned expression or binding inference facts.
+#[derive(Clone)]
 pub(super) struct InferenceFacts<Id> {
-    facts: Vec<Ty>,
+    // Most speculative trait probes only read body facts. Copy-on-write makes that trial snapshot
+    // cheap while still isolating the closure facts changed by a probe that does commit evidence.
+    facts: Arc<Vec<Ty>>,
     _id: PhantomData<fn(Id)>,
 }
 
 impl<Id: InferenceFactId> InferenceFacts<Id> {
     pub(super) fn new(count: usize) -> Self {
         Self {
-            facts: vec![Ty::Unknown; count],
+            facts: Arc::new(vec![Ty::Unknown; count]),
             _id: PhantomData,
         }
     }
@@ -53,7 +56,7 @@ impl<Id: InferenceFactId> InferenceFacts<Id> {
             return false;
         }
 
-        self.facts[id.index()] = ty;
+        Arc::make_mut(&mut self.facts)[id.index()] = ty;
         true
     }
 
@@ -67,7 +70,7 @@ impl<Id: InferenceFactId> InferenceFacts<Id> {
         let previous_ty = table.canonicalize(self.get_ref(id));
         let canonical_ty = table.canonicalize(&ty);
         if previous_ty == canonical_ty && !self.get_ref(id).has_var() && ty.has_var() {
-            self.facts[id.index()] = ty;
+            Arc::make_mut(&mut self.facts)[id.index()] = ty;
             return true;
         }
 

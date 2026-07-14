@@ -19,7 +19,7 @@ pub mod source_items;
 pub mod stmt;
 
 pub use self::{
-    binding::{BindingData, BindingKind, BodySelfParamKind},
+    binding::{BindingData, BindingKind},
     data::{BodyData, FunctionParamData},
     expr::{
         BuiltinMacroExprKind, ClosureCapture, ClosureKind, ClosureParamData, ExprAssignOp,

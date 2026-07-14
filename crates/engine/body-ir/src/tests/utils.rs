@@ -13,11 +13,14 @@ use rg_def_map::ModuleOrigin;
 use rg_ir_model::items::FieldItem;
 use rg_ir_model::{
     BindingId, BodyId, BodyRef, CrateRef, DefId, DefMapRef, EnumVariantRef, ExprId, FieldRef,
-    FunctionRef, ImplRef, ItemId, ItemOwner, LocalDefRef, ModuleId, ModuleRef, PatId,
-    SemanticItemRef, StmtId, TraitRef, TypeDefId, TypeDefRef, identity::DeclarationRef,
+    FunctionRef, GenericParamRef, ImplRef, ItemId, ItemOwner, LocalDefRef, ModuleId, ModuleRef,
+    PatId, SemanticItemRef, StmtId, TraitDefRef, TypeDefId, TypeDefRef, identity::DeclarationRef,
 };
 use rg_parse::{CargoTarget, Package, ParseDb};
-use rg_ty::{GenericArg, NominalTy, OpaqueTraitBound, Ty};
+use rg_semantic_ir::{GenericParamSource, GenericsQuery};
+use rg_ty::{
+    AdtTy, AliasTy, GenericArg, Lifetime, OpaqueTy, SemanticSignatureQuery, TraitRefLowering, Ty,
+};
 
 pub(super) fn check_project_body_ir(fixture: &str, expect: Expect) {
     let db = BodyIrFixtureDb::build(fixture);
@@ -1016,44 +1019,138 @@ impl CrateBodyIrSnapshot<'_> {
                 let suffix = if fields.len() == 1 { "," } else { "" };
                 format!("({}{suffix})", fields.join(", "))
             }
-            Ty::Array { inner, len } => format!(
-                "[{}; {}]",
-                self.render_ty(inner),
-                len.as_deref().unwrap_or("<unknown>")
-            ),
+            Ty::Array { inner, len } => format!("[{}; {}]", self.render_ty(inner), len),
             Ty::Slice(inner) => format!("[{}]", self.render_ty(inner)),
-            Ty::Syntax(ty) => format!("syntax {ty}"),
-            Ty::Reference { mutability, inner } => {
-                format!("{}{}", mutability.render_prefix(), self.render_ty(inner))
+            Ty::Reference {
+                lifetime,
+                mutability,
+                inner,
+            } => {
+                let lifetime = match lifetime {
+                    Lifetime::Erased => String::new(),
+                    lifetime => format!("{lifetime} "),
+                };
+                format!(
+                    "&{lifetime}{}{}",
+                    if matches!(mutability, rg_ir_model::Mutability::Mutable) {
+                        "mut "
+                    } else {
+                        ""
+                    },
+                    self.render_ty(inner)
+                )
             }
-            Ty::Opaque { bounds } => {
-                let mut bounds = bounds
+            Ty::RawPointer { mutability, inner } => {
+                let qualifier = if matches!(mutability, rg_ir_model::Mutability::Mutable) {
+                    "mut"
+                } else {
+                    "const"
+                };
+                format!("*{qualifier} {}", self.render_ty(inner))
+            }
+            Ty::FnPointer { params, ret } => {
+                let params = params
                     .iter()
-                    .map(|bound| self.render_opaque_bound(bound))
-                    .collect::<Vec<_>>();
-                bounds.sort();
-                format!("impl {}", bounds.join(" + "))
+                    .map(|param| self.render_ty(param))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!("fn({params}) -> {}", self.render_ty(ret))
             }
+            Ty::Param(param) => self.render_type_param(*param),
+            Ty::Alias(AliasTy::Opaque(opaque)) => self.render_opaque(opaque),
+            Ty::Alias(AliasTy::Projection(alias)) => format!(
+                "projection {}{}",
+                self.render_semantic_item_ref(SemanticItemRef::TypeAlias(alias.associated_ty)),
+                self.render_generic_args(&alias.args)
+            ),
             Ty::Closure(id) => format!("closure #{id}"),
-            Ty::FunctionItem(function) => {
-                format!("function item {}", self.render_function_ref(*function))
+            Ty::FnDef(function) => {
+                format!(
+                    "function item {}{}",
+                    self.render_function_ref(function.def),
+                    self.render_generic_args(&function.args)
+                )
             }
-            Ty::Nominal(ty) => format!("nominal {}", self.render_body_nominal_ty(ty)),
-            Ty::SelfTy(ty) => format!("Self {}", self.render_body_nominal_ty(ty)),
+            Ty::Adt(ty) => format!("nominal {}", self.render_body_nominal_ty(ty)),
             Ty::InferVar { kind, id } => format!("infer {kind:?} {id:?}"),
             Ty::Unknown => "<unknown>".to_string(),
         }
     }
 
-    fn render_opaque_bound(&self, bound: &OpaqueTraitBound) -> String {
-        format!(
-            "{}{}",
-            self.render_trait_ref(bound.trait_ref),
-            self.render_generic_args(&bound.args)
-        )
+    fn render_type_param(&self, param: rg_ir_model::TypeParamRef) -> String {
+        let generics = GenericsQuery::new(self.project)
+            .generics(param.owner)
+            .expect("fixture generic declarations should be available while rendering a type");
+        let Some(data) = generics
+            .iter()
+            .find(|data| data.param() == GenericParamRef::Type(param))
+        else {
+            return "param <missing>".to_string();
+        };
+        match data.source() {
+            GenericParamSource::Type(source) => format!("param {}", source.name),
+            GenericParamSource::TraitSelf => "param Self".to_string(),
+            GenericParamSource::ArgumentImplTrait(_) => {
+                let bounds = SemanticSignatureQuery::new(self.project, self.project)
+                    .function_type_param_bounds(param)
+                    .expect("fixture APIT predicates should lower while rendering a type")
+                    .iter()
+                    .map(|bound| self.render_opaque_bound(bound))
+                    .collect::<Vec<_>>();
+                if bounds.is_empty() {
+                    "param <argument impl Trait>".to_string()
+                } else {
+                    format!("impl {}", bounds.join(" + "))
+                }
+            }
+            GenericParamSource::Lifetime(_) | GenericParamSource::Const(_) => {
+                unreachable!("a type parameter should have type-like provenance")
+            }
+        }
     }
 
-    fn render_body_nominal_ty(&self, ty: &NominalTy) -> String {
+    fn render_opaque(&self, opaque: &OpaqueTy) -> String {
+        let mut bounds = SemanticSignatureQuery::new(self.project, self.project)
+            .opaque_bounds(opaque)
+            .expect("fixture opaque predicates should lower while rendering a type")
+            .unwrap_or_default()
+            .iter()
+            .map(|bound| self.render_opaque_bound(bound))
+            .collect::<Vec<_>>();
+        bounds.sort();
+        if bounds.is_empty() {
+            "impl _".to_string()
+        } else {
+            format!("impl {}", bounds.join(" + "))
+        }
+    }
+
+    fn render_opaque_bound(&self, bound: &TraitRefLowering) -> String {
+        let mut args = bound
+            .application
+            .args
+            .iter()
+            .skip(1)
+            .map(|arg| self.render_generic_arg(arg))
+            .collect::<Vec<_>>();
+        for binding in &bound.associated_types {
+            let name = self
+                .project
+                .resident_item_store(binding.associated_ty.origin)
+                .and_then(|items| items.type_alias_data(binding.associated_ty.id))
+                .map(|data| data.name.to_string())
+                .unwrap_or_else(|| "<missing>".to_string());
+            args.push(format!("{name} = {}", self.render_ty(&binding.ty)));
+        }
+        let args = if args.is_empty() {
+            String::new()
+        } else {
+            format!("<{}>", args.join(", "))
+        };
+        format!("{}{args}", self.render_trait_ref(bound.application.def))
+    }
+
+    fn render_body_nominal_ty(&self, ty: &AdtTy) -> String {
         format!(
             "{}{}",
             self.render_type_def_ref(ty.def),
@@ -1079,25 +1176,7 @@ impl CrateBodyIrSnapshot<'_> {
         match arg {
             GenericArg::Type(ty) => self.render_ty(ty),
             GenericArg::Lifetime(lifetime) => lifetime.to_string(),
-            GenericArg::Const(value) => value.clone(),
-            GenericArg::FnTraitArgs { params, ret } => {
-                let params = params
-                    .iter()
-                    .map(|ty| self.render_ty(ty))
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                let mut text = format!("({params})");
-                if !matches!(ret.as_ref(), Ty::Unit) {
-                    text.push_str(" -> ");
-                    text.push_str(&self.render_ty(ret));
-                }
-                text
-            }
-            GenericArg::AssocType { name, ty } => match ty {
-                Some(ty) => format!("{name} = {}", self.render_ty(ty)),
-                None => name.to_string(),
-            },
-            GenericArg::Unsupported(text) => format!("<unsupported:{text}>"),
+            GenericArg::Const(value) => value.to_string(),
         }
     }
 
@@ -1411,7 +1490,7 @@ impl CrateBodyIrSnapshot<'_> {
     fn render_owner(&self, owner: ItemOwner, origin: DefMapRef) -> String {
         match owner {
             ItemOwner::Module(module_ref) => self.render_module_ref(module_ref),
-            ItemOwner::Trait(trait_id) => self.render_trait_ref(TraitRef {
+            ItemOwner::Trait(trait_id) => self.render_trait_ref(TraitDefRef {
                 origin,
                 id: trait_id,
             }),
@@ -1422,7 +1501,7 @@ impl CrateBodyIrSnapshot<'_> {
         }
     }
 
-    fn render_trait_ref(&self, trait_ref: TraitRef) -> String {
+    fn render_trait_ref(&self, trait_ref: TraitDefRef) -> String {
         let items = self
             .project
             .resident_item_store(trait_ref.origin)

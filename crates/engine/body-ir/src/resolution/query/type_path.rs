@@ -39,7 +39,7 @@ where
             let prefix_ty =
                 Ty::from_type_path_resolution(prefix_resolution, Vec::new()).unwrap_or(Ty::Unknown);
             let mut aliases = ExpectedUnique::new();
-            for ty in prefix_ty.as_nominals() {
+            for ty in prefix_ty.as_adts() {
                 if let Some(alias) = self
                     .context
                     .type_aliases()
@@ -129,12 +129,19 @@ where
         path: &Path,
     ) -> Result<TypePathResolution, PackageStoreError> {
         if path.is_self_type() {
-            let candidate = self
-                .context
-                .type_contexts()
-                .nominal_self_ty_for_context(context)?
-                .map(|ty| ty.def);
-            return Ok(TypePathResolution::self_type(candidate));
+            let Some(impl_ref) = context.impl_ref else {
+                return Ok(TypePathResolution::Unknown);
+            };
+            let Some(impl_data) = self.context.item_query().impl_data(impl_ref)? else {
+                return Ok(TypePathResolution::Unknown);
+            };
+
+            // Keep path resolution at the identity layer. Impl-header lowering uses this resolver
+            // for clauses such as `where Self: Trait`; asking for the full header here would make
+            // resolving that `Self` depend recursively on the header being built.
+            return Ok(TypePathResolution::self_type(
+                impl_data.resolved_self_ty.clone(),
+            ));
         }
 
         // Associated aliases are not ordinary module-scope path items, so handle `Type::Alias`
@@ -144,7 +151,7 @@ where
             let prefix_ty =
                 Ty::from_type_path_resolution(prefix_resolution, Vec::new()).unwrap_or(Ty::Unknown);
             let mut aliases = ExpectedUnique::new();
-            for ty in prefix_ty.as_nominals() {
+            for ty in prefix_ty.as_adts() {
                 if let Some(alias) = self
                     .context
                     .type_aliases()

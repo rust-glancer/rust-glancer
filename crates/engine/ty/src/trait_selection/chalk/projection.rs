@@ -41,7 +41,7 @@ impl ProjectionVariableEnv {
 
     pub(super) fn from_goal(goal: &TraitGoal, table: &InferenceTable) -> Self {
         let mut env = Self::empty();
-        env.collect_ty(&goal.self_ty, table);
+        env.collect_ty(goal.self_ty(), table);
         for arg in goal.iter_positional_args() {
             env.collect_generic_arg(arg, table);
         }
@@ -99,24 +99,38 @@ impl ProjectionVariableEnv {
                     self.collect_ty(&field, table);
                 }
             }
-            RgTy::Slice(inner) | RgTy::Reference { inner, .. } => {
+            RgTy::Slice(inner) | RgTy::Reference { inner, .. } | RgTy::RawPointer { inner, .. } => {
                 self.collect_ty(&inner, table);
             }
             RgTy::Array { inner, .. } => {
                 self.collect_ty(&inner, table);
             }
-            RgTy::Nominal(ty) | RgTy::SelfTy(ty) => {
+            RgTy::FnPointer { params, ret } => {
+                for param in params {
+                    self.collect_ty(&param, table);
+                }
+                self.collect_ty(&ret, table);
+            }
+            RgTy::Adt(ty) => {
                 for arg in &ty.args {
+                    self.collect_generic_arg(arg, table);
+                }
+            }
+            RgTy::Alias(alias) => {
+                for arg in alias.args() {
+                    self.collect_generic_arg(arg, table);
+                }
+            }
+            RgTy::FnDef(function) => {
+                for arg in &function.args {
                     self.collect_generic_arg(arg, table);
                 }
             }
             RgTy::Unit
             | RgTy::Never
             | RgTy::Primitive(_)
-            | RgTy::Opaque { .. }
             | RgTy::Closure(_)
-            | RgTy::FunctionItem(_)
-            | RgTy::Syntax(_)
+            | RgTy::Param(_)
             | RgTy::Unknown
             | RgTy::InferVar { .. } => {}
         }
@@ -125,11 +139,7 @@ impl ProjectionVariableEnv {
     fn collect_generic_arg(&mut self, arg: &RgGenericArg, table: &InferenceTable) {
         match arg {
             RgGenericArg::Type(ty) => self.collect_ty(ty, table),
-            RgGenericArg::Lifetime(_)
-            | RgGenericArg::Const(_)
-            | RgGenericArg::FnTraitArgs { .. }
-            | RgGenericArg::AssocType { .. }
-            | RgGenericArg::Unsupported(_) => {}
+            RgGenericArg::Lifetime(_) | RgGenericArg::Const(_) => {}
         }
     }
 }

@@ -14,27 +14,43 @@
 //! share this facade. The detailed steps live in child modules so each file can read as one story.
 
 mod assoc_projection;
-mod obligation;
 mod selected_call;
 
 use rg_def_map::DefMapSource;
+use rg_ir_model::{GenericDefRef, GenericParamRef};
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::ItemStoreSource;
 use rg_std::ExpectedUnique;
-use rg_ty::{TraitGoal, TraitSelection, TraitSelectionQuery};
+use rg_ty::{
+    AssocTypeBinding, Clause, GenericArg, ImplHeader, Substitution, TraitApplication, TraitGoal,
+    TraitSelection, TraitSelectionOptions, TraitSelectionQuery, Ty,
+};
 
 use crate::resolution::BodyResolutionContext;
 
 use super::BodyCallableGoalSolver;
 use super::BodyInferenceCtx;
-
-use self::obligation::{BodyCallableObligation, BodyObligation, BodyObligationGoal};
-
-pub(super) use selected_call::SelectedCallObligationInput;
+use super::callable_goal::BodyCallableGoalOutcome;
 
 /// Solves bounded trait obligations while preserving inference-table semantics.
 pub(super) struct BodyTraitObligationSolver<'query, D, I> {
     context: BodyResolutionContext<'query, D, I>,
+}
+
+/// Canonical impl data prepared for evaluation against body-owned facts.
+struct BodySelectedImpl {
+    header: ImplHeader,
+    selection: TraitSelection,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BodyTraitGoalOutcome {
+    /// The selected goal and every recursively exposed predicate were established.
+    Solved,
+    /// Body-local facts may make the goal solvable on a later fixed-point pass.
+    Deferred,
+    /// The known receiver shape has no uniquely applicable bounded solution.
+    Rejected,
 }
 
 impl<'query, D, I> BodyTraitObligationSolver<'query, D, I>
@@ -66,67 +82,219 @@ where
         .probe(goal, &inference.table)
     }
 
-    /// Evaluate one body obligation using today's local solver hooks.
-    ///
-    /// This is deliberately shallow. It preserves the current policy of applying closure-callable
-    /// evidence first, then probing visible trait impls and committing only a unique trial table.
-    fn evaluate_obligation(
+    fn evaluate_trait_goals(
         &self,
         inference: &mut BodyInferenceCtx,
-        obligation: BodyObligation,
-    ) -> Result<(), PackageStoreError> {
-        match obligation.into_goal() {
-            BodyObligationGoal::Trait(goal) => self.evaluate_trait_goal(inference, &goal),
-            BodyObligationGoal::Callable(goal) => {
-                self.evaluate_callable_obligation(inference, &goal)
-            }
-        }
+        goals: Vec<TraitGoal>,
+    ) -> Result<BodyTraitGoalOutcome, PackageStoreError> {
+        self.evaluate_trait_goals_inner(inference, goals, &mut Vec::new())
     }
 
-    fn evaluate_obligations(
+    fn evaluate_trait_goals_inner(
         &self,
         inference: &mut BodyInferenceCtx,
-        obligations: Vec<BodyObligation>,
-    ) -> Result<(), PackageStoreError> {
-        for obligation in obligations {
-            self.evaluate_obligation(inference, obligation)?;
+        goals: Vec<TraitGoal>,
+        active: &mut Vec<TraitApplication>,
+    ) -> Result<BodyTraitGoalOutcome, PackageStoreError> {
+        for goal in goals {
+            let outcome = self.evaluate_trait_goal(inference, &goal, active)?;
+            if !matches!(outcome, BodyTraitGoalOutcome::Solved) {
+                return Ok(outcome);
+            }
         }
-        Ok(())
+        Ok(BodyTraitGoalOutcome::Solved)
+    }
+
+    /// Instantiate semantic clauses and group projection equalities with their trait goal.
+    fn trait_goals_from_clauses(clauses: &[Clause], subst: &Substitution) -> Vec<TraitGoal> {
+        let clauses = clauses
+            .iter()
+            .map(|clause| subst.apply_clause(clause))
+            .collect::<Vec<_>>();
+        clauses
+            .iter()
+            .filter_map(|clause| {
+                let Clause::Implemented(application) = clause else {
+                    return None;
+                };
+                let associated_types = clauses
+                    .iter()
+                    .filter_map(|candidate| {
+                        let Clause::AliasEq { alias, ty } = candidate else {
+                            return None;
+                        };
+                        (alias.args == application.args).then(|| AssocTypeBinding {
+                            associated_ty: alias.associated_ty,
+                            ty: ty.clone(),
+                        })
+                    })
+                    .collect();
+                Some(TraitGoal {
+                    application: application.clone(),
+                    associated_types,
+                })
+            })
+            .collect()
     }
 
     fn evaluate_trait_goal(
         &self,
         inference: &mut BodyInferenceCtx,
         goal: &TraitGoal,
-    ) -> Result<(), PackageStoreError> {
+        active: &mut Vec<TraitApplication>,
+    ) -> Result<BodyTraitGoalOutcome, PackageStoreError> {
+        // Bounds often contain semantic projections, as in
+        // `B: FromIterator<<Self as Iterator>::Item>`. Normalize those facts before impl-header
+        // matching so the candidate receives concrete evidence rather than an opaque alias shape.
+        let goal = self.normalize_trait_goal(inference, goal)?;
         // Fn* trait goals can sometimes be answered from a body-local closure witness before the
-        // shallow trait selector has enough type-system machinery to prove them.
-        if BodyCallableGoalSolver::new(self.context).solve_goal(inference, goal)? {
-            return Ok(());
+        // shared trait selector has enough body-specific evidence to prove them.
+        match BodyCallableGoalSolver::new(self.context).solve_goal(inference, &goal)? {
+            BodyCallableGoalOutcome::Solved => return Ok(BodyTraitGoalOutcome::Solved),
+            BodyCallableGoalOutcome::Deferred => return Ok(BodyTraitGoalOutcome::Deferred),
+            BodyCallableGoalOutcome::NotApplicable => {}
         }
 
-        let selection = self.probe_trait_goal(goal, inference)?;
+        // A bare inference slot or declaration parameter has no receiver shape with which to
+        // narrow the impl index. Enumerating every visible impl is both expensive and the wrong
+        // source of type evidence: Body IR can retry the call obligation after ordinary argument
+        // constraints solve the slot, while a generic parameter must be justified by its declared
+        // environment rather than by whichever impls happen to be visible.
+        let self_ty = inference.root_resolved_ty(goal.self_ty());
+        if matches!(self_ty, Ty::InferVar { .. } | Ty::Param(_) | Ty::Unknown) {
+            return Ok(BodyTraitGoalOutcome::Deferred);
+        }
+
+        let selection = self.probe_trait_goal(&goal, inference)?;
         if let ExpectedUnique::One(selection) = selection {
             inference.table = selection.table;
+            return Ok(BodyTraitGoalOutcome::Solved);
         }
 
-        Ok(())
+        // Chalk cannot see body-owned closure witnesses. If direct proof failed, select one
+        // canonical impl header without its predicates and evaluate those predicates here. This
+        // handles nested adapters such as `Map<Filter<I, P>, F>` while keeping impl enumeration in
+        // `rg_ty` and body-specific evidence in this layer.
+        // Selecting the same impl can allocate fresh slots for parameters that occur only in its
+        // predicates. Compare the entered goal shapes modulo those allocation IDs; raw equality
+        // would see `?0`, `?1`, ... as perpetual progress and recurse forever.
+        if active
+            .iter()
+            .any(|active| active.equivalent_modulo_inference_ids(&goal.application))
+        {
+            return Ok(BodyTraitGoalOutcome::Deferred);
+        }
+        active.push(goal.application.clone());
+        let result = self.evaluate_selected_impl_predicates(inference, &goal, active);
+        active.pop();
+        result
     }
 
-    fn evaluate_callable_obligation(
+    fn evaluate_selected_impl_predicates(
         &self,
         inference: &mut BodyInferenceCtx,
-        obligation: &BodyCallableObligation,
-    ) -> Result<(), PackageStoreError> {
-        // Callable obligations are best-effort closure evidence. If this local hook cannot learn
-        // anything from the closure body, there is no separate trait-selection fallback in this
-        // path: the obligation has already been classified as callable-only evidence.
-        let _solved = BodyCallableGoalSolver::new(self.context).solve_fn_trait_goal(
-            inference,
-            obligation.self_ty(),
-            obligation.params(),
-            obligation.ret(),
-        )?;
-        Ok(())
+        goal: &TraitGoal,
+        active: &mut Vec<TraitApplication>,
+    ) -> Result<BodyTraitGoalOutcome, PackageStoreError> {
+        let Some(selected) = self.select_impl_for_body(inference, goal)? else {
+            return Ok(BodyTraitGoalOutcome::Rejected);
+        };
+
+        let mut trial = inference.clone();
+        trial.table = selected.selection.table;
+        let goals = Self::trait_goals_from_clauses(
+            &selected.header.clauses,
+            selected.selection.subst.as_substitution(),
+        );
+        let outcome = self.evaluate_trait_goals_inner(&mut trial, goals, active)?;
+        if !matches!(outcome, BodyTraitGoalOutcome::Solved) {
+            return Ok(outcome);
+        }
+
+        *inference = trial;
+        Ok(BodyTraitGoalOutcome::Solved)
+    }
+
+    /// Select one canonical impl header and provide inference slots for impl-only type params.
+    ///
+    /// Header matching binds only parameters visible in `Self` or the trait inputs. Body-owned
+    /// evidence can solve the remaining parameters from predicates, so both predicate evaluation
+    /// and associated projection must start from the same complete trial substitution.
+    fn select_impl_for_body(
+        &self,
+        inference: &BodyInferenceCtx,
+        goal: &TraitGoal,
+    ) -> Result<Option<BodySelectedImpl>, PackageStoreError> {
+        let selection_query = TraitSelectionQuery::with_index(
+            self.context.item_paths(),
+            self.context.crate_items(),
+            self.context.semantic_index(),
+        )
+        .with_options(TraitSelectionOptions::new().caller_solves_impl_predicates())
+        .with_cache(inference.trait_selection_cache());
+        let ExpectedUnique::One(mut selection) = selection_query.probe(goal, &inference.table)?
+        else {
+            return Ok(None);
+        };
+        let impl_ref = selection.trait_impl.impl_ref;
+        let Some(header) = self.context.impl_matcher().impl_header(impl_ref)? else {
+            return Ok(None);
+        };
+        let generics = self
+            .context
+            .item_paths()
+            .generics()
+            .generics(GenericDefRef::Impl(impl_ref))?;
+
+        // Direct header matching only binds parameters that occur in `Self` or the trait inputs.
+        // Predicate-only parameters still need trial vars before their clauses can provide facts.
+        let matched_subst = selection.subst.clone();
+        let mut subst = Substitution::identity(&generics);
+        subst.extend(selection.subst.into_substitution());
+        for param in generics.iter_self() {
+            let GenericParamRef::Type(param) = param.param() else {
+                continue;
+            };
+            if matched_subst.type_param(param).is_none() {
+                subst.push(
+                    GenericParamRef::Type(param),
+                    GenericArg::Type(Box::new(selection.table.new_type_var())),
+                );
+            }
+        }
+        selection.subst = rg_ty::inference::InferenceSubstitution::from_substitution(subst);
+        Ok(Some(BodySelectedImpl { header, selection }))
+    }
+
+    fn normalize_trait_goal(
+        &self,
+        inference: &mut BodyInferenceCtx,
+        goal: &TraitGoal,
+    ) -> Result<TraitGoal, PackageStoreError> {
+        let mut args = Vec::with_capacity(goal.application.args.len());
+        for arg in &goal.application.args {
+            args.push(match arg {
+                GenericArg::Type(ty) => {
+                    GenericArg::Type(Box::new(self.normalize_ty(inference, ty)?))
+                }
+                GenericArg::Lifetime(_) | GenericArg::Const(_) => arg.clone(),
+            });
+        }
+
+        let mut associated_types = Vec::with_capacity(goal.associated_types.len());
+        for binding in &goal.associated_types {
+            associated_types.push(AssocTypeBinding {
+                associated_ty: binding.associated_ty,
+                ty: self.normalize_ty(inference, &binding.ty)?,
+            });
+        }
+
+        Ok(TraitGoal {
+            application: TraitApplication {
+                def: goal.application.def,
+                args: args.into(),
+            },
+            associated_types,
+        })
     }
 }

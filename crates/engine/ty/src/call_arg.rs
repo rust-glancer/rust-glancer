@@ -1,16 +1,14 @@
-use rg_ir_model::{
-    Mutability,
-    items::{GenericParams, ParamItem, TypeRef},
-};
-use rg_text::Name;
+use rg_ir_model::GenericParamRef;
+use rg_semantic_ir::Generics;
 
-use crate::{Ty, TypeSubst};
+use crate::{GenericArg, Substitution, Ty};
 
+/// How call-site arguments line up with the selected callable's semantic parameters.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CallArgMapping {
-    /// The written call args line up with signature params from the beginning.
+    /// Written arguments begin at the first declared parameter.
     FunctionCall,
-    /// Method-call syntax stores the receiver separately, so written args start after `self`.
+    /// Method syntax supplies the receiver separately, so written arguments begin after `self`.
     MethodCall,
 }
 
@@ -23,22 +21,26 @@ impl CallArgMapping {
     }
 }
 
-/// Infers direct function-generic substitutions from already-known call argument types.
+/// Infers function-owned parameter bindings from a canonical callable signature.
+///
+/// For `fn wrap<T>(value: Option<T>)`, an `Option<User>` argument contributes `T = User` by
+/// matching the two semantic type shapes. Only parameters owned by this function are inferred;
+/// inherited trait or impl parameters keep the bindings already selected by the receiver.
 pub struct CallArgInference<'signature, 'arg> {
-    generics: Option<&'signature GenericParams>,
-    params: &'signature [ParamItem],
+    generics: &'signature Generics<'signature>,
+    params: &'signature [Ty],
     arg_tys: &'arg [Ty],
     arg_mapping: CallArgMapping,
-    existing_subst: &'arg TypeSubst,
+    existing_subst: &'arg Substitution,
 }
 
 impl<'signature, 'arg> CallArgInference<'signature, 'arg> {
     pub fn new(
-        generics: Option<&'signature GenericParams>,
-        params: &'signature [ParamItem],
+        generics: &'signature Generics<'signature>,
+        params: &'signature [Ty],
         arg_tys: &'arg [Ty],
         arg_mapping: CallArgMapping,
-        existing_subst: &'arg TypeSubst,
+        existing_subst: &'arg Substitution,
     ) -> Self {
         Self {
             generics,
@@ -49,56 +51,33 @@ impl<'signature, 'arg> CallArgInference<'signature, 'arg> {
         }
     }
 
-    pub fn infer(&self) -> TypeSubst {
-        let Some(generics) = self.generics else {
-            return TypeSubst::new();
-        };
-        if self.arg_tys.is_empty() {
-            return TypeSubst::new();
-        }
-
-        let type_params = generics
-            .types
-            .iter()
-            .map(|param| param.name.as_str())
-            .collect::<Vec<_>>();
-        let mut subst = TypeSubst::new();
-
-        for (param, arg_ty) in self
+    pub fn infer(&self) -> Substitution {
+        let mut subst = Substitution::new();
+        for (param_ty, arg_ty) in self
             .params
             .iter()
             .skip(self.arg_mapping.first_param_idx())
             .zip(self.arg_tys)
         {
-            let Some(param_ty) = &param.ty else {
-                continue;
-            };
-            self.infer_type_ref_subst(param_ty, arg_ty, &type_params, &mut subst);
+            self.infer_ty_subst(param_ty, arg_ty, &mut subst);
         }
-
         subst
     }
 
-    fn infer_type_ref_subst(
-        &self,
-        param_ty: &TypeRef,
-        arg_ty: &Ty,
-        type_params: &[&str],
-        subst: &mut TypeSubst,
-    ) {
-        // This is intentionally a small, syntax-directed matcher. It binds `T` from positions
-        // where the written parameter type directly exposes `T`; nominal containers like
-        // `Vec<T>` are left for a later, more deliberate unification step.
-        if let Some(name) = param_ty.type_param_name()
-            && type_params.contains(&name.as_str())
+    fn infer_ty_subst(&self, param_ty: &Ty, arg_ty: &Ty, subst: &mut Substitution) {
+        if let Ty::Param(param) = param_ty
+            && self
+                .generics
+                .iter_self()
+                .any(|candidate| candidate.param() == GenericParamRef::Type(*param))
         {
-            self.push_inferred_call_subst(subst, name, arg_ty);
+            self.push_inferred_call_subst(subst, *param, arg_ty);
             return;
         }
 
         match (param_ty, arg_ty) {
             (
-                TypeRef::Reference {
+                Ty::Reference {
                     mutability: param_mutability,
                     inner: param_inner,
                     ..
@@ -106,79 +85,86 @@ impl<'signature, 'arg> CallArgInference<'signature, 'arg> {
                 Ty::Reference {
                     mutability: arg_mutability,
                     inner: arg_inner,
+                    ..
                 },
-            ) if Self::ref_mutability_matches(*param_mutability, *arg_mutability) => {
-                self.infer_type_ref_subst(param_inner, arg_inner, type_params, subst);
+            )
+            | (
+                Ty::RawPointer {
+                    mutability: param_mutability,
+                    inner: param_inner,
+                },
+                Ty::RawPointer {
+                    mutability: arg_mutability,
+                    inner: arg_inner,
+                },
+            ) if param_mutability == arg_mutability => {
+                self.infer_ty_subst(param_inner, arg_inner, subst);
             }
-            (TypeRef::Tuple(param_fields), Ty::Tuple(arg_fields))
+            (Ty::Tuple(param_fields), Ty::Tuple(arg_fields))
                 if param_fields.len() == arg_fields.len() =>
             {
                 for (param_field, arg_field) in param_fields.iter().zip(arg_fields) {
-                    self.infer_type_ref_subst(param_field, arg_field, type_params, subst);
+                    self.infer_ty_subst(param_field, arg_field, subst);
                 }
             }
-            (TypeRef::Slice(param_inner), Ty::Slice(arg_inner)) => {
-                self.infer_type_ref_subst(param_inner, arg_inner, type_params, subst);
-            }
-            (
-                TypeRef::Array {
-                    inner: param_inner,
-                    len: param_len,
+            (Ty::Slice(param_inner), Ty::Slice(arg_inner))
+            | (
+                Ty::Array {
+                    inner: param_inner, ..
                 },
                 Ty::Array {
-                    inner: arg_inner,
-                    len: arg_len,
+                    inner: arg_inner, ..
                 },
-            ) if param_len == arg_len => {
-                self.infer_type_ref_subst(param_inner, arg_inner, type_params, subst);
+            ) => self.infer_ty_subst(param_inner, arg_inner, subst),
+            (Ty::Adt(param), Ty::Adt(arg)) if param.def == arg.def => {
+                for (param, arg) in param.args.iter().zip(&arg.args) {
+                    if let (GenericArg::Type(param), GenericArg::Type(arg)) = (param, arg) {
+                        self.infer_ty_subst(param, arg, subst);
+                    }
+                }
             }
             _ => {}
         }
     }
 
-    fn push_inferred_call_subst(&self, subst: &mut TypeSubst, name: Name, arg_ty: &Ty) {
-        if !Self::ty_is_inferable_arg(arg_ty) {
+    fn push_inferred_call_subst(
+        &self,
+        subst: &mut Substitution,
+        param: rg_ir_model::TypeParamRef,
+        arg_ty: &Ty,
+    ) {
+        if matches!(arg_ty, Ty::Unknown) {
             return;
         }
-
-        if let Some(existing_ty) = self.existing_subst.get(name.as_str())
-            && !matches!(existing_ty, Ty::Unknown)
+        let key = GenericParamRef::Type(param);
+        if self
+            .existing_subst
+            .get(key)
+            .and_then(GenericArg::as_ty)
+            .is_some_and(|ty| !matches!(ty, Ty::Unknown))
         {
             return;
         }
-
-        if let Some(existing_ty) = subst.get(name.as_str()) {
-            if matches!(existing_ty, Ty::Unknown) || existing_ty == arg_ty {
-                return;
+        if let Some(existing_ty) = subst.get(key).and_then(GenericArg::as_ty) {
+            if existing_ty != arg_ty {
+                subst.push(key, GenericArg::Type(Box::new(Ty::Unknown)));
             }
-
-            subst.push(name, Ty::Unknown);
             return;
         }
-
-        subst.push(name, arg_ty.clone());
-    }
-
-    fn ref_mutability_matches(param_mutability: Mutability, arg_mutability: Mutability) -> bool {
-        param_mutability == arg_mutability
-    }
-
-    fn ty_is_inferable_arg(ty: &Ty) -> bool {
-        !matches!(ty, Ty::Unknown | Ty::Syntax(_))
+        subst.push(key, GenericArg::Type(Box::new(arg_ty.clone())));
     }
 }
 
-/// Function generics shadow outer impl generics with the same names.
-pub fn function_generic_shadow_subst(generics: Option<&GenericParams>) -> TypeSubst {
-    let Some(generics) = generics else {
-        return TypeSubst::new();
-    };
-
-    // Seed function generics as unknown first; explicit turbofish args and argument inference can
-    // overwrite these placeholders once call-site information is available.
-    generics
-        .types
-        .iter()
-        .map(|param| (param.name.clone(), Ty::Unknown))
-        .collect()
+/// Seed a function's own type parameters as unknown without shadowing parent IDs.
+pub fn function_generic_shadow_subst(generics: &Generics<'_>) -> Substitution {
+    let mut subst = Substitution::new();
+    for param in generics.iter_self() {
+        if let GenericParamRef::Type(param) = param.param() {
+            subst.push(
+                GenericParamRef::Type(param),
+                GenericArg::Type(Box::new(Ty::Unknown)),
+            );
+        }
+    }
+    subst
 }

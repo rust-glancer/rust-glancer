@@ -1,19 +1,21 @@
-use rg_ir_model::items::{GenericParams, TypeRef};
+use std::sync::Arc;
+
 use rg_ir_model::{BindingId, ExprId, ExprWrapperKind};
 
 use rg_ty::{
     ClosureTyId, TraitSelectionCache, Ty,
-    inference::{
-        ExplicitTypeArgInstantiationBuilder, InferenceTable, InferenceTypeSubst,
-        UnknownTypeInstantiationBuilder,
-    },
+    inference::{InferenceTable, UnknownTypeInstantiationBuilder},
 };
 
-use super::facts::InferenceFacts;
+use super::{call::CallInferenceState, facts::InferenceFacts};
 
+#[derive(Clone)]
 pub(crate) struct BodyInferenceCtx {
     pub(super) table: InferenceTable,
     pub(super) trait_selection_cache: TraitSelectionCache,
+    // Trait-obligation probes clone this context transactionally, but they do not edit call-site
+    // setup. Copy-on-write keeps those probes from cloning every canonical call projection.
+    call_inference: Arc<Vec<Option<CallInferenceState>>>,
     expr_tys: InferenceFacts<ExprId>,
     binding_tys: InferenceFacts<BindingId>,
 }
@@ -32,6 +34,7 @@ impl BodyInferenceCtx {
         Self {
             table: InferenceTable::new(),
             trait_selection_cache,
+            call_inference: Arc::new(vec![None; expr_count]),
             expr_tys: InferenceFacts::new(expr_count),
             binding_tys: InferenceFacts::new(binding_count),
         }
@@ -39,6 +42,18 @@ impl BodyInferenceCtx {
 
     pub(crate) fn trait_selection_cache(&self) -> TraitSelectionCache {
         self.trait_selection_cache.clone()
+    }
+
+    pub(crate) fn table_mut(&mut self) -> &mut InferenceTable {
+        &mut self.table
+    }
+
+    pub(super) fn call_inference(&self, call: ExprId) -> Option<CallInferenceState> {
+        self.call_inference[call.0].clone()
+    }
+
+    pub(super) fn set_call_inference(&mut self, call: ExprId, call_inference: CallInferenceState) {
+        Arc::make_mut(&mut self.call_inference)[call.0] = Some(call_inference);
     }
 
     pub(crate) fn set_expr_ty(&mut self, expr: ExprId, ty: &Ty) {
@@ -70,18 +85,6 @@ impl BodyInferenceCtx {
 
     pub(crate) fn root_resolved_ty(&self, ty: &Ty) -> Ty {
         self.table.resolve_root_var(ty)
-    }
-
-    /// Instantiate written `_` slots inside a type ref such as `Vec<_>`.
-    pub(crate) fn instantiate_written_infer_ty(
-        &mut self,
-        arg_ty: &TypeRef,
-        resolved_ty: &Ty,
-    ) -> (Ty, bool) {
-        let mut builder = ExplicitTypeArgInstantiationBuilder::new(&mut self.table);
-        let infer_ty = builder.ty_from_arg(arg_ty, resolved_ty);
-        let used_vars = builder.used_type_vars();
-        (infer_ty, used_vars)
     }
 
     /// Instantiate unknowns nested inside a selected call return shape.
@@ -136,6 +139,7 @@ impl BodyInferenceCtx {
         // sibling evidence and expected array types can solve literals and generic call results.
         // Refresh may visit the same array many times, so keep the old inference slot when the
         // shape matches.
+        let len = rg_ty::ConstValue::from(len);
         let element_ty = match self.expr_tys.get_ref(expr) {
             Ty::Array {
                 inner,
@@ -174,7 +178,7 @@ impl BodyInferenceCtx {
             expr,
             Ty::Array {
                 inner: Box::new(self.expr_tys.get(initializer)),
-                len,
+                len: len.into(),
             },
         );
     }
@@ -194,10 +198,7 @@ impl BodyInferenceCtx {
 
         let ty = match kind {
             ExprWrapperKind::Paren | ExprWrapperKind::Await => inner_ty,
-            ExprWrapperKind::Ref { mutability } => Ty::Reference {
-                mutability,
-                inner: Box::new(inner_ty),
-            },
+            ExprWrapperKind::Ref { mutability } => Ty::reference(mutability, inner_ty),
             ExprWrapperKind::Try | ExprWrapperKind::Return => fallback_ty.clone(),
         };
         self.set_expr_infer_ty(expr, ty);
@@ -297,23 +298,8 @@ impl BodyInferenceCtx {
         self.set_expr_fact(expr, current_ty) || changed
     }
 
-    pub(crate) fn constrain_expr_infer_ty(&mut self, expr: ExprId, expected_ty: &Ty) -> bool {
-        let current_ty = self.expr_ty(expr);
-        let changed = self.table.unify(&current_ty, expected_ty);
-        self.set_expr_fact(expr, current_ty) || changed
-    }
-
     pub(crate) fn constrain_infer_tys(&mut self, lhs: &Ty, rhs: &Ty) -> bool {
         self.table.unify(lhs, rhs)
-    }
-
-    pub(crate) fn bind_type_params_from_infer_args(
-        &mut self,
-        subst: &mut InferenceTypeSubst,
-        generics: &GenericParams,
-        args: &[rg_ty::GenericArg],
-    ) {
-        subst.bind_type_params_from_infer_args(&mut self.table, generics, args);
     }
 
     pub(crate) fn finalize_expr_ty(&self, expr: ExprId) -> Ty {

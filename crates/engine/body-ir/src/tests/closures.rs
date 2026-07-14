@@ -1,6 +1,6 @@
 use expect_test::expect;
 
-use super::utils::check_project_body_ir;
+use super::utils::{check_project_body_ir, check_project_body_ir_with_fake_sysroot};
 
 #[test]
 fn lowers_closure_scopes_params_and_body() {
@@ -105,7 +105,7 @@ pub fn use_it(user: User) -> User {
 
 #[test]
 fn infers_closure_params_from_direct_fn_trait_expectations() {
-    check_project_body_ir(
+    check_project_body_ir_with_fake_sysroot(
         r#"
 //- /Cargo.toml
 [package]
@@ -133,6 +133,11 @@ pub fn use_it(attr: Attr) {
 }
 "#,
         expect![[r#"
+            package alloc
+
+            alloc [lib]
+            skipped
+
             package body_direct_closure_expectation_fixture
 
             body_direct_closure_expectation_fixture [lib]
@@ -141,7 +146,7 @@ pub fn use_it(attr: Attr) {
             - s0 parent <none>: v0
             - s1 parent s0: <none>
             bindings
-            - v0 param f `f`: impl FnOnce(&mut AttrVec) => syntax impl FnOnce(&mut AttrVec) @ 11:19-11:20
+            - v0 param f `f`: impl FnOnce(&mut AttrVec) => impl trait core[lib]::crate::FnOnce<(&mut nominal struct body_direct_closure_expectation_fixture[lib]::crate::AttrVec,), Output = ()> @ 11:19-11:20
             body
             expr e0 block s1 => () @ 11:49-11:51
 
@@ -151,7 +156,7 @@ pub fn use_it(attr: Attr) {
             - s0 parent <none>: v0
             - s1 parent s0: <none>
             bindings
-            - v0 param f `f`: impl FnOnce((User, User)) -> User => syntax impl FnOnce((User, User)) -> User @ 12:18-12:19
+            - v0 param f `f`: impl FnOnce((User, User)) -> User => impl trait core[lib]::crate::FnOnce<((nominal struct body_direct_closure_expectation_fixture[lib]::crate::User, nominal struct body_direct_closure_expectation_fixture[lib]::crate::User),), Output = nominal struct body_direct_closure_expectation_fixture[lib]::crate::User> @ 12:18-12:19
             body
             expr e0 block s1 => () @ 12:56-12:58
 
@@ -196,10 +201,95 @@ pub fn use_it(attr: Attr) {
             - s0 parent <none>: v0, v1
             - s1 parent s0: <none>
             bindings
-            - v0 self_param self `&mut self` => &mut Self struct body_direct_closure_expectation_fixture[lib]::crate::AttrVec @ 6:17-6:26
+            - v0 self_param self `&mut self` => &mut nominal struct body_direct_closure_expectation_fixture[lib]::crate::AttrVec @ 6:17-6:26
             - v1 param attr `attr`: Attr => nominal struct body_direct_closure_expectation_fixture[lib]::crate::Attr @ 6:28-6:32
             body
             expr e0 block s1 => () @ 6:40-6:42
+
+
+            package core
+
+            core [lib]
+            skipped
+
+            package std
+
+            std [lib]
+            skipped
+        "#]],
+    );
+}
+
+#[test]
+fn treats_equivalent_fn_trait_bounds_as_one_closure_expectation() {
+    check_project_body_ir_with_fake_sysroot(
+        r#"
+//- /Cargo.toml
+[package]
+name = "body_equivalent_callable_bounds_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct User;
+pub struct Name;
+
+pub fn invoke<F>(f: F)
+where
+    F: FnMut(User) -> Name + FnOnce(User) -> Name,
+{}
+
+pub fn use_it() {
+    invoke(|user| Name);
+}
+"#,
+        expect![[r#"
+            package alloc
+
+            alloc [lib]
+            skipped
+
+            package body_equivalent_callable_bounds_fixture
+
+            body_equivalent_callable_bounds_fixture [lib]
+            body b0 fn body_equivalent_callable_bounds_fixture[lib]::crate::invoke @ 4:1-7:3
+            scopes
+            - s0 parent <none>: v0
+            - s1 parent s0: <none>
+            bindings
+            - v0 param f `f`: F => param F @ 4:18-4:19
+            body
+            expr e0 block s1 => () @ 7:1-7:3
+
+
+            body b1 fn body_equivalent_callable_bounds_fixture[lib]::crate::use_it @ 9:1-11:2
+            scopes
+            - s0 parent <none>: <none>
+            - s1 parent s0: <none>
+            - s2 parent s1: v0
+            bindings
+            - v0 param user `user` => nominal struct body_equivalent_callable_bounds_fixture[lib]::crate::User @ 10:13-10:17
+            body
+            expr e4 block s1 => () @ 9:17-11:2
+              stmt s0 expr; @ 10:5-10:25
+                expr e3 call => () @ 10:5-10:24
+                  callee
+                    expr e0 path invoke -> fn body_equivalent_callable_bounds_fixture[lib]::crate::invoke => function item fn body_equivalent_callable_bounds_fixture[lib]::crate::invoke @ 10:5-10:11
+                  arg
+                    expr e2 closure s2 (v0) => closure #2 @ 10:12-10:23
+                      body
+                        expr e1 path Name -> struct body_equivalent_callable_bounds_fixture[lib]::crate::Name => nominal struct body_equivalent_callable_bounds_fixture[lib]::crate::Name @ 10:19-10:23
+
+
+            package core
+
+            core [lib]
+            skipped
+
+            package std
+
+            std [lib]
+            skipped
         "#]],
     );
 }

@@ -794,6 +794,12 @@ version = "0.1.0"
 edition = "2024"
 
 //- /core/src/lib.rs
+pub trait FnOnce<Args> {
+    type Output;
+}
+
+pub trait FnMut<Args>: FnOnce<Args> {}
+
 pub mod iter {
     pub trait FromIterator<A> {}
 
@@ -802,11 +808,11 @@ pub mod iter {
 
         fn map<B, F>(self, f: F) -> Map<Self, F>
         where
-            F: FnMut(Self::Item) -> B;
+            F: crate::FnMut(Self::Item) -> B;
 
         fn filter_map<B, F>(self, f: F) -> FilterMap<Self, F>
         where
-            F: FnMut(Self::Item) -> Option<B>;
+            F: crate::FnMut(Self::Item) -> Option<B>;
 
         fn enumerate(self) -> Enumerate<Self>;
 
@@ -1166,25 +1172,25 @@ pub fn use_it(users: &[User], changed_files: &[ChangedFile], bytes: &[u8], prefi
             - nominal struct analysis_realistic_iterator_adapters[lib]::crate::Name
 
             realistic iterator map collect result
-            - nominal struct alloc[lib]::crate::vec::Vec<nominal struct analysis_realistic_iterator_adapters[lib]::crate::Name>
+            - nominal struct alloc[lib]::crate::vec::Vec<nominal struct analysis_realistic_iterator_adapters[lib]::crate::Name, nominal struct alloc[lib]::crate::vec::Global>
 
             realistic iterator skip collect result
-            - nominal struct alloc[lib]::crate::vec::Vec<&nominal struct analysis_realistic_iterator_adapters[lib]::crate::User>
+            - nominal struct alloc[lib]::crate::vec::Vec<&nominal struct analysis_realistic_iterator_adapters[lib]::crate::User, nominal struct alloc[lib]::crate::vec::Global>
 
             realistic iterator named function collect result
-            - nominal struct alloc[lib]::crate::vec::Vec<nominal struct analysis_realistic_iterator_adapters[lib]::crate::Name>
+            - nominal struct alloc[lib]::crate::vec::Vec<nominal struct analysis_realistic_iterator_adapters[lib]::crate::Name, nominal struct alloc[lib]::crate::vec::Global>
 
             realistic iterator function binding collect result
-            - nominal struct alloc[lib]::crate::vec::Vec<nominal struct analysis_realistic_iterator_adapters[lib]::crate::Name>
+            - nominal struct alloc[lib]::crate::vec::Vec<nominal struct analysis_realistic_iterator_adapters[lib]::crate::Name, nominal struct alloc[lib]::crate::vec::Global>
 
             realistic iterator named function vec collect result
-            - nominal struct alloc[lib]::crate::vec::Vec<nominal struct analysis_realistic_iterator_adapters[lib]::crate::Name>
+            - nominal struct alloc[lib]::crate::vec::Vec<nominal struct analysis_realistic_iterator_adapters[lib]::crate::Name, nominal struct alloc[lib]::crate::vec::Global>
 
             realistic iterator identity map closure param
             - &u8
 
             realistic iterator identity map collect result
-            - nominal struct alloc[lib]::crate::vec::Vec<&u8>
+            - nominal struct alloc[lib]::crate::vec::Vec<&u8, nominal struct alloc[lib]::crate::vec::Global>
 
             realistic iterator field-copy map closure param
             - &nominal struct analysis_realistic_iterator_adapters[lib]::crate::ChangedFile
@@ -1193,13 +1199,13 @@ pub fn use_it(users: &[User], changed_files: &[ChangedFile], bytes: &[u8], prefi
             - nominal struct analysis_realistic_iterator_adapters[lib]::crate::PackageSlot
 
             realistic iterator field-copy collect result
-            - nominal struct alloc[lib]::crate::vec::Vec<nominal struct analysis_realistic_iterator_adapters[lib]::crate::PackageSlot>
+            - nominal struct alloc[lib]::crate::vec::Vec<nominal struct analysis_realistic_iterator_adapters[lib]::crate::PackageSlot, nominal struct alloc[lib]::crate::vec::Global>
 
             realistic iterator filter_map closure param
             - &nominal struct analysis_realistic_iterator_adapters[lib]::crate::User
 
             realistic iterator filter_map collect result
-            - nominal struct alloc[lib]::crate::vec::Vec<nominal struct analysis_realistic_iterator_adapters[lib]::crate::Email>
+            - nominal struct alloc[lib]::crate::vec::Vec<nominal struct analysis_realistic_iterator_adapters[lib]::crate::Email, nominal struct alloc[lib]::crate::vec::Global>
 
             realistic iterator enumerate call result
             - nominal struct core[lib]::crate::iter::adapters::Enumerate<nominal struct core[lib]::crate::slice::Iter<'_, nominal struct analysis_realistic_iterator_adapters[lib]::crate::User>>
@@ -1211,7 +1217,7 @@ pub fn use_it(users: &[User], changed_files: &[ChangedFile], bytes: &[u8], prefi
             - &nominal struct analysis_realistic_iterator_adapters[lib]::crate::User
 
             realistic iterator enumerate map collect result
-            - nominal struct alloc[lib]::crate::vec::Vec<nominal struct analysis_realistic_iterator_adapters[lib]::crate::Row>
+            - nominal struct alloc[lib]::crate::vec::Vec<nominal struct analysis_realistic_iterator_adapters[lib]::crate::Row, nominal struct alloc[lib]::crate::vec::Global>
 
             realistic iterator filter closure param
             - &&nominal struct analysis_realistic_iterator_adapters[lib]::crate::User
@@ -1226,13 +1232,13 @@ pub fn use_it(users: &[User], changed_files: &[ChangedFile], bytes: &[u8], prefi
             - nominal struct analysis_realistic_iterator_adapters[lib]::crate::Name
 
             realistic iterator filtered map collect result
-            - nominal struct alloc[lib]::crate::vec::Vec<nominal struct analysis_realistic_iterator_adapters[lib]::crate::Name>
+            - nominal struct alloc[lib]::crate::vec::Vec<nominal struct analysis_realistic_iterator_adapters[lib]::crate::Name, nominal struct alloc[lib]::crate::vec::Global>
 
             keyword filter closure param
             - &&nominal struct analysis_realistic_iterator_adapters[lib]::crate::KeywordCandidate
 
             keyword filter label
-            - &str
+            - &'static str
 
             keyword filter call result
             - nominal struct core[lib]::crate::iter::adapters::Filter<nominal struct core[lib]::crate::slice::Iter<'_, nominal struct analysis_realistic_iterator_adapters[lib]::crate::KeywordCandidate>, closure #78>
@@ -1244,14 +1250,18 @@ pub fn use_it(users: &[User], changed_files: &[ChangedFile], bytes: &[u8], prefi
             - nominal struct analysis_realistic_iterator_adapters[lib]::crate::CompletionItem
 
             keyword collect result
-            - nominal struct alloc[lib]::crate::vec::Vec<nominal struct analysis_realistic_iterator_adapters[lib]::crate::CompletionItem>
+            - nominal struct alloc[lib]::crate::vec::Vec<nominal struct analysis_realistic_iterator_adapters[lib]::crate::CompletionItem, nominal struct alloc[lib]::crate::vec::Global>
         "#]],
     );
 }
 
 #[test]
 fn infers_closure_params_and_returns_from_callable_bounds() {
-    check_analysis_queries(
+    let ty = |title, marker| {
+        AnalysisQuery::ty(title, marker).in_lib("analysis_callable_closure_bound_inference")
+    };
+
+    check_analysis_queries_with_fake_sysroot(
         r#"
 //- /Cargo.toml
 [package]
@@ -1329,33 +1339,33 @@ pub fn use_it(flag: bool, attr: Attr, user: User, users: &[User], seed: Id) {
 }
 "#,
         &[
-            AnalysisQuery::ty("direct callable closure param", "type_direct_param"),
-            AnalysisQuery::ty(
+            ty("direct callable closure param", "type_direct_param"),
+            ty(
                 "direct callable closure method call",
                 "type_direct_param_call",
             ),
-            AnalysisQuery::ty(
+            ty(
                 "direct closure inherent associated param",
                 "type_inherent_assoc",
             ),
-            AnalysisQuery::ty(
+            ty(
                 "direct callable closure return body",
                 "type_direct_return_body",
             ),
-            AnalysisQuery::ty("inline generic closure param", "type_generic_inline_param"),
-            AnalysisQuery::ty(
+            ty("inline generic closure param", "type_generic_inline_param"),
+            ty(
                 "inline generic closure method call",
                 "type_generic_inline_call",
             ),
-            AnalysisQuery::ty("where generic closure param", "type_generic_where_param"),
-            AnalysisQuery::ty(
+            ty("where generic closure param", "type_generic_where_param"),
+            ty(
                 "where generic closure method call",
                 "type_generic_where_call",
             ),
-            AnalysisQuery::ty("generic closure return result", "type_generic_result"),
-            AnalysisQuery::ty("stored generic closure return result", "type_stored_result"),
-            AnalysisQuery::ty("nested generic closure return result", "type_nested_result"),
-            AnalysisQuery::ty("conflicting generic closure return result", "type_conflict"),
+            ty("generic closure return result", "type_generic_result"),
+            ty("stored generic closure return result", "type_stored_result"),
+            ty("nested generic closure return result", "type_nested_result"),
+            ty("conflicting generic closure return result", "type_conflict"),
         ],
         expect![[r#"
             direct callable closure param
@@ -1413,25 +1423,31 @@ version = "0.1.0"
 edition = "2024"
 
 //- /core/src/lib.rs
+pub trait FnOnce<Args> {
+    type Output;
+}
+
+pub trait FnMut<Args>: FnOnce<Args> {}
+
 pub mod iter {
     pub trait Iterator {
         type Item;
 
         fn map<B, F>(self, f: F) -> Map<Self, F>
         where
-            F: FnMut(Self::Item) -> B;
+            F: crate::FnMut(Self::Item) -> B;
 
         fn filter<P>(self, predicate: P) -> Filter<Self, P>
         where
-            P: FnMut(&Self::Item) -> bool;
+            P: crate::FnMut(&Self::Item) -> bool;
 
         fn find<P>(self, predicate: P)
         where
-            P: FnMut(&Self::Item) -> bool;
+            P: crate::FnMut(&Self::Item) -> bool;
 
         fn produce<F>(self, f: F)
         where
-            F: FnOnce() -> Self::Item;
+            F: crate::FnOnce() -> Self::Item;
     }
 
     pub struct Map<I, F> {
@@ -1536,7 +1552,7 @@ pub fn use_it(users: &[User], searcher: Searcher) {
 
 #[test]
 fn projects_associated_type_from_callable_impl_where_clause() {
-    check_analysis_queries(
+    check_analysis_queries_with_fake_sysroot(
         r#"
 //- /Cargo.toml
 [package]
@@ -1574,8 +1590,10 @@ pub fn use_it(not_callable: NotCallable) {
 }
 "#,
         &[
-            AnalysisQuery::ty("callable impl where projection", "type_produced"),
-            AnalysisQuery::ty("non-callable impl where projection", "type_unknown"),
+            AnalysisQuery::ty("callable impl where projection", "type_produced")
+                .in_lib("analysis_callable_impl_where_projection"),
+            AnalysisQuery::ty("non-callable impl where projection", "type_unknown")
+                .in_lib("analysis_callable_impl_where_projection"),
         ],
         expect![[r#"
             callable impl where projection
@@ -1589,7 +1607,7 @@ pub fn use_it(not_callable: NotCallable) {
 
 #[test]
 fn projects_associated_type_from_callable_impl_where_clause_with_generic_assoc_input() {
-    check_analysis_queries(
+    check_analysis_queries_with_fake_sysroot(
         r#"
 //- /Cargo.toml
 [package]
@@ -1683,12 +1701,15 @@ pub fn use_it(source: Source<User>) {
             AnalysisQuery::ty(
                 "callable impl where associated input projection",
                 "type_mapped",
-            ),
+            )
+            .in_lib("analysis_callable_impl_where_assoc_input_projection"),
             AnalysisQuery::ty(
                 "callable impl where referenced associated input projection",
                 "type_ref_mapped",
-            ),
-            AnalysisQuery::ty("unsupported impl where projection", "type_marked"),
+            )
+            .in_lib("analysis_callable_impl_where_assoc_input_projection"),
+            AnalysisQuery::ty("unsupported impl where projection", "type_marked")
+                .in_lib("analysis_callable_impl_where_assoc_input_projection"),
         ],
         expect![[r#"
             callable impl where associated input projection
@@ -2043,10 +2064,10 @@ pub fn use_it(user: User) {
                 pub fn new(value: &'value T) -> Self
 
             lifetime generic associated constructor result
-            - nominal struct analysis_associated_function_prefix_generic_inference[lib]::crate::Borrowed<nominal struct analysis_associated_function_prefix_generic_inference[lib]::crate::User>
+            - nominal struct analysis_associated_function_prefix_generic_inference[lib]::crate::Borrowed<'_, nominal struct analysis_associated_function_prefix_generic_inference[lib]::crate::User>
 
             lifetime generic explicit prefix constructor result
-            - nominal struct analysis_associated_function_prefix_generic_inference[lib]::crate::Borrowed<nominal struct analysis_associated_function_prefix_generic_inference[lib]::crate::User>
+            - nominal struct analysis_associated_function_prefix_generic_inference[lib]::crate::Borrowed<'_, nominal struct analysis_associated_function_prefix_generic_inference[lib]::crate::User>
 
             hover method after lifetime generic constructor
             - range: 44:40-44:50
@@ -2057,7 +2078,7 @@ pub fn use_it(user: User) {
                 pub fn into_value(self) -> T
 
             lifetime-only associated constructor result
-            - nominal struct analysis_associated_function_prefix_generic_inference[lib]::crate::Guard
+            - nominal struct analysis_associated_function_prefix_generic_inference[lib]::crate::Guard<'_>
 
             trait method after lifetime-only constructor result
             - nominal struct analysis_associated_function_prefix_generic_inference[lib]::crate::User

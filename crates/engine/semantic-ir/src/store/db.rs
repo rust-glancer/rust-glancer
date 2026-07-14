@@ -2,7 +2,7 @@
 
 use rg_def_map::PackageDefMaps as DefMapPackage;
 use rg_def_map::PackageSlot;
-use rg_ir_model::{ImplRef, TraitRef, TypeDefRef};
+use rg_ir_model::{ImplRef, TraitDefRef, TypeDefRef};
 use rg_package_store::{PackageLoader, PackageStore, PackageSubset};
 use rg_std::{ExpectedUnique, MemorySize, Shrink};
 
@@ -151,7 +151,7 @@ impl SemanticIrDbMutator<'_> {
         &mut self,
         impl_ref: ImplRef,
         resolved_self_ty: ExpectedUnique<TypeDefRef>,
-        resolved_trait_ref: ExpectedUnique<TraitRef>,
+        resolved_trait_ref: ExpectedUnique<TraitDefRef>,
     ) -> Option<()> {
         let crate_ref = impl_ref.origin.as_crate_ref()?;
         self.package_mut(crate_ref.package)?

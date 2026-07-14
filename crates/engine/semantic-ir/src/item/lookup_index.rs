@@ -7,7 +7,7 @@
 use std::collections::HashMap;
 
 use rg_def_map::DefMapSource;
-use rg_ir_model::{AssocItemId, FunctionRef, ImplRef, TraitImplRef, TraitRef, TypeDefRef};
+use rg_ir_model::{AssocItemId, FunctionRef, ImplRef, TraitDefRef, TraitImplRef, TypeDefRef};
 use rg_std::{MemorySize, Shrink, UniqueVec};
 use rg_text::Name;
 use wincode::{SchemaRead, SchemaWrite};
@@ -23,11 +23,12 @@ pub struct ItemLookupIndex {
     inherent_functions_by_type_and_name: HashMap<TypeDefRef, HashMap<Name, UniqueVec<FunctionRef>>>,
     structural_inherent_impls: UniqueVec<ImplRef>,
     trait_impls_by_type: HashMap<TypeDefRef, UniqueVec<TraitImplRef>>,
-    trait_impls_by_trait: HashMap<TraitRef, UniqueVec<TraitImplRef>>,
+    trait_impls_by_trait: HashMap<TraitDefRef, UniqueVec<TraitImplRef>>,
+    unindexed_trait_impls_by_trait: HashMap<TraitDefRef, UniqueVec<TraitImplRef>>,
     // Trait impl lookup produces trait identities first; this cache then expands each trait into
     // its associated function declarations without reopening the trait item every time.
-    trait_functions_by_trait: HashMap<TraitRef, UniqueVec<FunctionRef>>,
-    trait_functions_by_trait_and_name: HashMap<TraitRef, HashMap<Name, UniqueVec<FunctionRef>>>,
+    trait_functions_by_trait: HashMap<TraitDefRef, UniqueVec<FunctionRef>>,
+    trait_functions_by_trait_and_name: HashMap<TraitDefRef, HashMap<Name, UniqueVec<FunctionRef>>>,
 }
 
 impl ItemLookupIndex {
@@ -138,6 +139,15 @@ impl ItemLookupIndex {
                             .entry(*self_ty)
                             .or_default()
                             .push(trait_impl);
+                    } else {
+                        // Blanket and structural impls have no unique nominal receiver key. Keep
+                        // them beside every type-indexed candidate set for this trait: for example,
+                        // `impl<T> Trait for T` must still be considered for `Struct: Trait`.
+                        index
+                            .unindexed_trait_impls_by_trait
+                            .entry(*trait_ref)
+                            .or_default()
+                            .push(trait_impl);
                     }
                 }
             }
@@ -216,7 +226,7 @@ impl ItemLookupIndex {
     }
 
     /// Returns impl blocks indexed for an implemented trait.
-    pub fn impls_for_trait(&self, trait_ref: TraitRef) -> UniqueVec<ImplRef> {
+    pub fn impls_for_trait(&self, trait_ref: TraitDefRef) -> UniqueVec<ImplRef> {
         self.trait_impls_by_trait
             .get(&trait_ref)
             .into_iter()
@@ -240,12 +250,38 @@ impl ItemLookupIndex {
     }
 
     /// Returns trait impl candidates indexed by the implemented trait.
-    pub fn trait_impls_for_trait(&self, trait_ref: TraitRef) -> Option<&UniqueVec<TraitImplRef>> {
+    pub fn trait_impls_for_trait(
+        &self,
+        trait_ref: TraitDefRef,
+    ) -> Option<&UniqueVec<TraitImplRef>> {
         self.trait_impls_by_trait.get(&trait_ref)
     }
 
+    /// Returns candidates for a trait whose receiver is one known nominal type.
+    ///
+    /// Impl headers without a unique nominal key remain candidates because blanket or structural
+    /// `Self` patterns can match the requested type too.
+    pub fn trait_impls_for_trait_and_type(
+        &self,
+        trait_ref: TraitDefRef,
+        ty: TypeDefRef,
+    ) -> UniqueVec<TraitImplRef> {
+        let mut candidates = self
+            .trait_impls_by_type
+            .get(&ty)
+            .into_iter()
+            .flat_map(|candidates| candidates.iter())
+            .filter(|candidate| candidate.trait_ref == trait_ref)
+            .copied()
+            .collect::<UniqueVec<_>>();
+        if let Some(unindexed) = self.unindexed_trait_impls_by_trait.get(&trait_ref) {
+            candidates.extend(unindexed.iter().copied());
+        }
+        candidates
+    }
+
     /// Returns trait-declared functions if the trait was visible when the index was built.
-    pub fn trait_functions(&self, trait_ref: TraitRef) -> Option<&UniqueVec<FunctionRef>> {
+    pub fn trait_functions(&self, trait_ref: TraitDefRef) -> Option<&UniqueVec<FunctionRef>> {
         // `None` means the trait was not visible while this index was built. Callers can then fall
         // back to the direct item-store query for cross-subset/offloaded edge cases.
         self.trait_functions_by_trait.get(&trait_ref)
@@ -254,7 +290,7 @@ impl ItemLookupIndex {
     /// Returns same-name trait functions if the trait was visible when the index was built.
     pub fn trait_functions_by_name(
         &self,
-        trait_ref: TraitRef,
+        trait_ref: TraitDefRef,
         name: &str,
     ) -> Option<IndexedTraitFunctions<'_>> {
         // `Some(&[])` is meaningful: the trait is indexed and has no function with this name, so

@@ -4,15 +4,15 @@
 //! Specialized helpers live in sibling modules so this file can read like the pass itself.
 
 use rg_def_map::DefMapSource;
-use rg_ir_model::{BindingId, BodyRef, ExprId};
+use rg_ir_model::{BindingId, BodyRef, ExprId, items::SelfParamKind};
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::{ItemLookupIndex, ItemStoreSource};
-use rg_ty::{ExpectedNominalTyExt, PrimitiveTy, TraitSelectionCache, Ty};
+use rg_ty::{ExpectedAdtTyExt, PrimitiveTy, TraitSelectionCache, Ty};
 
 use crate::{
     ir::body::ResolvedBodyData,
     ir::resolved::BodyResolution,
-    ir::{BindingKind, BodySelfParamKind, ExprWrapperKind},
+    ir::{BindingKind, ExprWrapperKind},
 };
 
 use crate::resolution::{
@@ -45,10 +45,15 @@ where
         semantic_index: &'query ItemLookupIndex,
         body_ref: BodyRef,
         body: &'body mut ResolvedBodyData,
-        trait_selection_cache: TraitSelectionCache,
+        trait_selection_cache: &'query TraitSelectionCache,
     ) -> Result<Self, PackageStoreError> {
-        let providers =
-            BodyResolutionProviders::new(def_maps, item_stores, semantic_index, body_ref);
+        let providers = BodyResolutionProviders::new(
+            def_maps,
+            item_stores,
+            semantic_index,
+            body_ref,
+            trait_selection_cache,
+        );
 
         // Pattern materialization rewrites pending binding ids into the final binding arena.
         // Every later resolution step, including inference storage, assumes that stable shape.
@@ -56,7 +61,7 @@ where
         let inference = BodyInferenceCtx::with_trait_selection_cache(
             body.exprs().len(),
             body.bindings().len(),
-            trait_selection_cache,
+            trait_selection_cache.clone(),
         );
 
         Ok(Self {
@@ -218,6 +223,19 @@ where
 
     fn binding_ty(&self, binding: BindingId) -> Result<Ty, PackageStoreError> {
         let binding_data = self.body.binding_unchecked(binding);
+        if matches!(
+            binding_data.kind,
+            BindingKind::Param | BindingKind::SelfParam(_)
+        ) && let Some(function) = self.body.function_owner()
+            && let Some(param_index) = self.body.function_param_index_for_binding(binding)
+            && self.body.function_params()[param_index].bindings.len() == 1
+            && let Some(signature) = self.context().signatures().function(function)?
+            && let Some(param_ty) = signature.params.get(param_index)
+            && !matches!(param_ty, Ty::Unknown)
+        {
+            return Ok(param_ty.clone());
+        }
+
         if let Some(annotation) = &binding_data.annotation {
             return self
                 .context()
@@ -232,12 +250,12 @@ where
             let ty = self
                 .context()
                 .functions()
-                .self_nominal_ty(function)?
-                .into_self_ty();
+                .self_adt_ty(function)?
+                .into_adt_ty();
             return Ok(match kind {
-                BodySelfParamKind::Value => ty,
-                BodySelfParamKind::Reference { mutability } => Ty::reference(mutability, ty),
-                BodySelfParamKind::Explicit => Ty::Unknown,
+                SelfParamKind::Value => ty,
+                SelfParamKind::Reference { mutability } => Ty::reference(mutability, ty),
+                SelfParamKind::Explicit => Ty::Unknown,
             });
         }
 

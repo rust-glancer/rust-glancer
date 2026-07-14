@@ -94,7 +94,7 @@ pub fn use_it(user: User, wrapper: Wrapper<Error>) {
             - s0 parent <none>: v0
             - s1 parent s0: <none>
             bindings
-            - v0 self_param self `&self` => &Self struct body_trait_applicability_fixture[lib]::crate::User @ 13:15-13:20
+            - v0 self_param self `&self` => &nominal struct body_trait_applicability_fixture[lib]::crate::User @ 13:15-13:20
             body
             expr e1 block s1 => nominal struct body_trait_applicability_fixture[lib]::crate::User @ 13:30-15:6
               tail
@@ -106,7 +106,7 @@ pub fn use_it(user: User, wrapper: Wrapper<Error>) {
             - s0 parent <none>: v0
             - s1 parent s0: <none>
             bindings
-            - v0 self_param self `&self` => &Self struct body_trait_applicability_fixture[lib]::crate::Wrapper<syntax T> @ 23:16-23:21
+            - v0 self_param self `&self` => &nominal struct body_trait_applicability_fixture[lib]::crate::Wrapper<param T> @ 23:16-23:21
             body
             expr e1 block s1 => nominal struct body_trait_applicability_fixture[lib]::crate::User @ 23:31-25:6
               tail
@@ -118,7 +118,7 @@ pub fn use_it(user: User, wrapper: Wrapper<Error>) {
             - s0 parent <none>: v0
             - s1 parent s0: <none>
             bindings
-            - v0 self_param self `&self` => &Self struct body_trait_applicability_fixture[lib]::crate::Wrapper<nominal struct body_trait_applicability_fixture[lib]::crate::User> @ 33:18-33:23
+            - v0 self_param self `&self` => &nominal struct body_trait_applicability_fixture[lib]::crate::Wrapper<nominal struct body_trait_applicability_fixture[lib]::crate::User> @ 33:18-33:23
             body
             expr e1 block s1 => nominal struct body_trait_applicability_fixture[lib]::crate::User @ 33:33-35:6
               tail
@@ -224,7 +224,7 @@ impl OtherExt for Maybe {
             - s0 parent <none>: v0
             - s1 parent s0: <none>
             bindings
-            - v0 self_param self `&self` => &Self struct shared[lib]::crate::Maybe @ 8:17-8:22
+            - v0 self_param self `&self` => &nominal struct shared[lib]::crate::Maybe @ 8:17-8:22
             body
             expr e1 block s1 => bool @ 8:32-10:6
               tail
@@ -239,7 +239,7 @@ impl OtherExt for Maybe {
             - s0 parent <none>: v0
             - s1 parent s0: <none>
             bindings
-            - v0 self_param self `&self` => &Self struct shared[lib]::crate::Maybe @ 4:20-4:25
+            - v0 self_param self `&self` => &nominal struct shared[lib]::crate::Maybe @ 4:20-4:25
             body
             expr e1 block s1 => bool @ 4:35-6:6
               tail

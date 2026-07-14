@@ -78,7 +78,7 @@ pub fn choose(input: Maybe, fallback: UserId) -> UserId {
             - s0 parent <none>: v0
             - s1 parent s0: <none>
             bindings
-            - v0 self_param self `&self` => &Self struct body_if_let_fixture[lib]::crate::UserId @ 4:21-4:26
+            - v0 self_param self `&self` => &nominal struct body_if_let_fixture[lib]::crate::UserId @ 4:21-4:26
             body
             expr e1 block s1 => bool @ 4:36-6:6
               tail
@@ -168,7 +168,7 @@ pub fn choose(input: Maybe, fallback: UserId) -> UserId {
             - s0 parent <none>: v0
             - s1 parent s0: <none>
             bindings
-            - v0 self_param self `&self` => &Self struct body_let_else_guard_fixture[lib]::crate::UserId @ 4:21-4:26
+            - v0 self_param self `&self` => &nominal struct body_let_else_guard_fixture[lib]::crate::UserId @ 4:21-4:26
             body
             expr e1 block s1 => bool @ 4:36-6:6
               tail
@@ -482,7 +482,7 @@ pub fn use_it(def_map: &DefMap) {
             - s0 parent <none>: v0
             - s1 parent s0: <none>
             bindings
-            - v0 self_param self `&self` => &Self struct storage[lib]::crate::DefMap @ 6:20-6:25
+            - v0 self_param self `&self` => &nominal struct storage[lib]::crate::DefMap @ 6:20-6:25
             body
             expr e2 block s1 => <unknown> @ 6:44-8:6
               tail
@@ -610,7 +610,7 @@ pub fn use_it(def_map: &DefMap) {
             - s0 parent <none>: v0
             - s1 parent s0: <none>
             bindings
-            - v0 self_param self `&self` => <unknown> @ 16:17-16:22
+            - v0 self_param self `&self` => &[param T] @ 16:17-16:22
             body
             expr e2 block s1 => <unknown> @ 16:46-18:6
               tail
@@ -627,7 +627,7 @@ pub fn use_it(def_map: &DefMap) {
             - s0 parent <none>: v0
             - s1 parent s0: <none>
             bindings
-            - v0 self_param self `&self` => &Self struct storage[lib]::crate::DefMap @ 6:20-6:25
+            - v0 self_param self `&self` => &nominal struct storage[lib]::crate::DefMap @ 6:20-6:25
             body
             expr e2 block s1 => <unknown> @ 6:44-8:6
               tail

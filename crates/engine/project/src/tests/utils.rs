@@ -685,7 +685,7 @@ fn nominal_type_names_at(
         .read_txn(PackageLoader::resident_only("resident project fixture"));
     let mut names = Vec::new();
     for candidate in ReferencePeelingCandidates::new(&ty) {
-        for ty in candidate.ty().as_nominals() {
+        for ty in candidate.ty().as_adts() {
             let Some(crate_ref) = ty.def.origin.as_crate_ref() else {
                 continue;
             };

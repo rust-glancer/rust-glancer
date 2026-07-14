@@ -61,7 +61,7 @@ impl TraitSelectionOptions {
         self
     }
 
-    pub(super) fn accepts_impl_header(self, impl_data: &ImplData) -> bool {
+    pub(crate) fn accepts_impl_header(self, impl_data: &ImplData) -> bool {
         match self.predicate_policy {
             PredicatePolicy::SolveWithChalk => true,
             PredicatePolicy::RejectAll => {
@@ -74,8 +74,12 @@ impl TraitSelectionOptions {
         }
     }
 
-    pub(super) fn should_solve_impl_predicates(self) -> bool {
+    pub(crate) fn should_solve_impl_predicates(self) -> bool {
         self.predicate_policy == PredicatePolicy::SolveWithChalk
+    }
+
+    pub(crate) fn leaves_impl_predicates_to_caller(self) -> bool {
+        self.predicate_policy == PredicatePolicy::CallerSolvesImplPredicates
     }
 
     pub(super) fn prefers_definite_candidates(self) -> bool {
@@ -86,8 +90,7 @@ impl TraitSelectionOptions {
         Self::has_lifetime_param_bounds(impl_data)
             || impl_data
                 .generics
-                .types
-                .iter()
+                .types()
                 .any(|param| !param.bounds.is_empty())
     }
 

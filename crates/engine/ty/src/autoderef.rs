@@ -9,7 +9,7 @@ use std::{borrow::Cow, collections::VecDeque};
 use rg_def_map::DefMapSource;
 use rg_semantic_ir::{CrateItemQuery, ItemLookupIndex, ItemStoreSource};
 
-use crate::{ItemPathQuery, Mutability, Ty, deref::DerefResolver};
+use crate::{ItemPathQuery, Mutability, TraitSelectionCache, Ty, deref::DerefResolver};
 use rg_std::UniqueVec;
 
 const AUTODEREF_LIMIT: usize = 8;
@@ -20,6 +20,7 @@ pub struct Autoderef<'query, D, I> {
     item_paths: ItemPathQuery<'query, D, I>,
     crate_items: CrateItemQuery<'query, D, I>,
     lookup_index: &'query ItemLookupIndex,
+    trait_selection_cache: TraitSelectionCache,
 }
 
 impl<'query, D, I> Autoderef<'query, D, I>
@@ -37,7 +38,14 @@ where
             item_paths,
             crate_items,
             lookup_index,
+            trait_selection_cache: TraitSelectionCache::default(),
         }
+    }
+
+    /// Reuse trait-selection state across receiver adjustments in one visibility context.
+    pub fn with_cache(mut self, cache: TraitSelectionCache) -> Self {
+        self.trait_selection_cache = cache;
+        self
     }
 
     /// Returns candidate types in lookup order for the requested adjustment context.
@@ -75,6 +83,7 @@ where
             self.item_paths.clone(),
             self.crate_items.clone(),
             self.lookup_index,
+            self.trait_selection_cache.clone(),
         )
         .targets_for_ty(ty)
     }
@@ -183,9 +192,9 @@ impl<'ty> PendingAutoderefTy<'ty> {
             Self::Borrowed(ty) => ty
                 .reference_inner()
                 .map(|(inner, mutability)| (Self::Borrowed(inner), mutability)),
-            Self::Owned(Ty::Reference { mutability, inner }) => {
-                Some((Self::Owned((**inner).clone()), *mutability))
-            }
+            Self::Owned(Ty::Reference {
+                mutability, inner, ..
+            }) => Some((Self::Owned((**inner).clone()), *mutability)),
             Self::Owned(_) => None,
         }
     }

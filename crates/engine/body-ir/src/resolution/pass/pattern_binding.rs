@@ -15,21 +15,18 @@ use rg_ir_model::{
     BindingId, DefId, DefMapRef, ExprId, ModuleId, ModuleRef, Path, PathSegment, ScopeId,
     SemanticItemRef, TypeDefId,
     identity::DeclarationRef,
-    items::{FieldKey, FieldList, TypeRef},
+    items::{FieldKey, FieldList, SelfParamKind, TypeRef},
 };
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::ItemStoreSource;
 use rg_std::ExpectedUnique;
-use rg_ty::{ExpectedNominalTyExt, ReferencePeelingCandidates, Ty};
+use rg_ty::{ExpectedAdtTyExt, ReferencePeelingCandidates, Ty};
 
 use crate::{
     BodyPath,
     ir::body::ResolvedBodyData,
     ir::resolved::BodyResolution,
-    ir::{
-        BindingKind, BodySelfParamKind, ExprKind, PatKind, PendingBindingResolution,
-        RecordPatField, StmtKind,
-    },
+    ir::{BindingKind, ExprKind, PatKind, PendingBindingResolution, RecordPatField, StmtKind},
 };
 
 use crate::resolution::{BodyResolutionContext, BodyResolutionProviders, TypeRefUseSite};
@@ -385,7 +382,7 @@ where
         // before final binding materialization because `None` in `User { value: None }` only makes
         // sense after we project `User::value` to `Option<_>`.
         for candidate in ReferencePeelingCandidates::new(expected_ty) {
-            for nominal_ty in candidate.ty().as_nominals() {
+            for nominal_ty in candidate.ty().as_adts() {
                 match nominal_ty.def.id {
                     TypeDefId::Struct(_) | TypeDefId::Union(_) => {
                         if let Some(field_ty) = self
@@ -440,7 +437,7 @@ where
         for candidate in ReferencePeelingCandidates::new(expected_ty) {
             for enum_ty in candidate
                 .ty()
-                .as_nominals()
+                .as_adts()
                 .iter()
                 .filter(|ty| matches!(ty.def.id, TypeDefId::Enum(_)))
             {
@@ -611,6 +608,19 @@ where
 
     fn binding_ty(&self, binding: BindingId) -> Result<Ty, PackageStoreError> {
         let binding_data = self.body.binding_unchecked(binding);
+        if matches!(
+            binding_data.kind,
+            BindingKind::Param | BindingKind::SelfParam(_)
+        ) && let Some(function) = self.body.function_owner()
+            && let Some(param_index) = self.body.function_param_index_for_binding(binding)
+            && self.body.function_params()[param_index].bindings.len() == 1
+            && let Some(signature) = self.context().signatures().function(function)?
+            && let Some(param_ty) = signature.params.get(param_index)
+            && !matches!(param_ty, Ty::Unknown)
+        {
+            return Ok(param_ty.clone());
+        }
+
         if let Some(annotation) = &binding_data.annotation {
             return self
                 .context()
@@ -625,12 +635,12 @@ where
             let ty = self
                 .context()
                 .functions()
-                .self_nominal_ty(function)?
-                .into_self_ty();
+                .self_adt_ty(function)?
+                .into_adt_ty();
             return Ok(match kind {
-                BodySelfParamKind::Value => ty,
-                BodySelfParamKind::Reference { mutability } => Ty::reference(mutability, ty),
-                BodySelfParamKind::Explicit => Ty::Unknown,
+                SelfParamKind::Value => ty,
+                SelfParamKind::Reference { mutability } => Ty::reference(mutability, ty),
+                SelfParamKind::Explicit => Ty::Unknown,
             });
         }
 

@@ -12,7 +12,7 @@ use chalk_ir::{
 
 use super::interner::RgChalkInterner;
 use super::projection::{ProjectionAnswerVars, ProjectionVariableEnv};
-use crate::{FloatTy, GenericArg, NominalTy, PrimitiveTy, SignedIntTy, Ty, UnsignedIntTy};
+use crate::{AdtTy, FloatTy, GenericArg, PrimitiveTy, SignedIntTy, Ty, UnsignedIntTy};
 
 const INTER: RgChalkInterner = RgChalkInterner;
 
@@ -45,9 +45,10 @@ fn infer_ty_from_chalk_with_vars(
         )?))),
         TyKind::Array(inner, len) => Some(Ty::Array {
             inner: Box::new(infer_ty_from_chalk_with_vars(inner, variables)?),
-            len: Some(array_len_from_chalk(len)?),
+            len: crate::ConstValue::from_syntax(&array_len_from_chalk(len)?),
         }),
         TyKind::Ref(mutability, _, inner) => Some(Ty::Reference {
+            lifetime: crate::Lifetime::Erased,
             mutability: match mutability {
                 ChalkMutability::Mut => rg_ir_model::Mutability::Mutable,
                 ChalkMutability::Not => rg_ir_model::Mutability::Shared,
@@ -59,9 +60,9 @@ fn infer_ty_from_chalk_with_vars(
                 .iter(INTER)
                 .map(|arg| infer_generic_arg_from_chalk(arg, variables))
                 .collect::<Option<Vec<_>>>()?;
-            Some(Ty::Nominal(NominalTy {
+            Some(Ty::Adt(AdtTy {
                 def: adt_id.0,
-                args,
+                args: args.into(),
             }))
         }
         TyKind::BoundVar(bound_var) => {
@@ -118,7 +119,7 @@ fn infer_generic_arg_from_chalk(
         GenericArgData::Ty(ty) => Some(GenericArg::Type(Box::new(infer_ty_from_chalk_with_vars(
             ty, variables,
         )?))),
-        GenericArgData::Lifetime(_) => Some(GenericArg::Lifetime(rg_text::Name::new("_"))),
+        GenericArgData::Lifetime(_) => Some(GenericArg::Lifetime(crate::Lifetime::Erased)),
         GenericArgData::Const(_) => None,
     }
 }

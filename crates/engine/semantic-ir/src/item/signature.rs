@@ -24,11 +24,7 @@ pub(crate) enum SignatureGenerics {
 
 impl SignatureGenerics {
     fn from_params(params: &GenericParams) -> Self {
-        if params.lifetimes.is_empty()
-            && params.types.is_empty()
-            && params.consts.is_empty()
-            && params.where_predicates.is_empty()
-        {
+        if params.is_empty() {
             Self::Empty
         } else {
             Self::Present(Box::new(params.clone()))

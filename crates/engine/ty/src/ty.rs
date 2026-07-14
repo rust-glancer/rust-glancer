@@ -1,86 +1,24 @@
+//! Canonical semantic type shapes.
+//!
+//! Item declarations keep source-shaped `TypeRef` values for display and navigation. After the
+//! lowering boundary, type algorithms use only the identities and full argument lists in this
+//! module; they do not compare source text or reinterpret declaration syntax.
+
 use std::fmt;
 
-use rg_ir_model::items::{GenericParams, TypeRef};
-use rg_ir_model::{ExprId, FunctionRef, TraitRef, TypeDefRef, TypePathResolution};
-use rg_std::{ExpectedUnique, MemorySize, Shrink, UniqueVec};
-use rg_text::Name;
+use rg_ir_model::{
+    ExprId, FunctionRef, OpaqueTyRef, TypeAliasRef, TypeDefRef, TypeParamRef, TypePathResolution,
+};
+use rg_std::{ExpectedUnique, MemorySize, Shrink};
 use wincode::{SchemaRead, SchemaWrite};
 
 use crate::inference::{InferVarId, InferVarKind};
-use crate::{GenericArg, Mutability, PrimitiveTy};
-
-/// Ordered substitutions for type parameters visible at one use site.
-///
-/// Substitutions are intentionally stack-like: later bindings shadow earlier bindings. Body
-/// resolution extends this set while walking through aliases, impl headers, and function
-/// signatures, so lookup must search from the end instead of treating the data as an unordered map.
-#[derive(Debug, Clone, Default, PartialEq, Eq, MemorySize)]
-pub struct TypeSubst(Vec<(Name, Ty)>);
-
-impl TypeSubst {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Builds direct type-parameter substitutions from declared generics and visible arguments.
-    pub fn from_generics(generics: &GenericParams, args: &[GenericArg]) -> Self {
-        // We only substitute type parameters. Lifetimes, const args, associated type args, and
-        // unsupported args are preserved on the type but ignored by the simple substitution map.
-        let type_args = args.iter().filter_map(|arg| arg.as_ty().cloned());
-
-        generics
-            .types
-            .iter()
-            .zip(type_args)
-            .map(|(param, ty)| (param.name.clone(), ty))
-            .collect()
-    }
-
-    /// Adds a binding after existing entries, making it the visible one for later lookups.
-    pub fn push(&mut self, name: Name, ty: Ty) {
-        self.0.push((name, ty));
-    }
-
-    /// Appends another substitution set, preserving its internal shadowing order.
-    pub fn extend(&mut self, subst: Self) {
-        self.0.extend(subst.0);
-    }
-
-    pub(crate) fn iter(&self) -> impl Iterator<Item = (&Name, &Ty)> {
-        self.0.iter().map(|(name, ty)| (name, ty))
-    }
-
-    /// Returns the visible binding for `name`, honoring later shadowing earlier entries.
-    pub fn get(&self, name: &str) -> Option<&Ty> {
-        self.0
-            .iter()
-            .rev()
-            .find_map(|(param, ty)| (param.as_str() == name).then_some(ty))
-    }
-
-    /// Returns the visible substitution for a plain type-parameter name.
-    pub fn type_param(&self, name: &str) -> Option<Ty> {
-        self.get(name).cloned()
-    }
-}
-
-impl FromIterator<(Name, Ty)> for TypeSubst {
-    fn from_iter<T>(iter: T) -> Self
-    where
-        T: IntoIterator<Item = (Name, Ty)>,
-    {
-        Self(iter.into_iter().collect())
-    }
-}
+use crate::{ConstValue, GenericArg, GenericArgs, Lifetime, Mutability, PrimitiveTy};
 
 /// Body-local identity of an anonymous closure type.
 ///
 /// Rust gives every closure expression its own anonymous type. This id preserves that identity
 /// inside one body without pretending that it is a stable cross-body item.
-///
-/// Example: the closure at `ExprId(12)` can become `ClosureTyId::new(ExprId(12))`, so body
-/// inference can later find that closure's params and body result. The id does not encode
-/// captures or which callable trait the closure implements.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct ClosureTyId(ExprId);
 
@@ -100,8 +38,11 @@ impl fmt::Display for ClosureTyId {
     }
 }
 
-/// Small type vocabulary shared by IR layers.
-#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
+/// Owned semantic types shared by indexing and body analysis.
+///
+/// Every identity-carrying variant is self-contained: syntax text is not an equality key, generic
+/// parameters carry their owner, and inherent `Self` is the same `Adt` as its concrete spelling.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize)]
 pub enum Ty {
     Unit,
     Never,
@@ -110,30 +51,35 @@ pub enum Ty {
     Array {
         #[wincode(with = "rg_wincode_utils::WincodeDynamic<Box<Ty>>")]
         inner: Box<Ty>,
-        len: Option<String>,
+        len: ConstValue,
     },
     Slice(#[wincode(with = "rg_wincode_utils::WincodeDynamic<Box<Ty>>")] Box<Ty>),
     Reference {
+        lifetime: Lifetime,
         mutability: Mutability,
         #[wincode(with = "rg_wincode_utils::WincodeDynamic<Box<Ty>>")]
         inner: Box<Ty>,
     },
-    Opaque {
-        bounds: UniqueVec<OpaqueTraitBound>,
+    RawPointer {
+        mutability: Mutability,
+        #[wincode(with = "rg_wincode_utils::WincodeDynamic<Box<Ty>>")]
+        inner: Box<Ty>,
     },
+    FnPointer {
+        #[wincode(with = "rg_wincode_utils::WincodeDynamic<Vec<Ty>>")]
+        params: Vec<Ty>,
+        #[wincode(with = "rg_wincode_utils::WincodeDynamic<Box<Ty>>")]
+        ret: Box<Ty>,
+    },
+    Adt(AdtTy),
+    Param(TypeParamRef),
+    Alias(AliasTy),
     Closure(ClosureTyId),
-    // Function item types are the zero-sized, identity-carrying type of a specific `fn` item.
-    // They are not function pointers: coercion to `fn(...) -> ...` is a separate operation.
-    FunctionItem(FunctionRef),
-    Syntax(TypeRef),
-    Nominal(NominalTy),
-    SelfTy(NominalTy),
+    // Function definition types remain distinct from function pointers. The argument list is part
+    // of identity even when it consists entirely of unknown or inferred positions.
+    FnDef(FnDefTy),
     Unknown,
-    /// Transient inference variable stored directly in the shared type tree.
-    ///
-    /// Inference variables are meaningful only while a body is being inferred. They must be
-    /// finalized away before persistence; the wincode adapters on this variant reject any `Ty`
-    /// tree that still contains it.
+    /// Transient inference variable. It must be finalized before persistence.
     InferVar {
         #[wincode(with = "rg_wincode_utils::WincodeUnsupported<InferVarKind>")]
         kind: InferVarKind,
@@ -142,44 +88,71 @@ pub enum Ty {
     },
 }
 
-/// Module-level nominal type together with the generic arguments visible at use site.
-#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
-pub struct NominalTy {
+/// Algebraic data type together with its full semantic argument list.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize, Shrink)]
+pub struct AdtTy {
     pub def: TypeDefRef,
-    #[wincode(with = "rg_wincode_utils::WincodeDynamic<Vec<GenericArg>>")]
-    pub args: Vec<GenericArg>,
+    pub args: GenericArgs,
 }
 
-/// Resolved trait bound preserved for opaque `impl Trait` types.
-#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
-pub struct OpaqueTraitBound {
-    pub trait_ref: TraitRef,
-    #[wincode(with = "rg_wincode_utils::WincodeDynamic<Vec<GenericArg>>")]
-    pub args: Vec<GenericArg>,
-}
-
-impl NominalTy {
+impl AdtTy {
     pub fn bare(def: TypeDefRef) -> Self {
         Self {
             def,
-            args: Vec::new(),
+            args: GenericArgs::empty(),
         }
     }
+}
+
+/// Instantiated type of one function definition.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize, Shrink)]
+pub struct FnDefTy {
+    pub def: FunctionRef,
+    pub args: GenericArgs,
+}
+
+/// Semantic alias identities that are not transparent type aliases.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize, Shrink)]
+pub enum AliasTy {
+    Projection(ProjectionTy),
+    Opaque(OpaqueTy),
+}
+
+/// Associated type selected from a fully instantiated trait application.
+///
+/// For `<Vec<User> as IntoIterator>::Item`, `associated_ty` identifies the `Item` declaration and
+/// `args` retains `Self = Vec<User>` plus every declared `IntoIterator` argument. The value of the
+/// projection is resolved separately by trait selection.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize, Shrink)]
+pub struct ProjectionTy {
+    pub associated_ty: TypeAliasRef,
+    pub args: GenericArgs,
+}
+
+/// One opaque `impl Trait` occurrence instantiated with its owner's generic arguments.
+///
+/// In `fn make<T>() -> impl Iterator<Item = T>`, `opaque` identifies this particular `impl Trait`
+/// occurrence and `args` records the chosen `T`. Its `Iterator` predicates are queryable signature
+/// data rather than part of opaque type equality.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize, Shrink)]
+pub struct OpaqueTy {
+    pub opaque: OpaqueTyRef,
+    pub args: GenericArgs,
 }
 
 impl Ty {
     pub fn tuple(fields: Vec<Self>) -> Self {
         if fields.is_empty() {
-            return Self::Unit;
+            Self::Unit
+        } else {
+            Self::Tuple(fields)
         }
-
-        Self::Tuple(fields)
     }
 
-    pub fn array(inner: Self, len: Option<String>) -> Self {
+    pub fn array(inner: Self, len: impl Into<ConstValue>) -> Self {
         Self::Array {
             inner: Box::new(inner),
-            len,
+            len: len.into(),
         }
     }
 
@@ -188,194 +161,248 @@ impl Ty {
     }
 
     pub fn reference(mutability: Mutability, inner: Self) -> Self {
+        Self::reference_with_lifetime(Lifetime::Erased, mutability, inner)
+    }
+
+    pub fn reference_with_lifetime(
+        lifetime: Lifetime,
+        mutability: Mutability,
+        inner: Self,
+    ) -> Self {
         if matches!(inner, Self::Unknown) {
             return Self::Unknown;
         }
 
         Self::Reference {
+            lifetime,
             mutability,
             inner: Box::new(inner),
         }
     }
 
-    pub fn syntax(ty: TypeRef) -> Self {
-        Self::Syntax(ty)
+    pub fn raw_pointer(mutability: Mutability, inner: Self) -> Self {
+        Self::RawPointer {
+            mutability,
+            inner: Box::new(inner),
+        }
     }
 
-    pub fn opaque(bounds: UniqueVec<OpaqueTraitBound>) -> Self {
-        if bounds.is_empty() {
-            return Self::Unknown;
+    pub fn fn_pointer(params: Vec<Self>, ret: Self) -> Self {
+        Self::FnPointer {
+            params,
+            ret: Box::new(ret),
         }
-
-        Self::Opaque { bounds }
     }
 
     pub fn closure(id: ClosureTyId) -> Self {
         Self::Closure(id)
     }
 
-    pub fn function_item(function: FunctionRef) -> Self {
-        Self::FunctionItem(function)
+    pub fn fn_def(function: FunctionRef) -> Self {
+        Self::fn_def_with_args(function, GenericArgs::empty())
     }
 
-    pub fn nominal(ty: NominalTy) -> Self {
-        Self::Nominal(ty)
+    pub fn fn_def_with_args(function: FunctionRef, args: impl Into<GenericArgs>) -> Self {
+        Self::FnDef(FnDefTy {
+            def: function,
+            args: args.into(),
+        })
     }
 
-    pub fn self_ty(ty: NominalTy) -> Self {
-        Self::SelfTy(ty)
+    pub fn adt(ty: AdtTy) -> Self {
+        Self::Adt(ty)
     }
 
     pub(crate) fn var_for_kind(kind: InferVarKind, id: InferVarId) -> Self {
         Self::InferVar { kind, id }
     }
 
-    /// Projects a resolved nominal type path into `Ty`, preserving source generic arguments.
+    /// Projects the identity result of a path lookup into a semantic type.
     ///
-    /// Aliases, traits, and unresolved paths need context-specific fallback behavior, so callers
-    /// decide how to handle them.
+    /// Transparent aliases require recursive lowering and traits are not types, so those cases are
+    /// handled by the central lowerer rather than this identity-only helper.
     pub fn from_type_path_resolution(
         resolution: TypePathResolution,
-        args: Vec<GenericArg>,
+        args: impl Into<GenericArgs>,
     ) -> Option<Self> {
+        let args = args.into();
         match resolution {
-            TypePathResolution::SelfType(def) => Some(Self::self_ty(NominalTy { def, args })),
-            TypePathResolution::TypeDef(def) => Some(Self::nominal(NominalTy { def, args })),
+            TypePathResolution::SelfType(def) | TypePathResolution::TypeDef(def) => {
+                Some(Self::adt(AdtTy { def, args }))
+            }
             TypePathResolution::TypeAlias(_)
             | TypePathResolution::Trait(_)
             | TypePathResolution::Unknown => None,
         }
     }
 
-    pub fn as_nominals(&self) -> &[NominalTy] {
+    pub fn as_adts(&self) -> &[AdtTy] {
         match self {
-            Self::Nominal(ty) | Self::SelfTy(ty) => std::slice::from_ref(ty),
-            Self::Unit
-            | Self::Never
-            | Self::Primitive(_)
-            | Self::Tuple(_)
-            | Self::Array { .. }
-            | Self::Slice(_)
-            | Self::Reference { .. }
-            | Self::Opaque { .. }
-            | Self::Closure(_)
-            | Self::FunctionItem(_)
-            | Self::Syntax(_)
-            | Self::Unknown
-            | Self::InferVar { .. } => &[],
+            Self::Adt(ty) => std::slice::from_ref(ty),
+            _ => &[],
         }
     }
 
     pub fn reference_inner(&self) -> Option<(&Self, Mutability)> {
         match self {
-            Self::Reference { mutability, inner } => Some((inner, *mutability)),
-            Self::Unit
-            | Self::Never
-            | Self::Primitive(_)
-            | Self::Tuple(_)
-            | Self::Array { .. }
-            | Self::Slice(_)
-            | Self::Opaque { .. }
-            | Self::Closure(_)
-            | Self::FunctionItem(_)
-            | Self::Syntax(_)
-            | Self::Nominal(_)
-            | Self::SelfTy(_)
-            | Self::Unknown
-            | Self::InferVar { .. } => None,
+            Self::Reference {
+                mutability, inner, ..
+            } => Some((inner, *mutability)),
+            _ => None,
         }
     }
 
-    /// Returns true when this type still carries inference variables.
     pub fn has_var(&self) -> bool {
         match self {
             Self::InferVar { .. } => true,
             Self::Tuple(fields) => fields.iter().any(Self::has_var),
-            Self::Array { inner, .. } | Self::Slice(inner) | Self::Reference { inner, .. } => {
-                inner.has_var()
-            }
-            Self::Opaque { bounds } => bounds
-                .iter()
-                .any(|bound| bound.args.iter().any(GenericArg::has_var)),
-            Self::Nominal(ty) | Self::SelfTy(ty) => ty.args.iter().any(GenericArg::has_var),
+            Self::Array { inner, .. }
+            | Self::Slice(inner)
+            | Self::Reference { inner, .. }
+            | Self::RawPointer { inner, .. } => inner.has_var(),
+            Self::FnPointer { params, ret } => params.iter().any(Self::has_var) || ret.has_var(),
+            Self::Adt(ty) => ty.args.iter().any(GenericArg::has_var),
+            Self::Alias(alias) => alias.has_var(),
+            Self::FnDef(function) => function.args.iter().any(GenericArg::has_var),
             Self::Unit
             | Self::Never
             | Self::Primitive(_)
+            | Self::Param(_)
             | Self::Closure(_)
-            | Self::FunctionItem(_)
-            | Self::Syntax(_)
             | Self::Unknown => false,
         }
     }
 
-    /// Returns true when this type shape contains `Ty::Unknown`.
     pub fn has_unknown(&self) -> bool {
         match self {
             Self::Tuple(fields) => fields.iter().any(Self::has_unknown),
-            Self::Array { inner, .. } | Self::Slice(inner) | Self::Reference { inner, .. } => {
-                inner.has_unknown()
+            Self::Array { inner, .. }
+            | Self::Slice(inner)
+            | Self::Reference { inner, .. }
+            | Self::RawPointer { inner, .. } => inner.has_unknown(),
+            Self::FnPointer { params, ret } => {
+                params.iter().any(Self::has_unknown) || ret.has_unknown()
             }
-            Self::Opaque { bounds } => bounds
-                .iter()
-                .any(|bound| bound.args.iter().any(GenericArg::has_unknown)),
-            Self::Nominal(ty) | Self::SelfTy(ty) => ty.args.iter().any(GenericArg::has_unknown),
+            Self::Adt(ty) => ty.args.iter().any(GenericArg::has_unknown),
+            Self::Alias(alias) => alias.has_unknown(),
+            Self::FnDef(function) => function.args.iter().any(GenericArg::has_unknown),
             Self::Unknown => true,
             Self::Unit
             | Self::Never
             | Self::Primitive(_)
+            | Self::Param(_)
             | Self::Closure(_)
-            | Self::FunctionItem(_)
-            | Self::Syntax(_)
             | Self::InferVar { .. } => false,
         }
     }
 
-    /// Returns true when this type shape contains `Ty::Unknown` or unresolved source syntax.
-    pub fn has_unknown_or_syntax(&self) -> bool {
+    /// Return whether normalization still has an associated-type projection to resolve.
+    pub fn has_projection(&self) -> bool {
         match self {
-            Self::Tuple(fields) => fields.iter().any(Self::has_unknown_or_syntax),
-            Self::Array { inner, .. } | Self::Slice(inner) | Self::Reference { inner, .. } => {
-                inner.has_unknown_or_syntax()
+            Self::Alias(AliasTy::Projection(_)) => true,
+            Self::Tuple(fields) => fields.iter().any(Self::has_projection),
+            Self::Array { inner, .. }
+            | Self::Slice(inner)
+            | Self::Reference { inner, .. }
+            | Self::RawPointer { inner, .. } => inner.has_projection(),
+            Self::FnPointer { params, ret } => {
+                params.iter().any(Self::has_projection) || ret.has_projection()
             }
-            Self::Opaque { bounds } => bounds
-                .iter()
-                .any(|bound| bound.args.iter().any(GenericArg::has_unknown_or_syntax)),
-            Self::Nominal(ty) | Self::SelfTy(ty) => {
-                ty.args.iter().any(GenericArg::has_unknown_or_syntax)
+            Self::Adt(ty) => ty.args.iter().any(GenericArg::has_projection),
+            Self::Alias(AliasTy::Opaque(alias)) => {
+                alias.args.iter().any(GenericArg::has_projection)
             }
-            Self::Unknown | Self::Syntax(_) => true,
+            Self::FnDef(function) => function.args.iter().any(GenericArg::has_projection),
             Self::Unit
             | Self::Never
             | Self::Primitive(_)
+            | Self::Param(_)
             | Self::Closure(_)
-            | Self::FunctionItem(_)
+            | Self::Unknown
+            | Self::InferVar { .. } => false,
+        }
+    }
+
+    /// Return whether the type carries a body-local closure witness.
+    pub fn has_closure(&self) -> bool {
+        match self {
+            Self::Closure(_) => true,
+            Self::Tuple(fields) => fields.iter().any(Self::has_closure),
+            Self::Array { inner, .. }
+            | Self::Slice(inner)
+            | Self::Reference { inner, .. }
+            | Self::RawPointer { inner, .. } => inner.has_closure(),
+            Self::FnPointer { params, ret } => {
+                params.iter().any(Self::has_closure) || ret.has_closure()
+            }
+            Self::Adt(ty) => ty.args.iter().any(GenericArg::has_closure),
+            Self::Alias(alias) => alias.args().iter().any(GenericArg::has_closure),
+            Self::FnDef(function) => function.args.iter().any(GenericArg::has_closure),
+            Self::Unit
+            | Self::Never
+            | Self::Primitive(_)
+            | Self::Param(_)
+            | Self::Unknown
             | Self::InferVar { .. } => false,
         }
     }
 
     pub(crate) fn is_projectable(&self) -> bool {
         match self {
-            Self::Unknown | Self::Syntax(_) | Self::InferVar { .. } => false,
+            Self::Unknown | Self::InferVar { .. } => false,
             Self::Tuple(fields) => fields.iter().all(Self::is_projectable),
-            Self::Array { inner, .. } | Self::Slice(inner) => inner.is_projectable(),
-            Self::Reference { inner, .. } => inner.is_projectable(),
-            Self::Opaque { bounds } => bounds
-                .iter()
-                .all(|bound| bound.args.iter().all(GenericArg::is_projectable)),
-            Self::Unit
-            | Self::Never
-            | Self::Primitive(_)
-            | Self::Closure(_)
-            | Self::FunctionItem(_)
-            | Self::Nominal(_)
-            | Self::SelfTy(_) => true,
+            Self::Array { inner, .. }
+            | Self::Slice(inner)
+            | Self::Reference { inner, .. }
+            | Self::RawPointer { inner, .. } => inner.is_projectable(),
+            Self::FnPointer { params, ret } => {
+                params.iter().all(Self::is_projectable) && ret.is_projectable()
+            }
+            Self::Adt(ty) => ty.args.iter().all(GenericArg::is_projectable),
+            Self::Alias(alias) => alias.is_projectable(),
+            Self::FnDef(function) => function.args.iter().all(GenericArg::is_projectable),
+            Self::Unit | Self::Never | Self::Primitive(_) | Self::Param(_) | Self::Closure(_) => {
+                true
+            }
         }
+    }
+}
+
+impl AliasTy {
+    pub(crate) fn args(&self) -> &GenericArgs {
+        match self {
+            Self::Projection(alias) => &alias.args,
+            Self::Opaque(alias) => &alias.args,
+        }
+    }
+
+    pub(crate) fn same_definition(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Projection(lhs), Self::Projection(rhs)) => {
+                lhs.associated_ty == rhs.associated_ty
+            }
+            (Self::Opaque(lhs), Self::Opaque(rhs)) => lhs.opaque == rhs.opaque,
+            (Self::Projection(_), Self::Opaque(_)) | (Self::Opaque(_), Self::Projection(_)) => {
+                false
+            }
+        }
+    }
+
+    fn has_var(&self) -> bool {
+        self.args().iter().any(GenericArg::has_var)
+    }
+
+    fn has_unknown(&self) -> bool {
+        self.args().iter().any(GenericArg::has_unknown)
+    }
+
+    fn is_projectable(&self) -> bool {
+        self.args().iter().all(GenericArg::is_projectable)
     }
 }
 
 /// Converts expected-unique type candidates into the public type vocabulary.
 pub trait ExpectedTyExt {
-    /// Converts the value to `Ty` or keeps it as `Ty::Unknown`.
     fn into_ty(self) -> Ty;
 }
 
@@ -385,49 +412,37 @@ impl ExpectedTyExt for ExpectedUnique<Ty> {
     }
 }
 
-/// Converts expected-unique nominal candidates into the public type vocabulary.
-pub trait ExpectedNominalTyExt {
-    /// Converts the value to `Ty::Nominal` or keeps it as `Ty::Unknown`.
-    fn into_nominal_ty(self) -> Ty;
-
-    /// Converts the value to `Ty::SelfTy` or keeps it as `Ty::Unknown`.
-    fn into_self_ty(self) -> Ty;
+/// Converts expected-unique ADT candidates into the public type vocabulary.
+pub trait ExpectedAdtTyExt {
+    fn into_adt_ty(self) -> Ty;
 }
 
-impl ExpectedNominalTyExt for ExpectedUnique<NominalTy> {
-    fn into_nominal_ty(self) -> Ty {
-        self.into_option().map(Ty::nominal).unwrap_or(Ty::Unknown)
-    }
-
-    fn into_self_ty(self) -> Ty {
-        self.into_option().map(Ty::self_ty).unwrap_or(Ty::Unknown)
+impl ExpectedAdtTyExt for ExpectedUnique<AdtTy> {
+    fn into_adt_ty(self) -> Ty {
+        self.into_option().map(Ty::adt).unwrap_or(Ty::Unknown)
     }
 }
 
 impl Shrink for Ty {
     fn shrink_to_fit(&mut self) {
         match self {
-            Self::Tuple(fields) => {
-                Shrink::shrink_to_fit(fields);
+            Self::Tuple(fields) => Shrink::shrink_to_fit(fields),
+            Self::Array { inner, .. }
+            | Self::Slice(inner)
+            | Self::Reference { inner, .. }
+            | Self::RawPointer { inner, .. } => Shrink::shrink_to_fit(inner),
+            Self::FnPointer { params, ret } => {
+                Shrink::shrink_to_fit(params);
+                Shrink::shrink_to_fit(ret);
             }
-            Self::Array { inner, len } => {
-                Shrink::shrink_to_fit(inner);
-                Shrink::shrink_to_fit(len);
-            }
-            Self::Slice(inner) => Shrink::shrink_to_fit(inner),
-            Self::Reference { inner, .. } => Shrink::shrink_to_fit(inner),
-            Self::Opaque { bounds } => {
-                Shrink::shrink_to_fit(bounds);
-            }
-            Self::Syntax(ty) => Shrink::shrink_to_fit(ty),
-            Self::Nominal(ty) | Self::SelfTy(ty) => {
-                Shrink::shrink_to_fit(ty);
-            }
+            Self::Adt(ty) => Shrink::shrink_to_fit(ty),
+            Self::Alias(alias) => Shrink::shrink_to_fit(alias),
+            Self::FnDef(function) => Shrink::shrink_to_fit(function),
             Self::Unit
             | Self::Never
             | Self::Primitive(_)
+            | Self::Param(_)
             | Self::Closure(_)
-            | Self::FunctionItem(_)
             | Self::Unknown
             | Self::InferVar { .. } => {}
         }

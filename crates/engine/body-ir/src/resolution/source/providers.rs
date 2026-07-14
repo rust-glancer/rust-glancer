@@ -1,5 +1,6 @@
 use rg_ir_model::BodyRef;
 use rg_semantic_ir::ItemLookupIndex;
+use rg_ty::TraitSelectionCache;
 
 use crate::ir::body::ResolvedBodyData;
 
@@ -15,6 +16,7 @@ pub(crate) struct BodyResolutionProviders<'query, D, I> {
     item_stores: &'query I,
     semantic_index: &'query ItemLookupIndex,
     body_ref: BodyRef,
+    trait_selection_cache: &'query TraitSelectionCache,
 }
 
 impl<D, I> Clone for BodyResolutionProviders<'_, D, I> {
@@ -31,12 +33,14 @@ impl<'query, D, I> BodyResolutionProviders<'query, D, I> {
         item_stores: &'query I,
         semantic_index: &'query ItemLookupIndex,
         body_ref: BodyRef,
+        trait_selection_cache: &'query TraitSelectionCache,
     ) -> Self {
         Self {
             def_maps,
             item_stores,
             semantic_index,
             body_ref,
+            trait_selection_cache,
         }
     }
 
@@ -48,12 +52,13 @@ impl<'query, D, I> BodyResolutionProviders<'query, D, I> {
         &'source self,
         body: &'source ResolvedBodyData,
     ) -> BodyResolutionContext<'source, &'source D, &'source I> {
-        BodyResolutionContext::new(
+        BodyResolutionContext::with_trait_selection_cache(
             self.def_maps,
             self.item_stores,
             self.body_ref,
             body,
             self.semantic_index,
+            self.trait_selection_cache,
         )
     }
 }

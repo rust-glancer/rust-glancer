@@ -1,6 +1,6 @@
 use wincode::{SchemaRead, SchemaWrite};
 
-use crate::{TraitRef, TypeAliasRef, TypeDefRef};
+use crate::{TraitDefRef, TypeAliasRef, TypeDefRef};
 use rg_std::{ExpectedUnique, MemorySize};
 
 /// Type-namespace path resolution shared by semantic and body-local lookup.
@@ -9,7 +9,7 @@ pub enum TypePathResolution {
     SelfType(TypeDefRef),
     TypeDef(TypeDefRef),
     TypeAlias(TypeAliasRef),
-    Trait(TraitRef),
+    Trait(TraitDefRef),
     Unknown,
 }
 
@@ -35,7 +35,7 @@ impl TypePathResolution {
             .unwrap_or(Self::Unknown)
     }
 
-    pub fn trait_ref(candidate: ExpectedUnique<TraitRef>) -> Self {
+    pub fn trait_ref(candidate: ExpectedUnique<TraitDefRef>) -> Self {
         candidate
             .into_option()
             .map(Self::Trait)

@@ -25,11 +25,11 @@ pub use self::{
     },
     ir::{
         BindingData, BindingFacts, BindingKind, BodyAssociatedPathPrefix, BodyOwner, BodyPath,
-        BodySelfParamKind, BodySource, BodySourceItems, BuiltinMacroExprKind, ClosureCapture,
-        ClosureKind, ClosureParamData, ExprAssignOp, ExprBinaryOp, ExprBlockKind, ExprData,
-        ExprFacts, ExprKind, ExprRangeKind, ExprUnaryOp, FunctionParamData, LabelData, LiteralKind,
-        PatBindingMode, PatData, PatKind, PatRangeKind, RecordExprField, RecordExprSpread,
-        RecordFieldSyntax, RecordPatField, ResolvedBodyData, ScopeData, StmtData, StmtKind,
+        BodySource, BodySourceItems, BuiltinMacroExprKind, ClosureCapture, ClosureKind,
+        ClosureParamData, ExprAssignOp, ExprBinaryOp, ExprBlockKind, ExprData, ExprFacts, ExprKind,
+        ExprRangeKind, ExprUnaryOp, FunctionParamData, LabelData, LiteralKind, PatBindingMode,
+        PatData, PatKind, PatRangeKind, RecordExprField, RecordExprSpread, RecordFieldSyntax,
+        RecordPatField, ResolvedBodyData, ScopeData, StmtData, StmtKind,
     },
     resolution::{BodyMethodQuery, BodyResolutionContext, BodyTypePathQuery, BodyValuePathQuery},
     store::{

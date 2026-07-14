@@ -274,7 +274,7 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
                         .type_refs(TypeRefUseSite::Scope(scope))
                         .resolve(&self_ty)?;
                     let mut resolved_self_ty = ExpectedUnique::new();
-                    for nominal in ty.as_nominals() {
+                    for nominal in ty.as_adts() {
                         resolved_self_ty.push(nominal.def);
                     }
 
@@ -333,7 +333,7 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
                 semantic_index,
                 body_ref,
                 body,
-                trait_selection_cache.clone(),
+                &trait_selection_cache,
             )?
             .resolve()?;
         }

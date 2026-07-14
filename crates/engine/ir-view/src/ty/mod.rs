@@ -10,7 +10,7 @@ use rg_ir_model::{
     identity::DeclarationRef, identity::ExprRef, items::PrimitiveTy,
 };
 use rg_semantic_ir::{ItemStoreQuery, TypePathContext};
-use rg_ty::{ItemPathQuery, NominalTy, ReferencePeelingCandidates, Ty, TypeSubst};
+use rg_ty::{AdtTy, ItemPathQuery, ReferencePeelingCandidates, SemanticSignatureQuery, Ty};
 
 use crate::{
     IndexedViewDb, body::BodyResolutionView, source::IndexedTypePathScope, ty::locals::BodyView,
@@ -35,7 +35,7 @@ impl<'a, 'db> TyView<'a, 'db> {
     pub fn declarations_for_ty(&self, ty: &Ty) -> Vec<DeclarationRef> {
         let mut declarations = Vec::new();
         for candidate in ReferencePeelingCandidates::new(ty) {
-            for ty in candidate.ty().as_nominals() {
+            for ty in candidate.ty().as_adts() {
                 let declaration = DeclarationRef::from(ty.def);
                 if !declarations.contains(&declaration) {
                     declarations.push(declaration);
@@ -55,10 +55,10 @@ impl<'a, 'db> TyView<'a, 'db> {
                 else {
                     return Ok(None);
                 };
-                Ok(Some(Ty::nominal(NominalTy::bare(ty))))
+                Ok(Some(Ty::adt(AdtTy::bare(ty))))
             }
             DeclarationRef::Item(SemanticItemRef::TypeDef(ty)) => {
-                Ok(Some(Ty::nominal(NominalTy::bare(ty))))
+                Ok(Some(Ty::adt(AdtTy::bare(ty))))
             }
             DeclarationRef::Item(
                 SemanticItemRef::Trait(_)
@@ -133,18 +133,9 @@ impl<'a, 'db> TyView<'a, 'db> {
 
     /// Resolve the declared type of a field.
     fn ty_for_field(&self, field: FieldRef) -> anyhow::Result<Option<Ty>> {
-        // Field declarations live in the shared item store, but view callers expect the small
-        // `Ty` vocabulary used by body/member analysis.
-        let Some(field_data) = ItemStoreQuery::new(self.db).field_data(field)? else {
-            return Ok(None);
-        };
-        let item_paths = ItemPathQuery::new(self.db, self.db);
-        Ok(Some(item_paths.resolve_type_ref(
-            &field_data.field.ty,
-            TypePathContext::module(field_data.owner_module),
-            Ty::Unknown,
-            &TypeSubst::new(),
-        )?))
+        SemanticSignatureQuery::new(self.db, self.db)
+            .field_ty(field)
+            .map_err(Into::into)
     }
 
     /// Return the owning enum type for an enum variant constructor.
@@ -152,7 +143,7 @@ impl<'a, 'db> TyView<'a, 'db> {
         let Some(data) = ItemStoreQuery::new(self.db).enum_variant_data(variant)? else {
             return Ok(None);
         };
-        Ok(Some(Ty::nominal(NominalTy::bare(data.owner))))
+        Ok(Some(Ty::adt(AdtTy::bare(data.owner))))
     }
 
     /// Convert a type-path result to `Ty`, using unknown for non-type values.

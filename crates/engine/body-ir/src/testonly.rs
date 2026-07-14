@@ -1,9 +1,9 @@
-use rg_def_map::DefMap;
-use rg_def_map::DefMapDb;
-use rg_ir_model::{BodyRef, CrateRef, DefMapRef};
+use std::convert::Infallible;
+
+use rg_def_map::{DefMap, DefMapDb, DefMapSource};
+use rg_ir_model::{BodyRef, CrateRef, DefMapRef, ModuleRef};
 use rg_parse::ParseDb;
-use rg_semantic_ir::ItemStore;
-use rg_semantic_ir::{SemanticIrDb, testonly::SemanticIrFixture};
+use rg_semantic_ir::{ItemStore, ItemStoreSource, SemanticIrDb, testonly::SemanticIrFixture};
 use rg_text::PackageNameInterners;
 
 use crate::{BodyIrBuildPolicy, BodyIrDb, ResolvedBodyData};
@@ -106,5 +106,84 @@ impl BodyIrFixture {
             DefMapRef::Crate(crate_ref) => self.resident_crate_ir(crate_ref),
             DefMapRef::Body(body_ref) => self.resident_body_item_store(body_ref),
         }
+    }
+}
+
+impl DefMapSource for BodyIrFixture {
+    type Error = Infallible;
+
+    fn def_map_for_origin(&self, origin: DefMapRef) -> Result<Option<&DefMap>, Self::Error> {
+        Ok(match origin {
+            DefMapRef::Crate(crate_ref) => self.resident_def_map(crate_ref),
+            DefMapRef::Body(body_ref) => self.resident_body_def_map(body_ref),
+        })
+    }
+
+    fn extern_root(
+        &self,
+        crate_ref: CrateRef,
+        name: &str,
+    ) -> Result<Option<ModuleRef>, Self::Error> {
+        Ok(self
+            .def_map_db()
+            .resident_package(crate_ref.package)
+            .and_then(|package| package.crate_data(crate_ref.crate_id))
+            .and_then(|data| data.extern_prelude().get(name).copied()))
+    }
+
+    fn extern_roots(&self, crate_ref: CrateRef) -> Result<Vec<(String, ModuleRef)>, Self::Error> {
+        Ok(self
+            .def_map_db()
+            .resident_package(crate_ref.package)
+            .and_then(|package| package.crate_data(crate_ref.crate_id))
+            .map(|data| {
+                data.extern_prelude()
+                    .iter()
+                    .map(|(name, module)| (name.to_string(), *module))
+                    .collect()
+            })
+            .unwrap_or_default())
+    }
+
+    fn prelude_module(&self, crate_ref: CrateRef) -> Result<Option<ModuleRef>, Self::Error> {
+        Ok(self
+            .def_map_db()
+            .resident_package(crate_ref.package)
+            .and_then(|package| package.crate_data(crate_ref.crate_id))
+            .and_then(|data| data.prelude()))
+    }
+
+    fn root_module(&self, crate_ref: CrateRef) -> Result<Option<ModuleRef>, Self::Error> {
+        Ok(self
+            .def_map_db()
+            .resident_package(crate_ref.package)
+            .and_then(|package| package.crate_data(crate_ref.crate_id))
+            .and_then(|data| {
+                Some(ModuleRef {
+                    origin: DefMapRef::Crate(crate_ref),
+                    module: data.root_module()?,
+                })
+            }))
+    }
+}
+
+impl<'a> ItemStoreSource<'a> for &'a BodyIrFixture {
+    type Error = Infallible;
+
+    fn item_store_for_origin(
+        &self,
+        origin: DefMapRef,
+    ) -> Result<Option<&'a ItemStore>, Self::Error> {
+        Ok(self.resident_item_store(origin))
+    }
+
+    fn included_stores(&self) -> Result<Vec<&'a ItemStore>, Self::Error> {
+        Ok((0..self.semantic_ir_db().package_count())
+            .filter_map(|index| {
+                self.semantic_ir_db()
+                    .resident_package(rg_def_map::PackageSlot(index))
+            })
+            .flat_map(|package| package.crates())
+            .collect())
     }
 }

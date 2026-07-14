@@ -9,7 +9,7 @@ use std::fmt;
 use crate::{
     BodyBindingRef, BodyRef as BodyIrBodyRef, ConstRef, CrateRef, DefId, EnumVariantRef, ExprId,
     FieldRef, FunctionRef, ImplRef, LocalDefRef, ModuleRef, ScopeId, SemanticItemRef, StaticRef,
-    TraitRef, TypeAliasRef, TypeDefRef,
+    TraitDefRef, TypeAliasRef, TypeDefRef,
 };
 use rg_std::{MemorySize, Shrink};
 use wincode::{SchemaRead, SchemaWrite};
@@ -114,7 +114,7 @@ pub enum DeclarationRef {
     #[from(
         SemanticItemRef,
         TypeDefRef,
-        TraitRef,
+        TraitDefRef,
         ImplRef,
         FunctionRef,
         TypeAliasRef,

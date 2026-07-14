@@ -8,7 +8,7 @@ use rg_def_map::{DefMapQuery, DefMapSource};
 use rg_ir_model::items::Documentation;
 use rg_ir_model::{
     BodyBindingRef, ConstRef, DefId, EnumVariantRef, FieldRef, FunctionRef, LocalDefRef, ModuleRef,
-    SemanticItemRef, StaticRef, TraitRef, TypeAliasRef, TypeDefId, TypeDefRef,
+    SemanticItemRef, StaticRef, TraitDefRef, TypeAliasRef, TypeDefId, TypeDefRef,
     identity::DeclarationRef,
 };
 use rg_semantic_ir::ItemStoreQuery;
@@ -176,7 +176,7 @@ impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
     }
 
     /// Return details for a trait.
-    fn trait_details(&self, trait_ref: TraitRef) -> anyhow::Result<Option<DeclarationDetails>> {
+    fn trait_details(&self, trait_ref: TraitDefRef) -> anyhow::Result<Option<DeclarationDetails>> {
         let Some(data) = ItemStoreQuery::new(self.db).trait_data(trait_ref)? else {
             return Ok(None);
         };

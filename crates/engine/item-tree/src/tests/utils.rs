@@ -256,9 +256,9 @@ impl<'a> PackageItemTreeSnapshot<'a> {
                     self.render_fields(&variant.fields, depth + 2, dump);
                 }
             }
-            ItemKind::Function(function_item) => {
-                self.render_generics(&function_item.generics, depth, dump);
-                let params = function_item
+            ItemKind::Function(fn_def) => {
+                self.render_generics(&fn_def.generics, depth, dump);
+                let params = fn_def
                     .params
                     .iter()
                     .map(render_param)
@@ -266,7 +266,7 @@ impl<'a> PackageItemTreeSnapshot<'a> {
                     .join(", ");
                 writeln!(dump, "{indent}  - params ({params})")
                     .expect("string writes should not fail");
-                if let Some(ret_ty) = &function_item.ret_ty {
+                if let Some(ret_ty) = &fn_def.ret_ty {
                     writeln!(dump, "{indent}  - ret {ret_ty}")
                         .expect("string writes should not fail");
                 }
@@ -477,7 +477,7 @@ enum SnapshotMode {
 
 fn render_param(param: &crate::ParamItem) -> String {
     match (param.kind, &param.ty) {
-        (ParamKind::SelfParam, _) => param.pat.clone(),
+        (ParamKind::SelfParam(_), _) => param.pat.clone(),
         (ParamKind::Normal, Some(ty)) => format!("{}: {ty}", param.pat),
         (ParamKind::Normal, None) => param.pat.clone(),
     }

@@ -7,6 +7,7 @@
 
 mod context;
 mod data;
+mod generics;
 mod lookup_index;
 mod lowering;
 mod query;
@@ -20,9 +21,10 @@ pub use self::{
         ConstData, EnumData, EnumVariantData, FieldData, FunctionData, ImplData, StaticData,
         StructData, TraitData, TypeAliasData, UnionData,
     },
+    generics::{GenericParamSource, GenericParamView, Generics},
     lookup_index::ItemLookupIndex,
     lowering::{ItemStoreLowerer, ItemStoreSourceReader},
-    query::{CrateItemQuery, ItemResolutionQuery, ItemStoreQuery, ItemStoreSource},
+    query::{CrateItemQuery, GenericsQuery, ItemResolutionQuery, ItemStoreQuery, ItemStoreSource},
     signature::{ConstSignature, FunctionSignature, TypeAliasSignature},
     store::{ItemStore, ItemStoreBuilder},
     view::SemanticItemView,

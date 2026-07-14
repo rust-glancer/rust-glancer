@@ -7,11 +7,11 @@
 //! - read a selected impl associated type for strict adjustment paths such as `Deref`.
 
 use rg_def_map::DefMapSource;
-use rg_ir_model::{AssocItemId, Path, TraitImplRef, TraitRef, TypeAliasRef, TypePathResolution};
+use rg_ir_model::{AssocItemId, Path, TraitDefRef, TraitImplRef, TypeAliasRef, TypePathResolution};
 use rg_semantic_ir::{CrateItemQuery, ImplData, ItemStoreSource, TypePathContext};
 use rg_std::UniqueVec;
 
-use crate::{ItemPathQuery, Ty, TypeSubst};
+use crate::{ItemPathQuery, SemanticSignatureQuery, Substitution, Ty};
 
 /// Resolves associated-type-adjacent facts that are not general projection.
 ///
@@ -55,7 +55,7 @@ where
         &self,
         context: TypePathContext,
         trait_path: &Path,
-    ) -> Result<UniqueVec<TraitRef>, D::Error> {
+    ) -> Result<UniqueVec<TraitDefRef>, D::Error> {
         let TypePathResolution::Trait(trait_ref) =
             self.item_paths.resolve_type_path(context, trait_path)?
         else {
@@ -75,7 +75,7 @@ where
         &self,
         impl_data: &ImplData,
         trait_path: &Path,
-    ) -> Result<UniqueVec<TraitRef>, D::Error> {
+    ) -> Result<UniqueVec<TraitDefRef>, D::Error> {
         let mut traits = UniqueVec::new();
 
         // Impls written outside `core` can resolve `::core::path::Trait` from their own module.
@@ -105,7 +105,7 @@ where
     pub(crate) fn trait_refs_for_path_from_use_site(
         &self,
         trait_path: &Path,
-    ) -> Result<UniqueVec<TraitRef>, D::Error> {
+    ) -> Result<UniqueVec<TraitDefRef>, D::Error> {
         let mut traits = UniqueVec::new();
         let Some(use_site_root) = self.crate_items.use_site_root_module()? else {
             return Ok(traits);
@@ -126,7 +126,7 @@ where
         &self,
         context: TypePathContext,
         trait_path: &Path,
-        traits: &mut UniqueVec<TraitRef>,
+        traits: &mut UniqueVec<TraitDefRef>,
     ) -> Result<(), D::Error> {
         for trait_ref in self.trait_refs_for_path(context, trait_path)? {
             traits.push(trait_ref);
@@ -143,7 +143,7 @@ where
         trait_impl: TraitImplRef,
         impl_data: &ImplData,
         assoc_name: &str,
-        subst: &TypeSubst,
+        subst: &Substitution,
     ) -> Result<Option<Ty>, D::Error> {
         let item_query = self.item_paths.items();
         for item in &impl_data.items {
@@ -160,20 +160,12 @@ where
             if type_alias_data.name.as_str() != assoc_name {
                 continue;
             }
-            let Some(aliased_ty) = type_alias_data.signature.aliased_ty() else {
+            let Some(ty) =
+                SemanticSignatureQuery::type_alias_ty_from(self.item_paths, type_alias_ref)?
+            else {
                 continue;
             };
-
-            let context = TypePathContext {
-                module: impl_data.owner,
-                impl_ref: Some(trait_impl.impl_ref),
-            };
-            let ty = self.item_paths.resolve_type_ref(
-                aliased_ty,
-                context,
-                Ty::syntax(aliased_ty.clone()),
-                subst,
-            )?;
+            let ty = subst.apply(&ty);
             return Ok(ty.is_projectable().then_some(ty));
         }
 

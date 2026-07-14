@@ -47,7 +47,7 @@ where
         let mut outputs = ExpectedUnique::new();
         let item_query = self.context.item_query();
 
-        for nominal in ty.as_nominals() {
+        for nominal in ty.as_adts() {
             let Ok(Some(name)) = item_query.type_def_name(nominal.def) else {
                 continue;
             };

@@ -1,626 +1,492 @@
-//! Impl-header matching for trait selection candidates.
+//! Canonical impl-header matching for trait selection candidates.
 //!
-//! This is the cheap, local half of trait selection. It does not try to prove where-clauses or
-//! type-param bounds; that is either delegated to Chalk or to a body-local obligation path. The job
-//! here is narrower:
-//!
-//! - compare one visible impl header with a `TraitGoal`;
-//! - bind direct impl type params such as `impl<T> FromIterator<T> for Vec<T>`;
-//! - write any equality evidence into a trial inference table;
-//! - report whether the header is definite, maybe-applicable, or not applicable.
-//!
-//! Keeping this layer small is important because many callers probe candidates before they know
-//! whether they want to commit the result. A match here should mean "this impl header can be tried",
-//! not "the whole impl is proven".
+//! Source syntax is lowered before it reaches this module. Header matching therefore compares the
+//! same `Ty` and `GenericArg` vocabulary used by inference and Chalk, and the only bindable values
+//! are owner-scoped impl parameters.
 
-use rg_def_map::DefMapSource;
-use rg_ir_model::items::{GenericArg as ItemGenericArg, GenericParams, TypeBound, TypeRef};
-use rg_ir_model::{TraitApplicability, TraitImplRef, TypeDefRef};
-use rg_semantic_ir::ImplData;
-use rg_semantic_ir::{ItemStoreSource, TypePathContext};
-use rg_text::Name;
+use std::collections::HashMap;
+
+use rg_ir_model::{FunctionRef, GenericDefRef, TraitApplicability, TraitImplRef, TypeDefRef};
+use rg_std::UniqueVec;
 
 use super::TraitGoal;
-use crate::ItemPathQuery;
-use crate::generic_arg::item_generic_args_align;
-use crate::inference::{InferenceConflict, InferenceTable, InferenceTypeSubst};
-use crate::{GenericArg, Ty, TypeSubst};
+use crate::inference::{InferenceConflict, InferenceSubstitution, InferenceTable};
+use crate::{
+    ClosureTyId, ConstValue, GenericArg, ImplHeader, Lifetime, Mutability, PrimitiveTy, Ty,
+};
 
-/// Matches a single impl header against a trait goal.
+/// Top-level semantic type fingerprint used to index trait impl headers.
 ///
-/// The matcher is intentionally state-light: callers pass in the trial table and substitution that
-/// should receive evidence. This lets `TraitSelectionQuery` clone the caller table per candidate
-/// and commit only after uniqueness is known.
-pub(super) struct CandidateMatcher<'matcher, 'query, D, I> {
-    item_paths: &'matcher ItemPathQuery<'query, D, I>,
+/// `impl Trait for Vec<T>` can only match another `Vec<_>`, while `impl<T> Trait for T` must remain
+/// available for every receiver. Associated aliases are also left unindexed because the bounded
+/// matcher deliberately treats their hidden shape as uncertain.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(super) enum TraitSelfHead {
+    Unit,
+    Never,
+    Primitive(PrimitiveTy),
+    Tuple(usize),
+    Array,
+    Slice,
+    Reference(Mutability),
+    RawPointer(Mutability),
+    FnPointer(usize),
+    Adt(TypeDefRef),
+    Closure(ClosureTyId),
+    FnDef(FunctionRef),
 }
 
-impl<'matcher, 'query, D, I> CandidateMatcher<'matcher, 'query, D, I>
-where
-    D: DefMapSource<Error = I::Error>,
-    I: ItemStoreSource<'query>,
-{
-    pub(super) fn new(item_paths: &'matcher ItemPathQuery<'query, D, I>) -> Self {
-        Self { item_paths }
+impl TraitSelfHead {
+    pub(super) fn from_ty(ty: &Ty) -> Option<Self> {
+        match ty {
+            Ty::Unit => Some(Self::Unit),
+            Ty::Never => Some(Self::Never),
+            Ty::Primitive(primitive) => Some(Self::Primitive(*primitive)),
+            Ty::Tuple(fields) => Some(Self::Tuple(fields.len())),
+            Ty::Array { .. } => Some(Self::Array),
+            Ty::Slice(_) => Some(Self::Slice),
+            Ty::Reference { mutability, .. } => Some(Self::Reference(*mutability)),
+            Ty::RawPointer { mutability, .. } => Some(Self::RawPointer(*mutability)),
+            Ty::FnPointer { params, .. } => Some(Self::FnPointer(params.len())),
+            Ty::Adt(ty) => Some(Self::Adt(ty.def)),
+            Ty::Closure(id) => Some(Self::Closure(*id)),
+            Ty::FnDef(function) => Some(Self::FnDef(function.def)),
+            Ty::Param(_) | Ty::Alias(_) | Ty::Unknown | Ty::InferVar { .. } => None,
+        }
+    }
+}
+
+/// Visible trait impls partitioned by the top-level shape of their canonical `Self` type.
+#[derive(Clone, Default)]
+pub(super) struct TraitImplCandidateIndex {
+    by_self_head: HashMap<TraitSelfHead, UniqueVec<TraitImplRef>>,
+    fallbacks: UniqueVec<TraitImplRef>,
+}
+
+impl TraitImplCandidateIndex {
+    pub(super) fn push(&mut self, trait_impl: TraitImplRef, header: &ImplHeader) {
+        if let Some(head) = TraitSelfHead::from_ty(&header.self_ty) {
+            self.by_self_head.entry(head).or_default().push(trait_impl);
+        } else {
+            self.fallbacks.push(trait_impl);
+        }
     }
 
-    /// Match both sides of an impl header against the goal.
-    ///
-    /// For `Vec<?T>: FromIterator<User>` and `impl<T> FromIterator<T> for Vec<T>`, this records
-    /// `T = User` in `subst` and `?T = User` in the trial table. Impl predicates, such as
-    /// `T: Clone`, are intentionally checked after this function by the caller's policy.
+    pub(super) fn candidates(&self, head: TraitSelfHead) -> UniqueVec<TraitImplRef> {
+        let mut candidates = self.by_self_head.get(&head).cloned().unwrap_or_default();
+        candidates.extend(self.fallbacks.iter().copied());
+        candidates
+    }
+}
+
+/// Matches a single lowered impl header against a trait goal.
+pub(super) struct CandidateMatcher;
+
+impl CandidateMatcher {
+    /// Match the canonical self type and positional trait arguments, recording impl-parameter
+    /// evidence in the candidate's trial substitution.
     pub(super) fn match_goal(
         &self,
         goal: &TraitGoal,
         trait_impl: TraitImplRef,
-        impl_data: &ImplData,
+        header: &ImplHeader,
         table: &mut InferenceTable,
-        subst: &mut InferenceTypeSubst,
-    ) -> Result<Option<TraitApplicability>, I::Error> {
-        let Some(self_applicability) =
-            self.match_self_ty(goal, trait_impl, impl_data, table, subst)?
-        else {
-            return Ok(None);
+        subst: &mut InferenceSubstitution,
+    ) -> Option<TraitApplicability> {
+        if header.owner != trait_impl.impl_ref {
+            return None;
+        }
+        let Some(trait_ref) = &header.trait_ref else {
+            return None;
         };
-
-        let Some(trait_applicability) =
-            self.match_trait_args(goal, trait_impl, impl_data, table, subst)?
-        else {
-            return Ok(None);
-        };
-
-        Ok(Some(self_applicability.and(trait_applicability)))
-    }
-
-    /// Match the impl's `Self` type before looking at trait args.
-    ///
-    /// The self type is usually the strongest filter. A nominal self type can reject most impls by
-    /// definition id, while a blanket self param such as `impl<I: Iterator> IntoIterator for I`
-    /// only binds `I` and leaves the `I: Iterator` proof for the predicate stage.
-    fn match_self_ty(
-        &self,
-        goal: &TraitGoal,
-        trait_impl: TraitImplRef,
-        impl_data: &ImplData,
-        table: &mut InferenceTable,
-        subst: &mut InferenceTypeSubst,
-    ) -> Result<Option<TraitApplicability>, I::Error> {
-        if let Some(self_def) = impl_data.resolved_self_ty.as_option() {
-            return self
-                .match_nominal_self_ty(goal, trait_impl, *self_def, impl_data, table, subst);
+        if trait_ref.application.def != trait_impl.trait_ref {
+            return None;
         }
 
-        if impl_data
-            .self_ty
-            .type_param_name()
-            .is_some_and(|name| Self::is_impl_type_param(&impl_data.generics, &name))
+        let owner = GenericDefRef::Impl(trait_impl.impl_ref);
+        // A bare inference receiver must not make every blanket `impl<T> Trait for T` a viable
+        // candidate. Nested variables are different: `Vec<?T>` against `Vec<T>` is useful direct
+        // evidence and must be allowed to flow into the candidate substitution.
+        if matches!(&header.self_ty, Ty::Param(param) if param.owner == owner)
+            && matches!(table.resolve_root_var(goal.self_ty()), Ty::InferVar { .. })
         {
-            // Blanket self params are only the header match, for example
-            // `impl<I: Iterator> IntoIterator for I`. Predicate checking below still has to prove
-            // the bound after `I` is bound to the concrete goal self type.
-            return Self::match_type_param_self_ty(goal, impl_data, table, subst);
+            return None;
         }
+        let self_applicability =
+            self.match_ty(owner, &header.self_ty, goal.self_ty(), table, subst)?;
 
-        if let Some(self_def) = self.resolve_nominal_self_def(trait_impl, impl_data)? {
-            return self.match_nominal_self_ty(goal, trait_impl, self_def, impl_data, table, subst);
-        }
+        // The canonical trait application stores `Self` first. It was matched above because the
+        // impl self type carries the useful structural pattern; compare only the remaining inputs
+        // here. Erased/omitted lifetime positions do not shift following type or const arguments.
+        let header_args = trait_ref.application.args.iter().skip(1);
+        let goal_args = goal.iter_positional_args();
+        let args_applicability = self.match_args(owner, header_args, goal_args, table, subst)?;
 
-        self.match_type_ref(
-            trait_impl,
-            impl_data,
-            &impl_data.self_ty,
-            &goal.self_ty,
-            table,
-            subst,
-        )
+        Some(self_applicability.and(args_applicability))
     }
 
-    /// Bind a blanket impl self param to the goal receiver.
-    ///
-    /// Example: for `impl<I: Iterator> IntoIterator for I`, the header match for
-    /// `Iter<User>: IntoIterator` records `I = Iter<User>`. This is not enough by itself; the
-    /// later predicate step still has to prove `Iter<User>: Iterator`.
-    fn match_type_param_self_ty(
-        goal: &TraitGoal,
-        impl_data: &ImplData,
-        table: &mut InferenceTable,
-        subst: &mut InferenceTypeSubst,
-    ) -> Result<Option<TraitApplicability>, I::Error> {
-        let Some(name) = impl_data.self_ty.type_param_name() else {
-            return Ok(None);
-        };
-        let self_ty = table.resolve_root_var(&goal.self_ty);
-        let applicability = match &self_ty {
-            Ty::InferVar { .. } => return Ok(None),
-            // `impl Trait` hides the concrete type, but it is still one concrete type from the
-            // caller's point of view. Bind the blanket self param and let predicate checking prove
-            // any required bounds from the opaque trait list.
-            Ty::Opaque { .. } => TraitApplicability::Yes,
-            _ => {
-                let Some(applicability) =
-                    Self::unknown_self_applicability(&self_ty).or_else(|| {
-                        (!Self::type_is_uncertain(&self_ty)).then_some(TraitApplicability::Yes)
-                    })
-                else {
-                    return Ok(None);
-                };
-                applicability
-            }
-        };
-
-        match subst.try_push(table, name, goal.self_ty.clone()) {
-            Ok(()) => Ok(Some(applicability)),
-            Err(InferenceConflict) => Ok(None),
-        }
-    }
-
-    /// Resolve a path self type when semantic-ir did not already give us its type definition.
-    ///
-    /// Most impls have `resolved_self_ty`, but generated or partially-supported headers may only
-    /// have the written `TypeRef`. This fallback lets ordinary paths like `Vec<T>` still use the
-    /// fast nominal matching path after resolution succeeds.
-    fn resolve_nominal_self_def(
+    fn match_args<'pattern, 'evidence>(
         &self,
-        trait_impl: TraitImplRef,
-        impl_data: &ImplData,
-    ) -> Result<Option<TypeDefRef>, I::Error> {
-        let TypeRef::Path(_) = &impl_data.self_ty else {
-            return Ok(None);
-        };
-
-        let context = TypePathContext {
-            module: impl_data.owner,
-            impl_ref: Some(trait_impl.impl_ref),
-        };
-        let resolved_ty = self.item_paths.resolve_type_ref(
-            &impl_data.self_ty,
-            context,
-            Ty::syntax(impl_data.self_ty.clone()),
-            &TypeSubst::new(),
-        )?;
-
-        match resolved_ty {
-            Ty::Nominal(ty) | Ty::SelfTy(ty) => Ok(Some(ty.def)),
-            Ty::Unit
-            | Ty::Never
-            | Ty::Primitive(_)
-            | Ty::Tuple(_)
-            | Ty::Array { .. }
-            | Ty::Slice(_)
-            | Ty::Reference { .. }
-            | Ty::Opaque { .. }
-            | Ty::Closure(_)
-            | Ty::FunctionItem(_)
-            | Ty::Syntax(_)
-            | Ty::Unknown
-            | Ty::InferVar { .. } => Ok(None),
-        }
-    }
-
-    /// Match a nominal impl self type and then line up its generic args.
-    ///
-    /// Once the definition id matches, the interesting part is the substitution: `Vec<T>` against
-    /// `Vec<User>` binds `T = User`, while `Vec<String>` against `Vec<User>` rejects the impl.
-    fn match_nominal_self_ty(
-        &self,
-        goal: &TraitGoal,
-        trait_impl: TraitImplRef,
-        self_def: TypeDefRef,
-        impl_data: &ImplData,
+        owner: GenericDefRef,
+        patterns: impl IntoIterator<Item = &'pattern GenericArg>,
+        evidence: impl IntoIterator<Item = &'evidence GenericArg>,
         table: &mut InferenceTable,
-        subst: &mut InferenceTypeSubst,
-    ) -> Result<Option<TraitApplicability>, I::Error> {
-        let self_ty = table.resolve_root_var(&goal.self_ty);
-        let (Ty::Nominal(goal_ty) | Ty::SelfTy(goal_ty)) = &self_ty else {
-            return Ok(Self::unknown_self_applicability(&self_ty));
-        };
-        if goal_ty.def != self_def {
-            return Ok(None);
-        }
-
-        let TypeRef::Path(self_path) = &impl_data.self_ty else {
-            return Ok(Some(TraitApplicability::Maybe));
-        };
-        let Some(segment) = self_path.segments.last() else {
-            return Ok(Some(TraitApplicability::Maybe));
-        };
-        self.match_generic_args(
-            trait_impl,
-            impl_data,
-            &segment.args,
-            &goal_ty.args,
-            table,
-            subst,
-        )
-    }
-
-    /// Decide whether an unknown-looking receiver should stay as a maybe candidate.
-    ///
-    /// `Ty::Unknown` and unresolved syntax can be useful for exploratory UI queries. Plain
-    /// inference vars are different: a bare `?T: Trait` would make nearly every impl a maybe
-    /// candidate, so we leave that to later evidence instead of flooding selection.
-    fn unknown_self_applicability(self_ty: &Ty) -> Option<TraitApplicability> {
-        match self_ty {
-            // A bare variable could match many impls for the same trait. Returning every impl as a
-            // maybe-candidate would be noisy and not useful for commit mode, so leave it unsolved.
-            Ty::InferVar { .. } => None,
-            Ty::Unknown | Ty::Syntax(_) => Some(TraitApplicability::Maybe),
-            Ty::Unit
-            | Ty::Never
-            | Ty::Primitive(_)
-            | Ty::Tuple(_)
-            | Ty::Array { .. }
-            | Ty::Slice(_)
-            | Ty::Reference { .. }
-            | Ty::Opaque { .. }
-            | Ty::Closure(_)
-            | Ty::FunctionItem(_)
-            | Ty::Nominal(_)
-            | Ty::SelfTy(_) => None,
-        }
-    }
-
-    /// Match trait path arguments after the receiver side was accepted.
-    ///
-    /// For `impl<T> FromIterator<T> for Vec<T>`, this compares the impl's `T` with the goal's
-    /// `User` in `Vec<?T>: FromIterator<User>`. Associated equality args, such as
-    /// `Iterator<Item = User>`, are not positional trait inputs; the selection query checks them
-    /// by projecting the selected associated type after the cheap header match succeeds.
-    fn match_trait_args(
-        &self,
-        goal: &TraitGoal,
-        trait_impl: TraitImplRef,
-        impl_data: &ImplData,
-        table: &mut InferenceTable,
-        subst: &mut InferenceTypeSubst,
-    ) -> Result<Option<TraitApplicability>, I::Error> {
-        let Some(TypeRef::Path(trait_path)) = impl_data.trait_ref.as_ref() else {
-            return Ok(goal
-                .iter_positional_args()
-                .next()
-                .is_none()
-                .then_some(TraitApplicability::Maybe));
-        };
-
-        let impl_args = trait_path
-            .segments
-            .last()
-            .into_iter()
-            .flat_map(|segment| segment.args.iter())
-            .filter(|arg| !matches!(arg, ItemGenericArg::AssocType { .. }));
-        self.match_generic_args(
-            trait_impl,
-            impl_data,
-            impl_args,
-            goal.iter_positional_args(),
-            table,
-            subst,
-        )
-    }
-
-    /// Match generic args position-by-position, collecting the weakest applicability.
-    ///
-    /// Lifetime parameter alignment is delegated to `item_generic_args_align`; this method only
-    /// owns the trait-selection policy for each non-lifetime argument pair.
-    fn match_generic_args<'impl_arg, 'goal_arg>(
-        &self,
-        trait_impl: TraitImplRef,
-        impl_data: &ImplData,
-        impl_args: impl IntoIterator<Item = &'impl_arg ItemGenericArg>,
-        goal_args: impl IntoIterator<Item = &'goal_arg GenericArg>,
-        table: &mut InferenceTable,
-        subst: &mut InferenceTypeSubst,
-    ) -> Result<Option<TraitApplicability>, I::Error> {
+        subst: &mut InferenceSubstitution,
+    ) -> Option<TraitApplicability> {
+        let patterns = patterns.into_iter();
+        let mut evidence = evidence.into_iter().peekable();
         let mut applicability = TraitApplicability::Yes;
-        let impl_lifetime_params = impl_data
-            .generics
-            .lifetimes
-            .iter()
-            .map(|param| param.name.as_str())
-            .collect::<Vec<_>>();
 
-        let matched = item_generic_args_align(
-            impl_args,
-            goal_args,
-            &impl_lifetime_params,
-            |impl_arg, goal_arg| {
-                let Some(arg_applicability) = self.non_lifetime_generic_arg_applicability(
-                    trait_impl, impl_data, impl_arg, goal_arg, table, subst,
-                )?
-                else {
-                    return Ok(false);
-                };
-                applicability = applicability.and(arg_applicability);
-                Ok(true)
-            },
-        )?;
-
-        if !matched {
-            return Ok(None);
+        for pattern in patterns {
+            // Lifetime arguments may be omitted at a use site. Their semantic slot still exists
+            // in the impl application, but it must not consume a following type argument.
+            if matches!(pattern, GenericArg::Lifetime(_))
+                && !matches!(evidence.peek(), Some(GenericArg::Lifetime(_)))
+            {
+                if let GenericArg::Lifetime(Lifetime::Param(param)) = pattern
+                    && param.owner == owner
+                {
+                    // Region inference is outside this table. Retain an erased binding so an
+                    // omitted use-site lifetime cannot leave the impl's own parameter behind.
+                    subst.bind_lifetime(Lifetime::Param(*param), Lifetime::Erased);
+                }
+                continue;
+            }
+            let evidence = evidence.next()?;
+            let arg_applicability = self.match_arg(owner, pattern, evidence, table, subst)?;
+            applicability = applicability.and(arg_applicability);
         }
 
-        Ok(Some(applicability))
+        evidence.next().is_none().then_some(applicability)
     }
 
-    /// Match one non-lifetime generic arg in a trait path or nominal self type.
-    ///
-    /// Function-trait args and associated-type equality args can appear in bounds such as
-    /// `FnOnce(T) -> R` or `Iterator<Item = T>`, so the matcher handles the simple structural
-    /// forms even though it does not perform general trait solving here.
-    fn non_lifetime_generic_arg_applicability(
+    fn match_arg(
         &self,
-        trait_impl: TraitImplRef,
-        impl_data: &ImplData,
-        impl_arg: &ItemGenericArg,
-        goal_arg: &GenericArg,
+        owner: GenericDefRef,
+        pattern: &GenericArg,
+        evidence: &GenericArg,
         table: &mut InferenceTable,
-        subst: &mut InferenceTypeSubst,
-    ) -> Result<Option<TraitApplicability>, I::Error> {
-        debug_assert!(
-            !matches!(impl_arg, ItemGenericArg::Lifetime(_)),
-            "item_generic_args_align consumes item-side lifetime args"
-        );
-
-        match (impl_arg, goal_arg) {
-            (ItemGenericArg::Type(impl_ty), GenericArg::Type(goal_ty)) => {
-                self.match_type_ref(trait_impl, impl_data, impl_ty, goal_ty, table, subst)
+        subst: &mut InferenceSubstitution,
+    ) -> Option<TraitApplicability> {
+        match (pattern, evidence) {
+            (GenericArg::Type(pattern), GenericArg::Type(evidence)) => {
+                self.match_ty(owner, pattern, evidence, table, subst)
             }
-            (ItemGenericArg::Const(lhs), GenericArg::Const(rhs)) if lhs == rhs => {
-                Ok(Some(TraitApplicability::Yes))
+            (GenericArg::Lifetime(pattern), GenericArg::Lifetime(evidence)) => {
+                self.match_lifetime(owner, *pattern, *evidence, subst)
             }
-            (
-                ItemGenericArg::FnTraitArgs {
-                    params: impl_params,
-                    ret: impl_ret,
-                },
-                GenericArg::FnTraitArgs {
-                    params: goal_params,
-                    ret: goal_ret,
-                },
-            ) if impl_params.len() == goal_params.len() => {
-                let mut applicability = TraitApplicability::Yes;
-                for (impl_param, goal_param) in impl_params.iter().zip(goal_params) {
-                    let Some(param_applicability) = self.match_type_ref(
-                        trait_impl, impl_data, impl_param, goal_param, table, subst,
-                    )?
-                    else {
-                        return Ok(None);
-                    };
-                    applicability = applicability.and(param_applicability);
-                }
-                let Some(ret_applicability) =
-                    self.match_type_ref(trait_impl, impl_data, impl_ret, goal_ret, table, subst)?
-                else {
-                    return Ok(None);
-                };
-                Ok(Some(applicability.and(ret_applicability)))
+            (GenericArg::Const(pattern), GenericArg::Const(evidence)) => {
+                self.match_const(owner, *pattern, *evidence, subst)
             }
-            (
-                ItemGenericArg::AssocType {
-                    name: impl_name,
-                    ty: impl_ty,
-                },
-                GenericArg::AssocType {
-                    name: goal_name,
-                    ty: goal_ty,
-                },
-            ) if impl_name == goal_name => match (impl_ty, goal_ty) {
-                (Some(impl_ty), Some(goal_ty)) => {
-                    self.match_type_ref(trait_impl, impl_data, impl_ty, goal_ty, table, subst)
-                }
-                (None, None) => Ok(Some(TraitApplicability::Yes)),
-                (Some(_), None) | (None, Some(_)) => Ok(Some(TraitApplicability::Maybe)),
-            },
-            _ => Ok(None),
+            (GenericArg::Type(_), GenericArg::Lifetime(_) | GenericArg::Const(_))
+            | (GenericArg::Lifetime(_), GenericArg::Type(_) | GenericArg::Const(_))
+            | (GenericArg::Const(_), GenericArg::Type(_) | GenericArg::Lifetime(_)) => None,
         }
     }
 
-    /// Match written type syntax from an impl header against an inference type from the goal.
-    ///
-    /// This is the small unification-like core of header matching. Direct impl params bind into
-    /// `subst`; concrete written types are resolved and unified with the goal; unsupported source
-    /// shapes either become `Maybe` or reject the candidate, depending on whether using them would
-    /// invent evidence.
-    fn match_type_ref(
+    fn match_ty(
         &self,
-        trait_impl: TraitImplRef,
-        impl_data: &ImplData,
-        impl_ty: &TypeRef,
-        goal_ty: &Ty,
+        owner: GenericDefRef,
+        pattern: &Ty,
+        evidence: &Ty,
         table: &mut InferenceTable,
-        subst: &mut InferenceTypeSubst,
-    ) -> Result<Option<TraitApplicability>, I::Error> {
-        if let Some(name) = impl_ty.type_param_name()
-            && Self::is_impl_type_param(&impl_data.generics, &name)
+        subst: &mut InferenceSubstitution,
+    ) -> Option<TraitApplicability> {
+        let evidence = table.resolve_root_var(evidence);
+        if let Ty::Param(param) = pattern
+            && param.owner == owner
         {
-            // A bare impl type param is the only binding operation this matcher performs directly.
-            // More complex generic patterns are rejected below unless they resolve to concrete
-            // projectable types.
-            return match subst.try_push(table, name, goal_ty.clone()) {
-                Ok(()) => Ok(Some(TraitApplicability::Yes)),
-                Err(InferenceConflict) => Ok(None),
+            return match subst.try_push_type(table, *param, evidence) {
+                Ok(()) => Some(TraitApplicability::Yes),
+                Err(InferenceConflict) => None,
             };
         }
 
-        let goal_ty = table.resolve_root_var(goal_ty);
+        if matches!(pattern, Ty::Unknown) || matches!(evidence, Ty::Unknown) {
+            return Some(TraitApplicability::Maybe);
+        }
+
         let mut applicability = TraitApplicability::Yes;
-        if Self::type_is_uncertain(&goal_ty) {
-            // Unknown or syntax-backed goal types can keep a candidate alive for exploratory
-            // callers, but they should not be treated as a proven concrete match.
-            applicability = TraitApplicability::Maybe;
-        }
-
-        match (impl_ty, &goal_ty) {
-            (TypeRef::Unit, Ty::Unit) | (TypeRef::Never, Ty::Never) => Ok(Some(applicability)),
-            (TypeRef::Tuple(impl_fields), Ty::Tuple(goal_fields))
-                if impl_fields.len() == goal_fields.len() =>
-            {
-                for (impl_field, goal_field) in impl_fields.iter().zip(goal_fields) {
-                    let Some(field_applicability) = self.match_type_ref(
-                        trait_impl, impl_data, impl_field, goal_field, table, subst,
-                    )?
-                    else {
-                        return Ok(None);
-                    };
-                    applicability = applicability.and(field_applicability);
+        let matched = match (pattern, &evidence) {
+            (Ty::Unit, Ty::Unit)
+            | (Ty::Never, Ty::Never)
+            | (Ty::Primitive(_), Ty::Primitive(_))
+            | (Ty::Closure(_), Ty::Closure(_)) => pattern == &evidence,
+            (Ty::Tuple(pattern), Ty::Tuple(evidence)) if pattern.len() == evidence.len() => {
+                for (pattern, evidence) in pattern.iter().zip(evidence) {
+                    applicability =
+                        applicability.and(self.match_ty(owner, pattern, evidence, table, subst)?);
                 }
-                Ok(Some(applicability))
-            }
-            (
-                TypeRef::Array {
-                    inner: impl_inner,
-                    len: impl_len,
-                },
-                Ty::Array {
-                    inner: goal_inner,
-                    len: goal_len,
-                },
-            ) if Self::array_len_matches(impl_len, goal_len, &impl_data.generics) => {
-                self.match_type_ref(trait_impl, impl_data, impl_inner, goal_inner, table, subst)
-            }
-            (TypeRef::Slice(impl_inner), Ty::Slice(goal_inner)) => {
-                self.match_type_ref(trait_impl, impl_data, impl_inner, goal_inner, table, subst)
-            }
-            (
-                TypeRef::Reference {
-                    mutability,
-                    inner: impl_inner,
-                    ..
-                },
-                Ty::Reference {
-                    mutability: goal_mutability,
-                    inner: goal_inner,
-                },
-            ) if *mutability == *goal_mutability => {
-                self.match_type_ref(trait_impl, impl_data, impl_inner, goal_inner, table, subst)
-            }
-            (TypeRef::Path(_), _)
-                if Self::type_ref_mentions_impl_type_param(impl_ty, &impl_data.generics) =>
-            {
-                Ok(None)
-            }
-            (TypeRef::Path(_), _) => {
-                let context = TypePathContext {
-                    module: impl_data.owner,
-                    impl_ref: Some(trait_impl.impl_ref),
-                };
-                let resolved_ty = self.item_paths.resolve_type_ref(
-                    impl_ty,
-                    context,
-                    Ty::syntax(impl_ty.clone()),
-                    &TypeSubst::new(),
-                )?;
-                if !resolved_ty.is_projectable() {
-                    return Ok(Some(TraitApplicability::Maybe));
-                }
-
-                // Concrete type refs can use the normal inference-table unifier. This is how a
-                // header like `impl Trait for Vec<User>` rejects `Vec<String>` without special
-                // matching code for every nominal shape.
-                match table.try_unify(&resolved_ty, &goal_ty) {
-                    Ok(()) => Ok(Some(applicability)),
-                    Err(InferenceConflict) => Ok(None),
-                }
-            }
-            (TypeRef::Unknown(_) | TypeRef::Infer, _) => Ok(Some(TraitApplicability::Maybe)),
-            (
-                TypeRef::RawPointer { .. }
-                | TypeRef::FnPointer { .. }
-                | TypeRef::ImplTrait(_)
-                | TypeRef::DynTrait(_),
-                _,
-            ) => Ok(None),
-            _ => Ok(None),
-        }
-    }
-
-    /// Return true when a goal-side type is too incomplete for a definite header match.
-    fn type_is_uncertain(ty: &Ty) -> bool {
-        match ty {
-            Ty::Unknown | Ty::Syntax(_) => true,
-            Ty::Tuple(fields) => fields.iter().any(Self::type_is_uncertain),
-            Ty::Array { inner, .. } | Ty::Slice(inner) | Ty::Reference { inner, .. } => {
-                Self::type_is_uncertain(inner)
-            }
-            Ty::Opaque { .. } => true,
-            Ty::InferVar { .. }
-            | Ty::Unit
-            | Ty::Never
-            | Ty::Primitive(_)
-            | Ty::Closure(_)
-            | Ty::FunctionItem(_)
-            | Ty::Nominal(_)
-            | Ty::SelfTy(_) => false,
-        }
-    }
-
-    /// Match array lengths without pretending to solve const generics.
-    ///
-    /// A concrete `impl<T> Trait for [T; 3]` only matches `[User; 3]`. A const param in the impl
-    /// header, such as `[T; N]`, is accepted structurally because the rest of this matcher can
-    /// still bind `T` without needing to know the actual value of `N`.
-    fn array_len_matches(
-        impl_len: &Option<String>,
-        goal_len: &Option<String>,
-        generics: &GenericParams,
-    ) -> bool {
-        match impl_len {
-            Some(len)
-                if generics
-                    .consts
-                    .iter()
-                    .any(|param| param.name.as_str() == len.as_str()) =>
-            {
                 true
             }
-            _ => impl_len == goal_len,
-        }
-    }
-
-    /// Return true when the name belongs to the impl's own type params.
-    fn is_impl_type_param(generics: &GenericParams, name: &Name) -> bool {
-        generics.type_param_names().any(|param| param == name)
-    }
-
-    /// Detect nested impl-param patterns the header matcher cannot safely bind.
-    ///
-    /// `T` by itself can be bound directly. `Option<T>` is different: matching that against a goal
-    /// type requires recursive decomposition after resolving `Option`, and this local matcher only
-    /// supports that for already-concrete projectable types.
-    fn type_ref_mentions_impl_type_param(ty: &TypeRef, generics: &GenericParams) -> bool {
-        match ty {
-            TypeRef::Path(path) => path.mentions_type_param(
-                &generics
-                    .type_param_names()
-                    .map(|name| name.as_str())
-                    .collect::<Vec<_>>(),
-            ),
-            TypeRef::Tuple(types) => types
-                .iter()
-                .any(|ty| Self::type_ref_mentions_impl_type_param(ty, generics)),
-            TypeRef::Reference { inner, .. }
-            | TypeRef::RawPointer { inner, .. }
-            | TypeRef::Slice(inner)
-            | TypeRef::Array { inner, .. } => {
-                Self::type_ref_mentions_impl_type_param(inner, generics)
+            (
+                Ty::Array {
+                    inner: pattern,
+                    len: pattern_len,
+                },
+                Ty::Array {
+                    inner: evidence,
+                    len: evidence_len,
+                },
+            ) => {
+                applicability = applicability.and(self.match_const(
+                    owner,
+                    *pattern_len,
+                    *evidence_len,
+                    subst,
+                )?);
+                applicability =
+                    applicability.and(self.match_ty(owner, pattern, evidence, table, subst)?);
+                true
             }
-            TypeRef::FnPointer { params, ret } => {
-                params
-                    .iter()
-                    .any(|ty| Self::type_ref_mentions_impl_type_param(ty, generics))
-                    || Self::type_ref_mentions_impl_type_param(ret, generics)
+            (Ty::Slice(pattern), Ty::Slice(evidence)) => {
+                applicability =
+                    applicability.and(self.match_ty(owner, pattern, evidence, table, subst)?);
+                true
             }
-            TypeRef::ImplTrait(bounds) | TypeRef::DynTrait(bounds) => bounds
-                .iter()
-                .any(|bound| Self::type_bound_mentions_impl_type_param(bound, generics)),
-            TypeRef::Unknown(_) | TypeRef::Never | TypeRef::Unit | TypeRef::Infer => false,
-        }
+            (
+                Ty::Reference {
+                    lifetime: pattern_lifetime,
+                    mutability: pattern_mutability,
+                    inner: pattern,
+                },
+                Ty::Reference {
+                    lifetime: evidence_lifetime,
+                    mutability: evidence_mutability,
+                    inner: evidence,
+                },
+            ) if pattern_mutability == evidence_mutability => {
+                applicability = applicability.and(self.match_lifetime(
+                    owner,
+                    *pattern_lifetime,
+                    *evidence_lifetime,
+                    subst,
+                )?);
+                applicability =
+                    applicability.and(self.match_ty(owner, pattern, evidence, table, subst)?);
+                true
+            }
+            (
+                Ty::RawPointer {
+                    mutability: pattern_mutability,
+                    inner: pattern,
+                },
+                Ty::RawPointer {
+                    mutability: evidence_mutability,
+                    inner: evidence,
+                },
+            ) if pattern_mutability == evidence_mutability => {
+                applicability =
+                    applicability.and(self.match_ty(owner, pattern, evidence, table, subst)?);
+                true
+            }
+            (
+                Ty::FnPointer {
+                    params: pattern_params,
+                    ret: pattern_ret,
+                },
+                Ty::FnPointer {
+                    params: evidence_params,
+                    ret: evidence_ret,
+                },
+            ) if pattern_params.len() == evidence_params.len() => {
+                for (pattern, evidence) in pattern_params.iter().zip(evidence_params) {
+                    applicability =
+                        applicability.and(self.match_ty(owner, pattern, evidence, table, subst)?);
+                }
+                applicability = applicability.and(self.match_ty(
+                    owner,
+                    pattern_ret,
+                    evidence_ret,
+                    table,
+                    subst,
+                )?);
+                true
+            }
+            (Ty::Adt(pattern), Ty::Adt(evidence)) if pattern.def == evidence.def => {
+                applicability = applicability.and(self.match_args(
+                    owner,
+                    &pattern.args,
+                    &evidence.args,
+                    table,
+                    subst,
+                )?);
+                true
+            }
+            (Ty::FnDef(pattern), Ty::FnDef(evidence)) if pattern.def == evidence.def => {
+                applicability = applicability.and(self.match_args(
+                    owner,
+                    &pattern.args,
+                    &evidence.args,
+                    table,
+                    subst,
+                )?);
+                true
+            }
+            (Ty::Alias(pattern), Ty::Alias(evidence)) if pattern.same_definition(evidence) => {
+                applicability = applicability.and(self.match_args(
+                    owner,
+                    pattern.args(),
+                    evidence.args(),
+                    table,
+                    subst,
+                )?);
+                true
+            }
+            // Opaque/projection evidence is a real semantic type but may hide the concrete shape
+            // required by this impl header. Keep it speculative instead of inventing equality.
+            (_, Ty::Alias(_)) | (Ty::Alias(_), _) | (Ty::Param(_), _) => {
+                applicability = TraitApplicability::Maybe;
+                true
+            }
+            (_, Ty::InferVar { .. }) => {
+                return match table.try_unify(pattern, &evidence) {
+                    Ok(()) => Some(applicability),
+                    Err(InferenceConflict) => None,
+                };
+            }
+            _ => false,
+        };
+
+        matched.then_some(applicability)
     }
 
-    fn type_bound_mentions_impl_type_param(bound: &TypeBound, generics: &GenericParams) -> bool {
-        match bound {
-            TypeBound::Trait(ty) => Self::type_ref_mentions_impl_type_param(ty, generics),
-            TypeBound::Lifetime(_) | TypeBound::Unsupported(_) => false,
+    fn match_lifetime(
+        &self,
+        owner: GenericDefRef,
+        pattern: Lifetime,
+        evidence: Lifetime,
+        subst: &mut InferenceSubstitution,
+    ) -> Option<TraitApplicability> {
+        if let Lifetime::Param(param) = pattern
+            && param.owner == owner
+        {
+            subst.bind_lifetime(pattern, evidence);
+            return Some(TraitApplicability::Yes);
         }
+
+        Some(match (pattern, evidence) {
+            (Lifetime::Static, Lifetime::Static) => TraitApplicability::Yes,
+            (Lifetime::Static, _) | (_, Lifetime::Static) => return None,
+            (Lifetime::Param(_) | Lifetime::Erased, _) => TraitApplicability::Yes,
+        })
+    }
+
+    fn match_const(
+        &self,
+        owner: GenericDefRef,
+        pattern: ConstValue,
+        evidence: ConstValue,
+        subst: &mut InferenceSubstitution,
+    ) -> Option<TraitApplicability> {
+        let bindable = matches!(pattern, ConstValue::Param(param) if param.owner == owner);
+        let compared_pattern = match pattern {
+            ConstValue::Param(param) if bindable => subst.const_param(param).unwrap_or(pattern),
+            _ => pattern,
+        };
+        let applicability = match (compared_pattern, evidence) {
+            (ConstValue::Scalar(lhs), ConstValue::Scalar(rhs)) => {
+                (lhs == rhs).then_some(TraitApplicability::Yes)
+            }
+            (ConstValue::Unknown, _) | (_, ConstValue::Unknown) => Some(TraitApplicability::Maybe),
+            (ConstValue::Param(_), _) | (_, ConstValue::Param(_)) => Some(TraitApplicability::Yes),
+        }?;
+        if bindable {
+            subst.bind_const(pattern, evidence);
+        }
+        Some(applicability)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use rg_ir_model::{
+        ConstParamRef, CrateId, CrateRef, DefMapRef, GenericDefRef, ImplId, ImplRef,
+        LifetimeParamRef, LocalLifetimeParamId, LocalTypeOrConstParamId, PackageSlot, TraitDefRef,
+        TraitId, TraitImplRef,
+    };
+
+    use super::CandidateMatcher;
+    use crate::inference::{InferenceSubstitution, InferenceTable};
+    use crate::{
+        ConstValue, GenericArg, ImplHeader, Lifetime, Mutability, PrimitiveTy, TraitApplication,
+        TraitGoal, TraitRefLowering, Ty,
+    };
+
+    #[test]
+    fn retains_const_and_lifetime_impl_evidence() {
+        let origin = DefMapRef::Crate(CrateRef {
+            package: PackageSlot(0),
+            crate_id: CrateId(0),
+        });
+        let impl_ref = ImplRef::new(origin, ImplId(0));
+        let owner = GenericDefRef::Impl(impl_ref);
+        let lifetime_param = LifetimeParamRef {
+            owner,
+            local_id: LocalLifetimeParamId(0),
+        };
+        let const_param = ConstParamRef {
+            owner,
+            local_id: LocalTypeOrConstParamId(0),
+        };
+        let trait_ref = TraitDefRef::new(origin, TraitId(0));
+
+        // This is the semantic form of an impl headed by `&'a [(); N]`. Both parameters must be
+        // carried into the selected substitution because an associated value may mention either.
+        let pattern = Ty::reference_with_lifetime(
+            Lifetime::Param(lifetime_param),
+            Mutability::Shared,
+            Ty::array(Ty::Unit, ConstValue::Param(const_param)),
+        );
+        let evidence = Ty::reference_with_lifetime(
+            Lifetime::Static,
+            Mutability::Shared,
+            Ty::array(Ty::Unit, ConstValue::Scalar(4)),
+        );
+        let header = ImplHeader {
+            owner: impl_ref,
+            args: vec![
+                GenericArg::Lifetime(Lifetime::Param(lifetime_param)),
+                GenericArg::Const(ConstValue::Param(const_param)),
+            ]
+            .into(),
+            self_ty: pattern.clone(),
+            trait_ref: Some(TraitRefLowering {
+                application: TraitApplication {
+                    def: trait_ref,
+                    args: vec![GenericArg::Type(Box::new(pattern.clone()))].into(),
+                },
+                associated_types: Vec::new(),
+            }),
+            clauses: Vec::new(),
+        };
+        let trait_impl = TraitImplRef {
+            impl_ref,
+            trait_ref,
+        };
+        let goal = TraitGoal::new(evidence.clone(), trait_ref, Vec::new());
+        let mut table = InferenceTable::new();
+        let mut subst = InferenceSubstitution::new();
+
+        let applicability =
+            CandidateMatcher.match_goal(&goal, trait_impl, &header, &mut table, &mut subst);
+
+        assert_eq!(applicability, Some(rg_ir_model::TraitApplicability::Yes));
+        assert_eq!(subst.as_substitution().apply(&pattern), evidence);
+        assert_eq!(
+            subst.as_substitution().apply(&Ty::reference_with_lifetime(
+                Lifetime::Param(lifetime_param),
+                Mutability::Shared,
+                Ty::array(
+                    Ty::Primitive(PrimitiveTy::Bool),
+                    ConstValue::Param(const_param),
+                ),
+            )),
+            Ty::reference_with_lifetime(
+                Lifetime::Static,
+                Mutability::Shared,
+                Ty::array(Ty::Primitive(PrimitiveTy::Bool), ConstValue::Scalar(4),),
+            )
+        );
     }
 }

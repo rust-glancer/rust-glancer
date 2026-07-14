@@ -8,8 +8,8 @@ pub use self::{
     decl::{
         ConstItem, ConstParamData, EnumItem, EnumVariantItem, FieldItem, FieldKey, FieldList,
         FunctionItem, FunctionQualifiers, GenericParams, ImplItem, LifetimeParamData, ParamItem,
-        ParamKind, StaticItem, StructItem, TraitItem, TypeAliasItem, TypeParamData, UnionItem,
-        WherePredicate,
+        ParamKind, SelfParamKind, StaticItem, StructItem, TraitItem, TypeAliasItem,
+        TypeOrConstParamData, TypeParamData, UnionItem, WherePredicate,
     },
     docs::Documentation,
     import::{

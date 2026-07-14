@@ -2,17 +2,15 @@
 
 use rg_def_map::DefMapSource;
 use rg_ir_model::{
-    DefId, ExprData, ExprId, FunctionRef, ScopeId, SemanticItemRef,
-    identity::DeclarationRef,
-    items::{GenericArg as ItemGenericArg, GenericParams, TypeRef},
+    DefId, ExprData, ExprId, FunctionRef, GenericDefRef, ScopeId, SemanticItemRef,
+    identity::DeclarationRef, items::GenericArg as ItemGenericArg,
 };
 use rg_package_store::PackageStoreError;
-use rg_semantic_ir::ItemStoreSource;
+use rg_semantic_ir::{GenericParamSource, ItemStoreSource};
 use rg_std::{ExpectedUnique, UniqueVec};
-use rg_text::Name;
 use rg_ty::{
-    CallArgInference, CallArgMapping, ExpectedNominalTyExt, ExpectedTyExt, Ty, TypeSubst,
-    function_generic_shadow_subst,
+    CallArgInference, CallArgMapping, CallableSignature, ExpectedTyExt, GenericArg, Substitution,
+    Ty, function_generic_shadow_subst,
 };
 
 use crate::resolution::{BodyResolutionContext, TypeRefUseSite};
@@ -39,7 +37,7 @@ enum CallSelfSource {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct CallSelf {
     self_ty: Ty,
-    subst: TypeSubst,
+    subst: Substitution,
 }
 
 impl ResolvedCallTarget {
@@ -97,14 +95,14 @@ impl ResolvedCallTarget {
         &self.explicit_args
     }
 
+    /// Return the body scope where explicit call arguments were written.
+    pub(crate) fn site_scope(&self) -> ScopeId {
+        self.site_scope
+    }
+
     /// Return the first signature param matched by written call args.
     pub(crate) fn first_written_param_idx(&self) -> usize {
         self.self_source.first_written_param_idx()
-    }
-
-    /// Return whether this static call was selected through a type prefix.
-    pub(crate) fn has_type_prefix_self_source(&self) -> bool {
-        matches!(self.self_source, CallSelfSource::TypePrefix(_))
     }
 }
 
@@ -128,16 +126,11 @@ impl CallSelfSource {
     }
 
     /// Start signature projection with receiver-derived substitutions.
-    fn base_subst(&self) -> TypeSubst {
+    fn base_subst(&self) -> Substitution {
         match self {
-            Self::None => TypeSubst::new(),
+            Self::None => Substitution::new(),
             Self::TypePrefix(self_context) | Self::Receiver(self_context) => {
-                let mut subst = self_context.subst.clone();
-                // Trait and impl signatures may mention the special `Self` type directly. Add it
-                // to the same substitution as ordinary generics so projected call signatures see
-                // `Self::Item` and `Self`-typed params from the selected receiver.
-                subst.push(Name::new("Self"), self_context.self_ty.clone());
-                subst
+                self_context.subst.clone()
             }
         }
     }
@@ -239,33 +232,16 @@ pub(crate) struct CallSignature<'call, 'query, D, I> {
 /// Signature facts projected for one selected call target.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct CallProjection {
-    written_param_refs: Vec<Option<TypeRef>>,
+    signature: CallableSignature,
     written_param_tys: Vec<Ty>,
     return_ty: Ty,
-    declared_return_ty: Option<TypeRef>,
-    function_generics: Option<GenericParams>,
-    explicit_args: Vec<ItemGenericArg>,
-    selected_self_ty: Option<Ty>,
-    subst: TypeSubst,
+    subst: Substitution,
 }
 
 impl CallProjection {
-    fn unknown(explicit_args: &[ItemGenericArg]) -> Self {
-        Self {
-            written_param_refs: Vec::new(),
-            written_param_tys: Vec::new(),
-            return_ty: Ty::Unknown,
-            declared_return_ty: None,
-            function_generics: None,
-            explicit_args: explicit_args.to_vec(),
-            selected_self_ty: None,
-            subst: TypeSubst::new(),
-        }
-    }
-
-    /// Return declared parameter syntax for arguments written at the call site.
-    pub(crate) fn written_param_refs(&self) -> &[Option<TypeRef>] {
-        &self.written_param_refs
+    /// Return the uninstantiated semantic signature selected for this call.
+    pub(crate) fn signature(&self) -> &CallableSignature {
+        &self.signature
     }
 
     /// Return parameter types for arguments written at the call site.
@@ -278,28 +254,8 @@ impl CallProjection {
         &self.return_ty
     }
 
-    /// Return the declared return type syntax.
-    pub(crate) fn declared_return_ty(&self) -> Option<&TypeRef> {
-        self.declared_return_ty.as_ref()
-    }
-
-    /// Return the function generics visible in the signature.
-    pub(crate) fn function_generics(&self) -> Option<&GenericParams> {
-        self.function_generics.as_ref()
-    }
-
-    /// Return explicit generic arguments written at the call site.
-    pub(crate) fn explicit_args(&self) -> &[ItemGenericArg] {
-        &self.explicit_args
-    }
-
-    /// Return the `Self` type that selected this associated function or method.
-    pub(crate) fn selected_self_ty(&self) -> Option<&Ty> {
-        self.selected_self_ty.as_ref()
-    }
-
     /// Return the call-specific substitution used to project signature types.
-    pub(crate) fn subst(&self) -> &TypeSubst {
+    pub(crate) fn subst(&self) -> &Substitution {
         &self.subst
     }
 }
@@ -329,7 +285,7 @@ where
         };
         let callee_ty = self.context.body().expr_ty_unchecked(callee);
 
-        if matches!(callee_ty, Ty::Nominal(_) | Ty::SelfTy(_)) {
+        if matches!(callee_ty, Ty::Adt(_)) {
             return Ok(callee_ty.clone());
         }
 
@@ -355,29 +311,72 @@ where
         &self,
         call: ExprId,
     ) -> Result<Option<ResolvedCallTarget>, PackageStoreError> {
+        self.target_with_receiver_ty(call, None)
+    }
+
+    /// Return the selected target, preferring a live inference receiver for method calls.
+    pub(crate) fn target_with_receiver_ty(
+        &self,
+        call: ExprId,
+        receiver_ty: Option<&Ty>,
+    ) -> Result<Option<ResolvedCallTarget>, PackageStoreError> {
         let expr_data = self.context.body().expr_unchecked(call);
-        let site = match &expr_data.kind {
+        let targets = match &expr_data.kind {
             ExprKind::Call {
                 callee: Some(callee),
                 ..
-            } => CallSite::Function { callee: *callee },
+            } => self.targets(CallSite::Function { callee: *callee })?,
             ExprKind::Call { callee: None, .. } => return Ok(None),
             ExprKind::MethodCall {
                 receiver: Some(receiver),
                 method_name,
                 generic_args,
                 ..
-            } => CallSite::Method(MethodCallSite {
-                receiver: *receiver,
-                name: method_name,
-                explicit_args: generic_args,
-                scope: expr_data.scope,
-            }),
+            } => {
+                let site = MethodCallSite {
+                    receiver: *receiver,
+                    name: method_name,
+                    explicit_args: generic_args,
+                    scope: expr_data.scope,
+                };
+                match receiver_ty {
+                    Some(receiver_ty) => self.lookup_method_for_ty(site, receiver_ty)?,
+                    None => self.lookup_method(site)?,
+                }
+            }
             ExprKind::MethodCall { receiver: None, .. } => return Ok(None),
             _ => return Ok(None),
         };
 
-        Ok(self.targets(site)?.single())
+        Ok(targets.single())
+    }
+
+    /// Resolve a method-call expression from a receiver type learned during body inference.
+    pub(crate) fn method_targets_with_receiver_ty(
+        &self,
+        call: ExprId,
+        receiver_ty: &Ty,
+    ) -> Result<ResolvedCallTargets, PackageStoreError> {
+        let expr_data = self.context.body().expr_unchecked(call);
+        let ExprKind::MethodCall {
+            receiver: Some(receiver),
+            method_name,
+            generic_args,
+            ..
+        } = &expr_data.kind
+        else {
+            return Ok(ResolvedCallTargets::new());
+        };
+
+        self.lookup_method_for_ty(
+            MethodCallSite {
+                receiver: *receiver,
+                name: method_name,
+                explicit_args: generic_args,
+                scope: expr_data.scope,
+            },
+            receiver_ty,
+        )
     }
 
     /// Return all targets selected by a call site.
@@ -460,6 +459,15 @@ where
         site: MethodCallSite<'_>,
     ) -> Result<ResolvedCallTargets, PackageStoreError> {
         let receiver_ty = self.context.body().expr_ty_unchecked(site.receiver);
+        self.lookup_method_for_ty(site, receiver_ty)
+    }
+
+    /// Convert receiver method lookup into targets using the supplied semantic receiver fact.
+    fn lookup_method_for_ty(
+        &self,
+        site: MethodCallSite<'_>,
+        receiver_ty: &Ty,
+    ) -> Result<ResolvedCallTargets, PackageStoreError> {
         let mut targets = ResolvedCallTargets::new();
 
         for candidate in self
@@ -540,40 +548,42 @@ where
 {
     /// Project written parameter types and result type for this selected call.
     pub(crate) fn project(&self, args: &[ExprId]) -> Result<CallProjection, PackageStoreError> {
-        let item_query = self.query.context.item_query();
-        let Some(function_data) = item_query.function_data(self.target.function)? else {
-            return Ok(CallProjection::unknown(self.target.explicit_args()));
-        };
-        let generics = function_data.signature.generics();
-        let base_subst = self.base_subst(generics)?;
-        let param_resolver = self
+        let Some(signature) = self
             .query
             .context
-            .type_refs(TypeRefUseSite::Function(self.target.function))
-            .with_subst(&base_subst);
+            .signatures()
+            .function(self.target.function)?
+        else {
+            return Ok(CallProjection {
+                signature: CallableSignature {
+                    owner: self.target.function,
+                    args: Default::default(),
+                    params: Vec::new(),
+                    ret: Ty::Unknown,
+                    clauses: Vec::new(),
+                },
+                written_param_tys: Vec::new(),
+                return_ty: Ty::Unknown,
+                subst: Substitution::new(),
+            });
+        };
+        let generics = self
+            .query
+            .context
+            .item_paths()
+            .generics()
+            .generics(GenericDefRef::Function(self.target.function))?;
+        let base_subst = self.base_subst(&generics)?;
 
-        // Keep one expected type per written argument. Missing parameter annotations are not
-        // useful evidence, but `Unknown` preserves arity so the caller can still zip safely.
-        let written_params = function_data
-            .signature
-            .params()
+        // Canonical signatures preserve every parameter position, including an implicit receiver.
+        // Applying the selected owner substitution once gives every downstream caller the same
+        // expected types without interpreting declaration syntax again.
+        let written_param_tys = signature
+            .params
             .iter()
             .skip(self.target.self_source.first_written_param_idx())
+            .map(|param| base_subst.apply(param))
             .collect::<Vec<_>>();
-        let written_param_refs = written_params
-            .iter()
-            .map(|param| param.ty.clone())
-            .collect::<Vec<_>>();
-        let written_param_tys = written_params
-            .iter()
-            .map(|param| {
-                let Some(param_ty) = &param.ty else {
-                    return Ok(Ty::Unknown);
-                };
-
-                param_resolver.resolve(param_ty)
-            })
-            .collect::<Result<Vec<_>, _>>()?;
 
         let mut return_subst = base_subst.clone();
         let arg_tys = args
@@ -582,8 +592,8 @@ where
             .collect::<Vec<_>>();
         return_subst.extend(
             CallArgInference::new(
-                generics,
-                function_data.signature.params(),
+                &generics,
+                &signature.params,
                 &arg_tys,
                 self.target.self_source.arg_mapping(),
                 &return_subst,
@@ -591,71 +601,50 @@ where
             .infer(),
         );
 
-        let declared_return_ty = function_data.signature.ret_ty().cloned();
-        let return_ty = match declared_return_ty.as_ref() {
-            Some(ret_ty) => self.project_return(&return_subst, ret_ty)?,
-            None => Ty::Unit,
-        };
+        let return_ty = return_subst.apply(&signature.ret);
 
         Ok(CallProjection {
-            written_param_refs,
+            signature,
             written_param_tys,
             return_ty,
-            declared_return_ty,
-            function_generics: generics.cloned(),
-            explicit_args: self.target.explicit_args().to_vec(),
-            selected_self_ty: self.target.self_source.self_ty(),
             subst: return_subst,
         })
     }
 
     /// Combine receiver, shadow, and explicit generic substitutions.
-    fn base_subst(&self, generics: Option<&GenericParams>) -> Result<TypeSubst, PackageStoreError> {
+    fn base_subst(
+        &self,
+        generics: &rg_semantic_ir::Generics<'_>,
+    ) -> Result<Substitution, PackageStoreError> {
         let mut subst = self.target.self_source.base_subst();
+
+        // A trait's synthetic `Self` parameter is part of the parent's canonical generic list.
+        // Method lookup already selected its concrete receiver, so bind that identity here rather
+        // than introducing a spelling-based `"Self"` substitution.
+        if let Some(self_ty) = self.target.self_source.self_ty()
+            && let Some(self_param) = generics.iter().find_map(|param| {
+                matches!(param.source(), GenericParamSource::TraitSelf).then_some(param.param())
+            })
+        {
+            subst.push(self_param, GenericArg::Type(Box::new(self_ty)));
+        }
         subst.extend(function_generic_shadow_subst(generics));
-        subst.extend(self.explicit_subst(generics)?);
+        subst.extend(self.explicit_subst()?);
         Ok(subst)
     }
 
     /// Bind written function generics at the call-site scope.
-    fn explicit_subst(
-        &self,
-        generics: Option<&GenericParams>,
-    ) -> Result<TypeSubst, PackageStoreError> {
-        let Some(generics) = generics else {
-            return Ok(TypeSubst::new());
-        };
+    fn explicit_subst(&self) -> Result<Substitution, PackageStoreError> {
         if self.target.explicit_args.is_empty() {
-            return Ok(TypeSubst::new());
+            return Ok(Substitution::new());
         }
 
         // Function turbofish arguments are supplied at the call site, so names inside them must
         // resolve from the body scope where the call was written.
         self.query.context.generics().subst_for_explicit_args(
-            generics,
+            GenericDefRef::Function(self.target.function),
             &self.target.explicit_args,
             TypeRefUseSite::Scope(self.target.site_scope),
         )
-    }
-
-    /// Resolve the declared return type after call-specific substitutions.
-    fn project_return(&self, subst: &TypeSubst, ret_ty: &TypeRef) -> Result<Ty, PackageStoreError> {
-        if ret_ty.is_self_type() {
-            return Ok(match self.target.self_source.self_ty() {
-                Some(self_ty) => self_ty,
-                None => self
-                    .query
-                    .context
-                    .functions()
-                    .self_nominal_ty(self.target.function)?
-                    .into_self_ty(),
-            });
-        }
-
-        self.query
-            .context
-            .type_refs(TypeRefUseSite::Function(self.target.function))
-            .with_subst(subst)
-            .resolve(ret_ty)
     }
 }

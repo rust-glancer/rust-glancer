@@ -24,10 +24,11 @@ pub use self::{
     ir::{PackageIr, SemanticIrStats},
     item::{
         ConstData, ConstSignature, CrateItemQuery, EnumData, EnumVariantData, FieldData,
-        FunctionData, FunctionSignature, ImplData, ItemLookupIndex, ItemResolutionQuery, ItemStore,
-        ItemStoreBuilder, ItemStoreLowerer, ItemStoreQuery, ItemStoreSource, ItemStoreSourceReader,
-        SemanticItemView, StaticData, StructData, TraitData, TypeAliasData, TypeAliasSignature,
-        TypePathContext, UnionData,
+        FunctionData, FunctionSignature, GenericParamSource, GenericParamView, Generics,
+        GenericsQuery, ImplData, ItemLookupIndex, ItemResolutionQuery, ItemStore, ItemStoreBuilder,
+        ItemStoreLowerer, ItemStoreQuery, ItemStoreSource, ItemStoreSourceReader, SemanticItemView,
+        StaticData, StructData, TraitData, TypeAliasData, TypeAliasSignature, TypePathContext,
+        UnionData,
     },
     store::{SemanticIrDb, SemanticIrReadTxn},
 };

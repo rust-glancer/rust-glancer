@@ -1,6 +1,6 @@
 use rg_ir_model::{
     AssocItemId, FunctionRef, ItemOwner, LocalDefRef, LocalImplRef, ModuleRef, Mutability,
-    TraitRef, TypeDefRef,
+    TraitDefRef, TypeDefRef,
     hir::source::ItemSource,
     items::{
         Documentation, EnumVariantItem, FieldItem, FieldList, GenericParams, ParamKind, TypeBound,
@@ -116,7 +116,7 @@ pub struct ImplData {
     pub trait_ref: Option<TypeRef>,
     pub self_ty: TypeRef,
     pub resolved_self_ty: ExpectedUnique<TypeDefRef>,
-    pub resolved_trait_ref: ExpectedUnique<TraitRef>,
+    pub resolved_trait_ref: ExpectedUnique<TraitDefRef>,
     pub items: Vec<AssocItemId>,
     pub is_unsafe: bool,
 }
@@ -155,7 +155,7 @@ impl FunctionData {
         self.signature
             .params()
             .first()
-            .is_some_and(|param| matches!(param.kind, ParamKind::SelfParam))
+            .is_some_and(|param| matches!(param.kind, ParamKind::SelfParam(_)))
     }
 }
 

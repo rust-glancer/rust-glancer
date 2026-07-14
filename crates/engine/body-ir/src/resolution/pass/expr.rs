@@ -5,7 +5,7 @@
 
 use rg_def_map::DefMapSource;
 use rg_ir_model::{
-    BodyPath, DefMapRef, ExprId, Path, ScopeId, TypeDefRef, TypePathResolution,
+    BodyPath, DefMapRef, ExprId, GenericDefRef, Path, ScopeId, TypeDefRef, TypePathResolution,
     identity::DeclarationRef,
     items::{FieldKey, GenericArg as ItemGenericArg},
 };
@@ -13,8 +13,8 @@ use rg_package_store::PackageStoreError;
 use rg_semantic_ir::ItemStoreSource;
 use rg_std::ExpectedUnique;
 use rg_ty::{
-    AutoderefMode, ExpectedTyExt, GenericArg, NominalTy, PrimitiveTy, ReferencePeelingCandidates,
-    Ty, ty_for_binary, ty_for_literal, ty_for_unary,
+    AdtTy, AutoderefMode, ExpectedTyExt, GenericArgs, PrimitiveTy, ReferencePeelingCandidates,
+    Substitution, Ty, ty_for_binary, ty_for_literal, ty_for_unary,
 };
 
 use crate::{
@@ -329,14 +329,14 @@ where
             TypePathResolution::SelfType(type_def) => {
                 return Ok((
                     BodyResolution::Unknown,
-                    Ty::self_ty(self.record_nominal_ty(scope, path, type_def)?),
+                    Ty::adt(self.record_nominal_ty(scope, path, type_def)?),
                 ));
             }
             TypePathResolution::TypeDef(type_def) => {
                 let declaration = self.record_declaration_for_type_def(type_def)?;
                 return Ok((
                     BodyResolution::Declarations([declaration].into_iter().collect()),
-                    Ty::nominal(self.record_nominal_ty(scope, path, type_def)?),
+                    Ty::adt(self.record_nominal_ty(scope, path, type_def)?),
                 ));
             }
             TypePathResolution::TypeAlias(_)
@@ -364,7 +364,7 @@ where
                         .into_iter()
                         .collect(),
                 ),
-                Ty::nominal(self.record_nominal_ty(scope, path, variant.owner)?),
+                Ty::adt(self.record_nominal_ty(scope, path, variant.owner)?),
             ));
         }
 
@@ -398,8 +398,8 @@ where
         scope: ScopeId,
         path: &BodyPath,
         type_def: TypeDefRef,
-    ) -> Result<NominalTy, PackageStoreError> {
-        Ok(NominalTy {
+    ) -> Result<AdtTy, PackageStoreError> {
+        Ok(AdtTy {
             def: type_def,
             args: self.record_generic_args(scope, path, type_def)?,
         })
@@ -411,31 +411,22 @@ where
         scope: ScopeId,
         path: &BodyPath,
         type_def: TypeDefRef,
-    ) -> Result<Vec<GenericArg>, PackageStoreError> {
+    ) -> Result<GenericArgs, PackageStoreError> {
         if let Some(args) = path.last_segment_angle_args() {
             return self
                 .pass
                 .context()
                 .type_refs(TypeRefUseSite::Scope(scope))
-                .resolve_generic_args(args);
+                .resolve_generic_args_for(GenericDefRef::TypeDef(type_def), args);
         }
 
-        let Some(generics) = self
+        let generics = self
             .pass
             .context()
-            .item_query()
-            .generic_params_for_type_def(type_def)?
-        else {
-            return Ok(Vec::new());
-        };
-
-        // TODO: Omitted record constructor args should preserve non-type generic arity too.
-        // We need a deliberate placeholder shape for lifetimes and consts before adding that.
-        Ok(generics
-            .types
-            .iter()
-            .map(|_| GenericArg::Type(Box::new(Ty::Unknown)))
-            .collect())
+            .item_paths()
+            .generics()
+            .generics(GenericDefRef::TypeDef(type_def))?;
+        Ok(Substitution::new().args_for(&generics))
     }
 
     fn resolve_field_expr(

@@ -25,7 +25,9 @@ pub(crate) use self::{
     traits::BodyTraitQuery,
     type_alias::BodyTypeAliasQuery,
     type_context::BodyTypeContextQuery,
-    type_ref::{TypeRefResolutionQuery, TypeRefUseSite},
+    type_ref::{BodyTypePathResolver, TypeRefResolutionQuery, TypeRefUseSite},
 };
 
-pub(crate) use self::call::{BodyCallQuery, CallSite, MethodCallSite, ResolvedCallTarget};
+pub(crate) use self::call::{
+    BodyCallQuery, CallProjection, CallSite, MethodCallSite, ResolvedCallTarget,
+};

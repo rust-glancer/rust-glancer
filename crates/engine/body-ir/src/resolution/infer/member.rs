@@ -4,16 +4,10 @@
 //! `base`, so later evidence on the projected value can solve the owner.
 
 use rg_def_map::DefMapSource;
-use rg_ir_model::{
-    ExprId,
-    items::{FieldKey, GenericParams},
-};
+use rg_ir_model::{ExprId, GenericDefRef, items::FieldKey};
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::ItemStoreSource;
-use rg_ty::{
-    GenericArg, NominalTy, Ty,
-    inference::{InferenceTypeRefProjector, InferenceTypeSubst},
-};
+use rg_ty::{AdtTy, Substitution, Ty};
 
 use crate::{ir::ExprKind, resolution::BodyResolutionContext};
 
@@ -82,51 +76,31 @@ where
         let Some(target) = targets.single_declared() else {
             return Ok(false);
         };
-        let Some(field_ty_ref) = target.ty_ref() else {
-            return Ok(false);
-        };
         let fallback_ty = target.ty().cloned().unwrap_or(Ty::Unknown);
-
-        let Some(generics) = self
-            .context
-            .item_query()
-            .generic_params_for_type_def(target.owner_ty().def)?
-            .cloned()
-        else {
-            return Ok(inference.set_expr_infer_ty(expr, fallback_ty.clone()));
-        };
-
-        let Some(subst) = self.infer_subst_for_owner(inference, base, target.owner_ty(), &generics)
-        else {
+        let base_ty = inference.root_resolved_expr_ty(base);
+        let Some(owner_ty) = Self::infer_owner_ty(&base_ty, target.owner_ty().def) else {
             return Ok(false);
         };
-
-        let projected_ty =
-            InferenceTypeRefProjector::new(&subst).ty_from_type_ref(field_ty_ref, &fallback_ty);
+        let generics = self
+            .context
+            .item_paths()
+            .generics()
+            .generics(GenericDefRef::TypeDef(owner_ty.def))?;
+        let subst = Substitution::from_args(&generics, &owner_ty.args);
+        let projected_ty = self
+            .context
+            .signatures()
+            .field_ty(target.field())?
+            .map(|ty| subst.apply(&ty))
+            .unwrap_or(fallback_ty);
         Ok(inference.set_expr_infer_ty(expr, projected_ty))
     }
 
-    /// Bind owner generics from `Boxed<?T>` before projecting `field: T`.
-    fn infer_subst_for_owner(
-        &self,
-        inference: &mut BodyInferenceCtx,
-        base: ExprId,
-        owner_ty: &NominalTy,
-        generics: &GenericParams,
-    ) -> Option<InferenceTypeSubst> {
-        let base_ty = inference.root_resolved_expr_ty(base);
-        let infer_args = Self::infer_args_for_owner(&base_ty, owner_ty)?;
-
-        let mut subst = InferenceTypeSubst::new();
-        subst.bind_type_params_from_infer_args(&mut inference.table, generics, infer_args);
-        Some(subst)
-    }
-
-    /// Find owner generic args after reference autoderef, e.g. `&Boxed<?T>` -> `Boxed<?T>`.
-    fn infer_args_for_owner<'ty>(ty: &'ty Ty, owner_ty: &NominalTy) -> Option<&'ty [GenericArg]> {
+    /// Find the live nominal owner after reference autoderef, e.g. `&Boxed<?T>` -> `Boxed<?T>`.
+    fn infer_owner_ty(ty: &Ty, owner: rg_ir_model::TypeDefRef) -> Option<&AdtTy> {
         match ty {
-            Ty::Nominal(ty) | Ty::SelfTy(ty) if ty.def == owner_ty.def => Some(&ty.args),
-            Ty::Reference { inner, .. } => Self::infer_args_for_owner(inner, owner_ty),
+            Ty::Adt(ty) if ty.def == owner => Some(ty),
+            Ty::Reference { inner, .. } => Self::infer_owner_ty(inner, owner),
             _ => None,
         }
     }

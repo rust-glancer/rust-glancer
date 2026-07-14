@@ -4,6 +4,7 @@
 //! store routing from queries that need a concrete Rust visibility universe.
 
 mod crate_item;
+mod generics;
 mod item_store;
 mod resolution;
 
@@ -12,14 +13,15 @@ use rg_ir_model::DefMapRef;
 use crate::ItemStore;
 
 pub use self::{
-    crate_item::CrateItemQuery, item_store::ItemStoreQuery, resolution::ItemResolutionQuery,
+    crate_item::CrateItemQuery, generics::GenericsQuery, item_store::ItemStoreQuery,
+    resolution::ItemResolutionQuery,
 };
 
 /// Provides the stores that semantic-shaped item refs can point into.
 ///
 /// Layer-specific code implements this once, and the query modules can then treat crate items and
 /// body-local items as the same kind of data.
-pub trait ItemStoreSource<'a> {
+pub trait ItemStoreSource<'a>: Clone {
     type Error;
 
     /// Finds the store that owns refs with this origin.

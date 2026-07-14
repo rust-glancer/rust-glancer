@@ -8,7 +8,7 @@ use anyhow::Context as _;
 
 use rg_cfg_eval::CfgEvaluator;
 use rg_def_map::{DefMapReadTxn, PackageSlot};
-use rg_ir_model::{ConstRef, FunctionRef, ImplRef, ItemOwner, ModuleRef, StaticRef, TraitRef};
+use rg_ir_model::{ConstRef, FunctionRef, ImplRef, ItemOwner, ModuleRef, StaticRef, TraitDefRef};
 use rg_parse::{FileId, Span};
 use rg_semantic_ir::ItemStoreQuery;
 use rg_semantic_ir::SemanticIrReadTxn;
@@ -161,7 +161,7 @@ impl<'a> CrateLowering<'a> {
         let module = match owner {
             ItemOwner::Module(module_ref) => Some(module_ref),
             ItemOwner::Trait(trait_id) => item_query
-                .trait_data(TraitRef {
+                .trait_data(TraitDefRef {
                     origin,
                     id: trait_id,
                 })

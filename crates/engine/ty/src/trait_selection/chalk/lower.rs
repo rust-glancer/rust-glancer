@@ -1,38 +1,43 @@
+//! Canonical rust-glancer type data lowered into Chalk's solver vocabulary.
+//!
+//! Definition syntax is interpreted by `TypeLoweringSession` before it reaches this module. Chalk
+//! therefore sees the same owner-scoped parameters, full-arity arguments, aliases, and clauses as
+//! body inference. Returning `None` here means that the bounded solver does not model a semantic
+//! shape; it must never trigger another walk over `TypeRef`.
+
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use chalk_ir::cast::Cast;
 use chalk_ir::fold::Shift;
 use chalk_ir::visit::VisitExt;
 use chalk_ir::{
-    AdtId, AliasEq, AliasTy, AssocTypeId, BoundVar, ConcreteConst, ConstData, ConstValue,
-    DebruijnIndex, DomainGoal, GenericArg, GenericArgData, Goal, LifetimeData,
-    Mutability as ChalkMutability, ProjectionTy, QuantifiedWhereClause, Scalar, Substitution,
-    TraitId, TraitRef as ChalkTraitRef, TyKind, TyVariableKind, UintTy, VariableKind,
-    VariableKinds, WhereClause,
+    AdtId, AliasEq, AliasTy as ChalkAliasTy, AssocTypeId, BoundVar, ConcreteConst, ConstData,
+    ConstValue as ChalkConstValue, DebruijnIndex, DomainGoal, FnDefId, FnPointer, FnSig, FnSubst,
+    GenericArg as ChalkGenericArg, GenericArgData, Goal, LifetimeData,
+    Mutability as ChalkMutability, OpaqueTyId, ProjectionTy as ChalkProjectionTy,
+    QuantifiedWhereClause, Safety, Scalar, Substitution as ChalkSubstitution, TraitId,
+    TraitRef as ChalkTraitRef, TyKind, TyVariableKind, UintTy, VariableKind, VariableKinds,
+    WhereClause,
 };
 use chalk_solve::rust_ir::{
     AdtDatum, AdtDatumBound, AdtFlags, AdtKind, AdtVariantDatum, AssociatedTyDatum,
     AssociatedTyDatumBound, AssociatedTyValue, AssociatedTyValueBound, AssociatedTyValueId,
-    ImplDatum, ImplDatumBound, ImplType, Polarity, TraitDatum, TraitDatumBound, TraitFlags,
-};
-use rg_def_map::DefMapSource;
-use rg_ir_model::items::{
-    GenericArg as ItemGenericArg, GenericParams, TypeBound, TypePath, TypePathAnchor, TypeRef,
-    WherePredicate,
+    ImplDatum, ImplDatumBound, ImplType, OpaqueTyDatum, OpaqueTyDatumBound, Polarity, TraitDatum,
+    TraitDatumBound, TraitFlags,
 };
 use rg_ir_model::{
-    ImplRef, Mutability, TraitRef, TypeAliasRef, TypeDefId, TypeDefRef, TypePathResolution,
+    GenericParamRef, ImplRef, Mutability, TraitDefRef, TypeAliasRef, TypeDefId, TypeDefRef,
 };
-use rg_semantic_ir::{ItemStoreSource, TypeAliasData, TypePathContext};
-use rg_text::Name;
+use rg_semantic_ir::{Generics, TypeAliasData};
 
 use super::interner::{ChalkDefId, RgChalkInterner};
 use super::projection::{ProjectionAliasLowering, ProjectionVariableEnv};
-use crate::inference::{InferVarKind, InferenceTable, InferenceTypeSubst};
+use crate::inference::{InferVarKind, InferenceSubstitution, InferenceTable};
 use crate::trait_selection::TraitGoal;
 use crate::{
-    FloatTy, GenericArg as RgGenericArg, ItemPathQuery, PrimitiveTy, SignedIntTy, Ty as RgTy,
-    UnsignedIntTy,
+    AliasTy, Clause, ConstValue, FloatTy, GenericArg, ImplHeader, Lifetime, PrimitiveTy,
+    SignedIntTy, TraitApplication, TraitHeader, TraitRefLowering, Ty, UnsignedIntTy,
 };
 
 pub(super) type ChalkTy = chalk_ir::Ty<RgChalkInterner>;
@@ -40,49 +45,40 @@ pub(super) type ChalkGoal = Goal<RgChalkInterner>;
 
 const INTER: RgChalkInterner = RgChalkInterner;
 
+/// Maps one semantic generic binder to Chalk's positional bound-variable representation.
 #[derive(Debug, Clone)]
 pub(super) struct GenericBinderEnv {
     bindings: Vec<GenericBinding>,
-    type_indices: HashMap<Name, usize>,
-    lifetime_indices: HashMap<Name, usize>,
+    indices: HashMap<GenericParamRef, usize>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 enum GenericBinding {
     Type,
     Lifetime,
-}
-
-struct TraitBoundArgs<'a> {
-    positional: Vec<chalk_ir::GenericArg<RgChalkInterner>>,
-    associated_equalities: Vec<TraitBoundAssocEquality<'a>>,
-}
-
-struct TraitBoundAssocEquality<'a> {
-    name: &'a Name,
-    rhs_ty: &'a TypeRef,
+    Const,
 }
 
 impl GenericBinderEnv {
-    pub(super) fn for_impl(generics: &GenericParams) -> Option<Self> {
-        if !generics.consts.is_empty() {
-            return None;
+    pub(super) fn for_generics(generics: &Generics<'_>) -> Self {
+        let mut bindings = Vec::with_capacity(generics.len());
+        let mut indices = HashMap::with_capacity(generics.len());
+        for param in generics.iter() {
+            let param = param.param();
+            indices.insert(param, bindings.len());
+            bindings.push(match param {
+                GenericParamRef::Lifetime(_) => GenericBinding::Lifetime,
+                GenericParamRef::Type(_) => GenericBinding::Type,
+                GenericParamRef::Const(_) => GenericBinding::Const,
+            });
         }
-        Self::build(generics, false)
-    }
-
-    pub(super) fn for_trait(generics: &GenericParams) -> Option<Self> {
-        if !generics.consts.is_empty() {
-            return None;
-        }
-        Self::build(generics, true)
+        Self { bindings, indices }
     }
 
     pub(super) fn empty() -> Self {
         Self {
             bindings: Vec::new(),
-            type_indices: HashMap::new(),
-            lifetime_indices: HashMap::new(),
+            indices: HashMap::new(),
         }
     }
 
@@ -92,111 +88,59 @@ impl GenericBinderEnv {
             self.bindings.iter().map(|binding| match binding {
                 GenericBinding::Type => VariableKind::Ty(TyVariableKind::General),
                 GenericBinding::Lifetime => VariableKind::Lifetime,
+                // The project keeps scalar const identity but does not retain a semantic const
+                // parameter type yet. Integer consts are the supported subset, so use `usize`
+                // consistently instead of recovering source syntax inside this adapter.
+                GenericBinding::Const => VariableKind::Const(usize_ty()),
             }),
         )
     }
 
-    fn build(generics: &GenericParams, include_self: bool) -> Option<Self> {
-        let mut env = Self::empty();
-        if include_self {
-            env.push_type(Name::new("Self"));
-        }
-        for lifetime in &generics.lifetimes {
-            env.push_lifetime(lifetime.name.clone());
-        }
-        for param in &generics.types {
-            env.push_type(param.name.clone());
-        }
-        Some(env)
-    }
-
-    fn push_type(&mut self, name: Name) {
-        let index = self.bindings.len();
-        self.bindings.push(GenericBinding::Type);
-        self.type_indices.insert(name, index);
-    }
-
-    fn push_lifetime(&mut self, name: Name) {
-        let index = self.bindings.len();
-        self.bindings.push(GenericBinding::Lifetime);
-        self.lifetime_indices.insert(name, index);
-    }
-
-    fn type_var(&self, name: &Name) -> Option<ChalkTy> {
-        self.type_indices.get(name).map(|index| {
-            BoundVar::new(DebruijnIndex::INNERMOST, *index).to_ty::<RgChalkInterner>(INTER)
-        })
-    }
-
-    fn lifetime_var(&self, lifetime: &Name) -> Option<chalk_ir::Lifetime<RgChalkInterner>> {
-        self.lifetime_indices.get(lifetime).map(|index| {
-            BoundVar::new(DebruijnIndex::INNERMOST, *index).to_lifetime::<RgChalkInterner>(INTER)
-        })
+    fn bound_var(&self, param: GenericParamRef) -> Option<BoundVar> {
+        self.indices
+            .get(&param)
+            .copied()
+            .map(|index| BoundVar::new(DebruijnIndex::INNERMOST, index))
     }
 }
 
-pub(super) struct ChalkLowerer<'lower, 'query, D, I> {
-    item_paths: &'lower ItemPathQuery<'query, D, I>,
-    associated_ty_by_trait_name: Option<&'lower HashMap<(TraitRef, Name), TypeAliasRef>>,
-    context: TypePathContext,
+/// Stateless conversion scoped by the semantic binder and solver-supported definitions.
+///
+/// Associated types with bounds or their own generics are deliberately omitted from the Chalk
+/// program until their extra binder and predicate layers can be represented faithfully. Keeping
+/// the supported registry here makes every nested projection decline at the same boundary instead
+/// of giving Chalk an ID whose datum does not exist.
+pub(super) struct ChalkLowerer<'lower> {
     binders: &'lower GenericBinderEnv,
+    associated_tys: Option<&'lower HashMap<TypeAliasRef, Arc<AssociatedTyDatum<RgChalkInterner>>>>,
 }
 
-impl<'lower, 'query, D, I> ChalkLowerer<'lower, 'query, D, I>
-where
-    D: DefMapSource<Error = I::Error>,
-    I: ItemStoreSource<'query>,
-{
-    pub(super) fn new(
-        item_paths: &'lower ItemPathQuery<'query, D, I>,
-        context: TypePathContext,
-        binders: &'lower GenericBinderEnv,
-    ) -> Self {
+impl<'lower> ChalkLowerer<'lower> {
+    pub(super) fn new(binders: &'lower GenericBinderEnv) -> Self {
         Self {
-            item_paths,
-            associated_ty_by_trait_name: None,
-            context,
             binders,
+            associated_tys: None,
         }
     }
 
     pub(super) fn with_associated_tys(
         mut self,
-        associated_ty_by_trait_name: &'lower HashMap<(TraitRef, Name), TypeAliasRef>,
+        associated_tys: &'lower HashMap<TypeAliasRef, Arc<AssociatedTyDatum<RgChalkInterner>>>,
     ) -> Self {
-        self.associated_ty_by_trait_name = Some(associated_ty_by_trait_name);
+        self.associated_tys = Some(associated_tys);
         self
-    }
-
-    fn with_binders<'a>(&'a self, binders: &'a GenericBinderEnv) -> ChalkLowerer<'a, 'query, D, I> {
-        ChalkLowerer {
-            item_paths: self.item_paths,
-            associated_ty_by_trait_name: self.associated_ty_by_trait_name,
-            context: self.context,
-            binders,
-        }
     }
 
     pub(super) fn trait_datum(
         &self,
-        trait_ref: TraitRef,
-        generics: &GenericParams,
-        super_traits: &[TypeBound],
+        header: &TraitHeader,
         associated_ty_ids: Vec<AssocTypeId<RgChalkInterner>>,
     ) -> Option<TraitDatum<RgChalkInterner>> {
-        let binders = GenericBinderEnv::for_trait(generics)?;
-        let self_ty = BoundVar::new(DebruijnIndex::INNERMOST, 0).to_ty::<RgChalkInterner>(INTER);
-        let lowerer = self.with_binders(&binders);
-        let mut where_clauses = lowerer.type_param_bounds(generics, None)?;
-        for super_trait in super_traits {
-            where_clauses.extend(lowerer.trait_bound_clauses(&self_ty, super_trait, None)?);
-        }
-        where_clauses.extend(lowerer.where_predicates(&generics.where_predicates, None)?);
-
+        let where_clauses = self.lower_quantified_clauses(&header.clauses)?;
         Some(TraitDatum {
-            id: chalk_trait_id(trait_ref),
+            id: chalk_trait_id(header.owner),
             binders: chalk_ir::Binders::new(
-                binders.variable_kinds(),
+                self.binders.variable_kinds(),
                 TraitDatumBound { where_clauses },
             ),
             flags: TraitFlags {
@@ -214,15 +158,12 @@ where
 
     pub(super) fn associated_ty_datum(
         &self,
-        trait_ref: TraitRef,
+        trait_ref: TraitDefRef,
         type_alias_ref: TypeAliasRef,
         type_alias_data: &TypeAliasData,
-        trait_generics: &GenericParams,
     ) -> Option<AssociatedTyDatum<RgChalkInterner>> {
-        let binders = GenericBinderEnv::for_trait(trait_generics)?;
-        // V1 only lowers plain associated types like `type Item;`.
-        // GAT binders and associated type bounds need another parameter/where-clause layer before
-        // they can be represented without lying to Chalk.
+        // GATs add their own binder layer. Declining them is honest and keeps the ordinary
+        // associated-type representation independent from their source syntax.
         if type_alias_data.signature.generics().is_some()
             || !type_alias_data.signature.bounds().is_empty()
         {
@@ -234,7 +175,7 @@ where
             id: chalk_assoc_type_id(type_alias_ref),
             name: type_alias_data.name.to_string(),
             binders: chalk_ir::Binders::new(
-                binders.variable_kinds(),
+                self.binders.variable_kinds(),
                 AssociatedTyDatumBound {
                     bounds: Vec::new(),
                     where_clauses: Vec::new(),
@@ -245,25 +186,18 @@ where
 
     pub(super) fn impl_datum(
         &self,
-        impl_data: &rg_semantic_ir::ImplData,
+        header: &ImplHeader,
         associated_ty_value_ids: Vec<AssociatedTyValueId<RgChalkInterner>>,
     ) -> Option<ImplDatum<RgChalkInterner>> {
-        let binders = GenericBinderEnv::for_impl(&impl_data.generics)?;
-        let lowerer = self.with_binders(&binders);
-        let self_ty = lowerer.impl_self_ty(impl_data, None)?;
-        let trait_ref = impl_data.resolved_trait_ref.as_option().copied()?;
-        let trait_args = lowerer.impl_trait_args(impl_data, None)?;
-        let chalk_trait_ref = lowerer.chalk_trait_ref(trait_ref, self_ty, trait_args);
-        let mut where_clauses = lowerer.type_param_bounds(&impl_data.generics, None)?;
-        let predicates = lowerer.where_predicates(&impl_data.generics.where_predicates, None)?;
-        where_clauses.extend(predicates);
-
+        let trait_ref = header.trait_ref.as_ref()?;
+        let trait_ref = self.lower_trait_application(&trait_ref.application, None, None)?;
+        let where_clauses = self.lower_quantified_clauses(&header.clauses)?;
         Some(ImplDatum {
             polarity: Polarity::Positive,
             binders: chalk_ir::Binders::new(
-                binders.variable_kinds(),
+                self.binders.variable_kinds(),
                 ImplDatumBound {
-                    trait_ref: chalk_trait_ref,
+                    trait_ref,
                     where_clauses,
                 },
             ),
@@ -277,26 +211,109 @@ where
         impl_ref: ImplRef,
         associated_ty_ref: TypeAliasRef,
         type_alias_data: &TypeAliasData,
-        impl_data: &rg_semantic_ir::ImplData,
+        ty: &Ty,
     ) -> Option<AssociatedTyValue<RgChalkInterner>> {
-        let binders = GenericBinderEnv::for_impl(&impl_data.generics)?;
-        // Keep impl values aligned with the declaration support above: `type Item = T` is in,
-        // `type Item<'a> = ...` and value-side bounds are left unsupported.
         if type_alias_data.signature.generics().is_some()
             || !type_alias_data.signature.bounds().is_empty()
         {
             return None;
         }
 
-        let aliased_ty = type_alias_data.signature.aliased_ty()?;
-        let lowerer = self.with_binders(&binders);
-        let ty = lowerer.lower_type_ref(aliased_ty, None)?;
-
         Some(AssociatedTyValue {
             impl_id: chalk_impl_id(impl_ref),
             associated_ty_id: chalk_assoc_type_id(associated_ty_ref),
-            value: chalk_ir::Binders::new(binders.variable_kinds(), AssociatedTyValueBound { ty }),
+            value: chalk_ir::Binders::new(
+                self.binders.variable_kinds(),
+                AssociatedTyValueBound {
+                    ty: self.lower_ty(ty, None, None)?,
+                },
+            ),
         })
+    }
+
+    pub(super) fn opaque_ty_datum(
+        &self,
+        opaque: &crate::OpaqueTy,
+        bounds: &[TraitRefLowering],
+    ) -> Option<OpaqueTyDatum<RgChalkInterner>> {
+        let clauses = bounds
+            .iter()
+            .map(|bound| self.lower_opaque_bound(bound))
+            .collect::<Option<Vec<_>>>()?
+            .into_iter()
+            .flatten()
+            .collect();
+        Some(OpaqueTyDatum {
+            opaque_ty_id: chalk_opaque_ty_id(opaque.opaque),
+            bound: chalk_ir::Binders::new(
+                self.binders.variable_kinds(),
+                OpaqueTyDatumBound {
+                    bounds: chalk_ir::Binders::new(
+                        VariableKinds::from_iter(
+                            INTER,
+                            [VariableKind::Ty(TyVariableKind::General)],
+                        ),
+                        clauses,
+                    ),
+                    where_clauses: chalk_ir::Binders::empty(INTER, Vec::new()),
+                },
+            ),
+        })
+    }
+
+    /// Lower an opaque predicate under Chalk's dedicated `Self` binder.
+    ///
+    /// Semantic predicates name the opaque identity in their first trait argument. Chalk instead
+    /// expects every opaque bound to quantify a fresh `Self`, which it later substitutes with the
+    /// opaque placeholder. Owner parameters move out one De Bruijn level under that binder.
+    fn lower_opaque_bound(
+        &self,
+        bound: &TraitRefLowering,
+    ) -> Option<Vec<QuantifiedWhereClause<RgChalkInterner>>> {
+        let self_ty = BoundVar::new(DebruijnIndex::INNERMOST, 0)
+            .to_ty::<RgChalkInterner>(INTER)
+            .shifted_in(INTER)
+            .cast(INTER);
+        let mut args = vec![self_ty];
+        args.extend(
+            bound
+                .application
+                .args
+                .iter()
+                .skip(1)
+                .map(|arg| {
+                    self.lower_arg(arg, None, None)
+                        .map(|arg| arg.shifted_in(INTER).shifted_in(INTER))
+                })
+                .collect::<Option<Vec<_>>>()?,
+        );
+        let substitution = ChalkSubstitution::from_iter(INTER, args);
+        let mut clauses = vec![chalk_ir::Binders::empty(
+            INTER,
+            WhereClause::Implemented(ChalkTraitRef {
+                trait_id: chalk_trait_id(bound.application.def),
+                substitution: substitution.clone(),
+            }),
+        )];
+        for binding in &bound.associated_types {
+            if !self.supports_associated_ty(binding.associated_ty) {
+                return None;
+            }
+            clauses.push(chalk_ir::Binders::empty(
+                INTER,
+                WhereClause::AliasEq(AliasEq {
+                    alias: ChalkAliasTy::Projection(ChalkProjectionTy {
+                        associated_ty_id: chalk_assoc_type_id(binding.associated_ty),
+                        substitution: substitution.clone(),
+                    }),
+                    ty: self
+                        .lower_ty(&binding.ty, None, None)?
+                        .shifted_in(INTER)
+                        .shifted_in(INTER),
+                }),
+            ));
+        }
+        Some(clauses)
     }
 
     pub(super) fn projection_alias(
@@ -305,589 +322,349 @@ where
         goal: &TraitGoal,
         table: &InferenceTable,
     ) -> Option<ProjectionAliasLowering> {
-        let variables = ProjectionVariableEnv::from_goal(goal, table);
-        let self_ty = self.lower_infer_ty_with_projection_vars(&goal.self_ty, table, &variables)?;
-        let mut substitution = Vec::with_capacity(1 + goal.args.len());
-        substitution.push(GenericArgData::Ty(self_ty).intern(INTER));
-        for arg in goal.iter_positional_args() {
-            substitution
-                .push(self.lower_infer_generic_arg_with_projection_vars(arg, table, &variables)?);
+        if !self.supports_associated_ty(assoc_type_ref) {
+            return None;
         }
-
-        let alias = AliasTy::Projection(ProjectionTy {
+        let variables = ProjectionVariableEnv::from_goal(goal, table);
+        let substitution = goal
+            .application
+            .args
+            .iter()
+            .map(|arg| self.lower_arg(arg, Some(table), Some(&variables)))
+            .collect::<Option<Vec<_>>>()?;
+        let alias = ChalkAliasTy::Projection(ChalkProjectionTy {
             associated_ty_id: chalk_assoc_type_id(assoc_type_ref),
-            substitution: Substitution::from_iter(INTER, substitution),
+            substitution: ChalkSubstitution::from_iter(INTER, substitution),
         });
         Some(ProjectionAliasLowering { alias, variables })
     }
 
     pub(super) fn candidate_where_goals(
         &self,
-        impl_data: &rg_semantic_ir::ImplData,
-        subst: &InferenceTypeSubst,
+        clauses: &[Clause],
+        subst: &InferenceSubstitution,
         table: &InferenceTable,
     ) -> Option<Vec<ChalkGoal>> {
-        let binders = GenericBinderEnv::for_impl(&impl_data.generics)?;
-        let lowerer = self.with_binders(&binders);
-        let mut clauses = lowerer.type_param_bounds(&impl_data.generics, Some((subst, table)))?;
-        clauses.extend(
-            lowerer.where_predicates(&impl_data.generics.where_predicates, Some((subst, table)))?,
-        );
-
         clauses
-            .into_iter()
+            .iter()
             .map(|clause| {
-                if !clause.binders.is_empty(INTER) {
+                let clause = subst.as_substitution().apply_clause(clause);
+                let clause = self.lower_clause(&clause, Some(table), None)?;
+                if clause.has_free_vars(INTER) {
                     return None;
                 }
-                let no_params: &[GenericArg<RgChalkInterner>] = &[];
-                let where_clause = clause.substitute(INTER, no_params);
-                if where_clause.has_free_vars(INTER) {
-                    return None;
-                }
-                Some(DomainGoal::Holds(where_clause).cast(INTER))
+                Some(DomainGoal::Holds(clause).cast(INTER))
             })
             .collect()
     }
 
-    pub(super) fn type_param_bounds(
+    fn lower_quantified_clauses(
         &self,
-        generics: &GenericParams,
-        subst: Option<(&InferenceTypeSubst, &InferenceTable)>,
+        clauses: &[Clause],
     ) -> Option<Vec<QuantifiedWhereClause<RgChalkInterner>>> {
-        let mut clauses = Vec::new();
-        for param in &generics.types {
-            let subject = self.type_param_subject(&param.name, subst)?;
-            for bound in &param.bounds {
-                clauses.extend(self.trait_bound_clauses(&subject, bound, subst)?);
-            }
-        }
+        let mut clauses = clauses
+            .iter()
+            .map(|clause| {
+                // The empty quantified binder sits inside the trait/impl binder. Shift references
+                // to owner parameters out one level so Chalk does not treat them as local here.
+                Some(chalk_ir::Binders::empty(
+                    INTER,
+                    self.lower_clause(clause, None, None)?.shifted_in(INTER),
+                ))
+            })
+            .collect::<Option<Vec<_>>>()?;
+
+        // Chalk's SLG engine selects the last pending condition. Store the conjunction in reverse
+        // so source-order prerequisites are still evaluated first. This matters for bounds such as
+        // `I: Iterator<Item = T>, T: Copy`: the projection equality should determine `T` before
+        // impl lookup is asked to enumerate `Copy` candidates for it.
+        clauses.reverse();
         Some(clauses)
     }
 
-    fn where_predicates(
+    fn lower_clause(
         &self,
-        predicates: &[WherePredicate],
-        subst: Option<(&InferenceTypeSubst, &InferenceTable)>,
-    ) -> Option<Vec<QuantifiedWhereClause<RgChalkInterner>>> {
-        let mut clauses = Vec::new();
-        for predicate in predicates {
-            match predicate {
-                WherePredicate::Type { ty, bounds } => {
-                    let subject = self.lower_type_ref(ty, subst)?;
-                    for bound in bounds {
-                        clauses.extend(self.trait_bound_clauses(&subject, bound, subst)?);
-                    }
-                }
-                WherePredicate::Lifetime { .. } => {}
-                WherePredicate::Unsupported(_) => return None,
-            }
-        }
-        Some(clauses)
-    }
-
-    fn impl_self_ty(
-        &self,
-        impl_data: &rg_semantic_ir::ImplData,
-        subst: Option<(&InferenceTypeSubst, &InferenceTable)>,
-    ) -> Option<ChalkTy> {
-        if let Some(name) = impl_data.self_ty.type_param_name()
-            && let Some(subject) = self.type_param_subject(&name, subst)
-        {
-            return Some(subject);
-        }
-
-        if let Some(type_def) = impl_data.resolved_self_ty.as_option().copied()
-            && let TypeRef::Path(path) = &impl_data.self_ty
-        {
-            let args = self.generic_args_from_final_segment(path, subst)?;
-            return Some(
-                TyKind::Adt(AdtId(type_def), Substitution::from_iter(INTER, args)).intern(INTER),
-            );
-        }
-
-        self.lower_type_ref(&impl_data.self_ty, subst)
-    }
-
-    fn impl_trait_args(
-        &self,
-        impl_data: &rg_semantic_ir::ImplData,
-        subst: Option<(&InferenceTypeSubst, &InferenceTable)>,
-    ) -> Option<Vec<chalk_ir::GenericArg<RgChalkInterner>>> {
-        let Some(TypeRef::Path(path)) = &impl_data.trait_ref else {
-            return Some(Vec::new());
-        };
-        let args = self.trait_bound_args_from_final_segment(path, subst)?;
-        if !args.associated_equalities.is_empty() {
-            return None;
-        }
-        Some(args.positional)
-    }
-
-    fn trait_bound_clauses(
-        &self,
-        subject: &ChalkTy,
-        bound: &TypeBound,
-        subst: Option<(&InferenceTypeSubst, &InferenceTable)>,
-    ) -> Option<Vec<QuantifiedWhereClause<RgChalkInterner>>> {
-        let TypeBound::Trait(TypeRef::Path(path)) = bound else {
-            return None;
-        };
-        let path_resolution = self.resolve_trait_path(path)?;
-        let args = self.trait_bound_args_from_final_segment(path, subst)?;
-        // `QuantifiedWhereClause` adds its own binder layer around the clause value. Even when it
-        // binds zero new variables, references to the surrounding impl/trait parameters must move
-        // one De Bruijn level out so Chalk does not treat them as parameters of this empty binder.
-        let trait_ref = self.chalk_trait_ref(path_resolution, subject.clone(), args.positional);
-        let mut clauses = vec![chalk_ir::Binders::empty(
-            INTER,
-            WhereClause::Implemented(trait_ref.clone().shifted_in(INTER)),
-        )];
-
-        for equality in args.associated_equalities {
-            let associated_ty_ref = self
-                .associated_ty_by_trait_name?
-                .get(&(path_resolution, equality.name.clone()))
-                .copied()?;
-            let rhs_ty = self.lower_type_ref(equality.rhs_ty, subst)?;
-            let alias_eq = AliasEq {
-                alias: AliasTy::Projection(ProjectionTy {
-                    associated_ty_id: chalk_assoc_type_id(associated_ty_ref),
-                    substitution: trait_ref.substitution.clone(),
-                }),
-                ty: rhs_ty,
-            }
-            .shifted_in(INTER);
-            clauses.push(chalk_ir::Binders::empty(
-                INTER,
-                WhereClause::AliasEq(alias_eq),
-            ));
-        }
-
-        Some(clauses)
-    }
-
-    fn chalk_trait_ref(
-        &self,
-        trait_ref: TraitRef,
-        self_ty: ChalkTy,
-        args: Vec<chalk_ir::GenericArg<RgChalkInterner>>,
-    ) -> ChalkTraitRef<RgChalkInterner> {
-        let mut substitution = Vec::with_capacity(1 + args.len());
-        substitution.push(GenericArgData::Ty(self_ty).intern(INTER));
-        substitution.extend(args);
-        ChalkTraitRef {
-            trait_id: chalk_trait_id(trait_ref),
-            substitution: Substitution::from_iter(INTER, substitution),
-        }
-    }
-
-    fn type_param_subject(
-        &self,
-        name: &Name,
-        subst: Option<(&InferenceTypeSubst, &InferenceTable)>,
-    ) -> Option<ChalkTy> {
-        if let Some((subst, table)) = subst {
-            let ty = subst.type_param(name.as_str())?;
-            return self.lower_infer_ty(&ty, table);
-        }
-        self.binders.type_var(name)
-    }
-
-    fn lower_type_ref(
-        &self,
-        ty: &TypeRef,
-        subst: Option<(&InferenceTypeSubst, &InferenceTable)>,
-    ) -> Option<ChalkTy> {
-        match ty {
-            TypeRef::Unit => Some(TyKind::Tuple(0, Substitution::empty(INTER)).intern(INTER)),
-            TypeRef::Never => Some(TyKind::Never.intern(INTER)),
-            TypeRef::Infer | TypeRef::Unknown(_) => None,
-            TypeRef::Path(path) => {
-                if path.anchor.is_some() {
-                    return self.lower_anchored_type_path(path, subst);
-                }
-
-                let path_key = path.as_def_map_path()?;
-                if let Some(name) = path_key.single_name() {
-                    if let Some((subst, table)) = subst
-                        && let Some(ty) = subst.type_param(name)
-                    {
-                        return self.lower_infer_ty(&ty, table);
-                    }
-                    if let Some(ty) = self.binders.type_var(&Name::new(name)) {
-                        return Some(ty);
-                    }
-                    if let Some(primitive) = PrimitiveTy::from_name(name) {
-                        return self.primitive_ty(primitive);
-                    }
-                }
-
-                let args = self.type_path_args(path, subst)?;
-                match self
-                    .item_paths
-                    .resolve_type_path(self.context, &path_key)
-                    .ok()?
-                {
-                    TypePathResolution::SelfType(type_def)
-                    | TypePathResolution::TypeDef(type_def) => {
-                        Some(TyKind::Adt(AdtId(type_def), args).intern(INTER))
-                    }
-                    TypePathResolution::TypeAlias(_)
-                    | TypePathResolution::Trait(_)
-                    | TypePathResolution::Unknown => None,
-                }
-            }
-            TypeRef::Tuple(fields) => {
-                let args = fields
-                    .iter()
-                    .map(|field| {
-                        self.lower_type_ref(field, subst)
-                            .map(|ty| GenericArgData::Ty(ty).intern(INTER))
-                    })
-                    .collect::<Option<Vec<_>>>()?;
-                Some(TyKind::Tuple(args.len(), Substitution::from_iter(INTER, args)).intern(INTER))
-            }
-            TypeRef::Reference {
-                lifetime,
-                mutability,
-                inner,
-            } => {
-                let lifetime = lifetime
-                    .as_ref()
-                    .and_then(|lifetime| self.binders.lifetime_var(lifetime))
-                    .unwrap_or_else(|| LifetimeData::Erased.intern(INTER));
-                let inner = self.lower_type_ref(inner, subst)?;
-                Some(TyKind::Ref(self.chalk_mutability(*mutability), lifetime, inner).intern(INTER))
-            }
-            TypeRef::RawPointer { mutability, inner } => {
-                let inner = self.lower_type_ref(inner, subst)?;
-                Some(TyKind::Raw(self.chalk_mutability(*mutability), inner).intern(INTER))
-            }
-            TypeRef::Slice(inner) => {
-                let inner = self.lower_type_ref(inner, subst)?;
-                Some(TyKind::Slice(inner).intern(INTER))
-            }
-            TypeRef::Array { inner, len } => {
-                let inner = self.lower_type_ref(inner, subst)?;
-                let len = self.lower_array_len(len)?;
-                Some(TyKind::Array(inner, len).intern(INTER))
-            }
-            TypeRef::FnPointer { .. } | TypeRef::ImplTrait(_) | TypeRef::DynTrait(_) => None,
-        }
-    }
-
-    fn lower_anchored_type_path(
-        &self,
-        path: &TypePath,
-        subst: Option<(&InferenceTypeSubst, &InferenceTable)>,
-    ) -> Option<ChalkTy> {
-        let Some(anchor) = &path.anchor else {
-            return None;
-        };
-        let [assoc_segment] = path.segments.as_slice() else {
-            return None;
-        };
-
-        match anchor {
-            TypePathAnchor::Type(_) => None,
-            TypePathAnchor::QualifiedTrait { self_ty, trait_ty } => self
-                .lower_qualified_associated_type(
-                    self_ty,
-                    trait_ty,
-                    &assoc_segment.name,
-                    &assoc_segment.args,
-                    subst,
-                ),
-        }
-    }
-
-    fn lower_qualified_associated_type(
-        &self,
-        self_ty: &TypeRef,
-        trait_ty: &TypeRef,
-        assoc_name: &Name,
-        assoc_args: &[ItemGenericArg],
-        subst: Option<(&InferenceTypeSubst, &InferenceTable)>,
-    ) -> Option<ChalkTy> {
-        if !assoc_args.is_empty() {
-            return None;
-        }
-
-        let self_ty = self.lower_type_ref(self_ty, subst)?;
-        let TypeRef::Path(trait_path) = trait_ty else {
-            return None;
-        };
-        let trait_ref = self.resolve_trait_path(trait_path)?;
-        let associated_ty_ref = self
-            .associated_ty_by_trait_name?
-            .get(&(trait_ref, assoc_name.clone()))
-            .copied()?;
-        let mut args = Vec::with_capacity(1 + trait_path.segments.last()?.args.len());
-        args.push(GenericArgData::Ty(self_ty).intern(INTER));
-        args.extend(self.generic_args_from_final_segment(trait_path, subst)?);
-
-        Some(
-            TyKind::Alias(AliasTy::Projection(ProjectionTy {
-                associated_ty_id: chalk_assoc_type_id(associated_ty_ref),
-                substitution: Substitution::from_iter(INTER, args),
-            }))
-            .intern(INTER),
-        )
-    }
-
-    fn lower_infer_ty(&self, ty: &RgTy, table: &InferenceTable) -> Option<ChalkTy> {
-        self.lower_infer_ty_with_projection_vars(ty, table, &ProjectionVariableEnv::empty())
-    }
-
-    fn lower_infer_ty_with_projection_vars(
-        &self,
-        ty: &RgTy,
-        table: &InferenceTable,
-        projection_vars: &ProjectionVariableEnv,
-    ) -> Option<ChalkTy> {
-        let ty = table.canonicalize(ty);
-        match ty {
-            RgTy::Unit => Some(TyKind::Tuple(0, Substitution::empty(INTER)).intern(INTER)),
-            RgTy::Never => Some(TyKind::Never.intern(INTER)),
-            RgTy::Primitive(primitive) => self.primitive_ty(primitive),
-            RgTy::Tuple(fields) => {
-                let args = fields
-                    .iter()
-                    .map(|field| {
-                        self.lower_infer_ty_with_projection_vars(field, table, projection_vars)
-                            .map(|ty| GenericArgData::Ty(ty).intern(INTER))
-                    })
-                    .collect::<Option<Vec<_>>>()?;
-                Some(TyKind::Tuple(args.len(), Substitution::from_iter(INTER, args)).intern(INTER))
-            }
-            RgTy::Slice(inner) => {
-                let inner =
-                    self.lower_infer_ty_with_projection_vars(&inner, table, projection_vars)?;
-                Some(TyKind::Slice(inner).intern(INTER))
-            }
-            RgTy::Array { inner, len } => {
-                let inner =
-                    self.lower_infer_ty_with_projection_vars(&inner, table, projection_vars)?;
-                let len = self.lower_array_len(&len)?;
-                Some(TyKind::Array(inner, len).intern(INTER))
-            }
-            RgTy::Reference { mutability, inner } => {
-                let inner =
-                    self.lower_infer_ty_with_projection_vars(&inner, table, projection_vars)?;
-                Some(
-                    TyKind::Ref(
-                        self.chalk_mutability(mutability),
-                        LifetimeData::Erased.intern(INTER),
-                        inner,
-                    )
-                    .intern(INTER),
-                )
-            }
-            RgTy::Nominal(ty) | RgTy::SelfTy(ty) => {
-                let args = ty
-                    .args
-                    .iter()
-                    .map(|arg| {
-                        self.lower_infer_generic_arg_with_projection_vars(
-                            arg,
-                            table,
-                            projection_vars,
-                        )
-                    })
-                    .collect::<Option<Vec<_>>>()?;
-                Some(TyKind::Adt(AdtId(ty.def), Substitution::from_iter(INTER, args)).intern(INTER))
-            }
-            RgTy::Syntax(ty) => self.lower_type_ref(&ty, None),
-            RgTy::InferVar {
-                kind: InferVarKind::Type,
-                id,
-            } => projection_vars.chalk_ty_for_var(id),
-            RgTy::InferVar { .. } | RgTy::Unknown | RgTy::Opaque { .. } | RgTy::Closure(_) => None,
-            // Function items are real rust-glancer types, but lowering them to Chalk needs a real
-            // `FnDef` signature. The current Chalk database only has placeholder fn-def callbacks,
-            // so treating a function item as a solvable Chalk type would prove the wrong callable
-            // shape. Body inference handles function-item callable evidence before this boundary.
-            RgTy::FunctionItem(_) => None,
-        }
-    }
-
-    fn lower_array_len(&self, len: &Option<String>) -> Option<chalk_ir::Const<RgChalkInterner>> {
-        let len = len.as_ref()?;
-        let ty = TyKind::Scalar(Scalar::Uint(UintTy::Usize)).intern(INTER);
-        Some(
-            ConstData {
-                ty,
-                value: ConstValue::Concrete(ConcreteConst {
-                    interned: len.clone(),
-                }),
-            }
-            .intern(INTER),
-        )
-    }
-
-    fn lower_infer_generic_arg_with_projection_vars(
-        &self,
-        arg: &RgGenericArg,
-        table: &InferenceTable,
-        projection_vars: &ProjectionVariableEnv,
-    ) -> Option<chalk_ir::GenericArg<RgChalkInterner>> {
-        match arg {
-            RgGenericArg::Type(ty) => self
-                .lower_infer_ty_with_projection_vars(ty, table, projection_vars)
-                .map(|ty| GenericArgData::Ty(ty).intern(INTER)),
-            RgGenericArg::Lifetime(lifetime) => Some(
-                self.binders
-                    .lifetime_var(lifetime)
-                    .unwrap_or_else(|| LifetimeData::Erased.intern(INTER)),
-            )
-            .map(|lifetime| GenericArgData::Lifetime(lifetime).intern(INTER)),
-            RgGenericArg::Const(_)
-            | RgGenericArg::FnTraitArgs { .. }
-            | RgGenericArg::AssocType { .. }
-            | RgGenericArg::Unsupported(_) => None,
-        }
-    }
-
-    fn type_path_args(
-        &self,
-        path: &rg_ir_model::items::TypePath,
-        subst: Option<(&InferenceTypeSubst, &InferenceTable)>,
-    ) -> Option<Substitution<RgChalkInterner>> {
-        Some(Substitution::from_iter(
-            INTER,
-            self.generic_args_from_final_segment(path, subst)?,
-        ))
-    }
-
-    fn generic_args_from_final_segment(
-        &self,
-        path: &rg_ir_model::items::TypePath,
-        subst: Option<(&InferenceTypeSubst, &InferenceTable)>,
-    ) -> Option<Vec<chalk_ir::GenericArg<RgChalkInterner>>> {
-        let args = path
-            .segments
-            .last()
-            .map(|segment| segment.args.as_slice())
-            .unwrap_or(&[]);
-        args.iter()
-            .map(|arg| self.generic_arg(arg, subst))
-            .collect::<Option<Vec<_>>>()
-    }
-
-    fn trait_bound_args_from_final_segment<'a>(
-        &self,
-        path: &'a rg_ir_model::items::TypePath,
-        subst: Option<(&InferenceTypeSubst, &InferenceTable)>,
-    ) -> Option<TraitBoundArgs<'a>> {
-        let args = path
-            .segments
-            .last()
-            .map(|segment| segment.args.as_slice())
-            .unwrap_or(&[]);
-        let mut positional_args = Vec::new();
-        let mut associated_equalities = Vec::new();
-        for arg in args {
-            match arg {
-                ItemGenericArg::AssocType { name, ty } => {
-                    associated_equalities.push(TraitBoundAssocEquality {
-                        name,
-                        rhs_ty: ty.as_ref()?,
-                    });
-                }
-                ItemGenericArg::Type(_)
-                | ItemGenericArg::Lifetime(_)
-                | ItemGenericArg::Const(_) => {
-                    positional_args.push(self.generic_arg(arg, subst)?);
-                }
-                ItemGenericArg::FnTraitArgs { .. } | ItemGenericArg::Unsupported(_) => {
+        clause: &Clause,
+        table: Option<&InferenceTable>,
+        projection_vars: Option<&ProjectionVariableEnv>,
+    ) -> Option<WhereClause<RgChalkInterner>> {
+        match clause {
+            Clause::Implemented(application) => Some(WhereClause::Implemented(
+                self.lower_trait_application(application, table, projection_vars)?,
+            )),
+            Clause::AliasEq { alias, ty } => {
+                if !self.supports_associated_ty(alias.associated_ty) {
                     return None;
                 }
+                Some(WhereClause::AliasEq(AliasEq {
+                    alias: ChalkAliasTy::Projection(ChalkProjectionTy {
+                        associated_ty_id: chalk_assoc_type_id(alias.associated_ty),
+                        substitution: self.lower_args(&alias.args, table, projection_vars)?,
+                    }),
+                    ty: self.lower_ty(ty, table, projection_vars)?,
+                }))
             }
         }
+    }
 
-        Some(TraitBoundArgs {
-            positional: positional_args,
-            associated_equalities,
+    fn lower_trait_application(
+        &self,
+        application: &TraitApplication,
+        table: Option<&InferenceTable>,
+        projection_vars: Option<&ProjectionVariableEnv>,
+    ) -> Option<ChalkTraitRef<RgChalkInterner>> {
+        Some(ChalkTraitRef {
+            trait_id: chalk_trait_id(application.def),
+            substitution: self.lower_args(&application.args, table, projection_vars)?,
         })
     }
 
-    fn generic_arg(
+    fn lower_args(
         &self,
-        arg: &ItemGenericArg,
-        subst: Option<(&InferenceTypeSubst, &InferenceTable)>,
-    ) -> Option<chalk_ir::GenericArg<RgChalkInterner>> {
+        args: &[GenericArg],
+        table: Option<&InferenceTable>,
+        projection_vars: Option<&ProjectionVariableEnv>,
+    ) -> Option<ChalkSubstitution<RgChalkInterner>> {
+        args.iter()
+            .map(|arg| self.lower_arg(arg, table, projection_vars))
+            .collect::<Option<Vec<_>>>()
+            .map(|args| ChalkSubstitution::from_iter(INTER, args))
+    }
+
+    fn lower_arg(
+        &self,
+        arg: &GenericArg,
+        table: Option<&InferenceTable>,
+        projection_vars: Option<&ProjectionVariableEnv>,
+    ) -> Option<ChalkGenericArg<RgChalkInterner>> {
         match arg {
-            ItemGenericArg::Type(ty) => self
-                .lower_type_ref(ty, subst)
+            GenericArg::Type(ty) => self
+                .lower_ty(ty, table, projection_vars)
                 .map(|ty| GenericArgData::Ty(ty).intern(INTER)),
-            ItemGenericArg::Lifetime(lifetime) => Some(
-                self.binders
-                    .lifetime_var(lifetime)
-                    .unwrap_or_else(|| LifetimeData::Erased.intern(INTER)),
-            )
-            .map(|lifetime| GenericArgData::Lifetime(lifetime).intern(INTER)),
-            ItemGenericArg::Const(_)
-            | ItemGenericArg::FnTraitArgs { .. }
-            | ItemGenericArg::AssocType { .. }
-            | ItemGenericArg::Unsupported(_) => None,
+            GenericArg::Lifetime(lifetime) => self
+                .lower_lifetime(*lifetime)
+                .map(|lifetime| GenericArgData::Lifetime(lifetime).intern(INTER)),
+            GenericArg::Const(value) => self
+                .lower_const(*value)
+                .map(|value| GenericArgData::Const(value).intern(INTER)),
         }
     }
 
-    fn resolve_trait_path(&self, path: &rg_ir_model::items::TypePath) -> Option<TraitRef> {
-        let path_key = path.as_def_map_path()?;
-        if let TypePathResolution::Trait(trait_ref) = self
-            .item_paths
-            .resolve_type_path(self.context, &path_key)
-            .ok()?
-        {
-            return Some(trait_ref);
+    fn lower_ty(
+        &self,
+        ty: &Ty,
+        table: Option<&InferenceTable>,
+        projection_vars: Option<&ProjectionVariableEnv>,
+    ) -> Option<ChalkTy> {
+        let canonical;
+        let ty = if let Some(table) = table {
+            canonical = table.canonicalize(ty);
+            &canonical
+        } else {
+            ty
+        };
+
+        match ty {
+            Ty::Unit => Some(unit_ty()),
+            Ty::Never => Some(TyKind::Never.intern(INTER)),
+            Ty::Primitive(primitive) => Some(Self::lower_primitive(*primitive)),
+            Ty::Tuple(fields) => {
+                let fields = fields
+                    .iter()
+                    .map(|field| {
+                        self.lower_ty(field, table, projection_vars)
+                            .map(|ty| GenericArgData::Ty(ty).intern(INTER))
+                    })
+                    .collect::<Option<Vec<_>>>()?;
+                Some(
+                    TyKind::Tuple(fields.len(), ChalkSubstitution::from_iter(INTER, fields))
+                        .intern(INTER),
+                )
+            }
+            Ty::Array { inner, len } => Some(
+                TyKind::Array(
+                    self.lower_ty(inner, table, projection_vars)?,
+                    self.lower_const(*len)?,
+                )
+                .intern(INTER),
+            ),
+            Ty::Slice(inner) => {
+                Some(TyKind::Slice(self.lower_ty(inner, table, projection_vars)?).intern(INTER))
+            }
+            Ty::Reference {
+                lifetime,
+                mutability,
+                inner,
+            } => Some(
+                TyKind::Ref(
+                    Self::lower_mutability(*mutability),
+                    self.lower_lifetime(*lifetime)?,
+                    self.lower_ty(inner, table, projection_vars)?,
+                )
+                .intern(INTER),
+            ),
+            Ty::RawPointer { mutability, inner } => Some(
+                TyKind::Raw(
+                    Self::lower_mutability(*mutability),
+                    self.lower_ty(inner, table, projection_vars)?,
+                )
+                .intern(INTER),
+            ),
+            Ty::FnPointer { params, ret } => {
+                let mut signature = params
+                    .iter()
+                    .map(|param| {
+                        self.lower_ty(param, table, projection_vars)
+                            .map(|ty| GenericArgData::Ty(ty).intern(INTER))
+                    })
+                    .collect::<Option<Vec<_>>>()?;
+                signature.push(
+                    GenericArgData::Ty(self.lower_ty(ret, table, projection_vars)?).intern(INTER),
+                );
+                Some(
+                    TyKind::Function(FnPointer {
+                        num_binders: 0,
+                        sig: FnSig {
+                            abi: (),
+                            safety: Safety::Safe,
+                            variadic: false,
+                        },
+                        substitution: FnSubst(ChalkSubstitution::from_iter(INTER, signature)),
+                    })
+                    .intern(INTER),
+                )
+            }
+            Ty::Adt(adt) => Some(
+                TyKind::Adt(
+                    AdtId(adt.def),
+                    self.lower_args(&adt.args, table, projection_vars)?,
+                )
+                .intern(INTER),
+            ),
+            Ty::Param(param) => self
+                .binders
+                .bound_var(GenericParamRef::Type(*param))
+                .map(|param| param.to_ty::<RgChalkInterner>(INTER)),
+            Ty::Alias(AliasTy::Projection(alias)) => {
+                if !self.supports_associated_ty(alias.associated_ty) {
+                    return None;
+                }
+                Some(
+                    TyKind::Alias(ChalkAliasTy::Projection(ChalkProjectionTy {
+                        associated_ty_id: chalk_assoc_type_id(alias.associated_ty),
+                        substitution: self.lower_args(&alias.args, table, projection_vars)?,
+                    }))
+                    .intern(INTER),
+                )
+            }
+            Ty::Alias(AliasTy::Opaque(alias)) => Some(
+                TyKind::OpaqueType(
+                    chalk_opaque_ty_id(alias.opaque),
+                    self.lower_args(&alias.args, table, projection_vars)?,
+                )
+                .intern(INTER),
+            ),
+            Ty::Closure(id) => Some(
+                TyKind::Closure(
+                    chalk_ir::ClosureId(ChalkDefId::Closure(*id)),
+                    ChalkSubstitution::empty(INTER),
+                )
+                .intern(INTER),
+            ),
+            Ty::FnDef(function) => Some(
+                TyKind::FnDef(
+                    FnDefId(ChalkDefId::Function(function.def)),
+                    self.lower_args(&function.args, table, projection_vars)?,
+                )
+                .intern(INTER),
+            ),
+            Ty::InferVar {
+                kind: InferVarKind::Type,
+                id,
+            } => projection_vars?.chalk_ty_for_var(*id),
+            Ty::InferVar { .. } | Ty::Unknown => None,
         }
-        None
     }
 
-    fn primitive_ty(&self, primitive: PrimitiveTy) -> Option<ChalkTy> {
-        let scalar = match primitive {
-            PrimitiveTy::Bool => Scalar::Bool,
-            PrimitiveTy::Char => Scalar::Char,
-            PrimitiveTy::Str => return Some(TyKind::Str.intern(INTER)),
-            PrimitiveTy::SignedInt(kind) => Scalar::Int(match kind {
+    fn lower_lifetime(&self, lifetime: Lifetime) -> Option<chalk_ir::Lifetime<RgChalkInterner>> {
+        Some(match lifetime {
+            Lifetime::Static => LifetimeData::Static.intern(INTER),
+            Lifetime::Erased => LifetimeData::Erased.intern(INTER),
+            Lifetime::Param(param) => {
+                LifetimeData::BoundVar(self.binders.bound_var(GenericParamRef::Lifetime(param))?)
+                    .intern(INTER)
+            }
+        })
+    }
+
+    fn lower_const(&self, value: ConstValue) -> Option<chalk_ir::Const<RgChalkInterner>> {
+        let value = match value {
+            ConstValue::Scalar(value) => ChalkConstValue::Concrete(ConcreteConst {
+                interned: value.to_string(),
+            }),
+            ConstValue::Param(param) => {
+                ChalkConstValue::BoundVar(self.binders.bound_var(GenericParamRef::Const(param))?)
+            }
+            ConstValue::Unknown => return None,
+        };
+        Some(
+            ConstData {
+                ty: usize_ty(),
+                value,
+            }
+            .intern(INTER),
+        )
+    }
+
+    fn lower_primitive(primitive: PrimitiveTy) -> ChalkTy {
+        match primitive {
+            PrimitiveTy::Str => TyKind::Str.intern(INTER),
+            PrimitiveTy::Bool => TyKind::Scalar(Scalar::Bool).intern(INTER),
+            PrimitiveTy::Char => TyKind::Scalar(Scalar::Char).intern(INTER),
+            PrimitiveTy::SignedInt(kind) => TyKind::Scalar(Scalar::Int(match kind {
                 SignedIntTy::I8 => chalk_ir::IntTy::I8,
                 SignedIntTy::I16 => chalk_ir::IntTy::I16,
                 SignedIntTy::I32 => chalk_ir::IntTy::I32,
                 SignedIntTy::I64 => chalk_ir::IntTy::I64,
                 SignedIntTy::I128 => chalk_ir::IntTy::I128,
                 SignedIntTy::Isize => chalk_ir::IntTy::Isize,
-            }),
-            PrimitiveTy::UnsignedInt(kind) => Scalar::Uint(match kind {
+            }))
+            .intern(INTER),
+            PrimitiveTy::UnsignedInt(kind) => TyKind::Scalar(Scalar::Uint(match kind {
                 UnsignedIntTy::U8 => chalk_ir::UintTy::U8,
                 UnsignedIntTy::U16 => chalk_ir::UintTy::U16,
                 UnsignedIntTy::U32 => chalk_ir::UintTy::U32,
                 UnsignedIntTy::U64 => chalk_ir::UintTy::U64,
                 UnsignedIntTy::U128 => chalk_ir::UintTy::U128,
                 UnsignedIntTy::Usize => UintTy::Usize,
-            }),
-            PrimitiveTy::Float(kind) => Scalar::Float(match kind {
+            }))
+            .intern(INTER),
+            PrimitiveTy::Float(kind) => TyKind::Scalar(Scalar::Float(match kind {
                 FloatTy::F32 => chalk_ir::FloatTy::F32,
                 FloatTy::F64 => chalk_ir::FloatTy::F64,
-            }),
-        };
-        Some(TyKind::Scalar(scalar).intern(INTER))
+            }))
+            .intern(INTER),
+        }
     }
 
-    fn chalk_mutability(&self, mutability: Mutability) -> ChalkMutability {
+    fn lower_mutability(mutability: Mutability) -> ChalkMutability {
         match mutability {
             Mutability::Shared => ChalkMutability::Not,
             Mutability::Mutable => ChalkMutability::Mut,
         }
     }
+
+    fn supports_associated_ty(&self, associated_ty: TypeAliasRef) -> bool {
+        self.associated_tys
+            .is_some_and(|associated_tys| associated_tys.contains_key(&associated_ty))
+    }
 }
 
-pub(super) fn chalk_trait_id(trait_ref: TraitRef) -> TraitId<RgChalkInterner> {
+pub(super) fn chalk_trait_id(trait_ref: TraitDefRef) -> TraitId<RgChalkInterner> {
     TraitId(ChalkDefId::Trait(trait_ref))
 }
 
-pub(super) fn chalk_impl_id(impl_ref: rg_ir_model::ImplRef) -> chalk_ir::ImplId<RgChalkInterner> {
+pub(super) fn chalk_impl_id(impl_ref: ImplRef) -> chalk_ir::ImplId<RgChalkInterner> {
     chalk_ir::ImplId(ChalkDefId::Impl(impl_ref))
 }
 
@@ -901,8 +678,12 @@ pub(super) fn chalk_assoc_type_value_id(
     AssociatedTyValueId(ChalkDefId::AssocTypeValue(type_alias_ref))
 }
 
+pub(super) fn chalk_opaque_ty_id(opaque: rg_ir_model::OpaqueTyRef) -> OpaqueTyId<RgChalkInterner> {
+    OpaqueTyId(ChalkDefId::Opaque(opaque))
+}
+
 pub(super) fn stub_trait_datum(
-    trait_ref: TraitRef,
+    trait_ref: TraitDefRef,
     parameter_count: usize,
 ) -> TraitDatum<RgChalkInterner> {
     let binders = VariableKinds::from_iter(
@@ -932,18 +713,17 @@ pub(super) fn stub_trait_datum(
 
 pub(super) fn adt_datum(
     type_def: TypeDefRef,
-    generics: Option<&GenericParams>,
-) -> Option<AdtDatum<RgChalkInterner>> {
-    let binders = match generics {
-        Some(generics) => GenericBinderEnv::for_impl(generics)?,
-        None => GenericBinderEnv::empty(),
-    };
+    generics: Option<&Generics<'_>>,
+) -> AdtDatum<RgChalkInterner> {
+    let binders = generics
+        .map(GenericBinderEnv::for_generics)
+        .unwrap_or_else(GenericBinderEnv::empty);
     let kind = match type_def.id {
         TypeDefId::Struct(_) => AdtKind::Struct,
         TypeDefId::Enum(_) => AdtKind::Enum,
         TypeDefId::Union(_) => AdtKind::Union,
     };
-    Some(AdtDatum {
+    AdtDatum {
         binders: chalk_ir::Binders::new(
             binders.variable_kinds(),
             AdtDatumBound {
@@ -963,9 +743,13 @@ pub(super) fn adt_datum(
             phantom_data: false,
         },
         kind,
-    })
+    }
 }
 
 pub(super) fn unit_ty() -> ChalkTy {
-    TyKind::Tuple(0, Substitution::empty(INTER)).intern(INTER)
+    TyKind::Tuple(0, ChalkSubstitution::empty(INTER)).intern(INTER)
+}
+
+fn usize_ty() -> ChalkTy {
+    TyKind::Scalar(Scalar::Uint(UintTy::Usize)).intern(INTER)
 }

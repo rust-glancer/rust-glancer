@@ -8,14 +8,18 @@ use rg_def_map::{DefMapQuery, DefMapSource};
 use rg_ir_model::BodyRef;
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::{CrateItemQuery, ItemLookupIndex, ItemStoreQuery, ItemStoreSource};
-use rg_ty::{Autoderef, ImplMatcher, ItemPathQuery, IterationItemResolver};
+use rg_ty::{
+    Autoderef, ImplMatcher, ItemPathQuery, IterationItemResolver, SemanticSignatureQuery,
+    TraitSelectionCache,
+};
 
 use crate::ir::body::ResolvedBodyData;
 
 use crate::resolution::query::{
     BodyAssociatedItemQuery, BodyCallQuery, BodyFieldQuery, BodyFunctionQuery, BodyGenericsQuery,
     BodyLocalItemQuery, BodyMethodQuery, BodyTraitQuery, BodyTypeAliasQuery, BodyTypeContextQuery,
-    BodyTypePathQuery, BodyValuePathQuery, TypeRefResolutionQuery, TypeRefUseSite,
+    BodyTypePathQuery, BodyTypePathResolver, BodyValuePathQuery, TypeRefResolutionQuery,
+    TypeRefUseSite,
 };
 
 use super::BodyQuerySource;
@@ -24,6 +28,7 @@ use super::BodyQuerySource;
 pub struct BodyResolutionContext<'a, D, I> {
     source: BodyQuerySource<'a, D, I>,
     semantic_index: &'a ItemLookupIndex,
+    trait_selection_cache: Option<&'a TraitSelectionCache>,
 }
 
 impl<'a, D, I> BodyResolutionContext<'a, D, I> {
@@ -37,6 +42,22 @@ impl<'a, D, I> BodyResolutionContext<'a, D, I> {
         Self {
             source: BodyQuerySource::new(def_maps, item_stores, body_ref, body),
             semantic_index,
+            trait_selection_cache: None,
+        }
+    }
+
+    pub(crate) fn with_trait_selection_cache(
+        def_maps: D,
+        item_stores: I,
+        body_ref: BodyRef,
+        body: &'a ResolvedBodyData,
+        semantic_index: &'a ItemLookupIndex,
+        trait_selection_cache: &'a TraitSelectionCache,
+    ) -> Self {
+        Self {
+            source: BodyQuerySource::new(def_maps, item_stores, body_ref, body),
+            semantic_index,
+            trait_selection_cache: Some(trait_selection_cache),
         }
     }
 
@@ -50,6 +71,10 @@ impl<'a, D, I> BodyResolutionContext<'a, D, I> {
 
     pub(crate) fn semantic_index(&self) -> &'a ItemLookupIndex {
         self.semantic_index
+    }
+
+    pub(crate) fn trait_selection_cache(&self) -> TraitSelectionCache {
+        self.trait_selection_cache.cloned().unwrap_or_default()
     }
 }
 
@@ -75,6 +100,18 @@ where
     ) -> ItemPathQuery<'a, BodyQuerySource<'a, D, I>, BodyQuerySource<'a, D, I>> {
         let source = self.source;
         ItemPathQuery::new(source, source)
+    }
+
+    pub(crate) fn signatures(
+        &self,
+    ) -> SemanticSignatureQuery<
+        'a,
+        BodyQuerySource<'a, D, I>,
+        BodyQuerySource<'a, D, I>,
+        BodyTypePathResolver<'a, D, I>,
+    > {
+        let source = self.source;
+        SemanticSignatureQuery::with_resolver(source, source, BodyTypePathResolver::new(*self))
     }
 
     pub(crate) fn crate_items(
@@ -138,14 +175,25 @@ where
 
     pub(crate) fn impl_matcher(
         &self,
-    ) -> ImplMatcher<'a, BodyQuerySource<'a, D, I>, BodyQuerySource<'a, D, I>> {
-        ImplMatcher::new(self.item_paths(), self.crate_items())
+    ) -> ImplMatcher<
+        'a,
+        BodyQuerySource<'a, D, I>,
+        BodyQuerySource<'a, D, I>,
+        BodyTypePathResolver<'a, D, I>,
+    > {
+        ImplMatcher::with_resolver(
+            self.item_paths(),
+            self.crate_items(),
+            BodyTypePathResolver::new(*self),
+        )
+        .with_cache(self.trait_selection_cache())
     }
 
     pub(crate) fn autoderef(
         &self,
     ) -> Autoderef<'a, BodyQuerySource<'a, D, I>, BodyQuerySource<'a, D, I>> {
         Autoderef::with_index(self.item_paths(), self.crate_items(), self.semantic_index)
+            .with_cache(self.trait_selection_cache())
     }
 
     pub(crate) fn iteration_items(
@@ -156,5 +204,6 @@ where
             self.crate_items(),
             self.semantic_index,
         )
+        .with_cache(self.trait_selection_cache())
     }
 }

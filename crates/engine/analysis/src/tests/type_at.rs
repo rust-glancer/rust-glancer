@@ -872,13 +872,13 @@ pub fn use_it(pair: (u8, bool), array: [u8; 3], slice: &[u8], value: u8) {
             - [u8; 3]
 
             named repeat array expression
-            - [u8; N]
+            - [u8; _]
 
             spaced repeat array expression
-            - [u8; "a  b".len() + 1]
+            - [u8; _]
 
             self repeat array expression
-            - [u8; Self::N]
+            - [u8; _]
 
             tuple field
             - u8
@@ -1472,7 +1472,7 @@ pub fn use_it(def_map: &DefMap) {
         ],
         expect![[r#"
             prelude Vec from fake sysroot
-            - nominal struct alloc[lib]::crate::vec::Vec<nominal struct storage[lib]::crate::ImportData>
+            - nominal struct alloc[lib]::crate::vec::Vec<nominal struct storage[lib]::crate::ImportData, nominal struct alloc[lib]::crate::vec::Global>
 
             for item from fake sysroot slice iterator
             - &nominal struct storage[lib]::crate::ImportData
@@ -1524,7 +1524,7 @@ pub fn use_it(fields: &[Field]) {
             - &nominal struct app[lib]::crate::Field
 
             collected mapped values
-            - nominal struct alloc[lib]::crate::vec::Vec<nominal struct app[lib]::crate::Rendered>
+            - nominal struct alloc[lib]::crate::vec::Vec<nominal struct app[lib]::crate::Rendered, nominal struct alloc[lib]::crate::vec::Global>
         "#]],
     );
 }
@@ -3102,7 +3102,7 @@ impl User {
         )],
         expect![[r#"
             type at impl signature Self
-            - Self struct analysis_impl_self_signature_type[lib]::crate::User
+            - nominal struct analysis_impl_self_signature_type[lib]::crate::User
         "#]],
     );
 }
@@ -3141,13 +3141,13 @@ impl User {
         ],
         expect![[r#"
             type at owned self
-            - Self struct analysis_self_receiver_type[lib]::crate::User
+            - nominal struct analysis_self_receiver_type[lib]::crate::User
 
             type at shared self
-            - &Self struct analysis_self_receiver_type[lib]::crate::User
+            - &nominal struct analysis_self_receiver_type[lib]::crate::User
 
             type at mutable self
-            - &mut Self struct analysis_self_receiver_type[lib]::crate::User
+            - &mut nominal struct analysis_self_receiver_type[lib]::crate::User
         "#]],
     );
 }
@@ -3474,7 +3474,7 @@ pub fn make() {
         ],
         expect![[r#"
             type at body Self annotation
-            - Self struct analysis_body_annotation_type[lib]::crate::User
+            - nominal struct analysis_body_annotation_type[lib]::crate::User
 
             type at wildcard annotation
             - nominal struct fn analysis_body_annotation_type[lib]::crate::make::User

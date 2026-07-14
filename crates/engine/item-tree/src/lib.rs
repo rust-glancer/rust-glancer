@@ -21,9 +21,10 @@ pub use self::{
         ItemTreeRef, MacroCallContext, MacroCallItem, MacroDefAst, MacroDefContext,
         MacroDefinitionAttrs, MacroDefinitionItem, MacroRulesAst, MacroRulesContext, MacroUseAttr,
         MacroUseSelector, MaybeFromAst, ModuleItem, ModuleSource, OuterDocs, ParamItem, ParamKind,
-        StaticItem, StructItem, TraitItem, TraitItemContext, TypeAliasItem, TypeBound, TypePath,
-        TypePathAnchor, TypePathSegment, TypeRef, UnionItem, UseImport, UseImportKind, UseItem,
-        UsePath, UsePathSegment, UsePathSegmentKind, VisibilityLevel, WherePredicate,
+        StaticItem, StructItem, TraitItem, TraitItemContext, TypeAliasItem, TypeBound,
+        TypeOrConstParamData, TypePath, TypePathAnchor, TypePathSegment, TypeRef, UnionItem,
+        UseImport, UseImportKind, UseItem, UsePath, UsePathSegment, UsePathSegmentKind,
+        VisibilityLevel, WherePredicate,
     },
     package::{FileTree, Package, TargetRoot},
 };

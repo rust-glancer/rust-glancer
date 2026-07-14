@@ -4,7 +4,7 @@ use crate::ItemResolutionQuery;
 use crate::ItemStoreQuery;
 use rg_def_map::{DefMapDb, DefMapReadTxn, PackageSlot};
 use rg_ir_model::Path;
-use rg_ir_model::{CrateId, CrateRef, ImplRef, ModuleRef, TraitRef, TypeDefRef};
+use rg_ir_model::{CrateId, CrateRef, ImplRef, ModuleRef, TraitDefRef, TypeDefRef};
 use rg_item_tree::TypeRef;
 use rg_package_store::PackageStoreError;
 use rg_std::ExpectedUnique;
@@ -28,7 +28,7 @@ pub(super) fn resolve_impl_headers(
 pub(super) struct ImplHeaderResolution {
     impl_ref: ImplRef,
     resolved_self_ty: ExpectedUnique<TypeDefRef>,
-    resolved_trait_ref: ExpectedUnique<TraitRef>,
+    resolved_trait_ref: ExpectedUnique<TraitDefRef>,
 }
 
 pub(super) fn impl_header_resolutions_for_packages(
@@ -112,7 +112,7 @@ fn resolve_traits_from_ref(
     def_map: &DefMapReadTxn<'_>,
     owner: ModuleRef,
     ty: &TypeRef,
-) -> Result<ExpectedUnique<TraitRef>, PackageStoreError> {
+) -> Result<ExpectedUnique<TraitDefRef>, PackageStoreError> {
     let Some(path) = Path::from_type_ref(ty) else {
         return Ok(ExpectedUnique::new());
     };

@@ -61,6 +61,12 @@ impl ResolvedBodyData {
         self.body.function_params()
     }
 
+    pub(crate) fn function_param_index_for_binding(&self, binding: BindingId) -> Option<usize> {
+        self.function_params()
+            .iter()
+            .position(|param| param.bindings.contains(&binding))
+    }
+
     pub fn params(&self) -> &[BindingId] {
         self.body.params()
     }
@@ -173,6 +179,10 @@ impl ResolvedBodyData {
 
     pub(crate) fn set_expr_ty(&mut self, expr: ExprId, ty: rg_ty::Ty) {
         self.facts.exprs[expr].ty = ty;
+    }
+
+    pub(crate) fn set_expr_resolution(&mut self, expr: ExprId, resolution: BodyResolution) {
+        self.facts.exprs[expr].resolution = resolution;
     }
 
     pub(crate) fn expr_resolution(&self, expr: ExprId) -> &BodyResolution {

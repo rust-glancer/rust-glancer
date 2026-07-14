@@ -1,6 +1,8 @@
 use expect_test::expect;
 
-use super::utils::{AnalysisQuery, check_analysis_queries};
+use super::utils::{
+    AnalysisQuery, check_analysis_queries, check_analysis_queries_with_fake_sysroot,
+};
 
 #[test]
 fn hovers_over_documented_items_and_usages() {
@@ -85,7 +87,7 @@ fn hovers_over_documented_items_and_usages() {
 
 #[test]
 fn hovers_over_impl_fn_trait_parenthesized_args() {
-    check_analysis_queries(
+    check_analysis_queries_with_fake_sysroot(
         r#"
 //- /Cargo.toml
 [package]
@@ -100,10 +102,10 @@ pub fn configure(f$fn_once_hover$: impl FnOnce(&mut AttrVec)) {
     let _ = f;
 }
 "#,
-        &[AnalysisQuery::hover(
-            "hover impl FnOnce parenthesized args",
-            "fn_once_hover",
-        )],
+        &[
+            AnalysisQuery::hover("hover impl FnOnce parenthesized args", "fn_once_hover")
+                .in_lib("analysis_hover_fn_trait_args"),
+        ],
         expect![[r#"
             hover impl FnOnce parenthesized args
             - range: 3:18-3:19

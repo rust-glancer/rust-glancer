@@ -1,7 +1,7 @@
 //! Definition and semantic-item storage declared inside one body.
 
 use rg_def_map::DefMap;
-use rg_ir_model::{ImplId, TraitRef, TypeDefRef};
+use rg_ir_model::{ImplId, TraitDefRef, TypeDefRef};
 
 use rg_semantic_ir::ItemStore;
 use rg_std::{ExpectedUnique, MemorySize, Shrink};
@@ -34,7 +34,7 @@ impl BodyLocalItems {
         &mut self,
         id: ImplId,
         resolved_self_ty: ExpectedUnique<TypeDefRef>,
-        resolved_trait_ref: ExpectedUnique<TraitRef>,
+        resolved_trait_ref: ExpectedUnique<TraitDefRef>,
     ) -> Option<()> {
         self.item_store
             .set_impl_header_facts(id, resolved_self_ty, resolved_trait_ref)

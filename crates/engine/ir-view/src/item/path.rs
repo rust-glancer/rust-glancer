@@ -8,8 +8,8 @@ use std::fmt::Write as _;
 
 use rg_def_map::DefMapSource;
 use rg_ir_model::{
-    ConstRef, DefMapRef, FunctionRef, ImplId, ImplRef, ItemOwner, ModuleRef, StaticRef, TraitRef,
-    TypeAliasRef, TypeDefId, TypeDefRef,
+    ConstRef, DefMapRef, FunctionRef, ImplId, ImplRef, ItemOwner, ModuleRef, StaticRef,
+    TraitDefRef, TypeAliasRef, TypeDefId, TypeDefRef,
 };
 use rg_semantic_ir::{EnumVariantData, ItemStoreQuery};
 use rg_text::RustEdition;
@@ -80,7 +80,7 @@ impl<'a, 'db> PathView<'a, 'db> {
     }
 
     /// Return the full path for a trait.
-    pub fn trait_path(&self, trait_ref: TraitRef) -> anyhow::Result<Option<String>> {
+    pub fn trait_path(&self, trait_ref: TraitDefRef) -> anyhow::Result<Option<String>> {
         let Some(data) = ItemStoreQuery::new(self.db).trait_data(trait_ref)? else {
             return Ok(None);
         };
@@ -156,7 +156,7 @@ impl<'a, 'db> PathView<'a, 'db> {
     ) -> anyhow::Result<Option<String>> {
         match owner {
             ItemOwner::Module(module_ref) => self.module_path(module_ref),
-            ItemOwner::Trait(trait_id) => self.trait_path(TraitRef {
+            ItemOwner::Trait(trait_id) => self.trait_path(TraitDefRef {
                 origin,
                 id: trait_id,
             }),

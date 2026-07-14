@@ -361,7 +361,10 @@ fn chalk_solver_normalizes_array_associated_type_value() {
 }
 
 #[test]
-fn normalize_assoc_type_projects_qualified_associated_type_value() {
+fn normalize_assoc_type_exposes_canonical_nested_projection_when_chalk_stops() {
+    // Chalk's bounded solver stops at this transitive projection. Once the impl is uniquely
+    // selected, its canonical associated value can still expose the next projection. Recursive
+    // normalization can then continue without returning to declaration syntax.
     check_trait_selection_queries(
         r#"
             traits
@@ -387,15 +390,49 @@ fn normalize_assoc_type_projects_qualified_associated_type_value() {
               options: default
               goal: <Skip<Iter<User>> as Iterator>::Item
               result: projected
-                infer: User
-                final: User
+                infer: projection Item<Iter<User>>
+                final: projection Item<Iter<User>>
                 applicability: yes
         "#]],
     );
 }
 
 #[test]
-fn blanket_self_param_impl_proves_bound_before_projecting_item() {
+fn chalk_defers_body_local_closure_projection() {
+    // A closure's callable signature lives in Body IR. The shared Chalk database only has a stub
+    // closure datum, so it must leave this projection for the body-aware obligation solver.
+    check_trait_selection_queries(
+        r#"
+            traits
+              trait#0 Iterator
+              trait#1 FnOnce
+            structs
+              struct#0 Adapter<F>
+            impls
+              impl#0 impl<F: FnOnce> Iterator for Adapter<F>
+            type aliases
+              type#0 trait#0::Item
+              type#1 trait#1::Output
+              type#2 impl#0::Item = <F as FnOnce>::Output
+        "#,
+        vec![TraitSelectionCase::chalk_normalize_assoc(
+            "defer body-local closure projection",
+            "<Adapter<{closure#0}> as Iterator>::Item",
+        )],
+        expect![[r#"
+            defer body-local closure projection
+              options: default
+              goal: <Adapter<{closure#0}> as Iterator>::Item
+              result: none
+        "#]],
+    );
+}
+
+#[test]
+fn blanket_self_param_impl_and_source_opaque_bounds_are_proved() {
+    // Pair blanket-impl selection with its canonical associated value for both a nominal iterator
+    // and an opaque iterator. Chalk proves the impl; when it stops at the nested alias, the
+    // semantic signature supplies the next projection for recursive normalization.
     check_trait_selection_queries(
         r#"
             traits
@@ -412,7 +449,9 @@ fn blanket_self_param_impl_proves_bound_before_projecting_item() {
               type#0 trait#0::Item
               type#1 impl#0::Item = T
               type#2 trait#1::Item
-              type#3 impl#1::Item = I::Item
+              type#3 impl#1::Item = <I as Iterator>::Item
+            functions
+              fn#0 opaque_iter -> impl Iterator<Item = User>
         "#,
         vec![
             TraitSelectionCase::probe("prove blanket iterator impl", "Iter<User>: IntoIterator"),
@@ -422,11 +461,11 @@ fn blanket_self_param_impl_proves_bound_before_projecting_item() {
             ),
             TraitSelectionCase::probe(
                 "prove blanket iterator impl for opaque iterator",
-                "impl Iterator<Item = User>: IntoIterator",
+                "opaque#0: IntoIterator",
             ),
             TraitSelectionCase::normalize_assoc(
                 "project blanket opaque IntoIterator Item",
-                "<impl Iterator<Item = User> as IntoIterator>::Item",
+                "<opaque#0 as IntoIterator>::Item",
             ),
             TraitSelectionCase::probe(
                 "reject unproved blanket iterator impl",
@@ -445,8 +484,8 @@ fn blanket_self_param_impl_proves_bound_before_projecting_item() {
               options: default
               goal: <Iter<User> as IntoIterator>::Item
               result: projected
-                infer: User
-                final: User
+                infer: projection Item<Iter<User>>
+                final: projection Item<Iter<User>>
                 applicability: yes
 
             prove blanket iterator impl for opaque iterator
@@ -460,14 +499,61 @@ fn blanket_self_param_impl_proves_bound_before_projecting_item() {
               options: default
               goal: <impl Iterator<Item = User> as IntoIterator>::Item
               result: projected
-                infer: User
-                final: User
+                infer: projection Item<impl Iterator<Item = User>>
+                final: projection Item<impl Iterator<Item = User>>
                 applicability: yes
 
             reject unproved blanket iterator impl
               options: default
               goal: NotIter: IntoIterator
               result: empty
+        "#]],
+    );
+}
+
+#[test]
+fn blanket_impl_proves_nested_adapter_with_dependent_associated_bound() {
+    // `Copied<I>` determines `T` through `I::Item = T` before it can prove `T: Copy`. Keep this
+    // shaped like the standard iterator adapters: it exercises a blanket outer impl, nested
+    // adapter predicates, and a generic that appears only in an associated equality.
+    check_trait_selection_queries(
+        r#"
+            traits
+              trait#0 Copy
+              trait#1 Iterator
+              trait#2 IntoIterator
+            structs
+              struct#0 Iter<T>
+              struct#1 Copied<I>
+              struct#2 Enumerate<I>
+              struct#3 User
+              struct#4 Other
+            impls
+              impl#0 impl Copy for User
+              impl#1 impl Copy for Other
+              impl#2 impl<T> Iterator for Iter<T>
+              impl#3 impl<I: Iterator<Item = T>, T: Copy> Iterator for Copied<I>
+              impl#4 impl<I: Iterator> Iterator for Enumerate<I>
+              impl#5 impl<I: Iterator> IntoIterator for I [resolved self: empty]
+            type aliases
+              type#0 trait#1::Item
+              type#1 impl#2::Item = T
+              type#2 impl#3::Item = T
+              type#3 impl#4::Item = <I as Iterator>::Item
+              type#4 trait#2::Item
+              type#5 impl#5::Item = <I as Iterator>::Item
+        "#,
+        vec![TraitSelectionCase::probe(
+            "prove nested adapter blanket impl",
+            "Enumerate<Copied<Iter<User>>>: IntoIterator",
+        )],
+        expect![[r#"
+            prove nested adapter blanket impl
+              options: default
+              goal: Enumerate<Copied<Iter<User>>>: IntoIterator
+              result: one
+                impl: impl#5
+                applicability: yes
         "#]],
     );
 }
@@ -659,6 +745,37 @@ fn probe_handles_visible_trait_data_with_generic_bounds() {
                 applicability: yes
                 vars
                   ?item = User
+        "#]],
+    );
+}
+
+#[test]
+fn probe_declines_predicate_with_unsupported_bounded_associated_type() {
+    // Associated type bounds need an additional Chalk binder layer that is not modeled yet. A
+    // projection of such a type must stop at the lowering boundary instead of entering Chalk with
+    // an ID whose associated-type datum was intentionally omitted.
+    check_trait_selection_queries(
+        r#"
+            traits
+              trait#0 LinkOps
+              trait#1 Adapter
+              trait#2 UsesAdapter
+            structs
+              struct#0 User
+            impls
+              impl#0 impl UsesAdapter for User where <User as Adapter>::LinkOps: LinkOps
+            type aliases
+              type#0 trait#1::LinkOps: LinkOps
+        "#,
+        vec![TraitSelectionCase::probe(
+            "decline unsupported bounded associated type",
+            "User: UsesAdapter",
+        )],
+        expect![[r#"
+            decline unsupported bounded associated type
+              options: default
+              goal: User: UsesAdapter
+              result: empty
         "#]],
     );
 }

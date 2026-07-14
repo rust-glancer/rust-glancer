@@ -1,255 +1,265 @@
-//! Inference-aware type-ref substitution and projection.
+//! Inference-aware substitutions keyed by semantic generic-parameter identity.
 //!
-//! This binds declared type params from inference evidence, then projects another type ref while
-//! preserving `?T` slots inside the ordinary `Ty` tree.
+//! A source name is useful only while lowering a declaration. Once the declaration is semantic,
+//! inference binds `GenericParamRef` values directly so a method-level `T` cannot overwrite an
+//! impl or trait parameter that happens to use the same spelling.
 
-use rg_ir_model::items::{GenericArg as ItemGenericArg, GenericParams, TypePath, TypeRef};
-use rg_text::Name;
+use rg_ir_model::{ConstParamRef, GenericParamRef, LifetimeParamRef, TypeParamRef};
+use rg_semantic_ir::{GenericParamSource, Generics};
 
 use super::{
+    UnknownTypeInstantiationBuilder,
     table::{InferenceConflict, InferenceTable},
-    traversal::TypeRefInferenceProjector,
 };
-use crate::{GenericArg, Ty, TypeSubst};
+use crate::{ConstValue, GenericArg, Lifetime, Substitution, Ty};
 
-/// Substitution from declared type params to inference-aware types.
+/// Generic-parameter bindings that may still contain inference variables.
 ///
-/// Example: matching `impl<T> Vec<T>` against receiver `Vec<?T>` binds `T = ?T`.
+/// This wrapper keeps trial-table unification separate from the ordinary immutable semantic
+/// substitution API. Type evidence is unified through the table, while const and lifetime
+/// evidence is retained in the same owner-scoped substitution so selected declarations never
+/// leak their own parameters into instantiated clauses or associated values.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
-pub struct InferenceTypeSubst(TypeSubst);
+pub struct InferenceSubstitution(Substitution);
 
-impl InferenceTypeSubst {
-    /// Start with no inference substitutions.
+impl InferenceSubstitution {
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Add `T = ?T`; if `T` already exists, unify both values.
-    pub fn push(&mut self, table: &mut InferenceTable, name: Name, ty: Ty) {
-        let _ = self.try_push(table, name, ty);
+    pub fn from_substitution(subst: Substitution) -> Self {
+        Self(subst)
     }
 
-    /// Add `T = ?T` and report whether repeated evidence stayed compatible.
-    pub fn try_push(
+    /// Add `param = ty`; repeated evidence must unify in the supplied trial table.
+    pub fn try_push_type(
         &mut self,
         table: &mut InferenceTable,
-        name: Name,
+        param: TypeParamRef,
         ty: Ty,
     ) -> Result<(), InferenceConflict> {
-        if let Some(existing) = self.0.get(name.as_str()).cloned() {
+        if let Some(existing) = self.type_param(param).cloned() {
+            // `Unknown` is the placeholder for an omitted owner argument, not established type
+            // evidence. Once a call argument supplies a real type, replace that placeholder so
+            // inherent associated functions can infer an impl parameter from their parameters.
+            if matches!(existing, Ty::Unknown) {
+                self.0
+                    .push(GenericParamRef::Type(param), GenericArg::Type(Box::new(ty)));
+                return Ok(());
+            }
+
+            // Receiver substitutions can carry holes below a known nominal shape, for example
+            // `Self = Adapter<unknown>` before the live receiver becomes `Adapter<Closure#n>`.
+            // Turn only those nested holes into trial variables, retain the known structure, and
+            // let ordinary unification absorb the new evidence.
+            if existing.has_unknown() {
+                let existing = UnknownTypeInstantiationBuilder::new(table).ty_from_ty(&existing);
+                table.try_unify(&existing, &ty)?;
+                self.0.push(
+                    GenericParamRef::Type(param),
+                    GenericArg::Type(Box::new(existing)),
+                );
+                return Ok(());
+            }
             return table.try_unify(&existing, &ty);
         }
 
-        self.0.push(name, ty);
+        self.0
+            .push(GenericParamRef::Type(param), GenericArg::Type(Box::new(ty)));
         Ok(())
     }
 
-    /// Return the visible inference binding for a type parameter.
-    pub fn type_param(&self, name: &str) -> Option<Ty> {
-        self.0.type_param(name)
+    pub fn push_type(&mut self, table: &mut InferenceTable, param: TypeParamRef, ty: Ty) {
+        let _ = self.try_push_type(table, param, ty);
     }
 
-    /// Finalize inference bindings into an ordinary substitution for type-ref resolution.
-    ///
-    /// This is a bridge for APIs that still need resolved `Ty` shapes before projecting them back
-    /// into inference form. The inference-aware projector remains responsible for preserving
-    /// unsolved `?T` slots where the written type ref mentions a bound type parameter.
-    pub(crate) fn finalize_type_subst(&self, table: &InferenceTable) -> TypeSubst {
-        self.0
-            .iter()
-            .map(|(name, ty)| (name.clone(), table.finalize(ty)))
-            .collect()
+    pub fn type_param(&self, param: TypeParamRef) -> Option<&Ty> {
+        self.0.type_param(param)
     }
 
-    /// Let function generics hide same-named impl generics while staying inferable.
-    pub fn shadow_type_params(&mut self, table: &mut InferenceTable, generics: &GenericParams) {
-        for param in &generics.types {
-            self.0.push(param.name.clone(), table.new_type_var());
+    pub(crate) fn lifetime_param(&self, param: LifetimeParamRef) -> Option<Lifetime> {
+        match self.0.get(GenericParamRef::Lifetime(param)) {
+            Some(GenericArg::Lifetime(lifetime)) => Some(*lifetime),
+            Some(GenericArg::Type(_) | GenericArg::Const(_)) | None => None,
         }
     }
 
-    /// Bind type params by matching declaration syntax against inference evidence.
+    pub(crate) fn const_param(&self, param: ConstParamRef) -> Option<ConstValue> {
+        match self.0.get(GenericParamRef::Const(param)) {
+            Some(GenericArg::Const(value)) => Some(*value),
+            Some(GenericArg::Type(_) | GenericArg::Lifetime(_)) | None => None,
+        }
+    }
+
+    pub fn as_substitution(&self) -> &Substitution {
+        &self.0
+    }
+
+    pub fn into_substitution(self) -> Substitution {
+        self.0
+    }
+
+    /// Give the function's own type parameters fresh variables, shadowing only by identity.
+    pub fn shadow_type_params(&mut self, table: &mut InferenceTable, generics: &Generics<'_>) {
+        for param in generics.iter_self() {
+            let GenericParamRef::Type(param_ref) = param.param() else {
+                continue;
+            };
+            if matches!(param.source(), GenericParamSource::TraitSelf) {
+                continue;
+            }
+            self.0.push(
+                GenericParamRef::Type(param_ref),
+                GenericArg::Type(Box::new(table.new_type_var())),
+            );
+        }
+    }
+
+    /// Bind every parameter occurrence in a semantic pattern to matching evidence.
     ///
-    /// Example: `Vec<T>` matched with `Vec<?T>` binds `T = ?T`.
-    pub fn bind_type_ref(
-        &mut self,
-        table: &mut InferenceTable,
-        pattern: &TypeRef,
-        evidence: &Ty,
-        generics: &GenericParams,
-    ) {
-        if let Some(name) = pattern.type_param_name()
-            && generics
-                .types
-                .iter()
-                .any(|param| param.name.as_str() == name.as_str())
-        {
-            self.push(table, name, evidence.clone());
+    /// Shape compatibility remains the caller's policy. This routine records only evidence that
+    /// is structurally unambiguous and leaves unsupported/mismatched branches untouched.
+    pub fn bind_ty(&mut self, table: &mut InferenceTable, pattern: &Ty, evidence: &Ty) {
+        if let Ty::Param(param) = pattern {
+            self.push_type(table, *param, evidence.clone());
             return;
         }
 
         match (pattern, evidence) {
-            (TypeRef::Tuple(pattern_fields), Ty::Tuple(evidence_fields))
-                if pattern_fields.len() == evidence_fields.len() =>
-            {
-                for (pattern_field, evidence_field) in pattern_fields.iter().zip(evidence_fields) {
-                    self.bind_type_ref(table, pattern_field, evidence_field, generics);
+            (Ty::Tuple(pattern), Ty::Tuple(evidence)) if pattern.len() == evidence.len() => {
+                for (pattern, evidence) in pattern.iter().zip(evidence) {
+                    self.bind_ty(table, pattern, evidence);
                 }
             }
             (
-                TypeRef::Array {
-                    inner: pattern_inner,
+                Ty::Array {
+                    inner: pattern,
                     len: pattern_len,
                 },
                 Ty::Array {
-                    inner: evidence_inner,
+                    inner: evidence,
                     len: evidence_len,
                 },
-            ) if pattern_len == evidence_len => {
-                self.bind_type_ref(table, pattern_inner, evidence_inner, generics);
+            ) => {
+                self.bind_const(*pattern_len, *evidence_len);
+                self.bind_ty(table, pattern, evidence);
             }
-            (TypeRef::Slice(pattern_inner), Ty::Slice(evidence_inner)) => {
-                self.bind_type_ref(table, pattern_inner, evidence_inner, generics);
+            (Ty::Slice(pattern), Ty::Slice(evidence)) => {
+                self.bind_ty(table, pattern, evidence);
             }
             (
-                TypeRef::Reference {
-                    mutability,
-                    inner: pattern_inner,
+                Ty::Reference {
+                    lifetime: pattern_lifetime,
+                    inner: pattern,
                     ..
                 },
                 Ty::Reference {
-                    mutability: evidence_mutability,
-                    inner: evidence_inner,
+                    lifetime: evidence_lifetime,
+                    inner: evidence,
+                    ..
                 },
-            ) if *mutability == *evidence_mutability => {
-                self.bind_type_ref(table, pattern_inner, evidence_inner, generics);
-            }
-            (TypeRef::Path(path), Ty::Nominal(evidence_ty) | Ty::SelfTy(evidence_ty)) => {
-                self.bind_type_path_args(table, path, &evidence_ty.args, generics);
-            }
-            _ => {}
-        }
-    }
-
-    /// Bind declared type params from inferred args, e.g. `Option<?T>` gives `T = ?T`.
-    pub fn bind_type_params_from_infer_args(
-        &mut self,
-        table: &mut InferenceTable,
-        generics: &GenericParams,
-        args: &[GenericArg],
-    ) {
-        let type_args = args.iter().filter_map(|arg| match arg {
-            GenericArg::Type(ty) => Some(ty.as_ref().clone()),
-            GenericArg::Lifetime(_)
-            | GenericArg::Const(_)
-            | GenericArg::FnTraitArgs { .. }
-            | GenericArg::AssocType { .. }
-            | GenericArg::Unsupported(_) => None,
-        });
-
-        for (param, ty) in generics.types.iter().zip(type_args) {
-            self.push(table, param.name.clone(), ty);
-        }
-    }
-
-    /// Bind params from path args, e.g. `Vec<T>` against `Vec<?T>`.
-    fn bind_type_path_args(
-        &mut self,
-        table: &mut InferenceTable,
-        path: &TypePath,
-        evidence_args: &[GenericArg],
-        generics: &GenericParams,
-    ) {
-        let Some(segment) = path.segments.last() else {
-            return;
-        };
-        if segment.args.len() != evidence_args.len() {
-            return;
-        }
-
-        for (pattern_arg, evidence_arg) in segment.args.iter().zip(evidence_args) {
-            self.bind_generic_arg(table, pattern_arg, evidence_arg, generics);
-        }
-    }
-
-    /// Bind params from one generic arg, including associated-type and Fn-trait args.
-    fn bind_generic_arg(
-        &mut self,
-        table: &mut InferenceTable,
-        pattern: &ItemGenericArg,
-        evidence: &GenericArg,
-        generics: &GenericParams,
-    ) {
-        match (pattern, evidence) {
-            (ItemGenericArg::Type(pattern_ty), GenericArg::Type(evidence_ty)) => {
-                self.bind_type_ref(table, pattern_ty, evidence_ty, generics);
+            ) => {
+                self.bind_lifetime(*pattern_lifetime, *evidence_lifetime);
+                self.bind_ty(table, pattern, evidence);
             }
             (
-                ItemGenericArg::FnTraitArgs {
+                Ty::RawPointer { inner: pattern, .. },
+                Ty::RawPointer {
+                    inner: evidence, ..
+                },
+            ) => self.bind_ty(table, pattern, evidence),
+            (
+                Ty::FnPointer {
                     params: pattern_params,
                     ret: pattern_ret,
                 },
-                GenericArg::FnTraitArgs {
+                Ty::FnPointer {
                     params: evidence_params,
                     ret: evidence_ret,
                 },
             ) if pattern_params.len() == evidence_params.len() => {
-                for (pattern_param, evidence_param) in pattern_params.iter().zip(evidence_params) {
-                    self.bind_type_ref(table, pattern_param, evidence_param, generics);
+                for (pattern, evidence) in pattern_params.iter().zip(evidence_params) {
+                    self.bind_ty(table, pattern, evidence);
                 }
-                self.bind_type_ref(table, pattern_ret, evidence_ret, generics);
+                self.bind_ty(table, pattern_ret, evidence_ret);
             }
-            (
-                ItemGenericArg::AssocType {
-                    name: pattern_name,
-                    ty: Some(pattern_ty),
-                },
-                GenericArg::AssocType {
-                    name: evidence_name,
-                    ty: Some(evidence_ty),
-                },
-            ) if pattern_name == evidence_name => {
-                self.bind_type_ref(table, pattern_ty, evidence_ty, generics);
+            (Ty::Adt(pattern), Ty::Adt(evidence)) if pattern.def == evidence.def => {
+                self.bind_args(table, &pattern.args, &evidence.args);
+            }
+            (Ty::FnDef(pattern), Ty::FnDef(evidence)) if pattern.def == evidence.def => {
+                self.bind_args(table, &pattern.args, &evidence.args);
+            }
+            (Ty::Alias(pattern), Ty::Alias(evidence)) => {
+                self.bind_args(table, pattern.args(), evidence.args());
             }
             _ => {}
         }
     }
-}
 
-/// Projects declared type refs into `Ty` using an inference substitution.
-///
-/// Example: `push(value: T)` with `T = ?T` projects the param type to `?T`.
-pub struct InferenceTypeRefProjector<'subst> {
-    subst: &'subst InferenceTypeSubst,
-}
-
-impl<'subst> InferenceTypeRefProjector<'subst> {
-    /// Project type refs through this substitution.
-    pub fn new(subst: &'subst InferenceTypeSubst) -> Self {
-        Self { subst }
-    }
-
-    /// Resolve a declared type ref shape while preserving substituted inference vars.
-    ///
-    /// Example: `Option<T>` with `T = ?T` and resolved `Option<unknown>` becomes `Option<?T>`.
-    pub fn ty_from_type_ref(&mut self, pattern: &TypeRef, resolved_ty: &Ty) -> Ty {
-        self.project_ty(pattern, resolved_ty)
-    }
-
-    /// Resolve a generic arg shape while preserving substituted inference vars.
-    pub fn generic_arg_from_arg(
+    pub fn bind_args(
         &mut self,
-        pattern: &ItemGenericArg,
-        resolved_arg: &crate::GenericArg,
-    ) -> GenericArg {
-        self.project_generic_arg(pattern, resolved_arg)
+        table: &mut InferenceTable,
+        patterns: &[GenericArg],
+        evidence: &[GenericArg],
+    ) {
+        if patterns.len() != evidence.len() {
+            return;
+        }
+        for (pattern, evidence) in patterns.iter().zip(evidence) {
+            match (pattern, evidence) {
+                (GenericArg::Type(pattern), GenericArg::Type(evidence)) => {
+                    self.bind_ty(table, pattern, evidence);
+                }
+                (GenericArg::Lifetime(pattern), GenericArg::Lifetime(evidence)) => {
+                    self.bind_lifetime(*pattern, *evidence);
+                }
+                (GenericArg::Const(pattern), GenericArg::Const(evidence)) => {
+                    self.bind_const(*pattern, *evidence);
+                }
+                _ => {}
+            }
+        }
     }
-}
 
-impl TypeRefInferenceProjector for InferenceTypeRefProjector<'_> {
-    /// Substitute declared type params such as `T` with already-bound inference vars.
-    fn replace_written_ty(&mut self, pattern: &TypeRef) -> Option<Ty> {
-        let name = pattern.type_param_name()?;
-        self.subst.type_param(name.as_str())
+    /// Retain lifetime evidence without pretending to solve regions.
+    ///
+    /// `Erased` is a missing piece of evidence, while two distinct named/concrete lifetimes are a
+    /// relationship this inference table cannot express. In the latter case the binding itself is
+    /// erased so applying the substitution cannot make an order-dependent lifetime claim.
+    pub(crate) fn bind_lifetime(&mut self, pattern: Lifetime, evidence: Lifetime) {
+        let Lifetime::Param(param) = pattern else {
+            return;
+        };
+        let lifetime = match self.lifetime_param(param) {
+            None => evidence,
+            Some(existing) if existing == evidence => existing,
+            Some(Lifetime::Erased) => evidence,
+            Some(existing) if evidence == Lifetime::Erased => existing,
+            Some(_) => Lifetime::Erased,
+        };
+        self.0.push(
+            GenericParamRef::Lifetime(param),
+            GenericArg::Lifetime(lifetime),
+        );
+    }
+
+    /// Retain const evidence, collapsing incompatible evidence to `Unknown`.
+    ///
+    /// A compatibility matcher can reject conflicting literals before recording them. An
+    /// evidence-only caller instead gets the strongest order-independent value that can safely be
+    /// substituted later.
+    pub(crate) fn bind_const(&mut self, pattern: ConstValue, evidence: ConstValue) {
+        let ConstValue::Param(param) = pattern else {
+            return;
+        };
+        let value = match self.const_param(param) {
+            None => evidence,
+            Some(existing) if existing == evidence => existing,
+            Some(ConstValue::Unknown) => evidence,
+            Some(existing) if evidence == ConstValue::Unknown => existing,
+            Some(_) => ConstValue::Unknown,
+        };
+        self.0
+            .push(GenericParamRef::Const(param), GenericArg::Const(value));
     }
 }

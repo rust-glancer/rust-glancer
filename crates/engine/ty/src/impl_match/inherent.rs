@@ -1,36 +1,25 @@
-//! Boolean receiver checks for inherent impls.
-//!
-//! These checks decide whether an already-selected inherent item can belong to a nominal receiver.
-//! They may use impl type and const parameters as wildcards, but concrete known args must match.
+//! Receiver checks for inherent impls.
 
-use crate::generic_arg::item_generic_args_align;
-use crate::{GenericArg, NominalTy, Ty, TypeSubst};
 use rg_def_map::DefMapSource;
-use rg_ir_model::items::{GenericArg as ItemGenericArg, TypeRef};
 use rg_ir_model::{FunctionRef, ImplRef, ItemOwner};
-use rg_semantic_ir::ImplData;
-use rg_semantic_ir::{ItemStoreSource, TypePathContext};
+use rg_semantic_ir::{ImplData, ItemStoreSource};
+
+use crate::{AdtTy, Ty, TypePathResolver};
 
 use super::ImplMatcher;
 
-impl<'query, D, I> ImplMatcher<'query, D, I>
+impl<'query, D, I, R> ImplMatcher<'query, D, I, R>
 where
     D: DefMapSource,
     I: ItemStoreSource<'query, Error = D::Error>,
+    R: TypePathResolver<Error = D::Error>,
 {
-    /// Checks whether a function owned by an inherent impl can be called on the receiver type.
-    ///
-    /// Trait functions are accepted here because the trait impl candidate already carries the
-    /// receiver-specific filtering before a trait function reaches this point.
     pub fn function_applies_to_receiver(
         &self,
         function_ref: FunctionRef,
-        receiver_ty: &NominalTy,
+        receiver_ty: &AdtTy,
     ) -> Result<bool, D::Error> {
-        // Trait items are shared by all impl candidates in the best-effort model. Inherent impl
-        // items, however, must at least match the receiver's resolved self type.
-        let item_query = self.item_paths.items();
-        let Some(function_data) = item_query.function_data(function_ref)? else {
+        let Some(function_data) = self.item_paths.items().function_data(function_ref)? else {
             return Ok(false);
         };
         let ItemOwner::Impl(impl_id) = function_data.owner else {
@@ -40,126 +29,23 @@ where
             origin: function_ref.origin,
             id: impl_id,
         };
-        let Some(impl_data) = item_query.impl_data(impl_ref)? else {
+        let Some(impl_data) = self.item_paths.items().impl_data(impl_ref)? else {
             return Ok(false);
         };
         self.impl_applies_to_receiver(impl_ref, impl_data, receiver_ty)
     }
 
-    /// Checks whether an already-loaded inherent impl applies to a nominal receiver.
-    ///
-    /// Both target Semantic IR and body shadow item stores use `ImplData`, so the low-level
-    /// receiver check should not care which store provided the impl.
     pub fn impl_applies_to_receiver(
         &self,
         impl_ref: ImplRef,
         impl_data: &ImplData,
-        receiver_ty: &NominalTy,
+        receiver_ty: &AdtTy,
     ) -> Result<bool, D::Error> {
         if !impl_data.resolved_self_ty.is(&receiver_ty.def) {
             return Ok(false);
         }
-
-        self.impl_self_args_match_receiver(impl_ref, impl_data, receiver_ty)
-    }
-
-    /// Performs the boolean self-type argument check used by inherent impl methods.
-    ///
-    /// Type parameters in the impl self type act as wildcards, but concrete arguments must match:
-    /// `impl Wrapper<User>` applies to `Wrapper<User>`, not `Wrapper<Project>`.
-    fn impl_self_args_match_receiver(
-        &self,
-        impl_ref: ImplRef,
-        impl_data: &ImplData,
-        receiver_ty: &NominalTy,
-    ) -> Result<bool, D::Error> {
-        // Type and const parameters in the impl self type act as wildcards. Concrete args such as
-        // `impl Wrapper<User>` or `impl Foo<1>` must equal known receiver args, while unknown
-        // receiver args stay possible so selected-call inference can constrain them later.
-        // Impl lifetime parameters may be omitted from the receiver path, e.g.
-        // `Builder::new()` for `impl<'a, T> Builder<'a, T>`. Keep them from shifting the
-        // type/const arguments that actually select the impl.
-        let TypeRef::Path(self_ty) = &impl_data.self_ty else {
-            return Ok(true);
-        };
-        let Some(segment) = self_ty.segments.last() else {
-            return Ok(true);
-        };
-
-        let impl_lifetime_params = Self::impl_lifetime_param_names(&impl_data.generics);
-        let impl_type_params = Self::impl_type_param_names(&impl_data.generics);
-        let impl_const_params = Self::impl_const_param_names(&impl_data.generics);
-        item_generic_args_align(
-            &segment.args,
-            &receiver_ty.args,
-            &impl_lifetime_params,
-            |impl_arg, receiver_arg| {
-                self.non_lifetime_impl_self_arg_matches_receiver(
-                    impl_ref,
-                    impl_data,
-                    impl_arg,
-                    receiver_arg,
-                    &impl_type_params,
-                    &impl_const_params,
-                )
-            },
-        )
-    }
-
-    /// Match one non-lifetime impl self-type argument against the receiver argument at the same
-    /// effective position.
-    fn non_lifetime_impl_self_arg_matches_receiver(
-        &self,
-        impl_ref: ImplRef,
-        impl_data: &ImplData,
-        impl_arg: &ItemGenericArg,
-        receiver_arg: &GenericArg,
-        impl_type_params: &[&str],
-        impl_const_params: &[&str],
-    ) -> Result<bool, D::Error> {
-        debug_assert!(
-            !matches!(impl_arg, ItemGenericArg::Lifetime(_)),
-            "item_generic_args_align consumes item-side lifetime args"
-        );
-
-        match impl_arg {
-            ItemGenericArg::Type(impl_arg) => {
-                let Some(receiver_arg) = receiver_arg.as_ty().cloned() else {
-                    return Ok(false);
-                };
-                if matches!(receiver_arg, Ty::Unknown) {
-                    return Ok(true);
-                }
-                if impl_arg
-                    .type_param_name()
-                    .as_deref()
-                    .is_some_and(|name| impl_type_params.contains(&name))
-                {
-                    return Ok(true);
-                }
-
-                let context = TypePathContext {
-                    module: impl_data.owner,
-                    impl_ref: Some(impl_ref),
-                };
-                let impl_arg_ty = self.item_paths.resolve_type_ref(
-                    impl_arg,
-                    context,
-                    Ty::syntax(impl_arg.clone()),
-                    &TypeSubst::new(),
-                )?;
-                Ok(impl_arg_ty == receiver_arg)
-            }
-            ItemGenericArg::Const(impl_arg) => {
-                let GenericArg::Const(receiver_arg) = receiver_arg else {
-                    return Ok(false);
-                };
-                Ok(impl_const_params.contains(&impl_arg.as_str()) || impl_arg == receiver_arg)
-            }
-            ItemGenericArg::FnTraitArgs { .. }
-            | ItemGenericArg::AssocType { .. }
-            | ItemGenericArg::Unsupported(_) => Ok(false),
-            _ => Ok(false),
-        }
+        Ok(self
+            .impl_self_subst_for_impl(impl_ref, &Ty::adt(receiver_ty.clone()))?
+            .is_some_and(|(_, applicability)| applicability.is_applicable()))
     }
 }

@@ -1577,7 +1577,7 @@ pub fn use_it(error: Wrapper<Error>) {
 }
 
 #[test]
-fn marks_generic_trait_method_completions_as_maybe() {
+fn resolves_generic_trait_methods_and_rejects_unmet_bounds() {
     check_analysis_queries(
         r#"
 //- /Cargo.toml
@@ -1621,15 +1621,14 @@ pub fn use_it(wrapper: Wrapper<User>) {
         &[AnalysisQuery::complete("generic trait completions", "0")],
         expect![[r#"
             generic trait completions
-            - trait_method bounded_trait_name (maybe)
-            - trait_method generic_trait_name (maybe)
+            - trait_method generic_trait_name
             - field value
         "#]],
     );
 }
 
 #[test]
-fn marks_non_type_generic_trait_impl_args_as_maybe() {
+fn rejects_trait_impls_with_different_const_arguments() {
     check_analysis_queries(
         r#"
 //- /Cargo.toml
@@ -1656,7 +1655,7 @@ pub fn use_it(wrapper: Wrapper<2>) {
         &[AnalysisQuery::complete("const trait impl completions", "0")],
         expect![[r#"
             const trait impl completions
-            - trait_method label (maybe)
+            - <none>
         "#]],
     );
 }

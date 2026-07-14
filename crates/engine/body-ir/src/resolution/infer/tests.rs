@@ -1,7 +1,7 @@
 use rg_ir_model::{
     BindingId, CrateId, CrateRef, DefMapRef, ExprId, PackageSlot, StructId, TypeDefId, TypeDefRef,
 };
-use rg_ty::{ClosureTyId, GenericArg, NominalTy, PrimitiveTy, Ty, UnsignedIntTy};
+use rg_ty::{AdtTy, ClosureTyId, GenericArg, PrimitiveTy, Ty, UnsignedIntTy};
 
 use super::context::BodyInferenceCtx;
 
@@ -16,13 +16,13 @@ fn type_def(index: usize) -> TypeDefRef {
 }
 
 fn user_ty() -> Ty {
-    Ty::nominal(NominalTy::bare(type_def(0)))
+    Ty::adt(AdtTy::bare(type_def(0)))
 }
 
 fn vec_ty(inner: Ty) -> Ty {
-    Ty::nominal(NominalTy {
+    Ty::adt(AdtTy {
         def: type_def(1),
-        args: vec![GenericArg::Type(Box::new(inner))],
+        args: vec![GenericArg::Type(Box::new(inner))].into(),
     })
 }
 
@@ -149,7 +149,7 @@ fn refreshing_array_shapes_keeps_new_slot_for_weak_evidence() {
         context.finalize_expr_ty(ExprId(1)),
         Ty::Array {
             inner: Box::new(vec_ty(Ty::Unknown)),
-            len: Some("1".into()),
+            len: rg_ty::ConstValue::Scalar(1),
         }
     );
 }
@@ -196,7 +196,7 @@ fn refreshing_array_shapes_does_not_reuse_concrete_fallback_element() {
         ExprId(2),
         &Ty::Array {
             inner: Box::new(default_int_ty()),
-            len: Some("2".into()),
+            len: rg_ty::ConstValue::Scalar(2),
         },
     );
 
@@ -207,7 +207,7 @@ fn refreshing_array_shapes_does_not_reuse_concrete_fallback_element() {
         ExprId(2),
         &Ty::Array {
             inner: Box::new(u64_ty()),
-            len: Some("2".into()),
+            len: rg_ty::ConstValue::Scalar(2),
         },
     );
 
@@ -217,7 +217,7 @@ fn refreshing_array_shapes_does_not_reuse_concrete_fallback_element() {
         context.finalize_expr_ty(ExprId(2)),
         Ty::Array {
             inner: Box::new(u64_ty()),
-            len: Some("2".into()),
+            len: rg_ty::ConstValue::Scalar(2),
         },
     );
 }

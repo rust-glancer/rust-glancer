@@ -5,9 +5,9 @@ use rg_ir_model::FunctionRef;
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::ItemStoreSource;
 use rg_std::ExpectedUnique;
-use rg_ty::{ExpectedNominalTyExt, NominalTy, Ty, function_generic_shadow_subst};
+use rg_ty::{AdtTy, Ty};
 
-use crate::resolution::{BodyResolutionContext, TypeRefUseSite};
+use crate::resolution::BodyResolutionContext;
 
 /// Answers function-specific type questions.
 pub(crate) struct BodyFunctionQuery<'query, D, I> {
@@ -23,14 +23,41 @@ where
         Self { context }
     }
 
-    /// Return the nominal `Self` type visible from a function's owner context.
-    pub(crate) fn self_nominal_ty(
+    /// Return the ADT `Self` type visible from a function's owner context.
+    pub(crate) fn self_adt_ty(
         &self,
         function: FunctionRef,
-    ) -> Result<ExpectedUnique<NominalTy>, PackageStoreError> {
+    ) -> Result<ExpectedUnique<AdtTy>, PackageStoreError> {
         let type_contexts = self.context.type_contexts();
         let context = type_contexts.for_function(function)?;
-        type_contexts.nominal_self_ty_for_context(context)
+        let Some(impl_ref) = context.impl_ref else {
+            return Ok(ExpectedUnique::new());
+        };
+        let item_query = self.context.item_query();
+        let Some(impl_data) = item_query.impl_data(impl_ref)? else {
+            return Ok(ExpectedUnique::new());
+        };
+
+        // A method's `self` parameter needs the complete impl type. In particular,
+        // `impl<T> Wrapper<T>` must produce `Wrapper<T>`, not a bare `Wrapper` identity.
+        let mut self_tys = ExpectedUnique::new();
+        if let Some(header) = self.context.impl_matcher().impl_header(impl_ref)? {
+            for ty in header.self_ty.as_adts() {
+                if impl_data.resolved_self_ty.is(&ty.def) {
+                    self_tys.push(ty.clone());
+                }
+            }
+        }
+
+        // Definition lookup is still useful when full type lowering cannot recover an ADT. It
+        // gives body resolution a conservative type without inventing generic arguments.
+        if self_tys.is_empty()
+            && let Some(ty) = impl_data.resolved_self_ty.as_option()
+        {
+            self_tys.push(AdtTy::bare(*ty));
+        }
+
+        Ok(self_tys)
     }
 
     /// Return the written `-> T`.
@@ -44,19 +71,13 @@ where
         let Some(function_data) = item_query.function_data(function_ref)? else {
             return Ok(None);
         };
-        let Some(ret_ty) = function_data.signature.ret_ty() else {
+        if function_data.signature.ret_ty().is_none() {
             return Ok(None);
-        };
-        let subst = function_generic_shadow_subst(function_data.signature.generics());
-
-        if ret_ty.is_self_type() {
-            return Ok(Some(self.self_nominal_ty(function_ref)?.into_self_ty()));
         }
-
-        self.context
-            .type_refs(TypeRefUseSite::Function(function_ref))
-            .with_subst(&subst)
-            .resolve(ret_ty)
-            .map(Some)
+        Ok(self
+            .context
+            .signatures()
+            .function(function_ref)?
+            .map(|signature| signature.ret))
     }
 }

@@ -10,8 +10,8 @@ mod table;
 mod traversal;
 mod var;
 
-pub use instantiate::{ExplicitTypeArgInstantiationBuilder, UnknownTypeInstantiationBuilder};
-pub use subst::{InferenceTypeRefProjector, InferenceTypeSubst};
+pub use instantiate::UnknownTypeInstantiationBuilder;
+pub use subst::InferenceSubstitution;
 pub use table::{InferenceConflict, InferenceTable};
 pub use var::{InferVarId, InferVarKind};
 

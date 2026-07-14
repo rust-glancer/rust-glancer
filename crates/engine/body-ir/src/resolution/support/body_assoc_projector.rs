@@ -1,26 +1,15 @@
-//! Body-side associated type projection policy.
+//! Body-side access to shared semantic type normalization.
 //!
-//! The type layer owns the shared associated type normalizer. Body resolution has one extra source
-//! of evidence though: selected impl predicates and body-local callable facts. This facade is the
-//! single place that decides the ordinary body projection order:
-//!
-//! 1. try the body-local impl-predicate bridge;
-//! 2. fall back to `rg_ty::TraitSelectionQuery::normalize_assoc_type`.
-//!
-//! Callers should use this instead of open-coding that order. Keeping the policy here prevents
-//! selected-call, selected-method, and nested projection paths from drifting apart.
+//! This facade handles projections that need no body-local evidence. Body inference layers its
+//! closure-aware canonical-clause evaluation on top, while ordinary queries can stay independent
+//! of mutable body inference state.
 
 use rg_def_map::DefMapSource;
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::ItemStoreSource;
-use rg_ty::{
-    AssocProjectionResult, TraitGoal, TraitSelectionCache, TraitSelectionQuery,
-    inference::InferenceTable,
-};
+use rg_ty::{TraitSelectionCache, TraitSelectionQuery, Ty, inference::InferenceTable};
 
 use crate::resolution::BodyResolutionContext;
-
-use super::ImplPredicateAssocProjector;
 
 pub(crate) struct BodyAssocProjector<'query, D, I> {
     context: BodyResolutionContext<'query, D, I>,
@@ -44,32 +33,27 @@ where
         self
     }
 
-    /// Normalize an associated type using the body-local evidence that is safe at this call site.
-    ///
-    /// This does not solve callable obligations from closure bodies. That path mutates body
-    /// inference and remains in the selected-call obligation code. The local bridge here is for
-    /// non-callable impl-predicate support such as `S: Source` proving `S::Item`.
-    pub(crate) fn normalize_assoc_type(
+    /// Normalize projections anywhere inside one semantic type.
+    pub(crate) fn normalize_ty(
         &self,
-        goal: &TraitGoal,
-        assoc_name: &str,
+        ty: &Ty,
         table: &InferenceTable,
-    ) -> Result<Option<AssocProjectionResult>, PackageStoreError> {
-        if let Some(projection) = ImplPredicateAssocProjector::new(self.context)
-            .with_cache(self.trait_selection_cache.clone())
-            .project_goal_through_impl_predicates(goal, assoc_name, table)?
-        {
-            return Ok(Some(projection));
-        }
+    ) -> Result<(Ty, InferenceTable), PackageStoreError> {
+        self.query().normalize_ty(ty, table)
+    }
 
+    fn query(
+        &self,
+    ) -> TraitSelectionQuery<
+        'query,
+        crate::resolution::BodyQuerySource<'query, D, I>,
+        crate::resolution::BodyQuerySource<'query, D, I>,
+    > {
         TraitSelectionQuery::with_index(
             self.context.item_paths(),
             self.context.crate_items(),
             self.context.semantic_index(),
         )
-        // This fallback can return an inference table to the caller, so it must prove explicit impl
-        // where-clauses before making the projection usable.
         .with_cache(self.trait_selection_cache.clone())
-        .normalize_assoc_type(goal, assoc_name, table)
     }
 }

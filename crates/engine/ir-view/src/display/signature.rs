@@ -9,8 +9,8 @@ use std::fmt::Write as _;
 use rg_body_ir::BindingData;
 use rg_ir_model::Mutability;
 use rg_ir_model::items::{
-    EnumVariantItem, FieldItem, FieldList, FunctionQualifiers, GenericParams, ParamItem, TypeRef,
-    VisibilityLevel, WherePredicate,
+    EnumVariantItem, FieldItem, FieldList, FunctionQualifiers, GenericParams, ParamItem,
+    TypeOrConstParamData, TypeRef, VisibilityLevel, WherePredicate,
 };
 use rg_semantic_ir::{
     ConstData, EnumData, FieldData, FunctionData, StaticData, StructData, TraitData, TypeAliasData,
@@ -387,32 +387,34 @@ impl SignatureRenderer {
             }
             text
         }));
-        params.extend(generics.types.iter().map(|param| {
-            let mut text = self.syntax.identifier(&param.name).to_string();
-            if !param.bounds.is_empty() {
-                text.push_str(": ");
-                write!(text, "{}", self.syntax.type_bounds(&param.bounds))
-                    .expect("string writes should not fail");
+        params.extend(generics.type_or_consts.iter().map(|param| match param {
+            TypeOrConstParamData::Type(param) => {
+                let mut text = self.syntax.identifier(&param.name).to_string();
+                if !param.bounds.is_empty() {
+                    text.push_str(": ");
+                    write!(text, "{}", self.syntax.type_bounds(&param.bounds))
+                        .expect("string writes should not fail");
+                }
+                if let Some(default) = &param.default {
+                    text.push_str(" = ");
+                    write!(text, "{}", self.syntax.type_ref(default))
+                        .expect("string writes should not fail");
+                }
+                text
             }
-            if let Some(default) = &param.default {
-                text.push_str(" = ");
-                write!(text, "{}", self.syntax.type_ref(default))
-                    .expect("string writes should not fail");
+            TypeOrConstParamData::Const(param) => {
+                let mut text = format!("const {}", self.syntax.identifier(&param.name));
+                if let Some(ty) = &param.ty {
+                    text.push_str(": ");
+                    write!(text, "{}", self.syntax.type_ref(ty))
+                        .expect("string writes should not fail");
+                }
+                if let Some(default) = &param.default {
+                    text.push_str(" = ");
+                    text.push_str(default);
+                }
+                text
             }
-            text
-        }));
-        params.extend(generics.consts.iter().map(|param| {
-            let mut text = format!("const {}", self.syntax.identifier(&param.name));
-            if let Some(ty) = &param.ty {
-                text.push_str(": ");
-                write!(text, "{}", self.syntax.type_ref(ty))
-                    .expect("string writes should not fail");
-            }
-            if let Some(default) = &param.default {
-                text.push_str(" = ");
-                text.push_str(default);
-            }
-            text
         }));
 
         if params.is_empty() {

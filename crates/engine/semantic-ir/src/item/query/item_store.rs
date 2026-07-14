@@ -6,9 +6,9 @@
 use rg_def_map::LocalEnumVariantData;
 use rg_ir_model::items::{FieldKey, GenericParams};
 use rg_ir_model::{
-    ConstRef, CrateRef, DefMapRef, EnumVariantRef, FieldRef, FunctionRef, ImplRef, ItemOwner,
-    LocalDefRef, LocalEnumVariantRef, ModuleRef, SemanticItemRef, StaticRef, TraitRef,
-    TypeAliasRef, TypeDefId, TypeDefRef,
+    ConstRef, CrateRef, DefMapRef, EnumVariantRef, FieldRef, FunctionRef, GenericDefRef, ImplRef,
+    ItemOwner, LocalDefRef, LocalEnumVariantRef, ModuleRef, SemanticItemRef, StaticRef,
+    TraitDefRef, TypeAliasRef, TypeDefId, TypeDefRef,
 };
 
 use super::ItemStoreSource;
@@ -115,6 +115,46 @@ where
         self.type_path_context_for_owner(function_ref.origin, function_data.owner)
     }
 
+    /// Recovers the definition context in which generic defaults and predicates were written.
+    pub fn type_path_context_for_generic_def(
+        &self,
+        owner: GenericDefRef,
+    ) -> Result<Option<TypePathContext>, S::Error> {
+        match owner {
+            GenericDefRef::TypeDef(type_def) => {
+                Ok(self.type_def_owner(type_def)?.map(TypePathContext::module))
+            }
+            GenericDefRef::Trait(trait_ref) => Ok(self
+                .trait_data(trait_ref)?
+                .map(|data| TypePathContext::module(data.owner))),
+            GenericDefRef::Impl(impl_ref) => {
+                Ok(self.impl_data(impl_ref)?.map(|data| TypePathContext {
+                    module: data.owner,
+                    impl_ref: Some(impl_ref),
+                }))
+            }
+            GenericDefRef::Function(function) => self.type_path_context_for_function(function),
+            GenericDefRef::TypeAlias(alias) => {
+                let Some(data) = self.type_alias_data(alias)? else {
+                    return Ok(None);
+                };
+                self.type_path_context_for_owner(alias.origin, data.owner)
+            }
+            GenericDefRef::Const(konst) => {
+                let Some(data) = self.const_data(konst)? else {
+                    return Ok(None);
+                };
+                self.type_path_context_for_owner(konst.origin, data.owner)
+            }
+            GenericDefRef::Static(static_ref) => {
+                let Some(data) = self.static_data(static_ref)? else {
+                    return Ok(None);
+                };
+                Ok(Some(TypePathContext::module(data.owner)))
+            }
+        }
+    }
+
     /// Builds the type-path context for an item owner without exposing owner-specific lookup code.
     pub fn type_path_context_for_owner(
         &self,
@@ -124,7 +164,7 @@ where
         match owner {
             ItemOwner::Module(module) => Ok(Some(TypePathContext::module(module))),
             ItemOwner::Trait(id) => Ok(self
-                .trait_data(TraitRef { origin, id })?
+                .trait_data(TraitDefRef { origin, id })?
                 .map(|data| TypePathContext::module(data.owner))),
             ItemOwner::Impl(id) => {
                 let impl_ref = ImplRef { origin, id };
@@ -381,7 +421,7 @@ where
     }
 
     /// Provides trait signature/docs/associated-item data after resolution has picked a trait.
-    pub fn trait_data(&self, trait_ref: TraitRef) -> Result<Option<&'a TraitData>, S::Error> {
+    pub fn trait_data(&self, trait_ref: TraitDefRef) -> Result<Option<&'a TraitData>, S::Error> {
         Ok(self
             .item_store_for_origin(trait_ref.origin)?
             .and_then(|items| items.trait_data(trait_ref.id)))
