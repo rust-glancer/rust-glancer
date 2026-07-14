@@ -19,14 +19,10 @@ use crate::{
         ExprAssignOp, ExprKind, ExprWrapperKind, PatKind, RecordExprField, StmtKind,
         resolved::BodyResolution,
     },
-    resolution::{
-        TypeRefUseSite,
-        infer::{BodyCallInference, BodyMemberInference, BodyPatternInference},
-        support::TyNormalizer,
-    },
+    resolution::infer::{BodyCallInference, BodyMemberInference, BodyPatternInference},
 };
 
-use super::body::BodyResolutionPass;
+use super::{body::BodyResolutionPass, ty_normalize::TyNormalizer};
 
 /// Collects body-local inference constraints that need the fixed-point facts to be available.
 ///
@@ -95,7 +91,7 @@ where
             let kind = self.pass.body.expr_unchecked(expr).kind.clone();
             match kind {
                 ExprKind::Call { callee, args } => {
-                    let context = self.pass.providers.context(self.pass.body);
+                    let context = self.pass.env.context(self.pass.body);
                     BodyCallInference::new(context).instantiate_return_fact(
                         &mut self.pass.inference,
                         expr,
@@ -107,7 +103,7 @@ where
                     }
                 }
                 ExprKind::MethodCall { receiver, args, .. } => {
-                    let context = self.pass.providers.context(self.pass.body);
+                    let context = self.pass.env.context(self.pass.body);
                     BodyCallInference::new(context).instantiate_return_fact(
                         &mut self.pass.inference,
                         expr,
@@ -208,7 +204,7 @@ where
             // method expression. Select from that live receiver fact so stored resolution and the
             // inference target cannot disagree merely because the first body walk saw `unknown`.
             let resolution = {
-                let context = self.pass.providers.context(self.pass.body);
+                let context = self.pass.env.context(self.pass.body);
                 let targets = context
                     .calls()
                     .method_targets_with_receiver_ty(expr, &receiver_ty)?;
@@ -219,7 +215,7 @@ where
             };
             self.pass.body.set_expr_resolution(expr, resolution);
 
-            let context = self.pass.providers.context(self.pass.body);
+            let context = self.pass.env.context(self.pass.body);
             let calls = BodyCallInference::new(context);
             calls.instantiate_return_fact(&mut self.pass.inference, expr, &args, Some(receiver))?;
             calls.solve_generic_trait_obligations(
@@ -262,7 +258,7 @@ where
 
     /// Visit every unannotated `let pat = expr` that can carry initializer evidence.
     fn link_let_binding_initializers(&mut self) -> bool {
-        let context = self.pass.providers.context(self.pass.body);
+        let context = self.pass.env.context(self.pass.body);
         let pattern_inference = BodyPatternInference::new(context);
         let mut changed = false;
 
@@ -324,7 +320,7 @@ where
 
     /// Rebuild field and index expressions that project out of inference-aware bases.
     fn refresh_member_projection_facts(&mut self) -> Result<bool, PackageStoreError> {
-        let context = self.pass.providers.context(self.pass.body);
+        let context = self.pass.env.context(self.pass.body);
         let member_inference = BodyMemberInference::new(context);
         let mut changed = false;
 
@@ -441,7 +437,7 @@ where
         args: &[ExprId],
     ) -> Result<(), PackageStoreError> {
         // Concrete parameter types can immediately constrain literals and transparent shapes.
-        let context = self.pass.providers.context(self.pass.body);
+        let context = self.pass.env.context(self.pass.body);
         let concrete_expectations = BodyCallInference::new(context).argument_expected_tys(
             &mut self.pass.inference,
             call,
@@ -453,7 +449,7 @@ where
 
         // Build a fresh field-split context after concrete constraints. Keeping the first context
         // alive would immutably borrow the pass while we mutate the inference facts.
-        let context = self.pass.providers.context(self.pass.body);
+        let context = self.pass.env.context(self.pass.body);
         // Generic parameter evidence needs the inference view so shared `?T` slots stay linked.
         BodyCallInference::new(context).constrain_function_generic_arguments(
             &mut self.pass.inference,
@@ -468,7 +464,7 @@ where
         args: &[ExprId],
         receiver: Option<ExprId>,
     ) -> Result<(), PackageStoreError> {
-        let context = self.pass.providers.context(self.pass.body);
+        let context = self.pass.env.context(self.pass.body);
         BodyCallInference::new(context).solve_generic_trait_obligations(
             &mut self.pass.inference,
             call,
@@ -483,7 +479,7 @@ where
         args: &[ExprId],
         receiver: Option<ExprId>,
     ) -> Result<(), PackageStoreError> {
-        let context = self.pass.providers.context(self.pass.body);
+        let context = self.pass.env.context(self.pass.body);
         BodyCallInference::new(context).project_selected_trait_associated_return_type(
             &mut self.pass.inference,
             call,
@@ -551,14 +547,10 @@ where
         annotation: TypeRef,
         initializer: ExprId,
     ) -> Result<(), PackageStoreError> {
-        let (providers, body, inference) = (
-            &self.pass.providers,
-            &*self.pass.body,
-            &mut self.pass.inference,
-        );
-        let expected_ty = providers
+        let (env, body, inference) = (&self.pass.env, &*self.pass.body, &mut self.pass.inference);
+        let expected_ty = env
             .context(body)
-            .type_refs(TypeRefUseSite::Scope(scope))
+            .type_refs(scope)
             .resolve_with_inference(&annotation, inference.table_mut())?;
 
         // `let value: Vec<_> = make_vec();` needs the written `_` to become a real inference
@@ -618,7 +610,7 @@ where
             } => {
                 self.constrain_call_target_argument_expected_types(expr, &args)?;
 
-                let context = self.pass.providers.context(self.pass.body);
+                let context = self.pass.env.context(self.pass.body);
                 BodyCallInference::new(context).constrain_selected_method_receiver_and_arguments(
                     &mut self.pass.inference,
                     expr,

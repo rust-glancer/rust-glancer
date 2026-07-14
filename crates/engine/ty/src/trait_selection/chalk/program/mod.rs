@@ -62,7 +62,7 @@ struct ChalkProgramRoots {
 #[derive(Default)]
 struct ChalkProgramScope {
     definitions: ChalkProgramRoots,
-    trait_headers: HashMap<TraitDefRef, crate::TraitHeader>,
+    trait_headers: HashMap<TraitDefRef, crate::signature::TraitHeader>,
     impls: UniqueVec<ImplRef>,
     impl_headers: HashMap<ImplRef, crate::ImplHeader>,
     opaque_bounds: HashMap<OpaqueTyRef, (crate::OpaqueTy, Vec<TraitRefLowering>)>,

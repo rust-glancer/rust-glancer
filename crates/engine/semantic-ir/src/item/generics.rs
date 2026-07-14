@@ -48,7 +48,7 @@ impl<'a> GenericParamView<'a> {
         self.source
     }
 
-    pub fn name(self) -> Option<&'a Name> {
+    fn name(self) -> Option<&'a Name> {
         match self.source {
             GenericParamSource::Lifetime(param) => Some(&param.name),
             GenericParamSource::Type(param) => Some(&param.name),

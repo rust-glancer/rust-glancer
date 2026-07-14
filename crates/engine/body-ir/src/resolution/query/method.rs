@@ -12,13 +12,13 @@ use rg_ty::{
 
 use crate::resolution::{BodyQuerySource, BodyResolutionContext};
 
-use super::{BodyLocalItemQuery, BodyTypePathResolver};
+use super::BodyLocalItemQuery;
 
 type BodyImplMatcher<'query, D, I> = ImplMatcher<
     'query,
     BodyQuerySource<'query, D, I>,
     BodyQuerySource<'query, D, I>,
-    BodyTypePathResolver<'query, D, I>,
+    BodyResolutionContext<'query, D, I>,
 >;
 
 /// Resolves methods for receiver types.

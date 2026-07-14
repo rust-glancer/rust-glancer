@@ -154,7 +154,7 @@ impl Substitution {
         }
     }
 
-    pub fn apply_arg(&self, arg: &GenericArg) -> GenericArg {
+    pub(crate) fn apply_arg(&self, arg: &GenericArg) -> GenericArg {
         match arg {
             GenericArg::Type(ty) => GenericArg::Type(Box::new(self.apply(ty))),
             GenericArg::Lifetime(lifetime) => GenericArg::Lifetime(self.apply_lifetime(*lifetime)),
@@ -166,7 +166,7 @@ impl Substitution {
         }
     }
 
-    pub fn apply_args(&self, args: &GenericArgs) -> GenericArgs {
+    fn apply_args(&self, args: &GenericArgs) -> GenericArgs {
         args.iter().map(|arg| self.apply_arg(arg)).collect()
     }
 

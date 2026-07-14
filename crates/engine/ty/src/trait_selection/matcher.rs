@@ -445,11 +445,6 @@ mod tests {
         );
         let header = ImplHeader {
             owner: impl_ref,
-            args: vec![
-                GenericArg::Lifetime(Lifetime::Param(lifetime_param)),
-                GenericArg::Const(ConstValue::Param(const_param)),
-            ]
-            .into(),
             self_ty: pattern.clone(),
             trait_ref: Some(TraitRefLowering {
                 application: TraitApplication {

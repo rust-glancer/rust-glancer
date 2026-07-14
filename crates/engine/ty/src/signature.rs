@@ -14,19 +14,16 @@ use rg_ir_model::{
 use rg_semantic_ir::{GenericParamSource, ItemStoreSource, TypePathContext};
 
 use crate::{
-    Clause, GenericArgs, ItemPathQuery, OpaqueTy, Substitution, TraitRefLowering, Ty,
-    TypeLoweringAnchor, TypeLoweringEnv, TypeLoweringQuery, TypePathResolver,
+    Clause, ItemPathQuery, OpaqueTy, Substitution, TraitRefLowering, Ty, TypeLoweringAnchor,
+    TypeLoweringEnv, TypeLoweringQuery, TypePathResolver,
 };
 
 /// One function's parameters, return, and predicates under an owner-scoped binder.
 ///
-/// `args` is the identity argument list for every inherited and function-owned parameter. The
-/// types and clauses refer to those same parameter refs, so a caller can instantiate the complete
-/// signature with one substitution.
+/// Types and clauses retain their owner-scoped parameter refs. A caller chooses whether to keep
+/// those identities or replace them with a call-specific substitution.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CallableSignature {
-    pub owner: FunctionRef,
-    pub args: GenericArgs,
     pub params: Vec<Ty>,
     pub ret: Ty,
     pub clauses: Vec<Clause>,
@@ -36,19 +33,16 @@ pub struct CallableSignature {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ImplHeader {
     pub owner: ImplRef,
-    pub args: GenericArgs,
     pub self_ty: Ty,
     pub trait_ref: Option<TraitRefLowering>,
     pub clauses: Vec<Clause>,
 }
 
-/// Trait `Self`, super-trait applications, and declaration predicates.
+/// Trait `Self` and the predicates exposed to the trait solver.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TraitHeader {
+pub(crate) struct TraitHeader {
     pub owner: TraitDefRef,
-    pub args: GenericArgs,
     pub self_ty: Ty,
-    pub super_traits: Vec<TraitRefLowering>,
     pub clauses: Vec<Clause>,
 }
 
@@ -89,10 +83,6 @@ where
         }
     }
 
-    pub fn item_paths(&self) -> &ItemPathQuery<'query, D, I> {
-        &self.item_paths
-    }
-
     /// Lower one complete function declaration into the shared semantic type vocabulary.
     ///
     /// Parameters are visited in source order before the return type. Keeping that walk in one
@@ -110,8 +100,6 @@ where
             return Ok(None);
         };
         let owner = GenericDefRef::Function(function);
-        let generics = self.item_paths.generics().generics(owner)?;
-        let args = Substitution::identity(&generics).args_for(&generics);
         let implicit_self_ty = self.self_param_ty(function, data.owner)?;
         let lowering = TypeLoweringQuery::new(&self.item_paths, &self.resolver);
         let mut session = lowering.session(TypeLoweringEnv::new(
@@ -146,8 +134,6 @@ where
         let clauses = session.lower_clauses()?;
 
         Ok(Some(CallableSignature {
-            owner: function,
-            args,
             params,
             ret,
             clauses,
@@ -155,9 +141,15 @@ where
     }
 
     pub fn function_ty(&self, function: FunctionRef) -> Result<Option<Ty>, D::Error> {
-        Ok(self
-            .function(function)?
-            .map(|signature| Ty::fn_def_with_args(function, signature.args)))
+        if self.item_paths.items().function_data(function)?.is_none() {
+            return Ok(None);
+        }
+        let generics = self
+            .item_paths
+            .generics()
+            .generics(GenericDefRef::Function(function))?;
+        let args = Substitution::identity(&generics).args_for(&generics);
+        Ok(Some(Ty::fn_def_with_args(function, args)))
     }
 
     /// Return the trait bounds carried by one function-owned type parameter.
@@ -248,10 +240,6 @@ where
 
     pub fn impl_header(&self, impl_ref: ImplRef) -> Result<Option<ImplHeader>, D::Error> {
         impl_header_with(&self.item_paths, &self.resolver, impl_ref)
-    }
-
-    pub fn trait_header(&self, trait_ref: TraitDefRef) -> Result<Option<TraitHeader>, D::Error> {
-        trait_header_with(&self.item_paths, &self.resolver, trait_ref)
     }
 
     pub fn type_alias_ty(&self, alias: TypeAliasRef) -> Result<Option<Ty>, D::Error> {
@@ -399,8 +387,6 @@ where
         return Ok(None);
     };
     let owner = GenericDefRef::Impl(impl_ref);
-    let generics = item_paths.generics().generics(owner)?;
-    let args = Substitution::identity(&generics).args_for(&generics);
     let context = TypePathContext {
         module: data.owner,
         impl_ref: Some(impl_ref),
@@ -421,7 +407,6 @@ where
 
     Ok(Some(ImplHeader {
         owner: impl_ref,
-        args,
         self_ty,
         trait_ref,
         clauses,
@@ -443,7 +428,6 @@ where
     };
     let owner = GenericDefRef::Trait(trait_ref);
     let generics = item_paths.generics().generics(owner)?;
-    let args = Substitution::identity(&generics).args_for(&generics);
     let Some(self_param) = generics.iter().find_map(|param| {
         matches!(param.source(), GenericParamSource::TraitSelf).then_some(param.param())
     }) else {
@@ -474,9 +458,7 @@ where
 
     Ok(Some(TraitHeader {
         owner: trait_ref,
-        args,
         self_ty,
-        super_traits,
         clauses,
     }))
 }

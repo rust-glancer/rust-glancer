@@ -7,7 +7,6 @@
 
 mod associated_type;
 mod autoderef;
-mod call_arg;
 mod deref;
 mod generic_arg;
 mod impl_match;
@@ -34,7 +33,6 @@ pub use self::{
         Autoderef, AutoderefCandidate, AutoderefCandidates, AutoderefMode,
         ReferencePeelingCandidates,
     },
-    call_arg::{CallArgInference, CallArgMapping, function_generic_shadow_subst},
     generic_arg::{
         AssocTypeBinding, Clause, ConstValue, GenericArg, GenericArgs, Lifetime, TraitApplication,
         TraitRefLowering,
@@ -50,7 +48,7 @@ pub use self::{
     member::{MemberMethodCandidateRef, MemberMethodOrigin, MemberQuery},
     primitive_expr::{ty_for_binary, ty_for_literal, ty_for_unary},
     profile::profile_descriptors,
-    signature::{CallableSignature, ImplHeader, SemanticSignatureQuery, TraitHeader},
+    signature::{CallableSignature, ImplHeader, SemanticSignatureQuery},
     substitution::Substitution,
     trait_selection::{
         AssocProjectionResult, TraitGoal, TraitSelection, TraitSelectionCache,

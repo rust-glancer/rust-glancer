@@ -4,6 +4,8 @@
 //! bindings. Enum variants are matched against a known enum scrutinee/annotation type; patterns do
 //! not infer the scrutinee type by themselves.
 
+mod callable;
+
 use rg_def_map::DefMapSource;
 use rg_ir_model::{
     BindingId, BodyPath, ExprId, Mutability, PatId, Path, PathSegment, ScopeId, StmtId, TypeDefId,
@@ -12,16 +14,15 @@ use rg_ir_model::{
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::ItemStoreSource;
 use rg_std::ExpectedUnique;
-use rg_ty::{ReferencePeelingCandidates, TraitSelectionCache, Ty};
+use rg_ty::{ReferencePeelingCandidates, Ty};
 
 use crate::ir::{ExprKind, PatKind, RecordPatField, StmtKind};
-use crate::resolution::{
-    BodyResolutionContext, TypeRefUseSite, support::callable_arg_expectations,
-};
+use crate::resolution::BodyResolutionContext;
+
+use self::callable::CallableInputExpectation;
 
 pub(super) struct PatternTypePropagationPass<'query, D, I> {
     context: BodyResolutionContext<'query, D, I>,
-    trait_selection_cache: TraitSelectionCache,
 }
 
 impl<'query, D, I> PatternTypePropagationPass<'query, D, I>
@@ -29,14 +30,8 @@ where
     D: DefMapSource<Error = PackageStoreError> + Copy,
     I: ItemStoreSource<'query, Error = PackageStoreError> + Copy,
 {
-    pub(super) fn new(
-        context: BodyResolutionContext<'query, D, I>,
-        trait_selection_cache: TraitSelectionCache,
-    ) -> Self {
-        Self {
-            context,
-            trait_selection_cache,
-        }
+    pub(super) fn new(context: BodyResolutionContext<'query, D, I>) -> Self {
+        Self { context }
     }
 
     pub(super) fn propagate(&self) -> Result<Vec<(BindingId, Ty)>, PackageStoreError> {
@@ -66,7 +61,7 @@ where
                         continue;
                     };
                     self.context
-                        .type_refs(TypeRefUseSite::Scope(self.context.body().param_scope()))
+                        .type_refs(self.context.body().param_scope())
                         .resolve(annotation)?
                 }
             };
@@ -95,10 +90,7 @@ where
             self.propagate_pat(pat, &expected_ty, &mut updates)?;
         }
 
-        let iteration_items = self
-            .context
-            .iteration_items()
-            .with_cache(self.trait_selection_cache.clone());
+        let iteration_items = self.context.iteration_items();
         for expr_idx in 0..self.context.body().exprs().len() {
             let expr = ExprId(expr_idx);
             match self.context.body().expr_unchecked(expr).kind.clone() {
@@ -136,10 +128,7 @@ where
                         let (Some(pat), Some(annotation)) = (param.pat, param.annotation) else {
                             continue;
                         };
-                        let expected_ty = self
-                            .context
-                            .type_refs(TypeRefUseSite::Scope(scope))
-                            .resolve(&annotation)?;
+                        let expected_ty = self.context.type_refs(scope).resolve(&annotation)?;
                         self.propagate_pat(pat, &expected_ty, &mut updates)?;
                     }
                 }
@@ -194,9 +183,7 @@ where
         args: &[ExprId],
         updates: &mut Vec<(BindingId, Ty)>,
     ) -> Result<(), PackageStoreError> {
-        for (arg, expectation) in
-            callable_arg_expectations(self.context, self.trait_selection_cache.clone(), call, args)?
-        {
+        for (arg, expectation) in CallableInputExpectation::for_call(self.context, call, args)? {
             // Only closure arguments can receive these types here.
             // Other expression kinds still get ordinary call-argument expectations elsewhere.
             let ExprKind::Closure { params, .. } =
@@ -226,10 +213,7 @@ where
         initializer: Option<ExprId>,
     ) -> Result<Ty, PackageStoreError> {
         if let Some(annotation) = annotation {
-            let ty = self
-                .context
-                .type_refs(TypeRefUseSite::Scope(scope))
-                .resolve(annotation)?;
+            let ty = self.context.type_refs(scope).resolve(annotation)?;
             if !matches!(ty, Ty::Unknown) {
                 return Ok(ty);
             }

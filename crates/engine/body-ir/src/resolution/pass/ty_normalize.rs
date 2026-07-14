@@ -5,17 +5,14 @@
 //! `Try` trait, or `Future::Output` projection.
 
 use rg_def_map::DefMapSource;
+use rg_package_store::PackageStoreError;
 use rg_semantic_ir::ItemStoreSource;
 use rg_std::ExpectedUnique;
-use rg_ty::{ExpectedTyExt, GenericArg, Ty};
+use rg_ty::{ExpectedTyExt, Ty};
 
-use crate::ir::ExprWrapperKind;
+use crate::{ir::ExprWrapperKind, resolution::BodyResolutionContext};
 
-use rg_package_store::PackageStoreError;
-
-use crate::resolution::BodyResolutionContext;
-
-pub(crate) struct TyNormalizer<'a, D, I> {
+pub(super) struct TyNormalizer<'a, D, I> {
     context: BodyResolutionContext<'a, D, I>,
 }
 
@@ -24,16 +21,16 @@ where
     D: DefMapSource<Error = PackageStoreError> + Copy,
     I: ItemStoreSource<'a, Error = PackageStoreError> + Copy,
 {
-    pub(crate) fn new(context: BodyResolutionContext<'a, D, I>) -> Self {
+    pub(super) fn new(context: BodyResolutionContext<'a, D, I>) -> Self {
         Self { context }
     }
 
-    pub(crate) fn ty_for_wrapper(&self, kind: ExprWrapperKind, inner_ty: Ty) -> Ty {
+    pub(super) fn ty_for_wrapper(&self, kind: ExprWrapperKind, inner_ty: Ty) -> Ty {
         match kind {
             ExprWrapperKind::Paren => inner_ty,
             ExprWrapperKind::Ref { mutability } => Ty::reference(mutability, inner_ty),
-            // We currently model `async fn foo() -> T` as returning `T` directly. Preserving the
-            // inner type through `.await` keeps that useful behavior without pretending to model
+            // We model `async fn foo() -> T` as returning `T` directly. Preserving the inner type
+            // through `.await` keeps that useful behavior without pretending to model
             // `Future::Output` for arbitrary future types.
             ExprWrapperKind::Await => inner_ty,
             ExprWrapperKind::Try => self.try_output_ty(&inner_ty),
@@ -52,7 +49,7 @@ where
                 continue;
             };
             if matches!(name, "Result" | "Option")
-                && let Some(output) = first_type_arg(&nominal.args)
+                && let Some(output) = nominal.args.iter().find_map(|arg| arg.as_ty().cloned())
             {
                 outputs.push(output);
             }
@@ -60,8 +57,4 @@ where
 
         outputs.into_ty()
     }
-}
-
-fn first_type_arg(args: &[GenericArg]) -> Option<Ty> {
-    args.iter().find_map(|arg| arg.as_ty().cloned())
 }

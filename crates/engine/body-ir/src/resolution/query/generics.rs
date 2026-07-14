@@ -2,13 +2,14 @@
 
 use rg_def_map::DefMapSource;
 use rg_ir_model::{
-    DefMapRef, GenericDefRef, ImplRef, ItemOwner, items::GenericArg as ItemGenericArg,
+    DefMapRef, GenericDefRef, ImplRef, ItemOwner, ScopeId, TraitDefRef,
+    items::GenericArg as ItemGenericArg,
 };
 use rg_package_store::PackageStoreError;
-use rg_semantic_ir::ItemStoreSource;
-use rg_ty::{AdtTy, Substitution, Ty};
+use rg_semantic_ir::{GenericParamSource, ItemStoreSource};
+use rg_ty::{AdtTy, GenericArg, Substitution, Ty};
 
-use crate::resolution::{BodyResolutionContext, TypeRefUseSite};
+use crate::resolution::BodyResolutionContext;
 
 pub(crate) struct BodyGenericsQuery<'query, D, I> {
     context: BodyResolutionContext<'query, D, I>,
@@ -67,20 +68,36 @@ where
         receiver_ty: &AdtTy,
     ) -> Result<Substitution, PackageStoreError> {
         let mut subst = self.subst_for_nominal_ty(receiver_ty)?;
-        let ItemOwner::Impl(impl_id) = owner else {
-            return Ok(subst);
-        };
-
-        let impl_ref = ImplRef {
-            origin,
-            id: impl_id,
-        };
-        if let Some((impl_subst, _)) = self
-            .context
-            .impl_matcher()
-            .impl_self_subst_for_impl(impl_ref, &Ty::adt(receiver_ty.clone()))?
-        {
-            subst.extend(impl_subst);
+        match owner {
+            ItemOwner::Module(_) => {}
+            ItemOwner::Trait(id) => {
+                let generics = self
+                    .context
+                    .item_paths()
+                    .generics()
+                    .generics(GenericDefRef::Trait(TraitDefRef { origin, id }))?;
+                if let Some(self_param) = generics.iter().find_map(|param| {
+                    matches!(param.source(), GenericParamSource::TraitSelf).then_some(param.param())
+                }) {
+                    subst.push(
+                        self_param,
+                        GenericArg::Type(Box::new(Ty::adt(receiver_ty.clone()))),
+                    );
+                }
+            }
+            ItemOwner::Impl(impl_id) => {
+                let impl_ref = ImplRef {
+                    origin,
+                    id: impl_id,
+                };
+                if let Some((impl_subst, _)) = self
+                    .context
+                    .impl_matcher()
+                    .impl_self_subst_for_impl(impl_ref, &Ty::adt(receiver_ty.clone()))?
+                {
+                    subst.extend(impl_subst);
+                }
+            }
         }
         Ok(subst)
     }
@@ -90,14 +107,14 @@ where
         &self,
         owner: GenericDefRef,
         args: &[ItemGenericArg],
-        use_site: TypeRefUseSite,
+        scope: ScopeId,
     ) -> Result<Substitution, PackageStoreError> {
         if args.is_empty() {
             return Ok(Substitution::new());
         }
         let args = self
             .context
-            .type_refs(use_site)
+            .type_refs(scope)
             .resolve_generic_args_for(owner, args)?;
         let generics = self.context.item_paths().generics().generics(owner)?;
         let mut subst = Substitution::new();

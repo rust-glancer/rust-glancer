@@ -71,27 +71,16 @@ where
 /// Facts that give source syntax a meaning when one lowering session starts.
 ///
 /// `owner` supplies identities for generic parameters and opaque occurrences. `anchor` decides
-/// where names are looked up. `subst` can replace parameters already instantiated by an outer
-/// query, while every parameter absent from it starts as the owner's identity argument.
+/// where names are looked up.
 #[derive(Debug, Clone)]
 pub struct TypeLoweringEnv {
-    pub owner: GenericDefRef,
-    pub anchor: TypeLoweringAnchor,
-    pub subst: Substitution,
+    owner: GenericDefRef,
+    anchor: TypeLoweringAnchor,
 }
 
 impl TypeLoweringEnv {
     pub fn new(owner: GenericDefRef, anchor: TypeLoweringAnchor) -> Self {
-        Self {
-            owner,
-            anchor,
-            subst: Substitution::new(),
-        }
-    }
-
-    pub fn with_substitution(mut self, subst: Substitution) -> Self {
-        self.subst = subst;
-        self
+        Self { owner, anchor }
     }
 }
 
@@ -122,8 +111,7 @@ where
         env: TypeLoweringEnv,
     ) -> Result<TypeLoweringSession<'lower, 'query, D, I, R>, D::Error> {
         let generics = self.item_paths.generics().generics(env.owner)?;
-        let mut subst = Substitution::identity(&generics);
-        subst.extend(env.subst);
+        let subst = Substitution::identity(&generics);
 
         Ok(TypeLoweringSession {
             query: self,
@@ -167,7 +155,7 @@ where
     R: TypePathResolver<Error = D::Error>,
 {
     /// Lower a source type, treating `impl Trait` as an opaque type occurrence.
-    pub fn lower_type_ref(&mut self, ty: &TypeRef) -> Result<Ty, D::Error> {
+    pub(crate) fn lower_type_ref(&mut self, ty: &TypeRef) -> Result<Ty, D::Error> {
         self.lower_type_ref_with_mode(ty, ImplTraitMode::Opaque, None)
     }
 
@@ -188,7 +176,7 @@ where
     ///
     /// `fn visit(value: impl Display)` is generic over a hidden function parameter constrained by
     /// `Display`; it is not the opaque return type produced by `fn make() -> impl Display`.
-    pub fn lower_parameter_type(&mut self, ty: &TypeRef) -> Result<Ty, D::Error> {
+    pub(crate) fn lower_parameter_type(&mut self, ty: &TypeRef) -> Result<Ty, D::Error> {
         self.lower_type_ref_with_mode(ty, ImplTraitMode::Argument, None)
     }
 
@@ -323,7 +311,7 @@ where
     }
 
     /// Lower every trait predicate visible from this owner.
-    pub fn lower_clauses(&mut self) -> Result<Vec<Clause>, D::Error> {
+    pub(crate) fn lower_clauses(&mut self) -> Result<Vec<Clause>, D::Error> {
         let generics = self.query.item_paths.generics().generics(self.owner)?;
         let mut inline_bounds = Vec::new();
         let mut predicate_owners = UniqueVec::new();
@@ -733,7 +721,7 @@ where
         Ok(Ty::Alias(AliasTy::Projection(projection)))
     }
 
-    pub fn lower_alias(
+    pub(crate) fn lower_alias(
         &mut self,
         alias: TypeAliasRef,
         syntax_args: &[ItemGenericArg],

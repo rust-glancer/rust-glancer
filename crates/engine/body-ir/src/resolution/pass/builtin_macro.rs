@@ -14,7 +14,7 @@ use rg_semantic_ir::ItemStoreSource;
 use rg_text::Name;
 use rg_ty::{PrimitiveTy, Ty, UnsignedIntTy};
 
-use crate::resolution::{BodyResolutionContext, TypeRefUseSite};
+use crate::resolution::BodyResolutionContext;
 
 /// Maps a recognized builtin expression macro to the type Body IR should expose for it.
 pub(super) struct BuiltinMacroExprTypeMapper<'query, D, I> {
@@ -103,9 +103,7 @@ where
         // Builtins produce compiler-known types, but some fixtures and partial workspaces cannot
         // resolve the corresponding `core` paths. Keep those cases unknown instead of surfacing
         // synthetic syntax as if the user had written it.
-        self.context
-            .type_refs(TypeRefUseSite::Scope(expr_data.scope))
-            .resolve(&ty)
+        self.context.type_refs(expr_data.scope).resolve(&ty)
     }
 
     fn synthetic_type_path(

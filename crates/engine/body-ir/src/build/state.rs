@@ -15,7 +15,7 @@ use rg_ty::TraitSelectionCache;
 
 use crate::{
     BodyLocalItems, BodyOwner, CrateBodies,
-    resolution::{BodyResolutionContext, BodyResolutionPass, TypeRefUseSite},
+    resolution::{BodyResolutionContext, BodyResolutionPass},
 };
 
 use super::{
@@ -270,9 +270,7 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
                         continue;
                     };
 
-                    let ty = context
-                        .type_refs(TypeRefUseSite::Scope(scope))
-                        .resolve(&self_ty)?;
+                    let ty = context.type_refs(scope).resolve(&self_ty)?;
                     let mut resolved_self_ty = ExpectedUnique::new();
                     for nominal in ty.as_adts() {
                         resolved_self_ty.push(nominal.def);

@@ -2,16 +2,14 @@ use rg_ir_model::BodyRef;
 use rg_semantic_ir::ItemLookupIndex;
 use rg_ty::TraitSelectionCache;
 
-use crate::ir::body::ResolvedBodyData;
+use crate::{ir::body::ResolvedBodyData, resolution::BodyResolutionContext};
 
-use super::BodyResolutionContext;
-
-/// External stores and indexes shared by body-resolution passes.
+/// Stable query inputs retained while a resolution pass mutates its body.
 ///
-/// Mutating passes own the active body, but they should not each remember how to thread DefMap,
-/// item-store, semantic-index, and body identity into read-only queries. This provider bundle keeps
-/// those inputs together and creates short-lived query contexts for whichever body view a pass has.
-pub(crate) struct BodyResolutionProviders<'query, D, I> {
+/// `BodyResolutionContext` borrows the body it queries, so it cannot be stored beside the pass's
+/// mutable body reference. The environment keeps only the body-independent inputs and creates a
+/// context from each short-lived shared borrow taken by a pass step.
+pub(super) struct BodyResolutionEnv<'query, D, I> {
     def_maps: &'query D,
     item_stores: &'query I,
     semantic_index: &'query ItemLookupIndex,
@@ -19,16 +17,16 @@ pub(crate) struct BodyResolutionProviders<'query, D, I> {
     trait_selection_cache: &'query TraitSelectionCache,
 }
 
-impl<D, I> Clone for BodyResolutionProviders<'_, D, I> {
+impl<D, I> Clone for BodyResolutionEnv<'_, D, I> {
     fn clone(&self) -> Self {
         *self
     }
 }
 
-impl<D, I> Copy for BodyResolutionProviders<'_, D, I> {}
+impl<D, I> Copy for BodyResolutionEnv<'_, D, I> {}
 
-impl<'query, D, I> BodyResolutionProviders<'query, D, I> {
-    pub(crate) fn new(
+impl<'query, D, I> BodyResolutionEnv<'query, D, I> {
+    pub(super) fn new(
         def_maps: &'query D,
         item_stores: &'query I,
         semantic_index: &'query ItemLookupIndex,
@@ -44,11 +42,11 @@ impl<'query, D, I> BodyResolutionProviders<'query, D, I> {
         }
     }
 
-    pub(crate) fn body_ref(&self) -> BodyRef {
+    pub(super) fn body_ref(&self) -> BodyRef {
         self.body_ref
     }
 
-    pub(crate) fn context<'source>(
+    pub(super) fn context<'source>(
         &'source self,
         body: &'source ResolvedBodyData,
     ) -> BodyResolutionContext<'source, &'source D, &'source I> {

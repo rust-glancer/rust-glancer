@@ -14,7 +14,7 @@
 //! share this facade. The detailed steps live in child modules so each file can read as one story.
 
 mod assoc_projection;
-mod selected_call;
+mod callable;
 
 use rg_def_map::DefMapSource;
 use rg_ir_model::{GenericDefRef, GenericParamRef};
@@ -23,14 +23,13 @@ use rg_semantic_ir::ItemStoreSource;
 use rg_std::ExpectedUnique;
 use rg_ty::{
     AssocTypeBinding, Clause, GenericArg, ImplHeader, Substitution, TraitApplication, TraitGoal,
-    TraitSelection, TraitSelectionOptions, TraitSelectionQuery, Ty,
+    TraitSelection, TraitSelectionOptions, Ty,
 };
 
 use crate::resolution::BodyResolutionContext;
 
-use super::BodyCallableGoalSolver;
+use self::callable::{BodyCallableGoalOutcome, BodyCallableGoalSolver};
 use super::BodyInferenceCtx;
-use super::callable_goal::BodyCallableGoalOutcome;
 
 /// Solves bounded trait obligations while preserving inference-table semantics.
 pub(super) struct BodyTraitObligationSolver<'query, D, I> {
@@ -71,15 +70,11 @@ where
         goal: &TraitGoal,
         inference: &mut BodyInferenceCtx,
     ) -> Result<ExpectedUnique<TraitSelection>, PackageStoreError> {
-        TraitSelectionQuery::with_index(
-            self.context.item_paths(),
-            self.context.crate_items(),
-            self.context.semantic_index(),
-        )
-        // The returned table may be committed below, so this path uses full predicate solving
-        // instead of treating explicit impl where-clauses as someone else's obligation.
-        .with_cache(inference.trait_selection_cache.clone())
-        .probe(goal, &inference.table)
+        self.context
+            .trait_selection_with_cache(inference.trait_selection_cache())
+            // The returned table may be committed below, so this path uses full predicate solving
+            // instead of treating explicit impl where-clauses as someone else's obligation.
+            .probe(goal, &inference.table)
     }
 
     fn evaluate_trait_goals(
@@ -88,6 +83,24 @@ where
         goals: Vec<TraitGoal>,
     ) -> Result<BodyTraitGoalOutcome, PackageStoreError> {
         self.evaluate_trait_goals_inner(inference, goals, &mut Vec::new())
+    }
+
+    /// Instantiate every implemented-trait clause and attach equalities for that application.
+    ///
+    /// Parenthesized `Fn*` syntax follows the same path: its tuple input is positional and its
+    /// `Output` equality is an associated binding, so the closure-local solver receives an
+    /// ordinary `TraitGoal` rather than a syntax-only special case.
+    pub(crate) fn solve_selected_call(
+        &self,
+        inference: &mut BodyInferenceCtx,
+        clauses: &[Clause],
+        subst: &rg_ty::inference::InferenceSubstitution,
+    ) -> Result<bool, PackageStoreError> {
+        let goals = Self::trait_goals_from_clauses(clauses, subst.as_substitution());
+        Ok(matches!(
+            self.evaluate_trait_goals(inference, goals)?,
+            BodyTraitGoalOutcome::Solved
+        ))
     }
 
     fn evaluate_trait_goals_inner(
@@ -225,13 +238,10 @@ where
         inference: &BodyInferenceCtx,
         goal: &TraitGoal,
     ) -> Result<Option<BodySelectedImpl>, PackageStoreError> {
-        let selection_query = TraitSelectionQuery::with_index(
-            self.context.item_paths(),
-            self.context.crate_items(),
-            self.context.semantic_index(),
-        )
-        .with_options(TraitSelectionOptions::new().caller_solves_impl_predicates())
-        .with_cache(inference.trait_selection_cache());
+        let selection_query = self
+            .context
+            .trait_selection_with_cache(inference.trait_selection_cache())
+            .with_options(TraitSelectionOptions::new().caller_solves_impl_predicates());
         let ExpectedUnique::One(mut selection) = selection_query.probe(goal, &inference.table)?
         else {
             return Ok(None);

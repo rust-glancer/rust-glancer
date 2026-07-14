@@ -15,12 +15,10 @@ use crate::{
     ir::{BindingKind, ExprWrapperKind},
 };
 
-use crate::resolution::{
-    BodyResolutionContext, BodyResolutionProviders, TypeRefUseSite, infer::BodyInferenceCtx,
-};
+use crate::resolution::{BodyResolutionContext, infer::BodyInferenceCtx};
 
 use super::{
-    expr::ExprResolutionPass, inference::InferenceResolutionPass,
+    env::BodyResolutionEnv, expr::ExprResolutionPass, inference::InferenceResolutionPass,
     pattern_binding::PatternBindingMaterializationPass, pattern_type::PatternTypePropagationPass,
 };
 
@@ -29,7 +27,7 @@ use super::{
 /// Sibling pass modules keep their logic in separate files while operating on the same body
 /// facts, so the fields are scoped to `resolution` rather than hidden inside this file.
 pub(crate) struct BodyResolutionPass<'query, 'body, D, I> {
-    pub(super) providers: BodyResolutionProviders<'query, D, I>,
+    pub(super) env: BodyResolutionEnv<'query, D, I>,
     pub(super) body: &'body mut ResolvedBodyData,
     pub(super) inference: BodyInferenceCtx,
 }
@@ -47,7 +45,7 @@ where
         body: &'body mut ResolvedBodyData,
         trait_selection_cache: &'query TraitSelectionCache,
     ) -> Result<Self, PackageStoreError> {
-        let providers = BodyResolutionProviders::new(
+        let env = BodyResolutionEnv::new(
             def_maps,
             item_stores,
             semantic_index,
@@ -57,7 +55,7 @@ where
 
         // Pattern materialization rewrites pending binding ids into the final binding arena.
         // Every later resolution step, including inference storage, assumes that stable shape.
-        PatternBindingMaterializationPass::new(providers, body).materialize()?;
+        PatternBindingMaterializationPass::new(env, body).materialize()?;
         let inference = BodyInferenceCtx::with_trait_selection_cache(
             body.exprs().len(),
             body.bindings().len(),
@@ -65,7 +63,7 @@ where
         );
 
         Ok(Self {
-            providers,
+            env,
             body,
             inference,
         })
@@ -74,7 +72,7 @@ where
     pub(super) fn context<'source>(
         &'source self,
     ) -> BodyResolutionContext<'source, &'source D, &'source I> {
-        self.providers.context(self.body)
+        self.env.context(self.body)
     }
 
     pub(crate) fn resolve(&mut self) -> Result<(), PackageStoreError> {
@@ -93,11 +91,7 @@ where
                     changed |= expr_pass.resolve_expr(ExprId(expr_idx))?;
                 }
             }
-            let binding_updates = PatternTypePropagationPass::new(
-                self.context(),
-                self.inference.trait_selection_cache(),
-            )
-            .propagate()?;
+            let binding_updates = PatternTypePropagationPass::new(self.context()).propagate()?;
             changed |= self.apply_binding_type_updates(binding_updates);
 
             if !changed {
@@ -239,7 +233,7 @@ where
         if let Some(annotation) = &binding_data.annotation {
             return self
                 .context()
-                .type_refs(TypeRefUseSite::Scope(binding_data.scope))
+                .type_refs(binding_data.scope)
                 .resolve(annotation);
         }
 

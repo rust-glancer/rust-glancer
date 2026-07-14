@@ -1,4 +1,4 @@
-use super::super::{table::InferenceTable, traversal::InferenceTyFolder};
+use super::{table::InferenceTable, traversal::InferenceTyFolder};
 use crate::Ty;
 
 /// Instantiates unknowns nested inside a known return shape.

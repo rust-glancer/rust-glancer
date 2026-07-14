@@ -7,12 +7,11 @@ mod infer;
 mod pass;
 mod query;
 mod source;
-mod support;
 
 pub(crate) use self::{
     pass::BodyResolutionPass,
-    query::{CallSite, MethodCallSite, TypeRefUseSite},
-    source::{BodyQuerySource, BodyResolutionProviders},
+    query::{CallSite, MethodCallSite},
+    source::BodyQuerySource,
 };
 
 pub use self::{

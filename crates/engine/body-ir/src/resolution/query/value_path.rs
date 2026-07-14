@@ -12,12 +12,12 @@ use rg_ir_model::{
     identity::DeclarationRef,
 };
 use rg_package_store::PackageStoreError;
-use rg_semantic_ir::{ItemStoreSource, TypePathContext};
+use rg_semantic_ir::ItemStoreSource;
 use rg_std::{ExpectedUnique, UniqueVec};
 use rg_ty::{AdtTy, ExpectedTyExt, GenericArg, Ty};
 
 use crate::ir::resolved::BodyResolution;
-use crate::resolution::{BodyResolutionContext, TypeRefUseSite};
+use crate::resolution::BodyResolutionContext;
 
 /// Resolves paths in the value namespace without mutating the body.
 pub struct BodyValuePathQuery<'query, D, I> {
@@ -359,35 +359,20 @@ where
 
     /// Resolve the declared type of a const item.
     fn semantic_const_ty(&self, const_ref: ConstRef) -> Result<Ty, PackageStoreError> {
-        let item_query = self.context.item_query();
-        let Some(const_data) = item_query.const_data(const_ref)? else {
-            return Ok(Ty::Unknown);
-        };
-        let Some(ty) = const_data.signature.ty() else {
-            return Ok(Ty::Unknown);
-        };
-
-        let context = item_query
-            .type_path_context_for_owner(const_ref.origin, const_data.owner)?
-            .unwrap_or_else(|| TypePathContext::module(self.context.body().owner_module()));
-        self.context
-            .type_refs(TypeRefUseSite::OwnerContext(context))
-            .resolve(ty)
+        Ok(self
+            .context
+            .signatures()
+            .const_ty(const_ref)?
+            .unwrap_or(Ty::Unknown))
     }
 
     /// Resolve the declared type of a static item.
     fn semantic_static_ty(&self, static_ref: StaticRef) -> Result<Ty, PackageStoreError> {
-        let item_query = self.context.item_query();
-        let Some(static_data) = item_query.static_data(static_ref)? else {
-            return Ok(Ty::Unknown);
-        };
-        let Some(ty) = &static_data.ty else {
-            return Ok(Ty::Unknown);
-        };
-
-        self.context
-            .type_refs(TypeRefUseSite::Module(static_data.owner))
-            .resolve(ty)
+        Ok(self
+            .context
+            .signatures()
+            .static_ty(static_ref)?
+            .unwrap_or(Ty::Unknown))
     }
 
     /// Build the constructor-like value type for an imported enum variant.

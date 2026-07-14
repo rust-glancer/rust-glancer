@@ -27,8 +27,6 @@ use rg_ty::{
     TraitGoal, Ty,
 };
 
-use crate::resolution::support::BodyAssocProjector;
-
 use super::super::BodyInferenceCtx;
 use super::{BodyTraitGoalOutcome, BodyTraitObligationSolver};
 
@@ -118,8 +116,9 @@ where
                 // chance for a projection that remained unchanged because it needs local closure
                 // evidence.
                 let alias_ty = Ty::Alias(AliasTy::Projection(alias.clone()));
-                let (shared_ty, table) = BodyAssocProjector::new(self.context)
-                    .with_cache(inference.trait_selection_cache())
+                let (shared_ty, table) = self
+                    .context
+                    .trait_selection_with_cache(inference.trait_selection_cache())
                     .normalize_ty(&alias_ty, &inference.table)?;
                 inference.table = table;
                 if shared_ty != alias_ty {

@@ -17,7 +17,7 @@ use rg_ty::{Clause, GenericArg, Substitution, Ty, inference::InferenceSubstituti
 
 use crate::ir::resolved::BodyResolution;
 use crate::resolution::{
-    BodyResolutionContext, TypeRefUseSite,
+    BodyResolutionContext,
     query::{CallProjection, ResolvedCallTarget},
 };
 
@@ -370,7 +370,7 @@ where
         let resolved = self.context.generics().subst_for_explicit_args(
             GenericDefRef::Function(target.function()),
             target.explicit_args(),
-            TypeRefUseSite::Scope(target.site_scope()),
+            target.site_scope(),
         )?;
         let positional = target
             .explicit_args()
@@ -400,7 +400,7 @@ where
                     syntax_index += 1;
                     let ty = self
                         .context
-                        .type_refs(TypeRefUseSite::Scope(target.site_scope()))
+                        .type_refs(target.site_scope())
                         .resolve_with_inference(ty, &mut inference.table)?;
                     subst.push(
                         GenericParamRef::Type(type_param),

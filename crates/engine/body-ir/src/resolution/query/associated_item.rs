@@ -7,16 +7,13 @@ use rg_ir_model::{
     identity::DeclarationRef,
 };
 use rg_package_store::PackageStoreError;
-use rg_semantic_ir::{ItemStoreSource, TypePathContext};
+use rg_semantic_ir::ItemStoreSource;
 use rg_std::{ExpectedUnique, UniqueVec};
 use rg_ty::{AdtTy, ExpectedTyExt, Substitution, Ty};
 
 use super::traits::BodyQualifiedTraitSelection;
 
-use crate::{
-    ir::resolved::BodyResolution,
-    resolution::{BodyResolutionContext, TypeRefUseSite},
-};
+use crate::{ir::resolved::BodyResolution, resolution::BodyResolutionContext};
 
 /// Resolves `Type::item` paths in value position.
 ///
@@ -96,10 +93,7 @@ where
 
         match prefix {
             BodyAssociatedPathPrefix::Type(prefix_ty_ref) => {
-                let prefix_ty = self
-                    .context
-                    .type_refs(TypeRefUseSite::Scope(scope))
-                    .resolve(&prefix_ty_ref)?;
+                let prefix_ty = self.context.type_refs(scope).resolve(&prefix_ty_ref)?;
                 self.resolve_for_type(&prefix_ty, last_segment)
             }
             BodyAssociatedPathPrefix::QualifiedTrait { self_ty, trait_ref } => {
@@ -205,10 +199,7 @@ where
 
         match prefix {
             BodyAssociatedPathPrefix::Type(prefix_ty_ref) => {
-                let prefix_ty = self
-                    .context
-                    .type_refs(TypeRefUseSite::Scope(scope))
-                    .resolve(&prefix_ty_ref)?;
+                let prefix_ty = self.context.type_refs(scope).resolve(&prefix_ty_ref)?;
                 self.function_candidates_for_type(&prefix_ty, name)
             }
             BodyAssociatedPathPrefix::QualifiedTrait { self_ty, trait_ref } => {
@@ -663,32 +654,16 @@ where
         owner: ItemOwner,
         receiver_ty: &AdtTy,
     ) -> Result<Ty, PackageStoreError> {
-        let item_query = self.context.item_query();
-        let Some(const_data) = item_query.const_data(const_ref)? else {
-            return Ok(Ty::Unknown);
-        };
-        let Some(ty) = const_data.signature.ty() else {
-            return Ok(Ty::Unknown);
-        };
-
-        if ty.is_self_type() {
-            return Ok(Ty::adt(receiver_ty.clone()));
-        }
-
         let subst = self.context.generics().subst_for_receiver_owner(
             const_ref.origin,
             owner,
             receiver_ty,
         )?;
-
-        let context = self
+        let ty = self
             .context
-            .item_query()
-            .type_path_context_for_owner(const_ref.origin, owner)?
-            .unwrap_or_else(|| TypePathContext::module(self.context.body().owner_module()));
-        self.context
-            .type_refs(TypeRefUseSite::OwnerContext(context))
-            .with_subst(&subst)
-            .resolve(ty)
+            .signatures()
+            .const_ty(const_ref)?
+            .unwrap_or(Ty::Unknown);
+        Ok(subst.apply(&ty))
     }
 }

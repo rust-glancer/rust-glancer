@@ -34,10 +34,11 @@ use rg_semantic_ir::{Generics, TypeAliasData};
 use super::interner::{ChalkDefId, RgChalkInterner};
 use super::projection::{ProjectionAliasLowering, ProjectionVariableEnv};
 use crate::inference::{InferVarKind, InferenceSubstitution, InferenceTable};
+use crate::signature::TraitHeader;
 use crate::trait_selection::TraitGoal;
 use crate::{
     AliasTy, Clause, ConstValue, FloatTy, GenericArg, ImplHeader, Lifetime, PrimitiveTy,
-    SignedIntTy, TraitApplication, TraitHeader, TraitRefLowering, Ty, UnsignedIntTy,
+    SignedIntTy, TraitApplication, TraitRefLowering, Ty, UnsignedIntTy,
 };
 
 pub(super) type ChalkTy = chalk_ir::Ty<RgChalkInterner>;

@@ -94,10 +94,6 @@ pub struct GenericArgs(
 );
 
 impl GenericArgs {
-    pub fn new(args: Vec<GenericArg>) -> Self {
-        Self(args)
-    }
-
     pub fn empty() -> Self {
         Self::default()
     }
@@ -118,7 +114,7 @@ impl GenericArgs {
         self.0.is_empty()
     }
 
-    pub fn into_vec(self) -> Vec<GenericArg> {
+    pub(crate) fn into_vec(self) -> Vec<GenericArg> {
         self.0
     }
 
@@ -130,7 +126,7 @@ impl GenericArgs {
 
 impl From<Vec<GenericArg>> for GenericArgs {
     fn from(args: Vec<GenericArg>) -> Self {
-        Self::new(args)
+        Self(args)
     }
 }
 

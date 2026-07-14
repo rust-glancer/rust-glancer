@@ -1,7 +1,7 @@
 //! Definition path queries over semantic item stores.
 
 use rg_def_map::DefMapSource;
-use rg_ir_model::{ModuleRef, Path, SemanticItemRef, TraitDefRef, TypeDefRef, TypePathResolution};
+use rg_ir_model::{Path, SemanticItemRef, TypePathResolution};
 use rg_semantic_ir::{
     GenericsQuery, ItemResolutionQuery, ItemStoreQuery, ItemStoreSource, TypePathContext,
 };
@@ -48,21 +48,5 @@ where
         path: &Path,
     ) -> Result<UniqueVec<SemanticItemRef>, D::Error> {
         self.definitions.semantic_items_for_type_path(context, path)
-    }
-
-    pub fn type_defs_for_path(
-        &self,
-        from: ModuleRef,
-        path: &Path,
-    ) -> Result<UniqueVec<TypeDefRef>, D::Error> {
-        self.definitions.type_defs_for_path(from, path)
-    }
-
-    pub fn traits_for_path(
-        &self,
-        from: ModuleRef,
-        path: &Path,
-    ) -> Result<UniqueVec<TraitDefRef>, D::Error> {
-        self.definitions.traits_for_path(from, path)
     }
 }

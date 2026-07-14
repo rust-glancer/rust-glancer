@@ -7,7 +7,7 @@ use rg_semantic_ir::ItemStoreSource;
 use rg_std::UniqueVec;
 use rg_ty::{AdtTy, GenericArg, Substitution, TraitApplication, Ty};
 
-use crate::resolution::{BodyResolutionContext, TypeRefUseSite};
+use crate::resolution::BodyResolutionContext;
 
 /// Resolves trait-shaped questions in body context.
 pub(crate) struct BodyTraitQuery<'query, D, I> {
@@ -100,9 +100,7 @@ where
 
     /// Resolve a type syntax where the qualified path is written.
     fn resolve_type_ref(&self, scope: ScopeId, ty: &TypeRef) -> Result<Ty, PackageStoreError> {
-        self.context
-            .type_refs(TypeRefUseSite::Scope(scope))
-            .resolve(ty)
+        self.context.type_refs(scope).resolve(ty)
     }
 
     /// Resolve `Trait<Args>` from `<Self as Trait<Args>>`.
@@ -114,7 +112,7 @@ where
     ) -> Result<Option<ResolvedTraitPrefix>, PackageStoreError> {
         let Some(lowering) = self
             .context
-            .type_refs(TypeRefUseSite::Scope(scope))
+            .type_refs(scope)
             .resolve_trait_ref(trait_ty_ref, self_ty)?
         else {
             return Ok(None);

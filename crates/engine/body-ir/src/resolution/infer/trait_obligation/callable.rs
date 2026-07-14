@@ -12,17 +12,15 @@ use rg_ty::{GenericArg, Substitution, TraitGoal, Ty, inference::InferVarKind};
 
 use crate::{ir::ExprKind, resolution::BodyResolutionContext};
 
-use super::{BodyInferenceCtx, BodyPatternInference};
+use super::super::{BodyInferenceCtx, BodyPatternInference};
 
 /// Applies callable trait goals directly to body-local closure witnesses.
 ///
-/// This is a "plug" for the trait solver that adds knowledge about Fn* trait without having to properly
-/// model all the related machinery. For example, if we see that it's a closure and can link it to Fn* trait
-/// anywhere, we directly apply this knowledge during trait solving.
-///
-/// This way we can "pretend" that it's a part of trait solving (which it will eventually be) so it's not
-/// misplaced, but we avoid 80% of complexity at 20% of effort.
-pub(crate) struct BodyCallableGoalSolver<'query, D, I> {
+/// Shared trait selection cannot inspect a closure body because closure witnesses and their inference
+/// slots exist only while that body is being resolved. This solver supplies that missing local evidence:
+/// it relates an `Fn*` goal's input and output types to the closure's patterns and body expression, then
+/// lets the surrounding obligation solver commit the resulting inference facts.
+pub(super) struct BodyCallableGoalSolver<'query, D, I> {
     context: BodyResolutionContext<'query, D, I>,
 }
 

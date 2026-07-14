@@ -2,18 +2,15 @@
 
 use rg_def_map::DefMapSource;
 use rg_ir_model::{
-    DefId, ExprData, ExprId, FunctionRef, GenericDefRef, ScopeId, SemanticItemRef,
+    DefId, ExprData, ExprId, FunctionRef, GenericDefRef, GenericParamRef, ScopeId, SemanticItemRef,
     identity::DeclarationRef, items::GenericArg as ItemGenericArg,
 };
 use rg_package_store::PackageStoreError;
-use rg_semantic_ir::{GenericParamSource, ItemStoreSource};
+use rg_semantic_ir::{GenericParamSource, Generics, ItemStoreSource};
 use rg_std::{ExpectedUnique, UniqueVec};
-use rg_ty::{
-    CallArgInference, CallArgMapping, CallableSignature, ExpectedTyExt, GenericArg, Substitution,
-    Ty, function_generic_shadow_subst,
-};
+use rg_ty::{CallableSignature, ExpectedTyExt, GenericArg, Substitution, Ty};
 
-use crate::resolution::{BodyResolutionContext, TypeRefUseSite};
+use crate::resolution::BodyResolutionContext;
 use crate::{ir::ExprKind, ir::resolved::BodyResolution};
 
 use super::associated_item::BodyAssociatedFunctionCandidate;
@@ -107,15 +104,6 @@ impl ResolvedCallTarget {
 }
 
 impl CallSelfSource {
-    /// Choose how written arguments line up with declared params.
-    fn arg_mapping(&self) -> CallArgMapping {
-        match self {
-            Self::None => CallArgMapping::FunctionCall,
-            Self::TypePrefix(_) => CallArgMapping::FunctionCall,
-            Self::Receiver(_) => CallArgMapping::MethodCall,
-        }
-    }
-
     /// Skip implicit receiver params when projecting written arguments.
     fn first_written_param_idx(&self) -> usize {
         match self {
@@ -206,7 +194,7 @@ impl ResolvedCallTargets {
         let mut return_tys = ExpectedUnique::new();
         for target in &self.targets {
             let projection = calls.signature(target).project(args)?;
-            return_tys.push(projection.return_ty().clone());
+            return_tys.push(projection.return_ty());
         }
 
         Ok(return_tys.into_ty())
@@ -233,8 +221,6 @@ pub(crate) struct CallSignature<'call, 'query, D, I> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct CallProjection {
     signature: CallableSignature,
-    written_param_tys: Vec<Ty>,
-    return_ty: Ty,
     subst: Substitution,
 }
 
@@ -244,14 +230,9 @@ impl CallProjection {
         &self.signature
     }
 
-    /// Return parameter types for arguments written at the call site.
-    pub(crate) fn written_param_tys(&self) -> &[Ty] {
-        &self.written_param_tys
-    }
-
     /// Return the projected call result type.
-    pub(crate) fn return_ty(&self) -> &Ty {
-        &self.return_ty
+    pub(crate) fn return_ty(&self) -> Ty {
+        self.subst.apply(&self.signature.ret)
     }
 
     /// Return the call-specific substitution used to project signature types.
@@ -556,14 +537,10 @@ where
         else {
             return Ok(CallProjection {
                 signature: CallableSignature {
-                    owner: self.target.function,
-                    args: Default::default(),
                     params: Vec::new(),
                     ret: Ty::Unknown,
                     clauses: Vec::new(),
                 },
-                written_param_tys: Vec::new(),
-                return_ty: Ty::Unknown,
                 subst: Substitution::new(),
             });
         };
@@ -575,43 +552,132 @@ where
             .generics(GenericDefRef::Function(self.target.function))?;
         let base_subst = self.base_subst(&generics)?;
 
-        // Canonical signatures preserve every parameter position, including an implicit receiver.
-        // Applying the selected owner substitution once gives every downstream caller the same
-        // expected types without interpreting declaration syntax again.
-        let written_param_tys = signature
-            .params
-            .iter()
-            .skip(self.target.self_source.first_written_param_idx())
-            .map(|param| base_subst.apply(param))
-            .collect::<Vec<_>>();
-
         let mut return_subst = base_subst.clone();
         let arg_tys = args
             .iter()
             .map(|arg| self.query.context.body().expr_ty_unchecked(*arg).clone())
             .collect::<Vec<_>>();
-        return_subst.extend(
-            CallArgInference::new(
-                &generics,
-                &signature.params,
-                &arg_tys,
-                self.target.self_source.arg_mapping(),
-                &return_subst,
-            )
-            .infer(),
-        );
-
-        let return_ty = return_subst.apply(&signature.ret);
+        let inferred_arg_subst =
+            self.infer_argument_subst(&generics, &signature.params, &arg_tys, &return_subst);
+        return_subst.extend(inferred_arg_subst);
 
         Ok(CallProjection {
             signature,
-            written_param_tys,
-            return_ty,
             subst: return_subst,
         })
     }
 
-    /// Combine receiver, shadow, and explicit generic substitutions.
+    /// Derive function-owned bindings available from matching argument and parameter shapes.
+    ///
+    /// This projection operates on stable `Ty`, not inference variables, so conflicting evidence
+    /// becomes `Unknown`. Inherited trait and impl parameters retain the bindings selected from
+    /// the call receiver.
+    fn infer_argument_subst(
+        &self,
+        generics: &Generics<'_>,
+        params: &[Ty],
+        arg_tys: &[Ty],
+        existing_subst: &Substitution,
+    ) -> Substitution {
+        let mut subst = Substitution::new();
+        for (param_ty, arg_ty) in params
+            .iter()
+            .skip(self.target.first_written_param_idx())
+            .zip(arg_tys)
+        {
+            Self::infer_ty_subst(generics, existing_subst, param_ty, arg_ty, &mut subst);
+        }
+        subst
+    }
+
+    /// Follow compatible type structure until a function-owned parameter is reached.
+    fn infer_ty_subst(
+        generics: &Generics<'_>,
+        existing_subst: &Substitution,
+        param_ty: &Ty,
+        arg_ty: &Ty,
+        subst: &mut Substitution,
+    ) {
+        if let Ty::Param(param) = param_ty
+            && generics
+                .iter_self()
+                .any(|candidate| candidate.param() == GenericParamRef::Type(*param))
+        {
+            if matches!(arg_ty, Ty::Unknown) {
+                return;
+            }
+
+            let key = GenericParamRef::Type(*param);
+            if existing_subst
+                .get(key)
+                .and_then(GenericArg::as_ty)
+                .is_some_and(|ty| !matches!(ty, Ty::Unknown))
+            {
+                return;
+            }
+            if let Some(existing_ty) = subst.get(key).and_then(GenericArg::as_ty) {
+                if existing_ty != arg_ty {
+                    subst.push(key, GenericArg::Type(Box::new(Ty::Unknown)));
+                }
+                return;
+            }
+            subst.push(key, GenericArg::Type(Box::new(arg_ty.clone())));
+            return;
+        }
+
+        match (param_ty, arg_ty) {
+            (
+                Ty::Reference {
+                    mutability: param_mutability,
+                    inner: param_inner,
+                    ..
+                },
+                Ty::Reference {
+                    mutability: arg_mutability,
+                    inner: arg_inner,
+                    ..
+                },
+            )
+            | (
+                Ty::RawPointer {
+                    mutability: param_mutability,
+                    inner: param_inner,
+                },
+                Ty::RawPointer {
+                    mutability: arg_mutability,
+                    inner: arg_inner,
+                },
+            ) if param_mutability == arg_mutability => {
+                Self::infer_ty_subst(generics, existing_subst, param_inner, arg_inner, subst);
+            }
+            (Ty::Tuple(param_fields), Ty::Tuple(arg_fields))
+                if param_fields.len() == arg_fields.len() =>
+            {
+                for (param_field, arg_field) in param_fields.iter().zip(arg_fields) {
+                    Self::infer_ty_subst(generics, existing_subst, param_field, arg_field, subst);
+                }
+            }
+            (Ty::Slice(param_inner), Ty::Slice(arg_inner))
+            | (
+                Ty::Array {
+                    inner: param_inner, ..
+                },
+                Ty::Array {
+                    inner: arg_inner, ..
+                },
+            ) => Self::infer_ty_subst(generics, existing_subst, param_inner, arg_inner, subst),
+            (Ty::Adt(param), Ty::Adt(arg)) if param.def == arg.def => {
+                for (param, arg) in param.args.iter().zip(&arg.args) {
+                    if let (GenericArg::Type(param), GenericArg::Type(arg)) = (param, arg) {
+                        Self::infer_ty_subst(generics, existing_subst, param, arg, subst);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Combine receiver, unresolved function, and explicit generic substitutions.
     fn base_subst(
         &self,
         generics: &rg_semantic_ir::Generics<'_>,
@@ -628,7 +694,18 @@ where
         {
             subst.push(self_param, GenericArg::Type(Box::new(self_ty)));
         }
-        subst.extend(function_generic_shadow_subst(generics));
+
+        // Receiver substitutions describe parent trait or impl parameters. A function's own type
+        // parameters begin unresolved, then explicit arguments or argument shapes replace these
+        // entries. Iterating only this owner keeps inherited bindings intact.
+        for param in generics.iter_self() {
+            if let GenericParamRef::Type(param) = param.param() {
+                subst.push(
+                    GenericParamRef::Type(param),
+                    GenericArg::Type(Box::new(Ty::Unknown)),
+                );
+            }
+        }
         subst.extend(self.explicit_subst()?);
         Ok(subst)
     }
@@ -644,7 +721,7 @@ where
         self.query.context.generics().subst_for_explicit_args(
             GenericDefRef::Function(self.target.function),
             &self.target.explicit_args,
-            TypeRefUseSite::Scope(self.target.site_scope),
+            self.target.site_scope,
         )
     }
 }

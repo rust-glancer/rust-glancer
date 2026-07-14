@@ -23,9 +23,11 @@ use crate::{
     ir::{ExprKind, ExprWrapperKind, LiteralKind},
 };
 
-use crate::resolution::{CallSite, MethodCallSite, TypeRefUseSite, support::TyNormalizer};
+use crate::resolution::{CallSite, MethodCallSite};
 
-use super::{body::BodyResolutionPass, builtin_macro::BuiltinMacroExprTypeMapper};
+use super::{
+    body::BodyResolutionPass, builtin_macro::BuiltinMacroExprTypeMapper, ty_normalize::TyNormalizer,
+};
 
 pub(super) struct ExprResolutionPass<'pass, 'query, 'body, D, I> {
     pass: &'pass mut BodyResolutionPass<'query, 'body, D, I>,
@@ -89,9 +91,7 @@ where
                 let ty = self
                     .pass
                     .context()
-                    .type_refs(TypeRefUseSite::Scope(
-                        self.pass.body.expr_unchecked(expr).scope,
-                    ))
+                    .type_refs(self.pass.body.expr_unchecked(expr).scope)
                     .resolve(&ty)?;
                 self.pass.set_expr_ty(expr, ty);
             }
@@ -379,7 +379,7 @@ where
         &self,
         type_def: TypeDefRef,
     ) -> Result<DeclarationRef, PackageStoreError> {
-        if type_def.origin == DefMapRef::Body(self.pass.providers.body_ref()) {
+        if type_def.origin == DefMapRef::Body(self.pass.env.body_ref()) {
             return Ok(DeclarationRef::from(type_def));
         }
 
@@ -416,7 +416,7 @@ where
             return self
                 .pass
                 .context()
-                .type_refs(TypeRefUseSite::Scope(scope))
+                .type_refs(scope)
                 .resolve_generic_args_for(GenericDefRef::TypeDef(type_def), args);
         }
 

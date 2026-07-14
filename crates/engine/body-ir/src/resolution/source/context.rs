@@ -5,12 +5,12 @@
 //! only read-only access to the active body.
 
 use rg_def_map::{DefMapQuery, DefMapSource};
-use rg_ir_model::BodyRef;
+use rg_ir_model::{BodyRef, Path, ScopeId, TypePathResolution};
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::{CrateItemQuery, ItemLookupIndex, ItemStoreQuery, ItemStoreSource};
 use rg_ty::{
     Autoderef, ImplMatcher, ItemPathQuery, IterationItemResolver, SemanticSignatureQuery,
-    TraitSelectionCache,
+    TraitSelectionCache, TraitSelectionQuery, TypeLoweringAnchor, TypePathResolver,
 };
 
 use crate::ir::body::ResolvedBodyData;
@@ -18,8 +18,7 @@ use crate::ir::body::ResolvedBodyData;
 use crate::resolution::query::{
     BodyAssociatedItemQuery, BodyCallQuery, BodyFieldQuery, BodyFunctionQuery, BodyGenericsQuery,
     BodyLocalItemQuery, BodyMethodQuery, BodyTraitQuery, BodyTypeAliasQuery, BodyTypeContextQuery,
-    BodyTypePathQuery, BodyTypePathResolver, BodyValuePathQuery, TypeRefResolutionQuery,
-    TypeRefUseSite,
+    BodyTypePathQuery, BodyValuePathQuery, TypeRefResolutionQuery,
 };
 
 use super::BodyQuerySource;
@@ -108,10 +107,10 @@ where
         'a,
         BodyQuerySource<'a, D, I>,
         BodyQuerySource<'a, D, I>,
-        BodyTypePathResolver<'a, D, I>,
+        BodyResolutionContext<'a, D, I>,
     > {
         let source = self.source;
-        SemanticSignatureQuery::with_resolver(source, source, BodyTypePathResolver::new(*self))
+        SemanticSignatureQuery::with_resolver(source, source, *self)
     }
 
     pub(crate) fn crate_items(
@@ -129,8 +128,8 @@ where
         BodyValuePathQuery::new(*self)
     }
 
-    pub(crate) fn type_refs(&self, use_site: TypeRefUseSite) -> TypeRefResolutionQuery<'a, D, I> {
-        TypeRefResolutionQuery::new(*self, use_site)
+    pub(crate) fn type_refs(&self, scope: ScopeId) -> TypeRefResolutionQuery<'a, D, I> {
+        TypeRefResolutionQuery::new(*self, scope)
     }
 
     pub(crate) fn type_contexts(&self) -> BodyTypeContextQuery<'a, D, I> {
@@ -179,14 +178,10 @@ where
         'a,
         BodyQuerySource<'a, D, I>,
         BodyQuerySource<'a, D, I>,
-        BodyTypePathResolver<'a, D, I>,
+        BodyResolutionContext<'a, D, I>,
     > {
-        ImplMatcher::with_resolver(
-            self.item_paths(),
-            self.crate_items(),
-            BodyTypePathResolver::new(*self),
-        )
-        .with_cache(self.trait_selection_cache())
+        ImplMatcher::with_resolver(self.item_paths(), self.crate_items(), *self)
+            .with_cache(self.trait_selection_cache())
     }
 
     pub(crate) fn autoderef(
@@ -205,5 +200,40 @@ where
             self.semantic_index,
         )
         .with_cache(self.trait_selection_cache())
+    }
+
+    /// Build shared trait selection over this body's semantic lookup providers.
+    ///
+    /// Body inference may own a cache even when the read-only resolution context was constructed
+    /// without one, so callers provide the cache associated with their inference flow.
+    pub(crate) fn trait_selection_with_cache(
+        &self,
+        cache: TraitSelectionCache,
+    ) -> TraitSelectionQuery<'a, BodyQuerySource<'a, D, I>, BodyQuerySource<'a, D, I>> {
+        TraitSelectionQuery::with_index(self.item_paths(), self.crate_items(), self.semantic_index)
+            .with_cache(cache)
+    }
+}
+
+impl<'a, D, I> TypePathResolver for BodyResolutionContext<'a, D, I>
+where
+    D: DefMapSource<Error = PackageStoreError> + Copy,
+    I: ItemStoreSource<'a, Error = PackageStoreError> + Copy,
+{
+    type Error = PackageStoreError;
+
+    fn resolve_type_path(
+        &self,
+        anchor: TypeLoweringAnchor,
+        path: &Path,
+    ) -> Result<TypePathResolution, Self::Error> {
+        match anchor {
+            TypeLoweringAnchor::Scope(scope) => {
+                self.type_path_query().resolve_in_scope(scope, path)
+            }
+            TypeLoweringAnchor::Context(context) => {
+                self.type_path_query().resolve_in_context(context, path)
+            }
+        }
     }
 }

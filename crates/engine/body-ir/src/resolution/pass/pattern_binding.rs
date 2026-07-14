@@ -29,7 +29,9 @@ use crate::{
     ir::{BindingKind, ExprKind, PatKind, PendingBindingResolution, RecordPatField, StmtKind},
 };
 
-use crate::resolution::{BodyResolutionContext, BodyResolutionProviders, TypeRefUseSite};
+use crate::resolution::BodyResolutionContext;
+
+use super::env::BodyResolutionEnv;
 
 /// Resolves lowered binding candidates into the final body binding arena.
 ///
@@ -37,7 +39,7 @@ use crate::resolution::{BodyResolutionContext, BodyResolutionProviders, TypeRefU
 /// that resolved as consts/statics/unit variants remain visible through their pattern path, not as
 /// fake local bindings.
 pub(super) struct PatternBindingMaterializationPass<'query, 'body, D, I> {
-    providers: BodyResolutionProviders<'query, D, I>,
+    env: BodyResolutionEnv<'query, D, I>,
     body: &'body mut ResolvedBodyData,
 }
 
@@ -47,14 +49,14 @@ where
     for<'source> &'source I: ItemStoreSource<'source, Error = PackageStoreError>,
 {
     pub(super) fn new(
-        providers: BodyResolutionProviders<'query, D, I>,
+        env: BodyResolutionEnv<'query, D, I>,
         body: &'body mut ResolvedBodyData,
     ) -> Self {
-        Self { providers, body }
+        Self { env, body }
     }
 
     fn context<'source>(&'source self) -> BodyResolutionContext<'source, &'source D, &'source I> {
-        self.providers.context(&*self.body)
+        self.env.context(&*self.body)
     }
 
     /// Materializes all pending binding candidates, leaving the body in its final binding shape.
@@ -179,10 +181,7 @@ where
         pending_tys: &[Ty],
     ) -> Result<Ty, PackageStoreError> {
         if let Some(annotation) = annotation {
-            let ty = self
-                .context()
-                .type_refs(TypeRefUseSite::Scope(scope))
-                .resolve(annotation)?;
+            let ty = self.context().type_refs(scope).resolve(annotation)?;
             if !matches!(ty, Ty::Unknown) {
                 return Ok(ty);
             }
@@ -506,7 +505,7 @@ where
         // Check the body-local lexical module first, then the owner/fallback modules used by
         // ordinary body lookup. This keeps body-local consts visible without losing crate items.
         let from = ModuleRef {
-            origin: DefMapRef::Body(self.providers.body_ref()),
+            origin: DefMapRef::Body(self.env.body_ref()),
             module: ModuleId(scope.0),
         };
         let def_maps = self.context().def_map_query();
@@ -624,7 +623,7 @@ where
         if let Some(annotation) = &binding_data.annotation {
             return self
                 .context()
-                .type_refs(TypeRefUseSite::Scope(binding_data.scope))
+                .type_refs(binding_data.scope)
                 .resolve(annotation);
         }
 

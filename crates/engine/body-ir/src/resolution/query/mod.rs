@@ -17,15 +17,10 @@ pub use self::{
 };
 
 pub(crate) use self::{
-    associated_item::BodyAssociatedItemQuery,
-    body_items::BodyLocalItemQuery,
-    field::BodyFieldQuery,
-    function::BodyFunctionQuery,
-    generics::BodyGenericsQuery,
-    traits::BodyTraitQuery,
-    type_alias::BodyTypeAliasQuery,
-    type_context::BodyTypeContextQuery,
-    type_ref::{BodyTypePathResolver, TypeRefResolutionQuery, TypeRefUseSite},
+    associated_item::BodyAssociatedItemQuery, body_items::BodyLocalItemQuery,
+    field::BodyFieldQuery, function::BodyFunctionQuery, generics::BodyGenericsQuery,
+    traits::BodyTraitQuery, type_alias::BodyTypeAliasQuery, type_context::BodyTypeContextQuery,
+    type_ref::TypeRefResolutionQuery,
 };
 
 pub(crate) use self::call::{
