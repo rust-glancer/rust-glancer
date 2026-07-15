@@ -10,7 +10,7 @@ use rg_ir_model::{
 use rg_package_store::PackageStoreError;
 use rg_parse::FileId;
 
-use crate::{BodyIrReadTxn, BodyLocalItems, ExprKind, PatKind, ResolvedBodyData};
+use crate::{BodyIrReadTxn, BodyLocalItems, BodyView, ExprKind, PatKind};
 
 use super::{
     super::{BindingSurface, BodyCursorCandidate, RecordFieldKeySurface},
@@ -75,7 +75,7 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
     /// Adds written macro invocations as references to the macro definition selected by expansion.
     fn push_macro_call_candidates(
         &self,
-        body: &ResolvedBodyData,
+        body: BodyView<'_>,
         candidates: &mut Vec<BodyCursorCandidate>,
     ) {
         for call in body.macro_calls() {
@@ -95,7 +95,7 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
     fn push_declaration_candidates(
         &self,
         body_ref: BodyRef,
-        body: &ResolvedBodyData,
+        body: BodyView<'_>,
         body_local_items: Option<&BodyLocalItems>,
         candidates: &mut Vec<BodyCursorCandidate>,
     ) {
@@ -184,7 +184,7 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
         }
     }
 
-    fn record_shorthand_bindings(&self, body: &ResolvedBodyData) -> Vec<RecordPatShorthandBinding> {
+    fn record_shorthand_bindings(&self, body: BodyView<'_>) -> Vec<RecordPatShorthandBinding> {
         let mut bindings = Vec::new();
         let sites = BodyScanSites::new(body);
         sites.walk_pats(self.file_id, None, |site| {
@@ -278,7 +278,7 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
     fn push_member_reference_candidates(
         &self,
         body_ref: BodyRef,
-        body: &ResolvedBodyData,
+        body: BodyView<'_>,
         candidates: &mut Vec<BodyCursorCandidate>,
     ) {
         let record_shorthand_values = Self::record_expr_shorthand_values(body);
@@ -316,7 +316,7 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
         }
     }
 
-    fn record_expr_shorthand_values(body: &ResolvedBodyData) -> Vec<ExprId> {
+    fn record_expr_shorthand_values(body: BodyView<'_>) -> Vec<ExprId> {
         let mut values = Vec::new();
         for expr in body.exprs().iter() {
             let ExprKind::Record { fields, .. } = &expr.kind else {
@@ -338,7 +338,7 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
     fn push_record_field_key_candidates(
         &self,
         body_ref: BodyRef,
-        body: &ResolvedBodyData,
+        body: BodyView<'_>,
         candidates: &mut Vec<BodyCursorCandidate>,
     ) {
         for expr in body.exprs().iter() {

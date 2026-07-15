@@ -29,8 +29,7 @@ use rg_semantic_ir::ItemLookupIndex;
 
 use super::BodyIrLoader;
 use crate::{
-    BodyFileShard, BodyLocalItems, CrateBodies, PackageBodies, PackageBodiesManifest,
-    ResolvedBodyData,
+    BodyFileShard, BodyLocalItems, BodyView, CrateBodies, PackageBodies, PackageBodiesManifest,
 };
 
 /// One package slot as seen by this Body IR read transaction.
@@ -69,7 +68,7 @@ impl<'db> LazyPackage<'db> {
     /// Load the complete crate representation.
     ///
     /// This is the expensive path used by callers that genuinely need `CrateBodies`. File-local
-    /// access goes through `bodies`, `body_data`, or `body_local_items` and normally loads less.
+    /// access goes through `bodies`, `body`, or `body_local_items` and normally loads less.
     pub(super) fn crate_bodies(
         &self,
         crate_ref: CrateRef,
@@ -123,7 +122,7 @@ impl<'db> LazyPackage<'db> {
         &self,
         crate_ref: CrateRef,
         file: Option<FileId>,
-    ) -> Result<Vec<(BodyRef, &ResolvedBodyData)>, PackageStoreError> {
+    ) -> Result<Vec<(BodyRef, BodyView<'_>)>, PackageStoreError> {
         let Some(loaded_crate) = self
             .loaded(crate_ref.package)?
             .crate_data(crate_ref.crate_id)
@@ -132,10 +131,9 @@ impl<'db> LazyPackage<'db> {
         };
         if let Some(crate_bodies) = loaded_crate.bodies.get() {
             return Ok(crate_bodies
-                .bodies
-                .iter_with_ids()
+                .body_views()
                 .filter(|(_, body)| file.is_none_or(|file| body.source().file_id == file))
-                .map(|(body, data)| (BodyRef { crate_ref, body }, data))
+                .map(|(body, view)| (BodyRef { crate_ref, body }, view))
                 .collect());
         }
 
@@ -151,7 +149,7 @@ impl<'db> LazyPackage<'db> {
                         crate_ref,
                         body: entry.body(),
                     },
-                    entry.data(),
+                    entry.view(),
                 )
             }));
         }
@@ -161,10 +159,10 @@ impl<'db> LazyPackage<'db> {
     /// Find one body by using the manifest to select its source-file shard.
     ///
     /// Looking up one body does not scan or decode other file shards.
-    pub(super) fn body_data(
+    pub(super) fn body(
         &self,
         body_ref: BodyRef,
-    ) -> Result<Option<&ResolvedBodyData>, PackageStoreError> {
+    ) -> Result<Option<BodyView<'_>>, PackageStoreError> {
         let Some((loaded_crate, file)) = self.body_location(body_ref)? else {
             return Ok(None);
         };
@@ -179,7 +177,7 @@ impl<'db> LazyPackage<'db> {
     /// Find the body-local DefMap and item store paired with one body.
     ///
     /// Body data and body-local items are stored in the same file shard, so this follows the same
-    /// manifest lookup as `body_data`.
+    /// manifest lookup as `body`.
     pub(super) fn body_local_items(
         &self,
         body_ref: BodyRef,

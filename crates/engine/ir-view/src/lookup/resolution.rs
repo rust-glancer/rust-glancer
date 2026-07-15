@@ -81,7 +81,7 @@ impl<'a, 'db> ResolutionView<'a, 'db> {
     /// Return declarations already attached to a resolved body expression.
     pub fn declarations_for_expr(&self, expr: ExprRef) -> anyhow::Result<Vec<DeclarationRef>> {
         let body_ref = expr.body_ir();
-        let Some(body) = self.0.body_ir.body_data(body_ref)? else {
+        let Some(body) = self.0.body_ir.body(body_ref)? else {
             return Ok(Vec::new());
         };
         self.canonical_declarations(body.expr_declarations(body_ref, expr.expr_id()))
@@ -153,7 +153,7 @@ impl<'a, 'db> ResolutionView<'a, 'db> {
         scope: ScopeId,
         path: &Path,
     ) -> anyhow::Result<Vec<DeclarationRef>> {
-        let Some(body) = self.0.body_ir.body_data(body_ref)? else {
+        let Some(body) = self.0.body_ir.body(body_ref)? else {
             return Ok(Vec::new());
         };
         let Some(resolution) =

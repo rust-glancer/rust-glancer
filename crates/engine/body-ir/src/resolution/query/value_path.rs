@@ -313,7 +313,11 @@ where
     ) -> Result<Option<(BodyResolution, Ty)>, PackageStoreError> {
         match value_name {
             BodyValueName::Binding(binding) => {
-                let ty = self.context.body().binding_ty_unchecked(binding).clone();
+                let ty = self
+                    .context
+                    .resolved_body()
+                    .binding_ty_unchecked(binding)
+                    .clone();
                 Ok(Some((BodyResolution::Binding(binding), ty)))
             }
             BodyValueName::Candidates(candidates) => {

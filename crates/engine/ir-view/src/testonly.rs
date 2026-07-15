@@ -1,9 +1,9 @@
-use rg_body_ir::{BodyIrLoader, ResolvedBodyData, testonly::BodyIrFixture};
+use rg_body_ir::{BodyIrLoader, BodyView, testonly::BodyIrFixture};
 use rg_def_map::DefMap;
 use rg_def_map::DefMapDb;
 use rg_ir_model::{
-    BodyId, BodyOwner, BodyRef, BodySource, CrateRef, DefMapRef, ExprData, ExprId, FunctionRef,
-    ItemOwner, ModuleRef, TraitDefRef, TypeDefId, TypeDefRef,
+    BodyOwner, BodyRef, BodySource, CrateRef, DefMapRef, ExprData, ExprId, FunctionRef, ItemOwner,
+    ModuleRef, TraitDefRef, TypeDefId, TypeDefRef,
 };
 use rg_package_store::PackageLoader;
 use rg_parse::ParseDb;
@@ -67,7 +67,7 @@ impl ViewFixture {
         self.body_ir.resident_crate_ir(crate_ref)
     }
 
-    pub fn resident_body(&self, body_ref: BodyRef) -> Option<&ResolvedBodyData> {
+    pub fn resident_body(&self, body_ref: BodyRef) -> Option<BodyView<'_>> {
         self.body_ir.resident_body(body_ref)
     }
 
@@ -80,7 +80,7 @@ impl ViewFixture {
     }
 
     pub fn resident_body_owner(&self, body_ref: BodyRef) -> Option<BodyOwner> {
-        self.resident_body(body_ref).map(ResolvedBodyData::owner)
+        self.resident_body(body_ref).map(BodyView::owner)
     }
 
     pub fn resident_body_item_store(&self, body_ref: BodyRef) -> Option<&ItemStore> {
@@ -104,13 +104,8 @@ impl ViewFixture {
         };
 
         crate_bodies
-            .bodies()
-            .iter()
-            .enumerate()
-            .map(|(idx, _)| BodyRef {
-                crate_ref,
-                body: BodyId(idx),
-            })
+            .body_views()
+            .map(|(body, _)| BodyRef { crate_ref, body })
             .collect()
     }
 

@@ -21,11 +21,11 @@ use rg_ir_model::{
 use rg_package_store::PackageStoreError;
 use rg_text::Name;
 
-use crate::ResolvedBodyData;
+use crate::BodyData;
 
 pub(crate) struct BodyDefMapCollector<'body> {
     body_ref: BodyRef,
-    body: &'body ResolvedBodyData,
+    body: &'body BodyData,
     builder: DefMapBuilder,
     /// There might be more modules than scopes, so we need a mapping.
     /// Keys here are scope IDs, values are corresponding modules.
@@ -34,7 +34,7 @@ pub(crate) struct BodyDefMapCollector<'body> {
 }
 
 impl<'body> BodyDefMapCollector<'body> {
-    pub fn new(body_ref: BodyRef, body: &'body ResolvedBodyData) -> Self {
+    pub fn new(body_ref: BodyRef, body: &'body BodyData) -> Self {
         Self {
             body_ref,
             body,

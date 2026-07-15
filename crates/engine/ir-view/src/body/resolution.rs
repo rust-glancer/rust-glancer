@@ -4,7 +4,7 @@
 //! construct its context. This adapter is the single `ir-view` entry point for body-local path and
 //! member facts.
 
-use rg_body_ir::{BodyResolutionContext, ResolvedBodyData};
+use rg_body_ir::{BodyResolutionContext, BodyView};
 use rg_ir_model::{
     BodyRef, EnumVariantRef, Path, ScopeId, TypePathResolution, identity::DeclarationRef,
 };
@@ -26,8 +26,8 @@ impl<'a, 'db> BodyResolutionView<'a, 'db> {
     fn body_with_index(
         &self,
         body_ref: BodyRef,
-    ) -> anyhow::Result<Option<(&ResolvedBodyData, &ItemLookupIndex)>> {
-        let Some(body) = self.db.body_ir.body_data(body_ref)? else {
+    ) -> anyhow::Result<Option<(BodyView<'_>, &ItemLookupIndex)>> {
+        let Some(body) = self.db.body_ir.body(body_ref)? else {
             return Ok(None);
         };
         let Some(semantic_index) = self.db.body_ir.semantic_index(body_ref.crate_ref)? else {

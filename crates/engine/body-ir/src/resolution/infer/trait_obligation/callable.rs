@@ -253,7 +253,7 @@ mod tests {
     use rg_ty::{AdtTy, GenericArg, TraitGoal, Ty};
 
     use super::*;
-    use crate::{BodyIrLoader, ResolvedBodyData, testonly::BodyIrFixture};
+    use crate::{BodyIrLoader, BodyView, testonly::BodyIrFixture};
 
     const FIXTURE: &str = r#"
 //- /Cargo.toml
@@ -434,7 +434,7 @@ pub fn use_it(seed: Name) {
             BodyCallableGoalSolver::new(context).solve_goal(inference, goal)
         }
 
-        fn body(&self) -> &ResolvedBodyData {
+        fn body(&self) -> BodyView<'_> {
             self.project
                 .resident_body(self.body_ref)
                 .expect("fixture body should exist")
@@ -484,9 +484,11 @@ pub fn use_it(seed: Name) {
         }
 
         fn closure_param_binding(&self) -> BindingId {
-            let ExprKind::Closure { params, .. } =
-                self.body().expr_unchecked(self.closure_expr()).kind.clone()
-            else {
+            let body = self.body();
+            let closure = body
+                .expr(self.closure_expr())
+                .expect("fixture closure expression should exist");
+            let ExprKind::Closure { params, .. } = closure.kind.clone() else {
                 panic!("fixture closure expr should still be a closure");
             };
             params
@@ -497,9 +499,11 @@ pub fn use_it(seed: Name) {
         }
 
         fn closure_body(&self) -> ExprId {
-            let ExprKind::Closure { body, .. } =
-                self.body().expr_unchecked(self.closure_expr()).kind
-            else {
+            let body = self.body();
+            let closure = body
+                .expr(self.closure_expr())
+                .expect("fixture closure expression should exist");
+            let ExprKind::Closure { body, .. } = closure.kind else {
                 panic!("fixture closure expr should still be a closure");
             };
             body.expect("fixture closure should have a body")

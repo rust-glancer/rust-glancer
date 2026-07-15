@@ -10,7 +10,7 @@ use rg_ir_model::{
 use rg_package_store::PackageStoreError;
 use rg_parse::{FileId, Span};
 
-use crate::{BodyIrReadTxn, BodyOwner, ExprData, ExprKind, PatKind, ResolvedBodyData};
+use crate::{BodyIrReadTxn, BodyOwner, BodyView, ExprData, ExprKind, PatKind};
 
 use super::{
     super::{BindingSurface, BodyCursorCandidate, RecordFieldKeySurface},
@@ -47,7 +47,7 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
         let Some(body_ref) = self.body_at()? else {
             return Ok(Vec::new());
         };
-        let Some(body) = self.body_ir.body_data(body_ref)? else {
+        let Some(body) = self.body_ir.body(body_ref)? else {
             return Ok(Vec::new());
         };
 
@@ -96,7 +96,7 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
     fn candidate_at_body(
         &self,
         body_ref: BodyRef,
-        body: &ResolvedBodyData,
+        body: BodyView<'_>,
     ) -> Result<BodyCursorCandidate, PackageStoreError> {
         let mut best = BestCursorCandidate::new(BodyCursorCandidate::Body {
             body: body_ref,
@@ -252,7 +252,7 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
     /// owner name, so editor queries target the function/const/static item instead of the body.
     fn consider_body_owner_declaration(
         &self,
-        body: &ResolvedBodyData,
+        body: BodyView<'_>,
         best: &mut BestCursorCandidate,
     ) -> Result<(), PackageStoreError> {
         let Some((item, declaration_span)) = self.body_owner_declaration(body)? else {
@@ -286,7 +286,7 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
         Ok(())
     }
 
-    fn consider_macro_calls(&self, body: &ResolvedBodyData, best: &mut BestCursorCandidate) {
+    fn consider_macro_calls(&self, body: BodyView<'_>, best: &mut BestCursorCandidate) {
         for call in body.macro_calls() {
             if !call.source.is_written_in_file(self.file_id) {
                 continue;
@@ -308,7 +308,7 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
 
     fn body_owner_declaration(
         &self,
-        body: &ResolvedBodyData,
+        body: BodyView<'_>,
     ) -> Result<Option<(SemanticItemRef, Span)>, PackageStoreError> {
         match body.owner() {
             BodyOwner::Function(function) => {
@@ -350,7 +350,7 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
         }
     }
 
-    fn record_shorthand_bindings(&self, body: &ResolvedBodyData) -> Vec<RecordPatShorthandBinding> {
+    fn record_shorthand_bindings(&self, body: BodyView<'_>) -> Vec<RecordPatShorthandBinding> {
         let mut bindings = Vec::new();
         let sites = BodyScanSites::new(body);
         sites.walk_pats(Some(self.file_id), Some(self.offset), |site| {
@@ -374,7 +374,7 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
         bindings
     }
 
-    fn record_expr_shorthand_values(body: &ResolvedBodyData) -> Vec<ExprId> {
+    fn record_expr_shorthand_values(body: BodyView<'_>) -> Vec<ExprId> {
         let mut values = Vec::new();
         for expr in body.exprs().iter() {
             let ExprKind::Record { fields, .. } = &expr.kind else {
@@ -392,7 +392,7 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
         values
     }
 
-    fn generated_source_touches_offset(&self, body: &ResolvedBodyData) -> bool {
+    fn generated_source_touches_offset(&self, body: BodyView<'_>) -> bool {
         body.exprs().iter().any(|expr| {
             !expr.source.is_written()
                 && expr.source.file_id == self.file_id
@@ -448,7 +448,7 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
     fn consider_record_pat_fields(
         &self,
         body_ref: BodyRef,
-        body: &ResolvedBodyData,
+        body: BodyView<'_>,
         best: &mut BestCursorCandidate,
     ) {
         let sites = BodyScanSites::new(body);

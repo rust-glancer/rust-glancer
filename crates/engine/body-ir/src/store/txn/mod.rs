@@ -11,7 +11,7 @@
 //! ```text
 //! semantic_index(crate_ref)     -> crate-global index only
 //! bodies(crate_ref, Some(file)) -> one source-file shard
-//! body_data(body_ref)          -> the shard named by the manifest
+//! body(body_ref)               -> the shard named by the manifest
 //! crate_bodies(crate_ref)      -> complete crate
 //! ```
 //!
@@ -32,7 +32,7 @@ use rg_semantic_ir::{ItemLookupIndex, ItemStore};
 
 use self::lazy::{LazyPackage, PackageReadEntry};
 pub use self::loader::{BodyIrLoader, LoadBodyIr};
-use crate::{BodyLocalItems, CrateBodies, PackageBodies, ResolvedBodyData};
+use crate::{BodyLocalItems, BodyView, CrateBodies, PackageBodies};
 
 /// Read-only Body IR access with one stable view of package residency and loaded cache units.
 ///
@@ -108,17 +108,16 @@ impl<'db> BodyIrReadTxn<'db> {
         &self,
         crate_ref: CrateRef,
         file: Option<FileId>,
-    ) -> Result<Vec<(BodyRef, &ResolvedBodyData)>, PackageStoreError> {
+    ) -> Result<Vec<(BodyRef, BodyView<'_>)>, PackageStoreError> {
         match self.entry(crate_ref.package)? {
             PackageReadEntry::Resident(package) => {
                 let Some(crate_bodies) = package.crate_bodies(crate_ref.crate_id) else {
                     return Ok(Vec::new());
                 };
                 Ok(crate_bodies
-                    .bodies
-                    .iter_with_ids()
+                    .body_views()
                     .filter(|(_, body)| file.is_none_or(|file| body.source().file_id == file))
-                    .map(|(body, data)| (BodyRef { crate_ref, body }, data))
+                    .map(|(body, view)| (BodyRef { crate_ref, body }, view))
                     .collect())
             }
             PackageReadEntry::Lazy(package) => package.bodies(crate_ref, file),
@@ -130,15 +129,12 @@ impl<'db> BodyIrReadTxn<'db> {
     ///
     /// For an offloaded package, the manifest maps the `BodyId` to its source file and only that
     /// file shard is loaded.
-    pub fn body_data(
-        &self,
-        body_ref: BodyRef,
-    ) -> Result<Option<&ResolvedBodyData>, PackageStoreError> {
+    pub fn body(&self, body_ref: BodyRef) -> Result<Option<BodyView<'_>>, PackageStoreError> {
         match self.entry(body_ref.crate_ref.package)? {
             PackageReadEntry::Resident(package) => Ok(package
                 .crate_bodies(body_ref.crate_ref.crate_id)
                 .and_then(|crate_bodies| crate_bodies.body(body_ref.body))),
-            PackageReadEntry::Lazy(package) => package.body_data(body_ref),
+            PackageReadEntry::Lazy(package) => package.body(body_ref),
             PackageReadEntry::Excluded => unreachable!("excluded entries fail in entry()"),
         }
     }
@@ -146,7 +142,7 @@ impl<'db> BodyIrReadTxn<'db> {
     /// Return the DefMap and item store created inside one body.
     ///
     /// These values are paired with the body in the same file shard, so the lookup has the same
-    /// narrow loading behavior as `body_data`.
+    /// narrow loading behavior as `body`.
     pub fn body_local_items(
         &self,
         body_ref: BodyRef,

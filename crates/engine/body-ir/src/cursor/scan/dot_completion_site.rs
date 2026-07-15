@@ -8,7 +8,7 @@ use rg_ir_model::{CrateRef, ExprId};
 use rg_package_store::PackageStoreError;
 use rg_parse::{FileId, Span, TextSpan};
 
-use crate::{BodyIrReadTxn, ExprData, ExprKind, ResolvedBodyData};
+use crate::{BodyIrReadTxn, BodyView, ExprData, ExprKind};
 
 use super::super::DotCompletionSite;
 
@@ -82,7 +82,7 @@ impl<'txn, 'db> DotCompletionSiteScanner<'txn, 'db> {
     /// Returns the already-typed member prefix when `offset` is in this dot expression.
     fn member_prefix_span_for_dot_expr(
         expr: &ExprData,
-        body: &ResolvedBodyData,
+        body: BodyView<'_>,
         offset: u32,
     ) -> Option<Span> {
         // A completion site needs both the receiver and the dot; incomplete or unrelated

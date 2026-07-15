@@ -174,7 +174,7 @@ impl<'a, 'db> BodyView<'a, 'db> {
         Ok(self
             .db
             .body_ir
-            .body_data(body_ref)?
+            .body(body_ref)?
             .map(|body| body.owner_module()))
     }
 
@@ -184,7 +184,7 @@ impl<'a, 'db> BodyView<'a, 'db> {
         body_ref: BodyRef,
         scope: ScopeId,
     ) -> anyhow::Result<Vec<(ScopeId, ModuleRef)>> {
-        let Some(body) = self.db.body_ir.body_data(body_ref)? else {
+        let Some(body) = self.db.body_ir.body(body_ref)? else {
             return Ok(Vec::new());
         };
         let mut modules = Vec::new();
@@ -211,7 +211,7 @@ impl<'a, 'db> BodyView<'a, 'db> {
         body_ref: BodyRef,
         scope: ScopeId,
     ) -> anyhow::Result<HashSet<String>> {
-        let Some(body) = self.db.body_ir.body_data(body_ref)? else {
+        let Some(body) = self.db.body_ir.body(body_ref)? else {
             return Ok(HashSet::new());
         };
         let Some(scope_data) = body.scope(scope) else {
@@ -236,7 +236,7 @@ impl<'a, 'db> BodyView<'a, 'db> {
         Ok(self
             .db
             .body_ir
-            .body_data(body_ref)?
+            .body(body_ref)?
             .and_then(|body| body.expr_ty(expr).cloned()))
     }
 
@@ -245,13 +245,13 @@ impl<'a, 'db> BodyView<'a, 'db> {
         Ok(self
             .db
             .body_ir
-            .body_data(binding.body)?
+            .body(binding.body)?
             .and_then(|body| body.binding_ty(binding.binding).cloned()))
     }
 
     /// Return names visible from a body scope, ordered by lexical distance.
     pub fn lexical_names(&self, scope: BodyNameScope) -> anyhow::Result<Vec<BodyLexicalName>> {
-        let Some(body) = self.db.body_ir.body_data(scope.body)? else {
+        let Some(body) = self.db.body_ir.body(scope.body)? else {
             return Ok(Vec::new());
         };
         let body_item_store = self.db.body_ir.body_item_store(scope.body)?;
@@ -522,7 +522,7 @@ impl<'a, 'db> BodyView<'a, 'db> {
         body_ref: BodyRef,
         file_id: FileId,
     ) -> anyhow::Result<Vec<DeclarationRef>> {
-        let Some(body) = self.db.body_ir.body_data(body_ref)? else {
+        let Some(body) = self.db.body_ir.body(body_ref)? else {
             return Ok(Vec::new());
         };
         let body_item_store = self.db.body_ir.body_item_store(body_ref)?;
@@ -592,10 +592,7 @@ impl<'a, 'db> BodyView<'a, 'db> {
     }
 
     /// Convert expression ids into call argument spans.
-    fn resolved_call_args(
-        body: &rg_body_ir::ResolvedBodyData,
-        args: &[ExprId],
-    ) -> Vec<ResolvedCallArg> {
+    fn resolved_call_args(body: rg_body_ir::BodyView<'_>, args: &[ExprId]) -> Vec<ResolvedCallArg> {
         args.iter()
             .filter_map(|arg| {
                 body.expr(*arg).map(|expr| ResolvedCallArg {

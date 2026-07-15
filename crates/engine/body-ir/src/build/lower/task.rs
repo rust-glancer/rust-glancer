@@ -15,11 +15,14 @@ use rg_ir_model::{BodyId, ModuleRef};
 use rg_parse::{FileId, Span};
 use rg_text::NameInterner;
 
-use crate::{BodyOwner, CrateBodies};
+use crate::BodyOwner;
 
-use super::{body::BodyLowering, macro_expansion::BodyMacroExpansionContext, syntax::source_for};
+use super::{
+    LoweredCrateBodies, body::BodyLowering, macro_expansion::BodyMacroExpansionContext,
+    syntax::source_for,
+};
 
-/// A function body or item initializer that should become a `ResolvedBodyData`.
+/// A function body or item initializer that should become immutable `BodyData`.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct BodyLoweringTask {
     pub(crate) owner: BodyOwner,
@@ -40,7 +43,7 @@ pub(crate) struct BodyLoweringTask {
 
 pub(crate) struct BodyTaskLowering<'a> {
     parse_package: &'a rg_parse::Package,
-    crate_bodies: &'a mut CrateBodies,
+    crate_bodies: &'a mut LoweredCrateBodies,
     cfg: CfgEvaluator<'a>,
     interner: &'a mut NameInterner,
 }
@@ -48,7 +51,7 @@ pub(crate) struct BodyTaskLowering<'a> {
 impl<'a> BodyTaskLowering<'a> {
     pub(crate) fn new(
         parse_package: &'a rg_parse::Package,
-        crate_bodies: &'a mut CrateBodies,
+        crate_bodies: &'a mut LoweredCrateBodies,
         cfg: CfgEvaluator<'a>,
         interner: &'a mut NameInterner,
     ) -> Self {

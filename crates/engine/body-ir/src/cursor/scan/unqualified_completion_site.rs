@@ -9,7 +9,7 @@ use rg_package_store::PackageStoreError;
 use rg_parse::FileId;
 
 use crate::{
-    BodyIrReadTxn, BodyPath, ExprKind, ResolvedBodyData,
+    BodyIrReadTxn, BodyPath, BodyView, ExprKind,
     cursor::{UnqualifiedCompletionNamespace, UnqualifiedCompletionSite},
 };
 
@@ -60,7 +60,7 @@ impl<'txn, 'db> UnqualifiedCompletionSiteScanner<'txn, 'db> {
     fn scan_type_names(
         &self,
         body_ref: BodyRef,
-        body: &ResolvedBodyData,
+        body: BodyView<'_>,
         best: &mut Option<(UnqualifiedCompletionSite, u32)>,
     ) {
         let sites = BodyScanSites::new(body);
@@ -77,7 +77,7 @@ impl<'txn, 'db> UnqualifiedCompletionSiteScanner<'txn, 'db> {
     fn scan_value_names(
         &self,
         body_ref: BodyRef,
-        body: &ResolvedBodyData,
+        body: BodyView<'_>,
         best: &mut Option<(UnqualifiedCompletionSite, u32)>,
     ) {
         for (_expr, expr_data) in body.exprs_with_ids() {

@@ -6,6 +6,7 @@ mod control_flow;
 mod cursor;
 mod expressions;
 mod inference;
+mod lifecycle;
 mod macro_expansion;
 mod package_policy;
 mod patterns;

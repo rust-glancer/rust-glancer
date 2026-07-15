@@ -18,29 +18,31 @@ use rg_ir_model::{
     items::{FieldKey, FieldList, SelfParamKind, TypeRef},
 };
 use rg_package_store::PackageStoreError;
-use rg_semantic_ir::ItemStoreSource;
+use rg_semantic_ir::{ItemLookupIndex, ItemStoreSource};
 use rg_std::ExpectedUnique;
-use rg_ty::{ExpectedAdtTyExt, ReferencePeelingCandidates, Ty};
+use rg_ty::{ExpectedAdtTyExt, ReferencePeelingCandidates, TraitSelectionCache, Ty};
 
 use crate::{
     BodyPath,
-    ir::body::ResolvedBodyData,
+    ir::LoweredBodyData,
     ir::resolved::BodyResolution,
     ir::{BindingKind, ExprKind, PatKind, PendingBindingResolution, RecordPatField, StmtKind},
 };
 
 use crate::resolution::BodyResolutionContext;
 
-use super::env::BodyResolutionEnv;
-
 /// Resolves lowered binding candidates into the final body binding arena.
 ///
 /// After this pass, consumers should see ordinary `BindingId`s only. Ambiguous pattern identifiers
 /// that resolved as consts/statics/unit variants remain visible through their pattern path, not as
 /// fake local bindings.
-pub(super) struct PatternBindingMaterializationPass<'query, 'body, D, I> {
-    env: BodyResolutionEnv<'query, D, I>,
-    body: &'body mut ResolvedBodyData,
+pub(crate) struct PatternBindingMaterializationPass<'query, 'body, D, I> {
+    def_maps: &'query D,
+    item_stores: &'query I,
+    semantic_index: &'query ItemLookupIndex,
+    body_ref: rg_ir_model::BodyRef,
+    trait_selection_cache: &'query TraitSelectionCache,
+    body: &'body mut LoweredBodyData,
 }
 
 impl<'query, 'body, D, I> PatternBindingMaterializationPass<'query, 'body, D, I>
@@ -48,30 +50,48 @@ where
     for<'source> &'source D: DefMapSource<Error = PackageStoreError>,
     for<'source> &'source I: ItemStoreSource<'source, Error = PackageStoreError>,
 {
-    pub(super) fn new(
-        env: BodyResolutionEnv<'query, D, I>,
-        body: &'body mut ResolvedBodyData,
+    pub(crate) fn new(
+        def_maps: &'query D,
+        item_stores: &'query I,
+        semantic_index: &'query ItemLookupIndex,
+        body_ref: rg_ir_model::BodyRef,
+        body: &'body mut LoweredBodyData,
+        trait_selection_cache: &'query TraitSelectionCache,
     ) -> Self {
-        Self { env, body }
+        Self {
+            def_maps,
+            item_stores,
+            semantic_index,
+            body_ref,
+            trait_selection_cache,
+            body,
+        }
     }
 
     fn context<'source>(&'source self) -> BodyResolutionContext<'source, &'source D, &'source I> {
-        self.env.context(&*self.body)
+        BodyResolutionContext::for_structure(
+            self.def_maps,
+            self.item_stores,
+            self.body_ref,
+            self.body.body(),
+            self.semantic_index,
+        )
+        .with_trait_selection_cache(self.trait_selection_cache)
     }
 
-    /// Materializes all pending binding candidates, leaving the body in its final binding shape.
-    pub(super) fn materialize(&mut self) -> Result<(), PackageStoreError> {
-        if self.body.pending_binding_resolutions.is_empty() {
+    /// Materializes all pending binding candidates into the final structural body.
+    pub(crate) fn materialize(self) -> Result<(), PackageStoreError> {
+        if !self.body.has_pending_bindings() {
             return Ok(());
         }
 
         // `active` is indexed by the original pending binding ids. We keep this temporary view
         // while lookup still needs source-order visibility against the lowered scope lists.
-        let pending_count = self.body.bindings().len();
+        let pending_count = self.body.body().bindings().len();
         let mut active = Vec::with_capacity(pending_count);
         for binding_idx in 0..pending_count {
             let binding = BindingId(binding_idx);
-            let is_active = match self.body.pending_binding_resolutions[binding] {
+            let is_active = match self.body.pending_binding_resolution(binding) {
                 PendingBindingResolution::AlwaysBinding => true,
                 PendingBindingResolution::AmbiguousPattern => {
                     !self.ambiguous_pattern_binding_resolves_as_value(binding, &active)?
@@ -84,14 +104,14 @@ where
         // pattern input, so run that pass after the first active binding set exists.
         let pending_tys = self.pending_binding_tys(&active)?;
         self.deactivate_unit_variant_pattern_bindings(&mut active, &pending_tys)?;
-        self.body.compact_bindings(active);
+        self.body.compact_bindings(&active);
         Ok(())
     }
 
     /// Returns binding types in the pending-id space used during materialization.
     fn pending_binding_tys(&self, active: &[bool]) -> Result<Vec<Ty>, PackageStoreError> {
-        let mut tys = Vec::with_capacity(self.body.bindings().len());
-        for binding_idx in 0..self.body.bindings().len() {
+        let mut tys = Vec::with_capacity(self.body.body().bindings().len());
+        for binding_idx in 0..self.body.body().bindings().len() {
             let binding = BindingId(binding_idx);
             if active.get(binding_idx).copied().unwrap_or(false) {
                 tys.push(self.binding_ty(binding)?);
@@ -110,7 +130,7 @@ where
         // A bare `None` cannot be recognized from value lookup alone unless it is written as a
         // full path. The input type of `match value` or `let pat: Ty = ...` gives enough context to
         // interpret single-segment unit variants without returning to capitalization heuristics.
-        for statement in self.body.statements().iter() {
+        for statement in self.body.body().statements().iter() {
             let StmtKind::Let {
                 scope,
                 pat: Some(pat),
@@ -132,9 +152,9 @@ where
             self.deactivate_unit_variant_bindings_in_pat(*pat, &expected_ty, active)?;
         }
 
-        for expr_idx in 0..self.body.exprs().len() {
+        for expr_idx in 0..self.body.body().exprs().len() {
             let expr = ExprId(expr_idx);
-            match &self.body.expr_unchecked(expr).kind {
+            match &self.body.body().expr_unchecked(expr).kind {
                 ExprKind::Match { scrutinee, arms } => {
                     let expected_ty = scrutinee
                         .map(|scrutinee| self.pending_expr_ty(scrutinee, active, pending_tys))
@@ -199,15 +219,15 @@ where
         active: &[bool],
         pending_tys: &[Ty],
     ) -> Result<Ty, PackageStoreError> {
-        match &self.body.expr_unchecked(expr).kind {
+        match &self.body.body().expr_unchecked(expr).kind {
             ExprKind::Path { path } => {
                 let Some(path) = path.as_def_map_path() else {
                     return Ok(Ty::Unknown);
                 };
                 Ok(self
                     .pending_binding_ty_for_path(
-                        self.body.expr_unchecked(expr).scope,
-                        self.body.expr_unchecked(expr).visible_bindings,
+                        self.body.body().expr_unchecked(expr).scope,
+                        self.body.body().expr_unchecked(expr).visible_bindings,
                         &path,
                         active,
                         pending_tys,
@@ -221,7 +241,9 @@ where
                 // wrappers keeps common cases useful without trying to type-check the expression.
                 self.pending_expr_ty(*inner, active, pending_tys)
             }
-            _ => Ok(self.body.expr_ty_unchecked(expr).clone()),
+            // Materialization runs before body inference, so other expression forms have no
+            // semantic fact to consult yet.
+            _ => Ok(Ty::Unknown),
         }
     }
 
@@ -236,7 +258,7 @@ where
         let name = path.single_name()?;
         let mut scope = Some(start_scope);
         while let Some(scope_id) = scope {
-            let scope_data = self.body.scope(scope_id)?;
+            let scope_data = self.body.body().scope(scope_id)?;
             for binding in scope_data.bindings.iter().rev() {
                 if binding.0 >= visible_bindings {
                     continue;
@@ -244,7 +266,7 @@ where
                 if !active.get(binding.0).copied().unwrap_or(false) {
                     continue;
                 }
-                let Some(binding_data) = self.body.binding(*binding) else {
+                let Some(binding_data) = self.body.body().binding(*binding) else {
                     continue;
                 };
                 if binding_data.name.as_deref() == Some(name) {
@@ -268,7 +290,7 @@ where
             return Ok(());
         }
 
-        let Some(data) = self.body.pat(pat) else {
+        let Some(data) = self.body.body().pat(pat) else {
             return Ok(());
         };
         match &data.kind {
@@ -281,7 +303,7 @@ where
                 if let Some(binding) = binding
                     && active.get(binding.0).copied().unwrap_or(false)
                     && matches!(
-                        self.body.pending_binding_resolutions[*binding],
+                        self.body.pending_binding_resolution(*binding),
                         PendingBindingResolution::AmbiguousPattern
                     )
                     && path
@@ -467,7 +489,7 @@ where
         binding: BindingId,
         active: &[bool],
     ) -> Result<bool, PackageStoreError> {
-        let Some(binding_data) = self.body.binding(binding) else {
+        let Some(binding_data) = self.body.body().binding(binding) else {
             return Ok(false);
         };
         let Some(name) = binding_data.name.as_deref() else {
@@ -505,7 +527,7 @@ where
         // Check the body-local lexical module first, then the owner/fallback modules used by
         // ordinary body lookup. This keeps body-local consts visible without losing crate items.
         let from = ModuleRef {
-            origin: DefMapRef::Body(self.env.body_ref()),
+            origin: DefMapRef::Body(self.body_ref),
             module: ModuleId(scope.0),
         };
         let def_maps = self.context().def_map_query();
@@ -517,7 +539,7 @@ where
             return Ok(true);
         }
 
-        let owner_module = self.body.owner_module();
+        let owner_module = self.body.body().owner_module();
         let owner_defs = def_maps
             .scope_resolver()
             .resolve_path(owner_module, path, NamespaceSet::VALUES)?
@@ -526,7 +548,7 @@ where
             return Ok(true);
         }
 
-        let fallback_module = self.body.fallback_module();
+        let fallback_module = self.body.body().fallback_module();
         if fallback_module == owner_module {
             return Ok(false);
         }
@@ -571,7 +593,7 @@ where
     ) -> bool {
         let mut scope = Some(start_scope);
         while let Some(scope_id) = scope {
-            let Some(scope_data) = self.body.scope(scope_id) else {
+            let Some(scope_data) = self.body.body().scope(scope_id) else {
                 return false;
             };
 
@@ -583,7 +605,7 @@ where
                     continue;
                 }
 
-                let Some(candidate_data) = self.body.binding(*candidate) else {
+                let Some(candidate_data) = self.body.body().binding(*candidate) else {
                     continue;
                 };
                 if candidate_data.name.as_deref() == Some(name) {
@@ -606,13 +628,16 @@ where
     }
 
     fn binding_ty(&self, binding: BindingId) -> Result<Ty, PackageStoreError> {
-        let binding_data = self.body.binding_unchecked(binding);
+        let binding_data = self.body.body().binding_unchecked(binding);
         if matches!(
             binding_data.kind,
             BindingKind::Param | BindingKind::SelfParam(_)
-        ) && let Some(function) = self.body.function_owner()
-            && let Some(param_index) = self.body.function_param_index_for_binding(binding)
-            && self.body.function_params()[param_index].bindings.len() == 1
+        ) && let Some(function) = self.body.body().owner().function()
+            && let Some(param_index) = self.body.body().function_param_index_for_binding(binding)
+            && self.body.body().function_params()[param_index]
+                .bindings
+                .len()
+                == 1
             && let Some(signature) = self.context().signatures().function(function)?
             && let Some(param_ty) = signature.params.get(param_index)
             && !matches!(param_ty, Ty::Unknown)
@@ -629,7 +654,7 @@ where
 
         if let BindingKind::SelfParam(kind) = binding_data.kind
             && binding_data.name.as_deref() == Some("self")
-            && let Some(function) = self.body.function_owner()
+            && let Some(function) = self.body.body().owner().function()
         {
             let ty = self
                 .context()

@@ -1,6 +1,6 @@
 use rg_ir_model::{PatId, ScopeId};
 
-use crate::{PatData, PatKind, ResolvedBodyData};
+use crate::{BodyView, PatData, PatKind};
 
 /// One pattern node reached by structural pattern traversal.
 ///
@@ -14,7 +14,7 @@ pub(crate) struct PatWalkSite<'body> {
 
 /// Walks a lowered pattern root and all child pattern nodes.
 pub(crate) fn walk_pat<'body>(
-    body: &'body ResolvedBodyData,
+    body: BodyView<'body>,
     scope: ScopeId,
     pat: PatId,
     visit: &mut impl FnMut(PatWalkSite<'body>),

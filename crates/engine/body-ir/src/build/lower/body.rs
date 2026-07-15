@@ -8,7 +8,7 @@ use rg_ir_model::{BodyMacroCallData, CrateRef, ExprId, LocalDefRef, ModuleRef, S
 use rg_parse::LineIndex;
 use rg_text::NameInterner;
 
-use crate::ir::{BodyBuilder, BodyOwner, BodySource, ExprData, ExprKind, ResolvedBodyData};
+use crate::ir::{BodyBuilder, BodyOwner, BodySource, ExprData, ExprKind, LoweredBodyData};
 
 use super::{macro_expansion::BodyMacroExpansionContext, syntax::source_for};
 
@@ -72,7 +72,7 @@ impl<'a> BodyLowering<'a> {
         mut self,
         function: ast::Fn,
         body: ast::BlockExpr,
-    ) -> ResolvedBodyData {
+    ) -> LoweredBodyData {
         // Parameters live in the function's outer lexical scope. The body block gets a child scope
         // so locals do not appear before the function boundary.
         let param_scope = self.builder.alloc_scope(None);
@@ -83,7 +83,7 @@ impl<'a> BodyLowering<'a> {
             .collect();
         let root_expr = self.lower_block_expr(body, param_scope);
 
-        ResolvedBodyData::new(
+        self.builder.finish(
             self.owner,
             self.owner_module,
             self.fallback_module,
@@ -92,18 +92,17 @@ impl<'a> BodyLowering<'a> {
             root_expr,
             function_params,
             params,
-            self.builder,
         )
     }
 
-    pub(super) fn lower_initializer(mut self, expr: ast::Expr) -> ResolvedBodyData {
+    pub(super) fn lower_initializer(mut self, expr: ast::Expr) -> LoweredBodyData {
         // Item initializers are expression bodies without parameters. They still need a root scope
         // so ordinary body path resolution, type paths, and source scans can use the same pipeline
         // as function bodies.
         let root_scope = self.builder.alloc_scope(None);
         let root_expr = self.lower_expr(expr, root_scope);
 
-        ResolvedBodyData::new(
+        self.builder.finish(
             self.owner,
             self.owner_module,
             self.fallback_module,
@@ -112,7 +111,6 @@ impl<'a> BodyLowering<'a> {
             root_expr,
             Vec::new(),
             Vec::new(),
-            self.builder,
         )
     }
 }

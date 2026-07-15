@@ -420,7 +420,8 @@ where
     }
 
     fn fn_def_arg_ty(&self, arg: ExprId) -> Result<Option<Ty>, PackageStoreError> {
-        let BodyResolution::Declarations(declarations) = self.context.body().expr_resolution(arg)
+        let BodyResolution::Declarations(declarations) =
+            self.context.resolved_body().expr_resolution(arg)
         else {
             return Ok(None);
         };

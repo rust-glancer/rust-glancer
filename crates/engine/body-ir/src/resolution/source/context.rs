@@ -13,7 +13,7 @@ use rg_ty::{
     TraitSelectionCache, TraitSelectionQuery, TypeLoweringAnchor, TypePathResolver,
 };
 
-use crate::ir::body::ResolvedBodyData;
+use crate::{BodyData, BodyView};
 
 use crate::resolution::query::{
     BodyAssociatedItemQuery, BodyCallQuery, BodyFieldQuery, BodyFunctionQuery, BodyGenericsQuery,
@@ -35,7 +35,7 @@ impl<'a, D, I> BodyResolutionContext<'a, D, I> {
         def_maps: D,
         item_stores: I,
         body_ref: BodyRef,
-        body: &'a ResolvedBodyData,
+        body: BodyView<'a>,
         semantic_index: &'a ItemLookupIndex,
     ) -> Self {
         Self {
@@ -45,27 +45,38 @@ impl<'a, D, I> BodyResolutionContext<'a, D, I> {
         }
     }
 
-    pub(crate) fn with_trait_selection_cache(
+    pub(crate) fn for_structure(
         def_maps: D,
         item_stores: I,
         body_ref: BodyRef,
-        body: &'a ResolvedBodyData,
+        body: &'a BodyData,
         semantic_index: &'a ItemLookupIndex,
-        trait_selection_cache: &'a TraitSelectionCache,
     ) -> Self {
         Self {
-            source: BodyQuerySource::new(def_maps, item_stores, body_ref, body),
+            source: BodyQuerySource::for_structure(def_maps, item_stores, body_ref, body),
             semantic_index,
-            trait_selection_cache: Some(trait_selection_cache),
+            trait_selection_cache: None,
         }
+    }
+
+    pub(crate) fn with_trait_selection_cache(
+        mut self,
+        trait_selection_cache: &'a TraitSelectionCache,
+    ) -> Self {
+        self.trait_selection_cache = Some(trait_selection_cache);
+        self
     }
 
     pub(crate) fn body_ref(&self) -> BodyRef {
         self.source.body_ref()
     }
 
-    pub(crate) fn body(&self) -> &'a ResolvedBodyData {
+    pub(crate) fn body(&self) -> &'a BodyData {
         self.source.body()
+    }
+
+    pub(crate) fn resolved_body(&self) -> BodyView<'a> {
+        self.source.resolved_body()
     }
 
     pub(crate) fn semantic_index(&self) -> &'a ItemLookupIndex {

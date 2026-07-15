@@ -223,7 +223,7 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
     /// returns `user` for a path expression, `push` for `items.push(value)`, and `name` for
     /// `user.name`; literals and operators return `None`.
     pub fn expr_source_label(&self, expr: ExprRef) -> anyhow::Result<Option<String>> {
-        let Some(body_data) = self.db.body_ir.body_data(expr.body_ir())? else {
+        let Some(body_data) = self.db.body_ir.body(expr.body_ir())? else {
             return Ok(None);
         };
         let Some(expr_data) = body_data.expr(expr.expr_id()) else {
@@ -408,7 +408,7 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
         let span = candidate.span();
         let occurrence = match candidate {
             BodyCursorCandidate::Body { body, .. } => {
-                let Some(data) = self.db.body_ir.body_data(body)? else {
+                let Some(data) = self.db.body_ir.body(body)? else {
                     return Ok(None);
                 };
                 if !data.source().is_written() {
@@ -431,7 +431,7 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
                 ..
             } => {
                 let declaration = DeclarationRef::body_binding(BodyBindingRef { body, binding });
-                if let Some(body_data) = self.db.body_ir.body_data(body)?
+                if let Some(body_data) = self.db.body_ir.body(body)?
                     && let Some(data) = body_data.binding(binding)
                     && !data.source.is_written()
                 {
@@ -447,7 +447,7 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
                         pat_span,
                         binding_name_span,
                     } => {
-                        let file_id = match self.db.body_ir.body_data(body)? {
+                        let file_id = match self.db.body_ir.body(body)? {
                             Some(body_data) => match body_data.binding(binding) {
                                 Some(data) => data.source.file_id,
                                 None => {
@@ -480,7 +480,7 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
                 }
             }
             BodyCursorCandidate::Expr { body, expr, .. } => {
-                let file_id = match self.db.body_ir.body_data(body)? {
+                let file_id = match self.db.body_ir.body(body)? {
                     Some(body_data) => match body_data.expr(expr) {
                         Some(data) if data.source.is_written() => data.source.file_id,
                         Some(_) => return Ok(None),

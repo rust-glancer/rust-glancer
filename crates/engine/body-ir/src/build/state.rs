@@ -1,6 +1,7 @@
 //! Crate-local mutable state used while Body IR resolution is assembled.
 
 use anyhow::Context as _;
+use rg_arena::Arena;
 use rg_cfg_eval::CfgEvaluator;
 use rg_def_map::DefMapReadTxn;
 use rg_ir_model::{
@@ -14,14 +15,15 @@ use rg_text::NameInterner;
 use rg_ty::TraitSelectionCache;
 
 use crate::{
-    BodyLocalItems, BodyOwner, CrateBodies,
+    BodyFacts, BodyLocalItems, BodyOwner, CrateBodies,
     resolution::{BodyResolutionContext, BodyResolutionPass},
 };
 
 use super::{
     body_def_map::BodyDefMapCollector,
     body_item_store::BodyItemStoreCollector,
-    lower::{BodyLoweringTask, BodyMacroExpansion, BodyTaskLowering},
+    lower::{BodyLoweringTask, BodyMacroExpansion, BodyTaskLowering, LoweredCrateBodies},
+    pattern_binding::PatternBindingMaterializationPass,
     query_source::BodyBuildQuerySource,
 };
 
@@ -29,8 +31,9 @@ use super::{
 pub(super) struct CrateBodyBuildState<'crate_data> {
     crate_ref: CrateRef,
     parse_package: &'crate_data rg_parse::Package,
-    crate_bodies: &'crate_data mut CrateBodies,
-    body_local_items: Vec<Option<BodyLocalItems>>,
+    crate_bodies: LoweredCrateBodies,
+    body_facts: Arena<BodyId, BodyFacts>,
+    body_local_items: Arena<BodyId, Option<BodyLocalItems>>,
     interner: &'crate_data mut NameInterner,
 }
 
@@ -38,14 +41,15 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
     pub(super) fn new(
         crate_ref: CrateRef,
         parse_package: &'crate_data rg_parse::Package,
-        crate_bodies: &'crate_data mut CrateBodies,
+        crate_bodies: LoweredCrateBodies,
         interner: &'crate_data mut NameInterner,
     ) -> Self {
         Self {
             crate_ref,
             parse_package,
             crate_bodies,
-            body_local_items: Vec::new(),
+            body_facts: Arena::new(),
+            body_local_items: Arena::new(),
             interner,
         }
     }
@@ -54,7 +58,7 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
         mut self,
         def_map: &DefMapReadTxn<'_>,
         semantic_ir: &SemanticIrReadTxn<'_>,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<CrateBodies> {
         // Before resolving bodies on the expr level, we need to collect
         // the items declared within the body, and we need to match `impl`
         // blocks to their corresponding `Self` types.
@@ -67,15 +71,30 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
         let semantic_index = ItemLookupIndex::build_from(&crate_items)?;
         self.resolve_body_local_impl_headers(def_map, semantic_ir, &semantic_index)?;
 
+        // Identifier patterns are the last source ambiguity in structural Body IR. Resolve and
+        // compact them before the ordinary body pass receives its immutable `BodyData`.
+        let trait_selection_cache = TraitSelectionCache::default();
+        self.materialize_pattern_bindings(
+            def_map,
+            semantic_ir,
+            &semantic_index,
+            &trait_selection_cache,
+        )?;
+
+        // Semantic sidecars begin only after every structural ID has reached its final value.
+        self.initialize_body_facts();
+
         // Do a pass on resolving body expressions.
-        self.resolve_bodies(def_map, semantic_ir, &semantic_index)?;
-        self.crate_bodies.set_semantic_index(semantic_index);
+        self.resolve_bodies(
+            def_map,
+            semantic_ir,
+            &semantic_index,
+            &trait_selection_cache,
+        )?;
 
         // Finalize the build state, e.g. associate each body with its corresponding
         // defmap/item store.
-        self.finish();
-
-        Ok(())
+        Ok(self.finish(semantic_index))
     }
 
     // Walk every known body, collecting local facts and lowering newly discovered nested bodies.
@@ -107,32 +126,47 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
         );
         let mut macro_expansion = BodyMacroExpansion::new(self.parse_package, def_map, cfg);
         while self.body_local_items.len() < self.crate_bodies.bodies().len() {
-            let body_idx = self.body_local_items.len();
-            let body_ref = self.body_ref(body_idx);
-            let items = self.collect_body_local_items(body_idx, def_map, semantic_ir)?;
-            let fallback_module = self.crate_bodies.bodies()[body_idx].fallback_module();
+            let body = self.body_local_items.next_id();
+            let body_ref = self.body_ref(body);
+            let items = self.collect_body_local_items(body, def_map, semantic_ir)?;
+            let fallback_module = self.crate_bodies.bodies()[body].body().fallback_module();
             let nested_tasks =
                 Self::nested_body_tasks(body_ref, fallback_module, items.item_store());
-            self.body_local_items.push(Some(items));
+            let allocated = self.body_local_items.alloc(Some(items));
+            debug_assert_eq!(allocated, body);
 
             if !nested_tasks.is_empty() {
-                BodyTaskLowering::new(self.parse_package, self.crate_bodies, cfg, self.interner)
-                    .lower_tasks(&nested_tasks, &mut macro_expansion)?;
+                BodyTaskLowering::new(
+                    self.parse_package,
+                    &mut self.crate_bodies,
+                    cfg,
+                    self.interner,
+                )
+                .lower_tasks(&nested_tasks, &mut macro_expansion)?;
             }
         }
 
         Ok(())
     }
 
+    /// Allocate semantic sidecars after every body and binding id has reached its final value.
+    fn initialize_body_facts(&mut self) {
+        debug_assert!(self.body_facts.is_empty());
+        for (body, data) in self.crate_bodies.bodies().iter_with_ids() {
+            let allocated = self.body_facts.alloc(BodyFacts::for_body(data.body()));
+            debug_assert_eq!(allocated, body);
+        }
+    }
+
     // Collects the local items within a single already-lowered body.
     fn collect_body_local_items(
         &self,
-        body_idx: usize,
+        body: BodyId,
         def_map: &DefMapReadTxn<'_>,
         semantic_ir: &SemanticIrReadTxn<'_>,
     ) -> anyhow::Result<BodyLocalItems> {
-        let body_ref = self.body_ref(body_idx);
-        let body = &self.crate_bodies.bodies()[body_idx];
+        let body_ref = self.body_ref(body);
+        let body = self.crate_bodies.bodies()[body].body();
 
         // Finalization can see previously collected body-local DefMaps. This is what lets nested
         // bodies import names from the body scope that declared them.
@@ -228,11 +262,11 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
         semantic_ir: &SemanticIrReadTxn<'_>,
         semantic_index: &ItemLookupIndex,
     ) -> anyhow::Result<()> {
-        for body_idx in 0..self.crate_bodies.bodies().len() {
-            let body_ref = self.body_ref(body_idx);
-            let body = &self.crate_bodies.bodies()[body_idx];
+        for (body_id, lowered_body) in self.crate_bodies.bodies().iter_with_ids() {
+            let body_ref = self.body_ref(body_id);
+            let body = lowered_body.body();
             let resolved_headers = {
-                let Some(items) = self.body_local_items.get(body_idx).and_then(Option::as_ref)
+                let Some(items) = self.body_local_items.get(body_id).and_then(Option::as_ref)
                 else {
                     continue;
                 };
@@ -257,8 +291,13 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
                     self.crate_ref,
                     &self.body_local_items,
                 );
-                let context =
-                    BodyResolutionContext::new(&source, &source, body_ref, body, semantic_index);
+                let context = BodyResolutionContext::for_structure(
+                    &source,
+                    &source,
+                    body_ref,
+                    body,
+                    semantic_index,
+                );
                 let type_paths = context.type_path_query();
                 let mut resolved_headers = Vec::new();
                 for (impl_id, owner, self_ty, trait_ref) in impl_headers {
@@ -291,7 +330,7 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
 
             let Some(items) = self
                 .body_local_items
-                .get_mut(body_idx)
+                .get_mut(body_id)
                 .and_then(Option::as_mut)
             else {
                 continue;
@@ -299,6 +338,36 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
             for (impl_id, resolved_self_ty, resolved_trait_ref) in resolved_headers {
                 let _ = items.set_impl_header_facts(impl_id, resolved_self_ty, resolved_trait_ref);
             }
+        }
+
+        Ok(())
+    }
+
+    fn materialize_pattern_bindings(
+        &mut self,
+        def_map: &DefMapReadTxn<'_>,
+        semantic_ir: &SemanticIrReadTxn<'_>,
+        semantic_index: &ItemLookupIndex,
+        trait_selection_cache: &TraitSelectionCache,
+    ) -> anyhow::Result<()> {
+        let source =
+            BodyBuildQuerySource::new(def_map, semantic_ir, self.crate_ref, &self.body_local_items);
+        let crate_ref = self.crate_ref;
+
+        for (body_id, body) in self.crate_bodies.bodies_mut().iter_mut_with_ids() {
+            let body_ref = BodyRef {
+                crate_ref,
+                body: body_id,
+            };
+            PatternBindingMaterializationPass::new(
+                &source,
+                &source,
+                semantic_index,
+                body_ref,
+                body,
+                trait_selection_cache,
+            )
+            .materialize()?;
         }
 
         Ok(())
@@ -312,50 +381,66 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
         def_map: &DefMapReadTxn<'_>,
         semantic_ir: &SemanticIrReadTxn<'_>,
         semantic_index: &ItemLookupIndex,
+        trait_selection_cache: &TraitSelectionCache,
     ) -> anyhow::Result<()> {
         // Make the body resolution pass aware of body-local items.
         let source =
             BodyBuildQuerySource::new(def_map, semantic_ir, self.crate_ref, &self.body_local_items);
         let crate_ref = self.crate_ref;
-        let crate_bodies = &mut *self.crate_bodies;
-        let trait_selection_cache = TraitSelectionCache::default();
 
-        for (body_idx, body) in crate_bodies.bodies_mut().iter_mut().enumerate() {
+        for (body_id, body) in self.crate_bodies.bodies().iter_with_ids() {
             let body_ref = BodyRef {
                 crate_ref,
-                body: BodyId(body_idx),
+                body: body_id,
             };
-            BodyResolutionPass::new(
+            let facts = std::mem::take(&mut self.body_facts[body_id]);
+            self.body_facts[body_id] = BodyResolutionPass::new(
                 &source,
                 &source,
                 semantic_index,
                 body_ref,
-                body,
-                &trait_selection_cache,
-            )?
+                body.body(),
+                facts,
+                trait_selection_cache,
+            )
             .resolve()?;
         }
 
         Ok(())
     }
 
-    fn finish(mut self) {
-        let mut body_local_items = Vec::with_capacity(self.body_local_items.len());
-        for body_idx in 0..self.crate_bodies.bodies().len() {
-            let items = self
-                .body_local_items
-                .get_mut(body_idx)
-                .and_then(Option::take)
+    fn finish(mut self, semantic_index: ItemLookupIndex) -> CrateBodies {
+        let mut body_local_items = Arena::with_capacity(self.body_local_items.len());
+        for (body, items) in self.body_local_items.iter_mut_with_ids() {
+            let items = items
+                .take()
                 .expect("every built body should have collected body-local items");
-            body_local_items.push(items);
+            let allocated = body_local_items.alloc(items);
+            debug_assert_eq!(allocated, body);
         }
-        self.crate_bodies.set_body_local_items(body_local_items);
+        let coverage = self.crate_bodies.coverage();
+        let bodies = Arena::from_vec(
+            self.crate_bodies
+                .into_bodies()
+                .into_vec()
+                .into_iter()
+                .map(|body| body.into_body())
+                .collect(),
+        );
+
+        CrateBodies::from_build(
+            coverage,
+            semantic_index,
+            bodies,
+            self.body_facts,
+            body_local_items,
+        )
     }
 
-    fn body_ref(&self, body_idx: usize) -> BodyRef {
+    fn body_ref(&self, body: BodyId) -> BodyRef {
         BodyRef {
             crate_ref: self.crate_ref,
-            body: BodyId(body_idx),
+            body,
         }
     }
 }

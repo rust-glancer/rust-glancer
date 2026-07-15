@@ -94,7 +94,7 @@ impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
         &self,
         binding_ref: BodyBindingRef,
     ) -> anyhow::Result<Option<DeclarationDetails>> {
-        let Some(body) = self.db.body_ir.body_data(binding_ref.body)? else {
+        let Some(body) = self.db.body_ir.body(binding_ref.body)? else {
             return Ok(None);
         };
         let Some(binding_data) = body.binding(binding_ref.binding) else {

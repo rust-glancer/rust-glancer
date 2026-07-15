@@ -4,10 +4,9 @@ use expect_test::Expect;
 
 use crate::ir::resolved::BodyResolution;
 use crate::{
-    BindingData, BodyIrBuildPolicy, BodyIrLoader, BodyIrReadTxn, BodyOwner, BodySource,
+    BindingData, BodyIrBuildPolicy, BodyIrLoader, BodyIrReadTxn, BodyOwner, BodySource, BodyView,
     ClosureCapture, ClosureKind, ClosureParamData, CrateBodiesStatus, ExprBlockKind, ExprData,
-    ExprKind, LabelData, PatBindingMode, PatData, PatKind, ResolvedBodyData, StmtKind,
-    testonly::BodyIrFixture,
+    ExprKind, LabelData, PatBindingMode, PatData, PatKind, StmtKind, testonly::BodyIrFixture,
 };
 use rg_def_map::ModuleOrigin;
 use rg_ir_model::items::FieldItem;
@@ -152,8 +151,7 @@ impl CrateBodyIrSnapshot<'_> {
 
         // Body IDs encode the order bodies were materialized. Rendering in that order keeps
         // multi-body snapshots readable once nested const/static initializer bodies appear.
-        for (idx, body) in crate_bodies.bodies().iter().enumerate() {
-            let body_id = BodyId(idx);
+        for (idx, (body_id, body)) in crate_bodies.body_views().enumerate() {
             if idx == 0 {
                 dump.push('\n');
             } else {
@@ -180,8 +178,7 @@ impl CrateBodyIrSnapshot<'_> {
             return dump;
         }
 
-        for (idx, body) in crate_bodies.bodies().iter().enumerate() {
-            let body_id = BodyId(idx);
+        for (idx, (body_id, body)) in crate_bodies.body_views().enumerate() {
             if idx == 0 {
                 dump.push('\n');
             } else {
@@ -193,7 +190,7 @@ impl CrateBodyIrSnapshot<'_> {
         dump
     }
 
-    fn render_body(&self, body: &ResolvedBodyData, body_id: BodyId, dump: &mut String) {
+    fn render_body(&self, body: BodyView<'_>, body_id: BodyId, dump: &mut String) {
         writeln!(
             dump,
             "body b{} {} @ {}",
@@ -252,7 +249,7 @@ impl CrateBodyIrSnapshot<'_> {
         self.render_expr(body, body.root_expr(), 0, dump);
     }
 
-    fn render_body_patterns(&self, body: &ResolvedBodyData, body_id: BodyId, dump: &mut String) {
+    fn render_body_patterns(&self, body: BodyView<'_>, body_id: BodyId, dump: &mut String) {
         writeln!(
             dump,
             "body b{} {} @ {}",
@@ -295,7 +292,7 @@ impl CrateBodyIrSnapshot<'_> {
 
     fn render_binding(
         &self,
-        body: &ResolvedBodyData,
+        body: BodyView<'_>,
         id: BindingId,
         binding: &BindingData,
         dump: &mut String,
@@ -447,7 +444,7 @@ impl CrateBodyIrSnapshot<'_> {
 
     fn render_statement(
         &self,
-        body: &ResolvedBodyData,
+        body: BodyView<'_>,
         statement: StmtId,
         depth: usize,
         dump: &mut String,
@@ -532,7 +529,7 @@ impl CrateBodyIrSnapshot<'_> {
         }
     }
 
-    fn render_expr(&self, body: &ResolvedBodyData, expr: ExprId, depth: usize, dump: &mut String) {
+    fn render_expr(&self, body: BodyView<'_>, expr: ExprId, depth: usize, dump: &mut String) {
         let data = body
             .expr(expr)
             .expect("expr id should exist while rendering body IR");

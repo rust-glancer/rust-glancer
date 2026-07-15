@@ -14,9 +14,11 @@ use rg_semantic_ir::ItemStoreQuery;
 use rg_semantic_ir::SemanticIrReadTxn;
 use rg_text::NameInterner;
 
-use crate::{BodyOwner, CrateBodies};
+use crate::BodyOwner;
 
-use super::{BodyMacroExpansion, task::BodyLoweringTask, task::BodyTaskLowering};
+use super::{
+    BodyMacroExpansion, LoweredCrateBodies, task::BodyLoweringTask, task::BodyTaskLowering,
+};
 use crate::build::materialization::BodyIrMaterialization;
 
 type FunctionLoweringTarget = (FunctionRef, FileId, Span);
@@ -32,13 +34,13 @@ pub(super) struct CrateLowering<'a> {
     pub(super) functions: Vec<FunctionLoweringTarget>,
     pub(super) consts: Vec<ConstLoweringTarget>,
     pub(super) statics: Vec<StaticLoweringTarget>,
-    pub(super) crate_bodies: CrateBodies,
+    pub(super) crate_bodies: LoweredCrateBodies,
     pub(super) cfg: CfgEvaluator<'a>,
     pub(super) interner: &'a mut NameInterner,
 }
 
 impl<'a> CrateLowering<'a> {
-    pub(super) fn lower(mut self) -> anyhow::Result<CrateBodies> {
+    pub(super) fn lower(mut self) -> anyhow::Result<LoweredCrateBodies> {
         let tasks = self.selected_body_tasks()?;
         let mut macro_expansion =
             BodyMacroExpansion::new(self.parse_package, self.def_map, self.cfg);
@@ -55,7 +57,7 @@ impl<'a> CrateLowering<'a> {
     /// Converts crate semantic items into the same task shape used by nested body discovery.
     ///
     /// Body IDs are assigned in lowering order, not from Semantic IR item IDs. Resolve a body by
-    /// inspecting `ResolvedBodyData::owner`; never cast item IDs to `BodyId`.
+    /// inspecting `BodyData::owner`; never cast item IDs to `BodyId`.
     fn selected_body_tasks(&self) -> anyhow::Result<Vec<BodyLoweringTask>> {
         let mut tasks = Vec::new();
 

@@ -15,19 +15,58 @@ mod task;
 use anyhow::Context as _;
 use rayon::prelude::*;
 
+use rg_arena::Arena;
 use rg_cfg_eval::CfgEvaluator;
 use rg_def_map::{DefMapReadTxn, PackageSlot};
-use rg_ir_model::{ConstRef, CrateId, CrateRef, StaticRef};
+use rg_ir_model::{BodyId, ConstRef, CrateId, CrateRef, StaticRef};
 use rg_parse::ParseDb;
 use rg_semantic_ir::SemanticIrReadTxn;
 use rg_text::{NameInterner, PackageNameInterners};
 
-use crate::{BodyIrBuildPolicy, CrateBodies, CrateBodiesCoverage, PackageBodies};
+use crate::{BodyIrBuildPolicy, CrateBodiesCoverage, ir::LoweredBodyData};
 
 use self::crate_lowering::CrateLowering;
 pub(super) use self::macro_expansion::BodyMacroExpansion;
 pub(super) use self::task::{BodyLoweringTask, BodyTaskLowering};
 use super::{local_thread_pool, materialization::BodyIrMaterialization};
+
+/// Package-local structural lowering output. Semantic facts are intentionally absent here.
+pub(super) type LoweredPackageBodies = Vec<LoweredCrateBodies>;
+
+/// Crate-local bodies that still retain source-ambiguous pattern binding candidates.
+pub(super) struct LoweredCrateBodies {
+    coverage: CrateBodiesCoverage,
+    bodies: Arena<BodyId, LoweredBodyData>,
+}
+
+impl LoweredCrateBodies {
+    pub(super) fn with_coverage(coverage: CrateBodiesCoverage) -> Self {
+        Self {
+            coverage,
+            bodies: Arena::new(),
+        }
+    }
+
+    pub(super) fn coverage(&self) -> CrateBodiesCoverage {
+        self.coverage
+    }
+
+    pub(super) fn bodies(&self) -> &Arena<BodyId, LoweredBodyData> {
+        &self.bodies
+    }
+
+    pub(super) fn bodies_mut(&mut self) -> &mut Arena<BodyId, LoweredBodyData> {
+        &mut self.bodies
+    }
+
+    pub(super) fn alloc_body(&mut self, body: LoweredBodyData) -> BodyId {
+        self.bodies.alloc(body)
+    }
+
+    pub(super) fn into_bodies(self) -> Arena<BodyId, LoweredBodyData> {
+        self.bodies
+    }
+}
 
 pub(super) fn build_packages(
     parse: &ParseDb,
@@ -36,7 +75,7 @@ pub(super) fn build_packages(
     package_count: usize,
     policy: BodyIrBuildPolicy,
     interners: &mut PackageNameInterners,
-) -> anyhow::Result<Vec<PackageBodies>> {
+) -> anyhow::Result<Vec<LoweredPackageBodies>> {
     validate_package_inputs(parse, package_count, interners)?;
 
     let selected = vec![true; package_count];
@@ -65,7 +104,7 @@ pub(super) fn build_selected_packages(
     scope: BodyIrMaterialization<'_>,
     package_slots: &[PackageSlot],
     interners: &mut PackageNameInterners,
-) -> anyhow::Result<Vec<(PackageSlot, PackageBodies)>> {
+) -> anyhow::Result<Vec<(PackageSlot, LoweredPackageBodies)>> {
     validate_package_inputs(parse, parse.package_count(), interners)?;
     validate_selected_packages(parse.package_count(), package_slots)?;
     validate_selected_files(parse.package_count(), &scope)?;
@@ -101,7 +140,7 @@ fn build_package_outputs(
     scope: BodyIrMaterialization<'_>,
     interners: &mut PackageNameInterners,
     selected: &[bool],
-    packages: &mut [Option<PackageBodies>],
+    packages: &mut [Option<LoweredPackageBodies>],
 ) -> anyhow::Result<()> {
     anyhow::ensure!(
         selected.len() == parse.package_count(),
@@ -150,7 +189,7 @@ fn build_package_with_interner(
     scope: BodyIrMaterialization<'_>,
     package: PackageSlot,
     interner: &mut NameInterner,
-) -> anyhow::Result<PackageBodies> {
+) -> anyhow::Result<LoweredPackageBodies> {
     let package_ir = semantic_ir.package(package).with_context(|| {
         format!(
             "while attempting to fetch semantic IR package {} for body lowering",
@@ -233,13 +272,7 @@ fn build_package_with_interner(
             .collect::<Vec<_>>();
         let coverage = scope.crate_coverage(package, parse_package, &body_files);
         if !coverage.is_materialized() {
-            crates.push(match coverage {
-                CrateBodiesCoverage::Missing => CrateBodies::missing(),
-                CrateBodiesCoverage::SkippedByPolicy => CrateBodies::skipped_by_policy(),
-                CrateBodiesCoverage::Complete | CrateBodiesCoverage::Partial => {
-                    unreachable!("materialized body IR coverage should be lowered")
-                }
-            });
+            crates.push(LoweredCrateBodies::with_coverage(coverage));
             continue;
         }
 
@@ -254,7 +287,7 @@ fn build_package_with_interner(
                 functions,
                 consts,
                 statics,
-                crate_bodies: CrateBodies::with_coverage(coverage),
+                crate_bodies: LoweredCrateBodies::with_coverage(coverage),
                 cfg,
                 interner,
             }
@@ -263,7 +296,7 @@ fn build_package_with_interner(
         );
     }
 
-    Ok(PackageBodies::new(crates))
+    Ok(crates)
 }
 
 fn validate_package_inputs(

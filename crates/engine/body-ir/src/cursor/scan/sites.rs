@@ -13,7 +13,7 @@ use rg_item_tree::{
 use rg_parse::FileId;
 
 use crate::{
-    BodyPath, ExprKind, ResolvedBodyData, StmtKind,
+    BodyPath, BodyView, ExprKind, StmtKind,
     walk::{
         PatWalkSite, walk_body_path_type_refs as walk_embedded_body_path_type_refs,
         walk_generic_args_type_refs, walk_pat, walk_type_ref_paths,
@@ -66,11 +66,11 @@ pub(super) struct TypePathSite<'body> {
 
 /// Structural views over lowered body syntax used by cursor scans.
 pub(super) struct BodyScanSites<'body> {
-    body: &'body ResolvedBodyData,
+    body: BodyView<'body>,
 }
 
 impl<'body> BodyScanSites<'body> {
-    pub(super) fn new(body: &'body ResolvedBodyData) -> Self {
+    pub(super) fn new(body: BodyView<'body>) -> Self {
         Self { body }
     }
 

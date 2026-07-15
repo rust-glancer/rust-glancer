@@ -19,14 +19,14 @@
 
 use anyhow::Context as _;
 use rg_arena::{Arena, ArenaId as _};
-use rg_ir_model::{BodyId, CrateId};
+use rg_ir_model::{BodyData, BodyId, CrateId};
 use rg_parse::FileId;
 use rg_semantic_ir::ItemLookupIndex;
 use rg_std::MemorySize;
 use wincode::{SchemaRead, SchemaWrite};
 
 use super::{BodyLocalItems, CrateBodies, CrateBodiesCoverage, PackageBodies};
-use crate::ir::body::ResolvedBodyData;
+use crate::{BodyFacts, BodyView};
 
 impl PackageBodies {
     /// Build the small package directory read before any crate payload.
@@ -105,11 +105,11 @@ impl BodyFileShard {
         &self.entries
     }
 
-    pub fn body(&self, body: BodyId) -> Option<&ResolvedBodyData> {
+    pub fn body(&self, body: BodyId) -> Option<BodyView<'_>> {
         self.entries
             .iter()
             .find(|entry| entry.body == body)
-            .map(|entry| &entry.data)
+            .map(BodyFileEntry::view)
     }
 
     pub fn body_local_items(&self, body: BodyId) -> Option<&BodyLocalItems> {
@@ -120,14 +120,16 @@ impl BodyFileShard {
     }
 }
 
-/// One stable body id and the two payloads that must move with it.
+/// One stable body id and the payloads that must move with it.
 ///
-/// `ResolvedBodyData` and `BodyLocalItems` use the same `BodyId` in the resident representation.
-/// Keeping them in one shard entry prevents independently decoded arrays from drifting apart.
+/// `BodyData`, `BodyFacts`, and `BodyLocalItems` use the same `BodyId` in the resident
+/// representation. Keeping them in one shard entry prevents independently decoded arrays from
+/// drifting apart.
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
 pub struct BodyFileEntry {
     body: BodyId,
-    data: ResolvedBodyData,
+    data: BodyData,
+    facts: BodyFacts,
     local_items: BodyLocalItems,
 }
 
@@ -136,8 +138,8 @@ impl BodyFileEntry {
         self.body
     }
 
-    pub fn data(&self) -> &ResolvedBodyData {
-        &self.data
+    pub fn view(&self) -> BodyView<'_> {
+        BodyView::new(&self.data, &self.facts)
     }
 
     pub fn local_items(&self) -> &BodyLocalItems {
@@ -151,6 +153,11 @@ impl CrateBodies {
     /// The `body_files` arena preserves one entry per body id. The separate file list is sorted and
     /// deduplicated to make serialized output deterministic and shard iteration straightforward.
     pub fn manifest(&self) -> CrateBodiesManifest {
+        debug_assert_eq!(
+            self.bodies.len(),
+            self.facts.len(),
+            "every built body should have paired semantic facts",
+        );
         debug_assert_eq!(
             self.bodies.len(),
             self.body_local_items.len(),
@@ -184,6 +191,11 @@ impl CrateBodies {
             .map(|(body, data)| BodyFileEntry {
                 body,
                 data: data.clone(),
+                facts: self
+                    .facts
+                    .get(body)
+                    .expect("every built body should have paired semantic facts")
+                    .clone(),
                 local_items: self
                     .body_local_items
                     .get(body)
@@ -207,8 +219,10 @@ impl CrateBodies {
         // Start with the final dense shape, but leave every slot empty. Shard entries carry stable
         // body ids, so they can be placed directly rather than appended in file order.
         let mut bodies = Vec::with_capacity(manifest.body_count());
+        let mut facts = Vec::with_capacity(manifest.body_count());
         let mut body_local_items = Vec::with_capacity(manifest.body_count());
         bodies.resize_with(manifest.body_count(), || None);
+        facts.resize_with(manifest.body_count(), || None);
         body_local_items.resize_with(manifest.body_count(), || None);
 
         // Validate both sides of the routing relationship while filling the dense slots. Checking
@@ -235,7 +249,13 @@ impl CrateBodies {
                     "Body IR body {:?} is duplicated",
                     entry.body
                 );
+                anyhow::ensure!(
+                    entry.facts.is_aligned_with(&entry.data),
+                    "Body IR facts are not aligned with body {:?}",
+                    entry.body,
+                );
                 *body_slot = Some(entry.data);
+                facts[body_idx] = Some(entry.facts);
                 body_local_items[body_idx] = Some(entry.local_items);
             }
         }
@@ -258,11 +278,19 @@ impl CrateBodies {
                 })
             })
             .collect::<anyhow::Result<Vec<_>>>()?;
+        let facts = facts
+            .into_iter()
+            .enumerate()
+            .map(|(body, data)| {
+                data.with_context(|| format!("Body IR shard set is missing facts for body {body}"))
+            })
+            .collect::<anyhow::Result<Vec<_>>>()?;
 
         Ok(Self {
             coverage: manifest.coverage,
             semantic_index,
             bodies: Arena::from_vec(bodies),
+            facts: Arena::from_vec(facts),
             body_local_items: Arena::from_vec(body_local_items),
         })
     }

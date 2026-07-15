@@ -7,7 +7,7 @@ use rg_ir_model::{BodyRef, CrateRef, Path, ScopeId, items::TypePath};
 use rg_package_store::PackageStoreError;
 use rg_parse::{FileId, Span, TextSpan};
 
-use crate::{BodyIrReadTxn, BodyPath, ExprKind, PatData, ResolvedBodyData};
+use crate::{BodyIrReadTxn, BodyPath, BodyView, ExprKind, PatData};
 
 use super::{
     super::{PathCompletionNamespace, PathCompletionSite},
@@ -58,7 +58,7 @@ impl<'txn, 'db> PathCompletionSiteScanner<'txn, 'db> {
     fn scan_type_paths(
         &self,
         body_ref: BodyRef,
-        body: &ResolvedBodyData,
+        body: BodyView<'_>,
         best: &mut Option<(PathCompletionSite, u32)>,
     ) {
         let sites = BodyScanSites::new(body);
@@ -74,7 +74,7 @@ impl<'txn, 'db> PathCompletionSiteScanner<'txn, 'db> {
     fn scan_body_paths(
         &self,
         body_ref: BodyRef,
-        body: &ResolvedBodyData,
+        body: BodyView<'_>,
         best: &mut Option<(PathCompletionSite, u32)>,
     ) {
         for (_expr, expr_data) in body.exprs_with_ids() {

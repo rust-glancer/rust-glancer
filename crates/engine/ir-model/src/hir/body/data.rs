@@ -111,6 +111,16 @@ impl BodyData {
         &self.function_params
     }
 
+    /// Return the written function parameter that introduced this binding.
+    ///
+    /// One parameter may introduce several bindings through destructuring, so the relationship is
+    /// owned by the parameter metadata rather than inferred from binding order.
+    pub fn function_param_index_for_binding(&self, binding: BindingId) -> Option<usize> {
+        self.function_params
+            .iter()
+            .position(|param| param.bindings.contains(&binding))
+    }
+
     pub fn params(&self) -> &[BindingId] {
         &self.params
     }

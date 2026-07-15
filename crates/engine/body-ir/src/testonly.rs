@@ -6,7 +6,7 @@ use rg_parse::ParseDb;
 use rg_semantic_ir::{ItemStore, ItemStoreSource, SemanticIrDb, testonly::SemanticIrFixture};
 use rg_text::PackageNameInterners;
 
-use crate::{BodyIrBuildPolicy, BodyIrDb, ResolvedBodyData};
+use crate::{BodyIrBuildPolicy, BodyIrDb, BodyView};
 
 /// End-to-end fixture for tests that need body lowering and type propagation data.
 pub struct BodyIrFixture {
@@ -80,7 +80,7 @@ impl BodyIrFixture {
         self.semantic_ir.resident_crate_ir(crate_ref)
     }
 
-    pub fn resident_body(&self, body_ref: BodyRef) -> Option<&ResolvedBodyData> {
+    pub fn resident_body(&self, body_ref: BodyRef) -> Option<BodyView<'_>> {
         self.body_ir
             .resident_package(body_ref.crate_ref.package)?
             .crate_bodies(body_ref.crate_ref.crate_id)?

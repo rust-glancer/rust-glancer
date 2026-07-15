@@ -9,8 +9,7 @@ use rg_package_store::PackageStoreError;
 use rg_parse::{FileId, Span, TextSpan};
 
 use crate::{
-    BodyIrReadTxn, BodyPath, ExprKind, PatData, PatKind, RecordExprField, RecordPatField,
-    ResolvedBodyData,
+    BodyIrReadTxn, BodyPath, BodyView, ExprKind, PatData, PatKind, RecordExprField, RecordPatField,
 };
 
 use super::{super::RecordFieldCompletionSite, sites::BodyScanSites};
@@ -60,7 +59,7 @@ impl<'txn, 'db> RecordFieldCompletionSiteScanner<'txn, 'db> {
     fn scan_record_exprs(
         &self,
         body_ref: BodyRef,
-        body: &ResolvedBodyData,
+        body: BodyView<'_>,
         best: &mut Option<(RecordFieldCompletionSite, u32)>,
     ) {
         for expr in body.exprs().iter() {
@@ -95,7 +94,7 @@ impl<'txn, 'db> RecordFieldCompletionSiteScanner<'txn, 'db> {
     fn scan_record_pats(
         &self,
         body_ref: BodyRef,
-        body: &ResolvedBodyData,
+        body: BodyView<'_>,
         best: &mut Option<(RecordFieldCompletionSite, u32)>,
     ) {
         let sites = BodyScanSites::new(body);
@@ -108,7 +107,7 @@ impl<'txn, 'db> RecordFieldCompletionSiteScanner<'txn, 'db> {
     fn scan_pat_data(
         &self,
         body_ref: BodyRef,
-        body: &ResolvedBodyData,
+        body: BodyView<'_>,
         scope: ScopeId,
         data: &PatData,
         best: &mut Option<(RecordFieldCompletionSite, u32)>,

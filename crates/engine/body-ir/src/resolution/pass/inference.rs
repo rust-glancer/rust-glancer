@@ -91,25 +91,17 @@ where
             let kind = self.pass.body.expr_unchecked(expr).kind.clone();
             match kind {
                 ExprKind::Call { callee, args } => {
-                    let context = self.pass.env.context(self.pass.body);
-                    BodyCallInference::new(context).instantiate_return_fact(
-                        &mut self.pass.inference,
-                        expr,
-                        &args,
-                        None,
-                    )?;
+                    let (context, inference) = self.pass.context_and_inference();
+                    BodyCallInference::new(context)
+                        .instantiate_return_fact(inference, expr, &args, None)?;
                     if let Some(callee) = callee {
                         self.instantiate_enum_variant_call_result_fact(expr, callee);
                     }
                 }
                 ExprKind::MethodCall { receiver, args, .. } => {
-                    let context = self.pass.env.context(self.pass.body);
-                    BodyCallInference::new(context).instantiate_return_fact(
-                        &mut self.pass.inference,
-                        expr,
-                        &args,
-                        receiver,
-                    )?;
+                    let (context, inference) = self.pass.context_and_inference();
+                    BodyCallInference::new(context)
+                        .instantiate_return_fact(inference, expr, &args, receiver)?;
                 }
                 _ => {}
             }
@@ -129,7 +121,7 @@ where
                 continue;
             }
 
-            let ty = self.pass.body.expr_ty_unchecked(expr).clone();
+            let ty = self.pass.expr_ty_unchecked(expr).clone();
             if ty.has_unknown() {
                 self.pass
                     .inference
@@ -140,15 +132,14 @@ where
 
     /// Turn enum variant constructor results such as `Option<unknown>` into `Option<?T>`.
     fn instantiate_enum_variant_call_result_fact(&mut self, call: ExprId, callee: ExprId) {
-        let BodyResolution::Declarations(declarations) = self.pass.body.expr_resolution(callee)
-        else {
+        let BodyResolution::Declarations(declarations) = self.pass.expr_resolution(callee) else {
             return;
         };
         let Some(DeclarationRef::EnumVariant(_)) = declarations.as_one() else {
             return;
         };
 
-        let ty = self.pass.body.expr_ty_unchecked(call).clone();
+        let ty = self.pass.expr_ty_unchecked(call).clone();
         self.pass
             .inference
             .instantiate_expr_nested_unknown_ty(call, &ty);
@@ -180,10 +171,7 @@ where
 
         for expr_idx in 0..self.pass.body.exprs().len() {
             let expr = ExprId(expr_idx);
-            if !matches!(
-                self.pass.body.expr_resolution(expr),
-                BodyResolution::Unknown
-            ) {
+            if !matches!(self.pass.expr_resolution(expr), BodyResolution::Unknown) {
                 continue;
             }
             let ExprKind::MethodCall {
@@ -204,7 +192,7 @@ where
             // method expression. Select from that live receiver fact so stored resolution and the
             // inference target cannot disagree merely because the first body walk saw `unknown`.
             let resolution = {
-                let context = self.pass.env.context(self.pass.body);
+                let context = self.pass.context();
                 let targets = context
                     .calls()
                     .method_targets_with_receiver_ty(expr, &receiver_ty)?;
@@ -213,19 +201,14 @@ where
                 }
                 targets.resolution()
             };
-            self.pass.body.set_expr_resolution(expr, resolution);
+            self.pass.set_expr_resolution(expr, resolution);
 
-            let context = self.pass.env.context(self.pass.body);
+            let (context, inference) = self.pass.context_and_inference();
             let calls = BodyCallInference::new(context);
-            calls.instantiate_return_fact(&mut self.pass.inference, expr, &args, Some(receiver))?;
-            calls.solve_generic_trait_obligations(
-                &mut self.pass.inference,
-                expr,
-                &args,
-                Some(receiver),
-            )?;
+            calls.instantiate_return_fact(inference, expr, &args, Some(receiver))?;
+            calls.solve_generic_trait_obligations(inference, expr, &args, Some(receiver))?;
             calls.project_selected_trait_associated_return_type(
-                &mut self.pass.inference,
+                inference,
                 expr,
                 &args,
                 Some(receiver),
@@ -258,47 +241,35 @@ where
 
     /// Visit every unannotated `let pat = expr` that can carry initializer evidence.
     fn link_let_binding_initializers(&mut self) -> bool {
-        let context = self.pass.env.context(self.pass.body);
+        let (context, inference) = self.pass.context_and_inference();
+        let body = context.body();
         let pattern_inference = BodyPatternInference::new(context);
         let mut changed = false;
 
-        for statement_idx in 0..self.pass.body.statements().len() {
+        for statement_idx in 0..body.statements().len() {
             let StmtKind::Let {
                 pat: Some(pat),
                 annotation: None,
                 initializer: Some(initializer),
                 ..
-            } = self
-                .pass
-                .body
-                .statement_unchecked(StmtId(statement_idx))
-                .kind
-                .clone()
+            } = body.statement_unchecked(StmtId(statement_idx)).kind.clone()
             else {
                 continue;
             };
-            changed |= pattern_inference.link_initializer_pattern(
-                &mut self.pass.inference,
-                pat,
-                initializer,
-            );
+            changed |= pattern_inference.link_initializer_pattern(inference, pat, initializer);
         }
 
-        for expr_idx in 0..self.pass.body.exprs().len() {
+        for expr_idx in 0..body.exprs().len() {
             let expr = ExprId(expr_idx);
             let ExprKind::Let {
                 pat: Some(pat),
                 initializer: Some(initializer),
                 ..
-            } = self.pass.body.expr_unchecked(expr).kind.clone()
+            } = body.expr_unchecked(expr).kind.clone()
             else {
                 continue;
             };
-            changed |= pattern_inference.link_initializer_pattern(
-                &mut self.pass.inference,
-                pat,
-                initializer,
-            );
+            changed |= pattern_inference.link_initializer_pattern(inference, pat, initializer);
         }
 
         changed
@@ -310,7 +281,7 @@ where
 
         for expr_idx in 0..self.pass.body.exprs().len() {
             let expr = ExprId(expr_idx);
-            if let BodyResolution::Binding(binding) = self.pass.body.expr_resolution(expr) {
+            if let BodyResolution::Binding(binding) = self.pass.expr_resolution(expr) {
                 changed |= self.pass.inference.set_expr_from_binding(expr, *binding);
             }
         }
@@ -320,13 +291,13 @@ where
 
     /// Rebuild field and index expressions that project out of inference-aware bases.
     fn refresh_member_projection_facts(&mut self) -> Result<bool, PackageStoreError> {
-        let context = self.pass.env.context(self.pass.body);
+        let (context, inference) = self.pass.context_and_inference();
+        let expr_count = context.body().exprs().len();
         let member_inference = BodyMemberInference::new(context);
         let mut changed = false;
 
-        for expr_idx in 0..self.pass.body.exprs().len() {
-            changed |= member_inference
-                .refresh_projection_fact(&mut self.pass.inference, ExprId(expr_idx))?;
+        for expr_idx in 0..expr_count {
+            changed |= member_inference.refresh_projection_fact(inference, ExprId(expr_idx))?;
         }
 
         Ok(changed)
@@ -363,7 +334,7 @@ where
                         TyNormalizer::new(self.pass.context())
                             .ty_for_wrapper(kind, self.pass.inference.expr_ty(inner))
                     } else {
-                        self.pass.body.expr_ty_unchecked(expr).clone()
+                        self.pass.expr_ty_unchecked(expr).clone()
                     };
                     self.pass.inference.set_expr_infer_ty(expr, ty);
                 }
@@ -437,25 +408,19 @@ where
         args: &[ExprId],
     ) -> Result<(), PackageStoreError> {
         // Concrete parameter types can immediately constrain literals and transparent shapes.
-        let context = self.pass.env.context(self.pass.body);
-        let concrete_expectations = BodyCallInference::new(context).argument_expected_tys(
-            &mut self.pass.inference,
-            call,
-            args,
-        )?;
+        let concrete_expectations = {
+            let (context, inference) = self.pass.context_and_inference();
+            BodyCallInference::new(context).argument_expected_tys(inference, call, args)?
+        };
         for (arg, expected_ty) in concrete_expectations {
             self.constrain_expr_with_expected(arg, &expected_ty);
         }
 
         // Build a fresh field-split context after concrete constraints. Keeping the first context
         // alive would immutably borrow the pass while we mutate the inference facts.
-        let context = self.pass.env.context(self.pass.body);
+        let (context, inference) = self.pass.context_and_inference();
         // Generic parameter evidence needs the inference view so shared `?T` slots stay linked.
-        BodyCallInference::new(context).constrain_function_generic_arguments(
-            &mut self.pass.inference,
-            call,
-            args,
-        )
+        BodyCallInference::new(context).constrain_function_generic_arguments(inference, call, args)
     }
 
     fn solve_call_target_generic_trait_obligations(
@@ -464,13 +429,9 @@ where
         args: &[ExprId],
         receiver: Option<ExprId>,
     ) -> Result<(), PackageStoreError> {
-        let context = self.pass.env.context(self.pass.body);
-        BodyCallInference::new(context).solve_generic_trait_obligations(
-            &mut self.pass.inference,
-            call,
-            args,
-            receiver,
-        )
+        let (context, inference) = self.pass.context_and_inference();
+        BodyCallInference::new(context)
+            .solve_generic_trait_obligations(inference, call, args, receiver)
     }
 
     fn project_selected_trait_associated_return_type(
@@ -479,13 +440,9 @@ where
         args: &[ExprId],
         receiver: Option<ExprId>,
     ) -> Result<(), PackageStoreError> {
-        let context = self.pass.env.context(self.pass.body);
-        BodyCallInference::new(context).project_selected_trait_associated_return_type(
-            &mut self.pass.inference,
-            call,
-            args,
-            receiver,
-        )
+        let (context, inference) = self.pass.context_and_inference();
+        BodyCallInference::new(context)
+            .project_selected_trait_associated_return_type(inference, call, args, receiver)
     }
 
     /// Visit all places that can provide expected types to already-created inference slots.
@@ -547,11 +504,12 @@ where
         annotation: TypeRef,
         initializer: ExprId,
     ) -> Result<(), PackageStoreError> {
-        let (env, body, inference) = (&self.pass.env, &*self.pass.body, &mut self.pass.inference);
-        let expected_ty = env
-            .context(body)
-            .type_refs(scope)
-            .resolve_with_inference(&annotation, inference.table_mut())?;
+        let expected_ty = {
+            let (context, inference) = self.pass.context_and_inference();
+            context
+                .type_refs(scope)
+                .resolve_with_inference(&annotation, inference.table_mut())?
+        };
 
         // `let value: Vec<_> = make_vec();` needs the written `_` to become a real inference
         // slot before call obligations run, otherwise `Vec<unknown>` cannot absorb trait evidence.
@@ -610,12 +568,9 @@ where
             } => {
                 self.constrain_call_target_argument_expected_types(expr, &args)?;
 
-                let context = self.pass.env.context(self.pass.body);
+                let (context, inference) = self.pass.context_and_inference();
                 BodyCallInference::new(context).constrain_selected_method_receiver_and_arguments(
-                    &mut self.pass.inference,
-                    expr,
-                    receiver,
-                    &args,
+                    inference, expr, receiver, &args,
                 )?;
                 self.solve_call_target_generic_trait_obligations(expr, &args, Some(receiver))?;
                 self.project_selected_trait_associated_return_type(expr, &args, Some(receiver))
@@ -642,7 +597,7 @@ where
 
     /// Use `target = value` as equality evidence for direct local assignments.
     fn constrain_simple_assignment(&mut self, target: ExprId, value: ExprId) {
-        let BodyResolution::Binding(binding) = self.pass.body.expr_resolution(target) else {
+        let BodyResolution::Binding(binding) = *self.pass.expr_resolution(target) else {
             return;
         };
 
@@ -651,9 +606,7 @@ where
         self.pass
             .inference
             .constrain_infer_tys(&target_ty, &value_ty);
-        self.pass
-            .inference
-            .set_binding_infer_ty(*binding, target_ty);
+        self.pass.inference.set_binding_infer_ty(binding, target_ty);
     }
 
     /// Use known enum call result to push payload field types into tuple-variant args.
@@ -665,13 +618,12 @@ where
         callee: ExprId,
         args: Vec<ExprId>,
     ) -> Result<(), PackageStoreError> {
-        let BodyResolution::Declarations(declarations) = self.pass.body.expr_resolution(callee)
-        else {
+        let BodyResolution::Declarations(declarations) = self.pass.expr_resolution(callee) else {
             return Ok(());
         };
         let (variant_ref, enum_ty) = if let Some(DeclarationRef::EnumVariant(variant_ref)) =
             declarations.as_one()
-            && let [enum_ty] = self.pass.body.expr_ty_unchecked(call).as_adts()
+            && let [enum_ty] = self.pass.expr_ty_unchecked(call).as_adts()
         {
             (*variant_ref, enum_ty.clone())
         } else {
@@ -754,7 +706,7 @@ where
         record: ExprId,
         fields: Vec<RecordExprField>,
     ) -> Result<(), PackageStoreError> {
-        let [record_ty] = self.pass.body.expr_ty_unchecked(record).as_adts() else {
+        let [record_ty] = self.pass.expr_ty_unchecked(record).as_adts() else {
             return Ok(());
         };
         let record_ty = record_ty.clone();
@@ -825,7 +777,7 @@ where
 
     /// Resolve `fn f() -> T` for the body owner, if such annotation exists.
     fn explicit_function_return_ty(&self) -> Result<Option<Ty>, PackageStoreError> {
-        let Some(function) = self.pass.body.function_owner() else {
+        let Some(function) = self.pass.body.owner().function() else {
             return Ok(None);
         };
 
@@ -1003,12 +955,12 @@ where
         for expr_idx in 0..self.pass.body.exprs().len() {
             let expr = ExprId(expr_idx);
             let ty = self.pass.inference.finalize_expr_ty(expr);
-            self.pass.body.set_expr_ty(expr, ty);
+            self.pass.set_expr_ty(expr, ty);
         }
         for binding_idx in 0..self.pass.body.bindings().len() {
             let binding = BindingId(binding_idx);
             let ty = self.pass.inference.finalize_binding_ty(binding);
-            self.pass.body.set_binding_ty(binding, ty);
+            self.pass.set_binding_ty(binding, ty);
         }
     }
 }

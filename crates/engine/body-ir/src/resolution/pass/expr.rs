@@ -45,8 +45,8 @@ where
     for<'source> &'source I: ItemStoreSource<'source, Error = PackageStoreError>,
 {
     pub(super) fn resolve_expr(&mut self, expr: ExprId) -> Result<bool, PackageStoreError> {
-        let old_resolution = self.pass.body.expr_resolution(expr).clone();
-        let old_ty = self.pass.body.expr_ty_unchecked(expr).clone();
+        let old_resolution = self.pass.expr_resolution(expr).clone();
+        let old_ty = self.pass.expr_ty_unchecked(expr).clone();
         let expr_data = self.pass.body.expr_unchecked(expr);
         let kind = expr_data.kind.clone();
 
@@ -99,7 +99,7 @@ where
                 let mut arm_tys = ExpectedUnique::new();
                 for arm in arms {
                     if let Some(expr) = arm.expr {
-                        arm_tys.push(self.pass.body.expr_ty_unchecked(expr).clone());
+                        arm_tys.push(self.pass.expr_ty_unchecked(expr).clone());
                     }
                 }
                 let ty = arm_tys.into_ty();
@@ -114,9 +114,9 @@ where
                     Some(else_branch) => {
                         let mut branch_tys = ExpectedUnique::new();
                         if let Some(then_branch) = then_branch {
-                            branch_tys.push(self.pass.body.expr_ty_unchecked(then_branch).clone());
+                            branch_tys.push(self.pass.expr_ty_unchecked(then_branch).clone());
                         }
-                        branch_tys.push(self.pass.body.expr_ty_unchecked(else_branch).clone());
+                        branch_tys.push(self.pass.expr_ty_unchecked(else_branch).clone());
 
                         branch_tys.into_ty()
                     }
@@ -126,7 +126,7 @@ where
             }
             ExprKind::Block { tail, .. } => {
                 let ty = tail
-                    .map(|tail| self.pass.body.expr_ty_unchecked(tail).clone())
+                    .map(|tail| self.pass.expr_ty_unchecked(tail).clone())
                     .unwrap_or(Ty::Unit);
                 self.pass.set_expr_ty(expr, ty);
             }
@@ -176,7 +176,7 @@ where
                 op: Some(op),
                 expr: Some(inner),
             } => {
-                let ty = ty_for_unary(op, self.pass.body.expr_ty_unchecked(inner));
+                let ty = ty_for_unary(op, self.pass.expr_ty_unchecked(inner));
                 self.pass.set_expr_ty(expr, ty);
             }
             ExprKind::Binary {
@@ -186,8 +186,8 @@ where
             } => {
                 let ty = ty_for_binary(
                     op,
-                    self.pass.body.expr_ty_unchecked(lhs),
-                    self.pass.body.expr_ty_unchecked(rhs),
+                    self.pass.expr_ty_unchecked(lhs),
+                    self.pass.expr_ty_unchecked(rhs),
                 );
                 self.pass.set_expr_ty(expr, ty);
             }
@@ -223,8 +223,8 @@ where
             | ExprKind::Unknown { .. } => {}
         }
 
-        Ok(self.pass.body.expr_resolution(expr) != &old_resolution
-            || self.pass.body.expr_ty_unchecked(expr) != &old_ty)
+        Ok(self.pass.expr_resolution(expr) != &old_resolution
+            || self.pass.expr_ty_unchecked(expr) != &old_ty)
     }
 
     fn resolve_path_expr(
@@ -270,7 +270,7 @@ where
 
         let mut element_tys = ExpectedUnique::new();
         for element in elements {
-            let element_ty = self.pass.body.expr_ty_unchecked(*element).clone();
+            let element_ty = self.pass.expr_ty_unchecked(*element).clone();
             if matches!(element_ty, Ty::Unknown) {
                 return Ty::Unknown;
             }
@@ -288,7 +288,7 @@ where
         };
 
         Ty::array(
-            self.pass.body.expr_ty_unchecked(initializer).clone(),
+            self.pass.expr_ty_unchecked(initializer).clone(),
             len_text.map(str::to_owned),
         )
     }
@@ -301,7 +301,7 @@ where
         // Indexing is reference-transparent for the structural array/slice cases we model here:
         // `&[T]` and `&[T; N]` should behave like their inner container. Keep this deliberately
         // narrower than method lookup: no trait deref, no `Index` trait, and no container coercions.
-        for candidate in ReferencePeelingCandidates::new(self.pass.body.expr_ty_unchecked(base)) {
+        for candidate in ReferencePeelingCandidates::new(self.pass.expr_ty_unchecked(base)) {
             match candidate.ty() {
                 Ty::Array { inner, .. } | Ty::Slice(inner) => return inner.as_ref().clone(),
                 _ => {}
@@ -486,9 +486,9 @@ where
             return (BodyResolution::Unknown, ty);
         };
         let ty = TyNormalizer::new(self.pass.context())
-            .ty_for_wrapper(kind, self.pass.body.expr_ty_unchecked(inner).clone());
+            .ty_for_wrapper(kind, self.pass.expr_ty_unchecked(inner).clone());
         let resolution = if matches!(kind, ExprWrapperKind::Paren) {
-            self.pass.body.expr_resolution(inner).clone()
+            self.pass.expr_resolution(inner).clone()
         } else {
             BodyResolution::Unknown
         };
@@ -500,7 +500,7 @@ where
         let mut candidates = ExpectedUnique::new();
         for candidate in self.pass.context().autoderef().candidates(
             AutoderefMode::ExplicitDeref,
-            self.pass.body.expr_ty_unchecked(inner),
+            self.pass.expr_ty_unchecked(inner),
         ) {
             candidates.push(candidate?.ty().clone());
         }

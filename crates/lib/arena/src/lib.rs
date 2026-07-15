@@ -123,6 +123,10 @@ impl<Id, T> Arena<Id, T> {
         &mut self.items
     }
 
+    pub fn into_vec(self) -> Vec<T> {
+        self.items
+    }
+
     pub fn iter(&self) -> slice::Iter<'_, T> {
         self.items.iter()
     }

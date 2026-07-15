@@ -327,7 +327,7 @@ impl<'a, 'db> DeclarationView<'a, 'db> {
 
     /// Return declaration facts for a body binding.
     fn body_binding(&self, binding_ref: BodyBindingRef) -> anyhow::Result<Option<Declaration>> {
-        let Some(body) = self.db.body_ir.body_data(binding_ref.body)? else {
+        let Some(body) = self.db.body_ir.body(binding_ref.body)? else {
             return Ok(None);
         };
         let Some(binding) = body.binding(binding_ref.binding) else {

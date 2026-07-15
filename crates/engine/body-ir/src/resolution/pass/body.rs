@@ -1,6 +1,7 @@
 //! Main body-resolution pass.
 //!
-//! This module walks lowered bodies and fills resolution/type slots on bindings and expressions.
+//! This module walks immutable body structure and derives resolution/type facts for bindings and
+//! expressions.
 //! Specialized helpers live in sibling modules so this file can read like the pass itself.
 
 use rg_def_map::DefMapSource;
@@ -10,7 +11,7 @@ use rg_semantic_ir::{ItemLookupIndex, ItemStoreSource};
 use rg_ty::{ExpectedAdtTyExt, PrimitiveTy, TraitSelectionCache, Ty};
 
 use crate::{
-    ir::body::ResolvedBodyData,
+    BodyData, BodyFacts, BodyView,
     ir::resolved::BodyResolution,
     ir::{BindingKind, ExprWrapperKind},
 };
@@ -19,16 +20,17 @@ use crate::resolution::{BodyResolutionContext, infer::BodyInferenceCtx};
 
 use super::{
     env::BodyResolutionEnv, expr::ExprResolutionPass, inference::InferenceResolutionPass,
-    pattern_binding::PatternBindingMaterializationPass, pattern_type::PatternTypePropagationPass,
+    pattern_type::PatternTypePropagationPass,
 };
 
 /// Shared state for the body-resolution fixed-point pass.
 ///
-/// Sibling pass modules keep their logic in separate files while operating on the same body
-/// facts, so the fields are scoped to `resolution` rather than hidden inside this file.
+/// Sibling pass modules keep their logic in separate files while operating on the same fact
+/// sidecar. The structural body is borrowed for the entire pass and never mutated.
 pub(crate) struct BodyResolutionPass<'query, 'body, D, I> {
     pub(super) env: BodyResolutionEnv<'query, D, I>,
-    pub(super) body: &'body mut ResolvedBodyData,
+    pub(super) body: &'body BodyData,
+    pub(super) facts: BodyFacts,
     pub(super) inference: BodyInferenceCtx,
 }
 
@@ -42,9 +44,11 @@ where
         item_stores: &'query I,
         semantic_index: &'query ItemLookupIndex,
         body_ref: BodyRef,
-        body: &'body mut ResolvedBodyData,
+        body: &'body BodyData,
+        facts: BodyFacts,
         trait_selection_cache: &'query TraitSelectionCache,
-    ) -> Result<Self, PackageStoreError> {
+    ) -> Self {
+        debug_assert!(facts.is_aligned_with(body));
         let env = BodyResolutionEnv::new(
             def_maps,
             item_stores,
@@ -53,29 +57,47 @@ where
             trait_selection_cache,
         );
 
-        // Pattern materialization rewrites pending binding ids into the final binding arena.
-        // Every later resolution step, including inference storage, assumes that stable shape.
-        PatternBindingMaterializationPass::new(env, body).materialize()?;
         let inference = BodyInferenceCtx::with_trait_selection_cache(
             body.exprs().len(),
             body.bindings().len(),
             trait_selection_cache.clone(),
         );
 
-        Ok(Self {
+        Self {
             env,
             body,
+            facts,
             inference,
-        })
+        }
     }
 
     pub(super) fn context<'source>(
         &'source self,
     ) -> BodyResolutionContext<'source, &'source D, &'source I> {
-        self.env.context(self.body)
+        self.env.context(self.view())
     }
 
-    pub(crate) fn resolve(&mut self) -> Result<(), PackageStoreError> {
+    /// Split read-only query state from the inference table that a query operation may update.
+    ///
+    /// Building the context from `self.context()` would borrow the whole pass and prevent the
+    /// operation from mutating inference. Keeping this split here avoids exposing the pass's field
+    /// layout throughout inference code.
+    pub(super) fn context_and_inference<'source>(
+        &'source mut self,
+    ) -> (
+        BodyResolutionContext<'source, &'source D, &'source I>,
+        &'source mut BodyInferenceCtx,
+    ) {
+        let Self {
+            env,
+            body,
+            facts,
+            inference,
+        } = self;
+        (env.context(BodyView::new(body, facts)), inference)
+    }
+
+    pub(crate) fn resolve(mut self) -> Result<BodyFacts, PackageStoreError> {
         self.resolve_bindings()?;
 
         // Pattern propagation can unlock later expression types, and those expressions can then
@@ -86,7 +108,7 @@ where
             let mut changed = false;
             let expr_count = self.body.exprs().len();
             {
-                let mut expr_pass = ExprResolutionPass::new(self);
+                let mut expr_pass = ExprResolutionPass::new(&mut self);
                 for expr_idx in 0..expr_count {
                     changed |= expr_pass.resolve_expr(ExprId(expr_idx))?;
                 }
@@ -99,8 +121,8 @@ where
             }
         }
 
-        InferenceResolutionPass::new(self).run()?;
-        Ok(())
+        InferenceResolutionPass::new(&mut self).run()?;
+        Ok(self.facts)
     }
 
     fn resolve_bindings(&mut self) -> Result<(), PackageStoreError> {
@@ -122,7 +144,7 @@ where
             if self.body.binding(binding).is_none() {
                 continue;
             };
-            if !matches!(self.body.binding_ty_unchecked(binding), Ty::Unknown) {
+            if !matches!(self.binding_ty_unchecked(binding), Ty::Unknown) {
                 continue;
             }
 
@@ -135,29 +157,29 @@ where
 
     pub(super) fn set_expr_ty(&mut self, expr: ExprId, ty: Ty) {
         self.inference.set_expr_ty(expr, &ty);
-        self.body.set_expr_ty(expr, ty);
+        self.facts.set_expr_ty(expr, ty);
     }
 
     pub(super) fn set_expr_integer_var(&mut self, expr: ExprId) {
         self.inference.set_expr_integer_var(expr);
-        self.body
+        self.facts
             .set_expr_ty(expr, Ty::Primitive(PrimitiveTy::DEFAULT_INT));
     }
 
     pub(super) fn set_expr_float_var(&mut self, expr: ExprId) {
         self.inference.set_expr_float_var(expr);
-        self.body
+        self.facts
             .set_expr_ty(expr, Ty::Primitive(PrimitiveTy::DEFAULT_FLOAT));
     }
 
     pub(super) fn set_expr_tuple_from_fields(&mut self, expr: ExprId, fields: &[ExprId]) {
         self.inference.set_expr_tuple_from_fields(expr, fields);
-        self.body.set_expr_ty(
+        self.facts.set_expr_ty(
             expr,
             Ty::tuple(
                 fields
                     .iter()
-                    .map(|field| self.body.expr_ty_unchecked(*field).clone())
+                    .map(|field| self.expr_ty_unchecked(*field).clone())
                     .collect(),
             ),
         );
@@ -174,7 +196,7 @@ where
             elements,
             Some(elements.len().to_string()),
         );
-        self.body.set_expr_ty(expr, ty);
+        self.facts.set_expr_ty(expr, ty);
     }
 
     pub(super) fn set_expr_repeat_array_from_initializer(
@@ -189,12 +211,12 @@ where
             initializer,
             len_text.map(str::to_owned),
         );
-        self.body.set_expr_ty(expr, ty);
+        self.facts.set_expr_ty(expr, ty);
     }
 
     pub(super) fn set_expr_facts(&mut self, expr: ExprId, resolution: BodyResolution, ty: Ty) {
         self.inference.set_expr_ty(expr, &ty);
-        self.body.set_expr_facts(expr, resolution, ty);
+        self.facts.set_expr(expr, resolution, ty);
     }
 
     pub(super) fn set_expr_wrapper_facts(
@@ -207,12 +229,12 @@ where
     ) {
         self.inference
             .set_expr_wrapper_from_inner(expr, kind, inner, &ty);
-        self.body.set_expr_facts(expr, resolution, ty);
+        self.facts.set_expr(expr, resolution, ty);
     }
 
-    fn set_binding_ty(&mut self, binding: BindingId, ty: Ty) {
+    pub(super) fn set_binding_ty(&mut self, binding: BindingId, ty: Ty) {
         self.inference.set_binding_ty(binding, &ty);
-        self.body.set_binding_ty(binding, ty);
+        self.facts.set_binding_ty(binding, ty);
     }
 
     fn binding_ty(&self, binding: BindingId) -> Result<Ty, PackageStoreError> {
@@ -220,7 +242,7 @@ where
         if matches!(
             binding_data.kind,
             BindingKind::Param | BindingKind::SelfParam(_)
-        ) && let Some(function) = self.body.function_owner()
+        ) && let Some(function) = self.body.owner().function()
             && let Some(param_index) = self.body.function_param_index_for_binding(binding)
             && self.body.function_params()[param_index].bindings.len() == 1
             && let Some(signature) = self.context().signatures().function(function)?
@@ -239,7 +261,7 @@ where
 
         if let BindingKind::SelfParam(kind) = binding_data.kind
             && binding_data.name.as_deref() == Some("self")
-            && let Some(function) = self.body.function_owner()
+            && let Some(function) = self.body.owner().function()
         {
             let ty = self
                 .context()
@@ -254,5 +276,25 @@ where
         }
 
         Ok(Ty::Unknown)
+    }
+
+    pub(super) fn view(&self) -> BodyView<'_> {
+        BodyView::new(self.body, &self.facts)
+    }
+
+    pub(super) fn expr_ty_unchecked(&self, expr: ExprId) -> &Ty {
+        &self.facts.exprs[expr].ty
+    }
+
+    pub(super) fn expr_resolution(&self, expr: ExprId) -> &BodyResolution {
+        &self.facts.exprs[expr].resolution
+    }
+
+    pub(super) fn set_expr_resolution(&mut self, expr: ExprId, resolution: BodyResolution) {
+        self.facts.set_expr_resolution(expr, resolution);
+    }
+
+    pub(super) fn binding_ty_unchecked(&self, binding: BindingId) -> &Ty {
+        &self.facts.bindings[binding].ty
     }
 }

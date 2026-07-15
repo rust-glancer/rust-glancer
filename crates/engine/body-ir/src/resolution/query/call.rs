@@ -264,7 +264,7 @@ where
         let Some(callee) = callee else {
             return Ok(Ty::Unknown);
         };
-        let callee_ty = self.context.body().expr_ty_unchecked(callee);
+        let callee_ty = self.context.resolved_body().expr_ty_unchecked(callee);
 
         if matches!(callee_ty, Ty::Adt(_)) {
             return Ok(callee_ty.clone());
@@ -381,7 +381,7 @@ where
         }
 
         let BodyResolution::Declarations(declarations) =
-            self.context.body().expr_resolution(callee)
+            self.context.resolved_body().expr_resolution(callee)
         else {
             return Ok(targets);
         };
@@ -439,7 +439,10 @@ where
         &self,
         site: MethodCallSite<'_>,
     ) -> Result<ResolvedCallTargets, PackageStoreError> {
-        let receiver_ty = self.context.body().expr_ty_unchecked(site.receiver);
+        let receiver_ty = self
+            .context
+            .resolved_body()
+            .expr_ty_unchecked(site.receiver);
         self.lookup_method_for_ty(site, receiver_ty)
     }
 
@@ -555,7 +558,13 @@ where
         let mut return_subst = base_subst.clone();
         let arg_tys = args
             .iter()
-            .map(|arg| self.query.context.body().expr_ty_unchecked(*arg).clone())
+            .map(|arg| {
+                self.query
+                    .context
+                    .resolved_body()
+                    .expr_ty_unchecked(*arg)
+                    .clone()
+            })
             .collect::<Vec<_>>();
         let inferred_arg_subst =
             self.infer_argument_subst(&generics, &signature.params, &arg_tys, &return_subst);

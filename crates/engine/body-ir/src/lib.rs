@@ -24,12 +24,12 @@ pub use self::{
         ValueReferenceSurface,
     },
     ir::{
-        BindingData, BindingFacts, BindingKind, BodyAssociatedPathPrefix, BodyOwner, BodyPath,
-        BodySource, BodySourceItems, BuiltinMacroExprKind, ClosureCapture, ClosureKind,
-        ClosureParamData, ExprAssignOp, ExprBinaryOp, ExprBlockKind, ExprData, ExprFacts, ExprKind,
-        ExprRangeKind, ExprUnaryOp, FunctionParamData, LabelData, LiteralKind, PatBindingMode,
-        PatData, PatKind, PatRangeKind, RecordExprField, RecordExprSpread, RecordFieldSyntax,
-        RecordPatField, ResolvedBodyData, ScopeData, StmtData, StmtKind,
+        BindingData, BindingFacts, BindingKind, BodyAssociatedPathPrefix, BodyData, BodyFacts,
+        BodyOwner, BodyPath, BodySource, BodySourceItems, BodyView, BuiltinMacroExprKind,
+        ClosureCapture, ClosureKind, ClosureParamData, ExprAssignOp, ExprBinaryOp, ExprBlockKind,
+        ExprData, ExprFacts, ExprKind, ExprRangeKind, ExprUnaryOp, FunctionParamData, LabelData,
+        LiteralKind, PatBindingMode, PatData, PatKind, PatRangeKind, RecordExprField,
+        RecordExprSpread, RecordFieldSyntax, RecordPatField, ScopeData, StmtData, StmtKind,
     },
     resolution::{BodyMethodQuery, BodyResolutionContext, BodyTypePathQuery, BodyValuePathQuery},
     store::{

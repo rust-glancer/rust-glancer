@@ -148,7 +148,7 @@ where
 
         for candidate in self.context.autoderef().candidates(
             AutoderefMode::FieldLookup,
-            self.context.body().expr_ty_unchecked(base),
+            self.context.resolved_body().expr_ty_unchecked(base),
         ) {
             let candidate = candidate?;
             // Field lookup stops at the first autoderef depth that has matches. Same-depth

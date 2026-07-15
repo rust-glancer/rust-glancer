@@ -9,7 +9,7 @@ use rg_ir_model::{
 };
 use rg_parse::{FileId, Span};
 
-use crate::{BodyPath, ExprKind, PatData, ResolvedBodyData};
+use crate::{BodyPath, BodyView, ExprKind, PatData};
 
 use super::{
     super::{BodyCursorCandidate, ValueReferenceSource, ValueReferenceSurface},
@@ -19,7 +19,7 @@ use super::{
 /// Adds type-namespace path candidates from body-local type annotations.
 pub(super) struct TypePathCursorScanner<'a> {
     pub(super) body_ref: BodyRef,
-    pub(super) body: &'a ResolvedBodyData,
+    pub(super) body: BodyView<'a>,
     pub(super) file_id: Option<FileId>,
     pub(super) offset: Option<u32>,
     pub(super) candidates: &'a mut Vec<BodyCursorCandidate>,
@@ -64,7 +64,7 @@ impl TypePathCursorScanner<'_> {
 /// Adds path candidates from body-local expressions and patterns.
 pub(super) struct BodyPathCursorScanner<'a> {
     pub(super) body_ref: BodyRef,
-    pub(super) body: &'a ResolvedBodyData,
+    pub(super) body: BodyView<'a>,
     pub(super) file_id: Option<FileId>,
     pub(super) offset: Option<u32>,
     pub(super) include_single_segment: bool,

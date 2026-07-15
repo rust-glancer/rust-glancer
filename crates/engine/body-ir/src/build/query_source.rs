@@ -1,8 +1,9 @@
 //! Build-time body-aware routing for shared DefMap and item-store queries.
 
+use rg_arena::Arena;
 use rg_def_map::DefMapReadTxn;
 use rg_def_map::{DefMap, DefMapSource};
-use rg_ir_model::{BodyRef, CrateRef, DefMapRef, ModuleRef};
+use rg_ir_model::{BodyId, BodyRef, CrateRef, DefMapRef, ModuleRef};
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::SemanticIrReadTxn;
 use rg_semantic_ir::{ItemStore, ItemStoreSource};
@@ -19,7 +20,7 @@ pub(super) struct BodyBuildQuerySource<'a, 'db> {
     def_map: &'a DefMapReadTxn<'db>,
     semantic_ir: &'a SemanticIrReadTxn<'db>,
     crate_ref: CrateRef,
-    body_local_items: &'a [Option<BodyLocalItems>],
+    body_local_items: &'a Arena<BodyId, Option<BodyLocalItems>>,
 }
 
 impl<'a, 'db> BodyBuildQuerySource<'a, 'db> {
@@ -27,7 +28,7 @@ impl<'a, 'db> BodyBuildQuerySource<'a, 'db> {
         def_map: &'a DefMapReadTxn<'db>,
         semantic_ir: &'a SemanticIrReadTxn<'db>,
         crate_ref: CrateRef,
-        body_local_items: &'a [Option<BodyLocalItems>],
+        body_local_items: &'a Arena<BodyId, Option<BodyLocalItems>>,
     ) -> Self {
         Self {
             def_map,
@@ -42,7 +43,7 @@ impl<'a, 'db> BodyBuildQuerySource<'a, 'db> {
             return None;
         }
 
-        self.body_local_items.get(body_ref.body.0)?.as_ref()
+        self.body_local_items.get(body_ref.body)?.as_ref()
     }
 }
 

@@ -29,7 +29,7 @@ impl<'a, 'db> ImplementationView<'a, 'db> {
         expr: ExprRef,
     ) -> anyhow::Result<Option<UniqueVec<DeclarationRef>>> {
         let body_ref = expr.body_ir();
-        let Some(body_data) = self.db.body_ir.body_data(body_ref)? else {
+        let Some(body_data) = self.db.body_ir.body(body_ref)? else {
             return Ok(None);
         };
         let Some(expr_data) = body_data.expr(expr.expr_id()) else {
@@ -121,7 +121,7 @@ impl<'a, 'db> ImplementationView<'a, 'db> {
                 }
             }
             DeclarationRef::BodyBinding(binding) => {
-                let Some(body) = self.db.body_ir.body_data(binding.body)? else {
+                let Some(body) = self.db.body_ir.body(binding.body)? else {
                     return Ok(implementations);
                 };
                 let Some(binding_ty) = body.binding_ty(binding.binding) else {
