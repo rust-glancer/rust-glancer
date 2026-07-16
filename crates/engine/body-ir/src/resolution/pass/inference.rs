@@ -1,14 +1,12 @@
-//! Inference-facing helpers for the body-resolution pass.
+//! Inference transfer rules for the body semantic pass.
 //!
-//! Body resolution still publishes ordinary `Ty` facts while it runs. This module collects direct
-//! constraints over the parallel inference view and writes the finalized inference facts back into
-//! Body IR.
+//! Syntax-directed expression resolution and these expected-type/obligation rules write into the
+//! same `BodyInferenceCtx`. The parent pass owns the only fixed point and asks this module for one
+//! transfer step at a time before finalizing persisted facts.
 
 use rg_def_map::DefMapSource;
 use rg_ir_model::{
-    BindingId, EnumVariantRef, ExprId, GenericDefRef, PatId, ScopeId, StmtId,
-    identity::DeclarationRef,
-    items::{FieldKey, TypeRef},
+    EnumVariantRef, ExprId, GenericDefRef, PatId, StmtId, identity::DeclarationRef, items::FieldKey,
 };
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::ItemStoreSource;
@@ -16,58 +14,67 @@ use rg_ty::{AdtTy, Substitution, Ty};
 
 use crate::{
     ir::{
-        ExprAssignOp, ExprKind, ExprWrapperKind, PatKind, RecordExprField, StmtKind,
+        ExprAssignOp, ExprKind, ExprWrapperKind, RecordExprField, StmtKind,
         resolved::BodyResolution,
     },
-    resolution::infer::{BodyCallInference, BodyMemberInference, BodyPatternInference},
+    resolution::infer::{
+        BodyCallInference, BodyInferenceSnapshot, BodyMemberInference, BodyPatternInference,
+    },
 };
 
-use super::{body::BodyResolutionPass, ty_normalize::TyNormalizer};
+use super::body::BodyResolutionPass;
 
-/// Collects body-local inference constraints that need the fixed-point facts to be available.
+/// Applies one step of inference relationships that complement syntax-directed resolution.
 ///
-/// The pass runs after normal body resolution has stabilized: it adds direct constraints such as
-/// annotated `let` initializers, then collapses inference variables back into ordinary `Ty` facts.
-pub(super) struct InferenceResolutionPass<'pass, 'query, 'body, D, I> {
+/// The parent `BodyResolutionPass` owns convergence. This type only reads one coherent snapshot,
+/// writes refinements into the live context, and returns; it never starts a nested fixed point.
+pub(super) struct InferenceTransferPass<'pass, 'query, 'body, D, I> {
     pass: &'pass mut BodyResolutionPass<'query, 'body, D, I>,
+    snapshot: BodyInferenceSnapshot,
 }
 
-impl<'pass, 'query, 'body, D, I> InferenceResolutionPass<'pass, 'query, 'body, D, I> {
+impl<'pass, 'query, 'body, D, I> InferenceTransferPass<'pass, 'query, 'body, D, I> {
     pub(super) fn new(pass: &'pass mut BodyResolutionPass<'query, 'body, D, I>) -> Self {
-        Self { pass }
+        let snapshot = pass.inference.snapshot();
+        Self { pass, snapshot }
     }
 }
 
-impl<'pass, 'query, 'body, D, I> InferenceResolutionPass<'pass, 'query, 'body, D, I>
+impl<'pass, 'query, 'body, D, I> InferenceTransferPass<'pass, 'query, 'body, D, I>
 where
     for<'source> &'source D: DefMapSource<Error = PackageStoreError>,
     for<'source> &'source I: ItemStoreSource<'source, Error = PackageStoreError>,
 {
-    pub(super) fn run(mut self) -> Result<(), PackageStoreError> {
-        // 1. Mark `T` as `?T` in contexts where local evidence may infer it later.
-        // Without this step, those positions stay as plain `Ty::Unknown`.
-        self.instantiate_inference_facts()?;
+    /// Allocate identities that must remain stable across every later transfer step.
+    ///
+    /// Closure types and written `_` positions are body-owned unknowns. Re-lowering either inside
+    /// the fixed point would manufacture fresh variables and make unchanged state look new.
+    pub(super) fn initialize(mut self) -> Result<(), PackageStoreError> {
+        // Give body-owned anonymous types stable identities before calls can use them as generic
+        // evidence. Record results also need live slots before annotations reach their fields.
+        self.instantiate_closure_type_facts();
+        self.instantiate_record_result_facts();
 
-        // 2. Propagate `?` markers through expressions that depend on instantiated children.
-        self.refresh_inference_dependent_expr_facts()?;
-
-        // 3. Run inference: observe available evidence and solve `?T` where possible.
-        self.constrain_expected_types()?;
-
-        // 4. Write inferred facts back into Body IR as ordinary `Ty` values.
-        self.finalize_facts();
+        // Written `_` positions must be lowered once so every later transfer sees the same slot.
+        for statement_idx in 0..self.pass.body.statements().len() {
+            self.initialize_statement_expected_type(StmtId(statement_idx))?;
+        }
+        self.constrain_function_return_expected_types()?;
         Ok(())
     }
 
-    /// Instantiate facts that need the inference pass to add body-local identity or slots.
-    fn instantiate_inference_facts(&mut self) -> Result<(), PackageStoreError> {
-        // TODO: These could be one body walk, but later instantiation steps can depend on facts
-        // from earlier ones. For example, call instantiation may eventually need closure
-        // witnesses to exist before processing a call argument. We keep the passes explicit until
-        // this code is more mature and there is a clearer reason to optimize the extra scans.
-        self.instantiate_closure_type_facts();
-        self.instantiate_generic_call_result_facts()?;
+    /// Apply each inference-only relationship once against the current live facts.
+    pub(super) fn apply_once(mut self) -> Result<(), PackageStoreError> {
         self.instantiate_record_result_facts();
+        self.project_member_facts()?;
+        for expr_idx in 0..self.pass.body.exprs().len() {
+            self.constrain_expr_expected_types(ExprId(expr_idx))?;
+        }
+        for statement_idx in 0..self.pass.body.statements().len() {
+            self.constrain_statement_expected_types(StmtId(statement_idx))?;
+        }
+        self.constrain_function_return_expected_types()?;
+
         Ok(())
     }
 
@@ -82,32 +89,6 @@ where
                 self.pass.inference.set_expr_closure_ty(expr);
             }
         }
-    }
-
-    /// Turn generic call results such as `Vec<T>` or `Option<T>` into `Vec<?T>` / `Option<?T>`.
-    fn instantiate_generic_call_result_facts(&mut self) -> Result<(), PackageStoreError> {
-        for expr_idx in 0..self.pass.body.exprs().len() {
-            let expr = ExprId(expr_idx);
-            let kind = self.pass.body.expr_unchecked(expr).kind.clone();
-            match kind {
-                ExprKind::Call { callee, args } => {
-                    let (context, inference) = self.pass.context_and_inference();
-                    BodyCallInference::new(context)
-                        .instantiate_return_fact(inference, expr, &args, None)?;
-                    if let Some(callee) = callee {
-                        self.instantiate_enum_variant_call_result_fact(expr, callee);
-                    }
-                }
-                ExprKind::MethodCall { receiver, args, .. } => {
-                    let (context, inference) = self.pass.context_and_inference();
-                    BodyCallInference::new(context)
-                        .instantiate_return_fact(inference, expr, &args, receiver)?;
-                }
-                _ => {}
-            }
-        }
-
-        Ok(())
     }
 
     /// Turn record literal results such as `Pair<unknown>` into `Pair<?T>`.
@@ -145,335 +126,54 @@ where
             .instantiate_expr_nested_unknown_ty(call, &ty);
     }
 
-    /// Rebuild copied expression facts after child slots may have gained `?T`.
-    fn refresh_inference_dependent_expr_facts(&mut self) -> Result<bool, PackageStoreError> {
-        let mut any_changed = false;
-        let max_passes = self.pass.body.bindings().len() + self.pass.body.exprs().len() + 1;
-        for _ in 0..max_passes {
-            self.refresh_shape_expr_facts();
+    /// Project field and index expressions from inference-aware bases.
+    fn project_member_facts(&mut self) -> Result<(), PackageStoreError> {
+        self.pass
+            .with_context_and_inference(&self.snapshot, |context, inference| {
+                let expr_count = context.body().exprs().len();
+                let member_inference = BodyMemberInference::new(context);
 
-            let member_changed = self.refresh_member_projection_facts()?;
-            let binding_changed = self.refresh_binding_flow_facts();
-            let method_changed = self.resolve_inference_unlocked_method_calls()?;
-            let changed = member_changed || binding_changed || method_changed;
-            any_changed |= changed;
-            if !changed {
-                break;
-            }
-        }
-
-        Ok(any_changed)
-    }
-
-    /// Resolve method calls whose receiver only became known from body-local constraints.
-    fn resolve_inference_unlocked_method_calls(&mut self) -> Result<bool, PackageStoreError> {
-        let mut changed = false;
-
-        for expr_idx in 0..self.pass.body.exprs().len() {
-            let expr = ExprId(expr_idx);
-            if !matches!(self.pass.expr_resolution(expr), BodyResolution::Unknown) {
-                continue;
-            }
-            let ExprKind::MethodCall {
-                receiver: Some(receiver),
-                args,
-                ..
-            } = self.pass.body.expr_unchecked(expr).kind.clone()
-            else {
-                continue;
-            };
-
-            let receiver_ty = self.pass.inference.root_resolved_expr_ty(receiver);
-            if receiver_ty.has_var() || matches!(receiver_ty, Ty::Unknown) {
-                continue;
-            }
-
-            // A later call in the same chain can constrain a closure parameter used by an earlier
-            // method expression. Select from that live receiver fact so stored resolution and the
-            // inference target cannot disagree merely because the first body walk saw `unknown`.
-            let resolution = {
-                let context = self.pass.context();
-                let targets = context
-                    .calls()
-                    .method_targets_with_receiver_ty(expr, &receiver_ty)?;
-                if targets.is_empty() {
-                    continue;
+                for expr_idx in 0..expr_count {
+                    member_inference.project_expr(inference, ExprId(expr_idx))?;
                 }
-                targets.resolution()
-            };
-            self.pass.set_expr_resolution(expr, resolution);
 
-            let (context, inference) = self.pass.context_and_inference();
-            let calls = BodyCallInference::new(context);
-            calls.instantiate_return_fact(inference, expr, &args, Some(receiver))?;
-            calls.solve_generic_trait_obligations(inference, expr, &args, Some(receiver))?;
-            calls.project_selected_trait_associated_return_type(
-                inference,
-                expr,
-                &args,
-                Some(receiver),
-            )?;
-            changed = true;
-        }
-
-        Ok(changed)
+                Ok(())
+            })
     }
 
-    /// Make `let second = first;` chains share one inference slot graph.
-    fn refresh_binding_flow_facts(&mut self) -> bool {
-        // Binding reads and binding initializers can form short chains such as
-        // `let second = first;`. Iterate over this narrow graph so every slot shares the same
-        // inference vars before expected-type constraints run.
-        let mut any_changed = false;
-        let max_passes = self.pass.body.bindings().len() + self.pass.body.exprs().len() + 1;
-        for _ in 0..max_passes {
-            let initializer_changed = self.link_let_binding_initializers();
-            let path_changed = self.refresh_binding_path_expr_facts();
-            let changed = initializer_changed || path_changed;
-            any_changed |= changed;
-            if !changed {
-                break;
-            }
-        }
-
-        any_changed
-    }
-
-    /// Visit every unannotated `let pat = expr` that can carry initializer evidence.
-    fn link_let_binding_initializers(&mut self) -> bool {
-        let (context, inference) = self.pass.context_and_inference();
-        let body = context.body();
-        let pattern_inference = BodyPatternInference::new(context);
-        let mut changed = false;
-
-        for statement_idx in 0..body.statements().len() {
-            let StmtKind::Let {
-                pat: Some(pat),
-                annotation: None,
-                initializer: Some(initializer),
-                ..
-            } = body.statement_unchecked(StmtId(statement_idx)).kind.clone()
-            else {
-                continue;
-            };
-            changed |= pattern_inference.link_initializer_pattern(inference, pat, initializer);
-        }
-
-        for expr_idx in 0..body.exprs().len() {
-            let expr = ExprId(expr_idx);
-            let ExprKind::Let {
-                pat: Some(pat),
-                initializer: Some(initializer),
-                ..
-            } = body.expr_unchecked(expr).kind.clone()
-            else {
-                continue;
-            };
-            changed |= pattern_inference.link_initializer_pattern(inference, pat, initializer);
-        }
-
-        changed
-    }
-
-    /// Copy binding slots back into local reads such as `values` or `alias`.
-    fn refresh_binding_path_expr_facts(&mut self) -> bool {
-        let mut changed = false;
-
-        for expr_idx in 0..self.pass.body.exprs().len() {
-            let expr = ExprId(expr_idx);
-            if let BodyResolution::Binding(binding) = self.pass.expr_resolution(expr) {
-                changed |= self.pass.inference.set_expr_from_binding(expr, *binding);
-            }
-        }
-
-        changed
-    }
-
-    /// Rebuild field and index expressions that project out of inference-aware bases.
-    fn refresh_member_projection_facts(&mut self) -> Result<bool, PackageStoreError> {
-        let (context, inference) = self.pass.context_and_inference();
-        let expr_count = context.body().exprs().len();
-        let member_inference = BodyMemberInference::new(context);
-        let mut changed = false;
-
-        for expr_idx in 0..expr_count {
-            changed |= member_inference.refresh_projection_fact(inference, ExprId(expr_idx))?;
-        }
-
-        Ok(changed)
-    }
-
-    /// Rebuild shapes such as `(?T,)`, `[?T; N]`, `&?T`, or branch results from child slots.
-    fn refresh_shape_expr_facts(&mut self) {
-        for expr_idx in 0..self.pass.body.exprs().len() {
-            let expr = ExprId(expr_idx);
-            let kind = self.pass.body.expr_unchecked(expr).kind.clone();
-            match kind {
-                ExprKind::Tuple { fields } => self
-                    .pass
-                    .inference
-                    .set_expr_tuple_from_fields(expr, &fields),
-                ExprKind::Array { elements } => self.pass.inference.set_expr_array_from_elements(
-                    expr,
-                    &elements,
-                    Some(elements.len().to_string()),
-                ),
-                ExprKind::RepeatArray {
-                    initializer,
-                    len_text,
-                    ..
-                } => {
-                    self.pass.inference.set_expr_repeat_array_from_initializer(
-                        expr,
-                        initializer,
-                        len_text,
-                    );
-                }
-                ExprKind::Wrapper { kind, inner } => {
-                    let ty = if let Some(inner) = inner {
-                        TyNormalizer::new(self.pass.context())
-                            .ty_for_wrapper(kind, self.pass.inference.expr_ty(inner))
-                    } else {
-                        self.pass.expr_ty_unchecked(expr).clone()
-                    };
-                    self.pass.inference.set_expr_infer_ty(expr, ty);
-                }
-                ExprKind::Block {
-                    statements, tail, ..
-                } => {
-                    // If code has no tail, we want to prevent it from resolving to `()` if it
-                    // actually resolved to `!`.
-                    // At the same time we don't try to be overly smart and catch cases such as
-                    // `return false; 42` (e.g. block de facto resolves to `!` but has a tail),
-                    // since it's still valid rust and it typechecks. Compiler will warn user
-                    // about dead code anyway.
-                    if tail.is_none() && self.tailless_block_final_statement_diverges(&statements) {
-                        self.pass.inference.set_expr_infer_ty(expr, Ty::Never);
-                    } else {
-                        self.pass.inference.set_expr_block_from_tail(expr, tail);
-                    }
-                }
-                ExprKind::If {
-                    then_branch,
-                    else_branch,
-                    ..
-                } => {
-                    self.pass
-                        .inference
-                        .set_expr_if_from_branches(expr, then_branch, else_branch);
-                }
-                ExprKind::Match { arms, .. } => {
-                    self.pass.inference.set_expr_match_from_arms(
-                        expr,
-                        arms.into_iter().filter_map(|arm| arm.expr),
-                    );
-                }
-                _ => {}
-            }
-        }
-    }
-
-    /// Treat tail-less `{ return value; }`-style blocks as diverging.
-    fn tailless_block_final_statement_diverges(&self, statements: &[StmtId]) -> bool {
-        let Some(statement) = statements.last() else {
-            return false;
-        };
-        let StmtKind::Expr { expr, .. } = self.pass.body.statement_unchecked(*statement).kind
-        else {
-            return false;
-        };
-
-        match self.pass.body.expr_unchecked(expr).kind {
-            ExprKind::Break { value: Some(_), .. } => return false,
-            ExprKind::Wrapper {
-                kind: ExprWrapperKind::Return,
-                ..
-            }
-            | ExprKind::Break { value: None, .. }
-            | ExprKind::Continue { .. }
-            | ExprKind::Yeet { .. }
-            | ExprKind::Become { .. } => return true,
-            _ => {}
-        }
-
-        matches!(self.pass.inference.root_resolved_expr_ty(expr), Ty::Never)
-    }
-
-    /// Use one selected call target to push parameter evidence into written args.
+    /// Transfer one call's return, argument, obligation, and projection evidence as one unit.
     ///
-    /// `take_user(value)` makes `value` expect `User`; `id(user)` lets `T` become `User`.
-    fn constrain_call_target_argument_expected_types(
+    /// `take_user(value)` makes `value` expect `User`; `id(user)` lets `T` become `User`. The
+    /// selected state remains alive while those expectations reach nested argument expressions,
+    /// so completion can consume their refined types without selecting the call again.
+    fn transfer_call(
         &mut self,
         call: ExprId,
         args: &[ExprId],
+        receiver: Option<ExprId>,
     ) -> Result<(), PackageStoreError> {
-        // Concrete parameter types can immediately constrain literals and transparent shapes.
-        let concrete_expectations = {
-            let (context, inference) = self.pass.context_and_inference();
-            BodyCallInference::new(context).argument_expected_tys(inference, call, args)?
+        let transfer =
+            self.pass
+                .with_context_and_inference(&self.snapshot, |context, inference| {
+                    BodyCallInference::new(context)
+                        .prepare_transfer(inference, call, args, receiver)
+                })?;
+        let Some(transfer) = transfer else {
+            return Ok(());
         };
-        for (arg, expected_ty) in concrete_expectations {
+
+        for (arg, expected_ty) in transfer.argument_expected_tys(args) {
             self.constrain_expr_with_expected(arg, &expected_ty);
         }
 
-        // Build a fresh field-split context after concrete constraints. Keeping the first context
-        // alive would immutably borrow the pass while we mutate the inference facts.
-        let (context, inference) = self.pass.context_and_inference();
-        // Generic parameter evidence needs the inference view so shared `?T` slots stay linked.
-        BodyCallInference::new(context).constrain_function_generic_arguments(inference, call, args)
+        self.pass
+            .with_context_and_inference(&self.snapshot, |context, inference| {
+                BodyCallInference::new(context).complete_transfer(inference, transfer, args)
+            })
     }
 
-    fn solve_call_target_generic_trait_obligations(
-        &mut self,
-        call: ExprId,
-        args: &[ExprId],
-        receiver: Option<ExprId>,
-    ) -> Result<(), PackageStoreError> {
-        let (context, inference) = self.pass.context_and_inference();
-        BodyCallInference::new(context)
-            .solve_generic_trait_obligations(inference, call, args, receiver)
-    }
-
-    fn project_selected_trait_associated_return_type(
-        &mut self,
-        call: ExprId,
-        args: &[ExprId],
-        receiver: Option<ExprId>,
-    ) -> Result<(), PackageStoreError> {
-        let (context, inference) = self.pass.context_and_inference();
-        BodyCallInference::new(context)
-            .project_selected_trait_associated_return_type(inference, call, args, receiver)
-    }
-
-    /// Visit all places that can provide expected types to already-created inference slots.
-    fn constrain_expected_types(&mut self) -> Result<(), PackageStoreError> {
-        // Written annotations allocate inference variables for `_`. They are stable inputs to the
-        // body, so lower them once before the fixed point instead of replacing those variables on
-        // every pass.
-        for statement_idx in 0..self.pass.body.statements().len() {
-            self.constrain_statement_expected_types(StmtId(statement_idx))?;
-        }
-        self.constrain_function_return_expected_types()?;
-
-        let max_passes = self.pass.body.bindings().len() + self.pass.body.exprs().len() + 1;
-        for _ in 0..max_passes {
-            for expr_idx in 0..self.pass.body.exprs().len() {
-                self.constrain_expr_expected_types(ExprId(expr_idx))?;
-            }
-
-            // Calls can constrain closure parameters, which can unlock method resolution inside
-            // those closures and in turn provide return evidence to a later adapter in the chain.
-            // Repeat only while such dependent facts actually change.
-            if !self.refresh_inference_dependent_expr_facts()? {
-                break;
-            }
-        }
-
-        Ok(())
-    }
-
-    /// Route statement-level evidence, currently `let name: T = initializer`.
-    fn constrain_statement_expected_types(
+    /// Lower each written annotation once, retaining stable variables for `_` positions.
+    fn initialize_statement_expected_type(
         &mut self,
         statement: StmtId,
     ) -> Result<(), PackageStoreError> {
@@ -485,7 +185,20 @@ where
                 annotation: Some(annotation),
                 initializer: Some(initializer),
                 ..
-            } => self.constrain_let_annotation_initializer(scope, pat, annotation, initializer),
+            } => {
+                let expected_ty = self.pass.with_context_and_inference(
+                    &self.snapshot,
+                    |context, inference| {
+                        context
+                            .type_refs(scope)
+                            .resolve_with_inference(&annotation, inference.table_mut())
+                    },
+                )?;
+                self.pass
+                    .inference
+                    .set_statement_expected_ty(statement, expected_ty.clone());
+                self.constrain_let_annotation_initializer(pat, initializer, &expected_ty)
+            }
             StmtKind::Let { .. }
             | StmtKind::Expr { .. }
             | StmtKind::Item { .. }
@@ -493,92 +206,57 @@ where
         }
     }
 
-    /// Constrain an initializer from its explicit statement annotation.
-    ///
-    /// This intentionally only links the annotation to the initializer root expression. Nested
-    /// expected-type propagation belongs in expression kind-specific rules.
-    fn constrain_let_annotation_initializer(
+    /// Reapply the equality between a stable annotation type, its pattern, and initializer.
+    fn constrain_statement_expected_types(
         &mut self,
-        scope: ScopeId,
-        pat: PatId,
-        annotation: TypeRef,
-        initializer: ExprId,
+        statement: StmtId,
     ) -> Result<(), PackageStoreError> {
-        let expected_ty = {
-            let (context, inference) = self.pass.context_and_inference();
-            context
-                .type_refs(scope)
-                .resolve_with_inference(&annotation, inference.table_mut())?
+        let StmtKind::Let {
+            pat: Some(pat),
+            annotation: Some(_),
+            initializer: Some(initializer),
+            ..
+        } = self.pass.body.statement_unchecked(statement).kind.clone()
+        else {
+            return Ok(());
+        };
+        let Some(expected_ty) = self.pass.inference.statement_expected_ty(statement) else {
+            return Ok(());
         };
 
-        // `let value: Vec<_> = make_vec();` needs the written `_` to become a real inference
-        // slot before call obligations run, otherwise `Vec<unknown>` cannot absorb trait evidence.
-        if expected_ty.has_var() {
-            self.pass
-                .inference
-                .constrain_expr_ty(initializer, &expected_ty);
-            self.constrain_single_binding_annotation(pat, &expected_ty);
-        }
-
-        self.constrain_expr_with_expected(initializer, &expected_ty);
-
-        Ok(())
+        self.constrain_let_annotation_initializer(pat, initializer, &expected_ty)
     }
 
-    /// Attach annotation holes to a single local binding.
-    ///
-    /// This processes `let value: Vec<_> = ...`, where the whole annotation belongs to one
-    /// binding. It intentionally does not process destructuring annotations such as
-    /// `let (left, right): (Vec<_>, Vec<_>) = ...`; those need inference-aware pattern
-    /// propagation rather than assigning the whole tuple type to one binding.
-    fn constrain_single_binding_annotation(&mut self, pat: PatId, expected_ty: &Ty) {
-        let Some(pat_data) = self.pass.body.pat(pat).cloned() else {
-            return;
-        };
-        let PatKind::Binding {
-            binding: Some(binding),
-            ..
-        } = pat_data.kind
-        else {
-            return;
-        };
-
+    /// Constrain an initializer from its explicit statement annotation.
+    fn constrain_let_annotation_initializer(
+        &mut self,
+        pat: PatId,
+        initializer: ExprId,
+        expected_ty: &Ty,
+    ) -> Result<(), PackageStoreError> {
+        self.constrain_expr_with_expected(initializer, expected_ty);
         self.pass
-            .inference
-            .set_binding_infer_ty(binding, expected_ty.clone());
+            .with_context_and_inference(&self.snapshot, |context, inference| {
+                BodyPatternInference::new(context).link_pat(inference, pat, expected_ty)
+            })?;
+
+        Ok(())
     }
 
     /// Route expression-level evidence from calls, method calls, record fields, and assignments.
     fn constrain_expr_expected_types(&mut self, expr: ExprId) -> Result<(), PackageStoreError> {
         let kind = self.pass.body.expr_unchecked(expr).kind.clone();
         match kind {
-            ExprKind::Call {
-                callee: Some(callee),
-                args,
-            } => {
-                self.constrain_call_target_argument_expected_types(expr, &args)?;
-                self.solve_call_target_generic_trait_obligations(expr, &args, None)?;
-                self.project_selected_trait_associated_return_type(expr, &args, None)?;
-                self.constrain_enum_variant_payload_expected_types(expr, callee, args)
+            ExprKind::Call { callee, args } => {
+                self.transfer_call(expr, &args, None)?;
+                if let Some(callee) = callee {
+                    self.instantiate_enum_variant_call_result_fact(expr, callee);
+                    self.constrain_enum_variant_payload_expected_types(expr, callee, args)?;
+                }
+                Ok(())
             }
-            ExprKind::MethodCall {
-                receiver: Some(receiver),
-                args,
-                ..
-            } => {
-                self.constrain_call_target_argument_expected_types(expr, &args)?;
-
-                let (context, inference) = self.pass.context_and_inference();
-                BodyCallInference::new(context).constrain_selected_method_receiver_and_arguments(
-                    inference, expr, receiver, &args,
-                )?;
-                self.solve_call_target_generic_trait_obligations(expr, &args, Some(receiver))?;
-                self.project_selected_trait_associated_return_type(expr, &args, Some(receiver))
-            }
-            ExprKind::MethodCall { args, .. } => {
-                self.constrain_call_target_argument_expected_types(expr, &args)?;
-                self.solve_call_target_generic_trait_obligations(expr, &args, None)?;
-                self.project_selected_trait_associated_return_type(expr, &args, None)
+            ExprKind::MethodCall { receiver, args, .. } => {
+                self.transfer_call(expr, &args, receiver)
             }
             ExprKind::Record { fields, .. } => {
                 self.constrain_record_field_initializer_expected_types(expr, fields)
@@ -943,24 +621,5 @@ where
             }
             rg_ty::ConstValue::Param(_) | rg_ty::ConstValue::Unknown => true,
         })
-    }
-
-    /// Writes finalized inference facts back into the body.
-    ///
-    /// Downstream queries only read `Ty`, so unresolved variables are defaulted or erased here
-    /// before the resolved body leaves this pass.
-    fn finalize_facts(&mut self) {
-        // Persist the inference view back into Body IR so downstream queries see ordinary `Ty`
-        // facts. Unsolved numeric variables become defaults; conflicts become `<unknown>`.
-        for expr_idx in 0..self.pass.body.exprs().len() {
-            let expr = ExprId(expr_idx);
-            let ty = self.pass.inference.finalize_expr_ty(expr);
-            self.pass.set_expr_ty(expr, ty);
-        }
-        for binding_idx in 0..self.pass.body.bindings().len() {
-            let binding = BindingId(binding_idx);
-            let ty = self.pass.inference.finalize_binding_ty(binding);
-            self.pass.set_binding_ty(binding, ty);
-        }
     }
 }

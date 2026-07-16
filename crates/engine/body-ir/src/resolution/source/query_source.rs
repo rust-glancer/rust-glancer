@@ -5,29 +5,30 @@ use rg_ir_model::{BodyRef, CrateRef, DefMapRef, ModuleRef};
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::{ItemStore, ItemStoreSource};
 
-use crate::{BodyData, BodyView};
+use crate::{BodyData, BodyView, ir::BodyQueryView};
 
 /// Body state available to one query context.
 ///
-/// Structural build steps run before semantic sidecars exist. Resolved queries retain the paired
-/// view and can additionally read facts without making the build pipeline allocate placeholders.
+/// Structural build steps run before semantic sidecars exist. Semantic queries retain a narrow
+/// view of the facts available in their phase without making the build pipeline allocate
+/// placeholders for finalized facts.
 #[derive(Clone, Copy)]
 enum BodyQueryBody<'a> {
     Structural(&'a BodyData),
-    Resolved(BodyView<'a>),
+    Query(BodyQueryView<'a>),
 }
 
 impl<'a> BodyQueryBody<'a> {
     fn structure(self) -> &'a BodyData {
         match self {
             Self::Structural(body) => body,
-            Self::Resolved(body) => body.structure(),
+            Self::Query(body) => body.structure(),
         }
     }
 
-    fn resolved(self) -> BodyView<'a> {
+    fn query_view(self) -> BodyQueryView<'a> {
         match self {
-            Self::Resolved(body) => body,
+            Self::Query(body) => body,
             Self::Structural(_) => {
                 panic!("semantic body facts should exist before this query is used")
             }
@@ -53,7 +54,21 @@ impl<'a, D, I> BodyQuerySource<'a, D, I> {
             def_maps,
             item_stores,
             body_ref,
-            body: BodyQueryBody::Resolved(body),
+            body: BodyQueryBody::Query(body.query_view()),
+        }
+    }
+
+    pub(crate) fn for_query(
+        def_maps: D,
+        item_stores: I,
+        body_ref: BodyRef,
+        body: BodyQueryView<'a>,
+    ) -> Self {
+        Self {
+            def_maps,
+            item_stores,
+            body_ref,
+            body: BodyQueryBody::Query(body),
         }
     }
 
@@ -79,8 +94,8 @@ impl<'a, D, I> BodyQuerySource<'a, D, I> {
         self.body.structure()
     }
 
-    pub(crate) fn resolved_body(&self) -> BodyView<'a> {
-        self.body.resolved()
+    pub(crate) fn query_body(&self) -> BodyQueryView<'a> {
+        self.body.query_view()
     }
 }
 

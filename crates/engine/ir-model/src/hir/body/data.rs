@@ -12,10 +12,15 @@ use super::{
     PatData, PatKind, ScopeData, StmtData, StmtKind,
 };
 
-/// Model-shaped expression body for a function, const, or static initializer.
+/// Frozen structural IR for a function, const, or static initializer.
 ///
-/// This is the pure body shape: source identity, lexical scopes, and lowered node arenas.
-/// Resolution keeps derived facts in separate sidecars owned by the body resolution layer.
+/// This contains only facts established by lowering: source identity, lexical scopes, and the
+/// arenas for patterns, statements, expressions, and bindings. It does not contain resolved paths
+/// or inferred types. Those conclusions belong to `BodyFacts` in the body-resolution layer.
+///
+/// The arenas here define the meaning of `ExprId` and `BindingId` for this body. Once lowering has
+/// compacted ambiguous pattern bindings, the shape is no longer mutated; a corresponding semantic
+/// sidecar can then mirror those ids without either representation owning the other.
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct BodyData {
     owner: BodyOwner,

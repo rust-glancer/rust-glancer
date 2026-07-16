@@ -310,9 +310,9 @@ pub fn use_it() {
             bindings
             - v0 self_param self `&self` => &nominal struct fn body_local_impl_fixture[lib]::crate::use_it::User @ 4:5-4:17 @ 7:15-7:20
             body
-            expr e2 block s1 => <unknown> @ 7:34-9:10
+            expr e2 block s1 => nominal struct body_local_impl_fixture[lib]::crate::GlobalId @ 7:34-9:10
               tail
-                expr e1 call => <unknown> @ 8:13-8:22
+                expr e1 call => nominal struct body_local_impl_fixture[lib]::crate::GlobalId @ 8:13-8:22
                   callee
                     expr e0 path missing => <unknown> @ 8:13-8:20
 
@@ -324,9 +324,9 @@ pub fn use_it() {
             bindings
             - v0 self_param self `&self` => &nominal struct fn body_local_impl_fixture[lib]::crate::use_it::User @ 4:5-4:17 @ 11:18-11:23
             body
-            expr e2 block s1 => <unknown> @ 11:33-13:10
+            expr e2 block s1 => nominal struct fn body_local_impl_fixture[lib]::crate::use_it::User @ 4:5-4:17 @ 11:33-13:10
               tail
-                expr e1 call => <unknown> @ 12:13-12:22
+                expr e1 call => nominal struct fn body_local_impl_fixture[lib]::crate::use_it::User @ 4:5-4:17 @ 12:13-12:22
                   callee
                     expr e0 path missing => <unknown> @ 12:13-12:20
 
@@ -337,9 +337,9 @@ pub fn use_it() {
             - s1 parent s0: <none>
             bindings
             body
-            expr e2 block s1 => <unknown> @ 15:37-17:10
+            expr e2 block s1 => nominal struct body_local_impl_fixture[lib]::crate::GlobalId @ 15:37-17:10
               tail
-                expr e1 call => <unknown> @ 16:13-16:22
+                expr e1 call => nominal struct body_local_impl_fixture[lib]::crate::GlobalId @ 16:13-16:22
                   callee
                     expr e0 path missing => <unknown> @ 16:13-16:20
         "#]],
@@ -438,9 +438,9 @@ pub fn use_it(id: GlobalId) {
             bindings
             - v0 self_param self `&self` => &nominal struct body_local_target_impl_fixture[lib]::crate::GlobalId @ 9:18-9:23
             body
-            expr e2 block s1 => <unknown> @ 9:36-11:10
+            expr e2 block s1 => nominal struct body_local_target_impl_fixture[lib]::crate::LocalId @ 9:36-11:10
               tail
-                expr e1 call => <unknown> @ 10:13-10:22
+                expr e1 call => nominal struct body_local_target_impl_fixture[lib]::crate::LocalId @ 10:13-10:22
                   callee
                     expr e0 path missing => <unknown> @ 10:13-10:20
 
@@ -452,9 +452,9 @@ pub fn use_it(id: GlobalId) {
             bindings
             - v0 self_param self `&self` => &nominal struct body_local_target_impl_fixture[lib]::crate::GlobalId @ 13:18-13:23
             body
-            expr e2 block s1 => <unknown> @ 13:33-15:10
+            expr e2 block s1 => nominal struct body_local_target_impl_fixture[lib]::crate::GlobalId @ 13:33-15:10
               tail
-                expr e1 call => <unknown> @ 14:13-14:22
+                expr e1 call => nominal struct body_local_target_impl_fixture[lib]::crate::GlobalId @ 14:13-14:22
                   callee
                     expr e0 path missing => <unknown> @ 14:13-14:20
         "#]],
@@ -588,9 +588,9 @@ pub fn use_it(id: GlobalId) {
             bindings
             - v0 self_param self `&self` => &nominal struct body_local_trait_impl_fixture[lib]::crate::GlobalId @ 11:18-11:23
             body
-            expr e2 block s1 => <unknown> @ 11:34-13:10
+            expr e2 block s1 => nominal struct body_local_trait_impl_fixture[lib]::crate::Label @ 11:34-13:10
               tail
-                expr e1 call => <unknown> @ 12:13-12:22
+                expr e1 call => nominal struct body_local_trait_impl_fixture[lib]::crate::Label @ 12:13-12:22
                   callee
                     expr e0 path missing => <unknown> @ 12:13-12:20
 
@@ -601,9 +601,9 @@ pub fn use_it(id: GlobalId) {
             - s1 parent s0: <none>
             bindings
             body
-            expr e2 block s1 => <unknown> @ 15:28-17:10
+            expr e2 block s1 => nominal struct body_local_trait_impl_fixture[lib]::crate::Label @ 15:28-17:10
               tail
-                expr e1 call => <unknown> @ 16:13-16:22
+                expr e1 call => nominal struct body_local_trait_impl_fixture[lib]::crate::Label @ 16:13-16:22
                   callee
                     expr e0 path missing => <unknown> @ 16:13-16:20
         "#]],
@@ -1641,9 +1641,9 @@ pub fn use_it(id: GlobalId) {
             bindings
             - v0 self_param self `&self` => &nominal struct body_local_imported_impl_header_fixture[lib]::crate::GlobalId @ 8:18-8:23
             body
-            expr e2 block s1 => <unknown> @ 8:36-10:10
+            expr e2 block s1 => nominal struct body_local_imported_impl_header_fixture[lib]::crate::LocalId @ 8:36-10:10
               tail
-                expr e1 call => <unknown> @ 9:13-9:22
+                expr e1 call => nominal struct body_local_imported_impl_header_fixture[lib]::crate::LocalId @ 9:13-9:22
                   callee
                     expr e0 path missing => <unknown> @ 9:13-9:20
         "#]],

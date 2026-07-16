@@ -8,7 +8,7 @@ use rg_def_map::DefMapSource;
 use rg_ir_model::ExprId;
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::ItemStoreSource;
-use rg_ty::{GenericArg, Substitution, TraitGoal, Ty, inference::InferVarKind};
+use rg_ty::{GenericArg, Substitution, TraitGoal, Ty};
 
 use crate::{ir::ExprKind, resolution::BodyResolutionContext};
 
@@ -111,39 +111,30 @@ where
             if expected_ty.has_unknown() {
                 continue;
             }
-            let _ = pattern_inference.link_pat(inference, pat, &expected_ty);
+            pattern_inference.link_pat(inference, pat, &expected_ty)?;
         }
 
         // Return evidence flows in the opposite direction too: if `ret` is `?R` and the closure
         // body is known to be `Name`, this solves `?R = Name` for the caller that owns the goal.
         //
-        // A body call can still be an unresolved ordinary type slot at this point. Linking two
-        // such slots is not enough to finish the obligation: method resolution may replace the
-        // temporary body fact later, leaving the impl-only return slot orphaned. Keep the goal
-        // pending so the fixed-point pass retries it after the closure body gains a real shape.
+        // Relate the closure body and expected output before deciding whether the goal is done.
+        // Either side may provide the missing evidence: a known body solves an output slot, while
+        // a known expected output constrains an otherwise unresolved body expression.
+        //
+        // A structured body can still be incomplete, as in `(unknown, unknown)`. Types are copied
+        // into expression slots by value, so linking the output to that temporary tuple does not
+        // make its later field refinements observable through the old copy. Keep the goal pending
+        // until both canonical shapes are settled; the parent fixed point will then retry it with
+        // the refined tuple rather than freezing an orphaned result.
         if let Some(body) = body {
-            let body_ty = inference.root_resolved_expr_ty(body);
-            let ret_ty = inference.root_resolved_ty(ret);
-            let body_is_pending = matches!(
-                body_ty,
-                Ty::Unknown
-                    | Ty::InferVar {
-                        kind: InferVarKind::Type,
-                        ..
-                    }
-            );
-            let ret_is_pending = matches!(
-                ret_ty,
-                Ty::Unknown
-                    | Ty::InferVar {
-                        kind: InferVarKind::Type,
-                        ..
-                    }
-            );
-            if body_is_pending && ret_is_pending {
+            let _ = inference.constrain_expr_ty(body, ret);
+
+            let body_ty = inference.table.canonicalize(&inference.expr_ty(body));
+            let ret_ty = inference.table.canonicalize(ret);
+            let is_pending = |ty: &Ty| ty.has_var() || ty.has_unknown() || ty.has_projection();
+            if is_pending(&body_ty) || is_pending(&ret_ty) {
                 return Ok(BodyCallableGoalOutcome::Deferred);
             }
-            let _ = inference.constrain_expr_ty(body, ret);
         }
 
         Ok(BodyCallableGoalOutcome::Solved)
@@ -361,7 +352,26 @@ pub fn use_it(seed: Name) {
     #[test]
     fn callable_goal_waits_for_an_unresolved_closure_body() {
         let fixture = GoalFixture::new();
-        let mut inference = fixture.inference();
+        let body = fixture.body();
+        let mut inference = BodyInferenceCtx::new(body.exprs().len(), body.bindings().len());
+        for expr_idx in 0..body.exprs().len() {
+            let expr = ExprId(expr_idx);
+            if expr != fixture.closure_body() {
+                inference.set_expr_ty(
+                    expr,
+                    body.expr_ty(expr)
+                        .expect("fixture expression should have finalized facts"),
+                );
+            }
+        }
+        for binding_idx in 0..body.bindings().len() {
+            let binding = BindingId(binding_idx);
+            inference.set_binding_ty(
+                binding,
+                body.binding_ty(binding)
+                    .expect("fixture binding should have finalized facts"),
+            );
+        }
         let unresolved_body = inference.table.new_type_var();
         inference.set_expr_infer_ty(fixture.closure_body(), unresolved_body);
         let ret = inference.table.new_type_var();
@@ -445,11 +455,19 @@ pub fn use_it(seed: Name) {
             let mut inference = BodyInferenceCtx::new(body.exprs().len(), body.bindings().len());
             for expr_idx in 0..body.exprs().len() {
                 let expr = ExprId(expr_idx);
-                inference.set_expr_ty(expr, body.expr_ty_unchecked(expr));
+                inference.set_expr_ty(
+                    expr,
+                    body.expr_ty(expr)
+                        .expect("fixture expression should have finalized facts"),
+                );
             }
             for binding_idx in 0..body.bindings().len() {
                 let binding = BindingId(binding_idx);
-                inference.set_binding_ty(binding, body.binding_ty_unchecked(binding));
+                inference.set_binding_ty(
+                    binding,
+                    body.binding_ty(binding)
+                        .expect("fixture binding should have finalized facts"),
+                );
             }
             inference
         }

@@ -7,15 +7,19 @@ use rg_ir_model::{
 };
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::{GenericParamSource, Generics, ItemStoreSource};
-use rg_std::{ExpectedUnique, UniqueVec};
-use rg_ty::{CallableSignature, ExpectedTyExt, GenericArg, Substitution, Ty};
+use rg_std::UniqueVec;
+use rg_ty::{CallableSignature, GenericArg, Substitution, Ty};
 
 use crate::resolution::BodyResolutionContext;
 use crate::{ir::ExprKind, ir::resolved::BodyResolution};
 
 use super::associated_item::BodyAssociatedFunctionCandidate;
 
-/// Function target selected by call syntax.
+/// Semantic function selected for one written call before body-local inference.
+///
+/// The target retains explicit generic syntax and the call-site scope so type arguments can be
+/// lowered later against the correct body context. Receiver or type-prefix evidence is kept
+/// separately from function-owned generics; `BodyCallInference` turns the latter into live slots.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ResolvedCallTarget {
     function: FunctionRef,
@@ -24,6 +28,11 @@ pub(crate) struct ResolvedCallTarget {
     self_source: CallSelfSource,
 }
 
+/// How `Self` entered a selected call and whether syntax supplied an implicit receiver argument.
+///
+/// `Type::make(value)` contributes a `Self` substitution but its written arguments still begin at
+/// signature parameter zero. `value.method(arg)` contributes the same substitution and consumes
+/// parameter zero as the implicit receiver.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum CallSelfSource {
     None,
@@ -31,6 +40,7 @@ enum CallSelfSource {
     Receiver(CallSelf),
 }
 
+/// Concrete `Self` evidence recovered together with its owner-scoped substitution.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct CallSelf {
     self_ty: Ty,
@@ -134,18 +144,11 @@ impl CallSelfSource {
     }
 }
 
-/// A written function-call or method-call site.
-pub(crate) enum CallSite<'a> {
-    Function { callee: ExprId },
-    Method(MethodCallSite<'a>),
-}
-
 /// Method-call syntax facts needed for method lookup.
-pub(crate) struct MethodCallSite<'a> {
-    pub(crate) receiver: ExprId,
-    pub(crate) name: &'a str,
-    pub(crate) explicit_args: &'a [ItemGenericArg],
-    pub(crate) scope: ScopeId,
+struct MethodCallSite<'a> {
+    name: &'a str,
+    explicit_args: &'a [ItemGenericArg],
+    scope: ScopeId,
 }
 
 /// Call targets selected for one call expression.
@@ -181,25 +184,6 @@ impl ResolvedCallTargets {
         }
     }
 
-    /// Return the unique projected return type, or unknown for zero or multiple targets.
-    pub(crate) fn return_ty<'query, D, I>(
-        &self,
-        calls: &BodyCallQuery<'query, D, I>,
-        args: &[ExprId],
-    ) -> Result<Ty, PackageStoreError>
-    where
-        D: DefMapSource<Error = PackageStoreError> + Copy,
-        I: ItemStoreSource<'query, Error = PackageStoreError> + Copy,
-    {
-        let mut return_tys = ExpectedUnique::new();
-        for target in &self.targets {
-            let projection = calls.signature(target).project(args)?;
-            return_tys.push(projection.return_ty());
-        }
-
-        Ok(return_tys.into_ty())
-    }
-
     /// Add one target, preserving uniqueness.
     fn push(&mut self, target: ResolvedCallTarget) {
         self.targets.push(target);
@@ -230,11 +214,6 @@ impl CallProjection {
         &self.signature
     }
 
-    /// Return the projected call result type.
-    pub(crate) fn return_ty(&self) -> Ty {
-        self.subst.apply(&self.signature.ret)
-    }
-
     /// Return the call-specific substitution used to project signature types.
     pub(crate) fn subst(&self) -> &Substitution {
         &self.subst
@@ -255,27 +234,6 @@ where
         Self { context }
     }
 
-    /// Return the result type of a call expression.
-    pub(crate) fn call_expr_ty(
-        &self,
-        callee: Option<ExprId>,
-        args: &[ExprId],
-    ) -> Result<Ty, PackageStoreError> {
-        let Some(callee) = callee else {
-            return Ok(Ty::Unknown);
-        };
-        let callee_ty = self.context.resolved_body().expr_ty_unchecked(callee);
-
-        if matches!(callee_ty, Ty::Adt(_)) {
-            return Ok(callee_ty.clone());
-        }
-
-        // Ordinary calls use declared return types plus a deliberately-small substitution model:
-        // explicit turbofish args and direct argument-to-parameter type inference.
-        self.targets(CallSite::Function { callee })?
-            .return_ty(self, args)
-    }
-
     /// Return signature projection for a selected call target.
     pub(crate) fn signature<'call>(
         &'call self,
@@ -285,14 +243,6 @@ where
             query: self,
             target,
         }
-    }
-
-    /// Return the single target selected by a call expression.
-    pub(crate) fn target(
-        &self,
-        call: ExprId,
-    ) -> Result<Option<ResolvedCallTarget>, PackageStoreError> {
-        self.target_with_receiver_ty(call, None)
     }
 
     /// Return the selected target, preferring a live inference receiver for method calls.
@@ -306,7 +256,7 @@ where
             ExprKind::Call {
                 callee: Some(callee),
                 ..
-            } => self.targets(CallSite::Function { callee: *callee })?,
+            } => self.function_targets(*callee)?,
             ExprKind::Call { callee: None, .. } => return Ok(None),
             ExprKind::MethodCall {
                 receiver: Some(receiver),
@@ -315,15 +265,13 @@ where
                 ..
             } => {
                 let site = MethodCallSite {
-                    receiver: *receiver,
                     name: method_name,
                     explicit_args: generic_args,
                     scope: expr_data.scope,
                 };
-                match receiver_ty {
-                    Some(receiver_ty) => self.lookup_method_for_ty(site, receiver_ty)?,
-                    None => self.lookup_method(site)?,
-                }
+                let receiver_ty = receiver_ty
+                    .unwrap_or_else(|| self.context.query_body().expr_ty_unchecked(*receiver));
+                self.lookup_method_for_ty(site, receiver_ty)?
             }
             ExprKind::MethodCall { receiver: None, .. } => return Ok(None),
             _ => return Ok(None),
@@ -340,7 +288,7 @@ where
     ) -> Result<ResolvedCallTargets, PackageStoreError> {
         let expr_data = self.context.body().expr_unchecked(call);
         let ExprKind::MethodCall {
-            receiver: Some(receiver),
+            receiver: Some(_),
             method_name,
             generic_args,
             ..
@@ -351,24 +299,12 @@ where
 
         self.lookup_method_for_ty(
             MethodCallSite {
-                receiver: *receiver,
                 name: method_name,
                 explicit_args: generic_args,
                 scope: expr_data.scope,
             },
             receiver_ty,
         )
-    }
-
-    /// Return all targets selected by a call site.
-    pub(crate) fn targets(
-        &self,
-        site: CallSite<'_>,
-    ) -> Result<ResolvedCallTargets, PackageStoreError> {
-        match site {
-            CallSite::Function { callee } => self.function_targets(callee),
-            CallSite::Method(site) => self.lookup_method(site),
-        }
     }
 
     /// Convert resolved callee declarations into callable function targets.
@@ -381,7 +317,7 @@ where
         }
 
         let BodyResolution::Declarations(declarations) =
-            self.context.resolved_body().expr_resolution(callee)
+            self.context.query_body().expr_resolution_unchecked(callee)
         else {
             return Ok(targets);
         };
@@ -432,18 +368,6 @@ where
                 subst: candidate.subst().clone(),
             },
         )
-    }
-
-    /// Convert receiver method lookup into callable method targets.
-    fn lookup_method(
-        &self,
-        site: MethodCallSite<'_>,
-    ) -> Result<ResolvedCallTargets, PackageStoreError> {
-        let receiver_ty = self
-            .context
-            .resolved_body()
-            .expr_ty_unchecked(site.receiver);
-        self.lookup_method_for_ty(site, receiver_ty)
     }
 
     /// Convert receiver method lookup into targets using the supplied semantic receiver fact.
@@ -561,7 +485,7 @@ where
             .map(|arg| {
                 self.query
                     .context
-                    .resolved_body()
+                    .query_body()
                     .expr_ty_unchecked(*arg)
                     .clone()
             })

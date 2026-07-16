@@ -324,7 +324,10 @@ impl CrateBodyIrSnapshot<'_> {
             name,
             self.render_source_text(binding.source),
             annotation,
-            self.render_ty(body.binding_ty_unchecked(id)),
+            self.render_ty(
+                body.binding_ty(id)
+                    .expect("dumped binding should have finalized facts"),
+            ),
             self.render_source(binding.source),
             name_span,
         )

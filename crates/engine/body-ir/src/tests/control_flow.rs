@@ -484,9 +484,9 @@ pub fn use_it(def_map: &DefMap) {
             bindings
             - v0 self_param self `&self` => &nominal struct storage[lib]::crate::DefMap @ 6:20-6:25
             body
-            expr e2 block s1 => <unknown> @ 6:44-8:6
+            expr e2 block s1 => &[nominal struct storage[lib]::crate::ImportData] @ 6:44-8:6
               tail
-                expr e1 call => <unknown> @ 7:9-7:18
+                expr e1 call => &[nominal struct storage[lib]::crate::ImportData] @ 7:9-7:18
                   callee
                     expr e0 path missing => <unknown> @ 7:9-7:16
         "#]],
@@ -612,9 +612,9 @@ pub fn use_it(def_map: &DefMap) {
             bindings
             - v0 self_param self `&self` => &[param T] @ 16:17-16:22
             body
-            expr e2 block s1 => <unknown> @ 16:46-18:6
+            expr e2 block s1 => nominal struct fake_core[lib]::crate::slice::Iter<'_, param T> @ 16:46-18:6
               tail
-                expr e1 call => <unknown> @ 17:9-17:18
+                expr e1 call => nominal struct fake_core[lib]::crate::slice::Iter<'_, param T> @ 17:9-17:18
                   callee
                     expr e0 path missing => <unknown> @ 17:9-17:16
 
@@ -629,9 +629,9 @@ pub fn use_it(def_map: &DefMap) {
             bindings
             - v0 self_param self `&self` => &nominal struct storage[lib]::crate::DefMap @ 6:20-6:25
             body
-            expr e2 block s1 => <unknown> @ 6:44-8:6
+            expr e2 block s1 => &[nominal struct storage[lib]::crate::ImportData] @ 6:44-8:6
               tail
-                expr e1 call => <unknown> @ 7:9-7:18
+                expr e1 call => &[nominal struct storage[lib]::crate::ImportData] @ 7:9-7:18
                   callee
                     expr e0 path missing => <unknown> @ 7:9-7:16
         "#]],

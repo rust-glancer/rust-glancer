@@ -976,9 +976,9 @@ pub fn use_it(mut pair: (u8, u8), mut slots: [u8; 3], value: u8, user: User) {
             - s2 parent s1: <none>
             bindings
             body
-            expr e2 block s1 => <unknown> @ 5:21-7:2
+            expr e2 block s1 => ! @ 5:21-7:2
               tail
-                expr e1 loop => <unknown> @ 6:5-6:12
+                expr e1 loop => ! @ 6:5-6:12
                   body
                     expr e0 block s2 => () @ 6:10-6:12
 
@@ -1094,11 +1094,11 @@ pub fn use_it(mut pair: (u8, u8), mut slots: [u8; 3], value: u8, user: User) {
                         lhs
                           expr e39 binary == => bool @ 20:18-20:32
                             lhs
-                              expr e37 binary + => <unknown> @ 20:18-20:27
+                              expr e37 binary + => u8 @ 20:18-20:27
                                 lhs
                                   expr e35 path value -> local v2 => u8 @ 20:18-20:23
                                 rhs
-                                  expr e36 literal int `1` => i32 @ 20:26-20:27
+                                  expr e36 literal int `1` => u8 @ 20:26-20:27
                             rhs
                               expr e38 literal int `2` => i32 @ 20:31-20:32
                         rhs

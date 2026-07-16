@@ -78,6 +78,89 @@ pub fn use_it(user: User) {
 }
 
 #[test]
+fn resolves_members_from_a_solved_anonymous_binding_type() {
+    check_project_body_ir(
+        r#"
+//- /Cargo.toml
+[package]
+name = "body_solved_binding_member_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct User { pub id: u8 }
+
+impl User {
+    pub fn id(&self) -> u8 { self.id }
+}
+
+pub fn identity<T>(value: T) -> T { value }
+
+pub fn use_it(user: User) {
+    let inferred: _ = identity(user);
+    inferred.id;
+    inferred.id();
+}
+"#,
+        expect![[r#"
+            package body_solved_binding_member_fixture
+
+            body_solved_binding_member_fixture [lib]
+            body b0 fn body_solved_binding_member_fixture[lib]::crate::identity @ 7:1-7:44
+            scopes
+            - s0 parent <none>: v0
+            - s1 parent s0: <none>
+            bindings
+            - v0 param value `value`: T => param T @ 7:20-7:25
+            body
+            expr e1 block s1 => param T @ 7:35-7:44
+              tail
+                expr e0 path value -> local v0 => param T @ 7:37-7:42
+
+
+            body b1 fn body_solved_binding_member_fixture[lib]::crate::use_it @ 9:1-13:2
+            scopes
+            - s0 parent <none>: v0
+            - s1 parent s0: v1
+            bindings
+            - v0 param user `user`: User => nominal struct body_solved_binding_member_fixture[lib]::crate::User @ 9:15-9:19
+            - v1 let inferred `inferred`: _ => nominal struct body_solved_binding_member_fixture[lib]::crate::User @ 10:9-10:17
+            body
+            expr e7 block s1 => () @ 9:27-13:2
+              stmt s0 let v1: _ @ 10:5-10:38
+                initializer
+                  expr e2 call => nominal struct body_solved_binding_member_fixture[lib]::crate::User @ 10:23-10:37
+                    callee
+                      expr e0 path identity -> fn body_solved_binding_member_fixture[lib]::crate::identity => function item fn body_solved_binding_member_fixture[lib]::crate::identity @ 10:23-10:31
+                    arg
+                      expr e1 path user -> local v0 => nominal struct body_solved_binding_member_fixture[lib]::crate::User @ 10:32-10:36
+              stmt s1 expr; @ 11:5-11:17
+                expr e4 field id -> field struct body_solved_binding_member_fixture[lib]::crate::User::id => u8 @ 11:5-11:16
+                  base
+                    expr e3 path inferred -> local v1 => nominal struct body_solved_binding_member_fixture[lib]::crate::User @ 11:5-11:13
+              stmt s2 expr; @ 12:5-12:19
+                expr e6 method_call id -> fn impl User::id => u8 @ 12:5-12:18
+                  receiver
+                    expr e5 path inferred -> local v1 => nominal struct body_solved_binding_member_fixture[lib]::crate::User @ 12:5-12:13
+
+
+            body b2 fn impl User::id @ 4:5-4:39
+            scopes
+            - s0 parent <none>: v0
+            - s1 parent s0: <none>
+            bindings
+            - v0 self_param self `&self` => &nominal struct body_solved_binding_member_fixture[lib]::crate::User @ 4:15-4:20
+            body
+            expr e2 block s1 => u8 @ 4:28-4:39
+              tail
+                expr e1 field id -> field struct body_solved_binding_member_fixture[lib]::crate::User::id => u8 @ 4:30-4:37
+                  base
+                    expr e0 path self -> local v0 => &nominal struct body_solved_binding_member_fixture[lib]::crate::User @ 4:30-4:34
+        "#]],
+    );
+}
+
+#[test]
 fn infers_imported_enum_variant_constructors() {
     check_project_body_ir(
         r#"
@@ -124,7 +207,7 @@ pub fn use_it() {
                       expr e1 literal int `10u8` => u8 @ 9:22-9:26
               stmt s1 let v1: Option<u8> @ 10:5-10:35
                 initializer
-                  expr e3 path None -> variant enum body_imported_enum_variant_inference[lib]::crate::Option::None => nominal enum body_imported_enum_variant_inference[lib]::crate::Option<<unknown>> @ 10:30-10:34
+                  expr e3 path None -> variant enum body_imported_enum_variant_inference[lib]::crate::Option::None => nominal enum body_imported_enum_variant_inference[lib]::crate::Option<u8> @ 10:30-10:34
               stmt s2 expr; @ 11:5-11:11
                 expr e4 path value -> local v0 => nominal enum body_imported_enum_variant_inference[lib]::crate::Option<u8> @ 11:5-11:10
               stmt s3 expr; @ 12:5-12:12
@@ -383,9 +466,9 @@ pub fn expected_destination(def_map: &DefMap) {
             bindings
             - v0 self_param self `&self` => &[param T] @ 24:17-24:22
             body
-            expr e2 block s1 => <unknown> @ 24:46-26:6
+            expr e2 block s1 => nominal struct fake_core[lib]::crate::slice::Iter<'_, param T> @ 24:46-26:6
               tail
-                expr e1 call => <unknown> @ 25:9-25:18
+                expr e1 call => nominal struct fake_core[lib]::crate::slice::Iter<'_, param T> @ 25:9-25:18
                   callee
                     expr e0 path missing => <unknown> @ 25:9-25:16
 
@@ -400,9 +483,9 @@ pub fn expected_destination(def_map: &DefMap) {
             bindings
             - v0 self_param self `&self` => &nominal struct storage[lib]::crate::DefMap @ 6:20-6:25
             body
-            expr e2 block s1 => <unknown> @ 6:44-8:6
+            expr e2 block s1 => &[nominal struct storage[lib]::crate::ImportData] @ 6:44-8:6
               tail
-                expr e1 call => <unknown> @ 7:9-7:18
+                expr e1 call => &[nominal struct storage[lib]::crate::ImportData] @ 7:9-7:18
                   callee
                     expr e0 path missing => <unknown> @ 7:9-7:16
         "#]],

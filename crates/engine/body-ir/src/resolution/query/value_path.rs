@@ -315,7 +315,7 @@ where
             BodyValueName::Binding(binding) => {
                 let ty = self
                     .context
-                    .resolved_body()
+                    .query_body()
                     .binding_ty_unchecked(binding)
                     .clone();
                 Ok(Some((BodyResolution::Binding(binding), ty)))

@@ -1,139 +1,194 @@
-//! Inference-aware structural pattern projection.
+//! Inference-aware pattern projection.
 //!
-//! This layer links bindings inside tuple, reference, and slice patterns to the matching
-//! initializer slots, so later evidence on the binding can solve the initializer.
+//! Every source of an expected pattern type eventually enters through [`BodyPatternInference`].
+//! It projects structural and nominal fields while writing bindings into the one live inference
+//! context, so closure obligations and ordinary body traversal cannot disagree about patterns.
 
-use rg_ir_model::{ExprId, Mutability, PatId};
+use rg_def_map::DefMapSource;
+use rg_ir_model::{BodyPath, Mutability, PatId, items::FieldKey};
+use rg_package_store::PackageStoreError;
+use rg_semantic_ir::ItemStoreSource;
 use rg_ty::Ty;
 
-use crate::{ir::PatKind, resolution::BodyResolutionContext};
+use crate::{
+    ir::{PatKind, RecordPatField},
+    resolution::BodyResolutionContext,
+};
 
 use super::BodyInferenceCtx;
 
-/// Links structural pattern bindings to initializer inference facts.
+/// Projects one expected type through a pattern into its binding slots.
 pub(crate) struct BodyPatternInference<'query, D, I> {
     context: BodyResolutionContext<'query, D, I>,
 }
 
-impl<'query, D, I> BodyPatternInference<'query, D, I> {
-    /// Build pattern inference from a read-only body resolution context.
+impl<'query, D, I> BodyPatternInference<'query, D, I>
+where
+    D: DefMapSource<Error = PackageStoreError> + Copy,
+    I: ItemStoreSource<'query, Error = PackageStoreError> + Copy,
+{
     pub(crate) fn new(context: BodyResolutionContext<'query, D, I>) -> Self {
         Self { context }
     }
 
-    /// Link `let pat = initializer` where `pat` is structurally visible in the initializer type.
-    pub(crate) fn link_initializer_pattern(
+    /// Link the complete pattern to one live expected type.
+    pub(crate) fn link_pat(
         &self,
         inference: &mut BodyInferenceCtx,
         pat: PatId,
-        initializer: ExprId,
-    ) -> bool {
-        let initializer_ty = inference.root_resolved_expr_ty(initializer);
-        self.link_pat(inference, pat, &initializer_ty)
-    }
+        expected_ty: &Ty,
+    ) -> Result<(), PackageStoreError> {
+        let expected_ty = inference.root_resolved_ty(expected_ty);
+        if matches!(expected_ty, Ty::Unknown) {
+            return Ok(());
+        }
 
-    /// Project the current pattern from its matching inference slot.
-    pub(crate) fn link_pat(&self, inference: &mut BodyInferenceCtx, pat: PatId, ty: &Ty) -> bool {
-        let ty = inference.root_resolved_ty(ty);
         let Some(data) = self.context.body().pat(pat).cloned() else {
-            return false;
+            return Ok(());
         };
 
         match data.kind {
             PatKind::Binding {
                 binding, subpat, ..
             } => {
-                let mut changed = false;
                 if let Some(binding) = binding {
-                    changed |= inference.set_binding_infer_ty(binding, ty.clone());
+                    inference.set_binding_infer_ty(binding, expected_ty.clone());
                 }
                 if let Some(subpat) = subpat {
-                    changed |= self.link_pat(inference, subpat, &ty);
+                    self.link_pat(inference, subpat, &expected_ty)?;
                 }
-                changed
+                Ok(())
             }
-            PatKind::Tuple { fields } => self.link_tuple_pat(inference, &fields, &ty),
-            PatKind::Slice { fields } => self.link_slice_pat(inference, &fields, &ty),
+            PatKind::TupleStruct { path, fields } => {
+                self.link_tuple_variant(inference, path.as_ref(), &fields, &expected_ty)
+            }
+            PatKind::Record { path, fields, .. } => {
+                self.link_record_pat(inference, path.as_ref(), &fields, &expected_ty)
+            }
+            PatKind::Tuple { fields } => self.link_tuple_pat(inference, &fields, &expected_ty),
+            PatKind::Slice { fields } => self.link_slice_pat(inference, &fields, &expected_ty),
             PatKind::Or { pats } => {
-                let mut changed = false;
                 for pat in pats {
-                    changed |= self.link_pat(inference, pat, &ty);
+                    self.link_pat(inference, pat, &expected_ty)?;
                 }
-                changed
+                Ok(())
             }
-            PatKind::Ref { mutability, pat } => self.link_ref_pat(inference, pat, mutability, &ty),
-            PatKind::TupleStruct { .. }
-            | PatKind::Record { .. }
-            | PatKind::Box { .. }
-            | PatKind::Path { .. }
+            PatKind::Ref { mutability, pat } => {
+                self.link_ref_pat(inference, pat, mutability, &expected_ty)
+            }
+            PatKind::Box { pat } => self.link_pat(inference, pat, &expected_ty),
+            PatKind::Path { .. }
             | PatKind::Rest
             | PatKind::Literal { .. }
             | PatKind::Range { .. }
             | PatKind::ConstBlock { .. }
             | PatKind::Wildcard
-            | PatKind::Unsupported => false,
+            | PatKind::Unsupported => Ok(()),
         }
     }
 
-    /// Link tuple fields by position, e.g. `(values,) = (Vec::new(),)`.
-    fn link_tuple_pat(&self, inference: &mut BodyInferenceCtx, fields: &[PatId], ty: &Ty) -> bool {
-        let Ty::Tuple(field_tys) = ty else {
-            return false;
+    /// Project tuple fields by position, e.g. `(left, right): (User, bool)`.
+    fn link_tuple_pat(
+        &self,
+        inference: &mut BodyInferenceCtx,
+        fields: &[PatId],
+        expected_ty: &Ty,
+    ) -> Result<(), PackageStoreError> {
+        let Ty::Tuple(field_tys) = expected_ty else {
+            return Ok(());
         };
         if fields.len() != field_tys.len() {
-            return false;
+            return Ok(());
         }
 
-        let mut changed = false;
         for (field_pat, field_ty) in fields.iter().zip(field_tys) {
-            changed |= self.link_pat(inference, *field_pat, field_ty);
+            self.link_pat(inference, *field_pat, field_ty)?;
         }
-        changed
+        Ok(())
     }
 
-    /// Link `&pat` to the referenced slot when the initializer is explicitly a reference.
+    /// Give every non-rest slice pattern the container's element type.
+    fn link_slice_pat(
+        &self,
+        inference: &mut BodyInferenceCtx,
+        fields: &[PatId],
+        expected_ty: &Ty,
+    ) -> Result<(), PackageStoreError> {
+        let element_ty = match expected_ty {
+            Ty::Array { inner, .. } | Ty::Slice(inner) => inner.as_ref(),
+            _ => return Ok(()),
+        };
+
+        for field in fields {
+            if self
+                .context
+                .body()
+                .pat(*field)
+                .is_some_and(|pat| matches!(&pat.kind, PatKind::Rest))
+            {
+                continue;
+            }
+            self.link_pat(inference, *field, element_ty)?;
+        }
+        Ok(())
+    }
+
+    /// Peel only the reference written by the pattern, preserving its mutability contract.
     fn link_ref_pat(
         &self,
         inference: &mut BodyInferenceCtx,
         pat: PatId,
         pat_mutability: Mutability,
-        ty: &Ty,
-    ) -> bool {
-        let Ty::Reference {
-            mutability, inner, ..
-        } = ty
-        else {
-            return false;
+        expected_ty: &Ty,
+    ) -> Result<(), PackageStoreError> {
+        let Some((inner_ty, mutability)) = expected_ty.reference_inner() else {
+            return Ok(());
         };
-        if *mutability != pat_mutability {
-            return false;
+        if mutability != pat_mutability {
+            return Ok(());
         }
 
-        self.link_pat(inference, pat, inner)
+        self.link_pat(inference, pat, inner_ty)
     }
 
-    /// Link every non-rest slice pattern field to the element slot.
-    fn link_slice_pat(&self, inference: &mut BodyInferenceCtx, fields: &[PatId], ty: &Ty) -> bool {
-        let element_ty = match ty {
-            Ty::Array { inner, .. } | Ty::Slice(inner) => inner.as_ref(),
-            _ => return false,
-        };
-        let element_ty = inference.root_resolved_ty(element_ty);
-
-        let mut changed = false;
-        for field in fields {
-            if self.pat_is_rest(*field) {
-                continue;
+    /// Project tuple-variant payload fields from the expected enum instantiation.
+    fn link_tuple_variant(
+        &self,
+        inference: &mut BodyInferenceCtx,
+        path: Option<&BodyPath>,
+        fields: &[PatId],
+        expected_ty: &Ty,
+    ) -> Result<(), PackageStoreError> {
+        for (index, field_pat) in fields.iter().enumerate() {
+            let field_key = FieldKey::Tuple(index);
+            if let Some(field_ty) =
+                self.context
+                    .fields()
+                    .pattern_field_ty(path, expected_ty, &field_key)?
+            {
+                self.link_pat(inference, *field_pat, &field_ty)?;
             }
-            changed |= self.link_pat(inference, *field, &element_ty);
         }
-        changed
+        Ok(())
     }
 
-    fn pat_is_rest(&self, pat: PatId) -> bool {
-        self.context
-            .body()
-            .pat(pat)
-            .is_some_and(|pat| matches!(&pat.kind, PatKind::Rest))
+    /// Project named pattern fields from structs, unions, or record enum variants.
+    fn link_record_pat(
+        &self,
+        inference: &mut BodyInferenceCtx,
+        path: Option<&BodyPath>,
+        fields: &[RecordPatField],
+        expected_ty: &Ty,
+    ) -> Result<(), PackageStoreError> {
+        for field in fields {
+            if let Some(field_ty) =
+                self.context
+                    .fields()
+                    .pattern_field_ty(path, expected_ty, &field.key)?
+            {
+                self.link_pat(inference, field.pat, &field_ty)?;
+            }
+        }
+        Ok(())
     }
 }

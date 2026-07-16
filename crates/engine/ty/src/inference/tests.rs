@@ -346,6 +346,19 @@ fn later_evidence_refines_unknown_children_inside_solved_slots() {
 }
 
 #[test]
+fn merges_complementary_unknown_children_without_weakening_either_side() {
+    let table = InferenceTable::new();
+
+    assert_eq!(
+        table.merge_ty_evidence(
+            &Ty::tuple(vec![user_ty(), Ty::Unknown]),
+            &Ty::tuple(vec![Ty::Unknown, project_ty()]),
+        ),
+        Ty::tuple(vec![user_ty(), project_ty()]),
+    );
+}
+
+#[test]
 fn same_opaque_occurrence_infers_through_generic_args() {
     let mut table = InferenceTable::new();
     let element = table.new_type_var();

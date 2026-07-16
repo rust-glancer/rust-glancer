@@ -4,10 +4,10 @@
 //! `base`, so later evidence on the projected value can solve the owner.
 
 use rg_def_map::DefMapSource;
-use rg_ir_model::{ExprId, GenericDefRef, items::FieldKey};
+use rg_ir_model::{ExprId, items::FieldKey};
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::ItemStoreSource;
-use rg_ty::{AdtTy, Substitution, Ty};
+use rg_ty::Ty;
 
 use crate::{ir::ExprKind, resolution::BodyResolutionContext};
 
@@ -28,106 +28,58 @@ where
         Self { context }
     }
 
-    /// Refresh a field or index expression from its base inference fact.
-    pub(crate) fn refresh_projection_fact(
+    /// Project a field or index expression from its current base inference fact.
+    pub(crate) fn project_expr(
         &self,
         inference: &mut BodyInferenceCtx,
         expr: ExprId,
-    ) -> Result<bool, PackageStoreError> {
+    ) -> Result<(), PackageStoreError> {
         let kind = self.context.body().expr_unchecked(expr).kind.clone();
         match kind {
             ExprKind::Field {
                 base: Some(base),
                 field: Some(field),
                 ..
-            } => self.refresh_field_fact(inference, expr, base, &field),
+            } => self.project_field(inference, expr, base, &field),
             ExprKind::Index {
                 base: Some(base), ..
-            } => Ok(self.refresh_index_fact(inference, expr, base)),
-            _ => Ok(false),
+            } => {
+                self.project_index(inference, expr, base);
+                Ok(())
+            }
+            _ => Ok(()),
         }
     }
 
     /// Project `boxed.value` as `?T` when `boxed` is `Boxed<?T>`.
-    fn refresh_field_fact(
+    fn project_field(
         &self,
         inference: &mut BodyInferenceCtx,
         expr: ExprId,
         base: ExprId,
         field: &FieldKey,
-    ) -> Result<bool, PackageStoreError> {
+    ) -> Result<(), PackageStoreError> {
         let base_ty = inference.root_resolved_expr_ty(base);
-        if let Some(field_ty) = Self::structural_field_ty(&base_ty, field) {
-            return Ok(inference.set_expr_infer_ty(expr, field_ty));
-        }
-
-        self.refresh_declared_field_fact(inference, expr, base, field)
-    }
-
-    /// Project a declared field type through the base owner's inference vars.
-    fn refresh_declared_field_fact(
-        &self,
-        inference: &mut BodyInferenceCtx,
-        expr: ExprId,
-        base: ExprId,
-        field: &FieldKey,
-    ) -> Result<bool, PackageStoreError> {
-        let targets = self.context.fields().resolve(base, field)?;
-        let Some(target) = targets.single_declared() else {
-            return Ok(false);
+        let targets = self.context.fields().resolve_for_ty(&base_ty, field)?;
+        let Some(projected_ty) = targets.single_ty() else {
+            return Ok(());
         };
-        let fallback_ty = target.ty().cloned().unwrap_or(Ty::Unknown);
-        let base_ty = inference.root_resolved_expr_ty(base);
-        let Some(owner_ty) = Self::infer_owner_ty(&base_ty, target.owner_ty().def) else {
-            return Ok(false);
-        };
-        let generics = self
-            .context
-            .item_paths()
-            .generics()
-            .generics(GenericDefRef::TypeDef(owner_ty.def))?;
-        let subst = Substitution::from_args(&generics, &owner_ty.args);
-        let projected_ty = self
-            .context
-            .signatures()
-            .field_ty(target.field())?
-            .map(|ty| subst.apply(&ty))
-            .unwrap_or(fallback_ty);
-        Ok(inference.set_expr_infer_ty(expr, projected_ty))
-    }
-
-    /// Find the live nominal owner after reference autoderef, e.g. `&Boxed<?T>` -> `Boxed<?T>`.
-    fn infer_owner_ty(ty: &Ty, owner: rg_ir_model::TypeDefRef) -> Option<&AdtTy> {
-        match ty {
-            Ty::Adt(ty) if ty.def == owner => Some(ty),
-            Ty::Reference { inner, .. } => Self::infer_owner_ty(inner, owner),
-            _ => None,
-        }
-    }
-
-    /// Project `pair.0` from an inference-aware tuple, peeling explicit references.
-    fn structural_field_ty(ty: &Ty, field: &FieldKey) -> Option<Ty> {
-        match (ty, field) {
-            (Ty::Tuple(fields), FieldKey::Tuple(index)) => fields.get(*index).cloned(),
-            (Ty::Reference { inner, .. }, _) => Self::structural_field_ty(inner, field),
-            _ => None,
-        }
+        // Field lookup already owns receiver adjustment and applies the selected candidate's live
+        // arguments. Reconstructing structural or nominal owners here would create a second,
+        // less-capable autoderef path.
+        inference.set_expr_infer_ty(expr, projected_ty.clone());
+        Ok(())
     }
 
     /// Project `array[index]` as the element type, peeling explicit references.
-    fn refresh_index_fact(
-        &self,
-        inference: &mut BodyInferenceCtx,
-        expr: ExprId,
-        base: ExprId,
-    ) -> bool {
+    fn project_index(&self, inference: &mut BodyInferenceCtx, expr: ExprId, base: ExprId) {
         let base_ty = inference.root_resolved_expr_ty(base);
         let Some(element_ty) = Self::structural_index_ty(&base_ty) else {
-            return false;
+            return;
         };
         let element_ty = inference.root_resolved_ty(&element_ty);
 
-        inference.set_expr_infer_ty(expr, element_ty)
+        inference.set_expr_infer_ty(expr, element_ty);
     }
 
     /// Return the element type for array/slice indexing.

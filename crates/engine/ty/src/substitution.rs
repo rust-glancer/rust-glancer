@@ -83,12 +83,24 @@ impl Substitution {
     }
 
     pub fn args_for(&self, generics: &Generics<'_>) -> GenericArgs {
-        generics
-            .iter()
+        self.args_for_params(generics.iter().map(|param| param.param()))
+    }
+
+    /// Project keyed bindings into the positional order expected by stored semantic signatures.
+    ///
+    /// The supplied order belongs to the declaration, not to insertion order in this map. A
+    /// missing lifetime, type, or const parameter receives the corresponding erased/unknown value
+    /// so argument positions never shift when source syntax omitted one kind of generic.
+    pub(crate) fn args_for_params(
+        &self,
+        params: impl IntoIterator<Item = GenericParamRef>,
+    ) -> GenericArgs {
+        params
+            .into_iter()
             .map(|param| {
-                self.get(param.param())
+                self.get(param)
                     .cloned()
-                    .unwrap_or_else(|| Self::unknown_arg(param.param()))
+                    .unwrap_or_else(|| Self::unknown_arg(param))
             })
             .collect()
     }

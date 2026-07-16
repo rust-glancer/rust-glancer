@@ -12,14 +12,13 @@
 
 use rg_def_map::{DefMapSource, NamespaceSet};
 use rg_ir_model::{
-    BindingId, DefId, DefMapRef, ExprId, ModuleId, ModuleRef, Path, PathSegment, ScopeId,
-    SemanticItemRef, TypeDefId,
+    BindingId, DefId, DefMapRef, ExprId, ModuleId, ModuleRef, Path, ScopeId, SemanticItemRef,
+    TypeDefId,
     identity::DeclarationRef,
     items::{FieldKey, FieldList, SelfParamKind, TypeRef},
 };
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::{ItemLookupIndex, ItemStoreSource};
-use rg_std::ExpectedUnique;
 use rg_ty::{ExpectedAdtTyExt, ReferencePeelingCandidates, TraitSelectionCache, Ty};
 
 use crate::{
@@ -365,7 +364,11 @@ where
     ) -> Result<(), PackageStoreError> {
         for (index, field_pat) in fields.iter().enumerate() {
             let field_key = FieldKey::Tuple(index);
-            let Some(field_ty) = self.pattern_field_ty(path, expected_ty, &field_key)? else {
+            let Some(field_ty) =
+                self.context()
+                    .fields()
+                    .pattern_field_ty(path, expected_ty, &field_key)?
+            else {
                 continue;
             };
             self.deactivate_unit_variant_bindings_in_pat(*field_pat, &field_ty, active)?;
@@ -381,66 +384,16 @@ where
         active: &mut [bool],
     ) -> Result<(), PackageStoreError> {
         for field in fields {
-            let Some(field_ty) = self.pattern_field_ty(path, expected_ty, &field.key)? else {
+            let Some(field_ty) =
+                self.context()
+                    .fields()
+                    .pattern_field_ty(path, expected_ty, &field.key)?
+            else {
                 continue;
             };
             self.deactivate_unit_variant_bindings_in_pat(field.pat, &field_ty, active)?;
         }
         Ok(())
-    }
-
-    fn pattern_field_ty(
-        &self,
-        path: Option<&BodyPath>,
-        expected_ty: &Ty,
-        field_key: &FieldKey,
-    ) -> Result<Option<Ty>, PackageStoreError> {
-        let def_map_path = path.and_then(|path| path.as_def_map_path());
-        let variant_name = Self::pattern_path_last_name(def_map_path.as_ref());
-        let mut candidates = ExpectedUnique::new();
-
-        // Pattern fields are checked against the type of the field they destructure. This matters
-        // before final binding materialization because `None` in `User { value: None }` only makes
-        // sense after we project `User::value` to `Option<_>`.
-        for candidate in ReferencePeelingCandidates::new(expected_ty) {
-            for nominal_ty in candidate.ty().as_adts() {
-                match nominal_ty.def.id {
-                    TypeDefId::Struct(_) | TypeDefId::Union(_) => {
-                        if let Some(field_ty) = self
-                            .context()
-                            .fields()
-                            .declared(nominal_ty, field_key)?
-                            .and_then(|target| target.ty().cloned())
-                        {
-                            candidates.push(field_ty);
-                        }
-                    }
-                    TypeDefId::Enum(_) => {
-                        let Some(variant_name) = variant_name else {
-                            continue;
-                        };
-                        let Some(variant_ref) = self
-                            .context()
-                            .item_query()
-                            .enum_variant_ref_for_type_def(nominal_ty.def, variant_name)?
-                        else {
-                            continue;
-                        };
-                        let Some(field_ty) = self.context().fields().enum_variant_field_ty(
-                            nominal_ty,
-                            variant_ref,
-                            field_key,
-                        )?
-                        else {
-                            continue;
-                        };
-                        candidates.push(field_ty);
-                    }
-                }
-            }
-        }
-
-        Ok(candidates.into_option())
     }
 
     fn path_is_unit_variant_pattern(
@@ -669,15 +622,5 @@ where
         }
 
         Ok(Ty::Unknown)
-    }
-
-    fn pattern_path_last_name(path: Option<&Path>) -> Option<&str> {
-        match path?.segments.last()? {
-            PathSegment::Name(name) => Some(name),
-            PathSegment::SelfKw
-            | PathSegment::SuperKw
-            | PathSegment::CrateKw
-            | PathSegment::DollarCrate(_) => None,
-        }
     }
 }

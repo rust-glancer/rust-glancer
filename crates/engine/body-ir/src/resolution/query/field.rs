@@ -2,17 +2,21 @@
 
 use rg_def_map::DefMapSource;
 use rg_ir_model::{
-    EnumVariantRef, ExprId, FieldRef, TypeDefId,
+    EnumVariantRef, FieldRef, PathSegment, TypeDefId,
     identity::DeclarationRef,
     items::{FieldItem, FieldKey, FieldList},
 };
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::ItemStoreSource;
 use rg_std::{ExpectedUnique, UniqueVec};
-use rg_ty::{AdtTy, AutoderefMode, ExpectedTyExt, Ty};
+use rg_ty::{AdtTy, AutoderefMode, ReferencePeelingCandidates, Ty};
 
-use crate::{ir::resolved::BodyResolution, resolution::BodyResolutionContext};
+use crate::{BodyPath, ir::resolved::BodyResolution, resolution::BodyResolutionContext};
 
+/// One field projection at the selected receiver-adjustment depth.
+///
+/// Nominal fields retain their declaration identity for navigation and display. Tuple fields are
+/// structural language elements, so they contribute a type without inventing a declaration.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum ResolvedFieldTarget {
     Declared(DeclaredFieldTarget),
@@ -22,17 +26,11 @@ enum ResolvedFieldTarget {
 /// Declared field selected from a nominal owner type.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct DeclaredFieldTarget {
-    owner_ty: AdtTy,
     field: FieldRef,
     ty: Option<Ty>,
 }
 
 impl DeclaredFieldTarget {
-    /// Return the nominal owner type that selected this field.
-    pub(crate) fn owner_ty(&self) -> &AdtTy {
-        &self.owner_ty
-    }
-
     /// Return the selected semantic field declaration.
     pub(crate) fn field(&self) -> FieldRef {
         self.field
@@ -84,32 +82,12 @@ impl ResolvedFieldTargets {
         }
     }
 
-    /// Return the unique field type, or unknown for zero or multiple types.
-    pub(crate) fn ty(&self) -> Ty {
-        let mut tys = ExpectedUnique::new();
-        for target in &self.targets {
-            match target {
-                ResolvedFieldTarget::Declared(target) => {
-                    let Some(ty) = target.ty() else {
-                        continue;
-                    };
-                    tys.push(ty.clone());
-                }
-                ResolvedFieldTarget::Structural { ty } => {
-                    tys.push(ty.clone());
-                }
-            }
+    /// Return the selected field type only when receiver adjustment was unambiguous.
+    pub(crate) fn single_ty(&self) -> Option<&Ty> {
+        match self.targets.as_one()? {
+            ResolvedFieldTarget::Declared(target) => target.ty(),
+            ResolvedFieldTarget::Structural { ty } => Some(ty),
         }
-
-        tys.into_ty()
-    }
-
-    /// Return the declared target only when field lookup is unambiguous.
-    pub(crate) fn single_declared(&self) -> Option<&DeclaredFieldTarget> {
-        let ResolvedFieldTarget::Declared(target) = self.targets.as_one()? else {
-            return None;
-        };
-        Some(target)
     }
 
     /// Add a declared field target.
@@ -118,7 +96,7 @@ impl ResolvedFieldTargets {
     }
 
     /// Add a structural field type with no declaration.
-    fn push_structural_ty(&mut self, ty: Ty) {
+    fn push_structural(&mut self, ty: Ty) {
         self.targets.push(ResolvedFieldTarget::Structural { ty });
     }
 }
@@ -137,19 +115,20 @@ where
         Self { context }
     }
 
-    /// Resolve a field access expression through receiver autoderef.
-    pub(crate) fn resolve(
+    /// Resolve a field through the supplied live receiver type.
+    pub(crate) fn resolve_for_ty(
         &self,
-        base: ExprId,
+        base_ty: &Ty,
         field: &FieldKey,
     ) -> Result<ResolvedFieldTargets, PackageStoreError> {
         let mut current_depth = None;
         let mut targets = ResolvedFieldTargets::new();
 
-        for candidate in self.context.autoderef().candidates(
-            AutoderefMode::FieldLookup,
-            self.context.resolved_body().expr_ty_unchecked(base),
-        ) {
+        for candidate in self
+            .context
+            .autoderef()
+            .candidates(AutoderefMode::FieldLookup, base_ty)
+        {
             let candidate = candidate?;
             // Field lookup stops at the first autoderef depth that has matches. Same-depth
             // alternatives stay together so ambiguous receivers do not become order-dependent.
@@ -160,7 +139,7 @@ where
             current_depth = Some(candidate.depth());
 
             if let Some(ty) = Self::structural_field_ty(candidate.ty(), field) {
-                targets.push_structural_ty(ty);
+                targets.push_structural(ty);
             }
 
             for nominal_ty in candidate.ty().as_adts() {
@@ -171,6 +150,59 @@ where
         }
 
         Ok(targets)
+    }
+
+    /// Project the field type destructured by a record or tuple-variant pattern.
+    ///
+    /// Pattern matching peels written references but does not use receiver autoderef. Struct and
+    /// union fields come directly from the expected nominal type; enum fields additionally use the
+    /// pattern path's final segment to select the variant.
+    pub(crate) fn pattern_field_ty(
+        &self,
+        path: Option<&BodyPath>,
+        expected_ty: &Ty,
+        field_key: &FieldKey,
+    ) -> Result<Option<Ty>, PackageStoreError> {
+        let variant_path = path.and_then(BodyPath::as_def_map_path);
+        let variant_name = match variant_path.as_ref().and_then(|path| path.segments.last()) {
+            Some(PathSegment::Name(name)) => Some(name.as_str()),
+            Some(
+                PathSegment::SelfKw
+                | PathSegment::SuperKw
+                | PathSegment::CrateKw
+                | PathSegment::DollarCrate(_),
+            )
+            | None => None,
+        };
+        let mut candidates = ExpectedUnique::new();
+
+        for candidate in ReferencePeelingCandidates::new(expected_ty) {
+            for nominal_ty in candidate.ty().as_adts() {
+                let field_ty = match nominal_ty.def.id {
+                    TypeDefId::Struct(_) | TypeDefId::Union(_) => self
+                        .declared(nominal_ty, field_key)?
+                        .and_then(|target| target.ty().cloned()),
+                    TypeDefId::Enum(_) => {
+                        let Some(variant_name) = variant_name else {
+                            continue;
+                        };
+                        let Some(variant_ref) = self
+                            .context
+                            .item_query()
+                            .enum_variant_ref_for_type_def(nominal_ty.def, variant_name)?
+                        else {
+                            continue;
+                        };
+                        self.enum_variant_field_ty(nominal_ty, variant_ref, field_key)?
+                    }
+                };
+                if let Some(field_ty) = field_ty {
+                    candidates.push(field_ty);
+                }
+            }
+        }
+
+        Ok(candidates.into_option())
     }
 
     /// Resolve a declared field directly from its owner type.
@@ -185,7 +217,6 @@ where
         };
         let Some(_) = item_query.field_data(field_ref)? else {
             return Ok(Some(DeclaredFieldTarget {
-                owner_ty: owner_ty.clone(),
                 field: field_ref,
                 ty: None,
             }));
@@ -199,7 +230,6 @@ where
             .map(|ty| subst.apply(&ty));
 
         Ok(Some(DeclaredFieldTarget {
-            owner_ty: owner_ty.clone(),
             field: field_ref,
             ty,
         }))

@@ -314,16 +314,18 @@ impl<T> core::ops::Deref for Wrapper<T> {
     type Target = T;
 }
 
-pub fn use_it(wrapper: Wrapper<User>) {
+pub fn use_it(wrapper: Wrapper<User>, tuple_wrapper: Wrapper<(Id, Label)>) {
     let _id = wrapper.i$type_deref_field$d;
     let _label = wrapper.la$type_deref_method$bel();
     let _explicit = (*wrapper)$type_deref_explicit$;
+    let _tuple_field = tuple_wrapper.$type_deref_tuple_field$0;
 }
 "#,
         &[
             AnalysisQuery::ty("field through Deref", "type_deref_field").in_lib("app"),
             AnalysisQuery::ty("method through Deref", "type_deref_method").in_lib("app"),
             AnalysisQuery::ty("explicit Deref", "type_deref_explicit").in_lib("app"),
+            AnalysisQuery::ty("tuple field through Deref", "type_deref_tuple_field").in_lib("app"),
         ],
         expect![[r#"
             field through Deref
@@ -334,6 +336,9 @@ pub fn use_it(wrapper: Wrapper<User>) {
 
             explicit Deref
             - nominal struct app[lib]::crate::User
+
+            tuple field through Deref
+            - nominal struct app[lib]::crate::Id
         "#]],
     );
 }

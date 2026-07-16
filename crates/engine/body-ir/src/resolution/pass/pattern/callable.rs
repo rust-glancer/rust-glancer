@@ -1,4 +1,4 @@
-//! Callable input expectations used by pattern type propagation.
+//! Callable input expectations used by pattern inference.
 
 use rg_def_map::DefMapSource;
 use rg_ir_model::{ExprId, TraitDefRef};
@@ -24,6 +24,7 @@ impl CallableInputExpectation {
         context: BodyResolutionContext<'query, D, I>,
         call: ExprId,
         args: &[ExprId],
+        receiver_ty: Option<&Ty>,
     ) -> Result<Vec<(ExprId, Self)>, PackageStoreError>
     where
         D: DefMapSource<Error = PackageStoreError> + Copy,
@@ -41,7 +42,7 @@ impl CallableInputExpectation {
         }
 
         let calls = context.calls();
-        let Some(target) = calls.target(call)? else {
+        let Some(target) = calls.target_with_receiver_ty(call, receiver_ty)? else {
             return Ok(Vec::new());
         };
         let projection = calls.signature(&target).project(args)?;
@@ -106,6 +107,17 @@ impl CallableInputExpectation {
                 .map(|param| subst.apply(param))
                 .map(|param| Self::normalize_ty(context, trait_selection_cache.clone(), param))
                 .collect::<Result<Vec<_>, _>>()?;
+
+            // This syntax-side path has no access to the body's live inference table. Only
+            // propagate semantic inputs that the shared solver settled completely; persisting an
+            // opaque projection such as `Filter<I, P>::Item` in a binding would prevent the later
+            // body-aware obligation pass from replacing it with the projected concrete type.
+            if params
+                .iter()
+                .any(|param| param.has_unknown() || param.has_projection())
+            {
+                continue;
+            }
 
             // `Fn`, `FnMut`, and `FnOnce` may all describe the same input contract. Trait identity
             // validates the source clause above, while this pass deliberately compares only the

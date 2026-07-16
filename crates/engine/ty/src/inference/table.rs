@@ -2,7 +2,10 @@ use super::{
     traversal::{InferenceTyFolder, same_generic_arg_shape, same_ty_shape, ty_contains_var},
     var::{InferVarId, InferVarKind},
 };
-use crate::{AdtTy, Clause, GenericArg, Lifetime, PrimitiveTy, ProjectionTy, TraitApplication, Ty};
+use crate::{
+    AdtTy, AliasTy, Clause, FnDefTy, GenericArg, GenericArgs, Lifetime, OpaqueTy, PrimitiveTy,
+    ProjectionTy, TraitApplication, Ty,
+};
 
 /// Marker returned when speculative inference evidence is incompatible.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -145,6 +148,14 @@ impl InferenceTable {
         TableFinalizer::new(self).fold_ty(ty)
     }
 
+    /// Finalize every type-bearing position in a semantic argument list.
+    pub(crate) fn finalize_generic_args(&self, args: &GenericArgs) -> GenericArgs {
+        let mut finalizer = TableFinalizer::new(self);
+        args.iter()
+            .map(|arg| finalizer.fold_generic_arg(arg))
+            .collect()
+    }
+
     /// Expand only the root variable, preserving nested variables as future evidence links.
     pub fn resolve_root_var(&self, ty: &Ty) -> Ty {
         self.resolve_root_ty_var(ty, &mut Vec::new())
@@ -155,6 +166,18 @@ impl InferenceTable {
     /// `?B = User` then makes the same value compare as `Vec<User>`.
     pub fn canonicalize(&self, ty: &Ty) -> Ty {
         TableCanonicalizer::new(self).fold_ty(ty)
+    }
+
+    /// Merge evidence into unknown children without discarding facts already established.
+    ///
+    /// Body inference can observe the same structural type from several directions. For example,
+    /// `(Token, unknown)` arriving after `(Token, Token)` is weaker evidence, while
+    /// `(unknown, Token)` can complete `(Token, unknown)`. Canonicalizing through this table first
+    /// also lets solved variables participate as their established shapes.
+    pub fn merge_ty_evidence(&self, existing: &Ty, evidence: &Ty) -> Ty {
+        let existing = self.canonicalize(existing);
+        let evidence = self.canonicalize(evidence);
+        Self::refine_ty(&existing, &evidence).0
     }
 
     /// Return one predicate with every solved type variable expanded from this table.
@@ -548,6 +571,46 @@ impl InferenceTable {
                     changed,
                 )
             }
+            (
+                Ty::RawPointer {
+                    mutability: existing_mutability,
+                    inner: existing_inner,
+                },
+                Ty::RawPointer {
+                    inner: evidence_inner,
+                    ..
+                },
+            ) => {
+                let (inner, changed) = Self::refine_ty(existing_inner, evidence_inner);
+                (
+                    Ty::RawPointer {
+                        mutability: *existing_mutability,
+                        inner: Box::new(inner),
+                    },
+                    changed,
+                )
+            }
+            (
+                Ty::FnPointer {
+                    params: existing_params,
+                    ret: existing_ret,
+                },
+                Ty::FnPointer {
+                    params: evidence_params,
+                    ret: evidence_ret,
+                },
+            ) => {
+                let (params, params_changed) =
+                    Self::refine_ty_iter(existing_params.iter(), evidence_params.iter());
+                let (ret, ret_changed) = Self::refine_ty(existing_ret, evidence_ret);
+                (
+                    Ty::FnPointer {
+                        params,
+                        ret: Box::new(ret),
+                    },
+                    params_changed || ret_changed,
+                )
+            }
             (Ty::Adt(existing_ty), Ty::Adt(evidence_ty)) => {
                 let (args, changed) =
                     Self::refine_generic_args(&existing_ty.args, &evidence_ty.args);
@@ -558,6 +621,32 @@ impl InferenceTable {
                     }),
                     changed,
                 )
+            }
+            (Ty::FnDef(existing_ty), Ty::FnDef(evidence_ty)) => {
+                let (args, changed) =
+                    Self::refine_generic_args(&existing_ty.args, &evidence_ty.args);
+                (
+                    Ty::FnDef(FnDefTy {
+                        def: existing_ty.def,
+                        args: args.into(),
+                    }),
+                    changed,
+                )
+            }
+            (Ty::Alias(existing_ty), Ty::Alias(evidence_ty)) => {
+                let (args, changed) =
+                    Self::refine_generic_args(existing_ty.args(), evidence_ty.args());
+                let alias = match existing_ty {
+                    AliasTy::Projection(existing_ty) => AliasTy::Projection(ProjectionTy {
+                        associated_ty: existing_ty.associated_ty,
+                        args: args.into(),
+                    }),
+                    AliasTy::Opaque(existing_ty) => AliasTy::Opaque(OpaqueTy {
+                        opaque: existing_ty.opaque,
+                        args: args.into(),
+                    }),
+                };
+                (Ty::Alias(alias), changed)
             }
             _ => (existing.clone(), false),
         }

@@ -13,7 +13,7 @@ use rg_ty::{
     TraitSelectionCache, TraitSelectionQuery, TypeLoweringAnchor, TypePathResolver,
 };
 
-use crate::{BodyData, BodyView};
+use crate::{BodyData, BodyView, ir::BodyQueryView};
 
 use crate::resolution::query::{
     BodyAssociatedItemQuery, BodyCallQuery, BodyFieldQuery, BodyFunctionQuery, BodyGenericsQuery,
@@ -23,6 +23,13 @@ use crate::resolution::query::{
 
 use super::BodyQuerySource;
 
+/// Read-only provider bundle shared by body semantic queries.
+///
+/// The context keeps DefMap, item-store, semantic-index, and active-body routing coherent while
+/// small query objects own the actual operations. A finalized consumer supplies `BodyView`;
+/// indexing can instead supply structural-only data or a crate-private inference snapshot. Query
+/// APIs that need types therefore read through `query_body`, whose source is explicit at
+/// construction time.
 #[derive(Clone, Copy)]
 pub struct BodyResolutionContext<'a, D, I> {
     source: BodyQuerySource<'a, D, I>,
@@ -45,6 +52,10 @@ impl<'a, D, I> BodyResolutionContext<'a, D, I> {
         }
     }
 
+    /// Build a context for structural queries before semantic facts exist.
+    ///
+    /// Only operations backed by `BodyData` are valid in this phase. Asking the resulting context
+    /// for expression or binding facts is a programming error rather than an unknown result.
     pub(crate) fn for_structure(
         def_maps: D,
         item_stores: I,
@@ -54,6 +65,21 @@ impl<'a, D, I> BodyResolutionContext<'a, D, I> {
     ) -> Self {
         Self {
             source: BodyQuerySource::for_structure(def_maps, item_stores, body_ref, body),
+            semantic_index,
+            trait_selection_cache: None,
+        }
+    }
+
+    /// Build a context over one finalized or inference-time semantic query view.
+    pub(crate) fn for_query(
+        def_maps: D,
+        item_stores: I,
+        body_ref: BodyRef,
+        body: BodyQueryView<'a>,
+        semantic_index: &'a ItemLookupIndex,
+    ) -> Self {
+        Self {
+            source: BodyQuerySource::for_query(def_maps, item_stores, body_ref, body),
             semantic_index,
             trait_selection_cache: None,
         }
@@ -75,8 +101,8 @@ impl<'a, D, I> BodyResolutionContext<'a, D, I> {
         self.source.body()
     }
 
-    pub(crate) fn resolved_body(&self) -> BodyView<'a> {
-        self.source.resolved_body()
+    pub(crate) fn query_body(&self) -> BodyQueryView<'a> {
+        self.source.query_body()
     }
 
     pub(crate) fn semantic_index(&self) -> &'a ItemLookupIndex {

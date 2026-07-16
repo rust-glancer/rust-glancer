@@ -81,9 +81,6 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
             &trait_selection_cache,
         )?;
 
-        // Semantic sidecars begin only after every structural ID has reached its final value.
-        self.initialize_body_facts();
-
         // Do a pass on resolving body expressions.
         self.resolve_bodies(
             def_map,
@@ -147,15 +144,6 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
         }
 
         Ok(())
-    }
-
-    /// Allocate semantic sidecars after every body and binding id has reached its final value.
-    fn initialize_body_facts(&mut self) {
-        debug_assert!(self.body_facts.is_empty());
-        for (body, data) in self.crate_bodies.bodies().iter_with_ids() {
-            let allocated = self.body_facts.alloc(BodyFacts::for_body(data.body()));
-            debug_assert_eq!(allocated, body);
-        }
     }
 
     // Collects the local items within a single already-lowered body.
@@ -387,23 +375,24 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
         let source =
             BodyBuildQuerySource::new(def_map, semantic_ir, self.crate_ref, &self.body_local_items);
         let crate_ref = self.crate_ref;
+        debug_assert!(self.body_facts.is_empty());
 
         for (body_id, body) in self.crate_bodies.bodies().iter_with_ids() {
             let body_ref = BodyRef {
                 crate_ref,
                 body: body_id,
             };
-            let facts = std::mem::take(&mut self.body_facts[body_id]);
-            self.body_facts[body_id] = BodyResolutionPass::new(
+            let facts = BodyResolutionPass::new(
                 &source,
                 &source,
                 semantic_index,
                 body_ref,
                 body.body(),
-                facts,
                 trait_selection_cache,
             )
             .resolve()?;
+            let allocated = self.body_facts.alloc(facts);
+            debug_assert_eq!(allocated, body_id);
         }
 
         Ok(())

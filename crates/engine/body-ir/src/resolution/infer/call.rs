@@ -13,8 +13,12 @@ use rg_ir_model::{
 };
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::{Generics, ItemStoreSource};
-use rg_ty::{Clause, GenericArg, Substitution, Ty, inference::InferenceSubstitution};
+use rg_ty::{
+    Clause, GenericArg, Substitution, Ty,
+    inference::{InferenceSubstitution, InferenceTable},
+};
 
+use crate::CallFacts;
 use crate::ir::resolved::BodyResolution;
 use crate::resolution::{
     BodyResolutionContext,
@@ -25,11 +29,13 @@ use super::{BodyInferenceCtx, trait_obligation::BodyTraitObligationSolver};
 
 /// Call-owned signature projection and live generic slots.
 ///
-/// Several inference stages revisit the same call. Keeping their substitution here makes each
-/// written `_` and function generic one stable inference variable instead of allocating an
-/// unrelated replacement on every fixed-point pass.
-#[derive(Clone)]
+/// Fixed-point rounds revisit the same call as new body evidence appears. Keeping its substitution
+/// here makes each written `_` and function generic one stable inference variable instead of
+/// allocating an unrelated replacement on every pass.
+#[derive(Clone, PartialEq, Eq)]
 pub(super) struct CallInferenceState {
+    function: rg_ir_model::FunctionRef,
+    generic_params: Arc<[GenericParamRef]>,
     projection: Arc<CallProjection>,
     subst: InferenceSubstitution,
     first_written_param_idx: usize,
@@ -37,7 +43,58 @@ pub(super) struct CallInferenceState {
     generic_obligations_complete: bool,
 }
 
-/// Bridges selected semantic call signatures into body inference constraints.
+impl CallInferenceState {
+    /// Collapse the call-owned inference substitution into its persistent semantic form.
+    pub(super) fn finalize(&self, table: &InferenceTable) -> CallFacts {
+        let generic_args = self
+            .subst
+            .finalize_args(table, self.generic_params.iter().copied());
+        CallFacts::new(self.function, generic_args)
+    }
+}
+
+/// One call's selected state while a fixed-point transfer step applies its evidence.
+///
+/// Preparing the transfer selects the target at most once. The expression pass can then push the
+/// selected parameter types through tuple, array, and reference syntax before completion binds the
+/// refined arguments, solves obligations, and stores the call state again.
+pub(crate) struct CallInferenceTransfer {
+    call: ExprId,
+    receiver: Option<ExprId>,
+    state: CallInferenceState,
+}
+
+impl CallInferenceTransfer {
+    /// Return the selected signature's expected types for the written arguments.
+    pub(crate) fn argument_expected_tys(&self, args: &[ExprId]) -> Vec<(ExprId, Ty)> {
+        let written_params = self
+            .state
+            .projection
+            .signature()
+            .params
+            .get(self.state.first_written_param_idx..)
+            .unwrap_or_default();
+        if written_params.len() != args.len() {
+            return Vec::new();
+        }
+
+        args.iter()
+            .copied()
+            .zip(
+                written_params
+                    .iter()
+                    .map(|param| self.state.subst.as_substitution().apply(param)),
+            )
+            .collect()
+    }
+}
+
+/// Applies one selected semantic signature to body-owned inference slots.
+///
+/// Call lookup and signature projection remain query responsibilities. This layer keeps the
+/// resulting substitution alive across fixed-point rounds, pushes parameter expectations into the
+/// receiver and written arguments, and uses their evidence to refine generics and the return type.
+/// Once body inference finishes, `CallInferenceState` collapses to persisted `CallFacts`.
 pub(crate) struct BodyCallInference<'query, D, I> {
     context: BodyResolutionContext<'query, D, I>,
 }
@@ -51,231 +108,24 @@ where
         Self { context }
     }
 
-    /// Instantiate and store the selected call's semantic return type.
-    pub(crate) fn instantiate_return_fact(
+    /// Select one call target and expose its expected argument types for this transfer step.
+    ///
+    /// Evidence is deliberately bound during `complete_transfer`, after the caller has propagated
+    /// these expectations through transparent expression shapes. Selection itself is never
+    /// repeated within the step.
+    pub(crate) fn prepare_transfer(
         &self,
         inference: &mut BodyInferenceCtx,
         call: ExprId,
         args: &[ExprId],
         receiver: Option<ExprId>,
-    ) -> Result<(), PackageStoreError> {
-        let Some(call_inference) = self.selected_call_inference(inference, call, args, receiver)?
-        else {
-            return Ok(());
-        };
-        if call_inference.return_projection_complete {
-            return Ok(());
-        }
-        let return_ty = call_inference
-            .subst
-            .as_substitution()
-            .apply(&call_inference.projection.signature().ret);
-        if return_ty.has_var() {
-            inference.set_expr_infer_ty(call, return_ty);
-        } else if return_ty.has_unknown() {
-            inference.instantiate_expr_nested_unknown_ty(call, &return_ty);
-        } else {
-            inference.set_expr_infer_ty(call, return_ty);
-        }
-        Ok(())
-    }
-
-    /// Return expected types for arguments of the unique selected target.
-    pub(crate) fn argument_expected_tys(
-        &self,
-        inference: &mut BodyInferenceCtx,
-        call: ExprId,
-        args: &[ExprId],
-    ) -> Result<Vec<(ExprId, Ty)>, PackageStoreError> {
-        let Some(call_inference) = self.selected_call_inference(inference, call, args, None)?
-        else {
-            return Ok(Vec::new());
-        };
-        let written_params = call_inference
-            .projection
-            .signature()
-            .params
-            .get(call_inference.first_written_param_idx..)
-            .unwrap_or_default();
-        if written_params.len() != args.len() {
-            return Ok(Vec::new());
-        }
-        Ok(args
-            .iter()
-            .copied()
-            .zip(
-                written_params
-                    .iter()
-                    .map(|param| call_inference.subst.as_substitution().apply(param)),
-            )
-            .collect())
-    }
-
-    /// Normalize associated types in the selected semantic return.
-    pub(crate) fn project_selected_trait_associated_return_type(
-        &self,
-        inference: &mut BodyInferenceCtx,
-        call: ExprId,
-        args: &[ExprId],
-        receiver: Option<ExprId>,
-    ) -> Result<(), PackageStoreError> {
-        let Some(mut call_inference) =
-            self.selected_call_inference(inference, call, args, receiver)?
-        else {
-            return Ok(());
-        };
-        if call_inference.return_projection_complete {
-            return Ok(());
-        }
-        let return_ty = call_inference
-            .subst
-            .as_substitution()
-            .apply(&call_inference.projection.signature().ret);
-        let ty =
-            BodyTraitObligationSolver::new(self.context).normalize_ty(inference, &return_ty)?;
-        // Once every projection has been replaced, later evidence only solves the inference slots
-        // already embedded in this result. Re-running Chalk cannot change its semantic shape.
-        call_inference.return_projection_complete = !ty.has_projection();
-        inference.set_expr_infer_ty(call, ty);
-        inference.set_call_inference(call, call_inference);
-        Ok(())
-    }
-
-    /// Bind call arguments to function-owned parameters and constrain their expression slots.
-    pub(crate) fn constrain_function_generic_arguments(
-        &self,
-        inference: &mut BodyInferenceCtx,
-        call: ExprId,
-        args: &[ExprId],
-    ) -> Result<(), PackageStoreError> {
-        let Some(call_inference) = self.selected_call_inference(inference, call, args, None)?
-        else {
-            return Ok(());
-        };
-        for (arg, param) in args.iter().zip(
-            call_inference
-                .projection
-                .signature()
-                .params
-                .iter()
-                .skip(call_inference.first_written_param_idx),
-        ) {
-            let expected = call_inference.subst.as_substitution().apply(param);
-            inference.constrain_expr_ty(*arg, &expected);
-        }
-        Ok(())
-    }
-
-    /// Constrain the receiver and written arguments from the same instantiated signature.
-    pub(crate) fn constrain_selected_method_receiver_and_arguments(
-        &self,
-        inference: &mut BodyInferenceCtx,
-        method_call: ExprId,
-        receiver: ExprId,
-        args: &[ExprId],
-    ) -> Result<(), PackageStoreError> {
-        let Some(call_inference) =
-            self.selected_call_inference(inference, method_call, args, Some(receiver))?
-        else {
-            return Ok(());
-        };
-        let Some(receiver_param) = call_inference.projection.signature().params.first() else {
-            return Ok(());
-        };
-        // Method-call syntax supplies the receiver value before Rust inserts the `&self` or
-        // `&mut self` autoref. Constrain that value against the inner canonical receiver shape;
-        // arbitrary owned receivers continue to use their full declared type.
-        let receiver_pattern = match receiver_param {
-            Ty::Reference { inner, .. } => inner.as_ref(),
-            receiver_param => receiver_param,
-        };
-        let receiver_ty = call_inference
-            .subst
-            .as_substitution()
-            .apply(receiver_pattern);
-        inference.constrain_expr_ty(receiver, &receiver_ty);
-        for (arg, param) in args
-            .iter()
-            .zip(call_inference.projection.signature().params.iter().skip(1))
-        {
-            let expected = call_inference.subst.as_substitution().apply(param);
-            inference.constrain_expr_ty(*arg, &expected);
-        }
-        Ok(())
-    }
-
-    /// Submit the selected signature's canonical clauses with live call substitutions applied.
-    pub(crate) fn solve_generic_trait_obligations(
-        &self,
-        inference: &mut BodyInferenceCtx,
-        call: ExprId,
-        args: &[ExprId],
-        receiver: Option<ExprId>,
-    ) -> Result<(), PackageStoreError> {
-        let Some(mut call_inference) =
-            self.selected_call_inference(inference, call, args, receiver)?
-        else {
-            return Ok(());
-        };
-        if call_inference.generic_obligations_complete {
-            return Ok(());
-        }
-
-        // A selected call obligation matters to this layer only when it can still constrain a
-        // body-owned inference slot or closure witness. Fully concrete predicates are type-checking
-        // facts; proving them cannot change any Body IR type, so eager indexing should not submit
-        // them to Chalk merely to rediscover that the already-selected call is valid.
-        let needs_body_inference = call_inference
-            .projection
-            .signature()
-            .clauses
-            .iter()
-            .map(|clause| call_inference.subst.as_substitution().apply_clause(clause))
-            .map(|clause| inference.table.canonicalize_clause(&clause))
-            .any(|clause| match clause {
-                Clause::Implemented(application) => application.args.iter().any(|arg| {
-                    arg.as_ty()
-                        .is_some_and(|ty| ty.has_var() || ty.has_closure())
-                }),
-                Clause::AliasEq { alias, ty } => {
-                    ty.has_var()
-                        || ty.has_closure()
-                        || alias.args.iter().any(|arg| {
-                            arg.as_ty()
-                                .is_some_and(|ty| ty.has_var() || ty.has_closure())
-                        })
-                }
-            });
-        if !needs_body_inference {
-            call_inference.generic_obligations_complete = true;
-            inference.set_call_inference(call, call_inference);
-            return Ok(());
-        }
-
-        call_inference.generic_obligations_complete = BodyTraitObligationSolver::new(self.context)
-            .solve_selected_call(
-                inference,
-                &call_inference.projection.signature().clauses,
-                &call_inference.subst,
-            )?;
-        inference.set_call_inference(call, call_inference);
-        Ok(())
-    }
-
-    /// Reuse the one live signature projection and substitution owned by this call expression.
-    fn selected_call_inference(
-        &self,
-        inference: &mut BodyInferenceCtx,
-        call: ExprId,
-        args: &[ExprId],
-        receiver: Option<ExprId>,
-    ) -> Result<Option<CallInferenceState>, PackageStoreError> {
+    ) -> Result<Option<CallInferenceTransfer>, PackageStoreError> {
         let receiver = receiver.or_else(|| match self.context.body().expr_unchecked(call).kind {
             crate::ir::ExprKind::MethodCall { receiver, .. } => receiver,
             _ => None,
         });
-        let mut call_inference = if let Some(call_inference) = inference.call_inference(call) {
-            call_inference
+        let state = if let Some(state) = inference.call_inference(call) {
+            state
         } else {
             let calls = self.context.calls();
             let receiver_ty = receiver.map(|receiver| inference.root_resolved_expr_ty(receiver));
@@ -290,8 +140,8 @@ where
                 .generics(GenericDefRef::Function(target.function()))?;
 
             // Allocate call-owned function generics and explicit `_` arguments exactly once.
-            // Receiver and argument evidence below can keep refining these same slots on every
-            // fixed-point pass without growing a new alias chain through the inference table.
+            // Receiver and argument evidence can keep refining these slots without allocating an
+            // unrelated replacement on every fixed-point pass.
             let mut base = projection.subst().clone();
             for param in generics.iter_self() {
                 if let GenericParamRef::Type(param) = param.param() {
@@ -303,6 +153,12 @@ where
             }
             base.extend(self.explicit_inference_subst(inference, &target, &generics)?);
             CallInferenceState {
+                function: target.function(),
+                generic_params: generics
+                    .iter()
+                    .map(|param| param.param())
+                    .collect::<Vec<_>>()
+                    .into(),
                 projection: Arc::new(projection),
                 subst: InferenceSubstitution::from_substitution(base),
                 first_written_param_idx: target.first_written_param_idx(),
@@ -311,49 +167,204 @@ where
             }
         };
 
-        if call_inference.first_written_param_idx == 1
-            && let Some(receiver) = receiver
-            && let Some(receiver_param) = call_inference.projection.signature().params.first()
+        // Install the return shape before argument expectations. Chained calls later in the same
+        // expression walk can then use it as receiver evidence.
+        if !state.return_projection_complete {
+            let return_ty = state
+                .subst
+                .as_substitution()
+                .apply(&state.projection.signature().ret);
+            if return_ty.has_var() {
+                inference.set_expr_infer_ty(call, return_ty);
+            } else if return_ty.has_unknown() {
+                inference.instantiate_expr_nested_unknown_ty(call, &return_ty);
+            } else {
+                inference.set_expr_infer_ty(call, return_ty);
+            }
+        }
+
+        Ok(Some(CallInferenceTransfer {
+            call,
+            receiver,
+            state,
+        }))
+    }
+
+    /// Finish one prepared call after its expected types have reached the written arguments.
+    pub(crate) fn complete_transfer(
+        &self,
+        inference: &mut BodyInferenceCtx,
+        mut transfer: CallInferenceTransfer,
+        args: &[ExprId],
+    ) -> Result<(), PackageStoreError> {
+        // Bind the selected signature once against the evidence refined earlier in this transfer
+        // step. Every following operation consumes the same substitution.
+        if transfer.state.first_written_param_idx == 1
+            && let Some(receiver) = transfer.receiver
+            && let Some(receiver_param) = transfer.state.projection.signature().params.first()
         {
-            // Bind impl/trait parameters from the live receiver before projecting the return.
-            // The body expression precedes method autoref, so `&mut Vec<T>` matches `Vec<?T>`
-            // through its inner type while an owned `self: Box<Self>` keeps the full pattern.
             let receiver_pattern = match receiver_param {
                 Ty::Reference { inner, .. } => inner.as_ref(),
                 receiver_param => receiver_param,
             };
             let receiver_ty = inference.root_resolved_expr_ty(receiver);
-            call_inference
+            transfer
+                .state
                 .subst
                 .bind_ty(&mut inference.table, receiver_pattern, &receiver_ty);
         }
 
-        for (param, arg) in call_inference
+        for (param, arg) in transfer
+            .state
             .projection
             .signature()
             .params
             .iter()
-            .skip(call_inference.first_written_param_idx)
+            .skip(transfer.state.first_written_param_idx)
             .zip(args)
         {
             let evidence = self
                 .fn_def_arg_ty(*arg)?
                 .unwrap_or_else(|| inference.root_resolved_expr_ty(*arg));
-            call_inference
+            transfer
+                .state
                 .subst
                 .bind_ty(&mut inference.table, param, &evidence);
         }
-        let return_evidence = inference.expr_ty(call);
+        let return_evidence = inference.expr_ty(transfer.call);
         if !matches!(return_evidence, Ty::Unknown) {
-            call_inference.subst.bind_ty(
+            transfer.state.subst.bind_ty(
                 &mut inference.table,
-                &call_inference.projection.signature().ret,
+                &transfer.state.projection.signature().ret,
                 &return_evidence,
             );
         }
 
-        inference.set_call_inference(call, call_inference.clone());
-        Ok(Some(call_inference))
+        // Push the now-refined signature back into the written expressions. The outer pass has
+        // already handled transparent syntax such as tuple fields; these direct constraints cover
+        // partial/malformed calls too and keep receiver autoref handling call-owned.
+        for (arg, param) in args.iter().zip(
+            transfer
+                .state
+                .projection
+                .signature()
+                .params
+                .iter()
+                .skip(transfer.state.first_written_param_idx),
+        ) {
+            let expected = transfer.state.subst.as_substitution().apply(param);
+            inference.constrain_expr_ty(*arg, &expected);
+        }
+        if transfer.state.first_written_param_idx == 1
+            && let Some(receiver) = transfer.receiver
+            && let Some(receiver_param) = transfer.state.projection.signature().params.first()
+        {
+            // Method-call syntax supplies the receiver before Rust inserts `&self`/`&mut self`.
+            let receiver_pattern = match receiver_param {
+                Ty::Reference { inner, .. } => inner.as_ref(),
+                receiver_param => receiver_param,
+            };
+            let receiver_ty = transfer
+                .state
+                .subst
+                .as_substitution()
+                .apply(receiver_pattern);
+            inference.constrain_expr_ty(receiver, &receiver_ty);
+        }
+
+        self.solve_generic_trait_obligations(inference, &mut transfer.state)?;
+        self.project_selected_trait_associated_return_type(
+            inference,
+            transfer.call,
+            &mut transfer.state,
+        )?;
+        inference.set_call_inference(transfer.call, transfer.state);
+        Ok(())
+    }
+
+    /// Submit the selected signature's canonical clauses with live call substitutions applied.
+    fn solve_generic_trait_obligations(
+        &self,
+        inference: &mut BodyInferenceCtx,
+        state: &mut CallInferenceState,
+    ) -> Result<(), PackageStoreError> {
+        if state.generic_obligations_complete {
+            return Ok(());
+        }
+
+        // A selected call obligation matters to this layer while it can still constrain a
+        // body-owned inference slot, closure witness, or unresolved semantic shape. Fully settled
+        // predicates are type-checking facts; proving them cannot change any Body IR type, so
+        // eager indexing should not submit them to Chalk merely to rediscover that the
+        // already-selected call is valid.
+        //
+        // `Unknown` and projections deliberately remain pending. Their producer may become known
+        // on a later fixed-point pass, at which point the same obligation can carry useful evidence
+        // into the call-owned substitution. Marking either shape complete would freeze calls such
+        // as `map(...).collect::<Vec<_>>()` before `Map::Item` has been projected.
+        let is_unsettled =
+            |ty: &Ty| ty.has_var() || ty.has_closure() || ty.has_unknown() || ty.has_projection();
+        let needs_body_inference = state
+            .projection
+            .signature()
+            .clauses
+            .iter()
+            .map(|clause| state.subst.as_substitution().apply_clause(clause))
+            .map(|clause| inference.table.canonicalize_clause(&clause))
+            .any(|clause| match clause {
+                Clause::Implemented(application) => application
+                    .args
+                    .iter()
+                    .any(|arg| arg.as_ty().is_some_and(is_unsettled)),
+                Clause::AliasEq { alias, ty } => {
+                    is_unsettled(&ty)
+                        || alias
+                            .args
+                            .iter()
+                            .any(|arg| arg.as_ty().is_some_and(is_unsettled))
+                }
+            });
+        if !needs_body_inference {
+            state.generic_obligations_complete = true;
+            return Ok(());
+        }
+
+        state.generic_obligations_complete = BodyTraitObligationSolver::new(self.context)
+            .solve_selected_call(
+                inference,
+                &state.projection.signature().clauses,
+                &state.subst,
+            )?;
+        Ok(())
+    }
+
+    /// Normalize associated types in the selected semantic return.
+    fn project_selected_trait_associated_return_type(
+        &self,
+        inference: &mut BodyInferenceCtx,
+        call: ExprId,
+        state: &mut CallInferenceState,
+    ) -> Result<(), PackageStoreError> {
+        if state.return_projection_complete {
+            return Ok(());
+        }
+        let return_ty = state
+            .subst
+            .as_substitution()
+            .apply(&state.projection.signature().ret);
+        let ty =
+            BodyTraitObligationSolver::new(self.context).normalize_ty(inference, &return_ty)?;
+        // Once every projection has been replaced, later evidence only solves the inference slots
+        // already embedded in this result. Re-running Chalk cannot change its semantic shape.
+        state.return_projection_complete = !ty.has_projection();
+        if ty != return_ty {
+            inference.set_expr_normalized_ty(call, ty);
+        } else {
+            // A call may become selectable after a preceding transfer step gives its receiver a
+            // type. Install the ordinary return shape before marking projection complete.
+            inference.set_expr_infer_ty(call, ty);
+        }
+        Ok(())
     }
 
     /// Convert written `_` type arguments into inference variables without shifting omitted
@@ -421,7 +432,7 @@ where
 
     fn fn_def_arg_ty(&self, arg: ExprId) -> Result<Option<Ty>, PackageStoreError> {
         let BodyResolution::Declarations(declarations) =
-            self.context.resolved_body().expr_resolution(arg)
+            self.context.query_body().expr_resolution_unchecked(arg)
         else {
             return Ok(None);
         };

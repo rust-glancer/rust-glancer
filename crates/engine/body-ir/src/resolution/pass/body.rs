@@ -8,25 +8,30 @@ use rg_def_map::DefMapSource;
 use rg_ir_model::{BindingId, BodyRef, ExprId, items::SelfParamKind};
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::{ItemLookupIndex, ItemStoreSource};
-use rg_ty::{ExpectedAdtTyExt, PrimitiveTy, TraitSelectionCache, Ty};
+use rg_ty::{ExpectedAdtTyExt, TraitSelectionCache, Ty};
 
 use crate::{
-    BodyData, BodyFacts, BodyView,
+    BodyData, BodyFacts,
     ir::resolved::BodyResolution,
     ir::{BindingKind, ExprWrapperKind},
 };
 
-use crate::resolution::{BodyResolutionContext, infer::BodyInferenceCtx};
+use crate::resolution::{
+    BodyResolutionContext,
+    infer::{BodyInferenceCtx, BodyInferenceSnapshot},
+};
 
 use super::{
-    env::BodyResolutionEnv, expr::ExprResolutionPass, inference::InferenceResolutionPass,
-    pattern_type::PatternTypePropagationPass,
+    env::BodyResolutionEnv, expr::ExprResolutionPass, inference::InferenceTransferPass,
+    pattern::PatternInferenceTransfer,
 };
 
 /// Shared state for the body-resolution fixed-point pass.
 ///
-/// Sibling pass modules keep their logic in separate files while operating on the same fact
-/// sidecar. The structural body is borrowed for the entire pass and never mutated.
+/// The structural body is borrowed and never mutated. Name resolution accumulates directly in the
+/// pass-owned `BodyFacts`, while types and selected-call substitutions remain live in
+/// `BodyInferenceCtx` until the fixed point settles. Sibling pass modules borrow this one state so
+/// there is no second resolution lane to reconcile afterward.
 pub(crate) struct BodyResolutionPass<'query, 'body, D, I> {
     pub(super) env: BodyResolutionEnv<'query, D, I>,
     pub(super) body: &'body BodyData,
@@ -45,10 +50,8 @@ where
         semantic_index: &'query ItemLookupIndex,
         body_ref: BodyRef,
         body: &'body BodyData,
-        facts: BodyFacts,
         trait_selection_cache: &'query TraitSelectionCache,
     ) -> Self {
-        debug_assert!(facts.is_aligned_with(body));
         let env = BodyResolutionEnv::new(
             def_maps,
             item_stores,
@@ -60,13 +63,14 @@ where
         let inference = BodyInferenceCtx::with_trait_selection_cache(
             body.exprs().len(),
             body.bindings().len(),
+            body.statements().len(),
             trait_selection_cache.clone(),
         );
 
         Self {
             env,
             body,
-            facts,
+            facts: BodyFacts::for_body(body),
             inference,
         }
     }
@@ -74,55 +78,74 @@ where
     pub(super) fn context<'source>(
         &'source self,
     ) -> BodyResolutionContext<'source, &'source D, &'source I> {
-        self.env.context(self.view())
+        self.env
+            .context(self.inference.view(self.body, &self.facts))
     }
 
-    /// Split read-only query state from the inference table that a query operation may update.
+    /// Run a mutating inference operation against this transfer step's read snapshot.
     ///
-    /// Building the context from `self.context()` would borrow the whole pass and prevent the
-    /// operation from mutating inference. Keeping this split here avoids exposing the pass's field
-    /// layout throughout inference code.
-    pub(super) fn context_and_inference<'source>(
-        &'source mut self,
-    ) -> (
-        BodyResolutionContext<'source, &'source D, &'source I>,
-        &'source mut BodyInferenceCtx,
-    ) {
+    /// The context cannot borrow the live type slots while the operation mutates them. One
+    /// copy-on-write snapshot is shared by every operation in the transfer step, so the live facts
+    /// detach at most once before the outer fixed point creates the next read view.
+    pub(super) fn with_context_and_inference<R>(
+        &mut self,
+        snapshot: &BodyInferenceSnapshot,
+        operation: impl FnOnce(BodyResolutionContext<'_, &D, &I>, &mut BodyInferenceCtx) -> R,
+    ) -> R {
         let Self {
             env,
             body,
             facts,
             inference,
         } = self;
-        (env.context(BodyView::new(body, facts)), inference)
+        operation(env.context(snapshot.view(body, facts)), inference)
     }
 
+    /// Resolve one frozen body and return its aligned, finalized semantic sidecar.
+    ///
+    /// Syntax-directed resolution first seeds what can be known immediately. The shared fixed
+    /// point then lets expressions, patterns, calls, annotations, and trait obligations exchange
+    /// evidence. Only after convergence are inference variables erased or defaulted into
+    /// persistent `BodyFacts`.
     pub(crate) fn resolve(mut self) -> Result<BodyFacts, PackageStoreError> {
         self.resolve_bindings()?;
 
-        // Pattern propagation can unlock later expression types, and those expressions can then
-        // unlock more patterns. Every successful pass should discover at least one new binding or
-        // expression fact, so a body-sized cap is enough to avoid a hidden magic constant.
+        // Seed syntax-directed expression facts before annotations introduce inference holes.
+        // Calls and patterns that need later evidence are retried by the shared fixed point below.
+        self.transfer_expressions_and_patterns()?;
+        InferenceTransferPass::new(&mut self).initialize()?;
+
+        // Expressions, patterns, calls, and expected types all exchange evidence through the same
+        // inference context. Revisit the transfer rules while that context or declaration
+        // resolution changes; there is no ordinary-fact pass to refresh afterward.
         let max_passes = self.body.exprs().len() + self.body.bindings().len() + 1;
         for _ in 0..max_passes {
-            let mut changed = false;
-            let expr_count = self.body.exprs().len();
-            {
-                let mut expr_pass = ExprResolutionPass::new(&mut self);
-                for expr_idx in 0..expr_count {
-                    changed |= expr_pass.resolve_expr(ExprId(expr_idx))?;
-                }
-            }
-            let binding_updates = PatternTypePropagationPass::new(self.context()).propagate()?;
-            changed |= self.apply_binding_type_updates(binding_updates);
+            let before = self.inference.progress();
+            let resolution_changed = self.transfer_expressions_and_patterns()?;
+            InferenceTransferPass::new(&mut self).apply_once()?;
 
-            if !changed {
+            if !resolution_changed && !self.inference.has_progressed_since(&before) {
                 break;
             }
         }
 
-        InferenceResolutionPass::new(&mut self).run()?;
-        Ok(self.facts)
+        Ok(self.inference.finish(self.facts))
+    }
+
+    fn transfer_expressions_and_patterns(&mut self) -> Result<bool, PackageStoreError> {
+        let mut resolution_changed = false;
+        let expr_count = self.body.exprs().len();
+        {
+            let mut expr_pass = ExprResolutionPass::new(self);
+            for expr_idx in 0..expr_count {
+                resolution_changed |= expr_pass.resolve_expr(ExprId(expr_idx))?;
+            }
+        }
+        let snapshot = self.inference.snapshot();
+        self.with_context_and_inference(&snapshot, |context, inference| {
+            PatternInferenceTransfer::new(context).propagate(inference)
+        })?;
+        Ok(resolution_changed)
     }
 
     fn resolve_bindings(&mut self) -> Result<(), PackageStoreError> {
@@ -134,89 +157,13 @@ where
         Ok(())
     }
 
-    fn apply_binding_type_updates(&mut self, updates: Vec<(BindingId, Ty)>) -> bool {
-        let mut changed = false;
-        for (binding, ty) in updates {
-            if matches!(ty, Ty::Unknown) {
-                continue;
-            }
-
-            if self.body.binding(binding).is_none() {
-                continue;
-            };
-            if !matches!(self.binding_ty_unchecked(binding), Ty::Unknown) {
-                continue;
-            }
-
-            self.set_binding_ty(binding, ty);
-            changed = true;
-        }
-
-        changed
-    }
-
     pub(super) fn set_expr_ty(&mut self, expr: ExprId, ty: Ty) {
         self.inference.set_expr_ty(expr, &ty);
-        self.facts.set_expr_ty(expr, ty);
-    }
-
-    pub(super) fn set_expr_integer_var(&mut self, expr: ExprId) {
-        self.inference.set_expr_integer_var(expr);
-        self.facts
-            .set_expr_ty(expr, Ty::Primitive(PrimitiveTy::DEFAULT_INT));
-    }
-
-    pub(super) fn set_expr_float_var(&mut self, expr: ExprId) {
-        self.inference.set_expr_float_var(expr);
-        self.facts
-            .set_expr_ty(expr, Ty::Primitive(PrimitiveTy::DEFAULT_FLOAT));
-    }
-
-    pub(super) fn set_expr_tuple_from_fields(&mut self, expr: ExprId, fields: &[ExprId]) {
-        self.inference.set_expr_tuple_from_fields(expr, fields);
-        self.facts.set_expr_ty(
-            expr,
-            Ty::tuple(
-                fields
-                    .iter()
-                    .map(|field| self.expr_ty_unchecked(*field).clone())
-                    .collect(),
-            ),
-        );
-    }
-
-    pub(super) fn set_expr_array_from_elements(
-        &mut self,
-        expr: ExprId,
-        elements: &[ExprId],
-        ty: Ty,
-    ) {
-        self.inference.set_expr_array_from_elements(
-            expr,
-            elements,
-            Some(elements.len().to_string()),
-        );
-        self.facts.set_expr_ty(expr, ty);
-    }
-
-    pub(super) fn set_expr_repeat_array_from_initializer(
-        &mut self,
-        expr: ExprId,
-        initializer: Option<ExprId>,
-        len_text: Option<&str>,
-        ty: Ty,
-    ) {
-        self.inference.set_expr_repeat_array_from_initializer(
-            expr,
-            initializer,
-            len_text.map(str::to_owned),
-        );
-        self.facts.set_expr_ty(expr, ty);
     }
 
     pub(super) fn set_expr_facts(&mut self, expr: ExprId, resolution: BodyResolution, ty: Ty) {
         self.inference.set_expr_ty(expr, &ty);
-        self.facts.set_expr(expr, resolution, ty);
+        self.facts.set_expr_resolution(expr, resolution);
     }
 
     pub(super) fn set_expr_wrapper_facts(
@@ -229,12 +176,11 @@ where
     ) {
         self.inference
             .set_expr_wrapper_from_inner(expr, kind, inner, &ty);
-        self.facts.set_expr(expr, resolution, ty);
+        self.facts.set_expr_resolution(expr, resolution);
     }
 
     pub(super) fn set_binding_ty(&mut self, binding: BindingId, ty: Ty) {
         self.inference.set_binding_ty(binding, &ty);
-        self.facts.set_binding_ty(binding, ty);
     }
 
     fn binding_ty(&self, binding: BindingId) -> Result<Ty, PackageStoreError> {
@@ -278,12 +224,8 @@ where
         Ok(Ty::Unknown)
     }
 
-    pub(super) fn view(&self) -> BodyView<'_> {
-        BodyView::new(self.body, &self.facts)
-    }
-
     pub(super) fn expr_ty_unchecked(&self, expr: ExprId) -> &Ty {
-        &self.facts.exprs[expr].ty
+        self.inference.expr_ty_ref(expr)
     }
 
     pub(super) fn expr_resolution(&self, expr: ExprId) -> &BodyResolution {
@@ -292,9 +234,5 @@ where
 
     pub(super) fn set_expr_resolution(&mut self, expr: ExprId, resolution: BodyResolution) {
         self.facts.set_expr_resolution(expr, resolution);
-    }
-
-    pub(super) fn binding_ty_unchecked(&self, binding: BindingId) -> &Ty {
-        &self.facts.bindings[binding].ty
     }
 }

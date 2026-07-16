@@ -160,6 +160,26 @@ where
         // `B: FromIterator<<Self as Iterator>::Item>`. Normalize those facts before impl-header
         // matching so the candidate receives concrete evidence rather than an opaque alias shape.
         let goal = self.normalize_trait_goal(inference, goal)?;
+
+        // An associated alias that survived normalization is not usable body evidence. Passing it
+        // into the closure-local solver would persist that opaque shape in a binding slot, while
+        // passing it into the structural selector could mark a generic impl complete without
+        // relating the alias's eventual value to the impl parameters. Leave the whole goal pending
+        // so the parent fixed point can retry after the producer makes the alias projectable.
+        let has_unresolved_projection = goal
+            .application
+            .args
+            .iter()
+            .filter_map(GenericArg::as_ty)
+            .any(Ty::has_projection)
+            || goal
+                .associated_types
+                .iter()
+                .any(|binding| binding.ty.has_projection());
+        if has_unresolved_projection {
+            return Ok(BodyTraitGoalOutcome::Deferred);
+        }
+
         // Fn* trait goals can sometimes be answered from a body-local closure witness before the
         // shared trait selector has enough body-specific evidence to prove them.
         match BodyCallableGoalSolver::new(self.context).solve_goal(inference, &goal)? {

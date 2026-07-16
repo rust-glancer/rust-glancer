@@ -11,7 +11,7 @@ use super::{
     UnknownTypeInstantiationBuilder,
     table::{InferenceConflict, InferenceTable},
 };
-use crate::{ConstValue, GenericArg, Lifetime, Substitution, Ty};
+use crate::{ConstValue, GenericArg, GenericArgs, Lifetime, Substitution, Ty};
 
 /// Generic-parameter bindings that may still contain inference variables.
 ///
@@ -97,6 +97,20 @@ impl InferenceSubstitution {
 
     pub fn into_substitution(self) -> Substitution {
         self.0
+    }
+
+    /// Convert live keyed bindings into durable positional generic arguments.
+    ///
+    /// `params` supplies the declaration's canonical full order, including inherited parameters.
+    /// Missing bindings become kind-correct unknown arguments, and every type position is resolved
+    /// through the inference table so no inference variable crosses the persistence boundary.
+    pub fn finalize_args(
+        &self,
+        table: &InferenceTable,
+        params: impl IntoIterator<Item = GenericParamRef>,
+    ) -> GenericArgs {
+        let args = self.0.args_for_params(params);
+        table.finalize_generic_args(&args)
     }
 
     /// Give the function's own type parameters fresh variables, shadowing only by identity.
