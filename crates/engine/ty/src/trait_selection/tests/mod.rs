@@ -2,8 +2,6 @@ mod utils;
 
 use expect_test::expect;
 
-use super::TraitSelectionOptions;
-
 use self::utils::*;
 
 #[test]
@@ -24,7 +22,7 @@ fn probe_selects_direct_from_iterator_impl_and_solves_destination_arg() {
         )],
         expect![[r#"
             select direct impl
-              options: default
+              query: selection
               goal: Vec<?item>: FromIterator<User>
               result: one
                 impl: impl#0
@@ -56,7 +54,7 @@ fn normalize_assoc_type_projects_generic_impl_value() {
         )],
         expect![[r#"
             project generic impl Item
-              options: default
+              query: selection
               goal: <Iter<User> as Iterator>::Item
               result: projected
                 infer: User
@@ -98,19 +96,19 @@ fn probe_checks_goal_associated_type_equality_constraints() {
         ],
         expect![[r#"
             accept matching associated equality
-              options: default
+              query: selection
               goal: Iter<User>: Iterator<Item = User>
               result: one
                 impl: impl#0
                 applicability: yes
 
             reject mismatched associated equality
-              options: default
+              query: selection
               goal: Iter<User>: Iterator<Item = Other>
               result: empty
 
             solve receiver slot from associated equality
-              options: default
+              query: selection
               goal: Iter<?item>: Iterator<Item = User>
               result: one
                 impl: impl#0
@@ -142,7 +140,7 @@ fn probe_checks_custom_trait_associated_type_equality_constraints() {
         )],
         expect![[r#"
             solve custom associated equality
-              options: default
+              query: selection
               goal: Bag<?item>: Source<Output = User>
               result: one
                 impl: impl#0
@@ -184,14 +182,14 @@ fn chalk_proves_impl_predicate_associated_type_equality_constraints() {
         ],
         expect![[r#"
             prove matching impl predicate equality
-              options: default
+              query: selection
               goal: Adapter<Iter<User>>: AcceptsUserIterator
               result: one
                 impl: impl#1
                 applicability: yes
 
             reject mismatched impl predicate equality
-              options: default
+              query: selection
               goal: Adapter<Iter<Other>>: AcceptsUserIterator
               result: empty
         "#]],
@@ -213,19 +211,18 @@ fn probe_prefers_definite_impl_over_maybe_headers() {
         "#,
         vec![
             TraitSelectionCase::probe("default selection", "Iter<User>: Iterator"),
-            TraitSelectionCase::probe("exploratory selection", "Iter<User>: Iterator")
-                .with_options(TraitSelectionOptions::new().keep_maybe_candidates()),
+            TraitSelectionCase::candidate_probe("exploratory candidates", "Iter<User>: Iterator"),
         ],
         expect![[r#"
             default selection
-              options: default
+              query: selection
               goal: Iter<User>: Iterator
               result: one
                 impl: impl#0
                 applicability: yes
 
-            exploratory selection
-              options: keep-maybe-candidates
+            exploratory candidates
+              query: candidate
               goal: Iter<User>: Iterator
               result: ambiguous
         "#]],
@@ -253,7 +250,7 @@ fn chalk_solver_normalizes_generic_associated_type_value() {
         )],
         expect![[r#"
             chalk project generic impl Item
-              options: default
+              query: chalk
               goal: <Iter<User> as Iterator>::Item
               result: projected
                 infer: User
@@ -283,7 +280,7 @@ fn chalk_solver_normalizes_associated_type_to_existing_inference_var() {
         )],
         expect![[r#"
             chalk preserves projection variable
-              options: default
+              query: chalk
               goal: <Iter<?item> as Iterator>::Item
               result: projected
                 infer: ?item
@@ -316,7 +313,7 @@ fn chalk_solver_commits_projection_answer_evidence_to_inference_table() {
         )],
         expect![[r#"
             chalk solves projection variable
-              options: default
+              query: chalk
               goal: <Vec<?item> as Indexed<User>>::Item
               result: projected
                 infer: User
@@ -348,7 +345,7 @@ fn chalk_solver_normalizes_array_associated_type_value() {
         )],
         expect![[r#"
             chalk projects array impl Item
-              options: default
+              query: chalk
               goal: <Holder<?item> as ArrayProvider>::Item
               result: projected
                 infer: [?item; 3]
@@ -361,10 +358,57 @@ fn chalk_solver_normalizes_array_associated_type_value() {
 }
 
 #[test]
-fn normalize_assoc_type_exposes_canonical_nested_projection_when_chalk_stops() {
-    // Chalk's bounded solver stops at this transitive projection. Once the impl is uniquely
-    // selected, its canonical associated value can still expose the next projection. Recursive
-    // normalization can then continue without returning to declaration syntax.
+fn chalk_solver_raises_raw_pointer_and_function_pointer_values() {
+    check_trait_selection_queries(
+        r#"
+            traits
+              trait#0 Shapes
+            structs
+              struct#0 Holder
+              struct#1 User
+            impls
+              impl#0 impl Shapes for Holder
+            type aliases
+              type#0 trait#0::Pointer
+              type#1 impl#0::Pointer = *const User
+              type#2 trait#0::Callback
+              type#3 impl#0::Callback = fn(User) -> User
+        "#,
+        vec![
+            TraitSelectionCase::chalk_normalize_assoc(
+                "chalk projects raw pointer",
+                "<Holder as Shapes>::Pointer",
+            ),
+            TraitSelectionCase::chalk_normalize_assoc(
+                "chalk projects function pointer",
+                "<Holder as Shapes>::Callback",
+            ),
+        ],
+        expect![[r#"
+            chalk projects raw pointer
+              query: chalk
+              goal: <Holder as Shapes>::Pointer
+              result: projected
+                infer: *const User
+                final: *const User
+                applicability: yes
+
+            chalk projects function pointer
+              query: chalk
+              goal: <Holder as Shapes>::Callback
+              result: projected
+                infer: fn(User) -> User
+                final: fn(User) -> User
+                applicability: yes
+        "#]],
+    );
+}
+
+#[test]
+fn normalize_assoc_type_recurses_to_terminal_chalk_answer() {
+    // The selected Chalk datum first produces `I::Item`. Recursive normalization feeds that
+    // semantic projection back through the same adapter and reaches `User` without an impl-alias
+    // side door.
     check_trait_selection_queries(
         r#"
             traits
@@ -387,11 +431,11 @@ fn normalize_assoc_type_exposes_canonical_nested_projection_when_chalk_stops() {
         )],
         expect![[r#"
             project qualified impl Item
-              options: default
+              query: selection
               goal: <Skip<Iter<User>> as Iterator>::Item
               result: projected
-                infer: projection Item<Iter<User>>
-                final: projection Item<Iter<User>>
+                infer: User
+                final: User
                 applicability: yes
         "#]],
     );
@@ -421,7 +465,7 @@ fn chalk_defers_body_local_closure_projection() {
         )],
         expect![[r#"
             defer body-local closure projection
-              options: default
+              query: chalk
               goal: <Adapter<{closure#0}> as Iterator>::Item
               result: none
         "#]],
@@ -430,9 +474,9 @@ fn chalk_defers_body_local_closure_projection() {
 
 #[test]
 fn blanket_self_param_impl_and_source_opaque_bounds_are_proved() {
-    // Pair blanket-impl selection with its canonical associated value for both a nominal iterator
-    // and an opaque iterator. Chalk proves the impl; when it stops at the nested alias, the
-    // semantic signature supplies the next projection for recursive normalization.
+    // Pair blanket-impl selection with Chalk's terminal associated value for both a nominal
+    // iterator and an opaque iterator. Opaque equality comes from its declared Chalk datum rather
+    // than a source-side bounds lookup.
     check_trait_selection_queries(
         r#"
             traits
@@ -474,37 +518,37 @@ fn blanket_self_param_impl_and_source_opaque_bounds_are_proved() {
         ],
         expect![[r#"
             prove blanket iterator impl
-              options: default
+              query: selection
               goal: Iter<User>: IntoIterator
               result: one
                 impl: impl#1
                 applicability: yes
 
             project blanket IntoIterator Item
-              options: default
+              query: selection
               goal: <Iter<User> as IntoIterator>::Item
               result: projected
-                infer: projection Item<Iter<User>>
-                final: projection Item<Iter<User>>
+                infer: User
+                final: User
                 applicability: yes
 
             prove blanket iterator impl for opaque iterator
-              options: default
+              query: selection
               goal: impl Iterator<Item = User>: IntoIterator
               result: one
                 impl: impl#1
                 applicability: yes
 
             project blanket opaque IntoIterator Item
-              options: default
+              query: selection
               goal: <impl Iterator<Item = User> as IntoIterator>::Item
               result: projected
-                infer: projection Item<impl Iterator<Item = User>>
-                final: projection Item<impl Iterator<Item = User>>
+                infer: User
+                final: User
                 applicability: yes
 
             reject unproved blanket iterator impl
-              options: default
+              query: selection
               goal: NotIter: IntoIterator
               result: empty
         "#]],
@@ -549,7 +593,7 @@ fn blanket_impl_proves_nested_adapter_with_dependent_associated_bound() {
         )],
         expect![[r#"
             prove nested adapter blanket impl
-              options: default
+              query: selection
               goal: Enumerate<Copied<Iter<User>>>: IntoIterator
               result: one
                 impl: impl#5
@@ -573,7 +617,7 @@ fn probe_rejects_bare_inference_var_blanket_self_match() {
         )],
         expect![[r#"
             reject bare inference receiver
-              options: default
+              query: selection
               goal: ?receiver: Marker
               result: empty
         "#]],
@@ -599,7 +643,7 @@ fn probe_rejects_concrete_self_mismatch() {
         )],
         expect![[r#"
             reject mismatched self
-              options: default
+              query: selection
               goal: OtherVec<?item>: FromIterator<User>
               result: empty
         "#]],
@@ -625,7 +669,7 @@ fn probe_rejects_conflicting_repeated_type_param_evidence() {
         )],
         expect![[r#"
             reject conflicting repeated type param
-              options: default
+              query: selection
               goal: Vec<User>: FromIterator<Other>
               result: empty
         "#]],
@@ -652,7 +696,7 @@ fn probe_keeps_multiple_applicable_impls_as_separate_candidates() {
         )],
         expect![[r#"
             keep multiple applicable impls ambiguous
-              options: default
+              query: selection
               goal: Vec<?item>: FromIterator<User>
               result: ambiguous
         "#]],
@@ -678,7 +722,7 @@ fn probe_rejects_impls_with_unproven_bounds() {
         )],
         expect![[r#"
             reject unproven impl bound
-              options: default
+              query: selection
               goal: Vec<?item>: FromIterator<User>
               result: empty
         "#]],
@@ -705,7 +749,7 @@ fn probe_uses_chalk_to_prove_impl_type_param_bounds() {
         )],
         expect![[r#"
             prove Clone bound with Chalk
-              options: default
+              query: selection
               goal: Vec<?item>: FromIterator<User>
               result: one
                 impl: impl#0
@@ -738,7 +782,7 @@ fn probe_handles_visible_trait_data_with_generic_bounds() {
         )],
         expect![[r#"
             prove nested visible trait bounds
-              options: default
+              query: selection
               goal: Vec<?item>: FromIterator<User>
               result: one
                 impl: impl#0
@@ -773,7 +817,7 @@ fn probe_declines_predicate_with_unsupported_bounded_associated_type() {
         )],
         expect![[r#"
             decline unsupported bounded associated type
-              options: default
+              query: selection
               goal: User: UsesAdapter
               result: empty
         "#]],
@@ -781,7 +825,7 @@ fn probe_declines_predicate_with_unsupported_bounded_associated_type() {
 }
 
 #[test]
-fn caller_solved_impl_predicates_can_return_impl_with_where_predicates() {
+fn candidate_discovery_exposes_impl_with_body_local_where_predicate() {
     check_trait_selection_queries(
         r#"
             traits
@@ -794,23 +838,22 @@ fn caller_solved_impl_predicates_can_return_impl_with_where_predicates() {
         "#,
         vec![
             TraitSelectionCase::probe(
-                "default rejects unsolved where predicate",
+                "selection defers body-local predicate",
                 "Adapter<{closure#0}>: Produces",
             ),
-            TraitSelectionCase::probe(
-                "caller solves impl predicate",
+            TraitSelectionCase::candidate_probe(
+                "candidate exposes canonical header",
                 "Adapter<{closure#0}>: Produces",
-            )
-            .with_options(TraitSelectionOptions::new().caller_solves_impl_predicates()),
+            ),
         ],
         expect![[r#"
-            default rejects unsolved where predicate
-              options: default
+            selection defers body-local predicate
+              query: selection
               goal: Adapter<{closure#0}>: Produces
               result: empty
 
-            caller solves impl predicate
-              options: caller-solves-impl-predicates
+            candidate exposes canonical header
+              query: candidate
               goal: Adapter<{closure#0}>: Produces
               result: one
                 impl: impl#0
@@ -820,7 +863,7 @@ fn caller_solved_impl_predicates_can_return_impl_with_where_predicates() {
 }
 
 #[test]
-fn header_only_rejects_impl_type_param_bounds_even_when_chalk_can_prove_them() {
+fn candidate_discovery_does_not_prove_impl_type_param_bounds() {
     check_trait_selection_queries(
         r#"
             traits
@@ -838,15 +881,14 @@ fn header_only_rejects_impl_type_param_bounds_even_when_chalk_can_prove_them() {
                 "default proves Clone bound",
                 "Vec<?item>: FromIterator<User>",
             ),
-            TraitSelectionCase::probe(
-                "header-only rejects Clone bound",
+            TraitSelectionCase::candidate_probe(
+                "candidate leaves Clone bound unproved",
                 "Vec<?item>: FromIterator<User>",
-            )
-            .with_options(TraitSelectionOptions::new().header_only()),
+            ),
         ],
         expect![[r#"
             default proves Clone bound
-              options: default
+              query: selection
               goal: Vec<?item>: FromIterator<User>
               result: one
                 impl: impl#0
@@ -854,16 +896,20 @@ fn header_only_rejects_impl_type_param_bounds_even_when_chalk_can_prove_them() {
                 vars
                   ?item = User
 
-            header-only rejects Clone bound
-              options: header-only
+            candidate leaves Clone bound unproved
+              query: candidate
               goal: Vec<?item>: FromIterator<User>
-              result: empty
+              result: one
+                impl: impl#0
+                applicability: yes
+                vars
+                  ?item = User
         "#]],
     );
 }
 
 #[test]
-fn caller_solved_impl_predicates_can_return_impl_with_type_param_bounds() {
+fn candidate_discovery_retains_impl_with_unproved_type_param_bound() {
     check_trait_selection_queries(
         r#"
             traits
@@ -875,16 +921,13 @@ fn caller_solved_impl_predicates_can_return_impl_with_type_param_bounds() {
             impls
               impl#0 impl<T: Clone> FromIterator<T> for Vec<T>
         "#,
-        vec![
-            TraitSelectionCase::probe(
-                "caller solves inline bound",
-                "Vec<User>: FromIterator<User>",
-            )
-            .with_options(TraitSelectionOptions::new().caller_solves_impl_predicates()),
-        ],
+        vec![TraitSelectionCase::candidate_probe(
+            "candidate retains unproved inline bound",
+            "Vec<User>: FromIterator<User>",
+        )],
         expect![[r#"
-            caller solves inline bound
-              options: caller-solves-impl-predicates
+            candidate retains unproved inline bound
+              query: candidate
               goal: Vec<User>: FromIterator<User>
               result: one
                 impl: impl#0

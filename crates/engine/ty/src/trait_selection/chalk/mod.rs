@@ -14,4 +14,4 @@ mod projection;
 mod raise;
 mod solver;
 
-pub(super) use self::solver::ChalkTraitSolver;
+pub(super) use self::solver::{ChalkOutcome, ChalkTraitSolver};

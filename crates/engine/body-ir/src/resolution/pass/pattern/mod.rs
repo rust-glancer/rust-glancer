@@ -7,10 +7,12 @@
 mod callable;
 
 use rg_def_map::DefMapSource;
-use rg_ir_model::{ExprId, ScopeId, StmtId, items::TypeRef};
+use rg_ir_model::{
+    ExprId, ItemOwner, ScopeId, StmtId, TraitDefRef, items::LangItem, items::TypeRef,
+};
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::ItemStoreSource;
-use rg_ty::Ty;
+use rg_ty::{GenericArgs, TraitGoal, Ty};
 
 use crate::ir::{ExprKind, StmtKind};
 use crate::resolution::{
@@ -44,7 +46,7 @@ where
         &self,
         inference: &mut BodyInferenceCtx,
     ) -> Result<(), PackageStoreError> {
-        let patterns = BodyPatternInference::new(self.context);
+        let patterns = BodyPatternInference::new(self.context.clone());
 
         // Function parameters retain their root patterns even though body consumers see flattened
         // bindings. Canonical signatures keep APIT, inherited generics, and `Self` identities.
@@ -99,7 +101,6 @@ where
             patterns.link_pat(inference, pat, &expected_ty)?;
         }
 
-        let iteration_items = self.context.iteration_items();
         for expr_idx in 0..self.context.body().exprs().len() {
             let expr = ExprId(expr_idx);
             match self.context.body().expr_unchecked(expr).kind.clone() {
@@ -130,7 +131,40 @@ where
                     ..
                 } => {
                     let iterable_ty = inference.root_resolved_expr_ty(iterable);
-                    let item_ty = iteration_items.into_iterator_item_for_ty(&iterable_ty)?;
+                    let item_ty = if matches!(iterable_ty, Ty::Unknown) {
+                        Ty::Unknown
+                    } else {
+                        // `for pat in value` has no source expression for the implicit
+                        // `IntoIterator::into_iter` call. Model its item type as the ordinary
+                        // `<typeof(value) as IntoIterator>::Item` projection, using the same live
+                        // inference table as the rest of the body.
+                        let lang_items = self.context.semantic_index();
+                        let Some(into_iter) = lang_items.lang_function(LangItem::IntoIter) else {
+                            continue;
+                        };
+                        let Some(into_iter_data) =
+                            self.context.item_query().function_data(into_iter)?
+                        else {
+                            continue;
+                        };
+                        let ItemOwner::Trait(into_iterator_id) = into_iter_data.owner else {
+                            continue;
+                        };
+                        let goal = TraitGoal::new(
+                            iterable_ty,
+                            TraitDefRef::new(into_iter.origin, into_iterator_id),
+                            GenericArgs::empty(),
+                        );
+                        let query = self.context.trait_selection();
+                        let Some(projection) =
+                            query.normalize_assoc_type(&goal, "Item", inference.table())?
+                        else {
+                            continue;
+                        };
+                        let item_ty = projection.ty;
+                        *inference.table_mut() = projection.table;
+                        inference.root_resolved_ty(&item_ty)
+                    };
                     patterns.link_pat(inference, pat, &item_ty)?;
                 }
                 ExprKind::Closure { scope, params, .. } => {
@@ -195,7 +229,7 @@ where
             _ => None,
         };
         for (arg, expectation) in
-            CallableInputExpectation::for_call(self.context, call, args, receiver_ty.as_ref())?
+            CallableInputExpectation::for_call(&self.context, call, args, receiver_ty.as_ref())?
         {
             let ExprKind::Closure { params, .. } =
                 self.context.body().expr_unchecked(arg).kind.clone()

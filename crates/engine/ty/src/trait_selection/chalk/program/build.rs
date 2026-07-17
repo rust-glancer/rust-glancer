@@ -20,7 +20,7 @@ use super::super::lower::{
     ChalkLowerer, GenericBinderEnv, adt_datum, chalk_assoc_type_id, chalk_assoc_type_value_id,
 };
 use super::{ChalkProgram, ChalkProgramRoots, ChalkProgramScope};
-use crate::trait_selection::TraitSelectionCache;
+use crate::trait_selection::TraitSelectionSession;
 use crate::{ItemPathQuery, SemanticSignatureQuery};
 
 const INTER: RgChalkInterner = RgChalkInterner;
@@ -49,14 +49,14 @@ impl ChalkProgram {
         &mut self,
         item_paths: &ItemPathQuery<'query, D, I>,
         crate_items: &CrateItemQuery<'query, D, I>,
-        cache: &TraitSelectionCache,
+        session: &TraitSelectionSession,
         roots: &ChalkProgramRoots,
     ) -> Result<(), I::Error>
     where
         D: DefMapSource<Error = I::Error>,
         I: ItemStoreSource<'query>,
     {
-        let scope = ChalkProgramScope::discover(item_paths, crate_items, cache, roots, self)?;
+        let scope = ChalkProgramScope::discover(item_paths, crate_items, session, roots, self)?;
 
         // Associated-type declarations must exist before lowering any trait/impl predicates that
         // can mention their projection IDs.

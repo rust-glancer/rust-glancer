@@ -4,24 +4,21 @@
 //! available to declaration views, but receiver matching never interprets a `TypeRef` itself.
 
 mod inherent;
-mod projection;
 mod trait_methods;
 
 use rg_def_map::DefMapSource;
 use rg_ir_model::{GenericDefRef, GenericParamRef, ImplRef, TraitApplicability};
-use rg_semantic_ir::{CrateItemQuery, ItemStoreSource};
+use rg_semantic_ir::ItemStoreSource;
 
 use crate::{
-    ConstValue, GenericArg, ImplHeader, ItemPathQuery, Lifetime, Substitution, TraitSelectionCache,
-    Ty, TypePathResolver,
+    ConstValue, GenericArg, ImplHeader, ItemPathQuery, Lifetime, Substitution, Ty, TyContext,
+    TypePathResolver,
 };
 
 /// Matcher for canonical impl headers stored in semantic item stores.
 pub struct ImplMatcher<'query, D, I, R = ItemPathQuery<'query, D, I>> {
-    item_paths: ItemPathQuery<'query, D, I>,
-    crate_items: CrateItemQuery<'query, D, I>,
+    context: TyContext<'query, D, I>,
     resolver: R,
-    trait_selection_cache: TraitSelectionCache,
 }
 
 impl<'query, D, I> ImplMatcher<'query, D, I, ItemPathQuery<'query, D, I>>
@@ -29,17 +26,9 @@ where
     D: DefMapSource + Clone,
     I: ItemStoreSource<'query, Error = D::Error> + Clone,
 {
-    pub fn new(
-        item_paths: ItemPathQuery<'query, D, I>,
-        crate_items: CrateItemQuery<'query, D, I>,
-    ) -> Self {
-        let resolver = item_paths.clone();
-        Self {
-            item_paths,
-            crate_items,
-            resolver,
-            trait_selection_cache: TraitSelectionCache::default(),
-        }
+    pub fn new(context: TyContext<'query, D, I>) -> Self {
+        let resolver = context.item_paths().clone();
+        Self { context, resolver }
     }
 }
 
@@ -49,29 +38,17 @@ where
     I: ItemStoreSource<'query, Error = D::Error>,
     R: TypePathResolver<Error = D::Error>,
 {
-    pub fn with_resolver(
-        item_paths: ItemPathQuery<'query, D, I>,
-        crate_items: CrateItemQuery<'query, D, I>,
-        resolver: R,
-    ) -> Self {
-        Self {
-            item_paths,
-            crate_items,
-            resolver,
-            trait_selection_cache: TraitSelectionCache::default(),
-        }
-    }
-
-    /// Reuse the solver program across impl candidates from the same visibility context.
-    pub fn with_cache(mut self, cache: TraitSelectionCache) -> Self {
-        self.trait_selection_cache = cache;
-        self
+    pub fn with_resolver(context: TyContext<'query, D, I>, resolver: R) -> Self {
+        Self { context, resolver }
     }
 
     /// Return the canonical header used by every matching operation.
     pub fn impl_header(&self, impl_ref: ImplRef) -> Result<Option<ImplHeader>, D::Error> {
-        self.trait_selection_cache
-            .impl_header_with(&self.item_paths, &self.resolver, impl_ref)
+        self.context.trait_selection().impl_header_with(
+            self.context.item_paths(),
+            &self.resolver,
+            impl_ref,
+        )
     }
 
     /// Match the impl's semantic `Self` pattern and return owner-scoped bindings.

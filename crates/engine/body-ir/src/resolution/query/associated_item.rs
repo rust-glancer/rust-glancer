@@ -391,21 +391,16 @@ where
         }
 
         let body_trait_impls = body_items.trait_impls_for_type(ty.def)?;
-        for (function_ref, _) in matcher.trait_function_candidates_from_impls(
-            self.context.semantic_index(),
-            body_trait_impls,
-            ty,
-            Some(name),
-        )? {
+        for (function_ref, _) in
+            matcher.trait_function_candidates_from_impls(body_trait_impls, ty, Some(name))?
+        {
             self.push_associated_function(&mut functions, ty, function_ref, name)?;
         }
 
         if ty.def.origin.as_crate_ref().is_some() {
-            for (function_ref, _) in matcher.trait_function_candidates_for_receiver(
-                self.context.semantic_index(),
-                ty,
-                Some(name),
-            )? {
+            for (function_ref, _) in
+                matcher.trait_function_candidates_for_receiver(ty, Some(name))?
+            {
                 self.push_associated_function(&mut functions, ty, function_ref, name)?;
             }
         }
@@ -425,7 +420,6 @@ where
                 .context
                 .impl_matcher()
                 .trait_function_candidates_from_impls(
-                    self.context.semantic_index(),
                     receiver.impls().clone(),
                     receiver.receiver_ty(),
                     Some(name),

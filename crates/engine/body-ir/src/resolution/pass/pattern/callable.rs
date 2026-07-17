@@ -1,11 +1,11 @@
 //! Callable input expectations used by pattern inference.
 
 use rg_def_map::DefMapSource;
-use rg_ir_model::{ExprId, TraitDefRef};
+use rg_ir_model::{ExprId, TraitDefRef, items::LangItem};
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::ItemStoreSource;
 use rg_std::ExpectedUnique;
-use rg_ty::{Clause, GenericArg, TraitSelectionCache, Ty, inference::InferenceTable};
+use rg_ty::{Clause, GenericArg, Ty, inference::InferenceTable};
 
 use crate::{ir::ExprKind, resolution::BodyResolutionContext};
 
@@ -21,7 +21,7 @@ pub(super) struct CallableInputExpectation {
 impl CallableInputExpectation {
     /// Return callable input expectations aligned to closure arguments at one selected call.
     pub(super) fn for_call<'query, D, I>(
-        context: BodyResolutionContext<'query, D, I>,
+        context: &BodyResolutionContext<'query, D, I>,
         call: ExprId,
         args: &[ExprId],
         receiver_ty: Option<&Ty>,
@@ -55,7 +55,6 @@ impl CallableInputExpectation {
             return Ok(Vec::new());
         }
 
-        let cache = context.trait_selection_cache();
         let mut expectations = Vec::new();
         for (arg, param_ty) in args.iter().copied().zip(written_params) {
             if !matches!(
@@ -64,8 +63,7 @@ impl CallableInputExpectation {
             ) {
                 continue;
             }
-            let Some(expectation) =
-                Self::from_semantic_param(context, param_ty, &projection, &cache)?
+            let Some(expectation) = Self::from_semantic_param(context, param_ty, &projection)?
             else {
                 continue;
             };
@@ -76,10 +74,9 @@ impl CallableInputExpectation {
 
     /// Read the callable input application already lowered for one parameter.
     fn from_semantic_param<'query, D, I>(
-        context: BodyResolutionContext<'query, D, I>,
+        context: &BodyResolutionContext<'query, D, I>,
         param_ty: &Ty,
         projection: &crate::resolution::query::CallProjection,
-        trait_selection_cache: &TraitSelectionCache,
     ) -> Result<Option<Self>, PackageStoreError>
     where
         D: DefMapSource<Error = PackageStoreError> + Copy,
@@ -92,7 +89,7 @@ impl CallableInputExpectation {
                 continue;
             };
             if application.self_ty() != Some(param_ty)
-                || !Self::is_fn_trait(context, application.def)?
+                || !Self::is_fn_trait(context, application.def)
             {
                 continue;
             }
@@ -105,7 +102,7 @@ impl CallableInputExpectation {
             let params = params
                 .iter()
                 .map(|param| subst.apply(param))
-                .map(|param| Self::normalize_ty(context, trait_selection_cache.clone(), param))
+                .map(|param| Self::normalize_ty(context, param))
                 .collect::<Result<Vec<_>, _>>()?;
 
             // This syntax-side path has no access to the body's live inference table. Only
@@ -128,22 +125,20 @@ impl CallableInputExpectation {
     }
 
     fn is_fn_trait<'query, D, I>(
-        context: BodyResolutionContext<'query, D, I>,
+        context: &BodyResolutionContext<'query, D, I>,
         trait_ref: TraitDefRef,
-    ) -> Result<bool, PackageStoreError>
-    where
-        D: DefMapSource<Error = PackageStoreError> + Copy,
-        I: ItemStoreSource<'query, Error = PackageStoreError> + Copy,
-    {
-        Ok(context
-            .item_query()
-            .trait_data(trait_ref)?
-            .is_some_and(|data| matches!(data.name.as_str(), "Fn" | "FnMut" | "FnOnce")))
+    ) -> bool {
+        let lang_items = context.semantic_index();
+        for lang_item in LangItem::CALLABLE_TRAITS {
+            if lang_items.lang_trait(lang_item) == Some(trait_ref) {
+                return true;
+            }
+        }
+        false
     }
 
     fn normalize_ty<'query, D, I>(
-        context: BodyResolutionContext<'query, D, I>,
-        cache: TraitSelectionCache,
+        context: &BodyResolutionContext<'query, D, I>,
         ty: Ty,
     ) -> Result<Ty, PackageStoreError>
     where
@@ -151,9 +146,7 @@ impl CallableInputExpectation {
         I: ItemStoreSource<'query, Error = PackageStoreError> + Copy,
     {
         let table = InferenceTable::new();
-        let (ty, table) = context
-            .trait_selection_with_cache(cache)
-            .normalize_ty(&ty, &table)?;
+        let (ty, table) = context.trait_selection().normalize_ty(&ty, &table)?;
         Ok(table.finalize(&ty))
     }
 }

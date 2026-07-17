@@ -2,14 +2,14 @@ use rg_arena::Arena;
 use rg_ir_model::{
     ConstId, ConstRef, CrateRef, DefMapRef, EnumId, FunctionId, FunctionRef, ImplId, ImplRef,
     ItemId, LocalDefId, SemanticItemRef, StaticId, StaticRef, StructId, TraitDefRef, TraitId,
-    TypeAliasId, TypeAliasRef, TypeDefId, TypeDefRef, UnionId,
+    TypeAliasId, TypeAliasRef, TypeDefId, TypeDefRef, UnionId, items::LangItem,
 };
 use rg_std::{ExpectedUnique, MemorySize, Shrink};
 use wincode::{SchemaRead, SchemaWrite};
 
 use super::{
     ConstData, EnumData, FunctionData, ImplData, SemanticItemView, StaticData, StructData,
-    TraitData, TypeAliasData, UnionData, view::SemanticItemData,
+    TraitData, TypeAliasData, UnionData, lang_item::LangItemIndex, view::SemanticItemData,
 };
 
 #[derive(Debug)]
@@ -29,6 +29,7 @@ pub struct ItemStoreBuilder {
     pub type_aliases: Arena<TypeAliasId, TypeAliasData>,
     pub consts: Arena<ConstId, ConstData>,
     pub statics: Arena<StaticId, StaticData>,
+    lang_items: LangItemIndex,
 }
 
 impl ItemStoreBuilder {
@@ -49,6 +50,7 @@ impl ItemStoreBuilder {
             type_aliases: Arena::default(),
             consts: Arena::default(),
             statics: Arena::default(),
+            lang_items: LangItemIndex::default(),
         }
     }
 
@@ -58,6 +60,13 @@ impl ItemStoreBuilder {
             .get_mut(local_def)
             .expect("local item slot should exist while building semantic IR");
         *slot = Some(item);
+    }
+
+    /// Records a compiler-known identity after its typed semantic target has been allocated.
+    pub(crate) fn register_lang_item(&mut self, lang_item: Option<LangItem>, item: ItemId) {
+        if let Some(lang_item) = lang_item {
+            self.lang_items.insert(lang_item, item);
+        }
     }
 
     pub fn build(self) -> ItemStore {
@@ -73,6 +82,7 @@ impl ItemStoreBuilder {
             type_aliases: self.type_aliases,
             consts: self.consts,
             statics: self.statics,
+            lang_items: self.lang_items,
         }
     }
 }
@@ -98,6 +108,7 @@ pub struct ItemStore {
     type_aliases: Arena<TypeAliasId, TypeAliasData>,
     consts: Arena<ConstId, ConstData>,
     statics: Arena<StaticId, StaticData>,
+    lang_items: LangItemIndex,
 }
 
 impl ItemStore {
@@ -161,6 +172,10 @@ impl ItemStore {
     /// Returns the semantic item lowered from one DefMap local definition.
     pub fn item_for_local_def(&self, local_def: LocalDefId) -> Option<ItemId> {
         self.local_items.get(local_def).copied().flatten()
+    }
+
+    pub(crate) fn lang_item(&self, lang_item: LangItem) -> ExpectedUnique<SemanticItemRef> {
+        self.lang_items.target(lang_item, self.origin)
     }
 
     pub fn traits_with_refs(&self) -> impl Iterator<Item = (TraitDefRef, &TraitData)> {

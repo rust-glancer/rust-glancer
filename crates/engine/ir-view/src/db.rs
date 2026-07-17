@@ -1,5 +1,10 @@
 //! Shared read handle for indexed-data views.
 
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex},
+};
+
 use rg_body_ir::BodyIrReadTxn;
 use rg_def_map::DefMapReadTxn;
 use rg_def_map::{DefMap, DefMapSource};
@@ -8,17 +13,20 @@ use rg_package_store::PackageStoreError;
 use rg_semantic_ir::SemanticIrReadTxn;
 use rg_semantic_ir::{ItemStore, ItemStoreSource};
 use rg_text::RustEdition;
+use rg_ty::TraitSelectionSession;
 
 /// Read-only database handle used by all indexed-data views.
 ///
 /// The handle deliberately contains the concrete frozen storage transactions. That keeps views
 /// easy to extract as one crate first; a trait facade can replace these fields later once the
-/// method surface settles.
+/// method surface settles. Trait-selection sessions are derived query state: they may fill solver
+/// caches, but they never mutate the frozen project data exposed by this handle.
 #[derive(Debug, Clone)]
 pub struct IndexedViewDb<'db> {
     pub(crate) def_map: DefMapReadTxn<'db>,
     pub(crate) semantic_ir: SemanticIrReadTxn<'db>,
     pub(crate) body_ir: BodyIrReadTxn<'db>,
+    trait_selection: Arc<Mutex<HashMap<CrateRef, TraitSelectionSession>>>,
 }
 
 impl<'db> IndexedViewDb<'db> {
@@ -31,7 +39,23 @@ impl<'db> IndexedViewDb<'db> {
             def_map,
             semantic_ir,
             body_ir,
+            trait_selection: Arc::new(Mutex::new(HashMap::new())),
         }
+    }
+
+    /// Return the solver session shared by queries at one crate use site.
+    ///
+    /// `IndexedViewDb` lives for one analysis request, so the potentially large Chalk program and
+    /// candidate indexes are reused within that request and released with its frozen read
+    /// transactions. Keeping session creation here also prevents individual view adapters from
+    /// silently starting isolated solver state when a shared session is already available.
+    pub(crate) fn trait_selection(&self, use_site: CrateRef) -> TraitSelectionSession {
+        self.trait_selection
+            .lock()
+            .expect("trait-selection session map lock should not be poisoned")
+            .entry(use_site)
+            .or_insert_with(|| TraitSelectionSession::new(use_site))
+            .clone()
     }
 
     /// Returns the edition whose syntax rules apply at a crate_ref use site.

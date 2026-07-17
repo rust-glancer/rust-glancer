@@ -7,18 +7,18 @@ use rg_semantic_ir::{ItemStoreQuery, ItemStoreSource};
 use rg_std::UniqueVec;
 use rg_ty::{
     AdtTy, AutoderefMode, ImplMatcher, MemberMethodCandidateRef, MemberMethodOrigin, Substitution,
-    TraitSelectionOptions, Ty,
+    Ty,
 };
 
 use crate::resolution::{BodyQuerySource, BodyResolutionContext};
 
 use super::BodyLocalItemQuery;
 
-type BodyImplMatcher<'query, D, I> = ImplMatcher<
+type BodyImplMatcher<'context, 'query, D, I> = ImplMatcher<
     'query,
     BodyQuerySource<'query, D, I>,
     BodyQuerySource<'query, D, I>,
-    BodyResolutionContext<'query, D, I>,
+    &'context BodyResolutionContext<'query, D, I>,
 >;
 
 /// Resolves methods for receiver types.
@@ -65,6 +65,7 @@ where
         &self,
         ty: &Ty,
     ) -> Result<Vec<MemberMethodCandidateRef>, PackageStoreError> {
+        let matcher = self.context.impl_matcher();
         let mut candidates = Vec::new();
         for candidate in self
             .context
@@ -73,11 +74,11 @@ where
         {
             let candidate = candidate?;
             for receiver_ty in candidate.ty().as_adts() {
-                for method in self.nominal_method_candidates(receiver_ty, None)? {
+                for method in self.nominal_method_candidates(&matcher, receiver_ty, None)? {
                     Self::push_candidate(&mut candidates, method);
                 }
             }
-            for method in self.structural_method_candidates(candidate.ty(), None)? {
+            for method in self.structural_method_candidates(&matcher, candidate.ty(), None)? {
                 Self::push_candidate(
                     &mut candidates,
                     MemberMethodCandidateRef::inherent(method.function()),
@@ -95,6 +96,7 @@ where
         method_name: &str,
     ) -> Result<Vec<BodyMethodCandidate>, PackageStoreError> {
         let item_query = self.context.item_query();
+        let matcher = self.context.impl_matcher();
         let mut current_depth = None;
         let mut candidates = Vec::new();
 
@@ -115,7 +117,9 @@ where
             current_depth = Some(candidate.depth());
 
             for nominal_ty in candidate.ty().as_adts() {
-                for method in self.nominal_method_candidates(nominal_ty, Some(method_name))? {
+                for method in
+                    self.nominal_method_candidates(&matcher, nominal_ty, Some(method_name))?
+                {
                     let function_ref = method.function();
                     let Some(function_data) = item_query.function_data(function_ref)? else {
                         continue;
@@ -137,7 +141,7 @@ where
             }
 
             for structural in
-                self.structural_method_candidates(candidate.ty(), Some(method_name))?
+                self.structural_method_candidates(&matcher, candidate.ty(), Some(method_name))?
             {
                 let Some(function_data) = item_query.function_data(structural.function)? else {
                     continue;
@@ -160,10 +164,10 @@ where
     /// Collect inherent and trait methods for a nominal receiver.
     fn nominal_method_candidates(
         &self,
+        matcher: &BodyImplMatcher<'_, 'query, D, I>,
         receiver_ty: &AdtTy,
         method_name: Option<&str>,
     ) -> Result<Vec<MemberMethodCandidateRef>, PackageStoreError> {
-        let matcher = self.context.impl_matcher();
         let body_items = self.context.body_local_items();
         let mut candidates = Vec::new();
 
@@ -188,21 +192,11 @@ where
         }
 
         let body_trait_impls = body_items.trait_impls_for_type(receiver_ty.def)?;
-        let body_trait_functions = match method_name {
-            Some(method_name) => matcher.trait_function_candidates_from_impls_with_options(
-                self.context.semantic_index(),
-                body_trait_impls,
-                receiver_ty,
-                Some(method_name),
-                TraitSelectionOptions::new().caller_solves_impl_predicates(),
-            )?,
-            None => matcher.trait_function_candidates_from_impls(
-                self.context.semantic_index(),
-                body_trait_impls,
-                receiver_ty,
-                None,
-            )?,
-        };
+        let body_trait_functions = matcher.trait_function_candidates_from_impls(
+            body_trait_impls,
+            receiver_ty,
+            method_name,
+        )?;
         for (function, applicability) in body_trait_functions {
             Self::push_candidate(
                 &mut candidates,
@@ -211,19 +205,8 @@ where
         }
 
         if receiver_ty.def.origin.as_crate_ref().is_some() {
-            let semantic_trait_functions = match method_name {
-                Some(method_name) => matcher.trait_function_candidates_for_receiver_with_options(
-                    self.context.semantic_index(),
-                    receiver_ty,
-                    method_name,
-                    TraitSelectionOptions::new().caller_solves_impl_predicates(),
-                )?,
-                None => matcher.trait_function_candidates_for_receiver(
-                    self.context.semantic_index(),
-                    receiver_ty,
-                    None,
-                )?,
-            };
+            let semantic_trait_functions =
+                matcher.trait_function_candidates_for_receiver(receiver_ty, method_name)?;
             for (function, applicability) in semantic_trait_functions {
                 Self::push_candidate(
                     &mut candidates,
@@ -238,6 +221,7 @@ where
     /// Scan visible structural impls for builtin-shaped receiver types.
     fn structural_method_candidates(
         &self,
+        matcher: &BodyImplMatcher<'_, 'query, D, I>,
         receiver_ty: &Ty,
         method_name: Option<&str>,
     ) -> Result<Vec<BodyMethodCandidate>, PackageStoreError> {
@@ -247,7 +231,6 @@ where
             return Ok(Vec::new());
         }
 
-        let matcher = self.context.impl_matcher();
         let item_query = self.context.item_query();
         let mut candidates = Vec::new();
 
@@ -262,7 +245,7 @@ where
         for impl_ref in impl_refs {
             self.push_structural_inherent_functions_for_impl(
                 &item_query,
-                &matcher,
+                matcher,
                 impl_ref,
                 receiver_ty,
                 method_name,
@@ -277,7 +260,7 @@ where
     fn push_structural_inherent_functions_for_impl(
         &self,
         item_query: &ItemStoreQuery<'query, BodyQuerySource<'query, D, I>>,
-        matcher: &BodyImplMatcher<'query, D, I>,
+        matcher: &BodyImplMatcher<'_, 'query, D, I>,
         impl_ref: ImplRef,
         receiver_ty: &Ty,
         method_name: Option<&str>,

@@ -53,14 +53,7 @@ pub(super) fn check_analysis_queries_with_fake_sysroot(
     expect: Expect,
 ) {
     let (fixture, markers) = fixture_crate_with_markers(fixture);
-    let fixture = fixture.with_fake_sysroot();
-    let sysroot = SysrootSources::from_library_root(fixture.path("sysroot/library"))
-        .expect("fake sysroot should be complete");
-    let workspace =
-        WorkspaceMetadata::for_tests(fixture.metadata(), WorkspaceLoweringConfig::default())
-            .expect("fixture workspace metadata should build")
-            .with_sysroot_sources(Some(sysroot));
-    let db = AnalysisFixtureDb::build_from_crate_with_workspace(fixture, workspace);
+    let db = AnalysisFixtureDb::build_with_fake_sysroot(fixture);
     let renderer = AnalysisQuerySnapshot::new(&db, markers, queries);
     let actual = format!("{}\n", renderer.render().trim_end());
     expect.assert_eq(&actual);
@@ -85,8 +78,21 @@ pub(super) fn check_workspace_symbols(fixture: &str, query: &str, expect: Expect
 pub(super) fn check_inlay_hints(fixture: &str, query: InlayHintsQuery, expect: Expect) {
     let fixture = fixture_crate(fixture);
     let db = AnalysisFixtureDb::build_from_crate(fixture);
-    let renderer = AnalysisSymbolSnapshot::new(&db);
-    let actual = format!("{}\n", renderer.render_inlay_hints(&query).trim_end());
+    assert_inlay_hints(&db, &query, expect);
+}
+
+pub(super) fn check_inlay_hints_with_fake_sysroot(
+    fixture: &str,
+    query: InlayHintsQuery,
+    expect: Expect,
+) {
+    let db = AnalysisFixtureDb::build_with_fake_sysroot(fixture_crate(fixture));
+    assert_inlay_hints(&db, &query, expect);
+}
+
+fn assert_inlay_hints(db: &AnalysisFixtureDb, query: &InlayHintsQuery, expect: Expect) {
+    let renderer = AnalysisSymbolSnapshot::new(db);
+    let actual = format!("{}\n", renderer.render_inlay_hints(query).trim_end());
     expect.assert_eq(&actual);
 }
 
@@ -337,6 +343,17 @@ impl AnalysisFixtureDb {
         let workspace =
             WorkspaceMetadata::for_tests(fixture.metadata(), WorkspaceLoweringConfig::default())
                 .expect("fixture workspace metadata should build");
+        Self::build_from_crate_with_workspace(fixture, workspace)
+    }
+
+    fn build_with_fake_sysroot(fixture: CrateFixture) -> Self {
+        let fixture = fixture.with_fake_sysroot();
+        let sysroot = SysrootSources::from_library_root(fixture.path("sysroot/library"))
+            .expect("fake sysroot should be complete");
+        let workspace =
+            WorkspaceMetadata::for_tests(fixture.metadata(), WorkspaceLoweringConfig::default())
+                .expect("fixture workspace metadata should build")
+                .with_sysroot_sources(Some(sysroot));
         Self::build_from_crate_with_workspace(fixture, workspace)
     }
 

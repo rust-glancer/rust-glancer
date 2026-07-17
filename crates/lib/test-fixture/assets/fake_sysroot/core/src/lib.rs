@@ -1,5 +1,6 @@
 extern crate self as core;
 
+pub mod array;
 pub mod fmt;
 pub mod iter;
 mod macros;
@@ -20,10 +21,14 @@ impl str {
     pub fn starts_with(&self, _prefix: &str) -> bool {}
 }
 
+#[lang = "fn_once"]
 pub trait FnOnce<Args> {
+    #[lang = "fn_once_output"]
     type Output;
 }
 
+#[lang = "fn_mut"]
 pub trait FnMut<Args>: FnOnce<Args> {}
 
+#[lang = "fn"]
 pub trait Fn<Args>: FnMut<Args> {}

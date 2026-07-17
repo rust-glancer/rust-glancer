@@ -1,6 +1,7 @@
 mod decl;
 mod docs;
 mod import;
+mod lang_item;
 mod macro_item;
 mod type_ref;
 mod visibility;

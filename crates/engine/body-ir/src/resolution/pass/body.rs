@@ -8,7 +8,7 @@ use rg_def_map::DefMapSource;
 use rg_ir_model::{BindingId, BodyRef, ExprId, items::SelfParamKind};
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::{ItemLookupIndex, ItemStoreSource};
-use rg_ty::{ExpectedAdtTyExt, TraitSelectionCache, Ty};
+use rg_ty::{ExpectedAdtTyExt, TraitSelectionSession, Ty};
 
 use crate::{
     BodyData, BodyFacts,
@@ -50,21 +50,20 @@ where
         semantic_index: &'query ItemLookupIndex,
         body_ref: BodyRef,
         body: &'body BodyData,
-        trait_selection_cache: &'query TraitSelectionCache,
+        trait_selection: &'query TraitSelectionSession,
     ) -> Self {
         let env = BodyResolutionEnv::new(
             def_maps,
             item_stores,
             semantic_index,
             body_ref,
-            trait_selection_cache,
+            trait_selection,
         );
 
-        let inference = BodyInferenceCtx::with_trait_selection_cache(
+        let inference = BodyInferenceCtx::new(
             body.exprs().len(),
             body.bindings().len(),
             body.statements().len(),
-            trait_selection_cache.clone(),
         );
 
         Self {

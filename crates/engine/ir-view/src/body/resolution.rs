@@ -47,11 +47,19 @@ impl<'a, 'db> BodyResolutionView<'a, 'db> {
         let Some((body, semantic_index)) = self.body_with_index(body_ref)? else {
             return Ok(None);
         };
+        let trait_selection = self.db.trait_selection(body_ref.crate_ref);
 
         Ok(Some(
-            BodyResolutionContext::new(self.db, self.db, body_ref, body, semantic_index)
-                .type_path_query()
-                .resolve_in_scope(scope, path)?,
+            BodyResolutionContext::new(
+                self.db,
+                self.db,
+                body_ref,
+                body,
+                semantic_index,
+                trait_selection,
+            )
+            .type_path_query()
+            .resolve_in_scope(scope, path)?,
         ))
     }
 
@@ -65,11 +73,19 @@ impl<'a, 'db> BodyResolutionView<'a, 'db> {
         let Some((body, semantic_index)) = self.body_with_index(body_ref)? else {
             return Ok(None);
         };
+        let trait_selection = self.db.trait_selection(body_ref.crate_ref);
 
-        BodyResolutionContext::new(self.db, self.db, body_ref, body, semantic_index)
-            .type_path_query()
-            .resolve_enum_variant_in_scope(scope, path)
-            .map_err(Into::into)
+        BodyResolutionContext::new(
+            self.db,
+            self.db,
+            body_ref,
+            body,
+            semantic_index,
+            trait_selection,
+        )
+        .type_path_query()
+        .resolve_enum_variant_in_scope(scope, path)
+        .map_err(Into::into)
     }
 
     /// Find declarations for a body value path without local binding ordering.
@@ -82,12 +98,18 @@ impl<'a, 'db> BodyResolutionView<'a, 'db> {
         let Some((body, semantic_index)) = self.body_with_index(body_ref)? else {
             return Ok(Vec::new());
         };
+        let trait_selection = self.db.trait_selection(body_ref.crate_ref);
 
-        Ok(
-            BodyResolutionContext::new(self.db, self.db, body_ref, body, semantic_index)
-                .value_paths()
-                .resolve_nonlocal_path_declarations(scope, path)?,
+        Ok(BodyResolutionContext::new(
+            self.db,
+            self.db,
+            body_ref,
+            body,
+            semantic_index,
+            trait_selection,
         )
+        .value_paths()
+        .resolve_nonlocal_path_declarations(scope, path)?)
     }
 
     /// Resolve the type of a body value path without local binding ordering.
@@ -100,12 +122,18 @@ impl<'a, 'db> BodyResolutionView<'a, 'db> {
         let Some((body, semantic_index)) = self.body_with_index(body_ref)? else {
             return Ok(Ty::Unknown);
         };
+        let trait_selection = self.db.trait_selection(body_ref.crate_ref);
 
-        Ok(
-            BodyResolutionContext::new(self.db, self.db, body_ref, body, semantic_index)
-                .value_paths()
-                .resolve_nonlocal_path_ty(scope, path)?,
+        Ok(BodyResolutionContext::new(
+            self.db,
+            self.db,
+            body_ref,
+            body,
+            semantic_index,
+            trait_selection,
         )
+        .value_paths()
+        .resolve_nonlocal_path_ty(scope, path)?)
     }
 
     /// Return body-aware method refs for a receiver type.
@@ -117,11 +145,19 @@ impl<'a, 'db> BodyResolutionView<'a, 'db> {
         let Some((body, semantic_index)) = self.body_with_index(body_ref)? else {
             return Ok(None);
         };
+        let trait_selection = self.db.trait_selection(body_ref.crate_ref);
 
         Ok(Some(
-            BodyResolutionContext::new(self.db, self.db, body_ref, body, semantic_index)
-                .methods()
-                .method_candidates_for_ty(ty)?,
+            BodyResolutionContext::new(
+                self.db,
+                self.db,
+                body_ref,
+                body,
+                semantic_index,
+                trait_selection,
+            )
+            .methods()
+            .method_candidates_for_ty(ty)?,
         ))
     }
 }

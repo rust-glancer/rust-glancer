@@ -707,34 +707,18 @@ pub fn use_it() {
 
 #[test]
 fn mixed_declared_and_structural_field_targets_are_unresolved() {
-    check_project_body_ir(
+    check_project_body_ir_with_fake_sysroot(
         r#"
 //- /Cargo.toml
 [workspace]
-members = ["core", "app"]
+members = ["app"]
 resolver = "3"
-
-//- /core/Cargo.toml
-[package]
-name = "fake_core"
-version = "0.1.0"
-edition = "2024"
-
-//- /core/src/lib.rs
-pub mod ops {
-    pub trait Deref {
-        type Target;
-    }
-}
 
 //- /app/Cargo.toml
 [package]
 name = "app"
 version = "0.1.0"
 edition = "2024"
-
-[dependencies]
-core = { package = "fake_core", path = "../core" }
 
 //- /app/src/lib.rs
 pub struct DeclaredId;
@@ -757,6 +741,11 @@ pub fn use_it(wrapper: Wrapper) {
 }
 "#,
         expect![[r#"
+            package alloc
+
+            alloc [lib]
+            skipped
+
             package app
 
             app [lib]
@@ -776,9 +765,15 @@ pub fn use_it(wrapper: Wrapper) {
                       expr e0 path wrapper -> local v0 => nominal struct app[lib]::crate::Wrapper @ 17:17-17:24
 
 
-            package fake_core
+            package core
 
-            fake_core [lib]
+            core [lib]
+            skipped
+
+            package std
+
+            std [lib]
+            skipped
         "#]],
     );
 }

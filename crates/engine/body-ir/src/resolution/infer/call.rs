@@ -329,12 +329,12 @@ where
             return Ok(());
         }
 
-        state.generic_obligations_complete = BodyTraitObligationSolver::new(self.context)
+        state.generic_obligations_complete = BodyTraitObligationSolver::new(self.context.clone())
             .solve_selected_call(
-                inference,
-                &state.projection.signature().clauses,
-                &state.subst,
-            )?;
+            inference,
+            &state.projection.signature().clauses,
+            &state.subst,
+        )?;
         Ok(())
     }
 
@@ -352,8 +352,8 @@ where
             .subst
             .as_substitution()
             .apply(&state.projection.signature().ret);
-        let ty =
-            BodyTraitObligationSolver::new(self.context).normalize_ty(inference, &return_ty)?;
+        let ty = BodyTraitObligationSolver::new(self.context.clone())
+            .normalize_ty(inference, &return_ty)?;
         // Once every projection has been replaced, later evidence only solves the inference slots
         // already embedded in this result. Re-running Chalk cannot change its semantic shape.
         state.return_projection_complete = !ty.has_projection();

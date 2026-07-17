@@ -29,12 +29,13 @@ use rg_std::ExpectedUnique;
 use rg_text::Name;
 
 use super::super::{
-    ChalkTraitSolver, TraitGoal, TraitSelectionCache, TraitSelectionOptions, TraitSelectionQuery,
+    ChalkOutcome, ChalkTraitSolver, TraitCandidateQuery, TraitGoal, TraitSelectionQuery,
+    TraitSelectionSession,
 };
 use crate::inference::{InferVarKind, InferenceTable};
 use crate::{
     AdtTy, AliasTy, AssocTypeBinding, GenericArg, ItemPathQuery, OpaqueTy, PrimitiveTy,
-    SemanticSignatureQuery, Ty,
+    SemanticSignatureQuery, Ty, TyContext,
 };
 
 pub(super) struct TraitSelectionFixture {
@@ -507,11 +508,23 @@ fn type_ref_path_name(ty: &TypeRef) -> Option<String> {
 pub(super) fn query(
     fixture: &TraitSelectionFixture,
 ) -> TraitSelectionQuery<'_, &TraitSelectionFixture, &TraitSelectionFixture> {
-    TraitSelectionQuery::with_index(
-        ItemPathQuery::new(fixture, fixture),
-        CrateItemQuery::new(fixture, fixture, fixture.target),
+    TraitSelectionQuery::new(TyContext::new(
+        fixture,
+        fixture,
         &fixture.lookup_index,
-    )
+        TraitSelectionSession::new(fixture.target),
+    ))
+}
+
+fn candidate_query(
+    fixture: &TraitSelectionFixture,
+) -> TraitCandidateQuery<'_, &TraitSelectionFixture, &TraitSelectionFixture> {
+    TraitCandidateQuery::new(TyContext::new(
+        fixture,
+        fixture,
+        &fixture.lookup_index,
+        TraitSelectionSession::new(fixture.target),
+    ))
 }
 
 #[derive(Clone, Copy)]
@@ -876,6 +889,34 @@ fn parse_type_ref(text: &str) -> TypeRef {
     if let Some(bounds) = text.strip_prefix("impl ") {
         return TypeRef::ImplTrait(parse_type_bounds(bounds));
     }
+    if let Some(inner) = text.strip_prefix("*const ") {
+        return TypeRef::RawPointer {
+            mutability: rg_ir_model::Mutability::Shared,
+            inner: Box::new(parse_type_ref(inner)),
+        };
+    }
+    if let Some(inner) = text.strip_prefix("*mut ") {
+        return TypeRef::RawPointer {
+            mutability: rg_ir_model::Mutability::Mutable,
+            inner: Box::new(parse_type_ref(inner)),
+        };
+    }
+    if let Some(signature) = text.strip_prefix("fn(")
+        && let Some((params, ret)) = signature.rsplit_once(") -> ")
+    {
+        let params = if params.trim().is_empty() {
+            Vec::new()
+        } else {
+            split_top_level(params, ',')
+                .into_iter()
+                .map(parse_type_ref)
+                .collect()
+        };
+        return TypeRef::FnPointer {
+            params,
+            ret: Box::new(parse_type_ref(ret)),
+        };
+    }
     if let Some(ty) = parse_bracket_ty(text) {
         return match ty {
             ParsedBracketTy::Slice(inner) => TypeRef::Slice(Box::new(parse_type_ref(inner))),
@@ -1021,11 +1062,11 @@ fn matching_angle(text: &str, start: usize) -> usize {
 pub(super) struct TraitSelectionCase {
     title: &'static str,
     kind: TraitSelectionCaseKind,
-    options: TraitSelectionOptions,
 }
 
 enum TraitSelectionCaseKind {
     Probe(String),
+    CandidateProbe(String),
     NormalizeAssoc(String),
     ChalkNormalizeAssoc(String),
 }
@@ -1035,7 +1076,13 @@ impl TraitSelectionCase {
         Self {
             title,
             kind: TraitSelectionCaseKind::Probe(goal.into()),
-            options: TraitSelectionOptions::new(),
+        }
+    }
+
+    pub(super) fn candidate_probe(title: &'static str, goal: impl Into<String>) -> Self {
+        Self {
+            title,
+            kind: TraitSelectionCaseKind::CandidateProbe(goal.into()),
         }
     }
 
@@ -1043,7 +1090,6 @@ impl TraitSelectionCase {
         Self {
             title,
             kind: TraitSelectionCaseKind::NormalizeAssoc(goal.into()),
-            options: TraitSelectionOptions::new(),
         }
     }
 
@@ -1051,13 +1097,17 @@ impl TraitSelectionCase {
         Self {
             title,
             kind: TraitSelectionCaseKind::ChalkNormalizeAssoc(goal.into()),
-            options: TraitSelectionOptions::new(),
         }
     }
 
-    pub(super) fn with_options(mut self, options: TraitSelectionOptions) -> Self {
-        self.options = options;
-        self
+    fn query_name(&self) -> &'static str {
+        match &self.kind {
+            TraitSelectionCaseKind::Probe(_) | TraitSelectionCaseKind::NormalizeAssoc(_) => {
+                "selection"
+            }
+            TraitSelectionCaseKind::CandidateProbe(_) => "candidate",
+            TraitSelectionCaseKind::ChalkNormalizeAssoc(_) => "chalk",
+        }
     }
 }
 
@@ -1282,21 +1332,23 @@ impl TraitSelectionSnapshot {
 
     fn render_case(&self, case: &TraitSelectionCase, dump: &mut String) {
         writeln!(dump, "{}", case.title).expect("string writes should not fail");
-        writeln!(dump, "  options: {}", Self::render_options(case.options))
-            .expect("string writes should not fail");
+        writeln!(dump, "  query: {}", case.query_name()).expect("string writes should not fail");
 
         match &case.kind {
-            TraitSelectionCaseKind::Probe(goal) => self.render_probe_case(case, goal, dump),
+            TraitSelectionCaseKind::Probe(goal) => self.render_probe_case(goal, dump),
+            TraitSelectionCaseKind::CandidateProbe(goal) => {
+                self.render_candidate_probe_case(goal, dump);
+            }
             TraitSelectionCaseKind::NormalizeAssoc(goal) => {
-                self.render_normalize_case(case, goal, false, dump);
+                self.render_normalize_case(goal, false, dump);
             }
             TraitSelectionCaseKind::ChalkNormalizeAssoc(goal) => {
-                self.render_normalize_case(case, goal, true, dump);
+                self.render_normalize_case(goal, true, dump);
             }
         }
     }
 
-    fn render_probe_case(&self, case: &TraitSelectionCase, goal: &str, dump: &mut String) {
+    fn render_probe_case(&self, goal: &str, dump: &mut String) {
         let parsed = TraitSelectionQueryParser::new(&self.fixture).parse_goal(goal);
         writeln!(
             dump,
@@ -1306,7 +1358,6 @@ impl TraitSelectionSnapshot {
         .expect("string writes should not fail");
 
         let result = query(&self.fixture)
-            .with_options(case.options)
             .probe(&parsed.goal, &parsed.table)
             .expect("trait selection fixture query should not fail");
 
@@ -1336,13 +1387,45 @@ impl TraitSelectionSnapshot {
         }
     }
 
-    fn render_normalize_case(
-        &self,
-        case: &TraitSelectionCase,
-        goal: &str,
-        chalk_direct: bool,
-        dump: &mut String,
-    ) {
+    fn render_candidate_probe_case(&self, goal: &str, dump: &mut String) {
+        let parsed = TraitSelectionQueryParser::new(&self.fixture).parse_goal(goal);
+        writeln!(
+            dump,
+            "  goal: {}",
+            self.render_goal(&parsed.goal, &parsed.var_names)
+        )
+        .expect("string writes should not fail");
+
+        let candidates = candidate_query(&self.fixture)
+            .probe_all(&parsed.goal, &parsed.table)
+            .expect("trait candidate fixture query should not fail");
+        match candidates.as_slice() {
+            [] => {
+                writeln!(dump, "  result: empty").expect("string writes should not fail");
+            }
+            [_first, _second, ..] => {
+                writeln!(dump, "  result: ambiguous").expect("string writes should not fail");
+            }
+            [candidate] => {
+                writeln!(dump, "  result: one").expect("string writes should not fail");
+                writeln!(
+                    dump,
+                    "    impl: impl#{}",
+                    candidate.trait_impl.impl_ref.id.0
+                )
+                .expect("string writes should not fail");
+                writeln!(
+                    dump,
+                    "    applicability: {}",
+                    Self::render_applicability(candidate.applicability)
+                )
+                .expect("string writes should not fail");
+                self.render_named_vars(&parsed.vars, &candidate.table, dump);
+            }
+        }
+    }
+
+    fn render_normalize_case(&self, goal: &str, chalk_direct: bool, dump: &mut String) {
         let parsed = TraitSelectionQueryParser::new(&self.fixture).parse_assoc_goal(goal);
         writeln!(
             dump,
@@ -1357,21 +1440,30 @@ impl TraitSelectionSnapshot {
             let item_paths = ItemPathQuery::new(&self.fixture, &self.fixture);
             let crate_items =
                 CrateItemQuery::new(&self.fixture, &self.fixture, self.fixture.target);
-            let cache = TraitSelectionCache::default();
+            let session = TraitSelectionSession::new(self.fixture.target);
             let solver = ChalkTraitSolver::new();
-            solver
+            let outcome = solver
                 .normalize_assoc_type(
                     &item_paths,
                     &crate_items,
-                    &cache,
+                    &session,
                     &parsed.goal,
                     &parsed.assoc_name,
+                    None,
                     &parsed.table,
                 )
-                .expect("Chalk fixture projection should not fail")
+                .expect("Chalk fixture projection should not fail");
+            match outcome {
+                ChalkOutcome::Proven(projection) | ChalkOutcome::Ambiguous(Some(projection)) => {
+                    Some(projection)
+                }
+                ChalkOutcome::Ambiguous(None)
+                | ChalkOutcome::NoSolution
+                | ChalkOutcome::Unsupported
+                | ChalkOutcome::Exhausted => None,
+            }
         } else {
             query(&self.fixture)
-                .with_options(case.options)
                 .normalize_assoc_type(&parsed.goal, &parsed.assoc_name, &parsed.table)
                 .expect("trait selection fixture projection should not fail")
         };
@@ -1797,20 +1889,6 @@ impl TraitSelectionSnapshot {
             GenericArg::Type(ty) => self.render_ty(ty),
             GenericArg::Lifetime(lifetime) => lifetime.to_string(),
             GenericArg::Const(value) => value.to_string(),
-        }
-    }
-
-    fn render_options(options: TraitSelectionOptions) -> &'static str {
-        if options == TraitSelectionOptions::new() {
-            "default"
-        } else if options == TraitSelectionOptions::new().header_only() {
-            "header-only"
-        } else if options == TraitSelectionOptions::new().caller_solves_impl_predicates() {
-            "caller-solves-impl-predicates"
-        } else if options == TraitSelectionOptions::new().keep_maybe_candidates() {
-            "keep-maybe-candidates"
-        } else {
-            "custom"
         }
     }
 

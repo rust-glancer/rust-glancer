@@ -7,4 +7,6 @@ impl<'a, T> crate::iter::Iterator for Iter<'a, T> {
 impl<'a, T> crate::iter::IntoIterator for &'a [T] {
     type Item = &'a T;
     type IntoIter = Iter<'a, T>;
+
+    fn into_iter(self) -> Self::IntoIter {}
 }

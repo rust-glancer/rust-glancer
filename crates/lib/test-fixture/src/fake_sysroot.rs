@@ -13,6 +13,10 @@ const FILES: &[FakeSysrootFile] = &[
         contents: include_str!("../assets/fake_sysroot/core/src/lib.rs"),
     },
     FakeSysrootFile {
+        relative_path: "sysroot/library/core/src/array.rs",
+        contents: include_str!("../assets/fake_sysroot/core/src/array.rs"),
+    },
+    FakeSysrootFile {
         relative_path: "sysroot/library/core/src/fmt.rs",
         contents: include_str!("../assets/fake_sysroot/core/src/fmt.rs"),
     },

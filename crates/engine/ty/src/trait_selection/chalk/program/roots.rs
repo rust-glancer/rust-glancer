@@ -11,7 +11,7 @@ use rg_semantic_ir::{CrateItemQuery, ItemStoreSource};
 
 use super::{ChalkProgram, ChalkProgramRoots, ChalkProgramScope};
 use crate::inference::InferenceTable;
-use crate::trait_selection::TraitSelectionCache;
+use crate::trait_selection::TraitSelectionSession;
 use crate::{Clause, ItemPathQuery, SemanticSignatureQuery, TraitRefLowering};
 
 impl ChalkProgramRoots {
@@ -207,7 +207,7 @@ impl ChalkProgramScope {
     pub(super) fn discover<'query, D, I>(
         item_paths: &ItemPathQuery<'query, D, I>,
         crate_items: &CrateItemQuery<'query, D, I>,
-        cache: &TraitSelectionCache,
+        session: &TraitSelectionSession,
         roots: &ChalkProgramRoots,
         program: &ChalkProgram,
     ) -> Result<Self, I::Error>
@@ -251,7 +251,8 @@ impl ChalkProgramScope {
                     if !scope.impls.push(impl_ref) {
                         continue;
                     }
-                    let Some(header) = cache.impl_header_with(item_paths, item_paths, impl_ref)?
+                    let Some(header) =
+                        session.impl_header_with(item_paths, item_paths, impl_ref)?
                     else {
                         continue;
                     };

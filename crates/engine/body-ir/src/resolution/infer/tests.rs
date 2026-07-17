@@ -40,7 +40,7 @@ fn u64_ty() -> Ty {
 
 #[test]
 fn stores_closure_types_as_body_local_facts() {
-    let mut context = BodyInferenceCtx::new(1, 0);
+    let mut context = BodyInferenceCtx::new(1, 0, 0);
 
     assert!(context.set_expr_closure_ty(ExprId(0)));
 
@@ -53,7 +53,7 @@ fn stores_closure_types_as_body_local_facts() {
 
 #[test]
 fn copies_closure_types_through_binding_reads() {
-    let mut context = BodyInferenceCtx::new(2, 1);
+    let mut context = BodyInferenceCtx::new(2, 1, 0);
 
     context.set_expr_closure_ty(ExprId(0));
     context.set_binding_infer_ty(BindingId(0), context.expr_ty(ExprId(0)));
@@ -68,7 +68,7 @@ fn copies_closure_types_through_binding_reads() {
 
 #[test]
 fn creates_body_inference_context_with_body_sized_slots() {
-    let mut context = BodyInferenceCtx::new(2, 3);
+    let mut context = BodyInferenceCtx::new(2, 3, 0);
 
     let var = context.table.new_type_var();
 
@@ -82,7 +82,7 @@ fn creates_body_inference_context_with_body_sized_slots() {
 
 #[test]
 fn stores_expression_type_variables_until_expected_type_evidence_arrives() {
-    let mut context = BodyInferenceCtx::new(1, 0);
+    let mut context = BodyInferenceCtx::new(1, 0, 0);
     let var = context.table.new_type_var();
 
     context.set_expr_infer_ty(ExprId(0), var);
@@ -94,7 +94,7 @@ fn stores_expression_type_variables_until_expected_type_evidence_arrives() {
 
 #[test]
 fn expected_type_seeds_an_expression_without_producer_evidence() {
-    let mut context = BodyInferenceCtx::new(1, 0);
+    let mut context = BodyInferenceCtx::new(1, 0, 0);
 
     assert!(context.constrain_expr_ty(ExprId(0), &user_ty()));
 
@@ -103,7 +103,7 @@ fn expected_type_seeds_an_expression_without_producer_evidence() {
 
 #[test]
 fn binding_path_equality_carries_early_expected_type_back_to_the_binding() {
-    let mut context = BodyInferenceCtx::new(1, 1);
+    let mut context = BodyInferenceCtx::new(1, 1, 0);
     context.constrain_expr_ty(ExprId(0), &vec_ty(user_ty()));
 
     assert!(context.set_expr_from_binding(ExprId(0), BindingId(0)));
@@ -113,7 +113,7 @@ fn binding_path_equality_carries_early_expected_type_back_to_the_binding() {
 
 #[test]
 fn revisiting_numeric_literals_keeps_their_inference_slots() {
-    let mut context = BodyInferenceCtx::new(2, 0);
+    let mut context = BodyInferenceCtx::new(2, 0, 0);
 
     context.set_expr_integer_var(ExprId(0));
     context.set_expr_float_var(ExprId(1));
@@ -129,7 +129,7 @@ fn revisiting_numeric_literals_keeps_their_inference_slots() {
 
 #[test]
 fn weaker_expression_evidence_does_not_create_fixed_point_progress() {
-    let mut context = BodyInferenceCtx::new(1, 0);
+    let mut context = BodyInferenceCtx::new(1, 0, 0);
     context.set_expr_infer_ty(ExprId(0), user_ty());
     let before = context.progress();
 
@@ -140,7 +140,7 @@ fn weaker_expression_evidence_does_not_create_fixed_point_progress() {
 
 #[test]
 fn fixed_point_ignores_fresh_ids_for_the_same_inference_shape() {
-    let mut context = BodyInferenceCtx::new(1, 0);
+    let mut context = BodyInferenceCtx::new(1, 0, 0);
     let first = context.table.new_type_var();
     context.set_expr_infer_ty(ExprId(0), first);
     let before = context.progress();
@@ -153,7 +153,7 @@ fn fixed_point_ignores_fresh_ids_for_the_same_inference_shape() {
 
 #[test]
 fn weaker_pattern_evidence_does_not_replace_a_settled_binding_fact() {
-    let mut context = BodyInferenceCtx::new(0, 1);
+    let mut context = BodyInferenceCtx::new(0, 1, 0);
     let settled = Ty::tuple(vec![user_ty(), user_ty()]);
     context.set_binding_infer_ty(BindingId(0), settled.clone());
     let before = context.progress();
@@ -166,7 +166,7 @@ fn weaker_pattern_evidence_does_not_replace_a_settled_binding_fact() {
 
 #[test]
 fn conflicting_evidence_keeps_the_stable_slot_and_finalizes_to_unknown() {
-    let mut context = BodyInferenceCtx::new(1, 0);
+    let mut context = BodyInferenceCtx::new(1, 0, 0);
     let slot = context.table.new_type_var();
     context.set_expr_infer_ty(ExprId(0), slot);
 
@@ -178,7 +178,7 @@ fn conflicting_evidence_keeps_the_stable_slot_and_finalizes_to_unknown() {
 
 #[test]
 fn treats_equivalent_variable_aliases_as_stable_body_facts() {
-    let mut context = BodyInferenceCtx::new(1, 1);
+    let mut context = BodyInferenceCtx::new(1, 1, 0);
     let original = context.table.new_type_var();
     let alias = context.table.new_type_var();
     let unrelated = context.table.new_type_var();
@@ -196,7 +196,7 @@ fn treats_equivalent_variable_aliases_as_stable_body_facts() {
 
 #[test]
 fn empty_tuple_expression_is_unit_during_inference() {
-    let mut context = BodyInferenceCtx::new(1, 0);
+    let mut context = BodyInferenceCtx::new(1, 0, 0);
 
     context.set_expr_tuple_from_fields(ExprId(0), &[]);
 
@@ -206,7 +206,7 @@ fn empty_tuple_expression_is_unit_during_inference() {
 
 #[test]
 fn revisiting_array_shapes_reuses_existing_element_slot() {
-    let mut context = BodyInferenceCtx::new(3, 0);
+    let mut context = BodyInferenceCtx::new(3, 0, 0);
     let first_element = context.table.new_type_var();
     let second_element = context.table.new_type_var();
     context.set_expr_infer_ty(ExprId(0), first_element);
@@ -222,7 +222,7 @@ fn revisiting_array_shapes_reuses_existing_element_slot() {
 
 #[test]
 fn revisiting_array_shapes_keeps_new_slot_for_weak_evidence() {
-    let mut context = BodyInferenceCtx::new(2, 0);
+    let mut context = BodyInferenceCtx::new(2, 0, 0);
     context.set_expr_ty(ExprId(0), &vec_ty(Ty::Unknown));
 
     context.set_expr_array_from_elements(ExprId(1), &[ExprId(0)], Some("1".into()));
@@ -239,7 +239,7 @@ fn revisiting_array_shapes_keeps_new_slot_for_weak_evidence() {
 
 #[test]
 fn revisiting_branch_shapes_reuses_existing_result_slot() {
-    let mut context = BodyInferenceCtx::new(3, 0);
+    let mut context = BodyInferenceCtx::new(3, 0, 0);
     let then_ty = context.table.new_type_var();
     let else_ty = context.table.new_type_var();
     context.set_expr_infer_ty(ExprId(0), then_ty);
@@ -255,7 +255,7 @@ fn revisiting_branch_shapes_reuses_existing_result_slot() {
 
 #[test]
 fn revisiting_branch_shapes_does_not_reuse_concrete_fallback_result() {
-    let mut context = BodyInferenceCtx::new(3, 0);
+    let mut context = BodyInferenceCtx::new(3, 0, 0);
     context.set_expr_integer_var(ExprId(0));
     context.set_expr_integer_var(ExprId(1));
     context.set_expr_ty(ExprId(2), &default_int_ty());
@@ -272,7 +272,7 @@ fn revisiting_branch_shapes_does_not_reuse_concrete_fallback_result() {
 
 #[test]
 fn revisiting_array_shapes_does_not_reuse_concrete_fallback_element() {
-    let mut context = BodyInferenceCtx::new(3, 0);
+    let mut context = BodyInferenceCtx::new(3, 0, 0);
     context.set_expr_integer_var(ExprId(0));
     context.set_expr_integer_var(ExprId(1));
     context.set_expr_ty(

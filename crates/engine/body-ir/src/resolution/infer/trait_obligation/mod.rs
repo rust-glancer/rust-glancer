@@ -22,8 +22,8 @@ use rg_package_store::PackageStoreError;
 use rg_semantic_ir::ItemStoreSource;
 use rg_std::ExpectedUnique;
 use rg_ty::{
-    AssocTypeBinding, Clause, GenericArg, ImplHeader, Substitution, TraitApplication, TraitGoal,
-    TraitSelection, TraitSelectionOptions, Ty,
+    AssocTypeBinding, Clause, GenericArg, ImplHeader, Substitution, TraitApplication,
+    TraitCandidate, TraitGoal, TraitSelection, Ty,
 };
 
 use crate::resolution::BodyResolutionContext;
@@ -37,9 +37,9 @@ pub(super) struct BodyTraitObligationSolver<'query, D, I> {
 }
 
 /// Canonical impl data prepared for evaluation against body-owned facts.
-struct BodySelectedImpl {
+struct BodyImplCandidate {
     header: ImplHeader,
-    selection: TraitSelection,
+    candidate: TraitCandidate,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -71,7 +71,7 @@ where
         inference: &mut BodyInferenceCtx,
     ) -> Result<ExpectedUnique<TraitSelection>, PackageStoreError> {
         self.context
-            .trait_selection_with_cache(inference.trait_selection_cache())
+            .trait_selection()
             // The returned table may be committed below, so this path uses full predicate solving
             // instead of treating explicit impl where-clauses as someone else's obligation.
             .probe(goal, &inference.table)
@@ -182,7 +182,7 @@ where
 
         // Fn* trait goals can sometimes be answered from a body-local closure witness before the
         // shared trait selector has enough body-specific evidence to prove them.
-        match BodyCallableGoalSolver::new(self.context).solve_goal(inference, &goal)? {
+        match BodyCallableGoalSolver::new(self.context.clone()).solve_goal(inference, &goal)? {
             BodyCallableGoalOutcome::Solved => return Ok(BodyTraitGoalOutcome::Solved),
             BodyCallableGoalOutcome::Deferred => return Ok(BodyTraitGoalOutcome::Deferred),
             BodyCallableGoalOutcome::NotApplicable => {}
@@ -218,26 +218,26 @@ where
             return Ok(BodyTraitGoalOutcome::Deferred);
         }
         active.push(goal.application.clone());
-        let result = self.evaluate_selected_impl_predicates(inference, &goal, active);
+        let result = self.evaluate_body_impl_predicates(inference, &goal, active);
         active.pop();
         result
     }
 
-    fn evaluate_selected_impl_predicates(
+    fn evaluate_body_impl_predicates(
         &self,
         inference: &mut BodyInferenceCtx,
         goal: &TraitGoal,
         active: &mut Vec<TraitApplication>,
     ) -> Result<BodyTraitGoalOutcome, PackageStoreError> {
-        let Some(selected) = self.select_impl_for_body(inference, goal)? else {
+        let Some(selected) = self.probe_impl_for_body(inference, goal)? else {
             return Ok(BodyTraitGoalOutcome::Rejected);
         };
 
         let mut trial = inference.clone();
-        trial.table = selected.selection.table;
+        trial.table = selected.candidate.table;
         let goals = Self::trait_goals_from_clauses(
             &selected.header.clauses,
-            selected.selection.subst.as_substitution(),
+            selected.candidate.subst.as_substitution(),
         );
         let outcome = self.evaluate_trait_goals_inner(&mut trial, goals, active)?;
         if !matches!(outcome, BodyTraitGoalOutcome::Solved) {
@@ -248,25 +248,23 @@ where
         Ok(BodyTraitGoalOutcome::Solved)
     }
 
-    /// Select one canonical impl header and provide inference slots for impl-only type params.
+    /// Probe one canonical impl candidate and provide inference slots for impl-only type params.
     ///
     /// Header matching binds only parameters visible in `Self` or the trait inputs. Body-owned
     /// evidence can solve the remaining parameters from predicates, so both predicate evaluation
     /// and associated projection must start from the same complete trial substitution.
-    fn select_impl_for_body(
+    fn probe_impl_for_body(
         &self,
         inference: &BodyInferenceCtx,
         goal: &TraitGoal,
-    ) -> Result<Option<BodySelectedImpl>, PackageStoreError> {
-        let selection_query = self
-            .context
-            .trait_selection_with_cache(inference.trait_selection_cache())
-            .with_options(TraitSelectionOptions::new().caller_solves_impl_predicates());
-        let ExpectedUnique::One(mut selection) = selection_query.probe(goal, &inference.table)?
+    ) -> Result<Option<BodyImplCandidate>, PackageStoreError> {
+        let candidate_query = self.context.trait_candidates();
+        let ExpectedUnique::One(mut candidate) =
+            candidate_query.probe_preferred(goal, &inference.table)?
         else {
             return Ok(None);
         };
-        let impl_ref = selection.trait_impl.impl_ref;
+        let impl_ref = candidate.trait_impl.impl_ref;
         let Some(header) = self.context.impl_matcher().impl_header(impl_ref)? else {
             return Ok(None);
         };
@@ -278,9 +276,9 @@ where
 
         // Direct header matching only binds parameters that occur in `Self` or the trait inputs.
         // Predicate-only parameters still need trial vars before their clauses can provide facts.
-        let matched_subst = selection.subst.clone();
+        let matched_subst = candidate.subst.clone();
         let mut subst = Substitution::identity(&generics);
-        subst.extend(selection.subst.into_substitution());
+        subst.extend(candidate.subst.into_substitution());
         for param in generics.iter_self() {
             let GenericParamRef::Type(param) = param.param() else {
                 continue;
@@ -288,12 +286,12 @@ where
             if matched_subst.type_param(param).is_none() {
                 subst.push(
                     GenericParamRef::Type(param),
-                    GenericArg::Type(Box::new(selection.table.new_type_var())),
+                    GenericArg::Type(Box::new(candidate.table.new_type_var())),
                 );
             }
         }
-        selection.subst = rg_ty::inference::InferenceSubstitution::from_substitution(subst);
-        Ok(Some(BodySelectedImpl { header, selection }))
+        candidate.subst = rg_ty::inference::InferenceSubstitution::from_substitution(subst);
+        Ok(Some(BodyImplCandidate { header, candidate }))
     }
 
     fn normalize_trait_goal(

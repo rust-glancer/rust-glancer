@@ -19,7 +19,10 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
 
-use chalk_ir::Variances;
+use chalk_ir::{
+    AliasTy as ChalkAliasTy, GenericArgData, Substitution as ChalkSubstitution, TyKind, Variances,
+    WhereClause,
+};
 use chalk_solve::rust_ir::{
     AssociatedTyDatum, AssociatedTyValue, ImplDatum, OpaqueTyDatum, TraitDatum,
 };
@@ -31,8 +34,10 @@ use rg_text::Name;
 
 use super::interner::RgChalkInterner;
 use crate::inference::InferenceTable;
-use crate::trait_selection::{TraitGoal, TraitSelectionCache};
+use crate::trait_selection::{TraitGoal, TraitSelectionSession};
 use crate::{Clause, ItemPathQuery, TraitRefLowering};
+
+const INTER: RgChalkInterner = RgChalkInterner;
 
 /// The growing Chalk database owned by one solver instance.
 ///
@@ -104,7 +109,7 @@ impl ChalkProgramState {
         &mut self,
         item_paths: &ItemPathQuery<'query, D, I>,
         crate_items: &CrateItemQuery<'query, D, I>,
-        cache: &TraitSelectionCache,
+        session: &TraitSelectionSession,
         clauses: &[Clause],
         table: Option<&InferenceTable>,
     ) -> Result<(), I::Error>
@@ -114,7 +119,7 @@ impl ChalkProgramState {
     {
         let mut roots = ChalkProgramRoots::default();
         roots.collect_clauses(item_paths, clauses, table)?;
-        self.ensure_roots(item_paths, crate_items, cache, &roots)
+        self.ensure_roots(item_paths, crate_items, session, &roots)
     }
 
     /// Make every definition reachable from this projection goal available to Chalk.
@@ -122,7 +127,7 @@ impl ChalkProgramState {
         &mut self,
         item_paths: &ItemPathQuery<'query, D, I>,
         crate_items: &CrateItemQuery<'query, D, I>,
-        cache: &TraitSelectionCache,
+        session: &TraitSelectionSession,
         goal: &TraitGoal,
         table: &InferenceTable,
     ) -> Result<(), I::Error>
@@ -132,14 +137,14 @@ impl ChalkProgramState {
     {
         let mut roots = ChalkProgramRoots::default();
         roots.collect_goal(item_paths, goal, table)?;
-        self.ensure_roots(item_paths, crate_items, cache, &roots)
+        self.ensure_roots(item_paths, crate_items, session, &roots)
     }
 
     fn ensure_roots<'query, D, I>(
         &mut self,
         item_paths: &ItemPathQuery<'query, D, I>,
         crate_items: &CrateItemQuery<'query, D, I>,
-        cache: &TraitSelectionCache,
+        session: &TraitSelectionSession,
         roots: &ChalkProgramRoots,
     ) -> Result<(), I::Error>
     where
@@ -155,7 +160,7 @@ impl ChalkProgramState {
         let started = Instant::now();
         let result = self
             .program
-            .extend(item_paths, crate_items, cache, &pending_roots);
+            .extend(item_paths, crate_items, session, &pending_roots);
         crate::profile::metric::PROGRAM_BUILD_TIME.record(started.elapsed());
         result?;
         self.roots.merge(&pending_roots);
@@ -185,5 +190,66 @@ impl ChalkProgramState {
             .associated_ty_by_trait_name
             .get(&(trait_ref, Name::new(assoc_name)))
             .copied()
+    }
+
+    /// Instantiate the associated value owned by one already-selected Chalk impl datum.
+    ///
+    /// Trait selection has already proved the impl's predicates before this is called. Reading the
+    /// materialized datum here completes that selection inside the Chalk adapter; it does not
+    /// lower the source alias again or create a second project-side projection engine.
+    pub(super) fn selected_associated_ty_value(
+        &self,
+        impl_ref: ImplRef,
+        associated_ty_ref: TypeAliasRef,
+        args: &chalk_ir::Substitution<RgChalkInterner>,
+    ) -> Option<chalk_ir::Ty<RgChalkInterner>> {
+        let value_ref = self
+            .program
+            .associated_ty_value_by_impl
+            .get(&(impl_ref, associated_ty_ref))?;
+        let value = self.program.associated_ty_values.get(value_ref)?;
+        (value.value.len(INTER) == args.len(INTER))
+            .then(|| value.value.clone().substitute(INTER, args).ty)
+    }
+
+    /// Read an associated equality carried by the receiver's materialized opaque datum.
+    ///
+    /// Opaque bounds are environment evidence rather than impl candidates. Substitute both the
+    /// opaque owner's arguments and Chalk's dedicated `Self` binder, then require an exact match
+    /// with the projection being normalized.
+    pub(super) fn opaque_associated_ty_value(
+        &self,
+        alias: &ChalkAliasTy<RgChalkInterner>,
+    ) -> Option<chalk_ir::Ty<RgChalkInterner>> {
+        let ChalkAliasTy::Projection(projection) = alias else {
+            return None;
+        };
+        let self_arg = projection.substitution.iter(INTER).next()?;
+        let GenericArgData::Ty(self_ty) = self_arg.data(INTER) else {
+            return None;
+        };
+        let TyKind::OpaqueType(opaque_id, opaque_args) = self_ty.kind(INTER) else {
+            return None;
+        };
+        let super::interner::ChalkDefId::Opaque(opaque_ref) = opaque_id.0 else {
+            return None;
+        };
+        let datum = self.program.opaque_tys.get(&opaque_ref)?;
+        if datum.bound.len(INTER) != opaque_args.len(INTER) {
+            return None;
+        }
+        let bound = datum.bound.clone().substitute(INTER, opaque_args);
+        let self_subst = ChalkSubstitution::from_iter(INTER, [self_arg.clone()]);
+        let clauses = bound.bounds.substitute(INTER, &self_subst);
+
+        clauses.into_iter().find_map(|clause| {
+            if clause.len(INTER) != 0 {
+                return None;
+            }
+            let WhereClause::AliasEq(equality) = clause.skip_binders() else {
+                return None;
+            };
+            (equality.alias == *alias).then(|| equality.ty.clone())
+        })
     }
 }

@@ -19,7 +19,7 @@ use rg_ir_model::{
 };
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::{ItemLookupIndex, ItemStoreSource};
-use rg_ty::{ExpectedAdtTyExt, ReferencePeelingCandidates, TraitSelectionCache, Ty};
+use rg_ty::{ExpectedAdtTyExt, ReferencePeelingCandidates, TraitSelectionSession, Ty};
 
 use crate::{
     BodyPath,
@@ -40,7 +40,7 @@ pub(crate) struct PatternBindingMaterializationPass<'query, 'body, D, I> {
     item_stores: &'query I,
     semantic_index: &'query ItemLookupIndex,
     body_ref: rg_ir_model::BodyRef,
-    trait_selection_cache: &'query TraitSelectionCache,
+    trait_selection: &'query TraitSelectionSession,
     body: &'body mut LoweredBodyData,
 }
 
@@ -55,14 +55,14 @@ where
         semantic_index: &'query ItemLookupIndex,
         body_ref: rg_ir_model::BodyRef,
         body: &'body mut LoweredBodyData,
-        trait_selection_cache: &'query TraitSelectionCache,
+        trait_selection: &'query TraitSelectionSession,
     ) -> Self {
         Self {
             def_maps,
             item_stores,
             semantic_index,
             body_ref,
-            trait_selection_cache,
+            trait_selection,
             body,
         }
     }
@@ -74,8 +74,8 @@ where
             self.body_ref,
             self.body.body(),
             self.semantic_index,
+            self.trait_selection.clone(),
         )
-        .with_trait_selection_cache(self.trait_selection_cache)
     }
 
     /// Materializes all pending binding candidates into the final structural body.

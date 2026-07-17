@@ -7,8 +7,12 @@ pub trait FromIterator<A> {}
 pub trait IntoIterator {
     type Item;
     type IntoIter;
+
+    #[lang = "into_iter"]
+    fn into_iter(self) -> Self::IntoIter;
 }
 
+#[lang = "iterator"]
 pub trait Iterator {
     type Item;
 
@@ -18,6 +22,11 @@ pub trait Iterator {
         F: crate::FnMut(Self::Item) -> B;
 
     fn filter<P>(self, predicate: P) -> Filter<Self, P>
+    where
+        Self: Sized,
+        P: crate::FnMut(&Self::Item) -> bool;
+
+    fn find<P>(&mut self, predicate: P) -> crate::option::Option<Self::Item>
     where
         Self: Sized,
         P: crate::FnMut(&Self::Item) -> bool;
@@ -43,4 +52,6 @@ pub trait Iterator {
 impl<I: Iterator> IntoIterator for I {
     type Item = I::Item;
     type IntoIter = I;
+
+    fn into_iter(self) -> Self::IntoIter {}
 }

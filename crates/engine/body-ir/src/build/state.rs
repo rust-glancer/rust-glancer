@@ -12,7 +12,7 @@ use rg_semantic_ir::SemanticIrReadTxn;
 use rg_semantic_ir::{CrateItemQuery, ItemLookupIndex, ItemStore};
 use rg_std::ExpectedUnique;
 use rg_text::NameInterner;
-use rg_ty::TraitSelectionCache;
+use rg_ty::TraitSelectionSession;
 
 use crate::{
     BodyFacts, BodyLocalItems, BodyOwner, CrateBodies,
@@ -69,25 +69,20 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
         // crate-scoped cache.
         let crate_items = CrateItemQuery::new(def_map, semantic_ir, self.crate_ref);
         let semantic_index = ItemLookupIndex::build_from(&crate_items)?;
-        self.resolve_body_local_impl_headers(def_map, semantic_ir, &semantic_index)?;
+        let trait_selection = TraitSelectionSession::new(self.crate_ref);
+        self.resolve_body_local_impl_headers(
+            def_map,
+            semantic_ir,
+            &semantic_index,
+            &trait_selection,
+        )?;
 
         // Identifier patterns are the last source ambiguity in structural Body IR. Resolve and
         // compact them before the ordinary body pass receives its immutable `BodyData`.
-        let trait_selection_cache = TraitSelectionCache::default();
-        self.materialize_pattern_bindings(
-            def_map,
-            semantic_ir,
-            &semantic_index,
-            &trait_selection_cache,
-        )?;
+        self.materialize_pattern_bindings(def_map, semantic_ir, &semantic_index, &trait_selection)?;
 
         // Do a pass on resolving body expressions.
-        self.resolve_bodies(
-            def_map,
-            semantic_ir,
-            &semantic_index,
-            &trait_selection_cache,
-        )?;
+        self.resolve_bodies(def_map, semantic_ir, &semantic_index, &trait_selection)?;
 
         // Finalize the build state, e.g. associate each body with its corresponding
         // defmap/item store.
@@ -249,6 +244,7 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
         def_map: &DefMapReadTxn<'_>,
         semantic_ir: &SemanticIrReadTxn<'_>,
         semantic_index: &ItemLookupIndex,
+        trait_selection: &TraitSelectionSession,
     ) -> anyhow::Result<()> {
         for (body_id, lowered_body) in self.crate_bodies.bodies().iter_with_ids() {
             let body_ref = self.body_ref(body_id);
@@ -285,6 +281,7 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
                     body_ref,
                     body,
                     semantic_index,
+                    trait_selection.clone(),
                 );
                 let type_paths = context.type_path_query();
                 let mut resolved_headers = Vec::new();
@@ -336,7 +333,7 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
         def_map: &DefMapReadTxn<'_>,
         semantic_ir: &SemanticIrReadTxn<'_>,
         semantic_index: &ItemLookupIndex,
-        trait_selection_cache: &TraitSelectionCache,
+        trait_selection: &TraitSelectionSession,
     ) -> anyhow::Result<()> {
         let source =
             BodyBuildQuerySource::new(def_map, semantic_ir, self.crate_ref, &self.body_local_items);
@@ -353,7 +350,7 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
                 semantic_index,
                 body_ref,
                 body,
-                trait_selection_cache,
+                trait_selection,
             )
             .materialize()?;
         }
@@ -369,7 +366,7 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
         def_map: &DefMapReadTxn<'_>,
         semantic_ir: &SemanticIrReadTxn<'_>,
         semantic_index: &ItemLookupIndex,
-        trait_selection_cache: &TraitSelectionCache,
+        trait_selection: &TraitSelectionSession,
     ) -> anyhow::Result<()> {
         // Make the body resolution pass aware of body-local items.
         let source =
@@ -388,7 +385,7 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
                 semantic_index,
                 body_ref,
                 body.body(),
-                trait_selection_cache,
+                trait_selection,
             )
             .resolve()?;
             let allocated = self.body_facts.alloc(facts);

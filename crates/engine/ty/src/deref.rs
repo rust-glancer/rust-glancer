@@ -1,26 +1,22 @@
 //! Trait-backed `Deref` target lookup for autoderef.
 //!
-//! This module deliberately stays narrow: it recognizes `core::ops::Deref` impls for a known
-//! nominal receiver and resolves the impl's associated `Target` type with the receiver substitution.
+//! This module deliberately stays narrow: it recognizes the canonical `Deref` language item and
+//! asks the shared trait-selection projection path for `Target`. No adjustment code reads an impl
+//! alias body directly or assumes that the trait is reachable through the path `core::ops::Deref`.
 
 use rg_def_map::DefMapSource;
-use rg_ir_model::{Path, PathSegment, TraitImplRef};
-use rg_semantic_ir::{CrateItemQuery, ImplData, ItemLookupIndex, ItemStoreSource, TypePathContext};
+use rg_ir_model::{ItemOwner, TraitDefRef, items::LangItem};
+use rg_semantic_ir::ItemStoreSource;
 use rg_std::UniqueVec;
-use rg_text::Name;
 
 use crate::{
-    AdtTy, ImplMatcher, ItemPathQuery, Substitution, TraitSelectionCache, Ty,
-    associated_type::AssociatedTypeResolver,
+    AdtTy, GenericArgs, TraitGoal, TraitSelectionQuery, Ty, TyContext, inference::InferenceTable,
 };
 
-/// Resolves the associated `Target` type for applicable `core::ops::Deref` impls.
+/// Resolves the associated `Target` type for applicable canonical `Deref` impls.
 #[derive(Clone)]
 pub(crate) struct DerefResolver<'query, D, I> {
-    item_paths: ItemPathQuery<'query, D, I>,
-    crate_items: CrateItemQuery<'query, D, I>,
-    lookup_index: &'query ItemLookupIndex,
-    trait_selection_cache: TraitSelectionCache,
+    context: TyContext<'query, D, I>,
 }
 
 impl<'query, D, I> DerefResolver<'query, D, I>
@@ -28,18 +24,8 @@ where
     D: DefMapSource + Clone,
     I: ItemStoreSource<'query, Error = D::Error> + Clone,
 {
-    pub(crate) fn new(
-        item_paths: ItemPathQuery<'query, D, I>,
-        crate_items: CrateItemQuery<'query, D, I>,
-        lookup_index: &'query ItemLookupIndex,
-        trait_selection_cache: TraitSelectionCache,
-    ) -> Self {
-        Self {
-            item_paths,
-            crate_items,
-            lookup_index,
-            trait_selection_cache,
-        }
+    pub(crate) fn new(context: TyContext<'query, D, I>) -> Self {
+        Self { context }
     }
 
     /// Returns all one-step `Deref::Target` types for a known type.
@@ -60,71 +46,62 @@ where
     /// For `impl<T> core::ops::Deref for Wrapper<T> { type Target = T; }` and receiver
     /// `Wrapper<User>`, this resolves the target as `User`.
     fn targets_for_nominal(&self, receiver_ty: &AdtTy) -> Result<UniqueVec<Ty>, D::Error> {
-        let matcher = ImplMatcher::new(self.item_paths.clone(), self.crate_items.clone())
-            .with_cache(self.trait_selection_cache.clone());
-        let item_query = self.item_paths.items();
         let mut targets = UniqueVec::new();
-        let trait_impls = self
-            .lookup_index
-            .trait_impls_for_type(receiver_ty.def)
-            .cloned()
-            .unwrap_or_default();
-
-        for trait_impl in trait_impls {
-            let Some(impl_data) = item_query.impl_data(trait_impl.impl_ref)? else {
-                continue;
-            };
-            if !self.is_core_ops_deref_impl(trait_impl, impl_data)? {
-                continue;
-            }
-
-            // `Deref` is a real type adjustment, not just an optimistic editor candidate.
-            // Require a structural impl-self match so uncertain trait impls cannot change
-            // field/method lookup receiver types.
-            let Some(subst) = matcher.trait_impl_structural_match(trait_impl, receiver_ty)? else {
-                continue;
-            };
-
-            let Some(target) = self.target_from_impl(trait_impl, impl_data, &subst)? else {
-                continue;
-            };
+        let Some((deref_trait, target_name)) = self.canonical_deref_items()? else {
+            return Ok(targets);
+        };
+        let table = InferenceTable::new();
+        let query = TraitSelectionQuery::new(self.context.clone());
+        let goal = TraitGoal::new(
+            Ty::adt(receiver_ty.clone()),
+            deref_trait,
+            GenericArgs::empty(),
+        );
+        let Some(projection) = query.normalize_assoc_type(&goal, target_name.as_str(), &table)?
+        else {
+            return Ok(targets);
+        };
+        if projection.applicability != rg_ir_model::TraitApplicability::Yes {
+            return Ok(targets);
+        }
+        let target = projection.table.finalize(&projection.ty);
+        if target.is_projectable() {
             targets.push(target);
         }
 
         Ok(targets)
     }
 
-    /// Checks whether this trait impl resolved to the canonical `core::ops::Deref` path.
-    fn is_core_ops_deref_impl(
-        &self,
-        trait_impl: TraitImplRef,
-        impl_data: &ImplData,
-    ) -> Result<bool, D::Error> {
-        let path = Path {
-            absolute: true,
-            segments: vec![
-                PathSegment::Name(Name::new("core")),
-                PathSegment::Name(Name::new("ops")),
-                PathSegment::Name(Name::new("Deref")),
-            ],
+    /// Find the visible `Deref` and `Deref::Target` identities and verify they belong together.
+    ///
+    /// The two attributes are indexed independently. Checking the associated type's owner prevents
+    /// malformed declarations from combining an otherwise valid `Deref` trait with an unrelated
+    /// `#[lang = "deref_target"]` alias.
+    fn canonical_deref_items(&self) -> Result<Option<(TraitDefRef, rg_text::Name)>, D::Error> {
+        let Some(deref_trait) = self.context.lookup_index().lang_trait(LangItem::Deref) else {
+            return Ok(None);
         };
-        let context = TypePathContext {
-            module: impl_data.owner,
-            impl_ref: Some(trait_impl.impl_ref),
+        let Some(target_alias) = self
+            .context
+            .lookup_index()
+            .lang_type_alias(LangItem::DerefTarget)
+        else {
+            return Ok(None);
         };
-
-        AssociatedTypeResolver::new(&self.item_paths, &self.crate_items)
-            .trait_impl_resolves_to_path(trait_impl, context, &path)
-    }
-
-    /// Resolves the `type Target = ...` item declared in a matching `Deref` impl.
-    fn target_from_impl(
-        &self,
-        trait_impl: TraitImplRef,
-        impl_data: &ImplData,
-        subst: &Substitution,
-    ) -> Result<Option<Ty>, D::Error> {
-        AssociatedTypeResolver::new(&self.item_paths, &self.crate_items)
-            .associated_type_from_impl(trait_impl, impl_data, "Target", subst)
+        let Some(target_data) = self
+            .context
+            .item_paths()
+            .items()
+            .type_alias_data(target_alias)?
+        else {
+            return Ok(None);
+        };
+        let ItemOwner::Trait(owner) = target_data.owner else {
+            return Ok(None);
+        };
+        if target_alias.origin != deref_trait.origin || owner != deref_trait.id {
+            return Ok(None);
+        }
+        Ok(Some((deref_trait, target_data.name.clone())))
     }
 }

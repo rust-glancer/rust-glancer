@@ -1,6 +1,6 @@
 use expect_test::expect;
 
-use super::utils::check_project_body_ir;
+use super::utils::{check_project_body_ir, check_project_body_ir_with_fake_sysroot};
 
 #[test]
 fn lowers_if_let_scope_and_branch_types() {
@@ -266,42 +266,18 @@ pub fn walk(input: Maybe, items: Items) {
 
 #[test]
 fn propagates_for_loop_items_from_into_iterator() {
-    check_project_body_ir(
+    check_project_body_ir_with_fake_sysroot(
         r#"
 //- /Cargo.toml
 [workspace]
-members = ["core", "app"]
+members = ["app"]
 resolver = "3"
-
-//- /core/Cargo.toml
-[package]
-name = "fake_core"
-version = "0.1.0"
-edition = "2024"
-
-//- /core/src/lib.rs
-pub mod iter {
-    pub trait IntoIterator {
-        type Item;
-    }
-}
-
-impl<'a, T> iter::IntoIterator for &'a [T] {
-    type Item = &'a T;
-}
-
-impl<T, const N: usize> iter::IntoIterator for [T; N] {
-    type Item = T;
-}
 
 //- /app/Cargo.toml
 [package]
 name = "app"
 version = "0.1.0"
 edition = "2024"
-
-[dependencies]
-core = { package = "fake_core", path = "../core" }
 
 //- /app/src/lib.rs
 pub struct Package;
@@ -323,6 +299,11 @@ pub fn use_it(packages: &[Package], array: [Package; 3], pairs: [(Package, UserI
 }
 "#,
         expect![[r#"
+            package alloc
+
+            alloc [lib]
+            skipped
+
             package app
 
             app [lib]
@@ -374,38 +355,27 @@ pub fn use_it(packages: &[Package], array: [Package; 3], pairs: [(Package, UserI
                         expr e10 path user_id -> local v6 => nominal struct app[lib]::crate::UserId @ 15:9-15:16
 
 
-            package fake_core
+            package core
 
-            fake_core [lib]
+            core [lib]
+            skipped
+
+            package std
+
+            std [lib]
+            skipped
         "#]],
     );
 }
 
 #[test]
 fn propagates_for_loop_items_from_method_returned_slice() {
-    check_project_body_ir(
+    check_project_body_ir_with_fake_sysroot(
         r#"
 //- /Cargo.toml
 [workspace]
-members = ["core", "storage", "app"]
+members = ["storage", "app"]
 resolver = "3"
-
-//- /core/Cargo.toml
-[package]
-name = "fake_core"
-version = "0.1.0"
-edition = "2024"
-
-//- /core/src/lib.rs
-pub mod iter {
-    pub trait IntoIterator {
-        type Item;
-    }
-}
-
-impl<'a, T> iter::IntoIterator for &'a [T] {
-    type Item = &'a T;
-}
 
 //- /storage/Cargo.toml
 [package]
@@ -431,7 +401,6 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-core = { package = "fake_core", path = "../core" }
 storage = { path = "../storage" }
 
 //- /app/src/lib.rs
@@ -444,6 +413,11 @@ pub fn use_it(def_map: &DefMap) {
 }
 "#,
         expect![[r#"
+            package alloc
+
+            alloc [lib]
+            skipped
+
             package app
 
             app [lib]
@@ -470,9 +444,15 @@ pub fn use_it(def_map: &DefMap) {
                         expr e2 path import -> local v1 => &nominal struct storage[lib]::crate::ImportData @ 5:9-5:15
 
 
-            package fake_core
+            package core
 
-            fake_core [lib]
+            core [lib]
+            skipped
+
+            package std
+
+            std [lib]
+            skipped
 
             package storage
 
@@ -495,47 +475,12 @@ pub fn use_it(def_map: &DefMap) {
 
 #[test]
 fn propagates_for_loop_items_from_slice_iter_method() {
-    check_project_body_ir(
+    check_project_body_ir_with_fake_sysroot(
         r#"
 //- /Cargo.toml
 [workspace]
-members = ["core", "storage", "app"]
+members = ["storage", "app"]
 resolver = "3"
-
-//- /core/Cargo.toml
-[package]
-name = "fake_core"
-version = "0.1.0"
-edition = "2024"
-
-//- /core/src/lib.rs
-pub mod iter {
-    pub trait IntoIterator {
-        type Item;
-    }
-
-    pub trait Iterator {
-        type Item;
-    }
-}
-
-pub mod slice {
-    pub struct Iter<'a, T>(&'a T);
-}
-
-impl<T> [T] {
-    pub fn iter(&self) -> slice::Iter<'_, T> {
-        missing()
-    }
-}
-
-impl<'a, T> iter::Iterator for slice::Iter<'a, T> {
-    type Item = &'a T;
-}
-
-impl<I: iter::Iterator> iter::IntoIterator for I {
-    type Item = I::Item;
-}
 
 //- /storage/Cargo.toml
 [package]
@@ -561,7 +506,6 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-core = { package = "fake_core", path = "../core" }
 storage = { path = "../storage" }
 
 //- /app/src/lib.rs
@@ -574,6 +518,11 @@ pub fn use_it(def_map: &DefMap) {
 }
 "#,
         expect![[r#"
+            package alloc
+
+            alloc [lib]
+            skipped
+
             package app
 
             app [lib]
@@ -591,7 +540,7 @@ pub fn use_it(def_map: &DefMap) {
               tail
                 expr e5 for s2 v1 => () @ 4:5-6:6
                   iterable
-                    expr e2 method_call iter -> fn impl [T]::iter => nominal struct fake_core[lib]::crate::slice::Iter<'_, nominal struct storage[lib]::crate::ImportData> @ 4:19-4:43
+                    expr e2 method_call iter -> fn impl [T]::iter => nominal struct core[lib]::crate::slice::Iter<'_, nominal struct storage[lib]::crate::ImportData> @ 4:19-4:43
                       receiver
                         expr e1 method_call imports -> fn impl DefMap::imports => &[nominal struct storage[lib]::crate::ImportData] @ 4:19-4:36
                           receiver
@@ -602,22 +551,15 @@ pub fn use_it(def_map: &DefMap) {
                         expr e3 path import -> local v1 => &nominal struct storage[lib]::crate::ImportData @ 5:9-5:15
 
 
-            package fake_core
+            package core
 
-            fake_core [lib]
-            body b0 fn impl [T]::iter @ 16:5-18:6
-            scopes
-            - s0 parent <none>: v0
-            - s1 parent s0: <none>
-            bindings
-            - v0 self_param self `&self` => &[param T] @ 16:17-16:22
-            body
-            expr e2 block s1 => nominal struct fake_core[lib]::crate::slice::Iter<'_, param T> @ 16:46-18:6
-              tail
-                expr e1 call => nominal struct fake_core[lib]::crate::slice::Iter<'_, param T> @ 17:9-17:18
-                  callee
-                    expr e0 path missing => <unknown> @ 17:9-17:16
+            core [lib]
+            skipped
 
+            package std
+
+            std [lib]
+            skipped
 
             package storage
 

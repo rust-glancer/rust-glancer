@@ -47,6 +47,21 @@ pub trait TypePathResolver {
     ) -> Result<TypePathResolution, Self::Error>;
 }
 
+impl<R> TypePathResolver for &R
+where
+    R: TypePathResolver + ?Sized,
+{
+    type Error = R::Error;
+
+    fn resolve_type_path(
+        &self,
+        anchor: TypeLoweringAnchor,
+        path: &Path,
+    ) -> Result<TypePathResolution, Self::Error> {
+        R::resolve_type_path(*self, anchor, path)
+    }
+}
+
 impl<'query, D, I> TypePathResolver for ItemPathQuery<'query, D, I>
 where
     D: DefMapSource,

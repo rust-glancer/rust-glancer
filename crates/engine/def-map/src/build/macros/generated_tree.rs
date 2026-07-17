@@ -11,10 +11,10 @@ use rg_arena::Arena;
 use rg_ir_model::hir::source::GeneratedSourceData;
 use rg_item_tree::{
     CfgExpr, ConstItem, Documentation, EnumItem, ExternCrateItem, FromAst, FunctionItem, ImplItem,
-    ImplItemContext, InnerDocs, ItemKind, ItemNode, ItemTreeId, MacroCallContext, MacroCallItem,
-    MacroDefAst, MacroDefContext, MacroDefinitionItem, MacroRulesAst, MacroRulesContext,
-    MaybeFromAst, ModuleItem, ModuleSource, OuterDocs, StaticItem, StructItem, TraitItem,
-    TraitItemContext, TypeAliasItem, UnionItem, UseItem, VisibilityLevel,
+    ImplItemContext, InnerDocs, ItemKind, ItemNode, ItemTreeId, LangItem, MacroCallContext,
+    MacroCallItem, MacroDefAst, MacroDefContext, MacroDefinitionItem, MacroRulesAst,
+    MacroRulesContext, MaybeFromAst, ModuleItem, ModuleSource, OuterDocs, StaticItem, StructItem,
+    TraitItem, TraitItemContext, TypeAliasItem, UnionItem, UseItem, VisibilityLevel,
 };
 use rg_macro_runtime::{ExpansionSyntax, macro_edition};
 use rg_parse::{FileId, LineIndex, Span};
@@ -432,6 +432,7 @@ impl<'a> GeneratedSourceLowering<'a> {
             item.syntax().text_range(),
         );
         self.items[item_id].cfg = CfgExpr::from_attrs(item);
+        self.items[item_id].lang_item = LangItem::maybe_from_ast(item, ());
         item_id
     }
 
@@ -458,6 +459,7 @@ impl<'a> GeneratedSourceLowering<'a> {
             name_span,
             visibility,
             cfg: CfgExpr::default(),
+            lang_item: None,
             docs,
             file_id: self.origin.file_id,
             span,

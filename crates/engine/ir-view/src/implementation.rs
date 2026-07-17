@@ -7,9 +7,9 @@ use rg_ir_model::{
     BodyRef, CrateRef, DefMapRef, ExprKind, FunctionRef, SemanticItemRef, TraitDefRef, TypeDefRef,
     identity::{DeclarationRef, ExprRef},
 };
-use rg_semantic_ir::{CrateItemQuery, ItemLookupIndex, ItemStoreQuery};
+use rg_semantic_ir::{ItemLookupIndex, ItemStoreQuery};
 use rg_std::UniqueVec;
-use rg_ty::{ImplementationQuery, ItemPathQuery, ReferencePeelingCandidates, Ty};
+use rg_ty::{ImplementationQuery, ReferencePeelingCandidates, Ty, TyContext};
 
 use crate::{IndexedViewDb, lookup::resolution::ResolutionView};
 
@@ -220,11 +220,12 @@ impl<'a, 'db> ImplementationView<'a, 'db> {
         let Some(semantic_index) = self.semantic_index(use_site)? else {
             return Ok(None);
         };
-        Ok(Some(ImplementationQuery::with_index(
-            ItemPathQuery::new(self.db, self.db),
-            CrateItemQuery::new(self.db, self.db, use_site),
+        Ok(Some(ImplementationQuery::new(TyContext::new(
+            self.db,
+            self.db,
             semantic_index,
-        )))
+            self.db.trait_selection(use_site),
+        ))))
     }
 
     /// Return the crate-scoped semantic index that backs fast type/member queries.

@@ -6,16 +6,14 @@
 
 use rg_def_map::DefMapSource;
 use rg_ir_model::{AssocItemId, FunctionRef, ImplRef, ItemOwner, TraitDefRef, TypeDefRef};
-use rg_semantic_ir::{CrateItemQuery, ItemLookupIndex, ItemStoreSource};
+use rg_semantic_ir::ItemStoreSource;
 use rg_std::UniqueVec;
 
-use crate::{Autoderef, AutoderefMode, ImplMatcher, ItemPathQuery, ReferencePeelingCandidates, Ty};
+use crate::{Autoderef, AutoderefMode, ImplMatcher, ReferencePeelingCandidates, Ty, TyContext};
 
 /// Ref-level implementation lookup shared by view and analysis adapters.
 pub struct ImplementationQuery<'query, D, I> {
-    item_paths: ItemPathQuery<'query, D, I>,
-    crate_items: CrateItemQuery<'query, D, I>,
-    lookup_index: &'query ItemLookupIndex,
+    context: TyContext<'query, D, I>,
 }
 
 impl<'query, D, I> ImplementationQuery<'query, D, I>
@@ -23,17 +21,9 @@ where
     D: DefMapSource + Clone,
     I: ItemStoreSource<'query, Error = D::Error> + Clone,
 {
-    /// Creates an implementation query over a target-scoped receiver lookup index.
-    pub fn with_index(
-        item_paths: ItemPathQuery<'query, D, I>,
-        crate_items: CrateItemQuery<'query, D, I>,
-        lookup_index: &'query ItemLookupIndex,
-    ) -> Self {
-        Self {
-            item_paths,
-            crate_items,
-            lookup_index,
-        }
+    /// Creates implementation lookup in one crate-scoped type-query environment.
+    pub fn new(context: TyContext<'query, D, I>) -> Self {
+        Self { context }
     }
 
     /// Returns impl blocks for all nominal type definitions reachable through reference peeling.
@@ -51,12 +41,12 @@ where
 
     /// Returns impl blocks whose resolved self type mentions this nominal type definition.
     pub fn impls_for_type_def(&self, ty: TypeDefRef) -> Result<UniqueVec<ImplRef>, D::Error> {
-        Ok(self.lookup_index.impls_for_type(ty))
+        Ok(self.context.lookup_index().impls_for_type(ty))
     }
 
     /// Returns impl blocks that resolve to the requested trait.
     pub fn impls_for_trait(&self, trait_ref: TraitDefRef) -> Result<UniqueVec<ImplRef>, D::Error> {
-        Ok(self.lookup_index.impls_for_trait(trait_ref))
+        Ok(self.context.lookup_index().impls_for_trait(trait_ref))
     }
 
     /// Returns concrete functions that implement or correspond to the selected function.
@@ -68,7 +58,7 @@ where
         function: FunctionRef,
         receiver_ty: Option<&Ty>,
     ) -> Result<UniqueVec<FunctionRef>, D::Error> {
-        let Some(data) = self.item_paths.items().function_data(function)? else {
+        let Some(data) = self.context.item_paths().items().function_data(function)? else {
             return Ok(UniqueVec::new());
         };
 
@@ -107,19 +97,16 @@ where
         method_name: &str,
         receiver_ty: &Ty,
     ) -> Result<UniqueVec<FunctionRef>, D::Error> {
-        let autoderef = Autoderef::with_index(
-            self.item_paths.clone(),
-            self.crate_items.clone(),
-            self.lookup_index,
-        );
-        let matcher = ImplMatcher::new(self.item_paths.clone(), self.crate_items.clone());
+        let autoderef = Autoderef::new(self.context.clone());
+        let matcher = ImplMatcher::new(self.context.clone());
         let mut functions = UniqueVec::new();
 
         for candidate in autoderef.candidates(AutoderefMode::MethodReceiver, receiver_ty) {
             let candidate = candidate?;
             for ty in candidate.ty().as_adts() {
                 let trait_impls = self
-                    .lookup_index
+                    .context
+                    .lookup_index()
                     .trait_impls_for_type(ty.def)
                     .cloned()
                     .unwrap_or_default();
@@ -165,7 +152,7 @@ where
         impl_ref: ImplRef,
         method_name: &str,
     ) -> Result<UniqueVec<FunctionRef>, D::Error> {
-        let Some(data) = self.item_paths.items().impl_data(impl_ref)? else {
+        let Some(data) = self.context.item_paths().items().impl_data(impl_ref)? else {
             return Ok(UniqueVec::new());
         };
 
@@ -178,7 +165,8 @@ where
                 origin: impl_ref.origin,
                 id,
             };
-            let Some(function_data) = self.item_paths.items().function_data(function)? else {
+            let Some(function_data) = self.context.item_paths().items().function_data(function)?
+            else {
                 continue;
             };
             if function_data.name.as_str() != method_name {

@@ -109,14 +109,14 @@ where
     ) -> Option<ItemId> {
         // Imports, modules, and unsupported syntax already did their def-map work. Item stores keep
         // declarations that carry signature facts or item identities for queries.
-        match &item.kind {
-            ItemKind::Const(const_item) => Some(ItemId::Const(self.lower_const(
+        let item_id = match &item.kind {
+            ItemKind::Const(const_item) => ItemId::Const(self.lower_const(
                 Some(local_def),
                 source,
                 ItemOwner::Module(owner),
                 item,
                 const_item,
-            ))),
+            )),
             ItemKind::Enum(enum_item) => {
                 let id = self.items.enums.alloc(EnumData {
                     local_def,
@@ -128,22 +128,18 @@ where
                     generics: enum_item.generics.clone(),
                     variants: enum_item.variants.clone(),
                 });
-                Some(ItemId::Enum(id))
+                ItemId::Enum(id)
             }
-            ItemKind::Function(fn_def) => Some(ItemId::Function(self.lower_function(
+            ItemKind::Function(fn_def) => ItemId::Function(self.lower_function(
                 Some(local_def),
                 source,
                 ItemOwner::Module(owner),
                 item,
                 fn_def,
-            ))),
-            ItemKind::Static(static_item) => Some(ItemId::Static(self.lower_static(
-                local_def,
-                source,
-                owner,
-                item,
-                static_item,
-            ))),
+            )),
+            ItemKind::Static(static_item) => {
+                ItemId::Static(self.lower_static(local_def, source, owner, item, static_item))
+            }
             ItemKind::Struct(struct_item) => {
                 let id = self.items.structs.alloc(StructData {
                     local_def,
@@ -155,18 +151,18 @@ where
                     generics: struct_item.generics.clone(),
                     fields: struct_item.fields.clone(),
                 });
-                Some(ItemId::Struct(id))
+                ItemId::Struct(id)
             }
-            ItemKind::Trait(trait_item) => Some(ItemId::Trait(
-                self.lower_trait(local_def, source, owner, item, trait_item),
-            )),
-            ItemKind::TypeAlias(type_alias) => Some(ItemId::TypeAlias(self.lower_type_alias(
+            ItemKind::Trait(trait_item) => {
+                ItemId::Trait(self.lower_trait(local_def, source, owner, item, trait_item))
+            }
+            ItemKind::TypeAlias(type_alias) => ItemId::TypeAlias(self.lower_type_alias(
                 Some(local_def),
                 source,
                 ItemOwner::Module(owner),
                 item,
                 type_alias,
-            ))),
+            )),
             ItemKind::Union(union_item) => {
                 let id = self.items.unions.alloc(UnionData {
                     local_def,
@@ -178,10 +174,12 @@ where
                     generics: union_item.generics.clone(),
                     fields: union_item.fields.clone(),
                 });
-                Some(ItemId::Union(id))
+                ItemId::Union(id)
             }
-            _ => None,
-        }
+            _ => return None,
+        };
+        self.items.register_lang_item(item.lang_item, item_id);
+        Some(item_id)
     }
 
     fn lower_trait(
@@ -253,24 +251,29 @@ where
                 continue;
             };
 
-            match &item.kind {
+            let semantic_item = match &item.kind {
                 ItemKind::Const(const_item) => {
-                    assoc_items.push(AssocItemId::Const(
-                        self.lower_const(None, source, owner, item, const_item),
-                    ));
+                    ItemId::Const(self.lower_const(None, source, owner, item, const_item))
                 }
                 ItemKind::Function(fn_def) => {
-                    assoc_items.push(AssocItemId::Function(
-                        self.lower_function(None, source, owner, item, fn_def),
-                    ));
+                    ItemId::Function(self.lower_function(None, source, owner, item, fn_def))
                 }
                 ItemKind::TypeAlias(type_alias) => {
-                    assoc_items.push(AssocItemId::TypeAlias(
-                        self.lower_type_alias(None, source, owner, item, type_alias),
-                    ));
+                    ItemId::TypeAlias(self.lower_type_alias(None, source, owner, item, type_alias))
                 }
-                _ => {}
-            }
+                _ => continue,
+            };
+            self.items.register_lang_item(item.lang_item, semantic_item);
+            assoc_items.push(match semantic_item {
+                ItemId::Const(id) => AssocItemId::Const(id),
+                ItemId::Function(id) => AssocItemId::Function(id),
+                ItemId::TypeAlias(id) => AssocItemId::TypeAlias(id),
+                ItemId::Struct(_)
+                | ItemId::Union(_)
+                | ItemId::Enum(_)
+                | ItemId::Trait(_)
+                | ItemId::Static(_) => unreachable!("associated item lowering chose module item"),
+            });
         }
 
         assoc_items

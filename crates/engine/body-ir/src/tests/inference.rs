@@ -1,6 +1,6 @@
 use expect_test::expect;
 
-use super::utils::check_project_body_ir;
+use super::utils::{check_project_body_ir, check_project_body_ir_with_fake_sysroot};
 
 #[test]
 fn records_simple_assignment_inference_facts() {
@@ -321,51 +321,12 @@ where
 
 #[test]
 fn infers_collect_destination_from_selected_trait_obligations() {
-    check_project_body_ir(
+    check_project_body_ir_with_fake_sysroot(
         r#"
 //- /Cargo.toml
 [workspace]
-members = ["core", "storage", "app"]
+members = ["storage", "app"]
 resolver = "3"
-
-//- /core/Cargo.toml
-[package]
-name = "fake_core"
-version = "0.1.0"
-edition = "2024"
-
-//- /core/src/lib.rs
-pub mod iter {
-    pub trait FromIterator<A> {}
-
-    pub trait Iterator {
-        type Item;
-
-        fn collect<B>(self) -> B
-        where
-            B: FromIterator<Self::Item>;
-    }
-}
-
-pub mod slice {
-    pub struct Iter<'a, T>(&'a T);
-}
-
-pub struct Vec<T> {
-    value: T,
-}
-
-impl<T> iter::FromIterator<T> for Vec<T> {}
-
-impl<T> [T] {
-    pub fn iter(&self) -> slice::Iter<'_, T> {
-        missing()
-    }
-}
-
-impl<'a, T> iter::Iterator for slice::Iter<'a, T> {
-    type Item = &'a T;
-}
 
 //- /storage/Cargo.toml
 [package]
@@ -391,11 +352,9 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-core = { package = "fake_core", path = "../core" }
 storage = { path = "../storage" }
 
 //- /app/src/lib.rs
-use core::Vec;
 use storage::DefMap;
 
 pub fn explicit_destination(def_map: &DefMap) {
@@ -409,69 +368,67 @@ pub fn expected_destination(def_map: &DefMap) {
 }
 "#,
         expect![[r#"
+            package alloc
+
+            alloc [lib]
+            skipped
+
             package app
 
             app [lib]
-            body b0 fn app[lib]::crate::explicit_destination @ 4:1-7:2
+            body b0 fn app[lib]::crate::explicit_destination @ 3:1-6:2
             scopes
             - s0 parent <none>: v0
             - s1 parent s0: v1
             bindings
-            - v0 param def_map `def_map`: &DefMap => &nominal struct storage[lib]::crate::DefMap @ 4:29-4:36
-            - v1 let imports `imports` => nominal struct fake_core[lib]::crate::Vec<&nominal struct storage[lib]::crate::ImportData> @ 5:9-5:16
+            - v0 param def_map `def_map`: &DefMap => &nominal struct storage[lib]::crate::DefMap @ 3:29-3:36
+            - v1 let imports `imports` => nominal struct alloc[lib]::crate::vec::Vec<&nominal struct storage[lib]::crate::ImportData, nominal struct alloc[lib]::crate::vec::Global> @ 4:9-4:16
             body
-            expr e5 block s1 => () @ 4:47-7:2
-              stmt s0 let v1 @ 5:5-5:64
+            expr e5 block s1 => () @ 3:47-6:2
+              stmt s0 let v1 @ 4:5-4:64
                 initializer
-                  expr e3 method_call collect<Vec<_>> -> fn trait fake_core[lib]::crate::iter::Iterator::collect => nominal struct fake_core[lib]::crate::Vec<&nominal struct storage[lib]::crate::ImportData> @ 5:19-5:63
+                  expr e3 method_call collect<Vec<_>> -> fn trait core[lib]::crate::iter::Iterator::collect => nominal struct alloc[lib]::crate::vec::Vec<&nominal struct storage[lib]::crate::ImportData, nominal struct alloc[lib]::crate::vec::Global> @ 4:19-4:63
                     receiver
-                      expr e2 method_call iter -> fn impl [T]::iter => nominal struct fake_core[lib]::crate::slice::Iter<'_, nominal struct storage[lib]::crate::ImportData> @ 5:19-5:43
+                      expr e2 method_call iter -> fn impl [T]::iter => nominal struct core[lib]::crate::slice::Iter<'_, nominal struct storage[lib]::crate::ImportData> @ 4:19-4:43
                         receiver
-                          expr e1 method_call imports -> fn impl DefMap::imports => &[nominal struct storage[lib]::crate::ImportData] @ 5:19-5:36
+                          expr e1 method_call imports -> fn impl DefMap::imports => &[nominal struct storage[lib]::crate::ImportData] @ 4:19-4:36
                             receiver
-                              expr e0 path def_map -> local v0 => &nominal struct storage[lib]::crate::DefMap @ 5:19-5:26
-              stmt s1 expr; @ 6:5-6:13
-                expr e4 path imports -> local v1 => nominal struct fake_core[lib]::crate::Vec<&nominal struct storage[lib]::crate::ImportData> @ 6:5-6:12
+                              expr e0 path def_map -> local v0 => &nominal struct storage[lib]::crate::DefMap @ 4:19-4:26
+              stmt s1 expr; @ 5:5-5:13
+                expr e4 path imports -> local v1 => nominal struct alloc[lib]::crate::vec::Vec<&nominal struct storage[lib]::crate::ImportData, nominal struct alloc[lib]::crate::vec::Global> @ 5:5-5:12
 
 
-            body b1 fn app[lib]::crate::expected_destination @ 9:1-12:2
+            body b1 fn app[lib]::crate::expected_destination @ 8:1-11:2
             scopes
             - s0 parent <none>: v0
             - s1 parent s0: v1
             bindings
-            - v0 param def_map `def_map`: &DefMap => &nominal struct storage[lib]::crate::DefMap @ 9:29-9:36
-            - v1 let imports `imports`: Vec<_> => nominal struct fake_core[lib]::crate::Vec<&nominal struct storage[lib]::crate::ImportData> @ 10:9-10:16
+            - v0 param def_map `def_map`: &DefMap => &nominal struct storage[lib]::crate::DefMap @ 8:29-8:36
+            - v1 let imports `imports`: Vec<_> => nominal struct alloc[lib]::crate::vec::Vec<&nominal struct storage[lib]::crate::ImportData, nominal struct alloc[lib]::crate::vec::Global> @ 9:9-9:16
             body
-            expr e5 block s1 => () @ 9:47-12:2
-              stmt s0 let v1: Vec<_> @ 10:5-10:62
+            expr e5 block s1 => () @ 8:47-11:2
+              stmt s0 let v1: Vec<_> @ 9:5-9:62
                 initializer
-                  expr e3 method_call collect -> fn trait fake_core[lib]::crate::iter::Iterator::collect => nominal struct fake_core[lib]::crate::Vec<&nominal struct storage[lib]::crate::ImportData> @ 10:27-10:61
+                  expr e3 method_call collect -> fn trait core[lib]::crate::iter::Iterator::collect => nominal struct alloc[lib]::crate::vec::Vec<&nominal struct storage[lib]::crate::ImportData, nominal struct alloc[lib]::crate::vec::Global> @ 9:27-9:61
                     receiver
-                      expr e2 method_call iter -> fn impl [T]::iter => nominal struct fake_core[lib]::crate::slice::Iter<'_, nominal struct storage[lib]::crate::ImportData> @ 10:27-10:51
+                      expr e2 method_call iter -> fn impl [T]::iter => nominal struct core[lib]::crate::slice::Iter<'_, nominal struct storage[lib]::crate::ImportData> @ 9:27-9:51
                         receiver
-                          expr e1 method_call imports -> fn impl DefMap::imports => &[nominal struct storage[lib]::crate::ImportData] @ 10:27-10:44
+                          expr e1 method_call imports -> fn impl DefMap::imports => &[nominal struct storage[lib]::crate::ImportData] @ 9:27-9:44
                             receiver
-                              expr e0 path def_map -> local v0 => &nominal struct storage[lib]::crate::DefMap @ 10:27-10:34
-              stmt s1 expr; @ 11:5-11:13
-                expr e4 path imports -> local v1 => nominal struct fake_core[lib]::crate::Vec<&nominal struct storage[lib]::crate::ImportData> @ 11:5-11:12
+                              expr e0 path def_map -> local v0 => &nominal struct storage[lib]::crate::DefMap @ 9:27-9:34
+              stmt s1 expr; @ 10:5-10:13
+                expr e4 path imports -> local v1 => nominal struct alloc[lib]::crate::vec::Vec<&nominal struct storage[lib]::crate::ImportData, nominal struct alloc[lib]::crate::vec::Global> @ 10:5-10:12
 
 
-            package fake_core
+            package core
 
-            fake_core [lib]
-            body b0 fn impl [T]::iter @ 24:5-26:6
-            scopes
-            - s0 parent <none>: v0
-            - s1 parent s0: <none>
-            bindings
-            - v0 self_param self `&self` => &[param T] @ 24:17-24:22
-            body
-            expr e2 block s1 => nominal struct fake_core[lib]::crate::slice::Iter<'_, param T> @ 24:46-26:6
-              tail
-                expr e1 call => nominal struct fake_core[lib]::crate::slice::Iter<'_, param T> @ 25:9-25:18
-                  callee
-                    expr e0 path missing => <unknown> @ 25:9-25:16
+            core [lib]
+            skipped
 
+            package std
+
+            std [lib]
+            skipped
 
             package storage
 

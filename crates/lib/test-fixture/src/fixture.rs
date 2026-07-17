@@ -297,8 +297,8 @@ impl CrateFixture {
     ///
     /// The fake sysroot is intentionally incomplete. It focuses on APIs whose standard-library
     /// shape matters for name resolution and type inference tests: edition prelude wiring,
-    /// `core::iter`, `Option`, `Result`, slices, primitive `str`, common builtin and formatting
-    /// macros, `alloc::vec::Vec`, and `alloc::string::String`. Inspect
+    /// `core::iter`, `Option`, `Result`, array and slice iteration, primitive `str`, common builtin
+    /// and formatting macros, `alloc::vec::Vec`, and `alloc::string::String`. Inspect
     /// `crates/lib/test-fixture/assets/fake_sysroot` for the exact available API surface before
     /// relying on a standard-library item in a test.
     ///

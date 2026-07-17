@@ -8,6 +8,7 @@
 mod context;
 mod data;
 mod generics;
+mod lang_item;
 mod lookup_index;
 mod lowering;
 mod query;

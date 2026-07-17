@@ -1,6 +1,8 @@
+use rg_def_map::DefMapSource;
 use rg_ir_model::BodyRef;
-use rg_semantic_ir::ItemLookupIndex;
-use rg_ty::TraitSelectionCache;
+use rg_package_store::PackageStoreError;
+use rg_semantic_ir::{ItemLookupIndex, ItemStoreSource};
+use rg_ty::TraitSelectionSession;
 
 use crate::{ir::BodyQueryView, resolution::BodyResolutionContext};
 
@@ -14,7 +16,7 @@ pub(super) struct BodyResolutionEnv<'query, D, I> {
     item_stores: &'query I,
     semantic_index: &'query ItemLookupIndex,
     body_ref: BodyRef,
-    trait_selection_cache: &'query TraitSelectionCache,
+    trait_selection: &'query TraitSelectionSession,
 }
 
 impl<D, I> Clone for BodyResolutionEnv<'_, D, I> {
@@ -25,20 +27,24 @@ impl<D, I> Clone for BodyResolutionEnv<'_, D, I> {
 
 impl<D, I> Copy for BodyResolutionEnv<'_, D, I> {}
 
-impl<'query, D, I> BodyResolutionEnv<'query, D, I> {
+impl<'query, D, I> BodyResolutionEnv<'query, D, I>
+where
+    for<'source> &'source D: DefMapSource<Error = PackageStoreError>,
+    for<'source> &'source I: ItemStoreSource<'source, Error = PackageStoreError>,
+{
     pub(super) fn new(
         def_maps: &'query D,
         item_stores: &'query I,
         semantic_index: &'query ItemLookupIndex,
         body_ref: BodyRef,
-        trait_selection_cache: &'query TraitSelectionCache,
+        trait_selection: &'query TraitSelectionSession,
     ) -> Self {
         Self {
             def_maps,
             item_stores,
             semantic_index,
             body_ref,
-            trait_selection_cache,
+            trait_selection,
         }
     }
 
@@ -56,7 +62,7 @@ impl<'query, D, I> BodyResolutionEnv<'query, D, I> {
             self.body_ref,
             body,
             self.semantic_index,
+            self.trait_selection.clone(),
         )
-        .with_trait_selection_cache(self.trait_selection_cache)
     }
 }

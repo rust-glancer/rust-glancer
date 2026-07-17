@@ -11,11 +11,9 @@ use rg_ir_model::{
     BodyRef, CrateRef, EnumVariantRef, FieldRef, FunctionRef, ItemOwner, ScopeId, TypeDefId,
     TypePathResolution,
 };
-use rg_semantic_ir::{
-    CrateItemQuery, EnumVariantData, FieldData, FunctionData, ItemLookupIndex, ItemStoreQuery,
-};
+use rg_semantic_ir::{EnumVariantData, FieldData, FunctionData, ItemLookupIndex, ItemStoreQuery};
 use rg_ty::MemberMethodOrigin;
-use rg_ty::{ItemPathQuery, MemberMethodCandidateRef, MemberQuery, Ty};
+use rg_ty::{MemberMethodCandidateRef, MemberQuery, Ty, TyContext};
 
 use crate::{IndexedViewDb, SymbolKind, body::BodyResolutionView, item::path::PathView};
 
@@ -175,11 +173,12 @@ impl<'a, 'db> MemberView<'a, 'db> {
         let Some(semantic_index) = self.semantic_index(use_site)? else {
             return Ok(fields);
         };
-        let member_query = MemberQuery::with_index(
-            ItemPathQuery::new(self.db, self.db),
-            CrateItemQuery::new(self.db, self.db, use_site),
+        let member_query = MemberQuery::new(TyContext::new(
+            self.db,
+            self.db,
             semantic_index,
-        );
+            self.db.trait_selection(use_site),
+        ));
         for field_ref in member_query.fields_for_ty(ty)? {
             let Some(field) = self.field(field_ref)? else {
                 continue;
@@ -206,11 +205,12 @@ impl<'a, 'db> MemberView<'a, 'db> {
         let Some(semantic_index) = self.semantic_index(body.crate_ref)? else {
             return Ok(fields);
         };
-        let member_query = MemberQuery::with_index(
-            ItemPathQuery::new(self.db, self.db),
-            CrateItemQuery::new(self.db, self.db, body.crate_ref),
+        let member_query = MemberQuery::new(TyContext::new(
+            self.db,
+            self.db,
             semantic_index,
-        );
+            self.db.trait_selection(body.crate_ref),
+        ));
         if let TypePathResolution::SelfType(ty) | TypePathResolution::TypeDef(ty) = resolution {
             for field_ref in member_query.fields_for_type_def(ty)? {
                 let Some(field) = self.field(field_ref)? else {
@@ -313,11 +313,12 @@ impl<'a, 'db> MemberView<'a, 'db> {
         let Some(semantic_index) = self.semantic_index(use_site)? else {
             return Ok(Vec::new());
         };
-        let member_query = MemberQuery::with_index(
-            ItemPathQuery::new(self.db, self.db),
-            CrateItemQuery::new(self.db, self.db, use_site),
+        let member_query = MemberQuery::new(TyContext::new(
+            self.db,
+            self.db,
             semantic_index,
-        );
+            self.db.trait_selection(use_site),
+        ));
         Ok(member_query.method_candidates_for_ty(ty)?)
     }
 

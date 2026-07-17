@@ -340,6 +340,16 @@ impl<'lower> ChalkLowerer<'lower> {
         Some(ProjectionAliasLowering { alias, variables })
     }
 
+    /// Lower the selected impl arguments in the same existential environment as its projection.
+    pub(super) fn selected_impl_args(
+        &self,
+        args: &[GenericArg],
+        table: &InferenceTable,
+        projection_vars: &ProjectionVariableEnv,
+    ) -> Option<ChalkSubstitution<RgChalkInterner>> {
+        self.lower_args(args, Some(table), Some(projection_vars))
+    }
+
     pub(super) fn candidate_where_goals(
         &self,
         clauses: &[Clause],

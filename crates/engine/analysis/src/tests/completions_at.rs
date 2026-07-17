@@ -1,6 +1,9 @@
 use expect_test::expect;
 
-use super::utils::{AnalysisQuery, check_analysis_queries, check_analysis_queries_with_sysroot};
+use super::utils::{
+    AnalysisQuery, check_analysis_queries, check_analysis_queries_with_fake_sysroot,
+    check_analysis_queries_with_sysroot,
+};
 
 #[test]
 fn completes_inherent_and_trait_methods_at_dot() {
@@ -1769,34 +1772,18 @@ pub fn use_it() {
 
 #[test]
 fn completes_through_core_deref() {
-    check_analysis_queries(
+    check_analysis_queries_with_fake_sysroot(
         r#"
 //- /Cargo.toml
 [workspace]
-members = ["core", "app"]
+members = ["app"]
 resolver = "3"
-
-//- /core/Cargo.toml
-[package]
-name = "fake_core"
-version = "0.1.0"
-edition = "2024"
-
-//- /core/src/lib.rs
-pub mod ops {
-    pub trait Deref {
-        type Target;
-    }
-}
 
 //- /app/Cargo.toml
 [package]
 name = "app"
 version = "0.1.0"
 edition = "2024"
-
-[dependencies]
-core = { package = "fake_core", path = "../core" }
 
 //- /app/src/lib.rs
 pub struct User {

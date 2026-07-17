@@ -18,7 +18,7 @@ pub use self::{
         Documentation, EnumItem, EnumVariantItem, ExternCrateItem, FieldItem, FieldKey, FieldList,
         FromAst, FunctionItem, FunctionQualifiers, GenericArg, GenericParams, ImplItem,
         ImplItemContext, ImportAlias, InnerDocs, ItemKind, ItemNode, ItemTag, ItemTreeId,
-        ItemTreeRef, MacroCallContext, MacroCallItem, MacroDefAst, MacroDefContext,
+        ItemTreeRef, LangItem, MacroCallContext, MacroCallItem, MacroDefAst, MacroDefContext,
         MacroDefinitionAttrs, MacroDefinitionItem, MacroRulesAst, MacroRulesContext, MacroUseAttr,
         MacroUseSelector, MaybeFromAst, ModuleItem, ModuleSource, OuterDocs, ParamItem, ParamKind,
         StaticItem, StructItem, TraitItem, TraitItemContext, TypeAliasItem, TypeBound,

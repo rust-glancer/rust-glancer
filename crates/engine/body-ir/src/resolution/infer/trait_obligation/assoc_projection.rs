@@ -118,7 +118,7 @@ where
                 let alias_ty = Ty::Alias(AliasTy::Projection(alias.clone()));
                 let (shared_ty, table) = self
                     .context
-                    .trait_selection_with_cache(inference.trait_selection_cache())
+                    .trait_selection()
                     .normalize_ty(&alias_ty, &inference.table)?;
                 inference.table = table;
                 if shared_ty != alias_ty {
@@ -147,8 +147,7 @@ where
                 };
 
                 active.push(alias.clone());
-                let projected =
-                    self.project_selected_impl_assoc(inference, &goal, data.name.as_str());
+                let projected = self.project_body_impl_assoc(inference, &goal, data.name.as_str());
                 let normalized = match projected? {
                     BodyAssocProjection::Projected(projected) => {
                         self.normalize_ty_inner(inference, &projected, active)?
@@ -187,24 +186,24 @@ where
             .collect()
     }
 
-    /// Select one impl without asking Chalk to invent body facts, then solve its canonical clauses
-    /// against a trial copy of the active body inference state.
-    fn project_selected_impl_assoc(
+    /// Probe one impl candidate, then solve its canonical clauses against a trial copy of the
+    /// active body inference state instead of asking Chalk to invent body facts.
+    fn project_body_impl_assoc(
         &self,
         inference: &mut BodyInferenceCtx,
         goal: &TraitGoal,
         assoc_name: &str,
     ) -> Result<BodyAssocProjection, PackageStoreError> {
-        let Some(selected) = self.select_impl_for_body(inference, goal)? else {
+        let Some(selected) = self.probe_impl_for_body(inference, goal)? else {
             return Ok(BodyAssocProjection::Unavailable);
         };
-        let impl_ref = selected.selection.trait_impl.impl_ref;
+        let impl_ref = selected.candidate.trait_impl.impl_ref;
 
         let mut trial = inference.clone();
-        trial.table = selected.selection.table;
+        trial.table = selected.candidate.table;
         let goals = Self::trait_goals_from_clauses(
             &selected.header.clauses,
-            selected.selection.subst.as_substitution(),
+            selected.candidate.subst.as_substitution(),
         );
         match self.evaluate_trait_goals(&mut trial, goals)? {
             BodyTraitGoalOutcome::Solved => {}
@@ -234,7 +233,7 @@ where
             let Some(ty) = self.context.signatures().type_alias_ty(alias)? else {
                 return Ok(BodyAssocProjection::Unavailable);
             };
-            let ty = selected.selection.subst.as_substitution().apply(&ty);
+            let ty = selected.candidate.subst.as_substitution().apply(&ty);
             let ty = trial.table.canonicalize(&ty);
             *inference = trial;
             return Ok(BodyAssocProjection::Projected(ty));

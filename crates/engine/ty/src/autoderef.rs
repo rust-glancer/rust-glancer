@@ -1,4 +1,4 @@
-//! Autoderef candidate generation over item/path query providers.
+//! Autoderef candidate generation in one crate-scoped type-query context.
 //!
 //! This is the adjustment layer between expression types and the contexts that can look through
 //! references or trait-backed `Deref`. Contexts that only want `&T` transparency use
@@ -7,9 +7,9 @@
 use std::{borrow::Cow, collections::VecDeque};
 
 use rg_def_map::DefMapSource;
-use rg_semantic_ir::{CrateItemQuery, ItemLookupIndex, ItemStoreSource};
+use rg_semantic_ir::ItemStoreSource;
 
-use crate::{ItemPathQuery, Mutability, TraitSelectionCache, Ty, deref::DerefResolver};
+use crate::{Mutability, Ty, TyContext, deref::DerefResolver};
 use rg_std::UniqueVec;
 
 const AUTODEREF_LIMIT: usize = 8;
@@ -17,10 +17,7 @@ const AUTODEREF_LIMIT: usize = 8;
 /// Computes adjusted types for contexts that may dereference a receiver.
 #[derive(Clone)]
 pub struct Autoderef<'query, D, I> {
-    item_paths: ItemPathQuery<'query, D, I>,
-    crate_items: CrateItemQuery<'query, D, I>,
-    lookup_index: &'query ItemLookupIndex,
-    trait_selection_cache: TraitSelectionCache,
+    context: TyContext<'query, D, I>,
 }
 
 impl<'query, D, I> Autoderef<'query, D, I>
@@ -28,24 +25,9 @@ where
     D: DefMapSource + Clone,
     I: ItemStoreSource<'query, Error = D::Error> + Clone,
 {
-    /// Creates an autoderef engine over a target-scoped receiver lookup index.
-    pub fn with_index(
-        item_paths: ItemPathQuery<'query, D, I>,
-        crate_items: CrateItemQuery<'query, D, I>,
-        lookup_index: &'query ItemLookupIndex,
-    ) -> Self {
-        Self {
-            item_paths,
-            crate_items,
-            lookup_index,
-            trait_selection_cache: TraitSelectionCache::default(),
-        }
-    }
-
-    /// Reuse trait-selection state across receiver adjustments in one visibility context.
-    pub fn with_cache(mut self, cache: TraitSelectionCache) -> Self {
-        self.trait_selection_cache = cache;
-        self
+    /// Creates an autoderef engine in one crate-scoped type-query environment.
+    pub fn new(context: TyContext<'query, D, I>) -> Self {
+        Self { context }
     }
 
     /// Returns candidate types in lookup order for the requested adjustment context.
@@ -55,9 +37,7 @@ where
         ty: &'ty Ty,
     ) -> AutoderefCandidates<'query, 'ty, D, I> {
         let kind = match mode {
-            AutoderefMode::PeelReferences
-            | AutoderefMode::FieldLookup
-            | AutoderefMode::MethodReceiver => {
+            AutoderefMode::FieldLookup | AutoderefMode::MethodReceiver => {
                 let mut pending = VecDeque::new();
                 pending.push_back(PendingAutoderefCandidate {
                     ty: PendingAutoderefTy::Borrowed(ty),
@@ -79,24 +59,13 @@ where
     }
 
     fn deref_targets(&self, ty: &Ty) -> Result<UniqueVec<Ty>, D::Error> {
-        DerefResolver::new(
-            self.item_paths.clone(),
-            self.crate_items.clone(),
-            self.lookup_index,
-            self.trait_selection_cache.clone(),
-        )
-        .targets_for_ty(ty)
+        DerefResolver::new(self.context.clone()).targets_for_ty(ty)
     }
 }
 
 /// Describes which adjustment rule the caller wants.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AutoderefMode {
-    /// Peel only explicit `&T` / `&mut T` wrappers.
-    ///
-    /// This mode is for contexts that want reference transparency without receiver adjustment,
-    /// such as inferred type navigation or pattern propagation.
-    PeelReferences,
     /// Candidate types used while resolving a field receiver.
     FieldLookup,
     /// Candidate types used while resolving a method receiver.

@@ -17,6 +17,7 @@ pub use self::{
         UsePathSegmentKind,
     },
     kind::{ItemKind, ItemTag},
+    lang_item::LangItem,
     macro_item::{
         BuiltinMacroItem, BuiltinMacroKind, CfgAttrMacroUse, CfgSelectArmItem, CfgSelectArmPayload,
         MacroCallItem, MacroDefinitionAttrs, MacroDefinitionItem, MacroUseAttr, MacroUseSelector,
@@ -34,6 +35,7 @@ mod decl;
 mod docs;
 mod import;
 mod kind;
+mod lang_item;
 mod macro_item;
 mod module;
 mod primitive;
@@ -75,6 +77,8 @@ pub struct ItemNode {
     pub visibility: VisibilityLevel,
     /// Target-dependent cfg gates attached to the item.
     pub cfg: CfgExpr,
+    /// Compiler identity lowered from `#[lang = "..."]`, when analysis understands that identity.
+    pub lang_item: Option<LangItem>,
     /// User-facing documentation lowered from doc comments or `#[doc = "..."]`.
     pub docs: Option<Documentation>,
     /// File where this item is declared.
@@ -113,6 +117,7 @@ impl ItemNode {
             name_span,
             visibility,
             cfg: CfgExpr::default(),
+            lang_item: None,
             docs,
             file_id,
             span,

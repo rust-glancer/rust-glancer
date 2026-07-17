@@ -3,13 +3,14 @@ use std::fmt::Write as _;
 use expect_test::Expect;
 
 use crate::ItemResolutionQuery;
-use crate::{CrateItemQuery, ItemStore, ItemStoreQuery};
+use crate::{CrateItemQuery, ItemLookupIndex, ItemStore, ItemStoreQuery};
 use crate::{SemanticIrReadTxn, testonly::SemanticIrFixture};
 use rg_ir_model::{CrateId, CrateRef, DefMapRef, ModuleId, ModuleRef, TypeAliasId};
 use rg_ir_model::{Path, PathSegment};
 use rg_item_tree::{FieldItem, FieldList, ParamKind, VisibilityLevel};
 use rg_package_store::PackageLoader;
 use rg_parse::{CargoTarget, Package, ParseDb};
+use rg_std::UniqueVec;
 use rg_workspace::TargetKind;
 
 use rg_ir_model::{
@@ -159,6 +160,8 @@ impl<'a> ProjectSemanticQuerySnapshot<'a> {
             .semantic_ir_db()
             .read_txn(PackageLoader::resident_only("resident semantic IR fixture"));
         let crate_items = CrateItemQuery::new(&def_map_txn, &semantic_ir_txn, crate_ref);
+        let lookup_index = ItemLookupIndex::build_from(&crate_items)
+            .expect("fixture semantic lookup index should build");
         let type_defs = ItemResolutionQuery::new(&def_map_txn, &semantic_ir_txn)
             .type_defs_for_path(
                 ModuleRef {
@@ -181,6 +184,27 @@ impl<'a> ProjectSemanticQuerySnapshot<'a> {
         type_defs
             .into_iter()
             .map(|ty| {
+                let trait_impls = lookup_index
+                    .trait_impls_for_type(ty)
+                    .cloned()
+                    .unwrap_or_default();
+                let mut traits = UniqueVec::new();
+                let mut trait_functions = UniqueVec::new();
+                let mut trait_impl_functions = UniqueVec::new();
+                for trait_impl in &trait_impls {
+                    traits.push(trait_impl.trait_ref);
+                    if let Some(functions) = lookup_index.trait_functions(trait_impl.trait_ref) {
+                        trait_functions.extend(functions.iter().copied());
+                    }
+                    if let Some(data) = crate_items
+                        .items()
+                        .impl_data(trait_impl.impl_ref)
+                        .expect("fixture semantic query should read trait impl")
+                    {
+                        trait_impl_functions.extend(data.functions());
+                    }
+                }
+
                 let mut dump = format!(
                     "query {} [{}] {} resolves {} -> {}",
                     query.package_name,
@@ -192,9 +216,8 @@ impl<'a> ProjectSemanticQuerySnapshot<'a> {
                 self.render_query_section(
                     &mut dump,
                     "impls",
-                    crate_items
+                    lookup_index
                         .impls_for_type(ty)
-                        .expect("fixture semantic query should find impls for type")
                         .into_iter()
                         .map(|impl_ref| self.render_impl_ref(&semantic_ir_txn, impl_ref))
                         .collect(),
@@ -202,9 +225,7 @@ impl<'a> ProjectSemanticQuerySnapshot<'a> {
                 self.render_query_section(
                     &mut dump,
                     "trait impls",
-                    crate_items
-                        .trait_impls_for_type(ty)
-                        .expect("fixture semantic query should find trait impls for type")
+                    trait_impls
                         .into_iter()
                         .map(|trait_impl| {
                             format!(
@@ -218,9 +239,7 @@ impl<'a> ProjectSemanticQuerySnapshot<'a> {
                 self.render_query_section(
                     &mut dump,
                     "traits",
-                    crate_items
-                        .traits_for_type(ty)
-                        .expect("fixture semantic query should find traits for type")
+                    traits
                         .into_iter()
                         .map(|trait_ref| self.render_trait_ref(&semantic_ir_txn, trait_ref))
                         .collect(),
@@ -228,8 +247,8 @@ impl<'a> ProjectSemanticQuerySnapshot<'a> {
                 self.render_query_section(
                     &mut dump,
                     "inherent functions",
-                    crate_items
-                        .inherent_functions_for_type(ty)
+                    lookup_index
+                        .inherent_functions_for_type(crate_items.items(), ty)
                         .expect("fixture semantic query should find inherent functions for type")
                         .into_iter()
                         .map(|function_ref| {
@@ -240,9 +259,7 @@ impl<'a> ProjectSemanticQuerySnapshot<'a> {
                 self.render_query_section(
                     &mut dump,
                     "trait functions",
-                    crate_items
-                        .trait_functions_for_type(ty)
-                        .expect("fixture semantic query should find trait functions for type")
+                    trait_functions
                         .into_iter()
                         .map(|function_ref| {
                             self.render_function_ref(&semantic_ir_txn, function_ref)
@@ -252,9 +269,7 @@ impl<'a> ProjectSemanticQuerySnapshot<'a> {
                 self.render_query_section(
                     &mut dump,
                     "trait impl functions",
-                    crate_items
-                        .trait_impl_functions_for_type(ty)
-                        .expect("fixture semantic query should find trait impl functions for type")
+                    trait_impl_functions
                         .into_iter()
                         .map(|function_ref| {
                             self.render_function_ref(&semantic_ir_txn, function_ref)

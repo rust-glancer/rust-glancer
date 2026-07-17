@@ -2,7 +2,6 @@ use expect_test::expect;
 
 use super::utils::{
     AnalysisQuery, check_analysis_queries, check_analysis_queries_with_fake_sysroot,
-    check_analysis_queries_with_sysroot,
 };
 
 #[test]
@@ -263,34 +262,18 @@ pub fn use_it(mut user: User, value: u8) {
 
 #[test]
 fn autoderefs_core_deref_for_member_lookup_and_explicit_deref() {
-    check_analysis_queries(
+    check_analysis_queries_with_fake_sysroot(
         r#"
 //- /Cargo.toml
 [workspace]
-members = ["core", "app"]
+members = ["app"]
 resolver = "3"
-
-//- /core/Cargo.toml
-[package]
-name = "fake_core"
-version = "0.1.0"
-edition = "2024"
-
-//- /core/src/lib.rs
-pub mod ops {
-    pub trait Deref {
-        type Target;
-    }
-}
 
 //- /app/Cargo.toml
 [package]
 name = "app"
 version = "0.1.0"
 edition = "2024"
-
-[dependencies]
-core = { package = "fake_core", path = "../core" }
 
 //- /app/src/lib.rs
 pub struct Id;
@@ -344,24 +327,26 @@ pub fn use_it(wrapper: Wrapper<User>, tuple_wrapper: Wrapper<(Id, Label)>) {
 }
 
 #[test]
-fn resolves_canonical_deref_through_absolute_core_path() {
+fn identifies_deref_by_language_item_instead_of_path_or_name() {
     check_analysis_queries(
         r#"
 //- /Cargo.toml
 [workspace]
-members = ["core", "app"]
+members = ["runtime", "app"]
 resolver = "3"
 
-//- /core/Cargo.toml
+//- /runtime/Cargo.toml
 [package]
-name = "fake_core"
+name = "fake_runtime"
 version = "0.1.0"
 edition = "2024"
 
-//- /core/src/lib.rs
-pub mod ops {
-    pub trait Deref {
-        type Target;
+//- /runtime/src/lib.rs
+pub mod magic {
+    #[lang = "deref"]
+    pub trait Project {
+        #[lang = "deref_target"]
+        type Projected;
     }
 }
 
@@ -372,7 +357,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-core = { package = "fake_core", path = "../core" }
+runtime = { package = "fake_runtime", path = "../runtime" }
 
 //- /app/src/lib.rs
 mod core {
@@ -389,59 +374,56 @@ pub struct User {
     pub id: Id,
 }
 
-pub struct Wrapper<T> {
+pub struct LanguageWrapper<T> {
     inner: T,
 }
 
-impl<T> ::core::ops::Deref for Wrapper<T> {
+impl<T> runtime::magic::Project for LanguageWrapper<T> {
+    type Projected = T;
+}
+
+pub struct NameOnlyWrapper<T> {
+    inner: T,
+}
+
+impl<T> core::ops::Deref for NameOnlyWrapper<T> {
     type Target = T;
 }
 
-pub fn use_it(wrapper: Wrapper<User>) {
-    let _id = wrapper.i$type_shadowed_core$d;
+pub fn use_it(language: LanguageWrapper<User>, name_only: NameOnlyWrapper<User>) {
+    let _language_id = language.i$type_language_item$d;
+    let _name_only_id = name_only.i$type_name_only$d;
 }
 "#,
         &[
-            AnalysisQuery::ty("Deref ignores local core shadow", "type_shadowed_core")
+            AnalysisQuery::ty("Deref follows language identity", "type_language_item")
                 .in_lib("app"),
+            AnalysisQuery::ty("Deref ignores path and name alone", "type_name_only").in_lib("app"),
         ],
         expect![[r#"
-            Deref ignores local core shadow
+            Deref follows language identity
             - nominal struct app[lib]::crate::Id
+
+            Deref ignores path and name alone
+            - <unknown>
         "#]],
     );
 }
 
 #[test]
 fn rejects_uncertain_nested_generic_deref_impls_for_member_lookup() {
-    check_analysis_queries(
+    check_analysis_queries_with_fake_sysroot(
         r#"
 //- /Cargo.toml
 [workspace]
-members = ["core", "app"]
+members = ["app"]
 resolver = "3"
-
-//- /core/Cargo.toml
-[package]
-name = "fake_core"
-version = "0.1.0"
-edition = "2024"
-
-//- /core/src/lib.rs
-pub mod ops {
-    pub trait Deref {
-        type Target;
-    }
-}
 
 //- /app/Cargo.toml
 [package]
 name = "app"
 version = "0.1.0"
 edition = "2024"
-
-[dependencies]
-core = { package = "fake_core", path = "../core" }
 
 //- /app/src/lib.rs
 pub struct Id;
@@ -479,34 +461,18 @@ pub fn use_it(wrapper: Wrapper<Result<Foo>>) {
 
 #[test]
 fn rejects_defaulted_deref_impl_params_with_unproven_bounds() {
-    check_analysis_queries(
+    check_analysis_queries_with_fake_sysroot(
         r#"
 //- /Cargo.toml
 [workspace]
-members = ["core", "app"]
+members = ["app"]
 resolver = "3"
-
-//- /core/Cargo.toml
-[package]
-name = "fake_core"
-version = "0.1.0"
-edition = "2024"
-
-//- /core/src/lib.rs
-pub mod ops {
-    pub trait Deref {
-        type Target;
-    }
-}
 
 //- /app/Cargo.toml
 [package]
 name = "app"
 version = "0.1.0"
 edition = "2024"
-
-[dependencies]
-core = { package = "fake_core", path = "../core" }
 
 //- /app/src/lib.rs
 pub trait Allocator {}
@@ -544,34 +510,18 @@ pub fn use_it(wrapper: Wrapper) {
 
 #[test]
 fn aggregates_same_depth_deref_targets_before_resolving_members() {
-    check_analysis_queries(
+    check_analysis_queries_with_fake_sysroot(
         r#"
 //- /Cargo.toml
 [workspace]
-members = ["core", "app"]
+members = ["app"]
 resolver = "3"
-
-//- /core/Cargo.toml
-[package]
-name = "fake_core"
-version = "0.1.0"
-edition = "2024"
-
-//- /core/src/lib.rs
-pub mod ops {
-    pub trait Deref {
-        type Target;
-    }
-}
 
 //- /app/Cargo.toml
 [package]
 name = "app"
 version = "0.1.0"
 edition = "2024"
-
-[dependencies]
-core = { package = "fake_core", path = "../core" }
 
 //- /app/src/lib.rs
 pub struct UserId;
@@ -630,47 +580,18 @@ pub fn use_it(wrapper: Wrapper) {
 
 #[test]
 fn alternates_reference_and_trait_deref_for_member_lookup() {
-    check_analysis_queries(
+    check_analysis_queries_with_fake_sysroot(
         r#"
 //- /Cargo.toml
 [workspace]
-members = ["core", "std", "app"]
+members = ["app"]
 resolver = "3"
-
-//- /core/Cargo.toml
-[package]
-name = "fake_core"
-version = "0.1.0"
-edition = "2024"
-
-//- /core/src/lib.rs
-pub mod ops {
-    pub trait Deref {
-        type Target;
-    }
-}
-
-//- /std/Cargo.toml
-[package]
-name = "fake_std"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-core = { package = "fake_core", path = "../core" }
-
-//- /std/src/lib.rs
-pub use core::ops;
 
 //- /app/Cargo.toml
 [package]
 name = "app"
 version = "0.1.0"
 edition = "2024"
-
-[dependencies]
-core = { package = "fake_core", path = "../core" }
-std = { package = "fake_std", path = "../std" }
 
 //- /app/src/lib.rs
 pub struct Id;
@@ -1012,50 +933,18 @@ pub fn use_it(packages: &[Package], array: [Package; 3], array_ref: &[Package; 3
 
 #[test]
 fn propagates_for_loop_item_types_from_into_iterator() {
-    check_analysis_queries(
+    check_analysis_queries_with_fake_sysroot(
         r#"
 //- /Cargo.toml
 [workspace]
-members = ["core", "app"]
+members = ["app"]
 resolver = "3"
-
-//- /core/Cargo.toml
-[package]
-name = "fake_core"
-version = "0.1.0"
-edition = "2024"
-
-//- /core/src/lib.rs
-pub mod iter {
-    pub trait IntoIterator {
-        type Item;
-    }
-
-    pub trait Iterator {
-        type Item;
-    }
-}
-
-impl<'a, T> iter::IntoIterator for &'a [T] {
-    type Item = &'a T;
-}
-
-impl<T, const N: usize> iter::IntoIterator for [T; N] {
-    type Item = T;
-}
-
-impl<I: iter::Iterator> iter::IntoIterator for I {
-    type Item = I::Item;
-}
 
 //- /app/Cargo.toml
 [package]
 name = "app"
 version = "0.1.0"
 edition = "2024"
-
-[dependencies]
-core = { package = "fake_core", path = "../core" }
 
 //- /app/src/lib.rs
 pub struct Package;
@@ -1066,8 +955,21 @@ pub struct Bag<T> {
     value: T,
 }
 
+pub struct BagIter<T> {
+    value: T,
+}
+
+impl<T> core::iter::Iterator for BagIter<T> {
+    type Item = T;
+}
+
 impl<T> core::iter::IntoIterator for Bag<T> {
     type Item = T;
+    type IntoIter = BagIter<T>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        missing()
+    }
 }
 
 pub struct Events;
@@ -1174,7 +1076,7 @@ pub fn use_it(
             - nominal struct app[lib]::crate::Event
 
             opaque iterator return
-            - impl trait fake_core[lib]::crate::iter::Iterator<Item = nominal struct app[lib]::crate::UserId>
+            - impl trait core[lib]::crate::iter::Iterator<Item = nominal struct app[lib]::crate::UserId>
 
             for item from concrete iterator return
             - nominal struct app[lib]::crate::UserId
@@ -1187,117 +1089,7 @@ pub fn use_it(
 
 #[test]
 fn propagates_for_loop_item_types_from_method_returned_slice() {
-    check_analysis_queries(
-        r#"
-//- /Cargo.toml
-[workspace]
-members = ["core", "app"]
-resolver = "3"
-
-//- /core/Cargo.toml
-[package]
-name = "fake_core"
-version = "0.1.0"
-edition = "2024"
-
-//- /core/src/lib.rs
-pub mod iter {
-    pub trait IntoIterator {
-        type Item;
-    }
-}
-
-impl<'a, T> iter::IntoIterator for &'a [T] {
-    type Item = &'a T;
-}
-
-//- /storage/Cargo.toml
-[package]
-name = "storage"
-version = "0.1.0"
-edition = "2024"
-
-//- /storage/src/lib.rs
-pub struct ImportData;
-
-pub struct DefMap;
-
-impl DefMap {
-    pub fn imports(&self) -> &[ImportData] {
-        missing()
-    }
-}
-
-pub struct DefMapBuilder {
-    incomplete: DefMap,
-}
-
-impl DefMapBuilder {
-    pub fn partial(&self) -> PartialDefMap<'_> {
-        PartialDefMap {
-            def_map: &self.incomplete,
-        }
-    }
-}
-
-pub struct PartialDefMap<'a> {
-    def_map: &'a DefMap,
-}
-
-impl<'a> PartialDefMap<'a> {
-    pub fn imports(&self) -> &'a [ImportData] {
-        self.def_map.imports()
-    }
-}
-
-//- /app/Cargo.toml
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-core = { package = "fake_core", path = "../core" }
-storage = { path = "../storage" }
-
-//- /app/src/lib.rs
-use storage::{DefMap, DefMapBuilder};
-
-pub struct BuildState {
-    builder: DefMapBuilder,
-}
-
-pub fn use_it(def_map: &DefMap, state: &BuildState) {
-    for import in def_map.imports() {
-        let _import = imp$type_import$ort;
-    }
-
-    for chained in state.builder.partial().imports() {
-        let _chained = chai$type_chained$ned;
-    }
-}
-"#,
-        &[
-            AnalysisQuery::ty("for item from method returned slice", "type_import").in_lib("app"),
-            AnalysisQuery::ty(
-                "for item from chained method returned slice",
-                "type_chained",
-            )
-            .in_lib("app"),
-        ],
-        expect![[r#"
-            for item from method returned slice
-            - &nominal struct storage[lib]::crate::ImportData
-
-            for item from chained method returned slice
-            - &nominal struct storage[lib]::crate::ImportData
-        "#]],
-    );
-}
-
-#[test]
-fn propagates_for_loop_item_types_from_sysroot_slice_iterator() {
-    check_analysis_queries_with_sysroot(
+    check_analysis_queries_with_fake_sysroot(
         r#"
 //- /Cargo.toml
 [workspace]
@@ -1368,54 +1160,20 @@ pub fn use_it(def_map: &DefMap, state: &BuildState) {
         let _chained = chai$type_chained$ned;
     }
 }
-
-//- /sysroot/library/core/src/lib.rs
-extern crate self as core;
-
-pub mod iter {
-    pub trait IntoIterator {
-        type Item;
-        type IntoIter;
-    }
-}
-
-pub mod prelude {
-    pub mod rust_2024 {
-        pub use crate::iter::IntoIterator;
-    }
-}
-
-pub mod slice {
-    pub struct Iter<'a, T>(&'a T);
-}
-
-impl<'a, T> IntoIterator for &'a [T] {
-    type Item = &'a T;
-    type IntoIter = slice::Iter<'a, T>;
-}
-
-//- /sysroot/library/alloc/src/lib.rs
-pub struct Alloc;
-
-//- /sysroot/library/std/src/lib.rs
-pub mod prelude {
-    pub mod rust_2024 {}
-}
 "#,
         &[
-            AnalysisQuery::ty("for item from sysroot method returned slice", "type_import")
-                .in_lib("app"),
+            AnalysisQuery::ty("for item from method returned slice", "type_import").in_lib("app"),
             AnalysisQuery::ty(
-                "for item from sysroot chained method returned slice",
+                "for item from chained method returned slice",
                 "type_chained",
             )
             .in_lib("app"),
         ],
         expect![[r#"
-            for item from sysroot method returned slice
+            for item from method returned slice
             - &nominal struct storage[lib]::crate::ImportData
 
-            for item from sysroot chained method returned slice
+            for item from chained method returned slice
             - &nominal struct storage[lib]::crate::ImportData
         "#]],
     );
@@ -1536,112 +1294,7 @@ pub fn use_it(fields: &[Field]) {
 
 #[test]
 fn propagates_for_loop_item_types_from_slice_iter_method() {
-    check_analysis_queries(
-        r#"
-//- /Cargo.toml
-[workspace]
-members = ["core", "storage", "app"]
-resolver = "3"
-
-//- /core/Cargo.toml
-[package]
-name = "fake_core"
-version = "0.1.0"
-edition = "2024"
-
-//- /core/src/lib.rs
-pub mod iter {
-    pub trait IntoIterator {
-        type Item;
-    }
-
-    pub trait Iterator {
-        type Item;
-    }
-}
-
-pub mod slice {
-    pub struct Iter<'a, T>(&'a T);
-}
-
-impl<T> [T] {
-    pub fn iter(&self) -> slice::Iter<'_, T> {
-        missing()
-    }
-}
-
-impl<'a, T> iter::Iterator for slice::Iter<'a, T> {
-    type Item = &'a T;
-}
-
-impl<I: iter::Iterator> iter::IntoIterator for I {
-    type Item = I::Item;
-}
-
-//- /storage/Cargo.toml
-[package]
-name = "storage"
-version = "0.1.0"
-edition = "2024"
-
-//- /storage/src/lib.rs
-pub struct ImportData;
-
-pub struct DefMap;
-
-impl DefMap {
-    pub fn imports(&self) -> &[ImportData] {
-        missing()
-    }
-}
-
-//- /app/Cargo.toml
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-core = { package = "fake_core", path = "../core" }
-storage = { path = "../storage" }
-
-//- /app/src/lib.rs
-use storage::DefMap;
-
-pub fn use_it(def_map: &DefMap) {
-    let iter = def_map.imports().it$type_iter$er();
-
-    for imp$hover_import$ort in def_map.imports().iter() {
-        let _import = imp$type_import$ort;
-    }
-}
-"#,
-        &[
-            AnalysisQuery::ty("slice iter method return", "type_iter").in_lib("app"),
-            AnalysisQuery::ty("for item from slice iter method", "type_import").in_lib("app"),
-            AnalysisQuery::hover("hover for item from slice iter method", "hover_import")
-                .in_lib("app"),
-        ],
-        expect![[r#"
-            slice iter method return
-            - nominal struct fake_core[lib]::crate::slice::Iter<'_, nominal struct storage[lib]::crate::ImportData>
-
-            for item from slice iter method
-            - &nominal struct storage[lib]::crate::ImportData
-
-            hover for item from slice iter method
-            - range: 6:9-6:15
-            - block:
-              kind: variable
-              signature:
-                let import: &ImportData
-        "#]],
-    );
-}
-
-#[test]
-fn propagates_for_loop_item_types_from_sysroot_slice_iter_method() {
-    check_analysis_queries_with_sysroot(
+    check_analysis_queries_with_fake_sysroot(
         r#"
 //- /Cargo.toml
 [workspace]
@@ -1684,70 +1337,21 @@ pub fn use_it(def_map: &DefMap) {
         let _import = imp$type_import$ort;
     }
 }
-
-//- /sysroot/library/core/src/lib.rs
-extern crate self as core;
-
-pub mod iter {
-    pub trait IntoIterator {
-        type Item;
-    }
-
-    pub trait Iterator {
-        type Item;
-    }
-}
-
-pub mod prelude {
-    pub mod rust_2024 {
-        pub use crate::iter::{IntoIterator, Iterator};
-    }
-}
-
-pub mod slice {
-    pub struct Iter<'a, T: 'a>(&'a T);
-}
-
-impl<T> [T] {
-    pub fn iter(&self) -> slice::Iter<'_, T> {
-        missing()
-    }
-}
-
-impl<'a, T> Iterator for slice::Iter<'a, T> {
-    type Item = &'a T;
-}
-
-impl<I: Iterator> IntoIterator for I {
-    type Item = I::Item;
-}
-
-//- /sysroot/library/alloc/src/lib.rs
-pub struct Alloc;
-
-//- /sysroot/library/std/src/lib.rs
-pub mod prelude {
-    pub mod rust_2024 {}
-}
 "#,
         &[
-            AnalysisQuery::ty("sysroot slice iter method return", "type_iter").in_lib("app"),
-            AnalysisQuery::ty("for item from sysroot slice iter method", "type_import")
+            AnalysisQuery::ty("slice iter method return", "type_iter").in_lib("app"),
+            AnalysisQuery::ty("for item from slice iter method", "type_import").in_lib("app"),
+            AnalysisQuery::hover("hover for item from slice iter method", "hover_import")
                 .in_lib("app"),
-            AnalysisQuery::hover(
-                "hover for item from sysroot slice iter method",
-                "hover_import",
-            )
-            .in_lib("app"),
         ],
         expect![[r#"
-            sysroot slice iter method return
+            slice iter method return
             - nominal struct core[lib]::crate::slice::Iter<'_, nominal struct storage[lib]::crate::ImportData>
 
-            for item from sysroot slice iter method
+            for item from slice iter method
             - &nominal struct storage[lib]::crate::ImportData
 
-            hover for item from sysroot slice iter method
+            hover for item from slice iter method
             - range: 6:9-6:15
             - block:
               kind: variable
@@ -1759,56 +1363,18 @@ pub mod prelude {
 
 #[test]
 fn propagates_for_loop_items_from_project_style_import_helpers() {
-    check_analysis_queries(
+    check_analysis_queries_with_fake_sysroot(
         r#"
 //- /Cargo.toml
 [workspace]
-members = ["core", "storage", "app"]
+members = ["storage", "app"]
 resolver = "3"
-
-//- /core/Cargo.toml
-[package]
-name = "fake_core"
-version = "0.1.0"
-edition = "2024"
-
-//- /core/src/lib.rs
-pub mod iter {
-    pub trait IntoIterator {
-        type Item;
-    }
-
-    pub trait Iterator {
-        type Item;
-    }
-}
-
-pub mod slice {
-    pub struct Iter<'a, T>(&'a T);
-}
-
-impl<T> [T] {
-    pub fn iter(&self) -> slice::Iter<'_, T> {
-        missing()
-    }
-}
-
-impl<'a, T> iter::Iterator for slice::Iter<'a, T> {
-    type Item = &'a T;
-}
-
-impl<I: iter::Iterator> iter::IntoIterator for I {
-    type Item = I::Item;
-}
 
 //- /storage/Cargo.toml
 [package]
 name = "storage"
 version = "0.1.0"
 edition = "2024"
-
-[dependencies]
-core = { package = "fake_core", path = "../core" }
 
 //- /storage/src/lib.rs
 use core::iter;
@@ -1865,7 +1431,6 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-core = { package = "fake_core", path = "../core" }
 storage = { path = "../storage" }
 
 //- /app/src/lib.rs

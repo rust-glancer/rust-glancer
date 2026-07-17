@@ -23,8 +23,8 @@ const INTER: RgChalkInterner = RgChalkInterner;
 ///
 /// This is deliberately much smaller than a general Chalk-to-inference bridge. Projection
 /// normalization needs one specific thing first: when the caller asks for
-/// `<Iter<?T> as Iterator>::Item`, Chalk should be able to answer `?T` instead of forcing the
-/// project-side alias fallback to preserve that relationship by hand.
+/// `<Iter<?T> as Iterator>::Item`, Chalk should return the caller's `?T` slot rather than an
+/// unrelated bound variable. Keeping that link here avoids a second project-side projection path.
 #[derive(Debug, Clone)]
 pub(super) struct ProjectionVariableEnv {
     vars: Vec<InferVarId>,
@@ -156,6 +156,10 @@ pub(super) struct ProjectionAnswerVars {
 }
 
 impl ProjectionAnswerVars {
+    pub(super) fn empty() -> Self {
+        Self { vars: Vec::new() }
+    }
+
     pub(super) fn from_subst_args(
         variables: &ProjectionVariableEnv,
         subst_args: &[ChalkGenericArg<RgChalkInterner>],

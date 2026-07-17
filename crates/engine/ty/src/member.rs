@@ -1,15 +1,15 @@
 //! Member lookup over semantic-shaped item stores.
 //!
-//! Field and method lookup is type reasoning: it needs autoderef, impl-header matching, and the
-//! item/path providers, but it does not need source spans or UI labels. This query returns stable
-//! item refs so higher layers can decide how to present them.
+//! Field and method lookup is type reasoning: it needs autoderef, impl-header matching, and one
+//! coherent crate visibility/solver context, but it does not need source spans or UI labels. This
+//! query returns stable item refs so higher layers can decide how to present them.
 
 use rg_def_map::DefMapSource;
 use rg_ir_model::{FieldRef, FunctionRef, TraitApplicability, TypeDefRef};
-use rg_semantic_ir::{CrateItemQuery, ItemLookupIndex, ItemStoreSource};
+use rg_semantic_ir::ItemStoreSource;
 use rg_std::UniqueVec;
 
-use crate::{AdtTy, Autoderef, AutoderefMode, ImplMatcher, ItemPathQuery, Ty};
+use crate::{AdtTy, Autoderef, AutoderefMode, ImplMatcher, Ty, TyContext};
 
 /// One callable member selected for a receiver type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -51,9 +51,7 @@ pub enum MemberMethodOrigin {
 
 /// Ref-level member lookup shared by analysis and view adapters.
 pub struct MemberQuery<'query, D, I> {
-    item_paths: ItemPathQuery<'query, D, I>,
-    crate_items: CrateItemQuery<'query, D, I>,
-    lookup_index: &'query ItemLookupIndex,
+    context: TyContext<'query, D, I>,
 }
 
 impl<'query, D, I> MemberQuery<'query, D, I>
@@ -61,23 +59,16 @@ where
     D: DefMapSource + Clone,
     I: ItemStoreSource<'query, Error = D::Error> + Clone,
 {
-    /// Creates a member query over a target-scoped receiver lookup index.
-    pub fn with_index(
-        item_paths: ItemPathQuery<'query, D, I>,
-        crate_items: CrateItemQuery<'query, D, I>,
-        lookup_index: &'query ItemLookupIndex,
-    ) -> Self {
-        Self {
-            item_paths,
-            crate_items,
-            lookup_index,
-        }
+    /// Creates member lookup in one crate-scoped type-query environment.
+    pub fn new(context: TyContext<'query, D, I>) -> Self {
+        Self { context }
     }
 
     /// Returns fields visible after field-lookup autoderef.
     pub fn fields_for_ty(&self, ty: &Ty) -> Result<Vec<FieldRef>, D::Error> {
+        let autoderef = Autoderef::new(self.context.clone());
         let mut fields = Vec::new();
-        for candidate in self.autoderef().candidates(AutoderefMode::FieldLookup, ty) {
+        for candidate in autoderef.candidates(AutoderefMode::FieldLookup, ty) {
             let candidate = candidate?;
             for receiver_ty in candidate.ty().as_adts() {
                 fields.extend(self.fields_for_type_def(receiver_ty.def)?);
@@ -88,7 +79,7 @@ where
 
     /// Returns fields declared directly on a nominal type definition.
     pub fn fields_for_type_def(&self, ty: TypeDefRef) -> Result<Vec<FieldRef>, D::Error> {
-        self.item_paths.items().fields_for_type(ty)
+        self.context.item_paths().items().fields_for_type(ty)
     }
 
     /// Returns method candidates visible after method-receiver autoderef.
@@ -96,14 +87,16 @@ where
         &self,
         ty: &Ty,
     ) -> Result<Vec<MemberMethodCandidateRef>, D::Error> {
+        // Method autoderef and impl classification are one lookup operation. Sharing their session
+        // keeps every trait proof in the same crate-visible solver program and lets later receiver
+        // depths reuse exact classifications from earlier ones.
+        let autoderef = Autoderef::new(self.context.clone());
+        let matcher = ImplMatcher::new(self.context.clone());
         let mut methods = Vec::new();
-        for candidate in self
-            .autoderef()
-            .candidates(AutoderefMode::MethodReceiver, ty)
-        {
+        for candidate in autoderef.candidates(AutoderefMode::MethodReceiver, ty) {
             let candidate = candidate?;
             for receiver_ty in candidate.ty().as_adts() {
-                methods.extend(self.method_candidates_for_nominal(receiver_ty)?);
+                methods.extend(self.method_candidates_for_nominal(&matcher, receiver_ty)?);
             }
         }
         Ok(methods)
@@ -111,10 +104,10 @@ where
 
     fn method_candidates_for_nominal(
         &self,
+        matcher: &ImplMatcher<'query, D, I>,
         receiver_ty: &AdtTy,
     ) -> Result<Vec<MemberMethodCandidateRef>, D::Error> {
         let mut candidates = Vec::new();
-        let matcher = ImplMatcher::new(self.item_paths.clone(), self.crate_items.clone());
 
         for function in self.inherent_functions_for_nominal(receiver_ty)? {
             if !matcher.function_applies_to_receiver(function, receiver_ty)? {
@@ -123,10 +116,10 @@ where
             candidates.push(MemberMethodCandidateRef::inherent(function));
         }
 
-        // Trait candidates carry applicability because this project intentionally avoids full
-        // solving, but still wants useful editor suggestions for likely matches.
+        // Keep proof confidence with each trait method. Editor lookup can then distinguish a
+        // proved impl from one retained because Chalk reported ambiguity or unsupported evidence.
         for (function, applicability) in
-            matcher.trait_function_candidates_for_receiver(self.lookup_index, receiver_ty, None)?
+            matcher.trait_function_candidates_for_receiver(receiver_ty, None)?
         {
             candidates.push(MemberMethodCandidateRef::trait_method(
                 function,
@@ -141,15 +134,8 @@ where
         &self,
         receiver_ty: &AdtTy,
     ) -> Result<UniqueVec<FunctionRef>, D::Error> {
-        self.lookup_index
-            .inherent_functions_for_type(self.item_paths.items(), receiver_ty.def)
-    }
-
-    fn autoderef(&self) -> Autoderef<'query, D, I> {
-        Autoderef::with_index(
-            self.item_paths.clone(),
-            self.crate_items.clone(),
-            self.lookup_index,
-        )
+        self.context
+            .lookup_index()
+            .inherent_functions_for_type(self.context.item_paths().items(), receiver_ty.def)
     }
 }

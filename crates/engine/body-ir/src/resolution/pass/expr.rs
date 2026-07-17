@@ -21,9 +21,7 @@ use crate::{
     ir::{ExprKind, ExprWrapperKind, LiteralKind, StmtKind},
 };
 
-use super::{
-    body::BodyResolutionPass, builtin_macro::BuiltinMacroExprTypeMapper, ty_normalize::TyNormalizer,
-};
+use super::{body::BodyResolutionPass, builtin_macro::BuiltinMacroExprTypeMapper};
 
 pub(super) struct ExprResolutionPass<'pass, 'query, 'body, D, I> {
     pass: &'pass mut BodyResolutionPass<'query, 'body, D, I>,
@@ -452,7 +450,35 @@ where
             return (BodyResolution::Unknown, ty);
         };
         let inner_ty = self.pass.inference.root_resolved_expr_ty(inner);
-        let ty = TyNormalizer::new(self.pass.context()).ty_for_wrapper(kind, inner_ty);
+
+        // Wrapper typing is intentionally shallow. Rust-glancer models `async fn` return types as
+        // their declared output, and it does not yet model arbitrary `Future::Output` or `Try`
+        // projections. Keep those omissions visible here, where wrapper expressions are resolved,
+        // rather than presenting the small `Result`/`Option` heuristic as a general normalizer.
+        let ty = match kind {
+            ExprWrapperKind::Paren => inner_ty,
+            ExprWrapperKind::Ref { mutability } => Ty::reference(mutability, inner_ty),
+            ExprWrapperKind::Await => inner_ty,
+            ExprWrapperKind::Try => {
+                let mut outputs = ExpectedUnique::new();
+                let item_query = self.pass.context().item_query();
+                for nominal in inner_ty.as_adts() {
+                    let Ok(Some(name)) = item_query.type_def_name(nominal.def) else {
+                        continue;
+                    };
+                    if matches!(name, "Result" | "Option")
+                        && let Some(output) =
+                            nominal.args.iter().find_map(|arg| arg.as_ty().cloned())
+                    {
+                        outputs.push(output);
+                    }
+                }
+                outputs.into_ty()
+            }
+            // `return expr` evaluates to `!`; the child expression remains separately lowered and
+            // queryable, so callers can still ask about `expr` itself.
+            ExprWrapperKind::Return => Ty::Never,
+        };
         let resolution = if matches!(kind, ExprWrapperKind::Paren) {
             self.pass.expr_resolution(inner).clone()
         } else {

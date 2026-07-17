@@ -647,68 +647,12 @@ pub fn use_it(user: User, name: Name) {
 
 #[test]
 fn infers_collect_destination_through_trait_obligations() {
-    check_analysis_queries(
+    check_analysis_queries_with_fake_sysroot(
         r#"
 //- /Cargo.toml
 [workspace]
-members = ["core", "storage", "app"]
+members = ["storage", "app"]
 resolver = "3"
-
-//- /core/Cargo.toml
-[package]
-name = "fake_core"
-version = "0.1.0"
-edition = "2024"
-
-//- /core/src/lib.rs
-pub mod iter {
-    pub trait FromIterator<A> {}
-    pub trait UserCollector<S> {}
-
-    pub trait Iterator {
-        type Item;
-
-        fn collect<B>(self) -> B
-        where
-            B: FromIterator<Self::Item>;
-
-        fn collect_users<B>(self) -> B
-        where
-            B: UserCollector<Self>;
-    }
-}
-
-pub mod slice {
-    pub struct Iter<'a, T>(&'a T);
-}
-
-pub struct Vec<T> {
-    value: T,
-}
-
-pub struct User;
-pub struct UserStream;
-
-impl<T> iter::FromIterator<T> for Vec<T> {}
-
-impl<S> iter::UserCollector<S> for Vec<User>
-where
-    S: iter::Iterator<Item = User>,
-{}
-
-impl<T> [T] {
-    pub fn iter(&self) -> slice::Iter<'_, T> {
-        missing()
-    }
-}
-
-impl<'a, T> iter::Iterator for slice::Iter<'a, T> {
-    type Item = &'a T;
-}
-
-impl iter::Iterator for UserStream {
-    type Item = User;
-}
 
 //- /storage/Cargo.toml
 [package]
@@ -734,12 +678,33 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-core = { package = "fake_core", path = "../core" }
 storage = { path = "../storage" }
 
 //- /app/src/lib.rs
-use core::{UserStream, Vec};
 use storage::DefMap;
+
+pub trait UserCollector<S> {}
+
+pub trait UserIteratorExt: core::iter::Iterator {
+    fn collect_users<B>(self) -> B
+    where
+        Self: Sized,
+        B: UserCollector<Self>;
+}
+
+pub struct User;
+pub struct UserStream;
+
+impl core::iter::Iterator for UserStream {
+    type Item = User;
+}
+
+impl UserIteratorExt for UserStream {}
+
+impl<S> UserCollector<S> for Vec<User>
+where
+    S: core::iter::Iterator<Item = User>,
+{}
 
 pub fn explicit_destination(def_map: &DefMap) {
     let imports = def_map.imports().iter().collect::<Vec<_>>()$type_explicit$;
@@ -767,130 +732,25 @@ pub fn associated_equality_destination(stream: UserStream) {
         ],
         expect![[r#"
             explicit collect destination
-            - nominal struct fake_core[lib]::crate::Vec<&nominal struct storage[lib]::crate::ImportData>
+            - nominal struct alloc[lib]::crate::vec::Vec<&nominal struct storage[lib]::crate::ImportData, nominal struct alloc[lib]::crate::vec::Global>
 
             expected collect destination
-            - nominal struct fake_core[lib]::crate::Vec<&nominal struct storage[lib]::crate::ImportData>
+            - nominal struct alloc[lib]::crate::vec::Vec<&nominal struct storage[lib]::crate::ImportData, nominal struct alloc[lib]::crate::vec::Global>
 
             associated equality collect destination
-            - nominal struct fake_core[lib]::crate::Vec<nominal struct fake_core[lib]::crate::User>
+            - nominal struct alloc[lib]::crate::vec::Vec<nominal struct app[lib]::crate::User, nominal struct alloc[lib]::crate::vec::Global>
         "#]],
     );
 }
 
 #[test]
 fn projects_iterator_adapter_items_into_collect_destination() {
-    check_analysis_queries(
+    check_analysis_queries_with_fake_sysroot(
         r#"
 //- /Cargo.toml
 [workspace]
-members = ["core", "app"]
+members = ["app"]
 resolver = "3"
-
-//- /core/Cargo.toml
-[package]
-name = "fake_core"
-version = "0.1.0"
-edition = "2024"
-
-//- /core/src/lib.rs
-pub trait FnOnce<Args> {
-    type Output;
-}
-
-pub trait FnMut<Args>: FnOnce<Args> {}
-
-pub mod iter {
-    pub trait FromIterator<A> {}
-
-    pub trait Iterator {
-        type Item;
-
-        fn map<B, F>(self, f: F) -> Map<Self, F>
-        where
-            F: crate::FnMut(Self::Item) -> B;
-
-        fn filter_map<B, F>(self, f: F) -> FilterMap<Self, F>
-        where
-            F: crate::FnMut(Self::Item) -> Option<B>;
-
-        fn enumerate(self) -> Enumerate<Self>;
-
-        fn collect<B>(self) -> B
-        where
-            B: FromIterator<Self::Item>;
-    }
-
-    pub struct Map<I, F> {
-        iter: I,
-        f: F,
-    }
-
-    pub struct FilterMap<I, F> {
-        iter: I,
-        f: F,
-    }
-
-    pub struct Enumerate<I> {
-        iter: I,
-    }
-}
-
-pub mod slice {
-    pub struct Iter<'a, T>(&'a T);
-}
-
-pub enum Option<T> {
-    Some(T),
-    None,
-}
-
-pub struct Vec<T> {
-    value: T,
-}
-
-pub struct HashMap<K, V> {
-    key: K,
-    value: V,
-}
-
-impl<T> iter::FromIterator<T> for Vec<T> {}
-impl<K, V> iter::FromIterator<(K, V)> for HashMap<K, V> {}
-
-impl<T> [T] {
-    pub fn iter(&self) -> slice::Iter<'_, T> {
-        missing()
-    }
-}
-
-impl<'a, T> iter::Iterator for slice::Iter<'a, T> {
-    type Item = &'a T;
-}
-
-impl<I, F, B> iter::Iterator for iter::Map<I, F>
-where
-    I: iter::Iterator,
-    F: FnMut(I::Item) -> B,
-{
-    type Item = B;
-}
-
-impl<I, F, B> iter::Iterator for iter::FilterMap<I, F>
-where
-    I: iter::Iterator,
-    F: FnMut(I::Item) -> Option<B>,
-{
-    type Item = B;
-}
-
-impl<I> iter::Iterator for iter::Enumerate<I>
-where
-    I: iter::Iterator,
-{
-    type Item = (usize, <I>::Item);
-}
-
-pub fn missing<T>() -> T {}
 
 //- /app/Cargo.toml
 [package]
@@ -898,18 +758,20 @@ name = "app"
 version = "0.1.0"
 edition = "2024"
 
-[dependencies]
-core = { package = "fake_core", path = "../core" }
-
 //- /app/src/lib.rs
-use core::{HashMap, Option, Vec};
-
 pub struct User;
 pub struct Name;
 pub struct Email;
 pub struct Key;
 pub struct Value;
 pub struct Row;
+
+pub struct HashMap<K, V> {
+    key: K,
+    value: V,
+}
+
+impl<K, V> core::iter::FromIterator<(K, V)> for HashMap<K, V> {}
 
 impl User {
     pub fn name(&self) -> Name {}
@@ -939,10 +801,11 @@ impl<K, V> core::iter::FromIterator<(K, V)> for AmbiguousMap<K, V> {}
 impl core::iter::FromIterator<(Key, Value)> for AmbiguousMap<Key, Value> {}
 
 pub fn pairs() -> PairIter {
-    core::missing()
+    missing()
 }
 
 pub fn bar(_: usize, _: &User) -> Row {}
+pub fn missing<T>() -> T {}
 
 pub fn use_it(users: &[User], same_name: SameNameMap) {
     let names = users.iter().map(|user| user$type_map_param$.name()).collect::<Vec<_>>()$type_names$;
@@ -981,16 +844,16 @@ pub fn use_it(users: &[User], same_name: SameNameMap) {
             - &nominal struct app[lib]::crate::User
 
             iterator map collect result
-            - nominal struct fake_core[lib]::crate::Vec<nominal struct app[lib]::crate::Name>
+            - nominal struct alloc[lib]::crate::vec::Vec<nominal struct app[lib]::crate::Name, nominal struct alloc[lib]::crate::vec::Global>
 
             iterator filter_map closure param
             - &nominal struct app[lib]::crate::User
 
             iterator filter_map collect result
-            - nominal struct fake_core[lib]::crate::Vec<nominal struct app[lib]::crate::Email>
+            - nominal struct alloc[lib]::crate::vec::Vec<nominal struct app[lib]::crate::Email, nominal struct alloc[lib]::crate::vec::Global>
 
             iterator enumerate collect result
-            - nominal struct fake_core[lib]::crate::Vec<(usize, &nominal struct app[lib]::crate::User)>
+            - nominal struct alloc[lib]::crate::vec::Vec<(usize, &nominal struct app[lib]::crate::User), nominal struct alloc[lib]::crate::vec::Global>
 
             iterator enumerate map index param
             - usize
@@ -1005,13 +868,13 @@ pub fn use_it(users: &[User], same_name: SameNameMap) {
             - &nominal struct app[lib]::crate::User
 
             iterator bar map collect result
-            - nominal struct fake_core[lib]::crate::Vec<nominal struct app[lib]::crate::Row>
+            - nominal struct alloc[lib]::crate::vec::Vec<nominal struct app[lib]::crate::Row, nominal struct alloc[lib]::crate::vec::Global>
 
             direct HashMap collect result
-            - nominal struct fake_core[lib]::crate::HashMap<nominal struct app[lib]::crate::Key, nominal struct app[lib]::crate::Value>
+            - nominal struct app[lib]::crate::HashMap<nominal struct app[lib]::crate::Key, nominal struct app[lib]::crate::Value>
 
             mapped HashMap collect result
-            - nominal struct fake_core[lib]::crate::HashMap<nominal struct app[lib]::crate::Key, nominal struct app[lib]::crate::Value>
+            - nominal struct app[lib]::crate::HashMap<nominal struct app[lib]::crate::Key, nominal struct app[lib]::crate::Value>
 
             ambiguous HashMap collect result
             - nominal struct app[lib]::crate::AmbiguousMap<<unknown>, <unknown>>
@@ -1409,71 +1272,12 @@ pub fn use_it(flag: bool, attr: Attr, user: User, users: &[User], seed: Id) {
 
 #[test]
 fn infers_iterator_closure_params_from_selected_trait_method_bounds() {
-    check_analysis_queries(
+    check_analysis_queries_with_fake_sysroot(
         r#"
 //- /Cargo.toml
 [workspace]
-members = ["core", "app"]
+members = ["app"]
 resolver = "3"
-
-//- /core/Cargo.toml
-[package]
-name = "fake_core"
-version = "0.1.0"
-edition = "2024"
-
-//- /core/src/lib.rs
-pub trait FnOnce<Args> {
-    type Output;
-}
-
-pub trait FnMut<Args>: FnOnce<Args> {}
-
-pub mod iter {
-    pub trait Iterator {
-        type Item;
-
-        fn map<B, F>(self, f: F) -> Map<Self, F>
-        where
-            F: crate::FnMut(Self::Item) -> B;
-
-        fn filter<P>(self, predicate: P) -> Filter<Self, P>
-        where
-            P: crate::FnMut(&Self::Item) -> bool;
-
-        fn find<P>(self, predicate: P)
-        where
-            P: crate::FnMut(&Self::Item) -> bool;
-
-        fn produce<F>(self, f: F)
-        where
-            F: crate::FnOnce() -> Self::Item;
-    }
-
-    pub struct Map<I, F> {
-        iter: I,
-        f: F,
-    }
-
-    pub struct Filter<I, P> {
-        iter: I,
-        predicate: P,
-    }
-}
-
-pub mod slice {
-    pub struct Iter<'a, T>(&'a T);
-}
-
-impl<T> [T] {
-    pub fn iter(&self) -> slice::Iter<'_, T> {
-        missing()
-    }
-}
-
-impl<'a, T> iter::Iterator for slice::Iter<'a, T> {
-    type Item = &'a T;
-}
 
 //- /app/Cargo.toml
 [package]
@@ -1481,13 +1285,19 @@ name = "app"
 version = "0.1.0"
 edition = "2024"
 
-[dependencies]
-core = { package = "fake_core", path = "../core" }
-
 //- /app/src/lib.rs
 pub struct User;
 pub struct Name;
 pub struct Searcher;
+
+pub trait ProduceExt: core::iter::Iterator {
+    fn produce<F>(self, f: F)
+    where
+        Self: Sized,
+        F: FnOnce() -> Self::Item;
+}
+
+impl<'a, T> ProduceExt for core::slice::Iter<'a, T> {}
 
 impl User {
     pub fn name(&self) -> Name {}

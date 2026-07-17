@@ -1,11 +1,12 @@
 //! Callable trait goals that can be answered from body-local closure witnesses.
 //!
 //! This is the first bridge between the real closure type witness and trait obligations. It does
-//! not try to prove capture semantics. For now, a closure witness can provide evidence for any of
-//! `Fn`, `FnMut`, or `FnOnce` when the goal's argument shape fits the closure's written params.
+//! not try to prove capture semantics. This bounded model treats a closure witness as evidence for
+//! any of `Fn`, `FnMut`, or `FnOnce` when the goal's argument shape fits the closure's written
+//! params.
 
 use rg_def_map::DefMapSource;
-use rg_ir_model::ExprId;
+use rg_ir_model::{ExprId, items::LangItem};
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::ItemStoreSource;
 use rg_ty::{GenericArg, Substitution, TraitGoal, Ty};
@@ -102,7 +103,7 @@ where
         // Function-call syntax gives parameter evidence positionally, so `FnOnce(User)` links the
         // first closure pattern to `User`, including destructuring such as
         // `FnOnce((Left, Right))` -> `|(left, right)|`.
-        let pattern_inference = BodyPatternInference::new(self.context);
+        let pattern_inference = BodyPatternInference::new(self.context.clone());
         for (closure_param, expected_ty) in closure_params.iter().zip(params.iter()) {
             let Some(pat) = closure_param.pat else {
                 continue;
@@ -186,12 +187,20 @@ where
         &self,
         goal: &'goal TraitGoal,
     ) -> Result<Option<(&'goal [Ty], &'goal Ty)>, PackageStoreError> {
-        let Some(trait_data) = self.context.item_query().trait_data(goal.trait_ref())? else {
-            return Ok(None);
-        };
-        if !matches!(trait_data.name.as_str(), "Fn" | "FnMut" | "FnOnce") {
+        let lang_items = self.context.semantic_index();
+        let mut is_callable = false;
+        for lang_item in LangItem::CALLABLE_TRAITS {
+            if lang_items.lang_trait(lang_item) == Some(goal.trait_ref()) {
+                is_callable = true;
+                break;
+            }
+        }
+        if !is_callable {
             return Ok(None);
         }
+        let Some(output_alias) = lang_items.lang_type_alias(LangItem::FnOnceOutput) else {
+            return Ok(None);
+        };
 
         let mut args = goal.iter_positional_args();
         let Some(GenericArg::Type(input)) = args.next() else {
@@ -207,14 +216,7 @@ where
         };
         let mut ret = None;
         for binding in &goal.associated_types {
-            let Some(data) = self
-                .context
-                .item_query()
-                .type_alias_data(binding.associated_ty)?
-            else {
-                continue;
-            };
-            if data.name.as_str() == "Output" {
+            if binding.associated_ty == output_alias {
                 ret = Some(&binding.ty);
                 break;
             }
@@ -254,7 +256,11 @@ version = "0.1.0"
 edition = "2024"
 
 //- /src/lib.rs
-pub trait FnOnce { type Output; }
+#[lang = "fn_once"]
+pub trait FnOnce {
+    #[lang = "fn_once_output"]
+    type Output;
+}
 pub trait NotCallable {}
 
 pub struct User;
@@ -353,7 +359,11 @@ pub fn use_it(seed: Name) {
     fn callable_goal_waits_for_an_unresolved_closure_body() {
         let fixture = GoalFixture::new();
         let body = fixture.body();
-        let mut inference = BodyInferenceCtx::new(body.exprs().len(), body.bindings().len());
+        let mut inference = BodyInferenceCtx::new(
+            body.exprs().len(),
+            body.bindings().len(),
+            body.statements().len(),
+        );
         for expr_idx in 0..body.exprs().len() {
             let expr = ExprId(expr_idx);
             if expr != fixture.closure_body() {
@@ -434,12 +444,14 @@ pub fn use_it(seed: Name) {
             let body = crate_bodies
                 .body(self.body_ref.body)
                 .expect("body should exist");
+            let trait_selection = rg_ty::TraitSelectionSession::new(self.crate_ref);
             let context = BodyResolutionContext::new(
                 &def_maps,
                 &item_stores,
                 self.body_ref,
                 body,
                 crate_bodies.semantic_index(),
+                trait_selection,
             );
             BodyCallableGoalSolver::new(context).solve_goal(inference, goal)
         }
@@ -452,7 +464,11 @@ pub fn use_it(seed: Name) {
 
         fn inference(&self) -> BodyInferenceCtx {
             let body = self.body();
-            let mut inference = BodyInferenceCtx::new(body.exprs().len(), body.bindings().len());
+            let mut inference = BodyInferenceCtx::new(
+                body.exprs().len(),
+                body.bindings().len(),
+                body.statements().len(),
+            );
             for expr_idx in 0..body.exprs().len() {
                 let expr = ExprId(expr_idx);
                 inference.set_expr_ty(

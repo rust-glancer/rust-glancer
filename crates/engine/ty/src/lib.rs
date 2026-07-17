@@ -5,15 +5,14 @@
 //! clauses. Inference, impl matching, associated-type projection, and Chalk all consume those same
 //! shapes instead of maintaining their own `TypeRef` lowering rules.
 
-mod associated_type;
 mod autoderef;
+mod context;
 mod deref;
 mod generic_arg;
 mod impl_match;
 mod implementation;
 pub mod inference;
 mod item_path;
-mod iteration;
 mod lowering;
 mod member;
 mod primitive_expr;
@@ -33,6 +32,7 @@ pub use self::{
         Autoderef, AutoderefCandidate, AutoderefCandidates, AutoderefMode,
         ReferencePeelingCandidates,
     },
+    context::TyContext,
     generic_arg::{
         AssocTypeBinding, Clause, ConstValue, GenericArg, GenericArgs, Lifetime, TraitApplication,
         TraitRefLowering,
@@ -40,7 +40,6 @@ pub use self::{
     impl_match::ImplMatcher,
     implementation::ImplementationQuery,
     item_path::ItemPathQuery,
-    iteration::IterationItemResolver,
     lowering::{
         TypeLoweringAnchor, TypeLoweringEnv, TypeLoweringQuery, TypeLoweringSession,
         TypePathResolver,
@@ -51,8 +50,8 @@ pub use self::{
     signature::{CallableSignature, ImplHeader, SemanticSignatureQuery},
     substitution::Substitution,
     trait_selection::{
-        AssocProjectionResult, TraitGoal, TraitSelection, TraitSelectionCache,
-        TraitSelectionOptions, TraitSelectionQuery,
+        AssocProjectionResult, TraitCandidate, TraitCandidateQuery, TraitGoal, TraitSelection,
+        TraitSelectionQuery, TraitSelectionSession,
     },
     ty::{
         AdtTy, AliasTy, ClosureTyId, ExpectedAdtTyExt, ExpectedTyExt, FnDefTy, OpaqueTy,

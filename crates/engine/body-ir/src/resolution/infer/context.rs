@@ -3,7 +3,7 @@ use std::sync::Arc;
 use rg_ir_model::{BindingId, ExprBinaryOp, ExprId, ExprUnaryOp, ExprWrapperKind, StmtId};
 
 use rg_ty::{
-    ClosureTyId, GenericArg, GenericArgs, PrimitiveTy, TraitSelectionCache, Ty,
+    ClosureTyId, GenericArg, GenericArgs, PrimitiveTy, Ty,
     inference::InferVarKind,
     inference::{InferenceTable, UnknownTypeInstantiationBuilder},
     ty_for_binary, ty_for_unary,
@@ -26,7 +26,6 @@ use super::{call::CallInferenceState, facts::InferenceFacts};
 #[derive(Clone)]
 pub(crate) struct BodyInferenceCtx {
     pub(super) table: InferenceTable,
-    pub(super) trait_selection_cache: TraitSelectionCache,
     // Trait-obligation probes clone this context transactionally, but they do not edit call-site
     // setup. Copy-on-write keeps those probes from cloning every canonical call projection.
     call_inference: Arc<Vec<Option<CallInferenceState>>>,
@@ -73,34 +72,14 @@ impl PartialEq for BodyInferenceProgress {
 impl Eq for BodyInferenceProgress {}
 
 impl BodyInferenceCtx {
-    #[cfg(test)]
-    pub(crate) fn new(expr_count: usize, binding_count: usize) -> Self {
-        Self::with_trait_selection_cache(
-            expr_count,
-            binding_count,
-            0,
-            TraitSelectionCache::default(),
-        )
-    }
-
-    pub(crate) fn with_trait_selection_cache(
-        expr_count: usize,
-        binding_count: usize,
-        statement_count: usize,
-        trait_selection_cache: TraitSelectionCache,
-    ) -> Self {
+    pub(crate) fn new(expr_count: usize, binding_count: usize, statement_count: usize) -> Self {
         Self {
             table: InferenceTable::new(),
-            trait_selection_cache,
             call_inference: Arc::new(vec![None; expr_count]),
             expr_tys: InferenceFacts::new(expr_count),
             binding_tys: InferenceFacts::new(binding_count),
             statement_expected_tys: Arc::new(vec![None; statement_count]),
         }
-    }
-
-    pub(crate) fn trait_selection_cache(&self) -> TraitSelectionCache {
-        self.trait_selection_cache.clone()
     }
 
     /// Expose accumulated resolutions together with the latest live type slots to queries.
@@ -123,6 +102,10 @@ impl BodyInferenceCtx {
             expr_tys: self.expr_tys.clone(),
             binding_tys: self.binding_tys.clone(),
         }
+    }
+
+    pub(crate) fn table(&self) -> &InferenceTable {
+        &self.table
     }
 
     pub(crate) fn table_mut(&mut self) -> &mut InferenceTable {
