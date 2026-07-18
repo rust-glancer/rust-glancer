@@ -1,29 +1,46 @@
-//! Cursor-oriented queries over lowered function bodies.
+//! Source scanning over lowered function bodies.
 //!
-//! Analysis owns the public query vocabulary, but Body IR owns body source layout: expression
-//! spans, binding spans, body-local item names, let annotations, and dot-completion receiver
-//! ranges. These queries are intentionally exposed only on read transactions.
+//! Body IR owns the structural body and its source facts. The indexed view owns the editor-facing
+//! interpretation: which node is under a cursor, which spelling is a reference, and which source
+//! shape can accept completion. Keeping the scanners here prevents those query concepts from
+//! becoming part of Body IR's storage API.
+//!
+//! The scanners cover three different shapes of request over the same body:
+//!
+//! ```text
+//! user.na$0                  point query: select `na`
+//! User { na$0 }              completion query: select the record field slot
+//! let user = input; use(user) whole-file query: retain every declaration and reference
+//! ```
 
-mod scan;
+mod cursor;
+mod dot_completion_site;
+mod path_completion_site;
+mod paths;
+mod record_field_completion_site;
+mod record_pat_shorthand;
+mod sites;
+mod source;
+mod unqualified_completion_site;
+mod walk;
 
 use rg_ir_model::items::FieldKey;
 use rg_ir_model::{
-    BindingId, BodyRef, CrateRef, EnumVariantRef, ExprId, FieldRef, FunctionRef, LocalDefRef, Path,
-    ScopeId, SemanticItemRef,
+    BindingId, BodyRef, EnumVariantRef, ExprId, FieldRef, FunctionRef, LocalDefRef, Path, ScopeId,
+    SemanticItemRef,
 };
-use rg_package_store::PackageStoreError;
 use rg_parse::{FileId, Span};
 
-use crate::BodyIrReadTxn;
-
-use self::scan::{
-    BodyCursorScanner, BodySourceScanner, DotCompletionSiteScanner, PathCompletionSiteScanner,
-    RecordFieldCompletionSiteScanner, UnqualifiedCompletionSiteScanner,
+pub(crate) use self::{
+    cursor::BodyCursorScanner, dot_completion_site::DotCompletionSiteScanner,
+    path_completion_site::PathCompletionSiteScanner,
+    record_field_completion_site::RecordFieldCompletionSiteScanner, source::BodySourceScanner,
+    unqualified_completion_site::UnqualifiedCompletionSiteScanner,
 };
 
 /// Source site selected for a dot-completion query.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct DotCompletionSite {
+pub(crate) struct DotCompletionSite {
     pub body: BodyRef,
     pub receiver: ExprId,
     /// Member-name prefix already typed after the dot.
@@ -34,21 +51,21 @@ pub struct DotCompletionSite {
 
 /// Namespace expected by a path-completion site inside a function body.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PathCompletionNamespace {
+pub(crate) enum PathCompletionNamespace {
     Types,
     Values,
 }
 
 /// Namespace expected by an unqualified completion site inside a function body.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum UnqualifiedCompletionNamespace {
+pub(crate) enum UnqualifiedCompletionNamespace {
     Types,
     Values,
 }
 
 /// Source site selected for a qualified-path completion query.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PathCompletionSite {
+pub(crate) struct PathCompletionSite {
     pub body: BodyRef,
     pub scope: ScopeId,
     /// Path before the segment being completed.
@@ -60,7 +77,7 @@ pub struct PathCompletionSite {
 
 /// Source site selected for an unqualified completion query inside a body.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct UnqualifiedCompletionSite {
+pub(crate) struct UnqualifiedCompletionSite {
     pub body: BodyRef,
     pub scope: ScopeId,
     /// Name prefix already typed at the cursor.
@@ -76,7 +93,7 @@ pub struct UnqualifiedCompletionSite {
 
 /// Source site selected for a record-field completion query.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RecordFieldCompletionSite {
+pub(crate) struct RecordFieldCompletionSite {
     pub body: BodyRef,
     pub scope: ScopeId,
     /// Struct-like path before the record field list.
@@ -89,7 +106,7 @@ pub struct RecordFieldCompletionSite {
 
 /// Source spelling for a local binding declaration.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum BindingSurface {
+pub(crate) enum BindingSurface {
     /// Ordinary binding syntax, e.g. `user` in `let user = input;`.
     Plain,
     /// Binding introduced by record-pattern shorthand, e.g. `name` in `let User { name } = user;`.
@@ -109,7 +126,7 @@ pub enum BindingSurface {
 
 /// Source spelling for a record field key.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum RecordFieldKeySurface {
+pub(crate) enum RecordFieldKeySurface {
     /// Explicit key syntax, e.g. `name` in `User { name: value }`.
     Explicit,
     /// Expression shorthand key syntax, e.g. `name` in `User { name }`.
@@ -126,7 +143,7 @@ pub enum RecordFieldKeySurface {
 
 /// Lowered source backing a value-namespace reference candidate.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ValueReferenceSource {
+pub(crate) enum ValueReferenceSource {
     /// Expression-backed reference, e.g. `foo` in `foo()` or `name` in `User { name }`.
     Expr(ExprId),
     /// Path-segment reference without a dedicated expression id, e.g. `Some` in a pattern path.
@@ -135,7 +152,7 @@ pub enum ValueReferenceSource {
 
 /// Source spelling for a value-namespace reference.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ValueReferenceSurface {
+pub(crate) enum ValueReferenceSurface {
     /// Ordinary value reference syntax, e.g. `user` in `user.name`.
     Plain,
     /// Value implied by record-expression shorthand, e.g. `name` in `User { name }`.
@@ -145,10 +162,14 @@ pub enum ValueReferenceSurface {
     RecordExprShorthand { key: FieldKey, field_span: Span },
 }
 
-/// One body source node that can participate in cursor queries.
+/// One body source node that can become an indexed occurrence.
+///
+/// This is an internal transport shape between structural body scanning and the normalized source
+/// facade. It keeps source distinctions such as record shorthand long enough for rename and
+/// references to interpret them correctly; analysis code does not consume this enum directly.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum BodyCursorCandidate {
-    /// Function body declaration, e.g. the name in `fn use_it() { ... }`.
+pub(crate) enum BodySourceCandidate {
+    /// Fallback source for a function body when no narrower body-local node owns the cursor.
     Body { body: BodyRef, span: Span },
     /// Local binding introduced by a parameter or pattern, e.g. `user` in `let user = input;`.
     Binding {
@@ -157,7 +178,7 @@ pub enum BodyCursorCandidate {
         span: Span,
         surface: BindingSurface,
     },
-    /// Lowered expression node, e.g. the whole `user.id()` call expression.
+    /// Lowered expression node with its useful source spelling, e.g. `id` in `user.id()`.
     Expr {
         body: BodyRef,
         expr: ExprId,
@@ -184,7 +205,7 @@ pub enum BodyCursorCandidate {
     LocalEnumVariant { variant: EnumVariantRef, span: Span },
     /// Body-local function-like item, e.g. `helper` in `fn f() { fn helper() {} }`.
     LocalFunction { function: FunctionRef, span: Span },
-    /// Explicit record field key, e.g. `name` in `User { name: value }`.
+    /// Record field key, e.g. `name` in either `User { name: value }` or `User { name }`.
     RecordFieldKey {
         body: BodyRef,
         scope: ScopeId,
@@ -213,8 +234,8 @@ pub enum BodyCursorCandidate {
     },
 }
 
-impl BodyCursorCandidate {
-    pub fn span(&self) -> Span {
+impl BodySourceCandidate {
+    pub(crate) fn span(&self) -> Span {
         match self {
             Self::Body { span, .. }
             | Self::Binding { span, .. }
@@ -229,67 +250,5 @@ impl BodyCursorCandidate {
             | Self::ValueReference { span, .. }
             | Self::TypePath { span, .. } => *span,
         }
-    }
-}
-
-impl BodyIrReadTxn<'_> {
-    /// Returns body-local cursor candidates at `offset`, including let-annotation type paths.
-    pub fn cursor_candidates(
-        &self,
-        crate_ref: CrateRef,
-        file_id: FileId,
-        offset: u32,
-    ) -> Result<Vec<BodyCursorCandidate>, PackageStoreError> {
-        BodyCursorScanner::new(self, crate_ref, file_id, offset).scan()
-    }
-
-    /// Returns body-local source candidates in one crate.
-    pub fn source_candidates(
-        &self,
-        crate_ref: CrateRef,
-        file_id: Option<FileId>,
-    ) -> Result<Vec<BodyCursorCandidate>, PackageStoreError> {
-        BodySourceScanner::new(self, crate_ref, file_id).scan()
-    }
-
-    /// Returns the source site for a dot-completion query.
-    pub fn dot_completion_site(
-        &self,
-        crate_ref: CrateRef,
-        file_id: FileId,
-        offset: u32,
-    ) -> Result<Option<DotCompletionSite>, PackageStoreError> {
-        DotCompletionSiteScanner::new(self, crate_ref, file_id, offset).site_at_dot()
-    }
-
-    /// Returns the source site for a qualified-path completion query inside a body.
-    pub fn path_completion_site(
-        &self,
-        crate_ref: CrateRef,
-        file_id: FileId,
-        offset: u32,
-    ) -> Result<Option<PathCompletionSite>, PackageStoreError> {
-        PathCompletionSiteScanner::new(self, crate_ref, file_id, offset).site_at_path()
-    }
-
-    /// Returns the source site for an unqualified completion query inside a body.
-    pub fn unqualified_completion_site(
-        &self,
-        crate_ref: CrateRef,
-        file_id: FileId,
-        offset: u32,
-    ) -> Result<Option<UnqualifiedCompletionSite>, PackageStoreError> {
-        UnqualifiedCompletionSiteScanner::new(self, crate_ref, file_id, offset).site_at_name()
-    }
-
-    /// Returns the source site for a record-field completion query inside a body.
-    pub fn record_field_completion_site(
-        &self,
-        crate_ref: CrateRef,
-        file_id: FileId,
-        offset: u32,
-    ) -> Result<Option<RecordFieldCompletionSite>, PackageStoreError> {
-        RecordFieldCompletionSiteScanner::new(self, crate_ref, file_id, offset)
-            .site_at_record_field()
     }
 }

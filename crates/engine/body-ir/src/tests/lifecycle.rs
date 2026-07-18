@@ -55,7 +55,8 @@ pub fn use_it(value: &[u8; 3]) {
         assert!(body.binding_facts().iter().all(|facts| !facts.ty.has_var()));
         assert!(body.expr_facts().iter().all(|facts| !facts.ty.has_var()));
 
-        for (expr, data) in body.exprs_with_ids() {
+        for (expr_idx, data) in body.exprs().iter().enumerate() {
+            let expr = ExprId(expr_idx);
             if matches!(
                 data.kind,
                 ExprKind::Call { .. } | ExprKind::MethodCall { .. }

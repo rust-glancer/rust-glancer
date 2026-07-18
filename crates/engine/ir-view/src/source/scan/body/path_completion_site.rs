@@ -1,20 +1,28 @@
-//! Qualified-path completion site scanning.
+//! Qualified-path completion site scanning over Body IR.
 //!
 //! Path completion scans recognize partially typed segments in paths such as
 //! `crate::module::Us` and return the qualifier, replacement span, and expected namespace.
+//!
+//! ```text
+//! let value: model::Us$0;  qualifier `model`, complete in the type namespace
+//! model::make$0()          qualifier `model`, complete in the value namespace
+//! model::$0                qualifier `model`, use an empty replacement span
+//! ```
 
 use rg_ir_model::{BodyRef, CrateRef, Path, ScopeId, items::TypePath};
 use rg_package_store::PackageStoreError;
 use rg_parse::{FileId, Span, TextSpan};
 
-use crate::{BodyIrReadTxn, BodyPath, BodyView, ExprKind, PatData};
+use rg_body_ir::{BodyIrReadTxn, BodyPath, BodyView, ExprKind, PatData};
 
-use super::{
-    super::{PathCompletionNamespace, PathCompletionSite},
-    sites::BodyScanSites,
-};
+use super::super::NarrowestSourceSite;
+use super::{PathCompletionNamespace, PathCompletionSite, sites::BodyScanSites};
 
 /// Finds the source site that belongs to a qualified-path completion offset.
+///
+/// The surrounding syntax supplies the expected namespace: type annotations and record
+/// constructors request types, while ordinary expression and tuple/unit pattern paths request
+/// values.
 pub(crate) struct PathCompletionSiteScanner<'txn, 'db> {
     body_ir: &'txn BodyIrReadTxn<'db>,
     crate_ref: CrateRef,
@@ -39,7 +47,7 @@ impl<'txn, 'db> PathCompletionSiteScanner<'txn, 'db> {
 
     /// Returns the smallest type or value path whose segment prefix accepts completions.
     pub(crate) fn site_at_path(&self) -> Result<Option<PathCompletionSite>, PackageStoreError> {
-        let mut best: Option<(PathCompletionSite, u32)> = None;
+        let mut best = NarrowestSourceSite::new();
 
         for (body_ref, body) in self.body_ir.bodies(self.crate_ref, Some(self.file_id))? {
             // Body spans are a cheap first filter before scanning every expression and statement.
@@ -51,7 +59,7 @@ impl<'txn, 'db> PathCompletionSiteScanner<'txn, 'db> {
             self.scan_body_paths(body_ref, body, &mut best);
         }
 
-        Ok(best.map(|(site, _)| site))
+        Ok(best.finish())
     }
 
     /// Scans body-local type annotations, including nested generic arguments.
@@ -59,13 +67,13 @@ impl<'txn, 'db> PathCompletionSiteScanner<'txn, 'db> {
         &self,
         body_ref: BodyRef,
         body: BodyView<'_>,
-        best: &mut Option<(PathCompletionSite, u32)>,
+        best: &mut NarrowestSourceSite<PathCompletionSite>,
     ) {
         let sites = BodyScanSites::new(body);
         sites.walk_type_paths(Some(self.file_id), |site| {
             if let Some(completion_site) = self.site_for_type_path(body_ref, site.scope, site.path)
             {
-                Self::remember_site(completion_site, site.path.source_span.len(), best);
+                best.consider(completion_site, site.path.source_span.len());
             }
         });
     }
@@ -75,9 +83,9 @@ impl<'txn, 'db> PathCompletionSiteScanner<'txn, 'db> {
         &self,
         body_ref: BodyRef,
         body: BodyView<'_>,
-        best: &mut Option<(PathCompletionSite, u32)>,
+        best: &mut NarrowestSourceSite<PathCompletionSite>,
     ) {
-        for (_expr, expr_data) in body.exprs_with_ids() {
+        for expr_data in body.exprs() {
             if !expr_data.source.is_written_in_file(self.file_id) {
                 continue;
             }
@@ -114,7 +122,7 @@ impl<'txn, 'db> PathCompletionSiteScanner<'txn, 'db> {
         body_ref: BodyRef,
         scope: ScopeId,
         data: &PatData,
-        best: &mut Option<(PathCompletionSite, u32)>,
+        best: &mut NarrowestSourceSite<PathCompletionSite>,
     ) {
         if let Some(path) = data.kind.record_path() {
             self.scan_body_path(body_ref, scope, path, PathCompletionNamespace::Types, best);
@@ -124,6 +132,9 @@ impl<'txn, 'db> PathCompletionSiteScanner<'txn, 'db> {
     }
 
     /// Finds a partially typed type path segment after at least one qualifier segment.
+    ///
+    /// For `outer::inner::Ty$0`, the returned qualifier is `outer::inner` and the replacement span
+    /// covers `Ty`.
     fn site_for_type_path(
         &self,
         body: BodyRef,
@@ -211,13 +222,16 @@ impl<'txn, 'db> PathCompletionSiteScanner<'txn, 'db> {
     }
 
     /// Finds a partially typed constructor path segment after at least one qualifier segment.
+    ///
+    /// A record path such as `model::Us$0 { ... }` selects the type namespace; a call-like path such
+    /// as `model::ma$0ke()` selects the value namespace.
     fn scan_body_path(
         &self,
         body: BodyRef,
         scope: ScopeId,
         path: &BodyPath,
         namespace: PathCompletionNamespace,
-        best: &mut Option<(PathCompletionSite, u32)>,
+        best: &mut NarrowestSourceSite<PathCompletionSite>,
     ) {
         for idx in 1..path.segment_count() {
             let Some(span) = path.segment_span(idx) else {
@@ -230,7 +244,7 @@ impl<'txn, 'db> PathCompletionSiteScanner<'txn, 'db> {
                 continue;
             };
 
-            Self::remember_site(
+            best.consider(
                 PathCompletionSite {
                     body,
                     scope,
@@ -239,26 +253,11 @@ impl<'txn, 'db> PathCompletionSiteScanner<'txn, 'db> {
                     namespace,
                 },
                 path.source_span.len(),
-                best,
             );
         }
 
         if let Some(site) = self.empty_member_site_for_body_path(body, scope, path, namespace) {
-            Self::remember_site(site, path.source_span.len(), best);
-        }
-    }
-
-    /// Keeps nested path behavior predictable by choosing the shortest matching path syntax.
-    fn remember_site(
-        site: PathCompletionSite,
-        source_len: u32,
-        best: &mut Option<(PathCompletionSite, u32)>,
-    ) {
-        if best
-            .as_ref()
-            .is_none_or(|(_, best_len)| source_len < *best_len)
-        {
-            *best = Some((site, source_len));
+            best.consider(site, path.source_span.len());
         }
     }
 }

@@ -107,8 +107,8 @@ impl<'a, 'db> RenameResolver<'a, 'db> {
             edits.push(edit);
         }
 
-        // A semantic occurrence can be reachable through more than one source candidate. Collapse
-        // exact duplicates and fail loudly if two planned edits would fight over the same text.
+        // A semantic occurrence can be reached through more than one source scanner. Collapse exact
+        // duplicates and fail loudly if two planned edits would fight over the same text.
         let edits = Self::normalize_rename_edits(edits)?;
 
         Ok(Some(RenameResult {

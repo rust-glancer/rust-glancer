@@ -1,20 +1,32 @@
-//! Record-field completion site scanning.
+//! Record-field completion site scanning over Body IR.
 //!
 //! Record-field sites are the field-name slots inside struct literals and record patterns, such
 //! as `User { na$0 }` or `let User { na$0 } = user`.
+//!
+//! The cursor must be on a key or in free field-list space. `User { name: val$0 }` is deliberately
+//! rejected so ordinary value completion can handle the field value.
 
 use rg_ir_model::items::FieldKey;
 use rg_ir_model::{BodyRef, CrateRef, ScopeId};
 use rg_package_store::PackageStoreError;
 use rg_parse::{FileId, Span, TextSpan};
 
-use crate::{
+use rg_body_ir::{
     BodyIrReadTxn, BodyPath, BodyView, ExprKind, PatData, PatKind, RecordExprField, RecordPatField,
 };
 
-use super::{super::RecordFieldCompletionSite, sites::BodyScanSites};
+use super::super::NarrowestSourceSite;
+use super::{RecordFieldCompletionSite, sites::BodyScanSites};
 
 /// Finds the record field-list site that belongs to a completion offset.
+///
+/// Besides the owner path and replacement span, the result retains already-written keys. Candidate
+/// generation uses them to avoid suggesting the same field twice:
+///
+/// ```text
+/// User { name, em$0 }
+///        ^^^^ exclude `name` from the candidates for `em`
+/// ```
 pub(crate) struct RecordFieldCompletionSiteScanner<'txn, 'db> {
     body_ir: &'txn BodyIrReadTxn<'db>,
     crate_ref: CrateRef,
@@ -41,7 +53,7 @@ impl<'txn, 'db> RecordFieldCompletionSiteScanner<'txn, 'db> {
     pub(crate) fn site_at_record_field(
         &self,
     ) -> Result<Option<RecordFieldCompletionSite>, PackageStoreError> {
-        let mut best: Option<(RecordFieldCompletionSite, u32)> = None;
+        let mut best = NarrowestSourceSite::new();
 
         for (body_ref, body) in self.body_ir.bodies(self.crate_ref, Some(self.file_id))? {
             if !body.source().span.contains(self.offset) {
@@ -52,7 +64,7 @@ impl<'txn, 'db> RecordFieldCompletionSiteScanner<'txn, 'db> {
             self.scan_record_pats(body_ref, body, &mut best);
         }
 
-        Ok(best.map(|(site, _)| site))
+        Ok(best.finish())
     }
 
     /// Scans record expressions like `User { na$0: value }`.
@@ -60,7 +72,7 @@ impl<'txn, 'db> RecordFieldCompletionSiteScanner<'txn, 'db> {
         &self,
         body_ref: BodyRef,
         body: BodyView<'_>,
-        best: &mut Option<(RecordFieldCompletionSite, u32)>,
+        best: &mut NarrowestSourceSite<RecordFieldCompletionSite>,
     ) {
         for expr in body.exprs().iter() {
             if !expr.source.is_written_in_file(self.file_id) {
@@ -86,7 +98,7 @@ impl<'txn, 'db> RecordFieldCompletionSiteScanner<'txn, 'db> {
             ) else {
                 continue;
             };
-            Self::remember_site(site, expr.source.span.len(), best);
+            best.consider(site, expr.source.span.len());
         }
     }
 
@@ -95,7 +107,7 @@ impl<'txn, 'db> RecordFieldCompletionSiteScanner<'txn, 'db> {
         &self,
         body_ref: BodyRef,
         body: BodyView<'_>,
-        best: &mut Option<(RecordFieldCompletionSite, u32)>,
+        best: &mut NarrowestSourceSite<RecordFieldCompletionSite>,
     ) {
         let sites = BodyScanSites::new(body);
         sites.walk_pats(Some(self.file_id), Some(self.offset), |site| {
@@ -110,7 +122,7 @@ impl<'txn, 'db> RecordFieldCompletionSiteScanner<'txn, 'db> {
         body: BodyView<'_>,
         scope: ScopeId,
         data: &PatData,
-        best: &mut Option<(RecordFieldCompletionSite, u32)>,
+        best: &mut NarrowestSourceSite<RecordFieldCompletionSite>,
     ) {
         let PatKind::Record {
             path: Some(path),
@@ -131,7 +143,7 @@ impl<'txn, 'db> RecordFieldCompletionSiteScanner<'txn, 'db> {
             fields.iter().map(RecordFieldSpan::from_pat_field),
             rest_span,
         ) {
-            Self::remember_site(site, data.source.span.len(), best);
+            best.consider(site, data.source.span.len());
         }
     }
 
@@ -164,6 +176,10 @@ impl<'txn, 'db> RecordFieldCompletionSiteScanner<'txn, 'db> {
     }
 
     /// Returns the field-name replacement span, while leaving field values to value completion.
+    ///
+    /// A cursor on `na$0` replaces the key span. A cursor between fields gets an empty span. A
+    /// cursor anywhere else inside an existing field, spread expression, or `..` pattern returns
+    /// no record-field site.
     fn member_prefix_span_for_record_fields(
         &self,
         fields: &[RecordFieldSpan<'_>],
@@ -188,20 +204,6 @@ impl<'txn, 'db> RecordFieldCompletionSiteScanner<'txn, 'db> {
                 end: self.offset,
             },
         })
-    }
-
-    /// Keeps nested record behavior predictable by choosing the smallest matching record syntax.
-    fn remember_site(
-        site: RecordFieldCompletionSite,
-        source_len: u32,
-        best: &mut Option<(RecordFieldCompletionSite, u32)>,
-    ) {
-        if best
-            .as_ref()
-            .is_none_or(|(_, best_len)| source_len < *best_len)
-        {
-            *best = Some((site, source_len));
-        }
     }
 }
 

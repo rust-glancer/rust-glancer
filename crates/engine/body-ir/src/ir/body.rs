@@ -136,10 +136,6 @@ impl<'a> BodyView<'a> {
         self.body.exprs()
     }
 
-    pub(crate) fn exprs_with_ids(self) -> impl Iterator<Item = (ExprId, &'a ExprData)> {
-        self.body.exprs_with_ids()
-    }
-
     pub fn expr_facts(self) -> &'a [ExprFacts] {
         self.facts.exprs.as_slice()
     }

@@ -1,25 +1,35 @@
-//! Cursor-oriented queries over semantic item signatures.
+//! Source scanning over semantic item signatures.
 //!
-//! Analysis owns the user-facing `SymbolAt` enum, but semantic IR owns the shape of item
-//! signatures. Keeping this scan here prevents analysis from knowing how every semantic item stores
-//! generic params, field types, enum variants, impl headers, and associated function declarations.
+//! Semantic IR owns item signature data, while the indexed view owns the source interpretation of
+//! that data. This scanner finds fields, variants, associated functions, and nested type paths
+//! without making source-query APIs part of Semantic IR's storage transaction.
+//!
+//! ```text
+//! struct Wrapper<T> {
+//!     value: outer::Inner<Vec<T>>,
+//!     ^^^^^  ^^^^^  ^^^^^ ^^^ ^ fields and every nested type path remain independently navigable
+//! }
+//! ```
 
-use crate::{ItemStoreQuery, TypePathContext};
-use rg_ir_model::Path;
-use rg_ir_model::{CrateRef, DefMapRef};
-use rg_ir_model::{EnumVariantRef, FieldRef, FunctionRef, ItemOwner, TypeDefId, TypeDefRef};
-use rg_item_tree::{
-    FieldList, GenericArg, GenericParams, TypeBound, TypePath, TypePathAnchor, TypeRef,
-    WherePredicate,
+use rg_ir_model::{
+    CrateRef, DefMapRef, EnumVariantRef, FieldRef, FunctionRef, ItemOwner, Path, TypeDefId,
+    TypeDefRef,
+    items::{
+        FieldList, GenericArg, GenericParams, TypeBound, TypePath, TypePathAnchor, TypeRef,
+        WherePredicate,
+    },
 };
 use rg_package_store::PackageStoreError;
 use rg_parse::{FileId, Span};
+use rg_semantic_ir::{ItemStoreQuery, SemanticIrReadTxn, TypePathContext};
 
-use crate::SemanticIrReadTxn;
-
-/// One semantic signature source node that can participate in cursor queries.
+/// One semantic signature source node that can become an indexed occurrence.
+///
+/// Top-level item names already come from DefMap. Semantic signatures add names owned below that
+/// boundary—fields, variants, associated functions—and type paths that need their item's generic
+/// and impl context for resolution.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SemanticCursorCandidate {
+pub(crate) enum SignatureSourceCandidate {
     Field {
         field: FieldRef,
         span: Span,
@@ -40,7 +50,7 @@ pub enum SemanticCursorCandidate {
     },
 }
 
-impl SemanticCursorCandidate {
+impl SignatureSourceCandidate {
     fn span(&self) -> Span {
         match self {
             Self::Field { span, .. }
@@ -51,58 +61,51 @@ impl SemanticCursorCandidate {
     }
 }
 
-impl SemanticIrReadTxn<'_> {
-    /// Returns cursor candidates inside semantic item signatures.
-    pub fn signature_cursor_candidates(
-        &self,
-        crate_ref: CrateRef,
-        file_id: FileId,
-        offset: u32,
-    ) -> Result<Vec<SemanticCursorCandidate>, PackageStoreError> {
-        let mut candidates = Vec::new();
-        SignatureCursorScanner {
-            semantic_ir: self,
-            crate_ref,
-            file_id: Some(file_id),
-            offset: Some(offset),
-            candidates: &mut candidates,
-        }
-        .scan()?;
-
-        Ok(candidates)
-    }
-
-    /// Returns source candidates inside semantic item signatures for one crate.
-    pub fn signature_source_candidates(
-        &self,
-        crate_ref: CrateRef,
-        file_id: Option<FileId>,
-    ) -> Result<Vec<SemanticCursorCandidate>, PackageStoreError> {
-        let mut candidates = Vec::new();
-        SignatureCursorScanner {
-            semantic_ir: self,
-            crate_ref,
-            file_id,
-            offset: None,
-            candidates: &mut candidates,
-        }
-        .scan()?;
-
-        Ok(candidates)
-    }
-}
-
-/// Scans semantic item signatures for names and type paths under the cursor.
-struct SignatureCursorScanner<'txn, 'db> {
+/// Scans semantic item signatures for declaration names and nested type paths.
+///
+/// Type references are walked recursively through generic defaults, bounds, where predicates,
+/// fields, parameters, return types, and qualified anchors. For `Outer<Inner>`, both paths are
+/// emitted rather than treating the annotation as one opaque source span.
+pub(crate) struct SignatureSourceScanner<'txn, 'db> {
     semantic_ir: &'txn SemanticIrReadTxn<'db>,
     crate_ref: CrateRef,
     file_id: Option<FileId>,
     offset: Option<u32>,
-    candidates: &'txn mut Vec<SemanticCursorCandidate>,
+    candidates: Vec<SignatureSourceCandidate>,
 }
 
-impl SignatureCursorScanner<'_, '_> {
-    fn scan(&mut self) -> Result<(), PackageStoreError> {
+impl<'txn, 'db> SignatureSourceScanner<'txn, 'db> {
+    pub(crate) fn at(
+        semantic_ir: &'txn SemanticIrReadTxn<'db>,
+        crate_ref: CrateRef,
+        file_id: FileId,
+        offset: u32,
+    ) -> Self {
+        Self {
+            semantic_ir,
+            crate_ref,
+            file_id: Some(file_id),
+            offset: Some(offset),
+            candidates: Vec::new(),
+        }
+    }
+
+    pub(crate) fn in_crate(
+        semantic_ir: &'txn SemanticIrReadTxn<'db>,
+        crate_ref: CrateRef,
+        file_id: Option<FileId>,
+    ) -> Self {
+        Self {
+            semantic_ir,
+            crate_ref,
+            file_id,
+            offset: None,
+            candidates: Vec::new(),
+        }
+    }
+
+    /// Collects the source facts owned by each semantic item family in the crate.
+    pub(crate) fn scan(mut self) -> Result<Vec<SignatureSourceCandidate>, PackageStoreError> {
         self.scan_structs()?;
         self.scan_unions()?;
         self.scan_enums()?;
@@ -112,7 +115,7 @@ impl SignatureCursorScanner<'_, '_> {
         self.scan_type_aliases()?;
         self.scan_consts()?;
         self.scan_statics()?;
-        Ok(())
+        Ok(self.candidates)
     }
 
     fn scan_structs(&mut self) -> Result<(), PackageStoreError> {
@@ -453,6 +456,10 @@ impl SignatureCursorScanner<'_, '_> {
         }
     }
 
+    /// Emits each unanchored path prefix and then descends into the segment's generic arguments.
+    ///
+    /// For `outer::Inner<Vec<T>>`, segment occurrences resolve as `outer` and `outer::Inner`; `Vec`
+    /// and `T` are visited recursively as their own paths.
     fn push_type_path(&mut self, context: TypePathContext, path: &TypePath, file_id: FileId) {
         if let Some(anchor) = &path.anchor {
             self.push_type_path_anchor(context, anchor, file_id);
@@ -463,7 +470,7 @@ impl SignatureCursorScanner<'_, '_> {
                 && self.offset_matches(segment.span)
                 && let Some(def_map_path) = Path::from_type_path_prefix(path, idx)
             {
-                self.push_candidate(SemanticCursorCandidate::TypePath {
+                self.push_candidate(SignatureSourceCandidate::TypePath {
                     context,
                     path: def_map_path,
                     file_id,
@@ -512,18 +519,18 @@ impl SignatureCursorScanner<'_, '_> {
     }
 
     fn push_field(&mut self, field: FieldRef, span: Span) {
-        self.push_candidate(SemanticCursorCandidate::Field { field, span });
+        self.push_candidate(SignatureSourceCandidate::Field { field, span });
     }
 
     fn push_function(&mut self, function: FunctionRef, span: Span) {
-        self.push_candidate(SemanticCursorCandidate::Function { function, span });
+        self.push_candidate(SignatureSourceCandidate::Function { function, span });
     }
 
     fn push_enum_variant(&mut self, variant: EnumVariantRef, span: Span) {
-        self.push_candidate(SemanticCursorCandidate::EnumVariant { variant, span });
+        self.push_candidate(SignatureSourceCandidate::EnumVariant { variant, span });
     }
 
-    fn push_candidate(&mut self, candidate: SemanticCursorCandidate) {
+    fn push_candidate(&mut self, candidate: SignatureSourceCandidate) {
         if self.offset_matches(candidate.span()) {
             self.candidates.push(candidate);
         }

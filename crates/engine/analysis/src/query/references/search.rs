@@ -136,11 +136,11 @@ impl ReferenceSearchLabel {
 /// Source surface scanned for reference use-sites.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum ReferenceSearchScope<'a> {
-    /// Scans all source candidates inside the listed crates.
+    /// Scans all source occurrences inside the listed crates.
     Crates(&'a [CrateRef]),
-    /// Scans source candidates inside the listed crate/file pairs.
+    /// Scans source occurrences inside the listed crate/file pairs.
     Files(&'a [ReferenceSearchFile]),
-    /// Scans source candidates in one file inside one crate.
+    /// Scans source occurrences in one file inside one crate.
     File {
         crate_ref: CrateRef,
         file_id: FileId,

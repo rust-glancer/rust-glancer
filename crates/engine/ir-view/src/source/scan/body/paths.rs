@@ -1,7 +1,15 @@
-//! Shared path-segment scanning for body-local cursor candidates.
+//! Shared path-segment scanning for body-local source occurrences.
 //!
 //! Path scanners provide reusable type-path and value-path traversal for point
 //! queries and whole-crate scans after those queries choose their scope.
+//! Each written segment is represented by the prefix needed to resolve that segment:
+//!
+//! ```text
+//! crate::model::User
+//! ^^^^^  -> `crate`
+//!        ^^^^^ -> `crate::model`
+//!               ^^^^ -> `crate::model::User`
+//! ```
 
 use rg_ir_model::{
     BodyRef, Path, ScopeId,
@@ -9,23 +17,56 @@ use rg_ir_model::{
 };
 use rg_parse::{FileId, Span};
 
-use crate::{BodyPath, BodyView, ExprKind, PatData};
+use rg_body_ir::{BodyPath, BodyView, ExprKind, PatData, RecordExprField};
 
 use super::{
-    super::{BodyCursorCandidate, ValueReferenceSource, ValueReferenceSurface},
-    sites::BodyScanSites,
+    BodySourceCandidate, ValueReferenceSource, ValueReferenceSurface, sites::BodyScanSites,
 };
 
-/// Adds type-namespace path candidates from body-local type annotations.
-pub(super) struct TypePathCursorScanner<'a> {
-    pub(super) body_ref: BodyRef,
-    pub(super) body: BodyView<'a>,
-    pub(super) file_id: Option<FileId>,
-    pub(super) offset: Option<u32>,
-    pub(super) candidates: &'a mut Vec<BodyCursorCandidate>,
+/// Adds type-namespace path candidates from body-local type syntax.
+///
+/// This includes nested paths such as both `Outer` and `Inner` in `Outer<Inner>`, not only the
+/// outer annotation.
+pub(super) struct TypePathSourceScanner<'a> {
+    body_ref: BodyRef,
+    body: BodyView<'a>,
+    file_id: Option<FileId>,
+    offset: Option<u32>,
+    candidates: &'a mut Vec<BodySourceCandidate>,
 }
 
-impl TypePathCursorScanner<'_> {
+impl<'a> TypePathSourceScanner<'a> {
+    pub(super) fn at(
+        body_ref: BodyRef,
+        body: BodyView<'a>,
+        file_id: FileId,
+        offset: u32,
+        candidates: &'a mut Vec<BodySourceCandidate>,
+    ) -> Self {
+        Self {
+            body_ref,
+            body,
+            file_id: Some(file_id),
+            offset: Some(offset),
+            candidates,
+        }
+    }
+
+    pub(super) fn in_crate(
+        body_ref: BodyRef,
+        body: BodyView<'a>,
+        file_id: Option<FileId>,
+        candidates: &'a mut Vec<BodySourceCandidate>,
+    ) -> Self {
+        Self {
+            body_ref,
+            body,
+            file_id,
+            offset: None,
+            candidates,
+        }
+    }
+
     /// Scans body-local type annotations that can contain navigable type paths.
     pub(super) fn scan(&mut self) {
         let sites = BodyScanSites::new(self.body);
@@ -45,7 +86,7 @@ impl TypePathCursorScanner<'_> {
                 let Some(path) = Path::from_type_path_prefix(path, idx) else {
                     continue;
                 };
-                self.candidates.push(BodyCursorCandidate::TypePath {
+                self.candidates.push(BodySourceCandidate::TypePath {
                     body: self.body_ref,
                     scope,
                     path,
@@ -62,22 +103,67 @@ impl TypePathCursorScanner<'_> {
 }
 
 /// Adds path candidates from body-local expressions and patterns.
-pub(super) struct BodyPathCursorScanner<'a> {
-    pub(super) body_ref: BodyRef,
-    pub(super) body: BodyView<'a>,
-    pub(super) file_id: Option<FileId>,
-    pub(super) offset: Option<u32>,
-    pub(super) include_single_segment: bool,
-    pub(super) candidates: &'a mut Vec<BodyCursorCandidate>,
+///
+/// Qualifier segments are type/module-looking, while the final segment normally occupies the
+/// value namespace:
+///
+/// ```text
+/// Action::Start
+/// ^^^^^^ type-path candidate
+///         ^^^^^ value-path candidate
+/// ```
+///
+/// Record constructors are the exception: the final segment in `model::User { ... }` is also a
+/// type-path candidate.
+pub(super) struct BodyPathSourceScanner<'a> {
+    body_ref: BodyRef,
+    body: BodyView<'a>,
+    file_id: Option<FileId>,
+    offset: Option<u32>,
+    include_single_segment: bool,
+    candidates: &'a mut Vec<BodySourceCandidate>,
 }
 
-impl BodyPathCursorScanner<'_> {
+impl<'a> BodyPathSourceScanner<'a> {
+    pub(super) fn at(
+        body_ref: BodyRef,
+        body: BodyView<'a>,
+        file_id: FileId,
+        offset: u32,
+        candidates: &'a mut Vec<BodySourceCandidate>,
+    ) -> Self {
+        Self {
+            body_ref,
+            body,
+            file_id: Some(file_id),
+            offset: Some(offset),
+            include_single_segment: false,
+            candidates,
+        }
+    }
+
+    pub(super) fn in_crate(
+        body_ref: BodyRef,
+        body: BodyView<'a>,
+        file_id: Option<FileId>,
+        candidates: &'a mut Vec<BodySourceCandidate>,
+    ) -> Self {
+        Self {
+            body_ref,
+            body,
+            file_id,
+            offset: None,
+            include_single_segment: true,
+            candidates,
+        }
+    }
+
     /// Scans every source form where a body-local constructor or value path can appear.
     pub(super) fn scan(&mut self) {
         // Expression source-node lookup deliberately picks one smallest AST-ish node. Qualified
         // paths need finer granularity: in `Action::Start()`, `Action` and `Start` should produce
         // different symbols even though they belong to the same lowered expression.
-        for (_expr, expr_data) in self.body.exprs_with_ids() {
+        for expr_data in self.body.exprs() {
             if !expr_data.source.is_written_in_selected_file(self.file_id) {
                 continue;
             }
@@ -167,7 +253,7 @@ impl BodyPathCursorScanner<'_> {
                 if idx + 1 < segment_count || final_segment_is_type {
                     // In `Action::Start`, the prefix is still a user-visible type/module path.
                     // Record constructors also resolve their final segment as a type path.
-                    self.candidates.push(BodyCursorCandidate::TypePath {
+                    self.candidates.push(BodySourceCandidate::TypePath {
                         body: self.body_ref,
                         scope,
                         path: path.clone(),
@@ -176,7 +262,7 @@ impl BodyPathCursorScanner<'_> {
                     });
                     continue;
                 }
-                self.candidates.push(BodyCursorCandidate::ValueReference {
+                self.candidates.push(BodySourceCandidate::ValueReference {
                     body: self.body_ref,
                     scope,
                     file_id,
@@ -193,7 +279,7 @@ impl BodyPathCursorScanner<'_> {
     fn scan_record_expr_shorthand_values(
         &mut self,
         scope: ScopeId,
-        fields: &[crate::RecordExprField],
+        fields: &[RecordExprField],
         file_id: FileId,
     ) {
         for field in fields {
@@ -203,7 +289,7 @@ impl BodyPathCursorScanner<'_> {
             let FieldKey::Named(name) = &field.key else {
                 continue;
             };
-            self.candidates.push(BodyCursorCandidate::ValueReference {
+            self.candidates.push(BodySourceCandidate::ValueReference {
                 body: self.body_ref,
                 scope,
                 file_id,

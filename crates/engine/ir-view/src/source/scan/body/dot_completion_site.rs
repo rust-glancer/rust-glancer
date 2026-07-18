@@ -1,18 +1,28 @@
-//! Dot-completion site scanning.
+//! Dot-completion site scanning over Body IR.
 //!
 //! Dot completion site scans recognize field and method access expressions that
 //! can host member completions, then return the receiver expression and typed
 //! member prefix.
+//!
+//! ```text
+//! user.$0       empty replacement span after the dot
+//! user.na$0     replace the written `na` prefix
+//! user.name($0) not a dot-completion site: the cursor is inside the arguments
+//! ```
 
 use rg_ir_model::{CrateRef, ExprId};
 use rg_package_store::PackageStoreError;
 use rg_parse::{FileId, Span, TextSpan};
 
-use crate::{BodyIrReadTxn, BodyView, ExprData, ExprKind};
+use rg_body_ir::{BodyIrReadTxn, BodyView, ExprData, ExprKind};
 
-use super::super::DotCompletionSite;
+use super::super::NarrowestSourceSite;
+use super::DotCompletionSite;
 
 /// Finds the source site that belongs to a dot-completion offset.
+///
+/// The result identifies the lowered receiver separately from the source span to replace. Candidate
+/// generation can therefore inspect the receiver type without having to rediscover dot syntax.
 pub(crate) struct DotCompletionSiteScanner<'txn, 'db> {
     body_ir: &'txn BodyIrReadTxn<'db>,
     crate_ref: CrateRef,
@@ -37,7 +47,7 @@ impl<'txn, 'db> DotCompletionSiteScanner<'txn, 'db> {
 
     /// Returns the smallest field or method expression that accepts completions at the dot.
     pub(crate) fn site_at_dot(&self) -> Result<Option<DotCompletionSite>, PackageStoreError> {
-        let mut best: Option<(DotCompletionSite, u32)> = None;
+        let mut best = NarrowestSourceSite::new();
 
         for (body_ref, body) in self.body_ir.bodies(self.crate_ref, Some(self.file_id))? {
             // First narrow the search to bodies that can contain this completion offset.
@@ -63,23 +73,24 @@ impl<'txn, 'db> DotCompletionSiteScanner<'txn, 'db> {
                 let len = expr.source.span.len();
                 // Nested accesses can both contain the offset. The shortest expression is the
                 // one the user is completing.
-                if best.is_none_or(|(_, best_len)| len < best_len) {
-                    best = Some((
-                        DotCompletionSite {
-                            body: body_ref,
-                            receiver,
-                            member_prefix_span,
-                        },
-                        len,
-                    ));
-                }
+                best.consider(
+                    DotCompletionSite {
+                        body: body_ref,
+                        receiver,
+                        member_prefix_span,
+                    },
+                    len,
+                );
             }
         }
 
-        Ok(best.map(|(receiver, _)| receiver))
+        Ok(best.finish())
     }
 
     /// Returns the already-typed member prefix when `offset` is in this dot expression.
+    ///
+    /// The accepted range starts after the dot rather than at the beginning of the full expression,
+    /// so `receiver$0.field` remains an ordinary cursor query.
     fn member_prefix_span_for_dot_expr(
         expr: &ExprData,
         body: BodyView<'_>,

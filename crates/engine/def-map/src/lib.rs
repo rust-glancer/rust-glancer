@@ -33,8 +33,7 @@ pub use self::{
     package::{CrateData, PackageDefMaps},
     profile::profile_descriptors,
     query::{
-        CrateResolutionEnv, DefMapCursorCandidate, DefMapPathCompletionSite, DefMapQuery,
-        DefMapSource, DefMapUnqualifiedCompletionSite, GlobImportSource, ImportResolution,
+        CrateResolutionEnv, DefMapQuery, DefMapSource, GlobImportSource, ImportResolution,
         ImportedScopeBinding, MacroDefinitionEnv, ResolvePathResult, ScopeResolutionEnv,
         ScopeResolver,
     },

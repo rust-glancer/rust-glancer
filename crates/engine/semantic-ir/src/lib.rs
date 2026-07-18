@@ -9,7 +9,6 @@
 //! ownership.
 
 mod build;
-mod cursor;
 mod ir;
 mod item;
 mod store;
@@ -20,7 +19,6 @@ pub mod testonly;
 mod tests;
 
 pub use self::{
-    cursor::SemanticCursorCandidate,
     ir::{PackageIr, SemanticIrStats},
     item::{
         ConstData, ConstSignature, CrateItemQuery, EnumData, EnumVariantData, FieldData,

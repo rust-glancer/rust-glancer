@@ -1,12 +1,10 @@
 use rg_std::MemorySize;
 mod build;
-mod cursor;
 mod ir;
 mod resolution;
 mod store;
 #[doc(hidden)]
 pub mod testonly;
-mod walk;
 
 use rg_def_map::PackageSlot;
 use rg_parse::FileId;
@@ -17,12 +15,6 @@ pub use rg_ir_model::items::FieldKey;
 mod tests;
 
 pub use self::{
-    cursor::{
-        BindingSurface, BodyCursorCandidate, DotCompletionSite, PathCompletionNamespace,
-        PathCompletionSite, RecordFieldCompletionSite, RecordFieldKeySurface,
-        UnqualifiedCompletionNamespace, UnqualifiedCompletionSite, ValueReferenceSource,
-        ValueReferenceSurface,
-    },
     ir::{
         BindingData, BindingFacts, BindingKind, BodyAssociatedPathPrefix, BodyData, BodyFacts,
         BodyOwner, BodyPath, BodySource, BodySourceItems, BodyView, BuiltinMacroExprKind,

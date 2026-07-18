@@ -675,7 +675,7 @@ impl BodyLowering<'_> {
             .spread()
             .and_then(|spread| self.cfg.enabled_syntax(spread));
         // The AST exposes only the expression after `..`; the token span keeps bare `..`
-        // visible to cursor queries too.
+        // visible to source-site queries too.
         let source_end = spread_expr
             .as_ref()
             .map(|expr| u32::from(expr.syntax().text_range().end()))

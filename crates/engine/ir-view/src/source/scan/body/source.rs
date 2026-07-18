@@ -1,7 +1,14 @@
-//! Whole-crate_ref source scanning for project-wide body-local queries.
+//! Whole-crate source scanning for project-wide body-local queries.
 //!
 //! Source scans collect every body-local declaration and reference-like span
 //! that can participate in navigation, references, and symbol queries.
+//! Unlike a point scan, nothing is discarded merely because a narrower node overlaps it:
+//!
+//! ```text
+//! let value = input;
+//! consume(value);
+//!     ^     ^ retain both references, as well as the `value` declaration
+//! ```
 
 use rg_ir_model::{
     BindingId, BodyRef, CrateRef, EnumVariantRef, ExprId, FieldRef, SemanticItemRef, TypeDefId,
@@ -10,16 +17,19 @@ use rg_ir_model::{
 use rg_package_store::PackageStoreError;
 use rg_parse::FileId;
 
-use crate::{BodyIrReadTxn, BodyLocalItems, BodyView, ExprKind, PatKind};
+use rg_body_ir::{BodyIrReadTxn, BodyLocalItems, BodyView, ExprKind, PatKind};
 
 use super::{
-    super::{BindingSurface, BodyCursorCandidate, RecordFieldKeySurface},
-    paths::{BodyPathCursorScanner, TypePathCursorScanner},
+    BindingSurface, BodySourceCandidate, RecordFieldKeySurface,
+    paths::{BodyPathSourceScanner, TypePathSourceScanner},
     record_pat_shorthand::RecordPatShorthandBinding,
     sites::BodyScanSites,
 };
 
-/// Scans one crate for every body-local source candidate used by whole-project queries.
+/// Scans one crate for every written body-local source candidate used by whole-project queries.
+///
+/// Generated expansion internals are deliberately skipped. Their written macro invocation is
+/// emitted instead, so project-wide references point at source the user can edit.
 pub(crate) struct BodySourceScanner<'txn, 'db> {
     body_ir: &'txn BodyIrReadTxn<'db>,
     crate_ref: CrateRef,
@@ -39,8 +49,8 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
         }
     }
 
-    /// Returns all body-local candidates in this crate_ref, optionally limited to one file.
-    pub(crate) fn scan(&self) -> Result<Vec<BodyCursorCandidate>, PackageStoreError> {
+    /// Returns all body-local candidates in this crate, optionally limited to one file.
+    pub(crate) fn scan(&self) -> Result<Vec<BodySourceCandidate>, PackageStoreError> {
         let mut candidates = Vec::new();
         for (body_ref, body) in self.body_ir.bodies(self.crate_ref, self.file_id)? {
             let body_local_items = self.body_ir.body_local_items(body_ref)?;
@@ -50,23 +60,8 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
             self.push_member_reference_candidates(body_ref, body, &mut candidates);
             self.push_record_field_key_candidates(body_ref, body, &mut candidates);
 
-            TypePathCursorScanner {
-                body_ref,
-                body,
-                file_id: self.file_id,
-                offset: None,
-                candidates: &mut candidates,
-            }
-            .scan();
-            BodyPathCursorScanner {
-                body_ref,
-                body,
-                file_id: self.file_id,
-                offset: None,
-                include_single_segment: true,
-                candidates: &mut candidates,
-            }
-            .scan();
+            TypePathSourceScanner::in_crate(body_ref, body, self.file_id, &mut candidates).scan();
+            BodyPathSourceScanner::in_crate(body_ref, body, self.file_id, &mut candidates).scan();
         }
 
         Ok(candidates)
@@ -76,14 +71,14 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
     fn push_macro_call_candidates(
         &self,
         body: BodyView<'_>,
-        candidates: &mut Vec<BodyCursorCandidate>,
+        candidates: &mut Vec<BodySourceCandidate>,
     ) {
         for call in body.macro_calls() {
             if !call.source.is_written_in_selected_file(self.file_id) {
                 continue;
             }
 
-            candidates.push(BodyCursorCandidate::MacroCall {
+            candidates.push(BodySourceCandidate::MacroCall {
                 definition: call.definition,
                 file_id: call.source.file_id,
                 span: call.name_span,
@@ -97,9 +92,10 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
         body_ref: BodyRef,
         body: BodyView<'_>,
         body_local_items: Option<&BodyLocalItems>,
-        candidates: &mut Vec<BodyCursorCandidate>,
+        candidates: &mut Vec<BodySourceCandidate>,
     ) {
-        let record_shorthand_bindings = self.record_shorthand_bindings(body);
+        let record_shorthand_bindings =
+            RecordPatShorthandBinding::collect(body, self.file_id, None);
         for (binding_idx, binding) in body.bindings().iter().enumerate() {
             if !binding.source.is_written_in_selected_file(self.file_id) {
                 continue;
@@ -119,7 +115,7 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
                 BindingSurface::Plain
             };
             let span = binding.name_span.unwrap_or(binding.source.span);
-            candidates.push(BodyCursorCandidate::Binding {
+            candidates.push(BodySourceCandidate::Binding {
                 body: body_ref,
                 binding: binding_id,
                 span,
@@ -154,7 +150,7 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
 
             match item.item() {
                 SemanticItemRef::TypeDef(ty) => {
-                    candidates.push(BodyCursorCandidate::LocalItem {
+                    candidates.push(BodySourceCandidate::LocalItem {
                         item: item.item(),
                         span: declaration_span,
                     });
@@ -162,19 +158,19 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
                     self.push_variant_candidates(item_store, ty, candidates);
                 }
                 SemanticItemRef::Trait(_) | SemanticItemRef::TypeAlias(_) => {
-                    candidates.push(BodyCursorCandidate::LocalItem {
+                    candidates.push(BodySourceCandidate::LocalItem {
                         item: item.item(),
                         span: declaration_span,
                     });
                 }
                 SemanticItemRef::Const(_) | SemanticItemRef::Static(_) => {
-                    candidates.push(BodyCursorCandidate::LocalValueItem {
+                    candidates.push(BodySourceCandidate::LocalValueItem {
                         item: item.item(),
                         span: declaration_span,
                     });
                 }
                 SemanticItemRef::Function(function) => {
-                    candidates.push(BodyCursorCandidate::LocalFunction {
+                    candidates.push(BodySourceCandidate::LocalFunction {
                         function,
                         span: declaration_span,
                     });
@@ -184,35 +180,11 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
         }
     }
 
-    fn record_shorthand_bindings(&self, body: BodyView<'_>) -> Vec<RecordPatShorthandBinding> {
-        let mut bindings = Vec::new();
-        let sites = BodyScanSites::new(body);
-        sites.walk_pats(self.file_id, None, |site| {
-            let PatKind::Record { fields, .. } = &site.data.kind else {
-                return;
-            };
-
-            for field in fields {
-                let Some(shorthand) = RecordPatShorthandBinding::from_field(body, field) else {
-                    continue;
-                };
-                if bindings
-                    .iter()
-                    .any(|seen: &RecordPatShorthandBinding| seen.binding == shorthand.binding)
-                {
-                    continue;
-                }
-                bindings.push(shorthand);
-            }
-        });
-        bindings
-    }
-
     fn push_field_candidates(
         &self,
         item_store: &rg_semantic_ir::ItemStore,
         ty: rg_ir_model::TypeDefRef,
-        candidates: &mut Vec<BodyCursorCandidate>,
+        candidates: &mut Vec<BodySourceCandidate>,
     ) {
         match ty.id {
             TypeDefId::Struct(id) => {
@@ -223,7 +195,7 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
                     return;
                 }
                 for (index, field) in data.fields.fields().iter().enumerate() {
-                    candidates.push(BodyCursorCandidate::LocalField {
+                    candidates.push(BodySourceCandidate::LocalField {
                         field: FieldRef { owner: ty, index },
                         span: field.span,
                     });
@@ -237,7 +209,7 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
                     return;
                 }
                 for (index, field) in data.fields.iter().enumerate() {
-                    candidates.push(BodyCursorCandidate::LocalField {
+                    candidates.push(BodySourceCandidate::LocalField {
                         field: FieldRef { owner: ty, index },
                         span: field.span,
                     });
@@ -251,7 +223,7 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
         &self,
         item_store: &rg_semantic_ir::ItemStore,
         ty: rg_ir_model::TypeDefRef,
-        candidates: &mut Vec<BodyCursorCandidate>,
+        candidates: &mut Vec<BodySourceCandidate>,
     ) {
         let TypeDefId::Enum(enum_id) = ty.id else {
             return;
@@ -263,7 +235,7 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
             if !self.file_matches(data.source.file_id) {
                 continue;
             }
-            candidates.push(BodyCursorCandidate::LocalEnumVariant {
+            candidates.push(BodySourceCandidate::LocalEnumVariant {
                 variant: EnumVariantRef {
                     origin: ty.origin,
                     enum_id,
@@ -279,9 +251,9 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
         &self,
         body_ref: BodyRef,
         body: BodyView<'_>,
-        candidates: &mut Vec<BodyCursorCandidate>,
+        candidates: &mut Vec<BodySourceCandidate>,
     ) {
-        let record_shorthand_values = Self::record_expr_shorthand_values(body);
+        let record_shorthand_values = BodyScanSites::new(body).record_expr_shorthand_value_ids();
         for (expr_idx, expr) in body.exprs().iter().enumerate() {
             if !expr.source.is_written_in_selected_file(self.file_id) {
                 continue;
@@ -308,7 +280,7 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
                 _ => continue,
             };
 
-            candidates.push(BodyCursorCandidate::Expr {
+            candidates.push(BodySourceCandidate::Expr {
                 body: body_ref,
                 expr: ExprId(expr_idx),
                 span,
@@ -316,30 +288,12 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
         }
     }
 
-    fn record_expr_shorthand_values(body: BodyView<'_>) -> Vec<ExprId> {
-        let mut values = Vec::new();
-        for expr in body.exprs().iter() {
-            let ExprKind::Record { fields, .. } = &expr.kind else {
-                continue;
-            };
-            for field in fields {
-                if field.syntax.is_explicit() {
-                    continue;
-                }
-                if let Some(value) = field.value {
-                    values.push(value);
-                }
-            }
-        }
-        values
-    }
-
     /// Adds record field keys that resolve through their record owner type.
     fn push_record_field_key_candidates(
         &self,
         body_ref: BodyRef,
         body: BodyView<'_>,
-        candidates: &mut Vec<BodyCursorCandidate>,
+        candidates: &mut Vec<BodySourceCandidate>,
     ) {
         for expr in body.exprs().iter() {
             if !expr.source.is_written_in_selected_file(self.file_id) {
@@ -358,7 +312,7 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
             };
 
             for field in fields {
-                candidates.push(BodyCursorCandidate::RecordFieldKey {
+                candidates.push(BodySourceCandidate::RecordFieldKey {
                     body: body_ref,
                     scope: expr.scope,
                     owner: owner.clone(),
@@ -391,7 +345,7 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
             };
 
             for field in fields {
-                candidates.push(BodyCursorCandidate::RecordFieldKey {
+                candidates.push(BodySourceCandidate::RecordFieldKey {
                     body: body_ref,
                     scope: site.scope,
                     owner: owner.clone(),

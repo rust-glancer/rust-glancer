@@ -1,10 +1,13 @@
-//! Shared helpers for colonless record pattern fields.
+//! Source helpers for colonless record pattern fields.
 
 use rg_ir_model::items::FieldKey;
 use rg_ir_model::{BindingId, PatId};
-use rg_parse::Span;
+use rg_parse::{FileId, Span};
+use rg_std::UniqueVec;
 
-use crate::{BodyView, PatKind, RecordPatField};
+use rg_body_ir::{BodyView, PatKind, RecordPatField};
+
+use super::sites::BodyScanSites;
 
 /// Binding metadata recovered from a colonless record pattern field.
 ///
@@ -21,6 +24,31 @@ pub(super) struct RecordPatShorthandBinding {
 }
 
 impl RecordPatShorthandBinding {
+    /// Collects each binding introduced by colonless record fields in the selected source area.
+    pub(super) fn collect(
+        body: BodyView<'_>,
+        file_id: Option<FileId>,
+        offset: Option<u32>,
+    ) -> Vec<Self> {
+        let mut bindings = Vec::new();
+        let mut seen = UniqueVec::new();
+        BodyScanSites::new(body).walk_pats(file_id, offset, |site| {
+            let PatKind::Record { fields, .. } = &site.data.kind else {
+                return;
+            };
+
+            for field in fields {
+                let Some(shorthand) = Self::from_field(body, field) else {
+                    continue;
+                };
+                if seen.push(shorthand.binding) {
+                    bindings.push(shorthand);
+                }
+            }
+        });
+        bindings
+    }
+
     pub(super) fn from_field(body: BodyView<'_>, field: &RecordPatField) -> Option<Self> {
         if field.syntax.is_explicit() {
             return None;

@@ -1,23 +1,33 @@
-//! Shared source-site discovery for body cursor scanners.
+//! Shared source-site discovery for body source scanners.
 //!
-//! Cursor queries interpret the same lowered syntax in several different ways: one scanner wants
+//! Source queries interpret the same lowered syntax in several different ways: one scanner wants
 //! navigable value paths, another wants completion owners, and another wants record field lists.
 //! This module keeps the structural walk in one place while leaving those query-specific meanings
 //! with the callers.
+//!
+//! In particular, type syntax is not limited to a `let` annotation. The same path walk must find
+//! all of these spellings while retaining the scope that owns them:
+//!
+//! ```text
+//! let value: Option<Item> = input;
+//! let closure = |item: Item| -> Output { item };
+//! value.cast::<Target>()
+//! ```
 
-use rg_ir_model::{BodySource, PatId, ScopeId, items::ItemTreeId};
-use rg_item_tree::{
-    FieldItem, FieldList, FunctionItem, GenericParams, ImplItem, ItemKind, ItemNode, ModuleItem,
-    ModuleSource, TypeBound, TypePath, TypeRef, WherePredicate,
+use rg_ir_model::{
+    BodySource, ExprId, PatId, ScopeId,
+    items::{
+        FieldItem, FieldList, FunctionItem, GenericParams, ImplItem, ItemKind, ItemNode,
+        ItemTreeId, ModuleItem, ModuleSource, TypeBound, TypePath, TypeRef, WherePredicate,
+    },
 };
 use rg_parse::FileId;
 
-use crate::{
-    BodyPath, BodyView, ExprKind, StmtKind,
-    walk::{
-        PatWalkSite, walk_body_path_type_refs as walk_embedded_body_path_type_refs,
-        walk_generic_args_type_refs, walk_pat, walk_type_ref_paths,
-    },
+use rg_body_ir::{BodyPath, BodyView, ExprKind, StmtKind};
+
+use super::walk::{
+    PatWalkSite, walk_body_path_type_refs as walk_embedded_body_path_type_refs,
+    walk_generic_args_type_refs, walk_pat, walk_type_ref_paths,
 };
 
 /// A source-owned pattern root together with the scope where its bindings live.
@@ -64,7 +74,11 @@ pub(super) struct TypePathSite<'body> {
     pub(super) path: &'body TypePath,
 }
 
-/// Structural views over lowered body syntax used by cursor scans.
+/// Structural views over lowered body syntax used by source scans.
+///
+/// This type only discovers where patterns and type references were written. It does not decide
+/// whether a path is a completion site, a reference, or a declaration; each scanner applies that
+/// policy after receiving a site.
 pub(super) struct BodyScanSites<'body> {
     body: BodyView<'body>,
 }
@@ -123,6 +137,27 @@ impl<'body> BodyScanSites<'body> {
                 });
             });
         });
+    }
+
+    /// Returns expression ids used as the implicit values of record-expression shorthand fields.
+    ///
+    /// Those expressions are represented again as source-level shorthand occurrences, so ordinary
+    /// expression scanning skips them to avoid exposing the same token through two surfaces.
+    pub(super) fn record_expr_shorthand_value_ids(&self) -> Vec<ExprId> {
+        let mut values = Vec::new();
+        for expr in self.body.exprs() {
+            let ExprKind::Record { fields, .. } = &expr.kind else {
+                continue;
+            };
+            for field in fields {
+                if !field.syntax.is_explicit()
+                    && let Some(value) = field.value
+                {
+                    values.push(value);
+                }
+            }
+        }
+        values
     }
 
     fn for_each_pattern_site(&self, mut visit: impl FnMut(PatternSite)) {
@@ -187,6 +222,11 @@ impl<'body> BodyScanSites<'body> {
 }
 
 /// Collects written type references while keeping scope policy close to each source form.
+///
+/// Besides ordinary annotations, bodies can contain type references in closures, casts,
+/// turbofish arguments, pattern paths, and body-local item signatures. The walker carries the
+/// lexical scope and source location of each spelling so downstream point queries do not have to
+/// reconstruct that context from the finalized arenas.
 struct TypeRefSiteWalker<'scan, 'body, V>
 where
     V: FnMut(TypeRefSite<'body>),

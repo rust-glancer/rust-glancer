@@ -3,7 +3,6 @@ mod utils;
 mod body_local_items;
 mod closures;
 mod control_flow;
-mod cursor;
 mod expressions;
 mod inference;
 mod lifecycle;

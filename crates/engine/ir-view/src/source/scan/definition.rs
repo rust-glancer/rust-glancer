@@ -1,21 +1,27 @@
-//! Cursor-oriented queries over the frozen namespace map.
+//! Source scanning over the frozen namespace map.
 //!
-//! DefMap owns module-scope source facts such as local definition names and import path spans.
-//! Analysis can therefore ask a read transaction for cursor candidates without reaching back into
-//! item-tree storage.
+//! DefMap owns module-scope source facts such as local definition names and import path spans. The
+//! indexed view interprets those facts as source occurrences without adding cursor APIs to the
+//! frozen DefMap transaction.
+//!
+//! ```text
+//! mod model;                       definition: `model`
+//! use crate::model::User as Person;
+//!     ^^^^^  ^^^^^  ^^^^    ^^^^^ one path-prefix occurrence per segment, plus the alias
+//! ```
 
-use crate::{DefMap, ModuleOrigin};
+use rg_def_map::{DefMap, DefMapReadTxn, ModuleOrigin};
 use rg_ir_model::Path;
 use rg_ir_model::{CrateRef, DefId, DefMapRef, LocalDefId, LocalDefRef, ModuleId, ModuleRef};
+use rg_package_store::PackageStoreError;
 use rg_parse::{FileId, Span};
 
-use rg_package_store::PackageStoreError;
-
-use crate::DefMapReadTxn;
-
-/// One def-map source node that can participate in cursor queries.
+/// One module-scope source node that can become an indexed occurrence.
+///
+/// Imports retain a path prefix for each written segment. Resolving `model` in
+/// `crate::model::User` must not accidentally resolve the complete `User` path instead.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum DefMapCursorCandidate {
+pub(crate) enum DefinitionSourceCandidate {
     Def {
         def: DefId,
         file_id: FileId,
@@ -35,49 +41,48 @@ pub enum DefMapCursorCandidate {
     },
 }
 
-impl DefMapReadTxn<'_> {
-    /// Returns namespace-level cursor candidates at `offset`.
-    pub fn cursor_candidates(
-        &self,
-        crate_ref: CrateRef,
-        file_id: FileId,
-        offset: u32,
-    ) -> Result<Vec<DefMapCursorCandidate>, PackageStoreError> {
-        NamespaceCursorScanner {
-            def_map: self,
-            crate_ref,
-            file_id: Some(file_id),
-            offset: Some(offset),
-        }
-        .scan()
-    }
-
-    /// Returns namespace-level source candidates for one crate.
-    pub fn source_candidates(
-        &self,
-        crate_ref: CrateRef,
-        file_id: Option<FileId>,
-    ) -> Result<Vec<DefMapCursorCandidate>, PackageStoreError> {
-        NamespaceCursorScanner {
-            def_map: self,
-            crate_ref,
-            file_id,
-            offset: None,
-        }
-        .scan()
-    }
-}
-
 /// Scans module declarations, item names, and import path segments owned by DefMap.
-struct NamespaceCursorScanner<'txn, 'db> {
+///
+/// Point mode filters every source span against one cursor offset. Crate mode emits the same
+/// candidate vocabulary for all matching files, which keeps go-to-definition and project-wide
+/// references on one source interpretation.
+pub(crate) struct DefinitionSourceScanner<'txn, 'db> {
     def_map: &'txn DefMapReadTxn<'db>,
     crate_ref: CrateRef,
     file_id: Option<FileId>,
     offset: Option<u32>,
 }
 
-impl NamespaceCursorScanner<'_, '_> {
-    fn scan(&self) -> Result<Vec<DefMapCursorCandidate>, PackageStoreError> {
+impl<'txn, 'db> DefinitionSourceScanner<'txn, 'db> {
+    pub(crate) fn at(
+        def_map: &'txn DefMapReadTxn<'db>,
+        crate_ref: CrateRef,
+        file_id: FileId,
+        offset: u32,
+    ) -> Self {
+        Self {
+            def_map,
+            crate_ref,
+            file_id: Some(file_id),
+            offset: Some(offset),
+        }
+    }
+
+    pub(crate) fn in_crate(
+        def_map: &'txn DefMapReadTxn<'db>,
+        crate_ref: CrateRef,
+        file_id: Option<FileId>,
+    ) -> Self {
+        Self {
+            def_map,
+            crate_ref,
+            file_id,
+            offset: None,
+        }
+    }
+
+    /// Collects declarations first, followed by every written import segment and alias.
+    pub(crate) fn scan(&self) -> Result<Vec<DefinitionSourceCandidate>, PackageStoreError> {
         let mut candidates = Vec::new();
         let Some(def_map) = self.def_map.def_map(self.crate_ref)? else {
             return Ok(candidates);
@@ -92,7 +97,7 @@ impl NamespaceCursorScanner<'_, '_> {
     fn push_module_candidates(
         &self,
         def_map: &DefMap,
-        candidates: &mut Vec<DefMapCursorCandidate>,
+        candidates: &mut Vec<DefinitionSourceCandidate>,
     ) {
         for (module_idx, module) in def_map.modules().iter().enumerate() {
             let module_ref = ModuleRef {
@@ -116,7 +121,7 @@ impl NamespaceCursorScanner<'_, '_> {
                 continue;
             };
             if self.offset_matches(span) {
-                candidates.push(DefMapCursorCandidate::Def {
+                candidates.push(DefinitionSourceCandidate::Def {
                     def: DefId::Module(module_ref),
                     file_id: declaration_file,
                     span,
@@ -128,7 +133,7 @@ impl NamespaceCursorScanner<'_, '_> {
     fn push_local_def_candidates(
         &self,
         def_map: &DefMap,
-        candidates: &mut Vec<DefMapCursorCandidate>,
+        candidates: &mut Vec<DefinitionSourceCandidate>,
     ) {
         for (local_def_idx, local_def) in def_map.local_defs().iter().enumerate() {
             let local_def_ref = LocalDefRef {
@@ -141,7 +146,7 @@ impl NamespaceCursorScanner<'_, '_> {
 
             let span = local_def.name_span.unwrap_or(local_def.span);
             if self.offset_matches(span) {
-                candidates.push(DefMapCursorCandidate::Def {
+                candidates.push(DefinitionSourceCandidate::Def {
                     def: DefId::Local(local_def_ref),
                     file_id: local_def.file_id,
                     span,
@@ -153,7 +158,7 @@ impl NamespaceCursorScanner<'_, '_> {
     fn push_import_candidates(
         &self,
         def_map: &DefMap,
-        candidates: &mut Vec<DefMapCursorCandidate>,
+        candidates: &mut Vec<DefinitionSourceCandidate>,
     ) {
         for import in def_map.imports() {
             if !self.file_matches(import.source.file_id) {
@@ -169,7 +174,7 @@ impl NamespaceCursorScanner<'_, '_> {
             };
             for (idx, (_, span)) in segments.enumerate() {
                 if self.offset_matches(span) {
-                    candidates.push(DefMapCursorCandidate::UsePath {
+                    candidates.push(DefinitionSourceCandidate::UsePath {
                         module,
                         path: Path {
                             absolute: import.path.semantic().absolute,
@@ -184,7 +189,7 @@ impl NamespaceCursorScanner<'_, '_> {
             if let Some(alias_span) = import.alias_span
                 && self.offset_matches(alias_span)
             {
-                candidates.push(DefMapCursorCandidate::ImportAlias {
+                candidates.push(DefinitionSourceCandidate::ImportAlias {
                     module,
                     path: import.path.semantic().clone(),
                     file_id: import.source.file_id,

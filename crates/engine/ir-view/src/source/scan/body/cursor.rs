@@ -1,7 +1,19 @@
-//! Point-query scanning for editor requests at one source offset.
+//! Point-query scanning for source requests at one offset.
 //!
 //! Point queries pick the most specific body-local node under the cursor, then
 //! add any extra path-segment candidates visible at the same offset.
+//!
+//! ```text
+//! items.push$0(value)
+//!       ^^^^ select the method name, not the enclosing call or block
+//!
+//! Action::Sta$0rt
+//!         ^^^^^ keep a candidate for this path segment as well
+//! ```
+//!
+//! The first candidate gives editor queries the smallest AST-like body node. Path scanners add the
+//! second lane because one lowered expression can contain several independently navigable path
+//! segments.
 
 use rg_ir_model::{
     BindingId, BodyRef, CrateRef, DefMapRef, EnumVariantRef, ExprId, FieldRef, SemanticItemRef,
@@ -10,16 +22,21 @@ use rg_ir_model::{
 use rg_package_store::PackageStoreError;
 use rg_parse::{FileId, Span};
 
-use crate::{BodyIrReadTxn, BodyOwner, BodyView, ExprData, ExprKind, PatKind};
+use rg_body_ir::{BodyIrReadTxn, BodyOwner, BodyView, ExprData, ExprKind, PatKind};
 
+use super::super::NarrowestSourceSite;
 use super::{
-    super::{BindingSurface, BodyCursorCandidate, RecordFieldKeySurface},
-    paths::{BodyPathCursorScanner, TypePathCursorScanner},
+    BindingSurface, BodySourceCandidate, RecordFieldKeySurface,
+    paths::{BodyPathSourceScanner, TypePathSourceScanner},
     record_pat_shorthand::RecordPatShorthandBinding,
     sites::BodyScanSites,
 };
 
-/// Scans one Body IR transaction for all cursor candidates at a source offset.
+/// Scans one Body IR transaction for all source interpretations at a cursor offset.
+///
+/// There is one narrowest body-local candidate plus any type/value path segment candidates that
+/// touch the same offset. Returning all of them lets analysis choose the semantic interpretation
+/// without teaching Body IR about navigation policy.
 pub(crate) struct BodyCursorScanner<'txn, 'db> {
     body_ir: &'txn BodyIrReadTxn<'db>,
     crate_ref: CrateRef,
@@ -43,7 +60,7 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
     }
 
     /// Returns body-local candidates that can answer an editor query at this exact offset.
-    pub(crate) fn scan(&self) -> Result<Vec<BodyCursorCandidate>, PackageStoreError> {
+    pub(crate) fn scan(&self) -> Result<Vec<BodySourceCandidate>, PackageStoreError> {
         let Some(body_ref) = self.body_at()? else {
             return Ok(Vec::new());
         };
@@ -53,30 +70,17 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
 
         let mut candidates = Vec::new();
         candidates.push(self.candidate_at_body(body_ref, body)?);
-        TypePathCursorScanner {
-            body_ref,
-            body,
-            file_id: Some(self.file_id),
-            offset: Some(self.offset),
-            candidates: &mut candidates,
-        }
-        .scan();
-        BodyPathCursorScanner {
-            body_ref,
-            body,
-            file_id: Some(self.file_id),
-            offset: Some(self.offset),
-            include_single_segment: false,
-            candidates: &mut candidates,
-        }
-        .scan();
+        TypePathSourceScanner::at(body_ref, body, self.file_id, self.offset, &mut candidates)
+            .scan();
+        BodyPathSourceScanner::at(body_ref, body, self.file_id, self.offset, &mut candidates)
+            .scan();
 
         Ok(candidates)
     }
 
     /// Finds the innermost enclosing body at the cursor offset.
     fn body_at(&self) -> Result<Option<BodyRef>, PackageStoreError> {
-        let mut best: Option<(BodyRef, u32)> = None;
+        let mut best = NarrowestSourceSite::new();
 
         for (body_ref, body) in self.body_ir.bodies(self.crate_ref, Some(self.file_id))? {
             if !body.source().span.contains(self.offset) {
@@ -84,12 +88,10 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
             }
 
             let body_len = body.source().span.len();
-            if best.is_none_or(|(_, best_len)| body_len < best_len) {
-                best = Some((body_ref, body_len));
-            }
+            best.consider(body_ref, body_len);
         }
 
-        Ok(best.map(|(body_ref, _)| body_ref))
+        Ok(best.finish())
     }
 
     /// Picks the most precise source node in one body, falling back to the body itself.
@@ -97,13 +99,14 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
         &self,
         body_ref: BodyRef,
         body: BodyView<'_>,
-    ) -> Result<BodyCursorCandidate, PackageStoreError> {
-        let mut best = BestCursorCandidate::new(BodyCursorCandidate::Body {
+    ) -> Result<BodySourceCandidate, PackageStoreError> {
+        let mut best = BestCursorCandidate::new(BodySourceCandidate::Body {
             body: body_ref,
             span: body.source().span,
         });
-        let record_shorthand_values = Self::record_expr_shorthand_values(body);
-        let record_shorthand_bindings = self.record_shorthand_bindings(body);
+        let record_shorthand_values = BodyScanSites::new(body).record_expr_shorthand_value_ids();
+        let record_shorthand_bindings =
+            RecordPatShorthandBinding::collect(body, Some(self.file_id), Some(self.offset));
 
         // `body_at` chooses the innermost enclosing body. When the cursor is on a nested
         // fn/const/static declaration name, that body owns the initializer/block, while the
@@ -141,7 +144,7 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
                     .unwrap_or(expr.source.span);
                 best.consider(
                     span,
-                    BodyCursorCandidate::Expr {
+                    BodySourceCandidate::Expr {
                         body: body_ref,
                         expr: ExprId(expr_idx),
                         span,
@@ -178,7 +181,7 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
                 };
                 best.consider(
                     binding_span,
-                    BodyCursorCandidate::Binding {
+                    BodySourceCandidate::Binding {
                         body: body_ref,
                         binding: binding_id,
                         span: binding_span,
@@ -215,21 +218,21 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
                         | SemanticItemRef::Trait(_)
                         | SemanticItemRef::TypeAlias(_) => best.consider(
                             declaration_span,
-                            BodyCursorCandidate::LocalItem {
+                            BodySourceCandidate::LocalItem {
                                 item: item.item(),
                                 span: declaration_span,
                             },
                         ),
                         SemanticItemRef::Const(_) | SemanticItemRef::Static(_) => best.consider(
                             declaration_span,
-                            BodyCursorCandidate::LocalValueItem {
+                            BodySourceCandidate::LocalValueItem {
                                 item: item.item(),
                                 span: declaration_span,
                             },
                         ),
                         SemanticItemRef::Function(function) => best.consider(
                             declaration_span,
-                            BodyCursorCandidate::LocalFunction {
+                            BodySourceCandidate::LocalFunction {
                                 function,
                                 span: declaration_span,
                             },
@@ -265,14 +268,14 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
         match item {
             SemanticItemRef::Function(function) => best.consider(
                 declaration_span,
-                BodyCursorCandidate::LocalFunction {
+                BodySourceCandidate::LocalFunction {
                     function,
                     span: declaration_span,
                 },
             ),
             SemanticItemRef::Const(_) | SemanticItemRef::Static(_) => best.consider(
                 declaration_span,
-                BodyCursorCandidate::LocalValueItem {
+                BodySourceCandidate::LocalValueItem {
                     item,
                     span: declaration_span,
                 },
@@ -297,7 +300,7 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
 
             best.consider(
                 call.name_span,
-                BodyCursorCandidate::MacroCall {
+                BodySourceCandidate::MacroCall {
                     definition: call.definition,
                     file_id: call.source.file_id,
                     span: call.name_span,
@@ -350,48 +353,6 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
         }
     }
 
-    fn record_shorthand_bindings(&self, body: BodyView<'_>) -> Vec<RecordPatShorthandBinding> {
-        let mut bindings = Vec::new();
-        let sites = BodyScanSites::new(body);
-        sites.walk_pats(Some(self.file_id), Some(self.offset), |site| {
-            let PatKind::Record { fields, .. } = &site.data.kind else {
-                return;
-            };
-
-            for field in fields {
-                let Some(shorthand) = RecordPatShorthandBinding::from_field(body, field) else {
-                    continue;
-                };
-                if bindings
-                    .iter()
-                    .any(|seen: &RecordPatShorthandBinding| seen.binding == shorthand.binding)
-                {
-                    continue;
-                }
-                bindings.push(shorthand);
-            }
-        });
-        bindings
-    }
-
-    fn record_expr_shorthand_values(body: BodyView<'_>) -> Vec<ExprId> {
-        let mut values = Vec::new();
-        for expr in body.exprs().iter() {
-            let ExprKind::Record { fields, .. } = &expr.kind else {
-                continue;
-            };
-            for field in fields {
-                if field.syntax.is_explicit() {
-                    continue;
-                }
-                if let Some(value) = field.value {
-                    values.push(value);
-                }
-            }
-        }
-        values
-    }
-
     fn generated_source_touches_offset(&self, body: BodyView<'_>) -> bool {
         body.exprs().iter().any(|expr| {
             !expr.source.is_written()
@@ -432,7 +393,7 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
             }
             best.consider(
                 field.key_span,
-                BodyCursorCandidate::RecordFieldKey {
+                BodySourceCandidate::RecordFieldKey {
                     body: body_ref,
                     scope: expr.scope,
                     owner: owner.clone(),
@@ -471,7 +432,7 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
                 }
                 best.consider(
                     field.key_span,
-                    BodyCursorCandidate::RecordFieldKey {
+                    BodySourceCandidate::RecordFieldKey {
                         body: body_ref,
                         scope: site.scope,
                         owner: owner.clone(),
@@ -514,7 +475,7 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
                     if field.span.touches(self.offset) {
                         best.consider(
                             field.span,
-                            BodyCursorCandidate::LocalField {
+                            BodySourceCandidate::LocalField {
                                 field: FieldRef { owner: ty, index },
                                 span: field.span,
                             },
@@ -533,7 +494,7 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
                     if field.span.touches(self.offset) {
                         best.consider(
                             field.span,
-                            BodyCursorCandidate::LocalField {
+                            BodySourceCandidate::LocalField {
                                 field: FieldRef { owner: ty, index },
                                 span: field.span,
                             },
@@ -564,7 +525,7 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
             if variant.name_span.touches(self.offset) {
                 best.consider(
                     variant.name_span,
-                    BodyCursorCandidate::LocalEnumVariant {
+                    BodySourceCandidate::LocalEnumVariant {
                         variant: EnumVariantRef {
                             origin: ty.origin,
                             enum_id,
@@ -580,19 +541,19 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
 
 /// Tracks the narrowest body-local candidate seen while scanning one body.
 struct BestCursorCandidate {
-    candidate: Option<(u32, BodyCursorCandidate)>,
-    fallback: BodyCursorCandidate,
+    candidate: Option<(u32, BodySourceCandidate)>,
+    fallback: BodySourceCandidate,
 }
 
 impl BestCursorCandidate {
-    fn new(fallback: BodyCursorCandidate) -> Self {
+    fn new(fallback: BodySourceCandidate) -> Self {
         Self {
             candidate: None,
             fallback,
         }
     }
 
-    fn consider(&mut self, span: Span, candidate: BodyCursorCandidate) {
+    fn consider(&mut self, span: Span, candidate: BodySourceCandidate) {
         let len = span.len();
         if self
             .candidate
@@ -603,7 +564,7 @@ impl BestCursorCandidate {
         }
     }
 
-    fn finish(self) -> BodyCursorCandidate {
+    fn finish(self) -> BodySourceCandidate {
         self.candidate
             .map(|(_, candidate)| candidate)
             .unwrap_or(self.fallback)
