@@ -792,13 +792,14 @@ impl core::iter::Iterator for PairIter {
     type Item = (Key, Value);
 }
 
-pub struct AmbiguousMap<K, V> {
+pub struct OverlappingMap<K, V> {
     key: K,
     value: V,
 }
 
-impl<K, V> core::iter::FromIterator<(K, V)> for AmbiguousMap<K, V> {}
-impl core::iter::FromIterator<(Key, Value)> for AmbiguousMap<Key, Value> {}
+// Deliberately invalid overlap: both candidates still provide the same definite type guidance.
+impl<K, V> core::iter::FromIterator<(K, V)> for OverlappingMap<K, V> {}
+impl core::iter::FromIterator<(Key, Value)> for OverlappingMap<Key, Value> {}
 
 pub fn pairs() -> PairIter {
     missing()
@@ -815,7 +816,7 @@ pub fn use_it(users: &[User], same_name: SameNameMap) {
     let rows = users.iter().enumerate().map(|(id, f)| bar(id$type_bar_id$, f$type_bar_user$)).collect::<Vec<_>>()$type_rows$;
     let direct_lookup = pairs().collect::<HashMap<_, _>>()$type_direct_lookup$;
     let lookup = users.iter().map(|user| (user.key(), user.value())).collect::<HashMap<_, _>>()$type_lookup$;
-    let ambiguous = pairs().collect::<AmbiguousMap<_, _>>()$type_ambiguous$;
+    let overlapping = pairs().collect::<OverlappingMap<_, _>>()$type_overlapping$;
     same_name.map(|value| value$type_same_name_map_param$);
 }
 "#,
@@ -835,7 +836,7 @@ pub fn use_it(users: &[User], same_name: SameNameMap) {
             AnalysisQuery::ty("iterator bar map collect result", "type_rows").in_lib("app"),
             AnalysisQuery::ty("direct HashMap collect result", "type_direct_lookup").in_lib("app"),
             AnalysisQuery::ty("mapped HashMap collect result", "type_lookup").in_lib("app"),
-            AnalysisQuery::ty("ambiguous HashMap collect result", "type_ambiguous").in_lib("app"),
+            AnalysisQuery::ty("overlapping impl shared guidance", "type_overlapping").in_lib("app"),
             AnalysisQuery::ty("same-name map closure param", "type_same_name_map_param")
                 .in_lib("app"),
         ],
@@ -876,8 +877,8 @@ pub fn use_it(users: &[User], same_name: SameNameMap) {
             mapped HashMap collect result
             - nominal struct app[lib]::crate::HashMap<nominal struct app[lib]::crate::Key, nominal struct app[lib]::crate::Value>
 
-            ambiguous HashMap collect result
-            - nominal struct app[lib]::crate::AmbiguousMap<<unknown>, <unknown>>
+            overlapping impl shared guidance
+            - nominal struct app[lib]::crate::OverlappingMap<nominal struct app[lib]::crate::Key, nominal struct app[lib]::crate::Value>
 
             same-name map closure param
             - <unknown>
@@ -1187,8 +1188,12 @@ pub fn use_it(flag: bool, attr: Attr, user: User, users: &[User], seed: Id) {
     Factory::with_id(|id| id$type_inherent_assoc$);
     with_user(|| id(missing())$type_direct_return_body$);
 
-    visit(user, |user| user$type_generic_inline_param$.name()$type_generic_inline_call$);
-    visit_all(users, |user| user$type_generic_where_param$.name()$type_generic_where_call$);
+    visit(user, |user| {
+        user$type_generic_inline_param$.name()$type_generic_inline_call$;
+    });
+    visit_all(users, |user| {
+        user$type_generic_where_param$.name()$type_generic_where_call$;
+    });
 
     let applied = apply(seed, |id| make_user(id))$type_generic_result$;
     let stored_f = |id| make_user(id);

@@ -1,6 +1,6 @@
 use rg_ir_model::{
-    CrateRef, DefMapRef, ExprId, FunctionId, FunctionRef, GenericDefRef, OpaqueTyId, OpaqueTyRef,
-    PackageSlot, StructId, TraitDefRef, TraitId, TypeDefId, TypeDefRef,
+    BodyId, BodyRef, CrateRef, DefMapRef, ExprId, FunctionId, FunctionRef, GenericDefRef,
+    OpaqueTyId, OpaqueTyRef, PackageSlot, StructId, TraitDefRef, TraitId, TypeDefId, TypeDefRef,
     items::{FloatTy, SignedIntTy, UnsignedIntTy},
 };
 
@@ -11,10 +11,21 @@ use crate::{
 };
 
 fn def_map_ref() -> DefMapRef {
-    DefMapRef::Crate(CrateRef {
+    DefMapRef::Crate(crate_ref())
+}
+
+fn crate_ref() -> CrateRef {
+    CrateRef {
         package: PackageSlot(0),
         crate_id: rg_ir_model::CrateId(0),
-    })
+    }
+}
+
+fn body_ref() -> BodyRef {
+    BodyRef {
+        crate_ref: crate_ref(),
+        body: BodyId(0),
+    }
 }
 
 fn type_def(index: usize) -> TypeDefRef {
@@ -33,14 +44,21 @@ fn project_ty() -> Ty {
 }
 
 fn closure_ty(index: usize) -> Ty {
-    Ty::closure(ClosureTyId::new(ExprId(index)))
+    Ty::closure(
+        ClosureTyId::new(body_ref(), ExprId(index)),
+        vec![user_ty()],
+        project_ty(),
+    )
 }
 
 fn fn_def_ty(index: usize) -> Ty {
-    Ty::fn_def(FunctionRef {
-        origin: def_map_ref(),
-        id: FunctionId(index),
-    })
+    Ty::fn_def_with_args(
+        FunctionRef {
+            origin: def_map_ref(),
+            id: FunctionId(index),
+        },
+        GenericArgs::empty(),
+    )
 }
 
 fn vec_ty(inner: Ty) -> Ty {
@@ -184,7 +202,7 @@ fn closure_types_round_trip_through_inference_traversal() {
     let ty = closure_ty(7);
     let infer_ty = ty.clone();
 
-    assert_eq!(infer_ty, Ty::Closure(ClosureTyId::new(ExprId(7))));
+    assert_eq!(infer_ty, closure_ty(7));
     assert_eq!(table.finalize(&infer_ty), ty);
 }
 
@@ -198,7 +216,10 @@ fn fn_def_types_round_trip_through_inference_traversal() {
     let ty = fn_def_ty(7);
     let infer_ty = ty.clone();
 
-    assert_eq!(infer_ty, Ty::fn_def(function));
+    assert_eq!(
+        infer_ty,
+        Ty::fn_def_with_args(function, GenericArgs::empty())
+    );
     assert_eq!(table.finalize(&infer_ty), ty);
 }
 

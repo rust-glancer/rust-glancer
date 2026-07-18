@@ -60,11 +60,11 @@ pub fn use_it(user: User) {
                 initializer
                   expr e3 call => nominal struct body_assignment_inference_fixture[lib]::crate::User @ 7:21-7:34
                     callee
-                      expr e0 path id -> fn body_assignment_inference_fixture[lib]::crate::id => function item fn body_assignment_inference_fixture[lib]::crate::id @ 7:21-7:23
+                      expr e0 path id -> fn body_assignment_inference_fixture[lib]::crate::id => function item fn body_assignment_inference_fixture[lib]::crate::id<<unknown>> @ 7:21-7:23
                     arg
                       expr e2 call => nominal struct body_assignment_inference_fixture[lib]::crate::User @ 7:24-7:33
                         callee
-                          expr e1 path missing -> fn body_assignment_inference_fixture[lib]::crate::missing => function item fn body_assignment_inference_fixture[lib]::crate::missing @ 7:24-7:31
+                          expr e1 path missing -> fn body_assignment_inference_fixture[lib]::crate::missing => function item fn body_assignment_inference_fixture[lib]::crate::missing<<unknown>> @ 7:24-7:31
               stmt s1 expr; @ 8:5-8:18
                 expr e6 assign = => () @ 8:5-8:17
                   target
@@ -131,7 +131,7 @@ pub fn use_it(user: User) {
                 initializer
                   expr e2 call => nominal struct body_solved_binding_member_fixture[lib]::crate::User @ 10:23-10:37
                     callee
-                      expr e0 path identity -> fn body_solved_binding_member_fixture[lib]::crate::identity => function item fn body_solved_binding_member_fixture[lib]::crate::identity @ 10:23-10:31
+                      expr e0 path identity -> fn body_solved_binding_member_fixture[lib]::crate::identity => function item fn body_solved_binding_member_fixture[lib]::crate::identity<<unknown>> @ 10:23-10:31
                     arg
                       expr e1 path user -> local v0 => nominal struct body_solved_binding_member_fixture[lib]::crate::User @ 10:32-10:36
               stmt s1 expr; @ 11:5-11:17
@@ -450,7 +450,7 @@ pub fn expected_destination(def_map: &DefMap) {
 }
 
 #[test]
-fn keeps_trait_obligation_solving_conservative() {
+fn trait_obligations_infer_only_from_declared_bounds() {
     check_project_body_ir(
         r#"
 //- /Cargo.toml
@@ -492,11 +492,11 @@ impl<T> NotIterator<T> {
 }
 
 impl<T> FromIterator<T> for Vec<T> {}
-impl FromIterator<User> for Vec<User> {}
+// Keep one coherent impl: the bound itself should determine `Vec<User>`.
 
 pub fn missing<T>() -> T {}
 
-pub fn ambiguous_impls(iter: Iter<User>) {
+pub fn bounded_collect(iter: Iter<User>) {
     let collected = iter.collect::<Vec<_>>();
     collected;
 }
@@ -519,22 +519,22 @@ pub fn unrelated_collect(iter: NotIterator<User>) {
             expr e0 block s1 => () @ 35:26-35:28
 
 
-            body b1 fn body_conservative_trait_obligation_solving[lib]::crate::ambiguous_impls @ 37:1-40:2
+            body b1 fn body_conservative_trait_obligation_solving[lib]::crate::bounded_collect @ 37:1-40:2
             scopes
             - s0 parent <none>: v0
             - s1 parent s0: v1
             bindings
             - v0 param iter `iter`: Iter<User> => nominal struct body_conservative_trait_obligation_solving[lib]::crate::Iter<nominal struct body_conservative_trait_obligation_solving[lib]::crate::User> @ 37:24-37:28
-            - v1 let collected `collected` => nominal struct body_conservative_trait_obligation_solving[lib]::crate::Vec<<unknown>> @ 38:9-38:18
+            - v1 let collected `collected` => nominal struct body_conservative_trait_obligation_solving[lib]::crate::Vec<nominal struct body_conservative_trait_obligation_solving[lib]::crate::User> @ 38:9-38:18
             body
             expr e3 block s1 => () @ 37:42-40:2
               stmt s0 let v1 @ 38:5-38:46
                 initializer
-                  expr e1 method_call collect<Vec<_>> -> fn impl Iter<T>::collect => nominal struct body_conservative_trait_obligation_solving[lib]::crate::Vec<<unknown>> @ 38:21-38:45
+                  expr e1 method_call collect<Vec<_>> -> fn impl Iter<T>::collect => nominal struct body_conservative_trait_obligation_solving[lib]::crate::Vec<nominal struct body_conservative_trait_obligation_solving[lib]::crate::User> @ 38:21-38:45
                     receiver
                       expr e0 path iter -> local v0 => nominal struct body_conservative_trait_obligation_solving[lib]::crate::Iter<nominal struct body_conservative_trait_obligation_solving[lib]::crate::User> @ 38:21-38:25
               stmt s1 expr; @ 39:5-39:15
-                expr e2 path collected -> local v1 => nominal struct body_conservative_trait_obligation_solving[lib]::crate::Vec<<unknown>> @ 39:5-39:14
+                expr e2 path collected -> local v1 => nominal struct body_conservative_trait_obligation_solving[lib]::crate::Vec<nominal struct body_conservative_trait_obligation_solving[lib]::crate::User> @ 39:5-39:14
 
 
             body b2 fn body_conservative_trait_obligation_solving[lib]::crate::unrelated_collect @ 42:1-45:2
@@ -566,7 +566,7 @@ pub fn unrelated_collect(iter: NotIterator<User>) {
               tail
                 expr e1 call => param B @ 18:9-18:18
                   callee
-                    expr e0 path missing -> fn body_conservative_trait_obligation_solving[lib]::crate::missing => function item fn body_conservative_trait_obligation_solving[lib]::crate::missing @ 18:9-18:16
+                    expr e0 path missing -> fn body_conservative_trait_obligation_solving[lib]::crate::missing => function item fn body_conservative_trait_obligation_solving[lib]::crate::missing<<unknown>> @ 18:9-18:16
 
 
             body b4 fn impl NotIterator<T>::collect @ 27:5-29:6
@@ -580,7 +580,7 @@ pub fn unrelated_collect(iter: NotIterator<User>) {
               tail
                 expr e1 call => param B @ 28:9-28:18
                   callee
-                    expr e0 path missing -> fn body_conservative_trait_obligation_solving[lib]::crate::missing => function item fn body_conservative_trait_obligation_solving[lib]::crate::missing @ 28:9-28:16
+                    expr e0 path missing -> fn body_conservative_trait_obligation_solving[lib]::crate::missing => function item fn body_conservative_trait_obligation_solving[lib]::crate::missing<<unknown>> @ 28:9-28:16
         "#]],
     );
 }

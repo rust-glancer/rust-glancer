@@ -9,8 +9,8 @@ use rg_ir_model::items::{
     GenericArg as ItemGenericArg, TypeBound, TypePath, TypePathAnchor, TypeRef, WherePredicate,
 };
 use rg_ir_model::{
-    AssocItemId, GenericDefRef, GenericParamRef, ItemOwner, OpaqueTyId, OpaqueTyRef, Path, ScopeId,
-    TraitDefRef, TypeAliasRef, TypeParamRef, TypePathResolution,
+    GenericDefRef, GenericParamRef, ItemOwner, OpaqueTyId, OpaqueTyRef, Path, ScopeId, TraitDefRef,
+    TypeAliasRef, TypeParamRef, TypePathResolution,
 };
 use rg_semantic_ir::{GenericParamSource, ItemStoreSource, TypePathContext};
 use rg_std::{ExpectedUnique, UniqueVec};
@@ -1069,7 +1069,12 @@ where
         let Some(data) = self.query.item_paths.items().trait_data(application.def)? else {
             return Ok(None);
         };
-        if let Some(alias) = self.declared_associated_type(application.def, &data.items, name)? {
+        if let Some(alias) = self
+            .query
+            .item_paths
+            .items()
+            .declared_associated_type_by_name(application.def, name.as_str())?
+        {
             return Ok(Some(ProjectionTy {
                 associated_ty: alias,
                 args: application.args.clone(),
@@ -1144,7 +1149,10 @@ where
             return Ok(false);
         };
         if self
-            .declared_associated_type(trait_ref, &data.items, name)?
+            .query
+            .item_paths
+            .items()
+            .declared_associated_type_by_name(trait_ref, name.as_str())?
             .is_some()
         {
             return Ok(true);
@@ -1169,33 +1177,6 @@ where
             }
             Ok(false)
         })
-    }
-
-    fn declared_associated_type(
-        &self,
-        trait_ref: TraitDefRef,
-        items: &[AssocItemId],
-        name: &rg_text::Name,
-    ) -> Result<Option<TypeAliasRef>, D::Error> {
-        for item in items {
-            let AssocItemId::TypeAlias(id) = item else {
-                continue;
-            };
-            let alias = TypeAliasRef {
-                origin: trait_ref.origin,
-                id: *id,
-            };
-            if self
-                .query
-                .item_paths
-                .items()
-                .type_alias_data(alias)?
-                .is_some_and(|data| data.name == *name)
-            {
-                return Ok(Some(alias));
-            }
-        }
-        Ok(None)
     }
 
     /// Resolve `T::Assoc` from the unique trait bound on the owner-scoped parameter `T`.

@@ -4,31 +4,26 @@
 //! owns proof of their predicates and associated-type equalities. Keeping those phases as different
 //! types prevents exploratory editor candidates from being mistaken for established semantic facts.
 
-use std::{
-    collections::HashMap,
-    fmt,
-    sync::{Arc, Mutex},
-};
-
 mod candidate;
 mod chalk;
 mod matcher;
 mod projection;
+mod session;
 
 use rg_def_map::DefMapSource;
-use rg_ir_model::{CrateRef, ImplRef, TraitApplicability, TraitDefRef, TraitImplRef, TypeAliasRef};
-use rg_semantic_ir::{CrateItemQuery, ItemStoreSource};
+use rg_ir_model::{GenericDefRef, ImplRef, TraitApplicability, TraitImplRef, TypeAliasRef};
+use rg_semantic_ir::ItemStoreSource;
 use rg_std::{ExpectedUnique, UniqueVec};
 
-pub use self::candidate::{TraitCandidate, TraitCandidateQuery};
-use self::chalk::{ChalkOutcome, ChalkTraitSolver};
-use self::matcher::{TraitImplCandidateIndex, TraitSelfHead};
+use self::candidate::TraitCandidate;
+use self::chalk::ChalkOutcome;
 pub use self::projection::AssocProjectionResult;
+use self::projection::CandidateEvidence;
+pub use self::session::TraitSelectionSession;
 use crate::inference::{InferenceSubstitution, InferenceTable};
-use crate::signature::impl_header_with;
 use crate::{
-    AssocTypeBinding, Clause, GenericArg, GenericArgs, ItemPathQuery, Substitution,
-    TraitApplication, TraitRefLowering, Ty, TyContext, TypePathResolver,
+    AssocTypeBinding, Clause, GenericArg, GenericArgs, Substitution, TraitApplication,
+    TraitRefLowering, Ty, TyContext,
 };
 
 /// A canonical trait application plus any associated-type equality constraints.
@@ -136,9 +131,8 @@ impl TraitGoal {
 
 /// One trait impl whose predicates were submitted to the shared solver.
 ///
-/// Unlike [`TraitCandidate`], this value is safe for semantic consumers. `Maybe` means Chalk or
-/// canonical header matching found genuine ambiguity; it does not mean that predicate proof was
-/// silently delegated to another caller.
+/// `Maybe` means Chalk or canonical header matching found genuine ambiguity; it does not mean that
+/// predicate proof was silently delegated to another caller.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TraitSelection {
     pub trait_impl: TraitImplRef,
@@ -146,35 +140,23 @@ pub struct TraitSelection {
     pub applicability: TraitApplicability,
     /// Trial table after applying this candidate's direct equality evidence.
     ///
-    /// Probe mode returns the table instead of mutating the caller. A later commit mode can adopt
-    /// this table only when exactly one candidate survives.
+    /// Candidate evaluation never mutates the caller's table. Once a caller chooses this
+    /// selection, it can explicitly adopt the table together with the selected impl.
     pub table: InferenceTable,
 }
 
-#[derive(Clone)]
-struct CachedTraitSelection {
-    trait_impl: TraitImplRef,
-    subst: InferenceSubstitution,
-    applicability: TraitApplicability,
-}
-
-impl CachedTraitSelection {
-    fn from_selection(selection: TraitSelection) -> Self {
-        Self {
-            trait_impl: selection.trait_impl,
-            subst: selection.subst,
-            applicability: selection.applicability,
-        }
-    }
-
-    fn with_table(self, table: InferenceTable) -> TraitSelection {
-        TraitSelection {
-            trait_impl: self.trait_impl,
-            subst: self.subst,
-            applicability: self.applicability,
-            table,
-        }
-    }
+/// Semantic result of proving a related set of trait predicates.
+///
+/// `Proven` carries a trial inference table with every equality learned by the solver. Ambiguity
+/// can carry partial guidance too, but callers must not treat that guidance as a completed proof.
+/// `Unavailable` means the bounded adapter could not model or finish the query; it is deliberately
+/// separate from Rust-level `NoSolution`.
+#[derive(Debug, Clone)]
+pub enum TraitProof {
+    Proven(InferenceTable),
+    Ambiguous(Option<InferenceTable>),
+    NoSolution,
+    Unavailable,
 }
 
 /// Internal result that keeps an implementation limit separate from a semantic rejection.
@@ -182,258 +164,6 @@ enum SemanticOutcome<T> {
     Available(T),
     Rejected,
     Unavailable,
-}
-
-type SharedTraitImplCandidateIndex = Arc<Mutex<Option<TraitImplCandidateIndex>>>;
-type TraitImplCandidateIndexes = Arc<Mutex<HashMap<TraitDefRef, SharedTraitImplCandidateIndex>>>;
-type ExactCandidateApplicabilities =
-    Arc<Mutex<HashMap<TraitImplRef, HashMap<TraitGoal, TraitApplicability>>>>;
-
-/// Reusable solver session for trait-selection probes with the same visible items.
-///
-/// Chalk program lowering follows every trait, impl, and opaque bound reachable from a goal, so its
-/// cost is much larger than checking one candidate header. The use-site crate is part of the
-/// session identity because different crates may see different impl universes for the same goal.
-/// Cloning a session only clones shared handles: the Chalk program, candidate indexes, and exact
-/// answers remain shared by every `TyContext` for that use site.
-#[derive(Clone)]
-pub struct TraitSelectionSession {
-    use_site: CrateRef,
-    solver: Arc<ChalkTraitSolver>,
-    impl_headers: Arc<Mutex<HashMap<ImplRef, Option<crate::ImplHeader>>>>,
-    trait_impl_candidates: TraitImplCandidateIndexes,
-    strict_selections: Arc<Mutex<HashMap<TraitGoal, ExpectedUnique<CachedTraitSelection>>>>,
-    exact_candidate_applicabilities: ExactCandidateApplicabilities,
-}
-
-impl fmt::Debug for TraitSelectionSession {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("TraitSelectionSession")
-            .field("use_site", &self.use_site)
-            .finish_non_exhaustive()
-    }
-}
-
-impl TraitSelectionSession {
-    pub fn new(use_site: CrateRef) -> Self {
-        Self {
-            use_site,
-            solver: Arc::new(ChalkTraitSolver::new()),
-            impl_headers: Arc::new(Mutex::new(HashMap::new())),
-            trait_impl_candidates: Arc::new(Mutex::new(HashMap::new())),
-            strict_selections: Arc::new(Mutex::new(HashMap::new())),
-            exact_candidate_applicabilities: Arc::new(Mutex::new(HashMap::new())),
-        }
-    }
-
-    pub fn use_site(&self) -> CrateRef {
-        self.use_site
-    }
-
-    fn prove_impl_bounds<'query, D, I>(
-        &self,
-        item_paths: &ItemPathQuery<'query, D, I>,
-        crate_items: &CrateItemQuery<'query, D, I>,
-        clauses: &[Clause],
-        subst: &InferenceSubstitution,
-        table: &InferenceTable,
-    ) -> Result<ChalkOutcome<()>, I::Error>
-    where
-        D: DefMapSource<Error = I::Error>,
-        I: ItemStoreSource<'query>,
-    {
-        self.solver
-            .impl_bounds_applicability(item_paths, crate_items, self, clauses, subst, table)
-    }
-
-    fn normalize_assoc_type<'query, D, I>(
-        &self,
-        item_paths: &ItemPathQuery<'query, D, I>,
-        crate_items: &CrateItemQuery<'query, D, I>,
-        goal: &TraitGoal,
-        assoc_name: &str,
-        selected_impl: Option<(ImplRef, &InferenceSubstitution)>,
-        table: &InferenceTable,
-    ) -> Result<ChalkOutcome<AssocProjectionResult>, I::Error>
-    where
-        D: DefMapSource<Error = I::Error>,
-        I: ItemStoreSource<'query>,
-    {
-        self.solver.normalize_assoc_type(
-            item_paths,
-            crate_items,
-            self,
-            goal,
-            assoc_name,
-            selected_impl,
-            table,
-        )
-    }
-
-    /// Lower each canonical impl header once for this visible crate context.
-    pub(crate) fn impl_header_with<'query, D, I, R>(
-        &self,
-        item_paths: &ItemPathQuery<'query, D, I>,
-        resolver: &R,
-        impl_ref: ImplRef,
-    ) -> Result<Option<crate::ImplHeader>, I::Error>
-    where
-        D: DefMapSource<Error = I::Error>,
-        I: ItemStoreSource<'query>,
-        R: TypePathResolver<Error = I::Error>,
-    {
-        if let Some(header) = self
-            .impl_headers
-            .lock()
-            .expect("trait selection impl-header cache lock should not be poisoned")
-            .get(&impl_ref)
-            .cloned()
-        {
-            return Ok(header);
-        }
-
-        let header = impl_header_with(item_paths, resolver, impl_ref)?;
-        self.remember_impl_header(impl_ref, header.clone());
-        Ok(header)
-    }
-
-    fn remember_impl_header(&self, impl_ref: ImplRef, header: Option<crate::ImplHeader>) {
-        let mut headers = self
-            .impl_headers
-            .lock()
-            .expect("trait selection impl-header cache lock should not be poisoned");
-        // Parallel misses can finish out of order. A successfully lowered header may replace a
-        // conservative miss, while a late miss must not erase a header another worker found.
-        if header.is_some() {
-            headers.insert(impl_ref, header);
-        } else {
-            headers.entry(impl_ref).or_insert(None);
-        }
-    }
-
-    fn indexed_trait_impl_candidates<'query, D, I>(
-        &self,
-        item_paths: &ItemPathQuery<'query, D, I>,
-        trait_ref: TraitDefRef,
-        visible_impls: &UniqueVec<TraitImplRef>,
-        self_head: TraitSelfHead,
-    ) -> Result<UniqueVec<TraitImplRef>, I::Error>
-    where
-        D: DefMapSource<Error = I::Error>,
-        I: ItemStoreSource<'query>,
-    {
-        let index = self
-            .trait_impl_candidates
-            .lock()
-            .expect("trait impl candidate-index map lock should not be poisoned")
-            .entry(trait_ref)
-            .or_insert_with(|| Arc::new(Mutex::new(None)))
-            .clone();
-        let mut index = index
-            .lock()
-            .expect("trait impl candidate-index lock should not be poisoned");
-        if let Some(index) = index.as_ref() {
-            return Ok(index.candidates(self_head));
-        }
-
-        // Lower every visible header for this trait once, then answer all later receiver queries
-        // from its semantic `Self` fingerprint. The per-trait lock makes initialization
-        // single-flight without serializing indexes for unrelated traits.
-        let mut built = TraitImplCandidateIndex::default();
-        for &trait_impl in visible_impls {
-            let Some(header) =
-                self.impl_header_with(item_paths, item_paths, trait_impl.impl_ref)?
-            else {
-                continue;
-            };
-            built.push(trait_impl, &header);
-        }
-
-        let candidates = built.candidates(self_head);
-        *index = Some(built);
-        Ok(candidates)
-    }
-
-    fn prepare_trait_impl_predicates<'query, D, I>(
-        &self,
-        item_paths: &ItemPathQuery<'query, D, I>,
-        crate_items: &CrateItemQuery<'query, D, I>,
-        trait_impls: &UniqueVec<TraitImplRef>,
-    ) -> Result<(), I::Error>
-    where
-        D: DefMapSource<Error = I::Error>,
-        I: ItemStoreSource<'query>,
-    {
-        let mut clauses = Vec::new();
-        for &trait_impl in trait_impls {
-            let Some(header) =
-                self.impl_header_with(item_paths, item_paths, trait_impl.impl_ref)?
-            else {
-                continue;
-            };
-            clauses.extend(header.clauses);
-        }
-        self.solver
-            .prepare_clauses(item_paths, crate_items, self, &clauses)
-    }
-
-    fn strict_selection(
-        &self,
-        goal: &TraitGoal,
-        table: &InferenceTable,
-    ) -> Option<ExpectedUnique<TraitSelection>> {
-        self.strict_selections
-            .lock()
-            .expect("strict trait-selection cache lock should not be poisoned")
-            .get(goal)
-            .cloned()
-            .map(|selection| selection.map(|selection| selection.with_table(table.clone())))
-    }
-
-    fn remember_strict_selection(
-        &self,
-        goal: TraitGoal,
-        selection: &ExpectedUnique<TraitSelection>,
-    ) {
-        let selection = selection.clone().map(CachedTraitSelection::from_selection);
-        self.strict_selections
-            .lock()
-            .expect("strict trait-selection cache lock should not be poisoned")
-            .insert(goal, selection);
-    }
-
-    fn exact_candidate_applicability(
-        &self,
-        goal: &TraitGoal,
-        trait_impl: TraitImplRef,
-    ) -> Option<TraitApplicability> {
-        if !goal.is_cache_stable() {
-            return None;
-        }
-        self.exact_candidate_applicabilities
-            .lock()
-            .expect("exact trait-candidate cache lock should not be poisoned")
-            .get(&trait_impl)?
-            .get(goal)
-            .copied()
-    }
-
-    fn remember_exact_candidate_applicability(
-        &self,
-        goal: &TraitGoal,
-        trait_impl: TraitImplRef,
-        applicability: TraitApplicability,
-    ) {
-        if !goal.is_cache_stable() {
-            return;
-        }
-        self.exact_candidate_applicabilities
-            .lock()
-            .expect("exact trait-candidate cache lock should not be poisoned")
-            .entry(trait_impl)
-            .or_default()
-            .insert(goal.clone(), applicability);
-    }
 }
 
 /// Shared bounded trait-selection query.
@@ -450,21 +180,133 @@ where
         Self { context }
     }
 
+    /// Prove canonical clauses as one conjunction over the caller's inference variables.
+    ///
+    /// Related bounds cannot be submitted independently. In
+    /// `I: Iterator<Item = T>, T: Copy`, both predicates must see the same existential `T`, and
+    /// the returned table must preserve the equality learned from `Iterator::Item`.
+    pub fn prove_clauses(
+        &self,
+        clauses: &[Clause],
+        subst: &InferenceSubstitution,
+        table: &InferenceTable,
+    ) -> Result<TraitProof, I::Error> {
+        self.prove_clauses_with_candidate_evidence(clauses, subst, table, CandidateEvidence::Probe)
+    }
+
+    /// Prove predicates belonging to a native candidate without selecting that candidate again.
+    ///
+    /// Candidate selection may recursively encounter projections in the candidate's own bounds.
+    /// Chalk's forest owns cycle handling there; native projection probes are reserved for callers
+    /// that enter through the outer semantic-query boundary.
+    fn prove_candidate_clauses(
+        &self,
+        clauses: &[Clause],
+        subst: &InferenceSubstitution,
+        table: &InferenceTable,
+    ) -> Result<TraitProof, I::Error> {
+        self.prove_clauses_with_candidate_evidence(
+            clauses,
+            subst,
+            table,
+            CandidateEvidence::SolverOnly,
+        )
+    }
+
+    fn prove_clauses_with_candidate_evidence(
+        &self,
+        clauses: &[Clause],
+        subst: &InferenceSubstitution,
+        table: &InferenceTable,
+        candidate_evidence: CandidateEvidence,
+    ) -> Result<TraitProof, I::Error> {
+        if clauses.is_empty() {
+            return Ok(TraitProof::Proven(table.clone()));
+        }
+        // Instantiate declaration parameters first, then normalize nested projections before a
+        // later predicate consumes them. The entry point decides whether native candidate evidence
+        // is available or whether this proof is already inside candidate selection.
+        let mut table = table.clone();
+        let mut normalized_clauses = Vec::with_capacity(clauses.len());
+        for clause in clauses {
+            let clause = subst.as_substitution().apply_clause(clause);
+            let clause = match clause {
+                Clause::Implemented(mut application) => {
+                    let mut args = Vec::with_capacity(application.args.len());
+                    for arg in &application.args {
+                        let arg = match arg {
+                            GenericArg::Type(ty) => {
+                                let (ty, next_table) = self.normalize_ty_with_candidate_evidence(
+                                    ty,
+                                    &table,
+                                    candidate_evidence,
+                                )?;
+                                table = next_table;
+                                GenericArg::Type(Box::new(ty))
+                            }
+                            GenericArg::Lifetime(_) | GenericArg::Const(_) => arg.clone(),
+                        };
+                        args.push(arg);
+                    }
+                    application.args = args.into();
+                    Clause::Implemented(application)
+                }
+                Clause::AliasEq { mut alias, ty } => {
+                    let mut args = Vec::with_capacity(alias.args.len());
+                    for arg in &alias.args {
+                        let arg = match arg {
+                            GenericArg::Type(ty) => {
+                                let (ty, next_table) = self.normalize_ty_with_candidate_evidence(
+                                    ty,
+                                    &table,
+                                    candidate_evidence,
+                                )?;
+                                table = next_table;
+                                GenericArg::Type(Box::new(ty))
+                            }
+                            GenericArg::Lifetime(_) | GenericArg::Const(_) => arg.clone(),
+                        };
+                        args.push(arg);
+                    }
+                    alias.args = args.into();
+                    let (ty, next_table) =
+                        self.normalize_ty_with_candidate_evidence(&ty, &table, candidate_evidence)?;
+                    table = next_table;
+                    Clause::AliasEq { alias, ty }
+                }
+            };
+            normalized_clauses.push(table.canonicalize_clause(&clause));
+        }
+
+        let outcome = self.context.trait_selection().prove_clauses(
+            self.context.item_paths(),
+            self.context.crate_items(),
+            self.context.lookup_index(),
+            &normalized_clauses,
+            &table,
+        )?;
+        Ok(match outcome {
+            ChalkOutcome::Proven(table) => TraitProof::Proven(table),
+            ChalkOutcome::Ambiguous(table) => TraitProof::Ambiguous(table),
+            ChalkOutcome::NoSolution => TraitProof::NoSolution,
+            ChalkOutcome::Unsupported | ChalkOutcome::Exhausted => TraitProof::Unavailable,
+        })
+    }
+
     /// Return the unique visible impl whose header fits and whose predicates Chalk can prove.
     ///
     /// This is probe mode: every candidate gets a cloned inference table, and the caller's table
     /// remains unchanged even if a candidate would solve variables.
     ///
     /// Multiple distinct concrete selections become `ExpectedUnique::Ambiguous`. Speculative
-    /// `Maybe` selections are used only when no concrete selection survives. Editor-facing callers
-    /// that want every header match should use [`TraitCandidateQuery`] instead.
+    /// `Maybe` selections are used only when no concrete selection survives.
     pub fn probe(
         &self,
         goal: &TraitGoal,
         table: &InferenceTable,
     ) -> Result<ExpectedUnique<TraitSelection>, I::Error> {
-        // A goal that carries body-local inference or closure identity must be re-evaluated in its
-        // owning body. Fully stable semantic goals cannot change the caller's table, so cache only
+        // A goal that carries live inference or closure identity must be re-evaluated with its
+        // owning table. Fully stable semantic goals cannot change the caller's table, so cache only
         // the selected impl/substitution and attach the caller's current table on a hit.
         let cacheable = goal.is_cache_stable();
         if cacheable
@@ -473,7 +315,7 @@ where
             return Ok(selection);
         }
 
-        let candidates = TraitCandidateQuery::probe_all_with(
+        let candidates = TraitCandidate::probe_all(
             self.context.item_paths(),
             self.context.lookup_index(),
             self.context.trait_selection(),
@@ -492,6 +334,7 @@ where
             .prepare_trait_impl_predicates(
                 self.context.item_paths(),
                 self.context.crate_items(),
+                self.context.lookup_index(),
                 &trait_impls,
             )?;
 
@@ -529,7 +372,7 @@ where
         Ok(selection)
     }
 
-    /// Classify an impl that receiver matching has already instantiated.
+    /// Prove an impl that receiver matching has already instantiated.
     ///
     /// Method lookup starts from one indexed impl and matches its `Self` header against the
     /// receiver. That match already supplies every substitution needed to instantiate the impl's
@@ -540,14 +383,15 @@ where
     /// Stable exact classifications are shared across fixed-point passes. Definite rejection and
     /// genuine proof ambiguity are cacheable; adapter limits remain an uncached `Maybe` so a later
     /// query can retry instead of treating bounded work exhaustion as a semantic fact.
-    pub(crate) fn instantiated_impl_applicability(
+    pub(crate) fn probe_instantiated_impl(
         &self,
         trait_impl: TraitImplRef,
         header: &crate::ImplHeader,
         subst: Substitution,
-    ) -> Result<TraitApplicability, I::Error> {
+        table: &InferenceTable,
+    ) -> Result<Option<TraitSelection>, I::Error> {
         let Some(mut trait_ref) = header.trait_ref.clone() else {
-            return Ok(TraitApplicability::No);
+            return Ok(None);
         };
         trait_ref.application.args = trait_ref
             .application
@@ -570,17 +414,26 @@ where
             .trait_selection()
             .exact_candidate_applicability(&goal, trait_impl)
         {
-            return Ok(applicability);
+            return Ok(applicability.is_applicable().then(|| TraitSelection {
+                trait_impl,
+                subst: InferenceSubstitution::from_substitution(subst),
+                applicability,
+                table: table.clone(),
+            }));
         }
 
         let candidate = TraitCandidate {
             trait_impl,
             subst: InferenceSubstitution::from_substitution(subst),
             applicability: TraitApplicability::Yes,
-            table: InferenceTable::new(),
+            table: table.clone(),
         };
+        // Preserve the matched candidate for an editor-facing `Maybe` when the bounded adapter
+        // cannot classify it. The trial starts from the caller's live inference state, so any
+        // body-owned variables keep their original identities.
+        let unavailable = candidate.clone();
         let outcome = self.select_candidate_with_header(&goal, candidate, header)?;
-        let applicability = match outcome {
+        let selection = match outcome {
             SemanticOutcome::Available(selection) => {
                 self.context
                     .trait_selection()
@@ -589,7 +442,7 @@ where
                         trait_impl,
                         selection.applicability,
                     );
-                selection.applicability
+                Some(selection)
             }
             SemanticOutcome::Rejected => {
                 self.context
@@ -599,11 +452,16 @@ where
                         trait_impl,
                         TraitApplicability::No,
                     );
-                TraitApplicability::No
+                None
             }
-            SemanticOutcome::Unavailable => TraitApplicability::Maybe,
+            SemanticOutcome::Unavailable => Some(TraitSelection {
+                trait_impl,
+                subst: unavailable.subst,
+                applicability: TraitApplicability::Maybe,
+                table: unavailable.table,
+            }),
         };
-        Ok(applicability)
+        Ok(selection)
     }
 
     /// Turn a native header match into semantic evidence by proving every remaining condition.
@@ -632,28 +490,33 @@ where
     ) -> Result<SemanticOutcome<TraitSelection>, I::Error> {
         let TraitCandidate {
             trait_impl,
-            subst,
+            mut subst,
             mut applicability,
             mut table,
         } = candidate;
 
+        let generics = self
+            .context
+            .item_paths()
+            .generics()
+            .generics(GenericDefRef::Impl(trait_impl.impl_ref))?;
+        subst.instantiate_missing_type_params(&mut table, &generics);
+
         if header.clauses.is_empty() {
             crate::profile::metric::PREDICATE_FREE_CANDIDATES.inc();
         } else {
-            let predicate_applicability = self.context.trait_selection().prove_impl_bounds(
-                self.context.item_paths(),
-                self.context.crate_items(),
-                &header.clauses,
-                &subst,
-                &table,
-            )?;
+            let predicate_applicability =
+                self.prove_candidate_clauses(&header.clauses, &subst, &table)?;
             match predicate_applicability {
-                ChalkOutcome::Proven(()) => {}
-                ChalkOutcome::Ambiguous(_) => {
+                TraitProof::Proven(proven_table) => table = proven_table,
+                TraitProof::Ambiguous(guided_table) => {
+                    if let Some(guided_table) = guided_table {
+                        table = guided_table;
+                    }
                     applicability = applicability.and(TraitApplicability::Maybe);
                 }
-                ChalkOutcome::NoSolution => return Ok(SemanticOutcome::Rejected),
-                ChalkOutcome::Unsupported | ChalkOutcome::Exhausted => {
+                TraitProof::NoSolution => return Ok(SemanticOutcome::Rejected),
+                TraitProof::Unavailable => {
                     return Ok(SemanticOutcome::Unavailable);
                 }
             };
@@ -693,19 +556,12 @@ where
 
         let projection_goal = goal.without_assoc_type_constraints();
         for constraint in goal.assoc_type_constraints() {
-            let Some(alias_data) = self
-                .context
-                .crate_items()
-                .items()
-                .type_alias_data(constraint.associated_ty)?
-            else {
-                return Ok(SemanticOutcome::Rejected);
-            };
             let projection = self.context.trait_selection().normalize_assoc_type(
                 self.context.item_paths(),
                 self.context.crate_items(),
+                self.context.lookup_index(),
                 &projection_goal,
-                alias_data.name.as_str(),
+                constraint.associated_ty,
                 Some((impl_ref, subst)),
                 table,
             )?;

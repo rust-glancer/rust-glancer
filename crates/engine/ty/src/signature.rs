@@ -6,7 +6,7 @@
 //! walking `TypeRef` again.
 
 use rg_def_map::DefMapSource;
-use rg_ir_model::items::{ParamKind, SelfParamKind};
+use rg_ir_model::items::{FunctionQualifiers, ParamKind, SelfParamKind};
 use rg_ir_model::{
     ConstRef, EnumVariantRef, FieldRef, FunctionRef, GenericDefRef, GenericParamRef, ImplRef,
     ItemOwner, StaticRef, TraitDefRef, TypeAliasRef,
@@ -18,7 +18,7 @@ use crate::{
     TypeLoweringEnv, TypeLoweringQuery, TypePathResolver,
 };
 
-/// One function's parameters, return, and predicates under an owner-scoped binder.
+/// One function's parameters, return, qualifiers, and predicates under an owner-scoped binder.
 ///
 /// Types and clauses retain their owner-scoped parameter refs. A caller chooses whether to keep
 /// those identities or replace them with a call-specific substitution.
@@ -27,6 +27,111 @@ pub struct CallableSignature {
     pub params: Vec<Ty>,
     pub ret: Ty,
     pub clauses: Vec<Clause>,
+    /// Keep qualifiers beside the lowered types so semantic consumers do not have to reopen the
+    /// source-shaped declaration to distinguish safe, unsafe, and async function items.
+    pub qualifiers: FunctionQualifiers,
+}
+
+impl CallableSignature {
+    fn lower_with<'query, D, I, R>(
+        item_paths: &ItemPathQuery<'query, D, I>,
+        resolver: &R,
+        function: FunctionRef,
+    ) -> Result<Option<Self>, D::Error>
+    where
+        D: DefMapSource,
+        I: ItemStoreSource<'query, Error = D::Error>,
+        R: TypePathResolver<Error = D::Error>,
+    {
+        let Some(data) = item_paths.items().function_data(function)? else {
+            return Ok(None);
+        };
+        let Some(context) = item_paths
+            .items()
+            .type_path_context_for_function(function)?
+        else {
+            return Ok(None);
+        };
+        let owner = GenericDefRef::Function(function);
+        let implicit_self_ty =
+            Self::self_param_ty_with(item_paths, resolver, function, data.owner)?;
+        let lowering = TypeLoweringQuery::new(item_paths, resolver);
+        let mut session = lowering.session(TypeLoweringEnv::new(
+            owner,
+            TypeLoweringAnchor::Context(context),
+        ))?;
+
+        // One session walks parameters in source order so each APIT occurrence receives the same
+        // owner-local ID in every query.
+        let mut params = Vec::with_capacity(data.signature.params().len());
+        for param in data.signature.params() {
+            let ty = match &param.ty {
+                Some(ty) => session.lower_parameter_type(ty)?,
+                None => match param.kind {
+                    ParamKind::SelfParam(SelfParamKind::Value) => implicit_self_ty.clone(),
+                    ParamKind::SelfParam(SelfParamKind::Reference { mutability }) => {
+                        Ty::reference(mutability, implicit_self_ty.clone())
+                    }
+                    ParamKind::SelfParam(SelfParamKind::Explicit) | ParamKind::Normal => {
+                        Ty::Unknown
+                    }
+                },
+            };
+            params.push(ty);
+        }
+        let ret = data
+            .signature
+            .ret_ty()
+            .map(|ty| session.lower_type_ref(ty))
+            .transpose()?
+            .unwrap_or(Ty::Unit);
+        let clauses = session.lower_clauses()?;
+
+        Ok(Some(Self {
+            params,
+            ret,
+            clauses,
+            qualifiers: data.signature.qualifiers(),
+        }))
+    }
+
+    fn self_param_ty_with<'query, D, I, R>(
+        item_paths: &ItemPathQuery<'query, D, I>,
+        resolver: &R,
+        function: FunctionRef,
+        item_owner: ItemOwner,
+    ) -> Result<Ty, D::Error>
+    where
+        D: DefMapSource,
+        I: ItemStoreSource<'query, Error = D::Error>,
+        R: TypePathResolver<Error = D::Error>,
+    {
+        match item_owner {
+            ItemOwner::Impl(id) => Ok(impl_header_with(
+                item_paths,
+                resolver,
+                ImplRef {
+                    origin: function.origin,
+                    id,
+                },
+            )?
+            .map(|header| header.self_ty)
+            .unwrap_or(Ty::Unknown)),
+            ItemOwner::Trait(_) => {
+                let generics = item_paths
+                    .generics()
+                    .generics(GenericDefRef::Function(function))?;
+                Ok(generics
+                    .param_by_name("Self")
+                    .and_then(|param| match param {
+                        GenericParamRef::Type(param) => Some(Ty::Param(param)),
+                        GenericParamRef::Lifetime(_) | GenericParamRef::Const(_) => None,
+                    })
+                    .unwrap_or(Ty::Unknown))
+            }
+            ItemOwner::Module(_) => Ok(Ty::Unknown),
+        }
+    }
 }
 
 /// Canonical impl self type, optional trait application, and predicates.
@@ -89,58 +194,15 @@ where
     /// session gives argument-position parameters and opaque return occurrences repeatable
     /// owner-local identities.
     pub fn function(&self, function: FunctionRef) -> Result<Option<CallableSignature>, D::Error> {
-        let Some(data) = self.item_paths.items().function_data(function)? else {
-            return Ok(None);
-        };
-        let Some(context) = self
-            .item_paths
-            .items()
-            .type_path_context_for_function(function)?
-        else {
-            return Ok(None);
-        };
-        let owner = GenericDefRef::Function(function);
-        let implicit_self_ty = self.self_param_ty(function, data.owner)?;
-        let lowering = TypeLoweringQuery::new(&self.item_paths, &self.resolver);
-        let mut session = lowering.session(TypeLoweringEnv::new(
-            owner,
-            TypeLoweringAnchor::Context(context),
-        ))?;
-
-        // One session walks parameters in source order so each APIT occurrence receives the same
-        // owner-local ID in every query.
-        let mut params = Vec::with_capacity(data.signature.params().len());
-        for param in data.signature.params() {
-            let ty = match &param.ty {
-                Some(ty) => session.lower_parameter_type(ty)?,
-                None => match param.kind {
-                    ParamKind::SelfParam(SelfParamKind::Value) => implicit_self_ty.clone(),
-                    ParamKind::SelfParam(SelfParamKind::Reference { mutability }) => {
-                        Ty::reference(mutability, implicit_self_ty.clone())
-                    }
-                    ParamKind::SelfParam(SelfParamKind::Explicit) | ParamKind::Normal => {
-                        Ty::Unknown
-                    }
-                },
-            };
-            params.push(ty);
-        }
-        let ret = data
-            .signature
-            .ret_ty()
-            .map(|ty| session.lower_type_ref(ty))
-            .transpose()?
-            .unwrap_or(Ty::Unit);
-        let clauses = session.lower_clauses()?;
-
-        Ok(Some(CallableSignature {
-            params,
-            ret,
-            clauses,
-        }))
+        CallableSignature::lower_with(&self.item_paths, &self.resolver, function)
     }
 
-    pub fn function_ty(&self, function: FunctionRef) -> Result<Option<Ty>, D::Error> {
+    /// Build the use-site type of one function item with its complete generic arity.
+    ///
+    /// Path lookup has no inference table in which to allocate use-site variables. Keep each
+    /// generic position as a kind-correct unknown instead of leaking the declaration's own `T`
+    /// into the body. Direct calls replace these placeholders with stable call-owned slots.
+    pub fn function_item_ty(&self, function: FunctionRef) -> Result<Option<Ty>, D::Error> {
         if self.item_paths.items().function_data(function)?.is_none() {
             return Ok(None);
         }
@@ -148,7 +210,7 @@ where
             .item_paths
             .generics()
             .generics(GenericDefRef::Function(function))?;
-        let args = Substitution::identity(&generics).args_for(&generics);
+        let args = Substitution::new().args_for(&generics);
         Ok(Some(Ty::fn_def_with_args(function, args)))
     }
 
@@ -318,32 +380,6 @@ where
             )
             .map(Some)
     }
-
-    fn self_param_ty(&self, function: FunctionRef, item_owner: ItemOwner) -> Result<Ty, D::Error> {
-        match item_owner {
-            ItemOwner::Impl(id) => Ok(self
-                .impl_header(ImplRef {
-                    origin: function.origin,
-                    id,
-                })?
-                .map(|header| header.self_ty)
-                .unwrap_or(Ty::Unknown)),
-            ItemOwner::Trait(_) => {
-                let generics = self
-                    .item_paths
-                    .generics()
-                    .generics(GenericDefRef::Function(function))?;
-                Ok(generics
-                    .param_by_name("Self")
-                    .and_then(|param| match param {
-                        GenericParamRef::Type(param) => Some(Ty::Param(param)),
-                        GenericParamRef::Lifetime(_) | GenericParamRef::Const(_) => None,
-                    })
-                    .unwrap_or(Ty::Unknown))
-            }
-            ItemOwner::Module(_) => Ok(Ty::Unknown),
-        }
-    }
 }
 
 impl<'query, D, I> SemanticSignatureQuery<'query, D, I>
@@ -356,6 +392,13 @@ where
         trait_ref: TraitDefRef,
     ) -> Result<Option<TraitHeader>, D::Error> {
         trait_header_with(item_paths, item_paths, trait_ref)
+    }
+
+    pub(crate) fn function_from(
+        item_paths: &ItemPathQuery<'query, D, I>,
+        function: FunctionRef,
+    ) -> Result<Option<CallableSignature>, D::Error> {
+        CallableSignature::lower_with(item_paths, item_paths, function)
     }
 
     pub(crate) fn type_alias_ty_from(

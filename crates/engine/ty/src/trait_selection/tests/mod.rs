@@ -442,37 +442,6 @@ fn normalize_assoc_type_recurses_to_terminal_chalk_answer() {
 }
 
 #[test]
-fn chalk_defers_body_local_closure_projection() {
-    // A closure's callable signature lives in Body IR. The shared Chalk database only has a stub
-    // closure datum, so it must leave this projection for the body-aware obligation solver.
-    check_trait_selection_queries(
-        r#"
-            traits
-              trait#0 Iterator
-              trait#1 FnOnce
-            structs
-              struct#0 Adapter<F>
-            impls
-              impl#0 impl<F: FnOnce> Iterator for Adapter<F>
-            type aliases
-              type#0 trait#0::Item
-              type#1 trait#1::Output
-              type#2 impl#0::Item = <F as FnOnce>::Output
-        "#,
-        vec![TraitSelectionCase::chalk_normalize_assoc(
-            "defer body-local closure projection",
-            "<Adapter<{closure#0}> as Iterator>::Item",
-        )],
-        expect![[r#"
-            defer body-local closure projection
-              query: chalk
-              goal: <Adapter<{closure#0}> as Iterator>::Item
-              result: none
-        "#]],
-    );
-}
-
-#[test]
 fn blanket_self_param_impl_and_source_opaque_bounds_are_proved() {
     // Pair blanket-impl selection with Chalk's terminal associated value for both a nominal
     // iterator and an opaque iterator. Opaque equality comes from its declared Chalk datum rather
@@ -730,6 +699,40 @@ fn probe_rejects_impls_with_unproven_bounds() {
 }
 
 #[test]
+fn probe_does_not_infer_unconstrained_impl_parameter_from_visible_impls() {
+    // `T: Marker` constrains a type after another source establishes `T`; it is not an inverse
+    // lookup from the set of Marker impls. Even a uniquely visible impl cannot make `T = User`,
+    // because adding another Marker impl must not change inference at this call site.
+    check_trait_selection_queries(
+        r#"
+            traits
+              trait#0 Marker
+              trait#1 Target
+            structs
+              struct#0 Wrap<T>
+              struct#1 User
+            impls
+              impl#0 impl Marker for User
+              impl#1 impl<T: Marker> Target for Wrap<T>
+        "#,
+        vec![TraitSelectionCase::probe(
+            "leave open impl parameter ambiguous",
+            "Wrap<?item>: Target",
+        )],
+        expect![[r#"
+            leave open impl parameter ambiguous
+              query: selection
+              goal: Wrap<?item>: Target
+              result: one
+                impl: impl#1
+                applicability: maybe
+                vars
+                  ?item = _
+        "#]],
+    );
+}
+
+#[test]
 fn probe_uses_chalk_to_prove_impl_type_param_bounds() {
     check_trait_selection_queries(
         r#"
@@ -820,44 +823,6 @@ fn probe_declines_predicate_with_unsupported_bounded_associated_type() {
               query: selection
               goal: User: UsesAdapter
               result: empty
-        "#]],
-    );
-}
-
-#[test]
-fn candidate_discovery_exposes_impl_with_body_local_where_predicate() {
-    check_trait_selection_queries(
-        r#"
-            traits
-              trait#0 Produces
-              trait#1 FnOnce
-            structs
-              struct#0 Adapter<F>
-            impls
-              impl#0 impl<F, R> Produces for Adapter<F> where F: FnOnce
-        "#,
-        vec![
-            TraitSelectionCase::probe(
-                "selection defers body-local predicate",
-                "Adapter<{closure#0}>: Produces",
-            ),
-            TraitSelectionCase::candidate_probe(
-                "candidate exposes canonical header",
-                "Adapter<{closure#0}>: Produces",
-            ),
-        ],
-        expect![[r#"
-            selection defers body-local predicate
-              query: selection
-              goal: Adapter<{closure#0}>: Produces
-              result: empty
-
-            candidate exposes canonical header
-              query: candidate
-              goal: Adapter<{closure#0}>: Produces
-              result: one
-                impl: impl#0
-                applicability: yes
         "#]],
     );
 }

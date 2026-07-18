@@ -21,7 +21,7 @@ use crate::{
 /// available for every receiver. Associated aliases are also left unindexed because the bounded
 /// matcher deliberately treats their hidden shape as uncertain.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(super) enum TraitSelfHead {
+pub(crate) enum TraitSelfHead {
     Unit,
     Never,
     Primitive(PrimitiveTy),
@@ -49,7 +49,7 @@ impl TraitSelfHead {
             Ty::RawPointer { mutability, .. } => Some(Self::RawPointer(*mutability)),
             Ty::FnPointer { params, .. } => Some(Self::FnPointer(params.len())),
             Ty::Adt(ty) => Some(Self::Adt(ty.def)),
-            Ty::Closure(id) => Some(Self::Closure(*id)),
+            Ty::Closure(closure) => Some(Self::Closure(closure.id)),
             Ty::FnDef(function) => Some(Self::FnDef(function.def)),
             Ty::Param(_) | Ty::Alias(_) | Ty::Unknown | Ty::InferVar { .. } => None,
         }
@@ -210,8 +210,19 @@ impl CandidateMatcher {
         let matched = match (pattern, &evidence) {
             (Ty::Unit, Ty::Unit)
             | (Ty::Never, Ty::Never)
-            | (Ty::Primitive(_), Ty::Primitive(_))
-            | (Ty::Closure(_), Ty::Closure(_)) => pattern == &evidence,
+            | (Ty::Primitive(_), Ty::Primitive(_)) => pattern == &evidence,
+            (Ty::Closure(pattern), Ty::Closure(evidence)) => {
+                if pattern.id != evidence.id {
+                    false
+                } else {
+                    table
+                        .try_unify(
+                            &Ty::Closure(pattern.clone()),
+                            &Ty::Closure(evidence.clone()),
+                        )
+                        .is_ok()
+                }
+            }
             (Ty::Tuple(pattern), Ty::Tuple(evidence)) if pattern.len() == evidence.len() => {
                 for (pattern, evidence) in pattern.iter().zip(evidence) {
                     applicability =

@@ -78,16 +78,16 @@ where
         Ok(())
     }
 
-    /// Give every closure expression its own anonymous body-local type.
+    /// Give every closure expression its own anonymous type and callable inference slots.
     fn instantiate_closure_type_facts(&mut self) {
         for expr_idx in 0..self.pass.body.exprs().len() {
             let expr = ExprId(expr_idx);
-            if matches!(
-                &self.pass.body.expr_unchecked(expr).kind,
-                ExprKind::Closure { .. }
-            ) {
-                self.pass.inference.set_expr_closure_ty(expr);
-            }
+            let ExprKind::Closure { params, .. } = &self.pass.body.expr_unchecked(expr).kind else {
+                continue;
+            };
+            self.pass
+                .inference
+                .set_expr_closure_ty(self.pass.env.body_ref(), expr, params.len());
         }
     }
 

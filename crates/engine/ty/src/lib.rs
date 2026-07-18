@@ -50,11 +50,11 @@ pub use self::{
     signature::{CallableSignature, ImplHeader, SemanticSignatureQuery},
     substitution::Substitution,
     trait_selection::{
-        AssocProjectionResult, TraitCandidate, TraitCandidateQuery, TraitGoal, TraitSelection,
-        TraitSelectionQuery, TraitSelectionSession,
+        AssocProjectionResult, TraitGoal, TraitProof, TraitSelection, TraitSelectionQuery,
+        TraitSelectionSession,
     },
     ty::{
-        AdtTy, AliasTy, ClosureTyId, ExpectedAdtTyExt, ExpectedTyExt, FnDefTy, OpaqueTy,
+        AdtTy, AliasTy, ClosureTy, ClosureTyId, ExpectedAdtTyExt, ExpectedTyExt, FnDefTy, OpaqueTy,
         ProjectionTy, Ty,
     },
 };

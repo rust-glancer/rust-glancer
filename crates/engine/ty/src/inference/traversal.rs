@@ -6,7 +6,8 @@
 
 use super::var::{InferVarId, InferVarKind};
 use crate::{
-    AdtTy, AliasTy, ConstValue, FnDefTy, GenericArg, Lifetime, OpaqueTy, ProjectionTy, Ty,
+    AdtTy, AliasTy, ClosureTy, ConstValue, FnDefTy, GenericArg, Lifetime, OpaqueTy, ProjectionTy,
+    Ty,
 };
 
 /// Shared traversal over an inference-capable `Ty` tree.
@@ -39,7 +40,15 @@ pub(super) trait InferenceTyFolder {
                 params: params.iter().map(|param| self.fold_ty(param)).collect(),
                 ret: Box::new(self.fold_ty(ret)),
             },
-            Ty::Closure(id) => Ty::Closure(*id),
+            Ty::Closure(closure) => Ty::Closure(ClosureTy {
+                id: closure.id,
+                params: closure
+                    .params
+                    .iter()
+                    .map(|param| self.fold_ty(param))
+                    .collect(),
+                ret: Box::new(self.fold_ty(&closure.ret)),
+            }),
             Ty::FnDef(function) => Ty::FnDef(FnDefTy {
                 def: function.def,
                 args: function
@@ -167,9 +176,14 @@ pub(super) fn ty_contains_var(ty: &Ty, needle: InferVarId) -> bool {
             .args
             .iter()
             .any(|arg| generic_arg_contains_var(arg, needle)),
-        Ty::Unit | Ty::Never | Ty::Primitive(_) | Ty::Closure(_) | Ty::Param(_) | Ty::Unknown => {
-            false
+        Ty::Closure(closure) => {
+            closure
+                .params
+                .iter()
+                .any(|param| ty_contains_var(param, needle))
+                || ty_contains_var(&closure.ret, needle)
         }
+        Ty::Unit | Ty::Never | Ty::Primitive(_) | Ty::Param(_) | Ty::Unknown => false,
     }
 }
 
@@ -191,7 +205,9 @@ pub(super) fn same_ty_shape(lhs: &Ty, rhs: &Ty) -> bool {
         | (Ty::Slice(_), Ty::Slice(_))
         | (Ty::Unknown, Ty::Unknown) => true,
         (Ty::Primitive(lhs), Ty::Primitive(rhs)) => lhs == rhs,
-        (Ty::Closure(lhs), Ty::Closure(rhs)) => lhs == rhs,
+        (Ty::Closure(lhs), Ty::Closure(rhs)) => {
+            lhs.id == rhs.id && lhs.params.len() == rhs.params.len()
+        }
         (Ty::FnDef(lhs), Ty::FnDef(rhs)) => lhs.def == rhs.def && lhs.args.len() == rhs.args.len(),
         (Ty::Param(lhs), Ty::Param(rhs)) => lhs == rhs,
         (Ty::Alias(lhs), Ty::Alias(rhs)) => {

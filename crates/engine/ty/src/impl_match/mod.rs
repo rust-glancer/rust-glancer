@@ -102,8 +102,18 @@ where
         let matches = match (pattern, evidence) {
             (Ty::Unit, Ty::Unit)
             | (Ty::Never, Ty::Never)
-            | (Ty::Primitive(_), Ty::Primitive(_))
-            | (Ty::Closure(_), Ty::Closure(_)) => pattern == evidence,
+            | (Ty::Primitive(_), Ty::Primitive(_)) => pattern == evidence,
+            (Ty::Closure(pattern), Ty::Closure(evidence))
+                if pattern.id == evidence.id && pattern.params.len() == evidence.params.len() =>
+            {
+                for (pattern, evidence) in pattern.params.iter().zip(&evidence.params) {
+                    applicability =
+                        applicability.and(Self::match_ty(owner, pattern, evidence, subst)?);
+                }
+                applicability =
+                    applicability.and(Self::match_ty(owner, &pattern.ret, &evidence.ret, subst)?);
+                true
+            }
             (Ty::Tuple(pattern), Ty::Tuple(evidence)) if pattern.len() == evidence.len() => {
                 for (pattern, evidence) in pattern.iter().zip(evidence) {
                     applicability =

@@ -9,7 +9,10 @@ use rg_ir_model::{AssocItemId, FunctionRef, ImplRef, ItemOwner, TraitDefRef, Typ
 use rg_semantic_ir::ItemStoreSource;
 use rg_std::UniqueVec;
 
-use crate::{Autoderef, AutoderefMode, ImplMatcher, ReferencePeelingCandidates, Ty, TyContext};
+use crate::{
+    Autoderef, AutoderefMode, ImplMatcher, ReferencePeelingCandidates, Ty, TyContext,
+    inference::InferenceTable,
+};
 
 /// Ref-level implementation lookup shared by view and analysis adapters.
 pub struct ImplementationQuery<'query, D, I> {
@@ -99,6 +102,7 @@ where
     ) -> Result<UniqueVec<FunctionRef>, D::Error> {
         let autoderef = Autoderef::new(self.context.clone());
         let matcher = ImplMatcher::new(self.context.clone());
+        let table = InferenceTable::new();
         let mut functions = UniqueVec::new();
 
         for candidate in autoderef.candidates(AutoderefMode::MethodReceiver, receiver_ty) {
@@ -118,7 +122,7 @@ where
                     // args. Reuse method lookup's applicability check so implementation lookup
                     // follows the receiver the user actually called the method on.
                     if !matcher
-                        .trait_impl_applicability(trait_impl, ty)?
+                        .trait_impl_applicability(trait_impl, ty, &table)?
                         .is_applicable()
                     {
                         continue;

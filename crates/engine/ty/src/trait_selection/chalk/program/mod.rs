@@ -24,11 +24,15 @@ use chalk_ir::{
     WhereClause,
 };
 use chalk_solve::rust_ir::{
-    AssociatedTyDatum, AssociatedTyValue, ImplDatum, OpaqueTyDatum, TraitDatum,
+    AssociatedTyDatum, AssociatedTyValue, FnDefDatum, ImplDatum, OpaqueTyDatum, TraitDatum,
+    WellKnownTrait,
 };
 use rg_def_map::DefMapSource;
-use rg_ir_model::{GenericDefRef, ImplRef, OpaqueTyRef, TraitDefRef, TypeAliasRef, TypeDefRef};
-use rg_semantic_ir::{CrateItemQuery, ItemStoreSource};
+use rg_ir_model::{
+    FunctionRef, GenericDefRef, ImplRef, OpaqueTyRef, TraitDefRef, TypeAliasRef, TypeDefRef,
+    items::LangItem,
+};
+use rg_semantic_ir::{CrateItemQuery, ItemLookupIndex, ItemStoreSource};
 use rg_std::UniqueVec;
 use rg_text::Name;
 
@@ -57,6 +61,7 @@ pub(super) struct ChalkProgramState {
 struct ChalkProgramRoots {
     traits: UniqueVec<TraitDefRef>,
     opaque_tys: UniqueVec<OpaqueTyRef>,
+    functions: UniqueVec<FunctionRef>,
 }
 
 /// The complete semantic input discovered from a set of new roots.
@@ -71,6 +76,7 @@ struct ChalkProgramScope {
     impls: UniqueVec<ImplRef>,
     impl_headers: HashMap<ImplRef, crate::ImplHeader>,
     opaque_bounds: HashMap<OpaqueTyRef, (crate::OpaqueTy, Vec<TraitRefLowering>)>,
+    function_signatures: HashMap<FunctionRef, crate::CallableSignature>,
     loaded_opaque_owners: UniqueVec<GenericDefRef>,
 }
 
@@ -83,6 +89,7 @@ struct ChalkProgramScope {
 pub(super) struct ChalkProgram {
     materialized_traits: UniqueVec<TraitDefRef>,
     materialized_opaque_owners: UniqueVec<GenericDefRef>,
+    known_items: ChalkKnownItems,
     traits: HashMap<TraitDefRef, Arc<TraitDatum<RgChalkInterner>>>,
     trait_arities: HashMap<TraitDefRef, usize>,
     associated_tys: HashMap<TypeAliasRef, Arc<AssociatedTyDatum<RgChalkInterner>>>,
@@ -90,10 +97,61 @@ pub(super) struct ChalkProgram {
     associated_ty_values: HashMap<TypeAliasRef, Arc<AssociatedTyValue<RgChalkInterner>>>,
     associated_ty_value_by_impl: HashMap<(ImplRef, TypeAliasRef), TypeAliasRef>,
     opaque_tys: HashMap<OpaqueTyRef, Arc<OpaqueTyDatum<RgChalkInterner>>>,
+    functions: HashMap<FunctionRef, Arc<FnDefDatum<RgChalkInterner>>>,
     adts: HashMap<TypeDefRef, Arc<chalk_solve::rust_ir::AdtDatum<RgChalkInterner>>>,
     adt_variances: HashMap<TypeDefRef, Variances<RgChalkInterner>>,
     impls: HashMap<ImplRef, Arc<ImplDatum<RgChalkInterner>>>,
     impls_by_trait: HashMap<TraitDefRef, Vec<ImplRef>>,
+}
+
+/// Exact compiler-known identities used by Chalk's callable built-ins.
+#[derive(Debug, Default)]
+struct ChalkKnownItems {
+    fn_trait: Option<TraitDefRef>,
+    fn_mut_trait: Option<TraitDefRef>,
+    fn_once_trait: Option<TraitDefRef>,
+    fn_once_output: Option<TypeAliasRef>,
+}
+
+impl ChalkKnownItems {
+    fn from_index(index: &ItemLookupIndex) -> Self {
+        Self {
+            fn_trait: index.lang_trait(LangItem::Fn),
+            fn_mut_trait: index.lang_trait(LangItem::FnMut),
+            fn_once_trait: index.lang_trait(LangItem::FnOnce),
+            fn_once_output: index.lang_type_alias(LangItem::FnOnceOutput),
+        }
+    }
+
+    fn well_known_trait(
+        &self,
+        trait_ref: TraitDefRef,
+        associated_ty_ids: &[chalk_ir::AssocTypeId<RgChalkInterner>],
+    ) -> Option<WellKnownTrait> {
+        if self.fn_trait == Some(trait_ref) {
+            return Some(WellKnownTrait::Fn);
+        }
+        if self.fn_mut_trait == Some(trait_ref) {
+            return Some(WellKnownTrait::FnMut);
+        }
+        if self.fn_once_trait == Some(trait_ref)
+            && self.fn_once_output.is_some_and(|output| {
+                associated_ty_ids == [super::lower::chalk_assoc_type_id(output)]
+            })
+        {
+            return Some(WellKnownTrait::FnOnce);
+        }
+        None
+    }
+
+    fn trait_ref(&self, well_known: WellKnownTrait) -> Option<TraitDefRef> {
+        match well_known {
+            WellKnownTrait::Fn => self.fn_trait,
+            WellKnownTrait::FnMut => self.fn_mut_trait,
+            WellKnownTrait::FnOnce => self.fn_once_trait,
+            _ => None,
+        }
+    }
 }
 
 impl ChalkProgramState {
@@ -109,66 +167,80 @@ impl ChalkProgramState {
         &mut self,
         item_paths: &ItemPathQuery<'query, D, I>,
         crate_items: &CrateItemQuery<'query, D, I>,
+        lookup_index: &ItemLookupIndex,
         session: &TraitSelectionSession,
         clauses: &[Clause],
         table: Option<&InferenceTable>,
-    ) -> Result<(), I::Error>
+    ) -> Result<bool, I::Error>
     where
         D: DefMapSource<Error = I::Error>,
         I: ItemStoreSource<'query>,
     {
         let mut roots = ChalkProgramRoots::default();
         roots.collect_clauses(item_paths, clauses, table)?;
-        self.ensure_roots(item_paths, crate_items, session, &roots)
+        self.ensure_roots(item_paths, crate_items, lookup_index, session, &roots)
     }
 
     /// Make every definition reachable from this projection goal available to Chalk.
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn ensure_for_goal<'query, D, I>(
         &mut self,
         item_paths: &ItemPathQuery<'query, D, I>,
         crate_items: &CrateItemQuery<'query, D, I>,
+        lookup_index: &ItemLookupIndex,
         session: &TraitSelectionSession,
         goal: &TraitGoal,
+        associated_ty: TypeAliasRef,
         table: &InferenceTable,
-    ) -> Result<(), I::Error>
+    ) -> Result<bool, I::Error>
     where
         D: DefMapSource<Error = I::Error>,
         I: ItemStoreSource<'query>,
     {
         let mut roots = ChalkProgramRoots::default();
         roots.collect_goal(item_paths, goal, table)?;
-        self.ensure_roots(item_paths, crate_items, session, &roots)
+        roots.collect_associated_ty(item_paths, associated_ty)?;
+        self.ensure_roots(item_paths, crate_items, lookup_index, session, &roots)
     }
 
     fn ensure_roots<'query, D, I>(
         &mut self,
         item_paths: &ItemPathQuery<'query, D, I>,
         crate_items: &CrateItemQuery<'query, D, I>,
+        lookup_index: &ItemLookupIndex,
         session: &TraitSelectionSession,
         roots: &ChalkProgramRoots,
-    ) -> Result<(), I::Error>
+    ) -> Result<bool, I::Error>
     where
         D: DefMapSource<Error = I::Error>,
         I: ItemStoreSource<'query>,
     {
         let pending_roots = roots.new_since(&self.roots);
-        if pending_roots.is_empty() {
-            return Ok(());
+        if !pending_roots.is_empty() {
+            crate::profile::metric::PROGRAM_BUILDS.inc();
+            let started = Instant::now();
+            let result = self.program.extend(
+                item_paths,
+                crate_items,
+                lookup_index,
+                session,
+                &pending_roots,
+            );
+            crate::profile::metric::PROGRAM_BUILD_TIME.record(started.elapsed());
+            result?;
+            self.roots.merge(&pending_roots);
         }
-
-        crate::profile::metric::PROGRAM_BUILDS.inc();
-        let started = Instant::now();
-        let result = self
-            .program
-            .extend(item_paths, crate_items, session, &pending_roots);
-        crate::profile::metric::PROGRAM_BUILD_TIME.record(started.elapsed());
-        result?;
-        self.roots.merge(&pending_roots);
 
         // A trait is materialized with every visible impl before its first query, and an opaque is
         // materialized before its identity enters a goal. Later extensions therefore cannot
         // invalidate answers retained by the solver forests; they only add new goal identities.
-        Ok(())
+        // Function callbacks have a stronger invariant: every function type in this query must
+        // have real datum. Unsupported signatures are omitted by the builder and stop the query
+        // before Chalk can ask its mandatory callback for fabricated data.
+        Ok(roots
+            .functions
+            .iter()
+            .all(|function| self.program.functions.contains_key(function)))
     }
 
     pub(super) fn database(&self) -> &ChalkProgram {
@@ -181,15 +253,8 @@ impl ChalkProgramState {
         &self.program.associated_tys
     }
 
-    pub(super) fn associated_ty_ref(
-        &self,
-        trait_ref: TraitDefRef,
-        assoc_name: &str,
-    ) -> Option<TypeAliasRef> {
-        self.program
-            .associated_ty_by_trait_name
-            .get(&(trait_ref, Name::new(assoc_name)))
-            .copied()
+    pub(super) fn functions(&self) -> &HashMap<FunctionRef, Arc<FnDefDatum<RgChalkInterner>>> {
+        &self.program.functions
     }
 
     /// Instantiate the associated value owned by one already-selected Chalk impl datum.

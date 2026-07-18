@@ -29,8 +29,8 @@ use rg_std::ExpectedUnique;
 use rg_text::Name;
 
 use super::super::{
-    ChalkOutcome, ChalkTraitSolver, TraitCandidateQuery, TraitGoal, TraitSelectionQuery,
-    TraitSelectionSession,
+    TraitCandidate, TraitGoal, TraitSelectionQuery, TraitSelectionSession,
+    chalk::{ChalkInferenceCache, ChalkOutcome, ChalkTraitSolver},
 };
 use crate::inference::{InferVarKind, InferenceTable};
 use crate::{
@@ -509,17 +509,6 @@ pub(super) fn query(
     fixture: &TraitSelectionFixture,
 ) -> TraitSelectionQuery<'_, &TraitSelectionFixture, &TraitSelectionFixture> {
     TraitSelectionQuery::new(TyContext::new(
-        fixture,
-        fixture,
-        &fixture.lookup_index,
-        TraitSelectionSession::new(fixture.target),
-    ))
-}
-
-fn candidate_query(
-    fixture: &TraitSelectionFixture,
-) -> TraitCandidateQuery<'_, &TraitSelectionFixture, &TraitSelectionFixture> {
-    TraitCandidateQuery::new(TyContext::new(
         fixture,
         fixture,
         &fixture.lookup_index,
@@ -1247,15 +1236,6 @@ impl<'a> TraitSelectionQueryParser<'a> {
         if let Some(name) = text.strip_prefix('?') {
             return self.type_var(name);
         }
-        if let Some(id) = text
-            .strip_prefix("{closure#")
-            .and_then(|text| text.strip_suffix('}'))
-        {
-            return Ty::Closure(crate::ClosureTyId::new(rg_ir_model::ExprId(parse_usize(
-                id,
-                "closure id",
-            ))));
-        }
         if let Some(index) = text.strip_prefix("opaque#") {
             let function = FunctionRef {
                 origin: origin(),
@@ -1396,9 +1376,16 @@ impl TraitSelectionSnapshot {
         )
         .expect("string writes should not fail");
 
-        let candidates = candidate_query(&self.fixture)
-            .probe_all(&parsed.goal, &parsed.table)
-            .expect("trait candidate fixture query should not fail");
+        let item_paths = ItemPathQuery::new(&self.fixture, &self.fixture);
+        let session = TraitSelectionSession::new(self.fixture.target);
+        let candidates = TraitCandidate::probe_all(
+            &item_paths,
+            &self.fixture.lookup_index,
+            &session,
+            &parsed.goal,
+            &parsed.table,
+        )
+        .expect("trait candidate fixture query should not fail");
         match candidates.as_slice() {
             [] => {
                 writeln!(dump, "  result: empty").expect("string writes should not fail");
@@ -1442,13 +1429,20 @@ impl TraitSelectionSnapshot {
                 CrateItemQuery::new(&self.fixture, &self.fixture, self.fixture.target);
             let session = TraitSelectionSession::new(self.fixture.target);
             let solver = ChalkTraitSolver::new();
+            let inference_cache = ChalkInferenceCache::new();
+            let associated_ty = self
+                .fixture
+                .associated_ty_by_name(parsed.goal.trait_ref(), &parsed.assoc_name)
+                .expect("projection fixture should declare the requested associated type");
             let outcome = solver
                 .normalize_assoc_type(
                     &item_paths,
                     &crate_items,
+                    &self.fixture.lookup_index,
                     &session,
+                    &inference_cache,
                     &parsed.goal,
-                    &parsed.assoc_name,
+                    associated_ty,
                     None,
                     &parsed.table,
                 )
@@ -1663,7 +1657,7 @@ impl TraitSelectionSnapshot {
                     self.render_infer_ty_with_vars(ret, var_names)
                 )
             }
-            Ty::Closure(id) => format!("{{closure#{id}}}"),
+            Ty::Closure(closure) => format!("{{closure#{}}}", closure.id),
             Ty::FnDef(function) => format!(
                 "{{fn-item:{:?}{}}}",
                 function.def,
@@ -1747,7 +1741,7 @@ impl TraitSelectionSnapshot {
                     .join(", ");
                 format!("fn({params}) -> {}", self.render_ty(ret))
             }
-            Ty::Closure(id) => format!("{{closure#{id}}}"),
+            Ty::Closure(closure) => format!("{{closure#{}}}", closure.id),
             Ty::FnDef(function) => format!(
                 "{{fn-item:{:?}{}}}",
                 function.def,

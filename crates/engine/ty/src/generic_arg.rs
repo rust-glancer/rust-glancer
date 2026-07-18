@@ -279,7 +279,11 @@ impl InferenceIdEquivalence {
             (Ty::Alias(lhs), Ty::Alias(rhs)) => {
                 lhs.same_definition(rhs) && self.same_args(lhs.args(), rhs.args())
             }
-            (Ty::Closure(lhs), Ty::Closure(rhs)) => lhs == rhs,
+            (Ty::Closure(lhs), Ty::Closure(rhs)) => {
+                lhs.id == rhs.id
+                    && self.same_tys(&lhs.params, &rhs.params)
+                    && self.same_ty(&lhs.ret, &rhs.ret)
+            }
             (Ty::FnDef(lhs), Ty::FnDef(rhs)) => {
                 lhs.def == rhs.def && self.same_args(&lhs.args, &rhs.args)
             }

@@ -1187,7 +1187,7 @@ impl<'a> AnalysisQuerySnapshot<'a> {
                     .join(", ");
                 format!("fn({params}) -> {}", self.render_ty(ret))
             }
-            Ty::Closure(id) => format!("closure #{id}"),
+            Ty::Closure(closure) => format!("closure #{}", closure.id),
             Ty::FnDef(function) => format!(
                 "function item {:?}{}",
                 function.def,

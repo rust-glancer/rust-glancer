@@ -10,41 +10,52 @@ use std::sync::Arc;
 
 use chalk_ir::cast::Cast;
 use chalk_ir::fold::Shift;
-use chalk_ir::visit::VisitExt;
 use chalk_ir::{
-    AdtId, AliasEq, AliasTy as ChalkAliasTy, AssocTypeId, BoundVar, ConcreteConst, ConstData,
-    ConstValue as ChalkConstValue, DebruijnIndex, DomainGoal, FnDefId, FnPointer, FnSig, FnSubst,
-    GenericArg as ChalkGenericArg, GenericArgData, Goal, LifetimeData,
-    Mutability as ChalkMutability, OpaqueTyId, ProjectionTy as ChalkProjectionTy,
-    QuantifiedWhereClause, Safety, Scalar, Substitution as ChalkSubstitution, TraitId,
-    TraitRef as ChalkTraitRef, TyKind, TyVariableKind, UintTy, VariableKind, VariableKinds,
-    WhereClause,
+    AdtId, AliasEq, AliasTy as ChalkAliasTy, AssocTypeId, Binders, BoundVar, ConcreteConst,
+    ConstData, ConstValue as ChalkConstValue, DebruijnIndex, DomainGoal, FnDefId, FnPointer, FnSig,
+    FnSubst, GenericArg as ChalkGenericArg, GenericArgData, Goal, GoalData, LifetimeData,
+    Mutability as ChalkMutability, Normalize, OpaqueTyId, ProjectionTy as ChalkProjectionTy,
+    QuantifiedWhereClause, QuantifierKind, Safety, Scalar, Substitution as ChalkSubstitution,
+    TraitId, TraitRef as ChalkTraitRef, TyKind, TyVariableKind, UintTy, VariableKind,
+    VariableKinds, WhereClause,
 };
 use chalk_solve::rust_ir::{
     AdtDatum, AdtDatumBound, AdtFlags, AdtKind, AdtVariantDatum, AssociatedTyDatum,
     AssociatedTyDatumBound, AssociatedTyValue, AssociatedTyValueBound, AssociatedTyValueId,
-    ImplDatum, ImplDatumBound, ImplType, OpaqueTyDatum, OpaqueTyDatumBound, Polarity, TraitDatum,
-    TraitDatumBound, TraitFlags,
+    FnDefDatum, FnDefDatumBound, FnDefInputsAndOutputDatum, ImplDatum, ImplDatumBound, ImplType,
+    OpaqueTyDatum, OpaqueTyDatumBound, Polarity, TraitDatum, TraitDatumBound, TraitFlags,
+    WellKnownTrait,
 };
 use rg_ir_model::{
-    GenericParamRef, ImplRef, Mutability, TraitDefRef, TypeAliasRef, TypeDefId, TypeDefRef,
+    FunctionRef, GenericParamRef, ImplRef, Mutability, TraitDefRef, TypeAliasRef, TypeDefId,
+    TypeDefRef,
 };
 use rg_semantic_ir::{Generics, TypeAliasData};
 
+use super::evidence::{ProjectionAliasLowering, SolverVariableEnv};
 use super::interner::{ChalkDefId, RgChalkInterner};
-use super::projection::{ProjectionAliasLowering, ProjectionVariableEnv};
-use crate::inference::{InferVarKind, InferenceSubstitution, InferenceTable};
+use crate::inference::{InferVarKind, InferenceTable};
 use crate::signature::TraitHeader;
 use crate::trait_selection::TraitGoal;
 use crate::{
-    AliasTy, Clause, ConstValue, FloatTy, GenericArg, ImplHeader, Lifetime, PrimitiveTy,
-    SignedIntTy, TraitApplication, TraitRefLowering, Ty, UnsignedIntTy,
+    AliasTy, CallableSignature, Clause, ConstValue, FloatTy, GenericArg, ImplHeader, Lifetime,
+    PrimitiveTy, SignedIntTy, TraitApplication, TraitRefLowering, Ty, UnsignedIntTy,
 };
 
 pub(super) type ChalkTy = chalk_ir::Ty<RgChalkInterner>;
 pub(super) type ChalkGoal = Goal<RgChalkInterner>;
 
 const INTER: RgChalkInterner = RgChalkInterner;
+
+/// One conjunction whose existential variables correspond to a project inference table.
+///
+/// Predicate clauses must be solved together. For example, `I: Iterator<Item = T>, T: Copy`
+/// uses the projection equality to determine the same `T` that the second clause checks. Splitting
+/// those clauses into independent closed goals would discard precisely that inference evidence.
+pub(super) struct PredicateGoalLowering {
+    pub(super) goal: ChalkGoal,
+    pub(super) variables: SolverVariableEnv,
+}
 
 /// Maps one semantic generic binder to Chalk's positional bound-variable representation.
 #[derive(Debug, Clone)]
@@ -114,6 +125,7 @@ impl GenericBinderEnv {
 pub(super) struct ChalkLowerer<'lower> {
     binders: &'lower GenericBinderEnv,
     associated_tys: Option<&'lower HashMap<TypeAliasRef, Arc<AssociatedTyDatum<RgChalkInterner>>>>,
+    functions: Option<&'lower HashMap<FunctionRef, Arc<FnDefDatum<RgChalkInterner>>>>,
 }
 
 impl<'lower> ChalkLowerer<'lower> {
@@ -121,6 +133,7 @@ impl<'lower> ChalkLowerer<'lower> {
         Self {
             binders,
             associated_tys: None,
+            functions: None,
         }
     }
 
@@ -132,10 +145,19 @@ impl<'lower> ChalkLowerer<'lower> {
         self
     }
 
+    pub(super) fn with_functions(
+        mut self,
+        functions: &'lower HashMap<FunctionRef, Arc<FnDefDatum<RgChalkInterner>>>,
+    ) -> Self {
+        self.functions = Some(functions);
+        self
+    }
+
     pub(super) fn trait_datum(
         &self,
         header: &TraitHeader,
         associated_ty_ids: Vec<AssocTypeId<RgChalkInterner>>,
+        well_known: Option<WellKnownTrait>,
     ) -> Option<TraitDatum<RgChalkInterner>> {
         let where_clauses = self.lower_quantified_clauses(&header.clauses)?;
         Some(TraitDatum {
@@ -153,7 +175,57 @@ impl<'lower> ChalkLowerer<'lower> {
                 coinductive: false,
             },
             associated_ty_ids,
-            well_known: None,
+            well_known,
+        })
+    }
+
+    /// Lower one function item whose semantic callable signature is representable by this adapter.
+    ///
+    /// An `async fn` is callable, but its real output is an anonymous future rather than the
+    /// written return type retained by `CallableSignature`. Decline it until that desugared type
+    /// exists instead of teaching Chalk a plausible but false `FnOnce::Output` equality.
+    pub(super) fn fn_def_datum(
+        &self,
+        function: rg_ir_model::FunctionRef,
+        signature: &CallableSignature,
+    ) -> Option<FnDefDatum<RgChalkInterner>> {
+        if signature.qualifiers.is_async {
+            return None;
+        }
+        let argument_types = signature
+            .params
+            .iter()
+            .map(|param| {
+                self.lower_ty(param, None, None)
+                    .map(|ty| ty.shifted_in(INTER))
+            })
+            .collect::<Option<Vec<_>>>()?;
+        let return_type = self.lower_ty(&signature.ret, None, None)?.shifted_in(INTER);
+        let where_clauses = self.lower_quantified_clauses(&signature.clauses)?;
+        Some(FnDefDatum {
+            id: FnDefId(ChalkDefId::Function(function)),
+            sig: FnSig {
+                abi: (),
+                safety: if signature.qualifiers.is_unsafe {
+                    Safety::Unsafe
+                } else {
+                    Safety::Safe
+                },
+                variadic: false,
+            },
+            binders: Binders::new(
+                self.binders.variable_kinds(),
+                FnDefDatumBound {
+                    inputs_and_output: Binders::empty(
+                        INTER,
+                        FnDefInputsAndOutputDatum {
+                            argument_types,
+                            return_type,
+                        },
+                    ),
+                    where_clauses,
+                },
+            ),
         })
     }
 
@@ -326,7 +398,7 @@ impl<'lower> ChalkLowerer<'lower> {
         if !self.supports_associated_ty(assoc_type_ref) {
             return None;
         }
-        let variables = ProjectionVariableEnv::from_goal(goal, table);
+        let variables = SolverVariableEnv::from_goal(goal, table);
         let substitution = goal
             .application
             .args
@@ -345,28 +417,64 @@ impl<'lower> ChalkLowerer<'lower> {
         &self,
         args: &[GenericArg],
         table: &InferenceTable,
-        projection_vars: &ProjectionVariableEnv,
+        projection_vars: &SolverVariableEnv,
     ) -> Option<ChalkSubstitution<RgChalkInterner>> {
         self.lower_args(args, Some(table), Some(projection_vars))
     }
 
-    pub(super) fn candidate_where_goals(
+    pub(super) fn predicate_goal(
         &self,
         clauses: &[Clause],
-        subst: &InferenceSubstitution,
         table: &InferenceTable,
-    ) -> Option<Vec<ChalkGoal>> {
-        clauses
+    ) -> Option<PredicateGoalLowering> {
+        let variables = SolverVariableEnv::from_clauses(clauses, table);
+        let mut goals = clauses
             .iter()
             .map(|clause| {
-                let clause = subst.as_substitution().apply_clause(clause);
-                let clause = self.lower_clause(&clause, Some(table), None)?;
-                if clause.has_free_vars(INTER) {
-                    return None;
+                // Definition predicates are stored as where-clauses, but an active associated
+                // equality is a normalization question. Asking `Normalize` here lets Chalk return
+                // the projected value as evidence for another clause in this conjunction.
+                match clause {
+                    Clause::Implemented(application) => Some(
+                        DomainGoal::Holds(WhereClause::Implemented(self.lower_trait_application(
+                            application,
+                            Some(table),
+                            Some(&variables),
+                        )?))
+                        .cast(INTER),
+                    ),
+                    Clause::AliasEq { alias, ty } => {
+                        if !self.supports_associated_ty(alias.associated_ty) {
+                            return None;
+                        }
+                        Some(
+                            DomainGoal::Normalize(Normalize {
+                                alias: ChalkAliasTy::Projection(ChalkProjectionTy {
+                                    associated_ty_id: chalk_assoc_type_id(alias.associated_ty),
+                                    substitution: self.lower_args(
+                                        &alias.args,
+                                        Some(table),
+                                        Some(&variables),
+                                    )?,
+                                }),
+                                ty: self.lower_ty(ty, Some(table), Some(&variables))?,
+                            })
+                            .cast(INTER),
+                        )
+                    }
                 }
-                Some(DomainGoal::Holds(clause).cast(INTER))
             })
-            .collect()
+            .collect::<Option<Vec<_>>>()?;
+
+        // Chalk selects the last pending condition, so reverse source order for the same reason as
+        // declaration predicates: earlier projection equalities should feed later trait checks.
+        goals.reverse();
+        let goal = GoalData::Quantified(
+            QuantifierKind::Exists,
+            Binders::new(variables.variable_kinds(), Goal::all(INTER, goals)),
+        )
+        .intern(INTER);
+        Some(PredicateGoalLowering { goal, variables })
     }
 
     fn lower_quantified_clauses(
@@ -397,7 +505,7 @@ impl<'lower> ChalkLowerer<'lower> {
         &self,
         clause: &Clause,
         table: Option<&InferenceTable>,
-        projection_vars: Option<&ProjectionVariableEnv>,
+        projection_vars: Option<&SolverVariableEnv>,
     ) -> Option<WhereClause<RgChalkInterner>> {
         match clause {
             Clause::Implemented(application) => Some(WhereClause::Implemented(
@@ -422,7 +530,7 @@ impl<'lower> ChalkLowerer<'lower> {
         &self,
         application: &TraitApplication,
         table: Option<&InferenceTable>,
-        projection_vars: Option<&ProjectionVariableEnv>,
+        projection_vars: Option<&SolverVariableEnv>,
     ) -> Option<ChalkTraitRef<RgChalkInterner>> {
         Some(ChalkTraitRef {
             trait_id: chalk_trait_id(application.def),
@@ -434,7 +542,7 @@ impl<'lower> ChalkLowerer<'lower> {
         &self,
         args: &[GenericArg],
         table: Option<&InferenceTable>,
-        projection_vars: Option<&ProjectionVariableEnv>,
+        projection_vars: Option<&SolverVariableEnv>,
     ) -> Option<ChalkSubstitution<RgChalkInterner>> {
         args.iter()
             .map(|arg| self.lower_arg(arg, table, projection_vars))
@@ -446,7 +554,7 @@ impl<'lower> ChalkLowerer<'lower> {
         &self,
         arg: &GenericArg,
         table: Option<&InferenceTable>,
-        projection_vars: Option<&ProjectionVariableEnv>,
+        projection_vars: Option<&SolverVariableEnv>,
     ) -> Option<ChalkGenericArg<RgChalkInterner>> {
         match arg {
             GenericArg::Type(ty) => self
@@ -465,7 +573,7 @@ impl<'lower> ChalkLowerer<'lower> {
         &self,
         ty: &Ty,
         table: Option<&InferenceTable>,
-        projection_vars: Option<&ProjectionVariableEnv>,
+        projection_vars: Option<&SolverVariableEnv>,
     ) -> Option<ChalkTy> {
         let canonical;
         let ty = if let Some(table) = table {
@@ -522,15 +630,22 @@ impl<'lower> ChalkLowerer<'lower> {
                 .intern(INTER),
             ),
             Ty::FnPointer { params, ret } => {
+                // Chalk represents every function pointer signature under a binder, even when
+                // `num_binders` is zero. Move query-owned variables through that layer so its
+                // empty substitution cannot mistake `^0` for a late-bound function parameter.
                 let mut signature = params
                     .iter()
                     .map(|param| {
                         self.lower_ty(param, table, projection_vars)
-                            .map(|ty| GenericArgData::Ty(ty).intern(INTER))
+                            .map(|ty| GenericArgData::Ty(ty.shifted_in(INTER)).intern(INTER))
                     })
                     .collect::<Option<Vec<_>>>()?;
                 signature.push(
-                    GenericArgData::Ty(self.lower_ty(ret, table, projection_vars)?).intern(INTER),
+                    GenericArgData::Ty(
+                        self.lower_ty(ret, table, projection_vars)?
+                            .shifted_in(INTER),
+                    )
+                    .intern(INTER),
                 );
                 Some(
                     TyKind::Function(FnPointer {
@@ -575,20 +690,43 @@ impl<'lower> ChalkLowerer<'lower> {
                 )
                 .intern(INTER),
             ),
-            Ty::Closure(id) => Some(
-                TyKind::Closure(
-                    chalk_ir::ClosureId(ChalkDefId::Closure(*id)),
-                    ChalkSubstitution::empty(INTER),
+            Ty::Closure(closure) => {
+                let mut signature = closure
+                    .params
+                    .iter()
+                    .map(|param| {
+                        self.lower_ty(param, table, projection_vars)
+                            .map(|ty| GenericArgData::Ty(ty).intern(INTER))
+                    })
+                    .collect::<Option<Vec<_>>>()?;
+                signature.push(
+                    GenericArgData::Ty(self.lower_ty(&closure.ret, table, projection_vars)?)
+                        .intern(INTER),
+                );
+                Some(
+                    TyKind::Closure(
+                        chalk_ir::ClosureId(ChalkDefId::Closure(closure.id)),
+                        ChalkSubstitution::from_iter(INTER, signature),
+                    )
+                    .intern(INTER),
                 )
-                .intern(INTER),
-            ),
-            Ty::FnDef(function) => Some(
-                TyKind::FnDef(
-                    FnDefId(ChalkDefId::Function(function.def)),
-                    self.lower_args(&function.args, table, projection_vars)?,
+            }
+            Ty::FnDef(function) => {
+                let datum = self.functions?.get(&function.def)?;
+                // Chalk substitutes function-item arguments into the datum without checking its
+                // arity first. Decline malformed or partially instantiated items at this adapter
+                // boundary instead of letting the solver index past the supplied arguments.
+                if datum.binders.len(INTER) != function.args.len() {
+                    return None;
+                }
+                Some(
+                    TyKind::FnDef(
+                        FnDefId(ChalkDefId::Function(function.def)),
+                        self.lower_args(&function.args, table, projection_vars)?,
+                    )
+                    .intern(INTER),
                 )
-                .intern(INTER),
-            ),
+            }
             Ty::InferVar {
                 kind: InferVarKind::Type,
                 id,

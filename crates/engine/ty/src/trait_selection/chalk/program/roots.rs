@@ -16,12 +16,13 @@ use crate::{Clause, ItemPathQuery, SemanticSignatureQuery, TraitRefLowering};
 
 impl ChalkProgramRoots {
     pub(super) fn is_empty(&self) -> bool {
-        self.traits.is_empty() && self.opaque_tys.is_empty()
+        self.traits.is_empty() && self.opaque_tys.is_empty() && self.functions.is_empty()
     }
 
     pub(super) fn merge(&mut self, other: &Self) {
         self.traits.extend(other.traits.iter().copied());
         self.opaque_tys.extend(other.opaque_tys.iter().copied());
+        self.functions.extend(other.functions.iter().copied());
     }
 
     pub(super) fn new_since(&self, previous: &Self) -> Self {
@@ -36,6 +37,12 @@ impl ChalkProgramRoots {
                 .opaque_tys
                 .iter()
                 .filter(|opaque| !previous.opaque_tys.contains(opaque))
+                .copied()
+                .collect(),
+            functions: self
+                .functions
+                .iter()
+                .filter(|function| !previous.functions.contains(function))
                 .copied()
                 .collect(),
         }
@@ -104,7 +111,7 @@ impl ChalkProgramRoots {
         Ok(())
     }
 
-    fn collect_associated_ty<'query, D, I>(
+    pub(super) fn collect_associated_ty<'query, D, I>(
         &mut self,
         item_paths: &ItemPathQuery<'query, D, I>,
         associated_ty: TypeAliasRef,
@@ -187,14 +194,20 @@ impl ChalkProgramRoots {
                 self.opaque_tys.push(alias.opaque);
                 self.collect_args(item_paths, &alias.args, None)?;
             }
+            crate::Ty::Closure(closure) => {
+                for param in &closure.params {
+                    self.collect_ty(item_paths, param, None)?;
+                }
+                self.collect_ty(item_paths, &closure.ret, None)?;
+            }
             crate::Ty::FnDef(function) => {
+                self.functions.push(function.def);
                 self.collect_args(item_paths, &function.args, None)?;
             }
             crate::Ty::Unit
             | crate::Ty::Never
             | crate::Ty::Primitive(_)
             | crate::Ty::Param(_)
-            | crate::Ty::Closure(_)
             | crate::Ty::Unknown
             | crate::Ty::InferVar { .. } => {}
         }
@@ -221,12 +234,14 @@ impl ChalkProgramScope {
         };
         let mut trait_cursor = 0;
         let mut opaque_cursor = 0;
+        let mut function_cursor = 0;
 
         // Each discovered trait contributes its own declaration predicates and all visible impl
         // predicates. Opaque bounds can introduce more traits, so alternate both queues until the
         // semantic dependency closure stops growing.
         while trait_cursor < scope.definitions.traits.len()
             || opaque_cursor < scope.definitions.opaque_tys.len()
+            || function_cursor < scope.definitions.functions.len()
         {
             while trait_cursor < scope.definitions.traits.len() {
                 let trait_ref = scope.definitions.traits.as_slice()[trait_cursor];
@@ -307,6 +322,28 @@ impl ChalkProgramScope {
                     }
                     scope.opaque_bounds.insert(opaque.opaque, (opaque, bounds));
                 }
+            }
+
+            while function_cursor < scope.definitions.functions.len() {
+                let function = scope.definitions.functions.as_slice()[function_cursor];
+                function_cursor += 1;
+                if program.functions.contains_key(&function) {
+                    continue;
+                }
+                let Some(signature) = SemanticSignatureQuery::function_from(item_paths, function)?
+                else {
+                    continue;
+                };
+                for param in &signature.params {
+                    scope.definitions.collect_ty(item_paths, param, None)?;
+                }
+                scope
+                    .definitions
+                    .collect_ty(item_paths, &signature.ret, None)?;
+                scope
+                    .definitions
+                    .collect_clauses(item_paths, &signature.clauses, None)?;
+                scope.function_signatures.insert(function, signature);
             }
         }
 

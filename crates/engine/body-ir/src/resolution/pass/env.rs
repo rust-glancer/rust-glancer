@@ -16,16 +16,20 @@ pub(super) struct BodyResolutionEnv<'query, D, I> {
     item_stores: &'query I,
     semantic_index: &'query ItemLookupIndex,
     body_ref: BodyRef,
-    trait_selection: &'query TraitSelectionSession,
+    trait_selection: TraitSelectionSession,
 }
 
 impl<D, I> Clone for BodyResolutionEnv<'_, D, I> {
     fn clone(&self) -> Self {
-        *self
+        Self {
+            def_maps: self.def_maps,
+            item_stores: self.item_stores,
+            semantic_index: self.semantic_index,
+            body_ref: self.body_ref,
+            trait_selection: self.trait_selection.clone(),
+        }
     }
 }
-
-impl<D, I> Copy for BodyResolutionEnv<'_, D, I> {}
 
 impl<'query, D, I> BodyResolutionEnv<'query, D, I>
 where
@@ -37,7 +41,7 @@ where
         item_stores: &'query I,
         semantic_index: &'query ItemLookupIndex,
         body_ref: BodyRef,
-        trait_selection: &'query TraitSelectionSession,
+        trait_selection: TraitSelectionSession,
     ) -> Self {
         Self {
             def_maps,

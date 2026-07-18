@@ -11,8 +11,8 @@ use chalk_ir::{
     TyKind,
 };
 
+use super::evidence::{SolverAnswerVars, SolverVariableEnv};
 use super::interner::{ChalkDefId, RgChalkInterner};
-use super::projection::{ProjectionAnswerVars, ProjectionVariableEnv};
 use crate::{
     AdtTy, AliasTy, ConstValue, FloatTy, FnDefTy, GenericArg, GenericArgs, Lifetime, OpaqueTy,
     PrimitiveTy, ProjectionTy, SignedIntTy, Ty, UnsignedIntTy,
@@ -22,15 +22,15 @@ const INTER: RgChalkInterner = RgChalkInterner;
 
 pub(super) fn infer_ty_from_chalk_projection(
     ty: &ChalkTy<RgChalkInterner>,
-    variables: &ProjectionVariableEnv,
-    answer_vars: &ProjectionAnswerVars,
+    variables: &SolverVariableEnv,
+    answer_vars: &SolverAnswerVars,
 ) -> Option<Ty> {
     infer_ty_from_chalk_with_vars(ty, Some((variables, answer_vars)))
 }
 
 fn infer_ty_from_chalk_with_vars(
     ty: &ChalkTy<RgChalkInterner>,
-    variables: Option<(&ProjectionVariableEnv, &ProjectionAnswerVars)>,
+    variables: Option<(&SolverVariableEnv, &SolverAnswerVars)>,
 ) -> Option<Ty> {
     match ty.kind(INTER) {
         TyKind::Tuple(0, _) => Some(Ty::Unit),
@@ -72,15 +72,24 @@ fn infer_ty_from_chalk_with_vars(
         }
         TyKind::BoundVar(bound_var) => {
             let (variables, answer_vars) = variables?;
-            if let Some(index) = bound_var.index_if_innermost()
-                && let Some(ty) = variables.project_var_ty(index)
-            {
-                return Some(ty);
-            }
-            answer_vars
+            // A canonical answer introduces its own bound-variable universe. Its `^0.0` is not
+            // necessarily query variable zero: multiple query variables may have been equated to
+            // that one answer variable. Prefer the map decoded from the answer substitution and
+            // use positional query variables only when raising a datum directly, without an
+            // answer environment.
+            if let Some(ty) = answer_vars
                 .as_slice()
                 .iter()
                 .find_map(|(var, ty)| (*var == *bound_var).then_some(ty.clone()))
+            {
+                return Some(ty);
+            }
+            if let Some(index) = bound_var.index_if_innermost()
+                && let Some(ty) = variables.project_ty_for_index(index)
+            {
+                return Some(ty);
+            }
+            None
         }
         TyKind::AssociatedType(associated_ty, substitution) => {
             projection_from_chalk(associated_ty.0, substitution, variables)
@@ -134,7 +143,7 @@ fn infer_ty_from_chalk_with_vars(
 
 fn infer_ty_from_chalk_arg(
     arg: &ChalkGenericArg<RgChalkInterner>,
-    variables: Option<(&ProjectionVariableEnv, &ProjectionAnswerVars)>,
+    variables: Option<(&SolverVariableEnv, &SolverAnswerVars)>,
 ) -> Option<Ty> {
     let GenericArgData::Ty(ty) = arg.data(INTER) else {
         return None;
@@ -144,7 +153,7 @@ fn infer_ty_from_chalk_arg(
 
 fn infer_generic_arg_from_chalk(
     arg: &ChalkGenericArg<RgChalkInterner>,
-    variables: Option<(&ProjectionVariableEnv, &ProjectionAnswerVars)>,
+    variables: Option<(&SolverVariableEnv, &SolverAnswerVars)>,
 ) -> Option<GenericArg> {
     match arg.data(INTER) {
         GenericArgData::Ty(ty) => Some(GenericArg::Type(Box::new(infer_ty_from_chalk_with_vars(
@@ -161,7 +170,7 @@ fn infer_generic_arg_from_chalk(
 
 fn generic_args_from_chalk(
     substitution: &chalk_ir::Substitution<RgChalkInterner>,
-    variables: Option<(&ProjectionVariableEnv, &ProjectionAnswerVars)>,
+    variables: Option<(&SolverVariableEnv, &SolverAnswerVars)>,
 ) -> Option<GenericArgs> {
     substitution
         .iter(INTER)
@@ -172,7 +181,7 @@ fn generic_args_from_chalk(
 fn projection_from_chalk(
     associated_ty: ChalkDefId,
     substitution: &chalk_ir::Substitution<RgChalkInterner>,
-    variables: Option<(&ProjectionVariableEnv, &ProjectionAnswerVars)>,
+    variables: Option<(&SolverVariableEnv, &SolverAnswerVars)>,
 ) -> Option<Ty> {
     let ChalkDefId::AssocType(associated_ty) = associated_ty else {
         return None;
@@ -186,7 +195,7 @@ fn projection_from_chalk(
 fn opaque_from_chalk(
     opaque: ChalkDefId,
     substitution: &chalk_ir::Substitution<RgChalkInterner>,
-    variables: Option<(&ProjectionVariableEnv, &ProjectionAnswerVars)>,
+    variables: Option<(&SolverVariableEnv, &SolverAnswerVars)>,
 ) -> Option<Ty> {
     let ChalkDefId::Opaque(opaque) = opaque else {
         return None;

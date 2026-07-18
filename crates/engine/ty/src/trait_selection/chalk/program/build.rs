@@ -9,10 +9,10 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use chalk_ir::{AliasTy, AssocTypeId, Substitution, Ty, TyKind, Variance, Variances, WhereClause};
-use chalk_solve::rust_ir::{AssociatedTyValueId, ImplDatum, TraitDatum};
+use chalk_solve::rust_ir::{AssociatedTyValueId, FnDefDatum, ImplDatum, TraitDatum};
 use rg_def_map::DefMapSource;
 use rg_ir_model::{AssocItemId, GenericDefRef, ImplRef, TraitDefRef, TypeAliasRef, TypeDefRef};
-use rg_semantic_ir::{CrateItemQuery, ImplData, ItemStoreSource};
+use rg_semantic_ir::{CrateItemQuery, ImplData, ItemLookupIndex, ItemStoreSource};
 use rg_std::UniqueVec;
 
 use super::super::interner::RgChalkInterner;
@@ -30,6 +30,7 @@ impl ChalkProgram {
         Self {
             materialized_traits: UniqueVec::new(),
             materialized_opaque_owners: UniqueVec::new(),
+            known_items: super::ChalkKnownItems::default(),
             traits: HashMap::new(),
             trait_arities: HashMap::new(),
             associated_tys: HashMap::new(),
@@ -37,6 +38,7 @@ impl ChalkProgram {
             associated_ty_values: HashMap::new(),
             associated_ty_value_by_impl: HashMap::new(),
             opaque_tys: HashMap::new(),
+            functions: HashMap::new(),
             adts: HashMap::new(),
             adt_variances: HashMap::new(),
             impls: HashMap::new(),
@@ -49,6 +51,7 @@ impl ChalkProgram {
         &mut self,
         item_paths: &ItemPathQuery<'query, D, I>,
         crate_items: &CrateItemQuery<'query, D, I>,
+        lookup_index: &ItemLookupIndex,
         session: &TraitSelectionSession,
         roots: &ChalkProgramRoots,
     ) -> Result<(), I::Error>
@@ -56,6 +59,7 @@ impl ChalkProgram {
         D: DefMapSource<Error = I::Error>,
         I: ItemStoreSource<'query>,
     {
+        self.known_items = super::ChalkKnownItems::from_index(lookup_index);
         let scope = ChalkProgramScope::discover(item_paths, crate_items, session, roots, self)?;
 
         // Associated-type declarations must exist before lowering any trait/impl predicates that
@@ -92,13 +96,35 @@ impl ChalkProgram {
                 .get(&trait_ref)
                 .cloned()
                 .unwrap_or_default();
-            let Some(datum) = lowerer.trait_datum(header, associated_ty_ids) else {
+            let well_known = self
+                .known_items
+                .well_known_trait(trait_ref, &associated_ty_ids);
+            let Some(datum) = lowerer.trait_datum(header, associated_ty_ids, well_known) else {
                 continue;
             };
             self.ensure_trait_datum_adts(item_paths, &datum)?;
             self.trait_arities
                 .insert(trait_ref, datum.binders.len(INTER));
             self.traits.insert(trait_ref, Arc::new(datum));
+        }
+
+        // Function items participate in the same built-in `Fn*` clauses as closures. Their datum
+        // is declaration-owned, so materialize the canonical signature once with its generic
+        // binder rather than letting the database invent an empty `() -> ()` function.
+        for &function in &scope.definitions.functions {
+            let Some(signature) = scope.function_signatures.get(&function) else {
+                continue;
+            };
+            let generics = item_paths
+                .generics()
+                .generics(GenericDefRef::Function(function))?;
+            let binders = GenericBinderEnv::for_generics(&generics);
+            let lowerer = ChalkLowerer::new(&binders).with_associated_tys(&self.associated_tys);
+            let Some(datum) = lowerer.fn_def_datum(function, signature) else {
+                continue;
+            };
+            self.ensure_fn_def_datum_adts(item_paths, &datum)?;
+            self.functions.insert(function, Arc::new(datum));
         }
 
         // Impl datums use the same registry for their predicates and associated-type values.
@@ -306,6 +332,27 @@ impl ChalkProgram {
     {
         let bound = datum.binders.skip_binders();
         self.ensure_trait_ref_adts(item_paths, &bound.trait_ref)?;
+        for clause in &bound.where_clauses {
+            self.ensure_where_clause_adts(item_paths, clause.skip_binders())?;
+        }
+        Ok(())
+    }
+
+    fn ensure_fn_def_datum_adts<'query, D, I>(
+        &mut self,
+        item_paths: &ItemPathQuery<'query, D, I>,
+        datum: &FnDefDatum<RgChalkInterner>,
+    ) -> Result<(), I::Error>
+    where
+        D: DefMapSource<Error = I::Error>,
+        I: ItemStoreSource<'query>,
+    {
+        let bound = datum.binders.skip_binders();
+        let signature = bound.inputs_and_output.skip_binders();
+        for param in &signature.argument_types {
+            self.ensure_ty_adts(item_paths, param)?;
+        }
+        self.ensure_ty_adts(item_paths, &signature.return_type)?;
         for clause in &bound.where_clauses {
             self.ensure_where_clause_adts(item_paths, clause.skip_binders())?;
         }

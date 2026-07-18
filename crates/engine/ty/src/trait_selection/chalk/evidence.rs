@@ -1,9 +1,9 @@
-//! Projection-specific state shared by Chalk lowering, solving, and answer decoding.
+//! Inference evidence shared by Chalk lowering, solving, and answer decoding.
 //!
 //! Lowering owns ordinary Rust syntax-to-Chalk conversion, and raising owns Chalk-to-project type
-//! conversion. Projection normalization needs a small bit of state that belongs to neither side:
-//! which rust-glancer inference variables were exposed as existential Chalk variables, and how a
-//! Chalk answer maps those variables back.
+//! conversion. This module records which rust-glancer inference variables were exposed as
+//! existential Chalk variables and how an answer maps those variables back. Predicate proof and
+//! projection use the same mapping so callable bounds can return evidence to body inference.
 
 use std::collections::HashMap;
 
@@ -15,23 +15,18 @@ use chalk_ir::{
 use super::interner::RgChalkInterner;
 use crate::inference::{InferVarId, InferVarKind, InferenceTable};
 use crate::trait_selection::TraitGoal;
-use crate::{GenericArg as RgGenericArg, Ty as RgTy};
+use crate::{Clause, GenericArg as RgGenericArg, Ty as RgTy};
 
 const INTER: RgChalkInterner = RgChalkInterner;
 
-/// Inference variables that a projection goal lets Chalk mention in its answer.
-///
-/// This is deliberately much smaller than a general Chalk-to-inference bridge. Projection
-/// normalization needs one specific thing first: when the caller asks for
-/// `<Iter<?T> as Iterator>::Item`, Chalk should return the caller's `?T` slot rather than an
-/// unrelated bound variable. Keeping that link here avoids a second project-side projection path.
+/// Project inference variables made existential inside one Chalk query.
 #[derive(Debug, Clone)]
-pub(super) struct ProjectionVariableEnv {
+pub(super) struct SolverVariableEnv {
     vars: Vec<InferVarId>,
     indices: HashMap<InferVarId, usize>,
 }
 
-impl ProjectionVariableEnv {
+impl SolverVariableEnv {
     pub(super) fn empty() -> Self {
         Self {
             vars: Vec::new(),
@@ -41,13 +36,45 @@ impl ProjectionVariableEnv {
 
     pub(super) fn from_goal(goal: &TraitGoal, table: &InferenceTable) -> Self {
         let mut env = Self::empty();
-        env.collect_ty(goal.self_ty(), table);
-        for arg in goal.iter_positional_args() {
+        for arg in &goal.application.args {
             env.collect_generic_arg(arg, table);
+        }
+        for binding in &goal.associated_types {
+            env.collect_ty(&binding.ty, table);
         }
         env
     }
 
+    pub(super) fn from_clauses(clauses: &[Clause], table: &InferenceTable) -> Self {
+        let mut env = Self::empty();
+        for clause in clauses {
+            match clause {
+                Clause::Implemented(application) => {
+                    for arg in &application.args {
+                        env.collect_generic_arg(arg, table);
+                    }
+                }
+                Clause::AliasEq { alias, ty } => {
+                    for arg in &alias.args {
+                        env.collect_generic_arg(arg, table);
+                    }
+                    env.collect_ty(ty, table);
+                }
+            }
+        }
+        env
+    }
+
+    pub(super) fn variable_kinds(&self) -> VariableKinds<RgChalkInterner> {
+        VariableKinds::from_iter(
+            INTER,
+            self.vars
+                .iter()
+                .map(|_| VariableKind::Ty(TyVariableKind::General)),
+        )
+    }
+
+    /// Describe project variables first, followed by one extra slot for a projection result.
     pub(super) fn variable_kinds_with_result(&self) -> VariableKinds<RgChalkInterner> {
         VariableKinds::from_iter(
             INTER,
@@ -63,14 +90,14 @@ impl ProjectionVariableEnv {
         BoundVar::new(DebruijnIndex::INNERMOST, self.result_index()).to_ty::<RgChalkInterner>(INTER)
     }
 
-    pub(super) fn project_var_ty(&self, index: usize) -> Option<RgTy> {
+    pub(super) fn project_ty_for_index(&self, index: usize) -> Option<RgTy> {
         self.vars
             .get(index)
             .copied()
             .map(|id| RgTy::var_for_kind(InferVarKind::Type, id))
     }
 
-    pub(super) fn iter_project_vars(&self) -> impl Iterator<Item = (usize, InferVarId)> + '_ {
+    pub(super) fn iter_vars(&self) -> impl Iterator<Item = (usize, InferVarId)> + '_ {
         self.vars.iter().copied().enumerate()
     }
 
@@ -126,10 +153,15 @@ impl ProjectionVariableEnv {
                     self.collect_generic_arg(arg, table);
                 }
             }
+            RgTy::Closure(closure) => {
+                for param in &closure.params {
+                    self.collect_ty(param, table);
+                }
+                self.collect_ty(&closure.ret, table);
+            }
             RgTy::Unit
             | RgTy::Never
             | RgTy::Primitive(_)
-            | RgTy::Closure(_)
             | RgTy::Param(_)
             | RgTy::Unknown
             | RgTy::InferVar { .. } => {}
@@ -144,24 +176,29 @@ impl ProjectionVariableEnv {
     }
 }
 
+/// One associated-type alias lowered with the variables needed to decode its answer.
+///
+/// For `<Iter<?T> as Iterator>::Item`, `alias` refers to the Chalk projection containing the
+/// existential for `?T`. Projection solving adds one more existential for the resulting `Item`;
+/// `variables` lets answer decoding map both pieces back into the caller's inference table.
 pub(super) struct ProjectionAliasLowering {
     pub(super) alias: AliasTy<RgChalkInterner>,
-    pub(super) variables: ProjectionVariableEnv,
+    pub(super) variables: SolverVariableEnv,
 }
 
-/// Bound variables from a Chalk projection answer that correspond to project inference variables.
+/// Bound variables from a Chalk answer that correspond to project inference variables.
 #[derive(Debug, Clone)]
-pub(super) struct ProjectionAnswerVars {
+pub(super) struct SolverAnswerVars {
     vars: Vec<(BoundVar, RgTy)>,
 }
 
-impl ProjectionAnswerVars {
+impl SolverAnswerVars {
     pub(super) fn empty() -> Self {
         Self { vars: Vec::new() }
     }
 
     pub(super) fn from_subst_args(
-        variables: &ProjectionVariableEnv,
+        variables: &SolverVariableEnv,
         subst_args: &[ChalkGenericArg<RgChalkInterner>],
     ) -> Option<Self> {
         // Chalk may answer an unconstrained projection in canonical form:
@@ -171,7 +208,7 @@ impl ProjectionAnswerVars {
         // That is useful only because `?Receiver` corresponds to a real rust-glancer inference
         // slot. Build that tiny map first, then decode result types through it.
         let mut vars = Vec::new();
-        for (index, var) in variables.iter_project_vars() {
+        for (index, var) in variables.iter_vars() {
             let project_arg = subst_args.get(index)?;
             let GenericArgData::Ty(project_ty) = project_arg.data(INTER) else {
                 return None;

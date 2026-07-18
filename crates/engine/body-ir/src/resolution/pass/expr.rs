@@ -428,7 +428,7 @@ where
             .pass
             .context()
             .calls()
-            .method_targets_with_receiver_ty(call, &receiver_ty)?;
+            .method_targets_with_receiver_ty(call, &receiver_ty, self.pass.inference.table())?;
         if targets.is_empty() {
             return Ok(BodyResolution::Unknown);
         }

@@ -2193,7 +2193,7 @@ pub fn use_local() {
 }
 
 #[test]
-fn uses_naive_trait_applicability_for_method_return_types() {
+fn uses_proven_trait_impls_for_method_return_types() {
     check_analysis_queries(
         r#"
 //- /Cargo.toml

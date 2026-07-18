@@ -9,8 +9,8 @@ use rg_ir_model::{BodyRef, Path, ScopeId, TypePathResolution};
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::{ItemLookupIndex, ItemStoreQuery, ItemStoreSource};
 use rg_ty::{
-    Autoderef, ImplMatcher, ItemPathQuery, SemanticSignatureQuery, TraitCandidateQuery,
-    TraitSelectionQuery, TraitSelectionSession, TyContext, TypeLoweringAnchor, TypePathResolver,
+    Autoderef, ImplMatcher, ItemPathQuery, SemanticSignatureQuery, TraitSelectionQuery,
+    TraitSelectionSession, TyContext, TypeLoweringAnchor, TypePathResolver,
 };
 
 use crate::{BodyData, BodyView, ir::BodyQueryView};
@@ -240,16 +240,6 @@ where
         &self,
     ) -> TraitSelectionQuery<'a, BodyQuerySource<'a, D, I>, BodyQuerySource<'a, D, I>> {
         TraitSelectionQuery::new(self.ty.clone())
-    }
-
-    /// Build native candidate discovery for body-local obligation solving.
-    ///
-    /// Closure signatures are body facts and deliberately absent from the shared Chalk program.
-    /// The bridge chooses a canonical header here, then proves its clauses against those facts.
-    pub(crate) fn trait_candidates(
-        &self,
-    ) -> TraitCandidateQuery<'a, BodyQuerySource<'a, D, I>, BodyQuerySource<'a, D, I>> {
-        TraitCandidateQuery::new(self.ty.clone())
     }
 }
 

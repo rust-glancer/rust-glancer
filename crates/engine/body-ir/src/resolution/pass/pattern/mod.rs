@@ -1,10 +1,8 @@
 //! Sources of expected types for inference-aware pattern projection.
 //!
 //! This transfer walks the body places that introduce patterns. The recursive pattern semantics
-//! themselves live in `BodyPatternInference`, so a function parameter, a `let`, a match arm, and a
-//! callable obligation all project tuple/record/variant fields through the same implementation.
-
-mod callable;
+//! themselves live in `BodyPatternInference`, so function parameters, `let` bindings, match arms,
+//! iterator items, and closure signatures all use the same tuple/record/variant implementation.
 
 use rg_def_map::DefMapSource;
 use rg_ir_model::{
@@ -20,12 +18,10 @@ use crate::resolution::{
     infer::{BodyInferenceCtx, BodyPatternInference},
 };
 
-use self::callable::CallableInputExpectation;
-
 /// Routes each body-level source of an expected type into recursive pattern inference.
 ///
 /// This pass finds the surrounding contract: a function parameter, `let` initializer, match
-/// scrutinee, iterator item, closure annotation, or callable argument. `BodyPatternInference`
+/// scrutinee, iterator item, or closure signature. `BodyPatternInference`
 /// owns the actual tuple, record, variant, and binding projection so every source follows the same
 /// pattern semantics.
 pub(super) struct PatternInferenceTransfer<'query, D, I> {
@@ -167,22 +163,53 @@ where
                     };
                     patterns.link_pat(inference, pat, &item_ty)?;
                 }
-                ExprKind::Closure { scope, params, .. } => {
-                    for param in params {
-                        let (Some(pat), Some(annotation)) = (param.pat, param.annotation) else {
-                            continue;
-                        };
-                        let expected_ty = self.context.type_refs(scope).resolve(&annotation)?;
-                        patterns.link_pat(inference, pat, &expected_ty)?;
+                ExprKind::Closure {
+                    scope,
+                    params,
+                    ret_ty,
+                    body,
+                    ..
+                } => {
+                    // Keep the closure-owned slots themselves, not their interim canonical
+                    // values. A return slot may first learn `Option<unknown>` from the body and
+                    // later become `Option<User>` through the variant payload. Canonicalizing here
+                    // would replace that slot with the weak shape and sever the later evidence.
+                    let Ty::Closure(signature) = inference.expr_ty(expr) else {
+                        continue;
+                    };
+                    for (param, signature_ty) in params.iter().zip(&signature.params) {
+                        if let Some(annotation) = &param.annotation {
+                            let annotation_ty =
+                                self.context.type_refs(scope).resolve(annotation)?;
+                            inference.constrain_infer_tys(signature_ty, &annotation_ty);
+                        }
+                        if let Some(pat) = param.pat {
+                            patterns.link_pat(inference, pat, signature_ty)?;
+                        }
                     }
-                }
-                ExprKind::Call { args, .. } | ExprKind::MethodCall { args, .. } => {
-                    self.propagate_closure_arg_expectations(inference, &patterns, expr, &args)?;
+                    if let Some(ret_ty) = &ret_ty {
+                        let annotation_ty = self.context.type_refs(scope).resolve(ret_ty)?;
+                        inference.constrain_infer_tys(&signature.ret, &annotation_ty);
+                    }
+                    if let Some(body) = body {
+                        // A body can reveal a useful outer shape before its children are known,
+                        // as `(index, user)` does before a callable bound types either binding.
+                        // Give those children stable slots before linking the body to the closure
+                        // output; otherwise `(unknown, unknown)` would become terminal evidence
+                        // that the trait solver cannot refine.
+                        let body_ty = inference.expr_ty(body);
+                        if body_ty.has_unknown() {
+                            inference.instantiate_expr_nested_unknown_ty(body, &body_ty);
+                        }
+                        inference.constrain_expr_ty(body, &signature.ret);
+                    }
                 }
                 ExprKind::Path { .. }
                 | ExprKind::Tuple { .. }
                 | ExprKind::Array { .. }
                 | ExprKind::RepeatArray { .. }
+                | ExprKind::Call { .. }
+                | ExprKind::MethodCall { .. }
                 | ExprKind::Index { .. }
                 | ExprKind::Range { .. }
                 | ExprKind::Cast { .. }
@@ -210,43 +237,6 @@ where
             }
         }
 
-        Ok(())
-    }
-
-    /// Propagate callable input contracts only into closure argument patterns.
-    fn propagate_closure_arg_expectations(
-        &self,
-        inference: &mut BodyInferenceCtx,
-        patterns: &BodyPatternInference<'query, D, I>,
-        call: ExprId,
-        args: &[ExprId],
-    ) -> Result<(), PackageStoreError> {
-        let receiver_ty = match self.context.body().expr_unchecked(call).kind {
-            ExprKind::MethodCall {
-                receiver: Some(receiver),
-                ..
-            } => Some(inference.root_resolved_expr_ty(receiver)),
-            _ => None,
-        };
-        for (arg, expectation) in
-            CallableInputExpectation::for_call(&self.context, call, args, receiver_ty.as_ref())?
-        {
-            let ExprKind::Closure { params, .. } =
-                self.context.body().expr_unchecked(arg).kind.clone()
-            else {
-                continue;
-            };
-            if params.len() != expectation.params.len() {
-                continue;
-            }
-
-            for (param, expected_ty) in params.iter().zip(&expectation.params) {
-                let Some(pat) = param.pat else {
-                    continue;
-                };
-                patterns.link_pat(inference, pat, expected_ty)?;
-            }
-        }
         Ok(())
     }
 

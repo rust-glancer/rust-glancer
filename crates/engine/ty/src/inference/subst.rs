@@ -129,6 +129,27 @@ impl InferenceSubstitution {
         }
     }
 
+    /// Give impl type parameters that did not occur in its matched header a trial inference slot.
+    ///
+    /// A parameter can appear only in predicates and an associated value, as `R` does in
+    /// `impl<F, R> Produces for Adapter<F> where F: FnOnce() -> R`. Header matching binds `F` but
+    /// the predicate solver must still share one durable `R` with associated-type projection.
+    pub(crate) fn instantiate_missing_type_params(
+        &mut self,
+        table: &mut InferenceTable,
+        generics: &Generics<'_>,
+    ) {
+        for param in generics.iter_self() {
+            let GenericParamRef::Type(param) = param.param() else {
+                continue;
+            };
+            if self.type_param(param).is_none() {
+                let var = table.new_type_var();
+                self.push_type(table, param, var);
+            }
+        }
+    }
+
     /// Bind every parameter occurrence in a semantic pattern to matching evidence.
     ///
     /// Shape compatibility remains the caller's policy. This routine records only evidence that

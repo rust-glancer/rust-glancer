@@ -3,8 +3,8 @@ use super::{
     var::{InferVarId, InferVarKind},
 };
 use crate::{
-    AdtTy, AliasTy, Clause, FnDefTy, GenericArg, GenericArgs, Lifetime, OpaqueTy, PrimitiveTy,
-    ProjectionTy, TraitApplication, Ty,
+    AdtTy, AliasTy, Clause, ClosureTy, FnDefTy, GenericArg, GenericArgs, Lifetime, OpaqueTy,
+    PrimitiveTy, ProjectionTy, TraitApplication, Ty,
 };
 
 /// Marker returned when speculative inference evidence is incompatible.
@@ -281,7 +281,6 @@ impl InferenceTable {
             (Ty::Unit, Ty::Unit)
             | (Ty::Never, Ty::Never)
             | (Ty::Primitive(_), Ty::Primitive(_))
-            | (Ty::Closure(_), Ty::Closure(_))
             | (Ty::Param(_), Ty::Param(_)) => UnifyResult::compatible(),
             (Ty::Tuple(lhs_fields), Ty::Tuple(rhs_fields)) => {
                 self.unify_iter(lhs_fields.iter(), rhs_fields.iter())
@@ -338,6 +337,9 @@ impl InferenceTable {
                 }
                 result
             }
+            (Ty::Closure(lhs), Ty::Closure(rhs)) => self
+                .unify_iter(lhs.params.iter(), rhs.params.iter())
+                .merge(self.unify_ty(&lhs.ret, &rhs.ret)),
             (Ty::Alias(lhs), Ty::Alias(rhs)) => {
                 let mut result = UnifyResult::compatible();
                 for (lhs_arg, rhs_arg) in lhs.args().iter().zip(rhs.args()) {
@@ -631,6 +633,19 @@ impl InferenceTable {
                         args: args.into(),
                     }),
                     changed,
+                )
+            }
+            (Ty::Closure(existing_ty), Ty::Closure(evidence_ty)) => {
+                let (params, params_changed) =
+                    Self::refine_ty_iter(existing_ty.params.iter(), evidence_ty.params.iter());
+                let (ret, ret_changed) = Self::refine_ty(&existing_ty.ret, &evidence_ty.ret);
+                (
+                    Ty::Closure(ClosureTy {
+                        id: existing_ty.id,
+                        params,
+                        ret: Box::new(ret),
+                    }),
+                    params_changed || ret_changed,
                 )
             }
             (Ty::Alias(existing_ty), Ty::Alias(evidence_ty)) => {

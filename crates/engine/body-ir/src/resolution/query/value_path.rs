@@ -328,7 +328,12 @@ where
                     match candidate {
                         BodyValueCandidate::Function(function) => {
                             declarations.push(DeclarationRef::from(function));
-                            tys.push(Ty::fn_def(function));
+                            tys.push(
+                                self.context
+                                    .signatures()
+                                    .function_item_ty(function)?
+                                    .unwrap_or(Ty::Unknown),
+                            );
                         }
                         BodyValueCandidate::Const(const_ref) => {
                             declarations.push(DeclarationRef::from(const_ref));

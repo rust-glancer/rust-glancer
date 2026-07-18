@@ -22,12 +22,12 @@ use chalk_solve::Solver;
 use chalk_solve::ext::GoalExt;
 use rg_def_map::DefMapSource;
 use rg_ir_model::{GenericDefRef, ImplRef, TraitApplicability};
-use rg_semantic_ir::{CrateItemQuery, ItemStoreSource};
+use rg_semantic_ir::{CrateItemQuery, ItemLookupIndex, ItemStoreSource};
 
+use super::evidence::{ProjectionAliasLowering, SolverAnswerVars, SolverVariableEnv};
 use super::interner::RgChalkInterner;
 use super::lower::{ChalkLowerer, GenericBinderEnv};
 use super::program::ChalkProgramState;
-use super::projection::{ProjectionAliasLowering, ProjectionAnswerVars};
 use super::raise;
 use crate::inference::{InferVarKind, InferenceSubstitution, InferenceTable};
 use crate::trait_selection::{AssocProjectionResult, TraitSelectionSession};
@@ -63,8 +63,11 @@ struct SolverBudget {
     exhausted: Cell<bool>,
 }
 
-enum ProjectionAnswerFailure {
+/// Why an otherwise valid Chalk substitution cannot become project inference evidence.
+enum AnswerFailure {
+    /// The answer uses a type shape outside rust-glancer's semantic model.
     Unsupported,
+    /// Applying the answer would contradict evidence already present in the caller's table.
     Conflicting,
 }
 
@@ -91,19 +94,46 @@ impl SolverBudget {
     }
 }
 
-/// Long-lived Chalk state owned by one `TraitSelectionSession`.
+/// Long-lived Chalk state shared by `TraitSelectionSession`s for one crate view.
 ///
-/// The semantic program grows as new goals mention new traits. Chalk's solver forests stay beside
-/// it so repeated obligations can reuse answers instead of rebuilding a database and solving from
-/// scratch for each body.
+/// The semantic program grows as new goals mention new traits. Only forests whose goals contain no
+/// body-owned inference variables or closure identities stay here. Answers that depend on those
+/// identities instead live in `ChalkInferenceCache` and disappear with the body that owns them.
 pub(crate) struct ChalkTraitSolver {
     state: Mutex<ChalkSolverState>,
 }
 
+/// Solver forests whose answers are valid only within one inference scope.
+///
+/// The semantic program is still crate-scoped and shared through `ChalkTraitSolver`. A body pass
+/// receives a fresh cache so its fixed-point rounds can reuse answers involving that body's
+/// closures and inference slots, then drops the forests when the body finishes.
+pub(crate) struct ChalkInferenceCache {
+    forests: Mutex<ChalkSolverForests>,
+}
+
+/// Mutable crate program together with answers safe to reuse across bodies.
 struct ChalkSolverState {
     program: ChalkProgramState,
+    stable_forests: ChalkSolverForests,
+}
+
+/// Separate SLG forests for predicate proof and associated-type projection.
+///
+/// Both operations submit Chalk goals, but projection adds an explicit result variable while
+/// predicate proof maps only the input variables. Keeping the forests separate avoids mixing
+/// those goal and answer layouts and lets each retain work for its own query kind.
+struct ChalkSolverForests {
     impl_bounds_solver: SLGSolver<RgChalkInterner>,
     assoc_projection_solver: SLGSolver<RgChalkInterner>,
+}
+
+impl ChalkInferenceCache {
+    pub(crate) fn new() -> Self {
+        Self {
+            forests: Mutex::new(ChalkSolverForests::new()),
+        }
+    }
 }
 
 impl ChalkTraitSolver {
@@ -113,60 +143,59 @@ impl ChalkTraitSolver {
         }
     }
 
-    /// Check the predicates of one already-selected impl after applying its inferred arguments.
-    ///
-    /// Body-local closures are reported as unsupported because their callable signature lives in
-    /// Body IR rather than the shared program.
-    pub(crate) fn impl_bounds_applicability<'query, D, I>(
+    /// Prove a related set of predicates and return the inference evidence from one Chalk answer.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn prove_clauses<'query, D, I>(
         &self,
         item_paths: &ItemPathQuery<'query, D, I>,
         crate_items: &CrateItemQuery<'query, D, I>,
+        lookup_index: &ItemLookupIndex,
         session: &TraitSelectionSession,
+        inference_cache: &ChalkInferenceCache,
         clauses: &[Clause],
-        subst: &InferenceSubstitution,
         table: &InferenceTable,
-    ) -> Result<ChalkOutcome<()>, I::Error>
+    ) -> Result<ChalkOutcome<InferenceTable>, I::Error>
     where
         D: DefMapSource<Error = I::Error>,
         I: ItemStoreSource<'query>,
     {
-        let instantiated_clauses = clauses
-            .iter()
-            .map(|clause| subst.as_substitution().apply_clause(clause))
-            .collect::<Vec<_>>();
-
-        // Closure identities belong to one body and the Chalk database deliberately has no access
-        // to their inferred inputs or output. Let the body obligation solver evaluate these
-        // clauses from its closure witness instead of asking Chalk to reason from the stub datum.
-        let has_body_local_closure = instantiated_clauses.iter().any(|clause| match clause {
-            Clause::Implemented(application) => application
-                .args
-                .iter()
-                .any(|arg| arg.as_ty().is_some_and(crate::Ty::has_closure)),
-            Clause::AliasEq { alias, ty } => {
-                ty.has_closure()
-                    || alias
-                        .args
-                        .iter()
-                        .any(|arg| arg.as_ty().is_some_and(crate::Ty::has_closure))
-            }
+        // Trait selection is allowed to refine arguments after `Self` has a selectable head; it
+        // must not infer an unconstrained `Self` by enumerating every visible impl. Apart from
+        // being an unbounded search in a large crate, choosing from today's impl set would be the
+        // wrong Rust inference rule: another impl can be added without changing this call site.
+        // Keep the obligation pending before even materializing that trait's impl universe.
+        let has_open_self = clauses.iter().any(|clause| {
+            let self_ty = match clause {
+                Clause::Implemented(application) => application.self_ty(),
+                Clause::AliasEq { alias, .. } => {
+                    alias.args.first().and_then(crate::GenericArg::as_ty)
+                }
+            };
+            matches!(
+                self_ty,
+                Some(crate::Ty::InferVar { .. } | crate::Ty::Unknown)
+            )
         });
-        if has_body_local_closure {
-            return Ok(ChalkOutcome::Unsupported);
+        if has_open_self {
+            return Ok(ChalkOutcome::Ambiguous(None));
         }
 
         let mut state = self
             .state
             .lock()
             .expect("Chalk solver-state lock should not be poisoned");
-        state.program.ensure_for_clauses(
+        let supported = state.program.ensure_for_clauses(
             item_paths,
             crate_items,
+            lookup_index,
             session,
-            &instantiated_clauses,
+            clauses,
             Some(table),
         )?;
-        Ok(state.impl_bounds_applicability(clauses, subst, table))
+        if !supported {
+            return Ok(ChalkOutcome::Unsupported);
+        }
+        Ok(state.prove_clauses(clauses, table, inference_cache))
     }
 
     /// Load definitions referenced by visible impl predicates before candidate evaluation begins.
@@ -177,6 +206,7 @@ impl ChalkTraitSolver {
         &self,
         item_paths: &ItemPathQuery<'query, D, I>,
         crate_items: &CrateItemQuery<'query, D, I>,
+        lookup_index: &ItemLookupIndex,
         session: &TraitSelectionSession,
         clauses: &[Clause],
     ) -> Result<(), I::Error>
@@ -188,7 +218,15 @@ impl ChalkTraitSolver {
             .lock()
             .expect("Chalk solver-state lock should not be poisoned")
             .program
-            .ensure_for_clauses(item_paths, crate_items, session, clauses, None)
+            .ensure_for_clauses(
+                item_paths,
+                crate_items,
+                lookup_index,
+                session,
+                clauses,
+                None,
+            )
+            .map(|_| ())
     }
 
     /// Normalize one associated type and return any inference evidence carried by Chalk's answer.
@@ -197,9 +235,11 @@ impl ChalkTraitSolver {
         &self,
         item_paths: &ItemPathQuery<'query, D, I>,
         crate_items: &CrateItemQuery<'query, D, I>,
+        lookup_index: &ItemLookupIndex,
         session: &TraitSelectionSession,
+        inference_cache: &ChalkInferenceCache,
         goal: &crate::trait_selection::TraitGoal,
-        assoc_name: &str,
+        associated_ty: rg_ir_model::TypeAliasRef,
         selected_impl: Option<(ImplRef, &InferenceSubstitution)>,
         table: &InferenceTable,
     ) -> Result<ChalkOutcome<AssocProjectionResult>, I::Error>
@@ -207,29 +247,22 @@ impl ChalkTraitSolver {
         D: DefMapSource<Error = I::Error>,
         I: ItemStoreSource<'query>,
     {
-        // Chalk only sees a placeholder datum for body-local closures. In particular, it cannot
-        // project a closure's `Fn*::Output`; Body IR retries this projection with the closure's
-        // actual body-owned inference facts.
-        if goal
-            .application
-            .args
-            .iter()
-            .any(|arg| arg.as_ty().is_some_and(crate::Ty::has_closure))
-            || goal
-                .associated_types
-                .iter()
-                .any(|binding| binding.ty.has_closure())
-        {
-            return Ok(ChalkOutcome::Unsupported);
-        }
-
         let mut state = self
             .state
             .lock()
             .expect("Chalk solver-state lock should not be poisoned");
-        state
-            .program
-            .ensure_for_goal(item_paths, crate_items, session, goal, table)?;
+        let supported = state.program.ensure_for_goal(
+            item_paths,
+            crate_items,
+            lookup_index,
+            session,
+            goal,
+            associated_ty,
+            table,
+        )?;
+        if !supported {
+            return Ok(ChalkOutcome::Unsupported);
+        }
         let selected_impl = if let Some((impl_ref, subst)) = selected_impl {
             let generics = item_paths
                 .generics()
@@ -238,7 +271,25 @@ impl ChalkTraitSolver {
         } else {
             None
         };
-        Ok(state.normalize_assoc_type(goal, assoc_name, selected_impl.as_ref(), table))
+        Ok(state.normalize_assoc_type(
+            goal,
+            associated_ty,
+            selected_impl.as_ref(),
+            table,
+            inference_cache,
+        ))
+    }
+}
+
+impl ChalkSolverForests {
+    fn new() -> Self {
+        Self {
+            // Predicate proof and associated projection use separate forests because their goal
+            // shapes and answer decoding differ. `expected_answers` is a diagnostic assertion in
+            // Chalk, not a work limit; rust-glancer bounds work through `solve_limited` instead.
+            impl_bounds_solver: SLGSolver::new(SOLVER_MAX_SIZE, None),
+            assoc_projection_solver: SLGSolver::new(SOLVER_MAX_SIZE, None),
+        }
     }
 }
 
@@ -246,77 +297,102 @@ impl ChalkSolverState {
     fn new() -> Self {
         Self {
             program: ChalkProgramState::new(),
-            // Impl-bound checks and associated projection use separate forests because their goal
-            // shapes and answer decoding differ. `expected_answers` is a diagnostic assertion in
-            // Chalk, not a work limit; rust-glancer bounds work through `solve_limited` instead.
-            impl_bounds_solver: SLGSolver::new(SOLVER_MAX_SIZE, None),
-            assoc_projection_solver: SLGSolver::new(SOLVER_MAX_SIZE, None),
+            stable_forests: ChalkSolverForests::new(),
         }
     }
 
-    fn impl_bounds_applicability(
+    fn prove_clauses(
         &mut self,
         clauses: &[Clause],
-        subst: &InferenceSubstitution,
         table: &InferenceTable,
-    ) -> ChalkOutcome<()> {
+        inference_cache: &ChalkInferenceCache,
+    ) -> ChalkOutcome<InferenceTable> {
         let binders = GenericBinderEnv::empty();
-        let lowerer =
-            ChalkLowerer::new(&binders).with_associated_tys(self.program.associated_tys());
-        let Some(goals) = lowerer.candidate_where_goals(clauses, subst, table) else {
+        let lowerer = ChalkLowerer::new(&binders)
+            .with_associated_tys(self.program.associated_tys())
+            .with_functions(self.program.functions());
+        let Some(lowering) = lowerer.predicate_goal(clauses, table) else {
             return ChalkOutcome::Unsupported;
         };
-        if goals.is_empty() {
-            return ChalkOutcome::Proven(());
-        }
+        let canonical_goal = lowering.goal.into_peeled_goal(INTER);
+        crate::profile::metric::SOLVER_GOALS.inc();
+        let started = Instant::now();
+        let budget = SolverBudget::new(SOLVER_QUANTUM_BUDGET);
 
-        let mut ambiguous = false;
-        for goal in goals {
-            let canonical_goal = goal.into_closed_goal(INTER);
-            crate::profile::metric::SOLVER_GOALS.inc();
-            let started = Instant::now();
-            let budget = SolverBudget::new(SOLVER_QUANTUM_BUDGET);
-            let solution = self.impl_bounds_solver.solve_limited(
+        // A crate-wide forest is valuable for declaration-owned goals, but body inference slots
+        // and closure identities make each answer local to one inference scope. Retaining them in
+        // the stable forest makes later existential queries scan results they cannot reuse.
+        let cache_stable = clauses.iter().all(|clause| match clause {
+            Clause::Implemented(application) => application
+                .args
+                .iter()
+                .all(|arg| !arg.has_var() && !arg.has_closure()),
+            Clause::AliasEq { alias, ty } => {
+                alias
+                    .args
+                    .iter()
+                    .all(|arg| !arg.has_var() && !arg.has_closure())
+                    && !ty.has_var()
+                    && !ty.has_closure()
+            }
+        });
+        let solution = if cache_stable {
+            self.stable_forests.impl_bounds_solver.solve_limited(
                 self.program.database(),
                 &canonical_goal,
                 &|| budget.should_continue(),
-            );
-            crate::profile::metric::SOLVER_GOAL_TIME_BY_KIND
-                .record("impl_bounds", started.elapsed());
-            if budget.exhausted() {
-                return ChalkOutcome::Exhausted;
-            }
-            let Some(solution) = solution else {
-                return ChalkOutcome::NoSolution;
-            };
-            if solution.is_ambig() {
-                crate::profile::metric::SOLVER_AMBIGUOUS_GOALS.inc();
-                ambiguous = true;
-            }
-        }
-        if ambiguous {
-            ChalkOutcome::Ambiguous(None)
+            )
         } else {
-            ChalkOutcome::Proven(())
+            inference_cache
+                .forests
+                .lock()
+                .expect("Chalk inference-cache lock should not be poisoned")
+                .impl_bounds_solver
+                .solve_limited(self.program.database(), &canonical_goal, &|| {
+                    budget.should_continue()
+                })
+        };
+        crate::profile::metric::SOLVER_GOAL_TIME_BY_KIND.record("impl_bounds", started.elapsed());
+        if budget.exhausted() {
+            return ChalkOutcome::Exhausted;
+        }
+        let Some(solution) = solution else {
+            return ChalkOutcome::NoSolution;
+        };
+        if solution.is_ambig() {
+            crate::profile::metric::SOLVER_AMBIGUOUS_GOALS.inc();
+        }
+
+        let Some(subst) = solution.definite_subst(INTER) else {
+            return if solution.is_ambig() {
+                ChalkOutcome::Ambiguous(None)
+            } else {
+                ChalkOutcome::Proven(table.clone())
+            };
+        };
+        match Self::table_from_subst(&lowering.variables, &subst, table) {
+            Ok(table) if solution.is_ambig() => ChalkOutcome::Ambiguous(Some(table)),
+            Ok(table) => ChalkOutcome::Proven(table),
+            Err(AnswerFailure::Unsupported) => ChalkOutcome::Unsupported,
+            Err(AnswerFailure::Conflicting) => ChalkOutcome::NoSolution,
         }
     }
 
     fn normalize_assoc_type(
         &mut self,
         trait_goal: &crate::trait_selection::TraitGoal,
-        assoc_name: &str,
+        assoc_type_ref: rg_ir_model::TypeAliasRef,
         selected_impl: Option<&(ImplRef, GenericArgs)>,
         table: &InferenceTable,
+        inference_cache: &ChalkInferenceCache,
     ) -> ChalkOutcome<AssocProjectionResult> {
-        let Some(assoc_type_ref) = self
-            .program
-            .associated_ty_ref(trait_goal.trait_ref(), assoc_name)
-        else {
+        if !self.program.associated_tys().contains_key(&assoc_type_ref) {
             return ChalkOutcome::NoSolution;
-        };
+        }
         let binders = GenericBinderEnv::empty();
-        let lowerer =
-            ChalkLowerer::new(&binders).with_associated_tys(self.program.associated_tys());
+        let lowerer = ChalkLowerer::new(&binders)
+            .with_associated_tys(self.program.associated_tys())
+            .with_functions(self.program.functions());
         let Some(projection) = lowerer.projection_alias(assoc_type_ref, trait_goal, table) else {
             return ChalkOutcome::Unsupported;
         };
@@ -338,7 +414,7 @@ impl ChalkSolverState {
                 raise::infer_ty_from_chalk_projection(
                     &projected_ty,
                     &projection.variables,
-                    &ProjectionAnswerVars::empty(),
+                    &SolverAnswerVars::empty(),
                 )
             })
         {
@@ -389,11 +465,25 @@ impl ChalkSolverState {
         crate::profile::metric::SOLVER_GOALS.inc();
         let started = Instant::now();
         let budget = SolverBudget::new(quantum_budget);
-        let solution = self.assoc_projection_solver.solve_limited(
-            self.program.database(),
-            &canonical_goal,
-            &|| budget.should_continue(),
-        );
+        // Projection answers containing body-owned identities have the same lifetime as the
+        // caller's inference table. Keep them in the inference-scoped cache, not the stable
+        // crate-wide forest.
+        let solution = if trait_goal.is_cache_stable() {
+            self.stable_forests.assoc_projection_solver.solve_limited(
+                self.program.database(),
+                &canonical_goal,
+                &|| budget.should_continue(),
+            )
+        } else {
+            inference_cache
+                .forests
+                .lock()
+                .expect("Chalk inference-cache lock should not be poisoned")
+                .assoc_projection_solver
+                .solve_limited(self.program.database(), &canonical_goal, &|| {
+                    budget.should_continue()
+                })
+        };
         let elapsed = started.elapsed();
         crate::profile::metric::SOLVER_GOAL_TIME_BY_KIND.record("assoc_projection", elapsed);
         if budget.exhausted() {
@@ -420,8 +510,8 @@ impl ChalkSolverState {
             ) {
                 Ok(result) if solution.is_ambig() => ChalkOutcome::Ambiguous(Some(result)),
                 Ok(result) => ChalkOutcome::Proven(result),
-                Err(ProjectionAnswerFailure::Unsupported) => ChalkOutcome::Unsupported,
-                Err(ProjectionAnswerFailure::Conflicting) => ChalkOutcome::NoSolution,
+                Err(AnswerFailure::Unsupported) => ChalkOutcome::Unsupported,
+                Err(AnswerFailure::Conflicting) => ChalkOutcome::NoSolution,
             };
         }
 
@@ -434,52 +524,62 @@ impl ChalkSolverState {
         subst: &Canonical<ConstrainedSubst<RgChalkInterner>>,
         table: &InferenceTable,
         applicability: TraitApplicability,
-    ) -> Result<AssocProjectionResult, ProjectionAnswerFailure> {
+    ) -> Result<AssocProjectionResult, AnswerFailure> {
         let subst_args = subst.value.subst.as_slice(INTER);
-        let mut table = table.clone();
-
         let Some(answer_vars) =
-            ProjectionAnswerVars::from_subst_args(&projection.variables, subst_args)
+            SolverAnswerVars::from_subst_args(&projection.variables, subst_args)
         else {
-            return Err(ProjectionAnswerFailure::Unsupported);
+            return Err(AnswerFailure::Unsupported);
         };
-
-        for (index, var) in projection.variables.iter_project_vars() {
-            let Some(project_arg) = subst_args.get(index) else {
-                return Err(ProjectionAnswerFailure::Unsupported);
-            };
-            let GenericArgData::Ty(project_ty) = project_arg.data(INTER) else {
-                return Err(ProjectionAnswerFailure::Unsupported);
-            };
-            if let Some(evidence) = raise::infer_ty_from_chalk_projection(
-                project_ty,
-                &projection.variables,
-                &answer_vars,
-            ) && table
-                .try_unify(&crate::Ty::var_for_kind(InferVarKind::Type, var), &evidence)
-                .is_err()
-            {
-                return Err(ProjectionAnswerFailure::Conflicting);
-            }
-        }
+        let table = Self::table_from_subst(&projection.variables, subst, table)?;
 
         let Some(projected_arg) = subst_args.get(projection.variables.result_index()) else {
-            return Err(ProjectionAnswerFailure::Unsupported);
+            return Err(AnswerFailure::Unsupported);
         };
         let GenericArgData::Ty(projected_ty) = projected_arg.data(INTER) else {
-            return Err(ProjectionAnswerFailure::Unsupported);
+            return Err(AnswerFailure::Unsupported);
         };
         let Some(ty) = raise::infer_ty_from_chalk_projection(
             projected_ty,
             &projection.variables,
             &answer_vars,
         ) else {
-            return Err(ProjectionAnswerFailure::Unsupported);
+            return Err(AnswerFailure::Unsupported);
         };
         Ok(AssocProjectionResult {
             ty,
             applicability,
             table,
         })
+    }
+
+    /// Apply equality evidence for project variables shared by proof and projection queries.
+    fn table_from_subst(
+        variables: &SolverVariableEnv,
+        subst: &Canonical<ConstrainedSubst<RgChalkInterner>>,
+        table: &InferenceTable,
+    ) -> Result<InferenceTable, AnswerFailure> {
+        let subst_args = subst.value.subst.as_slice(INTER);
+        let Some(answer_vars) = SolverAnswerVars::from_subst_args(variables, subst_args) else {
+            return Err(AnswerFailure::Unsupported);
+        };
+        let mut table = table.clone();
+        for (index, var) in variables.iter_vars() {
+            let Some(project_arg) = subst_args.get(index) else {
+                return Err(AnswerFailure::Unsupported);
+            };
+            let GenericArgData::Ty(project_ty) = project_arg.data(INTER) else {
+                return Err(AnswerFailure::Unsupported);
+            };
+            if let Some(evidence) =
+                raise::infer_ty_from_chalk_projection(project_ty, variables, &answer_vars)
+                && table
+                    .try_unify(&crate::Ty::var_for_kind(InferVarKind::Type, var), &evidence)
+                    .is_err()
+            {
+                return Err(AnswerFailure::Conflicting);
+            }
+        }
+        Ok(table)
     }
 }

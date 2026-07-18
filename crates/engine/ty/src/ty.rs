@@ -7,7 +7,8 @@
 use std::fmt;
 
 use rg_ir_model::{
-    ExprId, FunctionRef, OpaqueTyRef, TypeAliasRef, TypeDefRef, TypeParamRef, TypePathResolution,
+    BodyRef, ExprId, FunctionRef, OpaqueTyRef, TypeAliasRef, TypeDefRef, TypeParamRef,
+    TypePathResolution,
 };
 use rg_std::{ExpectedUnique, MemorySize, Shrink};
 use wincode::{SchemaRead, SchemaWrite};
@@ -15,27 +16,41 @@ use wincode::{SchemaRead, SchemaWrite};
 use crate::inference::{InferVarId, InferVarKind};
 use crate::{ConstValue, GenericArg, GenericArgs, Lifetime, Mutability, PrimitiveTy};
 
-/// Body-local identity of an anonymous closure type.
+/// Identity of one anonymous closure type.
 ///
-/// Rust gives every closure expression its own anonymous type. This id preserves that identity
-/// inside one body without pretending that it is a stable cross-body item.
+/// Expression indices are only unique inside one body. The body identity is therefore part of the
+/// type identity before a closure enters the crate-scoped trait solver; otherwise two bodies whose
+/// first closure is `e0` could reuse the same cached Chalk answer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize, Shrink)]
-pub struct ClosureTyId(ExprId);
+pub struct ClosureTyId {
+    body: BodyRef,
+    expr: ExprId,
+}
 
 impl ClosureTyId {
-    pub fn new(expr: ExprId) -> Self {
-        Self(expr)
-    }
-
-    pub fn into_expr_id(self) -> ExprId {
-        self.0
+    pub fn new(body: BodyRef, expr: ExprId) -> Self {
+        Self { body, expr }
     }
 }
 
 impl fmt::Display for ClosureTyId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.0.0.fmt(f)
+        self.expr.0.fmt(f)
     }
+}
+
+/// Anonymous closure type together with the callable signature inferred for that expression.
+///
+/// The signature types may contain body inference variables. Keeping them in the closure type is
+/// intentional: expected `Fn*` bounds, the closure patterns/body, and Chalk all constrain the same
+/// slots instead of exchanging a separate body-only witness.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize, Shrink)]
+pub struct ClosureTy {
+    pub id: ClosureTyId,
+    #[wincode(with = "rg_wincode_utils::WincodeDynamic<Vec<Ty>>")]
+    pub params: Vec<Ty>,
+    #[wincode(with = "rg_wincode_utils::WincodeDynamic<Box<Ty>>")]
+    pub ret: Box<Ty>,
 }
 
 /// Owned semantic types shared by indexing and body analysis.
@@ -74,7 +89,7 @@ pub enum Ty {
     Adt(AdtTy),
     Param(TypeParamRef),
     Alias(AliasTy),
-    Closure(ClosureTyId),
+    Closure(ClosureTy),
     // Function definition types remain distinct from function pointers. The argument list is part
     // of identity even when it consists entirely of unknown or inferred positions.
     FnDef(FnDefTy),
@@ -194,12 +209,12 @@ impl Ty {
         }
     }
 
-    pub fn closure(id: ClosureTyId) -> Self {
-        Self::Closure(id)
-    }
-
-    pub fn fn_def(function: FunctionRef) -> Self {
-        Self::fn_def_with_args(function, GenericArgs::empty())
+    pub fn closure(id: ClosureTyId, params: Vec<Self>, ret: Self) -> Self {
+        Self::Closure(ClosureTy {
+            id,
+            params,
+            ret: Box::new(ret),
+        })
     }
 
     pub fn fn_def_with_args(function: FunctionRef, args: impl Into<GenericArgs>) -> Self {
@@ -263,13 +278,11 @@ impl Ty {
             Self::FnPointer { params, ret } => params.iter().any(Self::has_var) || ret.has_var(),
             Self::Adt(ty) => ty.args.iter().any(GenericArg::has_var),
             Self::Alias(alias) => alias.has_var(),
+            Self::Closure(closure) => {
+                closure.params.iter().any(Self::has_var) || closure.ret.has_var()
+            }
             Self::FnDef(function) => function.args.iter().any(GenericArg::has_var),
-            Self::Unit
-            | Self::Never
-            | Self::Primitive(_)
-            | Self::Param(_)
-            | Self::Closure(_)
-            | Self::Unknown => false,
+            Self::Unit | Self::Never | Self::Primitive(_) | Self::Param(_) | Self::Unknown => false,
         }
     }
 
@@ -285,13 +298,15 @@ impl Ty {
             }
             Self::Adt(ty) => ty.args.iter().any(GenericArg::has_unknown),
             Self::Alias(alias) => alias.has_unknown(),
+            Self::Closure(closure) => {
+                closure.params.iter().any(Self::has_unknown) || closure.ret.has_unknown()
+            }
             Self::FnDef(function) => function.args.iter().any(GenericArg::has_unknown),
             Self::Unknown => true,
             Self::Unit
             | Self::Never
             | Self::Primitive(_)
             | Self::Param(_)
-            | Self::Closure(_)
             | Self::InferVar { .. } => false,
         }
     }
@@ -312,18 +327,20 @@ impl Ty {
             Self::Alias(AliasTy::Opaque(alias)) => {
                 alias.args.iter().any(GenericArg::has_projection)
             }
+            Self::Closure(closure) => {
+                closure.params.iter().any(Self::has_projection) || closure.ret.has_projection()
+            }
             Self::FnDef(function) => function.args.iter().any(GenericArg::has_projection),
             Self::Unit
             | Self::Never
             | Self::Primitive(_)
             | Self::Param(_)
-            | Self::Closure(_)
             | Self::Unknown
             | Self::InferVar { .. } => false,
         }
     }
 
-    /// Return whether the type carries a body-local closure witness.
+    /// Return whether the type contains an anonymous closure type.
     pub fn has_closure(&self) -> bool {
         match self {
             Self::Closure(_) => true,
@@ -360,10 +377,11 @@ impl Ty {
             }
             Self::Adt(ty) => ty.args.iter().all(GenericArg::is_projectable),
             Self::Alias(alias) => alias.is_projectable(),
-            Self::FnDef(function) => function.args.iter().all(GenericArg::is_projectable),
-            Self::Unit | Self::Never | Self::Primitive(_) | Self::Param(_) | Self::Closure(_) => {
-                true
+            Self::Closure(closure) => {
+                closure.params.iter().all(Self::is_projectable) && closure.ret.is_projectable()
             }
+            Self::FnDef(function) => function.args.iter().all(GenericArg::is_projectable),
+            Self::Unit | Self::Never | Self::Primitive(_) | Self::Param(_) => true,
         }
     }
 }
@@ -437,12 +455,12 @@ impl Shrink for Ty {
             }
             Self::Adt(ty) => Shrink::shrink_to_fit(ty),
             Self::Alias(alias) => Shrink::shrink_to_fit(alias),
+            Self::Closure(closure) => Shrink::shrink_to_fit(closure),
             Self::FnDef(function) => Shrink::shrink_to_fit(function),
             Self::Unit
             | Self::Never
             | Self::Primitive(_)
             | Self::Param(_)
-            | Self::Closure(_)
             | Self::Unknown
             | Self::InferVar { .. } => {}
         }

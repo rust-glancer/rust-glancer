@@ -57,7 +57,7 @@ where
             item_stores,
             semantic_index,
             body_ref,
-            trait_selection,
+            trait_selection.for_body(body_ref),
         );
 
         let inference = BodyInferenceCtx::new(

@@ -1,5 +1,6 @@
 use rg_ir_model::{
-    BindingId, CrateId, CrateRef, DefMapRef, ExprId, PackageSlot, StructId, TypeDefId, TypeDefRef,
+    BindingId, BodyId, BodyRef, CrateId, CrateRef, DefMapRef, ExprId, PackageSlot, StructId,
+    TypeDefId, TypeDefRef,
 };
 use rg_ty::{AdtTy, ClosureTyId, GenericArg, PrimitiveTy, Ty, UnsignedIntTy};
 
@@ -27,7 +28,21 @@ fn vec_ty(inner: Ty) -> Ty {
 }
 
 fn closure_ty(index: usize) -> Ty {
-    Ty::closure(ClosureTyId::new(ExprId(index)))
+    Ty::closure(
+        ClosureTyId::new(body_ref(), ExprId(index)),
+        Vec::new(),
+        Ty::Unknown,
+    )
+}
+
+fn body_ref() -> BodyRef {
+    BodyRef {
+        crate_ref: CrateRef {
+            package: PackageSlot(0),
+            crate_id: CrateId(0),
+        },
+        body: BodyId(0),
+    }
 }
 
 fn default_int_ty() -> Ty {
@@ -42,12 +57,14 @@ fn u64_ty() -> Ty {
 fn stores_closure_types_as_body_local_facts() {
     let mut context = BodyInferenceCtx::new(1, 0, 0);
 
-    assert!(context.set_expr_closure_ty(ExprId(0)));
+    assert!(context.set_expr_closure_ty(body_ref(), ExprId(0), 0));
 
-    assert_eq!(
-        context.expr_ty(ExprId(0)),
-        Ty::Closure(ClosureTyId::new(ExprId(0)))
-    );
+    let Ty::Closure(closure) = context.expr_ty(ExprId(0)) else {
+        panic!("closure expression should retain its callable signature");
+    };
+    assert_eq!(closure.id, ClosureTyId::new(body_ref(), ExprId(0)));
+    assert!(closure.params.is_empty());
+    assert!(closure.ret.has_var());
     assert_eq!(context.finalize_expr_ty(ExprId(0)), closure_ty(0));
 }
 
@@ -55,14 +72,14 @@ fn stores_closure_types_as_body_local_facts() {
 fn copies_closure_types_through_binding_reads() {
     let mut context = BodyInferenceCtx::new(2, 1, 0);
 
-    context.set_expr_closure_ty(ExprId(0));
+    context.set_expr_closure_ty(body_ref(), ExprId(0), 0);
     context.set_binding_infer_ty(BindingId(0), context.expr_ty(ExprId(0)));
 
     assert!(context.set_expr_from_binding(ExprId(1), BindingId(0)));
-    assert_eq!(
-        context.expr_ty(ExprId(1)),
-        Ty::Closure(ClosureTyId::new(ExprId(0)))
-    );
+    let Ty::Closure(closure) = context.expr_ty(ExprId(1)) else {
+        panic!("binding reads should preserve closure identity and signature");
+    };
+    assert_eq!(closure.id, ClosureTyId::new(body_ref(), ExprId(0)));
     assert_eq!(context.finalize_expr_ty(ExprId(1)), closure_ty(0));
 }
 

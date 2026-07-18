@@ -7,8 +7,10 @@ use rg_ir_model::{
 };
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::{GenericParamSource, Generics, ItemStoreSource};
-use rg_std::UniqueVec;
-use rg_ty::{CallableSignature, GenericArg, Substitution, Ty};
+use rg_std::{ExpectedUnique, UniqueVec};
+use rg_ty::{
+    CallableSignature, GenericArg, Substitution, TraitSelection, Ty, inference::InferenceTable,
+};
 
 use crate::resolution::BodyResolutionContext;
 use crate::{ir::ExprKind, ir::resolved::BodyResolution};
@@ -19,13 +21,15 @@ use super::associated_item::BodyAssociatedFunctionCandidate;
 ///
 /// The target retains explicit generic syntax and the call-site scope so type arguments can be
 /// lowered later against the correct body context. Receiver or type-prefix evidence is kept
-/// separately from function-owned generics; `BodyCallInference` turns the latter into live slots.
+/// separately from function-owned generics. Trait candidates also retain their trial selection so
+/// inference can commit its table only after lookup finds one definite target.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ResolvedCallTarget {
     function: FunctionRef,
     explicit_args: Vec<ItemGenericArg>,
     site_scope: ScopeId,
     self_source: CallSelfSource,
+    trait_selection: Option<TraitSelection>,
 }
 
 /// How `Self` entered a selected call and whether syntax supplied an implicit receiver argument.
@@ -59,6 +63,7 @@ impl ResolvedCallTarget {
             explicit_args: explicit_args.to_vec(),
             site_scope,
             self_source: CallSelfSource::None,
+            trait_selection: None,
         }
     }
 
@@ -68,12 +73,14 @@ impl ResolvedCallTarget {
         site_scope: ScopeId,
         explicit_args: &[ItemGenericArg],
         receiver: CallSelf,
+        trait_selection: Option<TraitSelection>,
     ) -> Self {
         Self {
             function,
             explicit_args: explicit_args.to_vec(),
             site_scope,
             self_source: CallSelfSource::Receiver(receiver),
+            trait_selection,
         }
     }
 
@@ -83,12 +90,14 @@ impl ResolvedCallTarget {
         site_scope: ScopeId,
         explicit_args: &[ItemGenericArg],
         self_context: CallSelf,
+        trait_selection: Option<TraitSelection>,
     ) -> Self {
         Self {
             function,
             explicit_args: explicit_args.to_vec(),
             site_scope,
             self_source: CallSelfSource::TypePrefix(self_context),
+            trait_selection,
         }
     }
 
@@ -110,6 +119,11 @@ impl ResolvedCallTarget {
     /// Return the first signature param matched by written call args.
     pub(crate) fn first_written_param_idx(&self) -> usize {
         self.self_source.first_written_param_idx()
+    }
+
+    /// Return trait-selection evidence whose table is committed with a definite target.
+    pub(crate) fn trait_selection(&self) -> Option<&TraitSelection> {
+        self.trait_selection.as_ref()
     }
 }
 
@@ -189,9 +203,20 @@ impl ResolvedCallTargets {
         self.targets.push(target);
     }
 
-    /// Return the target only when lookup is unambiguous.
-    fn single(&self) -> Option<ResolvedCallTarget> {
-        self.targets.as_one().cloned()
+    /// Return the unique target whose trait predicates were fully proved.
+    fn single_proven(&self) -> Option<ResolvedCallTarget> {
+        let mut target = ExpectedUnique::new();
+        for candidate in &self.targets {
+            // Ordinary and inherent functions need no trait proof. Trait functions must have a
+            // definite selection; `Maybe` remains useful to editor lookup but cannot own call
+            // inference or associated projection facts.
+            if candidate.trait_selection.as_ref().is_none_or(|selection| {
+                selection.applicability == rg_ir_model::TraitApplicability::Yes
+            }) {
+                target.push(candidate.clone());
+            }
+        }
+        target.into_option()
     }
 }
 
@@ -250,13 +275,14 @@ where
         &self,
         call: ExprId,
         receiver_ty: Option<&Ty>,
+        table: &InferenceTable,
     ) -> Result<Option<ResolvedCallTarget>, PackageStoreError> {
         let expr_data = self.context.body().expr_unchecked(call);
         let targets = match &expr_data.kind {
             ExprKind::Call {
                 callee: Some(callee),
                 ..
-            } => self.function_targets(*callee)?,
+            } => self.function_targets(*callee, table)?,
             ExprKind::Call { callee: None, .. } => return Ok(None),
             ExprKind::MethodCall {
                 receiver: Some(receiver),
@@ -271,13 +297,13 @@ where
                 };
                 let receiver_ty = receiver_ty
                     .unwrap_or_else(|| self.context.query_body().expr_ty_unchecked(*receiver));
-                self.lookup_method_for_ty(site, receiver_ty)?
+                self.lookup_method_for_ty(site, receiver_ty, table)?
             }
             ExprKind::MethodCall { receiver: None, .. } => return Ok(None),
             _ => return Ok(None),
         };
 
-        Ok(targets.single())
+        Ok(targets.single_proven())
     }
 
     /// Resolve a method-call expression from a receiver type learned during body inference.
@@ -285,6 +311,7 @@ where
         &self,
         call: ExprId,
         receiver_ty: &Ty,
+        table: &InferenceTable,
     ) -> Result<ResolvedCallTargets, PackageStoreError> {
         let expr_data = self.context.body().expr_unchecked(call);
         let ExprKind::MethodCall {
@@ -304,14 +331,19 @@ where
                 scope: expr_data.scope,
             },
             receiver_ty,
+            table,
         )
     }
 
     /// Convert resolved callee declarations into callable function targets.
-    fn function_targets(&self, callee: ExprId) -> Result<ResolvedCallTargets, PackageStoreError> {
+    fn function_targets(
+        &self,
+        callee: ExprId,
+        table: &InferenceTable,
+    ) -> Result<ResolvedCallTargets, PackageStoreError> {
         let mut targets = ResolvedCallTargets::new();
         let callee_data = self.context.body().expr_unchecked(callee);
-        let associated_targets = self.associated_function_targets(callee_data)?;
+        let associated_targets = self.associated_function_targets(callee_data, table)?;
         if !associated_targets.is_empty() {
             return Ok(associated_targets);
         }
@@ -339,6 +371,7 @@ where
     fn associated_function_targets(
         &self,
         callee_data: &ExprData,
+        table: &InferenceTable,
     ) -> Result<ResolvedCallTargets, PackageStoreError> {
         let mut targets = ResolvedCallTargets::new();
         let ExprKind::Path { path } = &callee_data.kind else {
@@ -347,7 +380,7 @@ where
         for candidate in self
             .context
             .associated_items()
-            .function_candidates_for_body_path(callee_data.scope, path)?
+            .function_candidates_for_body_path(callee_data.scope, path, table)?
         {
             targets.push(Self::associated_function_target(callee_data, candidate));
         }
@@ -367,6 +400,7 @@ where
                 self_ty: candidate.self_ty().clone(),
                 subst: candidate.subst().clone(),
             },
+            candidate.trait_selection().cloned(),
         )
     }
 
@@ -375,13 +409,14 @@ where
         &self,
         site: MethodCallSite<'_>,
         receiver_ty: &Ty,
+        table: &InferenceTable,
     ) -> Result<ResolvedCallTargets, PackageStoreError> {
         let mut targets = ResolvedCallTargets::new();
 
-        for candidate in self
-            .context
-            .methods()
-            .named_method_candidates_for_ty(receiver_ty, site.name)?
+        for candidate in
+            self.context
+                .methods()
+                .named_method_candidates_for_ty(receiver_ty, site.name, table)?
         {
             targets.push(ResolvedCallTarget::method_call(
                 candidate.function(),
@@ -391,6 +426,7 @@ where
                     self_ty: candidate.receiver_ty().clone(),
                     subst: candidate.subst().clone(),
                 },
+                candidate.trait_selection().cloned(),
             ));
         }
 
@@ -467,6 +503,7 @@ where
                     params: Vec::new(),
                     ret: Ty::Unknown,
                     clauses: Vec::new(),
+                    qualifiers: rg_ir_model::items::FunctionQualifiers::default(),
                 },
                 subst: Substitution::new(),
             });

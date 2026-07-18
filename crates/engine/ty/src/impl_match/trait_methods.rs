@@ -4,7 +4,9 @@
 //! proves the exact candidate's predicates. A definite rejection removes the method; ambiguity or
 //! unsupported body-local evidence remains a useful editor-facing `Maybe` candidate.
 
-use crate::{AdtTy, TraitSelectionQuery, Ty, TypePathResolver};
+use crate::{
+    AdtTy, TraitSelection, TraitSelectionQuery, Ty, TypePathResolver, inference::InferenceTable,
+};
 use rg_def_map::DefMapSource;
 use rg_ir_model::{DefMapRef, FunctionRef, TraitApplicability, TraitImplRef};
 use rg_semantic_ir::ItemStoreSource;
@@ -23,9 +25,11 @@ where
         &self,
         trait_impl: TraitImplRef,
         receiver_ty: &AdtTy,
+        table: &InferenceTable,
     ) -> Result<TraitApplicability, D::Error> {
         Ok(self
-            .trait_impl_match(trait_impl, receiver_ty)?
+            .trait_impl_match(trait_impl, receiver_ty, table)?
+            .map(|selection| selection.applicability)
             .unwrap_or(TraitApplicability::No))
     }
 
@@ -34,14 +38,15 @@ where
         &self,
         receiver_ty: &AdtTy,
         method_name: Option<&str>,
-    ) -> Result<Vec<(FunctionRef, TraitApplicability)>, D::Error> {
+        table: &InferenceTable,
+    ) -> Result<Vec<(FunctionRef, TraitSelection)>, D::Error> {
         let trait_impls = self
             .context
             .lookup_index()
             .trait_impls_for_type(receiver_ty.def)
             .cloned()
             .unwrap_or_default();
-        self.trait_function_candidates_from_impls(trait_impls, receiver_ty, method_name)
+        self.trait_function_candidates_from_impls(trait_impls, receiver_ty, method_name, table)
     }
 
     /// Expands already-collected trait impl candidates into trait function candidates.
@@ -53,7 +58,8 @@ where
         trait_impls: UniqueVec<TraitImplRef>,
         receiver_ty: &AdtTy,
         method_name: Option<&str>,
-    ) -> Result<Vec<(FunctionRef, TraitApplicability)>, D::Error> {
+        table: &InferenceTable,
+    ) -> Result<Vec<(FunctionRef, TraitSelection)>, D::Error> {
         let item_query = self.context.item_paths().items();
         let mut functions = Vec::new();
         for trait_impl in trait_impls {
@@ -73,7 +79,7 @@ where
                 indexed_trait_functions = indexed_functions.functions().cloned();
             }
 
-            let Some(applicability) = self.trait_impl_match(trait_impl, receiver_ty)? else {
+            let Some(selection) = self.trait_impl_match(trait_impl, receiver_ty, table)? else {
                 continue;
             };
 
@@ -116,7 +122,10 @@ where
             };
 
             for function in trait_functions {
-                Self::push_function_candidate(&mut functions, function, applicability);
+                // Keep the selected impl with the function. Two overlapping impls can expose the
+                // same trait declaration but carry different predicate evidence; collapsing them
+                // by function identity would make an ambiguous call look uniquely selected.
+                functions.push((function, selection.clone()));
             }
         }
 
@@ -132,7 +141,8 @@ where
         &self,
         trait_impl: TraitImplRef,
         receiver_ty: &AdtTy,
-    ) -> Result<Option<TraitApplicability>, D::Error> {
+        table: &InferenceTable,
+    ) -> Result<Option<TraitSelection>, D::Error> {
         let item_query = self.context.item_paths().items();
         let Some(impl_data) = item_query.impl_data(trait_impl.impl_ref)? else {
             return Ok(None);
@@ -151,28 +161,13 @@ where
         else {
             return Ok(None);
         };
-        let predicate_applicability = TraitSelectionQuery::new(self.context.clone())
-            .instantiated_impl_applicability(trait_impl, &header, subst)?;
-        let applicability = self_applicability.and(predicate_applicability);
-        if !applicability.is_applicable() {
+        let Some(mut selection) = TraitSelectionQuery::new(self.context.clone())
+            .probe_instantiated_impl(trait_impl, &header, subst, table)?
+        else {
             return Ok(None);
-        }
-        Ok(Some(applicability))
-    }
+        };
 
-    fn push_function_candidate(
-        functions: &mut Vec<(FunctionRef, TraitApplicability)>,
-        function: FunctionRef,
-        applicability: TraitApplicability,
-    ) {
-        if let Some((_, existing)) = functions
-            .iter_mut()
-            .find(|(existing_function, _)| *existing_function == function)
-        {
-            *existing = existing.or(applicability);
-            return;
-        }
-
-        functions.push((function, applicability));
+        selection.applicability = self_applicability.and(selection.applicability);
+        Ok(selection.applicability.is_applicable().then_some(selection))
     }
 }

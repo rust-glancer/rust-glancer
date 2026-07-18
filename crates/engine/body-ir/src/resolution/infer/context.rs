@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use rg_ir_model::{BindingId, ExprBinaryOp, ExprId, ExprUnaryOp, ExprWrapperKind, StmtId};
+use rg_ir_model::{BindingId, BodyRef, ExprBinaryOp, ExprId, ExprUnaryOp, ExprWrapperKind, StmtId};
 
 use rg_ty::{
     ClosureTyId, GenericArg, GenericArgs, PrimitiveTy, Ty,
@@ -149,7 +149,9 @@ impl BodyInferenceCtx {
     /// shape after normalization, while still unifying through any live expected-type slot.
     pub(crate) fn set_expr_normalized_ty(&mut self, expr: ExprId, ty: Ty) -> bool {
         let previous_ty = self.expr_tys.get(expr);
-        if previous_ty.has_var() {
+        // A root slot should absorb the evidence. A projection may itself contain live generic or
+        // closure slots, but its outer alias still has to be replaced by the proven normal form.
+        if matches!(previous_ty, Ty::InferVar { .. }) {
             return self.table.unify(&previous_ty, &ty);
         }
         if previous_ty.has_projection() {
@@ -158,10 +160,25 @@ impl BodyInferenceCtx {
         self.refine_expr_fact(expr, ty)
     }
 
-    pub(crate) fn set_expr_closure_ty(&mut self, expr: ExprId) -> bool {
-        // The id intentionally points back to the body expression index. Later callable-trait
-        // phases can use that link to recover the closure params/body from the same body arena.
-        self.set_expr_infer_ty(expr, Ty::Closure(ClosureTyId::new(expr)))
+    /// Give one closure a stable identity plus live slots for every parameter and its return.
+    ///
+    /// An expected `Fn(User) -> Name` bound and evidence from the closure body must constrain the
+    /// same slots. They are allocated once during inference initialization and then carried inside
+    /// the closure's semantic type through every fixed-point pass.
+    pub(crate) fn set_expr_closure_ty(
+        &mut self,
+        body_ref: BodyRef,
+        expr: ExprId,
+        param_count: usize,
+    ) -> bool {
+        let params = (0..param_count)
+            .map(|_| self.table.new_type_var())
+            .collect();
+        let ret = self.table.new_type_var();
+        self.set_expr_infer_ty(
+            expr,
+            Ty::closure(ClosureTyId::new(body_ref, expr), params, ret),
+        )
     }
 
     pub(crate) fn expr_ty(&self, expr: ExprId) -> Ty {
@@ -220,12 +237,18 @@ impl BodyInferenceCtx {
     }
 
     pub(crate) fn set_expr_tuple_from_fields(&mut self, expr: ExprId, fields: &[ExprId]) {
-        // Tuple expressions carry child slots by value so later expected-type constraints can
-        // descend through the tuple and solve literals or variables nested inside each field.
-        self.set_expr_fact_allowing_weak_slot(
-            expr,
-            Ty::tuple(fields.iter().map(|field| self.expr_ty(*field)).collect()),
-        );
+        // Tuple expressions and their fields are one equality relationship. The tuple may already
+        // contain live slots introduced by an expected type or closure output before a child call
+        // resolves. Re-link every field on each pass so that later child evidence solves those
+        // existing slots instead of replacing the tuple shape.
+        let field_tys = fields
+            .iter()
+            .map(|field| self.expr_ty(*field))
+            .collect::<Vec<_>>();
+        let tuple_ty = Ty::tuple(field_tys);
+        let previous_ty = self.expr_tys.get(expr);
+        self.table.unify(&previous_ty, &tuple_ty);
+        self.set_expr_fact_allowing_weak_slot(expr, tuple_ty);
     }
 
     pub(crate) fn set_expr_array_from_elements(
@@ -511,6 +534,12 @@ impl BodyInferenceCtx {
     pub(crate) fn set_binding_infer_ty(&mut self, binding: BindingId, ty: Ty) -> bool {
         let previous_ty = self.binding_tys.get(binding);
         let changed = self.table.unify(&previous_ty, &ty);
+        // An unannotated pattern can first see an unresolved call projection and then its concrete
+        // normal form on the next fixed-point pass. The latter is stronger evidence even when the
+        // old projection contains nested inference slots that ordinary unification cannot cross.
+        if previous_ty.has_projection() && !ty.has_projection() {
+            return self.set_binding_fact(binding, ty) || changed;
+        }
         if previous_ty.has_var() {
             return changed;
         }

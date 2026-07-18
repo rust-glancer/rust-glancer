@@ -6,14 +6,15 @@
 //! normalization feeds every semantic projection back through the solver boundary.
 
 use rg_def_map::DefMapSource;
-use rg_ir_model::{ItemOwner, TraitApplicability, TraitDefRef};
+use rg_ir_model::{ItemOwner, TraitApplicability, TraitDefRef, TypeAliasRef};
 use rg_semantic_ir::ItemStoreSource;
 use rg_std::ExpectedUnique;
 
 use super::{ChalkOutcome, TraitGoal, TraitSelectionQuery};
 use crate::inference::InferenceTable;
 use crate::{
-    AdtTy, AliasTy, FnDefTy, GenericArg, GenericArgs, OpaqueTy, ProjectionTy, TraitApplication, Ty,
+    AdtTy, AliasTy, ClosureTy, FnDefTy, GenericArg, GenericArgs, OpaqueTy, ProjectionTy,
+    TraitApplication, Ty,
 };
 
 /// Result of normalizing one selected associated type projection.
@@ -25,6 +26,19 @@ pub struct AssocProjectionResult {
     pub ty: Ty,
     pub applicability: TraitApplicability,
     pub table: InferenceTable,
+}
+
+/// Whether recursive normalization may use native candidate selection as extra evidence.
+///
+/// An outer query starts in `Probe` mode. Once candidate predicates are being proved, recursively
+/// probing the same candidate would re-enter native selection; `SolverOnly` leaves that cycle to
+/// Chalk's own forest instead.
+#[derive(Clone, Copy)]
+pub(super) enum CandidateEvidence {
+    /// Use native selection to instantiate an already-proved impl value before solver search.
+    Probe,
+    /// Stay inside Chalk while normalizing a predicate that native selection is proving.
+    SolverOnly,
 }
 
 impl AssocProjectionResult {
@@ -50,12 +64,21 @@ where
         assoc_name: &str,
         table: &InferenceTable,
     ) -> Result<Option<AssocProjectionResult>, I::Error> {
-        let Some(mut projection) = self.normalize_assoc_type_once(goal, assoc_name, table)? else {
+        let Some(associated_ty) = self.associated_type_named(goal.trait_ref(), assoc_name)? else {
+            return Ok(None);
+        };
+        let Some(mut projection) =
+            self.normalize_assoc_type_once(goal, associated_ty, table, CandidateEvidence::Probe)?
+        else {
             return Ok(None);
         };
         let mut table = projection.table;
-        projection.ty =
-            self.normalize_ty_with_table(&projection.ty, &mut table, &mut Vec::new())?;
+        projection.ty = self.normalize_ty_with_table(
+            &projection.ty,
+            &mut table,
+            &mut Vec::new(),
+            CandidateEvidence::Probe,
+        )?;
         projection.table = table;
         Ok(Some(projection))
     }
@@ -64,12 +87,16 @@ where
     fn normalize_assoc_type_once(
         &self,
         goal: &TraitGoal,
-        assoc_name: &str,
+        associated_ty: TypeAliasRef,
         table: &InferenceTable,
+        candidate_evidence: CandidateEvidence,
     ) -> Result<Option<AssocProjectionResult>, I::Error> {
-        let selection = match self.probe(goal, table)? {
-            ExpectedUnique::One(selection) => Some(selection),
-            ExpectedUnique::Empty | ExpectedUnique::Ambiguous => None,
+        let selection = match candidate_evidence {
+            CandidateEvidence::Probe => match self.probe(goal, table)? {
+                ExpectedUnique::One(selection) => Some(selection),
+                ExpectedUnique::Empty | ExpectedUnique::Ambiguous => None,
+            },
+            CandidateEvidence::SolverOnly => None,
         };
         let selection_table = selection
             .as_ref()
@@ -78,8 +105,9 @@ where
         let projection = self.context.trait_selection().normalize_assoc_type(
             self.context.item_paths(),
             self.context.crate_items(),
+            self.context.lookup_index(),
             goal,
-            assoc_name,
+            associated_ty,
             selection
                 .as_ref()
                 .map(|selection| (selection.trait_impl.impl_ref, &selection.subst)),
@@ -111,8 +139,18 @@ where
         ty: &Ty,
         table: &InferenceTable,
     ) -> Result<(Ty, InferenceTable), I::Error> {
+        self.normalize_ty_with_candidate_evidence(ty, table, CandidateEvidence::Probe)
+    }
+
+    pub(super) fn normalize_ty_with_candidate_evidence(
+        &self,
+        ty: &Ty,
+        table: &InferenceTable,
+        candidate_evidence: CandidateEvidence,
+    ) -> Result<(Ty, InferenceTable), I::Error> {
         let mut table = table.clone();
-        let ty = self.normalize_ty_with_table(ty, &mut table, &mut Vec::new())?;
+        let ty =
+            self.normalize_ty_with_table(ty, &mut table, &mut Vec::new(), candidate_evidence)?;
         Ok((ty, table))
     }
 
@@ -121,19 +159,29 @@ where
         ty: &Ty,
         table: &mut InferenceTable,
         active: &mut Vec<ProjectionTy>,
+        candidate_evidence: CandidateEvidence,
     ) -> Result<Ty, I::Error> {
         Ok(match ty {
             Ty::Tuple(fields) => Ty::tuple(
                 fields
                     .iter()
-                    .map(|field| self.normalize_ty_with_table(field, table, active))
+                    .map(|field| {
+                        self.normalize_ty_with_table(field, table, active, candidate_evidence)
+                    })
                     .collect::<Result<_, _>>()?,
             ),
             Ty::Array { inner, len } => Ty::Array {
-                inner: Box::new(self.normalize_ty_with_table(inner, table, active)?),
+                inner: Box::new(self.normalize_ty_with_table(
+                    inner,
+                    table,
+                    active,
+                    candidate_evidence,
+                )?),
                 len: *len,
             },
-            Ty::Slice(inner) => Ty::slice(self.normalize_ty_with_table(inner, table, active)?),
+            Ty::Slice(inner) => {
+                Ty::slice(self.normalize_ty_with_table(inner, table, active, candidate_evidence)?)
+            }
             Ty::Reference {
                 lifetime,
                 mutability,
@@ -141,35 +189,53 @@ where
             } => Ty::reference_with_lifetime(
                 *lifetime,
                 *mutability,
-                self.normalize_ty_with_table(inner, table, active)?,
+                self.normalize_ty_with_table(inner, table, active, candidate_evidence)?,
             ),
             Ty::RawPointer { mutability, inner } => Ty::raw_pointer(
                 *mutability,
-                self.normalize_ty_with_table(inner, table, active)?,
+                self.normalize_ty_with_table(inner, table, active, candidate_evidence)?,
             ),
             Ty::FnPointer { params, ret } => Ty::fn_pointer(
                 params
                     .iter()
-                    .map(|param| self.normalize_ty_with_table(param, table, active))
+                    .map(|param| {
+                        self.normalize_ty_with_table(param, table, active, candidate_evidence)
+                    })
                     .collect::<Result<_, _>>()?,
-                self.normalize_ty_with_table(ret, table, active)?,
+                self.normalize_ty_with_table(ret, table, active, candidate_evidence)?,
             ),
             Ty::Adt(ty) => Ty::Adt(AdtTy {
                 def: ty.def,
-                args: self.normalize_args(&ty.args, table, active)?,
+                args: self.normalize_args(&ty.args, table, active, candidate_evidence)?,
             }),
             Ty::FnDef(function) => Ty::FnDef(FnDefTy {
                 def: function.def,
-                args: self.normalize_args(&function.args, table, active)?,
+                args: self.normalize_args(&function.args, table, active, candidate_evidence)?,
+            }),
+            Ty::Closure(closure) => Ty::Closure(ClosureTy {
+                id: closure.id,
+                params: closure
+                    .params
+                    .iter()
+                    .map(|param| {
+                        self.normalize_ty_with_table(param, table, active, candidate_evidence)
+                    })
+                    .collect::<Result<_, _>>()?,
+                ret: Box::new(self.normalize_ty_with_table(
+                    &closure.ret,
+                    table,
+                    active,
+                    candidate_evidence,
+                )?),
             }),
             Ty::Alias(AliasTy::Opaque(opaque)) => Ty::Alias(AliasTy::Opaque(OpaqueTy {
                 opaque: opaque.opaque,
-                args: self.normalize_args(&opaque.args, table, active)?,
+                args: self.normalize_args(&opaque.args, table, active, candidate_evidence)?,
             })),
             Ty::Alias(AliasTy::Projection(alias)) => {
                 let alias = ProjectionTy {
                     associated_ty: alias.associated_ty,
-                    args: self.normalize_args(&alias.args, table, active)?,
+                    args: self.normalize_args(&alias.args, table, active, candidate_evidence)?,
                 };
                 if active.contains(&alias) {
                     return Ok(Ty::Alias(AliasTy::Projection(alias)));
@@ -200,12 +266,16 @@ where
                 // Associated values can form cycles across multiple aliases. Stop at the first
                 // repeated semantic projection and keep that alias visible to the caller.
                 active.push(alias.clone());
-                let normalized =
-                    self.normalize_assoc_type_once(&goal, data.name.as_str(), table)?;
+                let normalized = self.normalize_assoc_type_once(
+                    &goal,
+                    alias.associated_ty,
+                    table,
+                    candidate_evidence,
+                )?;
                 let ty = if let Some(normalized) = normalized {
                     let (ty, _applicability, normalized_table) = normalized.into_parts();
                     *table = normalized_table;
-                    self.normalize_ty_with_table(&ty, table, active)?
+                    self.normalize_ty_with_table(&ty, table, active, candidate_evidence)?
                 } else {
                     Ty::Alias(AliasTy::Projection(alias))
                 };
@@ -216,10 +286,21 @@ where
             | Ty::Never
             | Ty::Primitive(_)
             | Ty::Param(_)
-            | Ty::Closure(_)
             | Ty::Unknown
             | Ty::InferVar { .. } => ty.clone(),
         })
+    }
+
+    /// Resolve the convenient named API to one declaration before entering the solver boundary.
+    fn associated_type_named(
+        &self,
+        trait_ref: TraitDefRef,
+        name: &str,
+    ) -> Result<Option<TypeAliasRef>, I::Error> {
+        self.context
+            .crate_items()
+            .items()
+            .declared_associated_type_by_name(trait_ref, name)
     }
 
     fn normalize_args(
@@ -227,13 +308,14 @@ where
         args: &GenericArgs,
         table: &mut InferenceTable,
         active: &mut Vec<ProjectionTy>,
+        candidate_evidence: CandidateEvidence,
     ) -> Result<GenericArgs, I::Error> {
         args.iter()
             .map(|arg| {
                 Ok(match arg {
-                    GenericArg::Type(ty) => {
-                        GenericArg::Type(Box::new(self.normalize_ty_with_table(ty, table, active)?))
-                    }
+                    GenericArg::Type(ty) => GenericArg::Type(Box::new(
+                        self.normalize_ty_with_table(ty, table, active, candidate_evidence)?,
+                    )),
                     GenericArg::Lifetime(_) | GenericArg::Const(_) => arg.clone(),
                 })
             })

@@ -6,9 +6,9 @@
 use rg_def_map::LocalEnumVariantData;
 use rg_ir_model::items::{FieldKey, GenericParams};
 use rg_ir_model::{
-    ConstRef, CrateRef, DefMapRef, EnumVariantRef, FieldRef, FunctionRef, GenericDefRef, ImplRef,
-    ItemOwner, LocalDefRef, LocalEnumVariantRef, ModuleRef, SemanticItemRef, StaticRef,
-    TraitDefRef, TypeAliasRef, TypeDefId, TypeDefRef,
+    AssocItemId, ConstRef, CrateRef, DefMapRef, EnumVariantRef, FieldRef, FunctionRef,
+    GenericDefRef, ImplRef, ItemOwner, LocalDefRef, LocalEnumVariantRef, ModuleRef,
+    SemanticItemRef, StaticRef, TraitDefRef, TypeAliasRef, TypeDefId, TypeDefRef,
 };
 
 use super::ItemStoreSource;
@@ -425,6 +425,36 @@ where
         Ok(self
             .item_store_for_origin(trait_ref.origin)?
             .and_then(|items| items.trait_data(trait_ref.id)))
+    }
+
+    /// Find an associated type declared directly by this trait.
+    ///
+    /// Supertrait traversal belongs to type lowering because it needs generic and path context.
+    /// This item-shaped operation only follows the trait's own associated-item IDs.
+    pub fn declared_associated_type_by_name(
+        &self,
+        trait_ref: TraitDefRef,
+        name: &str,
+    ) -> Result<Option<TypeAliasRef>, S::Error> {
+        let Some(data) = self.trait_data(trait_ref)? else {
+            return Ok(None);
+        };
+        for item in &data.items {
+            let AssocItemId::TypeAlias(id) = item else {
+                continue;
+            };
+            let alias = TypeAliasRef {
+                origin: trait_ref.origin,
+                id: *id,
+            };
+            if self
+                .type_alias_data(alias)?
+                .is_some_and(|data| data.name.as_str() == name)
+            {
+                return Ok(Some(alias));
+            }
+        }
+        Ok(None)
     }
 
     /// Follows an impl ref into the header and associated items used by member/type queries.

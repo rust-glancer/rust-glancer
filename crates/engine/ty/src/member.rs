@@ -9,7 +9,9 @@ use rg_ir_model::{FieldRef, FunctionRef, TraitApplicability, TypeDefRef};
 use rg_semantic_ir::ItemStoreSource;
 use rg_std::UniqueVec;
 
-use crate::{AdtTy, Autoderef, AutoderefMode, ImplMatcher, Ty, TyContext};
+use crate::{
+    AdtTy, Autoderef, AutoderefMode, ImplMatcher, Ty, TyContext, inference::InferenceTable,
+};
 
 /// One callable member selected for a receiver type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -92,11 +94,18 @@ where
         // depths reuse exact classifications from earlier ones.
         let autoderef = Autoderef::new(self.context.clone());
         let matcher = ImplMatcher::new(self.context.clone());
+        // Public member lookup consumes durable semantic types, so it has no body-owned inference
+        // slots to preserve. Body IR supplies its live table through its own lookup projection.
+        let table = InferenceTable::new();
         let mut methods = Vec::new();
         for candidate in autoderef.candidates(AutoderefMode::MethodReceiver, ty) {
             let candidate = candidate?;
             for receiver_ty in candidate.ty().as_adts() {
-                methods.extend(self.method_candidates_for_nominal(&matcher, receiver_ty)?);
+                methods.extend(self.method_candidates_for_nominal(
+                    &matcher,
+                    receiver_ty,
+                    &table,
+                )?);
             }
         }
         Ok(methods)
@@ -106,6 +115,7 @@ where
         &self,
         matcher: &ImplMatcher<'query, D, I>,
         receiver_ty: &AdtTy,
+        table: &InferenceTable,
     ) -> Result<Vec<MemberMethodCandidateRef>, D::Error> {
         let mut candidates = Vec::new();
 
@@ -118,12 +128,12 @@ where
 
         // Keep proof confidence with each trait method. Editor lookup can then distinguish a
         // proved impl from one retained because Chalk reported ambiguity or unsupported evidence.
-        for (function, applicability) in
-            matcher.trait_function_candidates_for_receiver(receiver_ty, None)?
+        for (function, selection) in
+            matcher.trait_function_candidates_for_receiver(receiver_ty, None, table)?
         {
             candidates.push(MemberMethodCandidateRef::trait_method(
                 function,
-                applicability,
+                selection.applicability,
             ));
         }
 

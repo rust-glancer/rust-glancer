@@ -7,25 +7,21 @@
 use std::sync::Arc;
 
 use rg_def_map::DefMapSource;
-use rg_ir_model::{
-    ExprId, GenericDefRef, GenericParamRef, SemanticItemRef, identity::DeclarationRef,
-    items::GenericArg as ItemGenericArg,
-};
+use rg_ir_model::{ExprId, GenericDefRef, GenericParamRef, items::GenericArg as ItemGenericArg};
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::{Generics, ItemStoreSource};
 use rg_ty::{
-    Clause, GenericArg, Substitution, Ty,
+    Clause, GenericArg, Substitution, TraitProof, Ty,
     inference::{InferenceSubstitution, InferenceTable},
 };
 
 use crate::CallFacts;
-use crate::ir::resolved::BodyResolution;
 use crate::resolution::{
     BodyResolutionContext,
     query::{CallProjection, ResolvedCallTarget},
 };
 
-use super::{BodyInferenceCtx, trait_obligation::BodyTraitObligationSolver};
+use super::BodyInferenceCtx;
 
 /// Call-owned signature projection and live generic slots.
 ///
@@ -66,7 +62,13 @@ pub(crate) struct CallInferenceTransfer {
 
 impl CallInferenceTransfer {
     /// Return the selected signature's expected types for the written arguments.
-    pub(crate) fn argument_expected_tys(&self, args: &[ExprId]) -> Vec<(ExprId, Ty)> {
+    ///
+    /// A malformed or incomplete call has no positional correspondence, so an arity mismatch
+    /// yields an empty iterator rather than applying expectations to the wrong expressions.
+    pub(crate) fn argument_expected_tys<'a>(
+        &'a self,
+        args: &'a [ExprId],
+    ) -> impl Iterator<Item = (ExprId, Ty)> + 'a {
         let written_params = self
             .state
             .projection
@@ -74,18 +76,16 @@ impl CallInferenceTransfer {
             .params
             .get(self.state.first_written_param_idx..)
             .unwrap_or_default();
-        if written_params.len() != args.len() {
-            return Vec::new();
-        }
-
-        args.iter()
-            .copied()
-            .zip(
-                written_params
-                    .iter()
-                    .map(|param| self.state.subst.as_substitution().apply(param)),
-            )
-            .collect()
+        (written_params.len() == args.len())
+            .then(|| {
+                args.iter().copied().zip(
+                    written_params
+                        .iter()
+                        .map(|param| self.state.subst.as_substitution().apply(param)),
+                )
+            })
+            .into_iter()
+            .flatten()
     }
 }
 
@@ -128,10 +128,21 @@ where
             state
         } else {
             let calls = self.context.calls();
+            // Keep nested slots in the selected receiver substitution so later arguments can
+            // still constrain them. Predicate proof receives the owning table separately and can
+            // canonicalize those slots without severing their connection to body inference.
             let receiver_ty = receiver.map(|receiver| inference.root_resolved_expr_ty(receiver));
-            let Some(target) = calls.target_with_receiver_ty(call, receiver_ty.as_ref())? else {
+            let Some(target) =
+                calls.target_with_receiver_ty(call, receiver_ty.as_ref(), inference.table())?
+            else {
                 return Ok(None);
             };
+            if let Some(selection) = target.trait_selection() {
+                // Candidate proof is transactional until lookup finds one definite target. Commit
+                // its table now so equality evidence used to prove the impl remains true while
+                // the selected call is refined on later fixed-point rounds.
+                inference.table = selection.table.clone();
+            }
             let projection = calls.signature(&target).project(args)?;
             let generics = self
                 .context
@@ -223,9 +234,7 @@ where
             .skip(transfer.state.first_written_param_idx)
             .zip(args)
         {
-            let evidence = self
-                .fn_def_arg_ty(*arg)?
-                .unwrap_or_else(|| inference.root_resolved_expr_ty(*arg));
+            let evidence = inference.root_resolved_expr_ty(*arg);
             transfer
                 .state
                 .subst
@@ -293,7 +302,7 @@ where
         }
 
         // A selected call obligation matters to this layer while it can still constrain a
-        // body-owned inference slot, closure witness, or unresolved semantic shape. Fully settled
+        // body-owned inference slot, closure identity, or unresolved semantic shape. Fully settled
         // predicates are type-checking facts; proving them cannot change any Body IR type, so
         // eager indexing should not submit them to Chalk merely to rediscover that the
         // already-selected call is valid.
@@ -329,12 +338,26 @@ where
             return Ok(());
         }
 
-        state.generic_obligations_complete = BodyTraitObligationSolver::new(self.context.clone())
-            .solve_selected_call(
-            inference,
+        let proof = self.context.trait_selection().prove_clauses(
             &state.projection.signature().clauses,
             &state.subst,
+            &inference.table,
         )?;
+        state.generic_obligations_complete = match proof {
+            TraitProof::Proven(table) => {
+                inference.table = table;
+                true
+            }
+            TraitProof::Ambiguous(Some(table)) => {
+                // Chalk's definite guidance is an equality every possible solution shares. It is
+                // safe inference evidence even though it does not prove that the obligation will
+                // ultimately hold. Keep the obligation pending and retry after that evidence has
+                // propagated through the body.
+                inference.table = table;
+                false
+            }
+            TraitProof::Ambiguous(None) | TraitProof::NoSolution | TraitProof::Unavailable => false,
+        };
         Ok(())
     }
 
@@ -352,8 +375,11 @@ where
             .subst
             .as_substitution()
             .apply(&state.projection.signature().ret);
-        let ty = BodyTraitObligationSolver::new(self.context.clone())
-            .normalize_ty(inference, &return_ty)?;
+        let (ty, table) = self
+            .context
+            .trait_selection()
+            .normalize_ty(&return_ty, &inference.table)?;
+        inference.table = table;
         // Once every projection has been replaced, later evidence only solves the inference slots
         // already embedded in this result. Re-running Chalk cannot change its semantic shape.
         state.return_projection_complete = !ty.has_projection();
@@ -428,18 +454,5 @@ where
             }
         }
         Ok(subst)
-    }
-
-    fn fn_def_arg_ty(&self, arg: ExprId) -> Result<Option<Ty>, PackageStoreError> {
-        let BodyResolution::Declarations(declarations) =
-            self.context.query_body().expr_resolution_unchecked(arg)
-        else {
-            return Ok(None);
-        };
-        let Some(DeclarationRef::Item(SemanticItemRef::Function(function))) = declarations.as_one()
-        else {
-            return Ok(None);
-        };
-        self.context.signatures().function_ty(*function)
     }
 }

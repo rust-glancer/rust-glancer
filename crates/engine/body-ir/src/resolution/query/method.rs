@@ -7,7 +7,7 @@ use rg_semantic_ir::{ItemStoreQuery, ItemStoreSource};
 use rg_std::UniqueVec;
 use rg_ty::{
     AdtTy, AutoderefMode, ImplMatcher, MemberMethodCandidateRef, MemberMethodOrigin, Substitution,
-    Ty,
+    TraitSelection, Ty, inference::InferenceTable,
 };
 
 use crate::resolution::{BodyQuerySource, BodyResolutionContext};
@@ -32,6 +32,13 @@ pub(crate) struct BodyMethodCandidate {
     function: FunctionRef,
     receiver_ty: Ty,
     subst: Substitution,
+    trait_selection: Option<TraitSelection>,
+}
+
+/// Nominal method plus any trait proof retained until the caller supplies receiver substitutions.
+struct NominalMethodCandidate {
+    function: FunctionRef,
+    trait_selection: Option<TraitSelection>,
 }
 
 impl BodyMethodCandidate {
@@ -48,6 +55,14 @@ impl BodyMethodCandidate {
     /// Return substitutions derived from the receiver and impl owner.
     pub(crate) fn subst(&self) -> &Substitution {
         &self.subst
+    }
+
+    /// Return the trait-selection evidence that made this candidate available.
+    ///
+    /// Inherent candidates have no trait obligation and therefore no selection to commit. A
+    /// `Maybe` selection may still be shown by editor lookup, but call inference cannot commit it.
+    pub(crate) fn trait_selection(&self) -> Option<&TraitSelection> {
+        self.trait_selection.as_ref()
     }
 }
 
@@ -66,6 +81,7 @@ where
         ty: &Ty,
     ) -> Result<Vec<MemberMethodCandidateRef>, PackageStoreError> {
         let matcher = self.context.impl_matcher();
+        let table = InferenceTable::new();
         let mut candidates = Vec::new();
         for candidate in self
             .context
@@ -74,8 +90,15 @@ where
         {
             let candidate = candidate?;
             for receiver_ty in candidate.ty().as_adts() {
-                for method in self.nominal_method_candidates(&matcher, receiver_ty, None)? {
-                    Self::push_candidate(&mut candidates, method);
+                for method in self.nominal_method_candidates(&matcher, receiver_ty, None, &table)? {
+                    let candidate = match &method.trait_selection {
+                        Some(selection) => MemberMethodCandidateRef::trait_method(
+                            method.function,
+                            selection.applicability,
+                        ),
+                        None => MemberMethodCandidateRef::inherent(method.function),
+                    };
+                    Self::push_candidate(&mut candidates, candidate);
                 }
             }
             for method in self.structural_method_candidates(&matcher, candidate.ty(), None)? {
@@ -94,6 +117,7 @@ where
         &self,
         receiver_ty: &Ty,
         method_name: &str,
+        table: &InferenceTable,
     ) -> Result<Vec<BodyMethodCandidate>, PackageStoreError> {
         let item_query = self.context.item_query();
         let matcher = self.context.impl_matcher();
@@ -118,9 +142,9 @@ where
 
             for nominal_ty in candidate.ty().as_adts() {
                 for method in
-                    self.nominal_method_candidates(&matcher, nominal_ty, Some(method_name))?
+                    self.nominal_method_candidates(&matcher, nominal_ty, Some(method_name), table)?
                 {
-                    let function_ref = method.function();
+                    let function_ref = method.function;
                     let Some(function_data) = item_query.function_data(function_ref)? else {
                         continue;
                     };
@@ -136,6 +160,7 @@ where
                             function_data.owner,
                             nominal_ty,
                         )?,
+                        trait_selection: method.trait_selection,
                     });
                 }
             }
@@ -154,6 +179,7 @@ where
                     function: structural.function,
                     receiver_ty: structural.receiver_ty,
                     subst: structural.subst,
+                    trait_selection: None,
                 });
             }
         }
@@ -167,26 +193,27 @@ where
         matcher: &BodyImplMatcher<'_, 'query, D, I>,
         receiver_ty: &AdtTy,
         method_name: Option<&str>,
-    ) -> Result<Vec<MemberMethodCandidateRef>, PackageStoreError> {
+        table: &InferenceTable,
+    ) -> Result<Vec<NominalMethodCandidate>, PackageStoreError> {
         let body_items = self.context.body_local_items();
         let mut candidates = Vec::new();
 
         for function in self.body_inherent_functions(&body_items, receiver_ty, method_name)? {
             if matcher.function_applies_to_receiver(function, receiver_ty)? {
-                Self::push_candidate(
-                    &mut candidates,
-                    MemberMethodCandidateRef::inherent(function),
-                );
+                candidates.push(NominalMethodCandidate {
+                    function,
+                    trait_selection: None,
+                });
             }
         }
 
         if receiver_ty.def.origin.as_crate_ref().is_some() {
             for function in self.semantic_inherent_functions(receiver_ty, method_name)? {
                 if matcher.function_applies_to_receiver(function, receiver_ty)? {
-                    Self::push_candidate(
-                        &mut candidates,
-                        MemberMethodCandidateRef::inherent(function),
-                    );
+                    candidates.push(NominalMethodCandidate {
+                        function,
+                        trait_selection: None,
+                    });
                 }
             }
         }
@@ -196,22 +223,23 @@ where
             body_trait_impls,
             receiver_ty,
             method_name,
+            table,
         )?;
-        for (function, applicability) in body_trait_functions {
-            Self::push_candidate(
-                &mut candidates,
-                MemberMethodCandidateRef::trait_method(function, applicability),
-            );
+        for (function, selection) in body_trait_functions {
+            candidates.push(NominalMethodCandidate {
+                function,
+                trait_selection: Some(selection),
+            });
         }
 
         if receiver_ty.def.origin.as_crate_ref().is_some() {
             let semantic_trait_functions =
-                matcher.trait_function_candidates_for_receiver(receiver_ty, method_name)?;
-            for (function, applicability) in semantic_trait_functions {
-                Self::push_candidate(
-                    &mut candidates,
-                    MemberMethodCandidateRef::trait_method(function, applicability),
-                );
+                matcher.trait_function_candidates_for_receiver(receiver_ty, method_name, table)?;
+            for (function, selection) in semantic_trait_functions {
+                candidates.push(NominalMethodCandidate {
+                    function,
+                    trait_selection: Some(selection),
+                });
             }
         }
 
@@ -298,6 +326,7 @@ where
                     function,
                     receiver_ty: receiver_ty.clone(),
                     subst: subst.clone(),
+                    trait_selection: None,
                 },
             );
         }

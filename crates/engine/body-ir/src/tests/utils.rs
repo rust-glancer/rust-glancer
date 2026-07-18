@@ -1063,7 +1063,7 @@ impl CrateBodyIrSnapshot<'_> {
                 self.render_semantic_item_ref(SemanticItemRef::TypeAlias(alias.associated_ty)),
                 self.render_generic_args(&alias.args)
             ),
-            Ty::Closure(id) => format!("closure #{id}"),
+            Ty::Closure(closure) => format!("closure #{}", closure.id),
             Ty::FnDef(function) => {
                 format!(
                     "function item {}{}",

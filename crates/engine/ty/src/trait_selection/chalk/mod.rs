@@ -7,11 +7,11 @@
 //! `lower` and `raise` translate at the solver boundary. `program` builds the goal-reachable Rust
 //! program Chalk reads, and `solver` owns the mutable forests that answer queries against it.
 
+mod evidence;
 mod interner;
 mod lower;
 mod program;
-mod projection;
 mod raise;
 mod solver;
 
-pub(super) use self::solver::{ChalkOutcome, ChalkTraitSolver};
+pub(super) use self::solver::{ChalkInferenceCache, ChalkOutcome, ChalkTraitSolver};

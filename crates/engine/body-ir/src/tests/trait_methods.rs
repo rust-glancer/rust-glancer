@@ -3,7 +3,7 @@ use expect_test::expect;
 use super::utils::check_project_body_ir;
 
 #[test]
-fn resolves_trait_methods_with_naive_applicability() {
+fn resolves_trait_methods_after_proving_impl_applicability() {
     check_project_body_ir(
         r#"
 //- /Cargo.toml

@@ -4,12 +4,12 @@
 //! Chalk callbacks from those maps. It does not resolve source paths or lower `TypeRef` again.
 //!
 //! `RustIrDatabase` also requires callbacks for language features outside rust-glancer's bounded
-//! solver model. Those callbacks return inert placeholder data. Query entry points reject shapes
-//! such as body-local closure projection before asking Chalk to make a semantic decision from a
-//! placeholder.
+//! solver model. Unsupported features retain inert data, while callable functions and closures
+//! are backed by canonical signatures materialized at the query boundary.
 
 use std::sync::Arc;
 
+use chalk_ir::fold::Shift;
 use chalk_ir::{
     AdtId, AssocTypeId, Binders, CanonicalVarKinds, ClosureId, CoroutineId, FnDefId, GenericArg,
     GenericArgData, OpaqueTyId, ProgramClause, ProgramClauses, Substitution, Ty, TyKind,
@@ -19,9 +19,8 @@ use chalk_solve::RustIrDatabase;
 use chalk_solve::rust_ir::{
     AdtRepr, AdtSizeAlign, AssociatedTyDatum, AssociatedTyValue, AssociatedTyValueBound,
     AssociatedTyValueId, ClosureKind, CoroutineDatum, CoroutineInputOutputDatum,
-    CoroutineWitnessDatum, FnDefDatum, FnDefDatumBound, FnDefInputsAndOutputDatum, ImplDatum,
-    Movability, OpaqueTyDatum, OpaqueTyDatumBound, Polarity, TraitDatum, WellKnownAssocType,
-    WellKnownTrait,
+    CoroutineWitnessDatum, FnDefDatum, FnDefInputsAndOutputDatum, ImplDatum, Movability,
+    OpaqueTyDatum, OpaqueTyDatumBound, Polarity, TraitDatum, WellKnownAssocType, WellKnownTrait,
 };
 use rg_ir_model::{ImplRef, TraitDefRef, TypeAliasRef, TypeDefRef};
 
@@ -222,27 +221,13 @@ impl RustIrDatabase<RgChalkInterner> for ChalkProgram {
         &self,
         fn_def_id: FnDefId<RgChalkInterner>,
     ) -> Arc<FnDefDatum<RgChalkInterner>> {
-        Arc::new(FnDefDatum {
-            id: fn_def_id,
-            sig: chalk_ir::FnSig {
-                abi: (),
-                safety: chalk_ir::Safety::Safe,
-                variadic: false,
-            },
-            binders: Binders::empty(
-                INTER,
-                FnDefDatumBound {
-                    inputs_and_output: Binders::empty(
-                        INTER,
-                        FnDefInputsAndOutputDatum {
-                            argument_types: Vec::new(),
-                            return_type: unit_ty(),
-                        },
-                    ),
-                    where_clauses: Vec::new(),
-                },
-            ),
-        })
+        let ChalkDefId::Function(function) = fn_def_id.0 else {
+            panic!("Chalk function callbacks should carry function IDs");
+        };
+        self.functions
+            .get(&function)
+            .cloned()
+            .expect("function types should be materialized before solving")
     }
 
     fn impl_datum(
@@ -431,9 +416,11 @@ impl RustIrDatabase<RgChalkInterner> for ChalkProgram {
 
     fn well_known_trait_id(
         &self,
-        _well_known_trait: WellKnownTrait,
+        well_known_trait: WellKnownTrait,
     ) -> Option<chalk_ir::TraitId<RgChalkInterner>> {
-        None
+        self.known_items
+            .trait_ref(well_known_trait)
+            .map(chalk_trait_id)
     }
 
     fn well_known_assoc_type_id(
@@ -458,26 +445,45 @@ impl RustIrDatabase<RgChalkInterner> for ChalkProgram {
         false
     }
 
-    // The shared program has no body inference facts. Closure-aware query paths are handled by
-    // Body IR; these values only make the mandatory database surface total.
+    // Capture analysis is not modeled yet. Treat closures as `Fn`, the most capable callable kind,
+    // preserving the bounded behavior that they may satisfy `Fn`, `FnMut`, and `FnOnce`.
     fn closure_kind(
         &self,
         _closure_id: ClosureId<RgChalkInterner>,
         _substs: &Substitution<RgChalkInterner>,
     ) -> ClosureKind {
-        ClosureKind::FnOnce
+        ClosureKind::Fn
     }
 
     fn closure_inputs_and_output(
         &self,
         _closure_id: ClosureId<RgChalkInterner>,
-        _substs: &Substitution<RgChalkInterner>,
+        substs: &Substitution<RgChalkInterner>,
     ) -> Binders<FnDefInputsAndOutputDatum<RgChalkInterner>> {
+        let (return_type, params) = substs
+            .as_slice(INTER)
+            .split_last()
+            .expect("closure substitutions always contain an output type");
+        let argument_types = params
+            .iter()
+            .map(|arg| {
+                let GenericArgData::Ty(ty) = arg.data(INTER) else {
+                    panic!("closure signatures contain only type arguments");
+                };
+                // The callback returns a binder even though this bounded model has no late-bound
+                // closure variables. Move query-owned variables through that empty binder so
+                // Chalk does not mistake them for parameters that the callback failed to supply.
+                ty.clone().shifted_in(INTER)
+            })
+            .collect();
+        let GenericArgData::Ty(return_type) = return_type.data(INTER) else {
+            panic!("closure output should be a type argument");
+        };
         Binders::empty(
             INTER,
             FnDefInputsAndOutputDatum {
-                argument_types: Vec::new(),
-                return_type: unit_ty(),
+                argument_types,
+                return_type: return_type.clone().shifted_in(INTER),
             },
         )
     }
@@ -495,6 +501,7 @@ impl RustIrDatabase<RgChalkInterner> for ChalkProgram {
         _closure_id: ClosureId<RgChalkInterner>,
         _substs: &Substitution<RgChalkInterner>,
     ) -> Substitution<RgChalkInterner> {
+        // Closure signatures contain no late-bound variables in the supported model.
         Substitution::empty(INTER)
     }
 

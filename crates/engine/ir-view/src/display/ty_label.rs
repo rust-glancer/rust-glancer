@@ -86,7 +86,7 @@ impl<'a, 'db> TypeRenderer<'a, 'db> {
                 let ret = self.render(ret)?.unwrap_or_else(|| "_".to_string());
                 Ok(Some(format!("fn({}) -> {ret}", params.join(", "))))
             }
-            Ty::Closure(id) => Ok(Some(format!("{{closure#{id}}}"))),
+            Ty::Closure(closure) => Ok(Some(format!("{{closure#{}}}", closure.id))),
             Ty::FnDef(function) => Ok(PathView::new(self.db, self.syntax.edition())
                 .function_path(function.def)?
                 .map(|path| format!("{{fn {path}}}"))),
