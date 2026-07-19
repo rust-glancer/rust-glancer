@@ -6,16 +6,22 @@
 //! analysis queries.
 
 use rg_ir_model::Path;
-use rg_ir_model::items::{Documentation, FieldKey, ParamItem};
 use rg_ir_model::{
-    BodyRef, CrateRef, EnumVariantRef, FieldRef, FunctionRef, ItemOwner, ScopeId, TypeDefId,
-    TypePathResolution,
+    BodyRef, CrateRef, EnumVariantRef, FieldKey, FieldRef, FunctionRef, ItemOwner, ScopeId,
+    TraitApplicability, TypeDefId,
 };
-use rg_semantic_ir::{EnumVariantData, FieldData, FunctionData, ItemLookupIndex, ItemStoreQuery};
-use rg_ty::MemberMethodOrigin;
-use rg_ty::{MemberMethodCandidateRef, MemberQuery, Ty, TyContext};
+use rg_item_tree::{Documentation, ParamItem, ParamKind};
+use rg_semantic_ir::{
+    EnumVariantData, FieldData, FunctionData, ItemLookupIndex, ItemStoreQuery, TypePathResolution,
+};
+use rg_ty::{
+    MemberMethodCandidateRef, MemberMethodOrigin as TyMemberMethodOrigin, MemberQuery, Ty,
+    TyContext,
+};
 
-use crate::{IndexedViewDb, SymbolKind, body::BodyResolutionView, item::path::PathView};
+use crate::{
+    IndexedViewDb, SymbolKind, body::BodyResolutionView, item::path::PathView, ty::IndexedType,
+};
 
 /// Borrowed data for one resolved field, independent from the storage layer it came from.
 #[derive(Debug, Clone, Copy)]
@@ -33,7 +39,7 @@ impl<'a> MemberField<'a> {
         self.data.field.key.as_ref()
     }
 
-    pub fn data(&self) -> FieldData<'a> {
+    pub(crate) fn data(&self) -> FieldData<'a> {
         self.data
     }
 
@@ -66,11 +72,24 @@ impl<'a> MemberFunction<'a> {
         self.data.name.as_str()
     }
 
-    pub fn params(&self) -> &'a [ParamItem] {
-        self.data.signature.params()
+    /// Iterate parameters without exposing the item-tree storage shape.
+    pub fn parameters(&self) -> impl ExactSizeIterator<Item = FunctionParameterView<'a>> + 'a {
+        self.data
+            .signature
+            .params()
+            .iter()
+            .map(FunctionParameterView::new)
     }
 
-    pub fn data(&self) -> &'a FunctionData {
+    pub fn parameter(&self, index: usize) -> Option<FunctionParameterView<'a>> {
+        self.data
+            .signature
+            .params()
+            .get(index)
+            .map(FunctionParameterView::new)
+    }
+
+    pub(crate) fn data(&self) -> &'a FunctionData {
         self.data
     }
 
@@ -95,6 +114,30 @@ impl<'a> MemberFunction<'a> {
 
     fn docs(&self) -> Option<&'a Documentation> {
         self.data.docs.as_ref()
+    }
+}
+
+/// Borrowed parameter facts needed by editor features.
+///
+/// Item lowering retains complete patterns and type syntax. Completion and inlay hints only need
+/// the written pattern plus whether the parameter is a receiver, so the full item-tree node stays
+/// behind this projection.
+#[derive(Debug, Clone, Copy)]
+pub struct FunctionParameterView<'a> {
+    param: &'a ParamItem,
+}
+
+impl<'a> FunctionParameterView<'a> {
+    fn new(param: &'a ParamItem) -> Self {
+        Self { param }
+    }
+
+    pub fn pattern(self) -> &'a str {
+        self.param.pat.as_str()
+    }
+
+    pub fn is_receiver(self) -> bool {
+        matches!(self.param.kind, ParamKind::SelfParam(_))
     }
 }
 
@@ -124,6 +167,22 @@ impl<'a> MemberEnumVariant<'a> {
 pub struct MemberMethodCandidate<'a> {
     function: MemberFunction<'a>,
     origin: MemberMethodOrigin,
+}
+
+/// Declaration source for a method candidate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MemberMethodOrigin {
+    Inherent,
+    Trait { applicability: TraitApplicability },
+}
+
+impl From<TyMemberMethodOrigin> for MemberMethodOrigin {
+    fn from(origin: TyMemberMethodOrigin) -> Self {
+        match origin {
+            TyMemberMethodOrigin::Inherent => Self::Inherent,
+            TyMemberMethodOrigin::Trait { applicability } => Self::Trait { applicability },
+        }
+    }
 }
 
 impl<'a> MemberMethodCandidate<'a> {
@@ -167,7 +226,7 @@ impl<'a, 'db> MemberView<'a, 'db> {
     pub fn field_candidates_for_ty<'view>(
         &'view self,
         use_site: CrateRef,
-        ty: &Ty,
+        ty: &IndexedType,
     ) -> anyhow::Result<Vec<MemberField<'view>>> {
         let mut fields = Vec::new();
         let Some(semantic_index) = self.semantic_index(use_site)? else {
@@ -179,7 +238,7 @@ impl<'a, 'db> MemberView<'a, 'db> {
             semantic_index,
             self.db.trait_selection(use_site),
         ));
-        for field_ref in member_query.fields_for_ty(ty)? {
+        for field_ref in member_query.fields_for_ty(ty.raw())? {
             let Some(field) = self.field(field_ref)? else {
                 continue;
             };
@@ -284,9 +343,9 @@ impl<'a, 'db> MemberView<'a, 'db> {
     pub fn method_candidates_for_ty<'view>(
         &'view self,
         use_site: MemberUseSite,
-        ty: &Ty,
+        ty: &IndexedType,
     ) -> anyhow::Result<Vec<MemberMethodCandidate<'view>>> {
-        let candidates = self.method_candidate_refs_for_ty(use_site, ty)?;
+        let candidates = self.method_candidate_refs_for_ty(use_site, ty.raw())?;
         self.method_candidates_from_refs(candidates)
     }
 
@@ -361,7 +420,7 @@ impl<'a, 'db> MemberView<'a, 'db> {
     ) -> MemberMethodCandidate<'view> {
         MemberMethodCandidate {
             function,
-            origin: candidate.origin(),
+            origin: candidate.origin().into(),
         }
     }
 

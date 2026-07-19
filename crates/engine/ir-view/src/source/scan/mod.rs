@@ -12,9 +12,9 @@ mod signature;
 pub(super) use self::{
     body::{
         BindingSurface, BodyCursorScanner, BodySourceCandidate, BodySourceScanner,
-        DotCompletionSiteScanner, PathCompletionNamespace, PathCompletionSiteScanner,
-        RecordFieldCompletionSiteScanner, RecordFieldKeySurface, UnqualifiedCompletionNamespace,
-        UnqualifiedCompletionSiteScanner, ValueReferenceSource, ValueReferenceSurface,
+        DotCompletionSiteScanner, PathCompletionSiteScanner, RecordFieldCompletionSiteScanner,
+        RecordFieldKeySurface, UnqualifiedCompletionSiteScanner, ValueReferenceSource,
+        ValueReferenceSurface,
     },
     definition::{DefinitionSourceCandidate, DefinitionSourceScanner},
     import_completion::ImportPathCompletionSiteScanner,

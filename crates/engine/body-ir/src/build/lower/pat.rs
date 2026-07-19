@@ -5,19 +5,16 @@ use rg_syntax::{
     ast::{self, HasName as _, RangeItem as _},
 };
 
-use rg_ir_model::{
-    BindingId, BodyPath, BodyPathSegment, BodyPathSegmentKind, ExprId, Mutability, PatId, ScopeId,
-    items::{FieldKey, TypeRef},
-};
-use rg_item_tree::{FromAst as _, RecordPatFieldAst};
+use rg_ir_model::{BindingId, ExprId, FieldKey, Mutability, PatId, ScopeId};
+use rg_item_tree::TypeRef;
 use rg_text::Name;
 
 use crate::ir::{
-    BindingData, BindingKind, LiteralKind, PatBindingMode, PatData, PatKind, PatRangeKind,
-    PendingBindingResolution, RecordFieldSyntax, RecordPatField,
+    BindingData, BindingKind, BodyPath, BodyPathSegment, BodyPathSegmentKind, LiteralKind, PatData,
+    PatKind, RecordPatField,
 };
 
-use super::body::BodyLowering;
+use super::{PendingBindingResolution, body::BodyLowering};
 
 /// A priori binding information from the syntactic position of an identifier pattern.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -126,7 +123,7 @@ impl BodyLowering<'_> {
                 };
                 let name_span = self.source(name_ast.syntax()).span;
                 let name = self.intern_ast_name(name_ast);
-                let mode = PatBindingMode::from_ast(&pat, ());
+                let mode = Self::pat_binding_mode_from_ast(&pat);
                 let ambiguous_path = pat.is_simple_ident().then(|| {
                     BodyPath::new(
                         name_span,
@@ -221,11 +218,7 @@ impl BodyLowering<'_> {
                     let name = self.intern_ast_name_or_name_ref(field_name);
                     let key = FieldKey::Named(name.clone());
                     let source_span = self.source(field.syntax()).span;
-                    let syntax =
-                        <RecordFieldSyntax as rg_item_tree::FromAst<RecordPatFieldAst>>::from_ast(
-                            &field,
-                            RecordPatFieldAst,
-                        );
+                    let syntax = Self::record_pat_field_syntax(&field);
                     let pat = if syntax.is_explicit() {
                         match field.pat() {
                             Some(inner) => self.lower_pat_inner(
@@ -363,7 +356,7 @@ impl BodyLowering<'_> {
                 end: pat
                     .end()
                     .map(|end| self.lower_pat_inner(end, scope, kind, None, false, bindings)),
-                kind: pat.op_kind().map(|kind| PatRangeKind::from_ast(&kind, ())),
+                kind: pat.op_kind().map(Self::pat_range_kind_from_ast),
             },
             ast::Pat::ConstBlockPat(pat) => PatKind::ConstBlock {
                 expr: pat

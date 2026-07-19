@@ -2,9 +2,8 @@
 
 use rg_def_map::DefMapSource;
 use rg_ir_model::{
-    AssocItemId, BodyAssociatedPathPrefix, BodyPath, ConstRef, DefMapRef, EnumVariantRef,
-    FunctionRef, ImplRef, ItemOwner, Path, ScopeId, TraitImplRef, TypeDefId,
-    identity::DeclarationRef,
+    AssocItemId, ConstRef, DefMapRef, EnumVariantRef, FunctionRef, ImplRef, ItemOwner, Path,
+    ScopeId, TraitImplRef, TypeDefId, identity::DeclarationRef,
 };
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::ItemStoreSource;
@@ -13,7 +12,10 @@ use rg_ty::{AdtTy, ExpectedTyExt, Substitution, TraitSelection, Ty, inference::I
 
 use super::traits::BodyQualifiedTraitSelection;
 
-use crate::{ir::resolved::BodyResolution, resolution::BodyResolutionContext};
+use crate::{
+    BodyAssociatedPathPrefix, BodyPath, ir::resolved::BodyResolution,
+    resolution::BodyResolutionContext,
+};
 
 /// Resolves `Type::item` paths in value position.
 ///

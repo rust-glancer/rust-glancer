@@ -2,12 +2,13 @@
 
 use std::collections::HashMap;
 
-use rg_ir_model::{CrateRef, ExprId, ExprKind, ExprWrapperKind};
+use rg_body_ir::{ExprKind, ExprWrapperKind};
+use rg_ir_model::{CrateRef, ExprId};
 use rg_parse::{FileId, Span};
 use rg_semantic_ir::ItemStoreQuery;
 use rg_ty::Ty;
 
-use crate::IndexedViewDb;
+use crate::{IndexedViewDb, ty::IndexedType};
 
 /// A body-derived construct whose known source span ends at its closing brace.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -56,7 +57,7 @@ pub struct MethodChainExprTy {
     file_id: FileId,
     span: Span,
     parent_dot_span: Span,
-    ty: Ty,
+    ty: IndexedType,
 }
 
 impl MethodChainExprTy {
@@ -72,7 +73,7 @@ impl MethodChainExprTy {
         self.parent_dot_span
     }
 
-    pub fn ty(&self) -> &Ty {
+    pub fn ty(&self) -> &IndexedType {
         &self.ty
     }
 }
@@ -119,7 +120,7 @@ impl<'a, 'db> BodyStructureView<'a, 'db> {
                     file_id: expr.source.file_id,
                     span: expr.source.span,
                     parent_dot_span,
-                    ty,
+                    ty: IndexedType::new(ty),
                 });
             }
         }

@@ -5,7 +5,8 @@
 //! alias body directly or assumes that the trait is reachable through the path `core::ops::Deref`.
 
 use rg_def_map::DefMapSource;
-use rg_ir_model::{ItemOwner, TraitDefRef, items::LangItem};
+use rg_ir_model::{ItemOwner, TraitDefRef};
+use rg_item_tree::LangItem;
 use rg_semantic_ir::ItemStoreSource;
 use rg_std::UniqueVec;
 

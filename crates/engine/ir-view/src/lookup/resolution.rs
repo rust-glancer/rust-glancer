@@ -5,13 +5,11 @@
 //! identities.
 
 use rg_def_map::{DefMapQuery, DefMapSource, NamespaceSet};
-use rg_ir_model::Path;
-use rg_ir_model::items::FieldKey;
 use rg_ir_model::{
-    BodyRef, DefId, LocalDefRef, ModuleRef, ScopeId, TypePathResolution,
+    BodyRef, DefId, FieldKey, LocalDefRef, ModuleRef, Path, ScopeId,
     identity::{DeclarationRef, ExprRef},
 };
-use rg_semantic_ir::{ItemStoreQuery, TypePathContext};
+use rg_semantic_ir::{ItemStoreQuery, TypePathContext, TypePathResolution};
 use rg_ty::ItemPathQuery;
 
 use crate::{IndexedViewDb, body::BodyResolutionView, source::IndexedTypePathScope};

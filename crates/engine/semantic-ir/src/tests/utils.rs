@@ -665,8 +665,8 @@ impl CrateSemanticIrSnapshot<'_> {
                     .static_data(id)
                     .expect("static id should exist while rendering");
                 let mutability = match data.mutability {
-                    rg_item_tree::Mutability::Shared => "",
-                    rg_item_tree::Mutability::Mutable => "mut ",
+                    rg_ir_model::Mutability::Shared => "",
+                    rg_ir_model::Mutability::Mutable => "mut ",
                 };
                 let ty = data
                     .ty

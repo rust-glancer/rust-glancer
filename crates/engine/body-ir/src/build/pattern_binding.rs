@@ -12,23 +12,23 @@
 
 use rg_def_map::{DefMapSource, NamespaceSet};
 use rg_ir_model::{
-    BindingId, DefId, DefMapRef, ExprId, ModuleId, ModuleRef, Path, ScopeId, SemanticItemRef,
-    TypeDefId,
-    identity::DeclarationRef,
-    items::{FieldKey, FieldList, SelfParamKind, TypeRef},
+    BindingId, DefId, DefMapRef, ExprId, FieldKey, ModuleId, ModuleRef, Path, ScopeId,
+    SemanticItemRef, TypeDefId, identity::DeclarationRef,
 };
+use rg_item_tree::{FieldList, SelfParamKind, TypeRef};
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::{ItemLookupIndex, ItemStoreSource};
 use rg_ty::{ExpectedAdtTyExt, ReferencePeelingCandidates, TraitSelectionSession, Ty};
 
 use crate::{
     BodyPath,
-    ir::LoweredBodyData,
     ir::resolved::BodyResolution,
-    ir::{BindingKind, ExprKind, PatKind, PendingBindingResolution, RecordPatField, StmtKind},
+    ir::{BindingKind, ExprKind, PatKind, RecordPatField, StmtKind},
 };
 
 use crate::resolution::BodyResolutionContext;
+
+use super::lower::{LoweredBodyData, PendingBindingResolution};
 
 /// Resolves lowered binding candidates into the final body binding arena.
 ///

@@ -4,11 +4,11 @@
 //! node means for resolution, completion, or navigation. Query code keeps that policy close to
 //! the query and uses these walkers only for reusable child traversal.
 
-use rg_body_ir::{BodyView, PatData, PatKind};
-use rg_ir_model::{
-    BodyPath, BodyPathSegment, BodyPathSegmentArgs, BodyPathSegmentKind, PatId, ScopeId,
-    items::{GenericArg, TypeBound, TypePath, TypePathAnchor, TypeRef},
+use rg_body_ir::{
+    BodyPath, BodyPathSegment, BodyPathSegmentArgs, BodyPathSegmentKind, BodyView, PatData, PatKind,
 };
+use rg_ir_model::{PatId, ScopeId};
+use rg_item_tree::{GenericArg, TypeBound, TypePath, TypePathAnchor, TypeRef};
 
 /// One pattern node reached by structural pattern traversal.
 ///

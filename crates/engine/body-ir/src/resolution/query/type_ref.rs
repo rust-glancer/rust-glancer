@@ -1,8 +1,8 @@
 //! Body adapter for the shared semantic type lowerer.
 
 use rg_def_map::DefMapSource;
-use rg_ir_model::items::{GenericArg as ItemGenericArg, TypeRef};
 use rg_ir_model::{GenericDefRef, ScopeId};
+use rg_item_tree::{GenericArg as ItemGenericArg, TypeRef};
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::ItemStoreSource;
 use rg_ty::{

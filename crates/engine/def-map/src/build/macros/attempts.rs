@@ -9,7 +9,8 @@ use std::collections::HashMap;
 use anyhow::Context as _;
 
 use crate::{CrateResolutionEnv, MacroDefinitionEnv};
-use rg_ir_model::{CrateRef, Path, items::BuiltinMacroKind};
+use rg_ir_model::{CrateRef, Path};
+use rg_item_tree::BuiltinMacroKind;
 use rg_item_tree::{BuiltinMacroItem, CfgSelectArmPayload, ItemTreeDb, ItemTreeId};
 use rg_macro_runtime::{
     ExpansionParseKind, ExpansionSyntax, MacroCompileRecord, MacroExpandRecord,

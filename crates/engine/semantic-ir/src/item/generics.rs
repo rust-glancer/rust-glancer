@@ -4,8 +4,8 @@
 //! owner-scoped parameter refs and arranges every visible parameter in the order used by semantic
 //! generic arguments.
 
-use rg_ir_model::items::{ConstParamData, LifetimeParamData, TypeBound, TypeParamData};
 use rg_ir_model::{GenericDefRef, GenericParamRef};
+use rg_item_tree::{ConstParamData, LifetimeParamData, TypeBound, TypeParamData};
 use rg_text::Name;
 
 /// Borrowed declaration facts explaining where one semantic parameter came from.

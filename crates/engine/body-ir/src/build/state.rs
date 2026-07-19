@@ -5,11 +5,11 @@ use rg_arena::Arena;
 use rg_cfg_eval::CfgEvaluator;
 use rg_def_map::DefMapReadTxn;
 use rg_ir_model::{
-    BodyId, BodyRef, ConstRef, CrateRef, DefMapRef, ItemOwner, ModuleRef, Path, StaticRef,
-    TypePathResolution,
+    BodyId, BodyRef, ConstRef, CrateRef, DefMapRef, ItemOwner, ModuleRef, StaticRef,
 };
-use rg_semantic_ir::SemanticIrReadTxn;
-use rg_semantic_ir::{CrateItemQuery, ItemLookupIndex, ItemStore};
+use rg_semantic_ir::{
+    CrateItemQuery, ItemLookupIndex, ItemStore, SemanticIrReadTxn, TypePathResolution,
+};
 use rg_std::ExpectedUnique;
 use rg_text::NameInterner;
 use rg_ty::TraitSelectionSession;
@@ -302,7 +302,7 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
 
                     let mut resolved_trait_ref = ExpectedUnique::new();
                     if let Some(trait_ref) = trait_ref
-                        && let Some(path) = Path::from_type_ref(&trait_ref)
+                        && let Some(path) = trait_ref.as_def_map_path()
                         && let TypePathResolution::Trait(trait_ref) =
                             type_paths.resolve_in_scope(scope, &path)?
                     {

@@ -13,9 +13,8 @@ pub use query::{
 pub use rg_ir_view::SymbolKind;
 
 use rg_ir_model::{CrateRef, PackageSlot};
-use rg_ir_view::IndexedViewDb;
+use rg_ir_view::{IndexedViewDb, ty::IndexedType};
 use rg_parse::{FileId, ParseDb, Span};
-use rg_ty::Ty;
 
 use crate::source_symbol::{SourceSymbol, SourceSymbolIndex, SourceSymbolResolver};
 
@@ -141,7 +140,7 @@ impl<'a> Analysis<'a> {
         crate_ref: CrateRef,
         file_id: FileId,
         offset: u32,
-    ) -> anyhow::Result<Option<Ty>> {
+    ) -> anyhow::Result<Option<IndexedType>> {
         let Some(symbol) = self.symbol_at_for_query(crate_ref, file_id, offset)? else {
             return Ok(None);
         };

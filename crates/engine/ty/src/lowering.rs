@@ -5,14 +5,14 @@
 //! do not get a second recursive visitor or their own rules for parameters, aliases, and args.
 
 use rg_def_map::DefMapSource;
-use rg_ir_model::items::{
-    GenericArg as ItemGenericArg, TypeBound, TypePath, TypePathAnchor, TypeRef, WherePredicate,
-};
 use rg_ir_model::{
     GenericDefRef, GenericParamRef, ItemOwner, OpaqueTyId, OpaqueTyRef, Path, ScopeId, TraitDefRef,
-    TypeAliasRef, TypeParamRef, TypePathResolution,
+    TypeAliasRef, TypeParamRef,
 };
-use rg_semantic_ir::{GenericParamSource, ItemStoreSource, TypePathContext};
+use rg_item_tree::{
+    GenericArg as ItemGenericArg, TypeBound, TypePath, TypePathAnchor, TypeRef, WherePredicate,
+};
+use rg_semantic_ir::{GenericParamSource, ItemStoreSource, TypePathContext, TypePathResolution};
 use rg_std::{ExpectedUnique, UniqueVec};
 
 use crate::inference::InferenceTable;
@@ -242,7 +242,7 @@ where
         let TypeRef::Path(path) = trait_ty else {
             return Ok(None);
         };
-        let Some(path_key) = Path::from_type_path(path) else {
+        let Some(path_key) = path.as_def_map_path() else {
             return Ok(None);
         };
         let TypePathResolution::Trait(trait_ref) = self
@@ -600,7 +600,7 @@ where
                 .unwrap_or(Ty::Param(param)));
         }
 
-        let Some(path_key) = Path::from_type_path(path) else {
+        let Some(path_key) = path.as_def_map_path() else {
             return Ok(Ty::Unknown);
         };
         let resolution = self

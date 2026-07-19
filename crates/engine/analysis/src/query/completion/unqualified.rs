@@ -5,6 +5,7 @@ use std::collections::HashSet;
 use rg_ir_view::{
     display::syntax::SyntaxRenderer,
     item::details::{DeclarationDetailsContext, DeclarationDetailsView},
+    lookup::name::NameNamespace,
     member::MemberView,
 };
 
@@ -17,8 +18,7 @@ use crate::{
 use super::{
     CallCompletionKind, CompletionQuery,
     candidates::{
-        CompletionCandidateSource, CompletionScopeNamespace, LexicalCompletionCandidate,
-        ModuleCompletionCandidate,
+        CompletionCandidateSource, LexicalCompletionCandidate, ModuleCompletionCandidate,
     },
     completion_sort::{CompletionSortPolicy, CompletionSortPriority},
     function::{FunctionCompletionRenderer, FunctionCompletionRequest},
@@ -108,7 +108,7 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
         candidate: LexicalCompletionCandidate,
         filter: UnqualifiedCompletionFilter,
         edit: CompletionEdit,
-        hidden: &mut HashSet<(String, CompletionScopeNamespace)>,
+        hidden: &mut HashSet<(String, NameNamespace)>,
         completions: &mut Vec<CompletionItem>,
     ) -> anyhow::Result<()> {
         for namespace in candidate.shadow_namespaces() {
@@ -177,7 +177,7 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
         &self,
         candidates: Vec<ModuleCompletionCandidate>,
         options: ModuleCompletionOptions,
-        hidden: &HashSet<(String, CompletionScopeNamespace)>,
+        hidden: &HashSet<(String, NameNamespace)>,
         completions: &mut Vec<CompletionItem>,
     ) -> anyhow::Result<()> {
         let renderer = ModuleCompletionRenderer::new(self.analysis, self.query)?;
@@ -239,9 +239,9 @@ struct ModuleCompletionOptions {
 }
 
 impl UnqualifiedCompletionFilter {
-    fn accepts_scope_namespace(self, namespace: CompletionScopeNamespace) -> bool {
+    fn accepts_scope_namespace(self, namespace: NameNamespace) -> bool {
         match self {
-            Self::Types => matches!(namespace, CompletionScopeNamespace::Types),
+            Self::Types => matches!(namespace, NameNamespace::Types),
             Self::All => true,
         }
     }

@@ -5,7 +5,8 @@
 //! Specialized helpers live in sibling modules so this file can read like the pass itself.
 
 use rg_def_map::DefMapSource;
-use rg_ir_model::{BindingId, BodyRef, ExprId, items::SelfParamKind};
+use rg_ir_model::{BindingId, BodyRef, ExprId};
+use rg_item_tree::SelfParamKind;
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::{ItemLookupIndex, ItemStoreSource};
 use rg_ty::{ExpectedAdtTyExt, TraitSelectionSession, Ty};

@@ -1,22 +1,66 @@
-//! Composite projection from declarations and paths into types.
+//! Composite projection from declarations and paths into indexed types.
 //!
-//! `Ty` is the common type vocabulary analysis exposes today. This view keeps projection rules
-//! from Semantic IR, DefMap, and Body IR out of query orchestration.
+//! Type inference owns a much larger vocabulary than editor features need. `IndexedType` keeps
+//! that compiler representation behind the view boundary while still supporting the concrete
+//! operations used by hover, navigation, completion, and inlay hints.
 
 pub mod locals;
 
 use rg_ir_model::{
-    BodyRef, EnumVariantRef, FieldRef, Path, ScopeId, SemanticItemRef, TypePathResolution,
-    identity::DeclarationRef, identity::ExprRef, items::PrimitiveTy,
+    BodyRef, EnumVariantRef, FieldRef, Path, PrimitiveTy, ScopeId, SemanticItemRef, TypeDefRef,
+    identity::DeclarationRef, identity::ExprRef,
 };
-use rg_semantic_ir::{ItemStoreQuery, TypePathContext};
+use rg_semantic_ir::{ItemStoreQuery, TypePathContext, TypePathResolution};
 use rg_ty::{AdtTy, ItemPathQuery, ReferencePeelingCandidates, SemanticSignatureQuery, Ty};
 
 use crate::{
     IndexedViewDb, body::BodyResolutionView, source::IndexedTypePathScope, ty::locals::BodyView,
 };
 
-/// Projects indexed declarations and body facts into `Ty`.
+/// An inferred type carried across the compiler-to-editor boundary.
+///
+/// The wrapped type is intentionally opaque. Editor features should ask a view to render it,
+/// inspect the small set of stable properties exposed here, or feed it back into another view
+/// query. This avoids coupling analysis workflows to solver-only variants and substitutions.
+#[derive(Clone, PartialEq, Eq)]
+pub struct IndexedType(Ty);
+
+impl std::fmt::Debug for IndexedType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("IndexedType(..)")
+    }
+}
+
+impl IndexedType {
+    pub(crate) fn new(ty: Ty) -> Self {
+        Self(ty)
+    }
+
+    pub(crate) fn raw(&self) -> &Ty {
+        &self.0
+    }
+
+    /// Return the primitive kind when this is exactly a primitive type.
+    pub fn primitive(&self) -> Option<PrimitiveTy> {
+        match self.raw() {
+            Ty::Primitive(primitive) => Some(*primitive),
+            _ => None,
+        }
+    }
+
+    /// Whether displaying this type after a method-chain segment would only add noise.
+    pub fn is_unit_or_never(&self) -> bool {
+        matches!(self.raw(), Ty::Unit | Ty::Never)
+    }
+
+    /// Iterate nominal definitions represented by this type after peeling references.
+    pub fn nominal_type_defs(&self) -> impl Iterator<Item = TypeDefRef> + '_ {
+        ReferencePeelingCandidates::new(self.raw())
+            .filter_map(|candidate| candidate.ty().as_adts().first().map(|ty| ty.def))
+    }
+}
+
+/// Projects indexed declarations and body facts into opaque editor-facing types.
 pub struct TyView<'a, 'db> {
     db: &'a IndexedViewDb<'db>,
 }
@@ -27,27 +71,16 @@ impl<'a, 'db> TyView<'a, 'db> {
     }
 
     /// Return the resolved body type for an expression.
-    pub fn ty_for_expr(&self, expr: ExprRef) -> anyhow::Result<Option<Ty>> {
+    pub fn ty_for_expr(&self, expr: ExprRef) -> anyhow::Result<Option<IndexedType>> {
         self.body_view().expr_ty(expr.body_ir(), expr.expr_id())
     }
 
-    /// Return declaration refs represented by a type, peeling references first.
-    pub fn declarations_for_ty(&self, ty: &Ty) -> Vec<DeclarationRef> {
-        let mut declarations = Vec::new();
-        for candidate in ReferencePeelingCandidates::new(ty) {
-            for ty in candidate.ty().as_adts() {
-                let declaration = DeclarationRef::from(ty.def);
-                if !declarations.contains(&declaration) {
-                    declarations.push(declaration);
-                }
-            }
-        }
-        declarations
-    }
-
     /// Project a declaration into its type when that question is meaningful.
-    pub fn ty_for_declaration(&self, declaration: DeclarationRef) -> anyhow::Result<Option<Ty>> {
-        match declaration {
+    pub fn ty_for_declaration(
+        &self,
+        declaration: DeclarationRef,
+    ) -> anyhow::Result<Option<IndexedType>> {
+        let ty = match declaration {
             DeclarationRef::Module(_) => Ok(None),
             DeclarationRef::LocalDef(local_def) => {
                 let Some(SemanticItemRef::TypeDef(ty)) =
@@ -70,20 +103,29 @@ impl<'a, 'db> TyView<'a, 'db> {
             ) => Ok(None),
             DeclarationRef::Field(field) => self.ty_for_field(field),
             DeclarationRef::EnumVariant(variant) => self.ty_for_enum_variant(variant),
-            DeclarationRef::BodyBinding(binding) => self.body_view().binding_ty(binding),
-        }
+            DeclarationRef::BodyBinding(binding) => {
+                return self.body_view().binding_ty(binding);
+            }
+        }?;
+        Ok(ty.map(IndexedType::new))
     }
 
-    /// Resolve a signature type path into `Ty`.
-    pub fn ty_for_type_path(&self, context: TypePathContext, path: &Path) -> anyhow::Result<Ty> {
+    /// Resolve a signature type path into an indexed type.
+    pub fn ty_for_type_path(
+        &self,
+        context: TypePathContext,
+        path: &Path,
+    ) -> anyhow::Result<IndexedType> {
         let resolution = ItemPathQuery::new(self.db, self.db).resolve_type_path(context, path)?;
         if matches!(resolution, TypePathResolution::Unknown)
             && let Some(primitive) = path.single_name().and_then(PrimitiveTy::from_name)
         {
-            return Ok(Ty::Primitive(primitive));
+            return Ok(IndexedType::new(Ty::Primitive(primitive)));
         }
 
-        Ok(Self::type_path_resolution_to_ty(resolution))
+        Ok(IndexedType::new(Self::type_path_resolution_to_ty(
+            resolution,
+        )))
     }
 
     /// Resolve a type path from either signature or body source.
@@ -91,7 +133,7 @@ impl<'a, 'db> TyView<'a, 'db> {
         &self,
         scope: IndexedTypePathScope,
         path: &Path,
-    ) -> anyhow::Result<Ty> {
+    ) -> anyhow::Result<IndexedType> {
         match scope {
             IndexedTypePathScope::Signature(context) => self.ty_for_type_path(context, path),
             IndexedTypePathScope::Body(scope) => {
@@ -100,23 +142,25 @@ impl<'a, 'db> TyView<'a, 'db> {
         }
     }
 
-    /// Resolve a body type path into `Ty`.
+    /// Resolve a body type path into an indexed type.
     pub fn ty_for_body_type_path(
         &self,
         body_ref: BodyRef,
         scope: ScopeId,
         path: &Path,
-    ) -> anyhow::Result<Ty> {
+    ) -> anyhow::Result<IndexedType> {
         let resolution = BodyResolutionView::new(self.db)
             .type_path_resolution(body_ref, scope, path)?
             .unwrap_or(TypePathResolution::Unknown);
         if matches!(resolution, TypePathResolution::Unknown)
             && let Some(primitive) = path.single_name().and_then(PrimitiveTy::from_name)
         {
-            return Ok(Ty::Primitive(primitive));
+            return Ok(IndexedType::new(Ty::Primitive(primitive)));
         }
 
-        Ok(Self::type_path_resolution_to_ty(resolution))
+        Ok(IndexedType::new(Self::type_path_resolution_to_ty(
+            resolution,
+        )))
     }
 
     /// Resolve a body value path into its expression type.
@@ -125,10 +169,12 @@ impl<'a, 'db> TyView<'a, 'db> {
         body_ref: BodyRef,
         scope: ScopeId,
         path: &Path,
-    ) -> anyhow::Result<Ty> {
+    ) -> anyhow::Result<IndexedType> {
         // Value-path type queries should use the same Body IR resolver as the main body pass, so
         // enum variants and associated functions agree between snapshots and cursor queries.
-        BodyResolutionView::new(self.db).nonlocal_value_path_ty(body_ref, scope, path)
+        Ok(IndexedType::new(
+            BodyResolutionView::new(self.db).nonlocal_value_path_ty(body_ref, scope, path)?,
+        ))
     }
 
     /// Resolve the declared type of a field.

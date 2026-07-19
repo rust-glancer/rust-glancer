@@ -2,10 +2,9 @@
 
 use rg_def_map::DefMapSource;
 use rg_ir_model::{
-    EnumVariantRef, FieldRef, PathSegment, TypeDefId,
-    identity::DeclarationRef,
-    items::{FieldItem, FieldKey, FieldList},
+    EnumVariantRef, FieldKey, FieldRef, PathSegment, TypeDefId, identity::DeclarationRef,
 };
+use rg_item_tree::{FieldItem, FieldList};
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::ItemStoreSource;
 use rg_std::{ExpectedUnique, UniqueVec};

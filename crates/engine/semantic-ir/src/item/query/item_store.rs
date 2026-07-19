@@ -4,12 +4,12 @@
 //! item-shaped queries, while callers provide only the origin-to-store routing policy.
 
 use rg_def_map::LocalEnumVariantData;
-use rg_ir_model::items::{FieldKey, GenericParams};
 use rg_ir_model::{
-    AssocItemId, ConstRef, CrateRef, DefMapRef, EnumVariantRef, FieldRef, FunctionRef,
+    AssocItemId, ConstRef, CrateRef, DefMapRef, EnumVariantRef, FieldKey, FieldRef, FunctionRef,
     GenericDefRef, ImplRef, ItemOwner, LocalDefRef, LocalEnumVariantRef, ModuleRef,
     SemanticItemRef, StaticRef, TraitDefRef, TypeAliasRef, TypeDefId, TypeDefRef,
 };
+use rg_item_tree::GenericParams;
 
 use super::ItemStoreSource;
 use crate::{

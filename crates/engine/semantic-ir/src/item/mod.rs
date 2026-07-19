@@ -14,6 +14,7 @@ mod lowering;
 mod query;
 mod signature;
 mod store;
+mod type_path_resolution;
 mod view;
 
 pub use self::{
@@ -28,5 +29,6 @@ pub use self::{
     query::{CrateItemQuery, GenericsQuery, ItemResolutionQuery, ItemStoreQuery, ItemStoreSource},
     signature::{ConstSignature, FunctionSignature, TypeAliasSignature},
     store::{ItemStore, ItemStoreBuilder},
+    type_path_resolution::TypePathResolution,
     view::SemanticItemView,
 };

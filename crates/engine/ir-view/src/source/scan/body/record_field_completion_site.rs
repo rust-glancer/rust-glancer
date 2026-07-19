@@ -6,8 +6,7 @@
 //! The cursor must be on a key or in free field-list space. `User { name: val$0 }` is deliberately
 //! rejected so ordinary value completion can handle the field value.
 
-use rg_ir_model::items::FieldKey;
-use rg_ir_model::{BodyRef, CrateRef, ScopeId};
+use rg_ir_model::{BodyRef, CrateRef, FieldKey, ScopeId};
 use rg_package_store::PackageStoreError;
 use rg_parse::{FileId, Span, TextSpan};
 

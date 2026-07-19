@@ -19,13 +19,14 @@
 
 use anyhow::Context as _;
 use rg_arena::{Arena, ArenaId as _};
-use rg_ir_model::{BodyData, BodyId, CrateId};
+use rg_ir_model::{BodyId, CrateId};
 use rg_parse::FileId;
 use rg_semantic_ir::ItemLookupIndex;
 use rg_std::MemorySize;
 use wincode::{SchemaRead, SchemaWrite};
 
 use super::{BodyLocalItems, CrateBodies, CrateBodiesCoverage, PackageBodies};
+use crate::BodyData;
 use crate::{BodyFacts, BodyView};
 
 impl PackageBodies {

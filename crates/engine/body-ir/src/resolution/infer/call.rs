@@ -7,7 +7,8 @@
 use std::sync::Arc;
 
 use rg_def_map::DefMapSource;
-use rg_ir_model::{ExprId, GenericDefRef, GenericParamRef, items::GenericArg as ItemGenericArg};
+use rg_ir_model::{ExprId, GenericDefRef, GenericParamRef};
+use rg_item_tree::GenericArg as ItemGenericArg;
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::{Generics, ItemStoreSource};
 use rg_ty::{

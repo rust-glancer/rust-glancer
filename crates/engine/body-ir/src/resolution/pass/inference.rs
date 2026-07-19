@@ -6,7 +6,7 @@
 
 use rg_def_map::DefMapSource;
 use rg_ir_model::{
-    EnumVariantRef, ExprId, GenericDefRef, PatId, StmtId, identity::DeclarationRef, items::FieldKey,
+    EnumVariantRef, ExprId, FieldKey, GenericDefRef, PatId, StmtId, identity::DeclarationRef,
 };
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::ItemStoreSource;

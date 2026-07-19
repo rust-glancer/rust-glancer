@@ -7,9 +7,8 @@ use rg_arena::Arena;
 use rg_ir_model::{
     BodyRef, CrateRef, DefMapRef, ImportId, LocalDefId, LocalDefRef, LocalEnumVariantId,
     LocalEnumVariantRef, LocalImplId, LocalImplRef, ModuleId, ModuleRef,
-    hir::source::{GeneratedSourceData, GeneratedSourceId},
-    items::{EnumItem, FieldList, ItemKind, VisibilityLevel},
 };
+use rg_item_tree::{EnumItem, FieldList, ItemKind, VisibilityLevel};
 use rg_parse::FileId;
 
 use crate::{
@@ -20,6 +19,7 @@ use crate::{
     },
     module::ModuleData,
     scope::{Namespace, NamespaceSet, PerNs, Visibility},
+    source::{GeneratedSourceData, GeneratedSourceId},
 };
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]

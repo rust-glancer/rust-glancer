@@ -4,19 +4,19 @@
 //! resolved in a fixed-point loop before the final DefMap is frozen.
 
 use rg_def_map::{
-    CrateResolutionEnv, DefMap, DefMapBuilder, DefMapSource, ImportBinding, ImportData, ImportKind,
-    ImportPath, LocalDefData, LocalDefKind, LocalEnumVariantData, LocalEnumVariantEntry,
-    LocalImplData, MacroDefinitionEnv, MacroDefinitionView, ModuleData, ModuleOrigin, ModuleScope,
-    ModuleScopeBuilder, Namespace, ScopeBinding, ScopeBindingProvenance, ScopeEntryRef,
-    ScopeResolutionEnv, ScopeResolver, Visibility,
-};
-use rg_ir_model::items::{
-    Documentation, EnumItem, ImportAlias, ItemKind, ItemNode, ItemTreeId, ModuleSource,
+    BodyItemSourceRef, CrateResolutionEnv, DefMap, DefMapBuilder, DefMapSource, ImportBinding,
+    ImportData, ImportKind, ImportPath, ItemSource, LocalDefData, LocalDefKind,
+    LocalEnumVariantData, LocalEnumVariantEntry, LocalImplData, MacroDefinitionEnv,
+    MacroDefinitionView, ModuleData, ModuleOrigin, ModuleScope, ModuleScopeBuilder, Namespace,
+    ScopeBinding, ScopeBindingProvenance, ScopeEntryRef, ScopeResolutionEnv, ScopeResolver,
+    Visibility,
 };
 use rg_ir_model::{
     BodyRef, CrateRef, DefId, DefMapRef, ImportRef, LocalDefRef, LocalEnumVariantRef, ModuleId,
     ModuleRef,
-    hir::source::{BodyItemSourceRef, ItemSource},
+};
+use rg_item_tree::{
+    Documentation, EnumItem, ImportAlias, ItemKind, ItemNode, ItemTreeId, ModuleSource,
 };
 use rg_package_store::PackageStoreError;
 use rg_text::Name;

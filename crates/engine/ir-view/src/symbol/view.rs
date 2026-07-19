@@ -4,9 +4,8 @@ use std::fmt::Write as _;
 
 use anyhow::Result;
 use rg_def_map::DefMapSource;
-use rg_ir_model::items::FieldKey;
 use rg_ir_model::{
-    AssocItemId, ConstRef, CrateRef, DefMapRef, EnumVariantRef as SemanticEnumVariantRef,
+    AssocItemId, ConstRef, CrateRef, DefMapRef, EnumVariantRef as SemanticEnumVariantRef, FieldKey,
     FunctionRef as SemanticFunctionRef, ModuleId, ModuleRef, SemanticItemKind, TypeAliasRef,
     TypeDefId, TypeDefRef, identity::DeclarationRef,
 };

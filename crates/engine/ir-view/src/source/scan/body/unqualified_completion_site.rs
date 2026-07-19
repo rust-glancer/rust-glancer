@@ -10,15 +10,17 @@
 //! module::it$0; not handled here: candidates come from `module`
 //! ```
 
-use rg_ir_model::{BodyRef, CrateRef, ScopeId, items::TypePath};
+use rg_ir_model::{BodyRef, CrateRef, ScopeId};
+use rg_item_tree::TypePath;
 use rg_package_store::PackageStoreError;
 use rg_parse::FileId;
 
 use rg_body_ir::{BodyIrReadTxn, BodyPath, BodyView, ExprKind};
 
 use super::super::NarrowestSourceSite;
+use super::UnqualifiedCompletionSite;
 use super::sites::BodyScanSites;
-use super::{UnqualifiedCompletionNamespace, UnqualifiedCompletionSite};
+use crate::lookup::name::ValueOrTypeNamespace;
 
 /// Finds the source site that belongs to an unqualified completion offset.
 ///
@@ -134,7 +136,7 @@ impl<'txn, 'db> UnqualifiedCompletionSiteScanner<'txn, 'db> {
             scope,
             member_prefix_span: segment.span,
             member_prefix: self.prefix_text(segment.name.as_str(), segment.span),
-            namespace: UnqualifiedCompletionNamespace::Types,
+            namespace: ValueOrTypeNamespace::Types,
             visible_bindings,
         })
     }
@@ -167,7 +169,7 @@ impl<'txn, 'db> UnqualifiedCompletionSiteScanner<'txn, 'db> {
                 member_prefix_span: span,
                 member_prefix: self
                     .prefix_text(def_map_path.single_name().unwrap_or_default(), span),
-                namespace: UnqualifiedCompletionNamespace::Values,
+                namespace: ValueOrTypeNamespace::Values,
                 visible_bindings,
             },
             path.source_span.len(),

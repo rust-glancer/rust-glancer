@@ -1,7 +1,7 @@
 use rg_ir_model::{
-    BodyId, BodyRef, CrateRef, DefMapRef, ExprId, FunctionId, FunctionRef, GenericDefRef,
-    OpaqueTyId, OpaqueTyRef, PackageSlot, StructId, TraitDefRef, TraitId, TypeDefId, TypeDefRef,
-    items::{FloatTy, SignedIntTy, UnsignedIntTy},
+    BodyId, BodyRef, CrateRef, DefMapRef, ExprId, FloatTy, FunctionId, FunctionRef, GenericDefRef,
+    OpaqueTyId, OpaqueTyRef, PackageSlot, SignedIntTy, StructId, TraitDefRef, TraitId, TypeDefId,
+    TypeDefRef, UnsignedIntTy,
 };
 
 use super::{InferenceTable, UnknownTypeInstantiationBuilder};

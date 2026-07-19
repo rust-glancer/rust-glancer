@@ -5,10 +5,8 @@
 //! member facts.
 
 use rg_body_ir::{BodyResolutionContext, BodyView};
-use rg_ir_model::{
-    BodyRef, EnumVariantRef, Path, ScopeId, TypePathResolution, identity::DeclarationRef,
-};
-use rg_semantic_ir::ItemLookupIndex;
+use rg_ir_model::{BodyRef, EnumVariantRef, Path, ScopeId, identity::DeclarationRef};
+use rg_semantic_ir::{ItemLookupIndex, TypePathResolution};
 use rg_ty::{MemberMethodCandidateRef, Ty};
 
 use crate::IndexedViewDb;

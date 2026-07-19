@@ -7,11 +7,8 @@
 use anyhow::Context as _;
 
 use crate::ItemStore;
-use rg_def_map::{DefMapDb, DefMapReadTxn, PackageSlot};
-use rg_ir_model::{
-    CrateId, CrateRef,
-    hir::source::{ItemSource, ItemSourceKind},
-};
+use rg_def_map::{DefMapDb, DefMapReadTxn, ItemSource, ItemSourceKind, PackageSlot};
+use rg_ir_model::{CrateId, CrateRef};
 use rg_item_tree::{ItemNode, ItemTreeDb, Package as ItemTreePackage};
 
 use crate::{ItemStoreLowerer, ItemStoreSourceReader, PackageIr};

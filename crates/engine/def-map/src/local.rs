@@ -1,9 +1,8 @@
-use rg_ir_model::items::{
-    BuiltinMacroKind, Documentation, ItemKind, ItemTag, MacroDefinitionItem, VisibilityLevel,
-};
 use rg_ir_model::{
-    CrateRef, DefMapRef, LocalDefId, LocalDefRef, LocalEnumVariantId, LocalEnumVariantRef,
-    ModuleId, hir::source::ItemSource,
+    CrateRef, DefMapRef, LocalDefId, LocalDefRef, LocalEnumVariantId, LocalEnumVariantRef, ModuleId,
+};
+use rg_item_tree::{
+    BuiltinMacroKind, Documentation, ItemKind, ItemTag, MacroDefinitionItem, VisibilityLevel,
 };
 use rg_macro_runtime::DeclarativeMacroDefinition;
 use rg_parse::{FileId, Span};
@@ -12,7 +11,10 @@ use rg_text::{Name, RustEdition};
 use rg_tt::TopSubtree;
 use wincode::{SchemaRead, SchemaWrite};
 
-use crate::scope::{NamespaceSet, Visibility};
+use crate::{
+    ItemSource,
+    scope::{NamespaceSet, Visibility},
+};
 
 /// One module-scope definition collected from source.
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]

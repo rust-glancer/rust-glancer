@@ -5,13 +5,13 @@
 //! context, so closure obligations and ordinary body traversal cannot disagree about patterns.
 
 use rg_def_map::DefMapSource;
-use rg_ir_model::{BodyPath, Mutability, PatId, items::FieldKey};
+use rg_ir_model::{FieldKey, Mutability, PatId};
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::ItemStoreSource;
 use rg_ty::Ty;
 
 use crate::{
-    ir::{PatKind, RecordPatField},
+    ir::{BodyPath, PatKind, RecordPatField},
     resolution::BodyResolutionContext,
 };
 

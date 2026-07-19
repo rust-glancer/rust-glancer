@@ -10,9 +10,9 @@
 //!     ^     ^ retain both references, as well as the `value` declaration
 //! ```
 
+use rg_def_map::ItemSourceKind;
 use rg_ir_model::{
     BindingId, BodyRef, CrateRef, EnumVariantRef, ExprId, FieldRef, SemanticItemRef, TypeDefId,
-    hir::source::ItemSourceKind,
 };
 use rg_package_store::PackageStoreError;
 use rg_parse::FileId;

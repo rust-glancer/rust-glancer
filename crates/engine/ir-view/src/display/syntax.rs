@@ -6,7 +6,7 @@
 
 use std::fmt;
 
-use rg_ir_model::items::{
+use rg_item_tree::{
     FieldKey, TypeBound, TypeBoundListDisplay, TypeNameFormatter, TypeRef, TypeRefDisplay,
 };
 use rg_text::{Name, RustEdition};
@@ -122,10 +122,8 @@ impl fmt::Display for FieldKeyDisplay<'_> {
 
 #[cfg(test)]
 mod tests {
-    use rg_ir_model::{
-        Mutability,
-        items::{TypeBound, TypeRef},
-    };
+    use rg_ir_model::Mutability;
+    use rg_item_tree::{TypeBound, TypeRef};
     use rg_text::{Name, RustEdition};
 
     use super::SyntaxRenderer;

@@ -4,12 +4,14 @@
 //! and visibility-order binding boundaries so the later resolution pass can stay focused.
 
 mod body;
+mod builder;
 mod crate_lowering;
 mod expr;
 mod macro_expansion;
 mod pat;
 mod stmt;
 mod syntax;
+mod syntax_kind;
 mod task;
 
 use anyhow::Context as _;
@@ -23,8 +25,9 @@ use rg_parse::ParseDb;
 use rg_semantic_ir::SemanticIrReadTxn;
 use rg_text::{NameInterner, PackageNameInterners};
 
-use crate::{BodyIrBuildPolicy, CrateBodiesCoverage, ir::LoweredBodyData};
+use crate::{BodyIrBuildPolicy, CrateBodiesCoverage};
 
+pub(super) use self::builder::{LoweredBodyData, PendingBindingResolution};
 use self::crate_lowering::CrateLowering;
 pub(super) use self::macro_expansion::BodyMacroExpansion;
 pub(super) use self::task::{BodyLoweringTask, BodyTaskLowering};

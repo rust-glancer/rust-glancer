@@ -1,8 +1,11 @@
 //! Resolution of analysis cursor symbols to declarations and types.
 
 use rg_ir_model::identity::DeclarationRef;
-use rg_ir_view::{IndexedViewDb, lookup::resolution::ResolutionView, ty::TyView};
-use rg_ty::Ty;
+use rg_ir_view::{
+    IndexedViewDb,
+    lookup::resolution::ResolutionView,
+    ty::{IndexedType, TyView},
+};
 
 use crate::model::SymbolAt;
 
@@ -48,7 +51,7 @@ impl<'a, 'db> SourceSymbolResolver<'a, 'db> {
         }
     }
 
-    pub(crate) fn ty_for_symbol(&self, symbol: SymbolAt) -> anyhow::Result<Option<Ty>> {
+    pub(crate) fn ty_for_symbol(&self, symbol: SymbolAt) -> anyhow::Result<Option<IndexedType>> {
         let ty_view = TyView::new(self.db);
         let ty = match symbol {
             SymbolAt::Expr { expr } => ty_view.ty_for_expr(expr)?,

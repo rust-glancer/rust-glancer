@@ -30,8 +30,8 @@ use chalk_solve::rust_ir::{
 use rg_def_map::DefMapSource;
 use rg_ir_model::{
     FunctionRef, GenericDefRef, ImplRef, OpaqueTyRef, TraitDefRef, TypeAliasRef, TypeDefRef,
-    items::LangItem,
 };
+use rg_item_tree::LangItem;
 use rg_semantic_ir::{CrateItemQuery, ItemLookupIndex, ItemStoreSource};
 use rg_std::UniqueVec;
 use rg_text::Name;

@@ -2,8 +2,9 @@ use rg_arena::Arena;
 use rg_ir_model::{
     ConstId, ConstRef, CrateRef, DefMapRef, EnumId, FunctionId, FunctionRef, ImplId, ImplRef,
     ItemId, LocalDefId, SemanticItemRef, StaticId, StaticRef, StructId, TraitDefRef, TraitId,
-    TypeAliasId, TypeAliasRef, TypeDefId, TypeDefRef, UnionId, items::LangItem,
+    TypeAliasId, TypeAliasRef, TypeDefId, TypeDefRef, UnionId,
 };
+use rg_item_tree::{GenericParams, LangItem};
 use rg_std::{ExpectedUnique, MemorySize, Shrink};
 use wincode::{SchemaRead, SchemaWrite};
 
@@ -329,10 +330,7 @@ impl ItemStore {
         }
     }
 
-    pub fn generic_params_for_type_def(
-        &self,
-        id: TypeDefId,
-    ) -> Option<&rg_ir_model::items::GenericParams> {
+    pub fn generic_params_for_type_def(&self, id: TypeDefId) -> Option<&GenericParams> {
         match id {
             TypeDefId::Struct(id) => self.struct_data(id).map(|data| &data.generics),
             TypeDefId::Enum(id) => self.enum_data(id).map(|data| &data.generics),

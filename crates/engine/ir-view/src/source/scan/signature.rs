@@ -14,10 +14,10 @@
 use rg_ir_model::{
     CrateRef, DefMapRef, EnumVariantRef, FieldRef, FunctionRef, ItemOwner, Path, TypeDefId,
     TypeDefRef,
-    items::{
-        FieldList, GenericArg, GenericParams, TypeBound, TypePath, TypePathAnchor, TypeRef,
-        WherePredicate,
-    },
+};
+use rg_item_tree::{
+    FieldList, GenericArg, GenericParams, TypeBound, TypePath, TypePathAnchor, TypeRef,
+    WherePredicate,
 };
 use rg_package_store::PackageStoreError;
 use rg_parse::{FileId, Span};
@@ -468,7 +468,7 @@ impl<'txn, 'db> SignatureSourceScanner<'txn, 'db> {
         for (idx, segment) in path.segments.iter().enumerate() {
             if path.anchor.is_none()
                 && self.offset_matches(segment.span)
-                && let Some(def_map_path) = Path::from_type_path_prefix(path, idx)
+                && let Some(def_map_path) = path.as_def_map_path_prefix(idx)
             {
                 self.push_candidate(SignatureSourceCandidate::TypePath {
                     context,

@@ -9,14 +9,16 @@
 //! model::$0                qualifier `model`, use an empty replacement span
 //! ```
 
-use rg_ir_model::{BodyRef, CrateRef, Path, ScopeId, items::TypePath};
+use rg_ir_model::{BodyRef, CrateRef, ScopeId};
+use rg_item_tree::TypePath;
 use rg_package_store::PackageStoreError;
 use rg_parse::{FileId, Span, TextSpan};
 
 use rg_body_ir::{BodyIrReadTxn, BodyPath, BodyView, ExprKind, PatData};
 
 use super::super::NarrowestSourceSite;
-use super::{PathCompletionNamespace, PathCompletionSite, sites::BodyScanSites};
+use super::{PathCompletionSite, sites::BodyScanSites};
+use crate::lookup::name::ValueOrTypeNamespace;
 
 /// Finds the source site that belongs to a qualified-path completion offset.
 ///
@@ -94,7 +96,7 @@ impl<'txn, 'db> PathCompletionSiteScanner<'txn, 'db> {
                     body_ref,
                     expr_data.scope,
                     path,
-                    PathCompletionNamespace::Values,
+                    ValueOrTypeNamespace::Values,
                     best,
                 ),
                 ExprKind::Record {
@@ -103,7 +105,7 @@ impl<'txn, 'db> PathCompletionSiteScanner<'txn, 'db> {
                     body_ref,
                     expr_data.scope,
                     path,
-                    PathCompletionNamespace::Types,
+                    ValueOrTypeNamespace::Types,
                     best,
                 ),
                 _ => {}
@@ -125,9 +127,9 @@ impl<'txn, 'db> PathCompletionSiteScanner<'txn, 'db> {
         best: &mut NarrowestSourceSite<PathCompletionSite>,
     ) {
         if let Some(path) = data.kind.record_path() {
-            self.scan_body_path(body_ref, scope, path, PathCompletionNamespace::Types, best);
+            self.scan_body_path(body_ref, scope, path, ValueOrTypeNamespace::Types, best);
         } else if let Some(path) = data.kind.value_path() {
-            self.scan_body_path(body_ref, scope, path, PathCompletionNamespace::Values, best);
+            self.scan_body_path(body_ref, scope, path, ValueOrTypeNamespace::Values, best);
         }
     }
 
@@ -153,9 +155,9 @@ impl<'txn, 'db> PathCompletionSiteScanner<'txn, 'db> {
             return Some(PathCompletionSite {
                 body,
                 scope,
-                qualifier: Path::from_type_path_prefix(path, idx - 1)?,
+                qualifier: path.as_def_map_path_prefix(idx - 1)?,
                 member_prefix_span: segment.span,
-                namespace: PathCompletionNamespace::Types,
+                namespace: ValueOrTypeNamespace::Types,
             });
         }
 
@@ -172,9 +174,9 @@ impl<'txn, 'db> PathCompletionSiteScanner<'txn, 'db> {
         Some(PathCompletionSite {
             body,
             scope,
-            qualifier: Path::from_type_path(path)?,
+            qualifier: path.as_def_map_path()?,
             member_prefix_span: span,
-            namespace: PathCompletionNamespace::Types,
+            namespace: ValueOrTypeNamespace::Types,
         })
     }
 
@@ -204,7 +206,7 @@ impl<'txn, 'db> PathCompletionSiteScanner<'txn, 'db> {
         body: BodyRef,
         scope: ScopeId,
         path: &BodyPath,
-        namespace: PathCompletionNamespace,
+        namespace: ValueOrTypeNamespace,
     ) -> Option<PathCompletionSite> {
         let last_segment_span = path.segment_span(path.segment_count().checked_sub(1)?)?;
         let span = self.empty_member_span(path.source_span, last_segment_span)?;
@@ -230,7 +232,7 @@ impl<'txn, 'db> PathCompletionSiteScanner<'txn, 'db> {
         body: BodyRef,
         scope: ScopeId,
         path: &BodyPath,
-        namespace: PathCompletionNamespace,
+        namespace: ValueOrTypeNamespace,
         best: &mut NarrowestSourceSite<PathCompletionSite>,
     ) {
         for idx in 1..path.segment_count() {

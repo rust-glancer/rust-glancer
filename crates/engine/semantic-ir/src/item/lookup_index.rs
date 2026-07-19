@@ -10,8 +10,9 @@ use std::collections::HashMap;
 use rg_def_map::DefMapSource;
 use rg_ir_model::{
     AssocItemId, FunctionRef, ImplRef, SemanticItemRef, TraitDefRef, TraitImplRef, TypeAliasRef,
-    TypeDefRef, items::LangItem,
+    TypeDefRef,
 };
+use rg_item_tree::LangItem;
 use rg_std::{MemorySize, Shrink, UniqueVec};
 use rg_text::Name;
 use wincode::{SchemaRead, SchemaWrite};

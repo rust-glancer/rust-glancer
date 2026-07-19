@@ -9,12 +9,12 @@ use crate::{
     ExprKind, LabelData, PatBindingMode, PatData, PatKind, StmtKind, testonly::BodyIrFixture,
 };
 use rg_def_map::ModuleOrigin;
-use rg_ir_model::items::FieldItem;
 use rg_ir_model::{
     BindingId, BodyId, BodyRef, CrateRef, DefId, DefMapRef, EnumVariantRef, ExprId, FieldRef,
     FunctionRef, GenericParamRef, ImplRef, ItemId, ItemOwner, LocalDefRef, ModuleId, ModuleRef,
     PatId, SemanticItemRef, StmtId, TraitDefRef, TypeDefId, TypeDefRef, identity::DeclarationRef,
 };
+use rg_item_tree::FieldItem;
 use rg_parse::{CargoTarget, Package, ParseDb};
 use rg_semantic_ir::{GenericParamSource, GenericsQuery};
 use rg_ty::{
@@ -270,7 +270,7 @@ impl CrateBodyIrSnapshot<'_> {
         }
     }
 
-    fn render_source_item(&self, id: usize, item: &rg_ir_model::BodySourceItem, dump: &mut String) {
+    fn render_source_item(&self, id: usize, item: &crate::ir::BodySourceItem, dump: &mut String) {
         let source_item = item.item();
         let name = source_item.name.as_deref().unwrap_or("<unnamed>");
         let provenance = if item.source().is_written() {
@@ -1670,7 +1670,7 @@ fn render_binding_list(bindings: &[BindingId]) -> String {
         .join(", ")
 }
 
-fn render_item_generic_args(args: &[rg_ir_model::items::GenericArg]) -> String {
+fn render_item_generic_args(args: &[rg_item_tree::GenericArg]) -> String {
     if args.is_empty() {
         return String::new();
     }

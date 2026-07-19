@@ -4,7 +4,7 @@
 //! This crate lowers those definitions into language items such as structs, functions, traits,
 //! impls, and signatures, then exposes crate-scoped stores and resolution queries over them.
 //!
-//! Types remain syntax-shaped here. Projecting a [`rg_ir_model::items::TypeRef`] into the type
+//! Types remain syntax-shaped here. Projecting a [`rg_item_tree::TypeRef`] into the type
 //! engine belongs to `rg_ty`, which depends on this crate rather than participating in definition
 //! ownership.
 
@@ -26,7 +26,7 @@ pub use self::{
         GenericsQuery, ImplData, ItemLookupIndex, ItemResolutionQuery, ItemStore, ItemStoreBuilder,
         ItemStoreLowerer, ItemStoreQuery, ItemStoreSource, ItemStoreSourceReader, SemanticItemView,
         StaticData, StructData, TraitData, TypeAliasData, TypeAliasSignature, TypePathContext,
-        UnionData,
+        TypePathResolution, UnionData,
     },
     store::{SemanticIrDb, SemanticIrReadTxn},
 };

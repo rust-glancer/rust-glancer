@@ -3,15 +3,16 @@
 //! Goto-implementation is an editor query, but the lookup itself needs direct access to crate item
 //! indexes and body expression facts. This view keeps those storage-shaped queries out of analysis.
 
+use rg_body_ir::ExprKind;
 use rg_ir_model::{
-    BodyRef, CrateRef, DefMapRef, ExprKind, FunctionRef, SemanticItemRef, TraitDefRef, TypeDefRef,
+    BodyRef, CrateRef, DefMapRef, FunctionRef, SemanticItemRef, TraitDefRef, TypeDefRef,
     identity::{DeclarationRef, ExprRef},
 };
 use rg_semantic_ir::{ItemLookupIndex, ItemStoreQuery};
 use rg_std::UniqueVec;
 use rg_ty::{ImplementationQuery, ReferencePeelingCandidates, Ty, TyContext};
 
-use crate::{IndexedViewDb, lookup::resolution::ResolutionView};
+use crate::{IndexedViewDb, lookup::resolution::ResolutionView, ty::IndexedType};
 
 /// Finds implementation declarations for types, traits, and methods.
 pub struct ImplementationView<'a, 'db> {
@@ -144,13 +145,13 @@ impl<'a, 'db> ImplementationView<'a, 'db> {
     pub fn implementations_for_ty(
         &self,
         use_site: CrateRef,
-        ty: &Ty,
+        ty: &IndexedType,
     ) -> anyhow::Result<UniqueVec<DeclarationRef>> {
         let mut implementations = UniqueVec::new();
         let Some(implementation_query) = self.implementation_query(use_site)? else {
             return Ok(implementations);
         };
-        for implementation in implementation_query.impls_for_ty(ty)? {
+        for implementation in implementation_query.impls_for_ty(ty.raw())? {
             implementations.push(DeclarationRef::from(implementation));
         }
         Ok(implementations)

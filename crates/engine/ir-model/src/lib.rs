@@ -1,25 +1,19 @@
-//! Storage-free identity model shared by the indexed IR layers.
+//! Shared identities and small language primitives for the indexed IR layers.
 //!
-//! These types name things, but they do not know how those things are stored. Keeping them below
-//! DefMap, Semantic IR, and Body IR lets higher layers talk about one declaration or one function
-//! without making any single storage crate own the aggregate identity.
+//! This crate deliberately owns no item or body HIR. It only contains stable routing references
+//! and context-free Rust primitives needed below more than one owning domain. Item syntax belongs
+//! to `rg_item_tree`; structural bodies belong to `rg_body_ir`.
 
-pub mod hir;
+mod body_source;
+mod builtin_macro;
+mod field;
 mod ids;
-pub mod items;
+mod literal;
 mod mutability;
+mod operator;
 pub mod path;
-mod resolution;
+mod primitive;
 
-pub use self::hir::body::{
-    BindingData, BindingKind, BodyAssociatedPathPrefix, BodyData, BodyMacroCallData, BodyOwner,
-    BodyPath, BodyPathSegment, BodyPathSegmentArgs, BodyPathSegmentKind, BodySource,
-    BodySourceItem, BodySourceItems, BuiltinMacroExprKind, ClosureCapture, ClosureKind,
-    ClosureParamData, ExprAssignOp, ExprBinaryOp, ExprBlockKind, ExprData, ExprKind, ExprRangeKind,
-    ExprUnaryOp, ExprWrapperKind, FunctionParamData, LabelData, LiteralKind, MatchArmData,
-    PatBindingMode, PatData, PatKind, PatRangeKind, RecordExprField, RecordExprSpread,
-    RecordFieldSyntax, RecordPatField, ScopeData, StmtData, StmtKind,
-};
 pub use self::ids::{
     body::{BindingId, BodyBindingRef, BodyId, BodyRef, ExprId, PatId, ScopeId, StmtId},
     def_map::{
@@ -38,7 +32,14 @@ pub use self::ids::{
 };
 pub use self::mutability::Mutability;
 pub use self::path::{Path, PathSegment, last_segment_name};
-pub use self::resolution::TypePathResolution;
+pub use self::{
+    body_source::BodySource,
+    builtin_macro::BuiltinMacroExprKind,
+    field::FieldKey,
+    literal::LiteralKind,
+    operator::{ExprBinaryOp, ExprUnaryOp},
+    primitive::{FloatTy, PrimitiveTy, SignedIntTy, UnsignedIntTy},
+};
 pub use rg_parse::{FileId, Span, TextSpan};
 pub use rg_workspace::PackageSlot;
 

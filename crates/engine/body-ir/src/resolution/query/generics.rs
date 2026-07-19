@@ -1,10 +1,8 @@
 //! Owner-scoped generic substitution helpers for body queries.
 
 use rg_def_map::DefMapSource;
-use rg_ir_model::{
-    DefMapRef, GenericDefRef, ImplRef, ItemOwner, ScopeId, TraitDefRef,
-    items::GenericArg as ItemGenericArg,
-};
+use rg_ir_model::{DefMapRef, GenericDefRef, ImplRef, ItemOwner, ScopeId, TraitDefRef};
+use rg_item_tree::GenericArg as ItemGenericArg;
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::{GenericParamSource, ItemStoreSource};
 use rg_ty::{AdtTy, GenericArg, Substitution, Ty};

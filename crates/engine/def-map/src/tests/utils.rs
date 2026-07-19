@@ -1,14 +1,12 @@
 use expect_test::Expect;
 
 use crate::{
-    DefMap, ImportData, ImportKind, LocalDefKind, Namespace, NamespaceSet, ResolvePathResult,
-    ScopeBinding, ScopeBindingProvenance, ScopeEntry, ScopeResolutionRef, Visibility,
+    DefMap, ImportData, ImportKind, ItemSource, ItemSourceKind, LocalDefKind, Namespace,
+    NamespaceSet, ResolvePathResult, ScopeBinding, ScopeBindingProvenance, ScopeEntry,
+    ScopeResolutionRef, Visibility,
 };
 use crate::{DefMapDb, testonly::DefMapFixture};
-use rg_ir_model::{
-    CrateId, CrateRef, DefId, DefMapRef, ModuleId, ModuleRef, Path, PathSegment,
-    hir::source::{ItemSource, ItemSourceKind},
-};
+use rg_ir_model::{CrateId, CrateRef, DefId, DefMapRef, ModuleId, ModuleRef, Path, PathSegment};
 use rg_item_tree::VisibilityLevel;
 use rg_package_store::PackageLoader;
 use rg_parse::{CargoTarget, FileId, Package, ParseDb};

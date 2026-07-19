@@ -5,12 +5,12 @@
 //! the view crate prevents editor-facing analysis code from reaching into storage queries directly.
 
 use rg_def_map::{DefMapQuery, DefMapSource};
-use rg_ir_model::items::Documentation;
 use rg_ir_model::{
     BodyBindingRef, ConstRef, DefId, EnumVariantRef, FieldRef, FunctionRef, LocalDefRef, ModuleRef,
     SemanticItemRef, StaticRef, TraitDefRef, TypeAliasRef, TypeDefId, TypeDefRef,
     identity::DeclarationRef,
 };
+use rg_item_tree::Documentation;
 use rg_semantic_ir::ItemStoreQuery;
 use rg_text::RustEdition;
 

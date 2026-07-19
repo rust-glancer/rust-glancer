@@ -8,6 +8,7 @@ mod package;
 mod profile;
 mod query;
 mod scope;
+mod source;
 mod store;
 #[doc(hidden)]
 pub mod testonly;
@@ -41,6 +42,10 @@ pub use self::{
         ModuleScope, ModuleScopeBuilder, Namespace, NamespaceSet, PerNs, ScopeBinding,
         ScopeBindingProvenance, ScopeBindingRoute, ScopeEntry, ScopeEntryRef, ScopeResolution,
         ScopeResolutionRef, Visibility,
+    },
+    source::{
+        BodyItemSourceRef, GeneratedItemRef, GeneratedSourceData, GeneratedSourceId, ItemSource,
+        ItemSourceKind,
     },
     store::{DefMapDb, DefMapReadTxn, DefMapStats},
     visible::{VisibleScopeDef, VisibleScopeDefs, VisibleScopeOrigin},

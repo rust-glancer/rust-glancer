@@ -2,9 +2,10 @@
 
 use rg_def_map::DefMapSource;
 use rg_ir_model::{
-    DefId, ExprData, ExprId, FunctionRef, GenericDefRef, GenericParamRef, ScopeId, SemanticItemRef,
-    identity::DeclarationRef, items::GenericArg as ItemGenericArg,
+    DefId, ExprId, FunctionRef, GenericDefRef, GenericParamRef, ScopeId, SemanticItemRef,
+    identity::DeclarationRef,
 };
+use rg_item_tree::{FunctionQualifiers, GenericArg as ItemGenericArg};
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::{GenericParamSource, Generics, ItemStoreSource};
 use rg_std::{ExpectedUnique, UniqueVec};
@@ -13,7 +14,10 @@ use rg_ty::{
 };
 
 use crate::resolution::BodyResolutionContext;
-use crate::{ir::ExprKind, ir::resolved::BodyResolution};
+use crate::{
+    ir::resolved::BodyResolution,
+    ir::{ExprData, ExprKind},
+};
 
 use super::associated_item::BodyAssociatedFunctionCandidate;
 
@@ -503,7 +507,7 @@ where
                     params: Vec::new(),
                     ret: Ty::Unknown,
                     clauses: Vec::new(),
-                    qualifiers: rg_ir_model::items::FunctionQualifiers::default(),
+                    qualifiers: FunctionQualifiers::default(),
                 },
                 subst: Substitution::new(),
             });

@@ -14,12 +14,10 @@
 //! value.cast::<Target>()
 //! ```
 
-use rg_ir_model::{
-    BodySource, ExprId, PatId, ScopeId,
-    items::{
-        FieldItem, FieldList, FunctionItem, GenericParams, ImplItem, ItemKind, ItemNode,
-        ItemTreeId, ModuleItem, ModuleSource, TypeBound, TypePath, TypeRef, WherePredicate,
-    },
+use rg_ir_model::{BodySource, ExprId, PatId, ScopeId};
+use rg_item_tree::{
+    FieldItem, FieldList, FunctionItem, GenericParams, ImplItem, ItemKind, ItemNode, ItemTreeId,
+    ModuleItem, ModuleSource, TypeBound, TypePath, TypeRef, WherePredicate,
 };
 use rg_parse::FileId;
 

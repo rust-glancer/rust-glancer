@@ -12,9 +12,9 @@ mod scan;
 mod tests;
 
 pub use completion::{
-    IndexedMemberAccessSite, IndexedNameNamespace, IndexedQualifiedPathScope,
-    IndexedQualifiedPathSite, IndexedRecordFieldListSite, IndexedUnqualifiedNameScope,
-    IndexedUnqualifiedNameSite, SourceCompletionView,
+    IndexedMemberAccessSite, IndexedQualifiedPathScope, IndexedQualifiedPathSite,
+    IndexedRecordFieldListSite, IndexedUnqualifiedNameScope, IndexedUnqualifiedNameSite,
+    SourceCompletionView,
 };
 pub use occurrence::{
     IndexedSourceFact, IndexedSourceOccurrence, IndexedSourceRole, IndexedSourceSurface,

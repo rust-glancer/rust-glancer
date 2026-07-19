@@ -8,10 +8,8 @@
 //! example, `Action` is a type path while `Start` is a value path. The facade keeps those semantic
 //! inputs distinct instead of forcing scanners to choose a navigation result.
 
-use rg_ir_model::Path;
-use rg_ir_model::items::FieldKey;
 use rg_ir_model::{
-    BodyBindingRef, CrateRef, ModuleRef,
+    BodyBindingRef, CrateRef, FieldKey, ModuleRef, Path,
     identity::{DeclarationRef, ExprRef, FunctionBodyRef, LexicalScopeRef},
 };
 use rg_parse::{FileId, Span};

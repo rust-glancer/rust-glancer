@@ -1,7 +1,6 @@
 //! Source helpers for colonless record pattern fields.
 
-use rg_ir_model::items::FieldKey;
-use rg_ir_model::{BindingId, PatId};
+use rg_ir_model::{BindingId, FieldKey, PatId};
 use rg_parse::{FileId, Span};
 use rg_std::UniqueVec;
 

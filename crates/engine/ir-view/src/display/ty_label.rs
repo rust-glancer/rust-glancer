@@ -9,7 +9,9 @@ use rg_semantic_ir::{GenericParamSource, GenericsQuery, ItemStoreQuery};
 use rg_text::RustEdition;
 use rg_ty::{AdtTy, AliasTy, GenericArg, OpaqueTy, SemanticSignatureQuery, TraitRefLowering, Ty};
 
-use crate::{IndexedViewDb, display::syntax::SyntaxRenderer, item::path::PathView};
+use crate::{
+    IndexedViewDb, display::syntax::SyntaxRenderer, item::path::PathView, ty::IndexedType,
+};
 
 /// Renders compact user-facing labels for `Ty`.
 pub struct TypeRenderer<'a, 'db> {
@@ -25,8 +27,13 @@ impl<'a, 'db> TypeRenderer<'a, 'db> {
         }
     }
 
-    /// Render a type, returning `None` for unknown types.
-    pub fn render(&self, ty: &Ty) -> anyhow::Result<Option<String>> {
+    /// Render an indexed type, returning `None` when inference could not determine it.
+    pub fn render(&self, ty: &IndexedType) -> anyhow::Result<Option<String>> {
+        self.render_ty(ty.raw())
+    }
+
+    /// Render the compiler representation while composing other view-level displays.
+    pub(crate) fn render_ty(&self, ty: &Ty) -> anyhow::Result<Option<String>> {
         match ty {
             Ty::Unit => Ok(Some("()".to_string())),
             Ty::Never => Ok(Some("!".to_string())),
@@ -35,7 +42,7 @@ impl<'a, 'db> TypeRenderer<'a, 'db> {
                 let fields = fields
                     .iter()
                     .map(|ty| {
-                        self.render(ty)
+                        self.render_ty(ty)
                             .map(|ty| ty.unwrap_or_else(|| "_".to_string()))
                     })
                     .collect::<anyhow::Result<Vec<_>>>()?;
@@ -44,18 +51,18 @@ impl<'a, 'db> TypeRenderer<'a, 'db> {
             }
             Ty::Array { inner, len } => Ok(Some(format!(
                 "[{}; {}]",
-                self.render(inner)?.unwrap_or_else(|| "_".to_string()),
+                self.render_ty(inner)?.unwrap_or_else(|| "_".to_string()),
                 len
             ))),
             Ty::Slice(inner) => Ok(Some(format!(
                 "[{}]",
-                self.render(inner)?.unwrap_or_else(|| "_".to_string())
+                self.render_ty(inner)?.unwrap_or_else(|| "_".to_string())
             ))),
             Ty::Reference {
                 lifetime,
                 mutability,
                 inner,
-            } => Ok(self.render(inner)?.map(|inner| {
+            } => Ok(self.render_ty(inner)?.map(|inner| {
                 let lifetime = match lifetime {
                     rg_ty::Lifetime::Erased => String::new(),
                     lifetime => format!("{lifetime} "),
@@ -67,7 +74,7 @@ impl<'a, 'db> TypeRenderer<'a, 'db> {
                 };
                 format!("&{lifetime}{qualifier}{inner}")
             })),
-            Ty::RawPointer { mutability, inner } => Ok(self.render(inner)?.map(|inner| {
+            Ty::RawPointer { mutability, inner } => Ok(self.render_ty(inner)?.map(|inner| {
                 let qualifier = if matches!(mutability, rg_ir_model::Mutability::Mutable) {
                     "mut"
                 } else {
@@ -79,11 +86,11 @@ impl<'a, 'db> TypeRenderer<'a, 'db> {
                 let params = params
                     .iter()
                     .map(|ty| {
-                        self.render(ty)
+                        self.render_ty(ty)
                             .map(|ty| ty.unwrap_or_else(|| "_".to_string()))
                     })
                     .collect::<anyhow::Result<Vec<_>>>()?;
-                let ret = self.render(ret)?.unwrap_or_else(|| "_".to_string());
+                let ret = self.render_ty(ret)?.unwrap_or_else(|| "_".to_string());
                 Ok(Some(format!("fn({}) -> {ret}", params.join(", "))))
             }
             Ty::Closure(closure) => Ok(Some(format!("{{closure#{}}}", closure.id))),
@@ -181,7 +188,9 @@ impl<'a, 'db> TypeRenderer<'a, 'db> {
                 .type_alias_data(binding.associated_ty)?
                 .map(|data| self.syntax.identifier(&data.name).to_string())
                 .unwrap_or_else(|| "_".to_string());
-            let ty = self.render(&binding.ty)?.unwrap_or_else(|| "_".to_string());
+            let ty = self
+                .render_ty(&binding.ty)?
+                .unwrap_or_else(|| "_".to_string());
             args.push(format!("{name} = {ty}"));
         }
         Ok(if args.is_empty() {
@@ -214,7 +223,7 @@ impl<'a, 'db> TypeRenderer<'a, 'db> {
         let params = params
             .iter()
             .map(|param| {
-                self.render(param)
+                self.render_ty(param)
                     .map(|ty| ty.unwrap_or_else(|| "_".to_string()))
             })
             .collect::<anyhow::Result<Vec<_>>>()?;
@@ -236,7 +245,7 @@ impl<'a, 'db> TypeRenderer<'a, 'db> {
         } else {
             format!(
                 " -> {}",
-                self.render(output)?.unwrap_or_else(|| "_".to_string())
+                self.render_ty(output)?.unwrap_or_else(|| "_".to_string())
             )
         };
 
@@ -264,7 +273,7 @@ impl<'a, 'db> TypeRenderer<'a, 'db> {
     /// Render one generic argument.
     fn render_generic_arg(&self, arg: &GenericArg) -> anyhow::Result<String> {
         match arg {
-            GenericArg::Type(ty) => Ok(self.render(ty)?.unwrap_or_else(|| "_".to_string())),
+            GenericArg::Type(ty) => Ok(self.render_ty(ty)?.unwrap_or_else(|| "_".to_string())),
             GenericArg::Lifetime(lifetime) => Ok(lifetime.to_string()),
             GenericArg::Const(value) => Ok(value.to_string()),
         }

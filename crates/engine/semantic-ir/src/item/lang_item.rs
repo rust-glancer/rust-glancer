@@ -5,7 +5,8 @@
 //! from one crate. Consumers therefore ask for the real declaration identity without relying on a
 //! crate name, module path, or re-export spelling.
 
-use rg_ir_model::{ItemId, SemanticItemRef, items::LangItem};
+use rg_ir_model::{ItemId, SemanticItemRef};
+use rg_item_tree::LangItem;
 use rg_std::{ExpectedUnique, MemorySize, Shrink};
 use wincode::{SchemaRead, SchemaWrite};
 

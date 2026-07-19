@@ -5,10 +5,8 @@
 //! module keeps the synthetic type construction out of the general expression walker.
 
 use rg_def_map::DefMapSource;
-use rg_ir_model::{
-    BuiltinMacroExprKind, ExprId, Mutability, Span, TextSpan,
-    items::{GenericArg as ItemGenericArg, TypePath, TypePathSegment, TypeRef},
-};
+use rg_ir_model::{BuiltinMacroExprKind, ExprId, Mutability, Span, TextSpan};
+use rg_item_tree::{GenericArg as ItemGenericArg, TypePath, TypePathSegment, TypeRef};
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::ItemStoreSource;
 use rg_text::Name;

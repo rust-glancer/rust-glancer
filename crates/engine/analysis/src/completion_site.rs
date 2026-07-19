@@ -9,10 +9,11 @@ use rg_parse::{FileId, Span};
 
 use rg_ir_view::{
     IndexedViewDb,
+    lookup::name::ValueOrTypeNamespace,
     source::{
-        IndexedMemberAccessSite, IndexedNameNamespace, IndexedQualifiedPathScope,
-        IndexedQualifiedPathSite, IndexedRecordFieldListSite, IndexedUnqualifiedNameScope,
-        IndexedUnqualifiedNameSite, SourceCompletionView,
+        IndexedMemberAccessSite, IndexedQualifiedPathScope, IndexedQualifiedPathSite,
+        IndexedRecordFieldListSite, IndexedUnqualifiedNameScope, IndexedUnqualifiedNameSite,
+        SourceCompletionView,
     },
 };
 
@@ -77,8 +78,8 @@ impl PathCompletionSite {
     pub(crate) fn context(&self) -> PathCompletionContext {
         match self.source.scope() {
             IndexedQualifiedPathScope::Body { namespace, .. } => match namespace {
-                IndexedNameNamespace::Types => PathCompletionContext::Type,
-                IndexedNameNamespace::Values => PathCompletionContext::Value,
+                ValueOrTypeNamespace::Types => PathCompletionContext::Type,
+                ValueOrTypeNamespace::Values => PathCompletionContext::Value,
             },
             IndexedQualifiedPathScope::Import { .. } => PathCompletionContext::Import,
         }
@@ -113,8 +114,8 @@ impl UnqualifiedCompletionSite {
     pub(crate) fn context(&self) -> UnqualifiedCompletionContext {
         match self.source.scope() {
             IndexedUnqualifiedNameScope::Body { namespace, .. } => match namespace {
-                IndexedNameNamespace::Types => UnqualifiedCompletionContext::Type,
-                IndexedNameNamespace::Values => UnqualifiedCompletionContext::Value,
+                ValueOrTypeNamespace::Types => UnqualifiedCompletionContext::Type,
+                ValueOrTypeNamespace::Values => UnqualifiedCompletionContext::Value,
             },
             IndexedUnqualifiedNameScope::Import { .. } => UnqualifiedCompletionContext::Import,
         }

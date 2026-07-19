@@ -1,6 +1,7 @@
 use crate::MacroDefinitionView;
 use rg_cfg_eval::CfgEvaluator;
-use rg_ir_model::{BodySource, CrateRef, LocalDefRef, ModuleRef, items::BuiltinMacroKind};
+use rg_ir_model::{BodySource, CrateRef, LocalDefRef, ModuleRef};
+use rg_item_tree::BuiltinMacroKind;
 use rg_macro_runtime::{
     DeclarativeMacroDefinition, ExpansionParseKind, MacroExpansionRequest, macro_edition,
 };

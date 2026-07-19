@@ -3,7 +3,6 @@
 use crate::ItemResolutionQuery;
 use crate::ItemStoreQuery;
 use rg_def_map::{DefMapDb, DefMapReadTxn, PackageSlot};
-use rg_ir_model::Path;
 use rg_ir_model::{CrateId, CrateRef, ImplRef, ModuleRef, TraitDefRef, TypeDefRef};
 use rg_item_tree::TypeRef;
 use rg_package_store::PackageStoreError;
@@ -96,7 +95,7 @@ fn resolve_type_defs_from_ref(
     owner: ModuleRef,
     ty: &TypeRef,
 ) -> Result<ExpectedUnique<TypeDefRef>, PackageStoreError> {
-    let Some(path) = Path::from_type_ref(ty) else {
+    let Some(path) = ty.as_def_map_path() else {
         return Ok(ExpectedUnique::new());
     };
 
@@ -113,7 +112,7 @@ fn resolve_traits_from_ref(
     owner: ModuleRef,
     ty: &TypeRef,
 ) -> Result<ExpectedUnique<TraitDefRef>, PackageStoreError> {
-    let Some(path) = Path::from_type_ref(ty) else {
+    let Some(path) = ty.as_def_map_path() else {
         return Ok(ExpectedUnique::new());
     };
 

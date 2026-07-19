@@ -7,7 +7,8 @@
 
 use std::{cmp::Ordering, collections::HashMap};
 
-use rg_ir_model::{DefId, ImportRef, ModuleRef, items::FieldList};
+use rg_ir_model::{DefId, ImportRef, ModuleRef};
+use rg_item_tree::FieldList;
 use rg_std::{MemorySize, Shrink};
 use rg_text::Name;
 use wincode::{SchemaRead, SchemaWrite};

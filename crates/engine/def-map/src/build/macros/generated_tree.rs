@@ -7,8 +7,8 @@
 
 use anyhow::{Context as _, Result};
 
+use crate::GeneratedSourceData;
 use rg_arena::Arena;
-use rg_ir_model::hir::source::GeneratedSourceData;
 use rg_item_tree::{
     CfgExpr, ConstItem, Documentation, EnumItem, ExternCrateItem, FromAst, FunctionItem, ImplItem,
     ImplItemContext, InnerDocs, ItemKind, ItemNode, ItemTreeId, LangItem, MacroCallContext,

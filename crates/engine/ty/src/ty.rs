@@ -8,8 +8,8 @@ use std::fmt;
 
 use rg_ir_model::{
     BodyRef, ExprId, FunctionRef, OpaqueTyRef, TypeAliasRef, TypeDefRef, TypeParamRef,
-    TypePathResolution,
 };
+use rg_semantic_ir::TypePathResolution;
 use rg_std::{ExpectedUnique, MemorySize, Shrink};
 use wincode::{SchemaRead, SchemaWrite};
 

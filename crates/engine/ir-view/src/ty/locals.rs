@@ -5,31 +5,24 @@
 
 use std::collections::HashSet;
 
-use rg_body_ir::BindingKind;
+use rg_body_ir::{BindingKind, ExprKind};
+use rg_def_map::ItemSourceKind;
 use rg_ir_model::{
-    BindingId, BodyBindingRef, BodyRef, CrateRef, DefMapRef, ExprId, ExprKind, FunctionRef,
-    ModuleId, ModuleRef, ScopeId, SemanticItemKind, SemanticItemRef, hir::source::ItemSourceKind,
-    identity::DeclarationRef,
+    BindingId, BodyBindingRef, BodyRef, CrateRef, DefMapRef, ExprId, FunctionRef, ModuleId,
+    ModuleRef, ScopeId, SemanticItemKind, SemanticItemRef, identity::DeclarationRef,
 };
 use rg_parse::{FileId, Span, TextSpan};
 use rg_semantic_ir::ItemStoreQuery;
 use rg_ty::Ty;
 
-use crate::IndexedViewDb;
-
-/// Namespace requested for body-local name lookup.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BodyNameNamespace {
-    Types,
-    Values,
-}
+use crate::{IndexedViewDb, lookup::name::ValueOrTypeNamespace, ty::IndexedType};
 
 /// Body scope together with the visible binding boundary.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BodyNameScope {
     body: BodyRef,
     scope: ScopeId,
-    namespace: BodyNameNamespace,
+    namespace: ValueOrTypeNamespace,
     visible_bindings: usize,
 }
 
@@ -37,7 +30,7 @@ impl BodyNameScope {
     pub fn new(
         body: BodyRef,
         scope: ScopeId,
-        namespace: BodyNameNamespace,
+        namespace: ValueOrTypeNamespace,
         visible_bindings: usize,
     ) -> Self {
         Self {
@@ -82,7 +75,7 @@ pub enum BodyLexicalName {
 pub struct InferredBindingTy {
     file_id: FileId,
     span: Span,
-    ty: Ty,
+    ty: IndexedType,
 }
 
 impl InferredBindingTy {
@@ -94,7 +87,7 @@ impl InferredBindingTy {
         self.span
     }
 
-    pub fn ty(&self) -> &Ty {
+    pub fn ty(&self) -> &IndexedType {
         &self.ty
     }
 }
@@ -232,21 +225,23 @@ impl<'a, 'db> BodyView<'a, 'db> {
     }
 
     /// Return the stored type for a body expression.
-    pub fn expr_ty(&self, body_ref: BodyRef, expr: ExprId) -> anyhow::Result<Option<Ty>> {
+    pub fn expr_ty(&self, body_ref: BodyRef, expr: ExprId) -> anyhow::Result<Option<IndexedType>> {
         Ok(self
             .db
             .body_ir
             .body(body_ref)?
-            .and_then(|body| body.expr_ty(expr).cloned()))
+            .and_then(|body| body.expr_ty(expr).cloned())
+            .map(IndexedType::new))
     }
 
     /// Return the stored type for a body binding.
-    pub fn binding_ty(&self, binding: BodyBindingRef) -> anyhow::Result<Option<Ty>> {
+    pub fn binding_ty(&self, binding: BodyBindingRef) -> anyhow::Result<Option<IndexedType>> {
         Ok(self
             .db
             .body_ir
             .body(binding.body)?
-            .and_then(|body| body.binding_ty(binding.binding).cloned()))
+            .and_then(|body| body.binding_ty(binding.binding).cloned())
+            .map(IndexedType::new))
     }
 
     /// Return names visible from a body scope, ordered by lexical distance.
@@ -268,7 +263,7 @@ impl<'a, 'db> BodyView<'a, 'db> {
                 break;
             };
 
-            if matches!(scope.namespace, BodyNameNamespace::Values) {
+            if matches!(scope.namespace, ValueOrTypeNamespace::Values) {
                 for binding_id in scope_data.bindings.iter().rev().copied() {
                     if binding_id.0 >= scope.visible_bindings {
                         continue;
@@ -351,7 +346,7 @@ impl<'a, 'db> BodyView<'a, 'db> {
                 }
             }
 
-            if matches!(scope.namespace, BodyNameNamespace::Types) {
+            if matches!(scope.namespace, ValueOrTypeNamespace::Types) {
                 for item_id in scope_data.source_items.iter().rev().copied() {
                     let Some(view) = body_item_store.and_then(|items| {
                         items.semantic_items().find(|view| {
@@ -437,7 +432,7 @@ impl<'a, 'db> BodyView<'a, 'db> {
                 bindings.push(InferredBindingTy {
                     file_id: binding.source.file_id,
                     span: binding.source.span,
-                    ty,
+                    ty: IndexedType::new(ty),
                 });
             }
         }

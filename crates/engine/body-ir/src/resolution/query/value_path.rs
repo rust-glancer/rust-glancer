@@ -8,11 +8,11 @@
 use rg_def_map::{DefMapSource, NamespaceSet, ResolvePathResult};
 use rg_ir_model::{
     BindingId, ConstRef, DefId, DefMapRef, EnumVariantRef, FunctionRef, LocalEnumVariantRef,
-    ModuleId, ModuleRef, Path, ScopeId, SemanticItemRef, StaticRef, TypeDefRef, TypePathResolution,
+    ModuleId, ModuleRef, Path, ScopeId, SemanticItemRef, StaticRef, TypeDefRef,
     identity::DeclarationRef,
 };
 use rg_package_store::PackageStoreError;
-use rg_semantic_ir::ItemStoreSource;
+use rg_semantic_ir::{ItemStoreSource, TypePathResolution};
 use rg_std::{ExpectedUnique, UniqueVec};
 use rg_ty::{AdtTy, ExpectedTyExt, GenericArg, Ty};
 

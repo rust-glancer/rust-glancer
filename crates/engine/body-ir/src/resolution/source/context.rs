@@ -5,9 +5,9 @@
 //! still exposing only read-only access to the active body.
 
 use rg_def_map::{DefMapQuery, DefMapSource};
-use rg_ir_model::{BodyRef, Path, ScopeId, TypePathResolution};
+use rg_ir_model::{BodyRef, Path, ScopeId};
 use rg_package_store::PackageStoreError;
-use rg_semantic_ir::{ItemLookupIndex, ItemStoreQuery, ItemStoreSource};
+use rg_semantic_ir::{ItemLookupIndex, ItemStoreQuery, ItemStoreSource, TypePathResolution};
 use rg_ty::{
     Autoderef, ImplMatcher, ItemPathQuery, SemanticSignatureQuery, TraitSelectionQuery,
     TraitSelectionSession, TyContext, TypeLoweringAnchor, TypePathResolver,

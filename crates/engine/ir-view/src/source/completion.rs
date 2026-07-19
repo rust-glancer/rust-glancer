@@ -10,45 +10,17 @@
 //! User { na$0 }    -> record owner + already-written fields
 //! ```
 
-use rg_ir_model::Path;
-use rg_ir_model::items::FieldKey;
 use rg_ir_model::{
-    CrateRef, ModuleRef,
+    CrateRef, FieldKey, ModuleRef, Path,
     identity::{ExprRef, LexicalScopeRef},
 };
 use rg_parse::{FileId, Span};
 
 use super::scan::{
-    DotCompletionSiteScanner, ImportPathCompletionSiteScanner, PathCompletionNamespace,
-    PathCompletionSiteScanner, RecordFieldCompletionSiteScanner, UnqualifiedCompletionNamespace,
-    UnqualifiedCompletionSiteScanner,
+    DotCompletionSiteScanner, ImportPathCompletionSiteScanner, PathCompletionSiteScanner,
+    RecordFieldCompletionSiteScanner, UnqualifiedCompletionSiteScanner,
 };
-use crate::IndexedViewDb;
-
-/// Namespace expected by an indexed name site.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum IndexedNameNamespace {
-    Types,
-    Values,
-}
-
-impl From<PathCompletionNamespace> for IndexedNameNamespace {
-    fn from(namespace: PathCompletionNamespace) -> Self {
-        match namespace {
-            PathCompletionNamespace::Types => Self::Types,
-            PathCompletionNamespace::Values => Self::Values,
-        }
-    }
-}
-
-impl From<UnqualifiedCompletionNamespace> for IndexedNameNamespace {
-    fn from(namespace: UnqualifiedCompletionNamespace) -> Self {
-        match namespace {
-            UnqualifiedCompletionNamespace::Types => Self::Types,
-            UnqualifiedCompletionNamespace::Values => Self::Values,
-        }
-    }
-}
+use crate::{IndexedViewDb, lookup::name::ValueOrTypeNamespace};
 
 /// Source site for member access after a dot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -94,7 +66,7 @@ impl IndexedQualifiedPathSite {
 pub enum IndexedQualifiedPathScope {
     Body {
         scope: LexicalScopeRef,
-        namespace: IndexedNameNamespace,
+        namespace: ValueOrTypeNamespace,
     },
     Import {
         module: ModuleRef,
@@ -123,7 +95,7 @@ impl IndexedUnqualifiedNameSite {
 pub enum IndexedUnqualifiedNameScope {
     Body {
         scope: LexicalScopeRef,
-        namespace: IndexedNameNamespace,
+        namespace: ValueOrTypeNamespace,
         member_prefix: String,
         visible_bindings: usize,
     },
@@ -202,7 +174,7 @@ impl<'a, 'db> SourceCompletionView<'a, 'db> {
                 .map(|site| IndexedQualifiedPathSite {
                     scope: IndexedQualifiedPathScope::Body {
                         scope: LexicalScopeRef::new(site.body, site.scope),
-                        namespace: site.namespace.into(),
+                        namespace: site.namespace,
                     },
                     qualifier: site.qualifier,
                     member_prefix_span: site.member_prefix_span,
@@ -243,7 +215,7 @@ impl<'a, 'db> SourceCompletionView<'a, 'db> {
                 .map(|site| IndexedUnqualifiedNameSite {
                     scope: IndexedUnqualifiedNameScope::Body {
                         scope: LexicalScopeRef::new(site.body, site.scope),
-                        namespace: site.namespace.into(),
+                        namespace: site.namespace,
                         member_prefix: site.member_prefix,
                         visible_bindings: site.visible_bindings,
                     },

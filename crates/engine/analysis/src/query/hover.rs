@@ -4,9 +4,9 @@ use rg_ir_model::CrateRef;
 use rg_ir_view::{
     display::ty_label::TypeRenderer,
     item::details::{DeclarationDetails, DeclarationDetailsContext, DeclarationDetailsView},
+    ty::IndexedType,
 };
 use rg_parse::FileId;
-use rg_ty::Ty;
 
 use crate::{
     Analysis, SymbolKind,
@@ -78,7 +78,7 @@ impl<'a, 'db> HoverResolver<'a, 'db> {
     fn hover_for_ty(
         &self,
         renderer: &TypeRenderer<'_, '_>,
-        ty: &Ty,
+        ty: &IndexedType,
     ) -> anyhow::Result<Option<HoverBlock>> {
         let Some(signature) = renderer.render(ty)? else {
             return Ok(None);

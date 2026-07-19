@@ -1,183 +1,177 @@
-use rg_ir_model::items::{
-    ExternCrateItem, ImportAlias, MacroUseAttr, UseImport, UseImportKind, UseItem, UsePath,
-    UsePathSegment, UsePathSegmentKind,
-};
+use rg_std::{MemorySize, Shrink};
+use std::fmt;
+use wincode::{SchemaRead, SchemaWrite};
+
 use rg_parse::{Span, TextSpan};
-use rg_syntax::{
-    AstNode as _, SyntaxKind, algo,
-    ast::{self, HasName},
-};
-use rg_text::NameInterner;
+use rg_text::Name;
 
-use super::{FromAst, MaybeFromAst as _};
+use super::MacroUseAttr;
 
-impl FromAst for ExternCrateItem {
-    type AstNode = ast::ExternCrate;
-    type Context<'a> = &'a mut NameInterner;
+/// Syntactic `extern crate` facts attached to `ItemKind::ExternCrate`.
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
+pub struct ExternCrateItem {
+    pub name: Option<Name>,
+    pub alias: ImportAlias,
+    pub macro_use: Option<MacroUseAttr>,
+}
 
-    fn from_ast(item: &Self::AstNode, interner: Self::Context<'_>) -> Self {
+/// Syntactic `use` facts attached to `ItemKind::Use`.
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
+pub struct UseItem {
+    pub imports: Vec<UseImport>,
+}
+
+/// One leaf import produced by a potentially nested use tree.
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
+pub struct UseImport {
+    pub kind: UseImportKind,
+    pub path: UsePath,
+    pub alias: ImportAlias,
+}
+
+/// Import form before name resolution.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    derive_more::Display,
+    SchemaRead,
+    SchemaWrite,
+    MemorySize,
+    Shrink,
+)]
+#[memsize(leaf)]
+#[shrink(leaf)]
+pub enum UseImportKind {
+    #[display("named")]
+    Named,
+    #[display("self")]
+    SelfImport,
+    #[display("glob")]
+    Glob,
+}
+
+/// Explicit import alias, including `as _`.
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
+pub enum ImportAlias {
+    Inferred,
+    Explicit { name: Name, span: Span },
+    Hidden,
+}
+
+impl fmt::Display for ImportAlias {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Inferred => Ok(()),
+            Self::Explicit { name, .. } => write!(f, " as {name}"),
+            Self::Hidden => write!(f, " as _"),
+        }
+    }
+}
+
+/// Structured path used before semantic resolution.
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
+pub struct UsePath {
+    pub source_span: Option<Span>,
+    pub absolute: bool,
+    pub segments: Vec<UsePathSegment>,
+}
+
+impl UsePath {
+    pub fn empty() -> Self {
         Self {
-            name: item
-                .name_ref()
-                .map(|name_ref| interner.intern(name_ref.text())),
-            alias: import_alias_from_rename(item.rename(), interner),
-            macro_use: MacroUseAttr::maybe_from_ast(item, interner),
+            source_span: None,
+            absolute: false,
+            segments: Vec::new(),
         }
     }
-}
 
-impl FromAst for UseItem {
-    type AstNode = ast::Use;
-    type Context<'a> = &'a mut NameInterner;
-
-    fn from_ast(item: &Self::AstNode, interner: Self::Context<'_>) -> Self {
-        let mut imports = Vec::new();
-
-        if let Some(use_tree) = item.use_tree() {
-            lower_use_tree(&mut imports, &UsePath::empty(), use_tree, interner);
-        }
-
-        Self { imports }
-    }
-}
-
-fn lower_use_tree(
-    imports: &mut Vec<UseImport>,
-    prefix: &UsePath,
-    use_tree: ast::UseTree,
-    interner: &mut NameInterner,
-) {
-    let path = match use_tree.path() {
-        Some(path) => {
-            let Some(path) = use_path_from_ast(&path, &use_tree, interner) else {
-                return;
-            };
-            prefix.joined(&path)
-        }
-        None => prefix.clone(),
-    };
-
-    if let Some(use_tree_list) = use_tree.use_tree_list() {
-        for child_use_tree in use_tree_list.use_trees() {
-            lower_use_tree(imports, &path, child_use_tree, interner);
-        }
-        return;
-    }
-
-    let (kind, path) = if use_tree.star_token().is_some() {
-        (UseImportKind::Glob, path)
-    } else if path.ends_with_self() {
-        (UseImportKind::SelfImport, path.without_trailing_self())
-    } else {
-        (UseImportKind::Named, path)
-    };
-
-    imports.push(UseImport {
-        kind,
-        path,
-        alias: import_alias_from_rename(use_tree.rename(), interner),
-    });
-}
-
-fn import_alias_from_rename(
-    rename: Option<ast::Rename>,
-    interner: &mut NameInterner,
-) -> ImportAlias {
-    let Some(rename) = rename else {
-        return ImportAlias::Inferred;
-    };
-
-    if rename.underscore_token().is_some() {
-        return ImportAlias::Hidden;
-    }
-
-    rename
-        .name()
-        .map(|name| ImportAlias::Explicit {
-            span: Span::from_text_range(name.syntax().text_range()),
-            name: interner.intern(name.text()),
-        })
-        .unwrap_or(ImportAlias::Inferred)
-}
-
-fn use_path_from_ast(
-    path: &ast::Path,
-    use_tree: &ast::UseTree,
-    interner: &mut NameInterner,
-) -> Option<UsePath> {
-    let mut segments = Vec::new();
-
-    for segment in path.segments() {
-        let span = Span::from_text_range(segment.syntax().text_range());
-        let Some(kind) = segment.kind() else {
-            // A live edit such as `use crate::module::` produces an empty trailing segment. Keep
-            // the completed prefix so completion can fill that final segment.
-            if span.is_empty() {
-                continue;
-            }
-
-            // Syntax recovery may attach the next item's attribute marker as a bogus segment after
-            // the trailing `::`. The valid prefix is still useful for completion, so stop before
-            // the recovered token instead of dropping the whole use path.
-            if !segments.is_empty() {
-                break;
-            }
-            return None;
+    pub fn joined(&self, suffix: &Self) -> Self {
+        let mut segments = self.segments.clone();
+        segments.extend(suffix.segments.clone());
+        let source_span = match (self.source_span, suffix.source_span) {
+            (Some(left), Some(right)) => Some(Span {
+                text: TextSpan {
+                    start: left.text.start.min(right.text.start),
+                    end: left.text.end.max(right.text.end),
+                },
+            }),
+            (Some(span), None) | (None, Some(span)) => Some(span),
+            (None, None) => None,
         };
-        let lowered_segment = match kind {
-            ast::PathSegmentKind::Name(name_ref) => UsePathSegment {
-                kind: UsePathSegmentKind::Name(interner.intern(name_ref.text())),
-                span: Span::from_text_range(name_ref.syntax().text_range()),
-            },
-            ast::PathSegmentKind::SelfKw => UsePathSegment {
-                kind: UsePathSegmentKind::SelfKw,
-                span,
-            },
-            ast::PathSegmentKind::SuperKw => UsePathSegment {
-                kind: UsePathSegmentKind::SuperKw,
-                span,
-            },
-            ast::PathSegmentKind::CrateKw => UsePathSegment {
-                kind: UsePathSegmentKind::CrateKw,
-                span,
-            },
-            ast::PathSegmentKind::SelfTypeKw | ast::PathSegmentKind::Type { .. } => {
-                return None;
-            }
-        };
-        segments.push(lowered_segment);
-    }
-    if segments.is_empty() {
-        return None;
+
+        Self {
+            source_span,
+            absolute: self.absolute || suffix.absolute,
+            segments,
+        }
     }
 
-    Some(UsePath {
-        source_span: Some(use_path_source_span(path, use_tree)),
-        absolute: path
-            .first_segment()
-            .is_some_and(|segment| segment.coloncolon_token().is_some()),
-        segments,
-    })
+    pub fn without_trailing_self(&self) -> Self {
+        let mut segments = self.segments.clone();
+        if matches!(
+            segments.last().map(|segment| &segment.kind),
+            Some(UsePathSegmentKind::SelfKw)
+        ) {
+            segments.pop();
+        }
+        Self {
+            source_span: self.source_span,
+            absolute: self.absolute,
+            segments,
+        }
+    }
+
+    pub fn ends_with_self(&self) -> bool {
+        matches!(
+            self.segments.last().map(|segment| &segment.kind),
+            Some(UsePathSegmentKind::SelfKw)
+        )
+    }
 }
 
-fn use_path_source_span(path: &ast::Path, use_tree: &ast::UseTree) -> Span {
-    let mut span = Span::from_text_range(path.syntax().text_range());
-    let Some(next_token) = algo::next_non_trivia_token(path.syntax().clone()) else {
-        return span;
-    };
-    if next_token.kind() != SyntaxKind::COLON2 {
-        return span;
-    }
+impl fmt::Display for UsePath {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.absolute {
+            write!(f, "::")?;
+        }
 
-    // Some use-tree forms keep a trailing separator next to the path rather than in a named segment
-    // span. Keep that token in the source span so completion can recognize an empty final segment.
-    let use_tree_range = use_tree.syntax().text_range();
-    let colon_range = next_token.text_range();
-    if use_tree_range.start() <= colon_range.start() && colon_range.end() <= use_tree_range.end() {
-        span.text = TextSpan {
-            start: span.text.start,
-            end: u32::from(colon_range.end()),
-        };
+        for (idx, segment) in self.segments.iter().enumerate() {
+            if idx > 0 {
+                write!(f, "::")?;
+            }
+            write!(f, "{segment}")?;
+        }
+
+        Ok(())
     }
-    span
+}
+
+/// One structured path segment.
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
+pub struct UsePathSegment {
+    pub kind: UsePathSegmentKind,
+    pub span: Span,
+}
+
+impl fmt::Display for UsePathSegment {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.kind.fmt(f)
+    }
+}
+
+#[derive(
+    Debug, Clone, PartialEq, Eq, derive_more::Display, SchemaRead, SchemaWrite, MemorySize, Shrink,
+)]
+pub enum UsePathSegmentKind {
+    #[display("{_0}")]
+    Name(Name),
+    #[display("self")]
+    SelfKw,
+    #[display("super")]
+    SuperKw,
+    #[display("crate")]
+    CrateKw,
 }

@@ -3,13 +3,13 @@
 mod closing_brace;
 
 use rg_ir_model::CrateRef;
-use rg_ir_model::items::{ParamItem, ParamKind};
 use rg_ir_view::{
-    body::BodyStructureView, display::ty_label::TypeRenderer, member::MemberView,
+    body::BodyStructureView,
+    display::ty_label::TypeRenderer,
+    member::{FunctionParameterView, MemberView},
     ty::locals::BodyView,
 };
 use rg_parse::{FileId, TextSpan};
-use rg_ty::Ty;
 
 use crate::{
     Analysis,
@@ -99,7 +99,7 @@ impl<'a, 'db> InlayHintCollector<'a, 'db> {
             )? {
                 continue;
             }
-            if matches!(expr.ty(), Ty::Unit | Ty::Never) {
+            if expr.ty().is_unit_or_never() {
                 continue;
             }
             let Some(ty) = renderer.render(expr.ty())? else {
@@ -135,11 +135,9 @@ impl<'a, 'db> InlayHintCollector<'a, 'db> {
             let Some(function) = members.function(call.function())? else {
                 continue;
             };
-            let params = function.params();
-
             for (arg_idx, arg) in call.args().iter().enumerate() {
                 let param_idx = arg_idx + call.param_offset();
-                let Some(param) = params.get(param_idx) else {
+                let Some(param) = function.parameter(param_idx) else {
                     continue;
                 };
                 let Some(param_name) = Self::param_hint_name(param) else {
@@ -175,12 +173,12 @@ impl<'a, 'db> InlayHintCollector<'a, 'db> {
         Ok(hints)
     }
 
-    fn param_hint_name(param: &ParamItem) -> Option<&str> {
-        if !matches!(param.kind, ParamKind::Normal) {
+    fn param_hint_name(param: FunctionParameterView<'_>) -> Option<&str> {
+        if param.is_receiver() {
             return None;
         }
 
-        let name = param.pat.as_str();
+        let name = param.pattern();
         if name == "_" {
             return None;
         }

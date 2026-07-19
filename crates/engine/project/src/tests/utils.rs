@@ -9,7 +9,6 @@ use rg_def_map::PackageSlot;
 use rg_ir_model::CrateRef;
 use rg_package_store::PackageLoader;
 use rg_parse::FileId;
-use rg_ty::ReferencePeelingCandidates;
 
 use crate::{
     AnalysisChangeSummary, FileContext, PackageResidencyPolicy, Project, testonly::ProjectFixture,
@@ -684,32 +683,30 @@ fn nominal_type_names_at(
         .def_map
         .read_txn(PackageLoader::resident_only("resident project fixture"));
     let mut names = Vec::new();
-    for candidate in ReferencePeelingCandidates::new(&ty) {
-        for ty in candidate.ty().as_adts() {
-            let Some(crate_ref) = ty.def.origin.as_crate_ref() else {
-                continue;
-            };
-            let Some(local_def) = semantic_ir
-                .items(crate_ref)
-                .expect("fixture semantic IR should load while rendering nominal types")
-                .expect("Item store must exist")
-                .semantic_item_view(ty.def.into())
-                .and_then(|view| view.local_def())
-            else {
-                continue;
-            };
-            let Some(crate_ref) = local_def.origin.as_crate_ref() else {
-                continue;
-            };
-            let Some(local_def) = def_map
-                .def_map(crate_ref)
-                .expect("fixture def-map should load while rendering nominal types")
-                .and_then(|def_map| def_map.local_def(local_def.local_def))
-            else {
-                continue;
-            };
-            names.push(local_def.name.to_string());
-        }
+    for ty in ty.nominal_type_defs() {
+        let Some(crate_ref) = ty.origin.as_crate_ref() else {
+            continue;
+        };
+        let Some(local_def) = semantic_ir
+            .items(crate_ref)
+            .expect("fixture semantic IR should load while rendering nominal types")
+            .expect("Item store must exist")
+            .semantic_item_view(ty.into())
+            .and_then(|view| view.local_def())
+        else {
+            continue;
+        };
+        let Some(crate_ref) = local_def.origin.as_crate_ref() else {
+            continue;
+        };
+        let Some(local_def) = def_map
+            .def_map(crate_ref)
+            .expect("fixture def-map should load while rendering nominal types")
+            .and_then(|def_map| def_map.local_def(local_def.local_def))
+        else {
+            continue;
+        };
+        names.push(local_def.name.to_string());
     }
     names
 }

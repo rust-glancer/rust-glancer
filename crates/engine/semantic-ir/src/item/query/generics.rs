@@ -4,11 +4,11 @@
 //! query adds the owner relationships and implicit parameters needed by semantic types, then
 //! exposes one canonical order to type lowering, substitutions, inference, and Chalk.
 
-use rg_ir_model::items::{GenericArg as ItemGenericArg, TypeOrConstParamData, TypeRef};
 use rg_ir_model::{
     ConstParamRef, GenericDefRef, GenericParamRef, ImplRef, ItemOwner, LifetimeParamRef,
     LocalLifetimeParamId, LocalTypeOrConstParamId, TraitDefRef, TypeParamRef,
 };
+use rg_item_tree::{GenericArg as ItemGenericArg, TypeOrConstParamData, TypeRef};
 
 use super::{ItemStoreQuery, ItemStoreSource};
 use crate::{GenericParamSource, GenericParamView, Generics};
@@ -153,7 +153,7 @@ where
 
     fn collect_argument_impl_traits<'ty>(
         ty: &'ty TypeRef,
-        out: &mut Vec<&'ty [rg_ir_model::items::TypeBound]>,
+        out: &mut Vec<&'ty [rg_item_tree::TypeBound]>,
     ) {
         match ty {
             TypeRef::ImplTrait(bounds) => out.push(bounds),

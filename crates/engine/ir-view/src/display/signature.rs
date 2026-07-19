@@ -8,7 +8,7 @@ use std::fmt::Write as _;
 
 use rg_body_ir::BindingData;
 use rg_ir_model::Mutability;
-use rg_ir_model::items::{
+use rg_item_tree::{
     EnumVariantItem, FieldItem, FieldList, FunctionQualifiers, GenericParams, ParamItem,
     TypeOrConstParamData, TypeRef, VisibilityLevel, WherePredicate,
 };
@@ -22,6 +22,7 @@ use rg_ty::Ty;
 use crate::{
     IndexedViewDb,
     display::{syntax::SyntaxRenderer, ty_label::TypeRenderer},
+    member::{MemberField, MemberFunction},
 };
 
 const MEMBER_PREVIEW_LIMIT: usize = 5;
@@ -117,6 +118,11 @@ impl SignatureRenderer {
         )
     }
 
+    /// Render a function reached through the editor-facing member projection.
+    pub fn member_function_signature(&self, function: MemberFunction<'_>) -> String {
+        self.function_signature(function.data())
+    }
+
     /// Render a type alias signature.
     pub fn type_alias_signature(&self, data: &TypeAliasData) -> String {
         let bounds = if data.signature.bounds().is_empty() {
@@ -171,6 +177,11 @@ impl SignatureRenderer {
         self.field_item_signature(data.field)
     }
 
+    /// Render a field reached through the editor-facing member projection.
+    pub fn member_field_signature(&self, field: MemberField<'_>) -> Option<String> {
+        self.field_signature(field.data())
+    }
+
     /// Render an enum variant signature.
     pub fn enum_variant_signature(&self, variant: &EnumVariantItem) -> String {
         let name = self.syntax.identifier(&variant.name);
@@ -204,7 +215,7 @@ impl SignatureRenderer {
         ty: Option<&Ty>,
     ) -> anyhow::Result<String> {
         let rendered_ty = ty
-            .map(|ty| TypeRenderer::new(db, self.syntax.edition()).render(ty))
+            .map(|ty| TypeRenderer::new(db, self.syntax.edition()).render_ty(ty))
             .transpose()?
             .flatten();
 

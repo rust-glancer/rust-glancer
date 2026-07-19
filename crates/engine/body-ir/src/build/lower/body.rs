@@ -4,13 +4,17 @@ use rg_syntax::{AstNode as _, ast};
 
 use rg_cfg_eval::CfgEvaluator;
 use rg_def_map::{BodyMacroCallOrigin, BodyMacroExprExpansion, ExpandedBodyMacro};
-use rg_ir_model::{BodyMacroCallData, CrateRef, ExprId, LocalDefRef, ModuleRef, ScopeId};
+use rg_ir_model::{CrateRef, ExprId, LocalDefRef, ModuleRef, ScopeId};
 use rg_parse::LineIndex;
 use rg_text::NameInterner;
 
-use crate::ir::{BodyBuilder, BodyOwner, BodySource, ExprData, ExprKind, LoweredBodyData};
+use crate::ir::{BodyMacroCallData, BodyOwner, BodySource, ExprData, ExprKind};
 
-use super::{macro_expansion::BodyMacroExpansionContext, syntax::source_for};
+use super::{
+    builder::{BodyBuilder, LoweredBodyData},
+    macro_expansion::BodyMacroExpansionContext,
+    syntax::source_for,
+};
 
 pub(super) struct BodyLowering<'a> {
     owner: BodyOwner,

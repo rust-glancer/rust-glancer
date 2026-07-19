@@ -1,6 +1,6 @@
 use rg_ir_model::{
-    EnumVariantRef, FieldRef, FunctionRef, SemanticItemKind, TraitApplicability,
-    identity::DeclarationRef, items::PrimitiveTy,
+    EnumVariantRef, FieldRef, FunctionRef, PrimitiveTy, SemanticItemKind, TraitApplicability,
+    identity::DeclarationRef,
 };
 use rg_parse::Span;
 

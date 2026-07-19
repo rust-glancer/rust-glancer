@@ -11,10 +11,7 @@ use crate::{
     MacroDefinitionData, ModuleData, ModuleOrigin, ModuleScope, Namespace, ScopeBinding,
     ScopeBindingProvenance, Visibility,
 };
-use rg_ir_model::{
-    CrateRef, DefId, DefMapRef, LocalDefId, LocalDefRef, ModuleId, ModuleRef,
-    hir::source::{GeneratedItemRef, GeneratedSourceId, ItemSource},
-};
+use rg_ir_model::{CrateRef, DefId, DefMapRef, LocalDefId, LocalDefRef, ModuleId, ModuleRef};
 use rg_item_tree::{
     Documentation, ImportAlias, ItemKind, ItemNode, ItemTreeId, ItemTreeRef, MacroCallItem,
     MacroDefinitionAttrs, MacroDefinitionItem, ModuleItem, ModuleSource, UseImport, UseItem,
@@ -25,6 +22,7 @@ use rg_text::{Name, NameInterner};
 
 use crate::build::{collect::CrateState, finalize::ScopeMatrix};
 use crate::profile::metric;
+use crate::{GeneratedItemRef, GeneratedSourceId, ItemSource};
 
 use super::{
     ItemOrder, MacroCallSite, MacroDefinitionRecord, MacroExpansionApplyResult,

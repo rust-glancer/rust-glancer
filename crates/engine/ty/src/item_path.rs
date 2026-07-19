@@ -1,9 +1,10 @@
 //! Definition path queries over semantic item stores.
 
 use rg_def_map::DefMapSource;
-use rg_ir_model::{Path, SemanticItemRef, TypePathResolution};
+use rg_ir_model::{Path, SemanticItemRef};
 use rg_semantic_ir::{
     GenericsQuery, ItemResolutionQuery, ItemStoreQuery, ItemStoreSource, TypePathContext,
+    TypePathResolution,
 };
 use rg_std::UniqueVec;
 

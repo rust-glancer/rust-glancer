@@ -3,12 +3,11 @@
 // mostly a facade. At least for now, we don't expect to add many
 // tests here, though it doesn't have usual snapshot-driven flow.
 
+use rg_body_ir::BodyOwner;
 use rg_ir_model::{
-    BodyOwner, CrateRef, ExprId, PackageSlot,
+    CrateRef, ExprId, PackageSlot, PrimitiveTy, SignedIntTy,
     identity::{DeclarationRef, ExprRef},
-    items::{PrimitiveTy, SignedIntTy},
 };
-use rg_ty::Ty;
 
 use crate::{lookup::resolution::ResolutionView, testonly::ViewFixture, ty::TyView};
 
@@ -42,7 +41,10 @@ pub fn answer() -> i32 {
         .ty_for_expr(ExprRef::new(body_ref, body.root_expr()))?
         .expect("root expression should have an inferred type");
 
-    assert_eq!(ty, Ty::Primitive(PrimitiveTy::SignedInt(SignedIntTy::I32)));
+    assert_eq!(
+        ty.primitive(),
+        Some(PrimitiveTy::SignedInt(SignedIntTy::I32))
+    );
     Ok(())
 }
 

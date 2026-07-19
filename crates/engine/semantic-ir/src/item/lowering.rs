@@ -7,10 +7,10 @@ use super::{
     ItemStoreBuilder, StaticData, StructData, TraitData, TypeAliasData, TypeAliasSignature,
     UnionData,
 };
-use rg_def_map::DefMap;
+use rg_def_map::{DefMap, ItemSource};
 use rg_ir_model::{
     AssocItemId, ConstId, FunctionId, ItemId, ItemOwner, LocalDefRef, LocalImplRef, ModuleRef,
-    StaticId, TraitId, TypeAliasId, hir::source::ItemSource,
+    StaticId, TraitId, TypeAliasId,
 };
 use rg_item_tree::{
     ConstItem, FunctionItem, ImplItem, ItemKind, ItemNode, ItemTreeId, StaticItem, TraitItem,

@@ -4,13 +4,11 @@
 //! but definition lowering and impl-header resolution do not need to depend on the type engine.
 
 use rg_def_map::{DefMapQuery, DefMapSource, NamespaceSet};
-use rg_ir_model::{
-    DefId, ModuleRef, Path, SemanticItemRef, TraitDefRef, TypeDefRef, TypePathResolution,
-};
+use rg_ir_model::{DefId, ModuleRef, Path, SemanticItemRef, TraitDefRef, TypeDefRef};
 use rg_std::{ExpectedUnique, UniqueVec};
 
 use super::{ItemStoreQuery, ItemStoreSource};
-use crate::TypePathContext;
+use crate::{TypePathContext, TypePathResolution};
 
 /// Resolves Rust paths into semantic item identities without projecting them into `Ty`.
 #[derive(Clone)]

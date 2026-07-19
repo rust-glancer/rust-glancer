@@ -11,10 +11,8 @@
 //!               ^^^^ -> `crate::model::User`
 //! ```
 
-use rg_ir_model::{
-    BodyRef, Path, ScopeId,
-    items::{FieldKey, TypePath},
-};
+use rg_ir_model::{BodyRef, FieldKey, Path, ScopeId};
+use rg_item_tree::TypePath;
 use rg_parse::{FileId, Span};
 
 use rg_body_ir::{BodyPath, BodyView, ExprKind, PatData, RecordExprField};
@@ -83,7 +81,7 @@ impl<'a> TypePathSourceScanner<'a> {
 
         for (idx, segment) in path.segments.iter().enumerate() {
             if self.offset_matches(segment.span) {
-                let Some(path) = Path::from_type_path_prefix(path, idx) else {
+                let Some(path) = path.as_def_map_path_prefix(idx) else {
                     continue;
                 };
                 self.candidates.push(BodySourceCandidate::TypePath {

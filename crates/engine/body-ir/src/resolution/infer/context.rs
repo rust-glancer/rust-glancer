@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use rg_ir_model::{BindingId, BodyRef, ExprBinaryOp, ExprId, ExprUnaryOp, ExprWrapperKind, StmtId};
+use rg_ir_model::{BindingId, BodyRef, ExprBinaryOp, ExprId, ExprUnaryOp, StmtId};
 
 use rg_ty::{
     ClosureTyId, GenericArg, GenericArgs, PrimitiveTy, Ty,
@@ -9,7 +9,10 @@ use rg_ty::{
     ty_for_binary, ty_for_unary,
 };
 
-use crate::{BodyData, BodyFacts, CallFacts, ir::BodyQueryView};
+use crate::{
+    BodyData, BodyFacts, CallFacts,
+    ir::{BodyQueryView, ExprWrapperKind},
+};
 
 use super::{call::CallInferenceState, facts::InferenceFacts};
 

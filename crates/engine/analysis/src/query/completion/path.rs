@@ -2,6 +2,7 @@
 
 use rg_ir_view::{
     display::syntax::SyntaxRenderer,
+    lookup::name::NameNamespace,
     member::{MemberEnumVariant, MemberView},
 };
 
@@ -16,7 +17,7 @@ use crate::{
 
 use super::{
     CallCompletionKind, CompletionQuery,
-    candidates::{CompletionCandidateSource, CompletionScopeNamespace, ModuleCompletionCandidate},
+    candidates::{CompletionCandidateSource, ModuleCompletionCandidate},
     completion_sort::CompletionSortPolicy,
     def_completion_detail,
     module_scope::{ModuleCompletionRenderer, ModuleCompletionRequest},
@@ -157,9 +158,9 @@ enum PathCompletionFilter {
 }
 
 impl PathCompletionFilter {
-    fn accepts(self, namespace: CompletionScopeNamespace) -> bool {
+    fn accepts(self, namespace: NameNamespace) -> bool {
         match self {
-            Self::Types => matches!(namespace, CompletionScopeNamespace::Types),
+            Self::Types => matches!(namespace, NameNamespace::Types),
             Self::All => true,
         }
     }

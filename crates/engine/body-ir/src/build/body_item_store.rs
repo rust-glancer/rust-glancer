@@ -4,12 +4,9 @@
 //! items look like item-tree entries once the local DefMap has been finalized.
 
 use anyhow::Context as _;
-use rg_def_map::DefMap;
-use rg_ir_model::{
-    DefMapRef,
-    hir::source::{ItemSource, ItemSourceKind},
-    items::ItemNode,
-};
+use rg_def_map::{DefMap, ItemSource, ItemSourceKind};
+use rg_ir_model::DefMapRef;
+use rg_item_tree::ItemNode;
 use rg_semantic_ir::ItemStore;
 use rg_semantic_ir::{ItemStoreLowerer, ItemStoreSourceReader};
 

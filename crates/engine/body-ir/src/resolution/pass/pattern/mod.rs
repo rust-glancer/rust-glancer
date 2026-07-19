@@ -5,9 +5,8 @@
 //! iterator items, and closure signatures all use the same tuple/record/variant implementation.
 
 use rg_def_map::DefMapSource;
-use rg_ir_model::{
-    ExprId, ItemOwner, ScopeId, StmtId, TraitDefRef, items::LangItem, items::TypeRef,
-};
+use rg_ir_model::{ExprId, ItemOwner, ScopeId, StmtId, TraitDefRef};
+use rg_item_tree::{LangItem, TypeRef};
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::ItemStoreSource;
 use rg_ty::{GenericArgs, TraitGoal, Ty};

@@ -24,12 +24,13 @@ mod source;
 mod unqualified_completion_site;
 mod walk;
 
-use rg_ir_model::items::FieldKey;
 use rg_ir_model::{
-    BindingId, BodyRef, EnumVariantRef, ExprId, FieldRef, FunctionRef, LocalDefRef, Path, ScopeId,
-    SemanticItemRef,
+    BindingId, BodyRef, EnumVariantRef, ExprId, FieldKey, FieldRef, FunctionRef, LocalDefRef, Path,
+    ScopeId, SemanticItemRef,
 };
 use rg_parse::{FileId, Span};
+
+use crate::lookup::name::ValueOrTypeNamespace;
 
 pub(crate) use self::{
     cursor::BodyCursorScanner, dot_completion_site::DotCompletionSiteScanner,
@@ -49,20 +50,6 @@ pub(crate) struct DotCompletionSite {
     pub member_prefix_span: Span,
 }
 
-/// Namespace expected by a path-completion site inside a function body.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum PathCompletionNamespace {
-    Types,
-    Values,
-}
-
-/// Namespace expected by an unqualified completion site inside a function body.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum UnqualifiedCompletionNamespace {
-    Types,
-    Values,
-}
-
 /// Source site selected for a qualified-path completion query.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct PathCompletionSite {
@@ -72,7 +59,7 @@ pub(crate) struct PathCompletionSite {
     pub qualifier: Path,
     /// Segment prefix already typed after `::`.
     pub member_prefix_span: Span,
-    pub namespace: PathCompletionNamespace,
+    pub namespace: ValueOrTypeNamespace,
 }
 
 /// Source site selected for an unqualified completion query inside a body.
@@ -83,7 +70,7 @@ pub(crate) struct UnqualifiedCompletionSite {
     /// Name prefix already typed at the cursor.
     pub member_prefix_span: Span,
     pub member_prefix: String,
-    pub namespace: UnqualifiedCompletionNamespace,
+    pub namespace: ValueOrTypeNamespace,
     /// Number of body-wide bindings visible before this source site.
     ///
     /// Bindings are allocated in source order, so this boundary prevents later

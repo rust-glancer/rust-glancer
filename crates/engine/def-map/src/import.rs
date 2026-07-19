@@ -9,15 +9,12 @@ use std::fmt;
 use rg_std::{MemorySize, Shrink};
 use wincode::{SchemaRead, SchemaWrite};
 
-use rg_ir_model::{
-    CrateRef, ModuleId, Path, PathSegment,
-    hir::source::ItemSource,
-    items::{ImportAlias, UseImportKind, UsePath},
-};
+use rg_ir_model::{CrateRef, ModuleId, Path, PathSegment};
+use rg_item_tree::{ImportAlias, UseImportKind, UsePath, UsePathSegmentKind};
 use rg_parse::Span;
 use rg_text::Name;
 
-use crate::scope::Visibility;
+use crate::{ItemSource, scope::Visibility};
 
 /// One lowered import declaration.
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
@@ -108,8 +105,22 @@ pub struct ImportPath {
 
 impl ImportPath {
     pub fn from_use_path(path: &UsePath) -> Self {
+        let semantic = Path {
+            absolute: path.absolute,
+            segments: path
+                .segments
+                .iter()
+                .map(|segment| match &segment.kind {
+                    UsePathSegmentKind::Name(name) => PathSegment::Name(name.clone()),
+                    UsePathSegmentKind::SelfKw => PathSegment::SelfKw,
+                    UsePathSegmentKind::SuperKw => PathSegment::SuperKw,
+                    UsePathSegmentKind::CrateKw => PathSegment::CrateKw,
+                })
+                .collect(),
+        };
+
         Self {
-            semantic: Path::from_use_path(path),
+            semantic,
             source_span: path.source_span,
             segment_spans: path.segments.iter().map(|segment| segment.span).collect(),
         }
@@ -166,5 +177,70 @@ impl ImportPath {
 impl fmt::Display for ImportPath {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.semantic.fmt(f)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use rg_item_tree::{UsePath, UsePathSegment, UsePathSegmentKind};
+    use rg_parse::{Span, TextSpan};
+    use rg_text::Name;
+
+    use super::ImportPath;
+
+    #[test]
+    fn builds_semantic_paths_from_use_paths() {
+        let cases = [
+            (
+                "relative keywords and names",
+                use_path(
+                    false,
+                    &[
+                        UsePathSegmentKind::CrateKw,
+                        UsePathSegmentKind::SuperKw,
+                        UsePathSegmentKind::SelfKw,
+                        UsePathSegmentKind::Name(Name::new("User")),
+                    ],
+                ),
+                "crate::super::self::User",
+            ),
+            (
+                "absolute path",
+                use_path(
+                    true,
+                    &[
+                        UsePathSegmentKind::Name(Name::new("api")),
+                        UsePathSegmentKind::Name(Name::new("User")),
+                    ],
+                ),
+                "::api::User",
+            ),
+        ];
+
+        for (label, path, expected) in cases {
+            assert_eq!(
+                ImportPath::from_use_path(&path).to_string(),
+                expected,
+                "{label}"
+            );
+        }
+    }
+
+    fn use_path(absolute: bool, kinds: &[UsePathSegmentKind]) -> UsePath {
+        UsePath {
+            source_span: Some(span()),
+            absolute,
+            segments: kinds
+                .iter()
+                .cloned()
+                .map(|kind| UsePathSegment { kind, span: span() })
+                .collect(),
+        }
+    }
+
+    fn span() -> Span {
+        Span {
+            text: TextSpan { start: 0, end: 0 },
+        }
     }
 }

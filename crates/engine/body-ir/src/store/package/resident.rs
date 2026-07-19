@@ -2,13 +2,13 @@
 
 use rg_arena::Arena;
 use rg_def_map::DefMap;
-use rg_ir_model::{BodyData, BodyId, CrateId};
+use rg_ir_model::{BodyId, CrateId};
 use rg_semantic_ir::{ItemLookupIndex, ItemStore};
 use rg_std::{MemorySize, Shrink};
 use wincode::{SchemaRead, SchemaWrite};
 
 use super::{BodyLocalItems, CrateBodiesCoverage, CrateBodiesStatus};
-use crate::{BodyFacts, BodyView};
+use crate::{BodyData, BodyFacts, BodyView};
 
 /// Lowered bodies for all semantic crates inside one package.
 #[derive(Debug, Clone, PartialEq, Eq, Default, SchemaRead, SchemaWrite, MemorySize, Shrink)]

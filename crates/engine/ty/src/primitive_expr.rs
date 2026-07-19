@@ -86,7 +86,7 @@ fn shift_op_ty(lhs_ty: &Ty, rhs_ty: &Ty) -> Ty {
 
 #[cfg(test)]
 mod tests {
-    use rg_ir_model::items::{FloatTy, SignedIntTy, UnsignedIntTy};
+    use rg_ir_model::{FloatTy, SignedIntTy, UnsignedIntTy};
 
     use super::*;
 

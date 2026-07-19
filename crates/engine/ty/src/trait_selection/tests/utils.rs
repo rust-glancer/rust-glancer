@@ -7,18 +7,17 @@ use rg_def_map::{
     DefMap, DefMapBuilder, DefMapSource, LocalDefData, LocalDefKind, ModuleData, ModuleOrigin,
     ModuleScopeBuilder, Namespace, NamespaceSet, ScopeBinding, ScopeBindingProvenance, Visibility,
 };
-use rg_ir_model::hir::source::{GeneratedItemRef, GeneratedSourceId, ItemSource, ItemSourceKind};
-use rg_ir_model::items::{
-    FieldList, FloatTy, FunctionItem, FunctionQualifiers, GenericArg as ItemGenericArg,
-    GenericParams, ItemTreeId, SignedIntTy, TypeAliasItem, TypeBound, TypeOrConstParamData,
-    TypeParamData, TypePath, TypePathAnchor, TypePathSegment, TypeRef, UnsignedIntTy,
-    VisibilityLevel, WherePredicate,
-};
+use rg_def_map::{GeneratedItemRef, GeneratedSourceId, ItemSource, ItemSourceKind};
 use rg_ir_model::{
-    AssocItemId, CrateRef, DefId, DefMapRef, FileId, FunctionId, FunctionRef, GenericParamRef,
-    ImplId, ItemId, ItemOwner, LocalDefId, LocalDefRef, LocalImplId, LocalImplRef, ModuleId,
-    ModuleRef, PackageSlot, Span, StructId, TextSpan, TraitApplicability, TraitDefRef, TraitId,
-    TypeAliasId, TypeAliasRef, TypeDefId, TypeDefRef,
+    AssocItemId, CrateRef, DefId, DefMapRef, FileId, FloatTy, FunctionId, FunctionRef,
+    GenericParamRef, ImplId, ItemId, ItemOwner, LocalDefId, LocalDefRef, LocalImplId, LocalImplRef,
+    ModuleId, ModuleRef, PackageSlot, SignedIntTy, Span, StructId, TextSpan, TraitApplicability,
+    TraitDefRef, TraitId, TypeAliasId, TypeAliasRef, TypeDefId, TypeDefRef, UnsignedIntTy,
+};
+use rg_item_tree::{
+    FieldList, FunctionItem, FunctionQualifiers, GenericArg as ItemGenericArg, GenericParams,
+    ItemTreeId, TypeAliasItem, TypeBound, TypeOrConstParamData, TypeParamData, TypePath,
+    TypePathAnchor, TypePathSegment, TypeRef, VisibilityLevel, WherePredicate,
 };
 use rg_semantic_ir::{
     CrateItemQuery, FunctionData, FunctionSignature, GenericParamSource, GenericsQuery, ImplData,

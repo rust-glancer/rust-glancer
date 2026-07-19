@@ -1,7 +1,6 @@
 //! Goto-type-definition query flow.
 
-use rg_ir_model::CrateRef;
-use rg_ir_view::ty::TyView;
+use rg_ir_model::{CrateRef, identity::DeclarationRef};
 use rg_parse::FileId;
 
 use super::target::NavigationTargetProjection;
@@ -28,12 +27,11 @@ impl<'a, 'db> TypeDefinitionResolver<'a, 'db> {
             return Ok(Vec::new());
         };
 
-        let ty_view = TyView::new(self.0.view_db());
         let Some(ty) = SourceSymbolResolver::new(self.0.view_db()).ty_for_symbol(symbol)? else {
             return Ok(Vec::new());
         };
 
-        let declarations = ty_view.declarations_for_ty(&ty);
-        NavigationTargetProjection::new(self.0.view_db()).targets_for_declarations(declarations)
+        NavigationTargetProjection::new(self.0.view_db())
+            .targets_for_declarations(ty.nominal_type_defs().map(DeclarationRef::from))
     }
 }

@@ -5,18 +5,18 @@
 
 use rg_def_map::DefMapSource;
 use rg_ir_model::{
-    BodyPath, DefMapRef, ExprId, GenericDefRef, Path, ScopeId, StmtId, TypeDefRef,
-    TypePathResolution, identity::DeclarationRef, items::FieldKey,
+    DefMapRef, ExprId, FieldKey, GenericDefRef, Path, ScopeId, StmtId, TypeDefRef,
+    identity::DeclarationRef,
 };
 use rg_package_store::PackageStoreError;
-use rg_semantic_ir::ItemStoreSource;
+use rg_semantic_ir::{ItemStoreSource, TypePathResolution};
 use rg_std::ExpectedUnique;
 use rg_ty::{
     AdtTy, AutoderefMode, ExpectedTyExt, GenericArgs, PrimitiveTy, Substitution, Ty, ty_for_literal,
 };
 
 use crate::{
-    ExprUnaryOp,
+    BodyPath, ExprUnaryOp,
     ir::resolved::BodyResolution,
     ir::{ExprKind, ExprWrapperKind, LiteralKind, StmtKind},
 };

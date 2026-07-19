@@ -35,7 +35,7 @@ impl FieldCompletionRenderer {
             kind: CompletionKind::Field,
             target,
             applicability: CompletionApplicability::Known,
-            detail: SignatureRenderer::new(self.syntax.edition()).field_signature(field.data()),
+            detail: SignatureRenderer::new(self.syntax.edition()).member_field_signature(field),
             documentation: field.docs_text(),
             sort_text: CompletionSortPolicy::General.sort_text(
                 None,

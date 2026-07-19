@@ -8,16 +8,12 @@ use crate::{
     ReferenceLocation, ReferenceQuery as AnalysisReferenceQuery, ReferenceSearchFile, RenameEdit,
     RenameResult, RenameTarget, SourceTextView, SymbolAt, WorkspaceSymbol,
 };
+use rg_body_ir::{ExprData, ExprKind};
 use rg_def_map::testonly::DefMapFixture;
-use rg_ir_model::{BodySource, CrateRef, ExprData, ExprKind, GenericParamRef, PackageSlot};
+use rg_ir_model::{BodySource, CrateRef, PackageSlot};
 use rg_ir_view::testonly::ViewFixture;
 use rg_parse::{FileId, ParseDb, Span};
-use rg_semantic_ir::{
-    GenericParamSource, GenericsQuery, ItemStoreQuery, testonly::SemanticIrFixture,
-};
-use rg_ty::{
-    AdtTy, AliasTy, GenericArg, Lifetime, OpaqueTy, SemanticSignatureQuery, TraitRefLowering, Ty,
-};
+use rg_semantic_ir::testonly::SemanticIrFixture;
 use rg_workspace::{SysrootSources, TargetKind, WorkspaceLoweringConfig, WorkspaceMetadata};
 use test_fixture::{CrateFixture, FixtureMarkers, fixture_crate, fixture_crate_with_markers};
 
@@ -664,7 +660,7 @@ impl<'a> AnalysisQuerySnapshot<'a> {
                     dump,
                     "\n- {}",
                     ty.as_ref()
-                        .map(|ty| self.render_ty(ty))
+                        .map(|ty| self.db.fixture.render_indexed_type(ty))
                         .unwrap_or_else(|| "<none>".to_string())
                 )
                 .expect("string writes should not fail");
@@ -1134,196 +1130,6 @@ impl<'a> AnalysisQuerySnapshot<'a> {
                     writeln!(dump, "    {line}").expect("string writes should not fail");
                 }
             }
-        }
-    }
-
-    fn render_ty(&self, ty: &Ty) -> String {
-        match ty {
-            Ty::Unit => "()".to_string(),
-            Ty::Never => "!".to_string(),
-            Ty::Primitive(primitive) => primitive.label().to_string(),
-            Ty::Tuple(fields) => {
-                let fields = fields
-                    .iter()
-                    .map(|ty| self.render_ty(ty))
-                    .collect::<Vec<_>>();
-                let suffix = if fields.len() == 1 { "," } else { "" };
-                format!("({}{suffix})", fields.join(", "))
-            }
-            Ty::Array { inner, len } => format!("[{}; {}]", self.render_ty(inner), len),
-            Ty::Slice(inner) => format!("[{}]", self.render_ty(inner)),
-            Ty::Reference {
-                lifetime,
-                mutability,
-                inner,
-            } => {
-                let lifetime = match lifetime {
-                    Lifetime::Erased => String::new(),
-                    lifetime => format!("{lifetime} "),
-                };
-                format!(
-                    "&{lifetime}{}{}",
-                    if matches!(mutability, rg_ir_model::Mutability::Mutable) {
-                        "mut "
-                    } else {
-                        ""
-                    },
-                    self.render_ty(inner)
-                )
-            }
-            Ty::RawPointer { mutability, inner } => {
-                let qualifier = if matches!(mutability, rg_ir_model::Mutability::Mutable) {
-                    "mut"
-                } else {
-                    "const"
-                };
-                format!("*{qualifier} {}", self.render_ty(inner))
-            }
-            Ty::FnPointer { params, ret } => {
-                let params = params
-                    .iter()
-                    .map(|param| self.render_ty(param))
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                format!("fn({params}) -> {}", self.render_ty(ret))
-            }
-            Ty::Closure(closure) => format!("closure #{}", closure.id),
-            Ty::FnDef(function) => format!(
-                "function item {:?}{}",
-                function.def,
-                self.render_generic_args(&function.args)
-            ),
-            Ty::Adt(ty) => format!("nominal {}", self.render_body_nominal_ty(ty)),
-            Ty::Param(param) => self.render_type_param(*param),
-            Ty::Alias(AliasTy::Projection(alias)) => format!(
-                "projection {}{}",
-                self.render_associated_ty_name(alias.associated_ty),
-                self.render_generic_args(&alias.args)
-            ),
-            Ty::Alias(AliasTy::Opaque(opaque)) => self.render_opaque(opaque),
-            Ty::InferVar { kind, id } => format!("infer {kind:?} {id:?}"),
-            Ty::Unknown => "<unknown>".to_string(),
-        }
-    }
-
-    fn render_type_param(&self, param: rg_ir_model::TypeParamRef) -> String {
-        let db = self.db.fixture.view_db();
-        let generics = GenericsQuery::new(&db)
-            .generics(param.owner)
-            .expect("fixture generic declarations should be available while rendering a type");
-        let Some(data) = generics
-            .iter()
-            .find(|data| data.param() == GenericParamRef::Type(param))
-        else {
-            return "param <missing>".to_string();
-        };
-        match data.source() {
-            GenericParamSource::Type(source) => format!("param {}", source.name),
-            GenericParamSource::TraitSelf => "param Self".to_string(),
-            GenericParamSource::ArgumentImplTrait(_) => {
-                let mut bounds = SemanticSignatureQuery::new(&db, &db)
-                    .function_type_param_bounds(param)
-                    .expect("fixture APIT predicates should lower while rendering a type")
-                    .iter()
-                    .map(|bound| self.render_opaque_bound(&db, bound))
-                    .collect::<Vec<_>>();
-                bounds.sort();
-                if bounds.is_empty() {
-                    "param <argument impl Trait>".to_string()
-                } else {
-                    format!("impl {}", bounds.join(" + "))
-                }
-            }
-            GenericParamSource::Lifetime(_) | GenericParamSource::Const(_) => {
-                unreachable!("a type parameter should have type-like provenance")
-            }
-        }
-    }
-
-    fn render_opaque(&self, opaque: &OpaqueTy) -> String {
-        let db = self.db.fixture.view_db();
-        let mut bounds = SemanticSignatureQuery::new(&db, &db)
-            .opaque_bounds(opaque)
-            .expect("fixture opaque predicates should lower while rendering a type")
-            .unwrap_or_default()
-            .iter()
-            .map(|bound| self.render_opaque_bound(&db, bound))
-            .collect::<Vec<_>>();
-        bounds.sort();
-        if bounds.is_empty() {
-            "impl _".to_string()
-        } else {
-            format!("impl {}", bounds.join(" + "))
-        }
-    }
-
-    fn render_opaque_bound(
-        &self,
-        db: &rg_ir_view::IndexedViewDb<'_>,
-        bound: &TraitRefLowering,
-    ) -> String {
-        let mut args = bound
-            .application
-            .args
-            .iter()
-            .skip(1)
-            .map(|arg| self.render_generic_arg(arg))
-            .collect::<Vec<_>>();
-        for binding in &bound.associated_types {
-            let name = ItemStoreQuery::new(db)
-                .type_alias_data(binding.associated_ty)
-                .expect("fixture associated type should load while rendering an opaque bound")
-                .map(|data| data.name.to_string())
-                .unwrap_or_else(|| "<missing>".to_string());
-            args.push(format!("{name} = {}", self.render_ty(&binding.ty)));
-        }
-        let args = if args.is_empty() {
-            String::new()
-        } else {
-            format!("<{}>", args.join(", "))
-        };
-        format!(
-            "{}{args}",
-            self.db.fixture.render_trait_ref(bound.application.def)
-        )
-    }
-
-    fn render_associated_ty_name(&self, associated_ty: rg_ir_model::TypeAliasRef) -> String {
-        let db = self.db.fixture.view_db();
-        ItemStoreQuery::new(&db)
-            .type_alias_data(associated_ty)
-            .expect("fixture associated type should load while rendering a projection")
-            .map(|data| data.name.to_string())
-            .unwrap_or_else(|| "<missing>".to_string())
-    }
-
-    fn render_body_nominal_ty(&self, ty: &AdtTy) -> String {
-        format!(
-            "{}{}",
-            self.db.fixture.render_type_def_ref(ty.def),
-            self.render_generic_args(&ty.args)
-        )
-    }
-
-    fn render_generic_args(&self, args: &[GenericArg]) -> String {
-        if args.is_empty() {
-            return String::new();
-        }
-
-        format!(
-            "<{}>",
-            args.iter()
-                .map(|arg| self.render_generic_arg(arg))
-                .collect::<Vec<_>>()
-                .join(", ")
-        )
-    }
-
-    fn render_generic_arg(&self, arg: &GenericArg) -> String {
-        match arg {
-            GenericArg::Type(ty) => self.render_ty(ty),
-            GenericArg::Lifetime(lifetime) => lifetime.to_string(),
-            GenericArg::Const(value) => value.to_string(),
         }
     }
 

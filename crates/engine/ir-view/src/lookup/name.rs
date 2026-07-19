@@ -6,8 +6,8 @@
 use rg_def_map::{
     DefMapQuery, DefMapSource, Namespace, NamespaceSet, VisibleScopeDef, VisibleScopeOrigin,
 };
-use rg_ir_model::items::Documentation;
 use rg_ir_model::{DefId, FunctionRef, ModuleRef, Path, SemanticItemRef, identity::DeclarationRef};
+use rg_item_tree::Documentation;
 use rg_semantic_ir::ItemStoreQuery;
 
 use crate::{IndexedViewDb, SymbolKind};
@@ -18,6 +18,25 @@ pub enum NameNamespace {
     Types,
     Values,
     Macros,
+}
+
+/// Namespace selected by source positions that cannot denote a macro.
+///
+/// Keeping this restriction in the type distinguishes body type/value paths from module scopes,
+/// where macro names are a real third possibility.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ValueOrTypeNamespace {
+    Types,
+    Values,
+}
+
+impl From<ValueOrTypeNamespace> for NameNamespace {
+    fn from(namespace: ValueOrTypeNamespace) -> Self {
+        match namespace {
+            ValueOrTypeNamespace::Types => Self::Types,
+            ValueOrTypeNamespace::Values => Self::Values,
+        }
+    }
 }
 
 impl From<Namespace> for NameNamespace {

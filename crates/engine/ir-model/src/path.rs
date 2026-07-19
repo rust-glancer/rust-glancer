@@ -4,10 +4,7 @@ use wincode::{SchemaRead, SchemaWrite};
 
 use rg_text::{Name, NameInterner, RustEdition};
 
-use crate::{
-    CrateRef,
-    items::{TypePath, TypeRef, UsePath, UsePathSegment, UsePathSegmentKind},
-};
+use crate::CrateRef;
 use rg_std::{MemorySize, Shrink};
 
 /// Structured path used by def-map path resolution queries.
@@ -23,33 +20,6 @@ impl Path {
         Self {
             absolute: false,
             segments: vec![PathSegment::Name(Name::new(name.as_ref()))],
-        }
-    }
-
-    pub fn from_type_ref(ty: &TypeRef) -> Option<Self> {
-        let TypeRef::Path(path) = ty else {
-            return None;
-        };
-
-        Self::from_type_path(path)
-    }
-
-    pub fn from_type_path(path: &TypePath) -> Option<Self> {
-        path.as_def_map_path()
-    }
-
-    pub fn from_type_path_prefix(path: &TypePath, end_idx: usize) -> Option<Self> {
-        path.as_def_map_path_prefix(end_idx)
-    }
-
-    pub fn from_use_path(path: &UsePath) -> Self {
-        Self {
-            absolute: path.absolute,
-            segments: path
-                .segments
-                .iter()
-                .map(PathSegment::from_use_segment)
-                .collect(),
         }
     }
 
@@ -125,19 +95,6 @@ impl Path {
             | PathSegment::SuperKw
             | PathSegment::CrateKw
             | PathSegment::DollarCrate(_) => None,
-        }
-    }
-
-    #[cfg(test)]
-    pub fn from_use_path_prefix(path: &UsePath, end_idx: usize) -> Self {
-        Self {
-            absolute: path.absolute,
-            segments: path
-                .segments
-                .iter()
-                .take(end_idx.saturating_add(1))
-                .map(PathSegment::from_use_segment)
-                .collect(),
         }
     }
 
@@ -227,21 +184,13 @@ pub enum PathSegment {
 }
 
 impl PathSegment {
-    pub(crate) fn from_type_segment_name(name: &Name) -> Self {
+    /// Classifies a syntax path name into the keyword-aware DefMap representation.
+    pub fn from_syntax_name(name: &Name) -> Self {
         match name.as_str() {
             "self" => Self::SelfKw,
             "super" => Self::SuperKw,
             "crate" => Self::CrateKw,
             _ => Self::Name(name.clone()),
-        }
-    }
-
-    fn from_use_segment(segment: &UsePathSegment) -> Self {
-        match &segment.kind {
-            UsePathSegmentKind::Name(name) => Self::Name(name.clone()),
-            UsePathSegmentKind::SelfKw => Self::SelfKw,
-            UsePathSegmentKind::SuperKw => Self::SuperKw,
-            UsePathSegmentKind::CrateKw => Self::CrateKw,
         }
     }
 }
@@ -258,128 +207,9 @@ pub fn last_segment_name(segments: &[PathSegment]) -> Option<Name> {
 
 #[cfg(test)]
 mod tests {
-    use crate::items::{
-        TypePath, TypePathSegment, TypeRef, UsePath, UsePathSegment, UsePathSegmentKind,
-    };
-    use rg_parse::{Span, TextSpan};
     use rg_text::Name;
 
     use super::{Path, PathSegment};
-
-    #[test]
-    fn builds_paths_from_type_paths() {
-        let cases = [
-            (
-                "relative keywords and names",
-                type_path(false, &["crate", "super", "self", "User", "Self"]),
-                "crate::super::self::User::Self",
-            ),
-            (
-                "absolute path",
-                type_path(true, &["api", "User"]),
-                "::api::User",
-            ),
-        ];
-
-        for (label, path, expected) in cases {
-            let actual = Path::from_type_path(&path).map(|path| path.to_string());
-            assert_eq!(actual.as_deref(), Some(expected), "{label}");
-        }
-    }
-
-    #[test]
-    fn builds_paths_from_type_refs() {
-        let cases = [
-            (
-                "path type",
-                TypeRef::Path(type_path(false, &["User"])),
-                Some("User"),
-            ),
-            ("non-path type", TypeRef::Infer, None),
-        ];
-
-        for (label, ty, expected) in cases {
-            let actual = Path::from_type_ref(&ty).map(|path| path.to_string());
-            assert_eq!(actual.as_deref(), expected, "{label}");
-        }
-    }
-
-    #[test]
-    fn builds_paths_from_use_paths() {
-        let cases = [
-            (
-                "relative keywords and names",
-                use_path(
-                    false,
-                    &[
-                        UsePathSegmentKind::CrateKw,
-                        UsePathSegmentKind::SuperKw,
-                        UsePathSegmentKind::SelfKw,
-                        UsePathSegmentKind::Name(Name::new("User")),
-                    ],
-                ),
-                "crate::super::self::User",
-            ),
-            (
-                "absolute path",
-                use_path(
-                    true,
-                    &[
-                        UsePathSegmentKind::Name(Name::new("api")),
-                        UsePathSegmentKind::Name(Name::new("User")),
-                    ],
-                ),
-                "::api::User",
-            ),
-        ];
-
-        for (label, path, expected) in cases {
-            assert_eq!(Path::from_use_path(&path).to_string(), expected, "{label}");
-        }
-    }
-
-    #[test]
-    fn builds_prefix_paths() {
-        let type_path = type_path(false, &["api", "User", "Id"]);
-        let use_path = use_path(
-            true,
-            &[
-                UsePathSegmentKind::Name(Name::new("api")),
-                UsePathSegmentKind::Name(Name::new("User")),
-                UsePathSegmentKind::Name(Name::new("Id")),
-            ],
-        );
-
-        assert_eq!(
-            Path::from_type_path_prefix(&type_path, 1)
-                .map(|path| path.to_string())
-                .as_deref(),
-            Some("api::User")
-        );
-        assert_eq!(
-            Path::from_use_path_prefix(&use_path, 1).to_string(),
-            "::api::User"
-        );
-    }
-
-    #[test]
-    fn anchored_type_paths_have_no_def_map_path_projection() {
-        let path = TypePath {
-            source_span: span(),
-            absolute: false,
-            anchor: Some(crate::items::TypePathAnchor::Type(Box::new(TypeRef::Path(
-                type_path(false, &["T"]),
-            )))),
-            segments: vec![TypePathSegment {
-                name: Name::new("Assoc"),
-                args: Vec::new(),
-                span: span(),
-            }],
-        };
-
-        assert_eq!(Path::from_type_path(&path), None);
-        assert_eq!(Path::from_type_path_prefix(&path, 0), None);
-    }
 
     #[test]
     fn classifies_single_segment_paths() {
@@ -533,41 +363,7 @@ mod tests {
         }
     }
 
-    fn type_path(absolute: bool, names: &[&str]) -> TypePath {
-        TypePath {
-            source_span: span(),
-            absolute,
-            anchor: None,
-            segments: names
-                .iter()
-                .map(|name| TypePathSegment {
-                    name: Name::new(*name),
-                    args: Vec::new(),
-                    span: span(),
-                })
-                .collect(),
-        }
-    }
-
-    fn use_path(absolute: bool, kinds: &[UsePathSegmentKind]) -> UsePath {
-        UsePath {
-            source_span: Some(span()),
-            absolute,
-            segments: kinds
-                .iter()
-                .cloned()
-                .map(|kind| UsePathSegment { kind, span: span() })
-                .collect(),
-        }
-    }
-
     fn path(absolute: bool, segments: Vec<PathSegment>) -> Path {
         Path { absolute, segments }
-    }
-
-    fn span() -> Span {
-        Span {
-            text: TextSpan { start: 0, end: 0 },
-        }
     }
 }

@@ -1,7 +1,8 @@
 //! Trait lookup in body context.
 
 use rg_def_map::DefMapSource;
-use rg_ir_model::{GenericDefRef, ScopeId, TraitImplRef, items::TypeRef};
+use rg_ir_model::{GenericDefRef, ScopeId, TraitImplRef};
+use rg_item_tree::TypeRef;
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::ItemStoreSource;
 use rg_std::UniqueVec;

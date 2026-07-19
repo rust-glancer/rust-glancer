@@ -4,7 +4,7 @@
 //! `base`, so later evidence on the projected value can solve the owner.
 
 use rg_def_map::DefMapSource;
-use rg_ir_model::{ExprId, items::FieldKey};
+use rg_ir_model::{ExprId, FieldKey};
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::ItemStoreSource;
 use rg_ty::Ty;

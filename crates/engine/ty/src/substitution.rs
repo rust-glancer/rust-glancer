@@ -259,7 +259,7 @@ impl Substitution {
 mod tests {
     use rg_ir_model::{
         CrateId, CrateRef, DefMapRef, FunctionId, FunctionRef, GenericDefRef, ImplId, ImplRef,
-        LocalTypeOrConstParamId, PackageSlot, TypeParamRef, items::PrimitiveTy,
+        LocalTypeOrConstParamId, PackageSlot, PrimitiveTy, TypeParamRef,
     };
 
     use super::Substitution;

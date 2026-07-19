@@ -5,15 +5,15 @@ use rg_syntax::{
     ast::{self, HasGenericArgs as _, PathSegmentKind},
 };
 
-use rg_ir_model::{
-    BodyPath, BodyPathSegment, BodyPathSegmentArgs, BodyPathSegmentKind,
-    items::{GenericArg, PrimitiveTy, TypePath, TypeRef, UnsignedIntTy},
-};
-use rg_item_tree::FromAst as _;
+use rg_ir_model::{PrimitiveTy, UnsignedIntTy};
+use rg_item_tree::{FromAst as _, GenericArg, TypePath, TypeRef};
 use rg_parse::{FileId, Span};
 use rg_text::Name;
 
-use crate::ir::{BodySource, LabelData, LiteralKind};
+use crate::ir::{
+    BodyPath, BodyPathSegment, BodyPathSegmentArgs, BodyPathSegmentKind, BodySource, LabelData,
+    LiteralKind,
+};
 
 use super::body::BodyLowering;
 
@@ -241,7 +241,7 @@ pub(super) fn source_for(file_id: FileId, syntax: &rg_syntax::SyntaxNode) -> Bod
 
 #[cfg(test)]
 mod tests {
-    use rg_ir_model::items::{FloatTy, PrimitiveTy, UnsignedIntTy};
+    use rg_ir_model::{FloatTy, PrimitiveTy, UnsignedIntTy};
     use rg_syntax::{AstNode as _, Edition, SourceFile, ast};
 
     use crate::ir::LiteralKind;
