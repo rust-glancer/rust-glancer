@@ -1,3 +1,9 @@
+//! Process-side tarpc bootstrap for one analysis engine.
+//!
+//! The parent LSP server owns both loopback listeners. This module connects the engine process to
+//! the notification channel first, builds the service around that sink, then serves engine
+//! requests on the second connection.
+
 use std::{net::SocketAddr, sync::Arc};
 
 use anyhow::Context as _;
@@ -33,16 +39,16 @@ pub async fn run_rpc(
 
     // Initialize the service.
     let service = {
-        // Notifications are routed through the notifications client. This keeps the engine worker and
-        // diagnostics subsystem independent from how the LSP server eventually publishes them.
+        // Notifications are routed through the notifications client. This keeps the analysis
+        // engine and diagnostics subsystem independent from how the LSP server publishes them.
         let notifications = ServiceNotificationsSink::new(notifications_client);
         Service::spawn(memory_control, notifications)
     };
 
     // Initialize transport for engine service.
     let engine_transport = {
-        // The LSP server binds the socket and then acts as the RPC caller. The worker only connects
-        // back and serves requests over the initialized transport.
+        // The LSP server binds the socket and then acts as the RPC caller. The engine service only
+        // connects back and serves requests over the initialized transport.
         let mut transport = tcp::connect(engine_addr, Json::default);
         transport.config_mut().max_frame_length(usize::MAX);
         transport
@@ -52,8 +58,8 @@ pub async fn run_rpc(
 
     // Serve the engine RPC API.
     {
-        // Each request gets its own task, matching tarpc's usual server pattern and avoiding one
-        // slow request from blocking unrelated engine calls.
+        // Each response future gets its own task so tarpc can continue receiving requests. The
+        // analysis commands produced by those tasks still serialize on the engine lane.
         BaseChannel::with_defaults(engine_transport)
             .execute(service.serve())
             .for_each(|response| async move {

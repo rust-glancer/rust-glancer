@@ -1,9 +1,10 @@
 //! Dirty buffers are modeled as a narrow layer over the saved project state.
 //!
-//! `DirtyState` is shared with the worker so queued requests can notice when a newer dirty
-//! document identity exists and skip obsolete work. Current dirty requests use `DirtyOverlayCache`
-//! to build a temporary project overlay with the changed file partially reindexed, keeping the
-//! saved project frozen while hover, inlay hints, and similar features read from the buffer text.
+//! `DirtyState` is shared with the engine dispatcher so queued requests can notice when a newer
+//! dirty document identity exists and skip obsolete work. Current dirty requests use
+//! `DirtyOverlayCache` to build a temporary project overlay with the changed file partially
+//! reindexed, keeping the saved project frozen while hover, inlay hints, and similar features read
+//! from the buffer text.
 
 use std::{
     collections::HashMap,
@@ -19,10 +20,11 @@ mod overlay;
 #[cfg(test)]
 mod tests;
 
-/// Worker-visible dirty document state for skipping obsolete queued requests.
+/// Query-visible dirty document state for skipping obsolete queued requests.
 ///
-/// `DocumentStore` owns the live text. This is the small synchronous read model the worker uses
-/// without waiting behind the analysis command queue.
+/// `DocumentStore` owns the live text behind an async mutex. This is the smaller synchronous read
+/// model used by the engine thread: it can check an identity before and after a long query without
+/// borrowing the whole document store or copying buffer text again.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct DirtyState {
     state: Arc<Mutex<DirtyStateInner>>,
@@ -71,6 +73,11 @@ impl DirtyStateInner {
     }
 }
 
+/// Identifies the exact dirty buffer snapshot carried by one queued query.
+///
+/// Document versions are optional and are not enough by themselves: some clients omit them, and a
+/// restored buffer can reuse a version after reopening. The text fingerprint lets the engine
+/// notice content changes in either case.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct DirtyDocumentIdentity {
     path: PathBuf,

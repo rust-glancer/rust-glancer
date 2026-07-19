@@ -1,7 +1,14 @@
+//! Async access to the single-lane LSP analysis engine.
+//!
+//! RPC handlers clone `EngineHandle` and enqueue typed commands. A dedicated thread consumes those
+//! commands in FIFO order, which keeps saved-project mutation, query-time materialization, and
+//! package offloading from racing each other. The child modules split that thread into command
+//! dispatch, project lifecycle ownership, and request-scoped query execution.
+
 mod command;
-mod early_start;
-mod project_proxy;
-mod worker;
+mod dispatcher;
+mod project;
+mod query;
 
 use std::{
     path::{Path, PathBuf},
@@ -17,8 +24,8 @@ use anyhow::Context as _;
 use rg_lsp_proto::{ServiceLogLevel, ServiceNotification};
 use tokio::sync::{Mutex, oneshot};
 
-pub(crate) use self::command::EngineCommand;
-use self::{command::EngineResponse, worker::EngineWorker};
+pub(crate) use self::{command::EngineCommand, project::ProjectConfiguration};
+use self::{command::EngineResponse, dispatcher::EngineDispatcher};
 use crate::{
     debounce::Debouncer,
     dirty_state::DirtyState,
@@ -29,10 +36,11 @@ use crate::{
 
 const INLAY_HINT_REFRESH_DEBOUNCE: Duration = Duration::from_millis(150);
 
-/// Handle for the long-lived analysis worker.
+/// Handle for the long-lived analysis engine.
 ///
-/// The worker itself stays on a dedicated thread because project analysis is mostly synchronous.
-/// This handle is the async side used by the RPC-facing service.
+/// The engine itself stays on a dedicated thread because project analysis is mostly synchronous.
+/// This handle is the async side used by the RPC-facing service: each call sends one command and
+/// awaits its one-shot response without exposing the project itself to async tasks.
 #[derive(Clone, Debug)]
 pub(crate) struct EngineHandle {
     sender: Sender<QueuedEngineCommand>,
@@ -59,7 +67,7 @@ impl QueuedEngineCommand {
 }
 
 impl EngineHandle {
-    /// Starts the current in-process worker behind the engine-service abstraction.
+    /// Starts the in-process engine behind the service abstraction.
     pub(crate) fn spawn(
         memory_control: Arc<dyn MemoryControl>,
         notifications: ServiceNotificationsSink,
@@ -74,7 +82,8 @@ impl EngineHandle {
             let sender = sender.clone();
             let notifications = notifications.clone();
             move || {
-                EngineWorker::new(sender, memory_control, dirty_state, notifications).run(receiver)
+                EngineDispatcher::new(sender, memory_control, dirty_state, notifications)
+                    .run(receiver)
             }
         });
 
@@ -87,6 +96,11 @@ impl EngineHandle {
         }
     }
 
+    /// Send one typed command and wait for the dispatcher to answer it.
+    ///
+    /// Dropping the waiting RPC future closes the response endpoint. Query lifecycle code notices
+    /// that before doing expensive analysis, so cancelled requests can remain ordinary queued
+    /// commands instead of needing a second cancellation protocol.
     pub(crate) async fn request<T>(
         &self,
         build: impl FnOnce(EngineResponse<T>) -> EngineCommand,
@@ -97,13 +111,16 @@ impl EngineHandle {
         let (respond_to, response) = oneshot::channel();
         self.sender
             .send(QueuedEngineCommand::new(build(respond_to)))
-            .context("while attempting to send LSP engine command")?;
+            .context("send LSP engine command")?;
 
-        response
-            .await
-            .context("while attempting to receive LSP engine response")?
+        response.await.context("receive LSP engine response")?
     }
 
+    /// Clone the query-visible buffer snapshot before the request enters the engine queue.
+    ///
+    /// The command then carries one stable text/version pair even if the editor sends another
+    /// change while it waits. `DirtyState` separately tells the dispatcher when that pair became
+    /// stale.
     pub(crate) async fn dirty_document_snapshot(&self, path: &Path) -> DirtyDocumentSnapshotState {
         let documents = self.documents.lock().await;
         let dirty = documents.dirty_snapshot(path);
@@ -129,10 +146,12 @@ impl EngineHandle {
         dirty
     }
 
+    /// Publish the latest lightweight dirty identity to the synchronous engine thread.
     pub(crate) fn sync_dirty_state(&self, path: &Path, dirty: &DirtyDocumentSnapshotState) {
         self.dirty_state.sync_document(path, dirty);
     }
 
+    /// Restore dirty status when disk reindexing failed after `didSave` optimistically cleaned it.
     pub(crate) async fn mark_dirty_after_failed_save(&self, path: PathBuf, error: anyhow::Error) {
         let mut documents = self.documents.lock().await;
         documents.mark_dirty_after_failed_save(path.clone());
@@ -160,6 +179,7 @@ impl EngineHandle {
         });
     }
 
+    /// Trace the saved/live identity after the project accepted a save reindex.
     pub(crate) async fn log_freshness_after_save(&self, path: &Path) {
         let freshness = self.documents.lock().await.freshness(path);
         tracing::trace!(

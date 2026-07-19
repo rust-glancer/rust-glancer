@@ -1,3 +1,5 @@
+//! End-to-end rename behavior at the engine service boundary.
+
 use expect_test::expect;
 use test_fixture::testonly::MarkedText;
 
@@ -117,8 +119,8 @@ async fn query_rebuilds_and_retries_after_saved_source_changes_without_notificat
     .await;
 
     // Simulate a watcher delay: the disk advances, but the saved project still describes `User`.
-    // Rename needs exact source text, so its first attempt detects the stale revision. The worker
-    // rebuilds that path and runs the same query once more against `Acct`.
+    // Rename needs exact source text, so its first attempt detects the stale revision. Query
+    // recovery rebuilds that path and runs the same request once more against `Acct`.
     fixture.write_file_without_notification(
         "src/lib.rs",
         "pub struct Acct;\n\npub fn demo() {\n    let _user: Acct;\n}\n",
