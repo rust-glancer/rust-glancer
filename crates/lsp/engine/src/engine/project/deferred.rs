@@ -47,22 +47,28 @@ impl DeferredIndexingFinish {
     ///
     /// This is called after the coordinator replaces the saved project during initialization. At
     /// that point there cannot be an older finish for the same engine, so the clone built by the
-    /// initial index can be handed directly to the background thread.
-    pub(super) fn start_initial(&mut self, generation: u64, detached: DetachedSplitIndexing) {
-        self.spawn_finish(generation, detached);
+    /// initial index can be handed directly to the background thread. The return value tells the
+    /// coordinator whether it should publish a deferred-started notification.
+    pub(super) fn start_initial(
+        &mut self,
+        generation: u64,
+        detached: DetachedSplitIndexing,
+    ) -> bool {
+        self.spawn_finish(generation, detached)
     }
 
     /// Ensure the current saved project will eventually finish deferred indexing.
     ///
     /// Saved-source mutations invalidate any detached clone that is already running. Starting
     /// another clone immediately would double peak memory, so this state records that one restart
-    /// is needed and lets the old clone return first.
-    pub(super) fn saved_project_changed(&mut self, project: &ProjectState) {
+    /// is needed and lets the old clone return first. Returning `true` means the active generation
+    /// now has deferred work running or queued behind that older clone.
+    pub(super) fn saved_project_changed(&mut self, project: &ProjectState) -> bool {
         if self.in_flight_generation.is_some() {
             self.restart_after_in_flight = true;
-            return;
+            return true;
         }
-        self.start_current(project);
+        self.start_current(project)
     }
 
     /// Reconcile one returned clone and decide whether the editor may see indexing as finished.
@@ -100,7 +106,7 @@ impl DeferredIndexingFinish {
     }
 
     /// Detach the latest saved state when no other background clone is live.
-    fn start_current(&mut self, project: &ProjectState) {
+    fn start_current(&mut self, project: &ProjectState) -> bool {
         let (generation, detached) = match project.detach_saved_split_indexing() {
             Ok(detached) => detached,
             Err(error) => {
@@ -108,11 +114,11 @@ impl DeferredIndexingFinish {
                     error = %format!("{error:#}"),
                     "failed to detach saved project for deferred indexing finish"
                 );
-                return;
+                return false;
             }
         };
 
-        self.spawn_finish(generation, detached);
+        self.spawn_finish(generation, detached)
     }
 
     /// Finish deferred indexing on a detached project clone.
@@ -120,7 +126,7 @@ impl DeferredIndexingFinish {
     /// The saved project is already usable when this runs. The background result is sent back to
     /// the command loop instead of mutating saved state directly, so the command loop can keep all
     /// project generation checks in one place.
-    fn spawn_finish(&mut self, generation: u64, detached: DetachedSplitIndexing) {
+    fn spawn_finish(&mut self, generation: u64, detached: DetachedSplitIndexing) -> bool {
         let sender = self.sender.clone();
 
         let spawn_result = thread::Builder::new()
@@ -159,6 +165,7 @@ impl DeferredIndexingFinish {
         match spawn_result {
             Ok(_) => {
                 self.in_flight_generation = Some(generation);
+                true
             }
             Err(error) => {
                 tracing::warn!(
@@ -166,6 +173,7 @@ impl DeferredIndexingFinish {
                     error = %error,
                     "failed to spawn deferred indexing background finish"
                 );
+                false
             }
         }
     }

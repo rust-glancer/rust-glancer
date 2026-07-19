@@ -31,7 +31,12 @@ pub(crate) enum EngineCommand {
     },
     ProjectPathsChanged {
         paths: Vec<PathBuf>,
-        respond_to: EngineResponse<()>,
+        /// External save/watcher caller waiting for this command.
+        ///
+        /// Stale-source recovery uses the same command without a responder so it can join the
+        /// normal FIFO path-change stream instead of rebuilding inside a query. The dispatcher
+        /// creates responder fan-out only when it coalesces several adjacent commands.
+        respond_to: Option<EngineResponse<()>>,
     },
     GotoDefinition {
         path: PathBuf,

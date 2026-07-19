@@ -10,7 +10,7 @@ use tower_lsp_server::{
     },
 };
 
-use crate::client_notifications::DeferredIndexingFinished;
+use crate::client_notifications::{DeferredIndexingFinished, DeferredIndexingStarted};
 
 /// Publishes service side effects to the real LSP client.
 ///
@@ -104,6 +104,13 @@ async fn publish_service_notification(
                     "failed to request inlay hint refresh after service notification"
                 );
             }
+        }
+        ServiceNotification::DeferredIndexingStarted { root } => {
+            lsp_client
+                .send_notification::<DeferredIndexingStarted>(DeferredIndexingStarted::params(
+                    &root,
+                ))
+                .await;
         }
         ServiceNotification::DeferredIndexingFinished { root } => {
             lsp_client

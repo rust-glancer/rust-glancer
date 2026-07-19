@@ -11,7 +11,7 @@ mod target;
 mod tests;
 
 pub use self::{
-    db::{PackageFileRef, ParseDb},
+    db::{PackageFileRef, ParseDb, SavedFileRefresh},
     file::{FileId, ParsedFile, ParsedFileSnapshot},
     line_index::{LineIndex, LineIndexSnapshot},
     module::ModuleFileContext,

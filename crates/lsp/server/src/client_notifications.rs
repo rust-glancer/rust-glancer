@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use tower_lsp_server::ls_types::{LSPAny, LSPObject, notification::Notification};
 
 const ACTIVE_WORKSPACE_CHANGED_METHOD: &str = "rust-glancer/activeWorkspaceChanged";
+const DEFERRED_INDEXING_STARTED_METHOD: &str = "rust-glancer/deferredIndexingStarted";
 const DEFERRED_INDEXING_FINISHED_METHOD: &str = "rust-glancer/deferredIndexingFinished";
 
 /// Custom notification that lets the VS Code client show which workspace currently owns requests.
@@ -35,8 +36,25 @@ impl ActiveWorkspaceChanged {
     }
 }
 
-/// Custom notification used by tooling that wants to distinguish structural readiness from the
-/// background indexing work that completes shortly after it.
+/// Marks the beginning of background work for an already-queryable project generation.
+///
+/// This event is separate from the foreground `indexing` workspace state. A watcher batch can be
+/// an exact replay that publishes no generation and therefore starts no deferred work.
+pub(crate) struct DeferredIndexingStarted;
+
+impl Notification for DeferredIndexingStarted {
+    type Params = LSPAny;
+
+    const METHOD: &'static str = DEFERRED_INDEXING_STARTED_METHOD;
+}
+
+impl DeferredIndexingStarted {
+    pub(crate) fn params(root: &Path) -> LSPAny {
+        deferred_indexing_params(root)
+    }
+}
+
+/// Marks completion of background work for the active saved project generation.
 ///
 /// Editors can ignore this notification. `compare-lsp` uses it as a precise post-ready barrier so
 /// its measured query latency does not include the first body-sensitive request materializing
@@ -51,13 +69,17 @@ impl Notification for DeferredIndexingFinished {
 
 impl DeferredIndexingFinished {
     pub(crate) fn params(root: &Path) -> LSPAny {
-        let mut params = LSPObject::new();
-        params.insert(
-            "root".to_string(),
-            LSPAny::String(root.display().to_string()),
-        );
-        LSPAny::Object(params)
+        deferred_indexing_params(root)
     }
+}
+
+fn deferred_indexing_params(root: &Path) -> LSPAny {
+    let mut params = LSPObject::new();
+    params.insert(
+        "root".to_string(),
+        LSPAny::String(root.display().to_string()),
+    );
+    LSPAny::Object(params)
 }
 
 /// Client-facing snapshot of the workspace currently selected by document routing.
@@ -126,11 +148,14 @@ mod tests {
     }
 
     #[test]
-    fn deferred_indexing_finished_params_render_root() {
-        let actual = render_params(DeferredIndexingFinished::params(Path::new(
-            "workspace/project_a",
-        )));
-        assert_eq!(actual, "root: workspace/project_a");
+    fn deferred_indexing_params_render_root() {
+        let root = Path::new("workspace/project_a");
+        for params in [
+            DeferredIndexingStarted::params(root),
+            DeferredIndexingFinished::params(root),
+        ] {
+            assert_eq!(render_params(params), "root: workspace/project_a");
+        }
     }
 
     fn render_params(params: LSPAny) -> String {

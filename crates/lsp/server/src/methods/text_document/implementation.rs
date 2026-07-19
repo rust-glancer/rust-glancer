@@ -22,7 +22,7 @@ pub(crate) async fn implementation(
     tracing::trace!("implementation request received");
     let locations = ctx
         .engine_client
-        .call(
+        .query(
             "goto_implementation",
             move |engine_client, request_context| async move {
                 engine_client

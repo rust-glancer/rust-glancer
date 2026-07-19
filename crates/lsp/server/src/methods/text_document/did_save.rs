@@ -10,7 +10,7 @@ use crate::methods::MethodContext;
 )]
 pub(crate) async fn did_save(ctx: MethodContext, path: PathBuf, params: DidSaveTextDocumentParams) {
     ctx.engine_client
-        .notify(
+        .notify_indexing(
             "did_save",
             move |engine_client, request_context| async move {
                 engine_client

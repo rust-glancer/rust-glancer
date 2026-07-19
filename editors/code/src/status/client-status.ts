@@ -55,7 +55,7 @@ export class ClientStatus {
   private failureReason: string | undefined;
   private activeWorkspaceState: ActiveWorkspaceState | undefined;
   private activeWorkspaceFailureReason: string | undefined;
-  private readonly rootsWithFinishedDeferredIndexing = new Set<string>();
+  private readonly rootsWithPendingDeferredIndexing = new Set<string>();
   private currentStatus: StatusSnapshot = {
     state: "created",
     text: "",
@@ -82,7 +82,7 @@ export class ClientStatus {
     this.failureReason = undefined;
     this.activeWorkspaceState = undefined;
     this.activeWorkspaceFailureReason = undefined;
-    this.rootsWithFinishedDeferredIndexing.clear();
+    this.rootsWithPendingDeferredIndexing.clear();
     this.details = details;
     this.show("starting", "$(sync~spin) Rust Glancer: starting", () => this.view.starting(details));
   }
@@ -102,9 +102,6 @@ export class ClientStatus {
       return;
     }
 
-    if (this.details.activeWorkspaceRoot !== undefined) {
-      this.rootsWithFinishedDeferredIndexing.delete(this.details.activeWorkspaceRoot);
-    }
     this.show("indexing", "$(sync~spin) Rust Glancer: indexing", () =>
       this.view.indexing(this.details),
     );
@@ -122,13 +119,19 @@ export class ClientStatus {
 
     this.activeWorkspaceState = state;
     this.activeWorkspaceFailureReason = state === "failed" ? message : undefined;
-    if (state !== "ready") {
-      this.rootsWithFinishedDeferredIndexing.delete(root);
-    }
     this.details = {
       ...this.details,
       activeWorkspaceRoot: root,
     };
+    this.refresh(isActiveRustDocumentDirty);
+  }
+
+  public deferredIndexingStarted(root: string, isActiveRustDocumentDirty: boolean): void {
+    if (this.details === undefined) {
+      return;
+    }
+
+    this.rootsWithPendingDeferredIndexing.add(root);
     this.refresh(isActiveRustDocumentDirty);
   }
 
@@ -137,7 +140,7 @@ export class ClientStatus {
       return;
     }
 
-    this.rootsWithFinishedDeferredIndexing.add(root);
+    this.rootsWithPendingDeferredIndexing.delete(root);
     this.refresh(isActiveRustDocumentDirty);
   }
 
@@ -145,7 +148,7 @@ export class ClientStatus {
     this.running = false;
     this.resetDiagnostics();
     this.failureReason = undefined;
-    this.rootsWithFinishedDeferredIndexing.clear();
+    this.rootsWithPendingDeferredIndexing.clear();
     this.details = details;
     this.show("stopped", "$(circle-slash) Rust Glancer: stopped", () =>
       this.view.stopped(reason, details ?? {}),
@@ -156,7 +159,7 @@ export class ClientStatus {
     this.running = false;
     this.resetDiagnostics();
     this.failureReason = reason;
-    this.rootsWithFinishedDeferredIndexing.clear();
+    this.rootsWithPendingDeferredIndexing.clear();
     this.details = details;
     this.show("failed", "$(error) Rust Glancer: failed", () =>
       this.view.failed(reason, details ?? {}),
@@ -204,8 +207,9 @@ export class ClientStatus {
         this.view.diagnosticsFailed(this.details),
       );
     } else if (this.deferredIndexingIsRunningForActiveWorkspace()) {
-      // The engine is already usable here; the marker only says that background indexing has not
-      // sent its finish notification yet.
+      // The engine is already usable here. Only the explicit deferred-start event creates this
+      // state: a foreground indexing cycle may publish no new generation and need no background
+      // work at all.
       this.show("ready", "~ Rust Glancer: ready", () =>
         this.view.readyWithDeferredIndexing(this.details),
       );
@@ -219,7 +223,7 @@ export class ClientStatus {
     return (
       this.activeWorkspaceState === "ready" &&
       root !== undefined &&
-      !this.rootsWithFinishedDeferredIndexing.has(root)
+      this.rootsWithPendingDeferredIndexing.has(root)
     );
   }
 

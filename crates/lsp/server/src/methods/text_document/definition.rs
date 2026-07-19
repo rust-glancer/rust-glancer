@@ -19,7 +19,7 @@ pub(crate) async fn definition(
     tracing::trace!("definition request received");
     let locations = ctx
         .engine_client
-        .call(
+        .query(
             "goto_definition",
             move |engine_client, request_context| async move {
                 engine_client

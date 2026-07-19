@@ -2,7 +2,7 @@
 //!
 //! Query methods only compute a result. This layer decides whether that work should run and
 //! whether its result is still safe to publish. It skips cancelled or already-obsolete requests,
-//! releases request-scoped package loads, retries one stale saved-source failure, and turns a
+//! releases request-scoped package loads, neutralizes stale saved-source failures, and turns a
 //! recoverable package-cache failure into an empty answer followed by project repair.
 //!
 //! Dirty identity is checked twice: once before analysis to avoid known-obsolete work, and once
@@ -12,9 +12,13 @@
 //! Example: hover for dirty version 7 starts, then `didChange` publishes version 8 while inference
 //! is running. The computation is allowed to finish, but its version-7 result is replaced with the
 //! feature's empty response instead of being sent to the editor.
+//!
+//! A saved-source race follows a different path. If hover discovers that `src/lib.rs` changed on
+//! disk, hover returns its empty response, records that the saved generation is stale, and enqueues
+//! `src/lib.rs` on the ordinary path-change stream. Later queries stay empty until that mutation
+//! publishes a coherent generation; the hover itself never turns into a synchronous reindex.
 
 use std::{
-    path::Path,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -72,14 +76,15 @@ impl QueryContext {
 impl QueryRunner<'_> {
     /// Run one read-only request through cancellation, recovery, and publication policy.
     ///
-    /// The supplied closure contains only the feature query and may run twice: a stale saved-source
-    /// error triggers one workspace rebuild and one retry. Regardless of the result, transient
-    /// package loads are released before the next engine command is accepted.
+    /// The supplied closure contains only the feature query. A stale saved-source error latches the
+    /// saved generation as stale and schedules normal path recovery instead of rebuilding inside
+    /// this request. Regardless of the result, transient package loads are released before the
+    /// next engine command is accepted.
     pub(crate) fn respond_to_query<T>(
         &mut self,
         context: QueryContext,
         respond_to: EngineResponse<T>,
-        mut query: impl FnMut(&mut Self) -> anyhow::Result<T>,
+        query: impl FnOnce(&mut Self) -> anyhow::Result<T>,
     ) where
         T: Default + Send + 'static,
     {
@@ -110,6 +115,20 @@ impl QueryRunner<'_> {
             return;
         }
 
+        // Once one query proves that the saved generation no longer describes disk, all later
+        // queries are known to be unsafe. They remain cheap neutral responses until the queued
+        // watcher/recovery mutation publishes a coherent generation.
+        if let Some(stale_source) = self.project.stale_source() {
+            tracing::debug!(
+                label = context.label,
+                path = %stale_source.display(),
+                queued_ms = context.queue_elapsed.as_millis(),
+                "analysis query skipped for stale saved generation"
+            );
+            let _ = respond_to.send(Ok(T::default()));
+            return;
+        }
+
         // From here on, clean and current-dirty requests share the same execution path. Keeping the
         // stale check in the context layer lets timing and cache recovery remain uniform for every
         // analysis query.
@@ -129,16 +148,13 @@ impl QueryRunner<'_> {
             .as_ref()
             .err()
             .and_then(Project::stale_source_path)
-            .map(Path::to_path_buf);
-        let mut retried_stale_source = false;
-        // TODO(#126): Carry clean-document identity into the dispatcher and avoid rerunning a
-        // document request against disk bytes newer than the editor snapshot that issued it.
-        if let Some(stale_path) = stale_path
-            && self.project.recover_after_stale_source(label, &stale_path)
-        {
-            retried_stale_source = true;
-            result = query(self);
-            self.project.release_query_memory();
+            .map(std::path::Path::to_path_buf);
+        let stale_source_neutralized = stale_path.is_some();
+        if let Some(stale_path) = stale_path {
+            // A source race is a project-lifecycle event, not a feature-query failure. Re-enter the
+            // FIFO mutation stream and keep this response neutral while that recovery catches up.
+            self.project.record_stale_source(label, &stale_path);
+            result = Ok(T::default());
         }
         let query_elapsed = started.elapsed();
         MemoryReporter::purge_and_report_delta_debug(memory_control.as_ref(), label, memory_before);
@@ -153,7 +169,7 @@ impl QueryRunner<'_> {
                     queued_ms = queue_elapsed.as_millis(),
                     elapsed_ms = query_elapsed.as_millis(),
                     status = "ok",
-                    retried_stale_source,
+                    stale_source_neutralized,
                     "analysis query completed"
                 );
             }
@@ -165,7 +181,7 @@ impl QueryRunner<'_> {
                     elapsed_ms = query_elapsed.as_millis(),
                     status = "error",
                     recoverable_cache_failure = should_recover,
-                    retried_stale_source,
+                    stale_source_neutralized,
                     error = %error,
                     "analysis query completed"
                 );

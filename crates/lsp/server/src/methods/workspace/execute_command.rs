@@ -15,7 +15,7 @@ pub(crate) async fn execute_command(
     match command.as_str() {
         commands::REINDEX_WORKSPACE => {
             ctx.engine_client
-                .call(
+                .call_indexing(
                     "reindex_workspace",
                     |engine_client, request_context| async move {
                         engine_client.reindex_workspace(request_context).await

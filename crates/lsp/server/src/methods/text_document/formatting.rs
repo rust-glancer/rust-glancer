@@ -14,7 +14,7 @@ pub(crate) async fn formatting(
 
     let edits = ctx
         .engine_client
-        .call(
+        .query(
             "formatting",
             move |engine_client, request_context| async move {
                 engine_client.formatting(request_context, path).await

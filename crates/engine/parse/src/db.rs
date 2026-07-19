@@ -27,6 +27,21 @@ pub struct PackageFileRef {
     pub file: FileId,
 }
 
+/// Result of refreshing one saved path against a parsed project generation.
+///
+/// A watcher notification does not necessarily mean that source bytes changed: rescan recovery
+/// can report a path already applied by an earlier batch. Unknown paths are kept separate because
+/// they may be newly created Rust modules that package-level discovery still needs to find.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SavedFileRefresh {
+    /// The saved bytes have the same strong source identity as the existing generation.
+    Unchanged,
+    /// The path has new bytes and was reparsed in every package that already owns it.
+    Reparsed(Vec<PackageFileRef>),
+    /// The path is not present in any package file table and needs module rediscovery.
+    Unknown,
+}
+
 impl ParseDb {
     /// Builds parsed packages for one normalized workspace metadata graph.
     pub fn build(workspace: &rg_workspace::WorkspaceMetadata) -> anyhow::Result<Self> {
@@ -216,17 +231,29 @@ impl ParseDb {
         }
     }
 
-    /// Reparses a saved file from source staged before the project update began.
+    /// Refreshes a saved file from source staged before the project update began.
     ///
     /// `canonical_file_path` must use the same canonical identity stored in the parse database.
-    /// Unlike dirty-buffer reparsing, the parsed file remains filesystem-backed so staged source
-    /// text is not retained after the update finishes.
-    pub fn reparse_saved_file(
+    /// Exact watcher replays are reported without reparsing. Unlike dirty-buffer reparsing, a
+    /// changed parsed file remains filesystem-backed so staged source text is not retained after
+    /// the update finishes.
+    pub fn refresh_saved_file(
         &mut self,
         canonical_file_path: &Path,
-    ) -> Result<Vec<PackageFileRef>, SourceError> {
+    ) -> Result<SavedFileRefresh, SourceError> {
+        let known_file = self.contains_file_path(canonical_file_path);
         self.sources.begin_capture();
+        let previous = self.sources.entry(canonical_file_path);
         let source = self.sources.replace_saved_from_disk(canonical_file_path)?;
+        if known_file
+            && previous.as_ref().is_some_and(|previous| {
+                previous.is_saved()
+                    && previous.revision() == source.revision()
+                    && previous.byte_len() == source.byte_len()
+            })
+        {
+            return Ok(SavedFileRefresh::Unchanged);
+        }
         let mut changed_files = Vec::new();
 
         for (package_slot, package) in self.packages.iter_mut().enumerate() {
@@ -242,7 +269,11 @@ impl ParseDb {
             });
         }
 
-        Ok(changed_files)
+        if changed_files.is_empty() {
+            Ok(SavedFileRefresh::Unknown)
+        } else {
+            Ok(SavedFileRefresh::Reparsed(changed_files))
+        }
     }
 
     /// Reparses a known source file from an in-memory buffer for every package that owns it.

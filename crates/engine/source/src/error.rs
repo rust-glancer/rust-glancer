@@ -2,8 +2,8 @@
 //!
 //! Ordinary I/O and UTF-8 failures explain why source could not be captured. `Stale` and
 //! `ExistenceChanged` mean something stronger: a generation was internally coherent, but the
-//! filesystem no longer matches it. The project layer uses that distinction to rebuild once
-//! instead of treating stale source as an empty query result.
+//! filesystem no longer matches it. Project hosts use that distinction to retry from the newer
+//! disk state instead of treating a write that landed during construction as a permanent failure.
 
 use std::{
     error::Error,

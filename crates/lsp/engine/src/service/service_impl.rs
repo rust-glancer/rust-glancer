@@ -169,7 +169,7 @@ impl EngineService for Service {
             .engine
             .request(|respond_to| EngineCommand::ProjectPathsChanged {
                 paths: vec![path],
-                respond_to,
+                respond_to: Some(respond_to),
             })
             .await
         {
@@ -256,7 +256,7 @@ impl EngineService for Service {
         self.engine
             .request(|respond_to| EngineCommand::ProjectPathsChanged {
                 paths: forwarded_paths,
-                respond_to,
+                respond_to: Some(respond_to),
             })
             .await
             .map_err(EngineError::from)?;

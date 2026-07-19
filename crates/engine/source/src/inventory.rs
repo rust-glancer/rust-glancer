@@ -138,6 +138,10 @@ impl SourceInventory {
     }
 
     /// Replaces one saved path by capturing its disk bytes at the start of candidate rebuilding.
+    ///
+    /// An exact watcher replay keeps the existing immutable entry. Package file tables may still
+    /// point at that entry, and retaining it avoids splitting one unchanged source identity across
+    /// two otherwise equivalent allocations when another file in the same batch does change.
     pub fn replace_saved_from_disk(
         &self,
         canonical_path: &Path,
@@ -146,10 +150,18 @@ impl SourceInventory {
         let text = read_source_text(canonical_path)?;
         let path = SourcePath::new(canonical_path.to_path_buf());
         let entry = Arc::new(SourceEntry::saved(path.clone(), text));
-        self.entries
+        let mut entries = self
+            .entries
             .write()
-            .expect("source inventory lock should not be poisoned")
-            .insert(path, Arc::clone(&entry));
+            .expect("source inventory lock should not be poisoned");
+        if let Some(existing) = entries.get(&path)
+            && existing.is_saved()
+            && existing.revision() == entry.revision()
+            && existing.byte_len() == entry.byte_len()
+        {
+            return Ok(Arc::clone(existing));
+        }
+        entries.insert(path, Arc::clone(&entry));
         Ok(entry)
     }
 
@@ -195,6 +207,37 @@ impl SourceInventory {
             .expect("source inventory lock should not be poisoned")
             .get(path)
             .cloned()
+    }
+
+    /// Returns every saved path whose disk bytes advanced past this frozen inventory.
+    ///
+    /// A failed incremental build ordinarily reports only the first stale source it tried to read.
+    /// Hosts use this scan after an edit burst settles so the next candidate can refresh all known
+    /// changed files together instead of discovering them through one failed rebuild at a time.
+    pub fn stale_saved_paths(&self) -> Result<Vec<PathBuf>, SourceError> {
+        let entries = self
+            .entries
+            .read()
+            .expect("source inventory lock should not be poisoned");
+        let mut stale_paths = Vec::new();
+
+        for entry in entries.values() {
+            match entry.validate_saved() {
+                Ok(()) => {}
+                // Project update policy handles deletions through the surviving module or Cargo
+                // file that stopped naming this path. A disappeared entry should not hide other
+                // changed files from burst reconciliation.
+                Err(error) if error.io_kind() == Some(std::io::ErrorKind::NotFound) => {}
+                Err(error) => {
+                    let Some(path) = error.stale_path() else {
+                        return Err(error);
+                    };
+                    stale_paths.push(path.to_path_buf());
+                }
+            }
+        }
+
+        Ok(stale_paths)
     }
 
     /// Drops entries that are no longer part of any parsed package file table.

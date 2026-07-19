@@ -12,7 +12,7 @@ use tower_lsp_server::{Client as LspClient, ls_types::MessageType};
 use crate::{
     client_notifications::{ActiveWorkspaceChanged, ActiveWorkspaceStatus},
     config::ServerConfig,
-    engine_client::EngineClient,
+    engine_client::{EngineAvailabilitySnapshot, EngineClient, EngineIndexingActivity},
     engine_process::{EngineProcess, EngineProcessExit, EngineProcessExitMonitor},
 };
 
@@ -36,6 +36,18 @@ use self::{
 pub(crate) struct EngineRegistry {
     lsp_client: LspClient,
     inner: Arc<Mutex<EngineRegistryInner>>,
+}
+
+/// Foreground-unavailability tokens held while one native watcher burst settles and rebuilds.
+///
+/// The watcher is scoped to an editor workspace folder, which may contain several already-started
+/// Cargo engines. Keeping their tokens together lets every affected status change happen before
+/// the watcher waits for quiet. A token that finds no forwarded path is dropped as cancelled, so
+/// filtering a watcher event cannot accidentally clear an older failed status.
+#[must_use = "external project changes must be forwarded after the watcher settles"]
+#[derive(Debug)]
+pub(crate) struct ExternalProjectChanges {
+    activities: BTreeMap<EngineId, EngineIndexingActivity>,
 }
 
 impl EngineRegistry {
@@ -141,13 +153,42 @@ impl EngineRegistry {
         self.engine_for_document_owner(owner).await
     }
 
-    /// Forwards external project path changes to ready engines whose roots contain them.
-    pub(crate) async fn external_project_paths_changed(&self, paths: Vec<PathBuf>) {
-        // In theory, paths might correspond to different engines.
-        // So, for given list of paths we try to find a ready engine, and record path
-        // as belonging to it.
-        // As a result, we get a mapping of unique paths mapped to ready engines -- rest
-        // is going to be ignored.
+    /// Mark every ready Cargo engine below one watched editor folder as indexing.
+    ///
+    /// This happens on the first relevant filesystem event, before the watcher waits for a quiet
+    /// period. It only touches already-known engines: a native event must not start a Cargo engine
+    /// for a workspace the editor has never routed to.
+    pub(crate) async fn begin_external_project_changes(
+        &self,
+        workspace_root: &Path,
+    ) -> ExternalProjectChanges {
+        let inner = self.inner.lock().await;
+        let activities = inner
+            .routing
+            .engine_ids_for_workspace(workspace_root)
+            .filter_map(|id| {
+                let EngineSlot::Ready(engine) = inner.engine(id)? else {
+                    return None;
+                };
+                Some((id, engine.process.engine_client().begin_indexing()))
+            })
+            .collect();
+
+        ExternalProjectChanges { activities }
+    }
+
+    /// Finish one settled watcher burst against the ready engines that own its paths.
+    ///
+    /// `changes` carries the indexing activities acquired before the settle delay. Each routed RPC
+    /// completes its matching activity as success or failure. Activities for filtered paths fall
+    /// out of scope as cancellations and therefore preserve any older failure.
+    pub(crate) async fn external_project_paths_changed(
+        &self,
+        paths: Vec<PathBuf>,
+        mut changes: ExternalProjectChanges,
+    ) {
+        // One editor workspace folder can contain several Cargo roots. Route and deduplicate the
+        // settled paths under one registry snapshot; unknown or non-ready engines stay untouched.
         let paths_by_engine = {
             let inner = self.inner.lock().await;
             let mut grouped = BTreeMap::<EngineId, (EngineClient, UniqueVec<PathBuf>)>::new();
@@ -177,15 +218,22 @@ impl EngineRegistry {
             }
 
             grouped
-                .into_values()
-                .map(|(engine_client, paths)| (engine_client, paths.into_vec()))
+                .into_iter()
+                .map(|(id, (engine_client, paths))| (id, engine_client, paths.into_vec()))
                 .collect::<Vec<_>>()
         };
 
-        // Now that we have paths for each engine, we can notify each of them.
-        for (engine_client, paths) in paths_by_engine {
-            engine_client
-                .notify(
+        // The watcher already made these engines unavailable before waiting for quiet. Transfer
+        // each early activity to its RPC so cancellation cannot publish readiness while an accepted
+        // engine mutation is still queued or running.
+        for (id, engine_client, paths) in paths_by_engine {
+            let activity = changes
+                .activities
+                .remove(&id)
+                .unwrap_or_else(|| engine_client.begin_indexing());
+            let result = engine_client
+                .call_with_indexing_activity(
+                    activity,
                     "external_project_paths_changed",
                     |engine_client, request_context| async move {
                         engine_client
@@ -194,7 +242,16 @@ impl EngineRegistry {
                     },
                 )
                 .await;
+            if let Err(error) = result {
+                tracing::warn!(
+                    engine_id = id.index(),
+                    error = %format!("{error:#}"),
+                    "failed to apply external project path changes"
+                );
+            }
         }
+        // Remaining guards belong to paths that were filtered out or lost their ready engine. Their
+        // `Drop` implementation cancels the activity without treating it as a successful retry.
     }
 
     async fn engine_for_document_owner(
@@ -265,7 +322,7 @@ impl EngineRegistry {
         // Every engine follows the same lifecycle: protocol initialize first, then the
         // post-initialize notification before it can be observed as ready by request routing.
         if let Err(error) = engine_client
-            .call("initialized", |engine_client, request_context| async move {
+            .call_unconditional("initialized", |engine_client, request_context| async move {
                 engine_client.initialized(request_context).await
             })
             .await
@@ -336,6 +393,7 @@ impl EngineRegistry {
 
     /// Replaces a starting slot with a ready process and wakes waiters.
     async fn mark_ready(&self, id: EngineId, process: EngineProcess) {
+        let availability = process.engine_client().availability_changes();
         let (notify, status) = {
             let mut inner = self.inner.lock().await;
             let notify = inner
@@ -348,6 +406,32 @@ impl EngineRegistry {
         };
         notify.notify_waiters();
         Self::publish_active_workspace(&self.lsp_client, status).await;
+        self.spawn_availability_monitor(id, availability);
+    }
+
+    /// Republish active-workspace status when a ready process starts or finishes foreground work.
+    fn spawn_availability_monitor(
+        &self,
+        id: EngineId,
+        mut availability: tokio::sync::watch::Receiver<EngineAvailabilitySnapshot>,
+    ) {
+        let inner = Arc::downgrade(&self.inner);
+        let lsp_client = self.lsp_client.clone();
+        tokio::spawn(async move {
+            while availability.changed().await.is_ok() {
+                let Some(inner) = inner.upgrade() else {
+                    return;
+                };
+                let status = {
+                    let mut inner = inner.lock().await;
+                    if !matches!(inner.engine(id), Some(EngineSlot::Ready(_))) {
+                        return;
+                    }
+                    inner.workspace_status_update()
+                };
+                Self::publish_active_workspace(&lsp_client, status).await;
+            }
+        });
     }
 
     /// Replaces a starting slot with a failure and wakes waiters.
@@ -422,7 +506,7 @@ impl EngineRegistry {
         let engine_client = engine.engine_client().clone();
         let initialize_root = root.clone();
         engine_client
-            .call(
+            .call_unconditional(
                 "initialize",
                 move |engine_client, request_context| async move {
                     engine_client

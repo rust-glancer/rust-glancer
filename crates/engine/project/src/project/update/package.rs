@@ -13,8 +13,8 @@ use crate::{
     ProjectMemoryPurgePoint,
     profile::BuildMemorySampler,
     project::{
-        StartupCacheLoad, build, loading::PackageReadLoaders, offloading::ResidencyApplication,
-        package_set::PhasePackageSet, state::ProjectState,
+        SplitIndexingMode, StartupCacheLoad, build, loading::PackageReadLoaders,
+        offloading::ResidencyApplication, package_set::PhasePackageSet, state::ProjectState,
     },
 };
 
@@ -26,7 +26,7 @@ pub(super) fn rebuild_packages(
         return Ok(());
     }
 
-    let plan = PackageRebuildPlan::saved(packages);
+    let plan = PackageRebuildPlan::saved(packages, state.split_indexing_mode);
     match try_rebuild_packages(state, plan) {
         Ok(()) => {
             state
@@ -147,6 +147,7 @@ fn try_rebuild_packages(
         BodyRebuildScope::ConfiguredBodies => {
             body_rebuilder.configured_bodies(state.body_ir_policy)
         }
+        BodyRebuildScope::CoverageOnly => body_rebuilder.coverage_only(state.body_ir_policy),
         BodyRebuildScope::DirtyFiles(files) => body_rebuilder.selected_files(files.to_vec()),
     };
     let body_ir = body_rebuilder
@@ -183,11 +184,15 @@ struct PackageRebuildPlan<'a> {
 }
 
 impl<'a> PackageRebuildPlan<'a> {
-    fn saved(packages: &'a [PackageSlot]) -> Self {
+    fn saved(packages: &'a [PackageSlot], split_indexing_mode: SplitIndexingMode) -> Self {
+        let body_scope = match split_indexing_mode {
+            SplitIndexingMode::Full => BodyRebuildScope::ConfiguredBodies,
+            SplitIndexingMode::EarlyStart => BodyRebuildScope::CoverageOnly,
+        };
         Self {
             source_packages: PhasePackageSet::from_slice(packages),
             body_packages: PhasePackageSet::from_slice(packages),
-            body_scope: BodyRebuildScope::ConfiguredBodies,
+            body_scope,
             residency: RebuildResidency::RestoreSavedState,
         }
     }
@@ -205,6 +210,7 @@ impl<'a> PackageRebuildPlan<'a> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum BodyRebuildScope<'a> {
     ConfiguredBodies,
+    CoverageOnly,
     DirtyFiles(&'a [BodyIrFile]),
 }
 
@@ -219,6 +225,7 @@ pub(crate) fn rebuild_resident_from_source(state: &mut ProjectState) -> anyhow::
     let workspace_lowering_config = state.workspace_lowering_config.clone();
     let cargo_metadata_config = state.cargo_metadata_config.clone();
     let body_ir_policy = state.body_ir_policy;
+    let split_indexing_mode = state.split_indexing_mode;
     let indexing_preference = state.indexing_preference;
     let package_residency_policy = state.package_residency_policy;
     let cache_instance = state.cache_instance.clone();
@@ -233,7 +240,7 @@ pub(crate) fn rebuild_resident_from_source(state: &mut ProjectState) -> anyhow::
         cargo_metadata_config,
         cache_instance,
         body_ir_policy,
-        build::SplitIndexingMode::Full,
+        split_indexing_mode,
         indexing_preference,
         package_residency_policy,
         StartupCacheLoad::Disabled,

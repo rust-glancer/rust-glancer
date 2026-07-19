@@ -10,6 +10,7 @@ use anyhow::Context as _;
 
 use rg_def_map::PackageSlot;
 use rg_ir_model::CrateRef;
+use rg_parse::SavedFileRefresh;
 use rg_std::UniqueVec;
 
 use super::{affected_packages, package};
@@ -28,12 +29,12 @@ pub(super) fn apply_source_changes(
     // large watcher batches proportional to the changed package set instead of to the number of
     // changed paths in the batch.
     for change in changes {
-        let changed = match project
+        let refresh = match project
             .state
             .parse_db_mut()
-            .reparse_saved_file(&change.path)
+            .refresh_saved_file(&change.path)
         {
-            Ok(changed) => changed,
+            Ok(refresh) => refresh,
             Err(error) if error.io_kind() == Some(std::io::ErrorKind::NotFound) => {
                 // The path disappeared after canonicalization, usually because a checkout or
                 // rename advanced again while this command waited. Other paths remain useful.
@@ -49,20 +50,25 @@ pub(super) fn apply_source_changes(
             }
         };
 
-        if changed.is_empty() {
-            // A saved file can be new to the graph even though it now exists on disk. In that case,
-            // package roots are the coarse ownership boundary: rebuilding the containing package
-            // lets item-tree lowering rediscover any newly materialized `mod foo;` files through
-            // the normal Rust module rules.
-            fallback_saved_paths.insert(change.path.clone());
-            for package_slot in project
-                .state
-                .workspace()
-                .package_slots_containing_path(&change.path)
-            {
-                fallback_package_roots.push(PackageSlot(package_slot));
+        let changed = match refresh {
+            SavedFileRefresh::Unchanged => continue,
+            SavedFileRefresh::Reparsed(changed) => changed,
+            SavedFileRefresh::Unknown => {
+                // A saved file can be new to the graph even though it now exists on disk. In that
+                // case, package roots are the coarse ownership boundary: rebuilding the containing
+                // package lets item-tree lowering rediscover any newly materialized `mod foo;`
+                // files through the normal Rust module rules.
+                fallback_saved_paths.insert(change.path.clone());
+                for package_slot in project
+                    .state
+                    .workspace()
+                    .package_slots_containing_path(&change.path)
+                {
+                    fallback_package_roots.push(PackageSlot(package_slot));
+                }
+                Vec::new()
             }
-        }
+        };
 
         for changed_file in changed {
             let changed_file = ChangedFile {

@@ -495,6 +495,53 @@ pub struct SavedUser;
 }
 
 #[test]
+fn repeated_saved_source_notifications_do_not_rebuild_unchanged_packages() {
+    let fixture = ProjectSourceFixture::build(
+        r#"
+//- /Cargo.toml
+[package]
+name = "unchanged_notification_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct AlreadyApplied;
+"#,
+    );
+    let points = Arc::new(Mutex::new(Vec::new()));
+    let hooks: Arc<dyn ProjectMemoryHooks> = Arc::new(RecordingMemoryHooks {
+        points: Arc::clone(&points),
+    });
+    let mut project = Project::builder(fixture.workspace_metadata())
+        .memory_hooks(hooks)
+        .build()
+        .expect("analysis project should build");
+    let generation = project.generation_id();
+    points
+        .lock()
+        .expect("recorded memory hook points should not be poisoned")
+        .clear();
+
+    let summary = project
+        .apply_change(SavedFileChange::new(fixture.path("src/lib.rs")))
+        .expect("an unchanged watcher replay should be accepted");
+
+    assert_eq!(summary, AnalysisChangeSummary::default());
+    assert_eq!(
+        project.generation_id(),
+        generation,
+        "an unchanged watcher replay must not publish a replacement generation",
+    );
+    assert!(
+        points
+            .lock()
+            .expect("recorded memory hook points should not be poisoned")
+            .is_empty(),
+        "an unchanged watcher replay must not enter package rebuilding",
+    );
+}
+
+#[test]
 fn source_batch_skips_file_removed_after_canonicalization() {
     let fixture = ProjectSourceFixture::build(
         r#"
@@ -716,6 +763,61 @@ pub fn value() -> usize {
         evicted_source_memory,
         "deferred finishing should release source text reloaded by Body IR",
     );
+}
+
+#[test]
+fn early_start_source_update_keeps_body_ir_deferred() {
+    let fixture = ProjectSourceFixture::build(
+        r#"
+//- /Cargo.toml
+[package]
+name = "early_start_update_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub fn before() -> usize {
+    1
+}
+"#,
+    );
+    let source = fixture.path("src/lib.rs");
+    let mut project = Project::builder(fixture.workspace_metadata())
+        .split_indexing_mode(SplitIndexingMode::EarlyStart)
+        .build()
+        .expect("early-start project build should succeed");
+    project
+        .split_indexing()
+        .finish()
+        .expect("initial deferred indexing should succeed");
+    assert_eq!(project.stats().body_ir.complete_crate_count, 1);
+
+    std::fs::write(
+        &source,
+        r#"
+pub fn after() -> usize {
+    2
+}
+"#,
+    )
+    .expect("fixture source should be replaced");
+    project
+        .apply_change(SavedFileChange::new(source))
+        .expect("saved source update should succeed");
+
+    let stats = project.stats().body_ir;
+    assert_eq!(stats.complete_crate_count, 0);
+    assert_eq!(stats.missing_crate_count, 1);
+    assert_eq!(stats.body_count, 0);
+
+    project
+        .split_indexing()
+        .finish()
+        .expect("updated deferred indexing should succeed");
+    let stats = project.stats().body_ir;
+    assert_eq!(stats.complete_crate_count, 1);
+    assert_eq!(stats.missing_crate_count, 0);
+    assert_eq!(stats.body_count, 1);
 }
 
 #[test]

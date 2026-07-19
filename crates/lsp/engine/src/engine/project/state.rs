@@ -6,7 +6,7 @@
 //! materialization, and dirty overlays remain distinct transitions here instead of being inferred
 //! by callers.
 
-use std::sync::Arc;
+use std::{path::PathBuf, sync::Arc};
 
 use anyhow::Context as _;
 use rg_project::{DetachedSplitIndexing, Project, ProjectSnapshot};
@@ -86,9 +86,14 @@ impl ProjectState {
             .context("saved project is not initialized")?;
 
         // Saved-source operations publish through `Project` only after their candidate succeeds.
-        // Clear overlays up front because a successful mutation changes their base generation.
-        self.dirty_overlay.clear();
-        mutation(saved).context("mutate saved project")
+        // An unchanged watcher replay returns successfully without advancing the generation, so it
+        // must not discard an overlay that still has the same saved base.
+        let previous_generation = saved.generation_id();
+        let result = mutation(saved).context("mutate saved project");
+        if result.is_ok() && saved.generation_id() != previous_generation {
+            self.dirty_overlay.clear();
+        }
+        result
     }
 
     /// Enrich analysis data for the same saved source snapshot.
@@ -116,6 +121,15 @@ impl ProjectState {
             .as_ref()
             .map(Project::snapshot)
             .context("saved project is not initialized")
+    }
+
+    /// Reconcile a failed candidate with every known source changed since the published snapshot.
+    pub(super) fn stale_saved_source_paths(&self) -> anyhow::Result<Vec<PathBuf>> {
+        self.saved
+            .as_ref()
+            .context("saved project is not initialized")?
+            .stale_saved_source_paths()
+            .context("scan published project for stale saved sources")
     }
 
     /// Drop loads retained only to serve the request that just finished.

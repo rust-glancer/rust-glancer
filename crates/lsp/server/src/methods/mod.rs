@@ -32,7 +32,7 @@ pub(crate) fn initialize() -> InitializeResult {
 #[tracing::instrument(level = "trace", skip_all)]
 pub(crate) async fn shutdown(ctx: MethodContext) -> anyhow::Result<()> {
     ctx.engine_client
-        .call("shutdown", |engine_client, request_context| async move {
+        .call_unconditional("shutdown", |engine_client, request_context| async move {
             engine_client.shutdown(request_context).await
         })
         .await

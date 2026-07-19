@@ -3,6 +3,11 @@
 //! The analysis engine intentionally treats saved-file notifications as its filesystem coherence
 //! boundary. This watcher owns that boundary for external edits, so editor-specific watcher
 //! behavior cannot leave the saved project behind disk.
+//!
+//! A relevant native event first marks every affected ready engine as indexing. The watcher then
+//! waits for the whole edit burst to become quiet, compares its filesystem snapshot, and sends one
+//! coalesced path update. The indexing activity stays live through that wait and through the engine
+//! rebuild, so the editor does not show `Ready` or enqueue semantic queries against changing disk.
 
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -37,6 +42,7 @@ pub(crate) struct ProjectWatcher {
     _workspaces: Vec<WorkspaceWatcher>,
 }
 
+/// One native watcher, filesystem snapshot, and async forwarder for an editor workspace folder.
 #[derive(Debug)]
 struct WorkspaceWatcher {
     _root: PathBuf,
@@ -126,6 +132,13 @@ impl WorkspaceWatcher {
         let mut snapshot = ProjectPathSnapshot::scan(forwarder_root.as_path());
         let forwarder = tokio::spawn(async move {
             while let Some(result) = receiver.recv().await {
+                // The first relevant native event means the saved project may already disagree
+                // with disk. Publish that fact before waiting for the checkout/write burst to
+                // settle, so interactive requests do not queue behind a rebuild that has not yet
+                // been submitted.
+                let changes = registry
+                    .begin_external_project_changes(forwarder_root.as_path())
+                    .await;
                 let results = Self::collect_settled_results(result, &mut receiver).await;
                 Self::forward_watcher_results(
                     &mut snapshot,
@@ -133,6 +146,7 @@ impl WorkspaceWatcher {
                     &registry,
                     &recent_editor_saves,
                     results,
+                    changes,
                 )
                 .await;
             }
@@ -181,6 +195,11 @@ impl WorkspaceWatcher {
         }
     }
 
+    /// Turn one settled native-event burst into a saved-project update.
+    ///
+    /// This always returns `changes` to the registry, even when every path was an editor save or
+    /// disappeared during the burst. That lets unmatched early indexing activities end as
+    /// cancellations instead of leaving the workspace permanently `Indexing`.
     #[tracing::instrument(level = "trace", skip_all, fields(root = %root.display()))]
     async fn forward_watcher_results(
         snapshot: &mut ProjectPathSnapshot,
@@ -188,6 +207,7 @@ impl WorkspaceWatcher {
         registry: &EngineRegistry,
         recent_editor_saves: &RecentEditorSaves,
         results: Vec<DebounceEventResult>,
+        changes: crate::engine_registry::ExternalProjectChanges,
     ) {
         let paths = Self::changed_paths_for_results(snapshot, root, results);
         let path_count_before_save_filter = paths.len();
@@ -199,15 +219,17 @@ impl WorkspaceWatcher {
                 forwarded_paths = 0usize,
                 "server-side watched project changes filtered out"
             );
-            return;
+        } else {
+            tracing::debug!(
+                paths_before_save_filter = path_count_before_save_filter,
+                forwarded_paths = paths.len(),
+                "forwarding server-side watched project changes"
+            );
         }
 
-        tracing::debug!(
-            paths_before_save_filter = path_count_before_save_filter,
-            forwarded_paths = paths.len(),
-            "forwarding server-side watched project changes"
-        );
-        registry.external_project_paths_changed(paths).await;
+        registry
+            .external_project_paths_changed(paths, changes)
+            .await;
     }
 
     fn changed_paths_for_results(

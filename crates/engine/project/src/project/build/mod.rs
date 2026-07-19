@@ -38,7 +38,11 @@ impl StartupCacheLoad {
     }
 }
 
-/// Controls how much indexing work a fresh project build completes before returning.
+/// Controls where each saved project generation crosses its queryable boundary.
+///
+/// The mode is retained by the project after its first build. Source and workspace updates use the
+/// same boundary, so an early-start LSP project does not unexpectedly move Body IR back onto the
+/// foreground path after the first edit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SplitIndexingMode {
     /// Build every configured analysis payload before the project becomes usable.
@@ -219,6 +223,7 @@ pub(crate) fn build_resident_state(
         cache_store,
         package_source_fingerprints: phases.package_source_fingerprints,
         body_ir_policy,
+        split_indexing_mode,
         indexing_preference,
         package_residency_policy,
         package_residency,

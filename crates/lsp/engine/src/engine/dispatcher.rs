@@ -5,8 +5,9 @@
 //! pool of otherwise read-only queries would still need to coordinate ownership of the project.
 //! Background deferred indexing follows the same rule by returning its result as another command.
 //!
-//! Adjacent watcher batches are the only commands allowed to coalesce. The first interactive or
-//! lifecycle command ends the batch and keeps its original place in the queue.
+//! Adjacent saved-path batches are the only commands allowed to coalesce. They can come from the
+//! watcher, an editor save, or stale-source recovery. The first interactive or lifecycle command
+//! ends the batch and keeps its original place in the queue.
 //!
 //! For example, `watch(a), watch(b), hover, watch(c)` runs as one `{a, b}` rebuild, then hover,
 //! then the `{c}` rebuild. Coalescing never pulls the last watcher command across hover.
@@ -52,17 +53,20 @@ impl CommandQueue {
         self.pending.take().or_else(|| self.receiver.recv().ok())
     }
 
-    /// Merge only immediately adjacent watcher batches.
+    /// Merge only immediately adjacent saved-path batches.
     ///
     /// The first non-project command is retained in the FIFO rather than skipped, and commands
     /// behind it remain unread so an interactive request keeps its original ordering.
     fn collect_project_path_changes(
         &mut self,
         paths: Vec<PathBuf>,
-        respond_to: EngineResponse<()>,
+        respond_to: Option<EngineResponse<()>>,
     ) -> (Vec<PathBuf>, Vec<EngineResponse<()>>) {
         let mut paths = paths;
-        let mut responders = vec![respond_to];
+        let mut responders = Vec::new();
+        if let Some(respond_to) = respond_to {
+            responders.push(respond_to);
+        }
 
         while let Ok(queued) = self.receiver.try_recv() {
             match queued.command {
@@ -71,7 +75,9 @@ impl CommandQueue {
                     respond_to,
                 } => {
                     paths.extend(next_paths);
-                    responders.push(respond_to);
+                    if let Some(respond_to) = respond_to {
+                        responders.push(respond_to);
+                    }
                 }
                 command => {
                     self.pending = Some(QueuedEngineCommand {
@@ -83,7 +89,7 @@ impl CommandQueue {
             }
         }
 
-        // Watcher arrival order carries no semantics. Canonicalize the batch lexically so rebuild
+        // Path-change arrival order carries no semantics. Canonicalize the batch lexically so rebuild
         // logs and downstream traversal stay deterministic, then remove adjacent duplicates.
         paths.sort();
         paths.dedup();
@@ -431,7 +437,7 @@ impl EngineDispatcher {
         tracing::debug!("LSP engine dispatcher stopped");
     }
 
-    /// Answer every request merged into one watcher batch with the same outcome.
+    /// Answer every request merged into one saved-path batch with the same outcome.
     ///
     /// `anyhow::Error` is not cloneable, so the first caller receives the original context chain
     /// and later callers receive an error rebuilt from its fully rendered message.
@@ -447,6 +453,13 @@ impl EngineDispatcher {
             }
             Err(error) => {
                 let error_message = format!("{error:#}");
+                if responders.is_empty() {
+                    tracing::warn!(
+                        error = %error_message,
+                        "background stale-source recovery failed"
+                    );
+                    return;
+                }
                 let mut responders = responders.into_iter();
                 if let Some(respond_to) = responders.next() {
                     let _ = respond_to.send(Err(error));
@@ -481,10 +494,18 @@ mod tests {
             .send(QueuedEngineCommand::new(
                 EngineCommand::ProjectPathsChanged {
                     paths: vec![test_path("a"), test_path("b")],
-                    respond_to: second_respond_to,
+                    respond_to: Some(second_respond_to),
                 },
             ))
             .expect("test command channel should accept adjacent project change");
+        sender
+            .send(QueuedEngineCommand::new(
+                EngineCommand::ProjectPathsChanged {
+                    paths: vec![test_path("stale")],
+                    respond_to: None,
+                },
+            ))
+            .expect("test command channel should accept background source recovery");
         sender
             .send(QueuedEngineCommand::new(EngineCommand::WorkspaceSymbol {
                 query: "needle".to_string(),
@@ -495,18 +516,18 @@ mod tests {
             .send(QueuedEngineCommand::new(
                 EngineCommand::ProjectPathsChanged {
                     paths: vec![test_path("c")],
-                    respond_to: third_respond_to,
+                    respond_to: Some(third_respond_to),
                 },
             ))
             .expect("test command channel should accept later project change");
 
         let mut queue = CommandQueue::new(receiver);
         let (paths, responders) =
-            queue.collect_project_path_changes(vec![test_path("b")], first_respond_to);
+            queue.collect_project_path_changes(vec![test_path("b")], Some(first_respond_to));
 
         assert_eq!(
             paths,
-            vec![test_path("a"), test_path("b")],
+            vec![test_path("a"), test_path("b"), test_path("stale")],
             "adjacent project changes should be merged and deduplicated"
         );
         assert_eq!(

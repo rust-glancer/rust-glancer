@@ -14,7 +14,7 @@ pub(crate) async fn document_symbol(
 
     let symbols = ctx
         .engine_client
-        .call(
+        .query(
             "document_symbol",
             move |engine_client, request_context| async move {
                 engine_client.document_symbol(request_context, path).await

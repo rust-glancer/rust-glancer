@@ -23,7 +23,9 @@ use crate::{
 };
 use rg_std::MemorySize;
 
-use super::{loading::PackageReadLoaders, stats::ProjectStats, txn::ProjectReadTxn};
+use super::{
+    build::SplitIndexingMode, loading::PackageReadLoaders, stats::ProjectStats, txn::ProjectReadTxn,
+};
 
 /// Identity of one successfully published saved-source project generation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, MemorySize)]
@@ -61,6 +63,8 @@ pub(crate) struct ProjectState {
     pub(crate) cache_store: PackageCacheStore,
     pub(crate) package_source_fingerprints: Vec<Option<Fingerprint>>,
     pub(crate) body_ir_policy: BodyIrBuildPolicy,
+    #[memsize(skip)]
+    pub(crate) split_indexing_mode: SplitIndexingMode,
     #[memsize(skip)]
     pub(crate) indexing_preference: IndexingPerformancePreference,
     pub(crate) package_residency_policy: PackageResidencyPolicy,

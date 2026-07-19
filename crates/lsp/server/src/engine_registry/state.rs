@@ -8,6 +8,7 @@ use tokio::sync::Notify;
 use crate::{
     client_notifications::{ActiveWorkspaceState, ActiveWorkspaceStatus},
     config::ServerConfig,
+    engine_client::EngineAvailability,
 };
 
 use super::{
@@ -104,6 +105,7 @@ impl EngineRegistryInner {
         Some(status)
     }
 
+    /// Combine process lifecycle and saved-project availability into the status shown by the editor.
     fn workspace_status(&self, id: EngineId) -> ActiveWorkspaceStatus {
         let root = self
             .routing
@@ -113,7 +115,13 @@ impl EngineRegistryInner {
         let slot = self.engine(id).expect("engine id should have a slot");
         let (state, message) = match slot {
             EngineSlot::Starting { .. } => (ActiveWorkspaceState::Indexing, None),
-            EngineSlot::Ready(_) => (ActiveWorkspaceState::Ready, None),
+            EngineSlot::Ready(engine) => match engine.process.engine_client().availability() {
+                EngineAvailability::Queryable => (ActiveWorkspaceState::Ready, None),
+                EngineAvailability::Indexing => (ActiveWorkspaceState::Indexing, None),
+                EngineAvailability::Unavailable(error) => {
+                    (ActiveWorkspaceState::Failed, Some(error.to_string()))
+                }
+            },
             EngineSlot::Failed { error, .. } => {
                 (ActiveWorkspaceState::Failed, Some(error.to_string()))
             }

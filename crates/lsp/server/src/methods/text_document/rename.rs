@@ -17,7 +17,7 @@ pub(crate) async fn prepare_rename(
     tracing::trace!("prepare rename request received");
     let response = ctx
         .engine_client
-        .call(
+        .query(
             "prepare_rename",
             move |engine_client, request_context| async move {
                 engine_client
@@ -54,7 +54,7 @@ pub(crate) async fn rename(
     tracing::trace!("rename request received");
     let edit = ctx
         .engine_client
-        .call("rename", move |engine_client, request_context| async move {
+        .query("rename", move |engine_client, request_context| async move {
             engine_client
                 .rename(request_context, path, position, new_name)
                 .await

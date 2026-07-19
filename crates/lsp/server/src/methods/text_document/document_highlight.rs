@@ -19,7 +19,7 @@ pub(crate) async fn document_highlight(
     tracing::trace!("document highlight request received");
     let highlights = ctx
         .engine_client
-        .call(
+        .query(
             "document_highlight",
             move |engine_client, request_context| async move {
                 engine_client
