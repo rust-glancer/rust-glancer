@@ -4,15 +4,15 @@ use std::{
 };
 
 use rg_cfg_eval::CfgOptions;
+use rg_text::RustEdition;
 
 use crate::{SysrootCrate, SysrootSources};
 use rg_std::MemorySize;
 
 use super::{
     dependency::PackageDependency,
-    edition::RustEdition,
     package::{Package, PackageId, PackageOrigin, PackageSource},
-    target::{Target, TargetKind},
+    target::{CargoTarget, TargetKind},
 };
 
 /// Normalized workspace metadata used by the analysis pipeline.
@@ -133,7 +133,7 @@ impl WorkspaceMetadata {
             is_workspace_member: false,
             manifest_path: sources.library_root().join(krate.name()).join("Cargo.toml"),
             cfg_options,
-            targets: vec![Target {
+            targets: vec![CargoTarget {
                 name: krate.name().to_string(),
                 kind: TargetKind::Lib,
                 src_path: sources.crate_root(krate),

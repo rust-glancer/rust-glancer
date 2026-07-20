@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Context as _;
 use rg_def_map::PackageSlot;
-use rg_ir_model::TargetRef;
+use rg_ir_model::CrateRef;
 use rg_parse::FileId;
 use rg_workspace::WorkspaceMetadata;
 
@@ -101,6 +101,15 @@ impl Project {
         })
     }
 
+    /// Finds all known saved sources that no longer match this published generation.
+    ///
+    /// Incremental rebuild recovery uses this only after one candidate has already reported a
+    /// source race. Scanning then turns a settled multi-file edit into one retry without adding a
+    /// full source-tree scan to ordinary saves.
+    pub fn stale_saved_source_paths(&self) -> Result<Vec<PathBuf>, rg_source::SourceError> {
+        self.state.parse_db().source_inventory().stale_saved_paths()
+    }
+
     /// Builds a private candidate and publishes it as a new generation only after success.
     ///
     /// Candidate internals remain unreachable while `build` runs. Assigning the public generation
@@ -111,9 +120,21 @@ impl Project {
         &mut self,
         build: impl FnOnce(&mut Project) -> anyhow::Result<T>,
     ) -> anyhow::Result<T> {
+        self.try_publish_generation_when(build, |_| true)
+    }
+
+    /// Builds a candidate but publishes it only when its output describes a real state change.
+    fn try_publish_generation_when<T>(
+        &mut self,
+        build: impl FnOnce(&mut Project) -> anyhow::Result<T>,
+        should_publish: impl FnOnce(&T) -> bool,
+    ) -> anyhow::Result<T> {
         let mut candidate = self.clone();
         let output = build(&mut candidate)
             .context("while attempting to build project generation candidate")?;
+        if !should_publish(&output) {
+            return Ok(output);
+        }
 
         candidate.state.generation_id = ProjectGenerationId::fresh();
         self.state = candidate.state;
@@ -208,9 +229,16 @@ impl Project {
             return Ok(AnalysisChangeSummary::default());
         }
 
-        self.try_publish_generation(move |candidate| {
-            update::apply_canonical_changes(candidate, canonical_changes)
-        })
+        let application = self
+            .try_publish_generation_when(
+                move |candidate| update::apply_canonical_changes(candidate, canonical_changes),
+                |application| matches!(application, update::ProjectChangeApplication::Applied(_)),
+            )
+            .context("while attempting to apply saved file changes")?;
+        match application {
+            update::ProjectChangeApplication::Unchanged => Ok(AnalysisChangeSummary::default()),
+            update::ProjectChangeApplication::Applied(summary) => Ok(summary),
+        }
     }
 
     /// Builds an ephemeral analysis project from dirty editor buffers.
@@ -272,7 +300,15 @@ impl SavedFileChange {
 pub struct AnalysisChangeSummary {
     pub changed_files: Vec<ChangedFile>,
     pub affected_packages: Vec<PackageSlot>,
-    pub changed_targets: Vec<TargetRef>,
+    pub changed_crates: Vec<CrateRef>,
+}
+
+impl AnalysisChangeSummary {
+    fn is_empty(&self) -> bool {
+        self.changed_files.is_empty()
+            && self.affected_packages.is_empty()
+            && self.changed_crates.is_empty()
+    }
 }
 
 /// One known package-local source file that was reparsed in place.
@@ -284,12 +320,12 @@ pub struct ChangedFile {
 
 /// Analysis-ready context for one filesystem path.
 ///
-/// The same file can be reachable from more than one target, for example when a package library
+/// The same file can be reachable from more than one crate, for example when a package library
 /// and binary both declare `mod shared;`. Unreachable parsed-cache files are intentionally omitted
-/// by path lookups, because LSP queries need a current target context to answer semantic questions.
+/// by path lookups, because LSP queries need a current crate context to answer semantic questions.
 #[derive(Debug, Clone, PartialEq, Eq, MemorySize)]
 pub struct FileContext {
     pub package: PackageSlot,
     pub file: FileId,
-    pub targets: Vec<TargetRef>,
+    pub crates: Vec<CrateRef>,
 }

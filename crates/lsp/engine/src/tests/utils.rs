@@ -263,7 +263,8 @@ impl LspEngineFixture {
                         rendered_inlay_hint_refresh = true;
                     }
                 }
-                ServiceNotification::DeferredIndexingFinished { .. } => {
+                ServiceNotification::DeferredIndexingStarted { .. }
+                | ServiceNotification::DeferredIndexingFinished { .. } => {
                     // Initial deferred indexing finishes on a background thread, so this lifecycle
                     // notification can race with later fixture operations. These snapshots describe
                     // stable editor-facing effects of the operation under test, not the whole event
@@ -317,12 +318,14 @@ impl LspEngineFixture {
             .clone()
             .rename(context::current(), path, position, new_name.to_string())
             .await
-            .expect("rename query should succeed")
-            .expect("rename query should produce a workspace edit");
+            .expect("rename query should succeed");
 
         let mut rendered = String::new();
         writeln!(rendered, "{title}").expect("snapshot should be writable");
-        self.render_workspace_edit(&mut rendered, &edit);
+        match edit {
+            Some(edit) => self.render_workspace_edit(&mut rendered, &edit),
+            None => writeln!(rendered, "- none").expect("snapshot should be writable"),
+        }
         expect.assert_eq(&rendered);
     }
 

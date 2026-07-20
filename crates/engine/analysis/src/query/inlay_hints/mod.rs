@@ -2,14 +2,14 @@
 
 mod closing_brace;
 
-use rg_ir_model::TargetRef;
-use rg_ir_model::items::{ParamItem, ParamKind};
+use rg_ir_model::CrateRef;
 use rg_ir_view::{
-    body::BodyStructureView, display::ty_label::TypeRenderer, member::MemberView,
+    body::BodyStructureView,
+    display::ty_label::TypeRenderer,
+    member::{FunctionParameterView, MemberView},
     ty::locals::BodyView,
 };
 use rg_parse::{FileId, TextSpan};
-use rg_ty::Ty;
 
 use crate::{
     Analysis,
@@ -25,15 +25,15 @@ impl<'a, 'db> InlayHintCollector<'a, 'db> {
 
     pub(crate) fn inlay_hints(
         &self,
-        target: TargetRef,
+        crate_ref: CrateRef,
         file_id: FileId,
         range: Option<TextSpan>,
     ) -> anyhow::Result<Vec<InlayHint>> {
-        let mut hints = self.binding_type_hints(target, file_id, range)?;
-        hints.extend(self.parameter_hints(target, file_id, range)?);
-        hints.extend(self.expression_type_hints(target, file_id, range)?);
+        let mut hints = self.binding_type_hints(crate_ref, file_id, range)?;
+        hints.extend(self.parameter_hints(crate_ref, file_id, range)?);
+        hints.extend(self.expression_type_hints(crate_ref, file_id, range)?);
         hints.extend(closing_brace::closing_brace_hints(
-            self.0, target, file_id, range,
+            self.0, crate_ref, file_id, range,
         )?);
 
         hints.sort_by_key(|hint| (hint.text_offset(), hint.label.clone()));
@@ -42,16 +42,17 @@ impl<'a, 'db> InlayHintCollector<'a, 'db> {
 
     fn binding_type_hints(
         &self,
-        target: TargetRef,
+        crate_ref: CrateRef,
         file_id: FileId,
         range: Option<TextSpan>,
     ) -> anyhow::Result<Vec<InlayHint>> {
         // Binding hints depend on body-level type facts and type rendering, so keep that
         // projection separate from hint families backed by declaration metadata.
-        let renderer = TypeRenderer::new(self.0.view_db());
+        let renderer =
+            TypeRenderer::new(self.0.view_db(), self.0.view_db().crate_edition(crate_ref)?);
         let mut hints = Vec::new();
         for binding in
-            BodyView::new(self.0.view_db()).inferred_binding_tys(target, file_id, range)?
+            BodyView::new(self.0.view_db()).inferred_binding_tys(crate_ref, file_id, range)?
         {
             let Some(ty) = renderer.render(binding.ty())? else {
                 continue;
@@ -76,28 +77,29 @@ impl<'a, 'db> InlayHintCollector<'a, 'db> {
 
     fn expression_type_hints(
         &self,
-        target: TargetRef,
+        crate_ref: CrateRef,
         file_id: FileId,
         range: Option<TextSpan>,
     ) -> anyhow::Result<Vec<InlayHint>> {
-        let renderer = TypeRenderer::new(self.0.view_db());
+        let renderer =
+            TypeRenderer::new(self.0.view_db(), self.0.view_db().crate_edition(crate_ref)?);
         let mut hints = Vec::new();
         for expr in
-            BodyStructureView::new(self.0.view_db()).method_chain_expr_tys(target, file_id)?
+            BodyStructureView::new(self.0.view_db()).method_chain_expr_tys(crate_ref, file_id)?
         {
             let expr_span = expr.span();
             if range.is_some_and(|range| !range.touches(expr_span.text.end)) {
                 continue;
             }
             if !self.should_show_method_chain_expr_hint(
-                target,
+                crate_ref,
                 expr.file_id(),
                 expr_span,
                 expr.parent_dot_span(),
             )? {
                 continue;
             }
-            if matches!(expr.ty(), Ty::Unit | Ty::Never) {
+            if expr.ty().is_unit_or_never() {
                 continue;
             }
             let Some(ty) = renderer.render(expr.ty())? else {
@@ -123,21 +125,19 @@ impl<'a, 'db> InlayHintCollector<'a, 'db> {
 
     fn parameter_hints(
         &self,
-        target: TargetRef,
+        crate_ref: CrateRef,
         file_id: FileId,
         range: Option<TextSpan>,
     ) -> anyhow::Result<Vec<InlayHint>> {
         let members = MemberView::new(self.0.view_db());
         let mut hints = Vec::new();
-        for call in BodyView::new(self.0.view_db()).resolved_function_calls(target, file_id)? {
+        for call in BodyView::new(self.0.view_db()).resolved_function_calls(crate_ref, file_id)? {
             let Some(function) = members.function(call.function())? else {
                 continue;
             };
-            let params = function.params();
-
             for (arg_idx, arg) in call.args().iter().enumerate() {
                 let param_idx = arg_idx + call.param_offset();
-                let Some(param) = params.get(param_idx) else {
+                let Some(param) = function.parameter(param_idx) else {
                     continue;
                 };
                 let Some(param_name) = Self::param_hint_name(param) else {
@@ -149,7 +149,7 @@ impl<'a, 'db> InlayHintCollector<'a, 'db> {
                 }
                 if self
                     .0
-                    .source_text_for_span(target.package, call.file_id(), arg_span)?
+                    .source_text_for_span(crate_ref.package, call.file_id(), arg_span)?
                     .is_some_and(|arg_text| arg_text.trim() == param_name)
                 {
                     continue;
@@ -173,12 +173,12 @@ impl<'a, 'db> InlayHintCollector<'a, 'db> {
         Ok(hints)
     }
 
-    fn param_hint_name(param: &ParamItem) -> Option<&str> {
-        if !matches!(param.kind, ParamKind::Normal) {
+    fn param_hint_name(param: FunctionParameterView<'_>) -> Option<&str> {
+        if param.is_receiver() {
             return None;
         }
 
-        let name = param.pat.as_str();
+        let name = param.pattern();
         if name == "_" {
             return None;
         }
@@ -194,22 +194,24 @@ impl<'a, 'db> InlayHintCollector<'a, 'db> {
 
     fn should_show_method_chain_expr_hint(
         &self,
-        target: TargetRef,
+        crate_ref: CrateRef,
         file_id: FileId,
         expr_span: rg_parse::Span,
         parent_dot_span: rg_parse::Span,
     ) -> anyhow::Result<bool> {
         let Some(expr_end_line) = self.0.source_line_for_offset(
-            target.package,
+            crate_ref.package,
             file_id,
             expr_span.text.end.saturating_sub(1),
         )?
         else {
             return Ok(false);
         };
-        let Some(parent_dot_line) =
-            self.0
-                .source_line_for_offset(target.package, file_id, parent_dot_span.text.start)?
+        let Some(parent_dot_line) = self.0.source_line_for_offset(
+            crate_ref.package,
+            file_id,
+            parent_dot_span.text.start,
+        )?
         else {
             return Ok(false);
         };

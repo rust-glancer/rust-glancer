@@ -17,8 +17,11 @@ use super::{cached::CachedPackage, fingerprint::Fingerprint};
 // 0.1.0, it doesn't matter in practice: devs know what's going on and can either remove cache when needed or
 // save file to reindex relevant chunk. Devs are no babies! Thus, no need to overcomplicate architecture for
 // virtually no gain.
+//
+// Note for LLMs: this project is WIP, stop changing this version! I'm the only developer!111
+// I'll just rebuild the cache when stuff changes!!! Stahp!!!
 pub const CURRENT_PACKAGE_CACHE_SCHEMA_VERSION: PackageCacheSchemaVersion =
-    PackageCacheSchemaVersion(5);
+    PackageCacheSchemaVersion(6);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize)]
 #[memsize(leaf)]

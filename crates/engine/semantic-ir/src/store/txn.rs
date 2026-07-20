@@ -1,8 +1,8 @@
 //! Read transactions over frozen Semantic IR package data.
 
+use crate::{ItemStore, ItemStoreSource};
 use rg_def_map::PackageSlot;
-use rg_ir_model::{DefMapRef, TargetRef};
-use rg_ir_storage::{ItemStore, ItemStoreSource};
+use rg_ir_model::{CrateRef, DefMapRef};
 use rg_package_store::{PackageStoreError, PackageStoreReadTxn};
 
 use crate::PackageIr;
@@ -22,18 +22,18 @@ impl<'db> SemanticIrReadTxn<'db> {
         self.packages.read(package)
     }
 
-    pub fn items(&self, target: TargetRef) -> Result<Option<&ItemStore>, PackageStoreError> {
-        let package = self.package(target.package)?;
-        Ok(package.target(target.target))
+    pub fn items(&self, crate_ref: CrateRef) -> Result<Option<&ItemStore>, PackageStoreError> {
+        let package = self.package(crate_ref.package)?;
+        Ok(package.crate_items(crate_ref.crate_id))
     }
 
     pub fn included_stores(&self) -> Result<Vec<&ItemStore>, PackageStoreError> {
-        let mut target_stores = Vec::new();
+        let mut stores = Vec::new();
 
         for package in self.packages.included_packages() {
-            target_stores.extend(package?.targets().iter())
+            stores.extend(package?.crates().iter())
         }
-        Ok(target_stores)
+        Ok(stores)
     }
 }
 
@@ -44,11 +44,11 @@ impl<'a, 'db> ItemStoreSource<'a> for &'a SemanticIrReadTxn<'db> {
         &self,
         origin: DefMapRef,
     ) -> Result<Option<&'a ItemStore>, Self::Error> {
-        let Some(target) = origin.as_target_ref() else {
+        let Some(crate_ref) = origin.as_crate_ref() else {
             return Ok(None);
         };
 
-        (*self).items(target)
+        (*self).items(crate_ref)
     }
 
     fn included_stores(&self) -> Result<Vec<&'a ItemStore>, Self::Error> {

@@ -1,17 +1,25 @@
 //! Method lookup for receiver types.
 
+use rg_def_map::DefMapSource;
 use rg_ir_model::{AssocItemId, FunctionRef, ImplRef, ItemOwner};
-use rg_ir_storage::{DefMapSource, ItemStoreQuery, ItemStoreSource};
 use rg_package_store::PackageStoreError;
+use rg_semantic_ir::{ItemStoreQuery, ItemStoreSource};
 use rg_std::UniqueVec;
 use rg_ty::{
-    AutoderefMode, ImplMatcher, MemberMethodCandidateRef, MemberMethodOrigin, NominalTy, Ty,
-    TypeSubst,
+    AdtTy, AutoderefMode, ImplMatcher, MemberMethodCandidateRef, MemberMethodOrigin, Substitution,
+    TraitSelection, Ty, inference::InferenceTable,
 };
 
 use crate::resolution::{BodyQuerySource, BodyResolutionContext};
 
 use super::BodyLocalItemQuery;
+
+type BodyImplMatcher<'context, 'query, D, I> = ImplMatcher<
+    'query,
+    BodyQuerySource<'query, D, I>,
+    BodyQuerySource<'query, D, I>,
+    &'context BodyResolutionContext<'query, D, I>,
+>;
 
 /// Resolves methods for receiver types.
 pub struct BodyMethodQuery<'query, D, I> {
@@ -23,7 +31,14 @@ pub struct BodyMethodQuery<'query, D, I> {
 pub(crate) struct BodyMethodCandidate {
     function: FunctionRef,
     receiver_ty: Ty,
-    subst: TypeSubst,
+    subst: Substitution,
+    trait_selection: Option<TraitSelection>,
+}
+
+/// Nominal method plus any trait proof retained until the caller supplies receiver substitutions.
+struct NominalMethodCandidate {
+    function: FunctionRef,
+    trait_selection: Option<TraitSelection>,
 }
 
 impl BodyMethodCandidate {
@@ -38,8 +53,16 @@ impl BodyMethodCandidate {
     }
 
     /// Return substitutions derived from the receiver and impl owner.
-    pub(crate) fn subst(&self) -> &TypeSubst {
+    pub(crate) fn subst(&self) -> &Substitution {
         &self.subst
+    }
+
+    /// Return the trait-selection evidence that made this candidate available.
+    ///
+    /// Inherent candidates have no trait obligation and therefore no selection to commit. A
+    /// `Maybe` selection may still be shown by editor lookup, but call inference cannot commit it.
+    pub(crate) fn trait_selection(&self) -> Option<&TraitSelection> {
+        self.trait_selection.as_ref()
     }
 }
 
@@ -57,6 +80,8 @@ where
         &self,
         ty: &Ty,
     ) -> Result<Vec<MemberMethodCandidateRef>, PackageStoreError> {
+        let matcher = self.context.impl_matcher();
+        let table = InferenceTable::new();
         let mut candidates = Vec::new();
         for candidate in self
             .context
@@ -64,12 +89,19 @@ where
             .candidates(AutoderefMode::MethodReceiver, ty)
         {
             let candidate = candidate?;
-            for receiver_ty in candidate.ty().as_nominals() {
-                for method in self.nominal_method_candidates(receiver_ty, None)? {
-                    Self::push_candidate(&mut candidates, method);
+            for receiver_ty in candidate.ty().as_adts() {
+                for method in self.nominal_method_candidates(&matcher, receiver_ty, None, &table)? {
+                    let candidate = match &method.trait_selection {
+                        Some(selection) => MemberMethodCandidateRef::trait_method(
+                            method.function,
+                            selection.applicability,
+                        ),
+                        None => MemberMethodCandidateRef::inherent(method.function),
+                    };
+                    Self::push_candidate(&mut candidates, candidate);
                 }
             }
-            for method in self.structural_method_candidates(candidate.ty(), None)? {
+            for method in self.structural_method_candidates(&matcher, candidate.ty(), None)? {
                 Self::push_candidate(
                     &mut candidates,
                     MemberMethodCandidateRef::inherent(method.function()),
@@ -85,8 +117,10 @@ where
         &self,
         receiver_ty: &Ty,
         method_name: &str,
+        table: &InferenceTable,
     ) -> Result<Vec<BodyMethodCandidate>, PackageStoreError> {
         let item_query = self.context.item_query();
+        let matcher = self.context.impl_matcher();
         let mut current_depth = None;
         let mut candidates = Vec::new();
 
@@ -106,9 +140,11 @@ where
             }
             current_depth = Some(candidate.depth());
 
-            for nominal_ty in candidate.ty().as_nominals() {
-                for method in self.nominal_method_candidates(nominal_ty, Some(method_name))? {
-                    let function_ref = method.function();
+            for nominal_ty in candidate.ty().as_adts() {
+                for method in
+                    self.nominal_method_candidates(&matcher, nominal_ty, Some(method_name), table)?
+                {
+                    let function_ref = method.function;
                     let Some(function_data) = item_query.function_data(function_ref)? else {
                         continue;
                     };
@@ -118,18 +154,19 @@ where
 
                     candidates.push(BodyMethodCandidate {
                         function: function_ref,
-                        receiver_ty: Ty::nominal(nominal_ty.clone()),
+                        receiver_ty: Ty::adt(nominal_ty.clone()),
                         subst: self.nominal_method_subst(
                             function_ref,
                             function_data.owner,
                             nominal_ty,
                         )?,
+                        trait_selection: method.trait_selection,
                     });
                 }
             }
 
             for structural in
-                self.structural_method_candidates(candidate.ty(), Some(method_name))?
+                self.structural_method_candidates(&matcher, candidate.ty(), Some(method_name))?
             {
                 let Some(function_data) = item_query.function_data(structural.function)? else {
                     continue;
@@ -142,6 +179,7 @@ where
                     function: structural.function,
                     receiver_ty: structural.receiver_ty,
                     subst: structural.subst,
+                    trait_selection: None,
                 });
             }
         }
@@ -152,56 +190,56 @@ where
     /// Collect inherent and trait methods for a nominal receiver.
     fn nominal_method_candidates(
         &self,
-        receiver_ty: &NominalTy,
+        matcher: &BodyImplMatcher<'_, 'query, D, I>,
+        receiver_ty: &AdtTy,
         method_name: Option<&str>,
-    ) -> Result<Vec<MemberMethodCandidateRef>, PackageStoreError> {
-        let matcher = self.context.impl_matcher();
+        table: &InferenceTable,
+    ) -> Result<Vec<NominalMethodCandidate>, PackageStoreError> {
         let body_items = self.context.body_local_items();
         let mut candidates = Vec::new();
 
         for function in self.body_inherent_functions(&body_items, receiver_ty, method_name)? {
             if matcher.function_applies_to_receiver(function, receiver_ty)? {
-                Self::push_candidate(
-                    &mut candidates,
-                    MemberMethodCandidateRef::inherent(function),
-                );
+                candidates.push(NominalMethodCandidate {
+                    function,
+                    trait_selection: None,
+                });
             }
         }
 
-        if receiver_ty.def.origin.as_target_ref().is_some() {
+        if receiver_ty.def.origin.as_crate_ref().is_some() {
             for function in self.semantic_inherent_functions(receiver_ty, method_name)? {
                 if matcher.function_applies_to_receiver(function, receiver_ty)? {
-                    Self::push_candidate(
-                        &mut candidates,
-                        MemberMethodCandidateRef::inherent(function),
-                    );
+                    candidates.push(NominalMethodCandidate {
+                        function,
+                        trait_selection: None,
+                    });
                 }
             }
         }
 
         let body_trait_impls = body_items.trait_impls_for_type(receiver_ty.def)?;
-        for (function, applicability) in matcher.trait_function_candidates_from_impls(
-            self.context.semantic_index(),
+        let body_trait_functions = matcher.trait_function_candidates_from_impls(
             body_trait_impls,
             receiver_ty,
             method_name,
-        )? {
-            Self::push_candidate(
-                &mut candidates,
-                MemberMethodCandidateRef::trait_method(function, applicability),
-            );
+            table,
+        )?;
+        for (function, selection) in body_trait_functions {
+            candidates.push(NominalMethodCandidate {
+                function,
+                trait_selection: Some(selection),
+            });
         }
 
-        if receiver_ty.def.origin.as_target_ref().is_some() {
-            for (function, applicability) in matcher.trait_function_candidates_for_receiver(
-                self.context.semantic_index(),
-                receiver_ty,
-                method_name,
-            )? {
-                Self::push_candidate(
-                    &mut candidates,
-                    MemberMethodCandidateRef::trait_method(function, applicability),
-                );
+        if receiver_ty.def.origin.as_crate_ref().is_some() {
+            let semantic_trait_functions =
+                matcher.trait_function_candidates_for_receiver(receiver_ty, method_name, table)?;
+            for (function, selection) in semantic_trait_functions {
+                candidates.push(NominalMethodCandidate {
+                    function,
+                    trait_selection: Some(selection),
+                });
             }
         }
 
@@ -211,6 +249,7 @@ where
     /// Scan visible structural impls for builtin-shaped receiver types.
     fn structural_method_candidates(
         &self,
+        matcher: &BodyImplMatcher<'_, 'query, D, I>,
         receiver_ty: &Ty,
         method_name: Option<&str>,
     ) -> Result<Vec<BodyMethodCandidate>, PackageStoreError> {
@@ -220,7 +259,6 @@ where
             return Ok(Vec::new());
         }
 
-        let matcher = self.context.impl_matcher();
         let item_query = self.context.item_query();
         let mut candidates = Vec::new();
 
@@ -235,7 +273,7 @@ where
         for impl_ref in impl_refs {
             self.push_structural_inherent_functions_for_impl(
                 &item_query,
-                &matcher,
+                matcher,
                 impl_ref,
                 receiver_ty,
                 method_name,
@@ -250,7 +288,7 @@ where
     fn push_structural_inherent_functions_for_impl(
         &self,
         item_query: &ItemStoreQuery<'query, BodyQuerySource<'query, D, I>>,
-        matcher: &ImplMatcher<'query, BodyQuerySource<'query, D, I>, BodyQuerySource<'query, D, I>>,
+        matcher: &BodyImplMatcher<'_, 'query, D, I>,
         impl_ref: ImplRef,
         receiver_ty: &Ty,
         method_name: Option<&str>,
@@ -288,6 +326,7 @@ where
                     function,
                     receiver_ty: receiver_ty.clone(),
                     subst: subst.clone(),
+                    trait_selection: None,
                 },
             );
         }
@@ -304,17 +343,17 @@ where
     fn body_inherent_functions(
         &self,
         body_items: &BodyLocalItemQuery<'query, D, I>,
-        receiver_ty: &NominalTy,
+        receiver_ty: &AdtTy,
         method_name: Option<&str>,
     ) -> Result<UniqueVec<FunctionRef>, PackageStoreError> {
         let functions = body_items.inherent_functions_for_type(receiver_ty.def)?;
         self.filter_functions_by_name(functions, method_name)
     }
 
-    /// Read target-visible inherent functions, optionally filtered by name.
+    /// Read crate-visible inherent functions, optionally filtered by name.
     fn semantic_inherent_functions(
         &self,
-        receiver_ty: &NominalTy,
+        receiver_ty: &AdtTy,
         method_name: Option<&str>,
     ) -> Result<UniqueVec<FunctionRef>, PackageStoreError> {
         let index = self.context.semantic_index();
@@ -335,8 +374,8 @@ where
         &self,
         function_ref: FunctionRef,
         owner: ItemOwner,
-        receiver_ty: &NominalTy,
-    ) -> Result<TypeSubst, PackageStoreError> {
+        receiver_ty: &AdtTy,
+    ) -> Result<Substitution, PackageStoreError> {
         self.context
             .generics()
             .subst_for_receiver_owner(function_ref.origin, owner, receiver_ty)

@@ -1,6 +1,6 @@
 use expect_test::expect;
 
-use super::utils::{InlayHintsQuery, check_inlay_hints};
+use super::utils::{InlayHintsQuery, check_inlay_hints, check_inlay_hints_with_fake_sysroot};
 
 #[test]
 fn shows_inferred_local_binding_types() {
@@ -158,42 +158,18 @@ pub fn match_it(maybe: Option<User>) {
 
 #[test]
 fn shows_type_hints_for_for_loop_bindings_with_known_items() {
-    check_inlay_hints(
+    check_inlay_hints_with_fake_sysroot(
         r#"
 //- /Cargo.toml
 [workspace]
-members = ["core", "app"]
+members = ["app"]
 resolver = "3"
-
-//- /core/Cargo.toml
-[package]
-name = "fake_core"
-version = "0.1.0"
-edition = "2024"
-
-//- /core/src/lib.rs
-pub mod iter {
-    pub trait IntoIterator {
-        type Item;
-    }
-}
-
-impl<'a, T> iter::IntoIterator for &'a [T] {
-    type Item = &'a T;
-}
-
-impl<T, const N: usize> iter::IntoIterator for [T; N] {
-    type Item = T;
-}
 
 //- /app/Cargo.toml
 [package]
 name = "app"
 version = "0.1.0"
 edition = "2024"
-
-[dependencies]
-core = { package = "fake_core", path = "../core" }
 
 //- /app/src/lib.rs
 pub struct Package;

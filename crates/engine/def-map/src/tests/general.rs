@@ -77,7 +77,7 @@ fn main() {
 
             app [lib]
             crate
-            - Thing : type [struct dep[lib]::crate::hidden::Thing]
+            - Thing : type [struct dep[lib]::crate::hidden::Thing] | value [struct dep[lib]::crate::hidden::Thing]
             - dep_alias : type [module dep[lib]::crate]
             - dep_work : value [fn dep[lib]::crate::work]
             - final_mod : type [module app[lib]::crate::final_mod]
@@ -109,12 +109,12 @@ fn main() {
 
             dep [lib]
             crate
-            - Thing : type [pub struct dep[lib]::crate::hidden::Thing]
+            - Thing : type [pub struct dep[lib]::crate::hidden::Thing] | value [pub struct dep[lib]::crate::hidden::Thing]
             - hidden : type [module dep[lib]::crate::hidden]
             - work : value [pub fn dep[lib]::crate::work]
 
             crate::hidden
-            - Thing : type [pub struct dep[lib]::crate::hidden::Thing]
+            - Thing : type [pub struct dep[lib]::crate::hidden::Thing] | value [pub struct dep[lib]::crate::hidden::Thing]
         "#]],
     );
 }
@@ -189,13 +189,13 @@ pub fn work() {}
 
             path_attr_fixture [lib]
             crate
-            - Api : type [pub struct path_attr_fixture[lib]::crate::api::Api]
+            - Api : type [pub struct path_attr_fixture[lib]::crate::api::Api] | value [pub struct path_attr_fixture[lib]::crate::api::Api]
             - api : type [pub module path_attr_fixture[lib]::crate::api]
             - outer : type [pub module path_attr_fixture[lib]::crate::outer]
             - work : value [pub fn path_attr_fixture[lib]::crate::outer::implementation::work]
 
             crate::api
-            - Api : type [pub struct path_attr_fixture[lib]::crate::api::Api]
+            - Api : type [pub struct path_attr_fixture[lib]::crate::api::Api] | value [pub struct path_attr_fixture[lib]::crate::api::Api]
 
             crate::outer
             - implementation : type [pub module path_attr_fixture[lib]::crate::outer::implementation]
@@ -242,7 +242,7 @@ pub struct Shared;
             - shared : type [pub module shared_module_def_map[lib]::crate::shared]
 
             crate::shared
-            - Shared : type [pub struct shared_module_def_map[lib]::crate::shared::Shared]
+            - Shared : type [pub struct shared_module_def_map[lib]::crate::shared::Shared] | value [pub struct shared_module_def_map[lib]::crate::shared::Shared]
 
             shared_module_def_map [bin]
             crate
@@ -250,7 +250,7 @@ pub struct Shared;
             - shared : type [module shared_module_def_map[bin]::crate::shared]
 
             crate::shared
-            - Shared : type [pub struct shared_module_def_map[bin]::crate::shared::Shared]
+            - Shared : type [pub struct shared_module_def_map[bin]::crate::shared::Shared] | value [pub struct shared_module_def_map[bin]::crate::shared::Shared]
         "#]],
     );
 }
@@ -281,13 +281,13 @@ pub mod nested {
 
             impl_fixture [lib]
             crate
-            - Root : type [pub struct impl_fixture[lib]::crate::Root]
+            - Root : type [pub struct impl_fixture[lib]::crate::Root] | value [pub struct impl_fixture[lib]::crate::Root]
             - nested : type [pub module impl_fixture[lib]::crate::nested]
             impls
             - impl lib.rs#1
 
             crate::nested
-            - Nested : type [pub struct impl_fixture[lib]::crate::nested::Nested]
+            - Nested : type [pub struct impl_fixture[lib]::crate::nested::Nested] | value [pub struct impl_fixture[lib]::crate::nested::Nested]
             impls
             - impl lib.rs#3
         "#]],
@@ -305,11 +305,13 @@ version = "0.1.0"
 edition = "2024"
 
 //- /src/lib.rs
-pub struct Thing;
+pub struct Thing {
+    field: (),
+}
 
 #[allow(non_snake_case)]
 pub fn Thing() -> Thing {
-    Thing
+    Thing { field: () }
 }
 "#,
     );
@@ -319,4 +321,36 @@ pub fn Thing() -> Thing {
         .entry("Thing")
         .assert_type_exists("type namespace should keep the struct")
         .assert_value_exists("value namespace should keep the function");
+}
+
+#[test]
+fn struct_field_shape_determines_value_namespace_occupancy() {
+    let project = utils::DefMapFixtureDb::build(
+        r#"
+//- /Cargo.toml
+[package]
+name = "struct_namespace_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct Unit;
+pub struct Tuple(pub u8);
+pub struct Record { pub value: u8 }
+"#,
+    );
+    let target = project.lib("struct_namespace_fixture");
+
+    target
+        .entry("Unit")
+        .assert_type_exists("unit structs should retain their type identity")
+        .assert_value_exists("unit struct constructors should occupy the value namespace");
+    target
+        .entry("Tuple")
+        .assert_type_exists("tuple structs should retain their type identity")
+        .assert_value_exists("tuple struct constructors should occupy the value namespace");
+    target
+        .entry("Record")
+        .assert_type_exists("record structs should occupy the type namespace")
+        .assert_value_missing("record structs should not contribute a value constructor binding");
 }

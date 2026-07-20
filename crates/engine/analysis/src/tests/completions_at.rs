@@ -1,6 +1,9 @@
 use expect_test::expect;
 
-use super::utils::{AnalysisQuery, check_analysis_queries, check_analysis_queries_with_sysroot};
+use super::utils::{
+    AnalysisQuery, check_analysis_queries, check_analysis_queries_with_fake_sysroot,
+    check_analysis_queries_with_sysroot,
+};
 
 #[test]
 fn completes_inherent_and_trait_methods_at_dot() {
@@ -122,12 +125,12 @@ pub fn use_it(user: User) {
             bare dot before statement completions
             - inherent_method id
               detail: pub fn id(&self)
-              sort: id|01|00|Function(FunctionRef { origin: Target(TargetRef { package: PackageSlot(0), target: TargetId(0) }), id: FunctionId(1) })
+              sort: id|01|00|Function(FunctionRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), id: FunctionId(1) })
               replace: 119..119
               snippet: id()$0
             - field name
               detail: pub name: String
-              sort: name|00|00|Field(FieldRef { owner: TypeDefRef { origin: Target(TargetRef { package: PackageSlot(0), target: TargetId(0) }), id: Struct(StructId(0)) }, index: 0 })
+              sort: name|00|00|Field(FieldRef { owner: TypeDefRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), id: Struct(StructId(0)) }, index: 0 })
               replace: 119..119
         "#]],
     );
@@ -293,7 +296,6 @@ pub fn use_it() {
             qualified record constructor completions
             - enum Action
             - struct User
-            - fn build_user
 
             record variant constructor completions
             - variant Start
@@ -452,17 +454,17 @@ pub fn use_it() {
             macro from value prefix
             - fn make_function
               detail: pub fn make_function() -> u8
-              sort: 01-module|make_function|06|00|Function(FunctionRef { origin: Target(TargetRef { package: PackageSlot(0), target: TargetId(0) }), id: FunctionId(0) })
+              sort: 01-module|make_function|06|00|Function(FunctionRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), id: FunctionId(0) })
               replace: 171..175
               snippet: make_function()$0
             - macro make_value
               detail: macro make_value
-              sort: 01-module|make_value|06|00|Declaration(DeclarationRef { kind: "local_def", local_def: LocalDefRef { origin: Target(TargetRef { package: PackageSlot(0), target: TargetId(0) }), local_def: LocalDefId(0) } })
+              sort: 01-module|make_value|06|00|Declaration(DeclarationRef { kind: "local_def", local_def: LocalDefRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), local_def: LocalDefId(0) } })
               replace: 171..175
               snippet: make_value!($0)
             - fn use_it
               detail: pub fn use_it()
-              sort: 01-module|use_it|06|00|Function(FunctionRef { origin: Target(TargetRef { package: PackageSlot(0), target: TargetId(0) }), id: FunctionId(1) })
+              sort: 01-module|use_it|06|00|Function(FunctionRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), id: FunctionId(1) })
               replace: 171..175
               snippet: use_it()$0
         "#]],
@@ -502,17 +504,17 @@ pub fn use_it() {
             qualified macro from value prefix
             - fn exported_function
               detail: pub fn exported_function() -> u8
-              sort: exported_function|06|00|Function(FunctionRef { origin: Target(TargetRef { package: PackageSlot(0), target: TargetId(0) }), id: FunctionId(0) })
+              sort: exported_function|06|00|Function(FunctionRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), id: FunctionId(0) })
               replace: 201..209
               snippet: exported_function()$0
             - macro exported_value
               detail: macro exported_value
-              sort: exported_value|06|00|Declaration(DeclarationRef { kind: "local_def", local_def: LocalDefRef { origin: Target(TargetRef { package: PackageSlot(0), target: TargetId(0) }), local_def: LocalDefId(0) } })
+              sort: exported_value|06|00|Declaration(DeclarationRef { kind: "local_def", local_def: LocalDefRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), local_def: LocalDefId(0) } })
               replace: 201..209
               snippet: exported_value!($0)
             - fn use_it
               detail: pub fn use_it()
-              sort: use_it|06|00|Function(FunctionRef { origin: Target(TargetRef { package: PackageSlot(0), target: TargetId(0) }), id: FunctionId(1) })
+              sort: use_it|06|00|Function(FunctionRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), id: FunctionId(1) })
               replace: 201..209
               snippet: use_it()$0
         "#]],
@@ -573,20 +575,20 @@ pub fn use_it(c_a_outer: u8) {
             unqualified value proximity
             - variable c_z_inner
               detail: let c_z_inner: u8
-              sort: 00-body:0000|c_z_inner|07|00|Declaration(DeclarationRef { kind: "binding", body: FunctionBodyRef { target: TargetRef { package: PackageSlot(0), target: TargetId(0) }, body: BodyId(1) }, binding: BindingId(1) })
+              sort: 00-body:0000|c_z_inner|07|00|Declaration(DeclarationRef { kind: "binding", body: FunctionBodyRef { crate_ref: CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }, body: BodyId(1) }, binding: BindingId(1) })
               replace: 107..108
             - variable c_a_outer
               detail: let c_a_outer: u8
-              sort: 00-body:0002|c_a_outer|07|00|Declaration(DeclarationRef { kind: "binding", body: FunctionBodyRef { target: TargetRef { package: PackageSlot(0), target: TargetId(0) }, body: BodyId(1) }, binding: BindingId(0) })
+              sort: 00-body:0002|c_a_outer|07|00|Declaration(DeclarationRef { kind: "binding", body: FunctionBodyRef { crate_ref: CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }, body: BodyId(1) }, binding: BindingId(0) })
               replace: 107..108
             - fn c_module_item
               detail: pub fn c_module_item()
-              sort: 01-module|c_module_item|06|00|Function(FunctionRef { origin: Target(TargetRef { package: PackageSlot(0), target: TargetId(0) }), id: FunctionId(0) })
+              sort: 01-module|c_module_item|06|00|Function(FunctionRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), id: FunctionId(0) })
               replace: 107..108
               snippet: c_module_item()$0
             - fn use_it
               detail: pub fn use_it(c_a_outer: u8)
-              sort: 01-module|use_it|06|00|Function(FunctionRef { origin: Target(TargetRef { package: PackageSlot(0), target: TargetId(0) }), id: FunctionId(1) })
+              sort: 01-module|use_it|06|00|Function(FunctionRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), id: FunctionId(1) })
               replace: 107..108
               snippet: use_it(${1:c_a_outer})$0
         "#]],
@@ -655,19 +657,19 @@ pub fn use_it() {
             unqualified type proximity
             - struct ZLocal
               detail: struct ZLocal
-              sort: 00-body:0000|00|ZLocal|00|Declaration(DeclarationRef { kind: "item", item: TypeDef(TypeDefRef { origin: Body(BodyRef { target: TargetRef { package: PackageSlot(0), target: TargetId(0) }, body: BodyId(0) }), id: Struct(StructId(0)) }) })
+              sort: 00-body:0000|00|ZLocal|00|Declaration(DeclarationRef { kind: "item", item: TypeDef(TypeDefRef { origin: Body(BodyRef { crate_ref: CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }, body: BodyId(0) }), id: Struct(StructId(0)) }) })
               replace: 112..113
             - struct AModule
               detail: struct AModule
-              sort: 01-module|00|AModule|00|Declaration(DeclarationRef { kind: "local_def", local_def: LocalDefRef { origin: Target(TargetRef { package: PackageSlot(0), target: TargetId(0) }), local_def: LocalDefId(1) } })
+              sort: 01-module|00|AModule|00|Declaration(DeclarationRef { kind: "local_def", local_def: LocalDefRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), local_def: LocalDefId(1) } })
               replace: 112..113
             - trait ATrait
               detail: trait ATrait
-              sort: 01-module|01|ATrait|00|Declaration(DeclarationRef { kind: "local_def", local_def: LocalDefRef { origin: Target(TargetRef { package: PackageSlot(0), target: TargetId(0) }), local_def: LocalDefId(0) } })
+              sort: 01-module|01|ATrait|00|Declaration(DeclarationRef { kind: "local_def", local_def: LocalDefRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), local_def: LocalDefId(0) } })
               replace: 112..113
             - module a_mod
               detail: mod a_mod
-              sort: 01-module|02|a_mod|00|Declaration(DeclarationRef { kind: "module", module: ModuleRef { origin: Target(TargetRef { package: PackageSlot(0), target: TargetId(0) }), module: ModuleId(1) } })
+              sort: 01-module|02|a_mod|00|Declaration(DeclarationRef { kind: "module", module: ModuleRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), module: ModuleId(1) } })
               replace: 112..113
         "#]],
     );
@@ -807,7 +809,7 @@ pub fn use_it() {
             module named like primitive completions
             - module usize
               detail: mod usize
-              sort: 01-module|02|usize|00|Declaration(DeclarationRef { kind: "module", module: ModuleRef { origin: Target(TargetRef { package: PackageSlot(0), target: TargetId(0) }), module: ModuleId(1) } })
+              sort: 01-module|02|usize|00|Declaration(DeclarationRef { kind: "module", module: ModuleRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), module: ModuleId(1) } })
               replace: 52..54
             - primitive_type usize
               detail: primitive type usize
@@ -1016,15 +1018,15 @@ pub fn use_it() {
             unqualified type sorting
             - struct Zed
               detail: struct Zed
-              sort: 01-module|00|Zed|00|Declaration(DeclarationRef { kind: "local_def", local_def: LocalDefRef { origin: Target(TargetRef { package: PackageSlot(0), target: TargetId(0) }), local_def: LocalDefId(1) } })
+              sort: 01-module|00|Zed|00|Declaration(DeclarationRef { kind: "local_def", local_def: LocalDefRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), local_def: LocalDefId(1) } })
               replace: 89..90
             - trait Mid
               detail: trait Mid
-              sort: 01-module|01|Mid|00|Declaration(DeclarationRef { kind: "local_def", local_def: LocalDefRef { origin: Target(TargetRef { package: PackageSlot(0), target: TargetId(0) }), local_def: LocalDefId(0) } })
+              sort: 01-module|01|Mid|00|Declaration(DeclarationRef { kind: "local_def", local_def: LocalDefRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), local_def: LocalDefId(0) } })
               replace: 89..90
             - module aa_prefix
               detail: mod aa_prefix
-              sort: 01-module|02|aa_prefix|00|Declaration(DeclarationRef { kind: "module", module: ModuleRef { origin: Target(TargetRef { package: PackageSlot(0), target: TargetId(0) }), module: ModuleId(1) } })
+              sort: 01-module|02|aa_prefix|00|Declaration(DeclarationRef { kind: "module", module: ModuleRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), module: ModuleId(1) } })
               replace: 89..90
         "#]],
     );
@@ -1322,7 +1324,7 @@ pub fn use_it() {
             path metadata completions
             - struct User
               detail: struct User
-              sort: User|04|00|Declaration(DeclarationRef { kind: "local_def", local_def: LocalDefRef { origin: Target(TargetRef { package: PackageSlot(0), target: TargetId(0) }), local_def: LocalDefId(0) } })
+              sort: User|04|00|Declaration(DeclarationRef { kind: "local_def", local_def: LocalDefRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), local_def: LocalDefId(0) } })
               replace: 79..81
         "#]],
     );
@@ -1578,7 +1580,7 @@ pub fn use_it(error: Wrapper<Error>) {
 }
 
 #[test]
-fn marks_generic_trait_method_completions_as_maybe() {
+fn resolves_generic_trait_methods_and_rejects_unmet_bounds() {
     check_analysis_queries(
         r#"
 //- /Cargo.toml
@@ -1622,15 +1624,14 @@ pub fn use_it(wrapper: Wrapper<User>) {
         &[AnalysisQuery::complete("generic trait completions", "0")],
         expect![[r#"
             generic trait completions
-            - trait_method bounded_trait_name (maybe)
-            - trait_method generic_trait_name (maybe)
+            - trait_method generic_trait_name
             - field value
         "#]],
     );
 }
 
 #[test]
-fn marks_non_type_generic_trait_impl_args_as_maybe() {
+fn rejects_trait_impls_with_different_const_arguments() {
     check_analysis_queries(
         r#"
 //- /Cargo.toml
@@ -1657,7 +1658,7 @@ pub fn use_it(wrapper: Wrapper<2>) {
         &[AnalysisQuery::complete("const trait impl completions", "0")],
         expect![[r#"
             const trait impl completions
-            - trait_method label (maybe)
+            - <none>
         "#]],
     );
 }
@@ -1771,34 +1772,18 @@ pub fn use_it() {
 
 #[test]
 fn completes_through_core_deref() {
-    check_analysis_queries(
+    check_analysis_queries_with_fake_sysroot(
         r#"
 //- /Cargo.toml
 [workspace]
-members = ["core", "app"]
+members = ["app"]
 resolver = "3"
-
-//- /core/Cargo.toml
-[package]
-name = "fake_core"
-version = "0.1.0"
-edition = "2024"
-
-//- /core/src/lib.rs
-pub mod ops {
-    pub trait Deref {
-        type Target;
-    }
-}
 
 //- /app/Cargo.toml
 [package]
 name = "app"
 version = "0.1.0"
 edition = "2024"
-
-[dependencies]
-core = { package = "fake_core", path = "../core" }
 
 //- /app/src/lib.rs
 pub struct User {
@@ -2365,12 +2350,12 @@ pub fn use_it(user: User) {
             - field name
               detail: pub name: Profile
               docs: Name field.
-              sort: name|00|00|Field(FieldRef { owner: TypeDefRef { origin: Target(TargetRef { package: PackageSlot(0), target: TargetId(0) }), id: Struct(StructId(1)) }, index: 0 })
+              sort: name|00|00|Field(FieldRef { owner: TypeDefRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), id: Struct(StructId(1)) }, index: 0 })
               replace: 216..218
             - inherent_method name
               detail: pub fn name(&self) -> Profile
               docs: Name method.
-              sort: name|01|00|Function(FunctionRef { origin: Target(TargetRef { package: PackageSlot(0), target: TargetId(0) }), id: FunctionId(1) })
+              sort: name|01|00|Function(FunctionRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), id: FunctionId(1) })
               replace: 216..218
               snippet: name()$0
         "#]],

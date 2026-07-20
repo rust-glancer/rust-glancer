@@ -106,6 +106,44 @@ macro_rules! make_included {
 }
 
 #[test]
+fn include_macro_retains_enum_variant_shape_namespace_occupancy() {
+    let project = build_builtin_macro_fixture(
+        r#"
+//- /Cargo.toml
+[package]
+name = "included_variant_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+include!("included.rs");
+use Choice::{Record, Tuple, Unit};
+
+//- /src/included.rs
+pub enum Choice {
+    Record { value: u8 },
+    Tuple(u8),
+    Unit,
+}
+"#,
+    );
+    let target = project.lib("included_variant_fixture");
+
+    target
+        .entry("Record")
+        .assert_type_exists("included record variants should be importable as record paths")
+        .assert_value_missing("included record variants should not become bare values");
+    for name in ["Tuple", "Unit"] {
+        target
+            .entry(name)
+            .assert_type_exists("included tuple and unit variants should retain type bindings")
+            .assert_value_exists(
+                "included tuple and unit variants should retain value constructors",
+            );
+    }
+}
+
+#[test]
 fn qualified_include_macro_splices_real_source_items() {
     let project = build_builtin_macro_fixture(
         r#"
@@ -388,13 +426,13 @@ pub struct Dep;
 
             alloc [lib]
             crate
-            - Alloc : type [pub struct alloc[lib]::crate::Alloc]
+            - Alloc : type [pub struct alloc[lib]::crate::Alloc] | value [pub struct alloc[lib]::crate::Alloc]
 
             package cfg_select_source_items_fixture
 
             cfg_select_source_items_fixture [lib]
             crate
-            - User : type [pub struct cfg_select_source_items_fixture[lib]::crate::User]
+            - User : type [pub struct cfg_select_source_items_fixture[lib]::crate::User] | value [pub struct cfg_select_source_items_fixture[lib]::crate::User]
             - dep : type [module dep[lib]::crate]
             impls
             - impl lib.rs#2
@@ -418,7 +456,7 @@ pub struct Dep;
 
             dep [lib]
             crate
-            - Dep : type [pub struct dep[lib]::crate::Dep]
+            - Dep : type [pub struct dep[lib]::crate::Dep] | value [pub struct dep[lib]::crate::Dep]
 
             package std
 

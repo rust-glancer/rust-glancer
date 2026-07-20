@@ -27,7 +27,7 @@ use crate::{
     completion_site::{CompletionSite, CompletionSiteDetector, CompletionSiteSyntax},
     model::{CompletionItem, CompletionKind},
 };
-use rg_ir_model::TargetRef;
+use rg_ir_model::CrateRef;
 use rg_parse::FileId;
 
 use self::{
@@ -69,7 +69,7 @@ impl CallCompletionKind {
 /// One source-position completion query, including request-local editor state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CompletionQuery<'a> {
-    pub target: TargetRef,
+    pub crate_ref: CrateRef,
     pub file_id: FileId,
     pub offset: u32,
     pub source_text: Option<&'a str>,
@@ -77,9 +77,9 @@ pub struct CompletionQuery<'a> {
 }
 
 impl<'a> CompletionQuery<'a> {
-    pub fn new(target: TargetRef, file_id: FileId, offset: u32) -> Self {
+    pub fn new(crate_ref: CrateRef, file_id: FileId, offset: u32) -> Self {
         Self {
-            target,
+            crate_ref,
             file_id,
             offset,
             source_text: None,
@@ -135,7 +135,7 @@ impl<'a, 'db, 'source> CompletionResolver<'a, 'db, 'source> {
             )
         });
         let Some(site) = CompletionSiteDetector::new(self.analysis.view_db()).site_at(
-            self.query.target,
+            self.query.crate_ref,
             self.query.file_id,
             self.query.offset,
             syntax_hint,
@@ -169,7 +169,8 @@ impl<'a, 'db, 'source> CompletionResolver<'a, 'db, 'source> {
                 Ok(completions)
             }
             CompletionSite::RecordField(site) => {
-                RecordFieldCompletionResolver::new(self.analysis.view_db()).completions(site)
+                RecordFieldCompletionResolver::new(self.analysis.view_db(), self.query.crate_ref)
+                    .completions(site)
             }
         }
     }

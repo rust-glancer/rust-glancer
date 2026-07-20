@@ -123,8 +123,12 @@ export class LanguageClientSession implements vscode.Disposable {
           this.isActiveRustDocumentDirty(),
         );
       }),
+      client.onNotification(SERVER_NOTIFICATIONS.deferredIndexingStarted, (params) => {
+        const status = params as DeferredIndexingParams;
+        this.clientStatus.deferredIndexingStarted(status.root, this.isActiveRustDocumentDirty());
+      }),
       client.onNotification(SERVER_NOTIFICATIONS.deferredIndexingFinished, (params) => {
-        const status = params as DeferredIndexingFinishedParams;
+        const status = params as DeferredIndexingParams;
         this.clientStatus.deferredIndexingFinished(status.root, this.isActiveRustDocumentDirty());
       }),
     );
@@ -229,6 +233,6 @@ interface ActiveWorkspaceChangedParams {
   readonly message?: string;
 }
 
-interface DeferredIndexingFinishedParams {
+interface DeferredIndexingParams {
   readonly root: string;
 }

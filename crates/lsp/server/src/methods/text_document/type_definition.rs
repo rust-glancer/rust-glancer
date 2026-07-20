@@ -22,7 +22,7 @@ pub(crate) async fn type_definition(
     tracing::trace!("type definition request received");
     let locations = ctx
         .engine_client
-        .call(
+        .query(
             "goto_type_definition",
             move |engine_client, request_context| async move {
                 engine_client

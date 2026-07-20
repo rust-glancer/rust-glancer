@@ -5,30 +5,27 @@
 
 use anyhow::Result;
 
-use rg_ir_model::{DefId, DefMapRef, LocalDefRef, ModuleRef, TargetRef};
-use rg_ir_storage::{
-    ImportPath, LocalDefData, MacroDefinitionData, MacroDefinitionEnv, ScopeBinding,
-    ScopeBindingOrigin, ScopeResolver, TargetResolutionEnv,
+use crate::{
+    CrateResolutionEnv, MacroDefinitionEnv, MacroDefinitionView, ScopeBinding, ScopeResolver,
 };
+use rg_ir_model::{CrateRef, DefId, DefMapRef, LocalDefRef, ModuleRef, Path};
 use rg_std::ExpectedUnique;
 use rg_text::Name;
 
 use super::{ItemOrder, MacroCallSite};
-use crate::build::{collect::TargetState, finalize::FinalizeTargetStates};
+use crate::build::{collect::CrateState, finalize::FinalizeCrateStates};
 
 /// Macro definition resolved through the ordinary macro namespace.
 pub(super) struct ResolvedMacroDefinition<'a> {
-    pub(super) def_ref: LocalDefRef,
-    pub(super) local_def: &'a LocalDefData,
-    pub(super) data: &'a MacroDefinitionData,
+    pub(super) definition: MacroDefinitionView<'a>,
     pub(super) order: Option<&'a ItemOrder>,
-    pub(super) origin: ScopeBindingOrigin,
+    pub(super) direct_only: bool,
 }
 
 impl PartialEq for ResolvedMacroDefinition<'_> {
     fn eq(&self, other: &Self) -> bool {
         // Collapse duplicate bindings to the same macro definition, e.g. macro-export root aliases.
-        self.def_ref == other.def_ref
+        self.definition == other.definition
     }
 }
 
@@ -43,21 +40,17 @@ impl Eq for ResolvedMacroDefinition<'_> {}
 /// for the ordinary namespace work.
 pub(super) struct ItemMacroResolver<'a, E: ?Sized> {
     env: &'a E,
-    states: &'a FinalizeTargetStates,
-    state: &'a TargetState,
+    states: &'a FinalizeCrateStates,
+    state: &'a CrateState,
 }
 
 impl<'a, E> ItemMacroResolver<'a, E>
 where
-    E: TargetResolutionEnv<Error = rg_package_store::PackageStoreError>
+    E: CrateResolutionEnv<Error = rg_package_store::PackageStoreError>
         + MacroDefinitionEnv
         + ?Sized,
 {
-    pub(super) fn new(
-        env: &'a E,
-        states: &'a FinalizeTargetStates,
-        state: &'a TargetState,
-    ) -> Self {
+    pub(super) fn new(env: &'a E, states: &'a FinalizeCrateStates, state: &'a CrateState) -> Self {
         Self { env, states, state }
     }
 
@@ -65,7 +58,7 @@ where
     pub(super) fn resolve(
         &self,
         call: &MacroCallSite,
-        path: &ImportPath,
+        path: &Path,
     ) -> Result<ExpectedUnique<ResolvedMacroDefinition<'a>>> {
         if let Some(name) = path.relative_single_name() {
             // Unqualified calls have special `macro_rules!` textual visibility before they behave
@@ -76,7 +69,7 @@ where
         // Qualified calls follow ordinary path resolution for the prefix, then keep the final macro
         // binding so order filtering can distinguish direct definitions from exports/imports.
         let resolved_bindings = ScopeResolver::new(self.env)
-            .macro_bindings(ModuleRef::target(self.state.target, call.module), path)?;
+            .macro_bindings(ModuleRef::krate(self.state.crate_ref, call.module), path)?;
         let mut macros = Vec::new();
 
         for binding in resolved_bindings {
@@ -87,7 +80,7 @@ where
 
         Ok(unique_macro_definition(visible_macro_definitions(
             macros,
-            self.state.target,
+            self.state.crate_ref,
             call,
         )))
     }
@@ -120,7 +113,7 @@ where
         name: &Name,
     ) -> Result<ExpectedUnique<ResolvedMacroDefinition<'a>>> {
         let importing_module = ModuleRef {
-            origin: DefMapRef::Target(self.state.target),
+            origin: DefMapRef::Crate(self.state.crate_ref),
             module: call.module,
         };
         let bindings = ScopeResolver::new(self.env).visible_unqualified_macro_bindings(
@@ -156,17 +149,17 @@ where
             {
                 return self.macro_record_for_def(
                     DefId::Local(LocalDefRef {
-                        origin: DefMapRef::Target(self.state.target),
+                        origin: DefMapRef::Crate(self.state.crate_ref),
                         local_def,
                     }),
-                    ScopeBindingOrigin::Direct,
+                    true,
                 );
             }
 
             // A parent module contributes only declarations that appeared before the child module
             // was declared, matching the textual file view used by `macro_rules!`.
             let Some(parent) = self.env.parent_module(ModuleRef {
-                origin: DefMapRef::Target(self.state.target),
+                origin: DefMapRef::Crate(self.state.crate_ref),
                 module,
             })?
             else {
@@ -198,7 +191,7 @@ where
             }
 
             let import_owner = ModuleRef {
-                origin: DefMapRef::Target(self.state.target),
+                origin: DefMapRef::Crate(self.state.crate_ref),
                 module: macro_use.module,
             };
             for binding in ScopeResolver::new(self.env).visible_macro_bindings(
@@ -209,9 +202,7 @@ where
                 // Treat the fallback as an import-like binding. The source binding may be direct
                 // inside the exporting crate, but macro-use lookup is not source-order sensitive in
                 // the caller.
-                if let Some(resolved) =
-                    self.macro_record_for_def(binding.def, ScopeBindingOrigin::Import)?
-                {
+                if let Some(resolved) = self.macro_record_for_def(binding.def, false)? {
                     macros.push(resolved);
                 }
             }
@@ -235,7 +226,7 @@ where
 
         Ok(unique_macro_definition(visible_macro_definitions(
             macros,
-            self.state.target,
+            self.state.crate_ref,
             call,
         )))
     }
@@ -245,14 +236,14 @@ where
         &self,
         binding: &ScopeBinding,
     ) -> Result<Option<ResolvedMacroDefinition<'a>>> {
-        self.macro_record_for_def(binding.def, binding.origin)
+        self.macro_record_for_def(binding.def, binding.is_direct_only())
     }
 
     /// Converts a resolved definition id into the macro payload needed by expansion.
     fn macro_record_for_def(
         &self,
         def: DefId,
-        origin: ScopeBindingOrigin,
+        direct_only: bool,
     ) -> Result<Option<ResolvedMacroDefinition<'a>>> {
         let Some(payload) = MacroDefinitionEnv::macro_definition_view(self.env, def)? else {
             return Ok(None);
@@ -260,24 +251,22 @@ where
         let order = payload
             .def_ref
             .origin
-            .as_target_ref()
-            .and_then(|target| self.states.target(target))
+            .as_crate_ref()
+            .and_then(|crate_ref| self.states.crate_state(crate_ref))
             .and_then(|state| state.macro_definitions.get(&payload.def_ref.local_def))
             .map(|record| &record.order);
 
         Ok(Some(ResolvedMacroDefinition {
-            def_ref: payload.def_ref,
-            local_def: payload.local_def,
-            data: payload.data,
+            definition: payload,
             order,
-            origin,
+            direct_only,
         }))
     }
 }
 
 fn visible_macro_definitions<'a, 'call, I>(
     macros: I,
-    target: TargetRef,
+    crate_ref: CrateRef,
     call: &'call MacroCallSite,
 ) -> impl Iterator<Item = ResolvedMacroDefinition<'a>> + 'call
 where
@@ -285,7 +274,7 @@ where
 {
     macros
         .into_iter()
-        .filter(move |macro_| macro_definition_is_visible_by_order(macro_, target, call))
+        .filter(move |macro_| macro_definition_is_visible_by_order(macro_, crate_ref, call))
 }
 
 fn unique_macro_definition<'a>(
@@ -304,14 +293,14 @@ fn unique_macro_definition<'a>(
 /// Filters ordinary namespace candidates that are textually later than the call site.
 fn macro_definition_is_visible_by_order(
     macro_: &ResolvedMacroDefinition<'_>,
-    target: TargetRef,
+    crate_ref: CrateRef,
     call: &MacroCallSite,
 ) -> bool {
-    if macro_.origin != ScopeBindingOrigin::Direct {
+    if !macro_.direct_only {
         return true;
     }
 
-    !(macro_.def_ref.origin == DefMapRef::Target(target)
-        && macro_.local_def.module == call.module
+    !(macro_.definition.def_ref.origin == DefMapRef::Crate(crate_ref)
+        && macro_.definition.local_def.module == call.module
         && macro_.order.is_some_and(|order| order > &call.order))
 }

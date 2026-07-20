@@ -1,4 +1,4 @@
-use rg_ir_model::{BodySource, BuiltinMacroExprKind, LocalDefRef, TargetRef};
+use rg_ir_model::{BodySource, BuiltinMacroExprKind, CrateRef, LocalDefRef};
 use rg_parse::Span;
 use rg_syntax::{AstNode, Parse, SyntaxNode, ast};
 use rg_tt::syntax_bridge::ExpansionSpanMap;
@@ -7,19 +7,15 @@ use rg_tt::syntax_bridge::ExpansionSpanMap;
 pub struct ExpandedBodyMacro<T> {
     syntax: T,
     source_map: ExpansionSpanMap,
-    dollar_crate_target: TargetRef,
+    dollar_crate: CrateRef,
 }
 
 impl<T> ExpandedBodyMacro<T> {
-    pub(super) fn new(
-        syntax: T,
-        source_map: ExpansionSpanMap,
-        dollar_crate_target: TargetRef,
-    ) -> Self {
+    pub(super) fn new(syntax: T, source_map: ExpansionSpanMap, dollar_crate: CrateRef) -> Self {
         Self {
             syntax,
             source_map,
-            dollar_crate_target,
+            dollar_crate,
         }
     }
 
@@ -48,8 +44,8 @@ impl<T> ExpandedBodyMacro<T> {
     }
 
     /// Returns the crate that generated `$crate` paths inside this syntax should resolve to.
-    pub fn dollar_crate_target(&self) -> TargetRef {
-        self.dollar_crate_target
+    pub fn dollar_crate(&self) -> CrateRef {
+        self.dollar_crate
     }
 }
 
@@ -59,12 +55,12 @@ impl<T: AstNode> ExpandedBodyMacro<T> {
         let Self {
             syntax,
             source_map,
-            dollar_crate_target,
+            dollar_crate,
         } = self;
         let context_syntax = syntax.syntax().clone();
         (
             syntax,
-            ExpandedBodyMacro::new(context_syntax, source_map, dollar_crate_target),
+            ExpandedBodyMacro::new(context_syntax, source_map, dollar_crate),
         )
     }
 }
@@ -74,15 +70,11 @@ impl ExpandedBodyMacro<Parse<SyntaxNode>> {
         let Self {
             syntax: parse,
             source_map,
-            dollar_crate_target,
+            dollar_crate,
         } = self;
         let root = parse.syntax_node();
         let syntax = N::cast(root.clone()).or_else(|| root.children().find_map(N::cast))?;
-        Some(ExpandedBodyMacro::new(
-            syntax,
-            source_map,
-            dollar_crate_target,
-        ))
+        Some(ExpandedBodyMacro::new(syntax, source_map, dollar_crate))
     }
 }
 

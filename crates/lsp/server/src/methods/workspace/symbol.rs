@@ -14,7 +14,7 @@ pub(crate) async fn symbol(
     tracing::trace!("workspace symbol request received");
     let symbols = ctx
         .engine_client
-        .call(
+        .query(
             "workspace_symbol",
             move |engine_client, request_context| async move {
                 engine_client.workspace_symbol(request_context, query).await

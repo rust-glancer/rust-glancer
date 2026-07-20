@@ -1,16 +1,26 @@
+//! Translation between tarpc request shapes and the in-process engine command protocol.
+//!
+//! Most methods intentionally stay thin: capture a stable dirty-buffer snapshot, enqueue one typed
+//! command, and convert its error into the wire type. Document lifecycle methods do more work
+//! because editor buffer state must be updated before the corresponding saved-project command is
+//! allowed to run.
+
 use std::path::PathBuf;
 
 use rg_lsp_proto::{EngineConfig, EngineError, EngineResult, EngineService};
 use tarpc::context;
 
-use crate::{documents::DirtyDocumentSnapshotState, engine::EngineCommand};
+use crate::{
+    documents::DirtyDocumentSnapshotState,
+    engine::{EngineCommand, ProjectConfiguration},
+};
 
 use super::Service;
 
 /// Tarpc-facing engine API implementation.
 ///
 /// This module is the translation layer from protocol-shaped requests into the current in-process
-/// analysis worker and diagnostics handle. Keeping it separate makes the service state easier to
+/// analysis engine and diagnostics handle. Keeping it separate makes the service state easier to
 /// read without hiding the fact that this is still one façade over two internal subsystems.
 impl EngineService for Service {
     async fn initialize(
@@ -26,7 +36,7 @@ impl EngineService for Service {
         self.engine
             .request(|respond_to| EngineCommand::Initialize {
                 root,
-                analysis,
+                configuration: ProjectConfiguration::from(analysis),
                 respond_to,
             })
             .await
@@ -159,7 +169,7 @@ impl EngineService for Service {
             .engine
             .request(|respond_to| EngineCommand::ProjectPathsChanged {
                 paths: vec![path],
-                respond_to,
+                respond_to: Some(respond_to),
             })
             .await
         {
@@ -246,7 +256,7 @@ impl EngineService for Service {
         self.engine
             .request(|respond_to| EngineCommand::ProjectPathsChanged {
                 paths: forwarded_paths,
-                respond_to,
+                respond_to: Some(respond_to),
             })
             .await
             .map_err(EngineError::from)?;
@@ -409,9 +419,9 @@ impl EngineService for Service {
         new_name: String,
     ) -> EngineResult<Option<ls_types::WorkspaceEdit>> {
         let dirty = {
-            // Technically we have a TOCTOU here, but if someone really will try to
-            // do a rename while simulanteously editing multiple files... They probably
-            // should stop doing weird things.
+            // This check and the later edit publication are not atomic with edits in other open
+            // documents. Query lifecycle still validates the queried document, while source-text
+            // verification rejects stale rename spans before a workspace edit is returned.
             let documents = self.engine.documents.lock().await;
             if documents.has_dirty_documents_except(&path) {
                 return Err(EngineError::new(

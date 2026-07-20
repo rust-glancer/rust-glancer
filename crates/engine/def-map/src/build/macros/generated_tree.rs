@@ -1,20 +1,20 @@
 //! Lowers declarative macro output into an item-tree-shaped generated source.
 //!
 //! The generated payload intentionally lives in def-map, not item-tree: macro expansion is
-//! target-local, import-dependent, and `$crate`-sensitive. Keeping the payload item-tree-shaped
+//! crate-local, import-dependent, and `$crate`-sensitive. Keeping the payload item-tree-shaped
 //! lets later phases reuse normal semantic lowering without pretending generated items came from a
 //! real parsed file.
 
 use anyhow::{Context as _, Result};
 
+use crate::GeneratedSourceData;
 use rg_arena::Arena;
-use rg_ir_model::hir::source::GeneratedSourceData;
 use rg_item_tree::{
     CfgExpr, ConstItem, Documentation, EnumItem, ExternCrateItem, FromAst, FunctionItem, ImplItem,
-    ImplItemContext, InnerDocs, ItemKind, ItemNode, ItemTreeId, MacroCallContext, MacroCallItem,
-    MacroDefAst, MacroDefContext, MacroDefinitionItem, MacroRulesAst, MacroRulesContext,
-    MaybeFromAst, ModuleItem, ModuleSource, OuterDocs, StaticItem, StructItem, TraitItem,
-    TraitItemContext, TypeAliasItem, UnionItem, UseItem, VisibilityLevel,
+    ImplItemContext, InnerDocs, ItemKind, ItemNode, ItemTreeId, LangItem, MacroCallContext,
+    MacroCallItem, MacroDefAst, MacroDefContext, MacroDefinitionItem, MacroRulesAst,
+    MacroRulesContext, MaybeFromAst, ModuleItem, ModuleSource, OuterDocs, StaticItem, StructItem,
+    TraitItem, TraitItemContext, TypeAliasItem, UnionItem, UseItem, VisibilityLevel,
 };
 use rg_macro_runtime::{ExpansionSyntax, macro_edition};
 use rg_parse::{FileId, LineIndex, Span};
@@ -22,7 +22,7 @@ use rg_syntax::{
     AstNode as _,
     ast::{self, HasDocComments, HasModuleItem, HasName, HasVisibility},
 };
-use rg_text::{Name, NameInterner};
+use rg_text::{Name, NameInterner, RustEdition};
 use rg_tt::{
     Span as TtSpan,
     syntax_bridge::{ExpansionSpanMap, SpanFactory},
@@ -34,7 +34,7 @@ use super::generated::GeneratedOrigin;
 pub(super) struct GeneratedSourceLowering<'a> {
     origin: &'a GeneratedOrigin,
     interner: &'a mut NameInterner,
-    edition: rg_workspace::RustEdition,
+    edition: RustEdition,
     span_map: ExpansionSpanMap,
     line_index: LineIndex,
     items: Arena<ItemTreeId, ItemNode>,
@@ -45,7 +45,7 @@ impl<'a> GeneratedSourceLowering<'a> {
         origin: &'a GeneratedOrigin,
         expansion: ExpansionSyntax,
         interner: &'a mut NameInterner,
-        edition: rg_workspace::RustEdition,
+        edition: RustEdition,
     ) -> Result<GeneratedSourceData> {
         let ExpansionSyntax { parse, span_map } = expansion;
         let source_text = parse.syntax_node().text().to_string();
@@ -282,9 +282,8 @@ impl<'a> GeneratedSourceLowering<'a> {
             }
             ast::Item::Use(item) => {
                 let kind = ItemKind::Use(UseItem::from_ast(&item, &mut *self.interner));
-                let name = normalized_use_name(&item).map(|name| self.intern_name(name));
                 let visibility = VisibilityLevel::from_ast(&item.visibility(), ());
-                Some(self.alloc_documented_item(kind, name, None, visibility, &item))
+                Some(self.alloc_documented_item(kind, None, None, visibility, &item))
             }
         };
 
@@ -394,16 +393,12 @@ impl<'a> GeneratedSourceLowering<'a> {
         Ok(item_ids)
     }
 
-    fn intern_name(&mut self, text: impl AsRef<str>) -> Name {
-        self.interner.intern(text)
-    }
-
     fn intern_ast_name(&mut self, name: Option<ast::Name>) -> Option<Name> {
-        name.map(|name| self.intern_name(name.text()))
+        name.map(|name| self.interner.intern(name.text()))
     }
 
     fn intern_ast_name_ref(&mut self, name: Option<ast::NameRef>) -> Option<Name> {
-        name.map(|name| self.intern_name(name.syntax().text().to_string()))
+        name.map(|name| self.interner.intern(name.text()))
     }
 
     fn alloc_item(
@@ -437,6 +432,7 @@ impl<'a> GeneratedSourceLowering<'a> {
             item.syntax().text_range(),
         );
         self.items[item_id].cfg = CfgExpr::from_attrs(item);
+        self.items[item_id].lang_item = LangItem::maybe_from_ast(item, ());
         item_id
     }
 
@@ -463,6 +459,7 @@ impl<'a> GeneratedSourceLowering<'a> {
             name_span,
             visibility,
             cfg: CfgExpr::default(),
+            lang_item: None,
             docs,
             file_id: self.origin.file_id,
             span,
@@ -480,7 +477,7 @@ fn tt_span_for_range(
     span_map: &ExpansionSpanMap,
     origin_file_id: FileId,
     origin_span: Span,
-    edition: rg_workspace::RustEdition,
+    edition: RustEdition,
     range: rg_syntax::TextRange,
 ) -> TtSpan {
     if let Some(span) = span_map.span_for_range(range) {
@@ -494,12 +491,4 @@ fn tt_span_for_range(
         macro_edition(edition),
     )
     .span_for(text_range)
-}
-
-/// Keeps the original `use ...` text in a compact, human-readable form for debugging and tests.
-fn normalized_use_name(use_item: &ast::Use) -> Option<String> {
-    let use_tree = use_item.use_tree()?;
-    let text = use_tree.syntax().text().to_string();
-
-    Some(text.split_whitespace().collect::<Vec<_>>().join(" "))
 }

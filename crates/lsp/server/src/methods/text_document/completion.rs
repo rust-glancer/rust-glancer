@@ -20,7 +20,7 @@ pub(crate) async fn completion(
     tracing::trace!("completion request received");
     let completions = ctx
         .engine_client
-        .call(
+        .query(
             "completion",
             move |engine_client, request_context| async move {
                 engine_client

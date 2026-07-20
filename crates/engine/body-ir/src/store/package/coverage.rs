@@ -1,9 +1,9 @@
-//! Whether a target has all, some, or none of its bodies materialized.
+//! Whether a crate has all, some, or none of its bodies materialized.
 
 use rg_std::{MemorySize, Shrink};
 use wincode::{SchemaRead, SchemaWrite};
 
-/// How much of a target's body surface has been materialized.
+/// How much of a crate's body surface has been materialized.
 #[derive(
     Debug,
     Clone,
@@ -18,22 +18,22 @@ use wincode::{SchemaRead, SchemaWrite};
 )]
 #[memsize(leaf)]
 #[shrink(leaf)]
-pub enum TargetBodiesCoverage {
-    /// Every semantic item body known for the target was considered for lowering.
+pub enum CrateBodiesCoverage {
+    /// Every semantic item body known for the crate was considered for lowering.
     #[display("complete")]
     Complete,
     /// At least one, but not every, known body source file was selected for lowering.
     #[display("partial")]
     Partial,
-    /// The target has body sources, but none of them were selected for this materialization pass.
+    /// The crate has body sources, but none of them were selected for this materialization pass.
     #[display("missing")]
     Missing,
-    /// The configured package policy intentionally did not build bodies for this target.
+    /// The configured package policy intentionally did not build bodies for this crate.
     #[display("skipped-by-policy")]
     SkippedByPolicy,
 }
 
-impl TargetBodiesCoverage {
+impl CrateBodiesCoverage {
     pub fn is_complete(self) -> bool {
         matches!(self, Self::Complete)
     }
@@ -42,15 +42,15 @@ impl TargetBodiesCoverage {
         matches!(self, Self::Complete | Self::Partial)
     }
 
-    pub fn status(self) -> TargetBodiesStatus {
+    pub fn status(self) -> CrateBodiesStatus {
         match self {
-            Self::Complete | Self::Partial => TargetBodiesStatus::Built,
-            Self::Missing | Self::SkippedByPolicy => TargetBodiesStatus::Skipped,
+            Self::Complete | Self::Partial => CrateBodiesStatus::Built,
+            Self::Missing | Self::SkippedByPolicy => CrateBodiesStatus::Skipped,
         }
     }
 }
 
-/// Whether one target's bodies were eagerly lowered.
+/// Whether one crate's bodies were eagerly lowered.
 #[derive(
     Debug,
     Clone,
@@ -65,7 +65,7 @@ impl TargetBodiesCoverage {
 )]
 #[memsize(leaf)]
 #[shrink(leaf)]
-pub enum TargetBodiesStatus {
+pub enum CrateBodiesStatus {
     #[display("built")]
     Built,
     #[display("skipped")]

@@ -7,9 +7,9 @@
 use std::fmt;
 
 use crate::{
-    BodyBindingRef, BodyRef as BodyIrBodyRef, ConstRef, DefId, EnumVariantRef, ExprId, FieldRef,
-    FunctionRef, ImplRef, LocalDefRef, ModuleRef, ScopeId, SemanticItemRef, StaticRef, TargetRef,
-    TraitRef, TypeAliasRef, TypeDefRef,
+    BodyBindingRef, BodyRef as BodyIrBodyRef, ConstRef, CrateRef, DefId, EnumVariantRef, ExprId,
+    FieldRef, FunctionRef, ImplRef, LocalDefRef, ModuleRef, ScopeId, SemanticItemRef, StaticRef,
+    TraitDefRef, TypeAliasRef, TypeDefRef,
 };
 use rg_std::{MemorySize, Shrink};
 use wincode::{SchemaRead, SchemaWrite};
@@ -27,15 +27,15 @@ impl FunctionBodyRef {
         Self(body)
     }
 
-    pub fn target(self) -> TargetRef {
-        self.0.target
+    pub fn crate_ref(self) -> CrateRef {
+        self.0.crate_ref
     }
 }
 
 impl fmt::Debug for FunctionBodyRef {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("FunctionBodyRef")
-            .field("target", &self.0.target)
+            .field("crate_ref", &self.0.crate_ref)
             .field("body", &self.0.body)
             .finish()
     }
@@ -114,7 +114,7 @@ pub enum DeclarationRef {
     #[from(
         SemanticItemRef,
         TypeDefRef,
-        TraitRef,
+        TraitDefRef,
         ImplRef,
         FunctionRef,
         TypeAliasRef,

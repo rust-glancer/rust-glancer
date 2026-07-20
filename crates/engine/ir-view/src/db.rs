@@ -1,22 +1,32 @@
 //! Shared read handle for indexed-data views.
 
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex},
+};
+
 use rg_body_ir::BodyIrReadTxn;
 use rg_def_map::DefMapReadTxn;
-use rg_ir_model::{DefMapRef, ModuleRef, TargetRef};
-use rg_ir_storage::{DefMap, DefMapSource, ItemStore, ItemStoreSource};
+use rg_def_map::{DefMap, DefMapSource};
+use rg_ir_model::{CrateRef, DefMapRef, ModuleRef};
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::SemanticIrReadTxn;
+use rg_semantic_ir::{ItemStore, ItemStoreSource};
+use rg_text::RustEdition;
+use rg_ty::TraitSelectionSession;
 
 /// Read-only database handle used by all indexed-data views.
 ///
 /// The handle deliberately contains the concrete frozen storage transactions. That keeps views
 /// easy to extract as one crate first; a trait facade can replace these fields later once the
-/// method surface settles.
+/// method surface settles. Trait-selection sessions are derived query state: they may fill solver
+/// caches, but they never mutate the frozen project data exposed by this handle.
 #[derive(Debug, Clone)]
 pub struct IndexedViewDb<'db> {
     pub(crate) def_map: DefMapReadTxn<'db>,
     pub(crate) semantic_ir: SemanticIrReadTxn<'db>,
     pub(crate) body_ir: BodyIrReadTxn<'db>,
+    trait_selection: Arc<Mutex<HashMap<CrateRef, TraitSelectionSession>>>,
 }
 
 impl<'db> IndexedViewDb<'db> {
@@ -29,7 +39,33 @@ impl<'db> IndexedViewDb<'db> {
             def_map,
             semantic_ir,
             body_ir,
+            trait_selection: Arc::new(Mutex::new(HashMap::new())),
         }
+    }
+
+    /// Return the solver session shared by queries at one crate use site.
+    ///
+    /// `IndexedViewDb` lives for one analysis request, so the potentially large Chalk program and
+    /// candidate indexes are reused within that request and released with its frozen read
+    /// transactions. Keeping session creation here also prevents individual view adapters from
+    /// silently starting isolated solver state when a shared session is already available.
+    pub(crate) fn trait_selection(&self, use_site: CrateRef) -> TraitSelectionSession {
+        self.trait_selection
+            .lock()
+            .expect("trait-selection session map lock should not be poisoned")
+            .entry(use_site)
+            .or_insert_with(|| TraitSelectionSession::new(use_site))
+            .clone()
+    }
+
+    /// Returns the edition whose syntax rules apply at a crate_ref use site.
+    pub fn crate_edition(&self, crate_ref: CrateRef) -> Result<RustEdition, PackageStoreError> {
+        self.def_map.package_edition(crate_ref.package)
+    }
+
+    /// Returns the edition whose syntax rules apply to declarations owned by this origin.
+    pub fn origin_edition(&self, origin: DefMapRef) -> Result<RustEdition, PackageStoreError> {
+        self.crate_edition(origin.origin_crate())
     }
 }
 
@@ -41,7 +77,7 @@ impl<'a, 'db> ItemStoreSource<'a> for &'a IndexedViewDb<'db> {
         origin: DefMapRef,
     ) -> Result<Option<&'a ItemStore>, PackageStoreError> {
         match origin {
-            DefMapRef::Target(target) => self.semantic_ir.items(target),
+            DefMapRef::Crate(crate_ref) => self.semantic_ir.items(crate_ref),
             DefMapRef::Body(body_ref) => self.body_ir.body_item_store(body_ref),
         }
     }
@@ -56,31 +92,31 @@ impl DefMapSource for &IndexedViewDb<'_> {
 
     fn def_map_for_origin(&self, origin: DefMapRef) -> Result<Option<&DefMap>, PackageStoreError> {
         match origin {
-            DefMapRef::Target(target) => self.def_map.def_map(target),
+            DefMapRef::Crate(crate_ref) => self.def_map.def_map(crate_ref),
             DefMapRef::Body(body_ref) => self.body_ir.body_def_map(body_ref),
         }
     }
 
     fn extern_root(
         &self,
-        target: TargetRef,
+        crate_ref: CrateRef,
         name: &str,
     ) -> Result<Option<ModuleRef>, PackageStoreError> {
-        self.def_map.extern_root(target, name)
+        self.def_map.extern_root(crate_ref, name)
     }
 
     fn extern_roots(
         &self,
-        target: TargetRef,
+        crate_ref: CrateRef,
     ) -> Result<Vec<(String, ModuleRef)>, PackageStoreError> {
-        self.def_map.extern_roots(target)
+        self.def_map.extern_roots(crate_ref)
     }
 
-    fn prelude_module(&self, target: TargetRef) -> Result<Option<ModuleRef>, PackageStoreError> {
-        self.def_map.prelude_module(target)
+    fn prelude_module(&self, crate_ref: CrateRef) -> Result<Option<ModuleRef>, PackageStoreError> {
+        self.def_map.prelude_module(crate_ref)
     }
 
-    fn root_module(&self, target: TargetRef) -> Result<Option<ModuleRef>, PackageStoreError> {
-        self.def_map.root_module(target)
+    fn root_module(&self, crate_ref: CrateRef) -> Result<Option<ModuleRef>, PackageStoreError> {
+        self.def_map.root_module(crate_ref)
     }
 }

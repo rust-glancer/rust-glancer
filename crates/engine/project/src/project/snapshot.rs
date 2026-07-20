@@ -4,12 +4,12 @@ use anyhow::Context as _;
 
 use rg_analysis::{Analysis, ReferenceSearchFile, ReferenceSearchLabel};
 use rg_def_map::{DefMapReadTxn, PackageSlot};
-use rg_ir_model::TargetRef;
+use rg_ir_model::CrateRef;
 #[cfg(test)]
 use rg_parse::ParseDb;
 use rg_parse::{FileId, LineIndex, Span};
 use rg_std::MemorySize;
-use rg_workspace::RustEdition;
+use rg_text::RustEdition;
 
 use super::{
     FileContext, reference_search::ReferenceSearchPlanner, state::ProjectState,
@@ -29,9 +29,9 @@ impl<'a> ProjectSnapshot<'a> {
         Ok(self.state.analysis(&txn))
     }
 
-    /// Returns an analysis view scoped to the package dependency closure of target queries.
-    pub fn analysis_for_targets(&self, targets: &[TargetRef]) -> anyhow::Result<Analysis<'a>> {
-        let subset = subset::targets_with_visible_dependencies(self.state.workspace(), targets);
+    /// Returns an analysis view scoped to the package dependency closure of crate queries.
+    pub fn analysis_for_crates(&self, crates: &[CrateRef]) -> anyhow::Result<Analysis<'a>> {
+        let subset = subset::crates_with_visible_dependencies(self.state.workspace(), crates);
         let txn = self.state.read_txn_for_subset(&subset)?;
         Ok(self.state.analysis(&txn))
     }
@@ -42,29 +42,29 @@ impl<'a> ProjectSnapshot<'a> {
         self.state.def_map_read_txn_for_subset(&subset)
     }
 
-    /// Returns targets whose source should be scanned for an explicit references query.
+    /// Returns crates whose source should be scanned for an explicit references query.
     ///
     /// Queries scan the selected declaration packages and their package reverse-dependency
     /// closure. Workspace-origin queries keep that closure focused on workspace members, falling
     /// back to the whole workspace only when the declaration package is graph-opaque.
-    pub fn reference_search_targets(
+    pub fn reference_search_crates(
         &self,
         origin_package: PackageSlot,
-        declaration_targets: &[TargetRef],
-    ) -> Vec<TargetRef> {
-        ReferenceSearchPlanner::new(self.state).targets(origin_package, declaration_targets)
+        declaration_crates: &[CrateRef],
+    ) -> Vec<CrateRef> {
+        ReferenceSearchPlanner::new(self.state).crates(origin_package, declaration_crates)
     }
 
-    /// Returns target/file pairs whose source text contains one of the safe reference labels.
+    /// Returns crate/file pairs whose source text contains one of the safe reference labels.
     ///
     /// This is a request-local text prefilter. It narrows expensive semantic scans without storing
     /// a persistent text index or changing the declaration matcher that proves each result.
     pub fn reference_search_files_matching_labels(
         &self,
-        search_targets: &[TargetRef],
+        search_crates: &[CrateRef],
         labels: &[ReferenceSearchLabel],
     ) -> anyhow::Result<Option<Vec<ReferenceSearchFile>>> {
-        ReferenceSearchPlanner::new(self.state).files_matching_labels(search_targets, labels)
+        ReferenceSearchPlanner::new(self.state).files_matching_labels(search_crates, labels)
     }
 
     #[cfg(test)]
@@ -162,32 +162,32 @@ impl<'a> ProjectSnapshot<'a> {
         let mut contexts = Vec::new();
 
         for file in candidates {
-            let targets = def_map
-                .targets_for_file(file.package, file.file)
-                .context("while attempting to find target ownership for source file")?;
-            if targets.is_empty() {
+            let crates = def_map
+                .crates_for_file(file.package, file.file)
+                .context("while attempting to find crate ownership for source file")?;
+            if crates.is_empty() {
                 continue;
             }
 
             contexts.push(FileContext {
                 package: file.package,
                 file: file.file,
-                targets,
+                crates,
             });
         }
 
         Ok(contexts)
     }
 
-    /// Returns target contexts whose module tree contains a package-local file.
-    pub fn targets_for_file(
+    /// Returns crate contexts whose module tree contains a package-local file.
+    pub fn crates_for_file(
         &self,
         package: PackageSlot,
         file: FileId,
-    ) -> anyhow::Result<Vec<TargetRef>> {
+    ) -> anyhow::Result<Vec<CrateRef>> {
         let def_map = self.shallow_def_map(&[package]);
         def_map
-            .targets_for_file(package, file)
-            .context("while attempting to find target ownership for source file")
+            .crates_for_file(package, file)
+            .context("while attempting to find crate ownership for source file")
     }
 }

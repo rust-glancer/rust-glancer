@@ -2,21 +2,21 @@
 //!
 //! The project layer decides when indexing may start early or when a query needs more analysis
 //! data. Once that decision reaches this crate, the question is narrower: which Body IR payloads
-//! should this rebuild actually lower, and what target coverage should the store report afterward?
+//! should this rebuild actually lower, and what crate coverage should the store report afterward?
 
 use rg_def_map::PackageSlot;
 use rg_parse::FileId;
 
-use crate::{BodyIrBuildPolicy, BodyIrFile, TargetBodiesCoverage};
+use crate::{BodyIrBuildPolicy, BodyIrFile, CrateBodiesCoverage};
 
 /// Owned Body IR materialization plan stored by a package rebuilder.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum BodyIrMaterializationPlan {
     /// Lower the full body surface selected by the configured package policy.
     ConfiguredBodies(BodyIrBuildPolicy),
-    /// Preserve target coverage records, but leave body-bearing targets unlowered for later.
+    /// Preserve crate coverage records, but leave body-bearing crates unlowered for later.
     CoverageOnly(BodyIrBuildPolicy),
-    /// Lower bodies from selected files while preserving missing/partial target coverage.
+    /// Lower bodies from selected files while preserving missing/partial crate coverage.
     SelectedFiles(Vec<BodyIrFile>),
 }
 
@@ -30,51 +30,51 @@ impl BodyIrMaterializationPlan {
     }
 }
 
-/// Borrowed materialization mode used while lowering target bodies.
+/// Borrowed materialization mode used while lowering crate bodies.
 #[derive(Debug, Clone, Copy)]
 pub(super) enum BodyIrMaterialization<'a> {
     /// Lower every body selected by the package policy.
     ConfiguredBodies(BodyIrBuildPolicy),
-    /// Create the same target slots as a policy build, but mark body-bearing targets as missing.
+    /// Create the same crate slots as a policy build, but mark body-bearing crates as missing.
     CoverageOnly(BodyIrBuildPolicy),
-    /// Lower only selected source files. Targets can become partial when other body files remain.
+    /// Lower only selected source files. Crates can become partial when other body files remain.
     SelectedFiles(&'a [BodyIrFile]),
 }
 
 impl BodyIrMaterialization<'_> {
-    pub(super) fn target_coverage(
+    pub(super) fn crate_coverage(
         self,
         package: PackageSlot,
         parse_package: &rg_parse::Package,
         files_with_bodies: &[FileId],
-    ) -> TargetBodiesCoverage {
+    ) -> CrateBodiesCoverage {
         match self {
             Self::ConfiguredBodies(policy) => {
                 if policy.should_lower_package(parse_package) {
-                    TargetBodiesCoverage::Complete
+                    CrateBodiesCoverage::Complete
                 } else {
-                    TargetBodiesCoverage::SkippedByPolicy
+                    CrateBodiesCoverage::SkippedByPolicy
                 }
             }
             Self::CoverageOnly(policy) => {
                 if !policy.should_lower_package(parse_package) {
-                    return TargetBodiesCoverage::SkippedByPolicy;
+                    return CrateBodiesCoverage::SkippedByPolicy;
                 }
 
                 if files_with_bodies.is_empty() {
-                    TargetBodiesCoverage::Complete
+                    CrateBodiesCoverage::Complete
                 } else {
-                    TargetBodiesCoverage::Missing
+                    CrateBodiesCoverage::Missing
                 }
             }
             Self::SelectedFiles(files) => {
                 let package_selected = files.iter().any(|file| file.package == package);
                 if !package_selected {
-                    return TargetBodiesCoverage::Missing;
+                    return CrateBodiesCoverage::Missing;
                 }
 
                 if files_with_bodies.is_empty() {
-                    return TargetBodiesCoverage::Complete;
+                    return CrateBodiesCoverage::Complete;
                 }
 
                 let mut selected_body_file_seen = false;
@@ -91,10 +91,10 @@ impl BodyIrMaterialization<'_> {
                 }
 
                 match (selected_body_file_seen, unselected_body_file_seen) {
-                    (true, false) => TargetBodiesCoverage::Complete,
-                    (true, true) => TargetBodiesCoverage::Partial,
-                    (false, true) => TargetBodiesCoverage::Missing,
-                    (false, false) => TargetBodiesCoverage::Complete,
+                    (true, false) => CrateBodiesCoverage::Complete,
+                    (true, true) => CrateBodiesCoverage::Partial,
+                    (false, true) => CrateBodiesCoverage::Missing,
+                    (false, false) => CrateBodiesCoverage::Complete,
                 }
             }
         }

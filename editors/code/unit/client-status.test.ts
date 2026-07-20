@@ -68,9 +68,43 @@ describe("client status state precedence", () => {
     status.ready(DETAILS);
 
     status.activeWorkspace("/workspace/project_c", "ready", undefined, false);
+    status.deferredIndexingStarted("/workspace/project_c", false);
     assert.equal(render(status), "ready: ~ Rust Glancer: ready [project_c]");
 
     status.deferredIndexingFinished("/workspace/project_c", false);
+    assert.equal(render(status), "ready: $(check) Rust Glancer: ready [project_c]");
+  });
+
+  it("returns through indexing and explicit deferred-ready after a saved project rebuild", () => {
+    const status = clientStatus();
+    status.starting(DETAILS);
+    status.ready(DETAILS);
+    status.activeWorkspace("/workspace/project_c", "ready", undefined, false);
+    status.deferredIndexingFinished("/workspace/project_c", false);
+    assert.equal(render(status), "ready: $(check) Rust Glancer: ready [project_c]");
+
+    status.activeWorkspace("/workspace/project_c", "indexing", undefined, false);
+    assert.equal(render(status), "indexing: $(sync~spin) Rust Glancer: indexing [project_c]");
+
+    status.deferredIndexingStarted("/workspace/project_c", false);
+    status.activeWorkspace("/workspace/project_c", "ready", undefined, false);
+    assert.equal(render(status), "ready: ~ Rust Glancer: ready [project_c]");
+    status.deferredIndexingFinished("/workspace/project_c", false);
+    assert.equal(render(status), "ready: $(check) Rust Glancer: ready [project_c]");
+  });
+
+  it("does not invent deferred work for an ordinary indexing cycle", () => {
+    const status = clientStatus();
+    status.starting(DETAILS);
+    status.ready(DETAILS);
+    status.activeWorkspace("/workspace/project_c", "ready", undefined, false);
+    status.deferredIndexingStarted("/workspace/project_c", false);
+    status.deferredIndexingFinished("/workspace/project_c", false);
+
+    status.indexing();
+    status.activeWorkspace("/workspace/project_c", "indexing", undefined, false);
+    status.activeWorkspace("/workspace/project_c", "ready", undefined, false);
+
     assert.equal(render(status), "ready: $(check) Rust Glancer: ready [project_c]");
   });
 
@@ -80,11 +114,11 @@ describe("client status state precedence", () => {
     status.ready(DETAILS);
 
     status.activeWorkspace("/workspace/project_a", "ready", undefined, false);
-    status.deferredIndexingFinished("/workspace/project_b", false);
-    assert.equal(render(status), "ready: ~ Rust Glancer: ready [project_a]");
+    status.deferredIndexingStarted("/workspace/project_b", false);
+    assert.equal(render(status), "ready: $(check) Rust Glancer: ready [project_a]");
 
     status.activeWorkspace("/workspace/project_b", "ready", undefined, false);
-    assert.equal(render(status), "ready: $(check) Rust Glancer: ready [project_b]");
+    assert.equal(render(status), "ready: ~ Rust Glancer: ready [project_b]");
   });
 
   it("does not show deferred indexing when finish arrives before ready", () => {
@@ -92,6 +126,7 @@ describe("client status state precedence", () => {
     status.starting(DETAILS);
     status.ready(DETAILS);
 
+    status.deferredIndexingStarted("/workspace/project_e", false);
     status.deferredIndexingFinished("/workspace/project_e", false);
     status.activeWorkspace("/workspace/project_e", "ready", undefined, false);
 
@@ -109,7 +144,7 @@ describe("client status state precedence", () => {
       workspaceRoot: "/workspace/restarted-window",
     });
 
-    assert.equal(render(status), "ready: ~ Rust Glancer: ready [project_d]");
+    assert.equal(render(status), "ready: $(check) Rust Glancer: ready [project_d]");
     assert.deepEqual(status.snapshot().details, {
       ...DETAILS,
       workspaceRoot: "/workspace/restarted-window",

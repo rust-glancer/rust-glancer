@@ -80,6 +80,42 @@ pub mod api {
 }
 
 #[test]
+fn enum_variant_shape_controls_qualified_path_namespaces() {
+    utils::check_project_path_resolution(
+        r#"
+//- /Cargo.toml
+[package]
+name = "variant_path_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub enum Choice {
+    Record { value: u8 },
+    Tuple(u8),
+    Unit,
+}
+"#,
+        &[
+            PathResolutionQuery::lib("variant_path_fixture", "crate", "Choice::Record").types(),
+            PathResolutionQuery::lib("variant_path_fixture", "crate", "Choice::Record").values(),
+            PathResolutionQuery::lib("variant_path_fixture", "crate", "Choice::Tuple").types(),
+            PathResolutionQuery::lib("variant_path_fixture", "crate", "Choice::Tuple").values(),
+            PathResolutionQuery::lib("variant_path_fixture", "crate", "Choice::Unit").types(),
+            PathResolutionQuery::lib("variant_path_fixture", "crate", "Choice::Unit").values(),
+        ],
+        expect![[r#"
+            variant_path_fixture [lib] crate resolves Choice::Record [types] -> variant variant_path_fixture[lib]::crate::Choice::Record
+            variant_path_fixture [lib] crate resolves Choice::Record [values] -> <none> (unresolved at segment #1)
+            variant_path_fixture [lib] crate resolves Choice::Tuple [types] -> variant variant_path_fixture[lib]::crate::Choice::Tuple
+            variant_path_fixture [lib] crate resolves Choice::Tuple [values] -> variant variant_path_fixture[lib]::crate::Choice::Tuple
+            variant_path_fixture [lib] crate resolves Choice::Unit [types] -> variant variant_path_fixture[lib]::crate::Choice::Unit
+            variant_path_fixture [lib] crate resolves Choice::Unit [values] -> variant variant_path_fixture[lib]::crate::Choice::Unit
+        "#]],
+    );
+}
+
+#[test]
 fn resolves_bin_target_roots_and_dependencies() {
     utils::check_project_path_resolution(
         r#"
@@ -370,6 +406,48 @@ pub mod type_shadow {
             app [lib] crate::value_shadow resolves dep::ExternalTrait -> trait dep[lib]::crate::ExternalTrait
             app [lib] crate::macro_shadow resolves dep::ExternalTrait -> trait dep[lib]::crate::ExternalTrait
             app [lib] crate::type_shadow resolves dep::ExternalTrait -> <none> (unresolved at segment #1)
+        "#]],
+    );
+}
+
+#[test]
+fn resolves_repeated_super_visibility_to_its_semantic_module() {
+    utils::check_project_path_resolution(
+        r#"
+//- /Cargo.toml
+[package]
+name = "repeated_super_visibility_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub mod a {
+    pub mod b {
+        pub mod c {
+            pub(in super::super) struct Up;
+        }
+    }
+
+    pub mod sibling {}
+}
+
+pub mod outside {}
+"#,
+        &[
+            PathResolutionQuery::lib(
+                "repeated_super_visibility_fixture",
+                "crate::a::sibling",
+                "super::b::c::Up",
+            ),
+            PathResolutionQuery::lib(
+                "repeated_super_visibility_fixture",
+                "crate::outside",
+                "crate::a::b::c::Up",
+            ),
+        ],
+        expect![[r#"
+            repeated_super_visibility_fixture [lib] crate::a::sibling resolves super::b::c::Up -> struct repeated_super_visibility_fixture[lib]::crate::a::b::c::Up
+            repeated_super_visibility_fixture [lib] crate::outside resolves crate::a::b::c::Up -> <none> (unresolved at segment #4)
         "#]],
     );
 }

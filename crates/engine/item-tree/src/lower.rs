@@ -24,10 +24,10 @@ use rg_tt::{
 use super::{
     BuiltinMacroItem, CfgExpr, CfgSelectArmItem, ConstItem, Documentation, EnumItem,
     ExternCrateItem, FileTree, FromAst, FunctionItem, ImplItem, ImplItemContext, InnerDocs,
-    ItemKind, ItemNode, ItemTreeId, MacroCallContext, MacroCallItem, MacroDefAst, MacroDefContext,
-    MacroDefinitionItem, MacroRulesAst, MacroRulesContext, MacroUseAttr, MaybeFromAst, ModuleItem,
-    ModuleSource, Package, StaticItem, StructItem, TargetRoot, TraitItem, TraitItemContext,
-    TypeAliasItem, UnionItem, UseItem, VisibilityLevel,
+    ItemKind, ItemNode, ItemTreeId, LangItem, MacroCallContext, MacroCallItem, MacroDefAst,
+    MacroDefContext, MacroDefinitionItem, MacroRulesAst, MacroRulesContext, MacroUseAttr,
+    MaybeFromAst, ModuleItem, ModuleSource, Package, StaticItem, StructItem, TargetRoot, TraitItem,
+    TraitItemContext, TypeAliasItem, UnionItem, UseItem, VisibilityLevel,
 };
 
 /// Lowers all known files for one parsed package and records target entrypoints into them.
@@ -161,16 +161,12 @@ impl<'db> PackageLowering<'db> {
         }
     }
 
-    fn intern_name(&mut self, text: impl AsRef<str>) -> Name {
-        self.interner.intern(text)
-    }
-
     fn intern_ast_name(&mut self, name: Option<ast::Name>) -> Option<Name> {
-        name.map(|name| self.intern_name(name.text()))
+        name.map(|name| self.interner.intern(name.text()))
     }
 
     fn intern_ast_name_ref(&mut self, name: Option<ast::NameRef>) -> Option<Name> {
-        name.map(|name| self.intern_name(name.syntax().text().to_string()))
+        name.map(|name| self.interner.intern(name.text()))
     }
 
     /// Lowers all top-level items from one file into item-tree nodes.
@@ -407,7 +403,7 @@ impl<'db> PackageLowering<'db> {
             )),
             ast::Item::Use(item) => Some(builder.alloc_documented_item(
                 ItemKind::Use(UseItem::from_ast(&item, &mut *self.interner)),
-                normalized_use_name(&item).map(|name| self.intern_name(name)),
+                None,
                 None,
                 VisibilityLevel::from_ast(&item.visibility(), ()),
                 &item,
@@ -542,7 +538,10 @@ impl<'db> PackageLowering<'db> {
             // resolved under a directory named after the inline module path.
             let inline_module_context = item
                 .name()
-                .map(|name| module_file_context.descend(name.text().as_str()))
+                .map(|name| {
+                    let text = name.text();
+                    module_file_context.descend(rg_text::identifier_text(&text))
+                })
                 .unwrap_or_else(|| module_file_context.clone());
             let inline_items = item_list.items().collect::<Vec<_>>();
             let items = self
@@ -782,6 +781,7 @@ impl<'a> FileTreeBuilder<'a> {
             item.syntax().text_range(),
         );
         self.items[item_id].cfg = CfgExpr::from_attrs(item);
+        self.items[item_id].lang_item = LangItem::maybe_from_ast(item, ());
         item_id
     }
 
@@ -810,22 +810,13 @@ fn file_id_u32(file_id: FileId) -> u32 {
     u32::try_from(file_id.0).expect("file id should fit macro span storage")
 }
 
-fn macro_edition(edition: rg_workspace::RustEdition) -> rg_tt::Edition {
+fn macro_edition(edition: rg_text::RustEdition) -> rg_tt::Edition {
     match edition {
-        rg_workspace::RustEdition::Edition2015 => rg_tt::Edition::Edition2015,
-        rg_workspace::RustEdition::Edition2018 => rg_tt::Edition::Edition2018,
-        rg_workspace::RustEdition::Edition2021 => rg_tt::Edition::Edition2021,
-        rg_workspace::RustEdition::Edition2024 => rg_tt::Edition::Edition2024,
+        rg_text::RustEdition::Edition2015 => rg_tt::Edition::Edition2015,
+        rg_text::RustEdition::Edition2018 => rg_tt::Edition::Edition2018,
+        rg_text::RustEdition::Edition2021 => rg_tt::Edition::Edition2021,
+        rg_text::RustEdition::Edition2024 => rg_tt::Edition::Edition2024,
     }
-}
-
-/// Keeps the original `use ...` text in a compact, human-readable form for debugging and tests.
-fn normalized_use_name(use_item: &ast::Use) -> Option<String> {
-    let use_tree = use_item.use_tree()?;
-    let text = use_tree.syntax().text().to_string();
-
-    // Normalize all whitespace in an extracted syntax fragment to single spaces.
-    Some(text.split_whitespace().collect::<Vec<_>>().join(" "))
 }
 
 fn literal_include_path(item: &ast::MacroCall) -> Option<String> {

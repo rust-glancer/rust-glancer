@@ -1,11 +1,11 @@
 use wincode::{SchemaRead, SchemaWrite};
 
-use crate::TargetRef;
+use crate::CrateRef;
 use crate::declare_id;
 use rg_std::{MemorySize, Shrink};
 
 declare_id! {
-    /// Stable identifier for one lowered body inside a target.
+    /// Stable identifier for one lowered body inside a crate.
     pub struct BodyId;
 
     /// Stable identifier for one expression inside a body.
@@ -28,7 +28,7 @@ declare_id! {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 #[shrink(leaf)]
 pub struct BodyRef {
-    pub target: TargetRef,
+    pub crate_ref: CrateRef,
     pub body: BodyId,
 }
 

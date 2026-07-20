@@ -647,68 +647,12 @@ pub fn use_it(user: User, name: Name) {
 
 #[test]
 fn infers_collect_destination_through_trait_obligations() {
-    check_analysis_queries(
+    check_analysis_queries_with_fake_sysroot(
         r#"
 //- /Cargo.toml
 [workspace]
-members = ["core", "storage", "app"]
+members = ["storage", "app"]
 resolver = "3"
-
-//- /core/Cargo.toml
-[package]
-name = "fake_core"
-version = "0.1.0"
-edition = "2024"
-
-//- /core/src/lib.rs
-pub mod iter {
-    pub trait FromIterator<A> {}
-    pub trait UserCollector<S> {}
-
-    pub trait Iterator {
-        type Item;
-
-        fn collect<B>(self) -> B
-        where
-            B: FromIterator<Self::Item>;
-
-        fn collect_users<B>(self) -> B
-        where
-            B: UserCollector<Self>;
-    }
-}
-
-pub mod slice {
-    pub struct Iter<'a, T>(&'a T);
-}
-
-pub struct Vec<T> {
-    value: T,
-}
-
-pub struct User;
-pub struct UserStream;
-
-impl<T> iter::FromIterator<T> for Vec<T> {}
-
-impl<S> iter::UserCollector<S> for Vec<User>
-where
-    S: iter::Iterator<Item = User>,
-{}
-
-impl<T> [T] {
-    pub fn iter(&self) -> slice::Iter<'_, T> {
-        missing()
-    }
-}
-
-impl<'a, T> iter::Iterator for slice::Iter<'a, T> {
-    type Item = &'a T;
-}
-
-impl iter::Iterator for UserStream {
-    type Item = User;
-}
 
 //- /storage/Cargo.toml
 [package]
@@ -734,12 +678,33 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-core = { package = "fake_core", path = "../core" }
 storage = { path = "../storage" }
 
 //- /app/src/lib.rs
-use core::{UserStream, Vec};
 use storage::DefMap;
+
+pub trait UserCollector<S> {}
+
+pub trait UserIteratorExt: core::iter::Iterator {
+    fn collect_users<B>(self) -> B
+    where
+        Self: Sized,
+        B: UserCollector<Self>;
+}
+
+pub struct User;
+pub struct UserStream;
+
+impl core::iter::Iterator for UserStream {
+    type Item = User;
+}
+
+impl UserIteratorExt for UserStream {}
+
+impl<S> UserCollector<S> for Vec<User>
+where
+    S: core::iter::Iterator<Item = User>,
+{}
 
 pub fn explicit_destination(def_map: &DefMap) {
     let imports = def_map.imports().iter().collect::<Vec<_>>()$type_explicit$;
@@ -767,124 +732,25 @@ pub fn associated_equality_destination(stream: UserStream) {
         ],
         expect![[r#"
             explicit collect destination
-            - nominal struct fake_core[lib]::crate::Vec<&nominal struct storage[lib]::crate::ImportData>
+            - nominal struct alloc[lib]::crate::vec::Vec<&nominal struct storage[lib]::crate::ImportData, nominal struct alloc[lib]::crate::vec::Global>
 
             expected collect destination
-            - nominal struct fake_core[lib]::crate::Vec<&nominal struct storage[lib]::crate::ImportData>
+            - nominal struct alloc[lib]::crate::vec::Vec<&nominal struct storage[lib]::crate::ImportData, nominal struct alloc[lib]::crate::vec::Global>
 
             associated equality collect destination
-            - nominal struct fake_core[lib]::crate::Vec<nominal struct fake_core[lib]::crate::User>
+            - nominal struct alloc[lib]::crate::vec::Vec<nominal struct app[lib]::crate::User, nominal struct alloc[lib]::crate::vec::Global>
         "#]],
     );
 }
 
 #[test]
 fn projects_iterator_adapter_items_into_collect_destination() {
-    check_analysis_queries(
+    check_analysis_queries_with_fake_sysroot(
         r#"
 //- /Cargo.toml
 [workspace]
-members = ["core", "app"]
+members = ["app"]
 resolver = "3"
-
-//- /core/Cargo.toml
-[package]
-name = "fake_core"
-version = "0.1.0"
-edition = "2024"
-
-//- /core/src/lib.rs
-pub mod iter {
-    pub trait FromIterator<A> {}
-
-    pub trait Iterator {
-        type Item;
-
-        fn map<B, F>(self, f: F) -> Map<Self, F>
-        where
-            F: FnMut(Self::Item) -> B;
-
-        fn filter_map<B, F>(self, f: F) -> FilterMap<Self, F>
-        where
-            F: FnMut(Self::Item) -> Option<B>;
-
-        fn enumerate(self) -> Enumerate<Self>;
-
-        fn collect<B>(self) -> B
-        where
-            B: FromIterator<Self::Item>;
-    }
-
-    pub struct Map<I, F> {
-        iter: I,
-        f: F,
-    }
-
-    pub struct FilterMap<I, F> {
-        iter: I,
-        f: F,
-    }
-
-    pub struct Enumerate<I> {
-        iter: I,
-    }
-}
-
-pub mod slice {
-    pub struct Iter<'a, T>(&'a T);
-}
-
-pub enum Option<T> {
-    Some(T),
-    None,
-}
-
-pub struct Vec<T> {
-    value: T,
-}
-
-pub struct HashMap<K, V> {
-    key: K,
-    value: V,
-}
-
-impl<T> iter::FromIterator<T> for Vec<T> {}
-impl<K, V> iter::FromIterator<(K, V)> for HashMap<K, V> {}
-
-impl<T> [T] {
-    pub fn iter(&self) -> slice::Iter<'_, T> {
-        missing()
-    }
-}
-
-impl<'a, T> iter::Iterator for slice::Iter<'a, T> {
-    type Item = &'a T;
-}
-
-impl<I, F, B> iter::Iterator for iter::Map<I, F>
-where
-    I: iter::Iterator,
-    F: FnMut(I::Item) -> B,
-{
-    type Item = B;
-}
-
-impl<I, F, B> iter::Iterator for iter::FilterMap<I, F>
-where
-    I: iter::Iterator,
-    F: FnMut(I::Item) -> Option<B>,
-{
-    type Item = B;
-}
-
-impl<I> iter::Iterator for iter::Enumerate<I>
-where
-    I: iter::Iterator,
-{
-    type Item = (usize, <I>::Item);
-}
-
-pub fn missing<T>() -> T {}
 
 //- /app/Cargo.toml
 [package]
@@ -892,18 +758,20 @@ name = "app"
 version = "0.1.0"
 edition = "2024"
 
-[dependencies]
-core = { package = "fake_core", path = "../core" }
-
 //- /app/src/lib.rs
-use core::{HashMap, Option, Vec};
-
 pub struct User;
 pub struct Name;
 pub struct Email;
 pub struct Key;
 pub struct Value;
 pub struct Row;
+
+pub struct HashMap<K, V> {
+    key: K,
+    value: V,
+}
+
+impl<K, V> core::iter::FromIterator<(K, V)> for HashMap<K, V> {}
 
 impl User {
     pub fn name(&self) -> Name {}
@@ -924,19 +792,21 @@ impl core::iter::Iterator for PairIter {
     type Item = (Key, Value);
 }
 
-pub struct AmbiguousMap<K, V> {
+pub struct OverlappingMap<K, V> {
     key: K,
     value: V,
 }
 
-impl<K, V> core::iter::FromIterator<(K, V)> for AmbiguousMap<K, V> {}
-impl core::iter::FromIterator<(Key, Value)> for AmbiguousMap<Key, Value> {}
+// Deliberately invalid overlap: both candidates still provide the same definite type guidance.
+impl<K, V> core::iter::FromIterator<(K, V)> for OverlappingMap<K, V> {}
+impl core::iter::FromIterator<(Key, Value)> for OverlappingMap<Key, Value> {}
 
 pub fn pairs() -> PairIter {
-    core::missing()
+    missing()
 }
 
 pub fn bar(_: usize, _: &User) -> Row {}
+pub fn missing<T>() -> T {}
 
 pub fn use_it(users: &[User], same_name: SameNameMap) {
     let names = users.iter().map(|user| user$type_map_param$.name()).collect::<Vec<_>>()$type_names$;
@@ -946,7 +816,7 @@ pub fn use_it(users: &[User], same_name: SameNameMap) {
     let rows = users.iter().enumerate().map(|(id, f)| bar(id$type_bar_id$, f$type_bar_user$)).collect::<Vec<_>>()$type_rows$;
     let direct_lookup = pairs().collect::<HashMap<_, _>>()$type_direct_lookup$;
     let lookup = users.iter().map(|user| (user.key(), user.value())).collect::<HashMap<_, _>>()$type_lookup$;
-    let ambiguous = pairs().collect::<AmbiguousMap<_, _>>()$type_ambiguous$;
+    let overlapping = pairs().collect::<OverlappingMap<_, _>>()$type_overlapping$;
     same_name.map(|value| value$type_same_name_map_param$);
 }
 "#,
@@ -966,7 +836,7 @@ pub fn use_it(users: &[User], same_name: SameNameMap) {
             AnalysisQuery::ty("iterator bar map collect result", "type_rows").in_lib("app"),
             AnalysisQuery::ty("direct HashMap collect result", "type_direct_lookup").in_lib("app"),
             AnalysisQuery::ty("mapped HashMap collect result", "type_lookup").in_lib("app"),
-            AnalysisQuery::ty("ambiguous HashMap collect result", "type_ambiguous").in_lib("app"),
+            AnalysisQuery::ty("overlapping impl shared guidance", "type_overlapping").in_lib("app"),
             AnalysisQuery::ty("same-name map closure param", "type_same_name_map_param")
                 .in_lib("app"),
         ],
@@ -975,16 +845,16 @@ pub fn use_it(users: &[User], same_name: SameNameMap) {
             - &nominal struct app[lib]::crate::User
 
             iterator map collect result
-            - nominal struct fake_core[lib]::crate::Vec<nominal struct app[lib]::crate::Name>
+            - nominal struct alloc[lib]::crate::vec::Vec<nominal struct app[lib]::crate::Name, nominal struct alloc[lib]::crate::vec::Global>
 
             iterator filter_map closure param
             - &nominal struct app[lib]::crate::User
 
             iterator filter_map collect result
-            - nominal struct fake_core[lib]::crate::Vec<nominal struct app[lib]::crate::Email>
+            - nominal struct alloc[lib]::crate::vec::Vec<nominal struct app[lib]::crate::Email, nominal struct alloc[lib]::crate::vec::Global>
 
             iterator enumerate collect result
-            - nominal struct fake_core[lib]::crate::Vec<(usize, &nominal struct app[lib]::crate::User)>
+            - nominal struct alloc[lib]::crate::vec::Vec<(usize, &nominal struct app[lib]::crate::User), nominal struct alloc[lib]::crate::vec::Global>
 
             iterator enumerate map index param
             - usize
@@ -999,16 +869,16 @@ pub fn use_it(users: &[User], same_name: SameNameMap) {
             - &nominal struct app[lib]::crate::User
 
             iterator bar map collect result
-            - nominal struct fake_core[lib]::crate::Vec<nominal struct app[lib]::crate::Row>
+            - nominal struct alloc[lib]::crate::vec::Vec<nominal struct app[lib]::crate::Row, nominal struct alloc[lib]::crate::vec::Global>
 
             direct HashMap collect result
-            - nominal struct fake_core[lib]::crate::HashMap<nominal struct app[lib]::crate::Key, nominal struct app[lib]::crate::Value>
+            - nominal struct app[lib]::crate::HashMap<nominal struct app[lib]::crate::Key, nominal struct app[lib]::crate::Value>
 
             mapped HashMap collect result
-            - nominal struct fake_core[lib]::crate::HashMap<nominal struct app[lib]::crate::Key, nominal struct app[lib]::crate::Value>
+            - nominal struct app[lib]::crate::HashMap<nominal struct app[lib]::crate::Key, nominal struct app[lib]::crate::Value>
 
-            ambiguous HashMap collect result
-            - nominal struct app[lib]::crate::AmbiguousMap<<unknown>, <unknown>>
+            overlapping impl shared guidance
+            - nominal struct app[lib]::crate::OverlappingMap<nominal struct app[lib]::crate::Key, nominal struct app[lib]::crate::Value>
 
             same-name map closure param
             - <unknown>
@@ -1166,25 +1036,25 @@ pub fn use_it(users: &[User], changed_files: &[ChangedFile], bytes: &[u8], prefi
             - nominal struct analysis_realistic_iterator_adapters[lib]::crate::Name
 
             realistic iterator map collect result
-            - nominal struct alloc[lib]::crate::vec::Vec<nominal struct analysis_realistic_iterator_adapters[lib]::crate::Name>
+            - nominal struct alloc[lib]::crate::vec::Vec<nominal struct analysis_realistic_iterator_adapters[lib]::crate::Name, nominal struct alloc[lib]::crate::vec::Global>
 
             realistic iterator skip collect result
-            - nominal struct alloc[lib]::crate::vec::Vec<&nominal struct analysis_realistic_iterator_adapters[lib]::crate::User>
+            - nominal struct alloc[lib]::crate::vec::Vec<&nominal struct analysis_realistic_iterator_adapters[lib]::crate::User, nominal struct alloc[lib]::crate::vec::Global>
 
             realistic iterator named function collect result
-            - nominal struct alloc[lib]::crate::vec::Vec<nominal struct analysis_realistic_iterator_adapters[lib]::crate::Name>
+            - nominal struct alloc[lib]::crate::vec::Vec<nominal struct analysis_realistic_iterator_adapters[lib]::crate::Name, nominal struct alloc[lib]::crate::vec::Global>
 
             realistic iterator function binding collect result
-            - nominal struct alloc[lib]::crate::vec::Vec<nominal struct analysis_realistic_iterator_adapters[lib]::crate::Name>
+            - nominal struct alloc[lib]::crate::vec::Vec<nominal struct analysis_realistic_iterator_adapters[lib]::crate::Name, nominal struct alloc[lib]::crate::vec::Global>
 
             realistic iterator named function vec collect result
-            - nominal struct alloc[lib]::crate::vec::Vec<nominal struct analysis_realistic_iterator_adapters[lib]::crate::Name>
+            - nominal struct alloc[lib]::crate::vec::Vec<nominal struct analysis_realistic_iterator_adapters[lib]::crate::Name, nominal struct alloc[lib]::crate::vec::Global>
 
             realistic iterator identity map closure param
             - &u8
 
             realistic iterator identity map collect result
-            - nominal struct alloc[lib]::crate::vec::Vec<&u8>
+            - nominal struct alloc[lib]::crate::vec::Vec<&u8, nominal struct alloc[lib]::crate::vec::Global>
 
             realistic iterator field-copy map closure param
             - &nominal struct analysis_realistic_iterator_adapters[lib]::crate::ChangedFile
@@ -1193,13 +1063,13 @@ pub fn use_it(users: &[User], changed_files: &[ChangedFile], bytes: &[u8], prefi
             - nominal struct analysis_realistic_iterator_adapters[lib]::crate::PackageSlot
 
             realistic iterator field-copy collect result
-            - nominal struct alloc[lib]::crate::vec::Vec<nominal struct analysis_realistic_iterator_adapters[lib]::crate::PackageSlot>
+            - nominal struct alloc[lib]::crate::vec::Vec<nominal struct analysis_realistic_iterator_adapters[lib]::crate::PackageSlot, nominal struct alloc[lib]::crate::vec::Global>
 
             realistic iterator filter_map closure param
             - &nominal struct analysis_realistic_iterator_adapters[lib]::crate::User
 
             realistic iterator filter_map collect result
-            - nominal struct alloc[lib]::crate::vec::Vec<nominal struct analysis_realistic_iterator_adapters[lib]::crate::Email>
+            - nominal struct alloc[lib]::crate::vec::Vec<nominal struct analysis_realistic_iterator_adapters[lib]::crate::Email, nominal struct alloc[lib]::crate::vec::Global>
 
             realistic iterator enumerate call result
             - nominal struct core[lib]::crate::iter::adapters::Enumerate<nominal struct core[lib]::crate::slice::Iter<'_, nominal struct analysis_realistic_iterator_adapters[lib]::crate::User>>
@@ -1211,7 +1081,7 @@ pub fn use_it(users: &[User], changed_files: &[ChangedFile], bytes: &[u8], prefi
             - &nominal struct analysis_realistic_iterator_adapters[lib]::crate::User
 
             realistic iterator enumerate map collect result
-            - nominal struct alloc[lib]::crate::vec::Vec<nominal struct analysis_realistic_iterator_adapters[lib]::crate::Row>
+            - nominal struct alloc[lib]::crate::vec::Vec<nominal struct analysis_realistic_iterator_adapters[lib]::crate::Row, nominal struct alloc[lib]::crate::vec::Global>
 
             realistic iterator filter closure param
             - &&nominal struct analysis_realistic_iterator_adapters[lib]::crate::User
@@ -1226,13 +1096,13 @@ pub fn use_it(users: &[User], changed_files: &[ChangedFile], bytes: &[u8], prefi
             - nominal struct analysis_realistic_iterator_adapters[lib]::crate::Name
 
             realistic iterator filtered map collect result
-            - nominal struct alloc[lib]::crate::vec::Vec<nominal struct analysis_realistic_iterator_adapters[lib]::crate::Name>
+            - nominal struct alloc[lib]::crate::vec::Vec<nominal struct analysis_realistic_iterator_adapters[lib]::crate::Name, nominal struct alloc[lib]::crate::vec::Global>
 
             keyword filter closure param
             - &&nominal struct analysis_realistic_iterator_adapters[lib]::crate::KeywordCandidate
 
             keyword filter label
-            - &str
+            - &'static str
 
             keyword filter call result
             - nominal struct core[lib]::crate::iter::adapters::Filter<nominal struct core[lib]::crate::slice::Iter<'_, nominal struct analysis_realistic_iterator_adapters[lib]::crate::KeywordCandidate>, closure #78>
@@ -1244,14 +1114,18 @@ pub fn use_it(users: &[User], changed_files: &[ChangedFile], bytes: &[u8], prefi
             - nominal struct analysis_realistic_iterator_adapters[lib]::crate::CompletionItem
 
             keyword collect result
-            - nominal struct alloc[lib]::crate::vec::Vec<nominal struct analysis_realistic_iterator_adapters[lib]::crate::CompletionItem>
+            - nominal struct alloc[lib]::crate::vec::Vec<nominal struct analysis_realistic_iterator_adapters[lib]::crate::CompletionItem, nominal struct alloc[lib]::crate::vec::Global>
         "#]],
     );
 }
 
 #[test]
 fn infers_closure_params_and_returns_from_callable_bounds() {
-    check_analysis_queries(
+    let ty = |title, marker| {
+        AnalysisQuery::ty(title, marker).in_lib("analysis_callable_closure_bound_inference")
+    };
+
+    check_analysis_queries_with_fake_sysroot(
         r#"
 //- /Cargo.toml
 [package]
@@ -1314,8 +1188,12 @@ pub fn use_it(flag: bool, attr: Attr, user: User, users: &[User], seed: Id) {
     Factory::with_id(|id| id$type_inherent_assoc$);
     with_user(|| id(missing())$type_direct_return_body$);
 
-    visit(user, |user| user$type_generic_inline_param$.name()$type_generic_inline_call$);
-    visit_all(users, |user| user$type_generic_where_param$.name()$type_generic_where_call$);
+    visit(user, |user| {
+        user$type_generic_inline_param$.name()$type_generic_inline_call$;
+    });
+    visit_all(users, |user| {
+        user$type_generic_where_param$.name()$type_generic_where_call$;
+    });
 
     let applied = apply(seed, |id| make_user(id))$type_generic_result$;
     let stored_f = |id| make_user(id);
@@ -1329,33 +1207,33 @@ pub fn use_it(flag: bool, attr: Attr, user: User, users: &[User], seed: Id) {
 }
 "#,
         &[
-            AnalysisQuery::ty("direct callable closure param", "type_direct_param"),
-            AnalysisQuery::ty(
+            ty("direct callable closure param", "type_direct_param"),
+            ty(
                 "direct callable closure method call",
                 "type_direct_param_call",
             ),
-            AnalysisQuery::ty(
+            ty(
                 "direct closure inherent associated param",
                 "type_inherent_assoc",
             ),
-            AnalysisQuery::ty(
+            ty(
                 "direct callable closure return body",
                 "type_direct_return_body",
             ),
-            AnalysisQuery::ty("inline generic closure param", "type_generic_inline_param"),
-            AnalysisQuery::ty(
+            ty("inline generic closure param", "type_generic_inline_param"),
+            ty(
                 "inline generic closure method call",
                 "type_generic_inline_call",
             ),
-            AnalysisQuery::ty("where generic closure param", "type_generic_where_param"),
-            AnalysisQuery::ty(
+            ty("where generic closure param", "type_generic_where_param"),
+            ty(
                 "where generic closure method call",
                 "type_generic_where_call",
             ),
-            AnalysisQuery::ty("generic closure return result", "type_generic_result"),
-            AnalysisQuery::ty("stored generic closure return result", "type_stored_result"),
-            AnalysisQuery::ty("nested generic closure return result", "type_nested_result"),
-            AnalysisQuery::ty("conflicting generic closure return result", "type_conflict"),
+            ty("generic closure return result", "type_generic_result"),
+            ty("stored generic closure return result", "type_stored_result"),
+            ty("nested generic closure return result", "type_nested_result"),
+            ty("conflicting generic closure return result", "type_conflict"),
         ],
         expect![[r#"
             direct callable closure param
@@ -1399,65 +1277,12 @@ pub fn use_it(flag: bool, attr: Attr, user: User, users: &[User], seed: Id) {
 
 #[test]
 fn infers_iterator_closure_params_from_selected_trait_method_bounds() {
-    check_analysis_queries(
+    check_analysis_queries_with_fake_sysroot(
         r#"
 //- /Cargo.toml
 [workspace]
-members = ["core", "app"]
+members = ["app"]
 resolver = "3"
-
-//- /core/Cargo.toml
-[package]
-name = "fake_core"
-version = "0.1.0"
-edition = "2024"
-
-//- /core/src/lib.rs
-pub mod iter {
-    pub trait Iterator {
-        type Item;
-
-        fn map<B, F>(self, f: F) -> Map<Self, F>
-        where
-            F: FnMut(Self::Item) -> B;
-
-        fn filter<P>(self, predicate: P) -> Filter<Self, P>
-        where
-            P: FnMut(&Self::Item) -> bool;
-
-        fn find<P>(self, predicate: P)
-        where
-            P: FnMut(&Self::Item) -> bool;
-
-        fn produce<F>(self, f: F)
-        where
-            F: FnOnce() -> Self::Item;
-    }
-
-    pub struct Map<I, F> {
-        iter: I,
-        f: F,
-    }
-
-    pub struct Filter<I, P> {
-        iter: I,
-        predicate: P,
-    }
-}
-
-pub mod slice {
-    pub struct Iter<'a, T>(&'a T);
-}
-
-impl<T> [T] {
-    pub fn iter(&self) -> slice::Iter<'_, T> {
-        missing()
-    }
-}
-
-impl<'a, T> iter::Iterator for slice::Iter<'a, T> {
-    type Item = &'a T;
-}
 
 //- /app/Cargo.toml
 [package]
@@ -1465,13 +1290,19 @@ name = "app"
 version = "0.1.0"
 edition = "2024"
 
-[dependencies]
-core = { package = "fake_core", path = "../core" }
-
 //- /app/src/lib.rs
 pub struct User;
 pub struct Name;
 pub struct Searcher;
+
+pub trait ProduceExt: core::iter::Iterator {
+    fn produce<F>(self, f: F)
+    where
+        Self: Sized,
+        F: FnOnce() -> Self::Item;
+}
+
+impl<'a, T> ProduceExt for core::slice::Iter<'a, T> {}
 
 impl User {
     pub fn name(&self) -> Name {}
@@ -1536,7 +1367,7 @@ pub fn use_it(users: &[User], searcher: Searcher) {
 
 #[test]
 fn projects_associated_type_from_callable_impl_where_clause() {
-    check_analysis_queries(
+    check_analysis_queries_with_fake_sysroot(
         r#"
 //- /Cargo.toml
 [package]
@@ -1574,8 +1405,10 @@ pub fn use_it(not_callable: NotCallable) {
 }
 "#,
         &[
-            AnalysisQuery::ty("callable impl where projection", "type_produced"),
-            AnalysisQuery::ty("non-callable impl where projection", "type_unknown"),
+            AnalysisQuery::ty("callable impl where projection", "type_produced")
+                .in_lib("analysis_callable_impl_where_projection"),
+            AnalysisQuery::ty("non-callable impl where projection", "type_unknown")
+                .in_lib("analysis_callable_impl_where_projection"),
         ],
         expect![[r#"
             callable impl where projection
@@ -1589,7 +1422,7 @@ pub fn use_it(not_callable: NotCallable) {
 
 #[test]
 fn projects_associated_type_from_callable_impl_where_clause_with_generic_assoc_input() {
-    check_analysis_queries(
+    check_analysis_queries_with_fake_sysroot(
         r#"
 //- /Cargo.toml
 [package]
@@ -1683,12 +1516,15 @@ pub fn use_it(source: Source<User>) {
             AnalysisQuery::ty(
                 "callable impl where associated input projection",
                 "type_mapped",
-            ),
+            )
+            .in_lib("analysis_callable_impl_where_assoc_input_projection"),
             AnalysisQuery::ty(
                 "callable impl where referenced associated input projection",
                 "type_ref_mapped",
-            ),
-            AnalysisQuery::ty("unsupported impl where projection", "type_marked"),
+            )
+            .in_lib("analysis_callable_impl_where_assoc_input_projection"),
+            AnalysisQuery::ty("unsupported impl where projection", "type_marked")
+                .in_lib("analysis_callable_impl_where_assoc_input_projection"),
         ],
         expect![[r#"
             callable impl where associated input projection
@@ -2043,10 +1879,10 @@ pub fn use_it(user: User) {
                 pub fn new(value: &'value T) -> Self
 
             lifetime generic associated constructor result
-            - nominal struct analysis_associated_function_prefix_generic_inference[lib]::crate::Borrowed<nominal struct analysis_associated_function_prefix_generic_inference[lib]::crate::User>
+            - nominal struct analysis_associated_function_prefix_generic_inference[lib]::crate::Borrowed<'_, nominal struct analysis_associated_function_prefix_generic_inference[lib]::crate::User>
 
             lifetime generic explicit prefix constructor result
-            - nominal struct analysis_associated_function_prefix_generic_inference[lib]::crate::Borrowed<nominal struct analysis_associated_function_prefix_generic_inference[lib]::crate::User>
+            - nominal struct analysis_associated_function_prefix_generic_inference[lib]::crate::Borrowed<'_, nominal struct analysis_associated_function_prefix_generic_inference[lib]::crate::User>
 
             hover method after lifetime generic constructor
             - range: 44:40-44:50
@@ -2057,7 +1893,7 @@ pub fn use_it(user: User) {
                 pub fn into_value(self) -> T
 
             lifetime-only associated constructor result
-            - nominal struct analysis_associated_function_prefix_generic_inference[lib]::crate::Guard
+            - nominal struct analysis_associated_function_prefix_generic_inference[lib]::crate::Guard<'_>
 
             trait method after lifetime-only constructor result
             - nominal struct analysis_associated_function_prefix_generic_inference[lib]::crate::User

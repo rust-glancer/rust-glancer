@@ -1,11 +1,11 @@
-use rg_ir_model::TargetRef;
+use rg_ir_model::CrateRef;
 use rg_ir_view::SymbolKind;
 use rg_parse::{FileId, Span};
 
 /// One goto-definition destination.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NavigationTarget {
-    pub target: TargetRef,
+    pub crate_ref: CrateRef,
     pub kind: NavigationTargetKind,
     pub name: String,
     pub file_id: FileId,

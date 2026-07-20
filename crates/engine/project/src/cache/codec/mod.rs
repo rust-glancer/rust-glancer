@@ -24,7 +24,7 @@
 
 use anyhow::Context as _;
 use rg_body_ir::PackageBodies;
-use rg_ir_storage::PackageDefMaps as DefMapPackage;
+use rg_def_map::PackageDefMaps as DefMapPackage;
 use rg_semantic_ir::PackageIr;
 use wincode::{SchemaRead, SchemaWrite};
 
@@ -265,7 +265,7 @@ impl PackageCacheCodec {
         Ok(def_map)
     }
 
-    /// Decode Semantic IR and check that its target arena matches the probe.
+    /// Decode Semantic IR and check that its crate arena matches the probe.
     pub(crate) fn decode_semantic_ir(
         bytes: &[u8],
         probe: &PackageCacheProbe,
@@ -301,18 +301,18 @@ impl PackageCacheCodec {
     /// Check the facts later section decoders use as their package-wide reference point.
     fn validate_probe(probe: &PackageCacheProbe) -> anyhow::Result<()> {
         Self::validate_header(&probe.header)?;
-        let target_count = probe.header.package.targets.len();
+        let cargo_target_count = probe.header.package.targets.len();
         anyhow::ensure!(
-            probe.parse.target_root_count() == target_count,
-            "package cache probe has {} parse targets but header has {} targets",
+            probe.parse.target_root_count() == cargo_target_count,
+            "package cache probe has {} parse targets but header has {} Cargo targets",
             probe.parse.target_root_count(),
-            target_count,
+            cargo_target_count,
         );
         anyhow::ensure!(
-            probe.body_ir_coverage.len() == target_count,
-            "package cache probe has {} Body IR coverage entries but header has {} targets",
+            probe.body_ir_coverage.len() == cargo_target_count,
+            "package cache probe has {} Body IR coverage entries but header has {} Cargo targets",
             probe.body_ir_coverage.len(),
-            target_count,
+            cargo_target_count,
         );
         Ok(())
     }
@@ -326,9 +326,9 @@ impl PackageCacheCodec {
             package.name,
         );
         anyhow::ensure!(
-            def_map.def_maps().len() == package.targets.len(),
-            "package cache artifact has {} def-map targets but header has {} targets",
-            def_map.def_maps().len(),
+            def_map.crates().len() == package.targets.len(),
+            "package cache artifact has {} def-map crates but header has {} Cargo targets",
+            def_map.crates().len(),
             package.targets.len(),
         );
         Ok(())
@@ -339,9 +339,9 @@ impl PackageCacheCodec {
         probe: &PackageCacheProbe,
     ) -> anyhow::Result<()> {
         anyhow::ensure!(
-            semantic_ir.targets().len() == probe.header.package.targets.len(),
-            "package cache artifact has {} semantic IR targets but header has {} targets",
-            semantic_ir.targets().len(),
+            semantic_ir.crates().len() == probe.header.package.targets.len(),
+            "package cache artifact has {} semantic IR crates but header has {} Cargo targets",
+            semantic_ir.crates().len(),
             probe.header.package.targets.len(),
         );
         Ok(())
@@ -349,15 +349,15 @@ impl PackageCacheCodec {
 
     fn validate_body_ir(body_ir: &PackageBodies, probe: &PackageCacheProbe) -> anyhow::Result<()> {
         anyhow::ensure!(
-            body_ir.targets().len() == probe.header.package.targets.len(),
-            "package cache artifact has {} Body IR targets but header has {} targets",
-            body_ir.targets().len(),
+            body_ir.crates().len() == probe.header.package.targets.len(),
+            "package cache artifact has {} Body IR crates but header has {} Cargo targets",
+            body_ir.crates().len(),
             probe.header.package.targets.len(),
         );
         let coverage = body_ir
-            .targets()
+            .crates()
             .iter()
-            .map(|target| target.coverage())
+            .map(|crate_bodies| crate_bodies.coverage())
             .collect::<Vec<_>>();
         anyhow::ensure!(
             coverage == probe.body_ir_coverage,

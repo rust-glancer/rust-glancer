@@ -3,6 +3,11 @@
 //! The analysis engine intentionally treats saved-file notifications as its filesystem coherence
 //! boundary. This watcher owns that boundary for external edits, so editor-specific watcher
 //! behavior cannot leave the saved project behind disk.
+//!
+//! A relevant native event first marks every affected ready engine as indexing. The watcher then
+//! waits for the whole edit burst to become quiet, compares its filesystem snapshot, and sends one
+//! coalesced path update. The indexing activity stays live through that wait and through the engine
+//! rebuild, so the editor does not show `Ready` or enqueue semantic queries against changing disk.
 
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -15,7 +20,10 @@ use anyhow::Context as _;
 use ignore::WalkBuilder;
 use notify_debouncer_full::{
     DebounceEventResult, Debouncer, NoCache,
-    notify::{Config as NotifyConfig, RecommendedWatcher, RecursiveMode},
+    notify::{
+        Config as NotifyConfig, EventKind, RecommendedWatcher, RecursiveMode,
+        event::{AccessKind, AccessMode},
+    },
 };
 use tokio::{sync::mpsc, task::JoinHandle};
 
@@ -37,6 +45,7 @@ pub(crate) struct ProjectWatcher {
     _workspaces: Vec<WorkspaceWatcher>,
 }
 
+/// One native watcher, filesystem snapshot, and async forwarder for an editor workspace folder.
 #[derive(Debug)]
 struct WorkspaceWatcher {
     _root: PathBuf,
@@ -126,6 +135,13 @@ impl WorkspaceWatcher {
         let mut snapshot = ProjectPathSnapshot::scan(forwarder_root.as_path());
         let forwarder = tokio::spawn(async move {
             while let Some(result) = receiver.recv().await {
+                // The first relevant native event means the saved project may already disagree
+                // with disk. Publish that fact before waiting for the checkout/write burst to
+                // settle, so interactive requests do not queue behind a rebuild that has not yet
+                // been submitted.
+                let changes = registry
+                    .begin_external_project_changes(forwarder_root.as_path())
+                    .await;
                 let results = Self::collect_settled_results(result, &mut receiver).await;
                 Self::forward_watcher_results(
                     &mut snapshot,
@@ -133,6 +149,7 @@ impl WorkspaceWatcher {
                     &registry,
                     &recent_editor_saves,
                     results,
+                    changes,
                 )
                 .await;
             }
@@ -152,8 +169,22 @@ impl WorkspaceWatcher {
                 // the workspace settle window. Rescan events have no useful paths and must always
                 // reach the snapshot recovery path.
                 events.retain(|event| {
-                    event.need_rescan()
-                        || event
+                    if event.need_rescan() {
+                        return true;
+                    }
+
+                    // Linux inotify reports opening and reading a file as watcher events. Those
+                    // accesses are especially common while rust-glancer indexes its own workspace,
+                    // but they cannot make the saved project stale. Only an explicit
+                    // close-after-write remains useful as a mutation signal; normal modify events
+                    // cover backends that do not report the close mode.
+                    let may_change_saved_input = match event.event.kind {
+                        EventKind::Access(AccessKind::Close(AccessMode::Write)) => true,
+                        EventKind::Access(_) => false,
+                        _ => true,
+                    };
+                    may_change_saved_input
+                        && event
                             .event
                             .paths
                             .iter()
@@ -181,6 +212,11 @@ impl WorkspaceWatcher {
         }
     }
 
+    /// Turn one settled native-event burst into a saved-project update.
+    ///
+    /// This always returns `changes` to the registry, even when every path was an editor save or
+    /// disappeared during the burst. That lets unmatched early indexing activities end as
+    /// cancellations instead of leaving the workspace permanently `Indexing`.
     #[tracing::instrument(level = "trace", skip_all, fields(root = %root.display()))]
     async fn forward_watcher_results(
         snapshot: &mut ProjectPathSnapshot,
@@ -188,6 +224,7 @@ impl WorkspaceWatcher {
         registry: &EngineRegistry,
         recent_editor_saves: &RecentEditorSaves,
         results: Vec<DebounceEventResult>,
+        changes: crate::engine_registry::ExternalProjectChanges,
     ) {
         let paths = Self::changed_paths_for_results(snapshot, root, results);
         let path_count_before_save_filter = paths.len();
@@ -199,15 +236,17 @@ impl WorkspaceWatcher {
                 forwarded_paths = 0usize,
                 "server-side watched project changes filtered out"
             );
-            return;
+        } else {
+            tracing::debug!(
+                paths_before_save_filter = path_count_before_save_filter,
+                forwarded_paths = paths.len(),
+                "forwarding server-side watched project changes"
+            );
         }
 
-        tracing::debug!(
-            paths_before_save_filter = path_count_before_save_filter,
-            forwarded_paths = paths.len(),
-            "forwarding server-side watched project changes"
-        );
-        registry.external_project_paths_changed(paths).await;
+        registry
+            .external_project_paths_changed(paths, changes)
+            .await;
     }
 
     fn changed_paths_for_results(
@@ -465,7 +504,7 @@ mod tests {
         DebouncedEvent,
         notify::{
             Event, EventKind,
-            event::{DataChange, ModifyKind},
+            event::{AccessKind, AccessMode, DataChange, ModifyKind},
         },
     };
     use test_fixture::fixture_crate;
@@ -502,6 +541,35 @@ mod tests {
             vec![&project_source],
             "ignored event entries should be removed before settling"
         );
+    }
+
+    #[test]
+    fn watcher_ingress_drops_read_only_project_accesses() {
+        let source = PathBuf::from("/workspace/src/lib.rs");
+
+        for kind in [
+            EventKind::Access(AccessKind::Read),
+            EventKind::Access(AccessKind::Open(AccessMode::Any)),
+            EventKind::Access(AccessKind::Close(AccessMode::Read)),
+            EventKind::Access(AccessKind::Close(AccessMode::Any)),
+        ] {
+            assert!(
+                WorkspaceWatcher::project_result(Ok(vec![watcher_event(source.clone(), kind,)]))
+                    .is_none(),
+                "read-only access event {kind:?} should not enter the async watcher queue",
+            );
+        }
+
+        for kind in [
+            EventKind::Modify(ModifyKind::Data(DataChange::Any)),
+            EventKind::Access(AccessKind::Close(AccessMode::Write)),
+        ] {
+            assert!(
+                WorkspaceWatcher::project_result(Ok(vec![watcher_event(source.clone(), kind,)]))
+                    .is_some(),
+                "saved-input mutation event {kind:?} should enter the async watcher queue",
+            );
+        }
     }
 
     #[tokio::test]
@@ -560,9 +628,10 @@ mod tests {
     }
 
     fn changed_event(path: PathBuf) -> DebouncedEvent {
-        DebouncedEvent::new(
-            Event::new(EventKind::Modify(ModifyKind::Data(DataChange::Any))).add_path(path),
-            Instant::now(),
-        )
+        watcher_event(path, EventKind::Modify(ModifyKind::Data(DataChange::Any)))
+    }
+
+    fn watcher_event(path: PathBuf, kind: EventKind) -> DebouncedEvent {
+        DebouncedEvent::new(Event::new(kind).add_path(path), Instant::now())
     }
 }

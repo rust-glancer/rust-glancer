@@ -6,27 +6,31 @@
 //! return `None` instead of becoming a second, partial inference engine.
 
 use chalk_ir::{
-    Const, ConstValue, GenericArg as ChalkGenericArg, GenericArgData,
-    Mutability as ChalkMutability, Scalar, Ty as ChalkTy, TyKind,
+    AliasTy as ChalkAliasTy, ConstValue as ChalkConstValue, GenericArg as ChalkGenericArg,
+    GenericArgData, LifetimeData, Mutability as ChalkMutability, Safety, Scalar, Ty as ChalkTy,
+    TyKind,
 };
 
-use super::interner::RgChalkInterner;
-use super::projection::{ProjectionAnswerVars, ProjectionVariableEnv};
-use crate::{FloatTy, GenericArg, NominalTy, PrimitiveTy, SignedIntTy, Ty, UnsignedIntTy};
+use super::evidence::{SolverAnswerVars, SolverVariableEnv};
+use super::interner::{ChalkDefId, RgChalkInterner};
+use crate::{
+    AdtTy, AliasTy, ConstValue, FloatTy, FnDefTy, GenericArg, GenericArgs, Lifetime, OpaqueTy,
+    PrimitiveTy, ProjectionTy, SignedIntTy, Ty, UnsignedIntTy,
+};
 
 const INTER: RgChalkInterner = RgChalkInterner;
 
 pub(super) fn infer_ty_from_chalk_projection(
     ty: &ChalkTy<RgChalkInterner>,
-    variables: &ProjectionVariableEnv,
-    answer_vars: &ProjectionAnswerVars,
+    variables: &SolverVariableEnv,
+    answer_vars: &SolverAnswerVars,
 ) -> Option<Ty> {
     infer_ty_from_chalk_with_vars(ty, Some((variables, answer_vars)))
 }
 
 fn infer_ty_from_chalk_with_vars(
     ty: &ChalkTy<RgChalkInterner>,
-    variables: Option<(&ProjectionVariableEnv, &ProjectionAnswerVars)>,
+    variables: Option<(&SolverVariableEnv, &SolverAnswerVars)>,
 ) -> Option<Ty> {
     match ty.kind(INTER) {
         TyKind::Tuple(0, _) => Some(Ty::Unit),
@@ -45,13 +49,15 @@ fn infer_ty_from_chalk_with_vars(
         )?))),
         TyKind::Array(inner, len) => Some(Ty::Array {
             inner: Box::new(infer_ty_from_chalk_with_vars(inner, variables)?),
-            len: Some(array_len_from_chalk(len)?),
+            len: const_value_from_chalk(&len.data(INTER).value)?,
         }),
-        TyKind::Ref(mutability, _, inner) => Some(Ty::Reference {
-            mutability: match mutability {
-                ChalkMutability::Mut => rg_ir_model::Mutability::Mutable,
-                ChalkMutability::Not => rg_ir_model::Mutability::Shared,
-            },
+        TyKind::Ref(mutability, lifetime, inner) => Some(Ty::Reference {
+            lifetime: lifetime_from_chalk(lifetime.data(INTER))?,
+            mutability: mutability_from_chalk(*mutability),
+            inner: Box::new(infer_ty_from_chalk_with_vars(inner, variables)?),
+        }),
+        TyKind::Raw(mutability, inner) => Some(Ty::RawPointer {
+            mutability: mutability_from_chalk(*mutability),
             inner: Box::new(infer_ty_from_chalk_with_vars(inner, variables)?),
         }),
         TyKind::Adt(adt_id, substitution) => {
@@ -59,33 +65,75 @@ fn infer_ty_from_chalk_with_vars(
                 .iter(INTER)
                 .map(|arg| infer_generic_arg_from_chalk(arg, variables))
                 .collect::<Option<Vec<_>>>()?;
-            Some(Ty::Nominal(NominalTy {
+            Some(Ty::Adt(AdtTy {
                 def: adt_id.0,
-                args,
+                args: args.into(),
             }))
         }
         TyKind::BoundVar(bound_var) => {
             let (variables, answer_vars) = variables?;
-            if let Some(index) = bound_var.index_if_innermost()
-                && let Some(ty) = variables.project_var_ty(index)
-            {
-                return Some(ty);
-            }
-            answer_vars
+            // A canonical answer introduces its own bound-variable universe. Its `^0.0` is not
+            // necessarily query variable zero: multiple query variables may have been equated to
+            // that one answer variable. Prefer the map decoded from the answer substitution and
+            // use positional query variables only when raising a datum directly, without an
+            // answer environment.
+            if let Some(ty) = answer_vars
                 .as_slice()
                 .iter()
                 .find_map(|(var, ty)| (*var == *bound_var).then_some(ty.clone()))
+            {
+                return Some(ty);
+            }
+            if let Some(index) = bound_var.index_if_innermost()
+                && let Some(ty) = variables.project_ty_for_index(index)
+            {
+                return Some(ty);
+            }
+            None
         }
-        TyKind::Raw(_, _)
-        | TyKind::AssociatedType(_, _)
-        | TyKind::Alias(_)
-        | TyKind::OpaqueType(_, _)
-        | TyKind::FnDef(_, _)
-        | TyKind::Closure(_, _)
+        TyKind::AssociatedType(associated_ty, substitution) => {
+            projection_from_chalk(associated_ty.0, substitution, variables)
+        }
+        TyKind::Alias(alias) => match alias {
+            ChalkAliasTy::Projection(alias) => {
+                projection_from_chalk(alias.associated_ty_id.0, &alias.substitution, variables)
+            }
+            ChalkAliasTy::Opaque(alias) => {
+                opaque_from_chalk(alias.opaque_ty_id.0, &alias.substitution, variables)
+            }
+        },
+        TyKind::OpaqueType(opaque, substitution) => {
+            opaque_from_chalk(opaque.0, substitution, variables)
+        }
+        TyKind::FnDef(function, substitution) => {
+            let ChalkDefId::Function(def) = function.0 else {
+                return None;
+            };
+            Some(Ty::FnDef(FnDefTy {
+                def,
+                args: generic_args_from_chalk(substitution, variables)?,
+            }))
+        }
+        TyKind::Function(function) => {
+            if function.num_binders != 0
+                || function.sig.safety != Safety::Safe
+                || function.sig.variadic
+            {
+                return None;
+            }
+            let mut signature = function
+                .substitution
+                .0
+                .iter(INTER)
+                .map(|arg| infer_ty_from_chalk_arg(arg, variables))
+                .collect::<Option<Vec<_>>>()?;
+            let ret = signature.pop()?;
+            Some(Ty::fn_pointer(signature, ret))
+        }
+        TyKind::Closure(_, _)
         | TyKind::Coroutine(_, _)
         | TyKind::CoroutineWitness(_, _)
         | TyKind::Foreign(_)
-        | TyKind::Function(_)
         | TyKind::InferenceVar(_, _)
         | TyKind::Dyn(_)
         | TyKind::Placeholder(_)
@@ -93,16 +141,9 @@ fn infer_ty_from_chalk_with_vars(
     }
 }
 
-fn array_len_from_chalk(len: &Const<RgChalkInterner>) -> Option<String> {
-    let ConstValue::Concrete(value) = &len.data(INTER).value else {
-        return None;
-    };
-    Some(value.interned.clone())
-}
-
 fn infer_ty_from_chalk_arg(
     arg: &ChalkGenericArg<RgChalkInterner>,
-    variables: Option<(&ProjectionVariableEnv, &ProjectionAnswerVars)>,
+    variables: Option<(&SolverVariableEnv, &SolverAnswerVars)>,
 ) -> Option<Ty> {
     let GenericArgData::Ty(ty) = arg.data(INTER) else {
         return None;
@@ -112,14 +153,82 @@ fn infer_ty_from_chalk_arg(
 
 fn infer_generic_arg_from_chalk(
     arg: &ChalkGenericArg<RgChalkInterner>,
-    variables: Option<(&ProjectionVariableEnv, &ProjectionAnswerVars)>,
+    variables: Option<(&SolverVariableEnv, &SolverAnswerVars)>,
 ) -> Option<GenericArg> {
     match arg.data(INTER) {
         GenericArgData::Ty(ty) => Some(GenericArg::Type(Box::new(infer_ty_from_chalk_with_vars(
             ty, variables,
         )?))),
-        GenericArgData::Lifetime(_) => Some(GenericArg::Lifetime("_".to_owned())),
-        GenericArgData::Const(_) => None,
+        GenericArgData::Lifetime(lifetime) => Some(GenericArg::Lifetime(lifetime_from_chalk(
+            lifetime.data(INTER),
+        )?)),
+        GenericArgData::Const(value) => Some(GenericArg::Const(const_value_from_chalk(
+            &value.data(INTER).value,
+        )?)),
+    }
+}
+
+fn generic_args_from_chalk(
+    substitution: &chalk_ir::Substitution<RgChalkInterner>,
+    variables: Option<(&SolverVariableEnv, &SolverAnswerVars)>,
+) -> Option<GenericArgs> {
+    substitution
+        .iter(INTER)
+        .map(|arg| infer_generic_arg_from_chalk(arg, variables))
+        .collect()
+}
+
+fn projection_from_chalk(
+    associated_ty: ChalkDefId,
+    substitution: &chalk_ir::Substitution<RgChalkInterner>,
+    variables: Option<(&SolverVariableEnv, &SolverAnswerVars)>,
+) -> Option<Ty> {
+    let ChalkDefId::AssocType(associated_ty) = associated_ty else {
+        return None;
+    };
+    Some(Ty::Alias(AliasTy::Projection(ProjectionTy {
+        associated_ty,
+        args: generic_args_from_chalk(substitution, variables)?,
+    })))
+}
+
+fn opaque_from_chalk(
+    opaque: ChalkDefId,
+    substitution: &chalk_ir::Substitution<RgChalkInterner>,
+    variables: Option<(&SolverVariableEnv, &SolverAnswerVars)>,
+) -> Option<Ty> {
+    let ChalkDefId::Opaque(opaque) = opaque else {
+        return None;
+    };
+    Some(Ty::Alias(AliasTy::Opaque(OpaqueTy {
+        opaque,
+        args: generic_args_from_chalk(substitution, variables)?,
+    })))
+}
+
+fn lifetime_from_chalk(lifetime: &LifetimeData<RgChalkInterner>) -> Option<Lifetime> {
+    match lifetime {
+        LifetimeData::Static => Some(Lifetime::Static),
+        LifetimeData::Erased => Some(Lifetime::Erased),
+        LifetimeData::BoundVar(_)
+        | LifetimeData::InferenceVar(_)
+        | LifetimeData::Placeholder(_)
+        | LifetimeData::Phantom(_, _)
+        | LifetimeData::Error => None,
+    }
+}
+
+fn const_value_from_chalk(value: &ChalkConstValue<RgChalkInterner>) -> Option<ConstValue> {
+    let ChalkConstValue::Concrete(value) = value else {
+        return None;
+    };
+    value.interned.parse().ok().map(ConstValue::Scalar)
+}
+
+fn mutability_from_chalk(mutability: ChalkMutability) -> rg_ir_model::Mutability {
+    match mutability {
+        ChalkMutability::Mut => rg_ir_model::Mutability::Mutable,
+        ChalkMutability::Not => rg_ir_model::Mutability::Shared,
     }
 }
 

@@ -4,17 +4,19 @@
 //! query keeps the reusable search at the ref level so view code can project results into the
 //! declaration shape that UI-facing analysis expects.
 
-use rg_ir_model::{AssocItemId, FunctionRef, ImplRef, ItemOwner, TraitRef, TypeDefRef};
-use rg_ir_storage::{DefMapSource, ItemLookupIndex, ItemStoreSource, TargetItemQuery};
+use rg_def_map::DefMapSource;
+use rg_ir_model::{AssocItemId, FunctionRef, ImplRef, ItemOwner, TraitDefRef, TypeDefRef};
+use rg_semantic_ir::ItemStoreSource;
 use rg_std::UniqueVec;
 
-use crate::{Autoderef, AutoderefMode, ImplMatcher, ItemPathQuery, ReferencePeelingCandidates, Ty};
+use crate::{
+    Autoderef, AutoderefMode, ImplMatcher, ReferencePeelingCandidates, Ty, TyContext,
+    inference::InferenceTable,
+};
 
 /// Ref-level implementation lookup shared by view and analysis adapters.
 pub struct ImplementationQuery<'query, D, I> {
-    item_paths: ItemPathQuery<'query, D, I>,
-    target_items: TargetItemQuery<'query, D, I>,
-    lookup_index: &'query ItemLookupIndex,
+    context: TyContext<'query, D, I>,
 }
 
 impl<'query, D, I> ImplementationQuery<'query, D, I>
@@ -22,24 +24,16 @@ where
     D: DefMapSource + Clone,
     I: ItemStoreSource<'query, Error = D::Error> + Clone,
 {
-    /// Creates an implementation query over a target-scoped receiver lookup index.
-    pub fn with_index(
-        item_paths: ItemPathQuery<'query, D, I>,
-        target_items: TargetItemQuery<'query, D, I>,
-        lookup_index: &'query ItemLookupIndex,
-    ) -> Self {
-        Self {
-            item_paths,
-            target_items,
-            lookup_index,
-        }
+    /// Creates implementation lookup in one crate-scoped type-query environment.
+    pub fn new(context: TyContext<'query, D, I>) -> Self {
+        Self { context }
     }
 
     /// Returns impl blocks for all nominal type definitions reachable through reference peeling.
     pub fn impls_for_ty(&self, ty: &Ty) -> Result<UniqueVec<ImplRef>, D::Error> {
         let mut impls = UniqueVec::new();
         for candidate in ReferencePeelingCandidates::new(ty) {
-            for ty in candidate.ty().as_nominals() {
+            for ty in candidate.ty().as_adts() {
                 for impl_ref in self.impls_for_type_def(ty.def)? {
                     impls.push(impl_ref);
                 }
@@ -50,12 +44,12 @@ where
 
     /// Returns impl blocks whose resolved self type mentions this nominal type definition.
     pub fn impls_for_type_def(&self, ty: TypeDefRef) -> Result<UniqueVec<ImplRef>, D::Error> {
-        Ok(self.lookup_index.impls_for_type(ty))
+        Ok(self.context.lookup_index().impls_for_type(ty))
     }
 
     /// Returns impl blocks that resolve to the requested trait.
-    pub fn impls_for_trait(&self, trait_ref: TraitRef) -> Result<UniqueVec<ImplRef>, D::Error> {
-        Ok(self.lookup_index.impls_for_trait(trait_ref))
+    pub fn impls_for_trait(&self, trait_ref: TraitDefRef) -> Result<UniqueVec<ImplRef>, D::Error> {
+        Ok(self.context.lookup_index().impls_for_trait(trait_ref))
     }
 
     /// Returns concrete functions that implement or correspond to the selected function.
@@ -67,13 +61,13 @@ where
         function: FunctionRef,
         receiver_ty: Option<&Ty>,
     ) -> Result<UniqueVec<FunctionRef>, D::Error> {
-        let Some(data) = self.item_paths.items().function_data(function)? else {
+        let Some(data) = self.context.item_paths().items().function_data(function)? else {
             return Ok(UniqueVec::new());
         };
 
         match data.owner {
             ItemOwner::Trait(trait_id) => self.impl_methods_for_trait_method(
-                TraitRef {
+                TraitDefRef {
                     origin: function.origin,
                     id: trait_id,
                 },
@@ -88,7 +82,7 @@ where
     /// Returns impl methods matching a trait method, optionally narrowed to one receiver type.
     pub fn impl_methods_for_trait_method(
         &self,
-        trait_ref: TraitRef,
+        trait_ref: TraitDefRef,
         method_name: &str,
         receiver_ty: Option<&Ty>,
     ) -> Result<UniqueVec<FunctionRef>, D::Error> {
@@ -102,23 +96,21 @@ where
 
     fn impl_methods_for_trait_method_receiver(
         &self,
-        trait_ref: TraitRef,
+        trait_ref: TraitDefRef,
         method_name: &str,
         receiver_ty: &Ty,
     ) -> Result<UniqueVec<FunctionRef>, D::Error> {
-        let autoderef = Autoderef::with_index(
-            self.item_paths.clone(),
-            self.target_items.clone(),
-            self.lookup_index,
-        );
-        let matcher = ImplMatcher::new(self.item_paths.clone(), self.target_items.clone());
+        let autoderef = Autoderef::new(self.context.clone());
+        let matcher = ImplMatcher::new(self.context.clone());
+        let table = InferenceTable::new();
         let mut functions = UniqueVec::new();
 
         for candidate in autoderef.candidates(AutoderefMode::MethodReceiver, receiver_ty) {
             let candidate = candidate?;
-            for ty in candidate.ty().as_nominals() {
+            for ty in candidate.ty().as_adts() {
                 let trait_impls = self
-                    .lookup_index
+                    .context
+                    .lookup_index()
                     .trait_impls_for_type(ty.def)
                     .cloned()
                     .unwrap_or_default();
@@ -130,7 +122,7 @@ where
                     // args. Reuse method lookup's applicability check so implementation lookup
                     // follows the receiver the user actually called the method on.
                     if !matcher
-                        .trait_impl_applicability(trait_impl, ty)?
+                        .trait_impl_applicability(trait_impl, ty, &table)?
                         .is_applicable()
                     {
                         continue;
@@ -147,7 +139,7 @@ where
 
     fn impl_methods_for_trait_method_any_receiver(
         &self,
-        trait_ref: TraitRef,
+        trait_ref: TraitDefRef,
         method_name: &str,
     ) -> Result<UniqueVec<FunctionRef>, D::Error> {
         let mut functions = UniqueVec::new();
@@ -164,7 +156,7 @@ where
         impl_ref: ImplRef,
         method_name: &str,
     ) -> Result<UniqueVec<FunctionRef>, D::Error> {
-        let Some(data) = self.item_paths.items().impl_data(impl_ref)? else {
+        let Some(data) = self.context.item_paths().items().impl_data(impl_ref)? else {
             return Ok(UniqueVec::new());
         };
 
@@ -177,7 +169,8 @@ where
                 origin: impl_ref.origin,
                 id,
             };
-            let Some(function_data) = self.item_paths.items().function_data(function)? else {
+            let Some(function_data) = self.context.item_paths().items().function_data(function)?
+            else {
                 continue;
             };
             if function_data.name.as_str() != method_name {

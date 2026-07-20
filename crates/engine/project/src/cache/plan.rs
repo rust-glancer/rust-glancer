@@ -167,7 +167,7 @@ impl WorkspaceCachePlan {
 }
 
 impl CachedTarget {
-    fn from_workspace_target(target: &rg_workspace::Target) -> Self {
+    fn from_workspace_target(target: &rg_workspace::CargoTarget) -> Self {
         Self {
             name: target.name.clone(),
             kind: CachedTargetKind::from_workspace(&target.kind),

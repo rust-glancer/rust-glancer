@@ -70,9 +70,7 @@ impl PackageArtifactReader {
     }
 
     /// Read and decode only the package DefMap section.
-    pub(crate) fn read_def_map(
-        &self,
-    ) -> Result<rg_ir_storage::PackageDefMaps, PackageCacheReadError> {
+    pub(crate) fn read_def_map(&self) -> Result<rg_def_map::PackageDefMaps, PackageCacheReadError> {
         let bytes = self.read_section("def_map", self.inner.layout.def_map)?;
         let started = Instant::now();
         let decoded = self

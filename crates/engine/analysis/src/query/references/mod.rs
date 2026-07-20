@@ -5,7 +5,7 @@
 
 use std::collections::HashSet;
 
-use rg_ir_model::{TargetRef, identity::DeclarationRef};
+use rg_ir_model::{CrateRef, identity::DeclarationRef};
 use rg_ir_view::IndexedViewDb;
 use rg_parse::FileId;
 use rg_std::UniqueVec;
@@ -39,11 +39,11 @@ impl<'a, 'db, 'scope> ReferenceResolver<'a, 'db, 'scope> {
     /// Returns source labels that are safe for request-local text prefiltering.
     pub(crate) fn reference_search_labels(
         analysis: &Analysis<'db>,
-        target: TargetRef,
+        crate_ref: CrateRef,
         file_id: FileId,
         offset: u32,
     ) -> anyhow::Result<Vec<ReferenceSearchLabel>> {
-        let Some(symbol) = analysis.symbol_at_for_query(target, file_id, offset)? else {
+        let Some(symbol) = analysis.symbol_at_for_query(crate_ref, file_id, offset)? else {
             return Ok(Vec::new());
         };
         let declarations = Self::unique_declarations_for_analysis(analysis, symbol)?;
@@ -60,15 +60,15 @@ impl<'a, 'db, 'scope> ReferenceResolver<'a, 'db, 'scope> {
     /// requested, using the resolver's declaration scope policy.
     pub(crate) fn references(
         &self,
-        target: TargetRef,
+        crate_ref: CrateRef,
         file_id: FileId,
         offset: u32,
     ) -> anyhow::Result<Vec<ReferenceLocation>> {
-        let symbols = self.matching_source_symbols(target, file_id, offset)?;
+        let symbols = self.matching_source_symbols(crate_ref, file_id, offset)?;
         let mut locations = symbols
             .into_iter()
             .map(|symbol| ReferenceLocation {
-                target: symbol.target(),
+                crate_ref: symbol.crate_ref(),
                 file_id: symbol.file_id(),
                 span: symbol.span(),
             })
@@ -76,8 +76,8 @@ impl<'a, 'db, 'scope> ReferenceResolver<'a, 'db, 'scope> {
 
         locations.sort_by_key(|location| {
             (
-                location.target.package.0,
-                location.target.target.0,
+                location.crate_ref.package.0,
+                location.crate_ref.crate_id.0,
                 location.file_id.0,
                 location.span.text.start,
                 location.span.text.end,
@@ -89,11 +89,14 @@ impl<'a, 'db, 'scope> ReferenceResolver<'a, 'db, 'scope> {
 
     pub(crate) fn matching_source_symbols(
         &self,
-        target: TargetRef,
+        crate_ref: CrateRef,
         file_id: FileId,
         offset: u32,
     ) -> anyhow::Result<Vec<SourceSymbol>> {
-        let Some(symbol) = self.analysis.symbol_at_for_query(target, file_id, offset)? else {
+        let Some(symbol) = self
+            .analysis
+            .symbol_at_for_query(crate_ref, file_id, offset)?
+        else {
             return Ok(Vec::new());
         };
         let declarations = self.unique_declarations_for_symbol(symbol)?;
@@ -132,13 +135,13 @@ impl<'a, 'db, 'scope> ReferenceResolver<'a, 'db, 'scope> {
             for location in subject.declaration_locations() {
                 if !self
                     .query
-                    .accepts_declaration(location.target, location.file_id)
+                    .accepts_declaration(location.crate_ref, location.file_id)
                 {
                     continue;
                 }
                 if symbols.iter().any(|symbol| {
                     symbol.role() == SourceSymbolRole::Declaration
-                        && symbol.target() == location.target
+                        && symbol.crate_ref() == location.crate_ref
                         && symbol.file_id() == location.file_id
                         && symbol.span() == location.span
                 }) {
@@ -146,7 +149,7 @@ impl<'a, 'db, 'scope> ReferenceResolver<'a, 'db, 'scope> {
                 }
                 symbols.push(SourceSymbol::plain_declaration(
                     location.declaration,
-                    location.target,
+                    location.crate_ref,
                     location.file_id,
                     location.span,
                 ));
@@ -155,8 +158,8 @@ impl<'a, 'db, 'scope> ReferenceResolver<'a, 'db, 'scope> {
 
         symbols.sort_by_key(|symbol| {
             (
-                symbol.target().package.0,
-                symbol.target().target.0,
+                symbol.crate_ref().package.0,
+                symbol.crate_ref().crate_id.0,
                 symbol.file_id().0,
                 symbol.span().text.start,
                 symbol.span().text.end,
@@ -202,10 +205,10 @@ impl<'a, 'db, 'scope> ReferenceResolver<'a, 'db, 'scope> {
         }
 
         match self.query.search_scope() {
-            ReferenceSearchScope::Targets(targets) => {
-                for target in targets {
+            ReferenceSearchScope::Crates(crates) => {
+                for crate_ref in crates {
                     let scan = ReferenceScanTarget {
-                        target: *target,
+                        crate_ref: *crate_ref,
                         file_id: None,
                     };
                     if visited.contains(&scan) {
@@ -218,7 +221,7 @@ impl<'a, 'db, 'scope> ReferenceResolver<'a, 'db, 'scope> {
             ReferenceSearchScope::Files(files) => {
                 for file in files {
                     let scan = ReferenceScanTarget {
-                        target: file.target,
+                        crate_ref: file.crate_ref,
                         file_id: Some(file.file_id),
                     };
                     if visited.contains(&scan) {
@@ -228,10 +231,10 @@ impl<'a, 'db, 'scope> ReferenceResolver<'a, 'db, 'scope> {
                     self.push_matching_scan_target_candidates(scan, matcher, hints, symbols)?;
                 }
             }
-            ReferenceSearchScope::File { target, file_id } => {
+            ReferenceSearchScope::File { crate_ref, file_id } => {
                 self.push_matching_scan_target_candidates(
                     ReferenceScanTarget {
-                        target,
+                        crate_ref,
                         file_id: Some(file_id),
                     },
                     matcher,
@@ -252,7 +255,7 @@ impl<'a, 'db, 'scope> ReferenceResolver<'a, 'db, 'scope> {
         symbols: &mut Vec<SourceSymbol>,
     ) -> anyhow::Result<()> {
         for candidate in SourceSymbolIndex::new(self.analysis.view_db())
-            .symbols_in_target(scan.target, scan.file_id)?
+            .symbols_in_crate(scan.crate_ref, scan.file_id)?
         {
             if !self.accepts_candidate_role(candidate.role()) {
                 continue;

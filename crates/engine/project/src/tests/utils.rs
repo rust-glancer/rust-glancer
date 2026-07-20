@@ -6,10 +6,9 @@ use rg_analysis::{
     WorkspaceSymbol,
 };
 use rg_def_map::PackageSlot;
-use rg_ir_model::TargetRef;
+use rg_ir_model::CrateRef;
 use rg_package_store::PackageLoader;
 use rg_parse::FileId;
-use rg_ty::ReferencePeelingCandidates;
 
 use crate::{
     AnalysisChangeSummary, FileContext, PackageResidencyPolicy, Project, testonly::ProjectFixture,
@@ -63,15 +62,15 @@ impl HostFixture {
             .expect("fixture path should resolve to file contexts");
         let targets = contexts
             .iter()
-            .flat_map(|context| context.targets.iter().copied())
+            .flat_map(|context| context.crates.iter().copied())
             .collect::<Vec<_>>();
         let analysis = snapshot
-            .analysis_for_targets(&targets)
+            .analysis_for_crates(&targets)
             .expect("fixture analysis should materialize");
         let mut names = Vec::new();
 
         for context in contexts {
-            for target in context.targets {
+            for target in context.crates {
                 for symbol in analysis
                     .document_symbols(target, context.file)
                     .expect("fixture document symbols should resolve")
@@ -170,7 +169,7 @@ impl HostFixture {
             &mut dump,
         );
         writeln!(&mut dump).expect("string writes should not fail");
-        self.render_changed_targets(self.fixture.project(), &summary.changed_targets, &mut dump);
+        self.render_changed_crates(self.fixture.project(), &summary.changed_crates, &mut dump);
 
         dump
     }
@@ -229,12 +228,12 @@ impl HostFixture {
         }
     }
 
-    fn render_changed_targets(&self, project: &Project, targets: &[TargetRef], dump: &mut String) {
+    fn render_changed_crates(&self, project: &Project, targets: &[CrateRef], dump: &mut String) {
         writeln!(dump, "changed targets").expect("string writes should not fail");
 
         let mut labels = targets
             .iter()
-            .map(|target| self.render_target_ref(project, *target))
+            .map(|target| self.render_crate_ref(project, *target))
             .collect::<Vec<_>>();
         labels.sort();
 
@@ -329,7 +328,7 @@ impl HostFixture {
                 "- {} {} @ {} {path}",
                 symbol.kind,
                 symbol.name,
-                self.render_target_ref(project, symbol.target),
+                self.render_crate_ref(project, symbol.crate_ref),
             )
             .expect("string writes should not fail");
         }
@@ -364,9 +363,9 @@ impl HostFixture {
                 .file_path(context.file)
                 .expect("file context should have a parsed path");
             let mut targets = context
-                .targets
+                .crates
                 .iter()
-                .map(|target| self.render_target_ref(project, *target))
+                .map(|target| self.render_crate_ref(project, *target))
                 .collect::<Vec<_>>();
             targets.sort();
 
@@ -410,15 +409,11 @@ impl HostFixture {
         let stats = project.snapshot().stats();
 
         writeln!(dump, "resident stats `{label}`").expect("string writes should not fail");
-        writeln!(dump, "- def-map targets {}", stats.def_map.target_count)
+        writeln!(dump, "- def-map crates {}", stats.def_map.crate_count)
             .expect("string writes should not fail");
-        writeln!(
-            dump,
-            "- semantic targets {}",
-            stats.semantic_ir.target_count
-        )
-        .expect("string writes should not fail");
-        writeln!(dump, "- body targets {}", stats.body_ir.target_count)
+        writeln!(dump, "- semantic crates {}", stats.semantic_ir.crate_count)
+            .expect("string writes should not fail");
+        writeln!(dump, "- body crates {}", stats.body_ir.crate_count)
             .expect("string writes should not fail");
     }
 
@@ -426,30 +421,30 @@ impl HostFixture {
         let stats = project.snapshot().stats();
 
         writeln!(dump, "body ir stats `{label}`").expect("string writes should not fail");
-        writeln!(dump, "- targets {}", stats.body_ir.target_count)
+        writeln!(dump, "- crates {}", stats.body_ir.crate_count)
             .expect("string writes should not fail");
         writeln!(
             dump,
-            "- complete targets {}",
-            stats.body_ir.complete_target_count
+            "- complete crates {}",
+            stats.body_ir.complete_crate_count
         )
         .expect("string writes should not fail");
         writeln!(
             dump,
-            "- partial targets {}",
-            stats.body_ir.partial_target_count
+            "- partial crates {}",
+            stats.body_ir.partial_crate_count
         )
         .expect("string writes should not fail");
         writeln!(
             dump,
-            "- missing targets {}",
-            stats.body_ir.missing_target_count
+            "- missing crates {}",
+            stats.body_ir.missing_crate_count
         )
         .expect("string writes should not fail");
         writeln!(
             dump,
-            "- targets skipped by policy {}",
-            stats.body_ir.skipped_by_policy_target_count
+            "- crates skipped by policy {}",
+            stats.body_ir.skipped_by_policy_crate_count
         )
         .expect("string writes should not fail");
         writeln!(dump, "- bodies {}", stats.body_ir.body_count)
@@ -473,10 +468,10 @@ impl HostFixture {
             .expect("fixture path should resolve to file contexts");
         let targets = contexts
             .iter()
-            .flat_map(|context| context.targets.iter().copied())
+            .flat_map(|context| context.crates.iter().copied())
             .collect::<Vec<_>>();
         let analysis = snapshot
-            .analysis_for_targets(&targets)
+            .analysis_for_crates(&targets)
             .expect("fixture completion analysis should materialize");
         let mut completions = Vec::new();
         let offset = offset
@@ -484,7 +479,7 @@ impl HostFixture {
             .expect("fixture completion offset should fit into u32");
 
         for context in contexts {
-            for target in context.targets {
+            for target in context.crates {
                 let mut query = CompletionQuery::new(target, context.file, offset)
                     .with_client_capabilities(
                         CompletionClientCapabilities::default().with_snippet_support(true),
@@ -537,7 +532,7 @@ impl HostFixture {
         (
             symbol.kind.to_string(),
             symbol.name.clone(),
-            self.render_target_ref(project, symbol.target),
+            self.render_crate_ref(project, symbol.crate_ref),
             self.symbol_path(project, symbol),
         )
     }
@@ -551,17 +546,20 @@ impl HostFixture {
     }
 
     fn symbol_path(&self, project: &Project, symbol: &WorkspaceSymbol) -> String {
-        let package = self.package(project, symbol.target.package);
+        let package = self.package(project, symbol.crate_ref.package);
         let path = package
             .file_path(symbol.file_id)
             .expect("workspace symbol file should be parsed");
         self.display_path(path)
     }
 
-    fn render_target_ref(&self, project: &Project, target_ref: TargetRef) -> String {
-        let package = self.package(project, target_ref.package);
+    fn render_crate_ref(&self, project: &Project, crate_ref: CrateRef) -> String {
+        let package = self.package(project, crate_ref.package);
+        // Crate ids are allocated in parsed Cargo-target order. Use that stable source shape here
+        // because the semantic payload may have been offloaded by the time the fixture is rendered.
         let target = package
-            .target(target_ref.target)
+            .targets()
+            .get(crate_ref.crate_id.0)
             .expect("target should exist while rendering host fixture");
         format!("{}[{}]", package.package_name(), target.kind)
     }
@@ -661,13 +659,13 @@ fn nominal_type_names_at(
     let package_slot = ProjectFixture::package_slot_by_name_in(snapshot.parse_db(), package_name);
     let file_id = ProjectFixture::file_id_for_path_in(snapshot.parse_db(), path);
     let target = snapshot
-        .targets_for_file(package_slot, file_id)
+        .crates_for_file(package_slot, file_id)
         .expect("fixture target lookup should start")
         .into_iter()
         .next()
         .expect("fixture file should be owned by a target");
     let analysis = snapshot
-        .analysis_for_targets(&[target])
+        .analysis_for_crates(&[target])
         .expect("fixture analysis should materialize");
     let Some(ty) = analysis
         .type_at(target, file_id, offset)
@@ -685,32 +683,30 @@ fn nominal_type_names_at(
         .def_map
         .read_txn(PackageLoader::resident_only("resident project fixture"));
     let mut names = Vec::new();
-    for candidate in ReferencePeelingCandidates::new(&ty) {
-        for ty in candidate.ty().as_nominals() {
-            let Some(target_ref) = ty.def.origin.as_target_ref() else {
-                continue;
-            };
-            let Some(local_def) = semantic_ir
-                .items(target_ref)
-                .expect("fixture semantic IR should load while rendering nominal types")
-                .expect("Item store must exist")
-                .semantic_item_view(ty.def.into())
-                .and_then(|view| view.local_def())
-            else {
-                continue;
-            };
-            let Some(target_ref) = local_def.origin.as_target_ref() else {
-                continue;
-            };
-            let Some(local_def) = def_map
-                .def_map(target_ref)
-                .expect("fixture def-map should load while rendering nominal types")
-                .and_then(|def_map| def_map.local_def(local_def.local_def))
-            else {
-                continue;
-            };
-            names.push(local_def.name.to_string());
-        }
+    for ty in ty.nominal_type_defs() {
+        let Some(crate_ref) = ty.origin.as_crate_ref() else {
+            continue;
+        };
+        let Some(local_def) = semantic_ir
+            .items(crate_ref)
+            .expect("fixture semantic IR should load while rendering nominal types")
+            .expect("Item store must exist")
+            .semantic_item_view(ty.into())
+            .and_then(|view| view.local_def())
+        else {
+            continue;
+        };
+        let Some(crate_ref) = local_def.origin.as_crate_ref() else {
+            continue;
+        };
+        let Some(local_def) = def_map
+            .def_map(crate_ref)
+            .expect("fixture def-map should load while rendering nominal types")
+            .and_then(|def_map| def_map.local_def(local_def.local_def))
+        else {
+            continue;
+        };
+        names.push(local_def.name.to_string());
     }
     names
 }

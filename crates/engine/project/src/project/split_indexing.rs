@@ -10,7 +10,7 @@
 //! - `finish` finishes the configured deferred payloads for resident packages and then applies
 //!   normal package residency.
 //! - `materialize` makes the analysis surface needed by one query available, such as one file for
-//!   hover or a mix of files and targets for reference search.
+//!   hover or a mix of files and crates for reference search.
 //! - `DetachedSplitIndexing` and `merge_finished` let an LSP background clone finish deferred
 //!   payloads and merge package-wise improvements back into the saved project.
 //!
@@ -19,9 +19,9 @@
 //! with an older partial view.
 
 use anyhow::Context as _;
-use rg_body_ir::{BodyIrBuildPolicy, BodyIrFile, PackageBodies, TargetBodiesCoverage};
+use rg_body_ir::{BodyIrBuildPolicy, BodyIrFile, CrateBodiesCoverage, PackageBodies};
 use rg_def_map::PackageSlot;
-use rg_ir_model::TargetRef;
+use rg_ir_model::CrateRef;
 use rg_parse::FileId;
 use rg_std::{MemorySize, Shrink, UniqueVec};
 
@@ -36,20 +36,20 @@ use crate::{
 
 /// Source surface whose deferred analysis data must be available before a query runs.
 ///
-/// File surfaces are used when a query is tied to a concrete source file. Target surfaces are
-/// broader: preparing a target means that all deferred data in its owning package may be needed.
+/// File surfaces are used when a query is tied to a concrete source file. Crate surfaces are
+/// broader: preparing a crate means that all deferred data in its owning package may be needed.
 /// Reference search can need both shapes when a text prefilter narrows some work to files while
-/// another part of the query still needs whole-target coverage.
+/// another part of the query still needs whole-crate coverage.
 #[derive(Debug, Clone, Copy)]
 pub enum AnalysisSurface<'a> {
     /// Prepare deferred data needed by analysis rooted in these package-local source files.
     Files(&'a [(PackageSlot, FileId)]),
-    /// Prepare all deferred data for the packages that own these targets.
-    Targets(&'a [TargetRef]),
-    /// Prepare exact file coverage first, then finish target-owning packages.
-    FilesAndTargets {
+    /// Prepare all deferred data for the packages that own these crates.
+    Crates(&'a [CrateRef]),
+    /// Prepare exact file coverage first, then finish crate-owning packages.
+    FilesAndCrates {
         files: &'a [(PackageSlot, FileId)],
-        targets: &'a [TargetRef],
+        crates: &'a [CrateRef],
     },
 }
 
@@ -158,10 +158,10 @@ fn materialize_surface(
 ) -> anyhow::Result<()> {
     match surface {
         AnalysisSurface::Files(files) => materialize_files(state, files),
-        AnalysisSurface::Targets(targets) => materialize_targets(state, targets),
-        AnalysisSurface::FilesAndTargets { files, targets } => {
+        AnalysisSurface::Crates(crates) => materialize_crates(state, crates),
+        AnalysisSurface::FilesAndCrates { files, crates } => {
             materialize_files(state, files)?;
-            materialize_targets(state, targets)
+            materialize_crates(state, crates)
         }
     }
 }
@@ -191,8 +191,8 @@ fn merge_finished_project(
 
 /// Returns whether the current deferred-analysis payload can be written to a durable package cache.
 ///
-/// For this split-indexing mode the deferred payload is Body IR. Complete target coverage is
-/// durable, and policy-skipped targets are durable when the configured eager policy would skip the
+/// For this split-indexing mode the deferred payload is Body IR. Complete crate coverage is
+/// durable, and policy-skipped crates are durable when the configured eager policy would skip the
 /// whole package anyway. Partial selected-file coverage is intentionally transient: writing it as a
 /// package artifact would make future startup-cache reads look complete while silently missing
 /// bodies that were never materialized.
@@ -207,10 +207,13 @@ pub(crate) fn package_deferred_payload_is_durable(
         return false;
     };
 
-    body_ir.targets().iter().all(|target| {
-        target.coverage().is_complete()
+    body_ir.crates().iter().all(|crate_bodies| {
+        crate_bodies.coverage().is_complete()
             || (!state.body_ir_policy.should_lower_package(parse_package)
-                && matches!(target.coverage(), TargetBodiesCoverage::SkippedByPolicy))
+                && matches!(
+                    crate_bodies.coverage(),
+                    CrateBodiesCoverage::SkippedByPolicy
+                ))
     })
 }
 
@@ -297,24 +300,24 @@ fn body_file_needs_materialization(
     };
 
     if body_ir
-        .targets()
+        .crates()
         .iter()
-        .all(|target| target.coverage().is_complete())
+        .all(|crate_bodies| crate_bodies.coverage().is_complete())
     {
         return false;
     }
 
-    !body_ir.targets().iter().any(|target| {
-        target
+    !body_ir.crates().iter().any(|crate_bodies| {
+        crate_bodies
             .bodies()
             .iter()
             .any(|body| body.source().is_written() && body.source().file_id == file)
     })
 }
 
-/// Treat target readiness as package readiness, because deferred payloads are package-shaped.
-fn materialize_targets(state: &mut ProjectState, targets: &[TargetRef]) -> anyhow::Result<()> {
-    let packages = PhasePackageSet::from_targets(targets);
+/// Treat crate readiness as package readiness, because deferred payloads are package-shaped.
+fn materialize_crates(state: &mut ProjectState, crates: &[CrateRef]) -> anyhow::Result<()> {
+    let packages = PhasePackageSet::from_crates(crates);
     materialize_packages(state, packages.as_slice())
 }
 
@@ -517,9 +520,9 @@ fn unfinished_split_indexing_packages(state: &ProjectState) -> Vec<PackageSlot> 
             continue;
         };
         if body_ir
-            .targets()
+            .crates()
             .iter()
-            .all(|target| target.coverage().is_complete())
+            .all(|crate_bodies| crate_bodies.coverage().is_complete())
         {
             continue;
         }
@@ -542,9 +545,9 @@ fn packages_needing_finished_split_indexing(
             continue;
         };
         if body_ir
-            .targets()
+            .crates()
             .iter()
-            .all(|target| target.coverage().is_complete())
+            .all(|crate_bodies| crate_bodies.coverage().is_complete())
         {
             continue;
         }
@@ -564,9 +567,9 @@ fn finished_resident_packages(state: &ProjectState, packages: &[PackageSlot]) ->
             continue;
         };
         if body_ir
-            .targets()
+            .crates()
             .iter()
-            .all(|target| target.coverage().is_complete())
+            .all(|crate_bodies| crate_bodies.coverage().is_complete())
         {
             finished.push(package);
         }
@@ -581,11 +584,11 @@ fn extend_with_materialized_body_files(
     body_ir: &PackageBodies,
     files: &mut UniqueVec<BodyIrFile>,
 ) {
-    for target in body_ir.targets() {
-        if !target.coverage().is_materialized() {
+    for crate_bodies in body_ir.crates() {
+        if !crate_bodies.coverage().is_materialized() {
             continue;
         }
-        for body in target.bodies() {
+        for body in crate_bodies.bodies() {
             let source = body.source();
             if source.is_written() {
                 files.push(BodyIrFile::new(package, source.file_id));
@@ -594,17 +597,17 @@ fn extend_with_materialized_body_files(
     }
 }
 
-/// Return whether `finished` can replace `current` without losing target coverage.
+/// Return whether `finished` can replace `current` without losing crate coverage.
 ///
 /// Equal coverage is not treated as an improvement: replacing identical packages would create extra
 /// churn and can still disturb residency/cache state.
 fn body_payload_is_coverage_improvement(current: &PackageBodies, finished: &PackageBodies) -> bool {
-    if current.targets().len() != finished.targets().len() {
+    if current.crates().len() != finished.crates().len() {
         return false;
     }
 
     let mut improved = false;
-    for (current, finished) in current.targets().iter().zip(finished.targets()) {
+    for (current, finished) in current.crates().iter().zip(finished.crates()) {
         let current_rank = body_coverage_rank(current.coverage());
         let finished_rank = body_coverage_rank(finished.coverage());
         if finished_rank < current_rank {
@@ -618,10 +621,10 @@ fn body_payload_is_coverage_improvement(current: &PackageBodies, finished: &Pack
     improved
 }
 
-fn body_coverage_rank(coverage: TargetBodiesCoverage) -> u8 {
+fn body_coverage_rank(coverage: CrateBodiesCoverage) -> u8 {
     match coverage {
-        TargetBodiesCoverage::Missing | TargetBodiesCoverage::SkippedByPolicy => 0,
-        TargetBodiesCoverage::Partial => 1,
-        TargetBodiesCoverage::Complete => 2,
+        CrateBodiesCoverage::Missing | CrateBodiesCoverage::SkippedByPolicy => 0,
+        CrateBodiesCoverage::Partial => 1,
+        CrateBodiesCoverage::Complete => 2,
     }
 }

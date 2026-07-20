@@ -1,3 +1,5 @@
+//! End-to-end rename behavior at the engine service boundary.
+
 use expect_test::expect;
 use test_fixture::testonly::MarkedText;
 
@@ -97,7 +99,7 @@ pub fn helper() {
 }
 
 #[tokio::test]
-async fn query_rebuilds_and_retries_after_saved_source_changes_without_notification() {
+async fn stale_source_query_returns_neutral_then_recovers_through_the_command_queue() {
     let fixture = LspEngineFixture::initialized(
         r#"
         //- /Cargo.toml
@@ -117,19 +119,33 @@ async fn query_rebuilds_and_retries_after_saved_source_changes_without_notificat
     .await;
 
     // Simulate a watcher delay: the disk advances, but the saved project still describes `User`.
-    // Rename needs exact source text, so its first attempt detects the stale revision. The worker
-    // rebuilds that path and runs the same query once more against `Acct`.
+    // Rename needs exact source text, so its first attempt detects the stale revision and returns
+    // no edit. Recovery is queued behind that query instead of rebuilding on its call stack.
     fixture.write_file_without_notification(
         "src/lib.rs",
         "pub struct Acct;\n\npub fn demo() {\n    let _user: Acct;\n}\n",
     );
     fixture
         .check_rename(
-            "rename after unnotified source change",
+            "rename that discovers an unnotified source change",
             "rename",
             "Entity",
             expect![[r#"
-                rename after unnotified source change
+                rename that discovers an unnotified source change
+                - none
+            "#]],
+        )
+        .await;
+
+    // The recovery command was enqueued before the neutral response was published, so this second
+    // request runs after the normal path-change pipeline has published the `Acct` generation.
+    fixture
+        .check_rename(
+            "rename after queued source recovery",
+            "rename",
+            "Entity",
+            expect![[r#"
+                rename after queued source recovery
                 - /src/lib.rs
                   - 0:11-0:15 -> Entity
                   - 3:15-3:19 -> Entity

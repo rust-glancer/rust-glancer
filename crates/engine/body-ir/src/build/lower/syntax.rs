@@ -5,15 +5,15 @@ use rg_syntax::{
     ast::{self, HasGenericArgs as _, PathSegmentKind},
 };
 
-use rg_ir_model::{
-    BodyPath, BodyPathSegment, BodyPathSegmentArgs, BodyPathSegmentKind,
-    items::{GenericArg, PrimitiveTy, TypePath, TypeRef, UnsignedIntTy},
-};
-use rg_item_tree::FromAst as _;
+use rg_ir_model::{PrimitiveTy, UnsignedIntTy};
+use rg_item_tree::{FromAst as _, GenericArg, TypePath, TypeRef};
 use rg_parse::{FileId, Span};
 use rg_text::Name;
 
-use crate::ir::{BodySource, LabelData, LiteralKind};
+use crate::ir::{
+    BodyPath, BodyPathSegment, BodyPathSegmentArgs, BodyPathSegmentKind, BodySource, LabelData,
+    LiteralKind,
+};
 
 use super::body::BodyLowering;
 
@@ -57,19 +57,19 @@ impl BodyLowering<'_> {
     }
 
     pub(super) fn intern_ast_name(&mut self, name: ast::Name) -> Name {
-        self.intern_name_text(name.text())
+        self.interner.intern(name.text())
     }
 
     pub(super) fn intern_ast_name_ref(&mut self, name_ref: ast::NameRef) -> Name {
-        self.intern_name_text(name_ref.text())
+        self.interner.intern(name_ref.text())
     }
 
     pub(super) fn intern_ast_name_or_name_ref(&mut self, name: ast::NameOrNameRef) -> Name {
-        self.intern_name_text(name.text())
+        self.interner.intern(name.text())
     }
 
     pub(super) fn intern_ast_lifetime(&mut self, lifetime: ast::Lifetime) -> Name {
-        self.intern_name_text(lifetime.text())
+        self.interner.intern(lifetime.text())
     }
 
     pub(super) fn lower_label(&mut self, label: Option<ast::Label>) -> Option<LabelData> {
@@ -149,7 +149,7 @@ impl BodyLowering<'_> {
                 // `$crate` is meaningful only for macro-generated syntax, where the temporary
                 // lowering context knows which crate defined the macro.
                 let kind = if name.as_str() == "$crate" {
-                    BodyPathSegmentKind::DollarCrate(self.dollar_crate_target()?)
+                    BodyPathSegmentKind::DollarCrate(self.dollar_crate()?)
                 } else {
                     BodyPathSegmentKind::Name(name)
                 };
@@ -233,12 +233,6 @@ impl BodyLowering<'_> {
 
         Some(BodyPathSegmentArgs::Parenthesized(text))
     }
-
-    fn intern_name_text(&mut self, text: impl AsRef<str>) -> Name {
-        let text = text.as_ref();
-        self.interner
-            .intern(text.strip_prefix("r#").unwrap_or(text))
-    }
 }
 
 pub(super) fn source_for(file_id: FileId, syntax: &rg_syntax::SyntaxNode) -> BodySource {
@@ -247,7 +241,7 @@ pub(super) fn source_for(file_id: FileId, syntax: &rg_syntax::SyntaxNode) -> Bod
 
 #[cfg(test)]
 mod tests {
-    use rg_ir_model::items::{FloatTy, PrimitiveTy, UnsignedIntTy};
+    use rg_ir_model::{FloatTy, PrimitiveTy, UnsignedIntTy};
     use rg_syntax::{AstNode as _, Edition, SourceFile, ast};
 
     use crate::ir::LiteralKind;

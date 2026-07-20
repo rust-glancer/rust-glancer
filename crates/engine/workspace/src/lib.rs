@@ -14,8 +14,8 @@ pub use self::{
     cargo::{CargoMetadataConfig, CargoMetadataTarget, LoadedCargoMetadata},
     lower::WorkspaceLoweringConfig,
     model::{
-        Package, PackageDependency, PackageId, PackageOrigin, PackageSlot, PackageSource,
-        RustEdition, Target, TargetKind, WorkspaceMetadata,
+        CargoTarget, Package, PackageDependency, PackageId, PackageOrigin, PackageSlot,
+        PackageSource, TargetKind, WorkspaceMetadata,
     },
     rustc::RustcTarget,
     sysroot::{SysrootCrate, SysrootSources},

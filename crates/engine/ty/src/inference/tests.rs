@@ -1,17 +1,31 @@
 use rg_ir_model::{
-    DefMapRef, ExprId, FunctionId, FunctionRef, PackageSlot, StructId, TargetId, TargetRef,
-    TraitId, TraitRef, TypeDefId, TypeDefRef,
-    items::{FloatTy, SignedIntTy, TypeRef, UnsignedIntTy},
+    BodyId, BodyRef, CrateRef, DefMapRef, ExprId, FloatTy, FunctionId, FunctionRef, GenericDefRef,
+    OpaqueTyId, OpaqueTyRef, PackageSlot, SignedIntTy, StructId, TraitDefRef, TraitId, TypeDefId,
+    TypeDefRef, UnsignedIntTy,
 };
 
-use super::{ExplicitTypeArgInstantiationBuilder, InferenceTable, UnknownTypeInstantiationBuilder};
-use crate::{ClosureTyId, GenericArg, NominalTy, OpaqueTraitBound, PrimitiveTy, Ty};
+use super::{InferenceTable, UnknownTypeInstantiationBuilder};
+use crate::{
+    AdtTy, AliasTy, Clause, ClosureTyId, GenericArg, GenericArgs, OpaqueTy, PrimitiveTy,
+    TraitApplication, Ty,
+};
 
 fn def_map_ref() -> DefMapRef {
-    DefMapRef::Target(TargetRef {
+    DefMapRef::Crate(crate_ref())
+}
+
+fn crate_ref() -> CrateRef {
+    CrateRef {
         package: PackageSlot(0),
-        target: TargetId(0),
-    })
+        crate_id: rg_ir_model::CrateId(0),
+    }
+}
+
+fn body_ref() -> BodyRef {
+    BodyRef {
+        crate_ref: crate_ref(),
+        body: BodyId(0),
+    }
 }
 
 fn type_def(index: usize) -> TypeDefRef {
@@ -21,57 +35,57 @@ fn type_def(index: usize) -> TypeDefRef {
     }
 }
 
-fn trait_ref(index: usize) -> TraitRef {
-    TraitRef {
-        origin: def_map_ref(),
-        id: TraitId(index),
-    }
-}
-
 fn user_ty() -> Ty {
-    Ty::nominal(NominalTy::bare(type_def(0)))
+    Ty::adt(AdtTy::bare(type_def(0)))
 }
 
 fn project_ty() -> Ty {
-    Ty::nominal(NominalTy::bare(type_def(1)))
+    Ty::adt(AdtTy::bare(type_def(1)))
 }
 
 fn closure_ty(index: usize) -> Ty {
-    Ty::closure(ClosureTyId::new(ExprId(index)))
+    Ty::closure(
+        ClosureTyId::new(body_ref(), ExprId(index)),
+        vec![user_ty()],
+        project_ty(),
+    )
 }
 
-fn function_item_ty(index: usize) -> Ty {
-    Ty::function_item(FunctionRef {
-        origin: def_map_ref(),
-        id: FunctionId(index),
-    })
+fn fn_def_ty(index: usize) -> Ty {
+    Ty::fn_def_with_args(
+        FunctionRef {
+            origin: def_map_ref(),
+            id: FunctionId(index),
+        },
+        GenericArgs::empty(),
+    )
 }
 
 fn vec_ty(inner: Ty) -> Ty {
-    Ty::Nominal(NominalTy {
+    Ty::Adt(AdtTy {
         def: type_def(10),
-        args: vec![GenericArg::Type(Box::new(inner))],
+        args: vec![GenericArg::Type(Box::new(inner))].into(),
     })
 }
 
 fn concrete_vec_ty(inner: Ty) -> Ty {
-    Ty::nominal(NominalTy {
+    Ty::adt(AdtTy {
         def: type_def(10),
-        args: vec![GenericArg::Type(Box::new(inner))],
+        args: vec![GenericArg::Type(Box::new(inner))].into(),
     })
 }
 
-fn opaque_bound(trait_index: usize, arg: Ty) -> OpaqueTraitBound {
-    OpaqueTraitBound {
-        trait_ref: trait_ref(trait_index),
-        args: vec![GenericArg::Type(Box::new(arg))],
-    }
-}
-
-fn opaque_ty(bounds: Vec<OpaqueTraitBound>) -> Ty {
-    Ty::Opaque {
-        bounds: bounds.into_iter().collect(),
-    }
+fn opaque_ty(owner_index: usize, occurrence: usize, arg: Ty) -> Ty {
+    Ty::Alias(AliasTy::Opaque(OpaqueTy {
+        opaque: OpaqueTyRef {
+            owner: GenericDefRef::Function(FunctionRef {
+                origin: def_map_ref(),
+                id: FunctionId(owner_index),
+            }),
+            id: OpaqueTyId(occurrence),
+        },
+        args: vec![GenericArg::Type(Box::new(arg))].into(),
+    }))
 }
 
 #[test]
@@ -167,9 +181,9 @@ fn finalizes_solved_variables_inside_nominal_containers() {
 
     assert_eq!(
         table.finalize(&vec_ty(element)),
-        Ty::nominal(NominalTy {
+        Ty::adt(AdtTy {
             def: type_def(10),
-            args: vec![GenericArg::Type(Box::new(user_ty()))],
+            args: vec![GenericArg::Type(Box::new(user_ty()))].into(),
         })
     );
 }
@@ -188,21 +202,24 @@ fn closure_types_round_trip_through_inference_traversal() {
     let ty = closure_ty(7);
     let infer_ty = ty.clone();
 
-    assert_eq!(infer_ty, Ty::Closure(ClosureTyId::new(ExprId(7))));
+    assert_eq!(infer_ty, closure_ty(7));
     assert_eq!(table.finalize(&infer_ty), ty);
 }
 
 #[test]
-fn function_item_types_round_trip_through_inference_traversal() {
+fn fn_def_types_round_trip_through_inference_traversal() {
     let table = InferenceTable::new();
     let function = FunctionRef {
         origin: def_map_ref(),
         id: FunctionId(7),
     };
-    let ty = function_item_ty(7);
+    let ty = fn_def_ty(7);
     let infer_ty = ty.clone();
 
-    assert_eq!(infer_ty, Ty::FunctionItem(function));
+    assert_eq!(
+        infer_ty,
+        Ty::fn_def_with_args(function, GenericArgs::empty())
+    );
     assert_eq!(table.finalize(&infer_ty), ty);
 }
 
@@ -286,6 +303,57 @@ fn canonicalize_expands_solved_slots_inside_type_shapes() {
 }
 
 #[test]
+fn canonicalizes_solved_slots_inside_trait_clauses() {
+    let mut table = InferenceTable::new();
+    let subject = table.new_type_var();
+    assert!(table.unify(&subject, &user_ty()));
+    let trait_ref = TraitDefRef {
+        origin: def_map_ref(),
+        id: TraitId(0),
+    };
+
+    let clause = Clause::Implemented(TraitApplication {
+        def: trait_ref,
+        args: vec![GenericArg::Type(Box::new(subject))].into(),
+    });
+
+    assert_eq!(
+        table.canonicalize_clause(&clause),
+        Clause::Implemented(TraitApplication {
+            def: trait_ref,
+            args: vec![GenericArg::Type(Box::new(user_ty()))].into(),
+        })
+    );
+}
+
+#[test]
+fn generic_arg_equivalence_renames_inference_ids_bijectively() {
+    let mut table = InferenceTable::new();
+    let lhs_var = table.new_type_var();
+    let rhs_var = table.new_type_var();
+    let distinct_rhs_var = table.new_type_var();
+
+    let lhs: GenericArgs = vec![
+        GenericArg::Type(Box::new(vec_ty(lhs_var.clone()))),
+        GenericArg::Type(Box::new(lhs_var)),
+    ]
+    .into();
+    let equivalent_rhs: GenericArgs = vec![
+        GenericArg::Type(Box::new(vec_ty(rhs_var.clone()))),
+        GenericArg::Type(Box::new(rhs_var.clone())),
+    ]
+    .into();
+    let distinct_rhs: GenericArgs = vec![
+        GenericArg::Type(Box::new(vec_ty(rhs_var))),
+        GenericArg::Type(Box::new(distinct_rhs_var)),
+    ]
+    .into();
+
+    assert!(lhs.equivalent_modulo_inference_ids(&equivalent_rhs));
+    assert!(!lhs.equivalent_modulo_inference_ids(&distinct_rhs));
+}
+
+#[test]
 fn later_evidence_refines_unknown_children_inside_solved_slots() {
     let mut table = InferenceTable::new();
     let values = table.new_type_var();
@@ -299,35 +367,42 @@ fn later_evidence_refines_unknown_children_inside_solved_slots() {
 }
 
 #[test]
-fn single_opaque_bound_infers_through_matching_trait_args() {
+fn merges_complementary_unknown_children_without_weakening_either_side() {
+    let table = InferenceTable::new();
+
+    assert_eq!(
+        table.merge_ty_evidence(
+            &Ty::tuple(vec![user_ty(), Ty::Unknown]),
+            &Ty::tuple(vec![Ty::Unknown, project_ty()]),
+        ),
+        Ty::tuple(vec![user_ty(), project_ty()]),
+    );
+}
+
+#[test]
+fn same_opaque_occurrence_infers_through_generic_args() {
     let mut table = InferenceTable::new();
     let element = table.new_type_var();
 
     assert!(table.unify(
-        &opaque_ty(vec![opaque_bound(0, element.clone())]),
-        &opaque_ty(vec![opaque_bound(0, user_ty())])
+        &opaque_ty(0, 0, element.clone()),
+        &opaque_ty(0, 0, user_ty())
     ));
 
     assert_eq!(table.finalize(&element), user_ty());
 }
 
 #[test]
-fn broad_opaque_bounds_do_not_infer_from_partial_bound_overlap() {
+fn distinct_opaque_occurrences_do_not_unify_even_under_one_owner() {
     let mut table = InferenceTable::new();
-    let opaque = table.new_type_var();
     let element = table.new_type_var();
 
-    assert!(table.unify(
-        &opaque,
-        &opaque_ty(vec![
-            opaque_bound(0, element.clone()),
-            opaque_bound(1, project_ty()),
-        ])
+    assert!(!table.unify(
+        &opaque_ty(0, 0, element.clone()),
+        &opaque_ty(0, 1, user_ty())
     ));
-    assert!(!table.unify(&opaque, &opaque_ty(vec![opaque_bound(0, user_ty())])));
 
     assert_eq!(table.finalize(&element), Ty::Unknown);
-    assert!(matches!(table.finalize(&opaque), Ty::Opaque { .. }));
 }
 
 #[test]
@@ -337,10 +412,7 @@ fn unifies_same_definition_nominal_generic_arguments() {
 
     assert!(table.unify(&vec_ty(element.clone()), &vec_ty(user_ty())));
 
-    assert_eq!(
-        table.finalize(&element),
-        Ty::nominal(NominalTy::bare(type_def(0)))
-    );
+    assert_eq!(table.finalize(&element), Ty::adt(AdtTy::bare(type_def(0))));
 }
 
 #[test]
@@ -365,90 +437,6 @@ fn leaves_root_unknown_uninstantiated() {
 
     assert_eq!(builder.ty_from_ty(&Ty::Unknown), Ty::Unknown);
     assert!(!builder.used_type_vars());
-}
-
-#[test]
-fn explicit_type_arg_builder_instantiates_root_infer() {
-    let mut table = InferenceTable::new();
-    let inferred = {
-        let mut builder = ExplicitTypeArgInstantiationBuilder::new(&mut table);
-        let inferred = builder.ty_from_arg(&TypeRef::Infer, &Ty::Unknown);
-        assert!(builder.used_type_vars());
-        inferred
-    };
-
-    assert!(table.unify(&inferred, &user_ty()));
-
-    assert_eq!(table.finalize(&inferred), user_ty());
-}
-
-#[test]
-fn explicit_type_arg_builder_instantiates_nested_infer() {
-    let mut table = InferenceTable::new();
-    let inferred = {
-        let mut builder = ExplicitTypeArgInstantiationBuilder::new(&mut table);
-        let inferred = builder.ty_from_arg(
-            &TypeRef::Tuple(vec![TypeRef::Infer]),
-            &Ty::Tuple(vec![Ty::Unknown]),
-        );
-        assert!(builder.used_type_vars());
-        inferred
-    };
-
-    assert!(table.unify(&inferred, &Ty::Tuple(vec![user_ty()])));
-
-    assert_eq!(table.finalize(&inferred), Ty::Tuple(vec![user_ty()]));
-}
-
-#[test]
-fn explicit_type_arg_builder_instantiates_nested_infer_from_unknown_fallback() {
-    let cases = [
-        (
-            TypeRef::Tuple(vec![TypeRef::Infer]),
-            Ty::Tuple(vec![user_ty()]),
-        ),
-        (
-            TypeRef::Array {
-                inner: Box::new(TypeRef::Infer),
-                len: Some("3".to_owned()),
-            },
-            Ty::Array {
-                inner: Box::new(user_ty()),
-                len: Some("3".to_owned()),
-            },
-        ),
-        (
-            TypeRef::Slice(Box::new(TypeRef::Infer)),
-            Ty::Slice(Box::new(user_ty())),
-        ),
-    ];
-
-    for (written_ty, expected_ty) in cases {
-        let mut table = InferenceTable::new();
-        let inferred = {
-            let mut builder = ExplicitTypeArgInstantiationBuilder::new(&mut table);
-            let inferred = builder.ty_from_arg(&written_ty, &Ty::Unknown);
-            assert!(builder.used_type_vars());
-            inferred
-        };
-
-        assert!(table.unify(&inferred, &expected_ty));
-
-        assert_eq!(table.finalize(&inferred), expected_ty);
-    }
-}
-
-#[test]
-fn explicit_type_arg_builder_preserves_concrete_args() {
-    let mut table = InferenceTable::new();
-    let mut builder = ExplicitTypeArgInstantiationBuilder::new(&mut table);
-    let inferred = builder.ty_from_arg(
-        &TypeRef::Tuple(vec![TypeRef::Unit]),
-        &Ty::Tuple(vec![Ty::Unit]),
-    );
-
-    assert!(!builder.used_type_vars());
-    assert_eq!(table.finalize(&inferred), Ty::Tuple(vec![Ty::Unit]));
 }
 
 #[test]

@@ -9,17 +9,13 @@ use rg_syntax::{
     utils::normalized_syntax_text,
 };
 
-use rg_ir_model::{
-    ExprId, Mutability, ScopeId,
-    items::{FieldKey, GenericArg},
-};
-use rg_item_tree::{FromAst as _, MaybeFromAst as _, RecordExprFieldAst};
+use rg_ir_model::{ExprId, FieldKey, Mutability, ScopeId};
+use rg_item_tree::{FromAst as _, GenericArg};
 use rg_parse::{Span, TextSpan};
 
 use crate::ir::{
-    BindingData, BindingKind, ClosureCapture, ClosureKind, ClosureParamData, ExprAssignOp,
-    ExprBinaryOp, ExprKind, ExprRangeKind, ExprUnaryOp, ExprWrapperKind, MatchArmData,
-    RecordExprField, RecordExprSpread, RecordFieldSyntax,
+    BindingData, BindingKind, ClosureParamData, ExprKind, ExprWrapperKind, MatchArmData,
+    RecordExprField, RecordExprSpread,
 };
 
 use super::body::BodyLowering;
@@ -177,7 +173,7 @@ impl BodyLowering<'_> {
     fn lower_range_expr(&mut self, range: ast::RangeExpr, scope: ScopeId) -> ExprId {
         let start = range.start().map(|start| self.lower_expr(start, scope));
         let end = range.end().map(|end| self.lower_expr(end, scope));
-        let kind = range.op_kind().map(|op| ExprRangeKind::from_ast(&op, ()));
+        let kind = range.op_kind().map(Self::expr_range_kind_from_ast);
 
         self.alloc_expr(range.syntax(), scope, ExprKind::Range { start, end, kind })
     }
@@ -190,7 +186,7 @@ impl BodyLowering<'_> {
     }
 
     fn lower_unary_expr(&mut self, prefix: ast::PrefixExpr, scope: ScopeId) -> ExprId {
-        let op = prefix.op_kind().map(|op| ExprUnaryOp::from_ast(&op, ()));
+        let op = prefix.op_kind().map(Self::unary_op_from_ast);
         let expr = prefix.expr().map(|expr| self.lower_expr(expr, scope));
 
         self.alloc_expr(prefix.syntax(), scope, ExprKind::Unary { op, expr })
@@ -214,7 +210,7 @@ impl BodyLowering<'_> {
         op: Option<BinaryOp>,
         rhs: Option<ExprId>,
     ) -> ExprId {
-        if let Some(assign_op) = op.and_then(|op| ExprAssignOp::maybe_from_ast(&op, ())) {
+        if let Some(assign_op) = op.and_then(Self::assignment_op_from_ast) {
             return self.alloc_expr(
                 syntax,
                 scope,
@@ -231,7 +227,7 @@ impl BodyLowering<'_> {
             scope,
             ExprKind::Binary {
                 lhs,
-                op: op.and_then(|op| ExprBinaryOp::maybe_from_ast(&op, ())),
+                op: op.and_then(Self::binary_op_from_ast),
                 rhs,
             },
         )
@@ -270,8 +266,8 @@ impl BodyLowering<'_> {
         let body = closure
             .body()
             .map(|body| self.lower_expr(body, closure_scope));
-        let capture = ClosureCapture::from_ast(&closure, ());
-        let kind = ClosureKind::from_ast(&closure, ());
+        let capture = Self::closure_capture_from_ast(&closure);
+        let kind = Self::closure_kind_from_ast(&closure);
 
         self.alloc_expr(
             closure.syntax(),
@@ -538,7 +534,7 @@ impl BodyLowering<'_> {
         let method_name = name_ref
             .clone()
             .map(|name| self.intern_ast_name_ref(name))
-            .unwrap_or_else(|| self.interner.intern("<missing>"));
+            .unwrap_or_else(|| self.interner.intern_missing());
         let method_name_span = name_ref
             .as_ref()
             .map(|name| self.source(name.syntax()).span);
@@ -649,10 +645,7 @@ impl BodyLowering<'_> {
         let key_span = self.source(field_name.syntax()).span;
         let key = FieldKey::Named(self.intern_ast_name_ref(field_name));
         let source_span = self.source(field.syntax()).span;
-        let syntax = <RecordFieldSyntax as rg_item_tree::FromAst<RecordExprFieldAst>>::from_ast(
-            &field,
-            RecordExprFieldAst,
-        );
+        let syntax = Self::record_expr_field_syntax(&field);
         let value = field.expr().map(|expr| self.lower_expr(expr, scope));
 
         Some(RecordExprField {
@@ -675,7 +668,7 @@ impl BodyLowering<'_> {
             .spread()
             .and_then(|spread| self.cfg.enabled_syntax(spread));
         // The AST exposes only the expression after `..`; the token span keeps bare `..`
-        // visible to cursor queries too.
+        // visible to source-site queries too.
         let source_end = spread_expr
             .as_ref()
             .map(|expr| u32::from(expr.syntax().text_range().end()))

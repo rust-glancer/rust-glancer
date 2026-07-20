@@ -8,7 +8,8 @@ use rg_std::MemorySize;
 use std::path::Path;
 
 use rg_cfg_eval::CfgOptions;
-use rg_workspace::{PackageId, PackageSlot, PackageSource, RustEdition, TargetKind};
+use rg_text::RustEdition;
+use rg_workspace::{PackageId, PackageSlot, PackageSource, TargetKind};
 use wincode::{SchemaRead, SchemaWrite};
 
 use super::{Fingerprint, fingerprint};

@@ -1,32 +1,33 @@
-//! Nested directory and codecs for target indexes and file-granular Body IR payloads.
+//! Nested directory and codecs for crate indexes and file-granular Body IR payloads.
 //!
 //! Body IR is commonly the largest phase, and most interactive queries care about the file under
 //! the cursor. Its section therefore has another container:
 //!
 //! ```text
-//! RGBODY magic | manifest len | manifest | target 0 index | file shard | ...
+//! RGBODY magic | manifest len | manifest | crate 0 index | file shard | ...
 //! ```
 //!
 //! The manifest maps every stable body id to a source file and records the relative byte range for
-//! every target index and file shard. A file-local query reads the manifest once and then one shard.
-//! Target-global operations may read every shard or ask the loader to reconstruct a full target.
+//! every crate index and file shard. A file-local query reads the manifest once and then one shard.
+//! Crate-global operations may read every shard or ask the loader to reconstruct a full crate.
 //!
 //! This is still one section of one atomically published package file. Sharding changes read and
 //! decode granularity without creating a transaction protocol for hundreds of independent files.
 //!
 //! There are two kinds of information in the serialized manifest:
 //!
-//! - `PackageBodiesManifest` describes the logical Body IR shape: targets, body ids, and files.
-//! - `TargetBodyCacheLayout` describes where the corresponding encoded payloads live.
+//! - `PackageBodiesManifest` describes the logical Body IR shape: crates, body ids, and files.
+//! - `CrateBodyCacheLayout` describes where the corresponding encoded payloads live.
 //!
 //! Layout ranges are relative to the payload after the manifest. The decoded
 //! [`PackageBodyCacheIndex`] adds the payload offset once, so the artifact reader receives ranges
 //! relative to the beginning of the Body IR section.
 
 use anyhow::Context as _;
-use rg_body_ir::{BodyFileShard, PackageBodies, PackageBodiesManifest, TargetBodiesManifest};
-use rg_ir_storage::ItemLookupIndex;
-use rg_parse::{FileId, TargetId};
+use rg_body_ir::{BodyFileShard, CrateBodiesManifest, PackageBodies, PackageBodiesManifest};
+use rg_ir_model::CrateId;
+use rg_parse::FileId;
+use rg_semantic_ir::ItemLookupIndex;
 use wincode::{SchemaRead, SchemaWrite};
 
 use super::{
@@ -40,13 +41,13 @@ pub(crate) const BODY_CACHE_CONTAINER_PREFIX_BYTES: usize = 8 + size_of::<u64>()
 
 /// Validated Body IR directory used by lazy artifact reads.
 ///
-/// `manifest` answers logical routing questions such as `BodyId -> FileId`. `targets` holds the
+/// `manifest` answers logical routing questions such as `BodyId -> FileId`. `crates` holds the
 /// encoded byte ranges. `payload_offset` joins those two worlds by translating serialized
 /// payload-relative ranges into ranges relative to the complete Body IR section.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct PackageBodyCacheIndex {
     manifest: PackageBodiesManifest,
-    targets: Vec<TargetBodyCacheLayout>,
+    crates: Vec<CrateBodyCacheLayout>,
     payload_offset: u64,
 }
 
@@ -54,12 +55,12 @@ pub(crate) struct PackageBodyCacheIndex {
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite)]
 struct PackageBodyCacheManifest {
     bodies: PackageBodiesManifest,
-    targets: Vec<TargetBodyCacheLayout>,
+    crates: Vec<CrateBodyCacheLayout>,
 }
 
-/// Relative ranges for one target's global index and source-file shards.
+/// Relative ranges for one crate's global index and source-file shards.
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite)]
-struct TargetBodyCacheLayout {
+struct CrateBodyCacheLayout {
     semantic_index: PackageCacheSectionRange,
     files: Vec<BodyFileCacheRange>,
 }
@@ -98,24 +99,24 @@ impl PackageBodyCacheIndex {
         &self.manifest
     }
 
-    /// Return the section-relative range for one target-global semantic index.
+    /// Return the section-relative range for one crate-global semantic index.
     pub(crate) fn semantic_index_range(
         &self,
-        target: TargetId,
+        crate_id: CrateId,
     ) -> Option<PackageCacheSectionRange> {
-        self.targets
-            .get(target.0)
-            .map(|target| self.payload_range(target.semantic_index))
+        self.crates
+            .get(crate_id.0)
+            .map(|crate_layout| self.payload_range(crate_layout.semantic_index))
     }
 
-    /// Return the section-relative range for one target and source file.
+    /// Return the section-relative range for one crate and source file.
     pub(crate) fn file_range(
         &self,
-        target: TargetId,
+        crate_id: CrateId,
         file: FileId,
     ) -> Option<PackageCacheSectionRange> {
-        self.targets.get(target.0).and_then(|target| {
-            target
+        self.crates.get(crate_id.0).and_then(|crate_layout| {
+            crate_layout
                 .files
                 .iter()
                 .find(|entry| entry.file == file)
@@ -141,32 +142,32 @@ impl PackageCacheCodec {
     /// Body ids stay stable throughout this transformation. A file shard carries the original ids,
     /// while the logical manifest records which file owns each id.
     pub(super) fn encode_body_ir(body_ir: &PackageBodies) -> anyhow::Result<EncodedBodyIr> {
-        // 1. Build the logical directory first. It tells us which source-file shards each target
+        // 1. Build the logical directory first. It tells us which source-file shards each crate
         // needs, but does not contain encoded byte ranges yet.
         let bodies = body_ir.manifest();
         let mut payload = Vec::new();
-        let mut targets = Vec::with_capacity(body_ir.targets().len());
+        let mut crates = Vec::with_capacity(body_ir.crates().len());
 
-        // 2. Serialize one target index and one source file at a time. Each append returns its range
+        // 2. Serialize one crate index and one source file at a time. Each append returns its range
         // relative to `payload`. This avoids a second package-sized set of temporary shard objects.
-        for (target_idx, target) in body_ir.targets().iter().enumerate() {
+        for (crate_idx, crate_bodies) in body_ir.crates().iter().enumerate() {
             let semantic_index_start = payload.len();
             wincode::config::serialize_into(
                 &mut payload,
-                target.semantic_index(),
+                crate_bodies.semantic_index(),
                 Self::wincode_config(),
             )
             .map_err(|error| anyhow::anyhow!("{error}"))
-            .context("while attempting to serialize package cache Body IR target index")?;
+            .context("while attempting to serialize package cache Body IR crate index")?;
             let semantic_index = Self::body_payload_range(semantic_index_start, payload.len())?;
 
-            let target_id = TargetId(target_idx);
-            let target_manifest = bodies
-                .target(target_id)
-                .expect("Body IR manifest should mirror package targets");
-            let mut files = Vec::with_capacity(target_manifest.files().len());
-            for &file in target_manifest.files() {
-                let shard = target.file_shard(file);
+            let crate_id = CrateId(crate_idx);
+            let crate_manifest = bodies
+                .crate_manifest(crate_id)
+                .expect("Body IR manifest should mirror package crates");
+            let mut files = Vec::with_capacity(crate_manifest.files().len());
+            for &file in crate_manifest.files() {
+                let shard = crate_bodies.file_shard(file);
                 let shard_start = payload.len();
                 wincode::config::serialize_into(&mut payload, &shard, Self::wincode_config())
                     .map_err(|error| anyhow::anyhow!("{error}"))
@@ -176,14 +177,14 @@ impl PackageCacheCodec {
                     range: Self::body_payload_range(shard_start, payload.len())?,
                 });
             }
-            targets.push(TargetBodyCacheLayout {
+            crates.push(CrateBodyCacheLayout {
                 semantic_index,
                 files,
             });
         }
 
         // 3. The physical directory can be encoded only after every payload range is known.
-        let manifest = PackageBodyCacheManifest { bodies, targets };
+        let manifest = PackageBodyCacheManifest { bodies, crates };
         let manifest = wincode::config::serialize(&manifest, Self::wincode_config())
             .map_err(|error| anyhow::anyhow!("{error}"))
             .context("while attempting to serialize package cache Body IR manifest")?;
@@ -251,7 +252,7 @@ impl PackageCacheCodec {
         Ok(manifest_len)
     }
 
-    /// Decode and validate the Body IR directory without touching target or file payloads.
+    /// Decode and validate the Body IR directory without touching crate or file payloads.
     ///
     /// Validation connects the directory to the outer probe, checks that logical files match
     /// physical file ranges, and requires payload ranges to cover the remaining section exactly.
@@ -286,22 +287,22 @@ impl PackageCacheCodec {
 
         Ok(PackageBodyCacheIndex {
             manifest: manifest.bodies,
-            targets: manifest.targets,
+            crates: manifest.crates,
             payload_offset,
         })
     }
 
-    /// Decode one target-global index from its validated range.
+    /// Decode one crate-global index from its validated range.
     pub(crate) fn decode_body_semantic_index(bytes: &[u8]) -> anyhow::Result<ItemLookupIndex> {
         wincode::config::deserialize_exact::<ItemLookupIndex, _>(bytes, Self::wincode_config())
             .map_err(|error| anyhow::anyhow!("{error}"))
-            .context("while attempting to deserialize package cache Body IR target index")
+            .context("while attempting to deserialize package cache Body IR crate index")
     }
 
     /// Decode one file shard and verify that it contains exactly the bodies assigned to that file.
     pub(crate) fn decode_body_file_shard(
         bytes: &[u8],
-        manifest: &TargetBodiesManifest,
+        manifest: &CrateBodiesManifest,
         file: FileId,
     ) -> anyhow::Result<BodyFileShard> {
         let shard =
@@ -317,33 +318,33 @@ impl PackageCacheCodec {
         manifest: &PackageBodyCacheManifest,
         probe: &PackageCacheProbe,
     ) -> anyhow::Result<()> {
-        let target_count = probe.header.package.targets.len();
+        let crate_count = probe.header.package.targets.len();
         anyhow::ensure!(
-            manifest.bodies.targets().len() == target_count,
-            "package cache Body IR manifest has {} targets but header has {target_count} targets",
-            manifest.bodies.targets().len(),
+            manifest.bodies.crates().len() == crate_count,
+            "package cache Body IR manifest has {} crates but header has {crate_count} Cargo targets",
+            manifest.bodies.crates().len(),
         );
         anyhow::ensure!(
-            manifest.targets.len() == target_count,
-            "package cache Body IR directory has {} targets but header has {target_count} targets",
-            manifest.targets.len(),
+            manifest.crates.len() == crate_count,
+            "package cache Body IR directory has {} crates but header has {crate_count} Cargo targets",
+            manifest.crates.len(),
         );
         let coverage = manifest
             .bodies
-            .targets()
+            .crates()
             .iter()
-            .map(TargetBodiesManifest::coverage)
+            .map(CrateBodiesManifest::coverage)
             .collect::<Vec<_>>();
         anyhow::ensure!(
             coverage == probe.body_ir_coverage,
             "package cache Body IR manifest coverage does not match its probe",
         );
 
-        for (target_idx, (target, layout)) in manifest
+        for (crate_idx, (crate_manifest, layout)) in manifest
             .bodies
-            .targets()
+            .crates()
             .iter()
-            .zip(&manifest.targets)
+            .zip(&manifest.crates)
             .enumerate()
         {
             let files = layout
@@ -352,8 +353,8 @@ impl PackageCacheCodec {
                 .map(|entry| entry.file)
                 .collect::<Vec<_>>();
             anyhow::ensure!(
-                files == target.files(),
-                "package cache Body IR target {target_idx} file directory does not match its manifest",
+                files == crate_manifest.files(),
+                "package cache Body IR crate {crate_idx} file directory does not match its manifest",
             );
         }
         Ok(())
@@ -368,9 +369,9 @@ impl PackageCacheCodec {
         payload_len: u64,
     ) -> anyhow::Result<()> {
         let mut next_offset = 0_u64;
-        for target in &manifest.targets {
-            let ranges = std::iter::once(target.semantic_index)
-                .chain(target.files.iter().map(|file| file.range));
+        for crate_layout in &manifest.crates {
+            let ranges = std::iter::once(crate_layout.semantic_index)
+                .chain(crate_layout.files.iter().map(|file| file.range));
             for range in ranges {
                 anyhow::ensure!(
                     range.offset == next_offset,
@@ -400,7 +401,7 @@ impl PackageCacheCodec {
     /// the number of body ids assigned to the file. Together those checks also catch missing bodies.
     fn validate_body_file_shard(
         shard: &BodyFileShard,
-        manifest: &TargetBodiesManifest,
+        manifest: &CrateBodiesManifest,
         file: FileId,
     ) -> anyhow::Result<()> {
         anyhow::ensure!(

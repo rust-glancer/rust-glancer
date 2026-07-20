@@ -2,16 +2,17 @@
 //!
 //! The trait speaks in Body IR units rather than cache files. This keeps the project layer free to
 //! choose its artifact format, while the transaction can explicitly request the manifest, one
-//! target-global index, one source-file shard, or a complete target.
+//! crate-global index, one source-file shard, or a complete crate.
 
 use std::sync::Arc;
 
 use rg_def_map::PackageSlot;
-use rg_ir_storage::ItemLookupIndex;
+use rg_ir_model::CrateId;
 use rg_package_store::PackageStoreError;
-use rg_parse::{FileId, TargetId};
+use rg_parse::FileId;
+use rg_semantic_ir::ItemLookupIndex;
 
-use crate::{BodyFileShard, PackageBodiesManifest, TargetBodies};
+use crate::{BodyFileShard, CrateBodies, PackageBodiesManifest};
 
 /// Loads the storage units of one offloaded Body IR package.
 pub trait LoadBodyIr: std::fmt::Debug + Send + Sync {
@@ -23,21 +24,21 @@ pub trait LoadBodyIr: std::fmt::Debug + Send + Sync {
     fn load_semantic_index(
         &self,
         package: PackageSlot,
-        target: TargetId,
+        crate_id: CrateId,
     ) -> Result<Arc<ItemLookupIndex>, PackageStoreError>;
 
     fn load_file_shard(
         &self,
         package: PackageSlot,
-        target: TargetId,
+        crate_id: CrateId,
         file: FileId,
     ) -> Result<Arc<BodyFileShard>, PackageStoreError>;
 
-    fn load_target(
+    fn load_crate(
         &self,
         package: PackageSlot,
-        target: TargetId,
-    ) -> Result<Arc<TargetBodies>, PackageStoreError>;
+        crate_id: CrateId,
+    ) -> Result<Arc<CrateBodies>, PackageStoreError>;
 }
 
 /// Shared loader used by Body IR read transactions.
@@ -62,26 +63,26 @@ impl<'db> BodyIrLoader<'db> {
     pub(super) fn load_semantic_index(
         &self,
         package: PackageSlot,
-        target: TargetId,
+        crate_id: CrateId,
     ) -> Result<Arc<ItemLookupIndex>, PackageStoreError> {
-        self.loader.load_semantic_index(package, target)
+        self.loader.load_semantic_index(package, crate_id)
     }
 
     pub(super) fn load_file_shard(
         &self,
         package: PackageSlot,
-        target: TargetId,
+        crate_id: CrateId,
         file: FileId,
     ) -> Result<Arc<BodyFileShard>, PackageStoreError> {
-        self.loader.load_file_shard(package, target, file)
+        self.loader.load_file_shard(package, crate_id, file)
     }
 
-    pub(super) fn load_target(
+    pub(super) fn load_crate(
         &self,
         package: PackageSlot,
-        target: TargetId,
-    ) -> Result<Arc<TargetBodies>, PackageStoreError> {
-        self.loader.load_target(package, target)
+        crate_id: CrateId,
+    ) -> Result<Arc<CrateBodies>, PackageStoreError> {
+        self.loader.load_crate(package, crate_id)
     }
 }
 
@@ -124,7 +125,7 @@ impl LoadBodyIr for ResidentOnlyBodyIrLoader {
     fn load_semantic_index(
         &self,
         package: PackageSlot,
-        _target: TargetId,
+        _target: CrateId,
     ) -> Result<Arc<ItemLookupIndex>, PackageStoreError> {
         panic!(
             "{} should not load offloaded package {}",
@@ -135,7 +136,7 @@ impl LoadBodyIr for ResidentOnlyBodyIrLoader {
     fn load_file_shard(
         &self,
         package: PackageSlot,
-        _target: TargetId,
+        _target: CrateId,
         _file: FileId,
     ) -> Result<Arc<BodyFileShard>, PackageStoreError> {
         panic!(
@@ -144,11 +145,11 @@ impl LoadBodyIr for ResidentOnlyBodyIrLoader {
         )
     }
 
-    fn load_target(
+    fn load_crate(
         &self,
         package: PackageSlot,
-        _target: TargetId,
-    ) -> Result<Arc<TargetBodies>, PackageStoreError> {
+        _target: CrateId,
+    ) -> Result<Arc<CrateBodies>, PackageStoreError> {
         panic!(
             "{} should not load offloaded package {}",
             self.context, package.0

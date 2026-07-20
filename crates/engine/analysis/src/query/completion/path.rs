@@ -1,6 +1,10 @@
 //! Qualified path completion assembly for body and import positions.
 
-use rg_ir_view::member::{MemberEnumVariant, MemberView};
+use rg_ir_view::{
+    display::syntax::SyntaxRenderer,
+    lookup::name::NameNamespace,
+    member::{MemberEnumVariant, MemberView},
+};
 
 use crate::{
     Analysis,
@@ -13,7 +17,7 @@ use crate::{
 
 use super::{
     CallCompletionKind, CompletionQuery,
-    candidates::{CompletionCandidateSource, CompletionScopeNamespace, ModuleCompletionCandidate},
+    candidates::{CompletionCandidateSource, ModuleCompletionCandidate},
     completion_sort::CompletionSortPolicy,
     def_completion_detail,
     module_scope::{ModuleCompletionRenderer, ModuleCompletionRequest},
@@ -52,11 +56,16 @@ impl<'a, 'db, 'source> PathCompletionResolver<'a, 'db, 'source> {
         )?;
 
         let members = MemberView::new(self.analysis.view_db());
+        let syntax = SyntaxRenderer::new(
+            self.analysis
+                .view_db()
+                .crate_edition(self.query.crate_ref)?,
+        );
         for variant in completion_candidates.enum_variant_candidates_for_path(&site)? {
             let Some(variant) = members.enum_variant(variant)? else {
                 continue;
             };
-            self.push_enum_variant_completion(variant, edit, &mut completions);
+            self.push_enum_variant_completion(syntax, variant, edit, &mut completions);
         }
         completions.sort_by(|left, right| left.sort_text.cmp(&right.sort_text));
 
@@ -71,7 +80,7 @@ impl<'a, 'db, 'source> PathCompletionResolver<'a, 'db, 'source> {
         filter: PathCompletionFilter,
         call_completion: CallCompletionKind,
     ) -> anyhow::Result<Vec<CompletionItem>> {
-        let renderer = ModuleCompletionRenderer::new(self.analysis, self.query);
+        let renderer = ModuleCompletionRenderer::new(self.analysis, self.query)?;
         let mut completions: Vec<CompletionItem> = Vec::new();
 
         for candidate in candidates {
@@ -102,12 +111,13 @@ impl<'a, 'db, 'source> PathCompletionResolver<'a, 'db, 'source> {
 
     fn push_enum_variant_completion(
         &self,
+        syntax: SyntaxRenderer,
         variant: MemberEnumVariant<'_>,
         edit: CompletionEdit,
         completions: &mut Vec<CompletionItem>,
     ) {
         let target = CompletionTarget::EnumVariant(variant.variant_ref());
-        let label = variant.label();
+        let label = syntax.identifier(variant.label()).to_string();
         if completions
             .iter()
             .any(|completion| completion.target == target && completion.label == label)
@@ -116,15 +126,15 @@ impl<'a, 'db, 'source> PathCompletionResolver<'a, 'db, 'source> {
         }
 
         completions.push(CompletionItem {
-            label: label.to_string(),
+            label: label.clone(),
             kind: CompletionKind::EnumVariant,
             target,
             applicability: CompletionApplicability::Known,
-            detail: Some(def_completion_detail(CompletionKind::EnumVariant, label)),
+            detail: Some(def_completion_detail(CompletionKind::EnumVariant, &label)),
             documentation: variant.docs_text(),
             sort_text: CompletionSortPolicy::General.sort_text(
                 None,
-                label,
+                &label,
                 CompletionKind::EnumVariant,
                 CompletionApplicability::Known,
                 target,
@@ -148,9 +158,9 @@ enum PathCompletionFilter {
 }
 
 impl PathCompletionFilter {
-    fn accepts(self, namespace: CompletionScopeNamespace) -> bool {
+    fn accepts(self, namespace: NameNamespace) -> bool {
         match self {
-            Self::Types => matches!(namespace, CompletionScopeNamespace::Types),
+            Self::Types => matches!(namespace, NameNamespace::Types),
             Self::All => true,
         }
     }

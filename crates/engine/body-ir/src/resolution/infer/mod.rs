@@ -1,19 +1,17 @@
-//! Body-local inference facts used before writing resolved `Ty` values.
+//! Body-local inference state used before writing resolved `Ty` values.
 //!
-//! The persisted Body IR model stores ordinary `Ty` facts. This module only maps body expression
-//! and binding slots to the transient inference table owned by `rg_ty`.
+//! One context owns expression and binding slots, selected-call substitutions, and the inference
+//! evidence returned by semantic queries. It is consumed at the persistence boundary, where every
+//! transient inference variable is finalized into `BodyFacts`.
 
 mod call;
-mod callable_goal;
 mod context;
 mod facts;
 mod member;
 mod pattern;
-mod trait_obligation;
 
 pub(super) use call::BodyCallInference;
-pub(super) use callable_goal::BodyCallableGoalSolver;
-pub(super) use context::BodyInferenceCtx;
+pub(super) use context::{BodyInferenceCtx, BodyInferenceSnapshot};
 pub(super) use member::BodyMemberInference;
 pub(super) use pattern::BodyPatternInference;
 

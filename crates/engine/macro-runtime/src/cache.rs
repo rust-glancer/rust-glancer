@@ -13,11 +13,10 @@ use std::{
 use anyhow::Context as _;
 
 use rg_ir_model::LocalDefRef;
-use rg_ir_storage::{MacroDefinitionData, MacroDefinitionPayload};
 use rg_macro_expand::{DeclarativeMacro, Edition, ExpansionParseKind, ExpansionSyntax};
 use rg_tt::{Span as TtSpan, TopSubtree};
 
-use super::executor::MacroExpansionWork;
+use super::{DeclarativeMacroDefinition, executor::MacroExpansionWork};
 
 /// Per-build cache for compiled macro definitions and expanded syntax.
 #[derive(Default)]
@@ -31,7 +30,7 @@ impl MacroExpansionCache {
     pub(crate) fn compile(
         &mut self,
         def_ref: LocalDefRef,
-        macro_definition: &MacroDefinitionData,
+        definition: DeclarativeMacroDefinition<'_>,
         edition: Edition,
     ) -> CachedMacroCompileResult {
         if self.compiled.contains_key(&def_ref) {
@@ -47,7 +46,7 @@ impl MacroExpansionCache {
         }
 
         let started_at = Instant::now();
-        let compiled = Self::compile_macro(macro_definition, edition);
+        let compiled = Self::compile_macro(definition, edition);
         let elapsed = started_at.elapsed();
 
         match compiled {
@@ -127,25 +126,17 @@ impl MacroExpansionCache {
     }
 
     fn compile_macro(
-        macro_definition: &MacroDefinitionData,
+        definition: DeclarativeMacroDefinition<'_>,
         edition: Edition,
     ) -> anyhow::Result<DeclarativeMacro> {
-        if let Some(kind) = macro_definition.builtin {
-            anyhow::bail!("cannot compile compiler builtin macro {kind:?}");
-        }
-
-        match &macro_definition.payload {
-            MacroDefinitionPayload::MacroRules { body } => {
-                let body = body
-                    .as_ref()
-                    .context("while attempting to fetch macro_rules body")?;
+        match definition {
+            DeclarativeMacroDefinition::MacroRules { body, .. } => {
+                let body = body.context("while attempting to fetch macro_rules body")?;
                 DeclarativeMacro::from_macro_rules_tokens(body, edition)
             }
-            MacroDefinitionPayload::MacroDef { args, body } => {
-                let body = body
-                    .as_ref()
-                    .context("while attempting to fetch macro body")?;
-                DeclarativeMacro::from_macro_def_tokens(args.as_ref(), body, edition)
+            DeclarativeMacroDefinition::MacroDef { args, body, .. } => {
+                let body = body.context("while attempting to fetch macro body")?;
+                DeclarativeMacro::from_macro_def_tokens(args, body, edition)
             }
         }
     }

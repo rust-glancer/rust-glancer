@@ -1,12 +1,12 @@
 //! Builds hover payloads from resolved analysis declarations.
 
-use rg_ir_model::TargetRef;
+use rg_ir_model::CrateRef;
 use rg_ir_view::{
     display::ty_label::TypeRenderer,
     item::details::{DeclarationDetails, DeclarationDetailsContext, DeclarationDetailsView},
+    ty::IndexedType,
 };
 use rg_parse::FileId;
-use rg_ty::Ty;
 
 use crate::{
     Analysis, SymbolKind,
@@ -23,11 +23,13 @@ impl<'a, 'db> HoverResolver<'a, 'db> {
 
     pub(crate) fn hover(
         &self,
-        target: TargetRef,
+        crate_ref: CrateRef,
         file_id: FileId,
         offset: u32,
     ) -> anyhow::Result<Option<HoverInfo>> {
-        let Some(source_symbol) = self.0.source_symbol_at_for_query(target, file_id, offset)?
+        let Some(source_symbol) = self
+            .0
+            .source_symbol_at_for_query(crate_ref, file_id, offset)?
         else {
             return Ok(None);
         };
@@ -36,7 +38,9 @@ impl<'a, 'db> HoverResolver<'a, 'db> {
         let source_symbols = SourceSymbolResolver::new(self.0.view_db());
         let declarations = source_symbols.declarations_for_symbol(symbol.clone())?;
         let context = DeclarationDetailsContext::new(Self::module_display_name_for_symbol(&symbol));
-        let details = DeclarationDetailsView::new(self.0.view_db());
+        let edition = self.0.view_db().crate_edition(crate_ref)?;
+        let details = DeclarationDetailsView::new(self.0.view_db(), edition);
+        let type_renderer = TypeRenderer::new(self.0.view_db(), edition);
         let mut blocks = Vec::new();
 
         for declaration in declarations {
@@ -51,7 +55,7 @@ impl<'a, 'db> HoverResolver<'a, 'db> {
 
         if blocks.is_empty()
             && let Some(ty) = source_symbols.ty_for_symbol(symbol)?
-            && let Some(block) = self.hover_for_ty(&ty)?
+            && let Some(block) = self.hover_for_ty(&type_renderer, &ty)?
         {
             blocks.push(block);
         }
@@ -71,8 +75,12 @@ impl<'a, 'db> HoverResolver<'a, 'db> {
         }
     }
 
-    fn hover_for_ty(&self, ty: &Ty) -> anyhow::Result<Option<HoverBlock>> {
-        let Some(signature) = TypeRenderer::new(self.0.view_db()).render(ty)? else {
+    fn hover_for_ty(
+        &self,
+        renderer: &TypeRenderer<'_, '_>,
+        ty: &IndexedType,
+    ) -> anyhow::Result<Option<HoverBlock>> {
+        let Some(signature) = renderer.render(ty)? else {
             return Ok(None);
         };
         Ok(Some(HoverBlock {

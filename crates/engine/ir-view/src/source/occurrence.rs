@@ -1,30 +1,38 @@
 //! Source occurrences for symbol and reference queries.
 //!
-//! This adapter merges cursor/source candidates from DefMap, Semantic IR, and Body IR into one
-//! occurrence vocabulary. Analysis decides what each occurrence means for navigation or refs.
+//! The scanners below read source facts from DefMap, Semantic IR, and Body IR, then normalize them
+//! into one facade-owned occurrence vocabulary. Analysis decides what each occurrence means for
+//! navigation or references.
+//!
+//! A single source expression can expose more than one useful fact. In `Action::Start`, for
+//! example, `Action` is a type path while `Start` is a value path. The facade keeps those semantic
+//! inputs distinct instead of forcing scanners to choose a navigation result.
 
-use rg_body_ir::{
-    BindingSurface, BodyCursorCandidate, RecordFieldKeySurface, ValueReferenceSource,
-    ValueReferenceSurface,
-};
-use rg_def_map::DefMapCursorCandidate;
-use rg_ir_model::Path;
-use rg_ir_model::items::FieldKey;
 use rg_ir_model::{
-    BodyBindingRef, ModuleRef, TargetRef,
+    BodyBindingRef, CrateRef, FieldKey, ModuleRef, Path,
     identity::{DeclarationRef, ExprRef, FunctionBodyRef, LexicalScopeRef},
 };
-use rg_ir_storage::TypePathContext;
 use rg_parse::{FileId, Span};
-use rg_semantic_ir::SemanticCursorCandidate;
+use rg_semantic_ir::TypePathContext;
 
+use super::scan::{
+    BindingSurface, BodyCursorScanner, BodySourceCandidate, BodySourceScanner,
+    DefinitionSourceCandidate, DefinitionSourceScanner, RecordFieldKeySurface,
+    SignatureSourceCandidate, SignatureSourceScanner, ValueReferenceSource, ValueReferenceSurface,
+};
 use crate::{IndexedViewDb, item::declaration::DeclarationView};
 
 /// Why an indexed source occurrence exists in the scanned source surface.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IndexedSourceRole {
+    /// A spelling that introduces a symbol, such as `user` in `let user = input;`.
     Declaration,
+    /// A spelling that refers to a symbol, such as `user` in `consume(user)`.
     Reference,
+    /// Source ownership needed by an editor query, but not itself a symbol use.
+    ///
+    /// Function-body roots and import aliases use this role. Analysis can inspect them without
+    /// counting them as declarations or references.
     Structural,
 }
 
@@ -70,7 +78,7 @@ pub enum IndexedSourceSurface {
 /// One indexed source span that can be interpreted by analysis queries.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IndexedSourceOccurrence {
-    target: TargetRef,
+    crate_ref: CrateRef,
     file_id: FileId,
     span: Span,
     role: IndexedSourceRole,
@@ -84,7 +92,7 @@ impl IndexedSourceOccurrence {
         self,
     ) -> (
         IndexedSourceFact,
-        TargetRef,
+        CrateRef,
         FileId,
         Span,
         IndexedSourceRole,
@@ -92,7 +100,7 @@ impl IndexedSourceOccurrence {
     ) {
         (
             self.fact,
-            self.target,
+            self.crate_ref,
             self.file_id,
             self.span,
             self.role,
@@ -103,24 +111,24 @@ impl IndexedSourceOccurrence {
     /// Build a plain declaration occurrence.
     fn declaration(
         fact: IndexedSourceFact,
-        target: TargetRef,
+        crate_ref: CrateRef,
         file_id: FileId,
         span: Span,
     ) -> Self {
-        Self::declaration_with_surface(fact, target, file_id, span, IndexedSourceSurface::Plain)
+        Self::declaration_with_surface(fact, crate_ref, file_id, span, IndexedSourceSurface::Plain)
     }
 
     /// Build a declaration occurrence with special source-surface handling.
     fn declaration_with_surface(
         fact: IndexedSourceFact,
-        target: TargetRef,
+        crate_ref: CrateRef,
         file_id: FileId,
         span: Span,
         surface: IndexedSourceSurface,
     ) -> Self {
         Self {
             fact,
-            target,
+            crate_ref,
             file_id,
             span,
             role: IndexedSourceRole::Declaration,
@@ -129,21 +137,26 @@ impl IndexedSourceOccurrence {
     }
 
     /// Build a plain reference occurrence.
-    fn reference(fact: IndexedSourceFact, target: TargetRef, file_id: FileId, span: Span) -> Self {
-        Self::reference_with_surface(fact, target, file_id, span, IndexedSourceSurface::Plain)
+    fn reference(
+        fact: IndexedSourceFact,
+        crate_ref: CrateRef,
+        file_id: FileId,
+        span: Span,
+    ) -> Self {
+        Self::reference_with_surface(fact, crate_ref, file_id, span, IndexedSourceSurface::Plain)
     }
 
     /// Build a reference occurrence with special source-surface handling.
     fn reference_with_surface(
         fact: IndexedSourceFact,
-        target: TargetRef,
+        crate_ref: CrateRef,
         file_id: FileId,
         span: Span,
         surface: IndexedSourceSurface,
     ) -> Self {
         Self {
             fact,
-            target,
+            crate_ref,
             file_id,
             span,
             role: IndexedSourceRole::Reference,
@@ -152,10 +165,15 @@ impl IndexedSourceOccurrence {
     }
 
     /// Build an occurrence that is neither a declaration nor a reference.
-    fn structural(fact: IndexedSourceFact, target: TargetRef, file_id: FileId, span: Span) -> Self {
+    fn structural(
+        fact: IndexedSourceFact,
+        crate_ref: CrateRef,
+        file_id: FileId,
+        span: Span,
+    ) -> Self {
         Self {
             fact,
-            target,
+            crate_ref,
             file_id,
             span,
             role: IndexedSourceRole::Structural,
@@ -165,31 +183,40 @@ impl IndexedSourceOccurrence {
 }
 
 /// Indexed fact occupying one source occurrence.
+///
+/// Facts retain stable engine identities or the minimum path context needed for later resolution.
+/// They deliberately do not contain an eagerly resolved destination: different analysis queries
+/// can apply their own visibility and fallback policy to the same source occurrence.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum IndexedSourceFact {
+    /// A declaration with an engine-wide stable identity.
     Declaration(DeclarationRef),
+    /// The source range owned by one function body.
     FunctionBody(FunctionBodyRef),
+    /// A lowered expression whose exact meaning is available from Body IR.
     Expr(ExprRef),
+    /// A path written in a type position, together with its signature or body scope.
     TypePath {
         scope: IndexedTypePathScope,
         path: Path,
     },
-    ValuePath {
-        scope: LexicalScopeRef,
-        path: Path,
-    },
+    /// A value path without a dedicated lowered expression, most commonly a pattern path segment.
+    ValuePath { scope: LexicalScopeRef, path: Path },
+    /// A field key in a record expression or pattern.
     RecordField {
         scope: LexicalScopeRef,
         owner: Path,
         key: FieldKey,
     },
-    UsePath {
-        module: ModuleRef,
-        path: Path,
-    },
+    /// One written prefix of an import path, resolved from the importing module.
+    UsePath { module: ModuleRef, path: Path },
 }
 
 /// Resolution context for a type-looking path in source.
+///
+/// Signature paths need item generics and impl ownership; body paths need a lexical scope. Keeping
+/// the two cases explicit prevents callers from pretending that every type spelling resolves from
+/// a module alone.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IndexedTypePathScope {
     Signature(TypePathContext),
@@ -197,6 +224,16 @@ pub enum IndexedTypePathScope {
 }
 
 /// Finds declaration, reference, and structural source occurrences.
+///
+/// Point queries select the narrowest body-local source node at `$0` and retain any independently
+/// meaningful path segment at that offset. Crate queries instead return every written occurrence:
+///
+/// ```text
+/// let user = input;
+/// consume(user$0); point query selects this `user`
+///
+/// // crate query retains the declaration, `input`, `consume`, and the second `user`
+/// ```
 pub struct SourceOccurrenceView<'a, 'db> {
     db: &'a IndexedViewDb<'db>,
 }
@@ -213,7 +250,7 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
     /// returns `user` for a path expression, `push` for `items.push(value)`, and `name` for
     /// `user.name`; literals and operators return `None`.
     pub fn expr_source_label(&self, expr: ExprRef) -> anyhow::Result<Option<String>> {
-        let Some(body_data) = self.db.body_ir.body_data(expr.body_ir())? else {
+        let Some(body_data) = self.db.body_ir.body(expr.body_ir())? else {
             return Ok(None);
         };
         let Some(expr_data) = body_data.expr(expr.expr_id()) else {
@@ -233,31 +270,38 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
         Ok(label)
     }
 
-    /// Return occurrences that touch one cursor offset.
+    /// Return every semantic source interpretation that touches one cursor offset.
+    ///
+    /// The result is intentionally a vector rather than a single “best symbol”: the smallest
+    /// body-local node and a path segment can provide different facts for analysis to interpret.
     pub fn occurrences_at(
         &self,
-        target: TargetRef,
+        crate_ref: CrateRef,
         file_id: FileId,
         offset: u32,
     ) -> anyhow::Result<Vec<IndexedSourceOccurrence>> {
         let mut occurrences = Vec::new();
 
-        for candidate in self.db.body_ir.cursor_candidates(target, file_id, offset)? {
-            if let Some(occurrence) = self.body_occurrence(target, candidate, Some(file_id))? {
-                occurrences.push(occurrence);
-            }
-        }
-        for candidate in self.db.def_map.cursor_candidates(target, file_id, offset)? {
-            if let Some(occurrence) = Self::def_map_occurrence(target, candidate) {
-                occurrences.push(occurrence);
-            }
-        }
-        for candidate in self
-            .db
-            .semantic_ir
-            .signature_cursor_candidates(target, file_id, offset)?
+        for candidate in
+            BodyCursorScanner::new(&self.db.body_ir, crate_ref, file_id, offset).scan()?
         {
-            if let Some(occurrence) = self.semantic_occurrence(target, candidate, Some(file_id))? {
+            if let Some(occurrence) = self.body_occurrence(crate_ref, candidate, Some(file_id))? {
+                occurrences.push(occurrence);
+            }
+        }
+        for candidate in
+            DefinitionSourceScanner::at(&self.db.def_map, crate_ref, file_id, offset).scan()?
+        {
+            if let Some(occurrence) = Self::definition_occurrence(crate_ref, candidate) {
+                occurrences.push(occurrence);
+            }
+        }
+        for candidate in
+            SignatureSourceScanner::at(&self.db.semantic_ir, crate_ref, file_id, offset).scan()?
+        {
+            if let Some(occurrence) =
+                self.signature_occurrence(crate_ref, candidate, Some(file_id))?
+            {
                 occurrences.push(occurrence);
             }
         }
@@ -265,30 +309,33 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
         Ok(occurrences)
     }
 
-    /// Return occurrences in a target, optionally restricted to one file.
-    pub fn occurrences_in_target(
+    /// Return every written occurrence in a crate, optionally restricted to one file.
+    ///
+    /// This is the source inventory used by project-wide reference and rename searches; generated
+    /// expansion internals are represented by their editable invocation when possible.
+    pub fn occurrences_in_crate(
         &self,
-        target: TargetRef,
+        crate_ref: CrateRef,
         file_id: Option<FileId>,
     ) -> anyhow::Result<Vec<IndexedSourceOccurrence>> {
         let mut occurrences = Vec::new();
 
-        for candidate in self.db.def_map.source_candidates(target, file_id)? {
-            if let Some(occurrence) = Self::def_map_occurrence(target, candidate) {
-                occurrences.push(occurrence);
-            }
-        }
-        for candidate in self.db.body_ir.source_candidates(target, file_id)? {
-            if let Some(occurrence) = self.body_occurrence(target, candidate, file_id)? {
-                occurrences.push(occurrence);
-            }
-        }
-        for candidate in self
-            .db
-            .semantic_ir
-            .signature_source_candidates(target, file_id)?
+        for candidate in
+            DefinitionSourceScanner::in_crate(&self.db.def_map, crate_ref, file_id).scan()?
         {
-            if let Some(occurrence) = self.semantic_occurrence(target, candidate, file_id)? {
+            if let Some(occurrence) = Self::definition_occurrence(crate_ref, candidate) {
+                occurrences.push(occurrence);
+            }
+        }
+        for candidate in BodySourceScanner::new(&self.db.body_ir, crate_ref, file_id).scan()? {
+            if let Some(occurrence) = self.body_occurrence(crate_ref, candidate, file_id)? {
+                occurrences.push(occurrence);
+            }
+        }
+        for candidate in
+            SignatureSourceScanner::in_crate(&self.db.semantic_ir, crate_ref, file_id).scan()?
+        {
+            if let Some(occurrence) = self.signature_occurrence(crate_ref, candidate, file_id)? {
                 occurrences.push(occurrence);
             }
         }
@@ -297,42 +344,42 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
     }
 
     /// Convert a DefMap scanner candidate into a source occurrence.
-    fn def_map_occurrence(
-        target: TargetRef,
-        candidate: DefMapCursorCandidate,
+    fn definition_occurrence(
+        crate_ref: CrateRef,
+        candidate: DefinitionSourceCandidate,
     ) -> Option<IndexedSourceOccurrence> {
         match candidate {
-            DefMapCursorCandidate::Def { def, file_id, span } => {
+            DefinitionSourceCandidate::Def { def, file_id, span } => {
                 // TODO: Technically we are being defensive here, because enum variants
                 // are not candidates. Probably we need a slightly better representation
                 // and should get rid of option.
                 let declaration = DeclarationRef::try_from_def(def)?;
                 Some(IndexedSourceOccurrence::declaration(
                     IndexedSourceFact::Declaration(declaration),
-                    target,
+                    crate_ref,
                     file_id,
                     span,
                 ))
             }
-            DefMapCursorCandidate::UsePath {
+            DefinitionSourceCandidate::UsePath {
                 module,
                 path,
                 file_id,
                 span,
             } => Some(IndexedSourceOccurrence::reference(
                 IndexedSourceFact::UsePath { module, path },
-                target,
+                crate_ref,
                 file_id,
                 span,
             )),
-            DefMapCursorCandidate::ImportAlias {
+            DefinitionSourceCandidate::ImportAlias {
                 module,
                 path,
                 file_id,
                 span,
             } => Some(IndexedSourceOccurrence::structural(
                 IndexedSourceFact::UsePath { module, path },
-                target,
+                crate_ref,
                 file_id,
                 span,
             )),
@@ -340,26 +387,26 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
     }
 
     /// Convert a Semantic IR scanner candidate into a source occurrence.
-    fn semantic_occurrence(
+    fn signature_occurrence(
         &self,
-        target: TargetRef,
-        candidate: SemanticCursorCandidate,
+        crate_ref: CrateRef,
+        candidate: SignatureSourceCandidate,
         fallback_file_id: Option<FileId>,
     ) -> anyhow::Result<Option<IndexedSourceOccurrence>> {
         let occurrence = match candidate {
-            SemanticCursorCandidate::Field { field, span } => {
+            SignatureSourceCandidate::Field { field, span } => {
                 let declaration = DeclarationRef::from(field);
-                self.declaration_occurrence(declaration, target, span, fallback_file_id)?
+                self.declaration_occurrence(declaration, crate_ref, span, fallback_file_id)?
             }
-            SemanticCursorCandidate::Function { function, span } => {
+            SignatureSourceCandidate::Function { function, span } => {
                 let declaration = DeclarationRef::from(function);
-                self.declaration_occurrence(declaration, target, span, fallback_file_id)?
+                self.declaration_occurrence(declaration, crate_ref, span, fallback_file_id)?
             }
-            SemanticCursorCandidate::EnumVariant { variant, span } => {
+            SignatureSourceCandidate::EnumVariant { variant, span } => {
                 let declaration = DeclarationRef::from(variant);
-                self.declaration_occurrence(declaration, target, span, fallback_file_id)?
+                self.declaration_occurrence(declaration, crate_ref, span, fallback_file_id)?
             }
-            SemanticCursorCandidate::TypePath {
+            SignatureSourceCandidate::TypePath {
                 context,
                 path,
                 file_id,
@@ -369,7 +416,7 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
                     scope: IndexedTypePathScope::Signature(context),
                     path,
                 },
-                target,
+                crate_ref,
                 file_id,
                 span,
             )),
@@ -381,14 +428,14 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
     /// Convert a Body IR scanner candidate into a source occurrence.
     fn body_occurrence(
         &self,
-        target: TargetRef,
-        candidate: BodyCursorCandidate,
+        crate_ref: CrateRef,
+        candidate: BodySourceCandidate,
         fallback_file_id: Option<FileId>,
     ) -> anyhow::Result<Option<IndexedSourceOccurrence>> {
         let span = candidate.span();
         let occurrence = match candidate {
-            BodyCursorCandidate::Body { body, .. } => {
-                let Some(data) = self.db.body_ir.body_data(body)? else {
+            BodySourceCandidate::Body { body, .. } => {
+                let Some(data) = self.db.body_ir.body(body)? else {
                     return Ok(None);
                 };
                 if !data.source().is_written() {
@@ -399,19 +446,19 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
                 };
                 Some(IndexedSourceOccurrence::structural(
                     IndexedSourceFact::FunctionBody(FunctionBodyRef::from_body_ir(body)),
-                    target,
+                    crate_ref,
                     data.source().file_id,
                     span,
                 ))
             }
-            BodyCursorCandidate::Binding {
+            BodySourceCandidate::Binding {
                 body,
                 binding,
                 surface,
                 ..
             } => {
                 let declaration = DeclarationRef::body_binding(BodyBindingRef { body, binding });
-                if let Some(body_data) = self.db.body_ir.body_data(body)?
+                if let Some(body_data) = self.db.body_ir.body(body)?
                     && let Some(data) = body_data.binding(binding)
                     && !data.source.is_written()
                 {
@@ -419,7 +466,7 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
                 }
                 match surface {
                     BindingSurface::Plain => {
-                        self.declaration_occurrence(declaration, target, span, fallback_file_id)?
+                        self.declaration_occurrence(declaration, crate_ref, span, fallback_file_id)?
                     }
                     BindingSurface::RecordPatShorthand {
                         key,
@@ -427,7 +474,7 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
                         pat_span,
                         binding_name_span,
                     } => {
-                        let file_id = match self.db.body_ir.body_data(body)? {
+                        let file_id = match self.db.body_ir.body(body)? {
                             Some(body_data) => match body_data.binding(binding) {
                                 Some(data) => data.source.file_id,
                                 None => {
@@ -446,7 +493,7 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
                         };
                         Some(IndexedSourceOccurrence::declaration_with_surface(
                             IndexedSourceFact::Declaration(declaration),
-                            target,
+                            crate_ref,
                             file_id,
                             span,
                             IndexedSourceSurface::RecordPatShorthandBinding {
@@ -459,8 +506,8 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
                     }
                 }
             }
-            BodyCursorCandidate::Expr { body, expr, .. } => {
-                let file_id = match self.db.body_ir.body_data(body)? {
+            BodySourceCandidate::Expr { body, expr, .. } => {
+                let file_id = match self.db.body_ir.body(body)? {
                     Some(body_data) => match body_data.expr(expr) {
                         Some(data) if data.source.is_written() => data.source.file_id,
                         Some(_) => return Ok(None),
@@ -480,42 +527,42 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
                 };
                 Some(IndexedSourceOccurrence::reference(
                     IndexedSourceFact::Expr(ExprRef::new(body, expr)),
-                    target,
+                    crate_ref,
                     file_id,
                     span,
                 ))
             }
-            BodyCursorCandidate::MacroCall {
+            BodySourceCandidate::MacroCall {
                 definition,
                 file_id,
                 ..
             } => Some(IndexedSourceOccurrence::reference(
                 IndexedSourceFact::Declaration(DeclarationRef::local_def(definition)),
-                target,
+                crate_ref,
                 file_id,
                 span,
             )),
-            BodyCursorCandidate::LocalItem { item, .. } => {
+            BodySourceCandidate::LocalItem { item, .. } => {
                 let declaration = DeclarationRef::from(item);
-                self.declaration_occurrence(declaration, target, span, fallback_file_id)?
+                self.declaration_occurrence(declaration, crate_ref, span, fallback_file_id)?
             }
-            BodyCursorCandidate::LocalValueItem { item, .. } => {
+            BodySourceCandidate::LocalValueItem { item, .. } => {
                 let declaration = DeclarationRef::from(item);
-                self.declaration_occurrence(declaration, target, span, fallback_file_id)?
+                self.declaration_occurrence(declaration, crate_ref, span, fallback_file_id)?
             }
-            BodyCursorCandidate::LocalField { field, .. } => {
+            BodySourceCandidate::LocalField { field, .. } => {
                 let declaration = DeclarationRef::from(field);
-                self.declaration_occurrence(declaration, target, span, fallback_file_id)?
+                self.declaration_occurrence(declaration, crate_ref, span, fallback_file_id)?
             }
-            BodyCursorCandidate::LocalEnumVariant { variant, .. } => {
+            BodySourceCandidate::LocalEnumVariant { variant, .. } => {
                 let declaration = DeclarationRef::from(variant);
-                self.declaration_occurrence(declaration, target, span, fallback_file_id)?
+                self.declaration_occurrence(declaration, crate_ref, span, fallback_file_id)?
             }
-            BodyCursorCandidate::LocalFunction { function, .. } => {
+            BodySourceCandidate::LocalFunction { function, .. } => {
                 let declaration = DeclarationRef::from(function);
-                self.declaration_occurrence(declaration, target, span, fallback_file_id)?
+                self.declaration_occurrence(declaration, crate_ref, span, fallback_file_id)?
             }
-            BodyCursorCandidate::RecordFieldKey {
+            BodySourceCandidate::RecordFieldKey {
                 body,
                 scope,
                 owner,
@@ -543,13 +590,13 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
                         owner,
                         key,
                     },
-                    target,
+                    crate_ref,
                     file_id,
                     span,
                     surface,
                 ))
             }
-            BodyCursorCandidate::ValueReference {
+            BodySourceCandidate::ValueReference {
                 body,
                 scope,
                 source,
@@ -573,10 +620,10 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
                     }
                 };
                 Some(IndexedSourceOccurrence::reference_with_surface(
-                    fact, target, file_id, span, surface,
+                    fact, crate_ref, file_id, span, surface,
                 ))
             }
-            BodyCursorCandidate::TypePath {
+            BodySourceCandidate::TypePath {
                 body,
                 scope,
                 path,
@@ -587,7 +634,7 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
                     scope: IndexedTypePathScope::Body(LexicalScopeRef::new(body, scope)),
                     path,
                 },
-                target,
+                crate_ref,
                 file_id,
                 span,
             )),
@@ -600,7 +647,7 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
     fn declaration_occurrence(
         &self,
         declaration: DeclarationRef,
-        scan_target: TargetRef,
+        scan_target: CrateRef,
         span: Span,
         fallback_file_id: Option<FileId>,
     ) -> anyhow::Result<Option<IndexedSourceOccurrence>> {

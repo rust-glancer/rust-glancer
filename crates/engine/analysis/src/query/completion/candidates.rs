@@ -4,19 +4,20 @@
 //! storage owns name, member, or type lookup. This adapter accepts completion-domain cursor sites
 //! and projects generic view facts into completion-ready candidates.
 
-use rg_ir_model::items::{FieldKey, PrimitiveTy};
 use rg_ir_model::{
-    EnumVariantRef, FieldRef, FunctionRef, ModuleRef, Path, identity::DeclarationRef,
+    EnumVariantRef, FieldKey, FieldRef, FunctionRef, ModuleRef, Path, PrimitiveTy,
+    identity::DeclarationRef,
 };
 use rg_ir_view::{
     IndexedViewDb, SymbolKind,
-    lookup::name::{ModuleScopeName, NameLookupView, NameNamespace, NameOrigin},
-    member::{MemberMethodCandidate, MemberUseSite, MemberView},
-    source::{IndexedNameNamespace, IndexedQualifiedPathScope, IndexedUnqualifiedNameScope},
+    lookup::name::{
+        ModuleScopeName, NameLookupView, NameNamespace, NameOrigin, ValueOrTypeNamespace,
+    },
+    member::{MemberMethodCandidate, MemberMethodOrigin, MemberUseSite, MemberView},
+    source::{IndexedQualifiedPathScope, IndexedUnqualifiedNameScope},
     ty::TyView,
-    ty::locals::{BodyLexicalName, BodyNameNamespace, BodyNameScope, BodyView},
+    ty::locals::{BodyLexicalName, BodyNameScope, BodyView},
 };
-use rg_ty::{MemberMethodOrigin, Ty};
 
 use crate::{
     completion_site::{
@@ -25,45 +26,11 @@ use crate::{
     model::{CompletionApplicability, CompletionKind, CompletionTarget},
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) enum CompletionScopeNamespace {
-    Types,
-    Values,
-    Macros,
-}
-
-impl From<NameNamespace> for CompletionScopeNamespace {
-    fn from(namespace: NameNamespace) -> Self {
-        match namespace {
-            NameNamespace::Types => Self::Types,
-            NameNamespace::Values => Self::Values,
-            NameNamespace::Macros => Self::Macros,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum CompletionScopeOrigin {
-    ModuleScope,
-    Prelude,
-    ExternRoot,
-}
-
-impl From<NameOrigin> for CompletionScopeOrigin {
-    fn from(origin: NameOrigin) -> Self {
-        match origin {
-            NameOrigin::ModuleScope => Self::ModuleScope,
-            NameOrigin::Prelude => Self::Prelude,
-            NameOrigin::ExternRoot => Self::ExternRoot,
-        }
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ModuleCompletionCandidate {
     label: String,
-    namespace: CompletionScopeNamespace,
-    origin: CompletionScopeOrigin,
+    namespace: NameNamespace,
+    origin: NameOrigin,
     target: CompletionTarget,
     kind: CompletionKind,
     documentation: Option<String>,
@@ -75,11 +42,11 @@ impl ModuleCompletionCandidate {
         &self.label
     }
 
-    pub(crate) fn namespace(&self) -> CompletionScopeNamespace {
+    pub(crate) fn namespace(&self) -> NameNamespace {
         self.namespace
     }
 
-    pub(crate) fn origin(&self) -> CompletionScopeOrigin {
+    pub(crate) fn origin(&self) -> NameOrigin {
         self.origin
     }
 
@@ -103,13 +70,13 @@ impl ModuleCompletionCandidate {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct LexicalCompletionCandidate {
     label: String,
-    namespace: CompletionScopeNamespace,
+    namespace: NameNamespace,
     scope_distance: usize,
     target: CompletionTarget,
     kind: CompletionKind,
     declaration: Option<DeclarationRef>,
     function: Option<FunctionRef>,
-    shadow_namespaces: Vec<CompletionScopeNamespace>,
+    shadow_namespaces: Vec<NameNamespace>,
 }
 
 impl LexicalCompletionCandidate {
@@ -117,7 +84,7 @@ impl LexicalCompletionCandidate {
         &self.label
     }
 
-    pub(crate) fn namespace(&self) -> CompletionScopeNamespace {
+    pub(crate) fn namespace(&self) -> NameNamespace {
         self.namespace
     }
 
@@ -141,7 +108,7 @@ impl LexicalCompletionCandidate {
         self.function
     }
 
-    pub(crate) fn shadow_namespaces(&self) -> &[CompletionScopeNamespace] {
+    pub(crate) fn shadow_namespaces(&self) -> &[NameNamespace] {
         &self.shadow_namespaces
     }
 }
@@ -197,12 +164,9 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
         &self,
         site: &PathCompletionSite,
     ) -> anyhow::Result<Vec<EnumVariantRef>> {
-        let IndexedQualifiedPathScope::Body { scope, namespace } = site.source().scope() else {
+        let IndexedQualifiedPathScope::Body { scope, .. } = site.source().scope() else {
             return Ok(Vec::new());
         };
-        if !matches!(namespace, IndexedNameNamespace::Values) {
-            return Ok(Vec::new());
-        }
 
         MemberView::new(self.db).enum_variant_candidates_for_body_type_path(
             scope.body_ir(),
@@ -260,14 +224,10 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
         else {
             return Ok(Vec::new());
         };
-        let body_namespace = match namespace {
-            IndexedNameNamespace::Types => BodyNameNamespace::Types,
-            IndexedNameNamespace::Values => BodyNameNamespace::Values,
-        };
         let scope = BodyNameScope::new(
             scope.body_ir(),
             scope.scope_id(),
-            body_namespace,
+            *namespace,
             *visible_bindings,
         );
         let mut candidates = Vec::new();
@@ -292,7 +252,7 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
         else {
             return Ok(Vec::new());
         };
-        if !matches!(namespace, IndexedNameNamespace::Types) {
+        if !matches!(namespace, ValueOrTypeNamespace::Types) {
             return Ok(Vec::new());
         }
 
@@ -304,14 +264,11 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
             .filter(|primitive| primitive.label().starts_with(member_prefix.as_str()))
         {
             let path = Path::unqualified_name(primitive.label());
-            if matches!(
-                TyView::new(self.db).ty_for_body_type_path(
-                    scope.body_ir(),
-                    scope.scope_id(),
-                    &path
-                )?,
-                Ty::Primitive(resolved) if resolved == primitive
-            ) {
+            if TyView::new(self.db)
+                .ty_for_body_type_path(scope.body_ir(), scope.scope_id(), &path)?
+                .primitive()
+                == Some(primitive)
+            {
                 candidates.push(primitive);
             }
         }
@@ -332,7 +289,7 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
 
         let members = MemberView::new(self.db);
         let mut fields = Vec::new();
-        for field in members.field_candidates_for_ty(receiver.body_ir().target, &receiver_ty)? {
+        for field in members.field_candidates_for_ty(receiver.body_ir().crate_ref, &receiver_ty)? {
             fields.push(field.field_ref());
         }
 
@@ -429,8 +386,8 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
 
         Some(ModuleCompletionCandidate {
             label: name.label().to_string(),
-            namespace: name.namespace().into(),
-            origin: name.origin().into(),
+            namespace: name.namespace(),
+            origin: name.origin(),
             target,
             kind,
             documentation: name.documentation().map(ToString::to_string),
@@ -440,7 +397,7 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
 
     fn lexical_candidate(
         &self,
-        namespace: IndexedNameNamespace,
+        namespace: ValueOrTypeNamespace,
         candidate: BodyLexicalName,
     ) -> Option<LexicalCompletionCandidate> {
         let candidate = match candidate {
@@ -452,13 +409,13 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
                 let declaration = DeclarationRef::body_binding(binding);
                 LexicalCompletionCandidate {
                     label,
-                    namespace: CompletionScopeNamespace::Values,
+                    namespace: NameNamespace::Values,
                     scope_distance,
                     target: CompletionTarget::Declaration(declaration),
                     kind: CompletionKind::Variable,
                     declaration: Some(declaration),
                     function: None,
-                    shadow_namespaces: vec![CompletionScopeNamespace::Values],
+                    shadow_namespaces: vec![NameNamespace::Values],
                 }
             }
             BodyLexicalName::TypeItem {
@@ -468,14 +425,14 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
                 scope_distance,
                 has_value_constructor,
             } => {
-                let mut shadow_namespaces = vec![CompletionScopeNamespace::Types];
-                if matches!(namespace, IndexedNameNamespace::Values) && has_value_constructor {
-                    shadow_namespaces.push(CompletionScopeNamespace::Values);
+                let mut shadow_namespaces = vec![NameNamespace::Types];
+                if matches!(namespace, ValueOrTypeNamespace::Values) && has_value_constructor {
+                    shadow_namespaces.push(NameNamespace::Values);
                 }
                 let declaration = DeclarationRef::from(item);
                 LexicalCompletionCandidate {
                     label,
-                    namespace: CompletionScopeNamespace::Types,
+                    namespace: NameNamespace::Types,
                     scope_distance,
                     target: CompletionTarget::Declaration(declaration),
                     kind: CompletionKind::from_semantic_item_kind(kind)?,
@@ -491,13 +448,13 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
                 scope_distance,
             } => LexicalCompletionCandidate {
                 label,
-                namespace: CompletionScopeNamespace::Values,
+                namespace: NameNamespace::Values,
                 scope_distance,
                 target: CompletionTarget::Declaration(DeclarationRef::from(item)),
                 kind: CompletionKind::from_semantic_item_kind(kind)?,
                 declaration: Some(DeclarationRef::from(item)),
                 function: None,
-                shadow_namespaces: vec![CompletionScopeNamespace::Values],
+                shadow_namespaces: vec![NameNamespace::Values],
             },
             BodyLexicalName::Function {
                 function,
@@ -507,13 +464,13 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
                 let declaration = DeclarationRef::from(function);
                 LexicalCompletionCandidate {
                     label,
-                    namespace: CompletionScopeNamespace::Values,
+                    namespace: NameNamespace::Values,
                     scope_distance,
                     target: CompletionTarget::Function(function),
                     kind: CompletionKind::Function,
                     declaration: Some(declaration),
                     function: Some(function),
-                    shadow_namespaces: vec![CompletionScopeNamespace::Values],
+                    shadow_namespaces: vec![NameNamespace::Values],
                 }
             }
         };

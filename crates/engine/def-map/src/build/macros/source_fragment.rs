@@ -6,23 +6,21 @@
 
 use anyhow::{Context as _, Result};
 
-use rg_ir_model::{DefId, DefMapRef, LocalDefId, LocalDefRef, ModuleId, ModuleRef};
-use rg_ir_storage::{
-    ImportBinding, ImportData, ImportKind, ImportPath, ImportSourcePath, LocalDefData,
-    LocalDefKind, LocalImplData, MacroDefinitionData, ModuleData, ModuleOrigin, ModuleScope,
-    Namespace, ScopeBinding, ScopeBindingOrigin,
+use crate::{
+    ImportBinding, ImportData, ImportKind, ImportPath, LocalDefData, LocalDefKind, LocalImplData,
+    MacroDefinitionData, ModuleData, ModuleOrigin, ModuleScope, Namespace, ScopeBinding,
+    ScopeBindingProvenance, Visibility,
 };
+use rg_ir_model::{DefId, DefMapRef, LocalDefId, LocalDefRef, ModuleId, ModuleRef};
 use rg_item_tree::{
     Documentation, ExternCrateItem, ImportAlias, ItemKind, ItemTreeId, ItemTreeRef,
     MacroDefinitionAttrs, MacroDefinitionItem, MacroUseAttr, MacroUseSelector, ModuleItem,
-    ModuleSource, Package as ItemTreePackage, UseImport, UseItem, VisibilityLevel,
+    ModuleSource, Package as ItemTreePackage, UseImport, UseItem,
 };
 use rg_parse::FileId;
 use rg_text::Name;
 
-use crate::build::{
-    collect::TargetState, finalize::ScopeMatrix, macros::MacroExpansionApplyResult,
-};
+use crate::build::{collect::CrateState, finalize::ScopeMatrix, macros::MacroExpansionApplyResult};
 
 use super::{
     ItemOrder, MacroCallSite, MacroDefinitionRecord, MacroDirective, MacroDirectiveState,
@@ -37,7 +35,7 @@ pub(super) struct SourceFragmentOrigin {
 
 /// Collector for item-tree nodes that should behave like ordinary source at the call site.
 pub(super) struct SourceFragmentCollector<'a> {
-    pub(super) state: &'a mut TargetState,
+    pub(super) state: &'a mut CrateState,
     pub(super) current_scopes: &'a mut ScopeMatrix,
     pub(super) item_tree: &'a ItemTreePackage,
     pub(super) origin: SourceFragmentOrigin,
@@ -123,6 +121,7 @@ impl SourceFragmentCollector<'_> {
                     })?;
             }
             ItemKind::Use(use_item) => self.collect_use(module_id, item, source, use_item),
+            ItemKind::Enum(enum_item) => self.collect_enum(module_id, item, source, enum_item),
             ItemKind::Impl(_) => self.collect_local_impl(module_id, item, source),
             ItemKind::MacroCall(macro_call) => {
                 self.collect_macro_call(module_id, item, source, macro_call, order);
@@ -131,7 +130,7 @@ impl SourceFragmentCollector<'_> {
                 self.collect_macro_definition(module_id, item, source, macro_definition, order);
             }
             _ => {
-                self.collect_local_def(module_id, item, source);
+                self.collect_local_def(module_id, item, source, ScopeBindingProvenance::Direct);
             }
         }
 
@@ -147,10 +146,16 @@ impl SourceFragmentCollector<'_> {
         module_id: ModuleId,
         item: &rg_item_tree::ItemNode,
         source: ItemTreeRef,
+        provenance: ScopeBindingProvenance,
     ) -> Option<LocalDefId> {
         let kind = LocalDefKind::from_item_tag(item.kind.tag())?;
-        let namespace = kind.namespace();
+        let namespaces = kind.scope_namespaces(&item.kind);
         let name = item.name.clone()?;
+        let visibilities = self.state.def_map_builder.resolve_local_def_visibilities(
+            module_id,
+            &item.kind,
+            &item.visibility,
+        );
 
         // Local definitions become immediately visible in both the frozen def-map being built and
         // the mutable scope snapshot used by the macro expansion fixed-point loop.
@@ -158,6 +163,7 @@ impl SourceFragmentCollector<'_> {
             module: module_id,
             name: name.clone(),
             kind,
+            namespaces,
             visibility: item.visibility.clone(),
             source: source.into(),
             file_id: item.file_id,
@@ -170,29 +176,52 @@ impl SourceFragmentCollector<'_> {
             .expect("module should exist for source fragment local definition")
             .local_defs
             .push(local_def_id);
-        let binding = ScopeBinding {
-            def: DefId::Local(LocalDefRef {
-                origin: DefMapRef::Target(self.state.target),
-                local_def: local_def_id,
-            }),
-            visibility: item.visibility.clone(),
-            owner: ModuleRef {
-                origin: DefMapRef::Target(self.state.target),
-                module: module_id,
-            },
-            origin: ScopeBindingOrigin::Direct,
-        };
-        self.state
+        let def = DefId::Local(LocalDefRef {
+            origin: DefMapRef::Crate(self.state.crate_ref),
+            local_def: local_def_id,
+        });
+        let base_scope = self
+            .state
             .base_scopes
             .get_mut(module_id.0)
-            .expect("base scope should exist for source fragment local definition")
-            .insert_binding(&name, namespace, binding.clone());
-        self.current_scopes
-            .module_scope_mut(self.state.target, module_id)
-            .expect("current scope should exist for source fragment local definition")
-            .insert_binding(&name, namespace, binding);
+            .expect("base scope should exist for source fragment local definition");
+        let current_scope = self
+            .current_scopes
+            .module_scope_mut(self.state.crate_ref, module_id)
+            .expect("current scope should exist for source fragment local definition");
+        for namespace in namespaces.iter() {
+            let binding = ScopeBinding::new(def, *visibilities.get(namespace), provenance);
+            base_scope.insert_binding(&name, namespace, binding.clone());
+            current_scope.insert_binding(&name, namespace, binding);
+        }
 
         Some(local_def_id)
+    }
+
+    /// Record source-fragment enum variants with the same namespace facts as ordinary source.
+    fn collect_enum(
+        &mut self,
+        module_id: ModuleId,
+        item: &rg_item_tree::ItemNode,
+        source: ItemTreeRef,
+        enum_item: &rg_item_tree::EnumItem,
+    ) {
+        let Some(local_def_id) =
+            self.collect_local_def(module_id, item, source, ScopeBindingProvenance::Direct)
+        else {
+            return;
+        };
+        let visibility = self
+            .state
+            .def_map_builder
+            .resolve_visibility(module_id, &item.visibility);
+        self.state.def_map_builder.alloc_local_enum_variants(
+            module_id,
+            local_def_id,
+            enum_item,
+            visibility,
+            item.file_id,
+        );
     }
 
     fn collect_macro_definition(
@@ -203,7 +232,16 @@ impl SourceFragmentCollector<'_> {
         macro_definition: &MacroDefinitionItem,
         order: ItemOrder,
     ) {
-        let Some(local_def_id) = self.collect_local_def(module_id, item, source) else {
+        let provenance = match macro_definition {
+            MacroDefinitionItem::MacroRules { attrs, .. }
+                if self.macro_definition_is_exported(attrs) =>
+            {
+                ScopeBindingProvenance::DirectMacroExport
+            }
+            MacroDefinitionItem::MacroRules { .. } => ScopeBindingProvenance::DirectMacroRules,
+            MacroDefinitionItem::MacroDef { .. } => ScopeBindingProvenance::Direct,
+        };
+        let Some(local_def_id) = self.collect_local_def(module_id, item, source, provenance) else {
             return;
         };
 
@@ -234,25 +272,21 @@ impl SourceFragmentCollector<'_> {
                 macro_definition,
                 item.docs.clone(),
                 self.state.edition,
-                self.state.target,
+                self.state.crate_ref,
             ),
         );
     }
 
     fn export_macro_definition_to_root(&mut self, name: &Name, local_def_id: LocalDefId) {
         let root_module = self.state.root_module;
-        let binding = ScopeBinding {
-            def: DefId::Local(LocalDefRef {
-                origin: DefMapRef::Target(self.state.target),
+        let binding = ScopeBinding::new(
+            DefId::Local(LocalDefRef {
+                origin: DefMapRef::Crate(self.state.crate_ref),
                 local_def: local_def_id,
             }),
-            visibility: VisibilityLevel::Public,
-            owner: ModuleRef {
-                origin: DefMapRef::Target(self.state.target),
-                module: root_module,
-            },
-            origin: ScopeBindingOrigin::MacroExport,
-        };
+            Visibility::Public,
+            ScopeBindingProvenance::MacroExport,
+        );
 
         self.state
             .base_scopes
@@ -260,7 +294,7 @@ impl SourceFragmentCollector<'_> {
             .expect("root scope should exist before source fragment macro export collection")
             .insert_binding(name, Namespace::Macros, binding.clone());
         self.current_scopes
-            .module_scope_mut(self.state.target, root_module)
+            .module_scope_mut(self.state.crate_ref, root_module)
             .expect("current root scope should exist for source fragment macro export")
             .insert_binding(name, Namespace::Macros, binding);
     }
@@ -295,7 +329,7 @@ impl SourceFragmentCollector<'_> {
                 callee: macro_call.callee.clone(),
                 args: macro_call.args.clone(),
                 builtin: macro_call.builtin.clone(),
-                dollar_crate_target: None,
+                dollar_crate: None,
                 file_id: item.file_id,
                 span: item.span,
                 order,
@@ -368,18 +402,23 @@ impl SourceFragmentCollector<'_> {
                 definition_file: None,
             } => None,
         };
+        let semantic_visibility = self
+            .state
+            .def_map_builder
+            .resolve_visibility(parent_module, &item.visibility);
         let child_module = self.alloc_module(
             Some(parent_module),
             Some(module_name.clone()),
             item.name_span,
             Documentation::concat(item.docs.clone(), inner_docs),
+            semantic_visibility,
             origin,
         );
         self.link_child_module(
             parent_module,
             child_module,
             &module_name,
-            item.visibility.clone(),
+            semantic_visibility,
         );
         self.state
             .textual_macro_scopes
@@ -436,12 +475,14 @@ impl SourceFragmentCollector<'_> {
         name: Option<Name>,
         name_span: Option<rg_parse::Span>,
         docs: Option<Documentation>,
+        visibility: Visibility,
         origin: ModuleOrigin,
     ) -> ModuleId {
         let module_id = self.state.def_map_builder.alloc_module(ModuleData {
             name,
             name_span,
             docs,
+            visibility,
             parent,
             children: Vec::new(),
             local_defs: Vec::new(),
@@ -453,8 +494,8 @@ impl SourceFragmentCollector<'_> {
         });
         self.state.base_scopes.push(Default::default());
         self.current_scopes
-            .push_module_scope(self.state.target, Default::default())
-            .expect("current scopes should have a target slot for source fragment module");
+            .push_module_scope(self.state.crate_ref, Default::default())
+            .expect("current scopes should have a crate slot for source fragment module");
         module_id
     }
 
@@ -463,7 +504,7 @@ impl SourceFragmentCollector<'_> {
         parent_module: ModuleId,
         child_module: ModuleId,
         module_name: &Name,
-        visibility: VisibilityLevel,
+        visibility: Visibility,
     ) {
         self.state
             .def_map_builder
@@ -471,25 +512,21 @@ impl SourceFragmentCollector<'_> {
             .expect("parent module should exist for source fragment child link")
             .children
             .push((module_name.clone(), child_module));
-        let binding = ScopeBinding {
-            def: DefId::Module(ModuleRef {
-                origin: DefMapRef::Target(self.state.target),
+        let binding = ScopeBinding::new(
+            DefId::Module(ModuleRef {
+                origin: DefMapRef::Crate(self.state.crate_ref),
                 module: child_module,
             }),
             visibility,
-            owner: ModuleRef {
-                origin: DefMapRef::Target(self.state.target),
-                module: parent_module,
-            },
-            origin: ScopeBindingOrigin::Direct,
-        };
+            ScopeBindingProvenance::Direct,
+        );
         self.state
             .base_scopes
             .get_mut(parent_module.0)
             .expect("base scope should exist for source fragment child link")
             .insert_binding(module_name, Namespace::Types, binding.clone());
         self.current_scopes
-            .module_scope_mut(self.state.target, parent_module)
+            .module_scope_mut(self.state.crate_ref, parent_module)
             .expect("current scope should exist for source fragment child link")
             .insert_binding(module_name, Namespace::Types, binding);
     }
@@ -505,16 +542,19 @@ impl SourceFragmentCollector<'_> {
 
         for (import_index, import) in imports.iter().enumerate() {
             let path = ImportPath::from_use_path(&import.path);
-            if path.segments.is_empty() {
+            if path.semantic().segments.is_empty() {
                 continue;
             }
 
+            let visibility = self
+                .state
+                .def_map_builder
+                .resolve_visibility(module_id, &item.visibility);
             let import_id = self.state.def_map_builder.alloc_import(ImportData {
                 module: module_id,
-                visibility: item.visibility.clone(),
+                visibility,
                 kind: ImportKind::from_use_kind(import.kind),
                 path,
-                source_path: ImportSourcePath::from_use_path(&import.path),
                 binding: ImportBinding::from_alias(&import.alias),
                 alias_span: match &import.alias {
                     ImportAlias::Explicit { span, .. } => Some(*span),
@@ -546,7 +586,7 @@ impl SourceFragmentCollector<'_> {
         // applying aliases such as `extern crate dep as _`.
         let module_ref = if extern_name == "self" {
             ModuleRef {
-                origin: DefMapRef::Target(self.state.target),
+                origin: DefMapRef::Crate(self.state.crate_ref),
                 module: self.state.root_module,
             }
         } else {
@@ -572,22 +612,20 @@ impl SourceFragmentCollector<'_> {
             return;
         };
 
-        let binding = ScopeBinding {
-            def: DefId::Module(module_ref),
-            visibility: item.visibility.clone(),
-            owner: ModuleRef {
-                origin: DefMapRef::Target(self.state.target),
-                module: module_id,
-            },
-            origin: ScopeBindingOrigin::Direct,
-        };
+        let binding = ScopeBinding::new(
+            DefId::Module(module_ref),
+            self.state
+                .def_map_builder
+                .resolve_visibility(module_id, &item.visibility),
+            ScopeBindingProvenance::ExternCrate,
+        );
         self.state
             .base_scopes
             .get_mut(module_id.0)
             .expect("base scope should exist for source fragment extern crate binding")
             .insert_binding(&binding_name, Namespace::Types, binding.clone());
         self.current_scopes
-            .module_scope_mut(self.state.target, module_id)
+            .module_scope_mut(self.state.crate_ref, module_id)
             .expect("current scope should exist for source fragment extern crate binding")
             .insert_binding(&binding_name, Namespace::Types, binding);
     }

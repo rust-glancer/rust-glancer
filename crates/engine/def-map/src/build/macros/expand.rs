@@ -1,6 +1,6 @@
 //! Applies reusable macro expansion jobs back to item-position attempts.
 //!
-//! Attempt collection is tied to target state and macro resolution. The prepared work is
+//! Attempt collection is tied to crate state and macro resolution. The prepared work is
 //! self-contained, so it can run through the shared runtime before this module updates item macro
 //! attempts and records def-map metrics.
 

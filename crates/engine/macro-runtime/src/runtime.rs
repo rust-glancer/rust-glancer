@@ -9,10 +9,9 @@ use std::time::Duration;
 use anyhow::Context as _;
 
 use rg_ir_model::LocalDefRef;
-use rg_ir_storage::MacroDefinitionData;
 use rg_parse::{FileId, Span};
+use rg_text::RustEdition;
 use rg_tt::TopSubtree;
-use rg_workspace::RustEdition;
 
 use super::{
     ExpansionParseKind, ExpansionSyntax,
@@ -50,7 +49,7 @@ impl MacroExpansionRuntime {
         let compile_result = self.cache.compile(
             request.def_ref,
             request.definition,
-            macro_edition(request.definition.edition),
+            macro_edition(request.definition.edition()),
         );
         let Some(macro_) = compile_result.macro_ else {
             return PreparedMacroExpansionResult {
@@ -165,10 +164,35 @@ impl Default for MacroExpansionRuntime {
     }
 }
 
+/// Borrowed declarative-macro syntax needed by the expansion runtime.
+///
+/// Name resolution and retained definition metadata belong to the caller. The runtime only needs
+/// the definition edition and token trees required by the low-level macro compiler.
+#[derive(Clone, Copy)]
+pub enum DeclarativeMacroDefinition<'a> {
+    MacroRules {
+        edition: RustEdition,
+        body: Option<&'a TopSubtree>,
+    },
+    MacroDef {
+        edition: RustEdition,
+        args: Option<&'a TopSubtree>,
+        body: Option<&'a TopSubtree>,
+    },
+}
+
+impl DeclarativeMacroDefinition<'_> {
+    fn edition(self) -> RustEdition {
+        match self {
+            Self::MacroRules { edition, .. } | Self::MacroDef { edition, .. } => edition,
+        }
+    }
+}
+
 /// A macro call after the caller has resolved the callee definition.
 pub struct MacroExpansionRequest<'a> {
     pub def_ref: LocalDefRef,
-    pub definition: &'a MacroDefinitionData,
+    pub definition: DeclarativeMacroDefinition<'a>,
     pub path_text: &'a str,
     pub args: &'a TopSubtree,
     pub call_file_id: FileId,

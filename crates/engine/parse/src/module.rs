@@ -12,6 +12,7 @@ use std::{
 
 use anyhow::Context as _;
 use rg_syntax::ast::{self, HasAttrs, HasModuleItem, HasName};
+use rg_text::identifier_text;
 
 use crate::{FileId, Package, fs};
 use rg_source::SourceInventory;
@@ -68,7 +69,10 @@ impl ModuleFileContext {
         sources: &SourceInventory,
         module: &ast::Module,
     ) -> anyhow::Result<Option<PathBuf>> {
-        let Some(module_name) = module.name().map(|name| name.text().to_string()) else {
+        let Some(module_name) = module.name().map(|name| {
+            let text = name.text();
+            identifier_text(&text).to_string()
+        }) else {
             return Ok(None);
         };
         if let Some(path_attr) = module_path_attr(module) {
@@ -220,7 +224,10 @@ impl<'db> ModuleDiscovery<'db> {
             // a directory named after the inline module path.
             let inline_module_context = module
                 .name()
-                .map(|name| module_file_context.descend(name.text().as_str()))
+                .map(|name| {
+                    let text = name.text();
+                    module_file_context.descend(identifier_text(&text))
+                })
                 .unwrap_or_else(|| module_file_context.clone());
             let inline_items = item_list.items().collect::<Vec<_>>();
             return self

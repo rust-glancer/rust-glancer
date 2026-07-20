@@ -3,12 +3,12 @@
 //! Completion renderers use these facts heavily, but the facts themselves are not completion
 //! concepts: they are names visible from an indexed module or lexical body scope.
 
-use rg_ir_model::items::Documentation;
-use rg_ir_model::{DefId, FunctionRef, ModuleRef, Path, SemanticItemRef, identity::DeclarationRef};
-use rg_ir_storage::{
-    DefMapQuery, DefMapSource, ItemStoreQuery, NameResolutionFilter, ScopeNamespace,
-    VisibleScopeDef, VisibleScopeOrigin,
+use rg_def_map::{
+    DefMapQuery, DefMapSource, Namespace, NamespaceSet, VisibleScopeDef, VisibleScopeOrigin,
 };
+use rg_ir_model::{DefId, FunctionRef, ModuleRef, Path, SemanticItemRef, identity::DeclarationRef};
+use rg_item_tree::Documentation;
+use rg_semantic_ir::ItemStoreQuery;
 
 use crate::{IndexedViewDb, SymbolKind};
 
@@ -20,12 +20,31 @@ pub enum NameNamespace {
     Macros,
 }
 
-impl From<ScopeNamespace> for NameNamespace {
-    fn from(namespace: ScopeNamespace) -> Self {
+/// Namespace selected by source positions that cannot denote a macro.
+///
+/// Keeping this restriction in the type distinguishes body type/value paths from module scopes,
+/// where macro names are a real third possibility.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ValueOrTypeNamespace {
+    Types,
+    Values,
+}
+
+impl From<ValueOrTypeNamespace> for NameNamespace {
+    fn from(namespace: ValueOrTypeNamespace) -> Self {
         match namespace {
-            ScopeNamespace::Types => Self::Types,
-            ScopeNamespace::Values => Self::Values,
-            ScopeNamespace::Macros => Self::Macros,
+            ValueOrTypeNamespace::Types => Self::Types,
+            ValueOrTypeNamespace::Values => Self::Values,
+        }
+    }
+}
+
+impl From<Namespace> for NameNamespace {
+    fn from(namespace: Namespace) -> Self {
+        match namespace {
+            Namespace::Types => Self::Types,
+            Namespace::Values => Self::Values,
+            Namespace::Macros => Self::Macros,
         }
     }
 }
@@ -110,7 +129,7 @@ impl<'a, 'db> NameLookupView<'a, 'db> {
         let resolved = def_maps.scope_resolver().resolve_path(
             importing_module,
             qualifier,
-            NameResolutionFilter::TypesOnly,
+            NamespaceSet::TYPES,
         )?;
         let mut names = Vec::new();
 

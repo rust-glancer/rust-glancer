@@ -7,7 +7,7 @@ use crate::{
     ItemTreeId, MacroDefinitionItem, MacroUseAttr, MacroUseSelector, ModuleSource,
     Package as ItemTreePackage, ParamKind, TargetRoot, VisibilityLevel, testonly::ItemTreeFixture,
 };
-use rg_parse::{FileId, Package, ParseDb, Target};
+use rg_parse::{CargoTarget, FileId, Package, ParseDb};
 
 pub(super) fn check_project_item_tree(fixture: &str, expect: Expect) {
     let db = ItemTreeFixtureDb::build(fixture);
@@ -106,7 +106,7 @@ impl<'a> PackageItemTreeSnapshot<'a> {
         )
     }
 
-    fn render_target_root(&self, target: &Target, root_file: rg_parse::FileId) -> String {
+    fn render_target_root(&self, target: &CargoTarget, root_file: rg_parse::FileId) -> String {
         let mut dump = String::new();
         writeln!(
             &mut dump,
@@ -256,9 +256,9 @@ impl<'a> PackageItemTreeSnapshot<'a> {
                     self.render_fields(&variant.fields, depth + 2, dump);
                 }
             }
-            ItemKind::Function(function_item) => {
-                self.render_generics(&function_item.generics, depth, dump);
-                let params = function_item
+            ItemKind::Function(fn_def) => {
+                self.render_generics(&fn_def.generics, depth, dump);
+                let params = fn_def
                     .params
                     .iter()
                     .map(render_param)
@@ -266,7 +266,7 @@ impl<'a> PackageItemTreeSnapshot<'a> {
                     .join(", ");
                 writeln!(dump, "{indent}  - params ({params})")
                     .expect("string writes should not fail");
-                if let Some(ret_ty) = &function_item.ret_ty {
+                if let Some(ret_ty) = &fn_def.ret_ty {
                     writeln!(dump, "{indent}  - ret {ret_ty}")
                         .expect("string writes should not fail");
                 }
@@ -477,7 +477,7 @@ enum SnapshotMode {
 
 fn render_param(param: &crate::ParamItem) -> String {
     match (param.kind, &param.ty) {
-        (ParamKind::SelfParam, _) => param.pat.clone(),
+        (ParamKind::SelfParam(_), _) => param.pat.clone(),
         (ParamKind::Normal, Some(ty)) => format!("{}: {ty}", param.pat),
         (ParamKind::Normal, None) => param.pat.clone(),
     }

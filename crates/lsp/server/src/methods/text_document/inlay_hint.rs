@@ -17,7 +17,7 @@ pub(crate) async fn inlay_hint(
     tracing::trace!("inlay hint request received");
     let hints = ctx
         .engine_client
-        .call(
+        .query(
             "inlay_hint",
             move |engine_client, request_context| async move {
                 engine_client.inlay_hint(request_context, path, range).await

@@ -1,6 +1,10 @@
 //! Editor symbol models built from generic indexed symbol projections.
 
-use rg_ir_view::symbol::{IndexedSymbolEntry, SourceOutlineDeclaration, SourceOutlineNode};
+use rg_ir_view::{
+    IndexedViewDb,
+    item::declaration::DeclarationView,
+    symbol::{IndexedSymbolEntry, SourceOutlineDeclaration, SourceOutlineNode},
+};
 
 use crate::model::{DocumentSymbol, WorkspaceSymbol};
 
@@ -27,16 +31,20 @@ impl From<SourceOutlineNode> for DocumentSymbol {
     }
 }
 
-impl From<IndexedSymbolEntry> for WorkspaceSymbol {
-    fn from(entry: IndexedSymbolEntry) -> Self {
-        let (declaration, container_name) = entry.into_parts();
-        Self {
-            target: declaration.target(),
-            name: declaration.name().to_string(),
-            kind: declaration.kind(),
-            file_id: declaration.file_id(),
-            span: Some(declaration.selection_span()),
-            container_name,
-        }
-    }
+pub(super) fn workspace_symbol(
+    db: &IndexedViewDb<'_>,
+    entry: IndexedSymbolEntry,
+) -> anyhow::Result<WorkspaceSymbol> {
+    let (declaration, container_name) = entry.into_parts();
+    let name = DeclarationView::new(db)
+        .declaration_site_name(&declaration)?
+        .to_string();
+    Ok(WorkspaceSymbol {
+        crate_ref: declaration.crate_ref(),
+        name,
+        kind: declaration.kind(),
+        file_id: declaration.file_id(),
+        span: Some(declaration.selection_span()),
+        container_name,
+    })
 }

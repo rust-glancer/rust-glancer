@@ -107,6 +107,21 @@ impl EngineRouting {
             .map(|(_, id)| *id)
     }
 
+    /// Returns ready-slot candidates beneath one editor workspace folder.
+    ///
+    /// The native watcher is created per editor folder, while Cargo discovery can create several
+    /// more specific engine roots below it. A filesystem burst must mark every such existing
+    /// engine unavailable before waiting for the workspace-wide quiet period.
+    pub(crate) fn engine_ids_for_workspace(
+        &self,
+        workspace: &Path,
+    ) -> impl Iterator<Item = EngineId> + '_ {
+        let workspace = normalize_path(workspace);
+        self.engine_ids_by_root
+            .iter()
+            .filter_map(move |(root, id)| root.starts_with(&workspace).then_some(*id))
+    }
+
     pub(crate) fn root_for_id(&self, id: EngineId) -> Option<&Path> {
         self.engine_ids_by_root
             .iter()

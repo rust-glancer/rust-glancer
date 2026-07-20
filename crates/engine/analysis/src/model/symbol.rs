@@ -1,5 +1,4 @@
-use rg_ir_model::Path;
-use rg_ir_model::items::FieldKey;
+use rg_ir_model::{FieldKey, Path};
 use rg_ir_model::{
     ModuleRef,
     identity::{DeclarationRef, ExprRef, FunctionBodyRef, LexicalScopeRef},

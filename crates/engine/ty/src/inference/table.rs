@@ -1,11 +1,11 @@
 use super::{
-    traversal::{
-        InferenceTyFolder, same_generic_arg_shape, same_opaque_trait_shape, same_ty_shape,
-        ty_contains_var,
-    },
+    traversal::{InferenceTyFolder, same_generic_arg_shape, same_ty_shape, ty_contains_var},
     var::{InferVarId, InferVarKind},
 };
-use crate::{GenericArg, NominalTy, OpaqueTraitBound, PrimitiveTy, Ty};
+use crate::{
+    AdtTy, AliasTy, Clause, ClosureTy, FnDefTy, GenericArg, GenericArgs, Lifetime, OpaqueTy,
+    PrimitiveTy, ProjectionTy, TraitApplication, Ty,
+};
 
 /// Marker returned when speculative inference evidence is incompatible.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -125,7 +125,6 @@ impl InferenceTable {
     ///
     /// - `Unknown` does not solve variables.
     /// - Different nominal definitions conflict.
-    /// - Opaque bounds only use one clear same-trait pair as evidence.
     /// - Conflicts finalize to `Ty::Unknown`.
     /// - Unsolved type vars finalize to `Ty::Unknown`.
     /// - Unsolved numeric vars finalize to the existing defaults: `i32` / `f64`.
@@ -149,6 +148,14 @@ impl InferenceTable {
         TableFinalizer::new(self).fold_ty(ty)
     }
 
+    /// Finalize every type-bearing position in a semantic argument list.
+    pub(crate) fn finalize_generic_args(&self, args: &GenericArgs) -> GenericArgs {
+        let mut finalizer = TableFinalizer::new(self);
+        args.iter()
+            .map(|arg| finalizer.fold_generic_arg(arg))
+            .collect()
+    }
+
     /// Expand only the root variable, preserving nested variables as future evidence links.
     pub fn resolve_root_var(&self, ty: &Ty) -> Ty {
         self.resolve_root_ty_var(ty, &mut Vec::new())
@@ -159,6 +166,44 @@ impl InferenceTable {
     /// `?B = User` then makes the same value compare as `Vec<User>`.
     pub fn canonicalize(&self, ty: &Ty) -> Ty {
         TableCanonicalizer::new(self).fold_ty(ty)
+    }
+
+    /// Merge evidence into unknown children without discarding facts already established.
+    ///
+    /// Body inference can observe the same structural type from several directions. For example,
+    /// `(Token, unknown)` arriving after `(Token, Token)` is weaker evidence, while
+    /// `(unknown, Token)` can complete `(Token, unknown)`. Canonicalizing through this table first
+    /// also lets solved variables participate as their established shapes.
+    pub fn merge_ty_evidence(&self, existing: &Ty, evidence: &Ty) -> Ty {
+        let existing = self.canonicalize(existing);
+        let evidence = self.canonicalize(evidence);
+        Self::refine_ty(&existing, &evidence).0
+    }
+
+    /// Return one predicate with every solved type variable expanded from this table.
+    pub fn canonicalize_clause(&self, clause: &Clause) -> Clause {
+        let mut canonicalizer = TableCanonicalizer::new(self);
+        match clause {
+            Clause::Implemented(application) => Clause::Implemented(TraitApplication {
+                def: application.def,
+                args: application
+                    .args
+                    .iter()
+                    .map(|arg| canonicalizer.fold_generic_arg(arg))
+                    .collect(),
+            }),
+            Clause::AliasEq { alias, ty } => Clause::AliasEq {
+                alias: ProjectionTy {
+                    associated_ty: alias.associated_ty,
+                    args: alias
+                        .args
+                        .iter()
+                        .map(|arg| canonicalizer.fold_generic_arg(arg))
+                        .collect(),
+                },
+                ty: canonicalizer.fold_ty(ty),
+            },
+        }
     }
 
     fn alloc_var(&mut self, kind: InferVarKind) -> InferVarId {
@@ -180,12 +225,13 @@ impl InferenceTable {
             | Ty::Array { .. }
             | Ty::Slice(_)
             | Ty::Reference { .. }
-            | Ty::Opaque { .. }
+            | Ty::RawPointer { .. }
+            | Ty::FnPointer { .. }
             | Ty::Closure(_)
-            | Ty::FunctionItem(_)
-            | Ty::Syntax(_)
-            | Ty::Nominal(_)
-            | Ty::SelfTy(_)
+            | Ty::FnDef(_)
+            | Ty::Adt(_)
+            | Ty::Param(_)
+            | Ty::Alias(_)
             | Ty::Unknown => ty.clone(),
         }
     }
@@ -232,28 +278,10 @@ impl InferenceTable {
             (Ty::InferVar { kind, id }, _) => self.unify_var(*id, *kind, rhs),
             (_, Ty::InferVar { kind, id }) => self.unify_var(*id, *kind, lhs),
             _ if !same_ty_shape(lhs, rhs) => UnifyResult::conflict(),
-            (Ty::Opaque { bounds: lhs_bounds }, Ty::Opaque { bounds: rhs_bounds }) => {
-                // Multiple opaque bounds are too broad to align here; only one same-trait pair
-                // can pass evidence through its generic arguments.
-                let (Some(lhs), Some(rhs)) = (lhs_bounds.as_one(), rhs_bounds.as_one()) else {
-                    return UnifyResult::compatible();
-                };
-                if !same_opaque_trait_shape(lhs, rhs) {
-                    return UnifyResult::conflict();
-                }
-
-                let mut result = UnifyResult::compatible();
-                for (lhs_arg, rhs_arg) in lhs.args.iter().zip(&rhs.args) {
-                    result = result.merge(self.unify_generic_arg(lhs_arg, rhs_arg));
-                }
-                result
-            }
             (Ty::Unit, Ty::Unit)
             | (Ty::Never, Ty::Never)
             | (Ty::Primitive(_), Ty::Primitive(_))
-            | (Ty::Closure(_), Ty::Closure(_))
-            | (Ty::FunctionItem(_), Ty::FunctionItem(_))
-            | (Ty::Syntax(_), Ty::Syntax(_)) => UnifyResult::compatible(),
+            | (Ty::Param(_), Ty::Param(_)) => UnifyResult::compatible(),
             (Ty::Tuple(lhs_fields), Ty::Tuple(rhs_fields)) => {
                 self.unify_iter(lhs_fields.iter(), rhs_fields.iter())
             }
@@ -274,11 +302,47 @@ impl InferenceTable {
                     inner: rhs_inner, ..
                 },
             ) => self.unify_ty(lhs_inner, rhs_inner),
-            (Ty::Nominal(lhs_ty), Ty::Nominal(rhs_ty))
-            | (Ty::SelfTy(lhs_ty), Ty::SelfTy(rhs_ty)) => {
+            (
+                Ty::RawPointer {
+                    inner: lhs_inner, ..
+                },
+                Ty::RawPointer {
+                    inner: rhs_inner, ..
+                },
+            ) => self.unify_ty(lhs_inner, rhs_inner),
+            (
+                Ty::FnPointer {
+                    params: lhs_params,
+                    ret: lhs_ret,
+                },
+                Ty::FnPointer {
+                    params: rhs_params,
+                    ret: rhs_ret,
+                },
+            ) => self
+                .unify_iter(lhs_params.iter(), rhs_params.iter())
+                .merge(self.unify_ty(lhs_ret, rhs_ret)),
+            (Ty::Adt(lhs_ty), Ty::Adt(rhs_ty)) => {
                 // Same-definition nominal types can pass evidence through their generic arguments.
                 let mut result = UnifyResult::compatible();
                 for (lhs_arg, rhs_arg) in lhs_ty.args.iter().zip(&rhs_ty.args) {
+                    result = result.merge(self.unify_generic_arg(lhs_arg, rhs_arg));
+                }
+                result
+            }
+            (Ty::FnDef(lhs), Ty::FnDef(rhs)) => {
+                let mut result = UnifyResult::compatible();
+                for (lhs_arg, rhs_arg) in lhs.args.iter().zip(&rhs.args) {
+                    result = result.merge(self.unify_generic_arg(lhs_arg, rhs_arg));
+                }
+                result
+            }
+            (Ty::Closure(lhs), Ty::Closure(rhs)) => self
+                .unify_iter(lhs.params.iter(), rhs.params.iter())
+                .merge(self.unify_ty(&lhs.ret, &rhs.ret)),
+            (Ty::Alias(lhs), Ty::Alias(rhs)) => {
+                let mut result = UnifyResult::compatible();
+                for (lhs_arg, rhs_arg) in lhs.args().iter().zip(rhs.args()) {
                     result = result.merge(self.unify_generic_arg(lhs_arg, rhs_arg));
                 }
                 result
@@ -311,9 +375,7 @@ impl InferenceTable {
 
         let evidence = self.resolve_root_var(evidence);
 
-        // Syntax placeholders are preserved facts, not solver evidence. Later phases may resolve
-        // them first and feed the resolved shape back into the table.
-        if matches!(&evidence, Ty::Unknown | Ty::Syntax(_)) {
+        if matches!(&evidence, Ty::Unknown) {
             return UnifyResult::compatible();
         }
 
@@ -382,7 +444,7 @@ impl InferenceTable {
 
     fn var_kind_accepts(&self, kind: InferVarKind, evidence: &Ty) -> bool {
         match kind {
-            InferVarKind::Type => !matches!(evidence, Ty::Unknown | Ty::Syntax(_)),
+            InferVarKind::Type => !matches!(evidence, Ty::Unknown),
             InferVarKind::Integer => match evidence {
                 Ty::Primitive(primitive) => primitive.is_integral(),
                 Ty::InferVar {
@@ -422,12 +484,13 @@ impl InferenceTable {
             | Ty::Array { .. }
             | Ty::Slice(_)
             | Ty::Reference { .. }
-            | Ty::Opaque { .. }
+            | Ty::RawPointer { .. }
+            | Ty::FnPointer { .. }
             | Ty::Closure(_)
-            | Ty::FunctionItem(_)
-            | Ty::Syntax(_)
-            | Ty::Nominal(_)
-            | Ty::SelfTy(_)
+            | Ty::FnDef(_)
+            | Ty::Adt(_)
+            | Ty::Param(_)
+            | Ty::Alias(_)
             | Ty::Unknown => None,
         }
     }
@@ -436,43 +499,6 @@ impl InferenceTable {
         match (lhs, rhs) {
             // Type generic args are direct nested type positions.
             (GenericArg::Type(lhs), GenericArg::Type(rhs)) => self.unify_ty(lhs, rhs),
-
-            // Parenthesized `Fn*` args carry real type positions.
-            (
-                GenericArg::FnTraitArgs {
-                    params: lhs_params,
-                    ret: lhs_ret,
-                },
-                GenericArg::FnTraitArgs {
-                    params: rhs_params,
-                    ret: rhs_ret,
-                },
-            ) => {
-                if !same_generic_arg_shape(lhs, rhs) {
-                    return UnifyResult::conflict();
-                }
-
-                self.unify_iter(lhs_params.iter(), rhs_params.iter())
-                    .merge(self.unify_ty(lhs_ret, rhs_ret))
-            }
-
-            // Same-name associated type equalities can pass evidence through their type.
-            (
-                GenericArg::AssocType {
-                    name: lhs_name,
-                    ty: lhs_ty,
-                },
-                GenericArg::AssocType {
-                    name: rhs_name,
-                    ty: rhs_ty,
-                },
-            ) if lhs_name == rhs_name => match (lhs_ty, rhs_ty) {
-                (Some(lhs_ty), Some(rhs_ty)) => self.unify_ty(lhs_ty, rhs_ty),
-                // A missing associated type equality carries no evidence, but it also should not
-                // poison the surrounding trait-bound unification.
-                (None, None) => UnifyResult::compatible(),
-                (Some(_), None) | (None, Some(_)) => UnifyResult::compatible(),
-            },
 
             _ => {
                 if lhs == rhs {
@@ -487,7 +513,7 @@ impl InferenceTable {
     /// Merge later evidence into weak children of an already chosen slot shape.
     /// `Vec<unknown>` plus `Vec<?T>` becomes `Vec<?T>`.
     fn refine_ty(existing: &Ty, evidence: &Ty) -> (Ty, bool) {
-        if matches!(evidence, Ty::Unknown | Ty::Syntax(_)) {
+        if matches!(evidence, Ty::Unknown) {
             return (existing.clone(), false);
         }
         if matches!(existing, Ty::Unknown) {
@@ -517,7 +543,7 @@ impl InferenceTable {
                 (
                     Ty::Array {
                         inner: Box::new(inner),
-                        len: existing_len.clone(),
+                        len: *existing_len,
                     },
                     changed,
                 )
@@ -528,6 +554,7 @@ impl InferenceTable {
             }
             (
                 Ty::Reference {
+                    lifetime: existing_lifetime,
                     mutability: existing_mutability,
                     inner: existing_inner,
                 },
@@ -539,72 +566,102 @@ impl InferenceTable {
                 let (inner, changed) = Self::refine_ty(existing_inner, evidence_inner);
                 (
                     Ty::Reference {
+                        lifetime: *existing_lifetime,
                         mutability: *existing_mutability,
                         inner: Box::new(inner),
                     },
                     changed,
                 )
             }
-            (Ty::Nominal(existing_ty), Ty::Nominal(evidence_ty)) => {
-                let (args, changed) =
-                    Self::refine_generic_args(&existing_ty.args, &evidence_ty.args);
+            (
+                Ty::RawPointer {
+                    mutability: existing_mutability,
+                    inner: existing_inner,
+                },
+                Ty::RawPointer {
+                    inner: evidence_inner,
+                    ..
+                },
+            ) => {
+                let (inner, changed) = Self::refine_ty(existing_inner, evidence_inner);
                 (
-                    Ty::Nominal(NominalTy {
-                        def: existing_ty.def,
-                        args,
-                    }),
-                    changed,
-                )
-            }
-            (Ty::SelfTy(existing_ty), Ty::SelfTy(evidence_ty)) => {
-                let (args, changed) =
-                    Self::refine_generic_args(&existing_ty.args, &evidence_ty.args);
-                (
-                    Ty::SelfTy(NominalTy {
-                        def: existing_ty.def,
-                        args,
-                    }),
+                    Ty::RawPointer {
+                        mutability: *existing_mutability,
+                        inner: Box::new(inner),
+                    },
                     changed,
                 )
             }
             (
-                Ty::Opaque {
-                    bounds: existing_bounds,
+                Ty::FnPointer {
+                    params: existing_params,
+                    ret: existing_ret,
                 },
-                Ty::Opaque {
-                    bounds: evidence_bounds,
+                Ty::FnPointer {
+                    params: evidence_params,
+                    ret: evidence_ret,
                 },
             ) => {
-                let (Some(existing), Some(evidence)) =
-                    (existing_bounds.as_one(), evidence_bounds.as_one())
-                else {
-                    return (
-                        Ty::Opaque {
-                            bounds: existing_bounds.clone(),
-                        },
-                        false,
-                    );
-                };
-                if !same_opaque_trait_shape(existing, evidence) {
-                    return (
-                        Ty::Opaque {
-                            bounds: existing_bounds.clone(),
-                        },
-                        false,
-                    );
-                }
-
-                let (args, changed) = Self::refine_generic_args(&existing.args, &evidence.args);
+                let (params, params_changed) =
+                    Self::refine_ty_iter(existing_params.iter(), evidence_params.iter());
+                let (ret, ret_changed) = Self::refine_ty(existing_ret, evidence_ret);
                 (
-                    Ty::Opaque {
-                        bounds: std::iter::once(OpaqueTraitBound {
-                            trait_ref: existing.trait_ref,
-                            args,
-                        })
-                        .collect(),
+                    Ty::FnPointer {
+                        params,
+                        ret: Box::new(ret),
                     },
+                    params_changed || ret_changed,
+                )
+            }
+            (Ty::Adt(existing_ty), Ty::Adt(evidence_ty)) => {
+                let (args, changed) =
+                    Self::refine_generic_args(&existing_ty.args, &evidence_ty.args);
+                (
+                    Ty::Adt(AdtTy {
+                        def: existing_ty.def,
+                        args: args.into(),
+                    }),
                     changed,
                 )
+            }
+            (Ty::FnDef(existing_ty), Ty::FnDef(evidence_ty)) => {
+                let (args, changed) =
+                    Self::refine_generic_args(&existing_ty.args, &evidence_ty.args);
+                (
+                    Ty::FnDef(FnDefTy {
+                        def: existing_ty.def,
+                        args: args.into(),
+                    }),
+                    changed,
+                )
+            }
+            (Ty::Closure(existing_ty), Ty::Closure(evidence_ty)) => {
+                let (params, params_changed) =
+                    Self::refine_ty_iter(existing_ty.params.iter(), evidence_ty.params.iter());
+                let (ret, ret_changed) = Self::refine_ty(&existing_ty.ret, &evidence_ty.ret);
+                (
+                    Ty::Closure(ClosureTy {
+                        id: existing_ty.id,
+                        params,
+                        ret: Box::new(ret),
+                    }),
+                    params_changed || ret_changed,
+                )
+            }
+            (Ty::Alias(existing_ty), Ty::Alias(evidence_ty)) => {
+                let (args, changed) =
+                    Self::refine_generic_args(existing_ty.args(), evidence_ty.args());
+                let alias = match existing_ty {
+                    AliasTy::Projection(existing_ty) => AliasTy::Projection(ProjectionTy {
+                        associated_ty: existing_ty.associated_ty,
+                        args: args.into(),
+                    }),
+                    AliasTy::Opaque(existing_ty) => AliasTy::Opaque(OpaqueTy {
+                        opaque: existing_ty.opaque,
+                        args: args.into(),
+                    }),
+                };
+                (Ty::Alias(alias), changed)
             }
             _ => (existing.clone(), false),
         }
@@ -652,46 +709,6 @@ impl InferenceTable {
             (GenericArg::Type(existing), GenericArg::Type(evidence)) => {
                 let (ty, changed) = Self::refine_ty(existing, evidence);
                 (GenericArg::Type(Box::new(ty)), changed)
-            }
-            (
-                GenericArg::FnTraitArgs {
-                    params: existing_params,
-                    ret: existing_ret,
-                },
-                GenericArg::FnTraitArgs {
-                    params: evidence_params,
-                    ret: evidence_ret,
-                },
-            ) => {
-                let (params, params_changed) =
-                    Self::refine_ty_iter(existing_params.iter(), evidence_params.iter());
-                let (ret, ret_changed) = Self::refine_ty(existing_ret, evidence_ret);
-                (
-                    GenericArg::FnTraitArgs {
-                        params,
-                        ret: Box::new(ret),
-                    },
-                    params_changed || ret_changed,
-                )
-            }
-            (
-                GenericArg::AssocType {
-                    name: existing_name,
-                    ty: Some(existing_ty),
-                },
-                GenericArg::AssocType {
-                    ty: Some(evidence_ty),
-                    ..
-                },
-            ) => {
-                let (ty, changed) = Self::refine_ty(existing_ty, evidence_ty);
-                (
-                    GenericArg::AssocType {
-                        name: existing_name.clone(),
-                        ty: Some(Box::new(ty)),
-                    },
-                    changed,
-                )
             }
             _ => (existing.clone(), false),
         }
@@ -759,25 +776,21 @@ impl InferenceTyFolder for TableFinalizer<'_> {
         Ty::tuple(fields.iter().map(|field| self.fold_ty(field)).collect())
     }
 
-    fn fold_array(&mut self, inner: &Ty, len: &Option<String>) -> Ty {
-        Ty::array(self.fold_ty(inner), len.clone())
+    fn fold_array(&mut self, inner: &Ty, len: &crate::ConstValue) -> Ty {
+        Ty::array(self.fold_ty(inner), *len)
     }
 
     fn fold_slice(&mut self, inner: &Ty) -> Ty {
         Ty::slice(self.fold_ty(inner))
     }
 
-    fn fold_reference(&mut self, mutability: crate::Mutability, inner: &Ty) -> Ty {
-        Ty::reference(mutability, self.fold_ty(inner))
-    }
-
-    fn fold_opaque(&mut self, bounds: &rg_std::UniqueVec<OpaqueTraitBound>) -> Ty {
-        Ty::opaque(
-            bounds
-                .iter()
-                .map(|bound| self.fold_opaque_bound(bound))
-                .collect(),
-        )
+    fn fold_reference(
+        &mut self,
+        lifetime: Lifetime,
+        mutability: crate::Mutability,
+        inner: &Ty,
+    ) -> Ty {
+        Ty::reference_with_lifetime(lifetime, mutability, self.fold_ty(inner))
     }
 
     fn fold_infer_var(&mut self, id: InferVarId, kind: InferVarKind) -> Ty {

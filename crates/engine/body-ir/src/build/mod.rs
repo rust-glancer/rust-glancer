@@ -4,14 +4,15 @@ mod body_def_map;
 mod body_item_store;
 mod lower;
 mod materialization;
+mod pattern_binding;
 mod query_source;
 mod resolve;
 mod state;
 
 use anyhow::Context as _;
 
+use rg_def_map::PackageDefMaps as DefMapPackage;
 use rg_def_map::PackageSlot;
-use rg_ir_storage::PackageDefMaps as DefMapPackage;
 use rg_package_store::{PackageLoader, PackageSubset};
 use rg_semantic_ir::PackageIr;
 use rg_std::Shrink;
@@ -72,7 +73,7 @@ impl<'db, 'names> BodyIrDbBuilder<'db, 'names> {
         let semantic_ir_txn = self
             .semantic_ir
             .read_txn(PackageLoader::resident_only("resident body IR build"));
-        let mut packages = lower::build_packages(
+        let packages = lower::build_packages(
             self.parse,
             &def_map_txn,
             &semantic_ir_txn,
@@ -80,8 +81,8 @@ impl<'db, 'names> BodyIrDbBuilder<'db, 'names> {
             self.policy,
             self.interners.as_mut(),
         )?;
-        resolve::resolve_packages(
-            &mut packages,
+        let packages = resolve::resolve_packages(
+            packages,
             self.parse,
             self.interners.as_mut(),
             &def_map_txn,
@@ -182,7 +183,7 @@ impl<'db, 'names> BodyIrDbPackageRebuilder<'db, 'names> {
         let def_map_txn = self
             .def_map
             .read_txn_for_subset(self.def_map_loader, self.subset);
-        let mut rebuilt_packages = lower::build_selected_packages(
+        let rebuilt_packages = lower::build_selected_packages(
             self.parse,
             &def_map_txn,
             &semantic_ir_txn,
@@ -191,8 +192,8 @@ impl<'db, 'names> BodyIrDbPackageRebuilder<'db, 'names> {
             self.interners,
         )
         .context("while attempting to lower rebuilt body IR packages")?;
-        resolve::resolve_selected_packages(
-            &mut rebuilt_packages,
+        let rebuilt_packages = resolve::resolve_selected_packages(
+            rebuilt_packages,
             self.parse,
             self.interners,
             &def_map_txn,

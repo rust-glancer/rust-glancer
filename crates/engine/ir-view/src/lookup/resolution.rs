@@ -4,15 +4,12 @@
 //! rules that turn paths, declaration refs, and body resolutions into canonical declaration
 //! identities.
 
-use rg_ir_model::Path;
-use rg_ir_model::items::FieldKey;
+use rg_def_map::{DefMapQuery, DefMapSource, NamespaceSet};
 use rg_ir_model::{
-    BodyRef, DefId, LocalDefRef, ModuleRef, ScopeId, TypePathResolution,
+    BodyRef, DefId, FieldKey, LocalDefRef, ModuleRef, Path, ScopeId,
     identity::{DeclarationRef, ExprRef},
 };
-use rg_ir_storage::{
-    DefMapQuery, DefMapSource, ItemStoreQuery, NameResolutionFilter, TypePathContext,
-};
+use rg_semantic_ir::{ItemStoreQuery, TypePathContext, TypePathResolution};
 use rg_ty::ItemPathQuery;
 
 use crate::{IndexedViewDb, body::BodyResolutionView, source::IndexedTypePathScope};
@@ -82,7 +79,7 @@ impl<'a, 'db> ResolutionView<'a, 'db> {
     /// Return declarations already attached to a resolved body expression.
     pub fn declarations_for_expr(&self, expr: ExprRef) -> anyhow::Result<Vec<DeclarationRef>> {
         let body_ref = expr.body_ir();
-        let Some(body) = self.0.body_ir.body_data(body_ref)? else {
+        let Some(body) = self.0.body_ir.body(body_ref)? else {
             return Ok(Vec::new());
         };
         self.canonical_declarations(body.expr_declarations(body_ref, expr.expr_id()))
@@ -139,7 +136,7 @@ impl<'a, 'db> ResolutionView<'a, 'db> {
         let def_maps = DefMapQuery::new(self.0);
         for def in def_maps
             .scope_resolver()
-            .resolve_path(module, path, NameResolutionFilter::AllNamespaces)?
+            .resolve_path(module, path, NamespaceSet::ALL)?
             .resolved
         {
             declarations.extend(self.declarations_for_def(def)?);
@@ -154,7 +151,7 @@ impl<'a, 'db> ResolutionView<'a, 'db> {
         scope: ScopeId,
         path: &Path,
     ) -> anyhow::Result<Vec<DeclarationRef>> {
-        let Some(body) = self.0.body_ir.body_data(body_ref)? else {
+        let Some(body) = self.0.body_ir.body(body_ref)? else {
             return Ok(Vec::new());
         };
         let Some(resolution) =
@@ -166,6 +163,14 @@ impl<'a, 'db> ResolutionView<'a, 'db> {
         let declarations = self.declarations_for_body_type_path_resolution(resolution);
         if !declarations.is_empty() {
             return Ok(declarations);
+        }
+
+        // Enum variants participate in type-name resolution without themselves being types. Keep
+        // that identity available to editor queries, especially for body-local record variants.
+        if let Some(variant) =
+            BodyResolutionView::new(self.0).type_path_enum_variant(body_ref, scope, path)?
+        {
+            return Ok(vec![DeclarationRef::EnumVariant(variant)]);
         }
 
         self.declarations_for_use_path(body.owner_module(), path)

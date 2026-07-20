@@ -4,16 +4,15 @@
 //! resolution only needs the conservative type fact for that lowered builtin expression, so this
 //! module keeps the synthetic type construction out of the general expression walker.
 
-use rg_ir_model::{
-    BuiltinMacroExprKind, ExprId, Mutability, Span, TextSpan,
-    items::{GenericArg as ItemGenericArg, TypePath, TypePathSegment, TypeRef},
-};
-use rg_ir_storage::{DefMapSource, ItemStoreSource};
+use rg_def_map::DefMapSource;
+use rg_ir_model::{BuiltinMacroExprKind, ExprId, Mutability, Span, TextSpan};
+use rg_item_tree::{GenericArg as ItemGenericArg, TypePath, TypePathSegment, TypeRef};
 use rg_package_store::PackageStoreError;
+use rg_semantic_ir::ItemStoreSource;
 use rg_text::Name;
 use rg_ty::{PrimitiveTy, Ty, UnsignedIntTy};
 
-use crate::resolution::{BodyResolutionContext, TypeRefUseSite};
+use crate::resolution::BodyResolutionContext;
 
 /// Maps a recognized builtin expression macro to the type Body IR should expose for it.
 pub(super) struct BuiltinMacroExprTypeMapper<'query, D, I> {
@@ -102,15 +101,7 @@ where
         // Builtins produce compiler-known types, but some fixtures and partial workspaces cannot
         // resolve the corresponding `core` paths. Keep those cases unknown instead of surfacing
         // synthetic syntax as if the user had written it.
-        let ty = self
-            .context
-            .type_refs(TypeRefUseSite::Scope(expr_data.scope))
-            .resolve(&ty)?;
-        Ok(if matches!(ty, Ty::Syntax(_)) {
-            Ty::Unknown
-        } else {
-            ty
-        })
+        self.context.type_refs(expr_data.scope).resolve(&ty)
     }
 
     fn synthetic_type_path(

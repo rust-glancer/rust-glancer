@@ -1,5 +1,5 @@
 use rg_arena::Arena;
-use rg_parse::{FileId, TargetId};
+use rg_parse::{CargoTargetId, FileId};
 use rg_std::{MemorySize, Shrink};
 
 use crate::{Documentation, ItemNode, ItemTreeId, ItemTreeRef};
@@ -8,7 +8,7 @@ use crate::{Documentation, ItemNode, ItemTreeId, ItemTreeRef};
 #[derive(Debug, Clone, PartialEq, Eq, Default, MemorySize, Shrink)]
 pub struct Package {
     pub(crate) files: Arena<FileId, Option<FileTree>>,
-    pub(crate) target_roots: Arena<TargetId, TargetRoot>,
+    pub(crate) target_roots: Arena<CargoTargetId, TargetRoot>,
 }
 
 impl Package {
@@ -33,7 +33,7 @@ impl Package {
     }
 
     /// Returns one target root by parsed target id.
-    pub fn target_root(&self, target_id: TargetId) -> Option<&TargetRoot> {
+    pub fn target_root(&self, target_id: CargoTargetId) -> Option<&TargetRoot> {
         self.target_roots.get(target_id)
     }
 }
@@ -58,6 +58,6 @@ impl FileTree {
 #[derive(Debug, Clone, PartialEq, Eq, MemorySize, Shrink)]
 #[shrink(leaf)]
 pub struct TargetRoot {
-    pub target: TargetId,
+    pub target: CargoTargetId,
     pub root_file: FileId,
 }

@@ -1,6 +1,6 @@
 //! Collects the unresolved def-map skeleton from item trees.
 //!
-//! This phase walks one target's module tree and records only what is directly visible from the
+//! This phase walks one crate's module tree and records only what is directly visible from the
 //! syntax:
 //! - module hierarchy
 //! - module-scope local definitions
@@ -14,23 +14,23 @@ use std::collections::HashMap;
 
 use anyhow::Context as _;
 
+use crate::{
+    DefMapBuilder, ImportBinding, ImportData, ImportKind, ImportPath, LocalDefData, LocalDefKind,
+    LocalImplData, MacroDefinitionData, ModuleData, ModuleOrigin, ModuleScope, ModuleScopeBuilder,
+    Namespace, ScopeBinding, ScopeBindingProvenance, Visibility,
+};
 use rg_cfg_eval::{CfgEvaluator, CfgOptions};
-use rg_ir_model::{DefId, DefMapRef, LocalDefId, LocalDefRef, ModuleId, ModuleRef, TargetRef};
-use rg_ir_storage::{
-    DefMapBuilder, ImportBinding, ImportData, ImportKind, ImportPath, ImportSourcePath,
-    LocalDefData, LocalDefKind, LocalEnumVariantData, LocalImplData, MacroDefinitionData,
-    ModuleData, ModuleOrigin, ModuleScope, ModuleScopeBuilder, Namespace, ScopeBinding,
-    ScopeBindingOrigin,
+use rg_ir_model::{
+    CrateId, CrateRef, DefId, DefMapRef, LocalDefId, LocalDefRef, ModuleId, ModuleRef,
 };
 use rg_item_tree::{
     Documentation, EnumItem, ExternCrateItem, ItemKind, ItemNode, ItemTreeDb, ItemTreeId,
     ItemTreeRef, MacroCallItem, MacroDefinitionAttrs, MacroDefinitionItem, MacroUseAttr,
     MacroUseSelector, ModuleItem, ModuleSource, Package as ItemTreePackage, UseImport, UseItem,
-    VisibilityLevel,
 };
-use rg_parse::{Package, Target};
-use rg_text::Name;
-use rg_workspace::{RustEdition, TargetKind};
+use rg_parse::{CargoTarget, Package};
+use rg_text::{Name, RustEdition};
+use rg_workspace::TargetKind;
 
 use crate::PackageSlot;
 
@@ -39,16 +39,17 @@ use super::macros::{
     MacroUseImport, TextualMacroScopes,
 };
 
-/// Collected state for one target before fixed-point import resolution.
+/// Collected state for one crate before fixed-point import resolution.
 ///
 /// `def_map` contains the frozen structural data, while `base_scopes` keeps the directly known
 /// bindings that later passes start from.
-pub(super) struct TargetState {
-    pub(super) target: TargetRef,
-    pub(super) target_name: String,
+pub(super) struct CrateState {
+    pub(super) crate_ref: CrateRef,
+    pub(super) cargo_target: rg_parse::CargoTargetId,
+    pub(super) crate_name: String,
     pub(super) root_module: ModuleId,
     pub(super) edition: RustEdition,
-    /// Target-specific cfg values used to decide which collected items really exist.
+    /// Cargo-target-specific cfg values used to decide which collected items really exist.
     pub(super) cfg_options: CfgOptions,
     pub(super) target_kind: TargetKind,
     pub(super) def_map_builder: DefMapBuilder,
@@ -61,7 +62,7 @@ pub(super) struct TargetState {
     pub(super) macro_directives: Vec<MacroDirective>,
 }
 
-impl TargetState {
+impl CrateState {
     pub(super) fn push_macro_call(&mut self, call: MacroCallSite) {
         self.macro_directives.push(MacroDirective {
             call,
@@ -74,15 +75,15 @@ impl TargetState {
     }
 }
 
-/// Collects unresolved target states for every package/target pair.
+/// Collects unresolved crate states for every package/Cargo-target pair.
 ///
 /// The nested return shape mirrors the parsed package/target layout so later resolution can move
-/// between targets by package slot and target slot.
-pub(super) fn collect_target_states(
+/// between semantic crates by package slot and crate id.
+pub(super) fn collect_crate_states(
     packages: &[Package],
     item_tree: &ItemTreeDb,
     implicit_roots: &[Vec<HashMap<Name, ModuleRef>>],
-) -> anyhow::Result<Vec<Vec<TargetState>>> {
+) -> anyhow::Result<Vec<Vec<CrateState>>> {
     let mut states = Vec::with_capacity(packages.len());
 
     for (package_slot, package) in packages.iter().enumerate() {
@@ -92,7 +93,7 @@ pub(super) fn collect_target_states(
                 package.package_name()
             )
         })?;
-        states.push(collect_package_target_states(
+        states.push(collect_package_crate_states(
             package_slot,
             package,
             item_tree_package,
@@ -103,20 +104,20 @@ pub(super) fn collect_target_states(
     Ok(states)
 }
 
-pub(super) fn collect_package_target_states(
+pub(super) fn collect_package_crate_states(
     package_slot: usize,
     package: &Package,
     item_tree_package: &ItemTreePackage,
     implicit_roots: &[Vec<HashMap<Name, ModuleRef>>],
-) -> anyhow::Result<Vec<TargetState>> {
+) -> anyhow::Result<Vec<CrateState>> {
     let mut package_states = Vec::with_capacity(package.targets().len());
 
-    for target in package.targets() {
-        let target_ref = TargetRef {
+    for (crate_idx, target) in package.targets().iter().enumerate() {
+        let crate_ref = CrateRef {
             package: PackageSlot(package_slot),
-            target: target.id,
+            crate_id: CrateId(crate_idx),
         };
-        let target_roots = implicit_roots
+        let crate_roots = implicit_roots
             .get(package_slot)
             .and_then(|package_roots| package_roots.get(target.id.0))
             .expect("implicit roots should exist for every parsed target");
@@ -127,18 +128,19 @@ pub(super) fn collect_package_target_states(
             )
         })?;
 
-        let collector = TargetScopeCollector::new(
-            target_ref,
+        let collector = CrateScopeCollector::new(
+            crate_ref,
+            target.id,
             package.edition(),
             package.cfg_options(),
             target.kind.clone(),
-            target_roots,
+            crate_roots,
         );
         let state = collector
             .collect(item_tree_package, target, target_root.root_file)
             .with_context(|| {
                 format!(
-                    "while attempting to collect target scope for {}",
+                    "while attempting to collect crate scope for {}",
                     target.name
                 )
             })?;
@@ -148,13 +150,14 @@ pub(super) fn collect_package_target_states(
     Ok(package_states)
 }
 
-/// Mutable collector for one target's module tree.
+/// Mutable collector for one crate's module tree.
 ///
 /// The collector builds two parallel structures:
 /// - `def_map.modules`, which is the final structural payload
 /// - `base_scopes`, which starts with only directly known bindings and is enriched later
-struct TargetScopeCollector<'db> {
-    target: TargetRef,
+struct CrateScopeCollector<'db> {
+    crate_ref: CrateRef,
+    cargo_target: rg_parse::CargoTargetId,
     edition: RustEdition,
     cfg_options: &'db CfgOptions,
     target_kind: TargetKind,
@@ -168,22 +171,24 @@ struct TargetScopeCollector<'db> {
     macro_directives: Vec<MacroDirective>,
 }
 
-impl<'db> TargetScopeCollector<'db> {
+impl<'db> CrateScopeCollector<'db> {
     fn new(
-        target: TargetRef,
+        crate_ref: CrateRef,
+        cargo_target: rg_parse::CargoTargetId,
         edition: RustEdition,
         cfg_options: &'db CfgOptions,
         target_kind: TargetKind,
         implicit_roots: &'db HashMap<Name, ModuleRef>,
     ) -> Self {
         Self {
-            target,
+            crate_ref,
+            cargo_target,
             edition,
             cfg_options,
             target_kind,
             implicit_roots,
             root_module: None,
-            def_map_builder: DefMapBuilder::new(target),
+            def_map_builder: DefMapBuilder::new(crate_ref),
             base_scopes: Vec::new(),
             macro_definitions: HashMap::new(),
             textual_macro_scopes: TextualMacroScopes::default(),
@@ -192,13 +197,13 @@ impl<'db> TargetScopeCollector<'db> {
         }
     }
 
-    /// Walks the target starting from its root file and returns the unresolved target state.
+    /// Walks the target starting from its root file and returns the unresolved crate state.
     fn collect(
         mut self,
         item_tree: &ItemTreePackage,
-        target: &Target,
+        target: &CargoTarget,
         root_file: rg_parse::FileId,
-    ) -> anyhow::Result<TargetState> {
+    ) -> anyhow::Result<CrateState> {
         let root_file_tree = item_tree.file(root_file).with_context(|| {
             format!(
                 "while attempting to fetch root item tree for {:?}",
@@ -211,6 +216,7 @@ impl<'db> TargetScopeCollector<'db> {
             None,
             None,
             root_file_tree.docs.clone(),
+            Visibility::Public,
             ModuleOrigin::Root {
                 file_id: target.root_file,
             },
@@ -220,9 +226,10 @@ impl<'db> TargetScopeCollector<'db> {
         self.collect_items(item_tree, root_module, root_file, &root_file_tree.top_level)
             .context("while attempting to collect root file items")?;
 
-        Ok(TargetState {
-            target: self.target,
-            target_name: target.name.clone(),
+        Ok(CrateState {
+            crate_ref: self.crate_ref,
+            cargo_target: self.cargo_target,
+            crate_name: target.name.clone(),
             root_module,
             edition: self.edition,
             cfg_options: self.cfg_options.clone(),
@@ -245,12 +252,14 @@ impl<'db> TargetScopeCollector<'db> {
         name: Option<Name>,
         name_span: Option<rg_parse::Span>,
         docs: Option<rg_item_tree::Documentation>,
+        visibility: Visibility,
         origin: ModuleOrigin,
     ) -> ModuleId {
         let module_id = self.def_map_builder.alloc_module(ModuleData {
             name,
             name_span,
             docs,
+            visibility,
             parent,
             children: Vec::new(),
             local_defs: Vec::new(),
@@ -313,7 +322,7 @@ impl<'db> TargetScopeCollector<'db> {
                     self.collect_enum(module_id, item, source, enum_item);
                 }
                 _ => {
-                    self.collect_local_def(module_id, item, source);
+                    self.collect_local_def(module_id, item, source, ScopeBindingProvenance::Direct);
                 }
             }
         }
@@ -331,15 +340,22 @@ impl<'db> TargetScopeCollector<'db> {
         module_id: ModuleId,
         item: &ItemNode,
         source: ItemTreeRef,
+        provenance: ScopeBindingProvenance,
     ) -> Option<LocalDefId> {
         let kind = LocalDefKind::from_item_tag(item.kind.tag())?;
-        let namespace = kind.namespace();
+        let namespaces = kind.scope_namespaces(&item.kind);
         let name = item.name.clone()?;
+        let visibilities = self.def_map_builder.resolve_local_def_visibilities(
+            module_id,
+            &item.kind,
+            &item.visibility,
+        );
 
         let local_def_id = self.def_map_builder.alloc_local_def(LocalDefData {
             module: module_id,
             name: name.clone(),
             kind,
+            namespaces,
             visibility: item.visibility.clone(),
             source: source.into(),
             file_id: item.file_id,
@@ -351,25 +367,21 @@ impl<'db> TargetScopeCollector<'db> {
             .expect("module should exist for collected local definition")
             .local_defs
             .push(local_def_id);
-        self.base_scopes
+        let def = DefId::Local(LocalDefRef {
+            origin: DefMapRef::Crate(self.crate_ref),
+            local_def: local_def_id,
+        });
+        let scope = self
+            .base_scopes
             .get_mut(module_id.0)
-            .expect("base scope should exist for collected local definition")
-            .insert_binding(
+            .expect("base scope should exist for collected local definition");
+        for namespace in namespaces.iter() {
+            scope.insert_binding(
                 &name,
                 namespace,
-                ScopeBinding {
-                    def: DefId::Local(LocalDefRef {
-                        origin: DefMapRef::Target(self.target),
-                        local_def: local_def_id,
-                    }),
-                    visibility: item.visibility.clone(),
-                    owner: ModuleRef {
-                        origin: DefMapRef::Target(self.target),
-                        module: module_id,
-                    },
-                    origin: ScopeBindingOrigin::Direct,
-                },
+                ScopeBinding::new(def, *visibilities.get(namespace), provenance),
             );
+        }
         Some(local_def_id)
     }
 
@@ -383,23 +395,22 @@ impl<'db> TargetScopeCollector<'db> {
         source: ItemTreeRef,
         enum_item: &EnumItem,
     ) {
-        let Some(local_def_id) = self.collect_local_def(module_id, item, source) else {
+        let Some(local_def_id) =
+            self.collect_local_def(module_id, item, source, ScopeBindingProvenance::Direct)
+        else {
             return;
         };
+        let visibility = self
+            .def_map_builder
+            .resolve_visibility(module_id, &item.visibility);
 
-        for (index, variant) in enum_item.variants.iter().enumerate() {
-            self.def_map_builder
-                .alloc_local_enum_variant(LocalEnumVariantData {
-                    module: module_id,
-                    enum_def: local_def_id,
-                    name: variant.name.clone(),
-                    index,
-                    visibility: item.visibility.clone(),
-                    file_id: item.file_id,
-                    name_span: variant.name_span,
-                    span: variant.span,
-                });
-        }
+        self.def_map_builder.alloc_local_enum_variants(
+            module_id,
+            local_def_id,
+            enum_item,
+            visibility,
+            item.file_id,
+        );
     }
 
     /// Records a macro definition both as a normal macro-namespace binding and as macro payload
@@ -412,7 +423,16 @@ impl<'db> TargetScopeCollector<'db> {
         macro_definition: &MacroDefinitionItem,
         order: ItemOrder,
     ) {
-        let Some(local_def_id) = self.collect_local_def(module_id, item, source) else {
+        let provenance = match macro_definition {
+            MacroDefinitionItem::MacroRules { attrs, .. }
+                if self.macro_definition_is_exported(attrs) =>
+            {
+                ScopeBindingProvenance::DirectMacroExport
+            }
+            MacroDefinitionItem::MacroRules { .. } => ScopeBindingProvenance::DirectMacroRules,
+            MacroDefinitionItem::MacroDef { .. } => ScopeBindingProvenance::Direct,
+        };
+        let Some(local_def_id) = self.collect_local_def(module_id, item, source, provenance) else {
             return;
         };
 
@@ -440,7 +460,7 @@ impl<'db> TargetScopeCollector<'db> {
                 macro_definition,
                 item.docs.clone(),
                 self.edition,
-                self.target,
+                self.crate_ref,
             ),
         );
     }
@@ -456,18 +476,14 @@ impl<'db> TargetScopeCollector<'db> {
             .insert_binding(
                 name,
                 Namespace::Macros,
-                ScopeBinding {
-                    def: DefId::Local(LocalDefRef {
-                        origin: DefMapRef::Target(self.target),
+                ScopeBinding::new(
+                    DefId::Local(LocalDefRef {
+                        origin: DefMapRef::Crate(self.crate_ref),
                         local_def: local_def_id,
                     }),
-                    visibility: VisibilityLevel::Public,
-                    owner: ModuleRef {
-                        origin: DefMapRef::Target(self.target),
-                        module: root_module,
-                    },
-                    origin: ScopeBindingOrigin::MacroExport,
-                },
+                    Visibility::Public,
+                    ScopeBindingProvenance::MacroExport,
+                ),
             );
     }
 
@@ -500,7 +516,7 @@ impl<'db> TargetScopeCollector<'db> {
                 callee: macro_call.callee.clone(),
                 args: macro_call.args.clone(),
                 builtin: macro_call.builtin.clone(),
-                dollar_crate_target: None,
+                dollar_crate: None,
                 file_id: item.file_id,
                 span: item.span,
                 order,
@@ -568,18 +584,22 @@ impl<'db> TargetScopeCollector<'db> {
                 definition_file: None,
             } => None,
         };
+        let semantic_visibility = self
+            .def_map_builder
+            .resolve_visibility(parent_module, &item.visibility);
         let child_module = self.alloc_module(
             Some(parent_module),
             Some(module_name.clone()),
             item.name_span,
             Documentation::concat(item.docs.clone(), inner_docs),
+            semantic_visibility,
             origin,
         );
         self.link_child_module(
             parent_module,
             child_module,
             &module_name,
-            item.visibility.clone(),
+            semantic_visibility,
         );
         self.textual_macro_scopes
             .record_module_declaration(child_module, order.clone());
@@ -632,7 +652,7 @@ impl<'db> TargetScopeCollector<'db> {
         parent_module: ModuleId,
         child_module: ModuleId,
         module_name: &Name,
-        visibility: rg_item_tree::VisibilityLevel,
+        visibility: Visibility,
     ) {
         self.def_map_builder
             .module_mut(parent_module)
@@ -645,18 +665,14 @@ impl<'db> TargetScopeCollector<'db> {
             .insert_binding(
                 module_name,
                 Namespace::Types,
-                ScopeBinding {
-                    def: DefId::Module(ModuleRef {
-                        origin: DefMapRef::Target(self.target),
+                ScopeBinding::new(
+                    DefId::Module(ModuleRef {
+                        origin: DefMapRef::Crate(self.crate_ref),
                         module: child_module,
                     }),
                     visibility,
-                    owner: ModuleRef {
-                        origin: DefMapRef::Target(self.target),
-                        module: parent_module,
-                    },
-                    origin: ScopeBindingOrigin::Direct,
-                },
+                    ScopeBindingProvenance::Direct,
+                ),
             );
     }
 
@@ -677,16 +693,18 @@ impl<'db> TargetScopeCollector<'db> {
             let path = ImportPath::from_use_path(&import.path);
             // Imports like `use foo::{self};` strip the trailing `self`. If nothing remains, there
             // is no path to record here.
-            if path.segments.is_empty() {
+            if path.semantic().segments.is_empty() {
                 continue;
             }
+            let visibility = self
+                .def_map_builder
+                .resolve_visibility(module_id, &item.visibility);
 
             let import_id = self.def_map_builder.alloc_import(ImportData {
                 module: module_id,
-                visibility: item.visibility.clone(),
+                visibility,
                 kind: ImportKind::from_use_kind(import.kind),
                 path,
-                source_path: ImportSourcePath::from_use_path(&import.path),
                 binding: ImportBinding::from_alias(&import.alias),
                 alias_span: match &import.alias {
                     rg_item_tree::ImportAlias::Explicit { span, .. } => Some(*span),
@@ -705,7 +723,7 @@ impl<'db> TargetScopeCollector<'db> {
 
     /// Lowers `extern crate` into an immediate type-namespace binding.
     ///
-    /// Unlike normal `use`, this can be bound during collection because the target roots are
+    /// Unlike normal `use`, this can be bound during collection because the crate roots are
     /// already known.
     fn collect_extern_crate(
         &mut self,
@@ -719,7 +737,7 @@ impl<'db> TargetScopeCollector<'db> {
 
         let module_ref = if extern_name == "self" {
             ModuleRef {
-                origin: DefMapRef::Target(self.target),
+                origin: DefMapRef::Crate(self.crate_ref),
                 module: self
                     .root_module
                     .expect("root module should exist before extern crate collection"),
@@ -748,6 +766,9 @@ impl<'db> TargetScopeCollector<'db> {
         else {
             return;
         };
+        let visibility = self
+            .def_map_builder
+            .resolve_visibility(module_id, &item.visibility);
 
         // `extern crate` contributes directly to the base scope rather than through a deferred
         // import record.
@@ -757,15 +778,11 @@ impl<'db> TargetScopeCollector<'db> {
             .insert_binding(
                 &binding_name,
                 Namespace::Types,
-                ScopeBinding {
-                    def: DefId::Module(module_ref),
-                    visibility: item.visibility.clone(),
-                    owner: ModuleRef {
-                        origin: DefMapRef::Target(self.target),
-                        module: module_id,
-                    },
-                    origin: ScopeBindingOrigin::Direct,
-                },
+                ScopeBinding::new(
+                    DefId::Module(module_ref),
+                    visibility,
+                    ScopeBindingProvenance::ExternCrate,
+                ),
             );
     }
 

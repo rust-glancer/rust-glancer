@@ -1,6 +1,6 @@
 //! Shared rendering for module-scope completion candidates.
 
-use rg_ir_view::member::MemberView;
+use rg_ir_view::{display::syntax::SyntaxRenderer, member::MemberView};
 
 use crate::{
     Analysis,
@@ -30,11 +30,19 @@ pub(super) struct ModuleCompletionRequest<'candidate> {
 pub(super) struct ModuleCompletionRenderer<'a, 'db, 'source> {
     analysis: &'a Analysis<'db>,
     query: CompletionQuery<'source>,
+    syntax: SyntaxRenderer,
 }
 
 impl<'a, 'db, 'source> ModuleCompletionRenderer<'a, 'db, 'source> {
-    pub(super) fn new(analysis: &'a Analysis<'db>, query: CompletionQuery<'source>) -> Self {
-        Self { analysis, query }
+    pub(super) fn new(
+        analysis: &'a Analysis<'db>,
+        query: CompletionQuery<'source>,
+    ) -> anyhow::Result<Self> {
+        Ok(Self {
+            analysis,
+            query,
+            syntax: SyntaxRenderer::new(analysis.view_db().crate_edition(query.crate_ref)?),
+        })
     }
 
     pub(super) fn completion(
@@ -47,7 +55,7 @@ impl<'a, 'db, 'source> ModuleCompletionRenderer<'a, 'db, 'source> {
                 return Ok(None);
             };
             return Ok(Some(
-                FunctionCompletionRenderer::new(self.query)
+                FunctionCompletionRenderer::new(self.query, self.syntax)
                     .completion(FunctionCompletionRequest {
                         function,
                         label_override: Some(request.candidate.label()),
@@ -63,23 +71,26 @@ impl<'a, 'db, 'source> ModuleCompletionRenderer<'a, 'db, 'source> {
         }
 
         let target = request.candidate.target();
-        let label = request.candidate.label();
+        let label = self
+            .syntax
+            .identifier(request.candidate.label())
+            .to_string();
         let kind = request.candidate.kind();
         Ok(Some(CompletionItem {
-            label: label.to_string(),
+            label: label.clone(),
             kind,
             target,
             applicability: CompletionApplicability::Known,
-            detail: Some(def_completion_detail(kind, label)),
+            detail: Some(def_completion_detail(kind, &label)),
             documentation: request.candidate.documentation().map(ToString::to_string),
             sort_text: request.sort_policy.sort_text(
                 request.sort_priority,
-                label,
+                &label,
                 kind,
                 CompletionApplicability::Known,
                 target,
             ),
-            insert_text: self.insert_text(kind, label, request.call_completion),
+            insert_text: self.insert_text(kind, &label, request.call_completion),
             edit: Some(request.edit),
         }))
     }

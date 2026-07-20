@@ -4,7 +4,7 @@ use std::{
 };
 
 use anyhow::{Context as _, bail};
-use rg_workspace::RustEdition;
+use rg_text::RustEdition;
 
 /// Runs rustfmt as a pure text transformer for LSP formatting.
 pub(crate) fn rustfmt(text: &str, edition: RustEdition) -> anyhow::Result<String> {
@@ -41,7 +41,7 @@ pub(crate) fn rustfmt(text: &str, edition: RustEdition) -> anyhow::Result<String
 
 #[cfg(test)]
 mod tests {
-    use rg_workspace::RustEdition;
+    use rg_text::RustEdition;
 
     use super::rustfmt;
 

@@ -14,6 +14,12 @@ use workspace_graph::WorkspaceGraphChanges;
 
 pub(crate) use package::rebuild_resident_from_source;
 
+/// Whether one canonical path batch changed the candidate's published project state.
+pub(super) enum ProjectChangeApplication {
+    Unchanged,
+    Applied(AnalysisChangeSummary),
+}
+
 pub(super) fn reindex_workspace(project: &mut Project) -> anyhow::Result<()> {
     workspace::rebuild_workspace_graph(project, &[])
         .context("while attempting to reindex analysis project from workspace root")?;
@@ -24,7 +30,7 @@ pub(super) fn reindex_workspace(project: &mut Project) -> anyhow::Result<()> {
 pub(super) fn apply_canonical_changes(
     project: &mut Project,
     changes: Vec<SavedFileChange>,
-) -> anyhow::Result<AnalysisChangeSummary> {
+) -> anyhow::Result<ProjectChangeApplication> {
     debug_assert!(
         !changes.is_empty(),
         "candidate updates should contain at least one canonical change",
@@ -41,9 +47,16 @@ pub(super) fn apply_canonical_changes(
 
     if graph_changed {
         workspace::rebuild_workspace_graph(project, &changes)
+            .map(ProjectChangeApplication::Applied)
             .context("while attempting to rebuild analysis project after workspace change")
     } else {
-        source::apply_source_changes(project, changes)
+        let summary = source::apply_source_changes(project, changes)
+            .context("while attempting to apply saved source changes")?;
+        if summary.is_empty() {
+            Ok(ProjectChangeApplication::Unchanged)
+        } else {
+            Ok(ProjectChangeApplication::Applied(summary))
+        }
     }
 }
 

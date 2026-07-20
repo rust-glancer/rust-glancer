@@ -1,6 +1,6 @@
 //! Detects changes that invalidate the workspace package graph.
 //!
-//! Source saves can usually reuse package and target slots, but manifest or lockfile edits may
+//! Source saves can usually reuse package and Cargo-target slots, but manifest or lockfile edits may
 //! add, remove, or reorder packages, dependencies, or targets. Those graph-level changes are
 //! uncommon enough that the project intentionally treats them as a full-project rebuild boundary
 //! instead of forcing every downstream phase to support slot remapping.

@@ -3,8 +3,10 @@
 //! Function and method completions need more than a label: they reuse signature
 //! details for display and turn parameter names into LSP snippet placeholders.
 
-use rg_ir_model::items::ParamItem;
-use rg_ir_view::{display::signature::SignatureRenderer, member::MemberFunction};
+use rg_ir_view::{
+    display::{signature::SignatureRenderer, syntax::SyntaxRenderer},
+    member::{FunctionParameterView, MemberFunction},
+};
 
 use crate::model::{
     CompletionApplicability, CompletionEdit, CompletionInsertText, CompletionItem, CompletionKind,
@@ -46,11 +48,12 @@ pub(super) struct FunctionCompletionRequest<'label, 'member> {
 
 pub(super) struct FunctionCompletionRenderer<'source> {
     query: CompletionQuery<'source>,
+    syntax: SyntaxRenderer,
 }
 
 impl<'source> FunctionCompletionRenderer<'source> {
-    pub(super) fn new(query: CompletionQuery<'source>) -> Self {
-        Self { query }
+    pub(super) fn new(query: CompletionQuery<'source>, syntax: SyntaxRenderer) -> Self {
+        Self { query, syntax }
     }
 
     /// Builds display and snippet metadata for a resolved function declaration.
@@ -99,12 +102,15 @@ impl<'source> FunctionCompletionRenderer<'source> {
         let label = label_override
             .unwrap_or_else(|| function.name())
             .to_string();
+        let label = self.syntax.identifier(&label).to_string();
 
         FunctionCompletionMetadata {
             label: label.clone(),
-            detail: Some(SignatureRenderer::function_signature(function.data())),
+            detail: Some(
+                SignatureRenderer::new(self.syntax.edition()).member_function_signature(function),
+            ),
             documentation: function.docs_text(),
-            insert_text: self.insert_text(&label, function.params(), call_completion, edit),
+            insert_text: self.insert_text(&label, function, call_completion, edit),
             has_self_receiver: function.has_self_receiver(),
         }
     }
@@ -112,7 +118,7 @@ impl<'source> FunctionCompletionRenderer<'source> {
     fn insert_text(
         &self,
         label: &str,
-        params: &[ParamItem],
+        function: MemberFunction<'_>,
         call_completion: CallCompletionKind,
         edit: CompletionEdit,
     ) -> CompletionInsertText {
@@ -124,7 +130,7 @@ impl<'source> FunctionCompletionRenderer<'source> {
         }
 
         let skip_self = matches!(call_completion, CallCompletionKind::MethodCall);
-        CompletionInsertText::Snippet(call_snippet(label, params, skip_self))
+        CompletionInsertText::Snippet(call_snippet(label, function, skip_self))
     }
 
     fn call_parens_already_present(&self, edit: CompletionEdit) -> bool {
@@ -142,15 +148,13 @@ impl<'source> FunctionCompletionRenderer<'source> {
     }
 }
 
-fn call_snippet(label: &str, params: &[ParamItem], skip_self: bool) -> String {
+fn call_snippet(label: &str, function: MemberFunction<'_>, skip_self: bool) -> String {
     let mut snippet = escape_lsp_snippet_text(label);
     snippet.push('(');
 
-    for (idx, param) in params
-        .iter()
-        .enumerate()
-        .filter(|(param_idx, _)| !(skip_self && *param_idx == 0))
-        .map(|(_, param)| param)
+    for (idx, param) in function
+        .parameters()
+        .filter(|param| !(skip_self && param.is_receiver()))
         .enumerate()
     {
         if idx > 0 {
@@ -169,8 +173,8 @@ fn call_snippet(label: &str, params: &[ParamItem], skip_self: bool) -> String {
     snippet
 }
 
-fn param_placeholder(param: &ParamItem, idx: usize) -> String {
-    let pat = param.pat.trim();
+fn param_placeholder(param: FunctionParameterView<'_>, idx: usize) -> String {
+    let pat = param.pattern().trim();
     simple_binding_name(pat)
         .map(ToString::to_string)
         .unwrap_or_else(|| format!("arg{idx}"))

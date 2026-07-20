@@ -1,41 +1,35 @@
 use rg_std::MemorySize;
 mod build;
-mod cursor;
 mod ir;
 mod resolution;
 mod store;
 #[doc(hidden)]
 pub mod testonly;
-mod walk;
 
 use rg_def_map::PackageSlot;
 use rg_parse::FileId;
 
-pub use rg_ir_model::items::FieldKey;
+pub use rg_ir_model::FieldKey;
 
 #[cfg(test)]
 mod tests;
 
 pub use self::{
-    cursor::{
-        BindingSurface, BodyCursorCandidate, DotCompletionSite, PathCompletionNamespace,
-        PathCompletionSite, RecordFieldCompletionSite, RecordFieldKeySurface,
-        UnqualifiedCompletionNamespace, UnqualifiedCompletionSite, ValueReferenceSource,
-        ValueReferenceSurface,
-    },
     ir::{
-        BindingData, BindingFacts, BindingKind, BodyAssociatedPathPrefix, BodyOwner, BodyPath,
-        BodySelfParamKind, BodySource, BodySourceItems, BuiltinMacroExprKind, ClosureCapture,
-        ClosureKind, ClosureParamData, ExprAssignOp, ExprBinaryOp, ExprBlockKind, ExprData,
-        ExprFacts, ExprKind, ExprRangeKind, ExprUnaryOp, FunctionParamData, LabelData, LiteralKind,
+        BindingData, BindingFacts, BindingKind, BodyAssociatedPathPrefix, BodyData, BodyFacts,
+        BodyMacroCallData, BodyOwner, BodyPath, BodyPathSegment, BodyPathSegmentArgs,
+        BodyPathSegmentKind, BodySource, BodySourceItem, BodySourceItems, BodyView,
+        BuiltinMacroExprKind, CallFacts, ClosureCapture, ClosureKind, ClosureParamData,
+        ExprAssignOp, ExprBinaryOp, ExprBlockKind, ExprData, ExprFacts, ExprKind, ExprRangeKind,
+        ExprUnaryOp, ExprWrapperKind, FunctionParamData, LabelData, LiteralKind, MatchArmData,
         PatBindingMode, PatData, PatKind, PatRangeKind, RecordExprField, RecordExprSpread,
-        RecordFieldSyntax, RecordPatField, ResolvedBodyData, ScopeData, StmtData, StmtKind,
+        RecordFieldSyntax, RecordPatField, ScopeData, StmtData, StmtKind,
     },
     resolution::{BodyMethodQuery, BodyResolutionContext, BodyTypePathQuery, BodyValuePathQuery},
     store::{
         BodyFileEntry, BodyFileShard, BodyIrDb, BodyIrLoader, BodyIrReadTxn, BodyIrStats,
-        LoadBodyIr, PackageBodies, PackageBodiesManifest, TargetBodies, TargetBodiesCoverage,
-        TargetBodiesManifest, TargetBodiesStatus,
+        BodyLocalItems, CrateBodies, CrateBodiesCoverage, CrateBodiesManifest, CrateBodiesStatus,
+        LoadBodyIr, PackageBodies, PackageBodiesManifest,
     },
 };
 

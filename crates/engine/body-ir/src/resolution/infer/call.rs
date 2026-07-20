@@ -1,40 +1,101 @@
-//! Call-signature inference helpers for body resolution.
+//! Call-signature inference over canonical semantic signatures.
 //!
-//! This layer turns selected call targets into inference constraints without making the main pass
-//! know how receiver substitutions and function generic shadows are built.
+//! Call lookup chooses a function and supplies receiver/impl substitutions. This layer gives the
+//! selected function's own parameters live inference variables, binds arguments and return
+//! evidence, and submits its already-lowered clauses. Declaration syntax is not projected again.
 
-use rg_ir_model::{
-    DefMapRef, ExprId, FunctionRef, ImplRef, ItemOwner, ScopeId, SemanticItemRef,
-    hir::{items::FunctionData, signature::FunctionSignature},
-    identity::DeclarationRef,
-    items::{GenericArg as ItemGenericArg, GenericParams, TypeRef},
-};
-use rg_ir_storage::{DefMapSource, ItemStoreSource, TypePathContext};
+use std::sync::Arc;
+
+use rg_def_map::DefMapSource;
+use rg_ir_model::{ExprId, GenericDefRef, GenericParamRef};
+use rg_item_tree::GenericArg as ItemGenericArg;
 use rg_package_store::PackageStoreError;
-use rg_text::Name;
+use rg_semantic_ir::{Generics, ItemStoreSource};
 use rg_ty::{
-    Ty, TypeSubst,
-    inference::{InferenceTypeRefProjector, InferenceTypeSubst},
+    Clause, GenericArg, Substitution, TraitProof, Ty,
+    inference::{InferenceSubstitution, InferenceTable},
 };
 
-use crate::ir::resolved::BodyResolution;
+use crate::CallFacts;
 use crate::resolution::{
-    BodyResolutionContext, TypeRefUseSite,
-    query::ResolvedCallTarget,
-    support::{
-        CallableTypeRefExpectation, CallableTypeResolver, SelectedTraitMethodContext,
-        self_associated_type_name,
-    },
+    BodyResolutionContext,
+    query::{CallProjection, ResolvedCallTarget},
 };
 
-use super::{
-    BodyCallableGoalSolver, BodyInferenceCtx,
-    trait_obligation::{BodyTraitObligationSolver, SelectedCallObligationInput},
-};
+use super::BodyInferenceCtx;
 
-/// Bridges selected call signatures into inference constraints.
+/// Call-owned signature projection and live generic slots.
 ///
-/// It asks call resolution for one target, then maps signature facts back to written args.
+/// Fixed-point rounds revisit the same call as new body evidence appears. Keeping its substitution
+/// here makes each written `_` and function generic one stable inference variable instead of
+/// allocating an unrelated replacement on every pass.
+#[derive(Clone, PartialEq, Eq)]
+pub(super) struct CallInferenceState {
+    function: rg_ir_model::FunctionRef,
+    generic_params: Arc<[GenericParamRef]>,
+    projection: Arc<CallProjection>,
+    subst: InferenceSubstitution,
+    first_written_param_idx: usize,
+    return_projection_complete: bool,
+    generic_obligations_complete: bool,
+}
+
+impl CallInferenceState {
+    /// Collapse the call-owned inference substitution into its persistent semantic form.
+    pub(super) fn finalize(&self, table: &InferenceTable) -> CallFacts {
+        let generic_args = self
+            .subst
+            .finalize_args(table, self.generic_params.iter().copied());
+        CallFacts::new(self.function, generic_args)
+    }
+}
+
+/// One call's selected state while a fixed-point transfer step applies its evidence.
+///
+/// Preparing the transfer selects the target at most once. The expression pass can then push the
+/// selected parameter types through tuple, array, and reference syntax before completion binds the
+/// refined arguments, solves obligations, and stores the call state again.
+pub(crate) struct CallInferenceTransfer {
+    call: ExprId,
+    receiver: Option<ExprId>,
+    state: CallInferenceState,
+}
+
+impl CallInferenceTransfer {
+    /// Return the selected signature's expected types for the written arguments.
+    ///
+    /// A malformed or incomplete call has no positional correspondence, so an arity mismatch
+    /// yields an empty iterator rather than applying expectations to the wrong expressions.
+    pub(crate) fn argument_expected_tys<'a>(
+        &'a self,
+        args: &'a [ExprId],
+    ) -> impl Iterator<Item = (ExprId, Ty)> + 'a {
+        let written_params = self
+            .state
+            .projection
+            .signature()
+            .params
+            .get(self.state.first_written_param_idx..)
+            .unwrap_or_default();
+        (written_params.len() == args.len())
+            .then(|| {
+                args.iter().copied().zip(
+                    written_params
+                        .iter()
+                        .map(|param| self.state.subst.as_substitution().apply(param)),
+                )
+            })
+            .into_iter()
+            .flatten()
+    }
+}
+
+/// Applies one selected semantic signature to body-owned inference slots.
+///
+/// Call lookup and signature projection remain query responsibilities. This layer keeps the
+/// resulting substitution alive across fixed-point rounds, pushes parameter expectations into the
+/// receiver and written arguments, and uses their evidence to refine generics and the return type.
+/// Once body inference finishes, `CallInferenceState` collapses to persisted `CallFacts`.
 pub(crate) struct BodyCallInference<'query, D, I> {
     context: BodyResolutionContext<'query, D, I>,
 }
@@ -44,967 +105,355 @@ where
     D: DefMapSource<Error = PackageStoreError> + Copy,
     I: ItemStoreSource<'query, Error = PackageStoreError> + Copy,
 {
-    /// Build call inference from a read-only body resolution context.
     pub(crate) fn new(context: BodyResolutionContext<'query, D, I>) -> Self {
         Self { context }
     }
 
-    /// Instantiate one call return, e.g. `Vec::new()` from `Vec<unknown>` to `Vec<?T>`.
-    pub(crate) fn instantiate_return_fact(
+    /// Select one call target and expose its expected argument types for this transfer step.
+    ///
+    /// Evidence is deliberately bound during `complete_transfer`, after the caller has propagated
+    /// these expectations through transparent expression shapes. Selection itself is never
+    /// repeated within the step.
+    pub(crate) fn prepare_transfer(
         &self,
         inference: &mut BodyInferenceCtx,
         call: ExprId,
         args: &[ExprId],
         receiver: Option<ExprId>,
-    ) -> Result<(), PackageStoreError> {
-        if !self
-            .context
-            .body()
-            .expr_ty_unchecked(call)
-            .has_unknown_or_syntax()
-        {
-            return Ok(());
-        }
-
-        let calls = self.context.calls();
-        let Some(target) = calls.target(call)? else {
-            return Ok(());
-        };
-        let projection = calls.signature(&target).project(args)?;
-        let Some(function_data) = self
-            .context
-            .item_query()
-            .function_data(target.function())?
-            .cloned()
-        else {
-            return Ok(());
-        };
-
-        // Try instantiation paths from strongest to weakest. Once a branch writes the call slot,
-        // later branches must not replace it with an older or less precise projection.
-        let mut instantiated = false;
-        let generic_return_mentions_type_param = Self::return_ty_mentions_function_type_param(
-            projection.declared_return_ty(),
-            projection.function_generics(),
-        );
-
-        // Method returns that mention `Self` need the live receiver inference type. The call target
-        // only stores the receiver snapshot from method lookup, which can still contain stale
-        // source syntax such as `Iter<syntax T>`. Re-projecting here lets
-        // `make_iter(user).pair(name) -> Pair<Self, Name>` preserve `Self = Iter<User>`.
-        if let Some(receiver) = receiver
-            && let Some(ret_ty) = projection.declared_return_ty()
-        {
-            instantiated = self.instantiate_method_self_return_fact(
-                inference,
-                call,
-                args,
-                receiver,
-                &target,
-                &function_data,
-                ret_ty,
-                projection.return_ty(),
-            )?;
-        }
-
-        // Explicit type args can introduce written `_` holes that should become real inference
-        // slots inside the return. For example, `collect::<Vec<_>>()` should become `Vec<?T>` so
-        // later trait obligations can solve `?T`.
-        if !instantiated
-            && !projection.explicit_args().is_empty()
-            && let Some(ret_ty) = projection.declared_return_ty()
-            && let Some(generics) = projection.function_generics()
-        {
-            instantiated = self.instantiate_explicit_type_arg_return_fact(
-                inference,
-                call,
-                target.function(),
-                ret_ty,
-                generics,
-                projection.explicit_args(),
-            )?;
-        }
-
-        // Without explicit args, a generic return can still expose function type params directly.
-        // `make_vec<T>() -> Vec<T>` becomes `Vec<?T>`, while non-generic return shapes are left to
-        // the fallback below.
-        if !instantiated
-            && projection.explicit_args().is_empty()
-            && generic_return_mentions_type_param
-            && let Some(ret_ty) = projection.declared_return_ty()
-            && let Some(generics) = projection.function_generics()
-        {
-            instantiated = self.instantiate_generic_return_fact(
-                inference,
-                call,
-                target.function(),
-                ret_ty,
-                generics,
-            )?;
-        }
-
-        // Last fallback for selected returns that already have the right outer shape but contain
-        // unresolved children, such as a receiver-derived `Vec<unknown>`. This does not understand
-        // written generics; it only replaces nested unknowns with inference slots.
-        if !instantiated
-            && projection.selected_self_ty().is_some_and(Ty::has_unknown)
-            && projection.return_ty().has_unknown()
-        {
-            inference.instantiate_expr_nested_unknown_ty(call, projection.return_ty());
-        }
-
-        Ok(())
-    }
-
-    fn return_ty_mentions_function_type_param(
-        ret_ty: Option<&TypeRef>,
-        generics: Option<&GenericParams>,
-    ) -> bool {
-        let (Some(ret_ty), Some(generics)) = (ret_ty, generics) else {
-            return false;
-        };
-        let type_params = generics
-            .types
-            .iter()
-            .map(|param| param.name.as_str())
-            .collect::<Vec<_>>();
-        ret_ty.mentions_type_param(&type_params)
-    }
-
-    /// Resolve a generic return through inference variables before aliases erase where `T` lived.
-    fn instantiate_generic_return_fact(
-        &self,
-        inference: &mut BodyInferenceCtx,
-        call: ExprId,
-        function: FunctionRef,
-        ret_ty: &TypeRef,
-        generics: &GenericParams,
-    ) -> Result<bool, PackageStoreError> {
-        let subst = Self::generic_return_infer_subst(inference, generics);
-        self.instantiate_return_with_subst(inference, call, function, ret_ty, &subst)
-    }
-
-    /// Build `T = ?T` substitutions for generic return syntax such as `AliasResult<T>`.
-    fn generic_return_infer_subst(
-        inference: &mut BodyInferenceCtx,
-        generics: &GenericParams,
-    ) -> TypeSubst {
-        generics
-            .types
-            .iter()
-            .map(|param| (param.name.clone(), inference.table.new_type_var()))
-            .collect()
-    }
-
-    /// Re-project method returns like `Enumerate<Self>` from the current receiver inference type.
-    ///
-    /// Call resolution stores a snapshot of the selected receiver before body inference has a
-    /// chance to solve all child facts. For adapter methods, that can leave `Self` as
-    /// `Iter<syntax T>`. During inference we can do better: bind `Self` to the receiver expression
-    /// slot and then walk the declared return type again.
-    #[allow(clippy::too_many_arguments)]
-    fn instantiate_method_self_return_fact(
-        &self,
-        inference: &mut BodyInferenceCtx,
-        call: ExprId,
-        args: &[ExprId],
-        receiver: ExprId,
-        target: &ResolvedCallTarget,
-        function_data: &FunctionData,
-        ret_ty: &TypeRef,
-        resolved_ret_ty: &Ty,
-    ) -> Result<bool, PackageStoreError> {
-        if !ret_ty.mentions_type_param(&["Self"]) {
-            return Ok(false);
-        }
-
-        let scope = self.context.body().expr_unchecked(call).scope;
-        let mut subst = InferenceTypeSubst::new();
-        let receiver_ty = inference.root_resolved_expr_ty(receiver);
-        subst.push(&mut inference.table, Name::new("Self"), receiver_ty);
-        self.apply_function_generic_shadows(
-            inference,
-            &mut subst,
-            function_data.signature.generics(),
-            target.explicit_args(),
-            scope,
-        )?;
-        self.bind_selected_call_args_to_subst(
-            inference,
-            &mut subst,
-            args,
-            target,
-            &function_data.signature,
-        );
-
-        let return_ty =
-            InferenceTypeRefProjector::new(&subst).ty_from_type_ref(ret_ty, resolved_ret_ty);
-        inference.set_expr_infer_ty(call, return_ty);
-        Ok(true)
-    }
-
-    /// Instantiate explicit `_` args before projecting the call return.
-    fn instantiate_explicit_type_arg_return_fact(
-        &self,
-        inference: &mut BodyInferenceCtx,
-        call: ExprId,
-        function: FunctionRef,
-        ret_ty: &TypeRef,
-        generics: &GenericParams,
-        explicit_args: &[ItemGenericArg],
-    ) -> Result<bool, PackageStoreError> {
-        let scope = self.context.body().expr_unchecked(call).scope;
-        let (subst, used_vars) =
-            self.explicit_type_arg_infer_subst(inference, generics, explicit_args, scope)?;
-
-        if !used_vars {
-            return Ok(false);
-        }
-
-        self.instantiate_return_with_subst(inference, call, function, ret_ty, &subst)
-    }
-
-    /// Resolve the declared return type using inference-bearing substitutions.
-    fn instantiate_return_with_subst(
-        &self,
-        inference: &mut BodyInferenceCtx,
-        call: ExprId,
-        function: FunctionRef,
-        ret_ty: &TypeRef,
-        subst: &TypeSubst,
-    ) -> Result<bool, PackageStoreError> {
-        let return_ty = self
-            .context
-            .type_refs(TypeRefUseSite::Function(function))
-            .with_subst(subst)
-            .resolve(ret_ty)?;
-        if !return_ty.has_var() {
-            return Ok(false);
-        }
-
-        inference.set_expr_infer_ty(call, return_ty);
-        Ok(true)
-    }
-
-    /// Bind explicit type args, turning written `_` into inference vars.
-    fn explicit_type_arg_infer_subst(
-        &self,
-        inference: &mut BodyInferenceCtx,
-        generics: &GenericParams,
-        explicit_args: &[ItemGenericArg],
-        scope: ScopeId,
-    ) -> Result<(TypeSubst, bool), PackageStoreError> {
-        let explicit_subst = self.context.generics().subst_for_explicit_args(
-            generics,
-            explicit_args,
-            TypeRefUseSite::Scope(scope),
-        )?;
-        let mut explicit_type_args = explicit_args.iter().filter_map(ItemGenericArg::type_ref);
-
-        let mut subst = TypeSubst::new();
-        let mut used_vars = false;
-        for param in &generics.types {
-            let Some(arg_ty) = explicit_type_args.next() else {
-                break;
-            };
-            let Some(resolved_ty) = explicit_subst.type_param(param.name.as_str()) else {
-                continue;
-            };
-
-            let (infer_ty, arg_used_vars) =
-                inference.instantiate_written_infer_ty(arg_ty, &resolved_ty);
-            used_vars |= arg_used_vars;
-            subst.push(param.name.clone(), infer_ty);
-        }
-
-        Ok((subst, used_vars))
-    }
-
-    /// Return expected types for written args from the unique selected call target.
-    pub(crate) fn argument_expected_tys(
-        &self,
-        call: ExprId,
-        args: &[ExprId],
-    ) -> Result<Vec<(ExprId, Ty)>, PackageStoreError> {
-        // Only a single resolved function gives us trustworthy parameter evidence. Ambiguous calls
-        // keep their already-computed return type but do not push expectations inward.
-        let calls = self.context.calls();
-        let Some(target) = calls.target(call)? else {
-            return Ok(Vec::new());
-        };
-        let projection = calls.signature(&target).project(args)?;
-        if projection.written_param_tys().len() != args.len() {
-            return Ok(Vec::new());
-        }
-
-        Ok(args
-            .iter()
-            .copied()
-            .zip(projection.written_param_tys().iter().cloned())
-            .collect())
-    }
-
-    /// Solve direct `impl Fn*` callable syntax against body-local callable witnesses.
-    ///
-    /// Generic callable params such as `F: FnOnce(T) -> R` are ordinary selected-call
-    /// obligations now. Inline `impl FnOnce(T) -> R` params do not have a named `F`, so this
-    /// hook turns their written callable args into the same body-local goal directly:
-    /// `Closure#n: FnOnce(T) -> R` or `FunctionItem(f): FnOnce(T) -> R`.
-    pub(crate) fn solve_direct_callable_closure_arguments(
-        &self,
-        inference: &mut BodyInferenceCtx,
-        call: ExprId,
-        args: &[ExprId],
-    ) -> Result<(), PackageStoreError> {
-        if !args
-            .iter()
-            .any(|arg| self.callable_argument_ty(inference, *arg).is_some())
-        {
-            return Ok(());
-        }
-
-        let calls = self.context.calls();
-        let Some(target) = calls.target(call)? else {
-            return Ok(());
-        };
-        let Some(function_data) = self
-            .context
-            .item_query()
-            .function_data(target.function())?
-            .cloned()
-        else {
-            return Ok(());
-        };
-        let projection = calls.signature(&target).project(args)?;
-        if projection.written_param_refs().len() != args.len() {
-            return Ok(());
-        }
-
-        let subst =
-            self.selected_call_infer_subst(inference, call, args, &target, &function_data)?;
-        let resolver = self
-            .context
-            .type_refs(TypeRefUseSite::Function(target.function()))
-            .with_subst(projection.subst());
-        let callable_resolver = CallableTypeResolver::new(
-            self.context,
-            inference.trait_selection_cache.clone(),
-            &resolver,
-            target.function(),
-            function_data.owner,
-            projection.selected_self_ty(),
-        )?;
-
-        let callable_goal_solver = BodyCallableGoalSolver::new(self.context);
-        for (arg, param_ty) in args.iter().copied().zip(projection.written_param_refs()) {
-            let Some(self_ty) = self.callable_argument_ty(inference, arg) else {
-                continue;
-            };
-            let Some(param_ty) = param_ty else {
-                continue;
-            };
-            let Some(expectation) =
-                CallableTypeRefExpectation::from_direct_impl_trait(param_ty).into_option()
+    ) -> Result<Option<CallInferenceTransfer>, PackageStoreError> {
+        let receiver = receiver.or_else(|| match self.context.body().expr_unchecked(call).kind {
+            crate::ir::ExprKind::MethodCall { receiver, .. } => receiver,
+            _ => None,
+        });
+        let state = if let Some(state) = inference.call_inference(call) {
+            state
+        } else {
+            let calls = self.context.calls();
+            // Keep nested slots in the selected receiver substitution so later arguments can
+            // still constrain them. Predicate proof receives the owning table separately and can
+            // canonicalize those slots without severing their connection to body inference.
+            let receiver_ty = receiver.map(|receiver| inference.root_resolved_expr_ty(receiver));
+            let Some(target) =
+                calls.target_with_receiver_ty(call, receiver_ty.as_ref(), inference.table())?
             else {
-                continue;
+                return Ok(None);
             };
-
-            let mut projector = InferenceTypeRefProjector::new(&subst);
-            let mut params = Vec::new();
-            for param in expectation.params() {
-                let resolved_param_ty = callable_resolver.resolve(param)?;
-                params.push(projector.ty_from_type_ref(param, &resolved_param_ty));
+            if let Some(selection) = target.trait_selection() {
+                // Candidate proof is transactional until lookup finds one definite target. Commit
+                // its table now so equality evidence used to prove the impl remains true while
+                // the selected call is refined on later fixed-point rounds.
+                inference.table = selection.table.clone();
             }
-            let resolved_return_ty = callable_resolver.resolve(expectation.return_ty())?;
-            let return_ty =
-                projector.ty_from_type_ref(expectation.return_ty(), &resolved_return_ty);
-            if return_ty.has_unknown() {
-                continue;
+            let projection = calls.signature(&target).project(args)?;
+            let generics = self
+                .context
+                .item_paths()
+                .generics()
+                .generics(GenericDefRef::Function(target.function()))?;
+
+            // Allocate call-owned function generics and explicit `_` arguments exactly once.
+            // Receiver and argument evidence can keep refining these slots without allocating an
+            // unrelated replacement on every fixed-point pass.
+            let mut base = projection.subst().clone();
+            for param in generics.iter_self() {
+                if let GenericParamRef::Type(param) = param.param() {
+                    base.push(
+                        GenericParamRef::Type(param),
+                        GenericArg::Type(Box::new(inference.table.new_type_var())),
+                    );
+                }
             }
-
-            let _ = callable_goal_solver
-                .solve_fn_trait_goal(inference, &self_ty, &params, &return_ty)?;
-        }
-
-        Ok(())
-    }
-
-    /// Project exact `Self::Assoc` returns from selected trait methods in the inference view.
-    ///
-    /// Initial call projection only has ordinary `Ty` facts. Final inference may know more, such
-    /// as `Adapter<Closure#n>` after an inner call has bound its generic argument. That extra
-    /// closure witness is what lets impl where-clauses like `F: FnOnce() -> R` solve `R` before
-    /// projecting `type Output = R`.
-    pub(crate) fn project_selected_trait_associated_return_type(
-        &self,
-        inference: &mut BodyInferenceCtx,
-        call: ExprId,
-        args: &[ExprId],
-        receiver: Option<ExprId>,
-    ) -> Result<(), PackageStoreError> {
-        let calls = self.context.calls();
-        let Some(target) = calls.target(call)? else {
-            return Ok(());
-        };
-        let Some(function_data) = self
-            .context
-            .item_query()
-            .function_data(target.function())?
-            .cloned()
-        else {
-            return Ok(());
-        };
-        let projection = calls.signature(&target).project(args)?;
-        let Some(ret_ty) = projection.declared_return_ty() else {
-            return Ok(());
-        };
-        if let Some(receiver) = receiver
-            && self_associated_type_name(ret_ty).is_none()
-            && ret_ty.mentions_type_param(&["Self"])
-        {
-            let _ = self.instantiate_method_self_return_fact(
-                inference,
-                call,
-                args,
-                receiver,
-                &target,
-                &function_data,
-                ret_ty,
-                projection.return_ty(),
-            )?;
-            return Ok(());
-        }
-
-        let Some(assoc_name) = self_associated_type_name(ret_ty) else {
-            return Ok(());
-        };
-
-        let finalized_receiver_ty;
-        let selected_self_ty = match receiver {
-            Some(receiver) => {
-                finalized_receiver_ty = inference
-                    .table
-                    .finalize(&inference.root_resolved_expr_ty(receiver));
-                Some(&finalized_receiver_ty)
+            base.extend(self.explicit_inference_subst(inference, &target, &generics)?);
+            CallInferenceState {
+                function: target.function(),
+                generic_params: generics
+                    .iter()
+                    .map(|param| param.param())
+                    .collect::<Vec<_>>()
+                    .into(),
+                projection: Arc::new(projection),
+                subst: InferenceSubstitution::from_substitution(base),
+                first_written_param_idx: target.first_written_param_idx(),
+                return_projection_complete: false,
+                generic_obligations_complete: false,
             }
-            None => projection.selected_self_ty(),
-        };
-        let Some(selected_trait_method) = SelectedTraitMethodContext::from_function(
-            self.context,
-            target.function(),
-            function_data.owner,
-            selected_self_ty,
-        )?
-        else {
-            return Ok(());
         };
 
-        let projected_ty = BodyTraitObligationSolver::new(self.context)
-            .project_selected_trait_associated_alias(
-                inference,
-                &selected_trait_method,
-                receiver
-                    .map(|receiver| inference.root_resolved_expr_ty(receiver))
-                    .as_ref(),
-                assoc_name,
-            )?
-            .unwrap_or(Ty::Unknown);
-        inference.set_expr_infer_ty(call, projected_ty);
-
-        Ok(())
-    }
-
-    /// Use call args to solve function generics shared with the call result.
-    ///
-    /// Example: `id(missing())` makes the arg and return share the same `?T`.
-    pub(crate) fn constrain_function_generic_arguments(
-        &self,
-        inference: &mut BodyInferenceCtx,
-        call: ExprId,
-        args: &[ExprId],
-    ) -> Result<(), PackageStoreError> {
-        let calls = self.context.calls();
-        let Some(target) = calls.target(call)? else {
-            return Ok(());
-        };
-        let Some(function_data) = self
-            .context
-            .item_query()
-            .function_data(target.function())?
-            .cloned()
-        else {
-            return Ok(());
-        };
-        let projection = calls.signature(&target).project(args)?;
-        if projection.written_param_tys().len() != args.len() {
-            return Ok(());
+        // Install the return shape before argument expectations. Chained calls later in the same
+        // expression walk can then use it as receiver evidence.
+        if !state.return_projection_complete {
+            let return_ty = state
+                .subst
+                .as_substitution()
+                .apply(&state.projection.signature().ret);
+            if return_ty.has_var() {
+                inference.set_expr_infer_ty(call, return_ty);
+            } else if return_ty.has_unknown() {
+                inference.instantiate_expr_nested_unknown_ty(call, &return_ty);
+            } else {
+                inference.set_expr_infer_ty(call, return_ty);
+            }
         }
 
-        let subst =
-            self.selected_call_infer_subst(inference, call, args, &target, &function_data)?;
-
-        let written_params = function_data
-            .signature
-            .params()
-            .iter()
-            .skip(target.first_written_param_idx());
-        let mut projector = InferenceTypeRefProjector::new(&subst);
-        for ((arg, param), resolved_ty) in args
-            .iter()
-            .zip(written_params)
-            .zip(projection.written_param_tys())
-        {
-            let Some(param_ty) = &param.ty else {
-                continue;
-            };
-            let expected_ty = projector.ty_from_type_ref(param_ty, resolved_ty);
-            inference.constrain_expr_infer_ty(*arg, &expected_ty);
-        }
-
-        Ok(())
-    }
-
-    /// Rebuild the substitution that connects selected signature generics to live inference slots.
-    ///
-    /// This is the final-inference version of call projection. It starts from receiver/type-prefix
-    /// evidence, gives each function generic a `?T` slot, applies explicit generic args, and then
-    /// binds the declared return type to the already-instantiated call result.
-    fn selected_call_infer_subst(
-        &self,
-        inference: &mut BodyInferenceCtx,
-        call: ExprId,
-        args: &[ExprId],
-        target: &ResolvedCallTarget,
-        function_data: &FunctionData,
-    ) -> Result<InferenceTypeSubst, PackageStoreError> {
-        let scope = self.context.body().expr_unchecked(call).scope;
-        let mut subst = self.type_prefix_impl_infer_subst(
-            inference,
+        Ok(Some(CallInferenceTransfer {
             call,
-            target.has_type_prefix_self_source(),
-            target.function().origin,
-            &function_data.owner,
-            function_data.signature.ret_ty(),
-        )?;
-        self.apply_function_generic_shadows(
-            inference,
-            &mut subst,
-            function_data.signature.generics(),
-            target.explicit_args(),
-            scope,
-        )?;
-
-        if let Some(generics) = function_data.signature.generics()
-            && let Some(ret_ty) = function_data.signature.ret_ty()
-        {
-            let return_ty = inference.expr_ty(call);
-            subst.bind_type_ref(&mut inference.table, ret_ty, &return_ty, generics);
-        }
-
-        self.bind_selected_call_args_to_subst(
-            inference,
-            &mut subst,
-            args,
-            target,
-            &function_data.signature,
-        );
-
-        Ok(subst)
+            receiver,
+            state,
+        }))
     }
 
-    /// Bind impl generics for a static `Type::function` call from its result slot.
-    ///
-    /// Example: `Vec::singleton(user): Vec<?T>` gives `impl<T> Vec<T>` evidence `T = ?T`.
-    fn type_prefix_impl_infer_subst(
+    /// Finish one prepared call after its expected types have reached the written arguments.
+    pub(crate) fn complete_transfer(
         &self,
         inference: &mut BodyInferenceCtx,
-        call: ExprId,
-        has_type_prefix_self_source: bool,
-        origin: rg_ir_model::DefMapRef,
-        owner: &ItemOwner,
-        ret_ty: Option<&TypeRef>,
-    ) -> Result<InferenceTypeSubst, PackageStoreError> {
-        let mut subst = InferenceTypeSubst::new();
-        if !has_type_prefix_self_source {
-            return Ok(subst);
+        mut transfer: CallInferenceTransfer,
+        args: &[ExprId],
+    ) -> Result<(), PackageStoreError> {
+        // Bind the selected signature once against the evidence refined earlier in this transfer
+        // step. Every following operation consumes the same substitution.
+        if transfer.state.first_written_param_idx == 1
+            && let Some(receiver) = transfer.receiver
+            && let Some(receiver_param) = transfer.state.projection.signature().params.first()
+        {
+            let receiver_pattern = match receiver_param {
+                Ty::Reference { inner, .. } => inner.as_ref(),
+                receiver_param => receiver_param,
+            };
+            let receiver_ty = inference.root_resolved_expr_ty(receiver);
+            transfer
+                .state
+                .subst
+                .bind_ty(&mut inference.table, receiver_pattern, &receiver_ty);
         }
 
-        let ItemOwner::Impl(impl_id) = owner else {
-            return Ok(subst);
-        };
-
-        let impl_ref = ImplRef {
-            origin,
-            id: *impl_id,
-        };
-        let Some(impl_data) = self.context.item_query().impl_data(impl_ref)?.cloned() else {
-            return Ok(subst);
-        };
-
-        let return_ty = inference.root_resolved_expr_ty(call);
-        subst.bind_type_ref(
-            &mut inference.table,
-            &impl_data.self_ty,
-            &return_ty,
-            &impl_data.generics,
-        );
-        if let Some(ret_ty) = ret_ty {
-            subst.bind_type_ref(
+        for (param, arg) in transfer
+            .state
+            .projection
+            .signature()
+            .params
+            .iter()
+            .skip(transfer.state.first_written_param_idx)
+            .zip(args)
+        {
+            let evidence = inference.root_resolved_expr_ty(*arg);
+            transfer
+                .state
+                .subst
+                .bind_ty(&mut inference.table, param, &evidence);
+        }
+        let return_evidence = inference.expr_ty(transfer.call);
+        if !matches!(return_evidence, Ty::Unknown) {
+            transfer.state.subst.bind_ty(
                 &mut inference.table,
-                ret_ty,
-                &return_ty,
-                &impl_data.generics,
+                &transfer.state.projection.signature().ret,
+                &return_evidence,
             );
         }
 
-        Ok(subst)
-    }
-
-    /// Use a selected method to solve receiver vars.
-    ///
-    /// Examples:
-    ///
-    /// - `values: Vec<?T>; values.push(user)` gives `push(value: T)` evidence `?T = User`.
-    /// - `wrapper: Wrapper<?T>; wrapper.touch()` selected from `impl Wrapper<User>` gives
-    ///   receiver evidence `?T = User`.
-    pub(crate) fn constrain_selected_method_receiver_and_arguments(
-        &self,
-        inference: &mut BodyInferenceCtx,
-        method_call: ExprId,
-        receiver: ExprId,
-        args: &[ExprId],
-    ) -> Result<(), PackageStoreError> {
-        let calls = self.context.calls();
-        let Some(target) = calls.target(method_call)? else {
-            return Ok(());
-        };
-        let Some(function_data) = self
-            .context
-            .item_query()
-            .function_data(target.function())?
-            .cloned()
-        else {
-            return Ok(());
-        };
-        if !function_data.has_self_receiver() {
-            return Ok(());
+        // Push the now-refined signature back into the written expressions. The outer pass has
+        // already handled transparent syntax such as tuple fields; these direct constraints cover
+        // partial/malformed calls too and keep receiver autoref handling call-owned.
+        for (arg, param) in args.iter().zip(
+            transfer
+                .state
+                .projection
+                .signature()
+                .params
+                .iter()
+                .skip(transfer.state.first_written_param_idx),
+        ) {
+            let expected = transfer.state.subst.as_substitution().apply(param);
+            inference.constrain_expr_ty(*arg, &expected);
         }
-
-        let projection = calls.signature(&target).project(args)?;
-        if projection.written_param_tys().len() != args.len() {
-            return Ok(());
-        }
-
-        let mut subst = self.receiver_infer_subst(
-            inference,
-            target.function().origin,
-            &function_data.owner,
-            receiver,
-        )?;
-        self.constrain_selected_inherent_method_receiver(
-            inference,
-            target.function().origin,
-            &function_data.owner,
-            receiver,
-            &subst,
-        )?;
-        self.apply_function_generic_shadows(
-            inference,
-            &mut subst,
-            function_data.signature.generics(),
-            target.explicit_args(),
-            self.context.body().expr_unchecked(method_call).scope,
-        )?;
-
-        let written_params = function_data.signature.params().iter().skip(1);
-        let mut projector = InferenceTypeRefProjector::new(&subst);
-        for ((arg, param), resolved_ty) in args
-            .iter()
-            .zip(written_params)
-            .zip(projection.written_param_tys())
+        if transfer.state.first_written_param_idx == 1
+            && let Some(receiver) = transfer.receiver
+            && let Some(receiver_param) = transfer.state.projection.signature().params.first()
         {
-            let Some(param_ty) = &param.ty else {
-                continue;
+            // Method-call syntax supplies the receiver before Rust inserts `&self`/`&mut self`.
+            let receiver_pattern = match receiver_param {
+                Ty::Reference { inner, .. } => inner.as_ref(),
+                receiver_param => receiver_param,
             };
-            let expected_ty = projector.ty_from_type_ref(param_ty, resolved_ty);
-            inference.constrain_expr_infer_ty(*arg, &expected_ty);
+            let receiver_ty = transfer
+                .state
+                .subst
+                .as_substitution()
+                .apply(receiver_pattern);
+            inference.constrain_expr_ty(receiver, &receiver_ty);
         }
 
+        self.solve_generic_trait_obligations(inference, &mut transfer.state)?;
+        self.project_selected_trait_associated_return_type(
+            inference,
+            transfer.call,
+            &mut transfer.state,
+        )?;
+        inference.set_call_inference(transfer.call, transfer.state);
         Ok(())
     }
 
-    /// Push concrete `impl Self` evidence into the receiver slot for selected inherent methods.
-    fn constrain_selected_inherent_method_receiver(
+    /// Submit the selected signature's canonical clauses with live call substitutions applied.
+    fn solve_generic_trait_obligations(
         &self,
         inference: &mut BodyInferenceCtx,
-        origin: DefMapRef,
-        owner: &ItemOwner,
-        receiver: ExprId,
-        subst: &InferenceTypeSubst,
+        state: &mut CallInferenceState,
     ) -> Result<(), PackageStoreError> {
-        let ItemOwner::Impl(impl_id) = owner else {
-            return Ok(());
-        };
-
-        let impl_ref = ImplRef {
-            origin,
-            id: *impl_id,
-        };
-        let Some(impl_data) = self.context.item_query().impl_data(impl_ref)?.cloned() else {
-            return Ok(());
-        };
-        if impl_data.trait_ref.is_some() {
+        if state.generic_obligations_complete {
             return Ok(());
         }
 
-        let context = TypePathContext {
-            module: impl_data.owner,
-            impl_ref: Some(impl_ref),
-        };
-        let resolved_self_ty = self.context.item_paths().resolve_type_ref(
-            &impl_data.self_ty,
-            context,
-            Ty::syntax(impl_data.self_ty.clone()),
-            &TypeSubst::new(),
+        // A selected call obligation matters to this layer while it can still constrain a
+        // body-owned inference slot, closure identity, or unresolved semantic shape. Fully settled
+        // predicates are type-checking facts; proving them cannot change any Body IR type, so
+        // eager indexing should not submit them to Chalk merely to rediscover that the
+        // already-selected call is valid.
+        //
+        // `Unknown` and projections deliberately remain pending. Their producer may become known
+        // on a later fixed-point pass, at which point the same obligation can carry useful evidence
+        // into the call-owned substitution. Marking either shape complete would freeze calls such
+        // as `map(...).collect::<Vec<_>>()` before `Map::Item` has been projected.
+        let is_unsettled =
+            |ty: &Ty| ty.has_var() || ty.has_closure() || ty.has_unknown() || ty.has_projection();
+        let needs_body_inference = state
+            .projection
+            .signature()
+            .clauses
+            .iter()
+            .map(|clause| state.subst.as_substitution().apply_clause(clause))
+            .map(|clause| inference.table.canonicalize_clause(&clause))
+            .any(|clause| match clause {
+                Clause::Implemented(application) => application
+                    .args
+                    .iter()
+                    .any(|arg| arg.as_ty().is_some_and(is_unsettled)),
+                Clause::AliasEq { alias, ty } => {
+                    is_unsettled(&ty)
+                        || alias
+                            .args
+                            .iter()
+                            .any(|arg| arg.as_ty().is_some_and(is_unsettled))
+                }
+            });
+        if !needs_body_inference {
+            state.generic_obligations_complete = true;
+            return Ok(());
+        }
+
+        let proof = self.context.trait_selection().prove_clauses(
+            &state.projection.signature().clauses,
+            &state.subst,
+            &inference.table,
         )?;
-        let receiver_evidence = InferenceTypeRefProjector::new(subst)
-            .ty_from_type_ref(&impl_data.self_ty, &resolved_self_ty);
-        let receiver_ty = inference.root_resolved_expr_ty(receiver);
-
-        // Method lookup may have used autoderef while the source receiver expression still has its
-        // pre-adjustment type. Only commit the self-type evidence when it fits that original slot.
-        let mut trial_table = inference.table.clone();
-        if trial_table
-            .try_unify(&receiver_ty, &receiver_evidence)
-            .is_err()
-        {
-            return Ok(());
-        }
-
-        inference.constrain_expr_infer_ty(receiver, &receiver_evidence);
+        state.generic_obligations_complete = match proof {
+            TraitProof::Proven(table) => {
+                inference.table = table;
+                true
+            }
+            TraitProof::Ambiguous(Some(table)) => {
+                // Chalk's definite guidance is an equality every possible solution shares. It is
+                // safe inference evidence even though it does not prove that the obligation will
+                // ultimately hold. Keep the obligation pending and retry after that evidence has
+                // propagated through the body.
+                inference.table = table;
+                false
+            }
+            TraitProof::Ambiguous(None) | TraitProof::NoSolution | TraitProof::Unavailable => false,
+        };
         Ok(())
     }
 
-    /// Solve shallow trait bounds on already-selected generic calls.
-    ///
-    /// Example: `collect::<Vec<_>>()` produces `B = Vec<?T>` from the return type and then solves
-    /// the selected function bound `B: FromIterator<Item>` through visible impls.
-    pub(crate) fn solve_generic_trait_obligations(
+    /// Normalize associated types in the selected semantic return.
+    fn project_selected_trait_associated_return_type(
         &self,
         inference: &mut BodyInferenceCtx,
         call: ExprId,
-        args: &[ExprId],
-        receiver: Option<ExprId>,
+        state: &mut CallInferenceState,
     ) -> Result<(), PackageStoreError> {
-        let calls = self.context.calls();
-        let Some(target) = calls.target(call)? else {
+        if state.return_projection_complete {
             return Ok(());
-        };
-        let Some(function_data) = self
+        }
+        let return_ty = state
+            .subst
+            .as_substitution()
+            .apply(&state.projection.signature().ret);
+        let (ty, table) = self
             .context
-            .item_query()
-            .function_data(target.function())?
-            .cloned()
-        else {
-            return Ok(());
-        };
-        let Some(generics) = function_data.signature.generics() else {
-            return Ok(());
-        };
-        if generics.types.iter().all(|param| param.bounds.is_empty())
-            && generics.where_predicates.is_empty()
-        {
-            return Ok(());
+            .trait_selection()
+            .normalize_ty(&return_ty, &inference.table)?;
+        inference.table = table;
+        // Once every projection has been replaced, later evidence only solves the inference slots
+        // already embedded in this result. Re-running Chalk cannot change its semantic shape.
+        state.return_projection_complete = !ty.has_projection();
+        if ty != return_ty {
+            inference.set_expr_normalized_ty(call, ty);
+        } else {
+            // A call may become selectable after a preceding transfer step gives its receiver a
+            // type. Install the ordinary return shape before marking projection complete.
+            inference.set_expr_infer_ty(call, ty);
         }
-
-        // Stage 1: rebuild the substitution that connects signature names to inference slots.
-        // Return evidence is especially important for `collect::<Vec<_>>()`: it turns `B` into
-        // the already-instantiated destination shape `Vec<?T>`.
-        let projection = calls.signature(&target).project(args)?;
-        let mut subst = self.type_prefix_impl_infer_subst(
-            inference,
-            call,
-            target.has_type_prefix_self_source(),
-            target.function().origin,
-            &function_data.owner,
-            function_data.signature.ret_ty(),
-        )?;
-        if let Some(receiver) = receiver {
-            subst = self.receiver_infer_subst(
-                inference,
-                target.function().origin,
-                &function_data.owner,
-                receiver,
-            )?;
-        }
-        self.apply_function_generic_shadows(
-            inference,
-            &mut subst,
-            Some(generics),
-            target.explicit_args(),
-            self.context.body().expr_unchecked(call).scope,
-        )?;
-
-        if let Some(ret_ty) = function_data.signature.ret_ty() {
-            let return_ty = inference.expr_ty(call);
-            subst.bind_type_ref(&mut inference.table, ret_ty, &return_ty, generics);
-        }
-        self.bind_selected_call_args_to_subst(
-            inference,
-            &mut subst,
-            args,
-            &target,
-            &function_data.signature,
-        );
-
-        let finalized_receiver_ty;
-        let selected_self_infer_ty =
-            receiver.map(|receiver| inference.root_resolved_expr_ty(receiver));
-        let selected_self_ty = match receiver {
-            Some(receiver) => {
-                finalized_receiver_ty = inference
-                    .table
-                    .finalize(&inference.root_resolved_expr_ty(receiver));
-                Some(&finalized_receiver_ty)
-            }
-            None => projection.selected_self_ty(),
-        };
-
-        // Stage 2+: lower selected-call bounds into trait goals and commit only unique solutions.
-        BodyTraitObligationSolver::new(self.context).solve_selected_call(
-            inference,
-            SelectedCallObligationInput::new(
-                target.function(),
-                function_data.owner,
-                generics,
-                &subst,
-                projection.subst(),
-                selected_self_ty,
-                selected_self_infer_ty,
-            ),
-        )
-    }
-
-    /// Bind written call arguments into function generics.
-    ///
-    /// Example: `fn id<T>(value: T) -> T` plus `id(user)` gives `T = User`.
-    ///
-    /// Callable obligations need the same binding step:
-    /// `fn apply<T, F, R>(value: T, f: F) -> R where F: FnOnce(T) -> R`
-    /// plus `apply(user, |user| user.name())` gives:
-    /// - `T = User` from the first arg;
-    /// - `F = Closure#n` from the second arg.
-    ///
-    /// Obviously contradictory callable bounds, such as
-    /// `F: FnOnce(T) -> bool, F: FnOnce(T) -> u8`, are not a stable inference surface.
-    /// Inference may leave facts unknown or may be order-dependent there. The normal
-    /// path is intentionally simple and optimized for realistic selected calls.
-    fn bind_selected_call_args_to_subst(
-        &self,
-        inference: &mut BodyInferenceCtx,
-        subst: &mut InferenceTypeSubst,
-        args: &[ExprId],
-        target: &ResolvedCallTarget,
-        signature: &FunctionSignature,
-    ) {
-        let Some(generics) = signature.generics() else {
-            return;
-        };
-
-        let written_params = signature
-            .params()
-            .iter()
-            .skip(target.first_written_param_idx());
-        for (arg, param) in args.iter().zip(written_params) {
-            let Some(param_ty) = &param.ty else {
-                continue;
-            };
-            let arg_ty = self
-                .function_item_arg_ty(*arg)
-                .unwrap_or_else(|| inference.root_resolved_expr_ty(*arg));
-            subst.bind_type_ref(&mut inference.table, param_ty, &arg_ty, generics);
-        }
-    }
-
-    fn callable_argument_ty(&self, inference: &BodyInferenceCtx, arg: ExprId) -> Option<Ty> {
-        let arg_ty = inference.root_resolved_expr_ty(arg);
-        if matches!(arg_ty, Ty::Closure(_) | Ty::FunctionItem(_)) {
-            return Some(arg_ty);
-        }
-
-        self.function_item_arg_ty(arg)
-    }
-
-    fn function_item_arg_ty(&self, arg: ExprId) -> Option<Ty> {
-        let BodyResolution::Declarations(declarations) = self.context.body().expr_resolution(arg)
-        else {
-            return None;
-        };
-        let Some(DeclarationRef::Item(SemanticItemRef::Function(function))) = declarations.as_one()
-        else {
-            return None;
-        };
-        Some(Ty::FunctionItem(*function))
-    }
-
-    /// Bind impl generics from the selected receiver slot: `impl<T> Vec<T>` + `Vec<?T>`.
-    fn receiver_infer_subst(
-        &self,
-        inference: &mut BodyInferenceCtx,
-        origin: rg_ir_model::DefMapRef,
-        owner: &ItemOwner,
-        receiver: ExprId,
-    ) -> Result<InferenceTypeSubst, PackageStoreError> {
-        let mut subst = InferenceTypeSubst::new();
-        let ItemOwner::Impl(impl_id) = owner else {
-            return Ok(subst);
-        };
-
-        let impl_ref = ImplRef {
-            origin,
-            id: *impl_id,
-        };
-        let Some(impl_data) = self.context.item_query().impl_data(impl_ref)?.cloned() else {
-            return Ok(subst);
-        };
-
-        let receiver_ty = inference.root_resolved_expr_ty(receiver);
-        subst.bind_type_ref(
-            &mut inference.table,
-            &impl_data.self_ty,
-            &receiver_ty,
-            &impl_data.generics,
-        );
-
-        Ok(subst)
-    }
-
-    /// Function generics shadow impl generics; `::<User>` or return evidence then fills `T`.
-    fn apply_function_generic_shadows(
-        &self,
-        inference: &mut BodyInferenceCtx,
-        subst: &mut InferenceTypeSubst,
-        generics: Option<&GenericParams>,
-        explicit_args: &[ItemGenericArg],
-        scope: ScopeId,
-    ) -> Result<(), PackageStoreError> {
-        let Some(generics) = generics else {
-            return Ok(());
-        };
-
-        subst.shadow_type_params(&mut inference.table, generics);
-
-        let explicit_subst = self.context.generics().subst_for_explicit_args(
-            generics,
-            explicit_args,
-            TypeRefUseSite::Scope(scope),
-        )?;
-        for param in &generics.types {
-            if let Some(ty) = explicit_subst.type_param(param.name.as_str()) {
-                subst.push(&mut inference.table, param.name.clone(), ty);
-            }
-        }
-
         Ok(())
+    }
+
+    /// Convert written `_` type arguments into inference variables without shifting omitted
+    /// lifetime positions.
+    fn explicit_inference_subst(
+        &self,
+        inference: &mut BodyInferenceCtx,
+        target: &ResolvedCallTarget,
+        generics: &Generics<'_>,
+    ) -> Result<Substitution, PackageStoreError> {
+        if target.explicit_args().is_empty() {
+            return Ok(Substitution::new());
+        }
+        let resolved = self.context.generics().subst_for_explicit_args(
+            GenericDefRef::Function(target.function()),
+            target.explicit_args(),
+            target.site_scope(),
+        )?;
+        let positional = target
+            .explicit_args()
+            .iter()
+            .filter(|arg| {
+                !matches!(
+                    arg,
+                    ItemGenericArg::AssocType { .. } | ItemGenericArg::Unsupported(_)
+                )
+            })
+            .collect::<Vec<_>>();
+        let mut syntax_index = 0;
+        let mut subst = Substitution::new();
+        for param in generics.iter_self() {
+            let syntax = positional.get(syntax_index).copied();
+            match (param.param(), syntax) {
+                (GenericParamRef::Lifetime(_), Some(ItemGenericArg::Lifetime(_)))
+                | (GenericParamRef::Const(_), Some(ItemGenericArg::Const(_))) => {
+                    syntax_index += 1;
+                    if let Some(arg) = resolved.get(param.param()) {
+                        subst.push(param.param(), arg.clone());
+                    }
+                }
+                // Lifetimes can be omitted without consuming the following type argument.
+                (GenericParamRef::Lifetime(_), _) => {}
+                (GenericParamRef::Type(type_param), Some(ItemGenericArg::Type(ty))) => {
+                    syntax_index += 1;
+                    let ty = self
+                        .context
+                        .type_refs(target.site_scope())
+                        .resolve_with_inference(ty, &mut inference.table)?;
+                    subst.push(
+                        GenericParamRef::Type(type_param),
+                        GenericArg::Type(Box::new(ty)),
+                    );
+                }
+                (GenericParamRef::Type(_), Some(ItemGenericArg::FnTraitArgs { .. })) => {
+                    syntax_index += 1;
+                    if let Some(arg) = resolved.get(param.param()) {
+                        subst.push(param.param(), arg.clone());
+                    }
+                }
+                _ => {}
+            }
+        }
+        Ok(subst)
     }
 }

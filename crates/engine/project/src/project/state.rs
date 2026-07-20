@@ -9,7 +9,7 @@ use std::{
 use rg_analysis::{Analysis, SourceTextView};
 use rg_body_ir::{BodyIrBuildPolicy, BodyIrDb};
 use rg_def_map::{DefMapDb, DefMapReadTxn, PackageSlot};
-use rg_ir_model::TargetRef;
+use rg_ir_model::{CrateId, CrateRef};
 use rg_package_store::{PackageStoreError, PackageSubset};
 use rg_parse::{FileId, ParseDb};
 use rg_semantic_ir::SemanticIrDb;
@@ -23,7 +23,9 @@ use crate::{
 };
 use rg_std::MemorySize;
 
-use super::{loading::PackageReadLoaders, stats::ProjectStats, txn::ProjectReadTxn};
+use super::{
+    build::SplitIndexingMode, loading::PackageReadLoaders, stats::ProjectStats, txn::ProjectReadTxn,
+};
 
 /// Identity of one successfully published saved-source project generation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, MemorySize)]
@@ -61,6 +63,8 @@ pub(crate) struct ProjectState {
     pub(crate) cache_store: PackageCacheStore,
     pub(crate) package_source_fingerprints: Vec<Option<Fingerprint>>,
     pub(crate) body_ir_policy: BodyIrBuildPolicy,
+    #[memsize(skip)]
+    pub(crate) split_indexing_mode: SplitIndexingMode,
     #[memsize(skip)]
     pub(crate) indexing_preference: IndexingPerformancePreference,
     pub(crate) package_residency_policy: PackageResidencyPolicy,
@@ -140,8 +144,8 @@ impl ProjectState {
             .map(|(package_idx, _)| PackageSlot(package_idx))
     }
 
-    /// Returns all targets declared by the given package slot.
-    pub(crate) fn target_refs_for_package(&self, package: PackageSlot) -> Vec<TargetRef> {
+    /// Returns all semantic crates declared by the given package slot.
+    pub(crate) fn crate_refs_for_package(&self, package: PackageSlot) -> Vec<CrateRef> {
         let Some(parsed_package) = self.parse.package(package.0) else {
             return Vec::new();
         };
@@ -149,9 +153,10 @@ impl ProjectState {
         parsed_package
             .targets()
             .iter()
-            .map(|target| TargetRef {
+            .enumerate()
+            .map(|(crate_idx, _)| CrateRef {
                 package,
-                target: target.id,
+                crate_id: CrateId(crate_idx),
             })
             .collect()
     }

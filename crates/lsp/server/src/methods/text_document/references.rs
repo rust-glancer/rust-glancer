@@ -21,7 +21,7 @@ pub(crate) async fn references(
     tracing::trace!("references request received");
     let locations = ctx
         .engine_client
-        .call(
+        .query(
             "references",
             move |engine_client, request_context| async move {
                 engine_client

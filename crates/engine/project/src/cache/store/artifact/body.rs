@@ -2,16 +2,17 @@
 //!
 //! The outer artifact layout gives the reader one large Body IR range. The first Body IR request
 //! reads a fixed nested prefix and the manifest following it, then caches the validated directory
-//! in `body_index`. Later requests use that directory to read one target index or file shard.
+//! in `body_index`. Later requests use that directory to read one crate index or file shard.
 //!
 //! Ranges in the decoded index are relative to the Body IR section. `read_body_range` checks them
 //! against that section and translates them into outer-file offsets before using the shared reader.
 
 use std::time::Instant;
 
-use rg_body_ir::{BodyFileShard, PackageBodiesManifest, TargetBodies};
-use rg_ir_storage::ItemLookupIndex;
-use rg_parse::{FileId, TargetId};
+use rg_body_ir::{BodyFileShard, CrateBodies, PackageBodiesManifest};
+use rg_ir_model::CrateId;
+use rg_parse::FileId;
+use rg_semantic_ir::ItemLookupIndex;
 
 use super::{PackageArtifactReader, PackageCacheReadError};
 use crate::{
@@ -23,7 +24,7 @@ use crate::{
 };
 
 impl PackageArtifactReader {
-    /// Return the logical body-to-file directory without decoding target or file payloads.
+    /// Return the logical body-to-file directory without decoding crate or file payloads.
     ///
     /// The returned value is cloned out of the cached physical index so the Body IR transaction can
     /// keep it as its request-local routing table.
@@ -33,85 +34,85 @@ impl PackageArtifactReader {
         Ok(self.body_index()?.manifest().clone())
     }
 
-    /// Read one target-global semantic index without reading its bodies.
+    /// Read one crate-global semantic index without reading its bodies.
     pub(crate) fn read_body_semantic_index(
         &self,
-        target: TargetId,
+        crate_id: CrateId,
     ) -> Result<ItemLookupIndex, PackageCacheReadError> {
         let range = self
             .body_index()?
-            .semantic_index_range(target)
+            .semantic_index_range(crate_id)
             .ok_or_else(|| {
                 self.decode_error(anyhow::anyhow!(
-                    "Body IR manifest has no target index for {:?}",
-                    target,
+                    "Body IR manifest has no crate index for {:?}",
+                    crate_id,
                 ))
             })?;
-        let bytes = self.read_body_range("body_ir.target_index", range)?;
+        let bytes = self.read_body_range("body_ir.crate_index", range)?;
         let started = Instant::now();
         let decoded = self
             .decode_with_names(|| PackageCacheCodec::decode_body_semantic_index(&bytes))
             .map_err(|error| self.decode_error(error));
-        metric::CACHE_SECTION_DECODE.record("body_ir.target_index", started.elapsed());
+        metric::CACHE_SECTION_DECODE.record("body_ir.crate_index", started.elapsed());
         decoded
     }
 
-    /// Read one source file's bodies and validate them against the target manifest.
+    /// Read one source file's bodies and validate them against the crate manifest.
     ///
-    /// Both target and file must be declared by the directory. Their absence is malformed cache
+    /// Both crate and file must be declared by the directory. Their absence is malformed cache
     /// state, not an empty Body IR result.
     pub(crate) fn read_body_file_shard(
         &self,
-        target: TargetId,
+        crate_id: CrateId,
         file: FileId,
     ) -> Result<BodyFileShard, PackageCacheReadError> {
         let index = self.body_index()?;
-        let target_manifest = index.manifest().target(target).ok_or_else(|| {
+        let crate_manifest = index.manifest().crate_manifest(crate_id).ok_or_else(|| {
             self.decode_error(anyhow::anyhow!(
-                "Body IR manifest has no target {:?}",
-                target,
+                "Body IR manifest has no crate {:?}",
+                crate_id,
             ))
         })?;
-        let range = index.file_range(target, file).ok_or_else(|| {
+        let range = index.file_range(crate_id, file).ok_or_else(|| {
             self.decode_error(anyhow::anyhow!(
-                "Body IR manifest has no file {:?} in target {:?}",
+                "Body IR manifest has no file {:?} in crate {:?}",
                 file,
-                target,
+                crate_id,
             ))
         })?;
         let bytes = self.read_body_range("body_ir.file", range)?;
         let started = Instant::now();
         let decoded = self
             .decode_with_names(|| {
-                PackageCacheCodec::decode_body_file_shard(&bytes, target_manifest, file)
+                PackageCacheCodec::decode_body_file_shard(&bytes, crate_manifest, file)
             })
             .map_err(|error| self.decode_error(error));
         metric::CACHE_SECTION_DECODE.record("body_ir.file", started.elapsed());
         decoded
     }
 
-    /// Reconstruct a complete resident target from its index and every declared file shard.
+    /// Reconstruct a complete resident crate from its index and every declared file shard.
     ///
-    /// This is the intentionally broad loading path used when a caller asks for `TargetBodies`
+    /// This is the intentionally broad loading path used when a caller asks for `CrateBodies`
     /// rather than a file-local view.
-    pub(crate) fn read_body_target(
+    pub(crate) fn read_body_crate(
         &self,
-        target: TargetId,
-    ) -> Result<TargetBodies, PackageCacheReadError> {
+        crate_id: CrateId,
+    ) -> Result<CrateBodies, PackageCacheReadError> {
         let index = self.body_index()?;
-        let target_manifest = index.manifest().target(target).ok_or_else(|| {
+        let crate_manifest = index.manifest().crate_manifest(crate_id).ok_or_else(|| {
             self.decode_error(anyhow::anyhow!(
-                "Body IR manifest has no target {:?}",
-                target,
+                "Body IR manifest has no crate {:?}",
+                crate_id,
             ))
         })?;
-        let semantic_index = self.read_body_semantic_index(target)?;
-        let shards = target_manifest
+        let semantic_index = self.read_body_semantic_index(crate_id)?;
+        let shards = crate_manifest
             .files()
             .iter()
-            .map(|&file| self.read_body_file_shard(target, file))
+            .map(|&file| self.read_body_file_shard(crate_id, file))
             .collect::<Result<Vec<_>, _>>()?;
-        TargetBodies::from_storage_parts(target_manifest, semantic_index, shards)
+        CrateBodies::from_storage_parts(crate_manifest, semantic_index, shards)
             .map_err(|error| self.decode_error(error))
     }
 

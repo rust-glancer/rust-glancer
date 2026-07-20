@@ -5,6 +5,8 @@ use rg_ir_view::{IndexedViewDb, symbol::SymbolView};
 
 use crate::model::WorkspaceSymbol;
 
+use super::adapter::workspace_symbol;
+
 pub(crate) struct WorkspaceSymbolCollector<'a, 'db>(&'a IndexedViewDb<'db>);
 
 impl<'a, 'db> WorkspaceSymbolCollector<'a, 'db> {
@@ -17,11 +19,11 @@ impl<'a, 'db> WorkspaceSymbolCollector<'a, 'db> {
         let mut symbols = Vec::new();
 
         for symbol in SymbolView::new(self.0).workspace_symbols()? {
-            if !query.matches(symbol.name()) {
+            if !query.matches(symbol.name().as_ref()) {
                 continue;
             }
 
-            symbols.push(WorkspaceSymbol::from(symbol));
+            symbols.push(workspace_symbol(self.0, symbol)?);
         }
 
         symbols.sort_by_key(|symbol| {
@@ -29,8 +31,8 @@ impl<'a, 'db> WorkspaceSymbolCollector<'a, 'db> {
                 symbol.name.to_lowercase(),
                 symbol.kind,
                 symbol.container_name.clone(),
-                symbol.target.package.0,
-                symbol.target.target.0,
+                symbol.crate_ref.package.0,
+                symbol.crate_ref.crate_id.0,
                 symbol.file_id.0,
                 symbol.span.map(|span| span.text.start),
             )

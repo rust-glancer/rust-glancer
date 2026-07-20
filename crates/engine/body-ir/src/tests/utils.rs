@@ -4,20 +4,22 @@ use expect_test::Expect;
 
 use crate::ir::resolved::BodyResolution;
 use crate::{
-    BindingData, BodyIrBuildPolicy, BodyIrLoader, BodyIrReadTxn, BodyOwner, BodySource,
-    ClosureCapture, ClosureKind, ClosureParamData, ExprBlockKind, ExprData, ExprKind, LabelData,
-    PatBindingMode, PatData, PatKind, ResolvedBodyData, StmtKind, TargetBodiesStatus,
-    testonly::BodyIrFixture,
+    BindingData, BodyIrBuildPolicy, BodyIrLoader, BodyIrReadTxn, BodyOwner, BodySource, BodyView,
+    ClosureCapture, ClosureKind, ClosureParamData, CrateBodiesStatus, ExprBlockKind, ExprData,
+    ExprKind, LabelData, PatBindingMode, PatData, PatKind, StmtKind, testonly::BodyIrFixture,
 };
-use rg_ir_model::items::FieldItem;
+use rg_def_map::ModuleOrigin;
 use rg_ir_model::{
-    BindingId, BodyId, BodyRef, DefId, DefMapRef, EnumVariantRef, ExprId, FieldRef, FunctionRef,
-    ImplRef, ItemId, ItemOwner, LocalDefRef, ModuleId, ModuleRef, PatId, SemanticItemRef, StmtId,
-    TargetRef, TraitRef, TypeDefId, TypeDefRef, identity::DeclarationRef,
+    BindingId, BodyId, BodyRef, CrateRef, DefId, DefMapRef, EnumVariantRef, ExprId, FieldRef,
+    FunctionRef, GenericParamRef, ImplRef, ItemId, ItemOwner, LocalDefRef, ModuleId, ModuleRef,
+    PatId, SemanticItemRef, StmtId, TraitDefRef, TypeDefId, TypeDefRef, identity::DeclarationRef,
 };
-use rg_ir_storage::ModuleOrigin;
-use rg_parse::{Package, ParseDb, Target};
-use rg_ty::{GenericArg, NominalTy, OpaqueTraitBound, Ty};
+use rg_item_tree::FieldItem;
+use rg_parse::{CargoTarget, Package, ParseDb};
+use rg_semantic_ir::{GenericParamSource, GenericsQuery};
+use rg_ty::{
+    AdtTy, AliasTy, GenericArg, Lifetime, OpaqueTy, SemanticSignatureQuery, TraitRefLowering, Ty,
+};
 
 pub(super) fn check_project_body_ir(fixture: &str, expect: Expect) {
     let db = BodyIrFixtureDb::build(fixture);
@@ -28,6 +30,13 @@ pub(super) fn check_project_body_ir(fixture: &str, expect: Expect) {
 
 pub(super) fn check_project_body_ir_with_sysroot(fixture: &str, expect: Expect) {
     let db = BodyIrFixtureDb::build_with_sysroot(fixture);
+    let actual = ProjectBodyIrSnapshot::new(&db).render();
+    let actual = format!("{}\n", actual.trim_end());
+    expect.assert_eq(&actual);
+}
+
+pub(super) fn check_project_body_ir_with_fake_sysroot(fixture: &str, expect: Expect) {
+    let db = BodyIrFixtureDb::build_with_fake_sysroot(fixture);
     let actual = ProjectBodyIrSnapshot::new(&db).render();
     let actual = format!("{}\n", actual.trim_end());
     expect.assert_eq(&actual);
@@ -66,14 +75,14 @@ impl<'a> ProjectBodyIrSnapshot<'a> {
         sorted_packages(self.project.parse_db())
             .into_iter()
             .map(|(package_slot, package)| {
-                let target_dumps = sorted_targets(package)
+                let crate_dumps = sorted_targets(package)
                     .into_iter()
                     .map(|target| {
-                        TargetBodyIrSnapshot {
+                        CrateBodyIrSnapshot {
                             project: self.project,
-                            target_ref: TargetRef {
+                            crate_ref: CrateRef {
                                 package: rg_def_map::PackageSlot(package_slot),
-                                target: target.id,
+                                crate_id: rg_ir_model::CrateId(target.id.0),
                             },
                             target_name: &target.name,
                             target_kind: target.kind.to_string(),
@@ -83,7 +92,7 @@ impl<'a> ProjectBodyIrSnapshot<'a> {
                     .collect::<Vec<_>>()
                     .join("\n\n");
 
-                format!("package {}\n\n{target_dumps}", package.package_name())
+                format!("package {}\n\n{crate_dumps}", package.package_name())
             })
             .collect::<Vec<_>>()
             .join("\n\n")
@@ -93,14 +102,14 @@ impl<'a> ProjectBodyIrSnapshot<'a> {
         sorted_packages(self.project.parse_db())
             .into_iter()
             .map(|(package_slot, package)| {
-                let target_dumps = sorted_targets(package)
+                let crate_dumps = sorted_targets(package)
                     .into_iter()
                     .map(|target| {
-                        TargetBodyIrSnapshot {
+                        CrateBodyIrSnapshot {
                             project: self.project,
-                            target_ref: TargetRef {
+                            crate_ref: CrateRef {
                                 package: rg_def_map::PackageSlot(package_slot),
-                                target: target.id,
+                                crate_id: rg_ir_model::CrateId(target.id.0),
                             },
                             target_name: &target.name,
                             target_kind: target.kind.to_string(),
@@ -110,40 +119,39 @@ impl<'a> ProjectBodyIrSnapshot<'a> {
                     .collect::<Vec<_>>()
                     .join("\n\n");
 
-                format!("package {}\n\n{target_dumps}", package.package_name())
+                format!("package {}\n\n{crate_dumps}", package.package_name())
             })
             .collect::<Vec<_>>()
             .join("\n\n")
     }
 }
 
-struct TargetBodyIrSnapshot<'a> {
+struct CrateBodyIrSnapshot<'a> {
     project: &'a BodyIrFixtureDb,
-    target_ref: TargetRef,
+    crate_ref: CrateRef,
     target_name: &'a str,
     target_kind: String,
 }
 
-impl TargetBodyIrSnapshot<'_> {
+impl CrateBodyIrSnapshot<'_> {
     fn render(&self) -> String {
         let mut dump = format!("{} [{}]", self.target_name, self.target_kind);
         let body_ir = self.body_ir_txn();
-        let Some(target_bodies) = body_ir
-            .target_bodies(self.target_ref)
-            .expect("target body IR should load while rendering body IR")
+        let Some(crate_bodies) = body_ir
+            .crate_bodies(self.crate_ref)
+            .expect("crate body IR should load while rendering body IR")
         else {
             return dump;
         };
 
-        if matches!(target_bodies.status(), TargetBodiesStatus::Skipped) {
+        if matches!(crate_bodies.status(), CrateBodiesStatus::Skipped) {
             dump.push_str("\nskipped");
             return dump;
         }
 
         // Body IDs encode the order bodies were materialized. Rendering in that order keeps
         // multi-body snapshots readable once nested const/static initializer bodies appear.
-        for (idx, body) in target_bodies.bodies().iter().enumerate() {
-            let body_id = BodyId(idx);
+        for (idx, (body_id, body)) in crate_bodies.body_views().enumerate() {
             if idx == 0 {
                 dump.push('\n');
             } else {
@@ -158,20 +166,19 @@ impl TargetBodyIrSnapshot<'_> {
     fn render_patterns(&self) -> String {
         let mut dump = format!("{} [{}]", self.target_name, self.target_kind);
         let body_ir = self.body_ir_txn();
-        let Some(target_bodies) = body_ir
-            .target_bodies(self.target_ref)
-            .expect("target body IR should load while rendering body IR patterns")
+        let Some(crate_bodies) = body_ir
+            .crate_bodies(self.crate_ref)
+            .expect("crate body IR should load while rendering body IR patterns")
         else {
             return dump;
         };
 
-        if matches!(target_bodies.status(), TargetBodiesStatus::Skipped) {
+        if matches!(crate_bodies.status(), CrateBodiesStatus::Skipped) {
             dump.push_str("\nskipped");
             return dump;
         }
 
-        for (idx, body) in target_bodies.bodies().iter().enumerate() {
-            let body_id = BodyId(idx);
+        for (idx, (body_id, body)) in crate_bodies.body_views().enumerate() {
             if idx == 0 {
                 dump.push('\n');
             } else {
@@ -183,7 +190,7 @@ impl TargetBodyIrSnapshot<'_> {
         dump
     }
 
-    fn render_body(&self, body: &ResolvedBodyData, body_id: BodyId, dump: &mut String) {
+    fn render_body(&self, body: BodyView<'_>, body_id: BodyId, dump: &mut String) {
         writeln!(
             dump,
             "body b{} {} @ {}",
@@ -242,7 +249,7 @@ impl TargetBodyIrSnapshot<'_> {
         self.render_expr(body, body.root_expr(), 0, dump);
     }
 
-    fn render_body_patterns(&self, body: &ResolvedBodyData, body_id: BodyId, dump: &mut String) {
+    fn render_body_patterns(&self, body: BodyView<'_>, body_id: BodyId, dump: &mut String) {
         writeln!(
             dump,
             "body b{} {} @ {}",
@@ -263,7 +270,7 @@ impl TargetBodyIrSnapshot<'_> {
         }
     }
 
-    fn render_source_item(&self, id: usize, item: &rg_ir_model::BodySourceItem, dump: &mut String) {
+    fn render_source_item(&self, id: usize, item: &crate::ir::BodySourceItem, dump: &mut String) {
         let source_item = item.item();
         let name = source_item.name.as_deref().unwrap_or("<unnamed>");
         let provenance = if item.source().is_written() {
@@ -285,7 +292,7 @@ impl TargetBodyIrSnapshot<'_> {
 
     fn render_binding(
         &self,
-        body: &ResolvedBodyData,
+        body: BodyView<'_>,
         id: BindingId,
         binding: &BindingData,
         dump: &mut String,
@@ -317,7 +324,10 @@ impl TargetBodyIrSnapshot<'_> {
             name,
             self.render_source_text(binding.source),
             annotation,
-            self.render_ty(body.binding_ty_unchecked(id)),
+            self.render_ty(
+                body.binding_ty(id)
+                    .expect("dumped binding should have finalized facts"),
+            ),
             self.render_source(binding.source),
             name_span,
         )
@@ -437,7 +447,7 @@ impl TargetBodyIrSnapshot<'_> {
 
     fn render_statement(
         &self,
-        body: &ResolvedBodyData,
+        body: BodyView<'_>,
         statement: StmtId,
         depth: usize,
         dump: &mut String,
@@ -522,7 +532,7 @@ impl TargetBodyIrSnapshot<'_> {
         }
     }
 
-    fn render_expr(&self, body: &ResolvedBodyData, expr: ExprId, depth: usize, dump: &mut String) {
+    fn render_expr(&self, body: BodyView<'_>, expr: ExprId, depth: usize, dump: &mut String) {
         let data = body
             .expr(expr)
             .expect("expr id should exist while rendering body IR");
@@ -1009,44 +1019,138 @@ impl TargetBodyIrSnapshot<'_> {
                 let suffix = if fields.len() == 1 { "," } else { "" };
                 format!("({}{suffix})", fields.join(", "))
             }
-            Ty::Array { inner, len } => format!(
-                "[{}; {}]",
-                self.render_ty(inner),
-                len.as_deref().unwrap_or("<unknown>")
-            ),
+            Ty::Array { inner, len } => format!("[{}; {}]", self.render_ty(inner), len),
             Ty::Slice(inner) => format!("[{}]", self.render_ty(inner)),
-            Ty::Syntax(ty) => format!("syntax {ty}"),
-            Ty::Reference { mutability, inner } => {
-                format!("{}{}", mutability.render_prefix(), self.render_ty(inner))
+            Ty::Reference {
+                lifetime,
+                mutability,
+                inner,
+            } => {
+                let lifetime = match lifetime {
+                    Lifetime::Erased => String::new(),
+                    lifetime => format!("{lifetime} "),
+                };
+                format!(
+                    "&{lifetime}{}{}",
+                    if matches!(mutability, rg_ir_model::Mutability::Mutable) {
+                        "mut "
+                    } else {
+                        ""
+                    },
+                    self.render_ty(inner)
+                )
             }
-            Ty::Opaque { bounds } => {
-                let mut bounds = bounds
+            Ty::RawPointer { mutability, inner } => {
+                let qualifier = if matches!(mutability, rg_ir_model::Mutability::Mutable) {
+                    "mut"
+                } else {
+                    "const"
+                };
+                format!("*{qualifier} {}", self.render_ty(inner))
+            }
+            Ty::FnPointer { params, ret } => {
+                let params = params
                     .iter()
-                    .map(|bound| self.render_opaque_bound(bound))
-                    .collect::<Vec<_>>();
-                bounds.sort();
-                format!("impl {}", bounds.join(" + "))
+                    .map(|param| self.render_ty(param))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!("fn({params}) -> {}", self.render_ty(ret))
             }
-            Ty::Closure(id) => format!("closure #{id}"),
-            Ty::FunctionItem(function) => {
-                format!("function item {}", self.render_function_ref(*function))
+            Ty::Param(param) => self.render_type_param(*param),
+            Ty::Alias(AliasTy::Opaque(opaque)) => self.render_opaque(opaque),
+            Ty::Alias(AliasTy::Projection(alias)) => format!(
+                "projection {}{}",
+                self.render_semantic_item_ref(SemanticItemRef::TypeAlias(alias.associated_ty)),
+                self.render_generic_args(&alias.args)
+            ),
+            Ty::Closure(closure) => format!("closure #{}", closure.id),
+            Ty::FnDef(function) => {
+                format!(
+                    "function item {}{}",
+                    self.render_function_ref(function.def),
+                    self.render_generic_args(&function.args)
+                )
             }
-            Ty::Nominal(ty) => format!("nominal {}", self.render_body_nominal_ty(ty)),
-            Ty::SelfTy(ty) => format!("Self {}", self.render_body_nominal_ty(ty)),
+            Ty::Adt(ty) => format!("nominal {}", self.render_body_nominal_ty(ty)),
             Ty::InferVar { kind, id } => format!("infer {kind:?} {id:?}"),
             Ty::Unknown => "<unknown>".to_string(),
         }
     }
 
-    fn render_opaque_bound(&self, bound: &OpaqueTraitBound) -> String {
-        format!(
-            "{}{}",
-            self.render_trait_ref(bound.trait_ref),
-            self.render_generic_args(&bound.args)
-        )
+    fn render_type_param(&self, param: rg_ir_model::TypeParamRef) -> String {
+        let generics = GenericsQuery::new(self.project)
+            .generics(param.owner)
+            .expect("fixture generic declarations should be available while rendering a type");
+        let Some(data) = generics
+            .iter()
+            .find(|data| data.param() == GenericParamRef::Type(param))
+        else {
+            return "param <missing>".to_string();
+        };
+        match data.source() {
+            GenericParamSource::Type(source) => format!("param {}", source.name),
+            GenericParamSource::TraitSelf => "param Self".to_string(),
+            GenericParamSource::ArgumentImplTrait(_) => {
+                let bounds = SemanticSignatureQuery::new(self.project, self.project)
+                    .function_type_param_bounds(param)
+                    .expect("fixture APIT predicates should lower while rendering a type")
+                    .iter()
+                    .map(|bound| self.render_opaque_bound(bound))
+                    .collect::<Vec<_>>();
+                if bounds.is_empty() {
+                    "param <argument impl Trait>".to_string()
+                } else {
+                    format!("impl {}", bounds.join(" + "))
+                }
+            }
+            GenericParamSource::Lifetime(_) | GenericParamSource::Const(_) => {
+                unreachable!("a type parameter should have type-like provenance")
+            }
+        }
     }
 
-    fn render_body_nominal_ty(&self, ty: &NominalTy) -> String {
+    fn render_opaque(&self, opaque: &OpaqueTy) -> String {
+        let mut bounds = SemanticSignatureQuery::new(self.project, self.project)
+            .opaque_bounds(opaque)
+            .expect("fixture opaque predicates should lower while rendering a type")
+            .unwrap_or_default()
+            .iter()
+            .map(|bound| self.render_opaque_bound(bound))
+            .collect::<Vec<_>>();
+        bounds.sort();
+        if bounds.is_empty() {
+            "impl _".to_string()
+        } else {
+            format!("impl {}", bounds.join(" + "))
+        }
+    }
+
+    fn render_opaque_bound(&self, bound: &TraitRefLowering) -> String {
+        let mut args = bound
+            .application
+            .args
+            .iter()
+            .skip(1)
+            .map(|arg| self.render_generic_arg(arg))
+            .collect::<Vec<_>>();
+        for binding in &bound.associated_types {
+            let name = self
+                .project
+                .resident_item_store(binding.associated_ty.origin)
+                .and_then(|items| items.type_alias_data(binding.associated_ty.id))
+                .map(|data| data.name.to_string())
+                .unwrap_or_else(|| "<missing>".to_string());
+            args.push(format!("{name} = {}", self.render_ty(&binding.ty)));
+        }
+        let args = if args.is_empty() {
+            String::new()
+        } else {
+            format!("<{}>", args.join(", "))
+        };
+        format!("{}{args}", self.render_trait_ref(bound.application.def))
+    }
+
+    fn render_body_nominal_ty(&self, ty: &AdtTy) -> String {
         format!(
             "{}{}",
             self.render_type_def_ref(ty.def),
@@ -1071,26 +1175,8 @@ impl TargetBodyIrSnapshot<'_> {
     fn render_generic_arg(&self, arg: &GenericArg) -> String {
         match arg {
             GenericArg::Type(ty) => self.render_ty(ty),
-            GenericArg::Lifetime(lifetime) => lifetime.clone(),
-            GenericArg::Const(value) => value.clone(),
-            GenericArg::FnTraitArgs { params, ret } => {
-                let params = params
-                    .iter()
-                    .map(|ty| self.render_ty(ty))
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                let mut text = format!("({params})");
-                if !matches!(ret.as_ref(), Ty::Unit) {
-                    text.push_str(" -> ");
-                    text.push_str(&self.render_ty(ret));
-                }
-                text
-            }
-            GenericArg::AssocType { name, ty } => match ty {
-                Some(ty) => format!("{name} = {}", self.render_ty(ty)),
-                None => name.to_string(),
-            },
-            GenericArg::Unsupported(text) => format!("<unsupported:{text}>"),
+            GenericArg::Lifetime(lifetime) => lifetime.to_string(),
+            GenericArg::Const(value) => value.to_string(),
         }
     }
 
@@ -1100,7 +1186,7 @@ impl TargetBodyIrSnapshot<'_> {
             DefId::Local(local_def) => self.render_local_def(local_def),
             DefId::EnumVariant(variant_def) => {
                 let variant_data = match variant_def.origin {
-                    DefMapRef::Target(target) => {
+                    DefMapRef::Crate(target) => {
                         self.project.resident_def_map(target).and_then(|def_map| {
                             def_map.local_enum_variant(variant_def.local_enum_variant)
                         })
@@ -1404,7 +1490,7 @@ impl TargetBodyIrSnapshot<'_> {
     fn render_owner(&self, owner: ItemOwner, origin: DefMapRef) -> String {
         match owner {
             ItemOwner::Module(module_ref) => self.render_module_ref(module_ref),
-            ItemOwner::Trait(trait_id) => self.render_trait_ref(TraitRef {
+            ItemOwner::Trait(trait_id) => self.render_trait_ref(TraitDefRef {
                 origin,
                 id: trait_id,
             }),
@@ -1415,7 +1501,7 @@ impl TargetBodyIrSnapshot<'_> {
         }
     }
 
-    fn render_trait_ref(&self, trait_ref: TraitRef) -> String {
+    fn render_trait_ref(&self, trait_ref: TraitDefRef) -> String {
         let items = self
             .project
             .resident_item_store(trait_ref.origin)
@@ -1453,8 +1539,8 @@ impl TargetBodyIrSnapshot<'_> {
     }
 
     fn render_module_ref(&self, module_ref: ModuleRef) -> String {
-        let target_ref = match module_ref.origin {
-            DefMapRef::Target(target_ref) => target_ref,
+        let crate_ref = match module_ref.origin {
+            DefMapRef::Crate(crate_ref) => crate_ref,
             DefMapRef::Body(body_ref) => {
                 return self.render_body_module_ref(body_ref, module_ref.module);
             }
@@ -1463,10 +1549,17 @@ impl TargetBodyIrSnapshot<'_> {
             .project
             .parse_db()
             .packages()
-            .get(target_ref.package.0)
+            .get(crate_ref.package.0)
             .expect("package slot should exist while rendering body IR module");
+        let cargo_target = self
+            .project
+            .def_map_db()
+            .resident_package(crate_ref.package)
+            .and_then(|package| package.crate_data(crate_ref.crate_id))
+            .expect("semantic crate should exist while rendering body IR module")
+            .cargo_target();
         let target = package
-            .target(target_ref.target)
+            .target(cargo_target)
             .expect("target id should exist while rendering body IR module");
 
         format!(
@@ -1505,8 +1598,8 @@ impl TargetBodyIrSnapshot<'_> {
     fn module_path(&self, module_ref: ModuleRef) -> String {
         let module = self
             .project
-            .resident_def_map(module_ref.origin.origin_target())
-            .expect("target def map should exist while rendering body IR module path")
+            .resident_def_map(module_ref.origin.origin_crate())
+            .expect("crate def map should exist while rendering body IR module path")
             .module(module_ref.module)
             .expect("module id should exist while rendering body IR module path");
 
@@ -1530,7 +1623,7 @@ impl TargetBodyIrSnapshot<'_> {
         let line_column = source.span.line_column(
             self.project
                 .parse_db()
-                .package(self.target_ref.package.0)
+                .package(self.crate_ref.package.0)
                 .expect("source package should exist while rendering body IR source")
                 .parsed_file(source.file_id)
                 .expect("source file should exist while rendering body IR source")
@@ -1550,7 +1643,7 @@ impl TargetBodyIrSnapshot<'_> {
         let parsed_file = self
             .project
             .parse_db()
-            .package(self.target_ref.package.0)
+            .package(self.crate_ref.package.0)
             .expect("source package should exist while rendering body IR text")
             .parsed_file(source.file_id)
             .expect("source file should exist while rendering body IR text");
@@ -1577,7 +1670,7 @@ fn render_binding_list(bindings: &[BindingId]) -> String {
         .join(", ")
 }
 
-fn render_item_generic_args(args: &[rg_ir_model::items::GenericArg]) -> String {
+fn render_item_generic_args(args: &[rg_item_tree::GenericArg]) -> String {
     if args.is_empty() {
         return String::new();
     }
@@ -1639,7 +1732,7 @@ fn sorted_packages(parse: &ParseDb) -> Vec<(usize, &Package)> {
     packages
 }
 
-fn sorted_targets(package: &Package) -> Vec<&Target> {
+fn sorted_targets(package: &Package) -> Vec<&CargoTarget> {
     let mut targets = package.targets().iter().collect::<Vec<_>>();
     targets.sort_by(|left, right| {
         (

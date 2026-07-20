@@ -1,16 +1,20 @@
 //! Symbol enumeration over indexed declaration trees.
 
+use std::fmt::Write as _;
+
 use anyhow::Result;
+use rg_def_map::DefMapSource;
 use rg_ir_model::{
-    AssocItemId, ConstRef, DefMapRef, EnumVariantRef as SemanticEnumVariantRef,
-    FunctionRef as SemanticFunctionRef, ModuleId, ModuleRef, SemanticItemKind, TargetRef,
-    TypeAliasRef, TypeDefId, TypeDefRef, identity::DeclarationRef,
+    AssocItemId, ConstRef, CrateRef, DefMapRef, EnumVariantRef as SemanticEnumVariantRef, FieldKey,
+    FunctionRef as SemanticFunctionRef, ModuleId, ModuleRef, SemanticItemKind, TypeAliasRef,
+    TypeDefId, TypeDefRef, identity::DeclarationRef,
 };
-use rg_ir_storage::{DefMapSource, ItemStoreQuery, SemanticItemView};
 use rg_parse::{FileId, Span};
+use rg_semantic_ir::{ItemStoreQuery, SemanticItemView};
 
 use crate::{
     IndexedViewDb,
+    display::syntax::SyntaxRenderer,
     item::declaration::{Declaration, DeclarationView},
     symbol::{IndexedSymbolEntry, SourceOutlineDeclaration, SourceOutlineNode, SymbolKind},
     ty::locals::BodyView,
@@ -111,16 +115,16 @@ impl<'a, 'db> SymbolItemIndex<'a, 'db> {
         Self { db }
     }
 
-    /// Return targets included in the indexed view.
-    fn included_targets(&self) -> Result<Vec<TargetRef>> {
-        Ok(ItemStoreQuery::new(self.db).included_target_refs()?)
+    /// Return crates included in the indexed view.
+    fn included_crates(&self) -> Result<Vec<CrateRef>> {
+        Ok(ItemStoreQuery::new(self.db).included_crate_refs()?)
     }
 
-    /// Return module declarations for one target.
-    fn module_declarations(&self, target: TargetRef) -> Result<Vec<DeclarationRef>> {
+    /// Return module declarations for one crate.
+    fn module_declarations(&self, crate_ref: CrateRef) -> Result<Vec<DeclarationRef>> {
         Ok(self
             .db
-            .module_refs(target)?
+            .module_refs(crate_ref)?
             .into_iter()
             .map(DeclarationRef::module)
             .collect())
@@ -144,12 +148,12 @@ impl<'a, 'db> SymbolItemIndex<'a, 'db> {
     /// Return module-owned items, optionally restricted to one file.
     fn module_owned_items(
         &self,
-        target: TargetRef,
+        crate_ref: CrateRef,
         file_id: Option<FileId>,
     ) -> Result<Vec<IndexedItem>> {
         let mut items = Vec::new();
         for item in
-            ItemStoreQuery::new(self.db).semantic_items_for_origin(DefMapRef::Target(target))?
+            ItemStoreQuery::new(self.db).semantic_items_for_origin(DefMapRef::Crate(crate_ref))?
         {
             if item.module_owner().is_none() {
                 continue;
@@ -167,13 +171,13 @@ impl<'a, 'db> SymbolItemIndex<'a, 'db> {
     /// Return body-local item groups in one file.
     fn body_local_groups(
         &self,
-        target: TargetRef,
+        crate_ref: CrateRef,
         file_id: FileId,
     ) -> Result<Vec<IndexedBodyLocalGroup>> {
         let body_view = BodyView::new(self.db);
         let mut groups = Vec::new();
 
-        for group in body_view.local_groups(target, file_id)? {
+        for group in body_view.local_groups(crate_ref, file_id)? {
             let mut children = Vec::new();
             for declaration in body_view.local_scope_declarations(group.body(), file_id)? {
                 if let Some(item) = self.item_for_declaration(declaration)? {
@@ -262,6 +266,7 @@ impl<'a, 'db> SymbolItemIndex<'a, 'db> {
         ty: TypeDefRef,
     ) -> Result<Option<IndexedItem>> {
         let mut children = Vec::new();
+        let syntax = SyntaxRenderer::new(self.db.origin_edition(ty.origin)?);
         for variant_ref in self.enum_variant_refs(ty)? {
             let Some(variant) = ItemStoreQuery::new(self.db).enum_variant_data(variant_ref)? else {
                 continue;
@@ -274,7 +279,7 @@ impl<'a, 'db> SymbolItemIndex<'a, 'db> {
                 .map(|field| {
                     IndexedItemChild::Syntax(IndexedSyntaxChild::field(
                         variant.file_id,
-                        Self::field_label(field.key_declaration_label()),
+                        Self::field_label(syntax, field.key.as_ref()),
                         field.span,
                     ))
                 })
@@ -331,28 +336,46 @@ impl<'a, 'db> SymbolItemIndex<'a, 'db> {
     }
 
     /// Return a display label for an outline-only field.
-    fn field_label(name: Option<String>) -> String {
-        name.unwrap_or_else(|| "<unsupported>".to_string())
+    fn field_label(syntax: SyntaxRenderer, key: Option<&FieldKey>) -> String {
+        key.map(|key| syntax.field_declaration_label(key).to_string())
+            .unwrap_or_else(|| "<unsupported>".to_string())
     }
 
     /// Return a local module path for workspace-symbol containers.
     fn module_path(&self, origin: DefMapRef, module: ModuleId) -> Result<String> {
-        let Some(data) = self.db.module_data(ModuleRef { origin, module })? else {
-            return Ok(String::new());
-        };
-        let Some(name) = &data.name else {
-            return Ok(String::new());
-        };
-        let Some(parent) = data.parent else {
-            return Ok(name.to_string());
-        };
+        let syntax = SyntaxRenderer::new(self.db.origin_edition(origin)?);
+        self.module_path_with_syntax(origin, module, syntax)
+    }
 
-        let parent_path = self.module_path(origin, parent)?;
-        if parent_path.is_empty() {
-            Ok(name.to_string())
-        } else {
-            Ok(format!("{parent_path}::{name}"))
+    fn module_path_with_syntax(
+        &self,
+        origin: DefMapRef,
+        mut module: ModuleId,
+        syntax: SyntaxRenderer,
+    ) -> Result<String> {
+        let mut names = Vec::new();
+        loop {
+            let Some(data) = self.db.module_data(ModuleRef { origin, module })? else {
+                return Ok(String::new());
+            };
+            let Some(name) = &data.name else {
+                break;
+            };
+            names.push(name.clone());
+            let Some(parent) = data.parent else {
+                break;
+            };
+            module = parent;
         }
+
+        let mut path = String::new();
+        for name in names.iter().rev() {
+            if !path.is_empty() {
+                path.push_str("::");
+            }
+            write!(path, "{}", syntax.identifier(name)).expect("string writes should not fail");
+        }
+        Ok(path)
     }
 }
 
@@ -369,13 +392,13 @@ impl<'a, 'db> SymbolView<'a, 'db> {
     /// Return source-outline symbols for one file.
     pub fn source_outline(
         &self,
-        target: TargetRef,
+        crate_ref: CrateRef,
         file_id: FileId,
     ) -> Result<Vec<SourceOutlineNode>> {
         let index = SymbolItemIndex::new(self.db);
         let mut symbols = Vec::new();
 
-        for declaration in index.module_declarations(target)? {
+        for declaration in index.module_declarations(crate_ref)? {
             if let Some(symbol) = self.declaration_source_outline_node(declaration)?
                 && symbol.declaration().file_id() == file_id
             {
@@ -383,7 +406,7 @@ impl<'a, 'db> SymbolView<'a, 'db> {
             }
         }
 
-        for item in index.module_owned_items(target, Some(file_id))? {
+        for item in index.module_owned_items(crate_ref, Some(file_id))? {
             if let Some(symbol) = self.source_outline_item(&item, Some(file_id))? {
                 symbols.push(symbol);
             }
@@ -391,11 +414,16 @@ impl<'a, 'db> SymbolView<'a, 'db> {
 
         // Body-local items belong to their owning function in a source outline. The owner may
         // already be nested under a trait or impl, so attachment searches the built tree.
-        for group in index.body_local_groups(target, file_id)? {
+        for group in index.body_local_groups(crate_ref, file_id)? {
             let Some(owner) = self.declaration(group.owner())? else {
                 continue;
             };
-            let Some(parent) = Self::find_function_symbol_mut(&mut symbols, &owner) else {
+            let owner_name = DeclarationView::new(self.db)
+                .declaration_site_name(&owner)?
+                .to_string();
+            let Some(parent) =
+                Self::find_function_symbol_mut(&mut symbols, &owner_name, owner.span())
+            else {
                 continue;
             };
             for item in group.children() {
@@ -410,13 +438,13 @@ impl<'a, 'db> SymbolView<'a, 'db> {
         Ok(symbols)
     }
 
-    /// Return workspace-wide symbols for all included targets.
+    /// Return workspace-wide symbols for all included crates.
     pub fn workspace_symbols(&self) -> Result<Vec<IndexedSymbolEntry>> {
         let index = SymbolItemIndex::new(self.db);
         let mut symbols = Vec::new();
 
-        for target in index.included_targets()? {
-            for declaration in index.module_declarations(target)? {
+        for crate_ref in index.included_crates()? {
+            for declaration in index.module_declarations(crate_ref)? {
                 let Some(module) = self.declaration(declaration)? else {
                     continue;
                 };
@@ -433,7 +461,7 @@ impl<'a, 'db> SymbolView<'a, 'db> {
                 symbols.push(IndexedSymbolEntry::new(module, container_name));
             }
 
-            for item in index.module_owned_items(target, None)? {
+            for item in index.module_owned_items(crate_ref, None)? {
                 self.push_workspace_item(&item, None, &mut symbols)?;
             }
         }
@@ -475,6 +503,7 @@ impl<'a, 'db> SymbolView<'a, 'db> {
             }
         }
 
+        let declaration = self.source_outline_declaration(declaration)?;
         Ok(Some(
             SourceOutlineNode::new(declaration).with_children(children),
         ))
@@ -490,7 +519,7 @@ impl<'a, 'db> SymbolView<'a, 'db> {
         let Some(declaration) = self.declaration(item.declaration())? else {
             return Ok(());
         };
-        let child_container_name = Self::child_container_name(&declaration);
+        let child_container_name = self.child_container_name(&declaration)?;
         if declaration.kind() != SymbolKind::Impl {
             symbols.push(IndexedSymbolEntry::new(declaration, container_name));
         }
@@ -506,9 +535,11 @@ impl<'a, 'db> SymbolView<'a, 'db> {
     }
 
     /// Return the container name inherited by children of a declaration.
-    fn child_container_name(declaration: &Declaration) -> Option<String> {
-        match declaration.kind() {
-            SymbolKind::Trait => Some(format!("trait {}", declaration.name())),
+    fn child_container_name(&self, declaration: &Declaration) -> Result<Option<String>> {
+        let declarations = DeclarationView::new(self.db);
+        let display_name = declarations.declaration_site_name(declaration)?;
+        Ok(match declaration.kind() {
+            SymbolKind::Trait => Some(format!("trait {display_name}")),
             SymbolKind::Struct
             | SymbolKind::Union
             | SymbolKind::Enum
@@ -522,8 +553,8 @@ impl<'a, 'db> SymbolView<'a, 'db> {
             | SymbolKind::Macro
             | SymbolKind::Static
             | SymbolKind::TypeAlias
-            | SymbolKind::Variable => Some(declaration.name().to_string()),
-        }
+            | SymbolKind::Variable => Some(display_name.to_string()),
+        })
     }
 
     /// Load declaration facts for a symbol declaration ref.
@@ -536,21 +567,41 @@ impl<'a, 'db> SymbolView<'a, 'db> {
         &self,
         declaration: DeclarationRef,
     ) -> Result<Option<SourceOutlineNode>> {
-        Ok(self.declaration(declaration)?.map(SourceOutlineNode::new))
+        let Some(declaration) = self.declaration(declaration)? else {
+            return Ok(None);
+        };
+        Ok(Some(SourceOutlineNode::new(
+            self.source_outline_declaration(declaration)?,
+        )))
+    }
+
+    /// Materialize the one owned name required by the editor-facing outline result.
+    fn source_outline_declaration(
+        &self,
+        declaration: Declaration,
+    ) -> Result<SourceOutlineDeclaration> {
+        let name = DeclarationView::new(self.db)
+            .declaration_site_name(&declaration)?
+            .to_string();
+        Ok(SourceOutlineDeclaration::from_declaration(
+            declaration,
+            name,
+        ))
     }
 
     /// Find a function or method node already present in the outline tree.
     fn find_function_symbol_mut<'s>(
         symbols: &'s mut [SourceOutlineNode],
-        function: &Declaration,
+        function_name: &str,
+        function_span: Span,
     ) -> Option<&'s mut SourceOutlineNode> {
         // Associated functions may already be nested below traits or impls, so search the outline
         // tree instead of assuming module-level placement.
         for symbol in symbols {
             let is_owner = {
                 let declaration = symbol.declaration();
-                declaration.name() == function.name()
-                    && declaration.span() == function.span()
+                declaration.name() == function_name
+                    && declaration.span() == function_span
                     && matches!(
                         declaration.kind(),
                         SymbolKind::Function | SymbolKind::Method
@@ -559,7 +610,9 @@ impl<'a, 'db> SymbolView<'a, 'db> {
             if is_owner {
                 return Some(symbol);
             }
-            if let Some(found) = Self::find_function_symbol_mut(symbol.children_mut(), function) {
+            if let Some(found) =
+                Self::find_function_symbol_mut(symbol.children_mut(), function_name, function_span)
+            {
                 return Some(found);
             }
         }

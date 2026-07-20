@@ -55,7 +55,7 @@ impl ReferenceSubject {
 
             declaration_locations.push(ReferenceSourceLocation {
                 declaration: *declaration_ref,
-                target: declaration.target(),
+                crate_ref: declaration.crate_ref(),
                 file_id: declaration.file_id(),
                 span: declaration.selection_span(),
             });
@@ -126,9 +126,9 @@ impl ReferenceSearchHints {
         declaration: &Declaration,
     ) -> Option<ReferenceSearchLabel> {
         match declaration.kind() {
-            SymbolKind::Field | SymbolKind::Method | SymbolKind::Variable => {
-                ReferenceSearchLabel::new(declaration.name())
-            }
+            SymbolKind::Field | SymbolKind::Method | SymbolKind::Variable => declaration
+                .semantic_name()
+                .and_then(|name| ReferenceSearchLabel::new(name)),
             SymbolKind::Const
             | SymbolKind::Enum
             | SymbolKind::EnumVariant
@@ -141,7 +141,11 @@ impl ReferenceSearchHints {
             | SymbolKind::Trait
             | SymbolKind::TypeAlias
             | SymbolKind::Union => matches!(declaration_ref, DeclarationRef::BodyBinding(_))
-                .then(|| ReferenceSearchLabel::new(declaration.name()))
+                .then(|| {
+                    declaration
+                        .semantic_name()
+                        .and_then(|name| ReferenceSearchLabel::new(name))
+                })
                 .flatten(),
         }
     }
@@ -179,12 +183,11 @@ impl ReferenceSearchHints {
         }
 
         let first = locations.first()?;
-        if locations
-            .iter()
-            .all(|location| location.target == first.target && location.file_id == first.file_id)
-        {
+        if locations.iter().all(|location| {
+            location.crate_ref == first.crate_ref && location.file_id == first.file_id
+        }) {
             Some(ReferenceScanTarget {
-                target: first.target,
+                crate_ref: first.crate_ref,
                 file_id: Some(first.file_id),
             })
         } else {
@@ -209,7 +212,7 @@ impl ReferenceSearchHints {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct ReferenceSourceLocation {
     pub(super) declaration: DeclarationRef,
-    pub(super) target: rg_ir_model::TargetRef,
+    pub(super) crate_ref: rg_ir_model::CrateRef,
     pub(super) file_id: FileId,
     pub(super) span: Span,
 }

@@ -1,10 +1,11 @@
 //! Type-path lookup.
 
+use rg_def_map::{DefMapSource, NamespaceSet};
 use rg_ir_model::{
-    DefId, DefMapRef, ModuleId, ModuleRef, Path, ScopeId, SemanticItemRef, TypePathResolution,
+    DefId, DefMapRef, EnumVariantRef, ModuleId, ModuleRef, Path, ScopeId, SemanticItemRef,
 };
-use rg_ir_storage::{DefMapSource, ItemStoreSource, NameResolutionFilter, TypePathContext};
 use rg_package_store::PackageStoreError;
+use rg_semantic_ir::{ItemStoreSource, TypePathContext, TypePathResolution};
 use rg_std::{ExpectedUnique, UniqueVec};
 use rg_ty::Ty;
 
@@ -37,7 +38,7 @@ where
             let prefix_ty =
                 Ty::from_type_path_resolution(prefix_resolution, Vec::new()).unwrap_or(Ty::Unknown);
             let mut aliases = ExpectedUnique::new();
-            for ty in prefix_ty.as_nominals() {
+            for ty in prefix_ty.as_adts() {
                 if let Some(alias) = self
                     .context
                     .type_aliases()
@@ -77,6 +78,49 @@ where
         )
     }
 
+    /// Resolve an enum variant selected through the type namespace.
+    ///
+    /// All variants have a type-namespace binding, but they are not themselves Rust types and
+    /// therefore cannot be represented by `TypePathResolution`. Record syntax such as
+    /// `Choice::Record { value: 1 }` asks for the variant identity through this separate path.
+    pub fn resolve_enum_variant_in_scope(
+        &self,
+        scope: ScopeId,
+        path: &Path,
+    ) -> Result<Option<EnumVariantRef>, PackageStoreError> {
+        let from = ModuleRef {
+            origin: DefMapRef::Body(self.context.body_ref()),
+            module: ModuleId(scope.0),
+        };
+        let def_maps = self.context.def_map_query();
+        let result =
+            def_maps
+                .scope_resolver()
+                .resolve_lexical_path(from, path, NamespaceSet::TYPES)?;
+        if !result.resolved.is_empty() {
+            return self.enum_variant_from_defs(result.resolved);
+        }
+
+        let owner_module = self.context.body().owner_module();
+        let result =
+            def_maps
+                .scope_resolver()
+                .resolve_path(owner_module, path, NamespaceSet::TYPES)?;
+        if !result.resolved.is_empty() {
+            return self.enum_variant_from_defs(result.resolved);
+        }
+
+        let fallback_module = self.context.body().fallback_module();
+        if fallback_module == owner_module {
+            return Ok(None);
+        }
+        let result =
+            def_maps
+                .scope_resolver()
+                .resolve_path(fallback_module, path, NamespaceSet::TYPES)?;
+        self.enum_variant_from_defs(result.resolved)
+    }
+
     /// Resolve a path such as `Self` or `foo::bar` within an owner context.
     pub(crate) fn resolve_in_context(
         &self,
@@ -84,12 +128,19 @@ where
         path: &Path,
     ) -> Result<TypePathResolution, PackageStoreError> {
         if path.is_self_type() {
-            let candidate = self
-                .context
-                .type_contexts()
-                .nominal_self_ty_for_context(context)?
-                .map(|ty| ty.def);
-            return Ok(TypePathResolution::self_type(candidate));
+            let Some(impl_ref) = context.impl_ref else {
+                return Ok(TypePathResolution::Unknown);
+            };
+            let Some(impl_data) = self.context.item_query().impl_data(impl_ref)? else {
+                return Ok(TypePathResolution::Unknown);
+            };
+
+            // Keep path resolution at the identity layer. Impl-header lowering uses this resolver
+            // for clauses such as `where Self: Trait`; asking for the full header here would make
+            // resolving that `Self` depend recursively on the header being built.
+            return Ok(TypePathResolution::self_type(
+                impl_data.resolved_self_ty.clone(),
+            ));
         }
 
         // Associated aliases are not ordinary module-scope path items, so handle `Type::Alias`
@@ -99,7 +150,7 @@ where
             let prefix_ty =
                 Ty::from_type_path_resolution(prefix_resolution, Vec::new()).unwrap_or(Ty::Unknown);
             let mut aliases = ExpectedUnique::new();
-            for ty in prefix_ty.as_nominals() {
+            for ty in prefix_ty.as_adts() {
                 if let Some(alias) = self
                     .context
                     .type_aliases()
@@ -139,7 +190,7 @@ where
             .context
             .def_map_query()
             .scope_resolver()
-            .resolve_lexical_path(from, path, NameResolutionFilter::TypesOnly)?;
+            .resolve_lexical_path(from, path, NamespaceSet::TYPES)?;
 
         self.semantic_items_for_defs(result.resolved)
     }
@@ -151,11 +202,9 @@ where
         path: &Path,
     ) -> Result<UniqueVec<SemanticItemRef>, PackageStoreError> {
         let def_maps = self.context.def_map_query();
-        let result = def_maps.scope_resolver().resolve_path(
-            module,
-            path,
-            NameResolutionFilter::TypesOnly,
-        )?;
+        let result = def_maps
+            .scope_resolver()
+            .resolve_path(module, path, NamespaceSet::TYPES)?;
         let items = self.semantic_items_for_defs(result.resolved)?;
         if !items.is_empty() {
             return Ok(items);
@@ -168,11 +217,10 @@ where
             return Ok(items);
         }
 
-        let result = def_maps.scope_resolver().resolve_path(
-            fallback_module,
-            path,
-            NameResolutionFilter::TypesOnly,
-        )?;
+        let result =
+            def_maps
+                .scope_resolver()
+                .resolve_path(fallback_module, path, NamespaceSet::TYPES)?;
         self.semantic_items_for_defs(result.resolved)
     }
 
@@ -195,6 +243,29 @@ where
             }
         }
         Ok(items)
+    }
+
+    fn enum_variant_from_defs(
+        &self,
+        defs: Vec<DefId>,
+    ) -> Result<Option<EnumVariantRef>, PackageStoreError> {
+        let source = self.context.def_map_source();
+        let item_query = self.context.item_query();
+        let mut variants = ExpectedUnique::new();
+        for def in defs {
+            let DefId::EnumVariant(variant_ref) = def else {
+                continue;
+            };
+            let Some(variant_data) = source.local_enum_variant_data(variant_ref)? else {
+                continue;
+            };
+            if let Some(variant_ref) =
+                item_query.enum_variant_ref_for_local_enum_variant(variant_ref, variant_data)?
+            {
+                variants.push(variant_ref);
+            }
+        }
+        Ok(variants.into_option())
     }
 
     /// Group semantic items into a type-namespace resolution.

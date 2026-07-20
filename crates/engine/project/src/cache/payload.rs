@@ -4,11 +4,11 @@
 //!
 //! The cache writes these values as one atomic revision, but it does not encode them as one wincode
 //! object. [`PackageCacheProbe`] is the small startup section; DefMap and Semantic IR are separate
-//! sections; Body IR is further divided into target indexes and source-file shards. Writes borrow
+//! sections; Body IR is further divided into crate indexes and source-file shards. Writes borrow
 //! those phase values through [`PackageCacheWriteInput`] instead of assembling an owned aggregate.
 
-use rg_body_ir::{PackageBodies, TargetBodiesCoverage};
-use rg_ir_storage::PackageDefMaps as DefMapPackage;
+use rg_body_ir::{CrateBodiesCoverage, PackageBodies};
+use rg_def_map::PackageDefMaps as DefMapPackage;
 use rg_parse::PackageParseSnapshot;
 use rg_semantic_ir::PackageIr;
 use rg_std::MemorySize;
@@ -58,7 +58,7 @@ impl<'a> PackageCacheWriteInput<'a> {
 pub struct PackageCacheProbe {
     pub header: PackageCacheHeader,
     pub parse: PackageParseSnapshot,
-    pub body_ir_coverage: Vec<TargetBodiesCoverage>,
+    pub body_ir_coverage: Vec<CrateBodiesCoverage>,
 }
 
 impl PackageCacheProbe {
@@ -68,9 +68,9 @@ impl PackageCacheProbe {
             parse: input.parse.clone(),
             body_ir_coverage: input
                 .body_ir
-                .targets()
+                .crates()
                 .iter()
-                .map(|target| target.coverage())
+                .map(|crate_bodies| crate_bodies.coverage())
                 .collect(),
         }
     }

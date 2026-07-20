@@ -11,14 +11,19 @@ pub(crate) fn location_for_target(
     snapshot: ProjectSnapshot<'_>,
     target: &NavigationTarget,
 ) -> anyhow::Result<Option<Location>> {
-    let Some(path) = snapshot.file_path(target.target.package, target.file_id) else {
+    let Some(path) = snapshot.file_path(target.crate_ref.package, target.file_id) else {
         return Ok(None);
     };
     let Some(uri) = Uri::from_file_path(path) else {
         return Ok(None);
     };
 
-    let range = range_for_file(snapshot, target.target.package, target.file_id, target.span)?;
+    let range = range_for_file(
+        snapshot,
+        target.crate_ref.package,
+        target.file_id,
+        target.span,
+    )?;
 
     Ok(Some(Location { uri, range }))
 }

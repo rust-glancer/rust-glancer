@@ -1,25 +1,25 @@
 //! Body IR package store and transaction entry points.
 
+use rg_def_map::PackageDefMaps as DefMapPackage;
 use rg_def_map::PackageSlot;
-use rg_ir_storage::PackageDefMaps as DefMapPackage;
 use rg_package_store::{PackageLoader, PackageStore, PackageSubset};
 use rg_semantic_ir::PackageIr;
 use rg_text::PackageNameInterners;
 
-use super::{BodyIrLoader, BodyIrReadTxn, PackageBodies, TargetBodiesCoverage, TargetBodiesStatus};
+use super::{BodyIrLoader, BodyIrReadTxn, CrateBodiesCoverage, CrateBodiesStatus, PackageBodies};
 use crate::build::{BodyIrDbBuilder, BodyIrDbPackageRebuilder};
 use rg_std::{MemorySize, Shrink};
 
 /// Coarse totals for reporting that the Body IR phase produced useful data.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, MemorySize)]
 pub struct BodyIrStats {
-    pub target_count: usize,
-    pub built_target_count: usize,
-    pub skipped_target_count: usize,
-    pub complete_target_count: usize,
-    pub partial_target_count: usize,
-    pub missing_target_count: usize,
-    pub skipped_by_policy_target_count: usize,
+    pub crate_count: usize,
+    pub built_crate_count: usize,
+    pub skipped_crate_count: usize,
+    pub complete_crate_count: usize,
+    pub partial_crate_count: usize,
+    pub missing_crate_count: usize,
+    pub skipped_by_policy_crate_count: usize,
     pub body_count: usize,
     pub scope_count: usize,
     pub binding_count: usize,
@@ -27,7 +27,7 @@ pub struct BodyIrStats {
     pub expression_count: usize,
 }
 
-/// Body-level IR for all analyzed packages and targets.
+/// Body-level IR for all analyzed packages and semantic crates.
 #[derive(Debug, Clone, PartialEq, Eq, Default, MemorySize)]
 pub struct BodyIrDb {
     packages: PackageStore<PackageBodies>,
@@ -92,22 +92,22 @@ impl BodyIrDb {
             let Some(package) = entry.as_resident() else {
                 continue;
             };
-            for target in package.targets() {
-                stats.target_count += 1;
-                match target.status() {
-                    TargetBodiesStatus::Built => stats.built_target_count += 1,
-                    TargetBodiesStatus::Skipped => stats.skipped_target_count += 1,
+            for crate_bodies in package.crates() {
+                stats.crate_count += 1;
+                match crate_bodies.status() {
+                    CrateBodiesStatus::Built => stats.built_crate_count += 1,
+                    CrateBodiesStatus::Skipped => stats.skipped_crate_count += 1,
                 }
-                match target.coverage() {
-                    TargetBodiesCoverage::Complete => stats.complete_target_count += 1,
-                    TargetBodiesCoverage::Partial => stats.partial_target_count += 1,
-                    TargetBodiesCoverage::Missing => stats.missing_target_count += 1,
-                    TargetBodiesCoverage::SkippedByPolicy => {
-                        stats.skipped_by_policy_target_count += 1;
+                match crate_bodies.coverage() {
+                    CrateBodiesCoverage::Complete => stats.complete_crate_count += 1,
+                    CrateBodiesCoverage::Partial => stats.partial_crate_count += 1,
+                    CrateBodiesCoverage::Missing => stats.missing_crate_count += 1,
+                    CrateBodiesCoverage::SkippedByPolicy => {
+                        stats.skipped_by_policy_crate_count += 1;
                     }
                 }
-                stats.body_count += target.bodies().len();
-                for body in target.bodies() {
+                stats.body_count += crate_bodies.bodies().len();
+                for body in crate_bodies.bodies() {
                     stats.scope_count += body.scopes().len();
                     stats.binding_count += body.bindings().len();
                     stats.statement_count += body.statements().len();

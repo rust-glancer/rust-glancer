@@ -1,17 +1,15 @@
 use expect_test::Expect;
 
+use crate::{
+    DefMap, ImportData, ImportKind, ItemSource, ItemSourceKind, LocalDefKind, Namespace,
+    NamespaceSet, ResolvePathResult, ScopeBinding, ScopeBindingProvenance, ScopeEntry,
+    ScopeResolutionRef, Visibility,
+};
 use crate::{DefMapDb, testonly::DefMapFixture};
-use rg_ir_model::{
-    DefId, DefMapRef, ModuleId, ModuleRef, Path, PathSegment, TargetRef,
-    hir::source::{ItemSource, ItemSourceKind},
-};
-use rg_ir_storage::{
-    DefMap, ImportData, ImportKind, NameResolutionFilter, ResolvePathResult, ScopeBinding,
-    ScopeEntry,
-};
+use rg_ir_model::{CrateId, CrateRef, DefId, DefMapRef, ModuleId, ModuleRef, Path, PathSegment};
 use rg_item_tree::VisibilityLevel;
 use rg_package_store::PackageLoader;
-use rg_parse::{FileId, Package, ParseDb, Target};
+use rg_parse::{CargoTarget, FileId, Package, ParseDb};
 use rg_workspace::{TargetKind, WorkspaceLoweringConfig};
 
 pub(super) fn check_project_def_map(fixture: &str, expect: Expect) {
@@ -55,6 +53,7 @@ pub(super) struct PathResolutionQuery {
     target_kind: TargetKind,
     module_path: &'static str,
     path: &'static str,
+    namespaces: NamespaceSet,
 }
 
 impl PathResolutionQuery {
@@ -68,6 +67,7 @@ impl PathResolutionQuery {
             target_kind: TargetKind::Lib,
             module_path,
             path,
+            namespaces: NamespaceSet::ALL,
         }
     }
 
@@ -81,7 +81,18 @@ impl PathResolutionQuery {
             target_kind: TargetKind::Bin,
             module_path,
             path,
+            namespaces: NamespaceSet::ALL,
         }
+    }
+
+    pub(super) fn types(mut self) -> Self {
+        self.namespaces = NamespaceSet::TYPES;
+        self
+    }
+
+    pub(super) fn values(mut self) -> Self {
+        self.namespaces = NamespaceSet::VALUES;
+        self
     }
 }
 
@@ -111,6 +122,12 @@ impl DefMapFixtureDb {
         }
     }
 
+    pub(super) fn build_with_fake_sysroot(fixture: &str) -> Self {
+        Self {
+            fixture: DefMapFixture::build_with_fake_sysroot(fixture),
+        }
+    }
+
     fn parse_db(&self) -> &ParseDb {
         self.fixture.parse_db()
     }
@@ -119,16 +136,16 @@ impl DefMapFixtureDb {
         self.fixture.def_map_db()
     }
 
-    fn resident_def_map(&self, target: TargetRef) -> Option<&DefMap> {
-        self.fixture.resident_def_map(target)
+    fn resident_def_map(&self, crate_ref: CrateRef) -> Option<&DefMap> {
+        self.fixture.resident_def_map(crate_ref)
     }
 
     /// Returns the library target for one package.
-    pub(super) fn lib(&self, package_name: &str) -> FixtureTarget<'_> {
+    pub(super) fn lib(&self, package_name: &str) -> FixtureCrate<'_> {
         self.target(package_name, TargetKind::Lib)
     }
 
-    fn target(&self, package_name: &str, expected_kind: TargetKind) -> FixtureTarget<'_> {
+    fn target(&self, package_name: &str, expected_kind: TargetKind) -> FixtureCrate<'_> {
         let (package_slot, package) = self
             .parse_db()
             .packages()
@@ -147,35 +164,35 @@ impl DefMapFixtureDb {
                 )
             });
 
-        FixtureTarget {
+        FixtureCrate {
             db: self,
             package,
             target,
-            target_ref: TargetRef {
+            crate_ref: CrateRef {
                 package: crate::PackageSlot(package_slot),
-                target: target.id,
+                crate_id: CrateId(target.id.0),
             },
         }
     }
 }
 
-/// Target-scoped assertion helper used by behavior-style def-map tests.
-pub(super) struct FixtureTarget<'a> {
+/// Crate-scoped assertion helper used by behavior-style def-map tests.
+pub(super) struct FixtureCrate<'a> {
     db: &'a DefMapFixtureDb,
     package: &'a Package,
-    target: &'a Target,
-    target_ref: TargetRef,
+    target: &'a CargoTarget,
+    crate_ref: CrateRef,
 }
 
-impl<'a> FixtureTarget<'a> {
-    /// Looks up one textual name in the root module scope of this target.
+impl<'a> FixtureCrate<'a> {
+    /// Looks up one textual name in this crate's root module scope.
     pub(super) fn entry(&self, name: &str) -> FixtureEntry<'a> {
         let entry = self
             .db
             .def_map_db()
-            .resident_package(self.target_ref.package)
-            .and_then(|package| package.target_data(self.target_ref.target))
-            .and_then(|target_data| target_data.root_module())
+            .resident_package(self.crate_ref.package)
+            .and_then(|package| package.crate_data(self.crate_ref.crate_id))
+            .and_then(|crate_data| crate_data.root_module())
             .and_then(|root_module| self.def_map().module(root_module))
             .and_then(|module| module.scope.entry(name));
         FixtureEntry {
@@ -189,8 +206,8 @@ impl<'a> FixtureTarget<'a> {
 
     fn def_map(&self) -> &'a DefMap {
         self.db
-            .resident_def_map(self.target_ref)
-            .expect("target def map should exist in fixture db")
+            .resident_def_map(self.crate_ref)
+            .expect("crate def map should exist in fixture db")
     }
 }
 
@@ -198,7 +215,7 @@ impl<'a> FixtureTarget<'a> {
 pub(super) struct FixtureEntry<'a> {
     db: &'a DefMapFixtureDb,
     package_name: &'a str,
-    target: &'a Target,
+    target: &'a CargoTarget,
     name: String,
     entry: Option<&'a ScopeEntry>,
 }
@@ -217,7 +234,7 @@ impl<'a> FixtureEntry<'a> {
     /// Asserts that the entry has at least one visible type binding.
     pub(super) fn assert_type_exists(&self, reason: &str) -> &Self {
         assert!(
-            !self.scope_entry().types().is_empty(),
+            !self.scope_entry().bindings(Namespace::Types).is_empty(),
             "{reason}: expected {} to have a type binding",
             self.context(),
         );
@@ -227,8 +244,32 @@ impl<'a> FixtureEntry<'a> {
     /// Asserts that the entry has at least one visible value binding.
     pub(super) fn assert_value_exists(&self, reason: &str) -> &Self {
         assert!(
-            !self.scope_entry().values().is_empty(),
+            !self.scope_entry().bindings(Namespace::Values).is_empty(),
             "{reason}: expected {} to have a value binding",
+            self.context(),
+        );
+        self
+    }
+
+    /// Asserts that the entry has no selected value binding.
+    pub(super) fn assert_value_missing(&self, reason: &str) -> &Self {
+        assert!(
+            self.scope_entry().bindings(Namespace::Values).is_empty(),
+            "{reason}: expected {} not to have a value binding",
+            self.context(),
+        );
+        self
+    }
+
+    /// Asserts that one selected value binding has the requested local definition kind.
+    pub(super) fn assert_value_kind(&self, kind: LocalDefKind, reason: &str) -> &Self {
+        assert!(
+            self.scope_entry()
+                .bindings(Namespace::Values)
+                .iter()
+                .filter_map(|binding| self.binding_origin(binding))
+                .any(|origin| origin.local_def_kind() == Some(kind)),
+            "{reason}: expected {} to have a `{kind}` value binding",
             self.context(),
         );
         self
@@ -238,7 +279,7 @@ impl<'a> FixtureEntry<'a> {
     pub(super) fn assert_module_named(&self, module_name: &str, reason: &str) -> &Self {
         assert!(
             self.scope_entry()
-                .types()
+                .bindings(Namespace::Types)
                 .iter()
                 .filter_map(|binding| self.binding_origin(binding))
                 .any(|origin| origin.module_name() == Some(module_name)),
@@ -252,11 +293,46 @@ impl<'a> FixtureEntry<'a> {
     pub(super) fn assert_type_source_file(&self, file_name: &str, reason: &str) -> &Self {
         assert!(
             self.scope_entry()
-                .types()
+                .bindings(Namespace::Types)
                 .iter()
                 .filter_map(|binding| self.binding_origin(binding))
                 .any(|origin| origin.source_file_name().as_deref() == Some(file_name)),
             "{reason}: expected {} to have a type binding from `{file_name}`",
+            self.context(),
+        );
+        self
+    }
+
+    /// Asserts that the type namespace selected one definition with the requested route count.
+    pub(super) fn assert_type_resolved_with_routes(
+        &self,
+        route_count: usize,
+        reason: &str,
+    ) -> &Self {
+        let ScopeResolutionRef::Resolved(binding) = self.scope_entry().resolution(Namespace::Types)
+        else {
+            panic!("{reason}: expected {} to resolve uniquely", self.context());
+        };
+        assert_eq!(
+            binding.routes().len(),
+            route_count,
+            "{reason}: unexpected route count for {}",
+            self.context(),
+        );
+        self
+    }
+
+    /// Asserts that the type namespace retained an explicit ambiguity.
+    pub(super) fn assert_type_ambiguous(&self, candidate_count: usize, reason: &str) -> &Self {
+        let ScopeResolutionRef::Ambiguous(bindings) =
+            self.scope_entry().resolution(Namespace::Types)
+        else {
+            panic!("{reason}: expected {} to be ambiguous", self.context());
+        };
+        assert_eq!(
+            bindings.len(),
+            candidate_count,
+            "{reason}: unexpected candidate count for {}",
             self.context(),
         );
         self
@@ -284,9 +360,9 @@ impl<'a> FixtureEntry<'a> {
             DefId::Local(local_def_ref) => local_def_ref.origin,
             DefId::EnumVariant(variant_ref) => variant_ref.origin,
         };
-        let target_ref = origin.as_target_ref()?;
-        self.db.parse_db().packages().get(target_ref.package.0)?;
-        self.db.resident_def_map(target_ref)?;
+        let crate_ref = origin.as_crate_ref()?;
+        self.db.parse_db().packages().get(crate_ref.package.0)?;
+        self.db.resident_def_map(crate_ref)?;
 
         Some(FixtureBindingOrigin {
             db: self.db,
@@ -302,13 +378,24 @@ struct FixtureBindingOrigin<'a> {
 }
 
 impl FixtureBindingOrigin<'_> {
+    fn local_def_kind(&self) -> Option<LocalDefKind> {
+        let DefId::Local(local_def_ref) = self.def else {
+            return None;
+        };
+
+        self.db
+            .resident_def_map(local_def_ref.origin.as_crate_ref()?)?
+            .local_def(local_def_ref.local_def)
+            .map(|data| data.kind)
+    }
+
     fn module_name(&self) -> Option<&str> {
         let DefId::Module(module_ref) = self.def else {
             return None;
         };
 
         self.db
-            .resident_def_map(module_ref.origin.as_target_ref()?)?
+            .resident_def_map(module_ref.origin.as_crate_ref()?)?
             .module(module_ref.module)
             .and_then(|module| module.name.as_deref())
     }
@@ -317,14 +404,14 @@ impl FixtureBindingOrigin<'_> {
         let DefId::Local(local_def_ref) = self.def else {
             return None;
         };
-        let target_ref = local_def_ref.origin.as_target_ref()?;
+        let crate_ref = local_def_ref.origin.as_crate_ref()?;
         let local_def = self
             .db
-            .resident_def_map(target_ref)?
+            .resident_def_map(crate_ref)?
             .local_def(local_def_ref.local_def)?;
         self.db
             .parse_db()
-            .package(target_ref.package.0)?
+            .package(crate_ref.package.0)?
             .file_path(local_def.file_id)?
             .file_name()
             .map(|name| name.to_string_lossy().into_owned())
@@ -379,36 +466,45 @@ impl<'a> ProjectPathResolutionSnapshot<'a> {
     }
 
     fn render_query(&self, query: &PathResolutionQuery) -> String {
-        let (target_ref, target) = self.target_ref(query);
-        let module_id = self.module_id(target_ref, query.module_path);
+        let (crate_ref, target) = self.crate_ref(query);
+        let module_id = self.module_id(crate_ref, query.module_path);
         let path = Self::parse_path(query.path);
         let def_map = self
             .project
             .def_map_db()
             .read_txn(PackageLoader::resident_only("def-map fixture query"));
-        let result = rg_ir_storage::DefMapQuery::new(&def_map)
+        let result = crate::DefMapQuery::new(&def_map)
             .scope_resolver()
             .resolve_path(
                 ModuleRef {
-                    origin: DefMapRef::Target(target_ref),
+                    origin: DefMapRef::Crate(crate_ref),
                     module: module_id,
                 },
                 &path,
-                NameResolutionFilter::AllNamespaces,
+                query.namespaces,
             )
             .expect("path resolution fixture should load def-map packages");
 
+        let namespace_suffix = if query.namespaces == NamespaceSet::TYPES {
+            " [types]"
+        } else if query.namespaces == NamespaceSet::VALUES {
+            " [values]"
+        } else {
+            ""
+        };
+
         format!(
-            "{} [{}] {} resolves {} -> {}",
+            "{} [{}] {} resolves {}{} -> {}",
             query.package_name,
             target.kind,
             query.module_path,
             path,
+            namespace_suffix,
             self.render_result(&result),
         )
     }
 
-    fn target_ref(&self, query: &PathResolutionQuery) -> (TargetRef, &'a Target) {
+    fn crate_ref(&self, query: &PathResolutionQuery) -> (CrateRef, &'a CargoTarget) {
         let (package_slot, package) = self
             .project
             .parse_db()
@@ -429,19 +525,19 @@ impl<'a> ProjectPathResolutionSnapshot<'a> {
             });
 
         (
-            TargetRef {
+            CrateRef {
                 package: crate::PackageSlot(package_slot),
-                target: target.id,
+                crate_id: CrateId(target.id.0),
             },
             target,
         )
     }
 
-    fn module_id(&self, target_ref: TargetRef, module_path: &str) -> ModuleId {
+    fn module_id(&self, crate_ref: CrateRef, module_path: &str) -> ModuleId {
         let def_map = self
             .project
-            .resident_def_map(target_ref)
-            .expect("target def map should exist while resolving path snapshot query");
+            .resident_def_map(crate_ref)
+            .expect("crate def map should exist while resolving path snapshot query");
 
         def_map
             .modules()
@@ -449,22 +545,22 @@ impl<'a> ProjectPathResolutionSnapshot<'a> {
             .enumerate()
             .find_map(|(module_idx, _)| {
                 let module_id = ModuleId(module_idx);
-                (self.module_path(target_ref, module_id) == module_path).then_some(module_id)
+                (self.module_path(crate_ref, module_id) == module_path).then_some(module_id)
             })
             .unwrap_or_else(|| panic!("module `{module_path}` should exist in fixture target"))
     }
 
-    fn module_path(&self, target_ref: TargetRef, module_id: ModuleId) -> String {
+    fn module_path(&self, crate_ref: CrateRef, module_id: ModuleId) -> String {
         let module = self
             .project
-            .resident_def_map(target_ref)
-            .expect("target def map should exist while building module path")
+            .resident_def_map(crate_ref)
+            .expect("crate def map should exist while building module path")
             .module(module_id)
             .expect("module id should exist while building module path");
 
         match module.parent {
             Some(parent) => {
-                let parent_path = self.module_path(target_ref, parent);
+                let parent_path = self.module_path(crate_ref, parent);
                 let name = module
                     .name
                     .as_deref()
@@ -532,18 +628,18 @@ struct PackageDefMapSnapshot<'a> {
 
 impl<'a> PackageDefMapSnapshot<'a> {
     fn render(&self) -> String {
-        let target_dumps = sorted_targets(self.package)
+        let crate_dumps = sorted_targets(self.package)
             .into_iter()
             .map(|target| {
-                let target_ref = TargetRef {
+                let crate_ref = CrateRef {
                     package: crate::PackageSlot(self.package_slot),
-                    target: target.id,
+                    crate_id: CrateId(target.id.0),
                 };
-                TargetDefMapSnapshot {
+                CrateDefMapSnapshot {
                     project: self.project,
                     package: self.package,
                     target,
-                    target_ref,
+                    crate_ref,
                 }
                 .render()
                 .trim_end()
@@ -552,20 +648,20 @@ impl<'a> PackageDefMapSnapshot<'a> {
             .collect::<Vec<_>>()
             .join("\n\n");
 
-        format!("package {}\n\n{target_dumps}", self.package.package_name())
+        format!("package {}\n\n{crate_dumps}", self.package.package_name())
     }
 }
 
-/// Target-level DefMap snapshot context with access to resolved module paths.
+/// Crate-level DefMap snapshot context with access to resolved module paths.
 /// Renders module scopes such as `crate::nested`.
-struct TargetDefMapSnapshot<'a> {
+struct CrateDefMapSnapshot<'a> {
     project: &'a DefMapFixtureDb,
     package: &'a Package,
-    target: &'a Target,
-    target_ref: TargetRef,
+    target: &'a CargoTarget,
+    crate_ref: CrateRef,
 }
 
-impl<'a> TargetDefMapSnapshot<'a> {
+impl<'a> CrateDefMapSnapshot<'a> {
     fn render(&self) -> String {
         let def_map = self.def_map();
         let mut dump = format!("{} [{}]\n", self.package.package_name(), self.target.kind);
@@ -623,8 +719,8 @@ impl<'a> TargetDefMapSnapshot<'a> {
 
     fn def_map(&self) -> &'a DefMap {
         self.project
-            .resident_def_map(self.target_ref)
-            .expect("target def map should exist while rendering snapshot")
+            .resident_def_map(self.crate_ref)
+            .expect("crate def map should exist while rendering snapshot")
     }
 
     fn sorted_modules(&self) -> Vec<(String, ModuleId)> {
@@ -635,14 +731,14 @@ impl<'a> TargetDefMapSnapshot<'a> {
             .enumerate()
             .map(|(idx, _)| {
                 let module_id = ModuleId(idx);
-                (self.module_path(self.target_ref, module_id), module_id)
+                (self.module_path(self.crate_ref, module_id), module_id)
             })
             .collect::<Vec<_>>();
         modules.sort_by(|left, right| left.0.cmp(&right.0));
         modules
     }
 
-    fn sorted_scope_names(&self, scope: &rg_ir_storage::ModuleScope) -> Vec<String> {
+    fn sorted_scope_names(&self, scope: &crate::ModuleScope) -> Vec<String> {
         let mut names = scope
             .entries()
             .map(|(name, _)| name.clone())
@@ -654,24 +750,24 @@ impl<'a> TargetDefMapSnapshot<'a> {
     fn render_scope_entry(&self, entry: &ScopeEntry) -> String {
         let mut parts = Vec::new();
 
-        if !entry.types().is_empty() {
+        if !entry.bindings(Namespace::Types).is_empty() {
             parts.push(format!(
                 "type [{}]",
-                self.render_namespace_bindings(entry.types())
+                self.render_namespace_bindings(entry.bindings(Namespace::Types))
             ));
         }
 
-        if !entry.values().is_empty() {
+        if !entry.bindings(Namespace::Values).is_empty() {
             parts.push(format!(
                 "value [{}]",
-                self.render_namespace_bindings(entry.values())
+                self.render_namespace_bindings(entry.bindings(Namespace::Values))
             ));
         }
 
-        if !entry.macros().is_empty() {
+        if !entry.bindings(Namespace::Macros).is_empty() {
             parts.push(format!(
                 "macro [{}]",
-                self.render_namespace_bindings(entry.macros())
+                self.render_namespace_bindings(entry.bindings(Namespace::Macros))
             ));
         }
 
@@ -681,37 +777,63 @@ impl<'a> TargetDefMapSnapshot<'a> {
     fn render_namespace_bindings(&self, bindings: &[ScopeBinding]) -> String {
         let mut rendered = bindings
             .iter()
-            .filter_map(|binding| self.binding_origin(binding))
+            .flat_map(|binding| {
+                binding.routes().iter().filter_map(|route| {
+                    self.binding_origin_with_visibility(binding, route.visibility, route.provenance)
+                })
+            })
             .map(|origin| origin.render())
             .collect::<Vec<_>>();
         rendered.sort();
         rendered.join("; ")
     }
 
-    fn binding_origin(&self, binding: &'a ScopeBinding) -> Option<BindingOrigin<'a>> {
+    fn binding_origin_with_visibility(
+        &self,
+        binding: &'a ScopeBinding,
+        visibility: Visibility,
+        provenance: ScopeBindingProvenance,
+    ) -> Option<BindingOrigin<'a>> {
         let origin = match binding.def {
             DefId::Module(module_ref) => module_ref.origin,
             DefId::Local(local_def_ref) => local_def_ref.origin,
             DefId::EnumVariant(variant_ref) => variant_ref.origin,
         };
-        let target_ref = origin.as_target_ref()?;
+        let crate_ref = origin.as_crate_ref()?;
         self.project
             .parse_db()
             .packages()
-            .get(target_ref.package.0)?;
-        self.project.resident_def_map(target_ref)?;
+            .get(crate_ref.package.0)?;
+        self.project.resident_def_map(crate_ref)?;
+
+        let visibility_prefix = if provenance.is_direct() {
+            match binding.def {
+                DefId::Local(local_def) => self
+                    .project
+                    .resident_def_map(crate_ref)?
+                    .local_def(local_def.local_def)
+                    .map(|data| BindingOrigin::source_visibility_prefix(&data.visibility))
+                    .unwrap_or_else(|| BindingOrigin::semantic_visibility_prefix(visibility)),
+                DefId::Module(_) | DefId::EnumVariant(_) => {
+                    BindingOrigin::semantic_visibility_prefix(visibility)
+                }
+            }
+        } else {
+            BindingOrigin::semantic_visibility_prefix(visibility)
+        };
 
         Some(BindingOrigin {
             project: self.project,
             def: binding.def,
-            binding_visibility: &binding.visibility,
+            visibility_prefix,
         })
     }
 
     fn render_unresolved_import(&self, import: &ImportData) -> String {
-        let visibility = match &import.visibility {
-            VisibilityLevel::Private => String::new(),
-            visibility => format!("{visibility} "),
+        let visibility = match import.visibility {
+            Visibility::Module(_) => String::new(),
+            Visibility::Public => "pub ".to_string(),
+            Visibility::Invisible => "invisible ".to_string(),
         };
         let path = match import.kind {
             ImportKind::Glob => format!("{}::*", import.path),
@@ -736,17 +858,17 @@ impl<'a> TargetDefMapSnapshot<'a> {
         }
     }
 
-    fn module_path(&self, target_ref: TargetRef, module_id: ModuleId) -> String {
+    fn module_path(&self, crate_ref: CrateRef, module_id: ModuleId) -> String {
         let module = self
             .project
-            .resident_def_map(target_ref)
-            .expect("target def map should exist while building relative module path")
+            .resident_def_map(crate_ref)
+            .expect("crate def map should exist while building relative module path")
             .module(module_id)
             .expect("module id should exist while building relative module path");
 
         match module.parent {
             Some(parent) => {
-                let parent_path = self.module_path(target_ref, parent);
+                let parent_path = self.module_path(crate_ref, parent);
                 let name = module
                     .name
                     .as_deref()
@@ -763,22 +885,29 @@ impl<'a> TargetDefMapSnapshot<'a> {
 struct BindingOrigin<'a> {
     project: &'a DefMapFixtureDb,
     def: DefId,
-    binding_visibility: &'a VisibilityLevel,
+    visibility_prefix: String,
 }
 
 impl BindingOrigin<'_> {
     fn render(&self) -> String {
-        let visibility = Self::visibility_prefix(self.binding_visibility);
         let origin = ResolvedDefOrigin {
             project: self.project,
             def: self.def,
         }
         .render();
 
-        format!("{visibility}{origin}")
+        format!("{}{origin}", self.visibility_prefix)
     }
 
-    fn visibility_prefix(visibility: &VisibilityLevel) -> String {
+    fn semantic_visibility_prefix(visibility: Visibility) -> String {
+        match visibility {
+            Visibility::Module(_) => String::new(),
+            Visibility::Public => "pub ".to_string(),
+            Visibility::Invisible => "invisible ".to_string(),
+        }
+    }
+
+    fn source_visibility_prefix(visibility: &VisibilityLevel) -> String {
         match visibility {
             VisibilityLevel::Private => String::new(),
             _ => format!("{visibility} "),
@@ -801,8 +930,8 @@ impl ResolvedDefOrigin<'_> {
             DefId::Local(local_def_ref) => {
                 let local_def = self
                     .project
-                    .resident_def_map(local_def_ref.origin.origin_target())
-                    .expect("target def map should exist while dumping")
+                    .resident_def_map(local_def_ref.origin.origin_crate())
+                    .expect("crate def map should exist while dumping")
                     .local_def(local_def_ref.local_def)
                     .expect("local def id should exist while dumping");
                 let module_path = self.render_module_path(ModuleRef {
@@ -815,14 +944,14 @@ impl ResolvedDefOrigin<'_> {
             DefId::EnumVariant(variant_ref) => {
                 let variant = self
                     .project
-                    .resident_def_map(variant_ref.origin.origin_target())
-                    .expect("target def map should exist while dumping")
+                    .resident_def_map(variant_ref.origin.origin_crate())
+                    .expect("crate def map should exist while dumping")
                     .local_enum_variant(variant_ref.local_enum_variant)
                     .expect("enum variant id should exist while dumping");
                 let enum_def = self
                     .project
-                    .resident_def_map(variant_ref.origin.origin_target())
-                    .expect("target def map should exist while dumping")
+                    .resident_def_map(variant_ref.origin.origin_crate())
+                    .expect("crate def map should exist while dumping")
                     .local_def(variant.enum_def)
                     .expect("enum def id should exist while dumping");
                 let module_path = self.render_module_path(ModuleRef {
@@ -839,36 +968,43 @@ impl ResolvedDefOrigin<'_> {
     }
 
     fn render_module_path(&self, module_ref: ModuleRef) -> String {
-        let target_ref = module_ref.origin.origin_target();
+        let crate_ref = module_ref.origin.origin_crate();
         let package = self
             .project
             .parse_db()
             .packages()
-            .get(target_ref.package.0)
+            .get(crate_ref.package.0)
             .expect("package slot should exist while dumping");
         let target = package
-            .target(target_ref.target)
+            .target(
+                self.project
+                    .def_map_db()
+                    .resident_package(crate_ref.package)
+                    .and_then(|package| package.crate_data(crate_ref.crate_id))
+                    .expect("semantic crate should exist while dumping")
+                    .cargo_target(),
+            )
             .expect("target id should exist while dumping");
 
         format!(
             "{}[{}]::{}",
             package.package_name(),
             target.kind,
-            self.module_path(target_ref, module_ref.module),
+            self.module_path(crate_ref, module_ref.module),
         )
     }
 
-    fn module_path(&self, target_ref: TargetRef, module_id: ModuleId) -> String {
+    fn module_path(&self, crate_ref: CrateRef, module_id: ModuleId) -> String {
         let module = self
             .project
-            .resident_def_map(target_ref)
-            .expect("target def map should exist while building relative module path")
+            .resident_def_map(crate_ref)
+            .expect("crate def map should exist while building relative module path")
             .module(module_id)
             .expect("module id should exist while building relative module path");
 
         match module.parent {
             Some(parent) => {
-                let parent_path = self.module_path(target_ref, parent);
+                let parent_path = self.module_path(crate_ref, parent);
                 let name = module
                     .name
                     .as_deref()
@@ -886,7 +1022,7 @@ fn sorted_packages(parse: &ParseDb) -> Vec<(usize, &Package)> {
     packages
 }
 
-fn sorted_targets(package: &Package) -> Vec<&Target> {
+fn sorted_targets(package: &Package) -> Vec<&CargoTarget> {
     let mut targets = package.targets().iter().collect::<Vec<_>>();
     targets.sort_by(|left, right| {
         (

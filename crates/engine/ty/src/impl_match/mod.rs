@@ -1,170 +1,310 @@
-//! Shallow impl matching for receiver-based item queries.
+//! Canonical impl-header matching for receiver-based item queries.
 //!
-//! `ImplMatcher` is the stable façade used by member lookup, adjustments, and body queries. The
-//! implementation is split by policy, because those callers intentionally have different tolerance
-//! for uncertainty: editor candidates may keep `Maybe` impls, while real type adjustments must
-//! reject anything that would require a solver.
+//! All entry points consume `SemanticSignatureQuery::impl_header` results. Syntax HIR remains
+//! available to declaration views, but receiver matching never interprets a `TypeRef` itself.
 
 mod inherent;
-mod projection;
 mod trait_methods;
 
-use crate::{GenericArg, ItemPathQuery, NominalTy, Ty, TypeSubst};
-use rg_ir_model::TraitApplicability;
-use rg_ir_model::hir::items::ImplData;
-use rg_ir_model::items::{GenericArg as ItemGenericArg, GenericParams, TypeRef};
-use rg_ir_storage::{DefMapSource, ItemStoreSource, TargetItemQuery};
+use rg_def_map::DefMapSource;
+use rg_ir_model::{GenericDefRef, GenericParamRef, ImplRef, TraitApplicability};
+use rg_semantic_ir::ItemStoreSource;
 
-/// Matcher for impl headers stored in semantic-shaped item stores.
-pub struct ImplMatcher<'query, D, I> {
-    item_paths: ItemPathQuery<'query, D, I>,
-    target_items: TargetItemQuery<'query, D, I>,
+use crate::{
+    ConstValue, GenericArg, ImplHeader, ItemPathQuery, Lifetime, Substitution, Ty, TyContext,
+    TypePathResolver,
+};
+
+/// Matcher for canonical impl headers stored in semantic item stores.
+pub struct ImplMatcher<'query, D, I, R = ItemPathQuery<'query, D, I>> {
+    context: TyContext<'query, D, I>,
+    resolver: R,
 }
 
-impl<'query, D, I> ImplMatcher<'query, D, I>
+impl<'query, D, I> ImplMatcher<'query, D, I, ItemPathQuery<'query, D, I>>
+where
+    D: DefMapSource + Clone,
+    I: ItemStoreSource<'query, Error = D::Error> + Clone,
+{
+    pub fn new(context: TyContext<'query, D, I>) -> Self {
+        let resolver = context.item_paths().clone();
+        Self { context, resolver }
+    }
+}
+
+impl<'query, D, I, R> ImplMatcher<'query, D, I, R>
 where
     D: DefMapSource,
     I: ItemStoreSource<'query, Error = D::Error>,
+    R: TypePathResolver<Error = D::Error>,
 {
-    /// Creates a matcher over the same path/item routing used by type conversion.
-    pub fn new(
-        item_paths: ItemPathQuery<'query, D, I>,
-        target_items: TargetItemQuery<'query, D, I>,
-    ) -> Self {
-        Self {
-            item_paths,
-            target_items,
-        }
+    pub fn with_resolver(context: TyContext<'query, D, I>, resolver: R) -> Self {
+        Self { context, resolver }
     }
 
-    /// Builds receiver substitutions from already-loaded impl data.
+    /// Return the canonical header used by every matching operation.
+    pub fn impl_header(&self, impl_ref: ImplRef) -> Result<Option<ImplHeader>, D::Error> {
+        self.context.trait_selection().impl_header_with(
+            self.context.item_paths(),
+            &self.resolver,
+            impl_ref,
+        )
+    }
+
+    /// Match the impl's semantic `Self` pattern and return owner-scoped bindings.
     pub fn impl_self_subst_for_impl(
         &self,
-        impl_data: &ImplData,
-        receiver_ty: &NominalTy,
-    ) -> TypeSubst {
-        Self::impl_self_subst(&impl_data.generics, &impl_data.self_ty, &receiver_ty.args)
+        impl_ref: ImplRef,
+        receiver_ty: &Ty,
+    ) -> Result<Option<(Substitution, TraitApplicability)>, D::Error> {
+        let Some(header) = self.impl_header(impl_ref)? else {
+            return Ok(None);
+        };
+        Ok(Self::impl_self_subst(&header, receiver_ty))
     }
 
-    /// Extracts substitutions by aligning impl self type args with receiver type args.
-    ///
-    /// For `impl<T> Wrapper<T>` matched with `Wrapper<User>`, this returns `T -> User`.
+    /// Match an already-lowered impl header without interpreting its source syntax again.
     fn impl_self_subst(
-        generics: &GenericParams,
-        self_ty: &TypeRef,
-        receiver_args: &[GenericArg],
-    ) -> TypeSubst {
-        let TypeRef::Path(self_ty) = self_ty else {
-            return TypeSubst::new();
+        header: &ImplHeader,
+        receiver_ty: &Ty,
+    ) -> Option<(Substitution, TraitApplicability)> {
+        let mut subst = Substitution::new();
+        let applicability = Self::match_ty(
+            GenericDefRef::Impl(header.owner),
+            &header.self_ty,
+            receiver_ty,
+            &mut subst,
+        )?;
+        Some((subst, applicability))
+    }
+
+    fn match_ty(
+        owner: GenericDefRef,
+        pattern: &Ty,
+        evidence: &Ty,
+        subst: &mut Substitution,
+    ) -> Option<TraitApplicability> {
+        if let Ty::Param(param) = pattern
+            && param.owner == owner
+        {
+            let key = GenericParamRef::Type(*param);
+            if let Some(existing) = subst.get(key) {
+                return (existing.as_ty() == Some(evidence)).then_some(TraitApplicability::Yes);
+            }
+            subst.push(key, GenericArg::Type(Box::new(evidence.clone())));
+            return Some(TraitApplicability::Yes);
+        }
+        if matches!(pattern, Ty::Unknown) || matches!(evidence, Ty::Unknown | Ty::InferVar { .. }) {
+            return Some(TraitApplicability::Maybe);
+        }
+
+        let mut applicability = TraitApplicability::Yes;
+        let matches = match (pattern, evidence) {
+            (Ty::Unit, Ty::Unit)
+            | (Ty::Never, Ty::Never)
+            | (Ty::Primitive(_), Ty::Primitive(_)) => pattern == evidence,
+            (Ty::Closure(pattern), Ty::Closure(evidence))
+                if pattern.id == evidence.id && pattern.params.len() == evidence.params.len() =>
+            {
+                for (pattern, evidence) in pattern.params.iter().zip(&evidence.params) {
+                    applicability =
+                        applicability.and(Self::match_ty(owner, pattern, evidence, subst)?);
+                }
+                applicability =
+                    applicability.and(Self::match_ty(owner, &pattern.ret, &evidence.ret, subst)?);
+                true
+            }
+            (Ty::Tuple(pattern), Ty::Tuple(evidence)) if pattern.len() == evidence.len() => {
+                for (pattern, evidence) in pattern.iter().zip(evidence) {
+                    applicability =
+                        applicability.and(Self::match_ty(owner, pattern, evidence, subst)?);
+                }
+                true
+            }
+            (
+                Ty::Array {
+                    inner: pattern,
+                    len: pattern_len,
+                },
+                Ty::Array {
+                    inner: evidence,
+                    len: evidence_len,
+                },
+            ) => {
+                applicability = applicability.and(Self::match_const(
+                    owner,
+                    *pattern_len,
+                    *evidence_len,
+                    subst,
+                )?);
+                applicability = applicability.and(Self::match_ty(owner, pattern, evidence, subst)?);
+                true
+            }
+            (Ty::Slice(pattern), Ty::Slice(evidence)) => {
+                applicability = applicability.and(Self::match_ty(owner, pattern, evidence, subst)?);
+                true
+            }
+            (
+                Ty::Reference {
+                    mutability: pattern_mutability,
+                    inner: pattern,
+                    ..
+                },
+                Ty::Reference {
+                    mutability: evidence_mutability,
+                    inner: evidence,
+                    ..
+                },
+            )
+            | (
+                Ty::RawPointer {
+                    mutability: pattern_mutability,
+                    inner: pattern,
+                },
+                Ty::RawPointer {
+                    mutability: evidence_mutability,
+                    inner: evidence,
+                },
+            ) if pattern_mutability == evidence_mutability => {
+                applicability = applicability.and(Self::match_ty(owner, pattern, evidence, subst)?);
+                true
+            }
+            (
+                Ty::FnPointer {
+                    params: pattern_params,
+                    ret: pattern_ret,
+                },
+                Ty::FnPointer {
+                    params: evidence_params,
+                    ret: evidence_ret,
+                },
+            ) if pattern_params.len() == evidence_params.len() => {
+                for (pattern, evidence) in pattern_params.iter().zip(evidence_params) {
+                    applicability =
+                        applicability.and(Self::match_ty(owner, pattern, evidence, subst)?);
+                }
+                applicability =
+                    applicability.and(Self::match_ty(owner, pattern_ret, evidence_ret, subst)?);
+                true
+            }
+            (Ty::Adt(pattern), Ty::Adt(evidence)) if pattern.def == evidence.def => {
+                applicability = applicability.and(Self::match_args(
+                    owner,
+                    &pattern.args,
+                    &evidence.args,
+                    subst,
+                )?);
+                true
+            }
+            (Ty::FnDef(pattern), Ty::FnDef(evidence)) if pattern.def == evidence.def => {
+                applicability = applicability.and(Self::match_args(
+                    owner,
+                    &pattern.args,
+                    &evidence.args,
+                    subst,
+                )?);
+                true
+            }
+            (Ty::Alias(pattern), Ty::Alias(evidence)) if pattern.same_definition(evidence) => {
+                applicability = applicability.and(Self::match_args(
+                    owner,
+                    pattern.args(),
+                    evidence.args(),
+                    subst,
+                )?);
+                true
+            }
+            (_, Ty::Alias(_)) | (Ty::Alias(_), _) | (Ty::Param(_), _) => {
+                applicability = TraitApplicability::Maybe;
+                true
+            }
+            _ => false,
         };
-        let Some(segment) = self_ty.segments.last() else {
-            return TypeSubst::new();
-        };
-
-        let impl_type_params = Self::impl_type_param_names(generics);
-        let receiver_type_args = receiver_args
-            .iter()
-            .filter_map(|arg| arg.as_ty().cloned())
-            .collect::<Vec<_>>();
-
-        segment
-            .args
-            .iter()
-            .filter_map(ItemGenericArg::type_ref)
-            .zip(receiver_type_args)
-            .filter_map(|(impl_arg, receiver_arg)| {
-                let name = impl_arg.type_param_name()?;
-                impl_type_params
-                    .contains(&name.as_str())
-                    .then_some((name, receiver_arg))
-            })
-            .collect()
+        matches.then_some(applicability)
     }
 
-    /// Lists the type parameters declared by an impl header.
-    fn impl_type_param_names(generics: &GenericParams) -> Vec<&str> {
-        generics
-            .types
-            .iter()
-            .map(|param| param.name.as_str())
-            .collect()
-    }
-
-    /// Lists the lifetime parameters declared by an impl header.
-    fn impl_lifetime_param_names(generics: &GenericParams) -> Vec<&str> {
-        generics
-            .lifetimes
-            .iter()
-            .map(|param| param.name.as_str())
-            .collect()
-    }
-
-    /// Lists the const parameters declared by an impl header.
-    fn impl_const_param_names(generics: &GenericParams) -> Vec<&str> {
-        generics
-            .consts
-            .iter()
-            .map(|param| param.name.as_str())
-            .collect()
-    }
-
-    /// Returns item-tree type args only when no lifetime/const/assoc args were written.
-    fn item_tree_type_args(args: &[ItemGenericArg]) -> Option<Vec<&TypeRef>> {
-        let mut type_args = Vec::new();
-        for arg in args {
-            type_args.push(arg.type_ref()?);
+    fn match_args(
+        owner: GenericDefRef,
+        patterns: &[GenericArg],
+        evidence: &[GenericArg],
+        subst: &mut Substitution,
+    ) -> Option<TraitApplicability> {
+        if patterns.len() != evidence.len() {
+            return None;
         }
-        Some(type_args)
-    }
-
-    /// Returns type args only when no lifetime/const/assoc args were preserved.
-    fn ty_args(args: &[GenericArg]) -> Option<Vec<Ty>> {
-        let mut type_args = Vec::new();
-        for arg in args {
-            type_args.push(arg.as_ty().cloned()?);
+        let mut applicability = TraitApplicability::Yes;
+        for (pattern, evidence) in patterns.iter().zip(evidence) {
+            let arg_applicability = match (pattern, evidence) {
+                (GenericArg::Type(pattern), GenericArg::Type(evidence)) => {
+                    Self::match_ty(owner, pattern, evidence, subst)?
+                }
+                (GenericArg::Lifetime(pattern), GenericArg::Lifetime(evidence)) => {
+                    if let Lifetime::Param(param) = pattern
+                        && param.owner == owner
+                    {
+                        let key = GenericParamRef::Lifetime(*param);
+                        if let Some(GenericArg::Lifetime(existing)) = subst.get(key) {
+                            if existing != evidence
+                                && !matches!(existing, Lifetime::Erased)
+                                && !matches!(evidence, Lifetime::Erased)
+                            {
+                                return None;
+                            }
+                        } else {
+                            subst.push(key, GenericArg::Lifetime(*evidence));
+                        }
+                        TraitApplicability::Yes
+                    } else {
+                        match (pattern, evidence) {
+                            (Lifetime::Static, Lifetime::Static) => TraitApplicability::Yes,
+                            (Lifetime::Static, _) | (_, Lifetime::Static) => return None,
+                            (Lifetime::Param(_) | Lifetime::Erased, _) => TraitApplicability::Yes,
+                        }
+                    }
+                }
+                (GenericArg::Const(pattern), GenericArg::Const(evidence)) => {
+                    Self::match_const(owner, *pattern, *evidence, subst)?
+                }
+                _ => return None,
+            };
+            applicability = applicability.and(arg_applicability);
         }
-        Some(type_args)
+        Some(applicability)
     }
 
-    /// Returns whether the impl header has no constraints that require solving.
-    fn impl_header_has_only_plain_type_params(impl_data: &ImplData) -> bool {
-        impl_data.generics.lifetimes.is_empty()
-            && impl_data.generics.consts.is_empty()
-            && impl_data.generics.where_predicates.is_empty()
-            && impl_data
-                .generics
-                .types
-                .iter()
-                .all(|param| param.bounds.is_empty() && param.default.is_none())
-            && impl_data
-                .trait_ref
-                .as_ref()
-                .is_none_or(|trait_ref| !trait_ref.has_generic_args())
-    }
-
-    /// Classifies direct headers as proven and generic/conditional headers as maybe-applicable.
-    fn impl_header_applicability(impl_data: &ImplData) -> TraitApplicability {
-        if Self::impl_header_is_definitely_direct(impl_data) {
-            TraitApplicability::Yes
-        } else {
-            TraitApplicability::Maybe
+    fn match_const(
+        owner: GenericDefRef,
+        pattern: ConstValue,
+        evidence: ConstValue,
+        subst: &mut Substitution,
+    ) -> Option<TraitApplicability> {
+        if let ConstValue::Param(param) = pattern
+            && param.owner == owner
+        {
+            let key = GenericParamRef::Const(param);
+            if let Some(GenericArg::Const(existing)) = subst.get(key) {
+                return match (*existing, evidence) {
+                    (ConstValue::Scalar(lhs), ConstValue::Scalar(rhs)) => {
+                        (lhs == rhs).then_some(TraitApplicability::Yes)
+                    }
+                    (ConstValue::Unknown, _) | (_, ConstValue::Unknown) => {
+                        Some(TraitApplicability::Maybe)
+                    }
+                    (ConstValue::Param(_), _) | (_, ConstValue::Param(_)) => {
+                        Some(TraitApplicability::Yes)
+                    }
+                };
+            }
+            subst.push(key, GenericArg::Const(evidence));
+            return Some(TraitApplicability::Yes);
         }
-    }
 
-    /// Returns whether the impl header has no generic or where-clause uncertainty.
-    fn impl_header_is_definitely_direct(impl_data: &ImplData) -> bool {
-        impl_data.generics.lifetimes.is_empty()
-            && impl_data.generics.types.is_empty()
-            && impl_data.generics.consts.is_empty()
-            && impl_data.generics.where_predicates.is_empty()
-            && impl_data
-                .trait_ref
-                .as_ref()
-                .is_none_or(|trait_ref| !trait_ref.has_generic_args())
-    }
-
-    /// Returns whether comparing this type as a generic argument would overstate certainty.
-    fn type_arg_comparison_is_uncertain(ty: &Ty) -> bool {
-        ty.has_var() || ty.has_unknown_or_syntax() || matches!(ty, Ty::Opaque { .. })
+        match (pattern, evidence) {
+            (ConstValue::Scalar(lhs), ConstValue::Scalar(rhs)) => {
+                (lhs == rhs).then_some(TraitApplicability::Yes)
+            }
+            (ConstValue::Unknown, _) | (_, ConstValue::Unknown) => Some(TraitApplicability::Maybe),
+            (ConstValue::Param(_), _) | (_, ConstValue::Param(_)) => Some(TraitApplicability::Yes),
+        }
     }
 }

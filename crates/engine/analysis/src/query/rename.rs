@@ -6,11 +6,11 @@
 use anyhow::Context as _;
 use rg_ir_model::identity::DeclarationRef;
 use rg_ir_view::{
+    display::syntax::SyntaxRenderer,
     item::declaration::{Declaration, DeclarationView},
     source::{IndexedSourceSurface, SourceOccurrenceView},
 };
 use rg_parse::Span;
-use rg_syntax::{Edition, SyntaxKind};
 
 use crate::{
     Analysis, ReferenceQuery, SymbolKind,
@@ -38,13 +38,13 @@ impl<'a, 'db> RenameResolver<'a, 'db> {
     /// Returns the source span and placeholder shown by editor prepare-rename requests.
     pub(crate) fn prepare_rename(
         &self,
-        target: rg_ir_model::TargetRef,
+        crate_ref: rg_ir_model::CrateRef,
         file_id: rg_parse::FileId,
         offset: u32,
     ) -> anyhow::Result<Option<RenameTarget>> {
         let Some(symbol) = self
             .analysis
-            .source_symbol_at_for_query(target, file_id, offset)?
+            .source_symbol_at_for_query(crate_ref, file_id, offset)?
         else {
             return Ok(None);
         };
@@ -55,7 +55,7 @@ impl<'a, 'db> RenameResolver<'a, 'db> {
     /// Produces all text edits needed to rename the symbol selected at `offset`.
     pub(crate) fn rename(
         &self,
-        target: rg_ir_model::TargetRef,
+        crate_ref: rg_ir_model::CrateRef,
         file_id: rg_parse::FileId,
         offset: u32,
         new_name: &str,
@@ -63,6 +63,7 @@ impl<'a, 'db> RenameResolver<'a, 'db> {
     ) -> anyhow::Result<Option<RenameResult>> {
         // Reject invalid replacement names before doing any semantic work, so callers get a clear
         // error instead of an empty rename caused by an impossible edit.
+        let new_name = Self::identifier_semantic_spelling(new_name);
         anyhow::ensure!(
             Self::is_supported_new_name(new_name),
             "rename target `{new_name}` is not a supported Rust identifier"
@@ -72,7 +73,7 @@ impl<'a, 'db> RenameResolver<'a, 'db> {
         // symbol under the cursor, rename is simply unavailable at this position.
         let Some(symbol) = self
             .analysis
-            .source_symbol_at_for_query(target, file_id, offset)?
+            .source_symbol_at_for_query(crate_ref, file_id, offset)?
         else {
             return Ok(None);
         };
@@ -94,7 +95,11 @@ impl<'a, 'db> RenameResolver<'a, 'db> {
             .source_symbols_matching_declarations(&declarations)?
         {
             let Some(edit) = self
-                .rename_edit_for_symbol(symbol, &rename_target.placeholder, new_name)
+                .rename_edit_for_symbol(
+                    symbol,
+                    Self::identifier_semantic_spelling(&rename_target.placeholder),
+                    new_name,
+                )
                 .context("while attempting to plan rename edits")?
             else {
                 continue;
@@ -102,8 +107,8 @@ impl<'a, 'db> RenameResolver<'a, 'db> {
             edits.push(edit);
         }
 
-        // A semantic occurrence can be reachable through more than one source candidate. Collapse
-        // exact duplicates and fail loudly if two planned edits would fight over the same text.
+        // A semantic occurrence can be reached through more than one source scanner. Collapse exact
+        // duplicates and fail loudly if two planned edits would fight over the same text.
         let edits = Self::normalize_rename_edits(edits)?;
 
         Ok(Some(RenameResult {
@@ -123,21 +128,26 @@ impl<'a, 'db> RenameResolver<'a, 'db> {
             return Ok(None);
         }
 
+        let syntax =
+            SyntaxRenderer::new(self.analysis.view_db().crate_edition(symbol.crate_ref())?);
+        let new_name = syntax.identifier(new_name).to_string();
+        let source_name = self.source_text_for_span(&symbol, symbol.span())?;
+
         // Plain references can replace the selected text directly. Shorthand record syntax carries
         // two names in one span, so those occurrences expand into explicit `field: value` spelling.
         let (span, old_text, new_text) = match symbol.surface().clone() {
             IndexedSourceSurface::Plain | IndexedSourceSurface::RecordFieldKeyExplicit => {
-                (symbol.span(), old_name.to_string(), new_name.to_string())
+                (symbol.span(), source_name, new_name.clone())
             }
             IndexedSourceSurface::RecordExprShorthandFieldKey { .. } => (
                 symbol.span(),
-                old_name.to_string(),
-                format!("{new_name}: {old_name}"),
+                source_name.clone(),
+                format!("{new_name}: {source_name}"),
             ),
             IndexedSourceSurface::RecordExprShorthandValue { key, .. } => (
                 symbol.span(),
-                old_name.to_string(),
-                format!("{}: {new_name}", key.declaration_label()),
+                source_name,
+                format!("{}: {new_name}", syntax.field_key(&key)),
             ),
             IndexedSourceSurface::RecordPatShorthandFieldKey {
                 field_span,
@@ -159,19 +169,19 @@ impl<'a, 'db> RenameResolver<'a, 'db> {
                     pat_span,
                     binding_name_span,
                     &pat_text,
-                    new_name,
+                    &new_name,
                 )
                 .context("while attempting to rewrite record pattern shorthand binding")?;
                 (
                     field_span,
                     old_text,
-                    format!("{}: {pat_text}", key.declaration_label()),
+                    format!("{}: {pat_text}", syntax.field_key(&key)),
                 )
             }
         };
 
         Ok(Some(RenameEdit {
-            target: symbol.target(),
+            crate_ref: symbol.crate_ref(),
             file_id: symbol.file_id(),
             span,
             old_text,
@@ -192,7 +202,7 @@ impl<'a, 'db> RenameResolver<'a, 'db> {
         let Some(spelling) = self.source_symbol_spelling(symbol)? else {
             return Ok(false);
         };
-        Ok(spelling != canonical_name)
+        Ok(Self::identifier_semantic_spelling(&spelling) != canonical_name)
     }
 
     fn source_symbol_spelling(&self, symbol: &SourceSymbol) -> anyhow::Result<Option<String>> {
@@ -218,7 +228,7 @@ impl<'a, 'db> RenameResolver<'a, 'db> {
     /// Reads the exact source text covered by a rename surface span.
     fn source_text_for_span(&self, symbol: &SourceSymbol, span: Span) -> anyhow::Result<String> {
         self.analysis
-            .source_text_for_span(symbol.target().package, symbol.file_id(), span)
+            .source_text_for_span(symbol.crate_ref().package, symbol.file_id(), span)
             .with_context(|| "while attempting to read source text for rename edit")?
             .with_context(|| "rename edit span should have source text")
     }
@@ -257,8 +267,8 @@ impl<'a, 'db> RenameResolver<'a, 'db> {
     fn normalize_rename_edits(mut edits: Vec<RenameEdit>) -> anyhow::Result<Vec<RenameEdit>> {
         edits.sort_by_key(|edit| {
             (
-                edit.target.package.0,
-                edit.target.target.0,
+                edit.crate_ref.package.0,
+                edit.crate_ref.crate_id.0,
                 edit.file_id.0,
                 edit.span.text.start,
                 edit.span.text.end,
@@ -271,7 +281,7 @@ impl<'a, 'db> RenameResolver<'a, 'db> {
                 normalized.push(edit);
                 continue;
             };
-            if previous.target != edit.target || previous.file_id != edit.file_id {
+            if previous.crate_ref != edit.crate_ref || previous.file_id != edit.file_id {
                 normalized.push(edit);
                 continue;
             }
@@ -323,14 +333,22 @@ impl<'a, 'db> RenameResolver<'a, 'db> {
         if !Self::is_renameable_declaration(&declaration) {
             return Ok(None);
         }
-        if self.source_symbol_uses_different_spelling(&symbol, declaration.name())? {
+        let Some(name) = declaration.semantic_name() else {
+            return Ok(None);
+        };
+        if self.source_symbol_uses_different_spelling(&symbol, name)? {
             return Ok(None);
         }
+
+        // Prepare-rename describes the selected occurrence, which may be written under a
+        // different edition than its declaration. Preserve that exact spelling instead of
+        // re-rendering the semantic name with declaration-site syntax rules.
+        let placeholder = self.source_text_for_span(&symbol, symbol.span())?;
 
         Ok(Some(RenameTarget {
             file_id: symbol.file_id(),
             span: symbol.span(),
-            placeholder: declaration.name().to_string(),
+            placeholder,
         }))
     }
 
@@ -362,7 +380,7 @@ impl<'a, 'db> RenameResolver<'a, 'db> {
             return true;
         }
 
-        symbol.target() == declaration.target()
+        symbol.crate_ref() == declaration.crate_ref()
             && symbol.file_id() == declaration.file_id()
             && symbol.span() == declaration.selection_span()
     }
@@ -373,24 +391,15 @@ impl<'a, 'db> RenameResolver<'a, 'db> {
             return false;
         }
 
-        let name = declaration.name();
-        !name.is_empty()
-            && name != "<unsupported>"
-            && !name.starts_with('#')
-            && !matches!(name, "self" | "Self" | "crate" | "super")
+        declaration.semantic_name().is_some_and(|name| {
+            !name.is_empty() && !matches!(name.as_str(), "self" | "Self" | "crate" | "super")
+        })
     }
 
     /// Returns whether a requested replacement can be emitted as a Rust identifier token.
     fn is_supported_new_name(name: &str) -> bool {
         // TODO: Support non-ASCII identifiers once rename edits verify lexer token boundaries.
-        let name = match name.strip_prefix("r#") {
-            Some(raw) => raw,
-            // Technically we are being more restrictive than needed here, but it's unlikely to affect
-            // anyone realistically & it'll probably be a PITA to drag edition here, so it's fine.
-            None if SyntaxKind::from_keyword(name, Edition::CURRENT).is_none() => name,
-            None => return false,
-        };
-
+        let name = Self::identifier_semantic_spelling(name);
         let mut chars = name.chars();
         let Some(first) = chars.next() else {
             return false;
@@ -399,6 +408,11 @@ impl<'a, 'db> RenameResolver<'a, 'db> {
             && (first == '_' || first.is_ascii_alphabetic())
             && chars.all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
             && !matches!(name, "self" | "Self" | "crate" | "super")
+    }
+
+    /// Converts source spelling into the identifier identity used by semantic lookup.
+    fn identifier_semantic_spelling(name: &str) -> &str {
+        name.strip_prefix("r#").unwrap_or(name)
     }
 }
 
@@ -414,7 +428,7 @@ mod tests {
             ("r#type", true, "raw keyword identifier"),
             ("_", false, "wildcard is not a binding name"),
             ("r#_", false, "raw wildcard is not a binding name"),
-            ("type", false, "keyword requires raw identifier syntax"),
+            ("type", true, "presentation adds raw syntax for keywords"),
             ("self", false, "special path segment is not renameable"),
             ("", false, "empty replacement is not an identifier"),
         ];

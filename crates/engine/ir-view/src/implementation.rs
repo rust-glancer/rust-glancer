@@ -1,16 +1,18 @@
 //! Implementation lookup over indexed views.
 //!
-//! Goto-implementation is an editor query, but the lookup itself needs direct access to target item
+//! Goto-implementation is an editor query, but the lookup itself needs direct access to crate item
 //! indexes and body expression facts. This view keeps those storage-shaped queries out of analysis.
 
+use rg_body_ir::ExprKind;
 use rg_ir_model::{
-    BodyRef, DefMapRef, ExprKind, FunctionRef, SemanticItemRef, TargetRef, TraitRef, TypeDefRef,
+    BodyRef, CrateRef, DefMapRef, FunctionRef, SemanticItemRef, TraitDefRef, TypeDefRef,
     identity::{DeclarationRef, ExprRef},
 };
-use rg_ir_storage::{ItemLookupIndex, ItemStoreQuery, TargetItemQuery, UniqueVec};
-use rg_ty::{ImplementationQuery, ItemPathQuery, ReferencePeelingCandidates, Ty};
+use rg_semantic_ir::{ItemLookupIndex, ItemStoreQuery};
+use rg_std::UniqueVec;
+use rg_ty::{ImplementationQuery, ReferencePeelingCandidates, Ty, TyContext};
 
-use crate::{IndexedViewDb, lookup::resolution::ResolutionView};
+use crate::{IndexedViewDb, lookup::resolution::ResolutionView, ty::IndexedType};
 
 /// Finds implementation declarations for types, traits, and methods.
 pub struct ImplementationView<'a, 'db> {
@@ -28,7 +30,7 @@ impl<'a, 'db> ImplementationView<'a, 'db> {
         expr: ExprRef,
     ) -> anyhow::Result<Option<UniqueVec<DeclarationRef>>> {
         let body_ref = expr.body_ir();
-        let Some(body_data) = self.db.body_ir.body_data(body_ref)? else {
+        let Some(body_data) = self.db.body_ir.body(body_ref)? else {
             return Ok(None);
         };
         let Some(expr_data) = body_data.expr(expr.expr_id()) else {
@@ -47,7 +49,7 @@ impl<'a, 'db> ImplementationView<'a, 'db> {
             return Ok(None);
         }
 
-        let Some(implementation_query) = self.implementation_query(body_ref.target)? else {
+        let Some(implementation_query) = self.implementation_query(body_ref.crate_ref)? else {
             return Ok(None);
         };
         let mut implementations = UniqueVec::new();
@@ -67,7 +69,7 @@ impl<'a, 'db> ImplementationView<'a, 'db> {
     /// Return implementations related to a declaration.
     pub fn implementations_for_declaration(
         &self,
-        use_site: TargetRef,
+        use_site: CrateRef,
         declaration: DeclarationRef,
     ) -> anyhow::Result<UniqueVec<DeclarationRef>> {
         let mut implementations = UniqueVec::new();
@@ -120,7 +122,7 @@ impl<'a, 'db> ImplementationView<'a, 'db> {
                 }
             }
             DeclarationRef::BodyBinding(binding) => {
-                let Some(body) = self.db.body_ir.body_data(binding.body)? else {
+                let Some(body) = self.db.body_ir.body(binding.body)? else {
                     return Ok(implementations);
                 };
                 let Some(binding_ty) = body.binding_ty(binding.binding) else {
@@ -142,14 +144,14 @@ impl<'a, 'db> ImplementationView<'a, 'db> {
     /// Return impl blocks that apply to a type.
     pub fn implementations_for_ty(
         &self,
-        use_site: TargetRef,
-        ty: &Ty,
+        use_site: CrateRef,
+        ty: &IndexedType,
     ) -> anyhow::Result<UniqueVec<DeclarationRef>> {
         let mut implementations = UniqueVec::new();
         let Some(implementation_query) = self.implementation_query(use_site)? else {
             return Ok(implementations);
         };
-        for implementation in implementation_query.impls_for_ty(ty)? {
+        for implementation in implementation_query.impls_for_ty(ty.raw())? {
             implementations.push(DeclarationRef::from(implementation));
         }
         Ok(implementations)
@@ -182,7 +184,7 @@ impl<'a, 'db> ImplementationView<'a, 'db> {
         ty: &Ty,
     ) -> anyhow::Result<()> {
         for candidate in ReferencePeelingCandidates::new(ty) {
-            for nominal in candidate.ty().as_nominals() {
+            for nominal in candidate.ty().as_adts() {
                 self.push_body_local_impls_for_type_def(implementations, body_ref, nominal.def)?;
             }
         }
@@ -193,7 +195,7 @@ impl<'a, 'db> ImplementationView<'a, 'db> {
     fn push_body_local_impls_for_trait(
         &self,
         implementations: &mut UniqueVec<DeclarationRef>,
-        trait_ref: TraitRef,
+        trait_ref: TraitDefRef,
     ) -> anyhow::Result<()> {
         let DefMapRef::Body(body_ref) = trait_ref.origin else {
             return Ok(());
@@ -210,24 +212,25 @@ impl<'a, 'db> ImplementationView<'a, 'db> {
         Ok(())
     }
 
-    /// Build the lower implementation query for one target.
+    /// Build the lower implementation query for one crate.
     fn implementation_query(
         &self,
-        use_site: TargetRef,
+        use_site: CrateRef,
     ) -> anyhow::Result<Option<ImplementationQuery<'_, &IndexedViewDb<'_>, &IndexedViewDb<'_>>>>
     {
         let Some(semantic_index) = self.semantic_index(use_site)? else {
             return Ok(None);
         };
-        Ok(Some(ImplementationQuery::with_index(
-            ItemPathQuery::new(self.db, self.db),
-            TargetItemQuery::new(self.db, self.db, use_site),
+        Ok(Some(ImplementationQuery::new(TyContext::new(
+            self.db,
+            self.db,
             semantic_index,
-        )))
+            self.db.trait_selection(use_site),
+        ))))
     }
 
-    /// Return the target-scoped semantic index that backs fast type/member queries.
-    fn semantic_index(&self, use_site: TargetRef) -> anyhow::Result<Option<&ItemLookupIndex>> {
+    /// Return the crate-scoped semantic index that backs fast type/member queries.
+    fn semantic_index(&self, use_site: CrateRef) -> anyhow::Result<Option<&ItemLookupIndex>> {
         Ok(self.db.body_ir.semantic_index(use_site)?)
     }
 

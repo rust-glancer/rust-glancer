@@ -5,31 +5,24 @@
 
 use std::collections::HashSet;
 
-use rg_body_ir::BindingKind;
+use rg_body_ir::{BindingKind, ExprKind};
+use rg_def_map::ItemSourceKind;
 use rg_ir_model::{
-    BindingId, BodyBindingRef, BodyRef, DefMapRef, ExprId, ExprKind, FunctionRef, ModuleId,
-    ModuleRef, ScopeId, SemanticItemKind, SemanticItemRef, TargetRef, hir::source::ItemSourceKind,
-    identity::DeclarationRef,
+    BindingId, BodyBindingRef, BodyRef, CrateRef, DefMapRef, ExprId, FunctionRef, ModuleId,
+    ModuleRef, ScopeId, SemanticItemKind, SemanticItemRef, identity::DeclarationRef,
 };
-use rg_ir_storage::ItemStoreQuery;
 use rg_parse::{FileId, Span, TextSpan};
+use rg_semantic_ir::ItemStoreQuery;
 use rg_ty::Ty;
 
-use crate::IndexedViewDb;
-
-/// Namespace requested for body-local name lookup.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BodyNameNamespace {
-    Types,
-    Values,
-}
+use crate::{IndexedViewDb, lookup::name::ValueOrTypeNamespace, ty::IndexedType};
 
 /// Body scope together with the visible binding boundary.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BodyNameScope {
     body: BodyRef,
     scope: ScopeId,
-    namespace: BodyNameNamespace,
+    namespace: ValueOrTypeNamespace,
     visible_bindings: usize,
 }
 
@@ -37,7 +30,7 @@ impl BodyNameScope {
     pub fn new(
         body: BodyRef,
         scope: ScopeId,
-        namespace: BodyNameNamespace,
+        namespace: ValueOrTypeNamespace,
         visible_bindings: usize,
     ) -> Self {
         Self {
@@ -82,7 +75,7 @@ pub enum BodyLexicalName {
 pub struct InferredBindingTy {
     file_id: FileId,
     span: Span,
-    ty: Ty,
+    ty: IndexedType,
 }
 
 impl InferredBindingTy {
@@ -94,7 +87,7 @@ impl InferredBindingTy {
         self.span
     }
 
-    pub fn ty(&self) -> &Ty {
+    pub fn ty(&self) -> &IndexedType {
         &self.ty
     }
 }
@@ -174,7 +167,7 @@ impl<'a, 'db> BodyView<'a, 'db> {
         Ok(self
             .db
             .body_ir
-            .body_data(body_ref)?
+            .body(body_ref)?
             .map(|body| body.owner_module()))
     }
 
@@ -184,7 +177,7 @@ impl<'a, 'db> BodyView<'a, 'db> {
         body_ref: BodyRef,
         scope: ScopeId,
     ) -> anyhow::Result<Vec<(ScopeId, ModuleRef)>> {
-        let Some(body) = self.db.body_ir.body_data(body_ref)? else {
+        let Some(body) = self.db.body_ir.body(body_ref)? else {
             return Ok(Vec::new());
         };
         let mut modules = Vec::new();
@@ -211,7 +204,7 @@ impl<'a, 'db> BodyView<'a, 'db> {
         body_ref: BodyRef,
         scope: ScopeId,
     ) -> anyhow::Result<HashSet<String>> {
-        let Some(body) = self.db.body_ir.body_data(body_ref)? else {
+        let Some(body) = self.db.body_ir.body(body_ref)? else {
             return Ok(HashSet::new());
         };
         let Some(scope_data) = body.scope(scope) else {
@@ -232,26 +225,28 @@ impl<'a, 'db> BodyView<'a, 'db> {
     }
 
     /// Return the stored type for a body expression.
-    pub fn expr_ty(&self, body_ref: BodyRef, expr: ExprId) -> anyhow::Result<Option<Ty>> {
+    pub fn expr_ty(&self, body_ref: BodyRef, expr: ExprId) -> anyhow::Result<Option<IndexedType>> {
         Ok(self
             .db
             .body_ir
-            .body_data(body_ref)?
-            .and_then(|body| body.expr_ty(expr).cloned()))
+            .body(body_ref)?
+            .and_then(|body| body.expr_ty(expr).cloned())
+            .map(IndexedType::new))
     }
 
     /// Return the stored type for a body binding.
-    pub fn binding_ty(&self, binding: BodyBindingRef) -> anyhow::Result<Option<Ty>> {
+    pub fn binding_ty(&self, binding: BodyBindingRef) -> anyhow::Result<Option<IndexedType>> {
         Ok(self
             .db
             .body_ir
-            .body_data(binding.body)?
-            .and_then(|body| body.binding_ty(binding.binding).cloned()))
+            .body(binding.body)?
+            .and_then(|body| body.binding_ty(binding.binding).cloned())
+            .map(IndexedType::new))
     }
 
     /// Return names visible from a body scope, ordered by lexical distance.
     pub fn lexical_names(&self, scope: BodyNameScope) -> anyhow::Result<Vec<BodyLexicalName>> {
-        let Some(body) = self.db.body_ir.body_data(scope.body)? else {
+        let Some(body) = self.db.body_ir.body(scope.body)? else {
             return Ok(Vec::new());
         };
         let body_item_store = self.db.body_ir.body_item_store(scope.body)?;
@@ -268,7 +263,7 @@ impl<'a, 'db> BodyView<'a, 'db> {
                 break;
             };
 
-            if matches!(scope.namespace, BodyNameNamespace::Values) {
+            if matches!(scope.namespace, ValueOrTypeNamespace::Values) {
                 for binding_id in scope_data.bindings.iter().rev().copied() {
                     if binding_id.0 >= scope.visible_bindings {
                         continue;
@@ -351,7 +346,7 @@ impl<'a, 'db> BodyView<'a, 'db> {
                 }
             }
 
-            if matches!(scope.namespace, BodyNameNamespace::Types) {
+            if matches!(scope.namespace, ValueOrTypeNamespace::Types) {
                 for item_id in scope_data.source_items.iter().rev().copied() {
                     let Some(view) = body_item_store.and_then(|items| {
                         items.semantic_items().find(|view| {
@@ -407,12 +402,12 @@ impl<'a, 'db> BodyView<'a, 'db> {
     /// bindings, `let else` and match-pattern bindings, and `for` loop pattern bindings.
     pub fn inferred_binding_tys(
         &self,
-        target: TargetRef,
+        crate_ref: CrateRef,
         file_id: FileId,
         range: Option<TextSpan>,
     ) -> anyhow::Result<Vec<InferredBindingTy>> {
         let mut bindings = Vec::new();
-        for (_, body) in self.db.body_ir.bodies(target, Some(file_id))? {
+        for (_, body) in self.db.body_ir.bodies(crate_ref, Some(file_id))? {
             for (binding_idx, binding) in body.bindings().iter().enumerate() {
                 if !binding.source.is_written_in_file(file_id) {
                     continue;
@@ -437,7 +432,7 @@ impl<'a, 'db> BodyView<'a, 'db> {
                 bindings.push(InferredBindingTy {
                     file_id: binding.source.file_id,
                     span: binding.source.span,
-                    ty,
+                    ty: IndexedType::new(ty),
                 });
             }
         }
@@ -451,11 +446,11 @@ impl<'a, 'db> BodyView<'a, 'db> {
     /// as parameter names, onto concrete argument expressions without owning call resolution.
     pub fn resolved_function_calls(
         &self,
-        target: TargetRef,
+        crate_ref: CrateRef,
         file_id: FileId,
     ) -> anyhow::Result<Vec<ResolvedFunctionCall>> {
         let mut calls = Vec::new();
-        for (body_ref, body) in self.db.body_ir.bodies(target, Some(file_id))? {
+        for (body_ref, body) in self.db.body_ir.bodies(crate_ref, Some(file_id))? {
             for (expr_idx, expr) in body.exprs().iter().enumerate() {
                 if !expr.source.is_written_in_file(file_id) {
                     continue;
@@ -502,11 +497,11 @@ impl<'a, 'db> BodyView<'a, 'db> {
     /// Return bodies that own body-local item groups in one file.
     pub fn local_groups(
         &self,
-        target: TargetRef,
+        crate_ref: CrateRef,
         file_id: FileId,
     ) -> anyhow::Result<Vec<BodyLocalGroup>> {
         let mut groups = Vec::new();
-        for (body_ref, body) in self.db.body_ir.bodies(target, Some(file_id))? {
+        for (body_ref, body) in self.db.body_ir.bodies(crate_ref, Some(file_id))? {
             groups.push(BodyLocalGroup {
                 owner: body.owner().declaration(),
                 body: body_ref,
@@ -522,7 +517,7 @@ impl<'a, 'db> BodyView<'a, 'db> {
         body_ref: BodyRef,
         file_id: FileId,
     ) -> anyhow::Result<Vec<DeclarationRef>> {
-        let Some(body) = self.db.body_ir.body_data(body_ref)? else {
+        let Some(body) = self.db.body_ir.body(body_ref)? else {
             return Ok(Vec::new());
         };
         let body_item_store = self.db.body_ir.body_item_store(body_ref)?;
@@ -592,10 +587,7 @@ impl<'a, 'db> BodyView<'a, 'db> {
     }
 
     /// Convert expression ids into call argument spans.
-    fn resolved_call_args(
-        body: &rg_body_ir::ResolvedBodyData,
-        args: &[ExprId],
-    ) -> Vec<ResolvedCallArg> {
+    fn resolved_call_args(body: rg_body_ir::BodyView<'_>, args: &[ExprId]) -> Vec<ResolvedCallArg> {
         args.iter()
             .filter_map(|arg| {
                 body.expr(*arg).map(|expr| ResolvedCallArg {

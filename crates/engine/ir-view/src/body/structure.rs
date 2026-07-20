@@ -2,12 +2,13 @@
 
 use std::collections::HashMap;
 
-use rg_ir_model::{ExprId, ExprKind, ExprWrapperKind, TargetRef};
-use rg_ir_storage::ItemStoreQuery;
+use rg_body_ir::{ExprKind, ExprWrapperKind};
+use rg_ir_model::{CrateRef, ExprId};
 use rg_parse::{FileId, Span};
+use rg_semantic_ir::ItemStoreQuery;
 use rg_ty::Ty;
 
-use crate::IndexedViewDb;
+use crate::{IndexedViewDb, ty::IndexedType};
 
 /// A body-derived construct whose known source span ends at its closing brace.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -56,7 +57,7 @@ pub struct MethodChainExprTy {
     file_id: FileId,
     span: Span,
     parent_dot_span: Span,
-    ty: Ty,
+    ty: IndexedType,
 }
 
 impl MethodChainExprTy {
@@ -72,7 +73,7 @@ impl MethodChainExprTy {
         self.parent_dot_span
     }
 
-    pub fn ty(&self) -> &Ty {
+    pub fn ty(&self) -> &IndexedType {
         &self.ty
     }
 }
@@ -90,11 +91,11 @@ impl<'a, 'db> BodyStructureView<'a, 'db> {
     /// Return known types for method calls that feed another method call.
     pub fn method_chain_expr_tys(
         &self,
-        target: TargetRef,
+        crate_ref: CrateRef,
         file_id: FileId,
     ) -> anyhow::Result<Vec<MethodChainExprTy>> {
         let mut expr_tys = Vec::new();
-        for (_, body) in self.db.body_ir.bodies(target, Some(file_id))? {
+        for (_, body) in self.db.body_ir.bodies(crate_ref, Some(file_id))? {
             let parent_dot_by_receiver = Self::method_parent_dots_by_receiver(body);
 
             for (expr_idx, expr) in body.exprs().iter().enumerate() {
@@ -119,7 +120,7 @@ impl<'a, 'db> BodyStructureView<'a, 'db> {
                     file_id: expr.source.file_id,
                     span: expr.source.span,
                     parent_dot_span,
-                    ty,
+                    ty: IndexedType::new(ty),
                 });
             }
         }
@@ -130,7 +131,7 @@ impl<'a, 'db> BodyStructureView<'a, 'db> {
     /// Return body-owned blocks whose source extent ends at their closing brace.
     pub fn closing_brace_blocks(
         &self,
-        target: TargetRef,
+        crate_ref: CrateRef,
         file_id: FileId,
     ) -> anyhow::Result<Vec<BodyClosingBraceBlock>> {
         // Design note:
@@ -139,7 +140,7 @@ impl<'a, 'db> BodyStructureView<'a, 'db> {
 
         let items = ItemStoreQuery::new(self.db);
         let mut blocks = Vec::new();
-        for (_, body) in self.db.body_ir.bodies(target, Some(file_id))? {
+        for (_, body) in self.db.body_ir.bodies(crate_ref, Some(file_id))? {
             let body_source = body.source();
             if body_source.file_id == file_id
                 && let Some(function) = body.function_owner()
@@ -174,9 +175,7 @@ impl<'a, 'db> BodyStructureView<'a, 'db> {
     }
 
     /// Map a method receiver expression to the parent call's dot span.
-    fn method_parent_dots_by_receiver(
-        body: &rg_body_ir::ResolvedBodyData,
-    ) -> HashMap<ExprId, Span> {
+    fn method_parent_dots_by_receiver(body: rg_body_ir::BodyView<'_>) -> HashMap<ExprId, Span> {
         let mut parent_dot_by_receiver = HashMap::new();
         for expr in body.exprs() {
             let ExprKind::MethodCall {
@@ -195,7 +194,7 @@ impl<'a, 'db> BodyStructureView<'a, 'db> {
     }
 
     /// Peel wrappers around a receiver used as the base of a method chain.
-    fn chain_receiver_base(body: &rg_body_ir::ResolvedBodyData, receiver: ExprId) -> ExprId {
+    fn chain_receiver_base(body: rg_body_ir::BodyView<'_>, receiver: ExprId) -> ExprId {
         let mut current = receiver;
         while let Some(expr) = body.expr(current) {
             let ExprKind::Wrapper {
@@ -213,7 +212,7 @@ impl<'a, 'db> BodyStructureView<'a, 'db> {
 
     /// Classify a body expression that can produce a closing-brace hint.
     fn closing_brace_kind(
-        body: &rg_body_ir::ResolvedBodyData,
+        body: rg_body_ir::BodyView<'_>,
         expr: &ExprKind,
     ) -> Option<BodyClosingBraceBlockKind> {
         match expr {

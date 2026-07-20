@@ -1,20 +1,20 @@
 //! Associated item lookup in value position.
 
+use rg_def_map::DefMapSource;
 use rg_ir_model::{
-    AssocItemId, BodyAssociatedPathPrefix, BodyPath, ConstRef, DefMapRef, EnumVariantRef,
-    FunctionRef, ImplRef, ItemOwner, Path, ScopeId, TraitImplRef, TypeDefId,
-    identity::DeclarationRef,
+    AssocItemId, ConstRef, DefMapRef, EnumVariantRef, FunctionRef, ImplRef, ItemOwner, Path,
+    ScopeId, TraitImplRef, TypeDefId, identity::DeclarationRef,
 };
-use rg_ir_storage::{DefMapSource, ItemStoreSource, TypePathContext};
 use rg_package_store::PackageStoreError;
+use rg_semantic_ir::ItemStoreSource;
 use rg_std::{ExpectedUnique, UniqueVec};
-use rg_ty::{ExpectedTyExt, GenericArg, NominalTy, Ty, TypeSubst};
+use rg_ty::{AdtTy, ExpectedTyExt, Substitution, TraitSelection, Ty, inference::InferenceTable};
 
 use super::traits::BodyQualifiedTraitSelection;
 
 use crate::{
-    ir::resolved::BodyResolution,
-    resolution::{BodyResolutionContext, TypeRefUseSite},
+    BodyAssociatedPathPrefix, BodyPath, ir::resolved::BodyResolution,
+    resolution::BodyResolutionContext,
 };
 
 /// Resolves `Type::item` paths in value position.
@@ -35,7 +35,8 @@ enum BodyAssociatedItemCandidate {
 pub(crate) struct BodyAssociatedFunctionCandidate {
     function: FunctionRef,
     self_ty: Ty,
-    subst: TypeSubst,
+    subst: Substitution,
+    trait_selection: Option<TraitSelection>,
 }
 
 impl BodyAssociatedFunctionCandidate {
@@ -50,8 +51,13 @@ impl BodyAssociatedFunctionCandidate {
     }
 
     /// Return substitutions derived from the selected `Self` type.
-    pub(crate) fn subst(&self) -> &TypeSubst {
+    pub(crate) fn subst(&self) -> &Substitution {
         &self.subst
+    }
+
+    /// Return the trait-selection evidence for this function, if it came from a trait impl.
+    pub(crate) fn trait_selection(&self) -> Option<&TraitSelection> {
+        self.trait_selection.as_ref()
     }
 }
 
@@ -95,10 +101,7 @@ where
 
         match prefix {
             BodyAssociatedPathPrefix::Type(prefix_ty_ref) => {
-                let prefix_ty = self
-                    .context
-                    .type_refs(TypeRefUseSite::Scope(scope))
-                    .resolve(&prefix_ty_ref)?;
+                let prefix_ty = self.context.type_refs(scope).resolve(&prefix_ty_ref)?;
                 self.resolve_for_type(&prefix_ty, last_segment)
             }
             BodyAssociatedPathPrefix::QualifiedTrait { self_ty, trait_ref } => {
@@ -114,8 +117,9 @@ where
                     return Ok(Some(Self::const_resolution(consts)));
                 }
 
+                let table = InferenceTable::new();
                 let functions =
-                    self.qualified_trait_function_candidates(&selection, last_segment)?;
+                    self.qualified_trait_function_candidates(&selection, last_segment, &table)?;
                 Ok((!functions.is_empty()).then_some(Self::function_resolution(functions)))
             }
         }
@@ -153,10 +157,10 @@ where
             }
         }
 
-        // Trait associated const lookup is still receiver-driven: `Type::CONST` first proves that
-        // `Type` has a visible trait impl, then reads the matching const item from that impl or
-        // falls back to the trait declaration. This mirrors trait method lookup without pretending
-        // to be a full trait solver.
+        // Trait associated const lookup is receiver-driven: `Type::CONST` submits each matching
+        // impl to the shared selection boundary, then reads the concrete const from that impl or
+        // falls back to the trait declaration. An unavailable proof remains a tentative lookup
+        // candidate for editor features; definite rejection removes it.
         let mut trait_consts = Vec::new();
         for nominal_ty in &receiver_tys {
             trait_consts
@@ -170,10 +174,14 @@ where
         // Inherent associated functions are exact candidates. Trait-associated functions are kept
         // deliberately optimistic, following the same "prefer useful candidates over false
         // negatives" policy as dot completion.
-        let mut functions = Vec::new();
+        let mut functions = UniqueVec::new();
+        let table = InferenceTable::new();
         for nominal_ty in &receiver_tys {
-            functions
-                .extend(self.associated_function_candidates_for_type(nominal_ty, last_segment)?);
+            functions.extend(self.associated_function_candidates_for_type(
+                nominal_ty,
+                last_segment,
+                &table,
+            )?);
         }
 
         Ok((!functions.is_empty()).then_some(Self::function_resolution(functions)))
@@ -184,10 +192,15 @@ where
         &self,
         prefix_ty: &Ty,
         name: &str,
-    ) -> Result<Vec<BodyAssociatedFunctionCandidate>, PackageStoreError> {
-        let mut functions = Vec::new();
+        table: &InferenceTable,
+    ) -> Result<UniqueVec<BodyAssociatedFunctionCandidate>, PackageStoreError> {
+        let mut functions = UniqueVec::new();
         for nominal_ty in self.receiver_tys_for_prefix(prefix_ty)? {
-            functions.extend(self.associated_function_candidates_for_type(&nominal_ty, name)?);
+            functions.extend(self.associated_function_candidates_for_type(
+                &nominal_ty,
+                name,
+                table,
+            )?);
         }
         Ok(functions)
     }
@@ -197,18 +210,16 @@ where
         &self,
         scope: ScopeId,
         path: &BodyPath,
-    ) -> Result<Vec<BodyAssociatedFunctionCandidate>, PackageStoreError> {
+        table: &InferenceTable,
+    ) -> Result<UniqueVec<BodyAssociatedFunctionCandidate>, PackageStoreError> {
         let Some((prefix, name)) = path.split_associated_item_prefix_name() else {
-            return Ok(Vec::new());
+            return Ok(UniqueVec::new());
         };
 
         match prefix {
             BodyAssociatedPathPrefix::Type(prefix_ty_ref) => {
-                let prefix_ty = self
-                    .context
-                    .type_refs(TypeRefUseSite::Scope(scope))
-                    .resolve(&prefix_ty_ref)?;
-                self.function_candidates_for_type(&prefix_ty, name)
+                let prefix_ty = self.context.type_refs(scope).resolve(&prefix_ty_ref)?;
+                self.function_candidates_for_type(&prefix_ty, name, table)
             }
             BodyAssociatedPathPrefix::QualifiedTrait { self_ty, trait_ref } => {
                 let Some(selection) = self
@@ -216,9 +227,9 @@ where
                     .traits()
                     .qualified_selection(scope, &self_ty, &trait_ref)?
                 else {
-                    return Ok(Vec::new());
+                    return Ok(UniqueVec::new());
                 };
-                self.qualified_trait_function_candidates(&selection, name)
+                self.qualified_trait_function_candidates(&selection, name, table)
             }
         }
     }
@@ -281,29 +292,37 @@ where
         )
     }
 
-    /// Find an enum variant constructor for an enum receiver type.
+    /// Find a tuple or unit enum variant that can be used as a bare value.
     fn enum_variant_candidate_for_type(
         &self,
-        ty: &NominalTy,
+        ty: &AdtTy,
         name: &str,
     ) -> Result<Option<BodyAssociatedItemCandidate>, PackageStoreError> {
         if !matches!(ty.def.id, TypeDefId::Enum(_)) {
             return Ok(None);
         }
 
-        Ok(self
-            .context
-            .item_query()
-            .enum_variant_ref_for_type_def(ty.def, name)?
-            .map(|variant_ref| {
-                BodyAssociatedItemCandidate::EnumVariant(variant_ref, Ty::nominal(ty.clone()))
-            }))
+        let item_query = self.context.item_query();
+        let Some(variant_ref) = item_query.enum_variant_ref_for_type_def(ty.def, name)? else {
+            return Ok(None);
+        };
+        let Some(variant) = item_query.enum_variant_data(variant_ref)? else {
+            return Ok(None);
+        };
+        if !variant.variant.fields.has_value_constructor() {
+            return Ok(None);
+        }
+
+        Ok(Some(BodyAssociatedItemCandidate::EnumVariant(
+            variant_ref,
+            Ty::adt(ty.clone()),
+        )))
     }
 
-    /// Find an inherent associated const in body-local then target impls.
+    /// Find an inherent associated const in body-local then crate impls.
     fn inherent_associated_const_candidate_for_type(
         &self,
-        ty: &NominalTy,
+        ty: &AdtTy,
         name: &str,
     ) -> Result<Option<BodyAssociatedItemCandidate>, PackageStoreError> {
         if let Some(item) = self.associated_const_candidate_for_impls(
@@ -332,7 +351,7 @@ where
     /// Find associated consts from applicable trait impls.
     fn trait_associated_const_candidates_for_type(
         &self,
-        ty: &NominalTy,
+        ty: &AdtTy,
         name: &str,
     ) -> Result<Vec<BodyAssociatedItemCandidate>, PackageStoreError> {
         let mut items = Vec::new();
@@ -369,12 +388,13 @@ where
     /// Find static associated functions from inherent and trait impls.
     fn associated_function_candidates_for_type(
         &self,
-        ty: &NominalTy,
+        ty: &AdtTy,
         name: &str,
-    ) -> Result<Vec<BodyAssociatedFunctionCandidate>, PackageStoreError> {
+        table: &InferenceTable,
+    ) -> Result<UniqueVec<BodyAssociatedFunctionCandidate>, PackageStoreError> {
         let body_items = self.context.body_local_items();
         let matcher = self.context.impl_matcher();
-        let mut functions = Vec::new();
+        let mut functions = UniqueVec::new();
 
         for function_ref in body_items.inherent_functions_for_type(ty.def)? {
             if matcher.function_applies_to_receiver(function_ref, ty)? {
@@ -382,8 +402,8 @@ where
             }
         }
 
-        if ty.def.origin.as_target_ref().is_some() {
-            for function_ref in self.semantic_inherent_function_items_for_type(ty, name)? {
+        if ty.def.origin.as_crate_ref().is_some() {
+            for function_ref in self.semantic_inherent_fn_defs_for_type(ty, name)? {
                 if matcher.function_applies_to_receiver(function_ref, ty)? {
                     self.push_associated_function(&mut functions, ty, function_ref, name)?;
                 }
@@ -391,22 +411,31 @@ where
         }
 
         let body_trait_impls = body_items.trait_impls_for_type(ty.def)?;
-        for (function_ref, _) in matcher.trait_function_candidates_from_impls(
-            self.context.semantic_index(),
-            body_trait_impls,
-            ty,
-            Some(name),
-        )? {
-            self.push_associated_function(&mut functions, ty, function_ref, name)?;
+        for (function_ref, selection) in
+            matcher.trait_function_candidates_from_impls(body_trait_impls, ty, Some(name), table)?
+        {
+            self.push_associated_function_with_subst(
+                &mut functions,
+                ty,
+                function_ref,
+                name,
+                None,
+                Some(selection),
+            )?;
         }
 
-        if ty.def.origin.as_target_ref().is_some() {
-            for (function_ref, _) in matcher.trait_function_candidates_for_receiver(
-                self.context.semantic_index(),
-                ty,
-                Some(name),
-            )? {
-                self.push_associated_function(&mut functions, ty, function_ref, name)?;
+        if ty.def.origin.as_crate_ref().is_some() {
+            for (function_ref, selection) in
+                matcher.trait_function_candidates_for_receiver(ty, Some(name), table)?
+            {
+                self.push_associated_function_with_subst(
+                    &mut functions,
+                    ty,
+                    function_ref,
+                    name,
+                    None,
+                    Some(selection),
+                )?;
             }
         }
 
@@ -418,17 +447,18 @@ where
         &self,
         selection: &BodyQualifiedTraitSelection,
         name: &str,
-    ) -> Result<Vec<BodyAssociatedFunctionCandidate>, PackageStoreError> {
-        let mut functions = Vec::new();
+        table: &InferenceTable,
+    ) -> Result<UniqueVec<BodyAssociatedFunctionCandidate>, PackageStoreError> {
+        let mut functions = UniqueVec::new();
         for receiver in selection.receivers() {
-            for (function_ref, _) in self
+            for (function_ref, trait_selection) in self
                 .context
                 .impl_matcher()
                 .trait_function_candidates_from_impls(
-                    self.context.semantic_index(),
                     receiver.impls().clone(),
                     receiver.receiver_ty(),
                     Some(name),
+                    table,
                 )?
             {
                 self.push_associated_function_with_subst(
@@ -437,6 +467,7 @@ where
                     function_ref,
                     name,
                     Some(selection.subst()),
+                    Some(trait_selection),
                 )?;
             }
         }
@@ -461,10 +492,10 @@ where
         Ok(consts)
     }
 
-    /// Read target-visible inherent functions from the persisted lookup index.
-    fn semantic_inherent_function_items_for_type(
+    /// Read crate-visible inherent functions from the persisted lookup index.
+    fn semantic_inherent_fn_defs_for_type(
         &self,
-        ty: &NominalTy,
+        ty: &AdtTy,
         name: &str,
     ) -> Result<UniqueVec<FunctionRef>, PackageStoreError> {
         Ok(self
@@ -478,22 +509,30 @@ where
     /// Add a function only if it is static and has the requested name.
     fn push_associated_function(
         &self,
-        functions: &mut Vec<BodyAssociatedFunctionCandidate>,
-        receiver_ty: &NominalTy,
+        functions: &mut UniqueVec<BodyAssociatedFunctionCandidate>,
+        receiver_ty: &AdtTy,
         function_ref: FunctionRef,
         name: &str,
     ) -> Result<(), PackageStoreError> {
-        self.push_associated_function_with_subst(functions, receiver_ty, function_ref, name, None)
+        self.push_associated_function_with_subst(
+            functions,
+            receiver_ty,
+            function_ref,
+            name,
+            None,
+            None,
+        )
     }
 
     /// Add a function with extra substitutions from an explicit trait qualification.
     fn push_associated_function_with_subst(
         &self,
-        functions: &mut Vec<BodyAssociatedFunctionCandidate>,
-        receiver_ty: &NominalTy,
+        functions: &mut UniqueVec<BodyAssociatedFunctionCandidate>,
+        receiver_ty: &AdtTy,
         function_ref: FunctionRef,
         name: &str,
-        extra_subst: Option<&TypeSubst>,
+        extra_subst: Option<&Substitution>,
+        trait_selection: Option<TraitSelection>,
     ) -> Result<(), PackageStoreError> {
         let Some(function_data) = self.context.item_query().function_data(function_ref)? else {
             return Ok(());
@@ -509,48 +548,22 @@ where
             }
             let candidate = BodyAssociatedFunctionCandidate {
                 function: function_ref,
-                self_ty: Ty::nominal(receiver_ty.clone()),
+                self_ty: Ty::adt(receiver_ty.clone()),
                 subst,
+                trait_selection,
             };
-            if !functions.contains(&candidate) {
-                functions.push(candidate);
-            }
+            functions.push(candidate);
         }
         Ok(())
     }
 
     /// Preserve written args and treat omitted type args as inferable unknowns.
-    fn receiver_tys_for_prefix(&self, prefix_ty: &Ty) -> Result<Vec<NominalTy>, PackageStoreError> {
+    fn receiver_tys_for_prefix(&self, prefix_ty: &Ty) -> Result<Vec<AdtTy>, PackageStoreError> {
         prefix_ty
-            .as_nominals()
+            .as_adts()
             .iter()
-            .map(|ty| self.receiver_ty_for_prefix(ty))
+            .map(|ty| self.context.generics().complete_omitted_nominal_args(ty))
             .collect()
-    }
-
-    fn receiver_ty_for_prefix(&self, ty: &NominalTy) -> Result<NominalTy, PackageStoreError> {
-        if !ty.args.is_empty() {
-            return Ok(ty.clone());
-        }
-        let Some(generics) = self
-            .context
-            .item_query()
-            .generic_params_for_type_def(ty.def)?
-        else {
-            return Ok(ty.clone());
-        };
-        if generics.types.is_empty() {
-            return Ok(ty.clone());
-        }
-
-        Ok(NominalTy {
-            def: ty.def,
-            args: generics
-                .types
-                .iter()
-                .map(|_| GenericArg::Type(Box::new(Ty::Unknown)))
-                .collect(),
-        })
     }
 
     /// Add consts from applicable impl items, or their trait declarations.
@@ -558,14 +571,15 @@ where
         &self,
         items: &mut Vec<BodyAssociatedItemCandidate>,
         trait_impls: UniqueVec<TraitImplRef>,
-        ty: &NominalTy,
+        ty: &AdtTy,
         name: &str,
     ) -> Result<(), PackageStoreError> {
         let item_query = self.context.item_query();
         let matcher = self.context.impl_matcher();
+        let table = InferenceTable::new();
         for trait_impl in trait_impls {
             if !matcher
-                .trait_impl_applicability(trait_impl, ty)?
+                .trait_impl_applicability(trait_impl, ty, &table)?
                 .is_applicable()
             {
                 continue;
@@ -618,7 +632,7 @@ where
     fn associated_const_candidate_for_impls(
         &self,
         impls: UniqueVec<ImplRef>,
-        ty: &NominalTy,
+        ty: &AdtTy,
         name: &str,
     ) -> Result<Option<BodyAssociatedItemCandidate>, PackageStoreError> {
         let item_query = self.context.item_query();
@@ -649,7 +663,7 @@ where
         &self,
         origin: DefMapRef,
         assoc_items: &[AssocItemId],
-        receiver_ty: &NominalTy,
+        receiver_ty: &AdtTy,
         name: &str,
     ) -> Result<Option<BodyAssociatedItemCandidate>, PackageStoreError> {
         let item_query = self.context.item_query();
@@ -677,34 +691,18 @@ where
         &self,
         const_ref: ConstRef,
         owner: ItemOwner,
-        receiver_ty: &NominalTy,
+        receiver_ty: &AdtTy,
     ) -> Result<Ty, PackageStoreError> {
-        let item_query = self.context.item_query();
-        let Some(const_data) = item_query.const_data(const_ref)? else {
-            return Ok(Ty::Unknown);
-        };
-        let Some(ty) = const_data.signature.ty() else {
-            return Ok(Ty::Unknown);
-        };
-
-        if ty.is_self_type() {
-            return Ok(Ty::nominal(receiver_ty.clone()));
-        }
-
         let subst = self.context.generics().subst_for_receiver_owner(
             const_ref.origin,
             owner,
             receiver_ty,
         )?;
-
-        let context = self
+        let ty = self
             .context
-            .item_query()
-            .type_path_context_for_owner(const_ref.origin, owner)?
-            .unwrap_or_else(|| TypePathContext::module(self.context.body().owner_module()));
-        self.context
-            .type_refs(TypeRefUseSite::OwnerContext(context))
-            .with_subst(&subst)
-            .resolve(ty)
+            .signatures()
+            .const_ty(const_ref)?
+            .unwrap_or(Ty::Unknown);
+        Ok(subst.apply(&ty))
     }
 }

@@ -1,35 +1,88 @@
 //! Body-aware routing for shared DefMap and item-store queries.
 
-use rg_ir_model::{BodyRef, DefMapRef, ModuleRef, TargetRef};
-use rg_ir_storage::{DefMap, DefMapSource, ItemStore, ItemStoreSource};
+use rg_def_map::{DefMap, DefMapSource};
+use rg_ir_model::{BodyRef, CrateRef, DefMapRef, ModuleRef};
 use rg_package_store::PackageStoreError;
+use rg_semantic_ir::{ItemStore, ItemStoreSource};
 
-use crate::ir::body::ResolvedBodyData;
+use crate::{BodyData, BodyView, ir::BodyQueryView};
+
+/// Body state available to one query context.
+///
+/// Structural build steps run before semantic sidecars exist. Semantic queries retain a narrow
+/// view of the facts available in their phase without making the build pipeline allocate
+/// placeholders for finalized facts.
+#[derive(Clone, Copy)]
+enum BodyQueryBody<'a> {
+    Structural(&'a BodyData),
+    Query(BodyQueryView<'a>),
+}
+
+impl<'a> BodyQueryBody<'a> {
+    fn structure(self) -> &'a BodyData {
+        match self {
+            Self::Structural(body) => body,
+            Self::Query(body) => body.structure(),
+        }
+    }
+
+    fn query_view(self) -> BodyQueryView<'a> {
+        match self {
+            Self::Query(body) => body,
+            Self::Structural(_) => {
+                panic!("semantic body facts should exist before this query is used")
+            }
+        }
+    }
+}
 
 /// Routes semantic-shaped queries while keeping the active body available for lexical lookup.
 ///
 /// DefMap and item-store storage is owned by the provider. During indexing that provider reads the
-/// build state; after indexing it reads frozen target body-local storage.
+/// build state; after indexing it reads frozen crate_ref body-local storage.
 #[derive(Clone, Copy)]
 pub(crate) struct BodyQuerySource<'a, D, I> {
     def_maps: D,
     item_stores: I,
     body_ref: BodyRef,
-    body: &'a ResolvedBodyData,
+    body: BodyQueryBody<'a>,
 }
 
 impl<'a, D, I> BodyQuerySource<'a, D, I> {
-    pub(crate) fn new(
+    pub(crate) fn new(def_maps: D, item_stores: I, body_ref: BodyRef, body: BodyView<'a>) -> Self {
+        Self {
+            def_maps,
+            item_stores,
+            body_ref,
+            body: BodyQueryBody::Query(body.query_view()),
+        }
+    }
+
+    pub(crate) fn for_query(
         def_maps: D,
         item_stores: I,
         body_ref: BodyRef,
-        body: &'a ResolvedBodyData,
+        body: BodyQueryView<'a>,
     ) -> Self {
         Self {
             def_maps,
             item_stores,
             body_ref,
-            body,
+            body: BodyQueryBody::Query(body),
+        }
+    }
+
+    pub(crate) fn for_structure(
+        def_maps: D,
+        item_stores: I,
+        body_ref: BodyRef,
+        body: &'a BodyData,
+    ) -> Self {
+        Self {
+            def_maps,
+            item_stores,
+            body_ref,
+            body: BodyQueryBody::Structural(body),
         }
     }
 
@@ -37,8 +90,12 @@ impl<'a, D, I> BodyQuerySource<'a, D, I> {
         self.body_ref
     }
 
-    pub(crate) fn body(&self) -> &'a ResolvedBodyData {
-        self.body
+    pub(crate) fn body(&self) -> &'a BodyData {
+        self.body.structure()
+    }
+
+    pub(crate) fn query_body(&self) -> BodyQueryView<'a> {
+        self.body.query_view()
     }
 }
 
@@ -54,30 +111,31 @@ where
 
     fn extern_root(
         &self,
-        target: TargetRef,
+        crate_ref: CrateRef,
         name: &str,
     ) -> Result<Option<ModuleRef>, PackageStoreError> {
-        self.def_maps.extern_root(target, name)
+        self.def_maps.extern_root(crate_ref, name)
     }
 
     fn extern_roots(
         &self,
-        target: TargetRef,
+        crate_ref: CrateRef,
     ) -> Result<Vec<(String, ModuleRef)>, PackageStoreError> {
-        self.def_maps.extern_roots(target)
+        self.def_maps.extern_roots(crate_ref)
     }
 
-    fn prelude_module(&self, target: TargetRef) -> Result<Option<ModuleRef>, PackageStoreError> {
-        self.def_maps.prelude_module(target)
+    fn prelude_module(&self, crate_ref: CrateRef) -> Result<Option<ModuleRef>, PackageStoreError> {
+        self.def_maps.prelude_module(crate_ref)
     }
 
-    fn root_module(&self, target: TargetRef) -> Result<Option<ModuleRef>, PackageStoreError> {
-        self.def_maps.root_module(target)
+    fn root_module(&self, crate_ref: CrateRef) -> Result<Option<ModuleRef>, PackageStoreError> {
+        self.def_maps.root_module(crate_ref)
     }
 }
 
 impl<'a, D, I> ItemStoreSource<'a> for BodyQuerySource<'a, D, I>
 where
+    D: Clone,
     I: ItemStoreSource<'a, Error = PackageStoreError>,
 {
     type Error = PackageStoreError;

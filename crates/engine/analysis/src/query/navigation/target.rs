@@ -44,9 +44,13 @@ impl<'a, 'db> NavigationTargetProjection<'a, 'db> {
             | DeclarationRef::Item(_)
             | DeclarationRef::Field(_)
             | DeclarationRef::EnumVariant(_)
-            | DeclarationRef::BodyBinding(_) => Ok(DeclarationView::new(self.0)
-                .declaration(declaration)?
-                .map(Self::navigation_target)),
+            | DeclarationRef::BodyBinding(_) => {
+                let Some(declaration) = DeclarationView::new(self.0).declaration(declaration)?
+                else {
+                    return Ok(None);
+                };
+                Ok(Some(self.navigation_target(declaration)?))
+            }
         }
     }
 
@@ -56,7 +60,7 @@ impl<'a, 'db> NavigationTargetProjection<'a, 'db> {
             // Root modules have no declaration name to jump to, so they navigate to the owning
             // file. Named modules are ordinary declarations.
             return Ok(Some(NavigationTarget {
-                target: module_ref.origin.origin_target(),
+                crate_ref: module_ref.origin.origin_crate(),
                 kind: NavigationTargetKind::Module,
                 name: "crate".to_string(),
                 file_id,
@@ -64,24 +68,32 @@ impl<'a, 'db> NavigationTargetProjection<'a, 'db> {
             }));
         }
 
-        Ok(declarations
-            .declaration(DeclarationRef::module(module_ref))?
-            .map(|declaration| NavigationTarget {
-                target: declaration.target(),
-                kind: NavigationTargetKind::from(declaration.kind()),
-                name: declaration.name().to_string(),
-                file_id: declaration.file_id(),
-                span: Some(declaration.selection_span()),
-            }))
-    }
-
-    fn navigation_target(declaration: Declaration) -> NavigationTarget {
-        NavigationTarget {
-            target: declaration.target(),
+        let Some(declaration) = declarations.declaration(DeclarationRef::module(module_ref))?
+        else {
+            return Ok(None);
+        };
+        let name = declarations
+            .declaration_site_name(&declaration)?
+            .to_string();
+        Ok(Some(NavigationTarget {
+            crate_ref: declaration.crate_ref(),
             kind: NavigationTargetKind::from(declaration.kind()),
-            name: declaration.name().to_string(),
+            name,
             file_id: declaration.file_id(),
             span: Some(declaration.selection_span()),
-        }
+        }))
+    }
+
+    fn navigation_target(&self, declaration: Declaration) -> anyhow::Result<NavigationTarget> {
+        let name = DeclarationView::new(self.0)
+            .declaration_site_name(&declaration)?
+            .to_string();
+        Ok(NavigationTarget {
+            crate_ref: declaration.crate_ref(),
+            kind: NavigationTargetKind::from(declaration.kind()),
+            name,
+            file_id: declaration.file_id(),
+            span: Some(declaration.selection_span()),
+        })
     }
 }

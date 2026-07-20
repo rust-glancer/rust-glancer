@@ -12,10 +12,9 @@ pub use query::{
 };
 pub use rg_ir_view::SymbolKind;
 
-use rg_ir_model::{PackageSlot, TargetRef};
-use rg_ir_view::IndexedViewDb;
+use rg_ir_model::{CrateRef, PackageSlot};
+use rg_ir_view::{IndexedViewDb, ty::IndexedType};
 use rg_parse::{FileId, ParseDb, Span};
-use rg_ty::Ty;
 
 use crate::source_symbol::{SourceSymbol, SourceSymbolIndex, SourceSymbolResolver};
 
@@ -66,34 +65,34 @@ impl<'a> Analysis<'a> {
     /// Returns the smallest known symbol under a source offset.
     pub fn symbol_at(
         &self,
-        target: TargetRef,
+        crate_ref: CrateRef,
         file_id: FileId,
         offset: u32,
     ) -> anyhow::Result<Option<SymbolAt>> {
-        self.symbol_at_for_query(target, file_id, offset)
+        self.symbol_at_for_query(crate_ref, file_id, offset)
     }
 
     pub(crate) fn symbol_at_for_query(
         &self,
-        target: TargetRef,
+        crate_ref: CrateRef,
         file_id: FileId,
         offset: u32,
     ) -> anyhow::Result<Option<SymbolAt>> {
         Ok(self
-            .source_symbol_at_for_query(target, file_id, offset)?
+            .source_symbol_at_for_query(crate_ref, file_id, offset)?
             .map(SourceSymbol::into_symbol))
     }
 
     pub(crate) fn source_symbol_at_for_query(
         &self,
-        target: TargetRef,
+        crate_ref: CrateRef,
         file_id: FileId,
         offset: u32,
     ) -> anyhow::Result<Option<SourceSymbol>> {
         // Overlapping syntax is common around type paths and expressions. The narrowest span is
         // the best proxy for the thing the user actually placed the cursor on.
         Ok(SourceSymbolIndex::new(self.view_db())
-            .symbols_at(target, file_id, offset)?
+            .symbols_at(crate_ref, file_id, offset)?
             .into_iter()
             .min_by_key(|candidate| candidate.span().len()))
     }
@@ -106,43 +105,43 @@ impl<'a> Analysis<'a> {
     /// Returns best-effort definitions for the symbol under a source offset.
     pub fn goto_definition(
         &self,
-        target: TargetRef,
+        crate_ref: CrateRef,
         file_id: FileId,
         offset: u32,
     ) -> anyhow::Result<Vec<NavigationTarget>> {
-        query::navigation::GotoResolver::new(self).goto_definition(target, file_id, offset)
+        query::navigation::GotoResolver::new(self).goto_definition(crate_ref, file_id, offset)
     }
 
     /// Returns best-effort type definitions for the symbol under a source offset.
     pub fn goto_type_definition(
         &self,
-        target: TargetRef,
+        crate_ref: CrateRef,
         file_id: FileId,
         offset: u32,
     ) -> anyhow::Result<Vec<NavigationTarget>> {
         query::navigation::TypeDefinitionResolver::new(self)
-            .goto_type_definition(target, file_id, offset)
+            .goto_type_definition(crate_ref, file_id, offset)
     }
 
     /// Returns best-effort implementations for the symbol under a source offset.
     pub fn goto_implementation(
         &self,
-        target: TargetRef,
+        crate_ref: CrateRef,
         file_id: FileId,
         offset: u32,
     ) -> anyhow::Result<Vec<NavigationTarget>> {
         query::navigation::ImplementationResolver::new(self)
-            .goto_implementation(target, file_id, offset)
+            .goto_implementation(crate_ref, file_id, offset)
     }
 
     /// Returns the best-effort type under a source offset.
     pub fn type_at(
         &self,
-        target: TargetRef,
+        crate_ref: CrateRef,
         file_id: FileId,
         offset: u32,
-    ) -> anyhow::Result<Option<Ty>> {
-        let Some(symbol) = self.symbol_at_for_query(target, file_id, offset)? else {
+    ) -> anyhow::Result<Option<IndexedType>> {
+        let Some(symbol) = self.symbol_at_for_query(crate_ref, file_id, offset)? else {
             return Ok(None);
         };
         SourceSymbolResolver::new(self.view_db()).ty_for_symbol(symbol)
@@ -151,21 +150,21 @@ impl<'a> Analysis<'a> {
     /// Returns best-effort inlay hints for one file.
     pub fn inlay_hints(
         &self,
-        target: TargetRef,
+        crate_ref: CrateRef,
         file_id: FileId,
         range: Option<rg_parse::TextSpan>,
     ) -> anyhow::Result<Vec<InlayHint>> {
-        query::inlay_hints::InlayHintCollector::new(self).inlay_hints(target, file_id, range)
+        query::inlay_hints::InlayHintCollector::new(self).inlay_hints(crate_ref, file_id, range)
     }
 
     /// Returns best-effort hover information for the symbol under a source offset.
     pub fn hover(
         &self,
-        target: TargetRef,
+        crate_ref: CrateRef,
         file_id: FileId,
         offset: u32,
     ) -> anyhow::Result<Option<HoverInfo>> {
-        query::hover::HoverResolver::new(self).hover(target, file_id, offset)
+        query::hover::HoverResolver::new(self).hover(crate_ref, file_id, offset)
     }
 
     /// Returns best-effort source references for the symbol under a source offset.
@@ -174,44 +173,47 @@ impl<'a> Analysis<'a> {
     /// controls whether declaration locations are included and how they relate to that surface.
     pub fn references(
         &self,
-        target: TargetRef,
+        crate_ref: CrateRef,
         file_id: FileId,
         offset: u32,
         query: ReferenceQuery<'_>,
     ) -> anyhow::Result<Vec<ReferenceLocation>> {
-        query::references::ReferenceResolver::new(self, query).references(target, file_id, offset)
+        query::references::ReferenceResolver::new(self, query)
+            .references(crate_ref, file_id, offset)
     }
 
     /// Returns labels that callers may use for request-local reference prefiltering.
     pub fn reference_search_labels(
         &self,
-        target: TargetRef,
+        crate_ref: CrateRef,
         file_id: FileId,
         offset: u32,
     ) -> anyhow::Result<Vec<ReferenceSearchLabel>> {
-        query::references::ReferenceResolver::reference_search_labels(self, target, file_id, offset)
+        query::references::ReferenceResolver::reference_search_labels(
+            self, crate_ref, file_id, offset,
+        )
     }
 
     /// Returns the source range and placeholder for a valid rename position.
     pub fn prepare_rename(
         &self,
-        target: TargetRef,
+        crate_ref: CrateRef,
         file_id: FileId,
         offset: u32,
     ) -> anyhow::Result<Option<RenameTarget>> {
-        query::rename::RenameResolver::new(self).prepare_rename(target, file_id, offset)
+        query::rename::RenameResolver::new(self).prepare_rename(crate_ref, file_id, offset)
     }
 
     /// Returns semantic source edits for renaming the symbol under a source offset.
     pub fn rename(
         &self,
-        target: TargetRef,
+        crate_ref: CrateRef,
         file_id: FileId,
         offset: u32,
         new_name: &str,
         query: ReferenceQuery<'_>,
     ) -> anyhow::Result<Option<RenameResult>> {
-        query::rename::RenameResolver::new(self).rename(target, file_id, offset, new_name, query)
+        query::rename::RenameResolver::new(self).rename(crate_ref, file_id, offset, new_name, query)
     }
 
     /// Returns best-effort completion candidates for a source offset.
@@ -226,13 +228,13 @@ impl<'a> Analysis<'a> {
         query::completion::CompletionResolver::new(self, query).completions_at()
     }
 
-    /// Returns a hierarchical outline for one file under the selected target context.
+    /// Returns a hierarchical outline for one file under the selected crate context.
     pub fn document_symbols(
         &self,
-        target: TargetRef,
+        crate_ref: CrateRef,
         file_id: FileId,
     ) -> anyhow::Result<Vec<DocumentSymbol>> {
-        query::symbols::SymbolCollector::new(self).document_symbols(target, file_id)
+        query::symbols::SymbolCollector::new(self).document_symbols(crate_ref, file_id)
     }
 
     /// Returns flat, best-effort symbols matching a case-insensitive workspace query.

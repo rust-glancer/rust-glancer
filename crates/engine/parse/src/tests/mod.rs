@@ -214,6 +214,42 @@ fn module_discovery_shares_files_across_targets() {
 }
 
 #[test]
+fn module_discovery_uses_semantic_identifier_spelling_for_file_paths() {
+    check_parse_db_after_module_discovery(
+        r#"
+        //- /Cargo.toml
+        [package]
+        name = "raw_module_discovery"
+        version = "0.1.0"
+        edition = "2024"
+
+        //- /src/lib.rs
+        pub mod r#type;
+        pub mod r#async {
+            pub mod r#match;
+        }
+
+        //- /src/type.rs
+        pub struct Item;
+
+        //- /src/async/match.rs
+        pub struct Nested;
+        "#,
+        expect![[r#"
+            packages 1 (workspace members: 1, dependencies: 0)
+
+            package raw_module_discovery [member]
+            targets
+            - raw_module_discovery [lib] -> src/lib.rs
+            files
+            - src/async/match.rs
+            - src/lib.rs
+            - src/type.rs
+        "#]],
+    );
+}
+
+#[test]
 fn module_discovery_terminates_on_module_cycles() {
     check_parse_db_after_module_discovery(
         r#"

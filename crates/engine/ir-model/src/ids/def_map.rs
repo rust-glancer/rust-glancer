@@ -1,4 +1,3 @@
-use rg_parse::TargetId;
 use rg_workspace::PackageSlot;
 use wincode::{SchemaRead, SchemaWrite};
 
@@ -6,61 +5,63 @@ use crate::{BodyRef, declare_id};
 use rg_std::{MemorySize, Shrink};
 
 declare_id! {
-    /// Stable identifier of one module inside a target map.
+    /// Package-local identifier of one semantic crate.
+    pub struct CrateId;
+
+    /// Stable identifier of one module inside a crate map.
     pub struct ModuleId;
 
-    /// Stable identifier of one local definition inside a target map.
+    /// Stable identifier of one local definition inside a crate map.
     pub struct LocalDefId;
 
-    /// Stable identifier of one enum variant inside a target map.
+    /// Stable identifier of one enum variant inside a crate map.
     pub struct LocalEnumVariantId;
 
-    /// Stable identifier of one impl block inside a target map.
+    /// Stable identifier of one impl block inside a crate map.
     pub struct LocalImplId;
 
-    /// Stable identifier of one lowered import inside a target map.
+    /// Stable identifier of one lowered import inside a crate map.
     pub struct ImportId;
 }
 
-/// Stable reference to one target across the whole project analysis.
+/// Stable reference to one semantic crate across the whole project analysis.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 #[shrink(leaf)]
-pub struct TargetRef {
+pub struct CrateRef {
     pub package: PackageSlot,
-    pub target: TargetId,
+    pub crate_id: CrateId,
 }
 
 /// Stable reference to one def map item.
 // Note: we intentionally do not derive or provide `From` here, as it can be very
-// easy to just convert `TargetRef` (which is always present) where `BodyRef` must
+// easy to just convert `CrateRef` (which is always present) where `BodyRef` must
 // be used.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 #[shrink(leaf)]
 pub enum DefMapRef {
-    /// Item originates from a target (e.g. semantic scope)
-    Target(TargetRef),
+    /// Item originates from a crate (e.g. semantic scope).
+    Crate(CrateRef),
     /// Item originates from a certain function body (e.g. body scope)
     Body(BodyRef),
 }
 
 impl DefMapRef {
-    /// If `DefMapRef` originated from a target, returns the corresponding
-    /// target ref.
-    pub fn as_target_ref(&self) -> Option<TargetRef> {
+    /// If `DefMapRef` originated from a crate, returns the corresponding crate ref.
+    pub fn as_crate_ref(&self) -> Option<CrateRef> {
         match self {
-            Self::Target(target) => Some(*target),
+            Self::Crate(crate_ref) => Some(*crate_ref),
             Self::Body(_) => None,
         }
     }
 
-    /// Returns the target that contains the object identified by this ref,
-    /// regardless whether the object originates in target or in body.
+    /// Returns the crate that contains the object identified by this ref, regardless of whether
+    /// the object originates in a crate or in a body.
     ///
-    /// This method must not be confused with `as_target_ref`.
-    pub fn origin_target(&self) -> TargetRef {
+    /// This method must not be confused with `as_crate_ref`.
+    pub fn origin_crate(&self) -> CrateRef {
         match self {
-            Self::Target(target) => *target,
-            Self::Body(body) => body.target,
+            Self::Crate(crate_ref) => *crate_ref,
+            Self::Body(body) => body.crate_ref,
         }
     }
 }
@@ -74,9 +75,9 @@ pub struct ModuleRef {
 }
 
 impl ModuleRef {
-    pub fn target(target: TargetRef, module: ModuleId) -> Self {
+    pub fn krate(crate_ref: CrateRef, module: ModuleId) -> Self {
         Self {
-            origin: DefMapRef::Target(target),
+            origin: DefMapRef::Crate(crate_ref),
             module,
         }
     }
@@ -114,7 +115,7 @@ pub struct ImportRef {
     pub import: ImportId,
 }
 
-/// Namespace-resolved target-level definition reference.
+/// Namespace-resolved crate-level definition reference.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 #[shrink(leaf)]
 pub enum DefId {

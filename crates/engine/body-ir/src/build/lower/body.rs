@@ -4,13 +4,17 @@ use rg_syntax::{AstNode as _, ast};
 
 use rg_cfg_eval::CfgEvaluator;
 use rg_def_map::{BodyMacroCallOrigin, BodyMacroExprExpansion, ExpandedBodyMacro};
-use rg_ir_model::{BodyMacroCallData, ExprId, LocalDefRef, ModuleRef, ScopeId, TargetRef};
+use rg_ir_model::{CrateRef, ExprId, LocalDefRef, ModuleRef, ScopeId};
 use rg_parse::LineIndex;
 use rg_text::NameInterner;
 
-use crate::ir::{BodyBuilder, BodyOwner, BodySource, ExprData, ExprKind, ResolvedBodyData};
+use crate::ir::{BodyMacroCallData, BodyOwner, BodySource, ExprData, ExprKind};
 
-use super::{macro_expansion::BodyMacroExpansionContext, syntax::source_for};
+use super::{
+    builder::{BodyBuilder, LoweredBodyData},
+    macro_expansion::BodyMacroExpansionContext,
+    syntax::source_for,
+};
 
 pub(super) struct BodyLowering<'a> {
     owner: BodyOwner,
@@ -72,7 +76,7 @@ impl<'a> BodyLowering<'a> {
         mut self,
         function: ast::Fn,
         body: ast::BlockExpr,
-    ) -> ResolvedBodyData {
+    ) -> LoweredBodyData {
         // Parameters live in the function's outer lexical scope. The body block gets a child scope
         // so locals do not appear before the function boundary.
         let param_scope = self.builder.alloc_scope(None);
@@ -83,7 +87,7 @@ impl<'a> BodyLowering<'a> {
             .collect();
         let root_expr = self.lower_block_expr(body, param_scope);
 
-        ResolvedBodyData::new(
+        self.builder.finish(
             self.owner,
             self.owner_module,
             self.fallback_module,
@@ -92,18 +96,17 @@ impl<'a> BodyLowering<'a> {
             root_expr,
             function_params,
             params,
-            self.builder,
         )
     }
 
-    pub(super) fn lower_initializer(mut self, expr: ast::Expr) -> ResolvedBodyData {
+    pub(super) fn lower_initializer(mut self, expr: ast::Expr) -> LoweredBodyData {
         // Item initializers are expression bodies without parameters. They still need a root scope
         // so ordinary body path resolution, type paths, and source scans can use the same pipeline
         // as function bodies.
         let root_scope = self.builder.alloc_scope(None);
         let root_expr = self.lower_expr(expr, root_scope);
 
-        ResolvedBodyData::new(
+        self.builder.finish(
             self.owner,
             self.owner_module,
             self.fallback_module,
@@ -112,7 +115,6 @@ impl<'a> BodyLowering<'a> {
             root_expr,
             Vec::new(),
             Vec::new(),
-            self.builder,
         )
     }
 }
@@ -160,20 +162,20 @@ impl BodyLowering<'_> {
         source_for(self.body_source.file_id, syntax)
     }
 
-    pub(super) fn dollar_crate_target(&self) -> Option<TargetRef> {
+    pub(super) fn dollar_crate(&self) -> Option<CrateRef> {
         self.generated_context
             .as_ref()
-            .map(|context| context.expanded.dollar_crate_target())
+            .map(|context| context.expanded.dollar_crate())
     }
 
     /// Classify the macro call syntax that is about to be expanded.
     ///
     /// User-written calls have no macro-definition crate. Calls found while recursively lowering
-    /// generated syntax keep the generating definition's `$crate` target.
+    /// generated syntax keep the generating definition's `$crate` identity.
     pub(super) fn macro_call_origin(&self) -> BodyMacroCallOrigin {
         match &self.generated_context {
             Some(context) => BodyMacroCallOrigin::Generated {
-                dollar_crate_target: context.expanded.dollar_crate_target(),
+                dollar_crate: context.expanded.dollar_crate(),
             },
             None => BodyMacroCallOrigin::Source,
         }
@@ -187,7 +189,7 @@ impl BodyLowering<'_> {
     /// Example: a macro inside a normal function resolves from that function's module, while a
     /// macro inside a generated nested body still resolves from the nearest real module.
     pub(super) fn macro_resolution_module(&self) -> ModuleRef {
-        if self.owner_module.origin.as_target_ref().is_some() {
+        if self.owner_module.origin.as_crate_ref().is_some() {
             self.owner_module
         } else {
             self.fallback_module

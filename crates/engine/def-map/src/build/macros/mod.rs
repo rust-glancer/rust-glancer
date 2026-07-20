@@ -7,7 +7,7 @@
 
 use std::collections::HashMap;
 
-use rg_ir_model::{LocalDefId, ModuleId, ModuleRef, TargetRef};
+use rg_ir_model::{CrateRef, LocalDefId, ModuleId, ModuleRef};
 use rg_item_tree::{BuiltinMacroItem, ItemTreeRef, MacroUseSelector};
 use rg_parse::{FileId, Span};
 use rg_text::Name;
@@ -15,7 +15,7 @@ use rg_tt::TopSubtree;
 
 use crate::profile::metric;
 
-use super::finalize::FinalizeTargetStates;
+use super::finalize::FinalizeCrateStates;
 
 mod attempts;
 mod expand;
@@ -180,7 +180,7 @@ pub(super) struct MacroCallSite {
     pub(super) callee: Option<Name>,
     pub(super) args: Option<TopSubtree>,
     pub(super) builtin: Option<BuiltinMacroItem>,
-    pub(super) dollar_crate_target: Option<TargetRef>,
+    pub(super) dollar_crate: Option<CrateRef>,
     pub(super) file_id: FileId,
     pub(super) span: Span,
     pub(super) order: ItemOrder,
@@ -202,7 +202,7 @@ impl ItemOrder {
 }
 
 /// Marks the still-retryable macro calls as skipped after the fixed-point guard fires.
-pub(super) fn mark_retryable_macros_skipped_by_limit(states: &mut FinalizeTargetStates) {
+pub(super) fn mark_retryable_macros_skipped_by_limit(states: &mut FinalizeCrateStates) {
     let mut skipped = 0;
 
     for package_states in states.iter_dirty_mut() {

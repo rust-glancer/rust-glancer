@@ -6,17 +6,22 @@
 //! analysis queries.
 
 use rg_ir_model::Path;
-use rg_ir_model::items::{Documentation, FieldKey, ParamItem};
 use rg_ir_model::{
-    BodyRef, EnumVariantRef, FieldRef, FunctionRef, ItemOwner, ScopeId, TargetRef, TypeDefId,
-    TypePathResolution,
-    hir::items::{EnumVariantData, FieldData, FunctionData},
+    BodyRef, CrateRef, EnumVariantRef, FieldKey, FieldRef, FunctionRef, ItemOwner, ScopeId,
+    TraitApplicability, TypeDefId,
 };
-use rg_ir_storage::{ItemLookupIndex, ItemStoreQuery, TargetItemQuery};
-use rg_ty::MemberMethodOrigin;
-use rg_ty::{ItemPathQuery, MemberMethodCandidateRef, MemberQuery, Ty};
+use rg_item_tree::{Documentation, ParamItem, ParamKind};
+use rg_semantic_ir::{
+    EnumVariantData, FieldData, FunctionData, ItemLookupIndex, ItemStoreQuery, TypePathResolution,
+};
+use rg_ty::{
+    MemberMethodCandidateRef, MemberMethodOrigin as TyMemberMethodOrigin, MemberQuery, Ty,
+    TyContext,
+};
 
-use crate::{IndexedViewDb, SymbolKind, body::BodyResolutionView, item::path::PathView};
+use crate::{
+    IndexedViewDb, SymbolKind, body::BodyResolutionView, item::path::PathView, ty::IndexedType,
+};
 
 /// Borrowed data for one resolved field, independent from the storage layer it came from.
 #[derive(Debug, Clone, Copy)]
@@ -34,7 +39,7 @@ impl<'a> MemberField<'a> {
         self.data.field.key.as_ref()
     }
 
-    pub fn data(&self) -> FieldData<'a> {
+    pub(crate) fn data(&self) -> FieldData<'a> {
         self.data
     }
 
@@ -67,11 +72,24 @@ impl<'a> MemberFunction<'a> {
         self.data.name.as_str()
     }
 
-    pub fn params(&self) -> &'a [ParamItem] {
-        self.data.signature.params()
+    /// Iterate parameters without exposing the item-tree storage shape.
+    pub fn parameters(&self) -> impl ExactSizeIterator<Item = FunctionParameterView<'a>> + 'a {
+        self.data
+            .signature
+            .params()
+            .iter()
+            .map(FunctionParameterView::new)
     }
 
-    pub fn data(&self) -> &'a FunctionData {
+    pub fn parameter(&self, index: usize) -> Option<FunctionParameterView<'a>> {
+        self.data
+            .signature
+            .params()
+            .get(index)
+            .map(FunctionParameterView::new)
+    }
+
+    pub(crate) fn data(&self) -> &'a FunctionData {
         self.data
     }
 
@@ -96,6 +114,30 @@ impl<'a> MemberFunction<'a> {
 
     fn docs(&self) -> Option<&'a Documentation> {
         self.data.docs.as_ref()
+    }
+}
+
+/// Borrowed parameter facts needed by editor features.
+///
+/// Item lowering retains complete patterns and type syntax. Completion and inlay hints only need
+/// the written pattern plus whether the parameter is a receiver, so the full item-tree node stays
+/// behind this projection.
+#[derive(Debug, Clone, Copy)]
+pub struct FunctionParameterView<'a> {
+    param: &'a ParamItem,
+}
+
+impl<'a> FunctionParameterView<'a> {
+    fn new(param: &'a ParamItem) -> Self {
+        Self { param }
+    }
+
+    pub fn pattern(self) -> &'a str {
+        self.param.pat.as_str()
+    }
+
+    pub fn is_receiver(self) -> bool {
+        matches!(self.param.kind, ParamKind::SelfParam(_))
     }
 }
 
@@ -127,6 +169,22 @@ pub struct MemberMethodCandidate<'a> {
     origin: MemberMethodOrigin,
 }
 
+/// Declaration source for a method candidate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MemberMethodOrigin {
+    Inherent,
+    Trait { applicability: TraitApplicability },
+}
+
+impl From<TyMemberMethodOrigin> for MemberMethodOrigin {
+    fn from(origin: TyMemberMethodOrigin) -> Self {
+        match origin {
+            TyMemberMethodOrigin::Inherent => Self::Inherent,
+            TyMemberMethodOrigin::Trait { applicability } => Self::Trait { applicability },
+        }
+    }
+}
+
 impl<'a> MemberMethodCandidate<'a> {
     pub fn function(&self) -> MemberFunction<'a> {
         self.function
@@ -140,13 +198,13 @@ impl<'a> MemberMethodCandidate<'a> {
 /// Place where member lookup is requested.
 #[derive(Debug, Clone, Copy)]
 pub enum MemberUseSite {
-    Target(TargetRef),
+    Crate(CrateRef),
     Body(BodyRef),
 }
 
 impl MemberUseSite {
-    pub fn target(target: TargetRef) -> Self {
-        Self::Target(target)
+    pub fn krate(crate_ref: CrateRef) -> Self {
+        Self::Crate(crate_ref)
     }
 
     pub fn body(body: BodyRef) -> Self {
@@ -164,22 +222,23 @@ impl<'a, 'db> MemberView<'a, 'db> {
         Self { db }
     }
 
-    /// Return fields visible for a type at a target use site.
+    /// Return fields visible for a type at a crate use site.
     pub fn field_candidates_for_ty<'view>(
         &'view self,
-        use_site: TargetRef,
-        ty: &Ty,
+        use_site: CrateRef,
+        ty: &IndexedType,
     ) -> anyhow::Result<Vec<MemberField<'view>>> {
         let mut fields = Vec::new();
         let Some(semantic_index) = self.semantic_index(use_site)? else {
             return Ok(fields);
         };
-        let member_query = MemberQuery::with_index(
-            ItemPathQuery::new(self.db, self.db),
-            TargetItemQuery::new(self.db, self.db, use_site),
+        let member_query = MemberQuery::new(TyContext::new(
+            self.db,
+            self.db,
             semantic_index,
-        );
-        for field_ref in member_query.fields_for_ty(ty)? {
+            self.db.trait_selection(use_site),
+        ));
+        for field_ref in member_query.fields_for_ty(ty.raw())? {
             let Some(field) = self.field(field_ref)? else {
                 continue;
             };
@@ -202,14 +261,15 @@ impl<'a, 'db> MemberView<'a, 'db> {
         };
 
         let mut fields = Vec::new();
-        let Some(semantic_index) = self.semantic_index(body.target)? else {
+        let Some(semantic_index) = self.semantic_index(body.crate_ref)? else {
             return Ok(fields);
         };
-        let member_query = MemberQuery::with_index(
-            ItemPathQuery::new(self.db, self.db),
-            TargetItemQuery::new(self.db, self.db, body.target),
+        let member_query = MemberQuery::new(TyContext::new(
+            self.db,
+            self.db,
             semantic_index,
-        );
+            self.db.trait_selection(body.crate_ref),
+        ));
         if let TypePathResolution::SelfType(ty) | TypePathResolution::TypeDef(ty) = resolution {
             for field_ref in member_query.fields_for_type_def(ty)? {
                 let Some(field) = self.field(field_ref)? else {
@@ -279,13 +339,13 @@ impl<'a, 'db> MemberView<'a, 'db> {
         Ok(variants)
     }
 
-    /// Return methods visible for a type at a target or body use site.
+    /// Return methods visible for a type at a crate or body use site.
     pub fn method_candidates_for_ty<'view>(
         &'view self,
         use_site: MemberUseSite,
-        ty: &Ty,
+        ty: &IndexedType,
     ) -> anyhow::Result<Vec<MemberMethodCandidate<'view>>> {
-        let candidates = self.method_candidate_refs_for_ty(use_site, ty)?;
+        let candidates = self.method_candidate_refs_for_ty(use_site, ty.raw())?;
         self.method_candidates_from_refs(candidates)
     }
 
@@ -296,29 +356,32 @@ impl<'a, 'db> MemberView<'a, 'db> {
         ty: &Ty,
     ) -> anyhow::Result<Vec<MemberMethodCandidateRef>> {
         match use_site {
-            MemberUseSite::Target(target) => self.target_method_candidate_refs_for_ty(target, ty),
+            MemberUseSite::Crate(crate_ref) => {
+                self.crate_method_candidate_refs_for_ty(crate_ref, ty)
+            }
             MemberUseSite::Body(body) => self.body_method_candidate_refs_for_ty(body, ty),
         }
     }
 
-    /// Return target-level method refs.
-    fn target_method_candidate_refs_for_ty(
+    /// Return crate-level method refs.
+    fn crate_method_candidate_refs_for_ty(
         &self,
-        use_site: TargetRef,
+        use_site: CrateRef,
         ty: &Ty,
     ) -> anyhow::Result<Vec<MemberMethodCandidateRef>> {
         let Some(semantic_index) = self.semantic_index(use_site)? else {
             return Ok(Vec::new());
         };
-        let member_query = MemberQuery::with_index(
-            ItemPathQuery::new(self.db, self.db),
-            TargetItemQuery::new(self.db, self.db, use_site),
+        let member_query = MemberQuery::new(TyContext::new(
+            self.db,
+            self.db,
             semantic_index,
-        );
+            self.db.trait_selection(use_site),
+        ));
         Ok(member_query.method_candidates_for_ty(ty)?)
     }
 
-    /// Return body-aware method refs, falling back to target-level refs if the body is absent.
+    /// Return body-aware method refs, falling back to crate-level refs if the body is absent.
     fn body_method_candidate_refs_for_ty(
         &self,
         body: BodyRef,
@@ -327,8 +390,8 @@ impl<'a, 'db> MemberView<'a, 'db> {
         let Some(candidates) =
             BodyResolutionView::new(self.db).method_candidate_refs_for_ty(body, ty)?
         else {
-            // Missing body facts should not hide target-level methods from editor queries.
-            return self.target_method_candidate_refs_for_ty(body.target, ty);
+            // Missing body facts should not hide crate-level methods from editor queries.
+            return self.crate_method_candidate_refs_for_ty(body.crate_ref, ty);
         };
 
         Ok(candidates)
@@ -357,12 +420,12 @@ impl<'a, 'db> MemberView<'a, 'db> {
     ) -> MemberMethodCandidate<'view> {
         MemberMethodCandidate {
             function,
-            origin: candidate.origin(),
+            origin: candidate.origin().into(),
         }
     }
 
-    /// Return the target-scoped semantic index that backs fast type/member queries.
-    fn semantic_index(&self, use_site: TargetRef) -> anyhow::Result<Option<&ItemLookupIndex>> {
+    /// Return the crate-scoped semantic index that backs fast type/member queries.
+    fn semantic_index(&self, use_site: CrateRef) -> anyhow::Result<Option<&ItemLookupIndex>> {
         Ok(self.db.body_ir.semantic_index(use_site)?)
     }
 }

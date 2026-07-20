@@ -1,21 +1,23 @@
-//! Finalizes target scopes into frozen def maps.
+//! Finalizes crate scopes into frozen def maps.
 //!
-//! Collection records direct declarations and raw imports, but it intentionally leaves cross-target
-//! facts unresolved. This module turns those mutable target states into immutable def maps by
+//! Collection records direct declarations and raw imports, but it intentionally leaves cross-crate
+//! facts unresolved. This module turns those mutable crate states into immutable def maps by
 //! selecting preludes, repeatedly applying imports until scopes stop changing, and then freezing
-//! the settled scopes back into the target payloads. During package rebuilds, dirty package reads
-//! come from fresh target states while clean package reads fall through to the old frozen database.
+//! the settled scopes back into the crate payloads. During package rebuilds, dirty package reads
+//! come from fresh crate states while clean package reads fall through to the old frozen database.
 
 mod clean;
 mod rebuild;
 
 use anyhow::Context as _;
 
-use rg_ir_model::{DefId, DefMapRef, LocalDefRef, ModuleId, ModuleRef, TargetRef};
-use rg_ir_storage::{
-    DefMap, ImportPath, LocalDefData, LocalEnumVariantEntry, MacroDefinitionEnv,
-    MacroDefinitionView, ModuleData, ModuleScopeBuilder, PackageDefMaps as DefMapPackage,
-    ScopeEntryRef, ScopeResolutionEnv, ScopeResolver, TargetData, TargetResolutionEnv,
+use crate::{
+    CrateData, CrateResolutionEnv, LocalDefData, LocalEnumVariantData, LocalEnumVariantEntry,
+    MacroDefinitionEnv, MacroDefinitionView, ModuleData, ModuleScopeBuilder,
+    PackageDefMaps as DefMapPackage, ScopeEntryRef, ScopeResolutionEnv, ScopeResolver,
+};
+use rg_ir_model::{
+    CrateRef, DefId, DefMapRef, LocalDefRef, LocalEnumVariantRef, ModuleId, ModuleRef, Path,
 };
 use rg_item_tree::ItemTreeDb;
 use rg_macro_runtime::{MacroExpansionPerformancePreference, MacroExpansionRuntime};
@@ -26,7 +28,7 @@ use rg_workspace::WorkspaceMetadata;
 use crate::{DefMapReadTxn, PackageSlot, profile::metric};
 
 use super::{
-    collect::TargetState,
+    collect::CrateState,
     imports::{UnresolvedImports, apply_imports},
     macros::{
         MAX_MACRO_EXPANSION_PASSES, MacroExpansionCursors, MacroExpansionScan,
@@ -37,25 +39,25 @@ use super::{
 
 pub(crate) use self::{clean::build_db, rebuild::rebuild_packages};
 
-/// Mutable target states for every target inside one package.
-pub(super) type PackageTargetStates = Vec<TargetState>;
+/// Mutable crate states for every crate inside one package.
+pub(super) type PackageCrateStates = Vec<CrateState>;
 
-/// Mutable module scopes for one target.
-type TargetScopeMatrix = Vec<ModuleScopeBuilder>;
+/// Mutable module scopes for one crate.
+type CrateScopeMatrix = Vec<ModuleScopeBuilder>;
 
-/// Mutable module scopes for every target inside one package.
-type PackageScopeMatrix = Vec<TargetScopeMatrix>;
+/// Mutable module scopes for every crate inside one package.
+type PackageScopeMatrix = Vec<CrateScopeMatrix>;
 
-/// Collected target states that must be finalized.
+/// Collected crate states that must be finalized.
 ///
 /// `Some` package slots are dirty and will be resolved/frozen. `None` slots are only valid when an
 /// old `DefMapDb` baseline exists; resolution reads them from that frozen baseline instead.
-pub(super) struct FinalizeTargetStates {
-    packages: Vec<Option<PackageTargetStates>>,
+pub(super) struct FinalizeCrateStates {
+    packages: Vec<Option<PackageCrateStates>>,
 }
 
-impl FinalizeTargetStates {
-    pub(super) fn all(packages: Vec<PackageTargetStates>) -> Self {
+impl FinalizeCrateStates {
+    pub(super) fn all(packages: Vec<PackageCrateStates>) -> Self {
         Self {
             packages: packages.into_iter().map(Some).collect(),
         }
@@ -70,44 +72,44 @@ impl FinalizeTargetStates {
     pub(super) fn replace_package(
         &mut self,
         package: PackageSlot,
-        states: Vec<TargetState>,
+        states: Vec<CrateState>,
     ) -> Option<()> {
         *self.packages.get_mut(package.0)? = Some(states);
         Some(())
     }
 
-    pub(super) fn take_package(&mut self, package: PackageSlot) -> Option<Vec<TargetState>> {
+    pub(super) fn take_package(&mut self, package: PackageSlot) -> Option<Vec<CrateState>> {
         self.packages.get_mut(package.0)?.take()
     }
 
-    pub(super) fn package(&self, package: PackageSlot) -> Option<&[TargetState]> {
+    pub(super) fn package(&self, package: PackageSlot) -> Option<&[CrateState]> {
         self.packages.get(package.0)?.as_deref()
     }
 
-    pub(super) fn iter_packages(&self) -> impl Iterator<Item = Option<&[TargetState]>> + '_ {
+    pub(super) fn iter_packages(&self) -> impl Iterator<Item = Option<&[CrateState]>> + '_ {
         self.packages.iter().map(Option::as_deref)
     }
 
-    pub(super) fn target(&self, target: TargetRef) -> Option<&TargetState> {
-        self.package(target.package)?.get(target.target.0)
+    pub(super) fn crate_state(&self, crate_ref: CrateRef) -> Option<&CrateState> {
+        self.package(crate_ref.package)?.get(crate_ref.crate_id.0)
     }
 
-    pub(super) fn target_mut(&mut self, target: TargetRef) -> Option<&mut TargetState> {
+    pub(super) fn crate_state_mut(&mut self, crate_ref: CrateRef) -> Option<&mut CrateState> {
         self.packages
-            .get_mut(target.package.0)?
+            .get_mut(crate_ref.package.0)?
             .as_deref_mut()?
-            .get_mut(target.target.0)
+            .get_mut(crate_ref.crate_id.0)
     }
 
-    pub(super) fn iter_dirty(&self) -> impl Iterator<Item = &[TargetState]> {
+    pub(super) fn iter_dirty(&self) -> impl Iterator<Item = &[CrateState]> {
         self.packages.iter().filter_map(Option::as_deref)
     }
 
-    pub(super) fn iter_dirty_mut(&mut self) -> impl Iterator<Item = &mut [TargetState]> {
+    pub(super) fn iter_dirty_mut(&mut self) -> impl Iterator<Item = &mut [CrateState]> {
         self.packages.iter_mut().filter_map(Option::as_deref_mut)
     }
 
-    fn iter_dirty_mut_enumerated(&mut self) -> impl Iterator<Item = (usize, &mut [TargetState])> {
+    fn iter_dirty_mut_enumerated(&mut self) -> impl Iterator<Item = (usize, &mut [CrateState])> {
         self.packages
             .iter_mut()
             .enumerate()
@@ -117,13 +119,13 @@ impl FinalizeTargetStates {
     }
 
     fn base_scopes(&self) -> ScopeMatrix {
-        ScopeMatrix::from_target_states(self)
+        ScopeMatrix::from_crate_states(self)
     }
 }
 
 /// Import-resolution scopes for dirty packages.
 ///
-/// The axes are package slot, target slot, then module id. Clean package slots are absent and read
+/// The axes are package slot, crate id, then module id. Clean package slots are absent and read
 /// from the optional frozen baseline instead.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct ScopeMatrix {
@@ -131,7 +133,7 @@ pub(super) struct ScopeMatrix {
 }
 
 impl ScopeMatrix {
-    fn from_target_states(states: &FinalizeTargetStates) -> Self {
+    fn from_crate_states(states: &FinalizeCrateStates) -> Self {
         let packages = states
             .packages
             .iter()
@@ -148,40 +150,40 @@ impl ScopeMatrix {
         Self { packages }
     }
 
-    fn target_scopes(&self, target: TargetRef) -> Option<&[ModuleScopeBuilder]> {
+    fn crate_scopes(&self, crate_ref: CrateRef) -> Option<&[ModuleScopeBuilder]> {
         self.packages
-            .get(target.package.0)?
+            .get(crate_ref.package.0)?
             .as_ref()?
-            .get(target.target.0)
+            .get(crate_ref.crate_id.0)
             .map(Vec::as_slice)
     }
 
     fn module_scope(&self, module: ModuleRef) -> Option<&ModuleScopeBuilder> {
-        self.target_scopes(module.origin.as_target_ref()?)?
+        self.crate_scopes(module.origin.as_crate_ref()?)?
             .get(module.module.0)
     }
 
     pub(super) fn module_scope_mut(
         &mut self,
-        target: TargetRef,
+        crate_ref: CrateRef,
         module: ModuleId,
     ) -> Option<&mut ModuleScopeBuilder> {
         self.packages
-            .get_mut(target.package.0)?
+            .get_mut(crate_ref.package.0)?
             .as_mut()?
-            .get_mut(target.target.0)?
+            .get_mut(crate_ref.crate_id.0)?
             .get_mut(module.0)
     }
 
     pub(super) fn push_module_scope(
         &mut self,
-        target: TargetRef,
+        crate_ref: CrateRef,
         scope: ModuleScopeBuilder,
     ) -> Option<()> {
         self.packages
-            .get_mut(target.package.0)?
+            .get_mut(crate_ref.package.0)?
             .as_mut()?
-            .get_mut(target.target.0)?
+            .get_mut(crate_ref.crate_id.0)?
             .push(scope);
         Some(())
     }
@@ -189,18 +191,18 @@ impl ScopeMatrix {
 
 /// Resolution environment used while dirty package scopes are being fixed up.
 ///
-/// Dirty package reads come from fresh target state and the current fixed-point scope snapshot.
+/// Dirty package reads come from fresh crate state and the current fixed-point scope snapshot.
 /// Clean package reads fall through to the frozen baseline when one exists.
 struct FinalizeResolutionEnv<'a> {
     old: Option<&'a DefMapReadTxn<'a>>,
-    states: &'a FinalizeTargetStates,
+    states: &'a FinalizeCrateStates,
     current_scopes: &'a ScopeMatrix,
 }
 
 impl<'a> FinalizeResolutionEnv<'a> {
     fn new(
         old: Option<&'a DefMapReadTxn<'a>>,
-        states: &'a FinalizeTargetStates,
+        states: &'a FinalizeCrateStates,
         current_scopes: &'a ScopeMatrix,
     ) -> Self {
         Self {
@@ -218,18 +220,18 @@ impl ScopeResolutionEnv for FinalizeResolutionEnv<'_> {
         &self,
         module_ref: ModuleRef,
     ) -> Result<Option<&ModuleData>, rg_package_store::PackageStoreError> {
-        if let Some(target) = module_ref.origin.as_target_ref()
-            && let Some(state) = self.states.target(target)
+        if let Some(crate_ref) = module_ref.origin.as_crate_ref()
+            && let Some(state) = self.states.crate_state(crate_ref)
         {
             return Ok(state.def_map_builder.partial().module(module_ref.module));
         }
 
-        let Some(target) = module_ref.origin.as_target_ref() else {
+        let Some(crate_ref) = module_ref.origin.as_crate_ref() else {
             return Ok(None);
         };
         Ok(self
             .old
-            .map(|old| old.def_map(target))
+            .map(|old| old.def_map(crate_ref))
             .transpose()?
             .flatten()
             .and_then(|def_map| def_map.module(module_ref.module)))
@@ -242,8 +244,8 @@ impl ScopeResolutionEnv for FinalizeResolutionEnv<'_> {
     ) -> Result<Option<ScopeEntryRef<'a>>, rg_package_store::PackageStoreError> {
         if module_ref
             .origin
-            .as_target_ref()
-            .is_some_and(|target| self.states.package(target.package).is_some())
+            .as_crate_ref()
+            .is_some_and(|crate_ref| self.states.package(crate_ref.package).is_some())
         {
             return Ok(self
                 .current_scopes
@@ -263,8 +265,8 @@ impl ScopeResolutionEnv for FinalizeResolutionEnv<'_> {
     ) -> Result<Vec<(&'a Name, ScopeEntryRef<'a>)>, rg_package_store::PackageStoreError> {
         if module_ref
             .origin
-            .as_target_ref()
-            .is_some_and(|target| self.states.package(target.package).is_some())
+            .as_crate_ref()
+            .is_some_and(|crate_ref| self.states.package(crate_ref.package).is_some())
         {
             return Ok(self
                 .current_scopes
@@ -289,8 +291,8 @@ impl ScopeResolutionEnv for FinalizeResolutionEnv<'_> {
         &self,
         local_def_ref: LocalDefRef,
     ) -> Result<Option<&LocalDefData>, rg_package_store::PackageStoreError> {
-        if let Some(target) = local_def_ref.origin.as_target_ref()
-            && let Some(state) = self.states.target(target)
+        if let Some(crate_ref) = local_def_ref.origin.as_crate_ref()
+            && let Some(state) = self.states.crate_state(crate_ref)
         {
             return Ok(state
                 .def_map_builder
@@ -298,14 +300,40 @@ impl ScopeResolutionEnv for FinalizeResolutionEnv<'_> {
                 .local_def(local_def_ref.local_def));
         }
 
-        let Some(target) = local_def_ref.origin.as_target_ref() else {
+        let Some(crate_ref) = local_def_ref.origin.as_crate_ref() else {
             return Ok(None);
         };
         self.old
             .map(|old| {
                 Ok(old
-                    .def_map(target)?
+                    .def_map(crate_ref)?
                     .and_then(|def_map| def_map.local_def(local_def_ref.local_def)))
+            })
+            .transpose()
+            .map(Option::flatten)
+    }
+
+    fn local_enum_variant_data(
+        &self,
+        variant_ref: LocalEnumVariantRef,
+    ) -> Result<Option<&LocalEnumVariantData>, rg_package_store::PackageStoreError> {
+        if let Some(crate_ref) = variant_ref.origin.as_crate_ref()
+            && let Some(state) = self.states.crate_state(crate_ref)
+        {
+            return Ok(state
+                .def_map_builder
+                .partial()
+                .local_enum_variant(variant_ref.local_enum_variant));
+        }
+
+        let Some(crate_ref) = variant_ref.origin.as_crate_ref() else {
+            return Ok(None);
+        };
+        self.old
+            .map(|old| {
+                Ok(old
+                    .def_map(crate_ref)?
+                    .and_then(|def_map| def_map.local_enum_variant(variant_ref.local_enum_variant)))
             })
             .transpose()
             .map(Option::flatten)
@@ -315,8 +343,8 @@ impl ScopeResolutionEnv for FinalizeResolutionEnv<'_> {
         &'a self,
         enum_def: LocalDefRef,
     ) -> Result<Vec<LocalEnumVariantEntry<'a>>, rg_package_store::PackageStoreError> {
-        if let Some(target) = enum_def.origin.as_target_ref()
-            && let Some(state) = self.states.target(target)
+        if let Some(crate_ref) = enum_def.origin.as_crate_ref()
+            && let Some(state) = self.states.crate_state(crate_ref)
         {
             return Ok(state
                 .def_map_builder
@@ -325,9 +353,9 @@ impl ScopeResolutionEnv for FinalizeResolutionEnv<'_> {
                 .collect());
         }
 
-        if let Some(target) = enum_def.origin.as_target_ref()
+        if let Some(crate_ref) = enum_def.origin.as_crate_ref()
             && let Some(old) = self.old
-            && let Some(def_map) = old.def_map(target)?
+            && let Some(def_map) = old.def_map(crate_ref)?
         {
             Ok(def_map
                 .local_enum_variant_entries_for_enum(enum_def.local_def)
@@ -350,19 +378,19 @@ impl MacroDefinitionEnv for FinalizeResolutionEnv<'_> {
             return Ok(None);
         };
 
-        let data = if let Some(target) = def_ref.origin.as_target_ref()
-            && let Some(state) = self.states.target(target)
+        let data = if let Some(crate_ref) = def_ref.origin.as_crate_ref()
+            && let Some(state) = self.states.crate_state(crate_ref)
         {
             state
                 .def_map_builder
                 .partial()
                 .macro_definition(def_ref.local_def)
         } else {
-            let Some(target) = def_ref.origin.as_target_ref() else {
+            let Some(crate_ref) = def_ref.origin.as_crate_ref() else {
                 return Ok(None);
             };
             self.old
-                .map(|old| old.def_map(target))
+                .map(|old| old.def_map(crate_ref))
                 .transpose()?
                 .flatten()
                 .and_then(|def_map| def_map.macro_definition(def_ref.local_def))
@@ -375,125 +403,121 @@ impl MacroDefinitionEnv for FinalizeResolutionEnv<'_> {
     }
 }
 
-impl TargetResolutionEnv for FinalizeResolutionEnv<'_> {
+impl CrateResolutionEnv for FinalizeResolutionEnv<'_> {
     fn extern_root(
         &self,
-        target: TargetRef,
+        crate_ref: CrateRef,
         name: &str,
     ) -> Result<Option<ModuleRef>, rg_package_store::PackageStoreError> {
-        if let Some(state) = self.states.target(target) {
+        if let Some(state) = self.states.crate_state(crate_ref) {
             return Ok(state.implicit_roots.get(name).copied());
         }
 
         Ok(self
             .old
-            .map(|old| old.package(target.package))
+            .map(|old| old.package(crate_ref.package))
             .transpose()?
             .and_then(|package| {
                 package
-                    .target_data(target.target)
+                    .crate_data(crate_ref.crate_id)
                     .and_then(|data| data.extern_prelude().get(name).copied())
             }))
     }
 
     fn prelude_module(
         &self,
-        target: TargetRef,
+        crate_ref: CrateRef,
     ) -> Result<Option<ModuleRef>, rg_package_store::PackageStoreError> {
-        if let Some(state) = self.states.target(target) {
+        if let Some(state) = self.states.crate_state(crate_ref) {
             return Ok(state.prelude);
         }
 
         Ok(self
             .old
-            .map(|old| old.package(target.package))
+            .map(|old| old.package(crate_ref.package))
             .transpose()?
             .and_then(|package| {
                 package
-                    .target_data(target.target)
+                    .crate_data(crate_ref.crate_id)
                     .and_then(|data| data.prelude())
             }))
     }
 
     fn root_module(
         &self,
-        target: TargetRef,
+        crate_ref: CrateRef,
     ) -> Result<Option<ModuleRef>, rg_package_store::PackageStoreError> {
-        let module = if let Some(state) = self.states.target(target) {
+        let module = if let Some(state) = self.states.crate_state(crate_ref) {
             Some(state.root_module)
         } else {
             self.old
-                .map(|old| old.package(target.package))
+                .map(|old| old.package(crate_ref.package))
                 .transpose()?
                 .and_then(|package| {
                     package
-                        .target_data(target.target)
+                        .crate_data(crate_ref.crate_id)
                         .and_then(|data| data.root_module())
                 })
         };
 
         Ok(module.map(|module| ModuleRef {
-            origin: DefMapRef::Target(target),
+            origin: DefMapRef::Crate(crate_ref),
             module,
         }))
     }
 }
 
-/// Completes mutable target states after collection and before freezing.
+/// Completes mutable crate states after collection and before freezing.
 ///
-/// Collection records only local facts. This step attaches the edition prelude for each target,
+/// Collection records only local facts. This step attaches the edition prelude for each crate,
 /// resolves imports and item-position macros against the package graph, and writes the final
 /// module scopes back into the collected states.
 #[allow(clippy::too_many_arguments)]
-pub(super) fn finalize_target_states(
+pub(super) fn finalize_crate_states(
     old: Option<&DefMapReadTxn<'_>>,
     workspace: &WorkspaceMetadata,
     packages: &[Package],
     item_tree: &ItemTreeDb,
-    target_states: &mut FinalizeTargetStates,
+    crate_states: &mut FinalizeCrateStates,
     interners: &mut PackageNameInterners,
     performance_preference: MacroExpansionPerformancePreference,
 ) -> anyhow::Result<()> {
     // Prelude selection needs the directly declared root modules and implicit extern roots, but it
     // must happen before import resolution because prelude imports participate in normal lookup.
-    select_preludes(old, workspace, packages, target_states, interners)
-        .context("while attempting to select target preludes")?;
+    select_preludes(old, workspace, packages, crate_states, interners)
+        .context("while attempting to select crate preludes")?;
 
-    // Once each target knows its prelude, imports and item-position macros can be resolved through
+    // Once each crate knows its prelude, imports and item-position macros can be resolved through
     // the shared fixed-point loop.
     finalize_scopes(
         old,
         item_tree,
-        target_states,
+        crate_states,
         interners,
         performance_preference,
     )
-    .context("while attempting to resolve target scopes")
+    .context("while attempting to resolve crate scopes")
 }
 
-/// Freezes collected target states into the package payload stored by `DefMapDb`.
-pub(super) fn freeze_package(package: &Package, package_states: &[TargetState]) -> DefMapPackage {
+/// Freezes collected crate states into the package payload stored by `DefMapDb`.
+pub(super) fn freeze_package(package: &Package, package_states: &[CrateState]) -> DefMapPackage {
     DefMapPackage::new(
         package.package_name().to_string(),
-        package_states
-            .iter()
-            .map(|state| state.target_name.clone())
-            .collect(),
-        package_states.iter().map(freeze_target_data).collect(),
-        package_states.iter().map(freeze_target_state).collect(),
+        package.edition(),
+        package_states.iter().map(freeze_crate_data).collect(),
     )
 }
 
-/// Selects the standard prelude module visible from each dirty target.
+/// Selects the standard prelude module visible from each dirty crate.
 ///
-/// The prelude path depends on the target edition, and the module it resolves to can live in a
+/// The prelude path depends on the crate_ref edition, and the module it resolves to can live in a
 /// clean package. Resolution therefore uses the same dirty-state-plus-old-baseline environment as
 /// the later import fixed point.
 fn select_preludes(
     old: Option<&DefMapReadTxn<'_>>,
     workspace: &WorkspaceMetadata,
     packages: &[Package],
-    states: &mut FinalizeTargetStates,
+    states: &mut FinalizeCrateStates,
     interners: &mut PackageNameInterners,
 ) -> anyhow::Result<()> {
     // Prelude lookup only needs directly declared names and implicit extern roots. Using base
@@ -501,7 +525,7 @@ fn select_preludes(
     let base_scopes = states.base_scopes();
     let env = FinalizeResolutionEnv::new(old, states, &base_scopes);
 
-    // Store selected preludes out-of-band first so path resolution can borrow all target states
+    // Store selected preludes out-of-band first so path resolution can borrow all crate states
     // immutably while we inspect roots across packages.
     let mut selected_preludes = packages
         .iter()
@@ -526,9 +550,9 @@ fn select_preludes(
         let interner = interners.package_mut(package_slot).with_context(|| {
             format!("while attempting to fetch name interner for package {package_slot}")
         })?;
-        // Each target resolves its edition prelude from its own crate root. Targets without a root
-        // module are malformed enough that later phases will simply see no prelude.
-        for (target_slot, state) in package_states.iter().enumerate() {
+        // Each crate resolves its edition prelude from its own root. Crates without a root module
+        // are malformed enough that later phases will simply see no prelude.
+        for (crate_slot, state) in package_states.iter().enumerate() {
             let mut prelude_module = None;
 
             // Normal crates use `std` when available. No-std-shaped crates still need the same
@@ -537,23 +561,23 @@ fn select_preludes(
             // TODO: Parse crate-level `#![no_std]` and use it to select `core` prelude directly
             // and avoid exposing `std` as an automatic extern root for that crate.
             let prelude_paths = [
-                Some(ImportPath::standard_prelude(
+                Some(Path::standard_prelude(
                     "std",
                     workspace_package.edition,
                     interner,
                 )),
-                Some(ImportPath::standard_prelude(
+                Some(Path::standard_prelude(
                     "core",
                     workspace_package.edition,
                     interner,
                 )),
                 (workspace_package.name == "core").then(|| {
-                    ImportPath::crate_relative_standard_prelude(workspace_package.edition, interner)
+                    Path::crate_relative_standard_prelude(workspace_package.edition, interner)
                 }),
             ];
 
             for prelude_path in prelude_paths.into_iter().flatten() {
-                let root_module = ModuleRef::target(state.target, state.root_module);
+                let root_module = ModuleRef::krate(state.crate_ref, state.root_module);
                 prelude_module = ScopeResolver::new(&env)
                     .import_modules(root_module, &prelude_path)?
                     .into_iter()
@@ -570,35 +594,35 @@ fn select_preludes(
             let package_preludes = selected_preludes[package_slot]
                 .as_mut()
                 .expect("prelude slots should exist for every dirty package");
-            package_preludes[target_slot] = Some(prelude_module);
+            package_preludes[crate_slot] = Some(prelude_module);
         }
     }
 
     // Apply the selected modules after lookup is done so future import resolution can consult the
-    // prelude through `TargetResolutionEnv::prelude_module`.
+    // prelude through `CrateResolutionEnv::prelude_module`.
     for (package_slot, package_states) in states.iter_dirty_mut_enumerated() {
         let package_preludes = selected_preludes[package_slot]
             .as_ref()
             .expect("prelude slots should exist for every dirty package");
-        for (target_slot, state) in package_states.iter_mut().enumerate() {
-            state.prelude = package_preludes[target_slot];
+        for (crate_slot, state) in package_states.iter_mut().enumerate() {
+            state.prelude = package_preludes[crate_slot];
         }
     }
 
     Ok(())
 }
 
-/// Resolves imports and item-position macros until every dirty target scope stops changing.
+/// Resolves imports and item-position macros until every dirty crate scope stops changing.
 ///
 /// Imports can depend on names introduced by other imports, and macro calls can depend on imports
 /// that make the macro definition visible. This function therefore runs a small fixed-point loop:
-/// resolve imports against the current target states, expand the macros that are now visible,
-/// splice generated items back into the mutable target states, and refresh imports whenever those
+/// resolve imports against the current crate states, expand the macros that are now visible,
+/// splice generated items back into the mutable crate states, and refresh imports whenever those
 /// generated items may have introduced new imports or exported names.
 fn finalize_scopes(
     old: Option<&DefMapReadTxn<'_>>,
     item_tree: &ItemTreeDb,
-    states: &mut FinalizeTargetStates,
+    states: &mut FinalizeCrateStates,
     interners: &mut PackageNameInterners,
     performance_preference: MacroExpansionPerformancePreference,
 ) -> anyhow::Result<()> {
@@ -700,7 +724,7 @@ fn finalize_scopes(
 
 fn resolve_import_scopes(
     old: Option<&DefMapReadTxn<'_>>,
-    states: &FinalizeTargetStates,
+    states: &FinalizeCrateStates,
 ) -> anyhow::Result<ScopeMatrix> {
     let mut current_scopes = states.base_scopes();
 
@@ -715,7 +739,7 @@ fn resolve_import_scopes(
                 apply_imports(state, &env, &mut next_scopes).with_context(|| {
                     format!(
                         "while attempting to resolve imports for {}",
-                        state.target_name
+                        state.crate_name
                     )
                 })?;
             }
@@ -731,7 +755,7 @@ fn resolve_import_scopes(
 
 fn freeze_resolved_scopes(
     old: Option<&DefMapReadTxn<'_>>,
-    states: &mut FinalizeTargetStates,
+    states: &mut FinalizeCrateStates,
     current_scopes: ScopeMatrix,
 ) -> anyhow::Result<()> {
     // Once the import graph reaches a fixed point, freeze the resolved scopes into the public
@@ -741,8 +765,8 @@ fn freeze_resolved_scopes(
         UnresolvedImports::collect(states, &env)?
     };
 
-    for (package_slot, target_scopes) in current_scopes.packages.into_iter().enumerate() {
-        let Some(target_scopes) = target_scopes else {
+    for (package_slot, crate_scopes) in current_scopes.packages.into_iter().enumerate() {
+        let Some(crate_scopes) = crate_scopes else {
             continue;
         };
         let package_states = states
@@ -752,26 +776,26 @@ fn freeze_resolved_scopes(
             .expect("resolved scopes should exist only for dirty packages");
         assert_eq!(
             package_states.len(),
-            target_scopes.len(),
-            "resolved target scopes should match dirty target states"
+            crate_scopes.len(),
+            "resolved crate scopes should match dirty crate states"
         );
 
-        for (state, scopes) in package_states.iter_mut().zip(target_scopes) {
-            freeze_target_scopes(state, scopes, &unresolved_imports);
+        for (state, scopes) in package_states.iter_mut().zip(crate_scopes) {
+            freeze_crate_scopes(state, scopes, &unresolved_imports);
         }
     }
 
     Ok(())
 }
 
-fn freeze_target_scopes(
-    state: &mut TargetState,
-    final_scopes: TargetScopeMatrix,
+fn freeze_crate_scopes(
+    state: &mut CrateState,
+    final_scopes: CrateScopeMatrix,
     unresolved_imports: &UnresolvedImports,
 ) {
     let final_unresolved_imports = unresolved_imports
-        .target_imports(state.target)
-        .expect("unresolved imports should exist for every dirty target");
+        .crate_imports(state.crate_ref)
+        .expect("unresolved imports should exist for every dirty crate");
 
     for (module_idx, scope) in final_scopes.into_iter().enumerate() {
         let module = state
@@ -786,17 +810,16 @@ fn freeze_target_scopes(
     }
 }
 
-fn freeze_target_data(state: &TargetState) -> TargetData {
+fn freeze_crate_data(state: &CrateState) -> CrateData {
     // The same implicit roots used by import resolution are still needed by later frozen path
     // queries. Keep them as an extern prelude rather than pretending they are child modules of the
     // crate root.
-    TargetData::new(
+    CrateData::new(
+        state.cargo_target,
+        state.crate_name.clone(),
         Some(state.root_module),
         state.implicit_roots.clone(),
         state.prelude,
+        state.def_map_builder.clone().build(),
     )
-}
-
-fn freeze_target_state(state: &TargetState) -> DefMap {
-    state.def_map_builder.clone().build()
 }

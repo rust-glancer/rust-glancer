@@ -1,10 +1,9 @@
 //! Def-map package store and transaction entry points.
 
-use rg_ir_model::TargetRef;
-use rg_ir_storage::{DefMap, PackageDefMaps};
+use crate::{DefMap, PackageDefMaps};
+use rg_ir_model::{CrateId, CrateRef};
 use rg_item_tree::ItemTreeDb;
 use rg_package_store::{PackageLoader, PackageStore, PackageSubset};
-use rg_parse::{self, TargetId};
 use rg_text::PackageNameInterners;
 use rg_workspace::WorkspaceMetadata;
 
@@ -14,14 +13,14 @@ use crate::{
 };
 use rg_std::{MemorySize, Shrink};
 
-/// Frozen def maps for all parsed packages and targets.
+/// Frozen def maps for all parsed packages and semantic crates.
 #[derive(Debug, Clone, PartialEq, Eq, Default, MemorySize)]
 pub struct DefMapDb {
     packages: PackageStore<PackageDefMaps>,
 }
 
 impl DefMapDb {
-    /// Starts building target-local def maps from parsed metadata and lowered item trees.
+    /// Starts building crate-local def maps from parsed metadata and lowered item trees.
     pub fn builder<'a>(
         workspace: &'a WorkspaceMetadata,
         parse: &'a rg_parse::ParseDb,
@@ -66,8 +65,8 @@ impl DefMapDb {
         self.packages.len()
     }
 
-    /// Iterates over every resident target def map together with a resident-only target reference.
-    fn resident_target_maps(&self) -> impl Iterator<Item = (TargetRef, &DefMap)> {
+    /// Iterates over every resident crate def map together with its project-wide crate reference.
+    fn resident_crate_maps(&self) -> impl Iterator<Item = (CrateRef, &DefMap)> {
         self.packages
             .raw_entries_with_slots()
             .filter_map(|(package_slot, entry)| {
@@ -75,15 +74,15 @@ impl DefMapDb {
             })
             .flat_map(move |(package_slot, package)| {
                 package
-                    .def_maps()
+                    .crates()
                     .iter()
                     .enumerate()
-                    .map(move |(target_idx, def_map)| {
-                        let target_ref = TargetRef {
+                    .map(move |(crate_idx, data)| {
+                        let crate_ref = CrateRef {
                             package: package_slot,
-                            target: TargetId(target_idx),
+                            crate_id: CrateId(crate_idx),
                         };
-                        (target_ref, def_map)
+                        (crate_ref, data.def_map())
                     })
             })
     }
@@ -92,13 +91,13 @@ impl DefMapDb {
     pub fn stats(&self) -> DefMapStats {
         let mut stats = DefMapStats::default();
 
-        for (_, target) in self.resident_target_maps() {
-            stats.target_count += 1;
-            stats.module_count += target.modules().len();
-            stats.local_def_count += target.local_defs().len();
-            stats.local_impl_count += target.local_impls().len();
-            stats.import_count += target.imports().len();
-            stats.unresolved_import_count += target
+        for (_, def_map) in self.resident_crate_maps() {
+            stats.crate_count += 1;
+            stats.module_count += def_map.modules().len();
+            stats.local_def_count += def_map.local_defs().len();
+            stats.local_impl_count += def_map.local_impls().len();
+            stats.import_count += def_map.imports().len();
+            stats.unresolved_import_count += def_map
                 .modules()
                 .iter()
                 .map(|module| module.unresolved_imports.len())
@@ -174,7 +173,7 @@ impl DefMapDbMutator<'_> {
 /// Coarse totals for reporting that the DefMap phase produced useful data.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, MemorySize)]
 pub struct DefMapStats {
-    pub target_count: usize,
+    pub crate_count: usize,
     pub module_count: usize,
     pub local_def_count: usize,
     pub local_impl_count: usize,
@@ -184,44 +183,49 @@ pub struct DefMapStats {
 
 #[cfg(test)]
 mod tests {
-    use rg_ir_model::TargetRef;
-    use rg_ir_storage::{DefMapBuilder, TargetData};
+    use crate::{CrateData, DefMapBuilder};
+    use rg_ir_model::CrateRef;
+    use rg_parse::CargoTargetId;
 
     use super::*;
 
     #[test]
-    fn target_maps_preserve_package_slots_when_middle_package_is_offloaded() {
+    fn crate_maps_preserve_package_slots_when_middle_package_is_offloaded() {
         let mut db = DefMapDb {
             packages: PackageStore::from_vec(vec![
-                package_with_one_target("workspace"),
-                package_with_one_target("offloaded"),
-                package_with_one_target("dependency"),
+                package_with_one_crate("workspace"),
+                package_with_one_crate("offloaded"),
+                package_with_one_crate("dependency"),
             ]),
         };
 
         db.offload_package(PackageSlot(1))
             .expect("middle package should exist");
 
-        let target_packages = db
-            .resident_target_maps()
-            .map(|(target, _)| target.package)
+        let crate_packages = db
+            .resident_crate_maps()
+            .map(|(crate_ref, _)| crate_ref.package)
             .collect::<Vec<_>>();
 
-        assert_eq!(target_packages, vec![PackageSlot(0), PackageSlot(2)]);
+        assert_eq!(crate_packages, vec![PackageSlot(0), PackageSlot(2)]);
     }
 
-    fn package_with_one_target(name: &str) -> PackageDefMaps {
+    fn package_with_one_crate(name: &str) -> PackageDefMaps {
+        let crate_ref = CrateRef {
+            package: PackageSlot(0),
+            crate_id: CrateId(0),
+        };
         PackageDefMaps::new(
             name.to_string(),
-            vec![format!("{name}_lib")],
-            vec![TargetData::default()],
-            vec![
-                DefMapBuilder::new(TargetRef {
-                    package: PackageSlot(0),
-                    target: TargetId(0),
-                })
-                .build(),
-            ],
+            rg_text::RustEdition::Edition2024,
+            vec![CrateData::new(
+                CargoTargetId(0),
+                format!("{name}_lib"),
+                None,
+                Default::default(),
+                None,
+                DefMapBuilder::new(crate_ref).build(),
+            )],
         )
     }
 }

@@ -1,39 +1,133 @@
+use rg_cfg_eval::CfgExpr;
+use rg_parse::{FileId, Span};
+use rg_std::{MemorySize, Shrink};
+use rg_text::Name;
+use wincode::{SchemaRead, SchemaWrite};
+
+pub use self::{
+    decl::{
+        ConstItem, ConstParamData, EnumItem, EnumVariantItem, FieldItem, FieldList, FunctionItem,
+        FunctionQualifiers, GenericParams, ImplItem, LifetimeParamData, ParamItem, ParamKind,
+        SelfParamKind, StaticItem, StructItem, TraitItem, TypeAliasItem, TypeOrConstParamData,
+        TypeParamData, UnionItem, WherePredicate,
+    },
+    docs::Documentation,
+    import::{
+        ExternCrateItem, ImportAlias, UseImport, UseImportKind, UseItem, UsePath, UsePathSegment,
+        UsePathSegmentKind,
+    },
+    kind::{ItemKind, ItemTag},
+    lang_item::LangItem,
+    macro_item::{
+        BuiltinMacroItem, BuiltinMacroKind, CfgAttrMacroUse, CfgSelectArmItem, CfgSelectArmPayload,
+        MacroCallItem, MacroDefinitionAttrs, MacroDefinitionItem, MacroUseAttr, MacroUseSelector,
+    },
+    module::{ModuleItem, ModuleSource},
+    type_ref::{
+        GenericArg, TypeBound, TypeBoundListDisplay, TypeNameFormatter, TypePath, TypePathAnchor,
+        TypePathSegment, TypeRef, TypeRefDisplay,
+    },
+    visibility::VisibilityLevel,
+};
+
 mod decl;
 mod docs;
 mod import;
+mod kind;
+mod lang_item;
 mod macro_item;
+mod module;
 mod type_ref;
 mod visibility;
 
-pub use rg_ir_model::items::*;
+mod lowering;
 
-pub use self::{
-    decl::{ImplItemContext, TraitItemContext},
-    docs::{InnerDocs, OuterDocs},
-    macro_item::{
-        MacroCallContext, MacroDefAst, MacroDefContext, MacroRulesAst, MacroRulesContext,
-    },
+pub use rg_ir_model::FieldKey;
+
+pub use self::lowering::{
+    FromAst, ImplItemContext, InnerDocs, MacroCallContext, MacroDefAst, MacroDefContext,
+    MacroRulesAst, MacroRulesContext, MaybeFromAst, OuterDocs, TraitItemContext,
 };
 
-pub(crate) use self::type_ref::type_bound_list_from_ast;
+/// Stable file-local identifier for one lowered item-tree node.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize, Shrink)]
+#[memsize(leaf)]
+#[shrink(leaf)]
+pub struct ItemTreeId(pub usize);
 
-pub trait FromAst<Mode = ()> {
-    type AstNode: ?Sized;
-    type Context<'a>;
+impl rg_arena::ArenaId for ItemTreeId {
+    fn from_index(index: usize) -> Self {
+        Self(index)
+    }
 
-    fn from_ast(node: &Self::AstNode, ctx: Self::Context<'_>) -> Self;
+    fn index(self) -> usize {
+        self.0
+    }
 }
 
-pub trait MaybeFromAst<Mode = ()> {
-    type AstNode: ?Sized;
-    type Context<'a>;
-
-    fn maybe_from_ast(node: &Self::AstNode, ctx: Self::Context<'_>) -> Option<Self>
-    where
-        Self: Sized;
+/// Stable project-local reference to one item-tree node.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize, Shrink)]
+#[shrink(leaf)]
+pub struct ItemTreeRef {
+    pub file_id: FileId,
+    pub item: ItemTreeId,
 }
 
-fn normalized_syntax(node: &impl rg_syntax::AstNode) -> String {
-    // TODO: Either remove completely or at least re-export instead.
-    rg_syntax::utils::normalized_syntax_text(node)
+/// AST-independent item-tree node used by later lowering stages.
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
+pub struct ItemNode {
+    pub kind: ItemKind,
+    /// Name (when applicable), e.g. for functions or structs.
+    pub name: Option<Name>,
+    /// Source span of the declaration name, when the item has one.
+    pub name_span: Option<Span>,
+    pub visibility: VisibilityLevel,
+    /// Target-dependent cfg gates attached to the item.
+    pub cfg: CfgExpr,
+    /// Compiler identity lowered from `#[lang = "..."]`, when analysis understands that identity.
+    pub lang_item: Option<LangItem>,
+    /// User-facing documentation lowered from doc comments or `#[doc = "..."]`.
+    pub docs: Option<Documentation>,
+    /// File where this item is declared.
+    pub file_id: FileId,
+    /// Source span of the declaration.
+    pub span: Span,
+}
+
+impl ItemNode {
+    /// Creates an item node from source-like syntax that does not have target-specific cfg state.
+    pub fn source(
+        kind: ItemKind,
+        name: Option<Name>,
+        name_span: Option<Span>,
+        visibility: VisibilityLevel,
+        docs: Option<Documentation>,
+        span: Span,
+        file_id: FileId,
+    ) -> Self {
+        Self::new(kind, name, name_span, visibility, docs, span, file_id)
+    }
+
+    /// Creates a fully-populated item node from already-lowered parts.
+    pub fn new(
+        kind: ItemKind,
+        name: Option<Name>,
+        name_span: Option<Span>,
+        visibility: VisibilityLevel,
+        docs: Option<Documentation>,
+        span: Span,
+        file_id: FileId,
+    ) -> Self {
+        Self {
+            kind,
+            name,
+            name_span,
+            visibility,
+            cfg: CfgExpr::default(),
+            lang_item: None,
+            docs,
+            file_id,
+            span,
+        }
+    }
 }

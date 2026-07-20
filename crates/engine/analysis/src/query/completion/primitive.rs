@@ -3,7 +3,7 @@
 //! Primitives are part of the Rust language rather than module-scope definitions, so completion
 //! renders them from the shared type vocabulary instead of pretending they live in DefMap.
 
-use rg_ir_model::items::PrimitiveTy;
+use rg_ir_model::PrimitiveTy;
 
 use crate::model::{
     CompletionApplicability, CompletionEdit, CompletionInsertText, CompletionItem, CompletionKind,

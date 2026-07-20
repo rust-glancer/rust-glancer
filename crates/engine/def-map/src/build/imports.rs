@@ -1,28 +1,26 @@
 //! Applies and records imports during scope finalization.
 //!
-//! Import resolution is a fixed-point process driven by `scope.rs`. This module owns the work done
-//! inside one pass: resolving named/self/glob imports against the previous scope snapshot, writing
-//! the imported bindings into the next scope snapshot, and recording imports that still fail once
-//! the fixed point has stabilized.
+//! The shared scope resolver decides what named, self, and glob imports mean. This module only
+//! drives that operation for crate DefMaps: it writes returned binding facts into the next
+//! fixed-point snapshot, then uses the same result shape to record imports that remain unresolved
+//! after the scopes stop changing.
 
-use rg_ir_model::{ImportId, ModuleRef, TargetRef};
-use rg_ir_storage::{
-    ImportKind, ScopeBinding, ScopeBindingOrigin, ScopeResolver, TargetResolutionEnv,
-};
+use crate::{CrateResolutionEnv, ScopeResolver};
+use rg_ir_model::{CrateRef, DefMapRef, ImportId, ImportRef, ModuleRef};
 
 use super::{
-    collect::TargetState,
-    finalize::{FinalizeTargetStates, ScopeMatrix},
+    collect::CrateState,
+    finalize::{FinalizeCrateStates, ScopeMatrix},
 };
 
 /// Unresolved import ids for one module.
 type ModuleUnresolvedImports = Vec<ImportId>;
 
-/// Unresolved imports for every module inside one target.
-type TargetUnresolvedImports = Vec<ModuleUnresolvedImports>;
+/// Unresolved imports for every module inside one crate.
+type CrateUnresolvedImports = Vec<ModuleUnresolvedImports>;
 
-/// Unresolved imports for every target and module inside one package.
-type PackageUnresolvedImports = Vec<TargetUnresolvedImports>;
+/// Unresolved imports for every crate and module inside one package.
+type PackageUnresolvedImports = Vec<CrateUnresolvedImports>;
 
 /// Unresolved imports recorded after the fixed-point loop stabilizes.
 ///
@@ -34,8 +32,8 @@ pub(super) struct UnresolvedImports {
 
 impl UnresolvedImports {
     pub(super) fn collect(
-        states: &FinalizeTargetStates,
-        env: &impl TargetResolutionEnv<Error = rg_package_store::PackageStoreError>,
+        states: &FinalizeCrateStates,
+        env: &impl CrateResolutionEnv<Error = rg_package_store::PackageStoreError>,
     ) -> anyhow::Result<Self> {
         let packages = states
             .iter_packages()
@@ -44,7 +42,7 @@ impl UnresolvedImports {
                     .map(|package_states| {
                         package_states
                             .iter()
-                            .map(|state| unresolved_imports_for_target(state, env))
+                            .map(|state| unresolved_imports_for_crate(state, env))
                             .collect::<anyhow::Result<Vec<_>>>()
                     })
                     .transpose()
@@ -54,102 +52,60 @@ impl UnresolvedImports {
         Ok(Self { packages })
     }
 
-    pub(super) fn target_imports(&self, target: TargetRef) -> Option<&[Vec<ImportId>]> {
+    pub(super) fn crate_imports(&self, crate_ref: CrateRef) -> Option<&[Vec<ImportId>]> {
         self.packages
-            .get(target.package.0)?
+            .get(crate_ref.package.0)?
             .as_ref()?
-            .get(target.target.0)
+            .get(crate_ref.crate_id.0)
             .map(Vec::as_slice)
     }
 }
 
-/// Applies one target's imports using the previously computed scope snapshot.
+/// Apply one crate's resolved import facts to the next scope snapshot.
 ///
-/// Named/self imports add a binding under one textual name. Glob imports copy every visible
-/// binding from the source module into the target module.
+/// One directive may return several names or namespace slots. The resolver owns those decisions;
+/// this function only inserts the facts into the crate's mutable scope.
 pub(super) fn apply_imports(
-    state: &TargetState,
-    env: &impl TargetResolutionEnv<Error = rg_package_store::PackageStoreError>,
+    state: &CrateState,
+    env: &impl CrateResolutionEnv<Error = rg_package_store::PackageStoreError>,
     next_scopes: &mut ScopeMatrix,
 ) -> anyhow::Result<()> {
     let resolver = ScopeResolver::new(env);
-    for import in state.def_map_builder.partial().imports().iter() {
-        let import_owner = ModuleRef::target(state.target, import.module);
-        match import.kind {
-            ImportKind::Glob => {
-                let glob_sources = resolver.import_glob_sources(import_owner, &import.path)?;
-
-                for glob_source in glob_sources {
-                    let target_scope = next_scopes
-                        .module_scope_mut(state.target, import.module)
-                        .expect("target scope should exist for every import");
-                    let source_scope =
-                        resolver.visible_glob_source_scope(import_owner, glob_source)?;
-
-                    // Visibility is attached to the binding introduced by the glob import,
-                    // not to the original definition.
-                    for (name, entry) in source_scope.entries() {
-                        target_scope.copy_visible_bindings(
-                            name,
-                            entry,
-                            import.visibility.clone(),
-                            import_owner,
-                        );
-                    }
-                }
-            }
-            ImportKind::Named | ImportKind::SelfImport => {
-                let resolved_defs = resolver.import_defs(import_owner, &import.path)?;
-
-                let Some(binding_name) = import.binding_name() else {
-                    continue;
-                };
-                let target_scope = next_scopes
-                    .module_scope_mut(state.target, import.module)
-                    .expect("target scope should exist for every import");
-
-                for resolved_def in resolved_defs {
-                    // Resolution is namespace-aware, but the target textual name is shared across
-                    // namespaces inside one scope entry.
-                    let Some(namespace) = resolver.namespace_for_def(resolved_def)? else {
-                        continue;
-                    };
-                    target_scope.insert_binding(
-                        &binding_name,
-                        namespace,
-                        ScopeBinding {
-                            def: resolved_def,
-                            visibility: import.visibility.clone(),
-                            owner: import_owner,
-                            origin: ScopeBindingOrigin::Import,
-                        },
-                    );
-                }
-            }
+    for (import_id, import) in state.def_map_builder.partial().imports_with_ids() {
+        let import_owner = ModuleRef::krate(state.crate_ref, import.module);
+        let import_ref = ImportRef {
+            origin: DefMapRef::Crate(state.crate_ref),
+            import: import_id,
+        };
+        let resolution = resolver.resolve_import(import_owner, import_ref, import)?;
+        let target_scope = next_scopes
+            .module_scope_mut(state.crate_ref, import.module)
+            .expect("crate scope should exist for every import");
+        for introduced in resolution.introduced {
+            target_scope.insert_binding(&introduced.name, introduced.namespace, introduced.binding);
         }
     }
 
     Ok(())
 }
 
-fn unresolved_imports_for_target(
-    state: &TargetState,
-    env: &impl TargetResolutionEnv<Error = rg_package_store::PackageStoreError>,
+fn unresolved_imports_for_crate(
+    state: &CrateState,
+    env: &impl CrateResolutionEnv<Error = rg_package_store::PackageStoreError>,
 ) -> anyhow::Result<Vec<Vec<ImportId>>> {
     let mut module_imports = vec![Vec::new(); state.def_map_builder.partial().module_count()];
     let resolver = ScopeResolver::new(env);
 
     for (import_id, import) in state.def_map_builder.partial().imports_with_ids() {
-        let import_owner = ModuleRef::target(state.target, import.module);
-        let is_unresolved = match import.kind {
-            ImportKind::Glob => resolver
-                .import_glob_sources(import_owner, &import.path)?
-                .is_empty(),
-            ImportKind::Named | ImportKind::SelfImport => {
-                resolver.import_defs(import_owner, &import.path)?.is_empty()
-            }
+        let import_owner = ModuleRef::krate(state.crate_ref, import.module);
+        let import_ref = ImportRef {
+            origin: DefMapRef::Crate(state.crate_ref),
+            import: import_id,
         };
-        if is_unresolved {
+        if !resolver
+            .resolve_import(import_owner, import_ref, import)?
+            .is_resolved()
+        {
             module_imports
                 .get_mut(import.module.0)
                 .expect("import module should exist while collecting unresolved imports")

@@ -5,9 +5,9 @@
 //! allocation through `Arc<str>`, while the interner itself can prune names that no live analysis
 //! snapshot still references.
 
-use rg_std::Shrink;
+use rg_std::{MemorySize, Shrink};
 use std::{
-    borrow::Borrow,
+    borrow::{Borrow, Cow},
     cell::RefCell,
     collections::{HashMap, hash_map::DefaultHasher},
     fmt,
@@ -17,22 +17,97 @@ use std::{
 };
 use wincode::{SchemaRead, SchemaWrite};
 
-/// Shared short text, usually an identifier or path segment.
+/// Rust language edition used to interpret and present source text.
+///
+/// Edition is a language primitive shared by workspace loading, parsing, semantic storage, and
+/// editor rendering. Keeping it beside the semantic text types prevents those lower layers from
+/// depending on workspace metadata merely to ask a syntax-shaped question.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, Default, SchemaRead, SchemaWrite, MemorySize, Shrink,
+)]
+#[memsize(leaf)]
+#[shrink(leaf)]
+pub enum RustEdition {
+    Edition2015,
+    Edition2018,
+    Edition2021,
+    #[default]
+    Edition2024,
+}
+
+impl RustEdition {
+    pub fn prelude_module(self) -> &'static str {
+        match self {
+            Self::Edition2015 => "rust_2015",
+            Self::Edition2018 => "rust_2018",
+            Self::Edition2021 => "rust_2021",
+            Self::Edition2024 => "rust_2024",
+        }
+    }
+}
+
+impl fmt::Display for RustEdition {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Edition2015 => "2015",
+            Self::Edition2018 => "2018",
+            Self::Edition2021 => "2021",
+            Self::Edition2024 => "2024",
+        })
+    }
+}
+
+/// Shared canonical semantic name.
+///
+/// Source-only rawness is never retained: identifiers drop `r#`, while lifetimes and labels drop
+/// the `r#` after their leading apostrophe. Exact source fragments and user-facing labels are not
+/// names and should use an ordinary string instead.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Name(Arc<str>);
 
 impl Name {
-    /// Builds a standalone name without looking it up in an interner.
+    /// Builds a standalone semantic name without looking it up in an interner.
     ///
-    /// Production lowering should prefer `NameInterner::intern`; this constructor keeps tests and
-    /// small synthetic query values lightweight.
+    /// Production lowering should normally use [`NameInterner`]. This constructor keeps tests and
+    /// small synthetic query values lightweight while preserving the same canonical invariant.
     pub fn new(text: impl AsRef<str>) -> Self {
-        Self(Arc::from(text.as_ref()))
+        match canonical_name_text(text.as_ref()) {
+            Cow::Borrowed(text) => Self(Arc::from(text)),
+            Cow::Owned(text) => Self(Arc::from(text.into_boxed_str())),
+        }
+    }
+
+    /// Builds the sentinel used when syntax has a name-shaped slot but no valid source name.
+    pub fn missing() -> Self {
+        Self::new("<missing>")
+    }
+
+    pub fn is_missing(&self) -> bool {
+        self.as_str() == "<missing>"
     }
 
     pub fn as_str(&self) -> &str {
         &self.0
     }
+}
+
+/// Returns the semantic spelling of one Rust identifier token.
+///
+/// Raw identifiers only change how source text is parsed. Once syntax has identified the token as
+/// an identifier, `r#type` and `type` must participate in lookup as the same name.
+pub fn identifier_text(text: &str) -> &str {
+    text.strip_prefix("r#").unwrap_or(text)
+}
+
+/// Canonicalizes every raw spelling that can be stored as a semantic name.
+fn canonical_name_text(text: &str) -> Cow<'_, str> {
+    if let Some(identifier) = text.strip_prefix("r#") {
+        return Cow::Borrowed(identifier);
+    }
+    if let Some(lifetime) = text.strip_prefix("'r#") {
+        return Cow::Owned(format!("'{lifetime}"));
+    }
+    Cow::Borrowed(text)
 }
 
 impl Shrink for Name {
@@ -78,7 +153,12 @@ impl From<&str> for Name {
 }
 
 impl From<String> for Name {
-    fn from(value: String) -> Self {
+    fn from(mut value: String) -> Self {
+        if value.starts_with("r#") {
+            value.drain(..2);
+        } else if value.starts_with("'r#") {
+            value.drain(1..3);
+        }
         Self(Arc::from(value.into_boxed_str()))
     }
 }
@@ -201,8 +281,17 @@ impl NameInterner {
         Self::default()
     }
 
+    pub fn intern_missing(&mut self) -> Name {
+        self.intern("<missing>")
+    }
+
+    /// Interns one canonical semantic name.
+    ///
+    /// Both identifier rawness (`r#type`) and lifetime/label rawness (`'r#fn`) are source spelling
+    /// and are removed before hashing or storage.
     pub fn intern(&mut self, text: impl AsRef<str>) -> Name {
-        let text = text.as_ref();
+        let canonical = canonical_name_text(text.as_ref());
+        let text = canonical.as_ref();
         let hash = Self::hash_text(text);
 
         if let Some(bucket) = self.buckets.get_mut(&hash) {
@@ -218,7 +307,12 @@ impl NameInterner {
             }
         }
 
-        let name = Name::new(text);
+        // Raw lifetimes need a rewritten owned spelling. Reuse that allocation for the `Arc`
+        // instead of canonicalizing into a temporary `String` and copying it once more.
+        let name = match canonical {
+            Cow::Borrowed(text) => Name(Arc::from(text)),
+            Cow::Owned(text) => Name(Arc::from(text.into_boxed_str())),
+        };
         self.buckets
             .entry(hash)
             .or_default()
@@ -387,6 +481,24 @@ mod tests {
         assert_eq!(first, second);
         assert_eq!(first.as_str().as_ptr(), second.as_str().as_ptr());
         assert_eq!(interner.len(), 1);
+    }
+
+    #[test]
+    fn every_name_construction_path_removes_source_only_rawness() {
+        let mut interner = NameInterner::new();
+
+        let ordinary = interner.intern("type");
+        let raw = interner.intern("r#type");
+        let lifetime = interner.intern("'r#fn");
+
+        assert_eq!(ordinary, "type");
+        assert_eq!(raw, ordinary);
+        assert_eq!(raw.as_str().as_ptr(), ordinary.as_str().as_ptr());
+        assert_eq!(lifetime, "'fn");
+        assert_eq!(Name::new("r#type"), ordinary);
+        assert_eq!(Name::new("'r#fn"), lifetime);
+        assert_eq!(Name::from("r#type".to_string()), ordinary);
+        assert_eq!(Name::from("'r#fn".to_string()), lifetime);
     }
 
     #[test]

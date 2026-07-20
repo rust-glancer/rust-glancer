@@ -36,6 +36,7 @@ pub(super) fn rebuild_workspace_graph(
     .context("while attempting to normalize Cargo metadata")?
     .with_sysroot_sources(sysroot);
     let body_ir_policy = project.state.body_ir_policy;
+    let split_indexing_mode = project.state.split_indexing_mode;
     let indexing_preference = project.state.indexing_preference;
     let package_residency_policy = project.state.package_residency_policy;
 
@@ -46,6 +47,7 @@ pub(super) fn rebuild_workspace_graph(
         .workspace_lowering_config(workspace_lowering_config)
         .cargo_metadata_config(cargo_metadata_config)
         .body_ir_policy(body_ir_policy)
+        .split_indexing_mode(split_indexing_mode)
         .indexing_preference(indexing_preference)
         .package_residency_policy(package_residency_policy)
         .memory_hooks(memory_hooks)
@@ -67,19 +69,19 @@ pub(super) fn rebuild_workspace_graph(
         }
     }
     let mut affected_packages = Vec::new();
-    let mut changed_targets = Vec::new();
+    let mut changed_crates = Vec::new();
 
     // The rebuilt project has already restored its package residency, so payload-heavy phase
     // databases may be empty under aggressive offloading. ProjectState keeps the small graph
     // metadata that change summaries need resident.
     for package_slot in project.state.non_sysroot_package_slots() {
         affected_packages.push(package_slot);
-        changed_targets.extend(project.state.target_refs_for_package(package_slot));
+        changed_crates.extend(project.state.crate_refs_for_package(package_slot));
     }
 
     Ok(AnalysisChangeSummary {
         changed_files,
         affected_packages,
-        changed_targets,
+        changed_crates,
     })
 }

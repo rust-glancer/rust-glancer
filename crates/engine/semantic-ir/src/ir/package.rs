@@ -1,36 +1,34 @@
+use crate::ItemStore;
 use rg_arena::Arena;
-use rg_ir_storage::ItemStore;
-use rg_parse::TargetId;
+use rg_ir_model::CrateId;
 use rg_std::{MemorySize, Shrink};
 use wincode::{SchemaRead, SchemaWrite};
 
 /// Semantic IR for one Cargo package.
 ///
-/// Packages keep target IRs in the same stable order as parse/def-map packages, so a
-/// `TargetRef { package, target }` can address every phase without an extra translation table.
+/// Crate IDs are assigned by DefMap and reused by later semantic phases in the package.
 #[derive(Debug, Clone, PartialEq, Eq, Default, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct PackageIr {
-    pub(crate) targets: Arena<TargetId, ItemStore>,
+    pub(crate) crates: Arena<CrateId, ItemStore>,
 }
 
 impl PackageIr {
-    pub(crate) fn new(targets: Vec<ItemStore>) -> Self {
+    pub(crate) fn new(crates: Vec<ItemStore>) -> Self {
         Self {
-            targets: Arena::from_vec(targets),
+            crates: Arena::from_vec(crates),
         }
     }
 
-    /// Returns all target IRs for this package in target-id order.
-    pub fn targets(&self) -> &[ItemStore] {
-        self.targets.as_slice()
+    /// Returns all crate item stores for this package in crate-id order.
+    pub fn crates(&self) -> &[ItemStore] {
+        self.crates.as_slice()
     }
 
-    /// Returns one target IR by package-local target id.
-    pub fn target(&self, target: TargetId) -> Option<&ItemStore> {
-        self.targets.get(target)
+    pub fn crate_items(&self, crate_id: CrateId) -> Option<&ItemStore> {
+        self.crates.get(crate_id)
     }
 
-    pub(crate) fn target_mut(&mut self, target: TargetId) -> Option<&mut ItemStore> {
-        self.targets.get_mut(target)
+    pub(crate) fn crate_items_mut(&mut self, crate_id: CrateId) -> Option<&mut ItemStore> {
+        self.crates.get_mut(crate_id)
     }
 }

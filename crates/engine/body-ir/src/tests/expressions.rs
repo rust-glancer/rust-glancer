@@ -1,6 +1,6 @@
 use expect_test::expect;
 
-use super::utils::check_project_body_ir;
+use super::utils::{check_project_body_ir, check_project_body_ir_with_fake_sysroot};
 
 #[test]
 fn records_calls_fields_methods_and_easy_types() {
@@ -58,9 +58,9 @@ impl User {
             - s0 parent <none>: v0, v1
             - s1 parent s0: v2, v3, v4, v5
             bindings
-            - v0 self_param self `&self` => &Self struct body_expr_fixture[lib]::crate::User @ 12:15-12:20
+            - v0 self_param self `&self` => &nominal struct body_expr_fixture[lib]::crate::User @ 12:15-12:20
             - v1 param id `id`: UserId => nominal struct body_expr_fixture[lib]::crate::UserId @ 12:22-12:24
-            - v2 let this `this`: Self => Self struct body_expr_fixture[lib]::crate::User @ 13:13-13:17
+            - v2 let this `this`: Self => nominal struct body_expr_fixture[lib]::crate::User @ 13:13-13:17
             - v3 let built `built`: UserId => nominal struct body_expr_fixture[lib]::crate::UserId @ 14:13-14:18
             - v4 let via_fn `via_fn`: UserId => nominal struct body_expr_fixture[lib]::crate::UserId @ 15:13-15:19
             - v5 let field `field` => nominal struct body_expr_fixture[lib]::crate::UserId @ 16:13-16:18
@@ -68,12 +68,12 @@ impl User {
             expr e12 block s1 => nominal struct body_expr_fixture[lib]::crate::UserId @ 12:44-18:6
               stmt s0 let v2: Self @ 13:9-13:31
                 initializer
-                  expr e0 path self -> local v0 => &Self struct body_expr_fixture[lib]::crate::User @ 13:26-13:30
+                  expr e0 path self -> local v0 => &nominal struct body_expr_fixture[lib]::crate::User @ 13:26-13:30
               stmt s1 let v3: UserId @ 14:9-14:39
                 initializer
                   expr e3 call => nominal struct body_expr_fixture[lib]::crate::UserId @ 14:29-14:38
                     callee
-                      expr e1 path UserId -> item struct body_expr_fixture[lib]::crate::UserId => nominal struct body_expr_fixture[lib]::crate::UserId @ 14:29-14:35
+                      expr e1 path UserId -> struct body_expr_fixture[lib]::crate::UserId => nominal struct body_expr_fixture[lib]::crate::UserId @ 14:29-14:35
                     arg
                       expr e2 literal int `1` => i32 @ 14:36-14:37
               stmt s2 let v4: UserId @ 15:9-15:43
@@ -87,11 +87,11 @@ impl User {
                 initializer
                   expr e8 field id -> field struct body_expr_fixture[lib]::crate::User::id => nominal struct body_expr_fixture[lib]::crate::UserId @ 16:21-16:28
                     base
-                      expr e7 path self -> local v0 => &Self struct body_expr_fixture[lib]::crate::User @ 16:21-16:25
+                      expr e7 path self -> local v0 => &nominal struct body_expr_fixture[lib]::crate::User @ 16:21-16:25
               tail
                 expr e11 method_call touch -> fn impl User::touch => nominal struct body_expr_fixture[lib]::crate::UserId @ 17:9-17:27
                   receiver
-                    expr e9 path self -> local v0 => &Self struct body_expr_fixture[lib]::crate::User @ 17:9-17:13
+                    expr e9 path self -> local v0 => &nominal struct body_expr_fixture[lib]::crate::User @ 17:9-17:13
                   arg
                     expr e10 path via_fn -> local v4 => nominal struct body_expr_fixture[lib]::crate::UserId @ 17:20-17:26
 
@@ -101,7 +101,7 @@ impl User {
             - s0 parent <none>: v0, v1
             - s1 parent s0: <none>
             bindings
-            - v0 self_param self `&self` => &Self struct body_expr_fixture[lib]::crate::User @ 20:14-20:19
+            - v0 self_param self `&self` => &nominal struct body_expr_fixture[lib]::crate::User @ 20:14-20:19
             - v1 param id `id`: UserId => nominal struct body_expr_fixture[lib]::crate::UserId @ 20:21-20:23
             body
             expr e1 block s1 => nominal struct body_expr_fixture[lib]::crate::UserId @ 20:43-22:6
@@ -158,7 +158,7 @@ pub fn use_it(builder: Builder) {
             - s0 parent <none>: v0
             - s1 parent s0: <none>
             bindings
-            - v0 self_param self `&self` => &Self struct body_method_call_generic_args_fixture[lib]::crate::Builder @ 5:19-5:24
+            - v0 self_param self `&self` => &nominal struct body_method_call_generic_args_fixture[lib]::crate::Builder @ 5:19-5:24
             body
             expr e0 block s1 => () @ 5:31-5:33
         "#]],
@@ -167,7 +167,7 @@ pub fn use_it(builder: Builder) {
 
 #[test]
 fn renders_fn_trait_parenthesized_args_in_binding_annotations() {
-    check_project_body_ir(
+    check_project_body_ir_with_fake_sysroot(
         r#"
 //- /Cargo.toml
 [package]
@@ -183,6 +183,11 @@ pub fn configure(f: impl FnOnce(&mut AttrVec)) {
 }
 "#,
         expect![[r#"
+            package alloc
+
+            alloc [lib]
+            skipped
+
             package body_fn_trait_args_fixture
 
             body_fn_trait_args_fixture [lib]
@@ -191,12 +196,23 @@ pub fn configure(f: impl FnOnce(&mut AttrVec)) {
             - s0 parent <none>: v0
             - s1 parent s0: <none>
             bindings
-            - v0 param f `f`: impl FnOnce(&mut AttrVec) => syntax impl FnOnce(&mut AttrVec) @ 3:18-3:19
+            - v0 param f `f`: impl FnOnce(&mut AttrVec) => impl trait core[lib]::crate::FnOnce<(&mut nominal struct body_fn_trait_args_fixture[lib]::crate::AttrVec,), Output = ()> @ 3:18-3:19
             body
             expr e1 block s1 => () @ 3:48-5:2
               stmt s0 let  @ 4:5-4:15
                 initializer
-                  expr e0 path f -> local v0 => syntax impl FnOnce(&mut AttrVec) @ 4:13-4:14
+                  expr e0 path f -> local v0 => impl trait core[lib]::crate::FnOnce<(&mut nominal struct body_fn_trait_args_fixture[lib]::crate::AttrVec,), Output = ()> @ 4:13-4:14
+
+
+            package core
+
+            core [lib]
+            skipped
+
+            package std
+
+            std [lib]
+            skipped
         "#]],
     );
 }
@@ -596,44 +612,113 @@ pub fn use_it() {
                   expr e0 path Named => <unknown> @ 9:17-9:22
               stmt s1 let v1 @ 10:5-10:23
                 initializer
-                  expr e1 path Tuple -> item struct body_value_constructor_fixture[lib]::crate::Tuple => nominal struct body_value_constructor_fixture[lib]::crate::Tuple @ 10:17-10:22
+                  expr e1 path Tuple -> struct body_value_constructor_fixture[lib]::crate::Tuple => nominal struct body_value_constructor_fixture[lib]::crate::Tuple @ 10:17-10:22
               stmt s2 let v2 @ 11:5-11:21
                 initializer
-                  expr e2 path Unit -> item struct body_value_constructor_fixture[lib]::crate::Unit => nominal struct body_value_constructor_fixture[lib]::crate::Unit @ 11:16-11:20
+                  expr e2 path Unit -> struct body_value_constructor_fixture[lib]::crate::Unit => nominal struct body_value_constructor_fixture[lib]::crate::Unit @ 11:16-11:20
+        "#]],
+    );
+}
+
+#[test]
+fn enum_variant_shape_controls_value_and_record_paths() {
+    check_project_body_ir(
+        r#"
+//- /Cargo.toml
+[package]
+name = "body_variant_namespace_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub fn use_it() {
+    enum Choice {
+        Record { value: u8 },
+        Tuple(u8),
+        Unit,
+    }
+    use Choice::{Record, Tuple, Unit};
+
+    let record_value = Record;
+    let qualified_record_value = Choice::Record;
+    let record = Record { value: 1 };
+    let qualified_record = Choice::Record { value: 2 };
+    let tuple = Tuple;
+    let qualified_tuple = Choice::Tuple;
+    let unit = Unit;
+    let qualified_unit = Choice::Unit;
+}
+"#,
+        expect![[r#"
+            package body_variant_namespace_fixture
+
+            body_variant_namespace_fixture [lib]
+            body b0 fn body_variant_namespace_fixture[lib]::crate::use_it @ 1:1-17:2
+            scopes
+            - s0 parent <none>: <none>
+            - s1 parent s0: v0, v1, v2, v3, v4, v5, v6, v7; source_items i0, i1
+            source_items
+            - i0 enum Choice @ 2:5-6:6
+            - i1 use <unnamed> @ 7:5-7:39
+            bindings
+            - v0 let record_value `record_value` => <unknown> @ 9:9-9:21
+            - v1 let qualified_record_value `qualified_record_value` => <unknown> @ 10:9-10:31
+            - v2 let record `record` => nominal enum fn body_variant_namespace_fixture[lib]::crate::use_it::Choice @ 2:5-6:6 @ 11:9-11:15
+            - v3 let qualified_record `qualified_record` => nominal enum fn body_variant_namespace_fixture[lib]::crate::use_it::Choice @ 2:5-6:6 @ 12:9-12:25
+            - v4 let tuple `tuple` => nominal enum fn body_variant_namespace_fixture[lib]::crate::use_it::Choice @ 2:5-6:6 @ 13:9-13:14
+            - v5 let qualified_tuple `qualified_tuple` => nominal enum fn body_variant_namespace_fixture[lib]::crate::use_it::Choice @ 2:5-6:6 @ 14:9-14:24
+            - v6 let unit `unit` => nominal enum fn body_variant_namespace_fixture[lib]::crate::use_it::Choice @ 2:5-6:6 @ 15:9-15:13
+            - v7 let qualified_unit `qualified_unit` => nominal enum fn body_variant_namespace_fixture[lib]::crate::use_it::Choice @ 2:5-6:6 @ 16:9-16:23
+            body
+            expr e10 block s1 => () @ 1:17-17:2
+              stmt s0 source_item i0 @ 2:5-6:6
+              stmt s1 source_item i1 @ 7:5-7:39
+              stmt s2 let v0 @ 9:5-9:31
+                initializer
+                  expr e0 path Record => <unknown> @ 9:24-9:30
+              stmt s3 let v1 @ 10:5-10:49
+                initializer
+                  expr e1 path Choice::Record => <unknown> @ 10:34-10:48
+              stmt s4 let v2 @ 11:5-11:38
+                initializer
+                  expr e3 record Record -> variant enum fn body_variant_namespace_fixture[lib]::crate::use_it::Choice @ 2:5-6:6::Record => nominal enum fn body_variant_namespace_fixture[lib]::crate::use_it::Choice @ 2:5-6:6 @ 11:18-11:37
+                    field value
+                      expr e2 literal int `1` => i32 @ 11:34-11:35
+              stmt s5 let v3 @ 12:5-12:56
+                initializer
+                  expr e5 record Choice::Record -> variant enum fn body_variant_namespace_fixture[lib]::crate::use_it::Choice @ 2:5-6:6::Record => nominal enum fn body_variant_namespace_fixture[lib]::crate::use_it::Choice @ 2:5-6:6 @ 12:28-12:55
+                    field value
+                      expr e4 literal int `2` => i32 @ 12:52-12:53
+              stmt s6 let v4 @ 13:5-13:23
+                initializer
+                  expr e6 path Tuple -> variant enum fn body_variant_namespace_fixture[lib]::crate::use_it::Choice @ 2:5-6:6::Tuple => nominal enum fn body_variant_namespace_fixture[lib]::crate::use_it::Choice @ 2:5-6:6 @ 13:17-13:22
+              stmt s7 let v5 @ 14:5-14:41
+                initializer
+                  expr e7 path Choice::Tuple -> variant enum fn body_variant_namespace_fixture[lib]::crate::use_it::Choice @ 2:5-6:6::Tuple => nominal enum fn body_variant_namespace_fixture[lib]::crate::use_it::Choice @ 2:5-6:6 @ 14:27-14:40
+              stmt s8 let v6 @ 15:5-15:21
+                initializer
+                  expr e8 path Unit -> variant enum fn body_variant_namespace_fixture[lib]::crate::use_it::Choice @ 2:5-6:6::Unit => nominal enum fn body_variant_namespace_fixture[lib]::crate::use_it::Choice @ 2:5-6:6 @ 15:16-15:20
+              stmt s9 let v7 @ 16:5-16:39
+                initializer
+                  expr e9 path Choice::Unit -> variant enum fn body_variant_namespace_fixture[lib]::crate::use_it::Choice @ 2:5-6:6::Unit => nominal enum fn body_variant_namespace_fixture[lib]::crate::use_it::Choice @ 2:5-6:6 @ 16:26-16:38
         "#]],
     );
 }
 
 #[test]
 fn mixed_declared_and_structural_field_targets_are_unresolved() {
-    check_project_body_ir(
+    check_project_body_ir_with_fake_sysroot(
         r#"
 //- /Cargo.toml
 [workspace]
-members = ["core", "app"]
+members = ["app"]
 resolver = "3"
-
-//- /core/Cargo.toml
-[package]
-name = "fake_core"
-version = "0.1.0"
-edition = "2024"
-
-//- /core/src/lib.rs
-pub mod ops {
-    pub trait Deref {
-        type Target;
-    }
-}
 
 //- /app/Cargo.toml
 [package]
 name = "app"
 version = "0.1.0"
 edition = "2024"
-
-[dependencies]
-core = { package = "fake_core", path = "../core" }
 
 //- /app/src/lib.rs
 pub struct DeclaredId;
@@ -656,6 +741,11 @@ pub fn use_it(wrapper: Wrapper) {
 }
 "#,
         expect![[r#"
+            package alloc
+
+            alloc [lib]
+            skipped
+
             package app
 
             app [lib]
@@ -675,9 +765,15 @@ pub fn use_it(wrapper: Wrapper) {
                       expr e0 path wrapper -> local v0 => nominal struct app[lib]::crate::Wrapper @ 17:17-17:24
 
 
-            package fake_core
+            package core
 
-            fake_core [lib]
+            core [lib]
+            skipped
+
+            package std
+
+            std [lib]
+            skipped
         "#]],
     );
 }
@@ -809,7 +905,7 @@ pub fn use_it(user: User) {
             body
             expr e1 block s1 => nominal struct body_rich_path_fixture[lib]::crate::User @ 14:23-16:6
               tail
-                expr e0 path User -> item struct body_rich_path_fixture[lib]::crate::User => nominal struct body_rich_path_fixture[lib]::crate::User @ 15:9-15:13
+                expr e0 path User -> struct body_rich_path_fixture[lib]::crate::User => nominal struct body_rich_path_fixture[lib]::crate::User @ 15:9-15:13
 
 
             body b2 fn impl Factory<Project> for User::make @ 20:5-22:6
@@ -820,7 +916,7 @@ pub fn use_it(user: User) {
             body
             expr e1 block s1 => nominal struct body_rich_path_fixture[lib]::crate::Project @ 20:26-22:6
               tail
-                expr e0 path Project -> item struct body_rich_path_fixture[lib]::crate::Project => nominal struct body_rich_path_fixture[lib]::crate::Project @ 21:9-21:16
+                expr e0 path Project -> struct body_rich_path_fixture[lib]::crate::Project => nominal struct body_rich_path_fixture[lib]::crate::Project @ 21:9-21:16
         "#]],
     );
 }
@@ -875,9 +971,9 @@ pub fn use_it(mut pair: (u8, u8), mut slots: [u8; 3], value: u8, user: User) {
             - s2 parent s1: <none>
             bindings
             body
-            expr e2 block s1 => <unknown> @ 5:21-7:2
+            expr e2 block s1 => ! @ 5:21-7:2
               tail
-                expr e1 loop => <unknown> @ 6:5-6:12
+                expr e1 loop => ! @ 6:5-6:12
                   body
                     expr e0 block s2 => () @ 6:10-6:12
 
@@ -993,11 +1089,11 @@ pub fn use_it(mut pair: (u8, u8), mut slots: [u8; 3], value: u8, user: User) {
                         lhs
                           expr e39 binary == => bool @ 20:18-20:32
                             lhs
-                              expr e37 binary + => <unknown> @ 20:18-20:27
+                              expr e37 binary + => u8 @ 20:18-20:27
                                 lhs
                                   expr e35 path value -> local v2 => u8 @ 20:18-20:23
                                 rhs
-                                  expr e36 literal int `1` => i32 @ 20:26-20:27
+                                  expr e36 literal int `1` => u8 @ 20:26-20:27
                             rhs
                               expr e38 literal int `2` => i32 @ 20:31-20:32
                         rhs
@@ -1214,7 +1310,7 @@ pub fn use_it() {
             body
             expr e1 block s1 => nominal struct body_associated_path_fixture[lib]::crate::Widget @ 4:29-6:6
               tail
-                expr e0 path Widget -> item struct body_associated_path_fixture[lib]::crate::Widget => nominal struct body_associated_path_fixture[lib]::crate::Widget @ 5:9-5:15
+                expr e0 path Widget -> struct body_associated_path_fixture[lib]::crate::Widget => nominal struct body_associated_path_fixture[lib]::crate::Widget @ 5:9-5:15
         "#]],
     );
 }

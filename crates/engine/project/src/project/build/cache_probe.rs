@@ -185,7 +185,7 @@ impl<'a> StartupCacheProbe<'a> {
         }
 
         // A body artifact produced by a narrower policy can still be structurally valid while
-        // containing skipped targets. Reject it so the requested policy gets a full source rebuild.
+        // containing skipped crates. Reject it so the requested policy gets a full source rebuild.
         let matches_policy = probe
             .body_ir_coverage
             .iter()

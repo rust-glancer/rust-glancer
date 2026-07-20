@@ -88,7 +88,7 @@ pub struct DevHelper;
             workspace cache plan
 
             package #0 app
-            schema 5
+            schema 6
             id path+file://./#app@0.1.0
             source workspace
             edition 2024
@@ -105,7 +105,7 @@ pub struct DevHelper;
             - dev_support -> dev-helper (#3) [dev]
 
             package #1 build-helper
-            schema 5
+            schema 6
             id path+file://./build-helper#0.1.0
             source path
             edition 2021
@@ -116,7 +116,7 @@ pub struct DevHelper;
             - <none>
 
             package #2 dep-pkg
-            schema 5
+            schema 6
             id path+file://./dep#dep-pkg@0.1.0
             source path
             edition 2021
@@ -127,7 +127,7 @@ pub struct DevHelper;
             - <none>
 
             package #3 dev-helper
-            schema 5
+            schema 6
             id path+file://./dev-helper#0.1.0
             source path
             edition 2018
@@ -216,27 +216,26 @@ fn package_slot(workspace: &WorkspaceMetadata, package_name: &str) -> PackageSlo
 fn roundtrips_minimal_package_cache_artifact_codec() {
     utils::check_minimal_cache_artifact_codec(expect![[r#"
         encoded artifact has bytes true
-        5247504b47000001bb0000000000000020000000000000000800000000000000
-        2000000000000000050000000700000000000000220000000000000070617468
+        5247504b47000001bb0000000000000014000000000000000800000000000000
+        2000000000000000060000000700000000000000220000000000000070617468
         2b66696c653a2f2f2f776f726b737061636523656d70747940302e312e300000
         000000000000000000000300000015000000000000002f776f726b7370616365
         2f436172676f2e746f6d6c000000000000000000000000000000000000000000
         0000000000000000000000070707070707070707070707070707070707070707
         0707070707070707070707000000000000000000000000000000000000000000
-        0000000000000000000000000000000000000000000000000000000000000000
-        00000000000000000000005247424f4459000110000000000000000000000000
-        0000000000000000000000
+        0000000000000000000000030000000000000000000000000000000000000052
+        47424f44590001100000000000000000000000000000000000000000000000
 
         decoded artifact
-        schema 5
+        schema 6
         source fingerprint 0707070707070707070707070707070707070707070707070707070707070707
         package #7 
         header targets 0
         parse files 0
         parse target roots 0
-        def-map package  targets 0
-        semantic IR targets 0
-        body IR built targets 0
+        def-map package  crates 0
+        semantic IR crates 0
+        body IR built crates 0
     "#]]);
 }
 
@@ -256,15 +255,15 @@ pub struct App;
         expect![[r#"
             encoded artifact has bytes true
             decoded artifact
-            schema 5
+            schema 6
             source fingerprint c15eefc2727539a098da6dc03624a62761f2c4787b8b0208a27cfbbc61073011
             package #0 app
             header targets 1
             parse files 1
             parse target roots 1
-            def-map package app targets 1
-            semantic IR targets 1
-            body IR built targets 1
+            def-map package app crates 1
+            semantic IR crates 1
+            body IR built crates 1
         "#]],
     );
 }
@@ -507,8 +506,8 @@ fn startup_indexing_rejects_artifacts_when_body_ir_policy_needs_more_bodies() {
         hits 0
         misses 1
         body policy mismatches 1
-        body IR target statuses
-        - target 0 built complete
+        body IR crate statuses
+        - crate 0 built complete
     "#]]);
 }
 
