@@ -256,8 +256,14 @@ macro_rules! match_ast {
         $( $( $path:ident )::+ ($it:pat) => $res:expr, )*
         _ => $catch_all:expr $(,)?
     }) => {{
-        $( if let Some($it) = $($path::)+cast($node.clone()) { $res } else )*
-        { $catch_all }
+        // A failed cast selects the next AST arm; using `?` would instead return from the caller.
+        // Newer Clippy versions recognize the generated `if let` chain as question-mark-shaped
+        // without accounting for that match-like control flow.
+        #[allow(clippy::question_mark)]
+        {
+            $( if let Some($it) = $($path::)+cast($node.clone()) { $res } else )*
+            { $catch_all }
+        }
     }};
 }
 
