@@ -8,6 +8,7 @@ on:
       - "crates/**"
       - "rust-toolchain.toml"
       - ".github/scripts/render_benchmark_comment.py"
+      - ".github/scripts/check_lsp_compatibility_liveness.py"
       - ".github/scripts/render_lsp_compatibility_comment.py"
       - ".github/scripts/render_memory_profile_comment.py"
       - ".github/scripts/render_performance_comment.py"
@@ -25,6 +26,7 @@ on:
       - "crates/**"
       - "rust-toolchain.toml"
       - ".github/scripts/render_benchmark_comment.py"
+      - ".github/scripts/check_lsp_compatibility_liveness.py"
       - ".github/scripts/render_lsp_compatibility_comment.py"
       - ".github/scripts/render_memory_profile_comment.py"
       - ".github/scripts/render_performance_comment.py"
@@ -241,6 +243,11 @@ jobs:
         with:
           name: lsp-compatibility-comment
           path: .ci/lsp/comment.md
+
+      - name: Check LSP compatibility liveness
+        run: |
+          python3 .github/scripts/check_lsp_compatibility_liveness.py \
+            --report .ci/lsp/current/result.json
 
       - name: Upload main-branch LSP compatibility baseline
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'

@@ -20,7 +20,10 @@ use anyhow::Context as _;
 use ignore::WalkBuilder;
 use notify_debouncer_full::{
     DebounceEventResult, Debouncer, NoCache,
-    notify::{Config as NotifyConfig, RecommendedWatcher, RecursiveMode},
+    notify::{
+        Config as NotifyConfig, EventKind, RecommendedWatcher, RecursiveMode,
+        event::{AccessKind, AccessMode},
+    },
 };
 use tokio::{sync::mpsc, task::JoinHandle};
 
@@ -166,8 +169,22 @@ impl WorkspaceWatcher {
                 // the workspace settle window. Rescan events have no useful paths and must always
                 // reach the snapshot recovery path.
                 events.retain(|event| {
-                    event.need_rescan()
-                        || event
+                    if event.need_rescan() {
+                        return true;
+                    }
+
+                    // Linux inotify reports opening and reading a file as watcher events. Those
+                    // accesses are especially common while rust-glancer indexes its own workspace,
+                    // but they cannot make the saved project stale. Only an explicit
+                    // close-after-write remains useful as a mutation signal; normal modify events
+                    // cover backends that do not report the close mode.
+                    let may_change_saved_input = match event.event.kind {
+                        EventKind::Access(AccessKind::Close(AccessMode::Write)) => true,
+                        EventKind::Access(_) => false,
+                        _ => true,
+                    };
+                    may_change_saved_input
+                        && event
                             .event
                             .paths
                             .iter()
@@ -487,7 +504,7 @@ mod tests {
         DebouncedEvent,
         notify::{
             Event, EventKind,
-            event::{DataChange, ModifyKind},
+            event::{AccessKind, AccessMode, DataChange, ModifyKind},
         },
     };
     use test_fixture::fixture_crate;
@@ -524,6 +541,35 @@ mod tests {
             vec![&project_source],
             "ignored event entries should be removed before settling"
         );
+    }
+
+    #[test]
+    fn watcher_ingress_drops_read_only_project_accesses() {
+        let source = PathBuf::from("/workspace/src/lib.rs");
+
+        for kind in [
+            EventKind::Access(AccessKind::Read),
+            EventKind::Access(AccessKind::Open(AccessMode::Any)),
+            EventKind::Access(AccessKind::Close(AccessMode::Read)),
+            EventKind::Access(AccessKind::Close(AccessMode::Any)),
+        ] {
+            assert!(
+                WorkspaceWatcher::project_result(Ok(vec![watcher_event(source.clone(), kind,)]))
+                    .is_none(),
+                "read-only access event {kind:?} should not enter the async watcher queue",
+            );
+        }
+
+        for kind in [
+            EventKind::Modify(ModifyKind::Data(DataChange::Any)),
+            EventKind::Access(AccessKind::Close(AccessMode::Write)),
+        ] {
+            assert!(
+                WorkspaceWatcher::project_result(Ok(vec![watcher_event(source.clone(), kind,)]))
+                    .is_some(),
+                "saved-input mutation event {kind:?} should enter the async watcher queue",
+            );
+        }
     }
 
     #[tokio::test]
@@ -582,9 +628,10 @@ mod tests {
     }
 
     fn changed_event(path: PathBuf) -> DebouncedEvent {
-        DebouncedEvent::new(
-            Event::new(EventKind::Modify(ModifyKind::Data(DataChange::Any))).add_path(path),
-            Instant::now(),
-        )
+        watcher_event(path, EventKind::Modify(ModifyKind::Data(DataChange::Any)))
+    }
+
+    fn watcher_event(path: PathBuf, kind: EventKind) -> DebouncedEvent {
+        DebouncedEvent::new(Event::new(kind).add_path(path), Instant::now())
     }
 }
