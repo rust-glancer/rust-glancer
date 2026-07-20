@@ -143,10 +143,17 @@ impl EngineAvailabilityState {
             .inner
             .lock()
             .expect("engine availability mutex should not be poisoned");
-        if inner.active_indexing == 0 {
+        let became_unavailable = inner.active_indexing == 0;
+        if became_unavailable {
             inner.revision = inner.revision.wrapping_add(1);
         }
         inner.active_indexing += 1;
+        tracing::debug!(
+            revision = inner.revision,
+            active_indexing = inner.active_indexing,
+            became_unavailable,
+            "engine indexing activity started"
+        );
         self.publish(EngineAvailabilitySnapshot {
             availability: EngineAvailability::Indexing,
             revision: inner.revision,
@@ -169,6 +176,11 @@ impl EngineAvailabilityState {
             "finished indexing activity should have been started"
         );
         inner.active_indexing -= 1;
+        let outcome_label = match &outcome {
+            EngineIndexingOutcome::Succeeded => "succeeded",
+            EngineIndexingOutcome::Failed(_) => "failed",
+            EngineIndexingOutcome::Cancelled => "cancelled",
+        };
         match outcome {
             EngineIndexingOutcome::Succeeded => inner.failure = None,
             EngineIndexingOutcome::Failed(failure) => inner.failure = Some(failure),
@@ -182,6 +194,13 @@ impl EngineAvailabilityState {
         } else {
             EngineAvailability::Queryable
         };
+        tracing::debug!(
+            revision = inner.revision,
+            active_indexing = inner.active_indexing,
+            outcome = outcome_label,
+            availability = ?availability,
+            "engine indexing activity finished"
+        );
         self.publish(EngineAvailabilitySnapshot {
             availability,
             revision: inner.revision,

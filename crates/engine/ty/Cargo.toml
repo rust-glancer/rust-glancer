@@ -21,6 +21,7 @@ rg_profile.workspace = true
 rg_std.workspace = true
 rg_text.workspace = true
 rg_wincode_utils.workspace = true
+tracing.workspace = true
 wincode.workspace = true
 
 [dev-dependencies]

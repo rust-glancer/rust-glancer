@@ -10,7 +10,7 @@
 
 use std::cell::Cell;
 use std::sync::Mutex;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use chalk_engine::solve::SLGSolver;
 use chalk_ir::cast::Cast;
@@ -37,6 +37,9 @@ const INTER: RgChalkInterner = RgChalkInterner;
 const SOLVER_MAX_SIZE: usize = 32;
 const SETTLED_GOAL_QUANTUM_BUDGET: usize = 4_096;
 const SPECULATIVE_GOAL_QUANTUM_BUDGET: usize = 256;
+// A body may ask thousands of small solver questions. Log only a goal that is independently
+// expensive enough to explain a noticeable part of indexing time.
+const SLOW_SOLVER_GOAL: Duration = Duration::from_millis(100);
 
 /// Result of crossing the bounded Chalk adapter.
 ///
@@ -369,7 +372,29 @@ impl ChalkSolverState {
                     budget.should_continue()
                 })
         };
-        crate::profile::metric::SOLVER_GOAL_TIME_BY_KIND.record("impl_bounds", started.elapsed());
+        let elapsed = started.elapsed();
+        crate::profile::metric::SOLVER_GOAL_TIME_BY_KIND.record("impl_bounds", elapsed);
+        if elapsed >= SLOW_SOLVER_GOAL {
+            let solver_answer = if budget.exhausted() {
+                "exhausted"
+            } else {
+                match &solution {
+                    Some(solution) if solution.is_ambig() => "ambiguous",
+                    Some(_) => "definite",
+                    None => "no_solution",
+                }
+            };
+            tracing::debug!(
+                goal_kind = "impl_bounds",
+                elapsed_ms = elapsed.as_millis(),
+                solver_answer,
+                clause_count = clauses.len(),
+                quantum_budget,
+                has_live_inference,
+                cache_scope = if cache_stable { "crate" } else { "body" },
+                "slow Chalk solver goal"
+            );
+        }
         if budget.exhausted() {
             return ChalkOutcome::Exhausted;
         }
@@ -485,7 +510,8 @@ impl ChalkSolverState {
         // Projection answers containing body-owned identities have the same lifetime as the
         // caller's inference table. Keep them in the inference-scoped cache, not the stable
         // crate-wide forest.
-        let solution = if trait_goal.is_cache_stable() {
+        let cache_stable = trait_goal.is_cache_stable();
+        let solution = if cache_stable {
             self.stable_forests.assoc_projection_solver.solve_limited(
                 self.program.database(),
                 &canonical_goal,
@@ -503,6 +529,27 @@ impl ChalkSolverState {
         };
         let elapsed = started.elapsed();
         crate::profile::metric::SOLVER_GOAL_TIME_BY_KIND.record("assoc_projection", elapsed);
+        if elapsed >= SLOW_SOLVER_GOAL {
+            let solver_answer = if budget.exhausted() {
+                "exhausted"
+            } else {
+                match &solution {
+                    Some(solution) if solution.is_ambig() => "ambiguous",
+                    Some(_) => "definite",
+                    None => "no_solution",
+                }
+            };
+            tracing::debug!(
+                goal_kind = "assoc_projection",
+                elapsed_ms = elapsed.as_millis(),
+                solver_answer,
+                quantum_budget,
+                has_live_inference,
+                selected_impl = selected_impl.is_some(),
+                cache_scope = if cache_stable { "crate" } else { "body" },
+                "slow Chalk solver goal"
+            );
+        }
         if budget.exhausted() {
             return ChalkOutcome::Exhausted;
         }

@@ -28,6 +28,7 @@ rg_semantic_ir.workspace = true
 rg_text.workspace = true
 rg_ty.workspace = true
 rg_wincode_utils.workspace = true
+tracing.workspace = true
 
 [dev-dependencies]
 expect-test.workspace = true
