@@ -8,7 +8,7 @@ use rg_body_ir::{
     BodyPath, BodyPathSegment, BodyPathSegmentArgs, BodyPathSegmentKind, BodyView, PatData, PatKind,
 };
 use rg_ir_model::{PatId, ScopeId};
-use rg_item_tree::{GenericArg, TypeBound, TypePath, TypePathAnchor, TypeRef};
+use rg_item_tree::{GenericArg, TypePath, TypePathAnchor, TypeRef};
 
 /// One pattern node reached by structural pattern traversal.
 ///
@@ -207,7 +207,7 @@ pub(crate) fn walk_type_ref_paths<'ty>(ty: &'ty TypeRef, visit: &mut impl FnMut(
         }
         TypeRef::ImplTrait(bounds) | TypeRef::DynTrait(bounds) => {
             for bound in bounds {
-                if let TypeBound::Trait(ty) = bound {
+                if let Some(ty) = bound.trait_ty() {
                     walk_type_ref_paths(ty, visit);
                 }
             }

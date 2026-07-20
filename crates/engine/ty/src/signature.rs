@@ -10,7 +10,7 @@ use rg_ir_model::{
     ConstRef, EnumVariantRef, FieldRef, FunctionRef, GenericDefRef, GenericParamRef, ImplRef,
     ItemOwner, StaticRef, TraitDefRef, TypeAliasRef,
 };
-use rg_item_tree::{FunctionQualifiers, ParamKind, SelfParamKind, TypeBound};
+use rg_item_tree::{FunctionQualifiers, ParamKind, SelfParamKind};
 use rg_semantic_ir::{GenericParamSource, ItemStoreSource, TypePathContext};
 
 use crate::{
@@ -487,7 +487,7 @@ where
     ))?;
     let mut super_traits = Vec::new();
     for bound in &data.super_traits {
-        let TypeBound::Trait(trait_ty) = bound else {
+        let Some(trait_ty) = bound.required_trait_ty() else {
             continue;
         };
         if let Some(super_trait) = session.lower_trait_ref(trait_ty, self_ty.clone())? {

@@ -1763,6 +1763,8 @@ version = "0.1.0"
 edition = "2024"
 
 //- /app/src/lib.rs
+use std::sync::Arc;
+
 pub struct User {
     pub id: Id,
 }
@@ -1776,14 +1778,8 @@ impl User {
     }
 }
 
-pub struct Wrapper<T>;
-
-impl<T> core::ops::Deref for Wrapper<T> {
-    type Target = T;
-}
-
-pub fn use_it(wrapper: Wrapper<User>) {
-    wrapper.$deref$;
+pub fn use_it(user: Arc<User>) {
+    user.$deref$;
 }
 "#,
         &[AnalysisQuery::complete("Deref completions", "deref").in_lib("app")],

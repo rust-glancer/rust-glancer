@@ -17,6 +17,10 @@ const FILES: &[FakeSysrootFile] = &[
         contents: include_str!("../assets/fake_sysroot/core/src/array.rs"),
     },
     FakeSysrootFile {
+        relative_path: "sysroot/library/core/src/cell.rs",
+        contents: include_str!("../assets/fake_sysroot/core/src/cell.rs"),
+    },
+    FakeSysrootFile {
         relative_path: "sysroot/library/core/src/fmt.rs",
         contents: include_str!("../assets/fake_sysroot/core/src/fmt.rs"),
     },
@@ -27,6 +31,10 @@ const FILES: &[FakeSysrootFile] = &[
     FakeSysrootFile {
         relative_path: "sysroot/library/core/src/iter/adapters/mod.rs",
         contents: include_str!("../assets/fake_sysroot/core/src/iter/adapters/mod.rs"),
+    },
+    FakeSysrootFile {
+        relative_path: "sysroot/library/core/src/marker.rs",
+        contents: include_str!("../assets/fake_sysroot/core/src/marker.rs"),
     },
     FakeSysrootFile {
         relative_path: "sysroot/library/core/src/macros/mod.rs",

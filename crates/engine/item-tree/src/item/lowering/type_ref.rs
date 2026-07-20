@@ -1,4 +1,6 @@
-use crate::item::{GenericArg, TypeBound, TypePath, TypePathAnchor, TypePathSegment, TypeRef};
+use crate::item::{
+    GenericArg, TraitBoundModifier, TypeBound, TypePath, TypePathAnchor, TypePathSegment, TypeRef,
+};
 use rg_ir_model::Mutability;
 use rg_parse::{LineIndex, Span};
 use rg_syntax::{
@@ -286,7 +288,15 @@ fn type_bound_from_ast(
     }
 
     if let Some(ty) = bound.ty() {
-        return TypeBound::Trait(TypeRef::from_ast(&ty, (line_index, interner)));
+        let modifier = if bound.question_mark_token().is_some() {
+            TraitBoundModifier::Maybe
+        } else {
+            TraitBoundModifier::None
+        };
+        return TypeBound::Trait {
+            ty: TypeRef::from_ast(&ty, (line_index, interner)),
+            modifier,
+        };
     }
 
     TypeBound::Unsupported(normalized_syntax(&bound))

@@ -424,9 +424,8 @@ impl<'txn, 'db> SignatureSourceScanner<'txn, 'db> {
         file_id: FileId,
     ) {
         for bound in bounds {
-            match bound {
-                TypeBound::Trait(ty) => self.push_type_ref(context, ty, file_id),
-                TypeBound::Lifetime(_) | TypeBound::Unsupported(_) => {}
+            if let Some(ty) = bound.trait_ty() {
+                self.push_type_ref(context, ty, file_id);
             }
         }
     }

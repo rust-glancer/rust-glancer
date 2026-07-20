@@ -485,7 +485,7 @@ where
 
     fn walk_type_bounds_type_refs(&mut self, context: TypeRefContext, bounds: &'body [TypeBound]) {
         for bound in bounds {
-            if let TypeBound::Trait(ty) = bound {
+            if let Some(ty) = bound.trait_ty() {
                 self.emit_type_ref(context, ty);
             }
         }
