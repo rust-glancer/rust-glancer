@@ -1079,7 +1079,7 @@ fn main() {
 
 #[test]
 fn completes_unqualified_prelude_names() {
-    check_analysis_queries_with_sysroot(
+    check_analysis_queries_with_fake_sysroot(
         r#"
 //- /Cargo.toml
 [package]
@@ -1091,21 +1091,6 @@ edition = "2024"
 pub fn use_it() {
     let _value: Vec$0;
 }
-
-//- /sysroot/library/core/src/lib.rs
-pub struct Core;
-
-//- /sysroot/library/alloc/src/lib.rs
-pub mod vec {
-    pub struct Vec;
-}
-
-//- /sysroot/library/std/src/lib.rs
-pub mod prelude {
-    pub mod rust_2024 {
-        pub use alloc::vec::Vec;
-    }
-}
 "#,
         &[
             AnalysisQuery::complete("unqualified prelude completions", "0")
@@ -1113,6 +1098,14 @@ pub mod prelude {
         ],
         expect![[r#"
             unqualified prelude completions
+            - trait Fn
+            - trait FnMut
+            - trait FnOnce
+            - trait IntoIterator
+            - trait Iterator
+            - enum Option
+            - enum Result
+            - struct String
             - struct Vec
             - module alloc
             - module core
@@ -1250,7 +1243,7 @@ use crate::api_notify::$0
 
 #[test]
 fn completes_sysroot_paths_at_incomplete_bare_use_path_coloncolon() {
-    check_analysis_queries_with_sysroot(
+    check_analysis_queries_with_fake_sysroot(
         r#"
 //- /Cargo.toml
 [package]
@@ -1259,10 +1252,7 @@ version = "0.1.0"
 edition = "2024"
 
 //- /src/lib.rs
-use std::env;
-use std::ffi::OsString;
-
-use std::collections::$0
+use std::sync::$0
 
 #[derive(Debug)]
 enum CliInvocation {
@@ -1272,18 +1262,6 @@ enum CliInvocation {
 const DEFAULT_BASE_BRANCH: &str = "main";
 
 pub fn run() {}
-
-//- /sysroot/library/core/src/lib.rs
-pub struct Core;
-
-//- /sysroot/library/alloc/src/lib.rs
-pub mod collections {
-    pub struct HashMap;
-    pub struct HashSet;
-}
-
-//- /sysroot/library/std/src/lib.rs
-pub use alloc::collections;
 "#,
         &[
             AnalysisQuery::complete("incomplete sysroot use path completions", "0")
@@ -1291,8 +1269,7 @@ pub use alloc::collections;
         ],
         expect![[r#"
             incomplete sysroot use path completions
-            - struct HashMap
-            - struct HashSet
+            - struct Arc
         "#]],
     );
 }

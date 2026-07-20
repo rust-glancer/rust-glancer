@@ -54,12 +54,64 @@ pub(super) struct CrateState {
     pub(super) target_kind: TargetKind,
     pub(super) def_map_builder: DefMapBuilder,
     pub(super) base_scopes: Vec<ModuleScopeBuilder>,
-    pub(super) implicit_roots: HashMap<Name, ModuleRef>,
+    pub(super) extern_prelude: ExternPreludeBuilder,
     pub(super) prelude: Option<ModuleRef>,
     pub(super) macro_definitions: HashMap<LocalDefId, MacroDefinitionRecord>,
     pub(super) textual_macro_scopes: TextualMacroScopes,
     pub(super) macro_use_imports: Vec<MacroUseImport>,
     pub(super) macro_directives: Vec<MacroDirective>,
+}
+
+/// Mutable crate-wide extern prelude assembled while DefMap is built.
+///
+/// Cargo dependency names provide the initial roots. A root declaration such as
+/// `extern crate alloc as alloc_crate;` then adds `alloc_crate` for every real module in the
+/// crate. Rust gives only crate-root `extern crate` declarations this behavior; ordinary root
+/// items and declarations inside nested modules do not become unqualified child-module names.
+///
+/// Explicit aliases stay separate while collection is mutable. The source name in a later
+/// `extern crate` declaration must still name a Cargo dependency, not an alias introduced by an
+/// earlier declaration.
+pub(super) struct ExternPreludeBuilder {
+    implicit_roots: HashMap<Name, ModuleRef>,
+    explicit_aliases: HashMap<Name, ModuleRef>,
+}
+
+impl ExternPreludeBuilder {
+    fn new(implicit_roots: &HashMap<Name, ModuleRef>) -> Self {
+        Self {
+            implicit_roots: implicit_roots.clone(),
+            explicit_aliases: HashMap::new(),
+        }
+    }
+
+    /// Resolve the source spelling of an `extern crate` declaration.
+    pub(super) fn extern_crate_source(&self, name: &Name) -> Option<ModuleRef> {
+        self.implicit_roots.get(name).copied()
+    }
+
+    /// Resolve a first path segment through explicit aliases, then Cargo-provided roots.
+    pub(super) fn resolve(&self, name: &str) -> Option<ModuleRef> {
+        self.explicit_aliases
+            .get(name)
+            .or_else(|| self.implicit_roots.get(name))
+            .copied()
+    }
+
+    pub(super) fn insert_explicit_alias(&mut self, name: Name, module: ModuleRef) {
+        self.explicit_aliases.insert(name, module);
+    }
+
+    /// Freeze the two construction sources into the query-facing extern prelude.
+    pub(super) fn freeze(&self) -> HashMap<Name, ModuleRef> {
+        let mut roots = self.implicit_roots.clone();
+        roots.extend(
+            self.explicit_aliases
+                .iter()
+                .map(|(name, module)| (name.clone(), *module)),
+        );
+        roots
+    }
 }
 
 impl CrateState {
@@ -161,7 +213,7 @@ struct CrateScopeCollector<'db> {
     edition: RustEdition,
     cfg_options: &'db CfgOptions,
     target_kind: TargetKind,
-    implicit_roots: &'db HashMap<Name, ModuleRef>,
+    extern_prelude: ExternPreludeBuilder,
     root_module: Option<ModuleId>,
     def_map_builder: DefMapBuilder,
     base_scopes: Vec<ModuleScopeBuilder>,
@@ -186,7 +238,7 @@ impl<'db> CrateScopeCollector<'db> {
             edition,
             cfg_options,
             target_kind,
-            implicit_roots,
+            extern_prelude: ExternPreludeBuilder::new(implicit_roots),
             root_module: None,
             def_map_builder: DefMapBuilder::new(crate_ref),
             base_scopes: Vec::new(),
@@ -236,7 +288,7 @@ impl<'db> CrateScopeCollector<'db> {
             target_kind: self.target_kind.clone(),
             def_map_builder: self.def_map_builder,
             base_scopes: self.base_scopes,
-            implicit_roots: self.implicit_roots.clone(),
+            extern_prelude: self.extern_prelude,
             prelude: None,
             macro_definitions: self.macro_definitions,
             textual_macro_scopes: self.textual_macro_scopes,
@@ -743,7 +795,7 @@ impl<'db> CrateScopeCollector<'db> {
                     .expect("root module should exist before extern crate collection"),
             }
         } else {
-            let Some(module_ref) = self.implicit_roots.get(&extern_name).copied() else {
+            let Some(module_ref) = self.extern_prelude.extern_crate_source(&extern_name) else {
                 return;
             };
             module_ref
@@ -769,6 +821,13 @@ impl<'db> CrateScopeCollector<'db> {
         let visibility = self
             .def_map_builder
             .resolve_visibility(module_id, &item.visibility);
+
+        // Crate-root declarations also enter Rust's crate-wide extern prelude. Keep the direct
+        // root binding below as well: it retains the declaration's source scope and provenance.
+        if self.root_module == Some(module_id) {
+            self.extern_prelude
+                .insert_explicit_alias(binding_name.clone(), module_ref);
+        }
 
         // `extern crate` contributes directly to the base scope rather than through a deferred
         // import record.

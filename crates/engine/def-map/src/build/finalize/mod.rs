@@ -410,7 +410,7 @@ impl CrateResolutionEnv for FinalizeResolutionEnv<'_> {
         name: &str,
     ) -> Result<Option<ModuleRef>, rg_package_store::PackageStoreError> {
         if let Some(state) = self.states.crate_state(crate_ref) {
-            return Ok(state.implicit_roots.get(name).copied());
+            return Ok(state.extern_prelude.resolve(name));
         }
 
         Ok(self
@@ -482,7 +482,7 @@ pub(super) fn finalize_crate_states(
     interners: &mut PackageNameInterners,
     performance_preference: MacroExpansionPerformancePreference,
 ) -> anyhow::Result<()> {
-    // Prelude selection needs the directly declared root modules and implicit extern roots, but it
+    // Prelude selection needs the directly declared root modules and crate extern preludes, but it
     // must happen before import resolution because prelude imports participate in normal lookup.
     select_preludes(old, workspace, packages, crate_states, interners)
         .context("while attempting to select crate preludes")?;
@@ -520,7 +520,7 @@ fn select_preludes(
     states: &mut FinalizeCrateStates,
     interners: &mut PackageNameInterners,
 ) -> anyhow::Result<()> {
-    // Prelude lookup only needs directly declared names and implicit extern roots. Using base
+    // Prelude lookup only needs directly declared names and crate extern preludes. Using base
     // scopes here keeps the operation independent from later import and macro expansion passes.
     let base_scopes = states.base_scopes();
     let env = FinalizeResolutionEnv::new(old, states, &base_scopes);
@@ -811,14 +811,13 @@ fn freeze_crate_scopes(
 }
 
 fn freeze_crate_data(state: &CrateState) -> CrateData {
-    // The same implicit roots used by import resolution are still needed by later frozen path
-    // queries. Keep them as an extern prelude rather than pretending they are child modules of the
-    // crate root.
+    // Persist both Cargo-provided roots and explicit crate-root aliases. Queries read this as a
+    // prelude rather than pretending any of these names are child modules of the crate root.
     CrateData::new(
         state.cargo_target,
         state.crate_name.clone(),
         Some(state.root_module),
-        state.implicit_roots.clone(),
+        state.extern_prelude.freeze(),
         state.prelude,
         state.def_map_builder.clone().build(),
     )

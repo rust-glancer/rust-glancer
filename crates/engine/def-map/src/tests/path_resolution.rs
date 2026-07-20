@@ -80,6 +80,51 @@ pub mod api {
 }
 
 #[test]
+fn resolves_crate_root_extern_aliases_from_child_modules() {
+    utils::check_project_path_resolution(
+        r#"
+//- /Cargo.toml
+[workspace]
+members = ["crates/dep", "crates/app"]
+resolver = "3"
+
+//- /crates/dep/Cargo.toml
+[package]
+name = "dep"
+version = "0.1.0"
+edition = "2024"
+
+//- /crates/dep/src/lib.rs
+pub struct Shared;
+
+//- /crates/app/Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+dep = { path = "../dep" }
+
+//- /crates/app/src/lib.rs
+extern crate dep as dep_alias;
+
+pub mod api {
+    pub use dep_alias::Shared;
+}
+"#,
+        &[
+            PathResolutionQuery::lib("app", "crate::api", "dep_alias::Shared"),
+            PathResolutionQuery::lib("app", "crate", "api::Shared"),
+        ],
+        expect![[r#"
+            app [lib] crate::api resolves dep_alias::Shared -> struct dep[lib]::crate::Shared
+            app [lib] crate resolves api::Shared -> struct dep[lib]::crate::Shared
+        "#]],
+    );
+}
+
+#[test]
 fn enum_variant_shape_controls_qualified_path_namespaces() {
     utils::check_project_path_resolution(
         r#"
