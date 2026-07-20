@@ -179,7 +179,15 @@ fn merge_finished_project(
     finished: FinishedSplitIndexing,
 ) -> anyhow::Result<bool> {
     let packages = merge_finished_packages(state, &finished.project.state, &finished.packages)
-        .context("while attempting to merge deferred indexing packages")?;
+        .context("while attempting to merge deferred indexing packages");
+
+    // Package replacement clones the improvements into the saved project. Drop the detached
+    // project before applying residency: it can own a complete second Body IR, and purging while
+    // that clone is alive cannot return its allocator pages. This also matters when on-demand
+    // materialization already produced equal or better coverage and there is nothing to merge.
+    drop(finished);
+
+    let packages = packages?;
     if packages.is_empty() {
         return Ok(false);
     }
