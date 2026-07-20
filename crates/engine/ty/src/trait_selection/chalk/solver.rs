@@ -35,8 +35,8 @@ use crate::{Clause, GenericArgs, ItemPathQuery};
 
 const INTER: RgChalkInterner = RgChalkInterner;
 const SOLVER_MAX_SIZE: usize = 32;
-const SOLVER_QUANTUM_BUDGET: usize = 4_096;
-const OPEN_PROJECTION_QUANTUM_BUDGET: usize = 256;
+const SETTLED_GOAL_QUANTUM_BUDGET: usize = 4_096;
+const SPECULATIVE_GOAL_QUANTUM_BUDGET: usize = 256;
 
 /// Result of crossing the bounded Chalk adapter.
 ///
@@ -317,7 +317,24 @@ impl ChalkSolverState {
         let canonical_goal = lowering.goal.into_peeled_goal(INTER);
         crate::profile::metric::SOLVER_GOALS.inc();
         let started = Instant::now();
-        let budget = SolverBudget::new(SOLVER_QUANTUM_BUDGET);
+
+        // A goal that still contains body inference slots is only a speculative question from one
+        // fixed-point round. Giving it the settled-query allowance is particularly costly for
+        // blanket bounds such as `?T: Debug`: Chalk may explore the entire visible impl universe,
+        // only for body inference to ask again after `?T` becomes more precise. Bound that probe
+        // like an open projection and preserve the larger allowance for fully known types.
+        let has_live_inference = clauses.iter().any(|clause| match clause {
+            Clause::Implemented(application) => application.args.iter().any(|arg| arg.has_var()),
+            Clause::AliasEq { alias, ty } => {
+                alias.args.iter().any(|arg| arg.has_var()) || ty.has_var()
+            }
+        });
+        let quantum_budget = if has_live_inference {
+            SPECULATIVE_GOAL_QUANTUM_BUDGET
+        } else {
+            SETTLED_GOAL_QUANTUM_BUDGET
+        };
+        let budget = SolverBudget::new(quantum_budget);
 
         // A crate-wide forest is valuable for declaration-owned goals, but body inference slots
         // and closure identities make each answer local to one inference scope. Retaining them in
@@ -436,9 +453,9 @@ impl ChalkSolverState {
                 .iter()
                 .any(|binding| binding.ty.has_var());
         let quantum_budget = if selected_impl.is_none() && has_live_inference {
-            OPEN_PROJECTION_QUANTUM_BUDGET
+            SPECULATIVE_GOAL_QUANTUM_BUDGET
         } else {
-            SOLVER_QUANTUM_BUDGET
+            SETTLED_GOAL_QUANTUM_BUDGET
         };
 
         // Ask Chalk for the one existential result type in:
