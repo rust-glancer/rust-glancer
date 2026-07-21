@@ -502,7 +502,7 @@ impl EngineRegistry {
         config: EngineConfig,
     ) -> anyhow::Result<(EngineProcess, EngineProcessExitMonitor)> {
         let (engine, exit_monitor) =
-            EngineProcess::spawn(self.lsp_client.clone(), Self::engine_id(&root)).await?;
+            EngineProcess::spawn(self.lsp_client.clone(), &root, Self::engine_id(&root)).await?;
         let engine_client = engine.engine_client().clone();
         let initialize_root = root.clone();
         engine_client

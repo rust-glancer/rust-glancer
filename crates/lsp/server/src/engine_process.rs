@@ -2,6 +2,7 @@ use std::{
     fmt,
     io::Write as _,
     net::SocketAddr,
+    path::Path,
     process::{ExitStatus, Stdio},
     sync::{Arc, Weak},
     time::Duration,
@@ -41,6 +42,7 @@ pub(crate) struct EngineProcess {
 impl EngineProcess {
     pub(crate) async fn spawn(
         lsp_client: LspClient,
+        workspace_root: &Path,
         engine_id: String,
     ) -> anyhow::Result<(Self, EngineProcessExitMonitor)> {
         // Initialize transport for engine service.
@@ -70,7 +72,8 @@ impl EngineProcess {
         };
 
         // Spawn the engine subprocess.
-        let mut child = Self::spawn_worker(engine_addr, notifications_addr, &engine_id)?;
+        let mut child =
+            Self::spawn_worker(engine_addr, notifications_addr, workspace_root, &engine_id)?;
         Self::spawn_stderr_forwarder(&mut child, &engine_id);
         let child = Arc::new(Mutex::new(child));
         let exit_monitor = EngineProcessExitMonitor::new(Arc::downgrade(&child));
@@ -146,6 +149,7 @@ impl EngineProcess {
     fn spawn_worker(
         engine_addr: SocketAddr,
         notifications_addr: SocketAddr,
+        workspace_root: &Path,
         engine_id: &str,
     ) -> anyhow::Result<Child> {
         let executable = std::env::current_exe()
@@ -161,6 +165,9 @@ impl EngineProcess {
         tokio::process::Command::new(executable)
             .args(args)
             .env(ENGINE_ID_ENV, engine_id)
+            // Cargo configuration and rustup overrides are discovered from the child working
+            // directory. Use the resolved Cargo root so every engine tool shares one context.
+            .current_dir(workspace_root)
             // The parent LSP server owns stdout for JSON-RPC. The engine may log to stderr, but it
             // must never inherit stdout and accidentally corrupt the LSP stream. Stderr is piped
             // through the parent so server and engine JSON log lines are serialized in one process.

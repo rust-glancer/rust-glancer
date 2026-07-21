@@ -102,7 +102,7 @@ impl WorkspaceWatcher {
             WATCH_DEBOUNCE,
             Some(WATCH_DEBOUNCE),
             move |result| {
-                let Some(result) = Self::project_result(result) else {
+                let Some(result) = Self::project_result(callback_root.as_path(), result) else {
                     return;
                 };
                 if sender.send(result).is_err() {
@@ -162,7 +162,7 @@ impl WorkspaceWatcher {
         })
     }
 
-    fn project_result(result: DebounceEventResult) -> Option<DebounceEventResult> {
+    fn project_result(root: &Path, result: DebounceEventResult) -> Option<DebounceEventResult> {
         match result {
             Ok(mut events) => {
                 // Filter before the async queue so target-directory churn cannot keep extending
@@ -188,7 +188,7 @@ impl WorkspaceWatcher {
                             .event
                             .paths
                             .iter()
-                            .any(|path| WatchedProjectPath::is_watched_project_input(path))
+                            .any(|path| WatchedProjectPath::is_watched_project_input(root, path))
                 });
                 (!events.is_empty()).then_some(Ok(events))
             }
@@ -307,12 +307,12 @@ impl WorkspaceWatcher {
             .iter()
             .flat_map(|event| event.event.paths.iter())
             .filter_map(|path| {
-                let project_path = WatchedProjectPath::from_event(path);
+                let project_path = WatchedProjectPath::from_event(root, path);
                 let Some(project_path) = project_path else {
                     ignored_paths += 1;
                     return None;
                 };
-                if snapshot.refresh_path(&project_path) {
+                if snapshot.refresh_path(root, &project_path) {
                     Some(project_path)
                 } else {
                     unchanged_paths += 1;
@@ -357,28 +357,28 @@ impl WorkspaceWatcher {
 struct WatchedProjectPath;
 
 impl WatchedProjectPath {
-    fn from_event(path: &Path) -> Option<PathBuf> {
-        if !Self::is_watched_project_input(path) {
+    fn from_event(root: &Path, path: &Path) -> Option<PathBuf> {
+        if !Self::is_watched_project_input(root, path) {
             return None;
         }
 
         Some(Self::normalize(path))
     }
 
-    fn is_watched_project_input(path: &Path) -> bool {
-        !Self::is_ignored(path) && Self::is_project_input(path)
+    fn is_watched_project_input(root: &Path, path: &Path) -> bool {
+        !Self::is_ignored(root, path) && Self::is_project_input(path)
     }
 
-    fn identity(path: &Path) -> Option<(PathBuf, FileIdentity)> {
-        if Self::is_ignored(path) || !Self::is_project_input(path) {
+    fn identity(root: &Path, path: &Path) -> Option<(PathBuf, FileIdentity)> {
+        if Self::is_ignored(root, path) || !Self::is_project_input(path) {
             return None;
         }
 
         FileIdentity::read(&Self::normalize(path))
     }
 
-    fn should_visit(path: &Path) -> bool {
-        !Self::is_ignored(path)
+    fn should_visit(root: &Path, path: &Path) -> bool {
+        !Self::is_ignored(root, path)
     }
 
     fn normalize(path: impl AsRef<Path>) -> PathBuf {
@@ -392,8 +392,14 @@ impl WatchedProjectPath {
             || matches!(file_name, Some("Cargo.toml" | "Cargo.lock"))
     }
 
-    fn is_ignored(path: &Path) -> bool {
-        path.components().any(|component| {
+    fn is_ignored(root: &Path, path: &Path) -> bool {
+        // Ignore directory names only inside the watched workspace. The workspace itself may live
+        // below an unrelated `target`, `.git`, or dependency directory on the host filesystem.
+        let Ok(relative) = path.strip_prefix(root) else {
+            return true;
+        };
+
+        relative.components().any(|component| {
             let Component::Normal(name) = component else {
                 return false;
             };
@@ -421,12 +427,15 @@ impl ProjectPathSnapshot {
         let mut files_seen = 0usize;
         let mut identities = BTreeMap::new();
         let mut builder = WalkBuilder::new(root);
+        let filter_root = root.to_path_buf();
         builder
             .hidden(false)
             .git_ignore(true)
             .git_global(true)
             .git_exclude(true)
-            .filter_entry(|entry| WatchedProjectPath::should_visit(entry.path()));
+            .filter_entry(move |entry| {
+                WatchedProjectPath::should_visit(&filter_root, entry.path())
+            });
 
         for entry in builder.build() {
             let entry = match entry {
@@ -449,7 +458,7 @@ impl ProjectPathSnapshot {
             }
             files_seen += 1;
 
-            let Some((path, identity)) = WatchedProjectPath::identity(path) else {
+            let Some((path, identity)) = WatchedProjectPath::identity(root, path) else {
                 continue;
             };
             identities.insert(path, identity);
@@ -483,9 +492,9 @@ impl ProjectPathSnapshot {
         changed.into_iter().collect()
     }
 
-    fn refresh_path(&mut self, path: &Path) -> bool {
+    fn refresh_path(&mut self, root: &Path, path: &Path) -> bool {
         let normalized = WatchedProjectPath::normalize(path);
-        match WatchedProjectPath::identity(&normalized) {
+        match WatchedProjectPath::identity(root, &normalized) {
             Some((path, identity)) => {
                 let changed = self.identities.get(&path) != Some(&identity);
                 self.identities.insert(path, identity);
@@ -512,26 +521,32 @@ mod tests {
     use super::*;
 
     #[test]
-    fn watcher_ingress_drops_target_and_non_project_results() {
-        let root = PathBuf::from("/workspace");
+    fn watcher_ingress_scopes_ignored_directories_to_workspace_root() {
+        let root = PathBuf::from("/checkout/target/project");
         let target_source = root.join("target/debug/build/generated.rs");
         let notes = root.join("notes.md");
 
         assert!(
-            WorkspaceWatcher::project_result(Ok(vec![
-                changed_event(target_source.clone()),
-                changed_event(notes),
-            ]))
+            WorkspaceWatcher::project_result(
+                &root,
+                Ok(vec![
+                    changed_event(target_source.clone()),
+                    changed_event(notes),
+                ])
+            )
             .is_none(),
             "target and non-project churn should not enter the async watcher queue"
         );
 
         let project_source = root.join("src/lib.rs");
-        let Some(Ok(events)) = WorkspaceWatcher::project_result(Ok(vec![
-            changed_event(target_source),
-            changed_event(project_source.clone()),
-        ])) else {
-            panic!("a project input should keep the watcher result");
+        let Some(Ok(events)) = WorkspaceWatcher::project_result(
+            &root,
+            Ok(vec![
+                changed_event(target_source),
+                changed_event(project_source.clone()),
+            ]),
+        ) else {
+            panic!("a project input below an ancestor named target should remain watched");
         };
         assert_eq!(
             events
@@ -539,13 +554,14 @@ mod tests {
                 .flat_map(|event| event.event.paths.iter())
                 .collect::<Vec<_>>(),
             vec![&project_source],
-            "ignored event entries should be removed before settling"
+            "ignored directories should apply only below the workspace root"
         );
     }
 
     #[test]
     fn watcher_ingress_drops_read_only_project_accesses() {
-        let source = PathBuf::from("/workspace/src/lib.rs");
+        let root = PathBuf::from("/workspace");
+        let source = root.join("src/lib.rs");
 
         for kind in [
             EventKind::Access(AccessKind::Read),
@@ -554,8 +570,11 @@ mod tests {
             EventKind::Access(AccessKind::Close(AccessMode::Any)),
         ] {
             assert!(
-                WorkspaceWatcher::project_result(Ok(vec![watcher_event(source.clone(), kind,)]))
-                    .is_none(),
+                WorkspaceWatcher::project_result(
+                    &root,
+                    Ok(vec![watcher_event(source.clone(), kind,)]),
+                )
+                .is_none(),
                 "read-only access event {kind:?} should not enter the async watcher queue",
             );
         }
@@ -565,8 +584,11 @@ mod tests {
             EventKind::Access(AccessKind::Close(AccessMode::Write)),
         ] {
             assert!(
-                WorkspaceWatcher::project_result(Ok(vec![watcher_event(source.clone(), kind,)]))
-                    .is_some(),
+                WorkspaceWatcher::project_result(
+                    &root,
+                    Ok(vec![watcher_event(source.clone(), kind,)]),
+                )
+                .is_some(),
                 "saved-input mutation event {kind:?} should enter the async watcher queue",
             );
         }
@@ -589,9 +611,9 @@ mod tests {
             pub struct User;
             "#,
         );
-        let root = fixture.path("");
-        let account = fixture.path("src/account.rs");
-        let user = fixture.path("src/user.rs");
+        let root = WorkspaceWatcher::normalize_root(fixture.path(""));
+        let account = root.join("src/account.rs");
+        let user = root.join("src/user.rs");
         let mut snapshot = ProjectPathSnapshot::scan(&root);
 
         std::fs::write(&account, "pub struct SavedAccount;\n")
