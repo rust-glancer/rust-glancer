@@ -706,6 +706,183 @@ pub fn use_it() {
 }
 
 #[test]
+fn completes_type_paths_and_owner_generics_in_item_signatures() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_signature_type_completions"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct Fixture;
+pub struct Wrapper<T>(T);
+pub struct Array<const N: usize>;
+
+pub struct Holder<T> {
+    pub field: Wrapper<Fi$field_arg$>,
+    pub current: T$field_param$,
+}
+
+pub trait Service<T> {
+    fn map<U>(&self, input: Wrapper<Fi$trait_arg$>) -> Self$trait_self$;
+}
+
+impl<T> Holder<T> {
+    pub fn build<const N: usize>(
+        input: Wrapper<Fi$impl_arg$>,
+    ) -> crate::Fi$qualified_return$ {
+        loop {}
+    }
+}
+
+pub fn top<T, const N: usize>(
+    input: Wrapper<Fi$function_arg$>,
+    value: T$type_param$,
+    array: Array<N$const_arg$>,
+) {}
+
+pub fn incomplete(value: Wrapper<Fi$incomplete$
+"#,
+        &[
+            AnalysisQuery::complete("struct field generic arg", "field_arg"),
+            AnalysisQuery::complete("struct field type param", "field_param"),
+            AnalysisQuery::complete("trait method generic arg", "trait_arg"),
+            AnalysisQuery::complete("trait method Self", "trait_self"),
+            AnalysisQuery::complete("impl method generic arg", "impl_arg"),
+            AnalysisQuery::complete("qualified return type", "qualified_return"),
+            AnalysisQuery::complete("function generic arg", "function_arg"),
+            AnalysisQuery::complete("function type param", "type_param"),
+            AnalysisQuery::complete("function const arg", "const_arg"),
+            AnalysisQuery::complete("incomplete function generic arg", "incomplete"),
+        ],
+        expect![[r#"
+            struct field generic arg
+            - struct Array
+            - struct Fixture
+            - struct Holder
+            - trait Service
+            - type_parameter T
+            - struct Wrapper
+
+            struct field type param
+            - struct Array
+            - struct Fixture
+            - struct Holder
+            - trait Service
+            - type_parameter T
+            - struct Wrapper
+
+            trait method generic arg
+            - struct Array
+            - struct Fixture
+            - struct Holder
+            - type_parameter Self
+            - trait Service
+            - type_parameter T
+            - type_parameter U
+            - struct Wrapper
+
+            trait method Self
+            - struct Array
+            - struct Fixture
+            - struct Holder
+            - type_parameter Self
+            - trait Service
+            - type_parameter T
+            - type_parameter U
+            - struct Wrapper
+
+            impl method generic arg
+            - struct Array
+            - struct Fixture
+            - struct Holder
+            - const N
+            - type_parameter Self
+            - trait Service
+            - type_parameter T
+            - struct Wrapper
+
+            qualified return type
+            - struct Array
+            - struct Fixture
+            - struct Holder
+            - trait Service
+            - struct Wrapper
+
+            function generic arg
+            - struct Array
+            - struct Fixture
+            - struct Holder
+            - const N
+            - trait Service
+            - type_parameter T
+            - struct Wrapper
+
+            function type param
+            - struct Array
+            - struct Fixture
+            - struct Holder
+            - trait Service
+            - type_parameter T
+            - struct Wrapper
+
+            function const arg
+            - struct Array
+            - struct Fixture
+            - struct Holder
+            - const N
+            - trait Service
+            - type_parameter T
+            - struct Wrapper
+
+            incomplete function generic arg
+            - struct Array
+            - struct Fixture
+            - struct Holder
+            - trait Service
+            - struct Wrapper
+        "#]],
+    );
+}
+
+#[test]
+fn completes_owner_generics_in_body_type_positions() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_body_generic_completions"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct Array<const N: usize>;
+
+pub fn use_it<T, const N: usize>() {
+    let _: T$type_param$;
+    let _: Array<N$const_arg$>;
+}
+"#,
+        &[
+            AnalysisQuery::complete("body type parameter", "type_param"),
+            AnalysisQuery::complete("body const generic argument", "const_arg"),
+        ],
+        expect![[r#"
+            body type parameter
+            - struct Array
+            - type_parameter T
+
+            body const generic argument
+            - struct Array
+            - const N
+            - type_parameter T
+        "#]],
+    );
+}
+
+#[test]
 fn completes_primitive_types_in_unqualified_type_positions() {
     check_analysis_queries(
         r#"

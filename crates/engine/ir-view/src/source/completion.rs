@@ -7,18 +7,23 @@
 //! ```text
 //! value.na$0       -> receiver expression + replacement span `na`
 //! model::Us$0      -> qualifier `model` + type/value namespace from context
+//! fn load(_: Us$0) -> item signature scope + replacement span `Us`
 //! User { na$0 }    -> record owner + already-written fields
 //! ```
 
+use anyhow::Context as _;
 use rg_ir_model::{
-    CrateRef, FieldKey, ModuleRef, Path,
+    CrateRef, FieldKey, GenericDefRef, ModuleRef, Path,
     identity::{ExprRef, LexicalScopeRef},
 };
 use rg_parse::{FileId, Span};
+use rg_semantic_ir::TypePathContext;
 
 use super::scan::{
-    DotCompletionSiteScanner, ImportPathCompletionSiteScanner, PathCompletionSiteScanner,
-    RecordFieldCompletionSiteScanner, UnqualifiedCompletionSiteScanner,
+    BodyUnqualifiedNameContext, DotCompletionSiteScanner, ImportPathCompletionSiteScanner,
+    PathCompletionSiteScanner, RecordFieldCompletionSiteScanner, SignatureCompletionSite,
+    SignatureSourceScanner, SignatureTypePathScope, TypeNamePosition,
+    UnqualifiedCompletionSiteScanner,
 };
 use crate::{IndexedViewDb, lookup::name::ValueOrTypeNamespace};
 
@@ -64,13 +69,55 @@ impl IndexedQualifiedPathSite {
 /// Resolution context for a qualified path source site.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IndexedQualifiedPathScope {
+    /// A path in an expression or body-owned type, such as `let _: model::Us$0`.
     Body {
         scope: LexicalScopeRef,
         namespace: ValueOrTypeNamespace,
     },
-    Import {
-        module: ModuleRef,
-    },
+    /// A path in an import, such as `use model::Us$0;`.
+    Import { module: ModuleRef },
+    /// A type path in an item declaration, such as `fn load(_: model::Us$0)`.
+    Signature { scope: IndexedSignatureTypeScope },
+}
+
+/// Semantic owner of a type path written in an item signature.
+///
+/// The type-path context resolves module names and impl `Self`; the generic owner identifies the
+/// type and const parameters inherited by this particular declaration. For example, the cursor in
+/// `impl<T> Wrapper<T> { fn map<U>(_: U$0) {} }` needs the function owner to see `U`, while its
+/// type-path context supplies the impl's module and `Self` type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct IndexedSignatureTypeScope {
+    context: TypePathContext,
+    generic_owner: GenericDefRef,
+}
+
+impl IndexedSignatureTypeScope {
+    pub fn context(self) -> TypePathContext {
+        self.context
+    }
+
+    pub fn generic_owner(self) -> GenericDefRef {
+        self.generic_owner
+    }
+}
+
+/// Position of an unqualified type-shaped name within its surrounding annotation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IndexedTypeNamePosition {
+    /// A path in ordinary type syntax, including structured types nested in generic arguments.
+    Type,
+    /// A whole `N` argument in syntax such as `Array<N>`, which may name a const parameter.
+    BareGenericArgument,
+}
+
+/// Namespace and generic-argument context selected by unqualified source syntax.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IndexedUnqualifiedNameContext {
+    /// A type-shaped name such as `Us$0` in `fn load(_: Us$0)`.
+    Type { position: IndexedTypeNamePosition },
+    /// A value-shaped name such as `inp$0` in `let value = inp$0`.
+    Value,
 }
 
 /// Source site for an unqualified name.
@@ -93,15 +140,31 @@ impl IndexedUnqualifiedNameSite {
 /// Resolution context for an unqualified name source site.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum IndexedUnqualifiedNameScope {
+    /// A body name with its lexical cutoff, such as `inp$0` after several local bindings.
     Body {
         scope: LexicalScopeRef,
-        namespace: ValueOrTypeNamespace,
+        context: IndexedUnqualifiedNameContext,
         member_prefix: String,
         visible_bindings: usize,
     },
-    Import {
-        module: ModuleRef,
+    /// A declaration type name whose owner contributes generic parameters, such as `T$0` here:
+    /// `fn load<T>(_: T$0)`.
+    Signature {
+        scope: IndexedSignatureTypeScope,
+        context: IndexedUnqualifiedNameContext,
+        member_prefix: String,
     },
+    /// An import-root name resolved from the containing module, such as `use st$0;`.
+    Import { module: ModuleRef },
+}
+
+/// Signature completion site normalized into the same path/name shapes as body completion.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum IndexedSignatureTypeSite {
+    /// A type path such as `fn load(_: model::Us$0)`.
+    Qualified(IndexedQualifiedPathSite),
+    /// A type name such as `fn load<T>(_: T$0)`.
+    Unqualified(IndexedUnqualifiedNameSite),
 }
 
 /// Source site for record literal or pattern field names.
@@ -215,13 +278,76 @@ impl<'a, 'db> SourceCompletionView<'a, 'db> {
                 .map(|site| IndexedUnqualifiedNameSite {
                     scope: IndexedUnqualifiedNameScope::Body {
                         scope: LexicalScopeRef::new(site.body, site.scope),
-                        namespace: site.namespace,
+                        context: match site.context {
+                            BodyUnqualifiedNameContext::Type(position) => {
+                                IndexedUnqualifiedNameContext::Type {
+                                    position: Self::type_name_position(position),
+                                }
+                            }
+                            BodyUnqualifiedNameContext::Value => {
+                                IndexedUnqualifiedNameContext::Value
+                            }
+                        },
                         member_prefix: site.member_prefix,
                         visible_bindings: site.visible_bindings,
                     },
                     member_prefix_span: site.member_prefix_span,
                 }),
         )
+    }
+
+    /// Return a type-path completion site from an item signature.
+    ///
+    /// This covers declaration-owned syntax such as function parameters, return types, fields,
+    /// generic bounds, impl headers, and aliases. The result deliberately reuses the same
+    /// qualified/unqualified vocabulary as body completion so candidate rendering has one path.
+    ///
+    /// ```text
+    /// fn load(_: model::Us$0) -> qualified path, qualifier `model`, prefix `Us`
+    /// fn load<T>(_: T$0)      -> unqualified name, generic owner `load`, prefix `T`
+    /// ```
+    pub fn signature_type_site_at(
+        &self,
+        crate_ref: CrateRef,
+        file_id: FileId,
+        offset: u32,
+    ) -> anyhow::Result<Option<IndexedSignatureTypeSite>> {
+        let site = SignatureSourceScanner::completion_site_at(
+            &self.db.semantic_ir,
+            crate_ref,
+            file_id,
+            offset,
+        )
+        .context("scan signature type completion site")?;
+
+        Ok(site.map(|site| match site {
+            SignatureCompletionSite::Qualified {
+                scope,
+                qualifier,
+                member_prefix_span,
+            } => IndexedSignatureTypeSite::Qualified(IndexedQualifiedPathSite {
+                scope: IndexedQualifiedPathScope::Signature {
+                    scope: Self::signature_scope(scope),
+                },
+                qualifier,
+                member_prefix_span,
+            }),
+            SignatureCompletionSite::Unqualified {
+                scope,
+                member_prefix_span,
+                member_prefix,
+                position,
+            } => IndexedSignatureTypeSite::Unqualified(IndexedUnqualifiedNameSite {
+                scope: IndexedUnqualifiedNameScope::Signature {
+                    scope: Self::signature_scope(scope),
+                    context: IndexedUnqualifiedNameContext::Type {
+                        position: Self::type_name_position(position),
+                    },
+                    member_prefix,
+                },
+                member_prefix_span,
+            }),
+        }))
     }
 
     /// Return an import unqualified-name site at a cursor offset, e.g. `use cr$0;`.
@@ -260,5 +386,19 @@ impl<'a, 'db> SourceCompletionView<'a, 'db> {
                     existing_fields: site.existing_fields,
                 }),
         )
+    }
+
+    fn type_name_position(position: TypeNamePosition) -> IndexedTypeNamePosition {
+        match position {
+            TypeNamePosition::Type => IndexedTypeNamePosition::Type,
+            TypeNamePosition::BareGenericArgument => IndexedTypeNamePosition::BareGenericArgument,
+        }
+    }
+
+    fn signature_scope(scope: SignatureTypePathScope) -> IndexedSignatureTypeScope {
+        IndexedSignatureTypeScope {
+            context: scope.context,
+            generic_owner: scope.generic_owner,
+        }
     }
 }

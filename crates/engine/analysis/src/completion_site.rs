@@ -4,6 +4,7 @@
 //! "which source site should this cursor use?", so this module wraps indexed sites behind a small
 //! completion vocabulary.
 
+use anyhow::Context as _;
 use rg_ir_model::CrateRef;
 use rg_parse::{FileId, Span};
 
@@ -12,16 +13,35 @@ use rg_ir_view::{
     lookup::name::ValueOrTypeNamespace,
     source::{
         IndexedMemberAccessSite, IndexedQualifiedPathScope, IndexedQualifiedPathSite,
-        IndexedRecordFieldListSite, IndexedUnqualifiedNameScope, IndexedUnqualifiedNameSite,
-        SourceCompletionView,
+        IndexedRecordFieldListSite, IndexedSignatureTypeSite, IndexedUnqualifiedNameContext,
+        IndexedUnqualifiedNameScope, IndexedUnqualifiedNameSite, SourceCompletionView,
     },
 };
 
+/// One normalized syntax family selected for the cursor.
+///
+/// ```text
+/// value.na$0    -> Dot
+/// model::Us$0   -> Path
+/// let _: Us$0   -> Unqualified
+/// User { na$0 } -> RecordField
+/// ```
 pub(crate) enum CompletionSite {
     Dot(DotCompletionSite),
     Path(PathCompletionSite),
     Unqualified(UnqualifiedCompletionSite),
     RecordField(RecordFieldCompletionSite),
+}
+
+impl CompletionSite {
+    fn from_signature_type_site(site: IndexedSignatureTypeSite) -> Self {
+        match site {
+            IndexedSignatureTypeSite::Qualified(site) => Self::Path(PathCompletionSite::new(site)),
+            IndexedSignatureTypeSite::Unqualified(site) => {
+                Self::Unqualified(UnqualifiedCompletionSite::new(site))
+            }
+        }
+    }
 }
 
 /// Cheap syntax facts that let completion avoid impossible scanner families.
@@ -81,6 +101,7 @@ impl PathCompletionSite {
                 ValueOrTypeNamespace::Types => PathCompletionContext::Type,
                 ValueOrTypeNamespace::Values => PathCompletionContext::Value,
             },
+            IndexedQualifiedPathScope::Signature { .. } => PathCompletionContext::Type,
             IndexedQualifiedPathScope::Import { .. } => PathCompletionContext::Import,
         }
     }
@@ -90,6 +111,7 @@ impl PathCompletionSite {
     }
 }
 
+/// Namespace policy implied by a qualified path's surrounding syntax.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum PathCompletionContext {
     Type,
@@ -113,9 +135,10 @@ impl UnqualifiedCompletionSite {
 
     pub(crate) fn context(&self) -> UnqualifiedCompletionContext {
         match self.source.scope() {
-            IndexedUnqualifiedNameScope::Body { namespace, .. } => match namespace {
-                ValueOrTypeNamespace::Types => UnqualifiedCompletionContext::Type,
-                ValueOrTypeNamespace::Values => UnqualifiedCompletionContext::Value,
+            IndexedUnqualifiedNameScope::Body { context, .. }
+            | IndexedUnqualifiedNameScope::Signature { context, .. } => match context {
+                IndexedUnqualifiedNameContext::Type { .. } => UnqualifiedCompletionContext::Type,
+                IndexedUnqualifiedNameContext::Value => UnqualifiedCompletionContext::Value,
             },
             IndexedUnqualifiedNameScope::Import { .. } => UnqualifiedCompletionContext::Import,
         }
@@ -130,6 +153,7 @@ impl UnqualifiedCompletionSite {
     }
 }
 
+/// Candidate families allowed for a name without `.` or `::`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum UnqualifiedCompletionContext {
     Type,
@@ -156,6 +180,11 @@ impl RecordFieldCompletionSite {
     }
 }
 
+/// Selects one completion family without leaking source-scanner types into query assembly.
+///
+/// Decisive parser hints handle `use`, `.`, and `::` cheaply. In incomplete syntax where those
+/// hints are unavailable, the detector asks domain scanners from the most specific body-owned
+/// shape through signature and import fallbacks.
 pub(crate) struct CompletionSiteDetector<'a, 'db> {
     db: &'a IndexedViewDb<'db>,
 }
@@ -194,21 +223,32 @@ impl<'a, 'db> CompletionSiteDetector<'a, 'db> {
                     .map(CompletionSite::Dot));
             }
             if syntax.after_colon_colon {
+                if let Some(site) = source
+                    .body_qualified_path_site_at(crate_ref, file_id, offset)
+                    .context("scan body qualified completion site")?
+                {
+                    return Ok(Some(CompletionSite::Path(PathCompletionSite::new(site))));
+                }
+
                 return Ok(source
-                    .body_qualified_path_site_at(crate_ref, file_id, offset)?
-                    .map(PathCompletionSite::new)
-                    .map(CompletionSite::Path));
+                    .signature_type_site_at(crate_ref, file_id, offset)
+                    .context("scan qualified signature completion site")?
+                    .map(CompletionSite::from_signature_type_site));
             }
         }
 
         // Without a decisive syntax hint, ask scanners in the order that preserves the most
         // specific source interpretation: member access, qualified path, record field, lexical
-        // body name, then import path fallback.
+        // body name, declaration signature, then import path fallback. Most requests happen in a
+        // body, so signature scanning stays behind the body-owned sites.
         if let Some(site) = source.member_access_site_at(crate_ref, file_id, offset)? {
             return Ok(Some(CompletionSite::Dot(DotCompletionSite::new(site))));
         }
 
-        if let Some(site) = source.body_qualified_path_site_at(crate_ref, file_id, offset)? {
+        if let Some(site) = source
+            .body_qualified_path_site_at(crate_ref, file_id, offset)
+            .context("scan body qualified completion site")?
+        {
             return Ok(Some(CompletionSite::Path(PathCompletionSite::new(site))));
         }
 
@@ -222,6 +262,13 @@ impl<'a, 'db> CompletionSiteDetector<'a, 'db> {
             return Ok(Some(CompletionSite::Unqualified(
                 UnqualifiedCompletionSite::new(site),
             )));
+        }
+
+        if let Some(site) = source
+            .signature_type_site_at(crate_ref, file_id, offset)
+            .context("scan signature completion site")?
+        {
+            return Ok(Some(CompletionSite::from_signature_type_site(site)));
         }
 
         if let Some(site) = source.import_qualified_path_site_at(crate_ref, file_id, offset)? {

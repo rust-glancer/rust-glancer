@@ -16,7 +16,7 @@ use rg_parse::{FileId, Span, TextSpan};
 
 use rg_body_ir::{BodyIrReadTxn, BodyPath, BodyView, ExprKind, PatData};
 
-use super::super::NarrowestSourceSite;
+use super::super::{NarrowestSourceSite, TypeNamePosition, type_path::TypePathCompletionSite};
 use super::{PathCompletionSite, sites::BodyScanSites};
 use crate::lookup::name::ValueOrTypeNamespace;
 
@@ -73,7 +73,8 @@ impl<'txn, 'db> PathCompletionSiteScanner<'txn, 'db> {
     ) {
         let sites = BodyScanSites::new(body);
         sites.walk_type_paths(Some(self.file_id), |site| {
-            if let Some(completion_site) = self.site_for_type_path(body_ref, site.scope, site.path)
+            if let Some(completion_site) =
+                self.site_for_type_path(body_ref, site.scope, site.path, site.position)
             {
                 best.consider(completion_site, site.path.source_span.len());
             }
@@ -142,40 +143,21 @@ impl<'txn, 'db> PathCompletionSiteScanner<'txn, 'db> {
         body: BodyRef,
         scope: ScopeId,
         path: &TypePath,
+        position: TypeNamePosition,
     ) -> Option<PathCompletionSite> {
-        if path.anchor.is_some() {
+        let TypePathCompletionSite::Qualified {
+            qualifier,
+            member_prefix_span,
+        } = TypePathCompletionSite::at(path, self.offset, position)?
+        else {
             return None;
-        }
+        };
 
-        for (idx, segment) in path.segments.iter().enumerate().skip(1) {
-            if !segment.span.touches(self.offset) {
-                continue;
-            }
-
-            return Some(PathCompletionSite {
-                body,
-                scope,
-                qualifier: path.as_def_map_path_prefix(idx - 1)?,
-                member_prefix_span: segment.span,
-                namespace: ValueOrTypeNamespace::Types,
-            });
-        }
-
-        let last_segment = path.segments.last()?;
-        // Generic argument text also extends past the segment name. When arguments are present,
-        // that suffix is not the synthetic empty segment created by a trailing `::`.
-        if !last_segment.args.is_empty() {
-            return None;
-        }
-        let span = self.empty_member_span(path.source_span, last_segment.span)?;
-
-        // Live edits such as `let value: crate::` have no final segment yet. Treat the completed
-        // prefix as the qualifier and let completion fill the missing segment.
         Some(PathCompletionSite {
             body,
             scope,
-            qualifier: path.as_def_map_path()?,
-            member_prefix_span: span,
+            qualifier,
+            member_prefix_span,
             namespace: ValueOrTypeNamespace::Types,
         })
     }
