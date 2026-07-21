@@ -16,8 +16,9 @@ use test_fixture::testonly::MarkedText;
 
 use self::utils::{HostFixture, HostObservation};
 use crate::{
-    AnalysisChangeSummary, AnalysisSurface, BuildProcessMemory, PackageResidencyPolicy, Project,
-    ProjectMemoryHooks, ProjectMemoryPurgePoint, SavedFileChange, SplitIndexingMode,
+    AnalysisChangeSummary, AnalysisSurface, BuildProcessMemory, DirtyOverlayScope,
+    PackageResidencyPolicy, Project, ProjectMemoryHooks, ProjectMemoryPurgePoint, SavedFileChange,
+    SplitIndexingMode,
     testonly::{ProjectFixture, ProjectSourceFixture},
 };
 
@@ -1914,6 +1915,59 @@ pub fn dirty_body(value: Dirty) {
         - <none>
     "#]]
     .assert_eq(&actual);
+}
+
+#[test]
+fn dirty_overlay_scope_controls_reverse_dependent_rebuilds() {
+    let fixture = ProjectFixture::build_with_package_residency_policy(
+        r#"
+//- /Cargo.toml
+[workspace]
+members = ["crates/dep", "crates/app"]
+resolver = "3"
+
+//- /crates/dep/Cargo.toml
+[package]
+name = "dep"
+version = "0.1.0"
+edition = "2024"
+
+//- /crates/dep/src/lib.rs
+pub struct Api;
+
+//- /crates/app/Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+dep = { path = "../dep" }
+
+//- /crates/app/src/lib.rs
+pub fn use_dep(_: dep::Api) {}
+"#,
+        PackageResidencyPolicy::AllOffloadable,
+    );
+
+    let local = fixture.dirty_overlay_with_scope(
+        "crates/dep/src/lib.rs",
+        "pub struct Api;\npub struct Extra;\n",
+        DirtyOverlayScope::ChangedPackages,
+    );
+    let full = fixture.dirty_overlay_with_scope(
+        "crates/dep/src/lib.rs",
+        "pub struct Api;\npub struct Extra;\n",
+        DirtyOverlayScope::ReverseDependencyClosure,
+    );
+
+    let local_stats = local.snapshot().stats();
+    assert_eq!(local_stats.def_map.crate_count, 1);
+    assert_eq!(local_stats.semantic_ir.crate_count, 1);
+
+    let full_stats = full.snapshot().stats();
+    assert_eq!(full_stats.def_map.crate_count, 2);
+    assert_eq!(full_stats.semantic_ir.crate_count, 2);
 }
 
 #[test]

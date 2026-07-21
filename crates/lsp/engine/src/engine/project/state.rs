@@ -9,7 +9,9 @@
 use std::{path::PathBuf, sync::Arc};
 
 use anyhow::Context as _;
-use rg_project::{DetachedSplitIndexing, Project, ProjectSnapshot};
+use rg_project::{
+    AnalysisSurface, DetachedSplitIndexing, DirtyOverlayScope, Project, ProjectSnapshot,
+};
 
 use crate::{
     dirty_state::DirtyOverlayCache, documents::DirtyDocumentSnapshot, memory::MemoryControl,
@@ -21,8 +23,9 @@ use crate::{
 /// `Project` successfully publishes saved source state, so background results produced from an
 /// older clone can be discarded instead of merged into a newer workspace. Split-indexing
 /// materialization intentionally keeps the same generation: it enriches analysis data for the same
-/// saved source snapshot, but it still clears dirty overlays because those overlays borrow from the
-/// old project internals.
+/// saved source snapshot. A materialization that replaces package payloads clears dirty overlays
+/// because they borrow the old project internals; preparing an already-ready surface leaves the
+/// matching overlay cached.
 #[derive(Debug)]
 pub(super) struct ProjectState {
     saved: Option<Project>,
@@ -98,9 +101,9 @@ impl ProjectState {
 
     /// Enrich analysis data for the same saved source snapshot.
     ///
-    /// Query materialization and background merging can replace package payloads without changing
-    /// source identity. Dirty overlays still have to be discarded because they borrow the previous
-    /// package payloads, even though the public generation number stays the same.
+    /// Background merging can replace package payloads without changing source identity. Dirty
+    /// overlays still have to be discarded because they borrow the previous package payloads, even
+    /// though the public generation number stays the same.
     pub(super) fn mutate_saved_preserving_generation<T>(
         &mut self,
         mutation: impl FnOnce(&mut Project) -> anyhow::Result<T>,
@@ -110,10 +113,30 @@ impl ProjectState {
             .as_mut()
             .context("saved project is not initialized")?;
 
-        // Body-only materialization keeps the same saved-source snapshot, but dirty overlays still
-        // need to be rebuilt because they borrow analysis state from the previous saved project.
         self.dirty_overlay.clear();
         mutation(saved).context("mutate saved project without generation change")
+    }
+
+    /// Materialize a query surface without discarding an overlay for an already-ready project.
+    pub(super) fn materialize(&mut self, surface: AnalysisSurface<'_>) -> anyhow::Result<()> {
+        let Self {
+            saved,
+            dirty_overlay,
+        } = self;
+        let saved = saved.as_mut().context("saved project is not initialized")?;
+
+        // Materialization is a real mutation only for incomplete resident packages. Artifact-backed
+        // packages and already-complete residents can serve the query without changing the base
+        // shared by a cached dirty overlay.
+        if !saved.split_indexing().needs_materialization(surface) {
+            return Ok(());
+        }
+
+        dirty_overlay.clear();
+        saved
+            .split_indexing()
+            .materialize(surface)
+            .context("materialize saved project surface")
     }
 
     pub(super) fn saved_snapshot(&self) -> anyhow::Result<ProjectSnapshot<'_>> {
@@ -147,6 +170,7 @@ impl ProjectState {
     pub(super) fn with_query_snapshot<T>(
         &mut self,
         dirty: Option<&DirtyDocumentSnapshot>,
+        dirty_scope: DirtyOverlayScope,
         query: impl FnOnce(ProjectSnapshot<'_>) -> anyhow::Result<T>,
     ) -> anyhow::Result<T> {
         let project = match dirty {
@@ -156,7 +180,7 @@ impl ProjectState {
                     .as_ref()
                     .context("saved project is not initialized")?;
                 self.dirty_overlay
-                    .project_for_dirty(saved, dirty)
+                    .project_for_dirty(saved, dirty, dirty_scope)
                     .context("build dirty project overlay")?
             }
             None => {

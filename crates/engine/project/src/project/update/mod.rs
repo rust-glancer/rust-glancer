@@ -73,26 +73,17 @@ pub(super) fn affected_packages(
     changed_files: &[ChangedFile],
     fallback_package_roots: &[PackageSlot],
 ) -> Vec<PackageSlot> {
-    let mut changed_package_ids = changed_files
+    let changed_package_ids = changed_packages(changed_files, fallback_package_roots)
         .iter()
-        .filter_map(|changed_file| {
+        .filter_map(|package_slot| {
             project
                 .state
                 .workspace()
                 .packages()
-                .get(changed_file.package.0)
+                .get(package_slot.0)
                 .map(|package| package.id.clone())
         })
         .collect::<Vec<_>>();
-
-    for package_slot in fallback_package_roots {
-        let Some(package) = project.state.workspace().packages().get(package_slot.0) else {
-            continue;
-        };
-        if !changed_package_ids.contains(&package.id) {
-            changed_package_ids.push(package.id.clone());
-        }
-    }
 
     project
         .state
@@ -101,4 +92,18 @@ pub(super) fn affected_packages(
         .into_iter()
         .map(PackageSlot)
         .collect()
+}
+
+pub(super) fn changed_packages(
+    changed_files: &[ChangedFile],
+    fallback_package_roots: &[PackageSlot],
+) -> Vec<PackageSlot> {
+    let mut packages = changed_files
+        .iter()
+        .map(|changed_file| changed_file.package)
+        .chain(fallback_package_roots.iter().copied())
+        .collect::<Vec<_>>();
+    packages.sort_by_key(|package| package.0);
+    packages.dedup();
+    packages
 }

@@ -23,7 +23,7 @@ use std::{
 use anyhow::Context as _;
 use rg_analysis::{CompletionQuery, InlayHint as AnalysisInlayHint};
 use rg_lsp_proto::CompletionClientCapabilities;
-use rg_project::AnalysisSurface;
+use rg_project::{AnalysisSurface, DirtyOverlayScope};
 use rg_std::UniqueVec;
 use rg_text::RustEdition;
 
@@ -109,43 +109,47 @@ impl<'a> QueryRunner<'a> {
         let source_text = dirty.as_ref().map(DirtyDocumentSnapshot::text);
         let completions = self
             .project
-            .with_query_snapshot(dirty.as_ref(), |snapshot| {
-                let crate_offsets = Self::crate_offsets(snapshot, &path, position)
-                    .context("resolve completion position")?;
-                let analysis_crates = crate_offsets
-                    .iter()
-                    .map(|(_, crate_ref, _)| *crate_ref)
-                    .collect::<Vec<_>>();
-                let analysis = snapshot
-                    .analysis_for_crates(&analysis_crates)
-                    .context("load completion analysis")?;
-                let mut completions = UniqueVec::new();
+            .with_query_snapshot(
+                dirty.as_ref(),
+                DirtyOverlayScope::ChangedPackages,
+                |snapshot| {
+                    let crate_offsets = Self::crate_offsets(snapshot, &path, position)
+                        .context("resolve completion position")?;
+                    let analysis_crates = crate_offsets
+                        .iter()
+                        .map(|(_, crate_ref, _)| *crate_ref)
+                        .collect::<Vec<_>>();
+                    let analysis = snapshot
+                        .analysis_for_crates(&analysis_crates)
+                        .context("load completion analysis")?;
+                    let mut completions = UniqueVec::new();
 
-                for (context, crate_ref, offset) in crate_offsets {
-                    let Some(line_index) = snapshot
-                        .file_line_index(context.package, context.file)
-                        .context("load completion line index")?
-                    else {
-                        continue;
-                    };
-                    let mut query = CompletionQuery::new(crate_ref, context.file, offset)
-                        .with_client_capabilities(rg_analysis::CompletionClientCapabilities {
-                            snippet_support: client_capabilities.snippet_support,
-                        });
-                    if let Some(source_text) = source_text {
-                        query = query.with_source_text(source_text);
+                    for (context, crate_ref, offset) in crate_offsets {
+                        let Some(line_index) = snapshot
+                            .file_line_index(context.package, context.file)
+                            .context("load completion line index")?
+                        else {
+                            continue;
+                        };
+                        let mut query = CompletionQuery::new(crate_ref, context.file, offset)
+                            .with_client_capabilities(rg_analysis::CompletionClientCapabilities {
+                                snippet_support: client_capabilities.snippet_support,
+                            });
+                        if let Some(source_text) = source_text {
+                            query = query.with_source_text(source_text);
+                        }
+                        for item in analysis
+                            .completions_at(query)
+                            .context("compute completions")?
+                        {
+                            let item = completion::completion_item(item, line_index);
+                            completions.push(item);
+                        }
                     }
-                    for item in analysis
-                        .completions_at(query)
-                        .context("compute completions")?
-                    {
-                        let item = completion::completion_item(item, line_index);
-                        completions.push(item);
-                    }
-                }
 
-                Ok(completions.into_vec())
-            })
+                    Ok(completions.into_vec())
+                },
+            )
             .context("run completion query")?;
 
         tracing::trace!(
@@ -172,38 +176,42 @@ impl<'a> QueryRunner<'a> {
             .context("prepare hover path")?;
         let hover = self
             .project
-            .with_query_snapshot(dirty.as_ref(), |snapshot| {
-                let crate_offsets = Self::crate_offsets(snapshot, &path, position)
-                    .context("resolve hover position")?;
-                let analysis_crates = crate_offsets
-                    .iter()
-                    .map(|(_, crate_ref, _)| *crate_ref)
-                    .collect::<Vec<_>>();
-                let analysis = snapshot
-                    .analysis_for_crates(&analysis_crates)
-                    .context("load hover analysis")?;
+            .with_query_snapshot(
+                dirty.as_ref(),
+                DirtyOverlayScope::ChangedPackages,
+                |snapshot| {
+                    let crate_offsets = Self::crate_offsets(snapshot, &path, position)
+                        .context("resolve hover position")?;
+                    let analysis_crates = crate_offsets
+                        .iter()
+                        .map(|(_, crate_ref, _)| *crate_ref)
+                        .collect::<Vec<_>>();
+                    let analysis = snapshot
+                        .analysis_for_crates(&analysis_crates)
+                        .context("load hover analysis")?;
 
-                for (context, crate_ref, offset) in crate_offsets {
-                    let Some(info) = analysis
-                        .hover(crate_ref, context.file, offset)
-                        .context("compute hover")?
-                    else {
-                        continue;
-                    };
-                    let Some(line_index) = snapshot
-                        .file_line_index(context.package, context.file)
-                        .context("load hover line index")?
-                    else {
-                        continue;
-                    };
-                    let Some(hover) = hover::hover(info, line_index) else {
-                        continue;
-                    };
-                    return Ok(Some(hover));
-                }
+                    for (context, crate_ref, offset) in crate_offsets {
+                        let Some(info) = analysis
+                            .hover(crate_ref, context.file, offset)
+                            .context("compute hover")?
+                        else {
+                            continue;
+                        };
+                        let Some(line_index) = snapshot
+                            .file_line_index(context.package, context.file)
+                            .context("load hover line index")?
+                        else {
+                            continue;
+                        };
+                        let Some(hover) = hover::hover(info, line_index) else {
+                            continue;
+                        };
+                        return Ok(Some(hover));
+                    }
 
-                Ok(None)
-            })
+                    Ok(None)
+                },
+            )
             .context("run hover query")?;
 
         tracing::trace!(
@@ -226,34 +234,38 @@ impl<'a> QueryRunner<'a> {
         let started = Instant::now();
         let lsp_symbols = self
             .project
-            .with_query_snapshot(dirty.as_ref(), |snapshot| {
-                let contexts =
-                    Self::file_contexts(snapshot, &path).context("resolve document-symbol path")?;
-                let analysis_crates = contexts
-                    .iter()
-                    .flat_map(|context| context.crates.iter().copied())
-                    .collect::<Vec<_>>();
-                let analysis = snapshot
-                    .analysis_for_crates(&analysis_crates)
-                    .context("load document-symbol analysis")?;
-                let mut lsp_symbols = UniqueVec::new();
+            .with_query_snapshot(
+                dirty.as_ref(),
+                DirtyOverlayScope::ChangedPackages,
+                |snapshot| {
+                    let contexts = Self::file_contexts(snapshot, &path)
+                        .context("resolve document-symbol path")?;
+                    let analysis_crates = contexts
+                        .iter()
+                        .flat_map(|context| context.crates.iter().copied())
+                        .collect::<Vec<_>>();
+                    let analysis = snapshot
+                        .analysis_for_crates(&analysis_crates)
+                        .context("load document-symbol analysis")?;
+                    let mut lsp_symbols = UniqueVec::new();
 
-                for context in contexts {
-                    for crate_ref in context.crates {
-                        let symbols = analysis
-                            .document_symbols(crate_ref, context.file)
-                            .context("collect document symbols")?;
-                        for symbol in symbols {
-                            let symbol =
-                                symbols::document_symbol(snapshot, context.package, symbol)
-                                    .context("convert document symbol")?;
-                            lsp_symbols.push(symbol);
+                    for context in contexts {
+                        for crate_ref in context.crates {
+                            let symbols = analysis
+                                .document_symbols(crate_ref, context.file)
+                                .context("collect document symbols")?;
+                            for symbol in symbols {
+                                let symbol =
+                                    symbols::document_symbol(snapshot, context.package, symbol)
+                                        .context("convert document symbol")?;
+                                lsp_symbols.push(symbol);
+                            }
                         }
                     }
-                }
 
-                Ok(lsp_symbols.into_vec())
-            })
+                    Ok(lsp_symbols.into_vec())
+                },
+            )
             .context("run document-symbol query")?;
 
         tracing::trace!(
@@ -319,55 +331,59 @@ impl<'a> QueryRunner<'a> {
             .context("prepare inlay-hint path")?;
         let lsp_hints = self
             .project
-            .with_query_snapshot(dirty.as_ref(), |snapshot| {
-                let contexts =
-                    Self::file_contexts(snapshot, &path).context("resolve inlay-hint path")?;
-                let analysis_crates = contexts
-                    .iter()
-                    .flat_map(|context| context.crates.iter().copied())
-                    .collect::<Vec<_>>();
-                let analysis = snapshot
-                    .analysis_for_crates(&analysis_crates)
-                    .context("load inlay-hint analysis")?;
-                // A semantic hint already contains its file and source span. The package is only
-                // retained so protocol conversion can load that file, and is intentionally not
-                // part of deduplication when two crate contexts produce the same hint.
-                let mut hints = Vec::<(rg_def_map::PackageSlot, AnalysisInlayHint)>::new();
+            .with_query_snapshot(
+                dirty.as_ref(),
+                DirtyOverlayScope::ChangedPackages,
+                |snapshot| {
+                    let contexts =
+                        Self::file_contexts(snapshot, &path).context("resolve inlay-hint path")?;
+                    let analysis_crates = contexts
+                        .iter()
+                        .flat_map(|context| context.crates.iter().copied())
+                        .collect::<Vec<_>>();
+                    let analysis = snapshot
+                        .analysis_for_crates(&analysis_crates)
+                        .context("load inlay-hint analysis")?;
+                    // A semantic hint already contains its file and source span. The package is only
+                    // retained so protocol conversion can load that file, and is intentionally not
+                    // part of deduplication when two crate contexts produce the same hint.
+                    let mut hints = Vec::<(rg_def_map::PackageSlot, AnalysisInlayHint)>::new();
 
-                for context in contexts {
-                    let Some(range) = Self::text_span_for_context(snapshot, &context, range)
-                        .context("convert inlay-hint range")?
-                    else {
-                        continue;
-                    };
+                    for context in contexts {
+                        let Some(range) = Self::text_span_for_context(snapshot, &context, range)
+                            .context("convert inlay-hint range")?
+                        else {
+                            continue;
+                        };
 
-                    for crate_ref in context.crates {
-                        for hint in analysis
-                            .inlay_hints(crate_ref, context.file, Some(range))
-                            .context("compute inlay hints")?
-                        {
-                            if !hints
-                                .iter()
-                                .any(|(_, existing_hint)| existing_hint == &hint)
+                        for crate_ref in context.crates {
+                            for hint in analysis
+                                .inlay_hints(crate_ref, context.file, Some(range))
+                                .context("compute inlay hints")?
                             {
-                                hints.push((context.package, hint));
+                                if !hints
+                                    .iter()
+                                    .any(|(_, existing_hint)| existing_hint == &hint)
+                                {
+                                    hints.push((context.package, hint));
+                                }
                             }
                         }
                     }
-                }
 
-                let mut lsp_hints = Vec::new();
-                for (package, hint) in hints {
-                    let Some(hint) = inlay_hint::inlay_hint(snapshot, package, hint)
-                        .context("convert inlay hint")?
-                    else {
-                        continue;
-                    };
-                    lsp_hints.push(hint);
-                }
+                    let mut lsp_hints = Vec::new();
+                    for (package, hint) in hints {
+                        let Some(hint) = inlay_hint::inlay_hint(snapshot, package, hint)
+                            .context("convert inlay hint")?
+                        else {
+                            continue;
+                        };
+                        lsp_hints.push(hint);
+                    }
 
-                Ok(lsp_hints)
-            })
+                    Ok(lsp_hints)
+                },
+            )
             .context("run inlay-hint query")?;
 
         tracing::trace!(

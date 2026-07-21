@@ -9,7 +9,8 @@ use rg_workspace::{WorkspaceLoweringConfig, WorkspaceMetadata};
 use test_fixture::{CrateFixture, FixtureMarkers, FixtureSpec, fixture_crate_with_markers};
 
 use crate::{
-    AnalysisChangeSummary, DirtyFileChange, PackageResidencyPolicy, Project, SavedFileChange,
+    AnalysisChangeSummary, DirtyFileChange, DirtyOverlayScope, PackageResidencyPolicy, Project,
+    SavedFileChange,
 };
 
 /// Materialized project fixture sources plus marker metadata.
@@ -101,8 +102,24 @@ impl ProjectFixture {
     }
 
     pub fn dirty_overlay(&self, relative_path: &str, text: &str) -> Project {
+        self.dirty_overlay_with_scope(
+            relative_path,
+            text,
+            DirtyOverlayScope::ReverseDependencyClosure,
+        )
+    }
+
+    pub fn dirty_overlay_with_scope(
+        &self,
+        relative_path: &str,
+        text: &str,
+        scope: DirtyOverlayScope,
+    ) -> Project {
         self.project
-            .dirty_overlay([DirtyFileChange::new(self.path(relative_path), text)])
+            .dirty_overlay(
+                scope,
+                [DirtyFileChange::new(self.path(relative_path), text)],
+            )
             .expect("fixture dirty overlay should build")
             .expect("fixture dirty overlay should touch a known file")
     }

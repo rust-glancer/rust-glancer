@@ -22,8 +22,8 @@ use std::{
 use anyhow::Context as _;
 use rg_lsp_proto::ServiceNotification;
 use rg_project::{
-    AnalysisSurface, Project, ProjectMemoryHooks, ProjectMemoryPurgePoint, ProjectSnapshot,
-    SavedFileChange, SplitIndexingMode,
+    AnalysisSurface, DirtyOverlayScope, Project, ProjectMemoryHooks, ProjectMemoryPurgePoint,
+    ProjectSnapshot, SavedFileChange, SplitIndexingMode,
 };
 use rg_std::UniqueVec;
 use rg_workspace::{CargoMetadataTarget, SysrootSources, WorkspaceMetadata};
@@ -380,9 +380,7 @@ impl ProjectCoordinator {
     /// Materialize one query-selected analysis surface without changing source generation.
     pub(super) fn materialize(&mut self, surface: AnalysisSurface<'_>) -> anyhow::Result<()> {
         self.project
-            .mutate_saved_preserving_generation(|project| {
-                project.split_indexing().materialize(surface)
-            })
+            .materialize(surface)
             .context("materialize analysis surface")
     }
 
@@ -396,10 +394,11 @@ impl ProjectCoordinator {
     pub(super) fn with_query_snapshot<T>(
         &mut self,
         dirty: Option<&DirtyDocumentSnapshot>,
+        dirty_scope: DirtyOverlayScope,
         query: impl FnOnce(ProjectSnapshot<'_>) -> anyhow::Result<T>,
     ) -> anyhow::Result<T> {
         self.project
-            .with_query_snapshot(dirty, query)
+            .with_query_snapshot(dirty, dirty_scope, query)
             .context("run query with project snapshot")
     }
 
