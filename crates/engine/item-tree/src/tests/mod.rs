@@ -1,10 +1,40 @@
 mod utils;
 
-use crate::{FromAst, GenericArg, TypePathAnchor, TypeRef};
+use crate::{
+    FromAst, GenericArg, GenericParams, TraitBoundModifier, TypeBound, TypePathAnchor, TypeRef,
+};
 use expect_test::expect;
 use rg_parse::LineIndex;
 use rg_syntax::{AstNode as _, Edition, SourceFile, ast};
 use rg_text::NameInterner;
+
+#[test]
+fn preserves_relaxed_trait_bound_modifier() {
+    let source = "struct Wrapper<T: ?core::marker::Sized> { value: T }";
+    let file = SourceFile::parse(source, Edition::CURRENT)
+        .ok()
+        .expect("fixture should parse");
+    let item = file
+        .syntax()
+        .descendants()
+        .find_map(ast::Struct::cast)
+        .expect("fixture should contain a struct");
+    let line_index = LineIndex::new(source);
+    let mut interner = NameInterner::new();
+    let generics = GenericParams::from_ast(&item, (&line_index, &mut interner));
+    let param = generics
+        .types()
+        .next()
+        .expect("fixture should contain a type parameter");
+    let [TypeBound::Trait { ty, modifier }] = param.bounds.as_slice() else {
+        panic!("type parameter should contain one trait bound");
+    };
+
+    assert_eq!(*modifier, TraitBoundModifier::Maybe);
+    assert_eq!(ty.to_string(), "core::marker::Sized");
+    assert_eq!(param.bounds[0].to_string(), "?core::marker::Sized");
+    assert!(param.bounds[0].required_trait_ty().is_none());
+}
 
 #[test]
 fn lowers_qualified_associated_type_as_anchored_path() {

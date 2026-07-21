@@ -3,6 +3,8 @@
 //! This pass does not resolve names. It records the source shape, lexical scopes,
 //! and visibility-order binding boundaries so the later resolution pass can stay focused.
 
+use std::time::{Duration, Instant};
+
 mod body;
 mod builder;
 mod crate_lowering;
@@ -32,6 +34,11 @@ use self::crate_lowering::CrateLowering;
 pub(super) use self::macro_expansion::BodyMacroExpansion;
 pub(super) use self::task::{BodyLoweringTask, BodyTaskLowering};
 use super::{local_thread_pool, materialization::BodyIrMaterialization};
+
+// These thresholds are diagnostic filters, not build budgets. Debug logging should identify
+// unusually expensive units without producing one record for every ordinary package or crate.
+const SLOW_CRATE_LOWERING: Duration = Duration::from_secs(1);
+const SLOW_PACKAGE_LOWERING: Duration = Duration::from_secs(2);
 
 /// Package-local structural lowering output. Semantic facts are intentionally absent here.
 pub(super) type LoweredPackageBodies = Vec<LoweredCrateBodies>;
@@ -193,6 +200,13 @@ fn build_package_with_interner(
     package: PackageSlot,
     interner: &mut NameInterner,
 ) -> anyhow::Result<LoweredPackageBodies> {
+    let span = tracing::debug_span!(
+        "body_ir_package_lowering",
+        rg.package = parse_package.package_name(),
+        rg.package_slot = package.0,
+    );
+    let _entered = span.enter();
+    let started = Instant::now();
     let package_ir = semantic_ir.package(package).with_context(|| {
         format!(
             "while attempting to fetch semantic IR package {} for body lowering",
@@ -279,23 +293,47 @@ fn build_package_with_interner(
             continue;
         }
 
-        // Lower.
-        crates.push(
-            CrateLowering {
-                parse_package,
-                def_map,
-                semantic_ir,
-                scope,
-                package,
-                functions,
-                consts,
-                statics,
-                crate_bodies: LoweredCrateBodies::with_coverage(coverage),
-                cfg,
-                interner,
-            }
-            .lower()
-            .with_context(|| format!("while attempting to lower body IR for crate {crate_idx}"))?,
+        // Lower. Keep the crate identity in the active span so a slow macro/body event emitted by
+        // a nested lowering helper can identify its source without adding diagnostic parameters.
+        let crate_span = tracing::debug_span!("body_ir_crate_lowering", rg.crate_id = crate_idx,);
+        let _crate_entered = crate_span.enter();
+        let crate_started = Instant::now();
+        let crate_bodies = CrateLowering {
+            parse_package,
+            def_map,
+            semantic_ir,
+            scope,
+            package,
+            functions,
+            consts,
+            statics,
+            crate_bodies: LoweredCrateBodies::with_coverage(coverage),
+            cfg,
+            interner,
+        }
+        .lower()
+        .with_context(|| format!("while attempting to lower body IR for crate {crate_idx}"))?;
+        let crate_elapsed = crate_started.elapsed();
+        if crate_elapsed >= SLOW_CRATE_LOWERING {
+            tracing::debug!(
+                elapsed_ms = crate_elapsed.as_millis(),
+                body_count = crate_bodies.bodies().len(),
+                "slow Body IR crate lowering"
+            );
+        }
+        crates.push(crate_bodies);
+    }
+
+    let elapsed = started.elapsed();
+    if elapsed >= SLOW_PACKAGE_LOWERING {
+        tracing::debug!(
+            elapsed_ms = elapsed.as_millis(),
+            crate_count,
+            body_count = crates
+                .iter()
+                .map(|crate_bodies| crate_bodies.bodies().len())
+                .sum::<usize>(),
+            "slow Body IR package lowering"
         );
     }
 

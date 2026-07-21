@@ -506,7 +506,7 @@ where
                 let self_ty = Ty::Alias(AliasTy::Opaque(opaque.clone()));
                 let mut lowered_bounds = Vec::new();
                 for bound in bounds {
-                    let TypeBound::Trait(trait_ty) = bound else {
+                    let Some(trait_ty) = bound.required_trait_ty() else {
                         continue;
                     };
                     if let Some(bound) = self.lower_trait_ref(trait_ty, self_ty.clone())? {
@@ -821,7 +821,7 @@ where
         clauses: &mut Vec<Clause>,
     ) -> Result<(), D::Error> {
         for bound in bounds {
-            let TypeBound::Trait(trait_ty) = bound else {
+            let Some(trait_ty) = bound.required_trait_ty() else {
                 continue;
             };
             if let Some(trait_ref) = self.lower_trait_ref(trait_ty, subject.clone())? {
@@ -1098,7 +1098,7 @@ where
         next_lineage.push(application.def);
 
         for bound in super_traits {
-            let TypeBound::Trait(trait_ty) = bound else {
+            let Some(trait_ty) = bound.required_trait_ty() else {
                 continue;
             };
 
@@ -1107,7 +1107,7 @@ where
             let previous_subst =
                 std::mem::replace(&mut self.subst, Substitution::identity(&generics));
             let lowered = self.with_owner_anchor(owner, anchor, |session| {
-                session.lower_trait_ref(&trait_ty, Ty::Param(self_param))
+                session.lower_trait_ref(trait_ty, Ty::Param(self_param))
             });
             self.subst = previous_subst;
             let Some(super_trait) = lowered? else {
@@ -1165,10 +1165,10 @@ where
         next_lineage.push(trait_ref);
         self.with_owner_anchor(owner, anchor, |session| {
             for bound in super_traits {
-                let TypeBound::Trait(trait_ty) = bound else {
+                let Some(trait_ty) = bound.required_trait_ty() else {
                     continue;
                 };
-                let Some(super_trait) = session.resolve_trait_def(&trait_ty)? else {
+                let Some(super_trait) = session.resolve_trait_def(trait_ty)? else {
                     continue;
                 };
                 if session.trait_exposes_associated_type_inner(super_trait, name, &next_lineage)? {
@@ -1280,13 +1280,13 @@ where
             let anchor = self.anchor_for_owner(owner)?;
             let unambiguous = self.with_owner_anchor(owner, anchor, |session| {
                 for bound in bounds {
-                    let TypeBound::Trait(trait_ty) = bound else {
+                    let Some(trait_ty) = bound.required_trait_ty() else {
                         continue;
                     };
                     let TypeRef::Path(path) = &trait_ty else {
                         continue;
                     };
-                    let Some(trait_def) = session.resolve_trait_def(&trait_ty)? else {
+                    let Some(trait_def) = session.resolve_trait_def(trait_ty)? else {
                         continue;
                     };
                     // Candidate discovery is an identity operation. Only a trait that actually

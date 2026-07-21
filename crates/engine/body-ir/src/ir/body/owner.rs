@@ -1,6 +1,6 @@
 use wincode::{SchemaRead, SchemaWrite};
 
-use rg_ir_model::{ConstRef, FunctionRef, StaticRef, identity::DeclarationRef};
+use rg_ir_model::{ConstRef, FunctionRef, GenericDefRef, StaticRef, identity::DeclarationRef};
 use rg_std::{MemorySize, Shrink};
 
 /// Semantic item that owns a lowered expression body.
@@ -29,6 +29,15 @@ impl BodyOwner {
             Self::Function(function) => DeclarationRef::from(function),
             Self::Const(const_ref) => DeclarationRef::from(const_ref),
             Self::Static(static_ref) => DeclarationRef::from(static_ref),
+        }
+    }
+
+    /// Returns the signature owner whose generic parameters are visible inside this body.
+    pub fn generic_def(self) -> GenericDefRef {
+        match self {
+            Self::Function(function) => GenericDefRef::Function(function),
+            Self::Const(const_ref) => GenericDefRef::Const(const_ref),
+            Self::Static(static_ref) => GenericDefRef::Static(static_ref),
         }
     }
 }

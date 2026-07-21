@@ -90,6 +90,66 @@ pub fn demo(user: DirtyUser) {
 }
 
 #[tokio::test]
+async fn dirty_completion_uses_incomplete_function_signature() {
+    let fixture = LspEngineFixture::initialized(
+        r#"
+        //- /Cargo.toml
+        [package]
+        name = "lsp_dirty_signature_completion"
+        version = "0.1.0"
+        edition = "2024"
+
+        //- /src/lib.rs
+        pub struct Saved;
+        "#,
+    )
+    .await;
+
+    fixture.did_open_saved("src/lib.rs", 1).await;
+    let dirty = fixture
+        .did_change_full(
+            "src/lib.rs",
+            2,
+            MarkedText::parse(
+                r#"
+pub struct DirtyFixture;
+pub struct Wrapper<T>(T);
+
+pub fn demo<T, const N: usize>(value: Wrapper<Dirty$signature$
+"#,
+            ),
+        )
+        .await;
+
+    fixture
+        .check_dirty(
+            &dirty,
+            &[LspQuery::completion(
+                "dirty incomplete signature completion",
+                "signature",
+            )],
+            expect![[r#"
+                dirty incomplete signature completion
+                - T TypeParameter
+                  detail: type parameter T
+                  edit: /src/lib.rs:4:46-4:51 -> T
+                - N Constant
+                  detail: const parameter N
+                  edit: /src/lib.rs:4:46-4:51 -> N
+                - DirtyFixture Struct
+                  detail: struct DirtyFixture
+                  edit: /src/lib.rs:4:46-4:51 -> DirtyFixture
+                - Wrapper Struct
+                  detail: struct Wrapper
+                  edit: /src/lib.rs:4:46-4:51 -> Wrapper
+            "#]],
+        )
+        .await;
+
+    fixture.shutdown().await;
+}
+
+#[tokio::test]
 async fn restored_unsaved_open_uses_dirty_full_text_overlay() {
     let fixture = LspEngineFixture::initialized(
         r#"

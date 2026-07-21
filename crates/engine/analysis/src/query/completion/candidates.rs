@@ -4,17 +4,22 @@
 //! storage owns name, member, or type lookup. This adapter accepts completion-domain cursor sites
 //! and projects generic view facts into completion-ready candidates.
 
+use anyhow::Context as _;
 use rg_ir_model::{
-    EnumVariantRef, FieldKey, FieldRef, FunctionRef, ModuleRef, Path, PrimitiveTy,
-    identity::DeclarationRef,
+    BodyRef, EnumVariantRef, FieldKey, FieldRef, FunctionRef, ModuleRef, Path, PrimitiveTy,
+    ScopeId, identity::DeclarationRef,
 };
 use rg_ir_view::{
     IndexedViewDb, SymbolKind,
     lookup::name::{
-        ModuleScopeName, NameLookupView, NameNamespace, NameOrigin, ValueOrTypeNamespace,
+        GenericScopeNameKind, GenericScopeNameTarget, ModuleScopeName, NameLookupView,
+        NameNamespace, NameOrigin, ValueOrTypeNamespace,
     },
     member::{MemberMethodCandidate, MemberMethodOrigin, MemberUseSite, MemberView},
-    source::{IndexedQualifiedPathScope, IndexedUnqualifiedNameScope},
+    source::{
+        IndexedQualifiedPathScope, IndexedSignatureTypeScope, IndexedTypeNamePosition,
+        IndexedUnqualifiedNameContext, IndexedUnqualifiedNameScope,
+    },
     ty::TyView,
     ty::locals::{BodyLexicalName, BodyNameScope, BodyView},
 };
@@ -113,6 +118,43 @@ impl LexicalCompletionCandidate {
     }
 }
 
+/// A named type/const parameter or impl `Self` projected out of a declaration's generic scope.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct GenericScopeCompletionCandidate {
+    label: String,
+    namespace: NameNamespace,
+    target: CompletionTarget,
+    kind: CompletionKind,
+}
+
+impl GenericScopeCompletionCandidate {
+    pub(crate) fn label(&self) -> &str {
+        &self.label
+    }
+
+    pub(crate) fn namespace(&self) -> NameNamespace {
+        self.namespace
+    }
+
+    pub(crate) fn target(&self) -> CompletionTarget {
+        self.target
+    }
+
+    pub(crate) fn kind(&self) -> CompletionKind {
+        self.kind
+    }
+}
+
+/// Scope used to verify that a primitive-looking spelling still resolves to the builtin type.
+///
+/// Primitive candidates are not unconditional keywords: a declaration can shadow their spelling.
+/// Body and signature paths use different resolution anchors, so the check keeps that distinction.
+#[derive(Debug, Clone, Copy)]
+enum PrimitiveTypePathScope {
+    Body { body: BodyRef, scope: ScopeId },
+    Signature(IndexedSignatureTypeScope),
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct DotMethodCompletionCandidate {
     function: FunctionRef,
@@ -134,6 +176,11 @@ impl DotMethodCompletionCandidate {
     }
 }
 
+/// Turns normalized cursor sites into completion candidates from the matching indexed views.
+///
+/// This is the boundary where a site's semantic scope chooses body-local, declaration-generic, or
+/// module lookup. Rendering and sort policy stay outside so they can operate on one candidate
+/// vocabulary regardless of which frozen store supplied it.
 pub(crate) struct CompletionCandidateSource<'a, 'db> {
     db: &'a IndexedViewDb<'db>,
 }
@@ -155,6 +202,7 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
                 };
                 module
             }
+            IndexedQualifiedPathScope::Signature { scope } => scope.context().module,
             IndexedQualifiedPathScope::Import { module } => module,
         };
         self.module_path_candidates(importing_module, source.qualifier())
@@ -205,6 +253,9 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
 
                 Ok(candidates)
             }
+            IndexedUnqualifiedNameScope::Signature { scope, .. } => {
+                self.unqualified_module_candidates(scope.context().module)
+            }
             IndexedUnqualifiedNameScope::Import { module } => {
                 self.unqualified_module_candidates(*module)
             }
@@ -217,44 +268,139 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
     ) -> anyhow::Result<Vec<LexicalCompletionCandidate>> {
         let IndexedUnqualifiedNameScope::Body {
             scope,
-            namespace,
+            context,
             visible_bindings,
             ..
         } = site.source().scope()
         else {
             return Ok(Vec::new());
         };
+        let namespace = match context {
+            IndexedUnqualifiedNameContext::Type { .. } => ValueOrTypeNamespace::Types,
+            IndexedUnqualifiedNameContext::Value => ValueOrTypeNamespace::Values,
+        };
         let scope = BodyNameScope::new(
             scope.body_ir(),
             scope.scope_id(),
-            *namespace,
+            namespace,
             *visible_bindings,
         );
         let mut candidates = Vec::new();
         for candidate in BodyView::new(self.db).lexical_names(scope)? {
-            if let Some(candidate) = self.lexical_candidate(*namespace, candidate) {
+            if let Some(candidate) = self.lexical_candidate(namespace, candidate) {
                 candidates.push(candidate);
             }
         }
         Ok(candidates)
     }
 
+    /// Returns generic-scope names allowed by the syntax around an unqualified cursor.
+    ///
+    /// In `fn load<T, const N>()`, an ordinary type position such as `let _: T$0` accepts `T`.
+    /// A bare generic argument such as `Array<N$0>` is ambiguous until `Array` resolves, so it can
+    /// also accept `N`; a structured type inside an argument remains type-only.
+    pub(crate) fn generic_scope_candidates_for_unqualified(
+        &self,
+        site: &UnqualifiedCompletionSite,
+    ) -> anyhow::Result<Vec<GenericScopeCompletionCandidate>> {
+        let (owner, context) = match site.source().scope() {
+            IndexedUnqualifiedNameScope::Body { scope, context, .. } => {
+                let Some(owner) = BodyView::new(self.db)
+                    .generic_owner(scope.body_ir())
+                    .context("read completion body generic owner")?
+                else {
+                    return Ok(Vec::new());
+                };
+                (owner, *context)
+            }
+            IndexedUnqualifiedNameScope::Signature { scope, context, .. } => {
+                (scope.generic_owner(), *context)
+            }
+            IndexedUnqualifiedNameScope::Import { .. } => return Ok(Vec::new()),
+        };
+
+        let mut candidates = Vec::new();
+        for name in NameLookupView::new(self.db)
+            .generic_scope_names(owner)
+            .context("read completion generic scope names")?
+        {
+            // A bare argument such as `Container<N>` is syntactically ambiguous without the
+            // resolved container's parameter list, so both type and const parameters are useful.
+            // TODO: Carry the expected generic parameter kind when the enclosing path resolves.
+            let accepted = matches!(
+                (name.kind(), context),
+                (
+                    GenericScopeNameKind::Type,
+                    IndexedUnqualifiedNameContext::Type { .. }
+                ) | (
+                    GenericScopeNameKind::Const,
+                    IndexedUnqualifiedNameContext::Value
+                ) | (
+                    GenericScopeNameKind::Const,
+                    IndexedUnqualifiedNameContext::Type {
+                        position: IndexedTypeNamePosition::BareGenericArgument,
+                    },
+                )
+            );
+            if !accepted {
+                continue;
+            }
+
+            let (namespace, kind) = match name.kind() {
+                GenericScopeNameKind::Type => (NameNamespace::Types, CompletionKind::TypeParameter),
+                GenericScopeNameKind::Const => (NameNamespace::Values, CompletionKind::Const),
+            };
+            let target = match name.target() {
+                GenericScopeNameTarget::Param(param) => CompletionTarget::GenericParam(param),
+                GenericScopeNameTarget::ImplSelf(impl_ref) => CompletionTarget::ImplSelf(impl_ref),
+            };
+            candidates.push(GenericScopeCompletionCandidate {
+                label: name.label().to_string(),
+                namespace,
+                target,
+                kind,
+            });
+        }
+
+        Ok(candidates)
+    }
+
+    /// Returns matching primitive types that resolve as primitives in this exact source scope.
+    ///
+    /// Resolving each spelling prevents completion from suggesting a builtin where a declaration
+    /// with the same name has shadowed it.
     pub(crate) fn primitive_type_candidates_for_unqualified(
         &self,
         site: &UnqualifiedCompletionSite,
     ) -> anyhow::Result<Vec<PrimitiveTy>> {
-        let IndexedUnqualifiedNameScope::Body {
-            scope,
-            namespace,
-            member_prefix,
-            ..
-        } = site.source().scope()
-        else {
-            return Ok(Vec::new());
+        let (member_prefix, resolution) = match site.source().scope() {
+            IndexedUnqualifiedNameScope::Body {
+                scope,
+                context: IndexedUnqualifiedNameContext::Type { .. },
+                member_prefix,
+                ..
+            } => (
+                member_prefix,
+                PrimitiveTypePathScope::Body {
+                    body: scope.body_ir(),
+                    scope: scope.scope_id(),
+                },
+            ),
+            IndexedUnqualifiedNameScope::Signature {
+                scope,
+                context: IndexedUnqualifiedNameContext::Type { .. },
+                member_prefix,
+            } => (member_prefix, PrimitiveTypePathScope::Signature(*scope)),
+            IndexedUnqualifiedNameScope::Body {
+                context: IndexedUnqualifiedNameContext::Value,
+                ..
+            }
+            | IndexedUnqualifiedNameScope::Signature {
+                context: IndexedUnqualifiedNameContext::Value,
+                ..
+            }
+            | IndexedUnqualifiedNameScope::Import { .. } => return Ok(Vec::new()),
         };
-        if !matches!(namespace, ValueOrTypeNamespace::Types) {
-            return Ok(Vec::new());
-        }
 
         let mut candidates = Vec::new();
 
@@ -264,11 +410,15 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
             .filter(|primitive| primitive.label().starts_with(member_prefix.as_str()))
         {
             let path = Path::unqualified_name(primitive.label());
-            if TyView::new(self.db)
-                .ty_for_body_type_path(scope.body_ir(), scope.scope_id(), &path)?
-                .primitive()
-                == Some(primitive)
-            {
+            let ty = match resolution {
+                PrimitiveTypePathScope::Body { body, scope } => TyView::new(self.db)
+                    .ty_for_body_type_path(body, scope, &path)
+                    .context("resolve body primitive type completion")?,
+                PrimitiveTypePathScope::Signature(scope) => TyView::new(self.db)
+                    .ty_for_type_path(scope.context(), &path)
+                    .context("resolve signature primitive type completion")?,
+            };
+            if ty.primitive() == Some(primitive) {
                 candidates.push(primitive);
             }
         }

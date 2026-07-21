@@ -5,11 +5,12 @@
 
 use std::collections::HashSet;
 
+use anyhow::Context as _;
 use rg_body_ir::{BindingKind, ExprKind};
 use rg_def_map::ItemSourceKind;
 use rg_ir_model::{
-    BindingId, BodyBindingRef, BodyRef, CrateRef, DefMapRef, ExprId, FunctionRef, ModuleId,
-    ModuleRef, ScopeId, SemanticItemKind, SemanticItemRef, identity::DeclarationRef,
+    BindingId, BodyBindingRef, BodyRef, CrateRef, DefMapRef, ExprId, FunctionRef, GenericDefRef,
+    ModuleId, ModuleRef, ScopeId, SemanticItemKind, SemanticItemRef, identity::DeclarationRef,
 };
 use rg_parse::{FileId, Span, TextSpan};
 use rg_semantic_ir::ItemStoreQuery;
@@ -169,6 +170,19 @@ impl<'a, 'db> BodyView<'a, 'db> {
             .body_ir
             .body(body_ref)?
             .map(|body| body.owner_module()))
+    }
+
+    /// Return the signature owner whose generic parameters are visible inside a body.
+    ///
+    /// A method body starts from the function owner; generic lookup can then follow the semantic
+    /// parent chain to parameters declared by its enclosing trait or impl.
+    pub fn generic_owner(&self, body_ref: BodyRef) -> anyhow::Result<Option<GenericDefRef>> {
+        Ok(self
+            .db
+            .body_ir
+            .body(body_ref)
+            .context("read body generic owner")?
+            .map(|body| body.owner().generic_def()))
     }
 
     /// Return body-local module refs from a scope to its parents.

@@ -10,7 +10,6 @@ use rg_ty::{
     inference::InferenceTable,
 };
 
-use crate::ir::BodyOwner;
 use crate::resolution::BodyResolutionContext;
 
 /// Body-scoped entry point to the canonical lowerer.
@@ -71,11 +70,7 @@ where
     }
 
     fn body_owner(&self) -> GenericDefRef {
-        match self.context.body().owner() {
-            BodyOwner::Function(owner) => GenericDefRef::Function(owner),
-            BodyOwner::Const(owner) => GenericDefRef::Const(owner),
-            BodyOwner::Static(owner) => GenericDefRef::Static(owner),
-        }
+        self.context.body().owner().generic_def()
     }
 
     fn anchor(&self) -> TypeLoweringAnchor {

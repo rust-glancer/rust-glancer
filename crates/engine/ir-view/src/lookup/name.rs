@@ -3,12 +3,17 @@
 //! Completion renderers use these facts heavily, but the facts themselves are not completion
 //! concepts: they are names visible from an indexed module or lexical body scope.
 
+use anyhow::Context as _;
 use rg_def_map::{
     DefMapQuery, DefMapSource, Namespace, NamespaceSet, VisibleScopeDef, VisibleScopeOrigin,
 };
-use rg_ir_model::{DefId, FunctionRef, ModuleRef, Path, SemanticItemRef, identity::DeclarationRef};
+use rg_ir_model::{
+    DefId, FunctionRef, GenericDefRef, GenericParamRef, ImplRef, ModuleRef, Path, SemanticItemRef,
+    identity::DeclarationRef,
+};
 use rg_item_tree::Documentation;
-use rg_semantic_ir::ItemStoreQuery;
+use rg_semantic_ir::{GenericParamSource, GenericsQuery, ItemStoreQuery};
+use rg_std::UniqueVec;
 
 use crate::{IndexedViewDb, SymbolKind};
 
@@ -109,6 +114,50 @@ impl ModuleScopeName {
     }
 }
 
+/// Kind of declaration represented by a name from a generic scope.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GenericScopeNameKind {
+    /// A type parameter, trait `Self`, or impl `Self`.
+    Type,
+    /// A named const parameter.
+    Const,
+}
+
+/// Stable semantic identity behind a name from a generic scope.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GenericScopeNameTarget {
+    /// A written type/const parameter, or trait `Self`, represented by `Generics`.
+    Param(GenericParamRef),
+    /// `Self` in an impl is an alias for the impl's concrete self type, not a generic parameter.
+    ImplSelf(ImplRef),
+}
+
+/// One type or const name visible from a signature owner.
+///
+/// This vocabulary includes impl `Self` even though it is not a parameter: source lookup treats it
+/// like a type name, while `target` retains the distinction needed to resolve the concrete self
+/// type.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GenericScopeName {
+    label: String,
+    kind: GenericScopeNameKind,
+    target: GenericScopeNameTarget,
+}
+
+impl GenericScopeName {
+    pub fn label(&self) -> &str {
+        &self.label
+    }
+
+    pub fn kind(&self) -> GenericScopeNameKind {
+        self.kind
+    }
+
+    pub fn target(&self) -> GenericScopeNameTarget {
+        self.target
+    }
+}
+
 /// Looks up visible names and returns declaration-shaped view facts.
 pub struct NameLookupView<'a, 'db> {
     db: &'a IndexedViewDb<'db>,
@@ -160,6 +209,62 @@ impl<'a, 'db> NameLookupView<'a, 'db> {
                 names.push(name);
             }
         }
+        Ok(names)
+    }
+
+    /// Return named parameters visible from one declaration, including inherited owner params.
+    ///
+    /// Anonymous argument-position `impl Trait` parameters have no source name and lifetimes use
+    /// different syntax, so neither is part of ordinary identifier completion. Impl `Self` is
+    /// added explicitly because it resolves through the impl context rather than `Generics`.
+    /// Thus, for `impl<T> Wrapper<T> { fn map<U>() {} }`, the method owner exposes `U`, inherited
+    /// `T`, and `Self` through one lookup.
+    pub fn generic_scope_names(
+        &self,
+        owner: GenericDefRef,
+    ) -> anyhow::Result<Vec<GenericScopeName>> {
+        let generics = GenericsQuery::new(self.db)
+            .generics(owner)
+            .context("read generic scope parameters")?;
+        let mut names = Vec::new();
+        let mut seen = UniqueVec::new();
+
+        for param in generics.iter().rev() {
+            let (label, kind) = match param.source() {
+                GenericParamSource::Type(data) => {
+                    (data.name.to_string(), GenericScopeNameKind::Type)
+                }
+                GenericParamSource::Const(data) => {
+                    (data.name.to_string(), GenericScopeNameKind::Const)
+                }
+                GenericParamSource::TraitSelf => ("Self".to_string(), GenericScopeNameKind::Type),
+                GenericParamSource::Lifetime(_) | GenericParamSource::ArgumentImplTrait(_) => {
+                    continue;
+                }
+            };
+            if !seen.push((label.clone(), kind)) {
+                continue;
+            }
+            names.push(GenericScopeName {
+                label,
+                kind,
+                target: GenericScopeNameTarget::Param(param.param()),
+            });
+        }
+
+        let context = ItemStoreQuery::new(self.db)
+            .type_path_context_for_generic_def(owner)
+            .context("read generic scope type-path context")?;
+        if let Some(impl_ref) = context.and_then(|context| context.impl_ref)
+            && seen.push(("Self".to_string(), GenericScopeNameKind::Type))
+        {
+            names.push(GenericScopeName {
+                label: "Self".to_string(),
+                kind: GenericScopeNameKind::Type,
+                target: GenericScopeNameTarget::ImplSelf(impl_ref),
+            });
+        }
+
         Ok(names)
     }
 

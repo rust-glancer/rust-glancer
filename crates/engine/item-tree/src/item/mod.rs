@@ -24,8 +24,8 @@ pub use self::{
     },
     module::{ModuleItem, ModuleSource},
     type_ref::{
-        GenericArg, TypeBound, TypeBoundListDisplay, TypeNameFormatter, TypePath, TypePathAnchor,
-        TypePathSegment, TypeRef, TypeRefDisplay,
+        GenericArg, TraitBoundModifier, TypeBound, TypeBoundListDisplay, TypeNameFormatter,
+        TypePath, TypePathAnchor, TypePathSegment, TypeRef, TypeRefDisplay,
     },
     visibility::VisibilityLevel,
 };

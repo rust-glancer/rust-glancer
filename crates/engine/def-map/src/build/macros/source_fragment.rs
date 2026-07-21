@@ -590,7 +590,8 @@ impl SourceFragmentCollector<'_> {
                 module: self.state.root_module,
             }
         } else {
-            let Some(module_ref) = self.state.implicit_roots.get(&extern_name).copied() else {
+            let Some(module_ref) = self.state.extern_prelude.extern_crate_source(&extern_name)
+            else {
                 return;
             };
             module_ref
@@ -611,6 +612,15 @@ impl SourceFragmentCollector<'_> {
         else {
             return;
         };
+
+        // Source-like builtin expansion behaves as if its items were written at the call site.
+        // Therefore an expanded root declaration receives the same crate-wide alias behavior as
+        // an ordinary root `extern crate`, while a declaration expanded in a child module does not.
+        if module_id == self.state.root_module {
+            self.state
+                .extern_prelude
+                .insert_explicit_alias(binding_name.clone(), module_ref);
+        }
 
         let binding = ScopeBinding::new(
             DefId::Module(module_ref),

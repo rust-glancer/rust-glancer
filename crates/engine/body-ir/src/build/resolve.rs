@@ -1,5 +1,7 @@
 //! Resolves lowered Body IR while a build mutator has privileged package access.
 
+use std::time::{Duration, Instant};
+
 use anyhow::Context as _;
 use rayon::prelude::*;
 use rg_def_map::{DefMapReadTxn, PackageSlot};
@@ -10,6 +12,10 @@ use rg_text::{NameInterner, PackageNameInterners};
 use crate::{CrateBodies, PackageBodies};
 
 use super::{local_thread_pool, lower::LoweredPackageBodies, state::CrateBodyBuildState};
+
+// Package resolution runs in parallel, so report only packages large enough to stand out from
+// normal scheduling variance.
+const SLOW_PACKAGE_RESOLUTION: Duration = Duration::from_secs(2);
 
 pub(super) fn resolve_packages(
     packages: Vec<LoweredPackageBodies>,
@@ -115,6 +121,15 @@ fn resolve_package(
     def_map_txn: &DefMapReadTxn<'_>,
     semantic_ir: &SemanticIrReadTxn<'_>,
 ) -> anyhow::Result<PackageBodies> {
+    let crate_count = package.len();
+    let span = tracing::debug_span!(
+        "body_ir_package_resolution",
+        rg.package = parse_package.package_name(),
+        rg.package_slot = package_slot.0,
+    );
+    let _entered = span.enter();
+    let started = Instant::now();
+
     let crates = package
         .into_iter()
         .enumerate()
@@ -133,6 +148,19 @@ fn resolve_package(
                 .resolve(def_map_txn, semantic_ir)
         })
         .collect::<anyhow::Result<Vec<_>>>()?;
+
+    let elapsed = started.elapsed();
+    if elapsed >= SLOW_PACKAGE_RESOLUTION {
+        tracing::debug!(
+            elapsed_ms = elapsed.as_millis(),
+            crate_count,
+            body_count = crates
+                .iter()
+                .map(|crate_bodies| crate_bodies.bodies().len())
+                .sum::<usize>(),
+            "slow Body IR package resolution"
+        );
+    }
 
     Ok(PackageBodies::new(crates))
 }

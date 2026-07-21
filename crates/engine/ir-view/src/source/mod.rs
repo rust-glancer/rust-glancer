@@ -13,8 +13,9 @@ mod tests;
 
 pub use completion::{
     IndexedMemberAccessSite, IndexedQualifiedPathScope, IndexedQualifiedPathSite,
-    IndexedRecordFieldListSite, IndexedUnqualifiedNameScope, IndexedUnqualifiedNameSite,
-    SourceCompletionView,
+    IndexedRecordFieldListSite, IndexedSignatureTypeScope, IndexedSignatureTypeSite,
+    IndexedTypeNamePosition, IndexedUnqualifiedNameContext, IndexedUnqualifiedNameScope,
+    IndexedUnqualifiedNameSite, SourceCompletionView,
 };
 pub use occurrence::{
     IndexedSourceFact, IndexedSourceOccurrence, IndexedSourceRole, IndexedSourceSurface,
