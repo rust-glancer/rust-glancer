@@ -7,16 +7,36 @@ use std::{
     time::Duration,
 };
 
-use rg_lsp_proto::{AnalysisConfig, ServiceNotification, SysrootDiscovery};
-use rg_project::{ProjectMemoryHooks, ProjectMemoryPurgePoint};
+use rg_lsp_proto::{AnalysisConfig, PackageResidencyPolicy, ServiceNotification, SysrootDiscovery};
+use rg_project::{AnalysisSurface, ProjectMemoryHooks, ProjectMemoryPurgePoint};
 use test_fixture::fixture_crate;
 
 use super::{MAX_STALE_SOURCE_RETRIES, ProjectConfiguration, ProjectCoordinator};
 use crate::{
+    documents::{DirtyDocumentSnapshotState, DocumentStore},
     engine::command::EngineCommand,
     memory::MemoryControl,
     service::{ServiceNotificationPublisher, ServiceNotificationsSink},
 };
+
+#[derive(Debug, Default)]
+struct DirtyOverlayBuilds {
+    count: AtomicUsize,
+}
+
+impl DirtyOverlayBuilds {
+    fn count(&self) -> usize {
+        self.count.load(Ordering::Acquire)
+    }
+}
+
+impl ProjectMemoryHooks for DirtyOverlayBuilds {
+    fn purge(&self, point: ProjectMemoryPurgePoint) {
+        if point == ProjectMemoryPurgePoint::AfterDirtyOverlayBuild {
+            self.count.fetch_add(1, Ordering::AcqRel);
+        }
+    }
+}
 
 #[derive(Debug)]
 struct SourceMutations {
@@ -97,6 +117,192 @@ impl ServiceNotificationPublisher for RecordingNotifications {
             .expect("recorded notifications should not be poisoned")
             .push(notification);
     }
+}
+
+#[test]
+fn ready_query_surfaces_preserve_the_matching_dirty_overlay() {
+    let fixture = fixture_crate(
+        r#"
+            //- /Cargo.toml
+            [package]
+            name = "dirty_overlay_materialization_fixture"
+            version = "0.1.0"
+            edition = "2024"
+
+            //- /src/lib.rs
+            pub fn saved() -> usize {
+                1
+            }
+            "#,
+    );
+    let source = fixture.path("src/lib.rs");
+    let hooks = Arc::new(DirtyOverlayBuilds::default());
+    let (sender, receiver) = mpsc::channel();
+    let memory_control: Arc<dyn MemoryControl> = Arc::new(());
+    let notifications = ServiceNotificationsSink::from_publisher(NoopNotifications);
+    let mut project = ProjectCoordinator::new(sender, memory_control, notifications);
+    project.memory_hooks = hooks.clone();
+    project
+        .initialize(
+            fixture.path(""),
+            ProjectConfiguration::from(AnalysisConfig {
+                package_residency_policy: PackageResidencyPolicy::AllOffloadable,
+                sysroot_discovery: SysrootDiscovery::Disabled,
+                ..AnalysisConfig::default()
+            }),
+        )
+        .expect("fixture project should initialize");
+
+    // Finish and merge the deferred payload so all-offloadable queries can read its durable
+    // artifact without replacing saved project state.
+    let initial = receiver
+        .recv_timeout(Duration::from_secs(5))
+        .expect("initial deferred indexing should return");
+    let EngineCommand::DeferredIndexingFinished { generation, result } = initial.command else {
+        panic!("initial background command should finish deferred indexing");
+    };
+    project.deferred_indexing_finished(generation, result);
+
+    let context = project
+        .saved_snapshot()
+        .expect("saved project should be available")
+        .file_contexts_for_path(&source)
+        .expect("fixture file contexts should resolve")
+        .pop()
+        .expect("fixture file should have one context");
+    let files = [(context.package, context.file)];
+    let crates = context.crates;
+    let saved_text = std::fs::read_to_string(&source).expect("saved fixture source should read");
+    let mut documents = DocumentStore::default();
+    documents.did_open_saved(source.clone(), Some(1), &saved_text);
+    documents.did_change(
+        source.clone(),
+        Some(2),
+        Some("pub fn dirty() -> usize { 2 }\n"),
+    );
+    let DirtyDocumentSnapshotState::Dirty(dirty) = documents.dirty_snapshot(&source) else {
+        panic!("changed fixture document should have a dirty text snapshot");
+    };
+
+    // Document symbols can build the overlay before a body-backed query prepares its surface.
+    // File and mixed reference-search preparation are both no-ops for finished artifacts, so the
+    // same dirty snapshot must keep hitting one cached overlay across those query shapes.
+    project
+        .with_query_snapshot(Some(&dirty), |_| Ok(()))
+        .expect("first dirty query should build its overlay");
+    project
+        .materialize(AnalysisSurface::Files(&files))
+        .expect("file query surface should already be ready");
+    project
+        .with_query_snapshot(Some(&dirty), |_| Ok(()))
+        .expect("second dirty query should reuse its overlay");
+    project
+        .materialize(AnalysisSurface::FilesAndCrates {
+            files: &files,
+            crates: &crates,
+        })
+        .expect("mixed query surface should already be ready");
+    project
+        .with_query_snapshot(Some(&dirty), |_| Ok(()))
+        .expect("third dirty query should reuse its overlay");
+
+    assert_eq!(
+        hooks.count(),
+        1,
+        "no-op query materialization should not evict a matching dirty overlay",
+    );
+}
+
+#[test]
+fn incomplete_resident_query_surface_evicts_the_matching_dirty_overlay() {
+    let fixture = fixture_crate(
+        r#"
+            //- /Cargo.toml
+            [package]
+            name = "incomplete_dirty_overlay_materialization_fixture"
+            version = "0.1.0"
+            edition = "2024"
+
+            //- /src/lib.rs
+            pub fn saved() -> usize {
+                1
+            }
+            "#,
+    );
+    let source = fixture.path("src/lib.rs");
+    let hooks = Arc::new(DirtyOverlayBuilds::default());
+    let (sender, receiver) = mpsc::channel();
+    let memory_control: Arc<dyn MemoryControl> = Arc::new(());
+    let notifications = ServiceNotificationsSink::from_publisher(NoopNotifications);
+    let mut project = ProjectCoordinator::new(sender, memory_control, notifications);
+    project.memory_hooks = hooks.clone();
+    project
+        .initialize(
+            fixture.path(""),
+            ProjectConfiguration::from(AnalysisConfig {
+                package_residency_policy: PackageResidencyPolicy::AllResident,
+                sysroot_discovery: SysrootDiscovery::Disabled,
+                ..AnalysisConfig::default()
+            }),
+        )
+        .expect("fixture project should initialize");
+
+    // Let background indexing finish, but hold its result outside the coordinator. The saved
+    // project therefore remains deterministically incomplete while no worker is still running.
+    let initial = receiver
+        .recv_timeout(Duration::from_secs(5))
+        .expect("initial deferred indexing should return");
+    let EngineCommand::DeferredIndexingFinished { generation, result } = initial.command else {
+        panic!("initial background command should finish deferred indexing");
+    };
+    let incomplete_stats = project
+        .saved_snapshot()
+        .expect("saved project should be available")
+        .stats()
+        .body_ir;
+    assert_eq!(incomplete_stats.complete_crate_count, 0);
+    assert_eq!(incomplete_stats.missing_crate_count, 1);
+
+    let context = project
+        .saved_snapshot()
+        .expect("saved project should be available")
+        .file_contexts_for_path(&source)
+        .expect("fixture file contexts should resolve")
+        .pop()
+        .expect("fixture file should have one context");
+    let files = [(context.package, context.file)];
+    let saved_text = std::fs::read_to_string(&source).expect("saved fixture source should read");
+    let mut documents = DocumentStore::default();
+    documents.did_open_saved(source.clone(), Some(1), &saved_text);
+    documents.did_change(
+        source.clone(),
+        Some(2),
+        Some("pub fn dirty() -> usize { 2 }\n"),
+    );
+    let DirtyDocumentSnapshotState::Dirty(dirty) = documents.dirty_snapshot(&source) else {
+        panic!("changed fixture document should have a dirty text snapshot");
+    };
+
+    project
+        .with_query_snapshot(Some(&dirty), |_| Ok(()))
+        .expect("first dirty query should build its overlay");
+    assert_eq!(hooks.count(), 1, "first dirty query should build once");
+
+    // This preparation fills missing resident Body IR and replaces saved package payloads. The
+    // overlay based on the old payload must be dropped before the next dirty query can run.
+    project
+        .materialize(AnalysisSurface::Files(&files))
+        .expect("incomplete file query surface should materialize");
+    project
+        .with_query_snapshot(Some(&dirty), |_| Ok(()))
+        .expect("second dirty query should rebuild its evicted overlay");
+    assert_eq!(
+        hooks.count(),
+        2,
+        "real query materialization should evict a matching dirty overlay",
+    );
+
+    project.deferred_indexing_finished(generation, result);
 }
 
 #[test]

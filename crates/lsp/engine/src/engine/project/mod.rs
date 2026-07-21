@@ -374,9 +374,7 @@ impl ProjectCoordinator {
     /// Materialize one query-selected analysis surface without changing source generation.
     pub(super) fn materialize(&mut self, surface: AnalysisSurface<'_>) -> anyhow::Result<()> {
         self.project
-            .mutate_saved_preserving_generation(|project| {
-                project.split_indexing().materialize(surface)
-            })
+            .materialize(surface)
             .context("materialize analysis surface")
     }
 

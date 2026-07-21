@@ -91,6 +91,27 @@ impl<'project> SplitIndexing<'project> {
         finish_with_sampler(&mut self.project.state, &mut memory_sampler)
     }
 
+    /// Returns whether preparing the requested query surface would replace retained state.
+    ///
+    /// Offloaded packages do not need materialization because query transactions can read their
+    /// durable artifacts without replacing retained project state.
+    pub fn needs_materialization(&self, surface: AnalysisSurface<'_>) -> bool {
+        match surface {
+            AnalysisSurface::Files(files) => files.iter().any(|&(package, file)| {
+                body_file_needs_materialization(&self.project.state, package, file)
+            }),
+            AnalysisSurface::Crates(crates) => {
+                let packages = PhasePackageSet::from_crates(crates);
+                !packages_needing_finished_split_indexing(&self.project.state, packages.as_slice())
+                    .is_empty()
+            }
+            AnalysisSurface::FilesAndCrates { files, crates } => {
+                self.needs_materialization(AnalysisSurface::Files(files))
+                    || self.needs_materialization(AnalysisSurface::Crates(crates))
+            }
+        }
+    }
+
     /// Materialize deferred analysis data for the requested query surface.
     pub fn materialize(&mut self, surface: AnalysisSurface<'_>) -> anyhow::Result<()> {
         materialize_surface(&mut self.project.state, surface)
