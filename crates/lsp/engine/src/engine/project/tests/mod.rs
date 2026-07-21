@@ -70,6 +70,31 @@ struct SourceBurst {
     replacements: Vec<(std::path::PathBuf, &'static str)>,
 }
 
+#[derive(Debug, Default)]
+struct RecordingMemoryHooks {
+    points: Mutex<Vec<ProjectMemoryPurgePoint>>,
+}
+
+impl RecordingMemoryHooks {
+    fn take(&self) -> Vec<ProjectMemoryPurgePoint> {
+        std::mem::take(
+            &mut *self
+                .points
+                .lock()
+                .expect("recorded memory hook points should not be poisoned"),
+        )
+    }
+}
+
+impl ProjectMemoryHooks for RecordingMemoryHooks {
+    fn purge(&self, point: ProjectMemoryPurgePoint) {
+        self.points
+            .lock()
+            .expect("recorded memory hook points should not be poisoned")
+            .push(point);
+    }
+}
+
 impl ProjectMemoryHooks for SourceBurst {
     fn purge(&self, point: ProjectMemoryPurgePoint) {
         if point != ProjectMemoryPurgePoint::AfterItemTreeSyntaxEviction {
@@ -346,6 +371,8 @@ fn deferred_lifecycle_tracks_published_generations_not_foreground_activity() {
     let recorded = RecordingNotifications::default();
     let notifications = ServiceNotificationsSink::from_publisher(recorded.clone());
     let mut project = ProjectCoordinator::new(sender, memory_control, notifications);
+    let memory_hooks = Arc::new(RecordingMemoryHooks::default());
+    project.memory_hooks = memory_hooks.clone();
     project
         .initialize(
             fixture.path(""),
@@ -366,7 +393,13 @@ fn deferred_lifecycle_tracks_published_generations_not_foreground_activity() {
     let EngineCommand::DeferredIndexingFinished { generation, result } = initial.command else {
         panic!("initial background command should finish deferred indexing");
     };
+    let _ = memory_hooks.take();
     project.deferred_indexing_finished(generation, result);
+    assert_eq!(
+        memory_hooks.take().last(),
+        Some(&ProjectMemoryPurgePoint::AfterDeferredIndexingFinish),
+        "the detached result should die before the final deferred-indexing purge",
+    );
     assert!(matches!(
         recorded.take().as_slice(),
         [ServiceNotification::DeferredIndexingFinished { .. }]

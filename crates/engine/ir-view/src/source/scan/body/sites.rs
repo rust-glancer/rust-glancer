@@ -23,9 +23,10 @@ use rg_parse::FileId;
 
 use rg_body_ir::{BodyPath, BodyView, ExprKind, StmtKind};
 
+use super::super::{TypeNamePosition, type_path::walk_type_ref_paths};
 use super::walk::{
     PatWalkSite, walk_body_path_type_refs as walk_embedded_body_path_type_refs,
-    walk_generic_args_type_refs, walk_pat, walk_type_ref_paths,
+    walk_generic_args_type_refs, walk_pat,
 };
 
 /// A source-owned pattern root together with the scope where its bindings live.
@@ -70,6 +71,8 @@ pub(super) struct TypePathSite<'body> {
     pub(super) visible_bindings: usize,
     pub(super) file_id: FileId,
     pub(super) path: &'body TypePath,
+    /// Whether this path may name a const because it fills one whole generic argument.
+    pub(super) position: TypeNamePosition,
 }
 
 /// Structural views over lowered body syntax used by source scans.
@@ -116,6 +119,8 @@ impl<'body> BodyScanSites<'body> {
     ///
     /// Type references can hide paths inside tuples, pointers, function pointers, and generic
     /// arguments. Callers receive every nested path with the body scope that owns the annotation.
+    /// They also receive the generic-argument distinction needed to treat `Array<N$0>` differently
+    /// from an ordinary type spelling such as `let value: N$0`.
     pub(super) fn walk_type_paths(
         &self,
         file_id: Option<FileId>,
@@ -126,12 +131,13 @@ impl<'body> BodyScanSites<'body> {
                 return;
             }
 
-            walk_type_ref_paths(site.ty, &mut |path| {
+            walk_type_ref_paths(site.ty, TypeNamePosition::Type, &mut |path, position| {
                 visit(TypePathSite {
                     scope: site.scope,
                     visible_bindings: site.visible_bindings,
                     file_id: site.source.file_id,
                     path,
+                    position,
                 });
             });
         });
@@ -485,7 +491,7 @@ where
 
     fn walk_type_bounds_type_refs(&mut self, context: TypeRefContext, bounds: &'body [TypeBound]) {
         for bound in bounds {
-            if let TypeBound::Trait(ty) = bound {
+            if let Some(ty) = bound.trait_ty() {
                 self.emit_type_ref(context, ty);
             }
         }

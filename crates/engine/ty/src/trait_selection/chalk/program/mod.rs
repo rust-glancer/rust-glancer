@@ -17,7 +17,7 @@ mod roots;
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use chalk_ir::{
     AliasTy as ChalkAliasTy, GenericArgData, Substitution as ChalkSubstitution, TyKind, Variances,
@@ -42,6 +42,9 @@ use crate::trait_selection::{TraitGoal, TraitSelectionSession};
 use crate::{Clause, ItemPathQuery, TraitRefLowering};
 
 const INTER: RgChalkInterner = RgChalkInterner;
+// Program extensions are relatively rare; a subsecond threshold still filters ordinary root
+// discovery while exposing extensions that materially contribute to a slow body.
+const SLOW_PROGRAM_EXTENSION: Duration = Duration::from_millis(100);
 
 /// The growing Chalk database owned by one solver instance.
 ///
@@ -226,7 +229,18 @@ impl ChalkProgramState {
                 session,
                 &pending_roots,
             );
-            crate::profile::metric::PROGRAM_BUILD_TIME.record(started.elapsed());
+            let elapsed = started.elapsed();
+            crate::profile::metric::PROGRAM_BUILD_TIME.record(elapsed);
+            if elapsed >= SLOW_PROGRAM_EXTENSION {
+                tracing::debug!(
+                    elapsed_ms = elapsed.as_millis(),
+                    trait_roots = pending_roots.traits.len(),
+                    opaque_type_roots = pending_roots.opaque_tys.len(),
+                    function_roots = pending_roots.functions.len(),
+                    succeeded = result.is_ok(),
+                    "slow Chalk program extension"
+                );
+            }
             result?;
             self.roots.merge(&pending_roots);
         }

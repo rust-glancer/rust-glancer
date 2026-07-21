@@ -22,8 +22,8 @@ use std::{
 use anyhow::Context as _;
 use rg_lsp_proto::ServiceNotification;
 use rg_project::{
-    AnalysisSurface, DirtyOverlayScope, Project, ProjectMemoryHooks, ProjectSnapshot,
-    SavedFileChange, SplitIndexingMode,
+    AnalysisSurface, DirtyOverlayScope, Project, ProjectMemoryHooks, ProjectMemoryPurgePoint,
+    ProjectSnapshot, SavedFileChange, SplitIndexingMode,
 };
 use rg_std::UniqueVec;
 use rg_workspace::{CargoMetadataTarget, SysrootSources, WorkspaceMetadata};
@@ -361,6 +361,12 @@ impl ProjectCoordinator {
         let current_generation_finished =
             self.deferred_indexing_finish
                 .finish_returned(&mut self.project, generation, result);
+
+        // Reconciliation consumes the detached result on every path: merged, stale, failed, or
+        // unknown. Purge only after that ownership boundary so the background project's Body IR
+        // can actually leave allocator arenas instead of waiting for the next query cleanup.
+        self.memory_hooks
+            .purge(ProjectMemoryPurgePoint::AfterDeferredIndexingFinish);
         if !current_generation_finished {
             return;
         }

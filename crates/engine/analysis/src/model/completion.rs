@@ -1,6 +1,6 @@
 use rg_ir_model::{
-    EnumVariantRef, FieldRef, FunctionRef, PrimitiveTy, SemanticItemKind, TraitApplicability,
-    identity::DeclarationRef,
+    EnumVariantRef, FieldRef, FunctionRef, GenericParamRef, ImplRef, PrimitiveTy, SemanticItemKind,
+    TraitApplicability, identity::DeclarationRef,
 };
 use rg_parse::Span;
 
@@ -34,11 +34,21 @@ pub struct CompletionEdit {
 /// Stable analysis identity behind one completion row.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CompletionTarget {
+    /// A module, item, or body-local declaration covered by the shared declaration vocabulary.
     Declaration(DeclarationRef),
+    /// An enum variant indexed below its owning enum declaration.
     EnumVariant(EnumVariantRef),
+    /// A named or tuple field indexed below its owning type.
     Field(FieldRef),
+    /// A free, associated, or receiver function with function-specific semantic identity.
     Function(FunctionRef),
+    /// A written type or const parameter with its stable semantic identity.
+    GenericParam(GenericParamRef),
+    /// `Self` introduced by an impl, whose target is the impl rather than a generic parameter.
+    ImplSelf(ImplRef),
+    /// A language keyword or keyword-shaped snippet rather than a source declaration.
     Keyword(KeywordCompletion),
+    /// A builtin primitive type rather than a source declaration.
     PrimitiveType(PrimitiveTy),
 }
 
@@ -100,6 +110,8 @@ pub enum CompletionKind {
     Trait,
     #[display("trait_method")]
     TraitMethod,
+    #[display("type_parameter")]
+    TypeParameter,
     #[display("type_alias")]
     TypeAlias,
     #[display("union")]
@@ -124,6 +136,7 @@ impl CompletionKind {
             | Self::Enum
             | Self::EnumVariant
             | Self::Trait
+            | Self::TypeParameter
             | Self::PrimitiveType
             | Self::TypeAlias
             | Self::Union => 4,
@@ -139,7 +152,12 @@ impl CompletionKind {
     /// This is a context-specific component of LSP `sortText`, not the enum's general ordering.
     pub(crate) fn type_context_sort_text_rank(self) -> u8 {
         match self {
-            Self::Struct | Self::Enum | Self::Union | Self::TypeAlias | Self::PrimitiveType => 0,
+            Self::Struct
+            | Self::Enum
+            | Self::Union
+            | Self::TypeAlias
+            | Self::TypeParameter
+            | Self::PrimitiveType => 0,
             Self::Trait => 1,
             Self::Module => 2,
             Self::Keyword => 3,

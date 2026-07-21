@@ -17,10 +17,12 @@ use rg_parse::FileId;
 
 use rg_body_ir::{BodyIrReadTxn, BodyPath, BodyView, ExprKind};
 
-use super::super::NarrowestSourceSite;
-use super::UnqualifiedCompletionSite;
+use super::super::{
+    NarrowestSourceSite,
+    type_path::{TypePathCompletionSite, identifier_prefix_at},
+};
 use super::sites::BodyScanSites;
-use crate::lookup::name::ValueOrTypeNamespace;
+use super::{BodyUnqualifiedNameContext, UnqualifiedCompletionSite};
 
 /// Finds the source site that belongs to an unqualified completion offset.
 ///
@@ -75,9 +77,13 @@ impl<'txn, 'db> UnqualifiedCompletionSiteScanner<'txn, 'db> {
     ) {
         let sites = BodyScanSites::new(body);
         sites.walk_type_paths(Some(self.file_id), |site| {
-            if let Some(completion_site) =
-                self.site_for_type_path(body_ref, site.scope, site.visible_bindings, site.path)
-            {
+            if let Some(completion_site) = self.site_for_type_path(
+                body_ref,
+                site.scope,
+                site.visible_bindings,
+                site.path,
+                site.position,
+            ) {
                 best.consider(completion_site, site.path.source_span.len());
             }
         });
@@ -118,25 +124,28 @@ impl<'txn, 'db> UnqualifiedCompletionSiteScanner<'txn, 'db> {
         scope: ScopeId,
         visible_bindings: usize,
         path: &TypePath,
+        position: super::super::TypeNamePosition,
     ) -> Option<UnqualifiedCompletionSite> {
-        if path.absolute {
+        // This scanner owns only complete unqualified paths. The first segment of a longer path
+        // needs qualified-path recovery policy before it can safely use lexical candidates.
+        if path.segments.len() != 1 {
             return None;
         }
-        // This scanner owns only unqualified completion sites. Qualified type paths are handled by
-        // `PathCompletionSiteScanner`, because their candidates depend on the resolved qualifier.
-        let [segment] = path.segments.as_slice() else {
+        let TypePathCompletionSite::Unqualified {
+            member_prefix_span,
+            member_prefix,
+            position,
+        } = TypePathCompletionSite::at(path, self.offset, position)?
+        else {
             return None;
         };
-        if !segment.span.touches(self.offset) {
-            return None;
-        }
 
         Some(UnqualifiedCompletionSite {
             body,
             scope,
-            member_prefix_span: segment.span,
-            member_prefix: self.prefix_text(segment.name.as_str(), segment.span),
-            namespace: ValueOrTypeNamespace::Types,
+            member_prefix_span,
+            member_prefix,
+            context: BodyUnqualifiedNameContext::Type(position),
             visible_bindings,
         })
     }
@@ -167,23 +176,15 @@ impl<'txn, 'db> UnqualifiedCompletionSiteScanner<'txn, 'db> {
                 body,
                 scope,
                 member_prefix_span: span,
-                member_prefix: self
-                    .prefix_text(def_map_path.single_name().unwrap_or_default(), span),
-                namespace: ValueOrTypeNamespace::Values,
+                member_prefix: identifier_prefix_at(
+                    def_map_path.single_name().unwrap_or_default(),
+                    span,
+                    self.offset,
+                ),
+                context: BodyUnqualifiedNameContext::Value,
                 visible_bindings,
             },
             path.source_span.len(),
         );
-    }
-
-    fn prefix_text(&self, name: &str, span: rg_parse::Span) -> String {
-        // The lowered name is the complete segment text, while completion only needs the source
-        // prefix before the cursor. Walk back to a UTF-8 boundary for non-ASCII identifiers.
-        let end = self.offset.saturating_sub(span.text.start).min(span.len());
-        let mut end = usize::try_from(end).unwrap_or(name.len());
-        while !name.is_char_boundary(end) {
-            end = end.saturating_sub(1);
-        }
-        name.get(..end).unwrap_or(name).to_string()
     }
 }

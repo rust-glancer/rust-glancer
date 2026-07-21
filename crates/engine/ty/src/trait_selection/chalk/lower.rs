@@ -118,10 +118,10 @@ impl GenericBinderEnv {
 
 /// Stateless conversion scoped by the semantic binder and solver-supported definitions.
 ///
-/// Associated types with bounds or their own generics are deliberately omitted from the Chalk
-/// program until their extra binder and predicate layers can be represented faithfully. Keeping
-/// the supported registry here makes every nested projection decline at the same boundary instead
-/// of giving Chalk an ID whose datum does not exist.
+/// Associated types with required bounds or their own generics are deliberately omitted from the
+/// Chalk program until their extra binder and predicate layers can be represented faithfully.
+/// Keeping the supported registry here makes every nested projection decline at the same boundary
+/// instead of giving Chalk an ID whose datum does not exist.
 pub(super) struct ChalkLowerer<'lower> {
     binders: &'lower GenericBinderEnv,
     associated_tys: Option<&'lower HashMap<TypeAliasRef, Arc<AssociatedTyDatum<RgChalkInterner>>>>,
@@ -235,11 +235,7 @@ impl<'lower> ChalkLowerer<'lower> {
         type_alias_ref: TypeAliasRef,
         type_alias_data: &TypeAliasData,
     ) -> Option<AssociatedTyDatum<RgChalkInterner>> {
-        // GATs add their own binder layer. Declining them is honest and keeps the ordinary
-        // associated-type representation independent from their source syntax.
-        if type_alias_data.signature.generics().is_some()
-            || !type_alias_data.signature.bounds().is_empty()
-        {
+        if !Self::supports_associated_ty_declaration(type_alias_data) {
             return None;
         }
 
@@ -286,9 +282,7 @@ impl<'lower> ChalkLowerer<'lower> {
         type_alias_data: &TypeAliasData,
         ty: &Ty,
     ) -> Option<AssociatedTyValue<RgChalkInterner>> {
-        if type_alias_data.signature.generics().is_some()
-            || !type_alias_data.signature.bounds().is_empty()
-        {
+        if !Self::supports_associated_ty_declaration(type_alias_data) {
             return None;
         }
 
@@ -302,6 +296,20 @@ impl<'lower> ChalkLowerer<'lower> {
                 },
             ),
         })
+    }
+
+    /// Checks whether an associated type fits Chalk's binder-free datum shape.
+    ///
+    /// GAT parameters and required bounds need additional Chalk binders or predicates. A relaxed
+    /// bound such as `?Sized` only suppresses Rust's implicit `Sized` requirement; rust-glancer
+    /// does not introduce that implicit requirement, so there is no predicate to lower here.
+    fn supports_associated_ty_declaration(data: &TypeAliasData) -> bool {
+        data.signature.generics().is_none()
+            && data
+                .signature
+                .bounds()
+                .iter()
+                .all(rg_item_tree::TypeBound::is_relaxed_trait)
     }
 
     pub(super) fn opaque_ty_datum(

@@ -192,6 +192,7 @@ fn def_completion_detail(kind: CompletionKind, label: &str) -> String {
         CompletionKind::Struct => format!("struct {label}"),
         CompletionKind::Trait => format!("trait {label}"),
         CompletionKind::TypeAlias => format!("type {label}"),
+        CompletionKind::TypeParameter => format!("type parameter {label}"),
         CompletionKind::Union => format!("union {label}"),
         CompletionKind::Variable => format!("let {label}"),
     }

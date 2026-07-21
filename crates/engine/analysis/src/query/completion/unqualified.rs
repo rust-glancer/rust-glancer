@@ -1,7 +1,12 @@
-//! Unqualified completion assembly for lexical and import-root positions.
+//! Unqualified completion assembly for body, signature, and import-root positions.
+//!
+//! A name without `.` or `::` can come from several nested scopes: body locals, declaration
+//! generics, the containing module, a prelude, an extern root, or builtin primitive types. This
+//! module combines those families in Rust's shadowing order before applying editor sort policy.
 
 use std::collections::HashSet;
 
+use anyhow::Context as _;
 use rg_ir_view::{
     display::syntax::SyntaxRenderer,
     item::details::{DeclarationDetailsContext, DeclarationDetailsView},
@@ -12,13 +17,17 @@ use rg_ir_view::{
 use crate::{
     Analysis,
     completion_site::{UnqualifiedCompletionContext, UnqualifiedCompletionSite},
-    model::{CompletionApplicability, CompletionEdit, CompletionInsertText, CompletionItem},
+    model::{
+        CompletionApplicability, CompletionEdit, CompletionInsertText, CompletionItem,
+        CompletionKind, CompletionTarget,
+    },
 };
 
 use super::{
     CallCompletionKind, CompletionQuery,
     candidates::{
-        CompletionCandidateSource, LexicalCompletionCandidate, ModuleCompletionCandidate,
+        CompletionCandidateSource, GenericScopeCompletionCandidate, LexicalCompletionCandidate,
+        ModuleCompletionCandidate,
     },
     completion_sort::{CompletionSortPolicy, CompletionSortPriority},
     function::{FunctionCompletionRenderer, FunctionCompletionRequest},
@@ -26,6 +35,7 @@ use super::{
     primitive::PrimitiveTypeCompletionResolver,
 };
 
+/// Combines unqualified candidate families while preserving namespace-aware shadowing.
 pub(super) struct UnqualifiedCompletionResolver<'a, 'db, 'source> {
     analysis: &'a Analysis<'db>,
     query: CompletionQuery<'source>,
@@ -37,6 +47,10 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
     }
 
     /// Collects unqualified completions, such as `inp$0`, `Us$0`, or `use st$0`.
+    ///
+    /// Generic declarations participate in the same flow. For example, `T$0` in
+    /// `fn load<T>(_: T$0)` finds the function's type parameter, while `N$0` in
+    /// `Array<N$0>` may find a const parameter because a bare generic argument is ambiguous.
     pub(super) fn completions(
         &self,
         site: UnqualifiedCompletionSite,
@@ -55,6 +69,9 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
         );
 
         let completion_candidates = CompletionCandidateSource::new(self.analysis.view_db());
+
+        // Body-local declarations are nearest to the cursor. Record their namespace occupancy so
+        // an outer generic or module name with the same spelling cannot leak into the result.
         for candidate in completion_candidates.lexical_candidates_for_unqualified(&site)? {
             if !filter.accepts_scope_namespace(candidate.namespace()) {
                 continue;
@@ -69,6 +86,21 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
             )?;
         }
 
+        // Signature generics follow lexical names but precede module/prelude candidates. This also
+        // supplies inherited owner parameters and impl `Self` for declaration-owned sites.
+        for candidate in completion_candidates
+            .generic_scope_candidates_for_unqualified(&site)
+            .context("collect generic scope completions")?
+        {
+            if hidden.contains(&(candidate.label().to_string(), candidate.namespace())) {
+                continue;
+            }
+            hidden.insert((candidate.label().to_string(), candidate.namespace()));
+            Self::push_generic_scope_completion(syntax, candidate, filter, edit, &mut completions);
+        }
+
+        // Module candidates already retain whether they came from the immediate scope, prelude, or
+        // extern root; rendering uses that origin to keep the familiar local-first order.
         self.push_module_completions(
             completion_candidates.module_candidates_for_unqualified(&site)?,
             ModuleCompletionOptions {
@@ -91,6 +123,8 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
             &mut completions,
         )?;
 
+        // Primitive spellings are useful only in type positions and only when path resolution says
+        // the builtin has not been shadowed in this exact body or signature scope.
         if matches!(context, UnqualifiedCompletionContext::Type) {
             completions.extend(PrimitiveTypeCompletionResolver::completions(
                 completion_candidates.primitive_type_candidates_for_unqualified(&site)?,
@@ -100,6 +134,43 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
 
         completions.sort_by(|left, right| left.sort_text.cmp(&right.sort_text));
         Ok(completions)
+    }
+
+    fn push_generic_scope_completion(
+        syntax: SyntaxRenderer,
+        candidate: GenericScopeCompletionCandidate,
+        filter: UnqualifiedCompletionFilter,
+        edit: CompletionEdit,
+        completions: &mut Vec<CompletionItem>,
+    ) {
+        let target = candidate.target();
+        let kind = candidate.kind();
+        let label = syntax.identifier(candidate.label()).to_string();
+        let detail = match (kind, target) {
+            (CompletionKind::TypeParameter, CompletionTarget::ImplSelf(_)) => {
+                format!("self type {label}")
+            }
+            (CompletionKind::TypeParameter, _) => format!("type parameter {label}"),
+            (CompletionKind::Const, _) => format!("const parameter {label}"),
+            _ => return,
+        };
+        completions.push(CompletionItem {
+            label: label.clone(),
+            kind,
+            target,
+            applicability: CompletionApplicability::Known,
+            detail: Some(detail),
+            documentation: None,
+            sort_text: filter.sort_policy().sort_text(
+                Some(CompletionSortPriority::GenericScope),
+                &label,
+                kind,
+                CompletionApplicability::Known,
+                target,
+            ),
+            insert_text: CompletionInsertText::Plain,
+            edit: Some(edit),
+        });
     }
 
     fn push_lexical_completion(

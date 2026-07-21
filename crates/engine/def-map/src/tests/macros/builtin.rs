@@ -404,11 +404,15 @@ dep = { path = "dep" }
 //- /src/lib.rs
 cfg_select! {
     true => {
-        extern crate dep;
+        extern crate dep as dep_alias;
 
         pub struct User;
 
         impl User {}
+
+        pub mod nested {
+            pub use dep_alias::Dep;
+        }
     }
 }
 
@@ -433,9 +437,13 @@ pub struct Dep;
             cfg_select_source_items_fixture [lib]
             crate
             - User : type [pub struct cfg_select_source_items_fixture[lib]::crate::User] | value [pub struct cfg_select_source_items_fixture[lib]::crate::User]
-            - dep : type [module dep[lib]::crate]
+            - dep_alias : type [module dep[lib]::crate]
+            - nested : type [pub module cfg_select_source_items_fixture[lib]::crate::nested]
             impls
             - impl lib.rs#2
+
+            crate::nested
+            - Dep : type [pub struct dep[lib]::crate::Dep] | value [pub struct dep[lib]::crate::Dep]
 
             package core
 

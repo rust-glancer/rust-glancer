@@ -70,12 +70,21 @@ pub(crate) struct UnqualifiedCompletionSite {
     /// Name prefix already typed at the cursor.
     pub member_prefix_span: Span,
     pub member_prefix: String,
-    pub namespace: ValueOrTypeNamespace,
+    pub context: BodyUnqualifiedNameContext,
     /// Number of body-wide bindings visible before this source site.
     ///
     /// Bindings are allocated in source order, so this boundary prevents later
     /// `let` declarations from completing before they are in scope.
     pub visible_bindings: usize,
+}
+
+/// Type/value interpretation selected by body syntax for an unqualified name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum BodyUnqualifiedNameContext {
+    /// A name in an annotation, such as `Us$0` in `let value: Us$0`.
+    Type(super::TypeNamePosition),
+    /// A name in an expression, such as `inp$0` in `let value = inp$0`.
+    Value,
 }
 
 /// Source site selected for a record-field completion query.

@@ -1647,6 +1647,7 @@ dependencies = [
  "rg_text",
  "rg_ty",
  "rg_wincode_utils",
+ "tracing",
  "wincode",
 ]
 
@@ -2026,6 +2027,7 @@ dependencies = [
  "rg_std",
  "rg_text",
  "rg_wincode_utils",
+ "tracing",
  "wincode",
 ]
 

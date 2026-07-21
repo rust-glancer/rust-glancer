@@ -276,6 +276,9 @@ version = "0.1.0"
 edition = "2024"
 
 //- /app/src/lib.rs
+use std::cell::RefCell;
+use std::sync::Arc;
+
 pub struct Id;
 pub struct Label;
 
@@ -289,19 +292,15 @@ impl User {
     }
 }
 
-pub struct Wrapper<T> {
-    inner: T,
-}
+pub fn use_it(user: Arc<User>, tuple: Arc<(Id, Label)>, cell: RefCell<User>) {
+    let _id = user.i$type_deref_field$d;
+    let _label = user.la$type_deref_method$bel();
+    let _explicit = (*user)$type_deref_explicit$;
+    let _tuple_field = tuple.$type_deref_tuple_field$0;
 
-impl<T> core::ops::Deref for Wrapper<T> {
-    type Target = T;
-}
-
-pub fn use_it(wrapper: Wrapper<User>, tuple_wrapper: Wrapper<(Id, Label)>) {
-    let _id = wrapper.i$type_deref_field$d;
-    let _label = wrapper.la$type_deref_method$bel();
-    let _explicit = (*wrapper)$type_deref_explicit$;
-    let _tuple_field = tuple_wrapper.$type_deref_tuple_field$0;
+    let borrowed = cell.borrow();
+    let _borrowed_id = borrowed.i$type_ref_deref_field$d;
+    let _borrowed_label = borrowed.la$type_ref_deref_method$bel();
 }
 "#,
         &[
@@ -309,6 +308,8 @@ pub fn use_it(wrapper: Wrapper<User>, tuple_wrapper: Wrapper<(Id, Label)>) {
             AnalysisQuery::ty("method through Deref", "type_deref_method").in_lib("app"),
             AnalysisQuery::ty("explicit Deref", "type_deref_explicit").in_lib("app"),
             AnalysisQuery::ty("tuple field through Deref", "type_deref_tuple_field").in_lib("app"),
+            AnalysisQuery::ty("field through Ref Deref", "type_ref_deref_field").in_lib("app"),
+            AnalysisQuery::ty("method through Ref Deref", "type_ref_deref_method").in_lib("app"),
         ],
         expect![[r#"
             field through Deref
@@ -322,6 +323,12 @@ pub fn use_it(wrapper: Wrapper<User>, tuple_wrapper: Wrapper<(Id, Label)>) {
 
             tuple field through Deref
             - nominal struct app[lib]::crate::Id
+
+            field through Ref Deref
+            - nominal struct app[lib]::crate::Id
+
+            method through Ref Deref
+            - nominal struct app[lib]::crate::Label
         "#]],
     );
 }

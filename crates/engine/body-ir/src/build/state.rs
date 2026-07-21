@@ -1,5 +1,7 @@
 //! Crate-local mutable state used while Body IR resolution is assembled.
 
+use std::time::{Duration, Instant};
+
 use anyhow::Context as _;
 use rg_arena::Arena;
 use rg_cfg_eval::CfgEvaluator;
@@ -26,6 +28,12 @@ use super::{
     pattern_binding::PatternBindingMaterializationPass,
     query_source::BodyBuildQuerySource,
 };
+
+// Phase logs explain a slow crate-level build without emitting one event for every normal phase.
+const SLOW_CRATE_RESOLUTION_PHASE: Duration = Duration::from_secs(1);
+// Bodies are the highest-cardinality build unit. Construct their diagnostic record only after the
+// timer crosses this threshold; a normal body does not create a tracing span or event.
+const SLOW_BODY_RESOLUTION: Duration = Duration::from_secs(1);
 
 /// Coordinates all body-local facts needed to resolve one crate's bodies.
 pub(super) struct CrateBodyBuildState<'crate_data> {
@@ -59,30 +67,83 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
         def_map: &DefMapReadTxn<'_>,
         semantic_ir: &SemanticIrReadTxn<'_>,
     ) -> anyhow::Result<CrateBodies> {
+        let span = tracing::debug_span!(
+            "body_ir_crate_resolution",
+            rg.crate_id = self.crate_ref.crate_id.0,
+        );
+        let _entered = span.enter();
+
         // Before resolving bodies on the expr level, we need to collect
         // the items declared within the body, and we need to match `impl`
         // blocks to their corresponding `Self` types.
+        let phase_started = Instant::now();
         self.materialize_body_local_items(def_map, semantic_ir)?;
+        let elapsed = phase_started.elapsed();
+        if elapsed >= SLOW_CRATE_RESOLUTION_PHASE {
+            tracing::debug!(
+                phase = "body_local_items",
+                elapsed_ms = elapsed.as_millis(),
+                body_count = self.crate_bodies.bodies().len(),
+                "slow Body IR crate resolution phase"
+            );
+        }
 
         // Build a crate-semantic lookup index once and persist it with Body IR. Body-local items
         // are deliberately overlaid through `BodyBuildQuerySource` instead of being part of this
         // crate-scoped cache.
+        let phase_started = Instant::now();
         let crate_items = CrateItemQuery::new(def_map, semantic_ir, self.crate_ref);
         let semantic_index = ItemLookupIndex::build_from(&crate_items)?;
+        let elapsed = phase_started.elapsed();
+        if elapsed >= SLOW_CRATE_RESOLUTION_PHASE {
+            tracing::debug!(
+                phase = "semantic_index",
+                elapsed_ms = elapsed.as_millis(),
+                "slow Body IR crate resolution phase"
+            );
+        }
         let trait_selection = TraitSelectionSession::new(self.crate_ref);
+        let phase_started = Instant::now();
         self.resolve_body_local_impl_headers(
             def_map,
             semantic_ir,
             &semantic_index,
             &trait_selection,
         )?;
+        let elapsed = phase_started.elapsed();
+        if elapsed >= SLOW_CRATE_RESOLUTION_PHASE {
+            tracing::debug!(
+                phase = "body_local_impl_headers",
+                elapsed_ms = elapsed.as_millis(),
+                "slow Body IR crate resolution phase"
+            );
+        }
 
         // Identifier patterns are the last source ambiguity in structural Body IR. Resolve and
         // compact them before the ordinary body pass receives its immutable `BodyData`.
+        let phase_started = Instant::now();
         self.materialize_pattern_bindings(def_map, semantic_ir, &semantic_index, &trait_selection)?;
+        let elapsed = phase_started.elapsed();
+        if elapsed >= SLOW_CRATE_RESOLUTION_PHASE {
+            tracing::debug!(
+                phase = "pattern_bindings",
+                elapsed_ms = elapsed.as_millis(),
+                "slow Body IR crate resolution phase"
+            );
+        }
 
         // Do a pass on resolving body expressions.
+        let phase_started = Instant::now();
         self.resolve_bodies(def_map, semantic_ir, &semantic_index, &trait_selection)?;
+        let elapsed = phase_started.elapsed();
+        if elapsed >= SLOW_CRATE_RESOLUTION_PHASE {
+            tracing::debug!(
+                phase = "bodies",
+                elapsed_ms = elapsed.as_millis(),
+                body_count = self.crate_bodies.bodies().len(),
+                "slow Body IR crate resolution phase"
+            );
+        }
 
         // Finalize the build state, e.g. associate each body with its corresponding
         // defmap/item store.
@@ -379,15 +440,33 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
                 crate_ref,
                 body: body_id,
             };
+            let body = body.body();
+            let body_source = body.source();
+            let started = Instant::now();
             let facts = BodyResolutionPass::new(
                 &source,
                 &source,
                 semantic_index,
                 body_ref,
-                body.body(),
+                body,
                 trait_selection,
             )
             .resolve()?;
+            let elapsed = started.elapsed();
+            if elapsed >= SLOW_BODY_RESOLUTION {
+                tracing::debug!(
+                    body_id = body_id.0,
+                    owner = ?body.owner(),
+                    file_id = body_source.file_id.0,
+                    path = ?self.parse_package.file_path(body_source.file_id),
+                    span = ?body_source.span,
+                    elapsed_ms = elapsed.as_millis(),
+                    expression_count = body.exprs().len(),
+                    binding_count = body.bindings().len(),
+                    statement_count = body.statements().len(),
+                    "slow body resolution"
+                );
+            }
             let allocated = self.body_facts.alloc(facts);
             debug_assert_eq!(allocated, body_id);
         }

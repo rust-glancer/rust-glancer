@@ -19,7 +19,7 @@ pub struct CrateData {
     cargo_target: CargoTargetId,
     name: String,
     root_module: Option<ModuleId>,
-    // Implicit roots visible to this crate, including sibling lib roots.
+    // Crate-wide extern roots from Cargo dependencies and root `extern crate` declarations.
     extern_prelude: HashMap<Name, ModuleRef>,
     // Standard prelude module selected for this crate, if sysroot sources are available.
     prelude: Option<ModuleRef>,

@@ -375,26 +375,79 @@ impl fmt::Display for GenericArg {
 
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub enum TypeBound {
-    Trait(#[wincode(with = "rg_wincode_utils::WincodeDynamic<TypeRef>")] TypeRef),
+    Trait {
+        #[wincode(with = "rg_wincode_utils::WincodeDynamic<TypeRef>")]
+        ty: TypeRef,
+        modifier: TraitBoundModifier,
+    },
     Lifetime(Name),
     Unsupported(String),
 }
 
+/// Whether trait-bound syntax requires the trait or relaxes an implicit compiler bound.
+///
+/// `T: Trait` is a required bound. `T: ?Sized` is a relaxed bound: it removes the usual implicit
+/// `Sized` requirement and must not be lowered as a positive `T: Sized` obligation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
+#[memsize(leaf)]
+#[shrink(leaf)]
+pub enum TraitBoundModifier {
+    None,
+    Maybe,
+}
+
 impl TypeBound {
+    /// Returns the trait type regardless of whether the bound is required or relaxed.
+    ///
+    /// Syntax-oriented consumers use this to keep visiting `Sized` in both `T: Sized` and
+    /// `T: ?Sized`.
+    pub fn trait_ty(&self) -> Option<&TypeRef> {
+        match self {
+            Self::Trait { ty, .. } => Some(ty),
+            Self::Lifetime(_) | Self::Unsupported(_) => None,
+        }
+    }
+
+    /// Returns the trait type only when the syntax introduces a positive requirement.
+    ///
+    /// Semantic lowering should use this projection rather than accidentally turning `?Sized`
+    /// into a solver obligation.
+    pub fn required_trait_ty(&self) -> Option<&TypeRef> {
+        match self {
+            Self::Trait {
+                ty,
+                modifier: TraitBoundModifier::None,
+            } => Some(ty),
+            Self::Trait {
+                modifier: TraitBoundModifier::Maybe,
+                ..
+            }
+            | Self::Lifetime(_)
+            | Self::Unsupported(_) => None,
+        }
+    }
+
+    /// Returns true for `?Trait`, which relaxes a compiler-provided default instead of requiring
+    /// a predicate from the solver.
+    pub fn is_relaxed_trait(&self) -> bool {
+        matches!(
+            self,
+            Self::Trait {
+                modifier: TraitBoundModifier::Maybe,
+                ..
+            }
+        )
+    }
+
     /// Returns true when this bound contains explicit generic arguments anywhere inside it.
     pub fn has_generic_args(&self) -> bool {
-        match self {
-            Self::Trait(ty) => ty.has_generic_args(),
-            Self::Lifetime(_) | Self::Unsupported(_) => false,
-        }
+        self.trait_ty().is_some_and(TypeRef::has_generic_args)
     }
 
     /// Returns true when this bound mentions one of the provided type parameter names.
     pub fn mentions_type_param(&self, params: &[&str]) -> bool {
-        match self {
-            Self::Trait(ty) => ty.mentions_type_param(params),
-            Self::Lifetime(_) | Self::Unsupported(_) => false,
-        }
+        self.trait_ty()
+            .is_some_and(|ty| ty.mentions_type_param(params))
     }
 
     /// Displays one `+`-separated bound list through a semantic-name policy.
@@ -650,7 +703,12 @@ where
 
     fn fmt_type_bound(&self, bound: &TypeBound, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match bound {
-            TypeBound::Trait(ty) => self.fmt_type_ref(ty, f),
+            TypeBound::Trait { ty, modifier } => {
+                if *modifier == TraitBoundModifier::Maybe {
+                    f.write_str("?")?;
+                }
+                self.fmt_type_ref(ty, f)
+            }
             TypeBound::Lifetime(lifetime) => self.names.fmt_name(lifetime, f),
             TypeBound::Unsupported(text) => write!(f, "<unsupported:{text}>"),
         }

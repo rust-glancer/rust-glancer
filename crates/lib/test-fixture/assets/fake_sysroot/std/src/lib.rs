@@ -1,18 +1,20 @@
 extern crate self as std;
-extern crate alloc;
+extern crate alloc as alloc_crate;
 extern crate core;
 
 pub mod prelude;
+pub mod sync;
 
 pub use core::{
     cfg, cfg_select, column, concat, env, file, format_args, format_args_nl, include_bytes,
     include_str, line, module_path, option_env, stringify,
 };
+pub use core::cell;
 pub use core::ops;
-pub use alloc::string;
-pub use alloc::string::String;
-pub use alloc::vec;
-pub use alloc::vec::Vec;
+pub use alloc_crate::string;
+pub use alloc_crate::string::String;
+pub use alloc_crate::vec;
+pub use alloc_crate::vec::Vec;
 
 #[macro_export]
 macro_rules! format {

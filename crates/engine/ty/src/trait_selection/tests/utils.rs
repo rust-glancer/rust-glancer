@@ -16,8 +16,8 @@ use rg_ir_model::{
 };
 use rg_item_tree::{
     FieldList, FunctionItem, FunctionQualifiers, GenericArg as ItemGenericArg, GenericParams,
-    ItemTreeId, TypeAliasItem, TypeBound, TypeOrConstParamData, TypeParamData, TypePath,
-    TypePathAnchor, TypePathSegment, TypeRef, VisibilityLevel, WherePredicate,
+    ItemTreeId, TraitBoundModifier, TypeAliasItem, TypeBound, TypeOrConstParamData, TypeParamData,
+    TypePath, TypePathAnchor, TypePathSegment, TypeRef, VisibilityLevel, WherePredicate,
 };
 use rg_semantic_ir::{
     CrateItemQuery, FunctionData, FunctionSignature, GenericParamSource, GenericsQuery, ImplData,
@@ -856,7 +856,17 @@ fn parse_where_predicates(text: &str) -> Vec<WherePredicate> {
 fn parse_type_bounds(text: &str) -> Vec<TypeBound> {
     split_top_level(text, '+')
         .into_iter()
-        .map(|bound| TypeBound::Trait(parse_type_ref(bound.trim())))
+        .map(|bound| {
+            let bound = bound.trim();
+            let (modifier, bound) = match bound.strip_prefix('?') {
+                Some(bound) => (TraitBoundModifier::Maybe, bound),
+                None => (TraitBoundModifier::None, bound),
+            };
+            TypeBound::Trait {
+                ty: parse_type_ref(bound),
+                modifier,
+            }
+        })
         .collect()
 }
 

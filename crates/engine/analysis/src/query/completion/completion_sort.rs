@@ -25,10 +25,17 @@ pub(super) enum CompletionSortPolicy {
 /// Optional proximity bucket used before the ordinary completion sort key.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum CompletionSortPriority {
+    /// A body-local name; smaller distance means a nearer lexical scope.
     BodyScope { distance: usize },
+    /// Owner generics and impl `Self`, after body locals but before module-scope names.
+    GenericScope,
+    /// A declaration or import visible directly from the containing module.
     ModuleScope,
+    /// A builtin primitive type available in a type position.
     Primitive,
+    /// A name introduced by the crate's configured prelude.
     Prelude,
+    /// An external crate name available at the crate root.
     ExternRoot,
 }
 
@@ -142,6 +149,7 @@ impl SortTextComponent for CompletionSortPriority {
                 let distance = (*distance).min(9_999);
                 write!(out, "00-body:{distance:04}").expect("string writes should not fail");
             }
+            Self::GenericScope => out.push_str("01-generic"),
             Self::ModuleScope => out.push_str("01-module"),
             Self::Primitive => out.push_str("02-primitive"),
             Self::Prelude => out.push_str("03-prelude"),

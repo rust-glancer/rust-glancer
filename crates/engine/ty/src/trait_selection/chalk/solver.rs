@@ -10,7 +10,7 @@
 
 use std::cell::Cell;
 use std::sync::Mutex;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use chalk_engine::solve::SLGSolver;
 use chalk_ir::cast::Cast;
@@ -35,8 +35,11 @@ use crate::{Clause, GenericArgs, ItemPathQuery};
 
 const INTER: RgChalkInterner = RgChalkInterner;
 const SOLVER_MAX_SIZE: usize = 32;
-const SOLVER_QUANTUM_BUDGET: usize = 4_096;
-const OPEN_PROJECTION_QUANTUM_BUDGET: usize = 256;
+const SETTLED_GOAL_QUANTUM_BUDGET: usize = 4_096;
+const SPECULATIVE_GOAL_QUANTUM_BUDGET: usize = 256;
+// A body may ask thousands of small solver questions. Log only a goal that is independently
+// expensive enough to explain a noticeable part of indexing time.
+const SLOW_SOLVER_GOAL: Duration = Duration::from_millis(100);
 
 /// Result of crossing the bounded Chalk adapter.
 ///
@@ -317,7 +320,24 @@ impl ChalkSolverState {
         let canonical_goal = lowering.goal.into_peeled_goal(INTER);
         crate::profile::metric::SOLVER_GOALS.inc();
         let started = Instant::now();
-        let budget = SolverBudget::new(SOLVER_QUANTUM_BUDGET);
+
+        // A goal that still contains body inference slots is only a speculative question from one
+        // fixed-point round. Giving it the settled-query allowance is particularly costly for
+        // blanket bounds such as `?T: Debug`: Chalk may explore the entire visible impl universe,
+        // only for body inference to ask again after `?T` becomes more precise. Bound that probe
+        // like an open projection and preserve the larger allowance for fully known types.
+        let has_live_inference = clauses.iter().any(|clause| match clause {
+            Clause::Implemented(application) => application.args.iter().any(|arg| arg.has_var()),
+            Clause::AliasEq { alias, ty } => {
+                alias.args.iter().any(|arg| arg.has_var()) || ty.has_var()
+            }
+        });
+        let quantum_budget = if has_live_inference {
+            SPECULATIVE_GOAL_QUANTUM_BUDGET
+        } else {
+            SETTLED_GOAL_QUANTUM_BUDGET
+        };
+        let budget = SolverBudget::new(quantum_budget);
 
         // A crate-wide forest is valuable for declaration-owned goals, but body inference slots
         // and closure identities make each answer local to one inference scope. Retaining them in
@@ -352,7 +372,29 @@ impl ChalkSolverState {
                     budget.should_continue()
                 })
         };
-        crate::profile::metric::SOLVER_GOAL_TIME_BY_KIND.record("impl_bounds", started.elapsed());
+        let elapsed = started.elapsed();
+        crate::profile::metric::SOLVER_GOAL_TIME_BY_KIND.record("impl_bounds", elapsed);
+        if elapsed >= SLOW_SOLVER_GOAL {
+            let solver_answer = if budget.exhausted() {
+                "exhausted"
+            } else {
+                match &solution {
+                    Some(solution) if solution.is_ambig() => "ambiguous",
+                    Some(_) => "definite",
+                    None => "no_solution",
+                }
+            };
+            tracing::debug!(
+                goal_kind = "impl_bounds",
+                elapsed_ms = elapsed.as_millis(),
+                solver_answer,
+                clause_count = clauses.len(),
+                quantum_budget,
+                has_live_inference,
+                cache_scope = if cache_stable { "crate" } else { "body" },
+                "slow Chalk solver goal"
+            );
+        }
         if budget.exhausted() {
             return ChalkOutcome::Exhausted;
         }
@@ -436,9 +478,9 @@ impl ChalkSolverState {
                 .iter()
                 .any(|binding| binding.ty.has_var());
         let quantum_budget = if selected_impl.is_none() && has_live_inference {
-            OPEN_PROJECTION_QUANTUM_BUDGET
+            SPECULATIVE_GOAL_QUANTUM_BUDGET
         } else {
-            SOLVER_QUANTUM_BUDGET
+            SETTLED_GOAL_QUANTUM_BUDGET
         };
 
         // Ask Chalk for the one existential result type in:
@@ -468,7 +510,8 @@ impl ChalkSolverState {
         // Projection answers containing body-owned identities have the same lifetime as the
         // caller's inference table. Keep them in the inference-scoped cache, not the stable
         // crate-wide forest.
-        let solution = if trait_goal.is_cache_stable() {
+        let cache_stable = trait_goal.is_cache_stable();
+        let solution = if cache_stable {
             self.stable_forests.assoc_projection_solver.solve_limited(
                 self.program.database(),
                 &canonical_goal,
@@ -486,6 +529,27 @@ impl ChalkSolverState {
         };
         let elapsed = started.elapsed();
         crate::profile::metric::SOLVER_GOAL_TIME_BY_KIND.record("assoc_projection", elapsed);
+        if elapsed >= SLOW_SOLVER_GOAL {
+            let solver_answer = if budget.exhausted() {
+                "exhausted"
+            } else {
+                match &solution {
+                    Some(solution) if solution.is_ambig() => "ambiguous",
+                    Some(_) => "definite",
+                    None => "no_solution",
+                }
+            };
+            tracing::debug!(
+                goal_kind = "assoc_projection",
+                elapsed_ms = elapsed.as_millis(),
+                solver_answer,
+                quantum_budget,
+                has_live_inference,
+                selected_impl = selected_impl.is_some(),
+                cache_scope = if cache_stable { "crate" } else { "body" },
+                "slow Chalk solver goal"
+            );
+        }
         if budget.exhausted() {
             return ChalkOutcome::Exhausted;
         }
