@@ -205,7 +205,7 @@
             "Keep workspace packages, local path dependencies, and direct dependencies in memory.",
             "Offload every package that can be written to the package cache."
           ],
-          "default": "workspace-and-path-deps",
+          "default": "all-offloadable",
           "description": "Controls which package analysis artifacts remain resident after indexing. Restart the rust-glancer server after changing this setting."
         },
         "rust-glancer.diagnostics.onStartup": {

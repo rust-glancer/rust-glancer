@@ -34,9 +34,9 @@ impl AnalysisConfig {
 impl Default for AnalysisConfig {
     fn default() -> Self {
         Self {
-            // LSP keeps the packages users are most likely to edit resident, but otherwise favors
-            // fast initial indexing unless a client explicitly asks to lower peak memory.
-            package_residency_policy: PackageResidencyPolicy::WorkspaceAndPathDepsResident,
+            // Once indexing finishes, prefer low idle memory and load package data back from the
+            // durable cache when a query needs it.
+            package_residency_policy: PackageResidencyPolicy::default(),
             cargo_metadata_config: CargoMetadataConfig::default(),
             sysroot_discovery: SysrootDiscovery::default(),
             indexing_preference: IndexingPerformancePreference::default(),
@@ -53,13 +53,14 @@ mod tests {
     };
 
     #[test]
-    fn defaults_to_workspace_and_path_dependency_residency() {
+    fn defaults_to_all_offloadable_residency() {
         let config = AnalysisConfig::from_initialization_options(None)
             .expect("default analysis config should parse");
 
+        assert_eq!(config, AnalysisConfig::default());
         assert_eq!(
             config.package_residency_policy,
-            PackageResidencyPolicy::WorkspaceAndPathDepsResident,
+            PackageResidencyPolicy::AllOffloadable,
         );
         assert_eq!(config.cargo_metadata_config, CargoMetadataConfig::default(),);
         assert_eq!(config.sysroot_discovery, SysrootDiscovery::Auto);
