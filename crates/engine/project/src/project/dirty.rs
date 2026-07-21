@@ -12,6 +12,29 @@ use rg_def_map::PackageSlot;
 
 use super::{ChangedFile, Project, update};
 
+/// Package rebuild boundary for one dirty source overlay.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DirtyOverlayScope {
+    /// Rebuild only packages that own a changed file.
+    ///
+    /// Queries inside those packages can still read their unchanged dependencies from the saved
+    /// project. Reverse dependents are deliberately left untouched because they are not visible to
+    /// file-local analysis such as completion, hover, or inlay hints.
+    ChangedPackages,
+    /// Rebuild changed packages and every package that depends on them.
+    ///
+    /// Workspace-wide reference and edit queries need this broader coherent graph because a dirty
+    /// public declaration can change how downstream source resolves.
+    ReverseDependencyClosure,
+}
+
+impl DirtyOverlayScope {
+    /// Returns whether an overlay built for `self` contains all packages requested by `other`.
+    pub fn covers(self, other: Self) -> bool {
+        self == other || self == Self::ReverseDependencyClosure
+    }
+}
+
 /// One in-memory source file used to build a temporary dirty analysis overlay.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DirtyFileChange {
@@ -30,6 +53,7 @@ impl DirtyFileChange {
 
 pub(super) fn build_overlay(
     project: &Project,
+    scope: DirtyOverlayScope,
     changes: impl IntoIterator<Item = DirtyFileChange>,
 ) -> anyhow::Result<Option<Project>> {
     let changes = canonicalize_changes(changes)?;
@@ -76,9 +100,15 @@ pub(super) fn build_overlay(
         }
     }
 
-    let affected_packages =
-        update::affected_packages(&overlay, &changed_files, &fallback_package_roots);
-    if affected_packages.is_empty() {
+    let source_packages = match scope {
+        DirtyOverlayScope::ChangedPackages => {
+            update::changed_packages(&changed_files, &fallback_package_roots)
+        }
+        DirtyOverlayScope::ReverseDependencyClosure => {
+            update::affected_packages(&overlay, &changed_files, &fallback_package_roots)
+        }
+    };
+    if source_packages.is_empty() {
         return Ok(None);
     }
 
@@ -86,7 +116,7 @@ pub(super) fn build_overlay(
         .iter()
         .map(|file| BodyIrFile::new(file.package, file.file))
         .collect::<Vec<_>>();
-    update::rebuild_dirty_overlay_packages(&mut overlay.state, &affected_packages, &body_files)
+    update::rebuild_dirty_overlay_packages(&mut overlay.state, &source_packages, &body_files)
         .context("while attempting to rebuild dirty analysis overlay packages")?;
 
     Ok(Some(overlay))

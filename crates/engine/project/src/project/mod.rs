@@ -30,7 +30,7 @@ use rg_std::MemorySize;
 pub use self::state::ProjectGenerationId;
 pub use self::{
     build::{ProjectBuilder, SplitIndexingMode, StartupCacheLoad},
-    dirty::DirtyFileChange,
+    dirty::{DirtyFileChange, DirtyOverlayScope},
     snapshot::ProjectSnapshot,
     split_indexing::{
         AnalysisSurface, DetachedSplitIndexing, FinishedSplitIndexing, SplitIndexing,
@@ -248,9 +248,10 @@ impl Project {
     /// package artifacts. Callers can query the returned snapshot and then drop it.
     pub fn dirty_overlay(
         &self,
+        scope: DirtyOverlayScope,
         changes: impl IntoIterator<Item = DirtyFileChange>,
     ) -> anyhow::Result<Option<Project>> {
-        dirty::build_overlay(self, changes)
+        dirty::build_overlay(self, scope, changes)
     }
 
     /// Drops state that read-only queries may lazily reconstruct from durable backing data.

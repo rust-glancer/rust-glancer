@@ -9,7 +9,9 @@
 use std::{path::PathBuf, sync::Arc};
 
 use anyhow::Context as _;
-use rg_project::{AnalysisSurface, DetachedSplitIndexing, Project, ProjectSnapshot};
+use rg_project::{
+    AnalysisSurface, DetachedSplitIndexing, DirtyOverlayScope, Project, ProjectSnapshot,
+};
 
 use crate::{
     dirty_state::DirtyOverlayCache, documents::DirtyDocumentSnapshot, memory::MemoryControl,
@@ -168,6 +170,7 @@ impl ProjectState {
     pub(super) fn with_query_snapshot<T>(
         &mut self,
         dirty: Option<&DirtyDocumentSnapshot>,
+        dirty_scope: DirtyOverlayScope,
         query: impl FnOnce(ProjectSnapshot<'_>) -> anyhow::Result<T>,
     ) -> anyhow::Result<T> {
         let project = match dirty {
@@ -177,7 +180,7 @@ impl ProjectState {
                     .as_ref()
                     .context("saved project is not initialized")?;
                 self.dirty_overlay
-                    .project_for_dirty(saved, dirty)
+                    .project_for_dirty(saved, dirty, dirty_scope)
                     .context("build dirty project overlay")?
             }
             None => {

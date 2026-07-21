@@ -1,7 +1,7 @@
 use std::{sync::Arc, time::Instant};
 
 use anyhow::Context as _;
-use rg_project::{DirtyFileChange, Project};
+use rg_project::{DirtyFileChange, DirtyOverlayScope, Project};
 
 use super::DirtyDocumentIdentity;
 use crate::{
@@ -38,27 +38,34 @@ impl DirtyOverlayCache {
         &mut self,
         base: &Project,
         dirty: &DirtyDocumentSnapshot,
+        scope: DirtyOverlayScope,
     ) -> anyhow::Result<&Project> {
         let identity = DirtyDocumentIdentity::from_snapshot(dirty);
         let base_generation = base.generation_id();
         let should_rebuild = match &self.cached {
             Some(cached) => {
-                cached.identity != identity || cached.base_generation != base_generation
+                cached.identity != identity
+                    || cached.base_generation != base_generation
+                    || !cached.scope.covers(scope)
             }
             None => true,
         };
 
         if should_rebuild {
-            // A cache miss means the stored overlay was built for a different document snapshot.
-            // Drop it before constructing the replacement so edit bursts do not keep two overlays
-            // live across the expensive package rebuild.
+            // A cache miss means the stored overlay has a different dirty identity or base
+            // generation, or it does not cover the requested package scope. Drop it before
+            // constructing the replacement so edit bursts do not keep two overlays live across
+            // the expensive package rebuild.
             self.cached = None;
 
             let started = Instant::now();
             let memory_control = self.memory_control.as_ref();
             let memory_before = MemoryReporter::snapshot(memory_control);
             let overlay = base
-                .dirty_overlay([DirtyFileChange::new(dirty.path(), dirty.text().to_string())])
+                .dirty_overlay(
+                    scope,
+                    [DirtyFileChange::new(dirty.path(), dirty.text().to_string())],
+                )
                 .with_context(|| {
                     format!(
                         "while attempting to build dirty analysis overlay for {}",
@@ -77,6 +84,7 @@ impl DirtyOverlayCache {
                 path = %dirty.path().display(),
                 version = ?dirty.version(),
                 text_len = dirty.text().len(),
+                dirty_overlay_scope = ?scope,
                 dirty_overlay_cache_hit = false,
                 dirty_overlay_changed_known_file = changed_known_file,
                 dirty_overlay_build_ms = started.elapsed().as_millis(),
@@ -85,6 +93,7 @@ impl DirtyOverlayCache {
             self.cached = Some(CachedDirtyOverlay {
                 identity,
                 base_generation,
+                scope,
                 project,
             });
         } else {
@@ -92,6 +101,7 @@ impl DirtyOverlayCache {
                 path = %dirty.path().display(),
                 version = ?dirty.version(),
                 text_len = dirty.text().len(),
+                dirty_overlay_scope = ?scope,
                 dirty_overlay_cache_hit = true,
                 dirty_overlay_build_ms = 0_u128,
                 "dirty analysis overlay cache hit"
@@ -110,5 +120,6 @@ impl DirtyOverlayCache {
 struct CachedDirtyOverlay {
     identity: DirtyDocumentIdentity,
     base_generation: rg_project::ProjectGenerationId,
+    scope: DirtyOverlayScope,
     project: Project,
 }

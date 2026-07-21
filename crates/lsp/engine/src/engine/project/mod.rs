@@ -22,8 +22,8 @@ use std::{
 use anyhow::Context as _;
 use rg_lsp_proto::ServiceNotification;
 use rg_project::{
-    AnalysisSurface, Project, ProjectMemoryHooks, ProjectSnapshot, SavedFileChange,
-    SplitIndexingMode,
+    AnalysisSurface, DirtyOverlayScope, Project, ProjectMemoryHooks, ProjectSnapshot,
+    SavedFileChange, SplitIndexingMode,
 };
 use rg_std::UniqueVec;
 use rg_workspace::{CargoMetadataTarget, SysrootSources, WorkspaceMetadata};
@@ -388,10 +388,11 @@ impl ProjectCoordinator {
     pub(super) fn with_query_snapshot<T>(
         &mut self,
         dirty: Option<&DirtyDocumentSnapshot>,
+        dirty_scope: DirtyOverlayScope,
         query: impl FnOnce(ProjectSnapshot<'_>) -> anyhow::Result<T>,
     ) -> anyhow::Result<T> {
         self.project
-            .with_query_snapshot(dirty, query)
+            .with_query_snapshot(dirty, dirty_scope, query)
             .context("run query with project snapshot")
     }
 

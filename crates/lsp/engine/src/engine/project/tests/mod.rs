@@ -8,7 +8,7 @@ use std::{
 };
 
 use rg_lsp_proto::{AnalysisConfig, PackageResidencyPolicy, ServiceNotification, SysrootDiscovery};
-use rg_project::{AnalysisSurface, ProjectMemoryHooks, ProjectMemoryPurgePoint};
+use rg_project::{AnalysisSurface, DirtyOverlayScope, ProjectMemoryHooks, ProjectMemoryPurgePoint};
 use test_fixture::fixture_crate;
 
 use super::{MAX_STALE_SOURCE_RETRIES, ProjectConfiguration, ProjectCoordinator};
@@ -120,7 +120,7 @@ impl ServiceNotificationPublisher for RecordingNotifications {
 }
 
 #[test]
-fn ready_query_surfaces_preserve_the_matching_dirty_overlay() {
+fn ready_query_surfaces_and_sufficient_scope_preserve_the_matching_dirty_overlay() {
     let fixture = fixture_crate(
         r#"
             //- /Cargo.toml
@@ -188,13 +188,13 @@ fn ready_query_surfaces_preserve_the_matching_dirty_overlay() {
     // File and mixed reference-search preparation are both no-ops for finished artifacts, so the
     // same dirty snapshot must keep hitting one cached overlay across those query shapes.
     project
-        .with_query_snapshot(Some(&dirty), |_| Ok(()))
+        .with_query_snapshot(Some(&dirty), DirtyOverlayScope::ChangedPackages, |_| Ok(()))
         .expect("first dirty query should build its overlay");
     project
         .materialize(AnalysisSurface::Files(&files))
         .expect("file query surface should already be ready");
     project
-        .with_query_snapshot(Some(&dirty), |_| Ok(()))
+        .with_query_snapshot(Some(&dirty), DirtyOverlayScope::ChangedPackages, |_| Ok(()))
         .expect("second dirty query should reuse its overlay");
     project
         .materialize(AnalysisSurface::FilesAndCrates {
@@ -203,13 +203,32 @@ fn ready_query_surfaces_preserve_the_matching_dirty_overlay() {
         })
         .expect("mixed query surface should already be ready");
     project
-        .with_query_snapshot(Some(&dirty), |_| Ok(()))
+        .with_query_snapshot(Some(&dirty), DirtyOverlayScope::ChangedPackages, |_| Ok(()))
         .expect("third dirty query should reuse its overlay");
 
     assert_eq!(
         hooks.count(),
         1,
         "no-op query materialization should not evict a matching dirty overlay",
+    );
+
+    // A broader query must replace a local overlay. Once built, that broader overlay contains the
+    // changed packages too, so a later local query can reuse it without a second replacement.
+    project
+        .with_query_snapshot(
+            Some(&dirty),
+            DirtyOverlayScope::ReverseDependencyClosure,
+            |_| Ok(()),
+        )
+        .expect("workspace-wide dirty query should upgrade its overlay");
+    assert_eq!(hooks.count(), 2, "broader scope should rebuild once");
+    project
+        .with_query_snapshot(Some(&dirty), DirtyOverlayScope::ChangedPackages, |_| Ok(()))
+        .expect("local dirty query should reuse a broader overlay");
+    assert_eq!(
+        hooks.count(),
+        2,
+        "broader overlay should satisfy a later local query",
     );
 }
 
@@ -284,7 +303,7 @@ fn incomplete_resident_query_surface_evicts_the_matching_dirty_overlay() {
     };
 
     project
-        .with_query_snapshot(Some(&dirty), |_| Ok(()))
+        .with_query_snapshot(Some(&dirty), DirtyOverlayScope::ChangedPackages, |_| Ok(()))
         .expect("first dirty query should build its overlay");
     assert_eq!(hooks.count(), 1, "first dirty query should build once");
 
@@ -294,7 +313,7 @@ fn incomplete_resident_query_surface_evicts_the_matching_dirty_overlay() {
         .materialize(AnalysisSurface::Files(&files))
         .expect("incomplete file query surface should materialize");
     project
-        .with_query_snapshot(Some(&dirty), |_| Ok(()))
+        .with_query_snapshot(Some(&dirty), DirtyOverlayScope::ChangedPackages, |_| Ok(()))
         .expect("second dirty query should rebuild its evicted overlay");
     assert_eq!(
         hooks.count(),

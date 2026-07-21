@@ -8,6 +8,7 @@
 use std::{path::PathBuf, time::Instant};
 
 use anyhow::Context as _;
+use rg_project::DirtyOverlayScope;
 use rg_std::UniqueVec;
 
 use super::QueryRunner;
@@ -57,7 +58,7 @@ impl QueryRunner<'_> {
             .context("prepare navigation path")?;
         let locations = self
             .project
-            .with_query_snapshot(dirty.as_ref(), |snapshot| {
+            .with_query_snapshot(dirty.as_ref(), query.dirty_overlay_scope(), |snapshot| {
                 let crate_offsets = Self::crate_offsets(snapshot, &path, position)
                     .context("resolve navigation position")?;
                 let analysis_crates = crate_offsets
@@ -125,6 +126,13 @@ impl NavigationQuery {
             Self::Definition => "definition",
             Self::TypeDefinition => "type_definition",
             Self::Implementation => "implementation",
+        }
+    }
+
+    fn dirty_overlay_scope(self) -> DirtyOverlayScope {
+        match self {
+            Self::Definition | Self::TypeDefinition => DirtyOverlayScope::ChangedPackages,
+            Self::Implementation => DirtyOverlayScope::ReverseDependencyClosure,
         }
     }
 }
