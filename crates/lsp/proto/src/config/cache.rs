@@ -4,12 +4,14 @@ use serde::{Deserialize, Serialize};
 use super::section;
 
 /// Protocol-level cache residency policy requested by an LSP client.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 pub enum PackageResidencyPolicy {
     AllResident,
     WorkspaceResident,
     WorkspaceAndPathDepsResident,
     WorkspacePathAndDirectDepsResident,
+    /// Prefer low idle memory and load package data back from the durable cache on demand.
+    #[default]
     AllOffloadable,
 }
 
@@ -19,7 +21,7 @@ impl PackageResidencyPolicy {
             .and_then(|cache| cache.get("packageResidency"))
             .and_then(LSPAny::as_str)
             .and_then(Self::from_config_name)
-            .unwrap_or(Self::WorkspaceAndPathDepsResident)
+            .unwrap_or_default()
     }
 
     /// Stable kebab-case name accepted in LSP initialization options.

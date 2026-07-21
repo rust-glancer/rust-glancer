@@ -110,7 +110,7 @@ export namespace ExtensionConfig {
           config,
           "cache.packageResidency",
           PACKAGE_RESIDENCY_VALUES,
-          "workspace-and-path-deps",
+          "all-offloadable",
         ),
       },
       diagnostics: {
