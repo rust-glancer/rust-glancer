@@ -377,6 +377,9 @@ fn deferred_lifecycle_tracks_published_generations_not_foreground_activity() {
         .initialize(
             fixture.path(""),
             ProjectConfiguration::from(AnalysisConfig {
+                // The final assertions observe resident Body IR, so keep this lifecycle fixture
+                // independent from the client-facing residency default.
+                package_residency_policy: PackageResidencyPolicy::AllResident,
                 sysroot_discovery: SysrootDiscovery::Disabled,
                 ..AnalysisConfig::default()
             }),
