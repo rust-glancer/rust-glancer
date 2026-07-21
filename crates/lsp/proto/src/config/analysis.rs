@@ -7,7 +7,7 @@ use super::{
 };
 
 /// Analysis configuration sent by the LSP client during initialization.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct AnalysisConfig {
     pub package_residency_policy: PackageResidencyPolicy,
     pub cargo_metadata_config: CargoMetadataConfig,
@@ -28,20 +28,6 @@ impl AnalysisConfig {
             )?,
             cfg: AnalysisCfgConfig::from_initialization_options(options)?,
         })
-    }
-}
-
-impl Default for AnalysisConfig {
-    fn default() -> Self {
-        Self {
-            // Once indexing finishes, prefer low idle memory and load package data back from the
-            // durable cache when a query needs it.
-            package_residency_policy: PackageResidencyPolicy::default(),
-            cargo_metadata_config: CargoMetadataConfig::default(),
-            sysroot_discovery: SysrootDiscovery::default(),
-            indexing_preference: IndexingPerformancePreference::default(),
-            cfg: AnalysisCfgConfig::default(),
-        }
     }
 }
 

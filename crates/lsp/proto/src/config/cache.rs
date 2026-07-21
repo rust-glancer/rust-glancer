@@ -10,6 +10,7 @@ pub enum PackageResidencyPolicy {
     WorkspaceResident,
     WorkspaceAndPathDepsResident,
     WorkspacePathAndDirectDepsResident,
+    /// Prefer low idle memory and load package data back from the durable cache on demand.
     #[default]
     AllOffloadable,
 }
