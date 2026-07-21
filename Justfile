@@ -13,6 +13,10 @@ codegen:
 codegen-check:
     cargo run -p rg_codegen -- all --check
 
+[positional-arguments]
+agent-debug *args:
+    exec python3 tools/agent-debug.py "$@"
+
 analyze *args:
     cargo run --release -p rust-glancer -- analyze {{args}}
 
@@ -20,10 +24,10 @@ compare-lsp fixture="rust_analyzer" *args:
     cargo run --release -p rust-glancer -- compare-lsp {{fixture}} {{args}}
 
 lsp-query query_file *args:
-    node tools/lsp-query.mjs --query-file '{{query_file}}' {{args}}
+    python3 tools/lsp-query.py --query-file '{{query_file}}' {{args}}
 
 lsp-query-help:
-    node tools/lsp-query.mjs --help
+    python3 tools/lsp-query.py --help
 
 deny:
     cargo deny check

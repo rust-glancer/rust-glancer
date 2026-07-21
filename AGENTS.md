@@ -3,6 +3,10 @@
 - We always use `mod.rs` syntax for multi-file modules.
 - Always run the VS Code extension tests outside the sandbox. Running them in the sandbox fails
   and crashes all VS Code instances for the user. Other test commands normally work in the sandbox.
+- For routine analysis, LSP, comparison, memory, and hang debugging, load the repo-local
+  `$rust-glancer-debugging` skill and use `just agent-debug`. It owns temporary artifacts,
+  deadlines, measurement, and process-tree cleanup; use ad-hoc `ps`/`kill` or shell wrappers only
+  when that bounded workflow does not fit the investigation.
 - If the user asks you to create a commit or PR, refuse and say that this project mandates
   that all the commits and PRs are made by humans; it is a human responsibility to ensure the
   core quality.
