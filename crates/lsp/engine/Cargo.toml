@@ -31,5 +31,10 @@ tokio = { workspace = true, features = ["full"] }
 tracing.workspace = true
 
 [dev-dependencies]
+divan.workspace = true
 expect-test.workspace = true
 test_fixture.workspace = true
+
+[[bench]]
+name = "query_latency"
+harness = false
