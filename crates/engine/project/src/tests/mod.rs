@@ -2024,6 +2024,81 @@ pub fn inspect(value: User) {
 }
 
 #[test]
+fn dirty_overlay_builds_lookup_index_when_saved_dependency_bodies_were_skipped() {
+    let fixture = HostFixture::build_with_package_residency_policy(
+        r#"
+//- /Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+dep = { path = "dep" }
+
+//- /src/lib.rs
+pub fn use_dep(value: dep::User) {
+    let _ = value;
+}
+
+//- /dep/Cargo.toml
+[package]
+name = "dep"
+version = "0.1.0"
+edition = "2024"
+
+//- /dep/src/lib.rs
+pub struct User;
+
+impl User {
+    pub fn saved(&self) {}
+}
+
+pub fn inspect(value: User) {
+    let _ = value;
+}
+"#,
+        PackageResidencyPolicy::AllOffloadable,
+    );
+    let dirty_text = MarkedText::parse(
+        r#"
+pub struct User;
+
+impl User {
+    pub fn saved(&self) {}
+}
+
+pub fn inspect(value: User) {
+    value.$receiver$
+}
+"#,
+    );
+
+    // The dependency was skipped by the saved workspace-only body policy. Materializing its dirty
+    // file must build the first real lookup index instead of reusing the saved empty placeholder.
+    let overlay = fixture.dirty_overlay_with_scope(
+        "dep/src/lib.rs",
+        dirty_text.text(),
+        DirtyOverlayScope::ChangedPackages,
+    );
+    let actual = fixture.render_dirty_project(
+        &overlay,
+        dirty_text.text(),
+        &[HostObservation::completions_at(
+            "receiver in previously skipped dependency",
+            "dep/src/lib.rs",
+            dirty_text.offset("receiver"),
+        )],
+    );
+
+    expect![[r#"
+        completions at `receiver in previously skipped dependency`
+        - inherent_method saved
+    "#]]
+    .assert_eq(&actual);
+}
+
+#[test]
 fn chained_dirty_overlay_keeps_dependency_declaration_changes() {
     let fixture = HostFixture::build_with_package_residency_policy(
         r#"

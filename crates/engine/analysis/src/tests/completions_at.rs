@@ -1,3 +1,5 @@
+use std::fmt::Write as _;
+
 use expect_test::expect;
 
 use super::utils::{
@@ -88,6 +90,63 @@ pub fn use_it(user: User) {
             - inherent_method id
             - inherent_method touch
             - trait_method trait_name
+        "#]],
+    );
+}
+
+#[test]
+fn completion_ignores_unrelated_impls_in_speculative_trait_budget() {
+    let mut fixture = String::from(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_trait_budget_completions"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub trait Rel<T> {}
+
+pub struct User;
+
+impl User {
+    pub fn marker(&self) {}
+}
+
+pub struct Source;
+
+impl Rel<User> for Source {}
+"#,
+    );
+    for index in 0..65 {
+        writeln!(
+            &mut fixture,
+            "pub struct Other{index};\nimpl Rel<User> for Other{index} {{}}"
+        )
+        .expect("string writes should not fail");
+    }
+    fixture.push_str(
+        r#"
+pub fn infer<T>(_: impl Rel<T>) -> T {
+    loop {}
+}
+
+pub fn inspect() {
+    let value = infer(Source);
+    value.$receiver$
+}
+"#,
+    );
+
+    check_analysis_queries(
+        &fixture,
+        &[AnalysisQuery::complete(
+            "inferred receiver with many unrelated impls",
+            "receiver",
+        )],
+        expect![[r#"
+            inferred receiver with many unrelated impls
+            - inherent_method marker
         "#]],
     );
 }

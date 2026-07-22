@@ -102,7 +102,7 @@ impl PackageCacheProbe {
         })
     }
 
-    /// Check whether every rebuilt crate would produce the saved item lookup index.
+    /// Check whether every rebuilt crate can reuse its saved item lookup index.
     ///
     /// This is an all-or-nothing package decision. Returning `false` only disables index reuse;
     /// the dirty rebuild can still construct fresh indexes from the rebuilt declarations.
@@ -117,7 +117,20 @@ impl PackageCacheProbe {
             def_map.crates().len(),
             semantic_ir.crates().len(),
         );
-        if self.lookup_index_fingerprints.len() != semantic_ir.crates().len() {
+        if self.body_ir_coverage.len() != semantic_ir.crates().len()
+            || self.lookup_index_fingerprints.len() != semantic_ir.crates().len()
+        {
+            return Ok(false);
+        }
+
+        // A skipped or missing crate stores an empty placeholder rather than a visibility-scoped
+        // index. Matching declarations do not make that placeholder reusable when the dirty build
+        // materializes the crate for the first time.
+        if self
+            .body_ir_coverage
+            .iter()
+            .any(|coverage| !coverage.is_materialized())
+        {
             return Ok(false);
         }
 

@@ -111,6 +111,21 @@ impl ItemLookupIndex {
         // key from drifting away from the data it validates.
         let mut index = Self::default();
         index.extend_from_store(store);
+        let Self {
+            visible_packages,
+            lang_items,
+            inherent_impls_by_type,
+            inherent_functions_by_type_and_name,
+            structural_inherent_impls,
+            trait_impls_by_type,
+            trait_impls_by_trait,
+            trait_functions_by_trait,
+            trait_functions_by_trait_and_name,
+        } = index;
+        debug_assert!(
+            visible_packages.is_empty(),
+            "a local item-store index should not contain visibility packages"
+        );
 
         // The local item store does not own visibility edges. External roots and the prelude still
         // belong in the key because changing either can select a different set of contributing
@@ -124,12 +139,10 @@ impl ItemLookupIndex {
 
         // Hash-map order must not decide whether two equivalent snapshots can share an index.
         // Sort each map after converting it to vectors, but keep candidates in their lookup order.
-        let mut inherent_impls_by_type =
-            index.inherent_impls_by_type.into_iter().collect::<Vec<_>>();
+        let mut inherent_impls_by_type = inherent_impls_by_type.into_iter().collect::<Vec<_>>();
         inherent_impls_by_type.sort_by_key(|(ty, _)| type_def_sort_key(*ty));
 
-        let mut inherent_functions_by_type_and_name = index
-            .inherent_functions_by_type_and_name
+        let mut inherent_functions_by_type_and_name = inherent_functions_by_type_and_name
             .into_iter()
             .map(|(ty, functions)| {
                 let mut functions = functions.into_iter().collect::<Vec<_>>();
@@ -139,20 +152,16 @@ impl ItemLookupIndex {
             .collect::<Vec<_>>();
         inherent_functions_by_type_and_name.sort_by_key(|(ty, _)| type_def_sort_key(*ty));
 
-        let mut trait_impls_by_type = index.trait_impls_by_type.into_iter().collect::<Vec<_>>();
+        let mut trait_impls_by_type = trait_impls_by_type.into_iter().collect::<Vec<_>>();
         trait_impls_by_type.sort_by_key(|(ty, _)| type_def_sort_key(*ty));
 
-        let mut trait_impls_by_trait = index.trait_impls_by_trait.into_iter().collect::<Vec<_>>();
+        let mut trait_impls_by_trait = trait_impls_by_trait.into_iter().collect::<Vec<_>>();
         trait_impls_by_trait.sort_by_key(|(trait_ref, _)| trait_sort_key(*trait_ref));
 
-        let mut trait_functions_by_trait = index
-            .trait_functions_by_trait
-            .into_iter()
-            .collect::<Vec<_>>();
+        let mut trait_functions_by_trait = trait_functions_by_trait.into_iter().collect::<Vec<_>>();
         trait_functions_by_trait.sort_by_key(|(trait_ref, _)| trait_sort_key(*trait_ref));
 
-        let mut trait_functions_by_trait_and_name = index
-            .trait_functions_by_trait_and_name
+        let mut trait_functions_by_trait_and_name = trait_functions_by_trait_and_name
             .into_iter()
             .map(|(trait_ref, functions)| {
                 let mut functions = functions.into_iter().collect::<Vec<_>>();
@@ -166,10 +175,10 @@ impl ItemLookupIndex {
         // cache contract: local index facts first, then the edges that select visible stores.
         let key = (
             (
-                index.lang_items,
+                lang_items,
                 inherent_impls_by_type,
                 inherent_functions_by_type_and_name,
-                index.structural_inherent_impls,
+                structural_inherent_impls,
                 trait_impls_by_type,
                 trait_impls_by_trait,
                 trait_functions_by_trait,

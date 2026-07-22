@@ -8,9 +8,9 @@
 //! answers. Impl-predicate checks and associated-type projection use different forests: the first
 //! only needs one answer, while the second must retain the substitution for its result type.
 //!
-//! One exact nominal impl does not need that whole projection universe. When native selection has
-//! already proved such an impl, this module first tries to instantiate the matching semantic
-//! associated-type declaration directly and enters Chalk only for cases that need solver evidence.
+//! Native selection may also pass one exact impl into associated-type projection. Chalk uses that
+//! evidence to prefer the selected impl's value while retaining the solver path for defaults,
+//! opaque bounds, and other cases that need the complete program.
 
 use std::cell::Cell;
 use std::sync::Mutex;
@@ -28,6 +28,7 @@ use rg_def_map::DefMapSource;
 use rg_ir_model::{GenericDefRef, ImplRef, TraitApplicability};
 use rg_semantic_ir::{CrateItemQuery, ItemLookupIndex, ItemStoreSource};
 
+use super::super::matcher::TraitSelfHead;
 use super::evidence::{ProjectionAliasLowering, SolverAnswerVars, SolverVariableEnv};
 use super::interner::RgChalkInterner;
 use super::lower::{ChalkLowerer, GenericBinderEnv};
@@ -35,15 +36,15 @@ use super::program::ChalkProgramState;
 use super::raise;
 use crate::inference::{InferVarKind, InferenceSubstitution, InferenceTable};
 use crate::trait_selection::{AssocProjectionResult, TraitSelectionSession};
-use crate::{Clause, GenericArg, GenericArgs, ItemPathQuery, SemanticSignatureQuery, Substitution};
+use crate::{Clause, GenericArg, GenericArgs, ItemPathQuery, TraitApplication};
 
 const INTER: RgChalkInterner = RgChalkInterner;
 const SOLVER_MAX_SIZE: usize = 32;
 const SETTLED_GOAL_QUANTUM_BUDGET: usize = 4_096;
 const SPECULATIVE_GOAL_QUANTUM_BUDGET: usize = 256;
-// Program construction is not resumable like solver search. Avoid starting a large visible impl
-// universe while a live inference goal is still likely to become more precise on a later pass.
-const SPECULATIVE_PROGRAM_IMPL_BUDGET: usize = 64;
+// Program construction is not resumable like solver search. Avoid admitting a live inference goal
+// with a large receiver-compatible root set while it is likely to become more precise later.
+const SPECULATIVE_ROOT_IMPL_BUDGET: usize = 64;
 // A body may ask thousands of small solver questions. Log only a goal that is independently
 // expensive enough to explain a noticeable part of indexing time.
 const SLOW_SOLVER_GOAL: Duration = Duration::from_millis(100);
@@ -205,10 +206,10 @@ impl ChalkTraitSolver {
             return Ok(ChalkOutcome::Unsupported);
         }
 
-        // The ordinary speculative quantum budget starts after program preparation, but a large
-        // visible trait can spend hundreds of milliseconds building its transitive impl closure
-        // before the first quantum runs. Bound that preparation too. The caller retains the
-        // candidate as `Maybe` and body inference can retry once these variables become concrete.
+        // The ordinary speculative quantum budget starts after program preparation. Avoid
+        // admitting a goal whose receiver can actually reach a large root set, but do not reject a
+        // precise receiver merely because the same trait has many unrelated impls. The caller
+        // retains an exhausted candidate as `Maybe` and can retry after inference becomes concrete.
         let has_live_inference = clauses.iter().any(|clause| match clause {
             Clause::Implemented(application) => application.args.iter().any(GenericArg::has_var),
             Clause::AliasEq { alias, ty } => {
@@ -221,9 +222,15 @@ impl ChalkTraitSolver {
                 let Clause::Implemented(application) = clause else {
                     continue;
                 };
-                root_impl_count = root_impl_count
-                    .saturating_add(crate_items.impls_for_trait(application.def)?.len());
-                if root_impl_count > SPECULATIVE_PROGRAM_IMPL_BUDGET {
+                root_impl_count =
+                    root_impl_count.saturating_add(Self::speculative_root_impl_count(
+                        item_paths,
+                        lookup_index,
+                        session,
+                        application,
+                        table,
+                    )?);
+                if root_impl_count > SPECULATIVE_ROOT_IMPL_BUDGET {
                     return Ok(ChalkOutcome::Exhausted);
                 }
             }
@@ -267,11 +274,7 @@ impl ChalkTraitSolver {
         Ok(outcome)
     }
 
-    /// Normalize one associated type from an exact selected impl or from Chalk's answer.
-    ///
-    /// A supported value on a proved nominal impl is instantiated before program construction.
-    /// Defaults, opaque bounds, unsupported declaration shapes, and goals without exact impl
-    /// evidence continue through the ordinary Chalk projection path.
+    /// Normalize one associated type through Chalk, optionally guided by an exact selected impl.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn normalize_assoc_type<'query, D, I>(
         &self,
@@ -309,49 +312,15 @@ impl ChalkTraitSolver {
                 .any(|binding| binding.ty.has_var());
         if selected_impl.is_none()
             && has_live_inference
-            && crate_items.impls_for_trait(goal.trait_ref())?.len()
-                > SPECULATIVE_PROGRAM_IMPL_BUDGET
+            && Self::speculative_root_impl_count(
+                item_paths,
+                lookup_index,
+                session,
+                &goal.application,
+                table,
+            )? > SPECULATIVE_ROOT_IMPL_BUDGET
         {
             return Ok(ChalkOutcome::Exhausted);
-        }
-
-        // Native selection has already proved this exact impl and retained its substitution. Read
-        // a supported associated value directly from that impl before building Chalk's complete
-        // visible universe for the trait. Recursive aliases still return through the ordinary
-        // projection entry point, while defaults, GATs, and opaque-only evidence fall back below.
-        if let Some((impl_ref, subst)) = selected_impl
-            // A blanket impl selected for an opaque receiver may derive its associated value from
-            // that opaque's declared equality. Keep that environment evidence inside Chalk; the
-            // direct path is only needed for the indexed nominal receiver that made declaration
-            // materialization expensive in the first place.
-            && matches!(table.resolve_root_var(goal.self_ty()), crate::Ty::Adt(_))
-        {
-            let selected_value = if let Some(trait_alias_data) =
-                item_paths.items().type_alias_data(associated_ty)?
-                && ChalkLowerer::supports_associated_ty_declaration(trait_alias_data)
-                && let Some(alias) = item_paths
-                    .items()
-                    .impl_associated_type_by_name(impl_ref, trait_alias_data.name.as_str())?
-                && let Some(alias_data) = item_paths.items().type_alias_data(alias)?
-                && ChalkLowerer::supports_associated_ty_declaration(alias_data)
-            {
-                SemanticSignatureQuery::type_alias_ty_from(item_paths, alias)?
-            } else {
-                None
-            };
-
-            if let Some(selected_value) = selected_value {
-                let generics = item_paths
-                    .generics()
-                    .generics(GenericDefRef::Impl(impl_ref))?;
-                let args = subst.as_substitution().args_for(&generics);
-                let complete_subst = Substitution::from_args(&generics, &args);
-                return Ok(ChalkOutcome::Proven(AssocProjectionResult {
-                    ty: table.canonicalize(&complete_subst.apply(&selected_value)),
-                    applicability: TraitApplicability::Yes,
-                    table: table.clone(),
-                }));
-            }
         }
 
         let mut state = self
@@ -396,6 +365,38 @@ impl ChalkTraitSolver {
             table,
             inference_cache,
         ))
+    }
+
+    /// Count only impls whose canonical `Self` head can participate in a speculative root goal.
+    ///
+    /// Chalk still receives the complete trait program once work starts. This count is only the
+    /// admission budget, so unrelated receiver types must not make an otherwise small query look
+    /// expensive. Blanket and headless impls remain candidates for every receiver.
+    fn speculative_root_impl_count<'query, D, I>(
+        item_paths: &ItemPathQuery<'query, D, I>,
+        lookup_index: &ItemLookupIndex,
+        session: &TraitSelectionSession,
+        application: &TraitApplication,
+        table: &InferenceTable,
+    ) -> Result<usize, I::Error>
+    where
+        D: DefMapSource<Error = I::Error>,
+        I: ItemStoreSource<'query>,
+    {
+        let Some(visible_impls) = lookup_index.trait_impls_for_trait(application.def) else {
+            return Ok(0);
+        };
+        let Some(self_head) = application
+            .self_ty()
+            .map(|self_ty| table.resolve_root_var(self_ty))
+            .as_ref()
+            .and_then(TraitSelfHead::from_ty)
+        else {
+            return Ok(visible_impls.len());
+        };
+        Ok(session
+            .indexed_trait_impl_candidates(item_paths, application.def, visible_impls, self_head)?
+            .len())
     }
 }
 

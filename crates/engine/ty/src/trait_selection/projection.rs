@@ -6,15 +6,15 @@
 //! bounded boundary so nested aliases use the same evidence and inference table.
 
 use rg_def_map::DefMapSource;
-use rg_ir_model::{ItemOwner, TraitApplicability, TraitDefRef, TypeAliasRef};
+use rg_ir_model::{GenericDefRef, ItemOwner, TraitApplicability, TraitDefRef, TypeAliasRef};
 use rg_semantic_ir::ItemStoreSource;
 use rg_std::ExpectedUnique;
 
-use super::{ChalkOutcome, TraitGoal, TraitSelectionQuery};
+use super::{ChalkOutcome, TraitGoal, TraitSelection, TraitSelectionQuery};
 use crate::inference::InferenceTable;
 use crate::{
     AdtTy, AliasTy, ClosureTy, FnDefTy, GenericArg, GenericArgs, OpaqueTy, ProjectionTy,
-    TraitApplication, Ty,
+    SemanticSignatureQuery, Substitution, TraitApplication, Ty,
 };
 
 /// Result of normalizing one selected associated type projection.
@@ -115,6 +115,16 @@ where
             .as_ref()
             .map(|selection| &selection.table)
             .unwrap_or(table);
+
+        // An exact native candidate already carries everything needed to instantiate a plain
+        // associated declaration. Keep that semantic operation on this side of the Chalk adapter;
+        // only defaults, opaque evidence, GATs, and other solver-shaped cases cross the boundary.
+        if let Some(selection) = &selection
+            && let Some(projection) = self.project_selected_impl(goal, associated_ty, selection)?
+        {
+            return Ok(Some(projection));
+        }
+
         let projection = self.context.trait_selection().normalize_assoc_type(
             self.context.item_paths(),
             self.context.crate_items(),
@@ -141,6 +151,80 @@ where
             projection.applicability = selection.applicability.and(projection.applicability);
         }
         Ok(Some(projection))
+    }
+
+    /// Instantiate a plain associated value from an already-proved nominal impl.
+    fn project_selected_impl(
+        &self,
+        goal: &TraitGoal,
+        associated_ty: TypeAliasRef,
+        selection: &TraitSelection,
+    ) -> Result<Option<AssocProjectionResult>, I::Error> {
+        // A blanket impl selected for an opaque receiver may derive its value from that opaque's
+        // declared equality. Leave that environment evidence to Chalk; this shortcut exists for
+        // the indexed nominal receiver that native selection proved directly.
+        if !matches!(selection.table.resolve_root_var(goal.self_ty()), Ty::Adt(_)) {
+            return Ok(None);
+        }
+
+        // Generic associated types and required bounds need binders or additional predicates.
+        // Relaxed bounds such as `?Sized` add no requirement in rust-glancer's semantic model.
+        let can_project_directly = |data: &rg_semantic_ir::TypeAliasData| {
+            data.signature.generics().is_none()
+                && data
+                    .signature
+                    .bounds()
+                    .iter()
+                    .all(rg_item_tree::TypeBound::is_relaxed_trait)
+        };
+        let Some(trait_alias_data) = self
+            .context
+            .item_paths()
+            .items()
+            .type_alias_data(associated_ty)?
+        else {
+            return Ok(None);
+        };
+        if !can_project_directly(trait_alias_data) {
+            return Ok(None);
+        }
+        let Some(alias) = self
+            .context
+            .item_paths()
+            .items()
+            .impl_associated_type_by_name(
+                selection.trait_impl.impl_ref,
+                trait_alias_data.name.as_str(),
+            )?
+        else {
+            return Ok(None);
+        };
+        let Some(alias_data) = self.context.item_paths().items().type_alias_data(alias)? else {
+            return Ok(None);
+        };
+        if !can_project_directly(alias_data) {
+            return Ok(None);
+        }
+        let Some(selected_value) =
+            SemanticSignatureQuery::type_alias_ty_from(self.context.item_paths(), alias)?
+        else {
+            return Ok(None);
+        };
+
+        let generics = self
+            .context
+            .item_paths()
+            .generics()
+            .generics(GenericDefRef::Impl(selection.trait_impl.impl_ref))?;
+        let args = selection.subst.as_substitution().args_for(&generics);
+        let complete_subst = Substitution::from_args(&generics, &args);
+        Ok(Some(AssocProjectionResult {
+            ty: selection
+                .table
+                .canonicalize(&complete_subst.apply(&selected_value)),
+            applicability: selection.applicability,
+            table: selection.table.clone(),
+        }))
     }
 
     /// Normalize every associated projection reachable inside one semantic type.

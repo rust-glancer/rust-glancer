@@ -189,9 +189,11 @@ fn try_rebuild_packages(
             .parse
             .validate_saved_sources()
             .context("while attempting to validate captured project source generation")?,
-        // Only these packages received newly derived analysis. Dependencies still come from the
-        // already-validated saved generation, while every source read made during this rebuild
-        // independently verifies the frozen descriptor before returning text.
+        // A dirty overlay is based on the published project generation, not on an implicit poll of
+        // the latest filesystem state. Only these packages received newly derived analysis, so
+        // validate them here. Dependencies deliberately remain at the saved generation until the
+        // watcher publishes their update; any dependency source that this query actually reloads
+        // still verifies its frozen descriptor before returning text.
         RebuildResidency::KeepResident => state
             .parse
             .validate_saved_sources_in_packages(&package_indices)

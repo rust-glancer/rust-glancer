@@ -78,11 +78,12 @@ impl PackageReadLoaders {
     /// Check whether saved item lookup indexes still describe every rebuilt crate.
     ///
     /// Every package rebuilt by a dirty overlay is checked, including crate targets that are not
-    /// part of the immediate body request. The caller enables this only for an overlay built
-    /// directly from saved state, so equality proves that all replaced stores and visibility edges
-    /// are unchanged without walking the full dependency closure. This loader set owns both the
-    /// probes checked here and the Body IR loader used by the caller, so they read the same artifact
-    /// revisions.
+    /// part of the immediate body request. Saved crates must also have materialized Body IR: a
+    /// skipped crate has only an empty lookup-index placeholder, regardless of whether its
+    /// declarations match. The caller enables this only for an overlay built directly from saved
+    /// state, so equality proves that all replaced stores and visibility edges are unchanged
+    /// without walking the full dependency closure. This loader set owns both the probes checked
+    /// here and the Body IR loader used by the caller, so they read the same artifact revisions.
     pub(crate) fn item_lookup_indexes_unchanged(
         &self,
         def_map: &rg_def_map::DefMapDb,

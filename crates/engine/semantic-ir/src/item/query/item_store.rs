@@ -439,22 +439,7 @@ where
         let Some(data) = self.trait_data(trait_ref)? else {
             return Ok(None);
         };
-        for item in &data.items {
-            let AssocItemId::TypeAlias(id) = item else {
-                continue;
-            };
-            let alias = TypeAliasRef {
-                origin: trait_ref.origin,
-                id: *id,
-            };
-            if self
-                .type_alias_data(alias)?
-                .is_some_and(|data| data.name.as_str() == name)
-            {
-                return Ok(Some(alias));
-            }
-        }
-        Ok(None)
+        self.associated_type_by_name(trait_ref.origin, &data.items, name)
     }
 
     /// Follows an impl ref into the header and associated items used by member/type queries.
@@ -476,14 +461,21 @@ where
         let Some(data) = self.impl_data(impl_ref)? else {
             return Ok(None);
         };
-        for item in &data.items {
+        self.associated_type_by_name(impl_ref.origin, &data.items, name)
+    }
+
+    /// Find a named type alias inside either kind of associated-item list.
+    fn associated_type_by_name(
+        &self,
+        origin: DefMapRef,
+        items: &[AssocItemId],
+        name: &str,
+    ) -> Result<Option<TypeAliasRef>, S::Error> {
+        for item in items {
             let AssocItemId::TypeAlias(id) = item else {
                 continue;
             };
-            let alias = TypeAliasRef {
-                origin: impl_ref.origin,
-                id: *id,
-            };
+            let alias = TypeAliasRef { origin, id: *id };
             if self
                 .type_alias_data(alias)?
                 .is_some_and(|data| data.name.as_str() == name)
