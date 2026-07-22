@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-"""Run bounded hover and inlay-hint queries against rust-glancer's real LSP."""
+"""Run bounded editor queries against rust-glancer's real LSP."""
 
 import asyncio
 from dataclasses import dataclass
@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import sys
 import tempfile
+import time
 import traceback
 from typing import Any, Callable, Dict, List, Optional, Sequence
 
@@ -18,6 +19,7 @@ MAX_QUERIES = 20
 MAX_TIMEOUT_MS = 300_000
 DEFAULT_TIMEOUT_MS = 180_000
 MAX_HINTS = 200
+MAX_COMPLETIONS = 200
 STDERR_TAIL_BYTES = 64 * 1024
 MAX_SERVER_LOG_BYTES = 64 * 1024 * 1024
 MAX_PROTOCOL_MESSAGE_BYTES = 64 * 1024 * 1024
@@ -44,6 +46,7 @@ class Options:
     show_logs: bool = False
     package_residency: str = "all-resident"
     max_hints: int = MAX_HINTS
+    max_completions: int = MAX_COMPLETIONS
     label: Optional[str] = None
     file: Optional[str] = None
     binary: Optional[str] = None
@@ -70,6 +73,8 @@ def usage() -> str:
 Usage:
   just agent-debug lsp-query --file <path> hover --marker <text> [--delta <n>] [--label <name>]
   just agent-debug lsp-query --file <path> hover --line <1-based> --col <1-based> [--label <name>]
+  just agent-debug lsp-query --file <path> completion --marker <text> [--delta <n>] [--label <name>]
+  just agent-debug lsp-query --file <path> completion --line <1-based> --col <1-based> [--label <name>]
   just agent-debug lsp-query --file <path> inlay --start-marker <text> --end-marker <text> [--label <name>]
   just agent-debug lsp-query --query-file <path> [--json]
   just agent-debug lsp-query --query-json <json> [--json]
@@ -83,6 +88,8 @@ Query file shape:
     "initializationOptions": {"cache": {"packageResidency": "all-resident"}},
     "queries": [
       {"kind": "hover", "label": "local", "marker": "let value", "delta": 5},
+      {"kind": "completion", "label": "member", "marker": "value.", "delta": 6,
+       "context": {"triggerKind": 2, "triggerCharacter": "."}},
       {"kind": "inlay", "label": "block", "range": {"startMarker": "let value", "endMarker": "next_line"}}
     ]
   }
@@ -128,6 +135,7 @@ def parse_args(argv: Sequence[str]) -> Options:
     integer_options = {
         "--timeout-ms": "timeout_ms",
         "--max-hints": "max_hints",
+        "--max-completions": "max_completions",
         "--delta": "delta",
         "--occurrence": "occurrence",
         "--line": "line",
@@ -170,6 +178,8 @@ def parse_args(argv: Sequence[str]) -> Options:
         fail("--timeout-ms must be between 1 and {}".format(MAX_TIMEOUT_MS))
     if options.max_hints <= 0 or options.max_hints > 5000:
         fail("--max-hints must be between 1 and 5000")
+    if options.max_completions <= 0 or options.max_completions > 5000:
+        fail("--max-completions must be between 1 and 5000")
     if options.profile not in {"release", "debug"}:
         fail("--profile must be either release or debug")
     if options.query_file is not None and options.query_json is not None:
@@ -325,16 +335,16 @@ def query_range(query: Dict[str, Any], text: str) -> Dict[str, Dict[str, int]]:
 
 def single_query_from_options(options: Options) -> Dict[str, Any]:
     if not options.command:
-        fail("missing query command; expected hover or inlay")
+        fail("missing query command; expected hover, completion, or inlay")
     kind = "inlay" if options.command == "inlay-hints" else options.command
-    if kind not in {"hover", "inlay"}:
+    if kind not in {"hover", "completion", "inlay"}:
         fail("unsupported query command: {}".format(options.command))
 
     query: Dict[str, Any] = {
         "kind": kind,
         "label": options.label if options.label is not None else kind,
     }
-    if kind == "hover":
+    if kind in {"hover", "completion"}:
         if options.marker is not None:
             query.update(
                 {"marker": options.marker, "delta": options.delta, "occurrence": options.occurrence}
@@ -416,10 +426,19 @@ def normalize_plan(plan_value: Any, root: Path, options: Options) -> Dict[str, A
     queries = []
     for query_value in query_values:
         query = dict(require_object(query_value, "each query"))
-        if query.get("kind") not in {"hover", "inlay", "inlay-hints"}:
+        if query.get("kind") not in {"hover", "completion", "inlay", "inlay-hints"}:
             fail("unsupported query kind: {}".format(query.get("kind")))
         if query["kind"] == "inlay-hints":
             query["kind"] = "inlay"
+        if "context" in query and query["context"] is not None:
+            context = require_object(query["context"], "completion context")
+            if query["kind"] != "completion":
+                fail("query context is only supported for completion")
+            if context.get("triggerKind") not in {1, 2, 3}:
+                fail("completion context triggerKind must be 1, 2, or 3")
+            trigger_character = context.get("triggerCharacter")
+            if trigger_character is not None and not isinstance(trigger_character, str):
+                fail("completion context triggerCharacter must be a string")
         queries.append(query)
 
     output_format = plan.get("format", "text")
@@ -799,6 +818,49 @@ def normalize_hints(hints_value: Any, max_hints: int) -> List[Dict[str, Any]]:
     return normalized
 
 
+def normalize_completions(
+    completions_value: Any, max_completions: int
+) -> Dict[str, Any]:
+    if completions_value is None:
+        raw_items = []
+        is_incomplete = False
+    elif isinstance(completions_value, list):
+        raw_items = completions_value
+        is_incomplete = False
+    elif isinstance(completions_value, dict) and isinstance(
+        completions_value.get("items"), list
+    ):
+        raw_items = completions_value["items"]
+        is_incomplete = bool(completions_value.get("isIncomplete", False))
+    else:
+        fail("completion result must be an array, completion list, or null")
+
+    items = []
+    for raw_item in raw_items[:max_completions]:
+        if not isinstance(raw_item, dict):
+            fail("each completion item must be an object")
+        label = raw_item.get("label")
+        items.append(
+            {
+                "label": label
+                if isinstance(label, str)
+                else json.dumps(label, ensure_ascii=False),
+                "kind": raw_item.get("kind"),
+                "detail": raw_item.get("detail"),
+                "sortText": raw_item.get("sortText"),
+                "filterText": raw_item.get("filterText"),
+                "insertText": raw_item.get("insertText"),
+            }
+        )
+
+    return {
+        "items": items,
+        "totalCount": len(raw_items),
+        "isIncomplete": is_incomplete,
+        "truncated": len(raw_items) > max_completions,
+    }
+
+
 def without_none(value: Any) -> Any:
     if isinstance(value, dict):
         return {key: without_none(item) for key, item in value.items() if item is not None}
@@ -827,6 +889,10 @@ async def run(argv: Sequence[str]) -> None:
                 "capabilities": {
                     "textDocument": {
                         "hover": {"contentFormat": ["markdown", "plaintext"]},
+                        "completion": {
+                            "dynamicRegistration": False,
+                            "completionItem": {"snippetSupport": True},
+                        },
                         "inlayHint": {"dynamicRegistration": False},
                     }
                 },
@@ -856,9 +922,11 @@ async def run(argv: Sequence[str]) -> None:
         for query in plan["queries"]:
             if query["kind"] == "hover":
                 position = query_position(query, plan["text"])
+                request_started = time.perf_counter_ns()
                 response = await client.request(
                     "textDocument/hover", {"textDocument": {"uri": uri}, "position": position}
                 )
+                elapsed_ms = (time.perf_counter_ns() - request_started) / 1_000_000
                 results.append(
                     {
                         "kind": "hover",
@@ -869,16 +937,44 @@ async def run(argv: Sequence[str]) -> None:
                             "line": position["line"] + 1,
                             "col": position["character"] + 1,
                         },
+                        "elapsedMs": round(elapsed_ms, 3),
                         "text": hover_text(response.get("result")),
                         "raw": response.get("result"),
                     }
                 )
+            elif query["kind"] == "completion":
+                position = query_position(query, plan["text"])
+                params = {"textDocument": {"uri": uri}, "position": position}
+                if query.get("context") is not None:
+                    params["context"] = query["context"]
+                request_started = time.perf_counter_ns()
+                response = await client.request("textDocument/completion", params)
+                elapsed_ms = (time.perf_counter_ns() - request_started) / 1_000_000
+                completions = normalize_completions(
+                    response.get("result"), options.max_completions
+                )
+                results.append(
+                    {
+                        "kind": "completion",
+                        "label": query.get("label")
+                        if query.get("label") is not None
+                        else "completion",
+                        "position": {
+                            "line": position["line"] + 1,
+                            "col": position["character"] + 1,
+                        },
+                        "elapsedMs": round(elapsed_ms, 3),
+                        **completions,
+                    }
+                )
             elif query["kind"] == "inlay":
                 query_range_value = query_range(query, plan["text"])
+                request_started = time.perf_counter_ns()
                 response = await client.request(
                     "textDocument/inlayHint",
                     {"textDocument": {"uri": uri}, "range": query_range_value},
                 )
+                elapsed_ms = (time.perf_counter_ns() - request_started) / 1_000_000
                 raw_hints = response.get("result")
                 results.append(
                     {
@@ -896,6 +992,7 @@ async def run(argv: Sequence[str]) -> None:
                                 "col": query_range_value["end"]["character"] + 1,
                             },
                         },
+                        "elapsedMs": round(elapsed_ms, 3),
                         "hints": normalize_hints(raw_hints, options.max_hints),
                         "truncated": isinstance(raw_hints, list)
                         and len(raw_hints) > options.max_hints,
@@ -931,19 +1028,38 @@ async def run(argv: Sequence[str]) -> None:
         label = " " + str(result["label"])
         if result["kind"] == "hover":
             print(
-                "\nhover{} @ {}:{}".format(
-                    label, result["position"]["line"], result["position"]["col"]
+                "\nhover{} @ {}:{} ({:.3f} ms)".format(
+                    label,
+                    result["position"]["line"],
+                    result["position"]["col"],
+                    result["elapsedMs"],
                 )
             )
             print(result.get("text") or "<no hover>")
+        elif result["kind"] == "completion":
+            print(
+                "\ncompletion{} @ {}:{} ({:.3f} ms, {} items)".format(
+                    label,
+                    result["position"]["line"],
+                    result["position"]["col"],
+                    result["elapsedMs"],
+                    result["totalCount"],
+                )
+            )
+            for item in result["items"]:
+                detail = " — {}".format(item["detail"]) if item.get("detail") else ""
+                print("  {}{}".format(item["label"], detail))
+            if result["truncated"]:
+                print("  <truncated>")
         else:
             print(
-                "\ninlay{} @ {}:{}..{}:{}".format(
+                "\ninlay{} @ {}:{}..{}:{} ({:.3f} ms)".format(
                     label,
                     result["range"]["start"]["line"],
                     result["range"]["start"]["col"],
                     result["range"]["end"]["line"],
                     result["range"]["end"]["col"],
+                    result["elapsedMs"],
                 )
             )
             for hint in result["hints"]:

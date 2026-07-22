@@ -3,9 +3,9 @@
 //! Crate-semantic state is shared by every query for the use-site. A session adds one inference
 //! cache whose answers may contain body-owned variables and closure identities.
 //!
-//! `TraitSelectionSession::new` starts both layers. `for_body` keeps the crate layer and replaces
-//! only the inference layer. Cloning either session shares all of the state it already owns; a
-//! clone does not accidentally start another solver program or body cache.
+//! `TraitSelectionSession::new` starts both layers. `fresh_inference_scope` and `for_body` keep the
+//! crate layer and replace only the inference layer. Cloning any session shares all of the state it
+//! already owns; a clone does not accidentally start another solver program or inference cache.
 
 use std::{
     collections::HashMap,
@@ -126,6 +126,19 @@ impl TraitSelectionSession {
         self.shared.use_site
     }
 
+    /// Keep crate-semantic solver state while starting an independent inference scope.
+    ///
+    /// This is the safe handoff between separate build or query operations. Chalk's program,
+    /// canonical impl headers, candidate indexes, and stable answers remain shared, while answers
+    /// containing inference variables or body identities stay with the operation that created
+    /// them.
+    pub fn fresh_inference_scope(&self) -> Self {
+        Self {
+            shared: self.shared.clone(),
+            inference_cache: Arc::new(ChalkInferenceCache::new()),
+        }
+    }
+
     /// Create one body-owned inference scope over the same crate-semantic caches.
     ///
     /// Closure identities and live inference variables cannot produce reusable crate-wide Chalk
@@ -136,10 +149,7 @@ impl TraitSelectionSession {
             body.crate_ref, self.shared.use_site,
             "body trait-selection scope must use the session crate"
         );
-        Self {
-            shared: self.shared.clone(),
-            inference_cache: Arc::new(ChalkInferenceCache::new()),
-        }
+        self.fresh_inference_scope()
     }
 
     /// Prove one conjunction using this session's crate program and inference-scope cache.

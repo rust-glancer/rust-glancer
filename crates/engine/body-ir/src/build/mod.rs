@@ -9,6 +9,8 @@ mod query_source;
 mod resolve;
 mod state;
 
+use std::time::Instant;
+
 use anyhow::Context as _;
 
 use rg_def_map::PackageDefMaps as DefMapPackage;
@@ -81,14 +83,17 @@ impl<'db, 'names> BodyIrDbBuilder<'db, 'names> {
             self.policy,
             self.interners.as_mut(),
         )?;
-        let packages = resolve::resolve_packages(
+        let resolved = resolve::resolve_packages(
             packages,
             self.parse,
             self.interners.as_mut(),
             &def_map_txn,
             &semantic_ir_txn,
+            false,
         )
         .context("while attempting to resolve body IR packages")?;
+        debug_assert!(resolved.trait_selection_sessions.is_empty());
+        let packages = resolved.packages;
         let packages = compact_packages_two_phase(packages);
         let mut db = BodyIrDb::from_packages(packages);
         {
@@ -174,7 +179,31 @@ impl<'db, 'names> BodyIrDbPackageRebuilder<'db, 'names> {
     }
 
     pub fn build(self) -> anyhow::Result<BodyIrDb> {
+        let (body_ir, trait_selection_sessions) = self.build_inner(false)?;
+        debug_assert!(trait_selection_sessions.is_empty());
+        Ok(body_ir)
+    }
+
+    /// Rebuild Body IR and return the crate-semantic solver state warmed by that exact snapshot.
+    ///
+    /// The sessions do not borrow build inputs. A caller serving an immediate query can reuse them
+    /// and then drop them with its other request-owned resources; ordinary builds should use
+    /// [`Self::build`] so solver state is not retained accidentally.
+    pub fn build_with_trait_selection_sessions(
+        self,
+    ) -> anyhow::Result<(BodyIrDb, Vec<rg_ty::TraitSelectionSession>)> {
+        self.build_inner(true)
+    }
+
+    fn build_inner(
+        self,
+        retain_trait_selection: bool,
+    ) -> anyhow::Result<(BodyIrDb, Vec<rg_ty::TraitSelectionSession>)> {
+        let rebuild_started = Instant::now();
+        let clone_started = Instant::now();
         let mut next = self.old.clone();
+        let clone_ms = clone_started.elapsed().as_millis();
+        let setup_started = Instant::now();
         let packages = normalized_package_slots(self.packages);
         let materialization = self.materialization.lowering();
         let semantic_ir_txn = self
@@ -183,6 +212,8 @@ impl<'db, 'names> BodyIrDbPackageRebuilder<'db, 'names> {
         let def_map_txn = self
             .def_map
             .read_txn_for_subset(self.def_map_loader, self.subset);
+        let setup_ms = setup_started.elapsed().as_millis();
+        let lowering_started = Instant::now();
         let rebuilt_packages = lower::build_selected_packages(
             self.parse,
             &def_map_txn,
@@ -192,16 +223,24 @@ impl<'db, 'names> BodyIrDbPackageRebuilder<'db, 'names> {
             self.interners,
         )
         .context("while attempting to lower rebuilt body IR packages")?;
-        let rebuilt_packages = resolve::resolve_selected_packages(
+        let lowering_ms = lowering_started.elapsed().as_millis();
+        let resolution_started = Instant::now();
+        let resolved = resolve::resolve_selected_packages(
             rebuilt_packages,
             self.parse,
             self.interners,
             &def_map_txn,
             &semantic_ir_txn,
+            retain_trait_selection,
         )
         .context("while attempting to resolve rebuilt body IR packages")?;
+        let rebuilt_packages = resolved.packages;
+        let resolution_ms = resolution_started.elapsed().as_millis();
+        let compaction_started = Instant::now();
         let compacted_packages = compact_rebuilt_packages_two_phase(rebuilt_packages);
+        let compaction_ms = compaction_started.elapsed().as_millis();
 
+        let replacement_started = Instant::now();
         {
             let mut mutator = next.mutator();
             for (package, rebuilt) in compacted_packages {
@@ -210,7 +249,27 @@ impl<'db, 'names> BodyIrDbPackageRebuilder<'db, 'names> {
                 })?;
             }
         }
-        Ok(next)
+        let replacement_ms = replacement_started.elapsed().as_millis();
+        let read_txn_drop_started = Instant::now();
+        drop(semantic_ir_txn);
+        drop(def_map_txn);
+        let read_txn_drop_ms = read_txn_drop_started.elapsed().as_millis();
+
+        tracing::trace!(
+            ?materialization,
+            package_count = packages.len(),
+            trait_selection_session_count = resolved.trait_selection_sessions.len(),
+            clone_ms,
+            setup_ms,
+            lowering_ms,
+            resolution_ms,
+            compaction_ms,
+            replacement_ms,
+            read_txn_drop_ms,
+            total_ms = rebuild_started.elapsed().as_millis(),
+            "Body IR package rebuild phases finished"
+        );
+        Ok((next, resolved.trait_selection_sessions))
     }
 }
 

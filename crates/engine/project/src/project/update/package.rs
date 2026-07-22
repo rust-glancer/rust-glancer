@@ -150,9 +150,16 @@ fn try_rebuild_packages(
         BodyRebuildScope::CoverageOnly => body_rebuilder.coverage_only(state.body_ir_policy),
         BodyRebuildScope::DirtyFiles(files) => body_rebuilder.selected_files(files.to_vec()),
     };
-    let body_ir = body_rebuilder
-        .build()
-        .context("while attempting to rebuild affected body IR packages")?;
+    let (body_ir, trait_selection_sessions) = match plan.body_scope {
+        // Dirty queries can immediately reuse the crate-semantic solver program built while these
+        // same bodies were resolved. Saved rebuilds have no request boundary to own that state and
+        // deliberately keep the ordinary drop-on-build behavior.
+        BodyRebuildScope::DirtyFiles(_) => body_rebuilder.build_with_trait_selection_sessions(),
+        BodyRebuildScope::ConfiguredBodies | BodyRebuildScope::CoverageOnly => {
+            body_rebuilder.build().map(|body_ir| (body_ir, Vec::new()))
+        }
+    }
+    .context("while attempting to rebuild affected body IR packages")?;
     state
         .parse
         .validate_saved_sources()
@@ -166,6 +173,7 @@ fn try_rebuild_packages(
     state.def_map = def_map;
     state.semantic_ir = semantic_ir;
     state.body_ir = body_ir;
+    state.query_trait_selection_sessions = trait_selection_sessions;
     Shrink::shrink_to_fit(&mut state.names);
     if matches!(plan.residency, RebuildResidency::RestoreSavedState) {
         ResidencyApplication::restore(state, plan.source_packages.as_slice())

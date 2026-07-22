@@ -43,6 +43,27 @@ impl<'db> IndexedViewDb<'db> {
         }
     }
 
+    /// Seed crate-semantic solver state produced while building this exact indexed snapshot.
+    ///
+    /// The caller owns snapshot coherence and the lifetime policy. The view keeps the same
+    /// request-local map used by lazily created sessions, so seeded and newly encountered crates
+    /// follow one lookup path.
+    pub fn with_trait_selection_sessions(
+        self,
+        sessions: impl IntoIterator<Item = TraitSelectionSession>,
+    ) -> Self {
+        {
+            let mut by_crate = self
+                .trait_selection
+                .lock()
+                .expect("trait-selection session map lock should not be poisoned");
+            for session in sessions {
+                by_crate.insert(session.use_site(), session);
+            }
+        }
+        self
+    }
+
     /// Return the solver session shared by queries at one crate use site.
     ///
     /// `IndexedViewDb` lives for one analysis request, so the potentially large Chalk program and

@@ -14,6 +14,7 @@ use rg_package_store::{PackageStoreError, PackageSubset};
 use rg_parse::{FileId, ParseDb};
 use rg_semantic_ir::SemanticIrDb;
 use rg_text::PackageNameInterners;
+use rg_ty::TraitSelectionSession;
 use rg_workspace::{CargoMetadataConfig, WorkspaceLoweringConfig, WorkspaceMetadata};
 
 use crate::{
@@ -76,6 +77,12 @@ pub(crate) struct ProjectState {
     pub(crate) def_map: DefMapDb,
     pub(crate) semantic_ir: SemanticIrDb,
     pub(crate) body_ir: BodyIrDb,
+    /// Solver state warmed while constructing this exact dirty snapshot.
+    ///
+    /// Saved projects leave this empty. Dirty queries consume the reuse opportunity and clear the
+    /// sessions at the ordinary request-memory release boundary.
+    #[memsize(skip)]
+    pub(crate) query_trait_selection_sessions: Vec<TraitSelectionSession>,
 }
 
 impl ProjectState {

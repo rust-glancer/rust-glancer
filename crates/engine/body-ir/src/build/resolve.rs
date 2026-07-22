@@ -8,6 +8,7 @@ use rg_def_map::{DefMapReadTxn, PackageSlot};
 use rg_ir_model::{CrateId, CrateRef};
 use rg_semantic_ir::SemanticIrReadTxn;
 use rg_text::{NameInterner, PackageNameInterners};
+use rg_ty::TraitSelectionSession;
 
 use crate::{CrateBodies, PackageBodies};
 
@@ -17,16 +18,27 @@ use super::{local_thread_pool, lower::LoweredPackageBodies, state::CrateBodyBuil
 // normal scheduling variance.
 const SLOW_PACKAGE_RESOLUTION: Duration = Duration::from_secs(2);
 
+pub(super) struct ResolvedPackages<T> {
+    pub(super) packages: T,
+    pub(super) trait_selection_sessions: Vec<TraitSelectionSession>,
+}
+
+struct ResolvedPackage {
+    bodies: PackageBodies,
+    trait_selection_sessions: Vec<TraitSelectionSession>,
+}
+
 pub(super) fn resolve_packages(
     packages: Vec<LoweredPackageBodies>,
     parse: &rg_parse::ParseDb,
     interners: &mut PackageNameInterners,
     def_map: &DefMapReadTxn<'_>,
     semantic_ir: &SemanticIrReadTxn<'_>,
-) -> anyhow::Result<Vec<PackageBodies>> {
+    retain_trait_selection: bool,
+) -> anyhow::Result<ResolvedPackages<Vec<PackageBodies>>> {
     let profile_context = rg_profile::ProfileThreadContext::capture();
     let thread_pool = local_thread_pool("rg-body-resolve")?;
-    thread_pool
+    let resolved = thread_pool
         .install(|| {
             packages
                 .into_par_iter()
@@ -42,11 +54,22 @@ pub(super) fn resolve_packages(
                         interner,
                         def_map,
                         semantic_ir,
+                        retain_trait_selection,
                     )
                 })
                 .collect::<anyhow::Result<Vec<_>>>()
         })
-        .context("while attempting to resolve body IR packages")
+        .context("while attempting to resolve body IR packages")?;
+    let mut packages = Vec::with_capacity(resolved.len());
+    let mut trait_selection_sessions = Vec::new();
+    for resolved in resolved {
+        packages.push(resolved.bodies);
+        trait_selection_sessions.extend(resolved.trait_selection_sessions);
+    }
+    Ok(ResolvedPackages {
+        packages,
+        trait_selection_sessions,
+    })
 }
 
 pub(super) fn resolve_selected_packages(
@@ -55,7 +78,8 @@ pub(super) fn resolve_selected_packages(
     interners: &mut PackageNameInterners,
     def_map: &DefMapReadTxn<'_>,
     semantic_ir: &SemanticIrReadTxn<'_>,
-) -> anyhow::Result<Vec<(PackageSlot, PackageBodies)>> {
+    retain_trait_selection: bool,
+) -> anyhow::Result<ResolvedPackages<Vec<(PackageSlot, PackageBodies)>>> {
     let profile_context = rg_profile::ProfileThreadContext::capture();
     // Selected rebuilds are sparse, but resolution may discover nested bodies and lower them,
     // which needs mutable access to the matching package name interner. The rebuilder normalizes
@@ -93,7 +117,7 @@ pub(super) fn resolve_selected_packages(
     }
 
     let thread_pool = local_thread_pool("rg-body-resolve")?;
-    thread_pool
+    let resolved = thread_pool
         .install(|| {
             jobs.into_par_iter()
                 .map(|(package_slot, parse_package, package, interner)| {
@@ -105,12 +129,24 @@ pub(super) fn resolve_selected_packages(
                         interner,
                         def_map,
                         semantic_ir,
+                        retain_trait_selection,
                     )?;
                     Ok((package_slot, package))
                 })
                 .collect::<anyhow::Result<Vec<_>>>()
         })
-        .context("while attempting to resolve selected body IR packages")
+        .context("while attempting to resolve selected body IR packages")?;
+
+    let mut packages = Vec::with_capacity(resolved.len());
+    let mut trait_selection_sessions = Vec::new();
+    for (package_slot, resolved) in resolved {
+        packages.push((package_slot, resolved.bodies));
+        trait_selection_sessions.extend(resolved.trait_selection_sessions);
+    }
+    Ok(ResolvedPackages {
+        packages,
+        trait_selection_sessions,
+    })
 }
 
 fn resolve_package(
@@ -120,7 +156,8 @@ fn resolve_package(
     interner: &mut NameInterner,
     def_map_txn: &DefMapReadTxn<'_>,
     semantic_ir: &SemanticIrReadTxn<'_>,
-) -> anyhow::Result<PackageBodies> {
+    retain_trait_selection: bool,
+) -> anyhow::Result<ResolvedPackage> {
     let crate_count = package.len();
     let span = tracing::debug_span!(
         "body_ir_package_resolution",
@@ -136,7 +173,7 @@ fn resolve_package(
         .map(|(crate_idx, crate_bodies)| {
             let coverage = crate_bodies.coverage();
             if !coverage.is_materialized() {
-                return Ok(CrateBodies::empty(coverage));
+                return Ok((CrateBodies::empty(coverage), None));
             }
 
             let crate_ref = CrateRef {
@@ -144,17 +181,25 @@ fn resolve_package(
                 crate_id: CrateId(crate_idx),
             };
 
-            CrateBodyBuildState::new(crate_ref, parse_package, crate_bodies, interner)
-                .resolve(def_map_txn, semantic_ir)
+            let (bodies, trait_selection) =
+                CrateBodyBuildState::new(crate_ref, parse_package, crate_bodies, interner)
+                    .resolve(def_map_txn, semantic_ir, retain_trait_selection)?;
+            Ok((bodies, trait_selection))
         })
         .collect::<anyhow::Result<Vec<_>>>()?;
+    let mut bodies = Vec::with_capacity(crates.len());
+    let mut trait_selection_sessions = Vec::new();
+    for (crate_bodies, trait_selection) in crates {
+        bodies.push(crate_bodies);
+        trait_selection_sessions.extend(trait_selection);
+    }
 
     let elapsed = started.elapsed();
     if elapsed >= SLOW_PACKAGE_RESOLUTION {
         tracing::debug!(
             elapsed_ms = elapsed.as_millis(),
             crate_count,
-            body_count = crates
+            body_count = bodies
                 .iter()
                 .map(|crate_bodies| crate_bodies.bodies().len())
                 .sum::<usize>(),
@@ -162,5 +207,8 @@ fn resolve_package(
         );
     }
 
-    Ok(PackageBodies::new(crates))
+    Ok(ResolvedPackage {
+        bodies: PackageBodies::new(bodies),
+        trait_selection_sessions,
+    })
 }

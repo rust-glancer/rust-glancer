@@ -113,22 +113,32 @@ impl<'a> QueryRunner<'a> {
                 dirty.as_ref(),
                 DirtyOverlayScope::ChangedPackages,
                 |snapshot| {
+                    let snapshot_query_started = Instant::now();
+                    let crate_offsets_started = Instant::now();
                     let crate_offsets = Self::crate_offsets(snapshot, &path, position)
                         .context("resolve completion position")?;
+                    let crate_offsets_us = crate_offsets_started.elapsed().as_micros();
                     let analysis_crates = crate_offsets
                         .iter()
                         .map(|(_, crate_ref, _)| *crate_ref)
                         .collect::<Vec<_>>();
+                    let analysis_load_started = Instant::now();
                     let analysis = snapshot
                         .analysis_for_crates(&analysis_crates)
                         .context("load completion analysis")?;
+                    let analysis_load_us = analysis_load_started.elapsed().as_micros();
                     let mut completions = UniqueVec::new();
+                    let mut line_index_load_us = 0_u128;
+                    let mut analysis_compute_us = 0_u128;
+                    let mut protocol_conversion_us = 0_u128;
 
                     for (context, crate_ref, offset) in crate_offsets {
-                        let Some(line_index) = snapshot
+                        let line_index_load_started = Instant::now();
+                        let line_index = snapshot
                             .file_line_index(context.package, context.file)
-                            .context("load completion line index")?
-                        else {
+                            .context("load completion line index")?;
+                        line_index_load_us += line_index_load_started.elapsed().as_micros();
+                        let Some(line_index) = line_index else {
                             continue;
                         };
                         let mut query = CompletionQuery::new(crate_ref, context.file, offset)
@@ -138,16 +148,36 @@ impl<'a> QueryRunner<'a> {
                         if let Some(source_text) = source_text {
                             query = query.with_source_text(source_text);
                         }
-                        for item in analysis
+                        let analysis_compute_started = Instant::now();
+                        let items = analysis
                             .completions_at(query)
-                            .context("compute completions")?
-                        {
+                            .context("compute completions")?;
+                        analysis_compute_us += analysis_compute_started.elapsed().as_micros();
+                        let protocol_conversion_started = Instant::now();
+                        for item in items {
                             let item = completion::completion_item(item, line_index);
                             completions.push(item);
                         }
+                        protocol_conversion_us += protocol_conversion_started.elapsed().as_micros();
                     }
 
-                    Ok(completions.into_vec())
+                    let completions = completions.into_vec();
+                    let analysis_drop_started = Instant::now();
+                    drop(analysis);
+                    let analysis_drop_us = analysis_drop_started.elapsed().as_micros();
+                    tracing::trace!(
+                        crate_count = analysis_crates.len(),
+                        result_count = completions.len(),
+                        crate_offsets_us,
+                        analysis_load_us,
+                        line_index_load_us,
+                        analysis_compute_us,
+                        protocol_conversion_us,
+                        analysis_drop_us,
+                        total_us = snapshot_query_started.elapsed().as_micros(),
+                        "completion snapshot query phases finished"
+                    );
+                    Ok(completions)
                 },
             )
             .context("run completion query")?;

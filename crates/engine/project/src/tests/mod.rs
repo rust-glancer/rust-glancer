@@ -1835,7 +1835,7 @@ pub fn dirty_body(value: Dirty) {
         HostObservation::workspace_symbols("Saved"),
         HostObservation::workspace_symbols("Dirty"),
     ]);
-    let overlay = fixture.dirty_overlay("src/lib.rs", dirty_text.text());
+    let mut overlay = fixture.dirty_overlay("src/lib.rs", dirty_text.text());
     let dirty_overlay = fixture.render_dirty_project(
         &overlay,
         dirty_text.text(),
@@ -1850,6 +1850,16 @@ pub fn dirty_body(value: Dirty) {
                 dirty_text.offset("receiver"),
             ),
         ],
+    );
+    assert_eq!(
+        overlay.state.query_trait_selection_sessions.len(),
+        1,
+        "dirty Body IR should expose one warmed session for its materialized crate",
+    );
+    overlay.release_query_memory();
+    assert!(
+        overlay.state.query_trait_selection_sessions.is_empty(),
+        "request cleanup should release warmed solver state instead of adding idle residency",
     );
     let saved_after = fixture.render(&[
         HostObservation::resident_stats("saved after dirty overlay"),

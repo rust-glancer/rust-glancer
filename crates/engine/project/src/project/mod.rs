@@ -275,6 +275,7 @@ impl Project {
             .parse
             .offload_line_indexes_for_packages(&offloadable_packages);
         self.state.parse.evict_saved_source_text();
+        self.state.query_trait_selection_sessions.clear();
     }
 }
 
