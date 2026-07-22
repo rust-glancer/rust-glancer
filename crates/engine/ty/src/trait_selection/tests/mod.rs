@@ -733,7 +733,7 @@ fn probe_does_not_infer_unconstrained_impl_parameter_from_visible_impls() {
 }
 
 #[test]
-fn probe_uses_chalk_to_prove_impl_type_param_bounds() {
+fn probe_proves_impl_type_param_bounds() {
     check_trait_selection_queries(
         r#"
             traits
@@ -747,11 +747,11 @@ fn probe_uses_chalk_to_prove_impl_type_param_bounds() {
               impl#1 impl Clone for User
         "#,
         vec![TraitSelectionCase::probe(
-            "prove Clone bound with Chalk",
+            "prove concrete Clone bound",
             "Vec<?item>: FromIterator<User>",
         )],
         expect![[r#"
-            prove Clone bound with Chalk
+            prove concrete Clone bound
               query: selection
               goal: Vec<?item>: FromIterator<User>
               result: one

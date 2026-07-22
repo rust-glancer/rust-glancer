@@ -171,7 +171,10 @@ impl ProjectBuilder {
             project_bytes,
             process_memory,
         );
-        Ok(Project { state })
+        Ok(Project {
+            state,
+            is_dirty_overlay: false,
+        })
     }
 }
 
@@ -233,5 +236,6 @@ pub(crate) fn build_resident_state(
         def_map: phases.def_map,
         semantic_ir: phases.semantic_ir,
         body_ir: phases.body_ir,
+        query_cache: None,
     })
 }

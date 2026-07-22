@@ -26,6 +26,7 @@ BUILD_ROOT = DEBUG_ROOT / "build"
 RUST_GLANCER_PACKAGE = "rust-glancer"
 MODES = {"analyze", "compare-lsp", "fixture", "help", "last", "lsp-query", "test"}
 ADMINISTRATIVE_MODES = {"fixture", "last"}
+MANAGED_TMPDIR_MODES = {"analyze", "compare-lsp", "lsp-query"}
 
 PLATFORM = "linux" if sys.platform.startswith("linux") else sys.platform
 SUPPORTED_PLATFORMS = {"darwin", "linux"}
@@ -120,6 +121,8 @@ Examples:
 
 Everything after the mode is forwarded as an argv array. Shell metacharacters are never evaluated.
 Each build has a separate fixed 20m timeout. The runner supports macOS and Linux.
+Test mode inherits the system temporary directory so Cargo fixtures stay outside this workspace.
+Use --env TMPDIR=<path> before the mode when a test intentionally needs an override.
 fixture and last reject runner options, including --dry-run.
 Run just agent-debug lsp-query --help for the bounded LSP query syntax.
 """.strip()
@@ -347,9 +350,16 @@ def should_build(mode: str, mode_args: Sequence[str], options: RunnerOptions) ->
     return options.build_enabled and mode != "test" and not is_lsp_query_help(mode, mode_args)
 
 
-def runtime_environment(options: RunnerOptions, run_directory: Path) -> Dict[str, str]:
+def runtime_environment(
+    mode: str, options: RunnerOptions, run_directory: Path
+) -> Dict[str, str]:
     environment = dict(os.environ)
-    environment["TMPDIR"] = str(run_directory / "tmp")
+
+    # Cargo-backed tests create standalone projects through `tempfile`. Putting those projects
+    # below rust-glancer changes Cargo workspace discovery, so only runtime debugging modes use
+    # the runner-owned scratch directory by default.
+    if mode in MANAGED_TMPDIR_MODES:
+        environment["TMPDIR"] = str(run_directory / "tmp")
     environment["RUST_GLANCER_AGENT_DEBUG"] = "1"
     environment.update(options.environment)
 
@@ -963,7 +973,7 @@ async def run_managed_workflow(
             )
         )
 
-    environment = runtime_environment(options, run_directory)
+    environment = runtime_environment(mode, options, run_directory)
     warmups = []
     for index in range(options.warmup):
         result = await run_supervised(

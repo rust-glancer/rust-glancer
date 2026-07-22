@@ -25,6 +25,9 @@ intentionally sufficient.
 Read `just agent-debug --help` before constructing an unusual invocation. Runner options go before
 the mode; every argument after the mode is forwarded literally to that mode. `--timeout` applies
 to each warm-up and measured run. The Cargo build has a separate fixed 20-minute timeout.
+Test mode inherits the system temporary directory so tempfile-backed Cargo fixtures remain outside
+the rust-glancer workspace. Other runtime modes keep scratch files in their managed run directory.
+Use `--env TMPDIR=<path>` before the mode only when a test intentionally needs an override.
 
 ```bash
 just agent-debug --log 'rg_lsp_engine=debug' analyze . --profile default,macros -m

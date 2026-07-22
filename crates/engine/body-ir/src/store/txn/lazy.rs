@@ -7,7 +7,7 @@
 //! ```text
 //! first Body IR query
 //!     -> package manifest
-//!     -> crate index, one file shard, or the complete crate
+//!     -> item lookup index, one file shard, or the complete crate
 //! ```
 //!
 //! For example, scanning `src/foo.rs` loads the manifest and the shard for `foo.rs`. Asking for all
@@ -49,8 +49,8 @@ pub(super) enum PackageReadEntry<'db> {
 /// Lazily decoded pieces of one offloaded package.
 ///
 /// Loading begins with `loaded`, which contains the manifest and creates empty cells for every
-/// crate index and file shard described by it. Those cells are then filled independently as query
-/// methods need them.
+/// item lookup index and file shard described by it. Those cells are then filled independently as
+/// query methods need them.
 #[derive(Debug, Clone)]
 pub(super) struct LazyPackage<'db> {
     loader: BodyIrLoader<'db>,
@@ -92,7 +92,7 @@ impl<'db> LazyPackage<'db> {
     ///
     /// A complete crate already contains the same index, so prefer it when another query loaded
     /// the crate first. Otherwise the index remains an independent cache unit.
-    pub(super) fn semantic_index(
+    pub(super) fn item_lookup_index(
         &self,
         crate_ref: CrateRef,
     ) -> Result<Option<&ItemLookupIndex>, PackageStoreError> {
@@ -103,15 +103,15 @@ impl<'db> LazyPackage<'db> {
             return Ok(None);
         };
         if let Some(crate_bodies) = loaded_crate.bodies.get() {
-            return Ok(Some(crate_bodies.semantic_index()));
+            return Ok(Some(crate_bodies.item_lookup_index()));
         }
-        if loaded_crate.semantic_index.get().is_none() {
+        if loaded_crate.item_lookup_index.get().is_none() {
             let index = self
                 .loader
-                .load_semantic_index(crate_ref.package, crate_ref.crate_id)?;
-            let _ = loaded_crate.semantic_index.set(index);
+                .load_item_lookup_index(crate_ref.package, crate_ref.crate_id)?;
+            let _ = loaded_crate.item_lookup_index.set(index);
         }
-        Ok(loaded_crate.semantic_index.get().map(Arc::as_ref))
+        Ok(loaded_crate.item_lookup_index.get().map(Arc::as_ref))
     }
 
     /// Enumerate one file's bodies, or all crate bodies when `file` is absent.
@@ -278,7 +278,7 @@ impl LoadedPackage {
             .crates()
             .iter()
             .map(|crate_manifest| LoadedCrate {
-                semantic_index: OnceLock::new(),
+                item_lookup_index: OnceLock::new(),
                 shards: crate_manifest
                     .files()
                     .iter()
@@ -299,11 +299,11 @@ impl LoadedPackage {
 /// Independently loadable pieces of one crate.
 ///
 /// `bodies` is the complete fallback representation. Once it is present, query methods prefer it
-/// over `semantic_index` and `shards`, but already-loaded smaller pieces remain harmless and keep
+/// over `item_lookup_index` and `shards`, but already-loaded smaller pieces remain harmless and keep
 /// any references returned earlier by the transaction valid.
 #[derive(Debug, Clone)]
 struct LoadedCrate {
-    semantic_index: OnceLock<Arc<ItemLookupIndex>>,
+    item_lookup_index: OnceLock<Arc<ItemLookupIndex>>,
     shards: Vec<(FileId, OnceLock<Arc<BodyFileShard>>)>,
     bodies: OnceLock<Arc<CrateBodies>>,
 }

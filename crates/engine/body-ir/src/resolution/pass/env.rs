@@ -14,7 +14,7 @@ use crate::{ir::BodyQueryView, resolution::BodyResolutionContext};
 pub(super) struct BodyResolutionEnv<'query, D, I> {
     def_maps: &'query D,
     item_stores: &'query I,
-    semantic_index: &'query ItemLookupIndex,
+    item_lookup_index: &'query ItemLookupIndex,
     body_ref: BodyRef,
     trait_selection: TraitSelectionSession,
 }
@@ -24,7 +24,7 @@ impl<D, I> Clone for BodyResolutionEnv<'_, D, I> {
         Self {
             def_maps: self.def_maps,
             item_stores: self.item_stores,
-            semantic_index: self.semantic_index,
+            item_lookup_index: self.item_lookup_index,
             body_ref: self.body_ref,
             trait_selection: self.trait_selection.clone(),
         }
@@ -39,14 +39,14 @@ where
     pub(super) fn new(
         def_maps: &'query D,
         item_stores: &'query I,
-        semantic_index: &'query ItemLookupIndex,
+        item_lookup_index: &'query ItemLookupIndex,
         body_ref: BodyRef,
         trait_selection: TraitSelectionSession,
     ) -> Self {
         Self {
             def_maps,
             item_stores,
-            semantic_index,
+            item_lookup_index,
             body_ref,
             trait_selection,
         }
@@ -65,7 +65,7 @@ where
             self.item_stores,
             self.body_ref,
             body,
-            self.semantic_index,
+            self.item_lookup_index,
             self.trait_selection.clone(),
         )
     }

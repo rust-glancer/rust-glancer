@@ -303,7 +303,7 @@ impl<'lower> ChalkLowerer<'lower> {
     /// GAT parameters and required bounds need additional Chalk binders or predicates. A relaxed
     /// bound such as `?Sized` only suppresses Rust's implicit `Sized` requirement; rust-glancer
     /// does not introduce that implicit requirement, so there is no predicate to lower here.
-    fn supports_associated_ty_declaration(data: &TypeAliasData) -> bool {
+    pub(super) fn supports_associated_ty_declaration(data: &TypeAliasData) -> bool {
         data.signature.generics().is_none()
             && data
                 .signature

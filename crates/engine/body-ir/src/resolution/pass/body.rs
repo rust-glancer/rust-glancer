@@ -48,7 +48,7 @@ where
     pub(crate) fn new(
         def_maps: &'query D,
         item_stores: &'query I,
-        semantic_index: &'query ItemLookupIndex,
+        item_lookup_index: &'query ItemLookupIndex,
         body_ref: BodyRef,
         body: &'body BodyData,
         trait_selection: &'query TraitSelectionSession,
@@ -56,7 +56,7 @@ where
         let env = BodyResolutionEnv::new(
             def_maps,
             item_stores,
-            semantic_index,
+            item_lookup_index,
             body_ref,
             trait_selection.for_body(body_ref),
         );

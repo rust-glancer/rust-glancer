@@ -38,7 +38,7 @@ use super::lower::{LoweredBodyData, PendingBindingResolution};
 pub(crate) struct PatternBindingMaterializationPass<'query, 'body, D, I> {
     def_maps: &'query D,
     item_stores: &'query I,
-    semantic_index: &'query ItemLookupIndex,
+    item_lookup_index: &'query ItemLookupIndex,
     body_ref: rg_ir_model::BodyRef,
     trait_selection: &'query TraitSelectionSession,
     body: &'body mut LoweredBodyData,
@@ -52,7 +52,7 @@ where
     pub(crate) fn new(
         def_maps: &'query D,
         item_stores: &'query I,
-        semantic_index: &'query ItemLookupIndex,
+        item_lookup_index: &'query ItemLookupIndex,
         body_ref: rg_ir_model::BodyRef,
         body: &'body mut LoweredBodyData,
         trait_selection: &'query TraitSelectionSession,
@@ -60,7 +60,7 @@ where
         Self {
             def_maps,
             item_stores,
-            semantic_index,
+            item_lookup_index,
             body_ref,
             trait_selection,
             body,
@@ -73,7 +73,7 @@ where
             self.item_stores,
             self.body_ref,
             self.body.body(),
-            self.semantic_index,
+            self.item_lookup_index,
             self.trait_selection.clone(),
         )
     }

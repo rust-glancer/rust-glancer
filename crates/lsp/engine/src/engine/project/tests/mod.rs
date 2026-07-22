@@ -19,25 +19,6 @@ use crate::{
     service::{ServiceNotificationPublisher, ServiceNotificationsSink},
 };
 
-#[derive(Debug, Default)]
-struct DirtyOverlayBuilds {
-    count: AtomicUsize,
-}
-
-impl DirtyOverlayBuilds {
-    fn count(&self) -> usize {
-        self.count.load(Ordering::Acquire)
-    }
-}
-
-impl ProjectMemoryHooks for DirtyOverlayBuilds {
-    fn purge(&self, point: ProjectMemoryPurgePoint) {
-        if point == ProjectMemoryPurgePoint::AfterDirtyOverlayBuild {
-            self.count.fetch_add(1, Ordering::AcqRel);
-        }
-    }
-}
-
 #[derive(Debug)]
 struct SourceMutations {
     remaining: AtomicUsize,
@@ -161,12 +142,10 @@ fn ready_query_surfaces_and_sufficient_scope_preserve_the_matching_dirty_overlay
             "#,
     );
     let source = fixture.path("src/lib.rs");
-    let hooks = Arc::new(DirtyOverlayBuilds::default());
     let (sender, receiver) = mpsc::channel();
     let memory_control: Arc<dyn MemoryControl> = Arc::new(());
     let notifications = ServiceNotificationsSink::from_publisher(NoopNotifications);
     let mut project = ProjectCoordinator::new(sender, memory_control, notifications);
-    project.memory_hooks = hooks.clone();
     project
         .initialize(
             fixture.path(""),
@@ -232,7 +211,7 @@ fn ready_query_surfaces_and_sufficient_scope_preserve_the_matching_dirty_overlay
         .expect("third dirty query should reuse its overlay");
 
     assert_eq!(
-        hooks.count(),
+        project.project.dirty_overlay_rebuild_count(),
         1,
         "no-op query materialization should not evict a matching dirty overlay",
     );
@@ -246,12 +225,16 @@ fn ready_query_surfaces_and_sufficient_scope_preserve_the_matching_dirty_overlay
             |_| Ok(()),
         )
         .expect("workspace-wide dirty query should upgrade its overlay");
-    assert_eq!(hooks.count(), 2, "broader scope should rebuild once");
+    assert_eq!(
+        project.project.dirty_overlay_rebuild_count(),
+        2,
+        "broader scope should rebuild once",
+    );
     project
         .with_query_snapshot(Some(&dirty), DirtyOverlayScope::ChangedPackages, |_| Ok(()))
         .expect("local dirty query should reuse a broader overlay");
     assert_eq!(
-        hooks.count(),
+        project.project.dirty_overlay_rebuild_count(),
         2,
         "broader overlay should satisfy a later local query",
     );
@@ -274,12 +257,10 @@ fn incomplete_resident_query_surface_evicts_the_matching_dirty_overlay() {
             "#,
     );
     let source = fixture.path("src/lib.rs");
-    let hooks = Arc::new(DirtyOverlayBuilds::default());
     let (sender, receiver) = mpsc::channel();
     let memory_control: Arc<dyn MemoryControl> = Arc::new(());
     let notifications = ServiceNotificationsSink::from_publisher(NoopNotifications);
     let mut project = ProjectCoordinator::new(sender, memory_control, notifications);
-    project.memory_hooks = hooks.clone();
     project
         .initialize(
             fixture.path(""),
@@ -330,7 +311,11 @@ fn incomplete_resident_query_surface_evicts_the_matching_dirty_overlay() {
     project
         .with_query_snapshot(Some(&dirty), DirtyOverlayScope::ChangedPackages, |_| Ok(()))
         .expect("first dirty query should build its overlay");
-    assert_eq!(hooks.count(), 1, "first dirty query should build once");
+    assert_eq!(
+        project.project.dirty_overlay_rebuild_count(),
+        1,
+        "first dirty query should build once",
+    );
 
     // This preparation fills missing resident Body IR and replaces saved package payloads. The
     // overlay based on the old payload must be dropped before the next dirty query can run.
@@ -341,7 +326,7 @@ fn incomplete_resident_query_surface_evicts_the_matching_dirty_overlay() {
         .with_query_snapshot(Some(&dirty), DirtyOverlayScope::ChangedPackages, |_| Ok(()))
         .expect("second dirty query should rebuild its evicted overlay");
     assert_eq!(
-        hooks.count(),
+        project.project.dirty_overlay_rebuild_count(),
         2,
         "real query materialization should evict a matching dirty overlay",
     );

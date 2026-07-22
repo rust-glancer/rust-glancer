@@ -341,6 +341,23 @@ impl ParseDb {
         Ok(self.sources.validate_saved()?)
     }
 
+    /// Rejects a partial candidate if a source in one of its rebuilt packages changed on disk.
+    ///
+    /// Sources outside these packages still belong to the already-validated saved generation.
+    /// Module-existence probes are always checked because this rebuild may have made new discovery
+    /// decisions even when the files it parsed stayed unchanged.
+    pub fn validate_saved_sources_in_packages(
+        &self,
+        package_slots: &[usize],
+    ) -> anyhow::Result<()> {
+        let paths = package_slots
+            .iter()
+            .filter_map(|package_slot| self.packages.get(*package_slot).map(Package::parsed_files));
+        Ok(self
+            .sources
+            .validate_saved_paths(paths.flatten().map(|file| file.path()))?)
+    }
+
     /// Releases exact saved text while retaining strong source identity for verified reloads.
     pub fn evict_saved_source_text(&self) {
         self.sources.evict_saved_text();

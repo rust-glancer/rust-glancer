@@ -4,7 +4,7 @@ use rg_cfg_eval::CfgOptions;
 use rg_text::RustEdition;
 
 use crate::SysrootCrate;
-use rg_std::MemorySize;
+use rg_std::{MemorySize, Shrink};
 use wincode::{SchemaRead, SchemaWrite};
 
 use super::{dependency::PackageDependency, target::CargoTarget};
@@ -25,9 +25,21 @@ impl PackageId {
 /// Slots are dense and snapshot-local. Rebuild code must rebuild the whole project when Cargo
 /// metadata changes package ordering or membership, so analysis IDs never cross metadata graphs.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, SchemaRead, SchemaWrite, MemorySize,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    PartialOrd,
+    Ord,
+    SchemaRead,
+    SchemaWrite,
+    MemorySize,
+    Shrink,
 )]
 #[memsize(leaf)]
+#[shrink(leaf)]
 pub struct PackageSlot(pub usize);
 
 /// Where one normalized package came from.

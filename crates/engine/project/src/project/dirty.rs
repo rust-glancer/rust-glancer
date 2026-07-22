@@ -17,7 +17,7 @@ use super::{ChangedFile, Project, update};
 pub enum DirtyOverlayScope {
     /// Rebuild only packages that own a changed file.
     ///
-    /// Queries inside those packages can still read their unchanged dependencies from the saved
+    /// Queries inside those packages can still read their unchanged dependencies from the base
     /// project. Reverse dependents are deliberately left untouched because they are not visible to
     /// file-local analysis such as completion, hover, or inlay hints.
     ChangedPackages,
@@ -57,7 +57,15 @@ pub(super) fn build_overlay(
     changes: impl IntoIterator<Item = DirtyFileChange>,
 ) -> anyhow::Result<Option<Project>> {
     let changes = canonicalize_changes(changes)?;
+    // Persisted indexes are valid shortcuts only when unchanged dependencies still come from the
+    // saved project. A dirty-derived base may carry declaration changes in packages this overlay
+    // does not rebuild, and those changes are absent from every saved artifact.
+    let can_reuse_saved_item_lookup_indexes = !project.is_dirty_overlay;
     let mut overlay = project.clone();
+    overlay.is_dirty_overlay = true;
+    // A saved project should not carry request state, but clearing here also makes a cloned overlay
+    // robust when library callers build one disposable overlay from another.
+    overlay.state.clear_query_cache();
     let mut changed_files = Vec::new();
     let mut fallback_package_roots = Vec::new();
 
@@ -116,8 +124,13 @@ pub(super) fn build_overlay(
         .iter()
         .map(|file| BodyIrFile::new(file.package, file.file))
         .collect::<Vec<_>>();
-    update::rebuild_dirty_overlay_packages(&mut overlay.state, &source_packages, &body_files)
-        .context("while attempting to rebuild dirty analysis overlay packages")?;
+    update::rebuild_dirty_overlay_packages(
+        &mut overlay.state,
+        &source_packages,
+        &body_files,
+        can_reuse_saved_item_lookup_indexes,
+    )
+    .context("while attempting to rebuild dirty analysis overlay packages")?;
 
     Ok(Some(overlay))
 }

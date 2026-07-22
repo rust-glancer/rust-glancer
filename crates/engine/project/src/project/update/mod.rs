@@ -64,8 +64,14 @@ pub(super) fn rebuild_dirty_overlay_packages(
     state: &mut ProjectState,
     packages: &[PackageSlot],
     body_files: &[BodyIrFile],
+    can_reuse_saved_item_lookup_indexes: bool,
 ) -> anyhow::Result<()> {
-    package::rebuild_dirty_overlay_packages(state, packages, body_files)
+    package::rebuild_dirty_overlay_packages(
+        state,
+        packages,
+        body_files,
+        can_reuse_saved_item_lookup_indexes,
+    )
 }
 
 pub(super) fn affected_packages(

@@ -8,6 +8,132 @@ use self::utils::{
 };
 
 #[test]
+fn item_lookup_index_key_ignores_bodies_but_tracks_declarations_and_visibility() {
+    let key = |dependency_alias: &str, source: &str| {
+        let fixture = crate::testonly::SemanticIrFixture::build(&format!(
+            r#"
+//- /Cargo.toml
+[package]
+name = "lookup_input_fixture"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+{dependency_alias} = {{ package = "dep", path = "dep" }}
+
+//- /src/lib.rs
+{source}
+
+//- /dep/Cargo.toml
+[package]
+name = "dep"
+version = "0.1.0"
+edition = "2024"
+
+//- /dep/src/lib.rs
+pub struct Dependency;
+"#,
+        ));
+        let package = (0..fixture.def_map_db().package_count())
+            .map(rg_def_map::PackageSlot)
+            .find(|&package| {
+                fixture
+                    .def_map_db()
+                    .resident_package(package)
+                    .is_some_and(|package| package.package_name() == "lookup_input_fixture")
+            })
+            .expect("fixture root package should have resident DefMap data");
+        let crate_ref = rg_ir_model::CrateRef {
+            package,
+            crate_id: rg_ir_model::CrateId(0),
+        };
+        let crate_data = fixture
+            .def_map_db()
+            .resident_package(crate_ref.package)
+            .and_then(|package| package.crate_data(crate_ref.crate_id))
+            .expect("fixture crate should have resident DefMap data");
+        crate::ItemLookupIndex::cache_key(
+            crate_data,
+            fixture
+                .resident_crate_ir(crate_ref)
+                .expect("fixture crate should have resident semantic IR"),
+        )
+        .expect("fixture item lookup index should have a stable cache key")
+    };
+
+    let saved = key(
+        "dep_alias",
+        r#"
+pub struct User;
+
+impl User {
+    pub fn saved(&self) {}
+}
+
+pub fn inspect(value: User) {
+    let _ = value;
+}
+"#,
+    );
+    let body_only = key(
+        "dep_alias",
+        r#"
+pub struct User;
+
+impl User {
+    pub fn saved(&self) {}
+}
+
+pub fn inspect(value: User) {
+    dbg!(value);
+}
+"#,
+    );
+    let declaration = key(
+        "dep_alias",
+        r#"
+pub struct User;
+
+impl User {
+    pub fn saved(&self) {}
+    pub fn dirty(&self) {}
+}
+
+pub fn inspect(value: User) {
+    dbg!(value);
+}
+"#,
+    );
+    let visibility = key(
+        "renamed_dep",
+        r#"
+pub struct User;
+
+impl User {
+    pub fn saved(&self) {}
+}
+
+pub fn inspect(value: User) {
+    let _ = value;
+}
+"#,
+    );
+
+    assert_eq!(
+        saved, body_only,
+        "body contents must not invalidate the item lookup index key",
+    );
+    assert_ne!(
+        saved, declaration,
+        "a new inherent method must invalidate the item lookup index key",
+    );
+    assert_ne!(
+        saved, visibility,
+        "renaming an external root must invalidate the item lookup index key",
+    );
+}
+
+#[test]
 fn dumps_semantic_ir_signatures() {
     check_project_semantic_ir(
         r#"

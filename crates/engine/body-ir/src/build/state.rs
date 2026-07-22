@@ -62,16 +62,24 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
         }
     }
 
+    /// Resolve one lowered crate and optionally keep its warmed trait-selection state.
+    ///
+    /// A saved lookup index is trusted only because the package rebuilder checked its declaration
+    /// key before this crate was scheduled. Without one, this method builds the same index from the
+    /// declarations visible to the crate.
     pub(super) fn resolve(
         mut self,
         def_map: &DefMapReadTxn<'_>,
         semantic_ir: &SemanticIrReadTxn<'_>,
-    ) -> anyhow::Result<CrateBodies> {
+        retain_trait_selection: bool,
+        saved_item_lookup_index: Option<ItemLookupIndex>,
+    ) -> anyhow::Result<(CrateBodies, Option<TraitSelectionSession>)> {
         let span = tracing::debug_span!(
             "body_ir_crate_resolution",
             rg.crate_id = self.crate_ref.crate_id.0,
         );
         let _entered = span.enter();
+        let resolution_started = Instant::now();
 
         // Before resolving bodies on the expr level, we need to collect
         // the items declared within the body, and we need to match `impl`
@@ -79,6 +87,7 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
         let phase_started = Instant::now();
         self.materialize_body_local_items(def_map, semantic_ir)?;
         let elapsed = phase_started.elapsed();
+        let body_local_items_ms = elapsed.as_millis();
         if elapsed >= SLOW_CRATE_RESOLUTION_PHASE {
             tracing::debug!(
                 phase = "body_local_items",
@@ -88,16 +97,24 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
             );
         }
 
-        // Build a crate-semantic lookup index once and persist it with Body IR. Body-local items
-        // are deliberately overlaid through `BodyBuildQuerySource` instead of being part of this
-        // crate-scoped cache.
+        // Choose the crate-wide item lookup index before any body query starts. Dirty rebuilds may
+        // receive the saved index after its declaration key was checked; every other build scans
+        // the stores visible from this crate. Either way, persist the chosen index with Body IR.
+        // Body-local items are overlaid through `BodyBuildQuerySource` and do not enter this index.
         let phase_started = Instant::now();
-        let crate_items = CrateItemQuery::new(def_map, semantic_ir, self.crate_ref);
-        let semantic_index = ItemLookupIndex::build_from(&crate_items)?;
+        let item_lookup_index_reused = saved_item_lookup_index.is_some();
+        let item_lookup_index = match saved_item_lookup_index {
+            Some(index) => index,
+            None => {
+                let crate_items = CrateItemQuery::new(def_map, semantic_ir, self.crate_ref);
+                ItemLookupIndex::build_from(&crate_items)?
+            }
+        };
         let elapsed = phase_started.elapsed();
+        let item_lookup_index_ms = elapsed.as_millis();
         if elapsed >= SLOW_CRATE_RESOLUTION_PHASE {
             tracing::debug!(
-                phase = "semantic_index",
+                phase = "item_lookup_index",
                 elapsed_ms = elapsed.as_millis(),
                 "slow Body IR crate resolution phase"
             );
@@ -107,10 +124,11 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
         self.resolve_body_local_impl_headers(
             def_map,
             semantic_ir,
-            &semantic_index,
+            &item_lookup_index,
             &trait_selection,
         )?;
         let elapsed = phase_started.elapsed();
+        let body_local_impl_headers_ms = elapsed.as_millis();
         if elapsed >= SLOW_CRATE_RESOLUTION_PHASE {
             tracing::debug!(
                 phase = "body_local_impl_headers",
@@ -122,8 +140,14 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
         // Identifier patterns are the last source ambiguity in structural Body IR. Resolve and
         // compact them before the ordinary body pass receives its immutable `BodyData`.
         let phase_started = Instant::now();
-        self.materialize_pattern_bindings(def_map, semantic_ir, &semantic_index, &trait_selection)?;
+        self.materialize_pattern_bindings(
+            def_map,
+            semantic_ir,
+            &item_lookup_index,
+            &trait_selection,
+        )?;
         let elapsed = phase_started.elapsed();
+        let pattern_bindings_ms = elapsed.as_millis();
         if elapsed >= SLOW_CRATE_RESOLUTION_PHASE {
             tracing::debug!(
                 phase = "pattern_bindings",
@@ -134,8 +158,9 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
 
         // Do a pass on resolving body expressions.
         let phase_started = Instant::now();
-        self.resolve_bodies(def_map, semantic_ir, &semantic_index, &trait_selection)?;
+        self.resolve_bodies(def_map, semantic_ir, &item_lookup_index, &trait_selection)?;
         let elapsed = phase_started.elapsed();
+        let bodies_ms = elapsed.as_millis();
         if elapsed >= SLOW_CRATE_RESOLUTION_PHASE {
             tracing::debug!(
                 phase = "bodies",
@@ -147,7 +172,25 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
 
         // Finalize the build state, e.g. associate each body with its corresponding
         // defmap/item store.
-        Ok(self.finish(semantic_index))
+        let body_count = self.crate_bodies.bodies().len();
+        let finish_started = Instant::now();
+        let bodies = self.finish(item_lookup_index);
+        let finish_ms = finish_started.elapsed().as_millis();
+        tracing::trace!(
+            body_count,
+            body_local_items_ms,
+            item_lookup_index_ms,
+            item_lookup_index_reused,
+            body_local_impl_headers_ms,
+            pattern_bindings_ms,
+            bodies_ms,
+            finish_ms,
+            total_ms = resolution_started.elapsed().as_millis(),
+            "Body IR crate resolution phases finished"
+        );
+        let retained_trait_selection =
+            retain_trait_selection.then(|| trait_selection.fresh_inference_scope());
+        Ok((bodies, retained_trait_selection))
     }
 
     // Walk every known body, collecting local facts and lowering newly discovered nested bodies.
@@ -304,7 +347,7 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
         &mut self,
         def_map: &DefMapReadTxn<'_>,
         semantic_ir: &SemanticIrReadTxn<'_>,
-        semantic_index: &ItemLookupIndex,
+        item_lookup_index: &ItemLookupIndex,
         trait_selection: &TraitSelectionSession,
     ) -> anyhow::Result<()> {
         for (body_id, lowered_body) in self.crate_bodies.bodies().iter_with_ids() {
@@ -341,7 +384,7 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
                     &source,
                     body_ref,
                     body,
-                    semantic_index,
+                    item_lookup_index,
                     trait_selection.clone(),
                 );
                 let type_paths = context.type_path_query();
@@ -393,7 +436,7 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
         &mut self,
         def_map: &DefMapReadTxn<'_>,
         semantic_ir: &SemanticIrReadTxn<'_>,
-        semantic_index: &ItemLookupIndex,
+        item_lookup_index: &ItemLookupIndex,
         trait_selection: &TraitSelectionSession,
     ) -> anyhow::Result<()> {
         let source =
@@ -408,7 +451,7 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
             PatternBindingMaterializationPass::new(
                 &source,
                 &source,
-                semantic_index,
+                item_lookup_index,
                 body_ref,
                 body,
                 trait_selection,
@@ -426,7 +469,7 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
         &mut self,
         def_map: &DefMapReadTxn<'_>,
         semantic_ir: &SemanticIrReadTxn<'_>,
-        semantic_index: &ItemLookupIndex,
+        item_lookup_index: &ItemLookupIndex,
         trait_selection: &TraitSelectionSession,
     ) -> anyhow::Result<()> {
         // Make the body resolution pass aware of body-local items.
@@ -446,7 +489,7 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
             let facts = BodyResolutionPass::new(
                 &source,
                 &source,
-                semantic_index,
+                item_lookup_index,
                 body_ref,
                 body,
                 trait_selection,
@@ -474,7 +517,7 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
         Ok(())
     }
 
-    fn finish(mut self, semantic_index: ItemLookupIndex) -> CrateBodies {
+    fn finish(mut self, item_lookup_index: ItemLookupIndex) -> CrateBodies {
         let mut body_local_items = Arena::with_capacity(self.body_local_items.len());
         for (body, items) in self.body_local_items.iter_mut_with_ids() {
             let items = items
@@ -495,7 +538,7 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
 
         CrateBodies::from_build(
             coverage,
-            semantic_index,
+            item_lookup_index,
             bodies,
             self.body_facts,
             body_local_items,

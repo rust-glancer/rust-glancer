@@ -439,14 +439,43 @@ where
         let Some(data) = self.trait_data(trait_ref)? else {
             return Ok(None);
         };
-        for item in &data.items {
+        self.associated_type_by_name(trait_ref.origin, &data.items, name)
+    }
+
+    /// Follows an impl ref into the header and associated items used by member/type queries.
+    pub fn impl_data(&self, impl_ref: ImplRef) -> Result<Option<&'a ImplData>, S::Error> {
+        Ok(self
+            .item_store_for_origin(impl_ref.origin)?
+            .and_then(|items| items.impl_data(impl_ref.id)))
+    }
+
+    /// Find an associated type declared directly by this impl.
+    ///
+    /// Trait association is name-based in Rust, so both program materialization and direct
+    /// projection use this query instead of independently walking an impl's item IDs.
+    pub fn impl_associated_type_by_name(
+        &self,
+        impl_ref: ImplRef,
+        name: &str,
+    ) -> Result<Option<TypeAliasRef>, S::Error> {
+        let Some(data) = self.impl_data(impl_ref)? else {
+            return Ok(None);
+        };
+        self.associated_type_by_name(impl_ref.origin, &data.items, name)
+    }
+
+    /// Find a named type alias inside either kind of associated-item list.
+    fn associated_type_by_name(
+        &self,
+        origin: DefMapRef,
+        items: &[AssocItemId],
+        name: &str,
+    ) -> Result<Option<TypeAliasRef>, S::Error> {
+        for item in items {
             let AssocItemId::TypeAlias(id) = item else {
                 continue;
             };
-            let alias = TypeAliasRef {
-                origin: trait_ref.origin,
-                id: *id,
-            };
+            let alias = TypeAliasRef { origin, id: *id };
             if self
                 .type_alias_data(alias)?
                 .is_some_and(|data| data.name.as_str() == name)
@@ -455,13 +484,6 @@ where
             }
         }
         Ok(None)
-    }
-
-    /// Follows an impl ref into the header and associated items used by member/type queries.
-    pub fn impl_data(&self, impl_ref: ImplRef) -> Result<Option<&'a ImplData>, S::Error> {
-        Ok(self
-            .item_store_for_origin(impl_ref.origin)?
-            .and_then(|items| items.impl_data(impl_ref.id)))
     }
 
     /// Provides lowered function facts for both free functions and associated functions.

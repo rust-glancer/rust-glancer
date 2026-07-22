@@ -163,6 +163,11 @@ impl ProjectState {
         self.dirty_overlay.release_query_memory();
     }
 
+    #[cfg(test)]
+    pub(super) fn dirty_overlay_rebuild_count(&self) -> usize {
+        self.dirty_overlay.rebuild_count()
+    }
+
     /// Select the saved project or matching dirty overlay and lend out one snapshot.
     ///
     /// The closure keeps snapshots from escaping this state. In particular, a later command may

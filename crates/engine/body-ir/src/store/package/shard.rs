@@ -38,9 +38,9 @@ impl PackageBodies {
     }
 }
 
-/// Package-level Body IR directory used before any crate index or body payload is decoded.
+/// Package-level Body IR directory used before any item lookup index or body payload is decoded.
 ///
-/// This deliberately contains only crate manifests. Crate semantic indexes and file shards are
+/// This deliberately contains only crate manifests. Item lookup indexes and file shards are
 /// separate payloads in the cache container.
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
 pub struct PackageBodiesManifest {
@@ -214,7 +214,7 @@ impl CrateBodies {
     /// recorded by the manifest, and every dense body slot must be filled exactly once.
     pub fn from_storage_parts(
         manifest: &CrateBodiesManifest,
-        semantic_index: ItemLookupIndex,
+        item_lookup_index: ItemLookupIndex,
         shards: Vec<BodyFileShard>,
     ) -> anyhow::Result<Self> {
         // Start with the final dense shape, but leave every slot empty. Shard entries carry stable
@@ -289,7 +289,7 @@ impl CrateBodies {
 
         Ok(Self {
             coverage: manifest.coverage,
-            semantic_index,
+            item_lookup_index,
             bodies: Arena::from_vec(bodies),
             facts: Arena::from_vec(facts),
             body_local_items: Arena::from_vec(body_local_items),

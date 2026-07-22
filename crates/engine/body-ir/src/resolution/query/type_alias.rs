@@ -49,7 +49,7 @@ where
 
         self.associated_alias_for_impls(
             self.context
-                .semantic_index()
+                .item_lookup_index()
                 .inherent_impls_for_type(ty.def),
             ty,
             name,
