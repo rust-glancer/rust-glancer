@@ -111,8 +111,10 @@ impl<'a> TypePathSourceScanner<'a> {
 ///         ^^^^^ value-path candidate
 /// ```
 ///
-/// Record constructors are the exception: the final segment in `model::User { ... }` is also a
-/// type-path candidate.
+/// Record syntax splits the same-looking path differently. In `model::User { id }`, the lowered
+/// record expression owns `User` and this scanner keeps only the `model` qualifier. In
+/// `let model::User { id } = user`, there is no record expression, so the pattern path owns both
+/// segments.
 pub(super) struct BodyPathSourceScanner<'a> {
     body_ref: BodyRef,
     body: BodyView<'a>,
@@ -120,6 +122,26 @@ pub(super) struct BodyPathSourceScanner<'a> {
     offset: Option<u32>,
     include_single_segment: bool,
     candidates: &'a mut Vec<BodySourceCandidate>,
+}
+
+/// Selects which source fact owns the final segment after qualifiers have been emitted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BodyPathFinalSegment {
+    /// A lowered expression owns the final name.
+    ///
+    /// For `model::User { id }`, the record expression represents `User`; this scanner emits only
+    /// the `model` qualifier.
+    Expression,
+    /// The final name belongs to a type path.
+    ///
+    /// For `let model::User { id } = user`, this scanner emits both `model` and `User` because a
+    /// record pattern has no expression id.
+    TypePath,
+    /// The final name belongs to a value path.
+    ///
+    /// For `let action = Action::Start`, `Action` is a type-path qualifier and `Start` is the value
+    /// reference selected by this case.
+    ValuePath,
 }
 
 impl<'a> BodyPathSourceScanner<'a> {
@@ -171,7 +193,7 @@ impl<'a> BodyPathSourceScanner<'a> {
                     path,
                     expr_data.source.file_id,
                     false,
-                    false,
+                    BodyPathFinalSegment::ValuePath,
                 ),
                 ExprKind::Record {
                     path: Some(path), ..
@@ -180,7 +202,7 @@ impl<'a> BodyPathSourceScanner<'a> {
                     path,
                     expr_data.source.file_id,
                     false,
-                    true,
+                    BodyPathFinalSegment::Expression,
                 ),
                 _ => {}
             }
@@ -210,7 +232,7 @@ impl<'a> BodyPathSourceScanner<'a> {
                 path,
                 data.source.file_id,
                 self.include_single_segment,
-                true,
+                BodyPathFinalSegment::TypePath,
             );
         } else if let Some(path) = data.kind.value_path() {
             self.scan_body_path(
@@ -218,7 +240,7 @@ impl<'a> BodyPathSourceScanner<'a> {
                 path,
                 data.source.file_id,
                 self.include_single_segment,
-                false,
+                BodyPathFinalSegment::ValuePath,
             );
         }
     }
@@ -230,7 +252,7 @@ impl<'a> BodyPathSourceScanner<'a> {
         path: &BodyPath,
         file_id: FileId,
         include_single_segment: bool,
-        final_segment_is_type: bool,
+        final_segment: BodyPathFinalSegment,
     ) {
         // Expression paths already have an expression candidate for single-segment names. Segment
         // candidates are only needed for qualified expressions or for pattern paths, which do not
@@ -248,9 +270,11 @@ impl<'a> BodyPathSourceScanner<'a> {
                 let Some(path) = path.prefix_through(idx) else {
                     continue;
                 };
-                if idx + 1 < segment_count || final_segment_is_type {
+                if idx + 1 < segment_count
+                    || matches!(final_segment, BodyPathFinalSegment::TypePath)
+                {
                     // In `Action::Start`, the prefix is still a user-visible type/module path.
-                    // Record constructors also resolve their final segment as a type path.
+                    // Record patterns also resolve their final constructor segment as a type path.
                     self.candidates.push(BodySourceCandidate::TypePath {
                         body: self.body_ref,
                         scope,
@@ -260,14 +284,16 @@ impl<'a> BodyPathSourceScanner<'a> {
                     });
                     continue;
                 }
-                self.candidates.push(BodySourceCandidate::ValueReference {
-                    body: self.body_ref,
-                    scope,
-                    file_id,
-                    span,
-                    source: ValueReferenceSource::Path(path),
-                    surface: ValueReferenceSurface::Plain,
-                });
+                if matches!(final_segment, BodyPathFinalSegment::ValuePath) {
+                    self.candidates.push(BodySourceCandidate::ValueReference {
+                        body: self.body_ref,
+                        scope,
+                        file_id,
+                        span,
+                        source: ValueReferenceSource::Path(path),
+                        surface: ValueReferenceSurface::Plain,
+                    });
+                }
             }
         }
     }

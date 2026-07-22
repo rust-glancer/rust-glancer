@@ -69,6 +69,102 @@ pub fn use_it() {
 }
 
 #[test]
+fn finds_record_constructor_references() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_record_constructor_references"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub mod model {
+    pub struct Qual$qualified_decl$ified<T> {
+        pub value: T,
+    }
+}
+
+pub struct Us$user_decl$er<T> {
+    pub value: T,
+}
+
+pub enum Action<T> {
+    Start { value: T },
+}
+
+use crate::User as Account;
+
+pub fn make(value: u8) {
+    struct Local {
+        value: u8,
+    }
+
+    let _plain = User { value };
+    let _generic = User::<u8> { value };
+    let _qualified = model::Qual$qualified_use$ified::<u8> { value };
+    let _alias = Acc$alias_use$ount { value };
+    let _variant = Action::Sta$variant_use$rt { value };
+    let _local = Loc$local_use$al { value };
+}
+"#,
+        &[
+            AnalysisQuery::references(
+                "record struct references from declaration",
+                "user_decl",
+                ReferenceQuery::all(),
+            ),
+            AnalysisQuery::references(
+                "record struct references from imported constructor alias without declaration",
+                "alias_use",
+                ReferenceQuery::all().without_declaration(),
+            ),
+            AnalysisQuery::references(
+                "qualified generic record constructor references",
+                "qualified_use",
+                ReferenceQuery::all(),
+            ),
+            AnalysisQuery::references(
+                "record variant constructor references",
+                "variant_use",
+                ReferenceQuery::all(),
+            ),
+            AnalysisQuery::references(
+                "body-local record constructor references",
+                "local_use",
+                ReferenceQuery::all(),
+            ),
+        ],
+        expect![[r#"
+            record struct references from declaration
+            - `User` @ src/lib.rs:7:12-7:16
+            - `User` @ src/lib.rs:15:12-15:16
+            - `User` @ src/lib.rs:22:18-22:22
+            - `User` @ src/lib.rs:23:20-23:24
+            - `Account` @ src/lib.rs:25:18-25:25
+
+            record struct references from imported constructor alias without declaration
+            - `User` @ src/lib.rs:15:12-15:16
+            - `User` @ src/lib.rs:22:18-22:22
+            - `User` @ src/lib.rs:23:20-23:24
+            - `Account` @ src/lib.rs:25:18-25:25
+
+            qualified generic record constructor references
+            - `Qualified` @ src/lib.rs:2:16-2:25
+            - `Qualified` @ src/lib.rs:24:29-24:38
+
+            record variant constructor references
+            - `Start` @ src/lib.rs:12:5-12:10
+            - `Start` @ src/lib.rs:26:28-26:33
+
+            body-local record constructor references
+            - `Local` @ src/lib.rs:18:12-18:17
+            - `Local` @ src/lib.rs:27:18-27:23
+        "#]],
+    );
+}
+
+#[test]
 fn finds_item_initializer_references() {
     check_analysis_queries(
         r#"

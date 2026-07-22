@@ -247,8 +247,8 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
     ///
     /// Expression-backed occurrences intentionally expose only `ExprRef`, so callers that need a
     /// cheap source label can ask the view to inspect the lowered expression. For example, this
-    /// returns `user` for a path expression, `push` for `items.push(value)`, and `name` for
-    /// `user.name`; literals and operators return `None`.
+    /// returns `user` for a path expression, `push` for `items.push(value)`, `name` for
+    /// `user.name`, and `User` for `model::User { name }`; literals and operators return `None`.
     pub fn expr_source_label(&self, expr: ExprRef) -> anyhow::Result<Option<String>> {
         let Some(body_data) = self.db.body_ir.body(expr.body_ir())? else {
             return Ok(None);
@@ -265,6 +265,11 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
             rg_body_ir::ExprKind::Field { field, .. } => {
                 field.as_ref().map(|field| field.declaration_label())
             }
+            rg_body_ir::ExprKind::Record {
+                path: Some(path), ..
+            } => path
+                .as_def_map_path()
+                .and_then(|path| path.last_segment_label()),
             _ => None,
         };
         Ok(label)
