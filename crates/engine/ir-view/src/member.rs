@@ -12,7 +12,7 @@ use rg_ir_model::{
 };
 use rg_item_tree::{Documentation, ParamItem, ParamKind};
 use rg_semantic_ir::{
-    EnumVariantData, FieldData, FunctionData, ItemLookupIndex, ItemStoreQuery, TypePathResolution,
+    EnumVariantData, FieldData, FunctionData, ItemStoreQuery, TypePathResolution,
 };
 use rg_ty::{
     MemberMethodCandidateRef, MemberMethodOrigin as TyMemberMethodOrigin, MemberQuery, Ty,
@@ -229,13 +229,13 @@ impl<'a, 'db> MemberView<'a, 'db> {
         ty: &IndexedType,
     ) -> anyhow::Result<Vec<MemberField<'view>>> {
         let mut fields = Vec::new();
-        let Some(semantic_index) = self.semantic_index(use_site)? else {
+        let Some(item_lookup_index) = self.db.body_ir.item_lookup_index(use_site)? else {
             return Ok(fields);
         };
         let member_query = MemberQuery::new(TyContext::new(
             self.db,
             self.db,
-            semantic_index,
+            item_lookup_index,
             self.db.trait_selection(use_site),
         ));
         for field_ref in member_query.fields_for_ty(ty.raw())? {
@@ -261,13 +261,13 @@ impl<'a, 'db> MemberView<'a, 'db> {
         };
 
         let mut fields = Vec::new();
-        let Some(semantic_index) = self.semantic_index(body.crate_ref)? else {
+        let Some(item_lookup_index) = self.db.body_ir.item_lookup_index(body.crate_ref)? else {
             return Ok(fields);
         };
         let member_query = MemberQuery::new(TyContext::new(
             self.db,
             self.db,
-            semantic_index,
+            item_lookup_index,
             self.db.trait_selection(body.crate_ref),
         ));
         if let TypePathResolution::SelfType(ty) | TypePathResolution::TypeDef(ty) = resolution {
@@ -369,13 +369,13 @@ impl<'a, 'db> MemberView<'a, 'db> {
         use_site: CrateRef,
         ty: &Ty,
     ) -> anyhow::Result<Vec<MemberMethodCandidateRef>> {
-        let Some(semantic_index) = self.semantic_index(use_site)? else {
+        let Some(item_lookup_index) = self.db.body_ir.item_lookup_index(use_site)? else {
             return Ok(Vec::new());
         };
         let member_query = MemberQuery::new(TyContext::new(
             self.db,
             self.db,
-            semantic_index,
+            item_lookup_index,
             self.db.trait_selection(use_site),
         ));
         Ok(member_query.method_candidates_for_ty(ty)?)
@@ -422,10 +422,5 @@ impl<'a, 'db> MemberView<'a, 'db> {
             function,
             origin: candidate.origin().into(),
         }
-    }
-
-    /// Return the crate-scoped semantic index that backs fast type/member queries.
-    fn semantic_index(&self, use_site: CrateRef) -> anyhow::Result<Option<&ItemLookupIndex>> {
-        Ok(self.db.body_ir.semantic_index(use_site)?)
     }
 }

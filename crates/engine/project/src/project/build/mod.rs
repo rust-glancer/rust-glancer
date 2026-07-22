@@ -171,7 +171,10 @@ impl ProjectBuilder {
             project_bytes,
             process_memory,
         );
-        Ok(Project { state })
+        Ok(Project {
+            state,
+            is_dirty_overlay: false,
+        })
     }
 }
 

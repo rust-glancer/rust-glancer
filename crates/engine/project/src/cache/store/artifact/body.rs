@@ -2,7 +2,7 @@
 //!
 //! The outer artifact layout gives the reader one large Body IR range. The first Body IR request
 //! reads a fixed nested prefix and the manifest following it, then caches the validated directory
-//! in `body_index`. Later requests use that directory to read one crate index or file shard.
+//! in `body_index`. Later requests use that directory to read one item lookup index or file shard.
 //!
 //! Ranges in the decoded index are relative to the Body IR section. `read_body_range` checks them
 //! against that section and translates them into outer-file offsets before using the shared reader.
@@ -34,26 +34,26 @@ impl PackageArtifactReader {
         Ok(self.body_index()?.manifest().clone())
     }
 
-    /// Read one crate-global semantic index without reading its bodies.
-    pub(crate) fn read_body_semantic_index(
+    /// Read one item lookup index without reading its bodies.
+    pub(crate) fn read_item_lookup_index(
         &self,
         crate_id: CrateId,
     ) -> Result<ItemLookupIndex, PackageCacheReadError> {
         let range = self
             .body_index()?
-            .semantic_index_range(crate_id)
+            .item_lookup_index_range(crate_id)
             .ok_or_else(|| {
                 self.decode_error(anyhow::anyhow!(
-                    "Body IR manifest has no crate index for {:?}",
+                    "Body IR manifest has no item lookup index for {:?}",
                     crate_id,
                 ))
             })?;
-        let bytes = self.read_body_range("body_ir.crate_index", range)?;
+        let bytes = self.read_body_range("body_ir.item_lookup_index", range)?;
         let started = Instant::now();
         let decoded = self
-            .decode_with_names(|| PackageCacheCodec::decode_body_semantic_index(&bytes))
+            .decode_with_names(|| PackageCacheCodec::decode_item_lookup_index(&bytes))
             .map_err(|error| self.decode_error(error));
-        metric::CACHE_SECTION_DECODE.record("body_ir.crate_index", started.elapsed());
+        metric::CACHE_SECTION_DECODE.record("body_ir.item_lookup_index", started.elapsed());
         decoded
     }
 
@@ -106,13 +106,13 @@ impl PackageArtifactReader {
                 crate_id,
             ))
         })?;
-        let semantic_index = self.read_body_semantic_index(crate_id)?;
+        let item_lookup_index = self.read_item_lookup_index(crate_id)?;
         let shards = crate_manifest
             .files()
             .iter()
             .map(|&file| self.read_body_file_shard(crate_id, file))
             .collect::<Result<Vec<_>, _>>()?;
-        CrateBodies::from_storage_parts(crate_manifest, semantic_index, shards)
+        CrateBodies::from_storage_parts(crate_manifest, item_lookup_index, shards)
             .map_err(|error| self.decode_error(error))
     }
 

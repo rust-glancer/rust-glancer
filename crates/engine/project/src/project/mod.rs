@@ -49,6 +49,9 @@ pub use self::{
 #[derive(Debug, Clone, MemorySize)]
 pub struct Project {
     pub(crate) state: ProjectState,
+    // Package artifacts describe the saved project. Preserve overlay provenance separately so a
+    // cloned overlay cannot use those artifacts to validate state inherited from another overlay.
+    is_dirty_overlay: bool,
 }
 
 impl Project {

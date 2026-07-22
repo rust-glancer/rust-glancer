@@ -2,7 +2,7 @@
 //!
 //! The trait speaks in Body IR units rather than cache files. This keeps the project layer free to
 //! choose its artifact format, while the transaction can explicitly request the manifest, one
-//! crate-global index, one source-file shard, or a complete crate.
+//! item lookup index, one source-file shard, or a complete crate.
 
 use std::sync::Arc;
 
@@ -21,7 +21,7 @@ pub trait LoadBodyIr: std::fmt::Debug + Send + Sync {
         package: PackageSlot,
     ) -> Result<Arc<PackageBodiesManifest>, PackageStoreError>;
 
-    fn load_semantic_index(
+    fn load_item_lookup_index(
         &self,
         package: PackageSlot,
         crate_id: CrateId,
@@ -60,12 +60,12 @@ impl<'db> BodyIrLoader<'db> {
         self.loader.load_manifest(package)
     }
 
-    pub(super) fn load_semantic_index(
+    pub(super) fn load_item_lookup_index(
         &self,
         package: PackageSlot,
         crate_id: CrateId,
     ) -> Result<Arc<ItemLookupIndex>, PackageStoreError> {
-        self.loader.load_semantic_index(package, crate_id)
+        self.loader.load_item_lookup_index(package, crate_id)
     }
 
     pub(super) fn load_file_shard(
@@ -122,7 +122,7 @@ impl LoadBodyIr for ResidentOnlyBodyIrLoader {
         )
     }
 
-    fn load_semantic_index(
+    fn load_item_lookup_index(
         &self,
         package: PackageSlot,
         _target: CrateId,

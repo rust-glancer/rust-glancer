@@ -341,7 +341,7 @@ where
 
         self.associated_const_candidate_for_impls(
             self.context
-                .semantic_index()
+                .item_lookup_index()
                 .inherent_impls_for_type(ty.def),
             ty,
             name,
@@ -371,7 +371,7 @@ where
 
         let semantic_trait_impls = self
             .context
-            .semantic_index()
+            .item_lookup_index()
             .trait_impls_for_type(ty.def)
             .cloned()
             .unwrap_or_default();
@@ -500,7 +500,7 @@ where
     ) -> Result<UniqueVec<FunctionRef>, PackageStoreError> {
         Ok(self
             .context
-            .semantic_index()
+            .item_lookup_index()
             .inherent_functions_for_type_and_name(ty.def, name)
             .cloned()
             .unwrap_or_default())

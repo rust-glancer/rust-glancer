@@ -267,7 +267,7 @@ where
         // local structs, not for defining new inherent methods on builtin shaped types.
         let impl_refs = self
             .context
-            .semantic_index()
+            .item_lookup_index()
             .structural_inherent_impls()
             .clone();
         for impl_ref in impl_refs {
@@ -356,7 +356,7 @@ where
         receiver_ty: &AdtTy,
         method_name: Option<&str>,
     ) -> Result<UniqueVec<FunctionRef>, PackageStoreError> {
-        let index = self.context.semantic_index();
+        let index = self.context.item_lookup_index();
         match method_name {
             Some(name) => Ok(index
                 .inherent_functions_for_type_and_name(receiver_ty.def, name)

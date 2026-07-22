@@ -148,7 +148,7 @@ where
         if ty.def.origin.as_crate_ref().is_some() {
             let semantic_impls = self
                 .context
-                .semantic_index()
+                .item_lookup_index()
                 .trait_impls_for_type(ty.def)
                 .cloned()
                 .unwrap_or_default();

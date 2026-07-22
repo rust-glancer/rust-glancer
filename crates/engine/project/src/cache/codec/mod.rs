@@ -208,7 +208,8 @@ impl PackageCacheCodec {
     pub(crate) fn encode_write_input(
         input: PackageCacheWriteInput<'_>,
     ) -> anyhow::Result<EncodedPackageCacheArtifact> {
-        let probe = PackageCacheProbe::from_write_input(input);
+        let probe = PackageCacheProbe::from_write_input(input)
+            .context("while attempting to build package cache probe")?;
         Self::validate_write_input(input, &probe)?;
 
         // Encode every phase separately. The resulting lengths become the fixed outer directory,
@@ -312,6 +313,12 @@ impl PackageCacheCodec {
             probe.body_ir_coverage.len() == cargo_target_count,
             "package cache probe has {} Body IR coverage entries but header has {} Cargo targets",
             probe.body_ir_coverage.len(),
+            cargo_target_count,
+        );
+        anyhow::ensure!(
+            probe.lookup_index_fingerprints.len() == cargo_target_count,
+            "package cache probe has {} item lookup fingerprints but header has {} Cargo targets",
+            probe.lookup_index_fingerprints.len(),
             cargo_target_count,
         );
         Ok(())

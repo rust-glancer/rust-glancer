@@ -11,7 +11,8 @@ use rg_package_store::PackageLoader;
 use rg_parse::FileId;
 
 use crate::{
-    AnalysisChangeSummary, FileContext, PackageResidencyPolicy, Project, testonly::ProjectFixture,
+    AnalysisChangeSummary, DirtyFileChange, DirtyOverlayScope, FileContext, PackageResidencyPolicy,
+    Project, testonly::ProjectFixture,
 };
 
 pub(super) struct HostFixture {
@@ -100,7 +101,35 @@ impl HostFixture {
     }
 
     pub(super) fn dirty_overlay(&self, relative_path: &str, text: &str) -> Project {
-        self.fixture.dirty_overlay(relative_path, text)
+        self.dirty_overlay_with_scope(
+            relative_path,
+            text,
+            DirtyOverlayScope::ReverseDependencyClosure,
+        )
+    }
+
+    pub(super) fn dirty_overlay_with_scope(
+        &self,
+        relative_path: &str,
+        text: &str,
+        scope: DirtyOverlayScope,
+    ) -> Project {
+        self.dirty_overlay_from(self.fixture.project(), relative_path, text, scope)
+    }
+
+    pub(super) fn dirty_overlay_from(
+        &self,
+        base: &Project,
+        relative_path: &str,
+        text: &str,
+        scope: DirtyOverlayScope,
+    ) -> Project {
+        base.dirty_overlay(
+            scope,
+            [DirtyFileChange::new(self.fixture.path(relative_path), text)],
+        )
+        .expect("fixture dirty overlay should build")
+        .expect("fixture dirty overlay should touch a known file")
     }
 
     pub(super) fn check(&self, observations: &[HostObservation<'_>], expect: Expect) {

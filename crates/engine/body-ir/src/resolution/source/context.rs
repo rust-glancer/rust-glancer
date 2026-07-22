@@ -39,7 +39,7 @@ type BodyImplMatcher<'context, 'query, D, I> = ImplMatcher<
 
 /// Read-only provider bundle shared by body semantic queries.
 ///
-/// The context keeps DefMap, item-store, semantic-index, trait-selection, and active-body routing
+/// The context keeps DefMap, item-store, item-lookup-index, trait-selection, and active-body routing
 /// coherent while small query objects own the actual operations. A finalized consumer supplies
 /// `BodyView`; indexing can instead supply structural-only data or a crate-private inference
 /// snapshot. Query APIs that need types therefore read through `query_body`, whose source is
@@ -60,12 +60,12 @@ where
         item_stores: I,
         body_ref: BodyRef,
         body: BodyView<'a>,
-        semantic_index: &'a ItemLookupIndex,
+        item_lookup_index: &'a ItemLookupIndex,
         trait_selection: TraitSelectionSession,
     ) -> Self {
         Self::from_source(
             BodyQuerySource::new(def_maps, item_stores, body_ref, body),
-            semantic_index,
+            item_lookup_index,
             trait_selection,
         )
     }
@@ -79,12 +79,12 @@ where
         item_stores: I,
         body_ref: BodyRef,
         body: &'a BodyData,
-        semantic_index: &'a ItemLookupIndex,
+        item_lookup_index: &'a ItemLookupIndex,
         trait_selection: TraitSelectionSession,
     ) -> Self {
         Self::from_source(
             BodyQuerySource::for_structure(def_maps, item_stores, body_ref, body),
-            semantic_index,
+            item_lookup_index,
             trait_selection,
         )
     }
@@ -95,19 +95,19 @@ where
         item_stores: I,
         body_ref: BodyRef,
         body: BodyQueryView<'a>,
-        semantic_index: &'a ItemLookupIndex,
+        item_lookup_index: &'a ItemLookupIndex,
         trait_selection: TraitSelectionSession,
     ) -> Self {
         Self::from_source(
             BodyQuerySource::for_query(def_maps, item_stores, body_ref, body),
-            semantic_index,
+            item_lookup_index,
             trait_selection,
         )
     }
 
     fn from_source(
         source: BodyQuerySource<'a, D, I>,
-        semantic_index: &'a ItemLookupIndex,
+        item_lookup_index: &'a ItemLookupIndex,
         trait_selection: TraitSelectionSession,
     ) -> Self {
         assert_eq!(
@@ -118,7 +118,7 @@ where
         let ty = TyContext::new(
             source.clone(),
             source.clone(),
-            semantic_index,
+            item_lookup_index,
             trait_selection,
         );
         Self { source, ty }
@@ -138,7 +138,7 @@ impl<'a, D, I> BodyResolutionContext<'a, D, I> {
         self.source.query_body()
     }
 
-    pub(crate) fn semantic_index(&self) -> &'a ItemLookupIndex {
+    pub(crate) fn item_lookup_index(&self) -> &'a ItemLookupIndex {
         self.ty.lookup_index()
     }
 }

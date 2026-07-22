@@ -4,9 +4,11 @@
 //!
 //! The cache writes these values as one atomic revision, but it does not encode them as one wincode
 //! object. [`PackageCacheProbe`] is the small startup section; DefMap and Semantic IR are separate
-//! sections; Body IR is further divided into crate indexes and source-file shards. Writes borrow
-//! those phase values through [`PackageCacheWriteInput`] instead of assembling an owned aggregate.
+//! sections; Body IR is further divided into item lookup indexes and source-file shards. Writes
+//! borrow those phase values through [`PackageCacheWriteInput`] instead of assembling an owned
+//! aggregate.
 
+use anyhow::Context as _;
 use rg_body_ir::{CrateBodiesCoverage, PackageBodies};
 use rg_def_map::PackageDefMaps as DefMapPackage;
 use rg_parse::PackageParseSnapshot;
@@ -14,7 +16,10 @@ use rg_semantic_ir::PackageIr;
 use rg_std::MemorySize;
 use wincode::{SchemaRead, SchemaWrite};
 
-use super::header::PackageCacheHeader;
+use super::{
+    fingerprint::{Fingerprint, FingerprintBuilder},
+    header::PackageCacheHeader,
+};
 
 /// Borrowed resident phase data used to write one package artifact.
 ///
@@ -53,17 +58,38 @@ impl<'a> PackageCacheWriteInput<'a> {
 ///
 /// The parse snapshot belongs here because it freezes the exact saved source bytes whose
 /// fingerprint is in the header. Body coverage lets the project preserve materialization policy
-/// without opening the large Body IR section.
+/// without opening the large Body IR section. Per-crate lookup fingerprints let a dirty rebuild
+/// compare its new declarations with the saved indexes before decoding those indexes.
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
-pub struct PackageCacheProbe {
-    pub header: PackageCacheHeader,
-    pub parse: PackageParseSnapshot,
-    pub body_ir_coverage: Vec<CrateBodiesCoverage>,
+pub(crate) struct PackageCacheProbe {
+    pub(crate) header: PackageCacheHeader,
+    pub(crate) parse: PackageParseSnapshot,
+    pub(crate) body_ir_coverage: Vec<CrateBodiesCoverage>,
+    pub(super) lookup_index_fingerprints: Vec<Fingerprint>,
 }
 
 impl PackageCacheProbe {
-    pub(crate) fn from_write_input(input: PackageCacheWriteInput<'_>) -> Self {
-        Self {
+    /// Build the small validation section without serializing the retained phase payloads.
+    ///
+    /// DefMap and Semantic IR have matching crate slots. Their paired facts become one fingerprint
+    /// per target, in the same order as Body IR stores its saved indexes.
+    pub(crate) fn from_write_input(input: PackageCacheWriteInput<'_>) -> anyhow::Result<Self> {
+        anyhow::ensure!(
+            input.def_map.crates().len() == input.semantic_ir.crates().len(),
+            "package cache has {} DefMap crates but {} semantic IR crates for item lookup indexing",
+            input.def_map.crates().len(),
+            input.semantic_ir.crates().len(),
+        );
+        let lookup_index_fingerprints = input
+            .def_map
+            .crates()
+            .iter()
+            .zip(input.semantic_ir.crates())
+            .map(|(crate_data, items)| FingerprintBuilder::item_lookup_index(crate_data, items))
+            .collect::<anyhow::Result<Vec<_>>>()
+            .context("while attempting to fingerprint package item lookup indexes")?;
+
+        Ok(Self {
             header: input.header.clone(),
             parse: input.parse.clone(),
             body_ir_coverage: input
@@ -72,6 +98,46 @@ impl PackageCacheProbe {
                 .iter()
                 .map(|crate_bodies| crate_bodies.coverage())
                 .collect(),
+            lookup_index_fingerprints,
+        })
+    }
+
+    /// Check whether every rebuilt crate would produce the saved item lookup index.
+    ///
+    /// This is an all-or-nothing package decision. Returning `false` only disables index reuse;
+    /// the dirty rebuild can still construct fresh indexes from the rebuilt declarations.
+    pub(crate) fn lookup_indexes_match(
+        &self,
+        def_map: &DefMapPackage,
+        semantic_ir: &PackageIr,
+    ) -> anyhow::Result<bool> {
+        anyhow::ensure!(
+            def_map.crates().len() == semantic_ir.crates().len(),
+            "rebuilt package has {} DefMap crates but {} semantic IR crates",
+            def_map.crates().len(),
+            semantic_ir.crates().len(),
+        );
+        if self.lookup_index_fingerprints.len() != semantic_ir.crates().len() {
+            return Ok(false);
         }
+
+        // Recreate each key from the post-edit declarations. One mismatch is enough to reject all
+        // saved indexes for this package, which keeps the later Body IR handoff simple and aligned.
+        for (crate_idx, (crate_data, items)) in def_map
+            .crates()
+            .iter()
+            .zip(semantic_ir.crates())
+            .enumerate()
+        {
+            let rebuilt =
+                FingerprintBuilder::item_lookup_index(crate_data, items).with_context(|| {
+                    format!("while attempting to fingerprint item lookup index {crate_idx}")
+                })?;
+            if self.lookup_index_fingerprints[crate_idx] != rebuilt {
+                return Ok(false);
+            }
+        }
+
+        Ok(true)
     }
 }

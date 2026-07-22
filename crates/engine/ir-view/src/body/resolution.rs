@@ -28,11 +28,11 @@ impl<'a, 'db> BodyResolutionView<'a, 'db> {
         let Some(body) = self.db.body_ir.body(body_ref)? else {
             return Ok(None);
         };
-        let Some(semantic_index) = self.db.body_ir.semantic_index(body_ref.crate_ref)? else {
+        let Some(item_lookup_index) = self.db.body_ir.item_lookup_index(body_ref.crate_ref)? else {
             return Ok(None);
         };
 
-        Ok(Some((body, semantic_index)))
+        Ok(Some((body, item_lookup_index)))
     }
 
     /// Resolve a type path in a body scope.
@@ -42,7 +42,7 @@ impl<'a, 'db> BodyResolutionView<'a, 'db> {
         scope: ScopeId,
         path: &Path,
     ) -> anyhow::Result<Option<TypePathResolution>> {
-        let Some((body, semantic_index)) = self.body_with_index(body_ref)? else {
+        let Some((body, item_lookup_index)) = self.body_with_index(body_ref)? else {
             return Ok(None);
         };
         let trait_selection = self.db.trait_selection(body_ref.crate_ref);
@@ -53,7 +53,7 @@ impl<'a, 'db> BodyResolutionView<'a, 'db> {
                 self.db,
                 body_ref,
                 body,
-                semantic_index,
+                item_lookup_index,
                 trait_selection,
             )
             .type_path_query()
@@ -68,7 +68,7 @@ impl<'a, 'db> BodyResolutionView<'a, 'db> {
         scope: ScopeId,
         path: &Path,
     ) -> anyhow::Result<Option<EnumVariantRef>> {
-        let Some((body, semantic_index)) = self.body_with_index(body_ref)? else {
+        let Some((body, item_lookup_index)) = self.body_with_index(body_ref)? else {
             return Ok(None);
         };
         let trait_selection = self.db.trait_selection(body_ref.crate_ref);
@@ -78,7 +78,7 @@ impl<'a, 'db> BodyResolutionView<'a, 'db> {
             self.db,
             body_ref,
             body,
-            semantic_index,
+            item_lookup_index,
             trait_selection,
         )
         .type_path_query()
@@ -93,7 +93,7 @@ impl<'a, 'db> BodyResolutionView<'a, 'db> {
         scope: ScopeId,
         path: &Path,
     ) -> anyhow::Result<Vec<DeclarationRef>> {
-        let Some((body, semantic_index)) = self.body_with_index(body_ref)? else {
+        let Some((body, item_lookup_index)) = self.body_with_index(body_ref)? else {
             return Ok(Vec::new());
         };
         let trait_selection = self.db.trait_selection(body_ref.crate_ref);
@@ -103,7 +103,7 @@ impl<'a, 'db> BodyResolutionView<'a, 'db> {
             self.db,
             body_ref,
             body,
-            semantic_index,
+            item_lookup_index,
             trait_selection,
         )
         .value_paths()
@@ -117,7 +117,7 @@ impl<'a, 'db> BodyResolutionView<'a, 'db> {
         scope: ScopeId,
         path: &Path,
     ) -> anyhow::Result<Ty> {
-        let Some((body, semantic_index)) = self.body_with_index(body_ref)? else {
+        let Some((body, item_lookup_index)) = self.body_with_index(body_ref)? else {
             return Ok(Ty::Unknown);
         };
         let trait_selection = self.db.trait_selection(body_ref.crate_ref);
@@ -127,7 +127,7 @@ impl<'a, 'db> BodyResolutionView<'a, 'db> {
             self.db,
             body_ref,
             body,
-            semantic_index,
+            item_lookup_index,
             trait_selection,
         )
         .value_paths()
@@ -140,7 +140,7 @@ impl<'a, 'db> BodyResolutionView<'a, 'db> {
         body_ref: BodyRef,
         ty: &Ty,
     ) -> anyhow::Result<Option<Vec<MemberMethodCandidateRef>>> {
-        let Some((body, semantic_index)) = self.body_with_index(body_ref)? else {
+        let Some((body, item_lookup_index)) = self.body_with_index(body_ref)? else {
             return Ok(None);
         };
         let trait_selection = self.db.trait_selection(body_ref.crate_ref);
@@ -151,7 +151,7 @@ impl<'a, 'db> BodyResolutionView<'a, 'db> {
                 self.db,
                 body_ref,
                 body,
-                semantic_index,
+                item_lookup_index,
                 trait_selection,
             )
             .methods()

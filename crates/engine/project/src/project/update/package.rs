@@ -54,6 +54,7 @@ pub(super) fn rebuild_dirty_overlay_packages(
     state: &mut ProjectState,
     packages: &[PackageSlot],
     body_files: &[BodyIrFile],
+    can_reuse_saved_item_lookup_indexes: bool,
 ) -> anyhow::Result<()> {
     if packages.is_empty() {
         return Ok(());
@@ -61,7 +62,11 @@ pub(super) fn rebuild_dirty_overlay_packages(
 
     try_rebuild_packages(
         state,
-        PackageRebuildPlan::dirty_overlay(packages, body_files),
+        PackageRebuildPlan::dirty_overlay(
+            packages,
+            body_files,
+            can_reuse_saved_item_lookup_indexes,
+        ),
     )
 }
 
@@ -134,6 +139,17 @@ fn try_rebuild_packages(
         )
         .build()
         .context("while attempting to rebuild affected semantic IR packages")?;
+
+    // Dirty body edits often leave crate declarations unchanged. Compare the rebuilt DefMap and
+    // Semantic IR with the compact saved fingerprints now, while those new packages are resident.
+    // Other rebuild modes keep the ordinary fresh-index construction path.
+    let item_lookup_indexes_unchanged = if plan.can_reuse_saved_item_lookup_indexes {
+        loaders
+            .item_lookup_indexes_unchanged(&def_map, &semantic_ir, plan.source_packages.as_slice())
+            .context("while attempting to compare dirty item lookup indexes with saved analysis")?
+    } else {
+        false
+    };
     let mut body_rebuilder = state.body_ir.package_rebuilder(
         &state.parse,
         &def_map,
@@ -144,6 +160,13 @@ fn try_rebuild_packages(
         loaders.semantic_ir.clone(),
         &rebuild_subset,
     );
+    if item_lookup_indexes_unchanged {
+        // The compact cache-probe fingerprints cover every replaced package's lookup facts and
+        // visibility edges. The Body IR loader belongs to the same loader set that read those
+        // probes, so it can now load the saved indexes without materializing the old Semantic IR
+        // or walking the dependency closure a second time.
+        body_rebuilder = body_rebuilder.reuse_item_lookup_indexes(loaders.body_ir.clone());
+    }
     body_rebuilder = match plan.body_scope {
         BodyRebuildScope::ConfiguredBodies => {
             body_rebuilder.configured_bodies(state.body_ir_policy)
@@ -203,6 +226,7 @@ struct PackageRebuildPlan<'a> {
     body_packages: PhasePackageSet,
     body_scope: BodyRebuildScope<'a>,
     residency: RebuildResidency,
+    can_reuse_saved_item_lookup_indexes: bool,
 }
 
 impl<'a> PackageRebuildPlan<'a> {
@@ -216,15 +240,21 @@ impl<'a> PackageRebuildPlan<'a> {
             body_packages: PhasePackageSet::from_slice(packages),
             body_scope,
             residency: RebuildResidency::RestoreSavedState,
+            can_reuse_saved_item_lookup_indexes: false,
         }
     }
 
-    fn dirty_overlay(source_packages: &'a [PackageSlot], body_files: &'a [BodyIrFile]) -> Self {
+    fn dirty_overlay(
+        source_packages: &'a [PackageSlot],
+        body_files: &'a [BodyIrFile],
+        can_reuse_saved_item_lookup_indexes: bool,
+    ) -> Self {
         Self {
             source_packages: PhasePackageSet::from_slice(source_packages),
             body_packages: PhasePackageSet::from_body_files(body_files),
             body_scope: BodyRebuildScope::DirtyFiles(body_files),
             residency: RebuildResidency::KeepResident,
+            can_reuse_saved_item_lookup_indexes,
         }
     }
 }

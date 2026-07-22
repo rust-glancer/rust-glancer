@@ -3,12 +3,17 @@
 //! One request shares an artifact revision and its decoded declaration payloads across
 //! phase-specific package stores. Body IR sections remain independently lazy, but DefMap and
 //! Semantic IR packages are decoded at most once while this loader set is alive.
+//!
+//! A dirty rebuild also uses this owner to compare fingerprints and then load the saved Body IR
+//! index. Both operations therefore read the same immutable artifact revision; callers do not
+//! have to coordinate revisions themselves.
 
 use std::{
     fmt,
     sync::{Arc, OnceLock},
 };
 
+use anyhow::Context as _;
 use rg_body_ir::{BodyFileShard, BodyIrLoader, CrateBodies, LoadBodyIr, PackageBodiesManifest};
 use rg_def_map::PackageDefMaps as DefMapPackage;
 use rg_def_map::PackageSlot;
@@ -22,9 +27,10 @@ use crate::cache::{Fingerprint, PackageArtifactReader, PackageCacheStore, Worksp
 
 use super::state::ProjectState;
 
-/// Loader adapters that share one package-artifact read cache.
+/// Phase-specific loaders and validation queries backed by the same artifact revisions.
 #[derive(Clone)]
 pub(crate) struct PackageReadLoaders {
+    artifacts: Arc<PackageArtifactReaders>,
     pub(crate) def_map: PackageLoader<'static, DefMapPackage>,
     pub(crate) semantic_ir: PackageLoader<'static, PackageIr>,
     pub(crate) body_ir: BodyIrLoader<'static>,
@@ -58,6 +64,7 @@ impl PackageReadLoaders {
             package_source_fingerprints,
         ));
         Self {
+            artifacts: Arc::clone(&artifacts),
             def_map: PackageLoader::new(DefMapPackageLoader {
                 artifacts: Arc::clone(&artifacts),
             }),
@@ -66,6 +73,58 @@ impl PackageReadLoaders {
             }),
             body_ir: BodyIrLoader::new(BodyIrPackageLoader { artifacts }),
         }
+    }
+
+    /// Check whether saved item lookup indexes still describe every rebuilt crate.
+    ///
+    /// Every package rebuilt by a dirty overlay is checked, including crate targets that are not
+    /// part of the immediate body request. The caller enables this only for an overlay built
+    /// directly from saved state, so equality proves that all replaced stores and visibility edges
+    /// are unchanged without walking the full dependency closure. This loader set owns both the
+    /// probes checked here and the Body IR loader used by the caller, so they read the same artifact
+    /// revisions.
+    pub(crate) fn item_lookup_indexes_unchanged(
+        &self,
+        def_map: &rg_def_map::DefMapDb,
+        semantic_ir: &rg_semantic_ir::SemanticIrDb,
+        packages: &[PackageSlot],
+    ) -> anyhow::Result<bool> {
+        for &package in packages {
+            let def_map_package = def_map.resident_package(package).with_context(|| {
+                format!(
+                    "rebuilt package {} should have resident DefMap data for item lookup fingerprinting",
+                    package.0,
+                )
+            })?;
+            let semantic_package = semantic_ir.resident_package(package).with_context(|| {
+                format!(
+                    "rebuilt package {} should have resident semantic IR for item lookup fingerprinting",
+                    package.0,
+                )
+            })?;
+            let reader = match self.artifacts.reader(package) {
+                Ok(reader) => reader,
+                Err(_error) => {
+                    // Reuse is optional. A missing artifact still leaves the ordinary fresh-index
+                    // path available for this dirty query.
+                    return Ok(false);
+                }
+            };
+            if !reader
+                .probe()
+                .lookup_indexes_match(def_map_package, semantic_package)
+                .with_context(|| {
+                    format!(
+                        "while attempting to compare rebuilt package {} item lookup indexes",
+                        package.0,
+                    )
+                })?
+            {
+                return Ok(false);
+            }
+        }
+
+        Ok(true)
     }
 }
 
@@ -231,14 +290,14 @@ impl LoadBodyIr for BodyIrPackageLoader {
             .map_err(|error| error.into_package_store_error(package))
     }
 
-    fn load_semantic_index(
+    fn load_item_lookup_index(
         &self,
         package: PackageSlot,
         crate_id: CrateId,
     ) -> Result<Arc<ItemLookupIndex>, PackageStoreError> {
         self.artifacts
             .reader(package)?
-            .read_body_semantic_index(crate_id)
+            .read_item_lookup_index(crate_id)
             .map(Arc::new)
             .map_err(|error| error.into_package_store_error(package))
     }

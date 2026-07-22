@@ -1,15 +1,16 @@
-//! Nested directory and codecs for crate indexes and file-granular Body IR payloads.
+//! Nested directory and codecs for item lookup indexes and file-granular Body IR payloads.
 //!
 //! Body IR is commonly the largest phase, and most interactive queries care about the file under
 //! the cursor. Its section therefore has another container:
 //!
 //! ```text
-//! RGBODY magic | manifest len | manifest | crate 0 index | file shard | ...
+//! RGBODY magic | manifest len | manifest | crate 0 lookup index | file shard | ...
 //! ```
 //!
 //! The manifest maps every stable body id to a source file and records the relative byte range for
-//! every crate index and file shard. A file-local query reads the manifest once and then one shard.
-//! Crate-global operations may read every shard or ask the loader to reconstruct a full crate.
+//! every item lookup index and file shard. A file-local query reads the manifest once and then one
+//! shard. Crate-global operations may read every shard or ask the loader to reconstruct a full
+//! crate.
 //!
 //! This is still one section of one atomically published package file. Sharding changes read and
 //! decode granularity without creating a transaction protocol for hundreds of independent files.
@@ -58,10 +59,10 @@ struct PackageBodyCacheManifest {
     crates: Vec<CrateBodyCacheLayout>,
 }
 
-/// Relative ranges for one crate's global index and source-file shards.
+/// Relative ranges for one crate's item lookup index and source-file shards.
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite)]
 struct CrateBodyCacheLayout {
-    semantic_index: PackageCacheSectionRange,
+    item_lookup_index: PackageCacheSectionRange,
     files: Vec<BodyFileCacheRange>,
 }
 
@@ -99,14 +100,14 @@ impl PackageBodyCacheIndex {
         &self.manifest
     }
 
-    /// Return the section-relative range for one crate-global semantic index.
-    pub(crate) fn semantic_index_range(
+    /// Return the section-relative range for one crate's item lookup index.
+    pub(crate) fn item_lookup_index_range(
         &self,
         crate_id: CrateId,
     ) -> Option<PackageCacheSectionRange> {
         self.crates
             .get(crate_id.0)
-            .map(|crate_layout| self.payload_range(crate_layout.semantic_index))
+            .map(|crate_layout| self.payload_range(crate_layout.item_lookup_index))
     }
 
     /// Return the section-relative range for one crate and source file.
@@ -148,18 +149,19 @@ impl PackageCacheCodec {
         let mut payload = Vec::new();
         let mut crates = Vec::with_capacity(body_ir.crates().len());
 
-        // 2. Serialize one crate index and one source file at a time. Each append returns its range
-        // relative to `payload`. This avoids a second package-sized set of temporary shard objects.
+        // 2. Serialize one item lookup index and one source file at a time. Each append returns its
+        // range relative to `payload`. This avoids a second package-sized set of temporary shards.
         for (crate_idx, crate_bodies) in body_ir.crates().iter().enumerate() {
-            let semantic_index_start = payload.len();
+            let item_lookup_index_start = payload.len();
             wincode::config::serialize_into(
                 &mut payload,
-                crate_bodies.semantic_index(),
+                crate_bodies.item_lookup_index(),
                 Self::wincode_config(),
             )
             .map_err(|error| anyhow::anyhow!("{error}"))
-            .context("while attempting to serialize package cache Body IR crate index")?;
-            let semantic_index = Self::body_payload_range(semantic_index_start, payload.len())?;
+            .context("while attempting to serialize package cache item lookup index")?;
+            let item_lookup_index =
+                Self::body_payload_range(item_lookup_index_start, payload.len())?;
 
             let crate_id = CrateId(crate_idx);
             let crate_manifest = bodies
@@ -178,7 +180,7 @@ impl PackageCacheCodec {
                 });
             }
             crates.push(CrateBodyCacheLayout {
-                semantic_index,
+                item_lookup_index,
                 files,
             });
         }
@@ -292,11 +294,11 @@ impl PackageCacheCodec {
         })
     }
 
-    /// Decode one crate-global index from its validated range.
-    pub(crate) fn decode_body_semantic_index(bytes: &[u8]) -> anyhow::Result<ItemLookupIndex> {
+    /// Decode one item lookup index from its validated range.
+    pub(crate) fn decode_item_lookup_index(bytes: &[u8]) -> anyhow::Result<ItemLookupIndex> {
         wincode::config::deserialize_exact::<ItemLookupIndex, _>(bytes, Self::wincode_config())
             .map_err(|error| anyhow::anyhow!("{error}"))
-            .context("while attempting to deserialize package cache Body IR crate index")
+            .context("while attempting to deserialize package cache item lookup index")
     }
 
     /// Decode one file shard and verify that it contains exactly the bodies assigned to that file.
@@ -370,7 +372,7 @@ impl PackageCacheCodec {
     ) -> anyhow::Result<()> {
         let mut next_offset = 0_u64;
         for crate_layout in &manifest.crates {
-            let ranges = std::iter::once(crate_layout.semantic_index)
+            let ranges = std::iter::once(crate_layout.item_lookup_index)
                 .chain(crate_layout.files.iter().map(|file| file.range));
             for range in ranges {
                 anyhow::ensure!(

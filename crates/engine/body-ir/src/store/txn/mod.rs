@@ -9,10 +9,10 @@
 //! operations:
 //!
 //! ```text
-//! semantic_index(crate_ref)     -> crate-global index only
+//! item_lookup_index(crate_ref)  -> crate-wide lookup tables
 //! bodies(crate_ref, Some(file)) -> one source-file shard
-//! body(body_ref)               -> the shard named by the manifest
-//! crate_bodies(crate_ref)      -> complete crate
+//! body(body_ref)                -> the shard named by the manifest
+//! crate_bodies(crate_ref)       -> complete crate
 //! ```
 //!
 //! Values loaded for an offloaded package are owned by the transaction. This is why these methods
@@ -71,7 +71,7 @@ impl<'db> BodyIrReadTxn<'db> {
     /// Return the complete crate, loading every required Body IR storage unit when offloaded.
     ///
     /// Prefer the narrower query methods when the caller needs one body, one file, or only the
-    /// crate-global semantic index.
+    /// crate-global item lookup index.
     pub fn crate_bodies(
         &self,
         crate_ref: CrateRef,
@@ -85,17 +85,17 @@ impl<'db> BodyIrReadTxn<'db> {
 
     /// Return the crate-global lookup index without materializing body payloads.
     ///
-    /// The index answers item-to-body lookup questions. It is stored separately because those
-    /// questions should not decode every body in a large crate.
-    pub fn semantic_index(
+    /// The index answers repeated receiver, trait, and language-item questions. It is stored
+    /// separately because those questions should not decode every body in a large crate.
+    pub fn item_lookup_index(
         &self,
         crate_ref: CrateRef,
     ) -> Result<Option<&ItemLookupIndex>, PackageStoreError> {
         match self.entry(crate_ref.package)? {
             PackageReadEntry::Resident(package) => Ok(package
                 .crate_bodies(crate_ref.crate_id)
-                .map(CrateBodies::semantic_index)),
-            PackageReadEntry::Lazy(package) => package.semantic_index(crate_ref),
+                .map(CrateBodies::item_lookup_index)),
+            PackageReadEntry::Lazy(package) => package.item_lookup_index(crate_ref),
             PackageReadEntry::Excluded => unreachable!("excluded entries fail in entry()"),
         }
     }

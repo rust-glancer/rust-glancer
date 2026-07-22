@@ -8,7 +8,7 @@ use rg_ir_model::{
     BodyRef, CrateRef, DefMapRef, FunctionRef, SemanticItemRef, TraitDefRef, TypeDefRef,
     identity::{DeclarationRef, ExprRef},
 };
-use rg_semantic_ir::{ItemLookupIndex, ItemStoreQuery};
+use rg_semantic_ir::ItemStoreQuery;
 use rg_std::UniqueVec;
 use rg_ty::{ImplementationQuery, ReferencePeelingCandidates, Ty, TyContext};
 
@@ -218,20 +218,15 @@ impl<'a, 'db> ImplementationView<'a, 'db> {
         use_site: CrateRef,
     ) -> anyhow::Result<Option<ImplementationQuery<'_, &IndexedViewDb<'_>, &IndexedViewDb<'_>>>>
     {
-        let Some(semantic_index) = self.semantic_index(use_site)? else {
+        let Some(item_lookup_index) = self.db.body_ir.item_lookup_index(use_site)? else {
             return Ok(None);
         };
         Ok(Some(ImplementationQuery::new(TyContext::new(
             self.db,
             self.db,
-            semantic_index,
+            item_lookup_index,
             self.db.trait_selection(use_site),
         ))))
-    }
-
-    /// Return the crate-scoped semantic index that backs fast type/member queries.
-    fn semantic_index(&self, use_site: CrateRef) -> anyhow::Result<Option<&ItemLookupIndex>> {
-        Ok(self.db.body_ir.semantic_index(use_site)?)
     }
 
     /// Extract a function ref from a declaration when it denotes a function.

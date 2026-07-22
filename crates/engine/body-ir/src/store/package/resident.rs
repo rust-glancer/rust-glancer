@@ -36,7 +36,7 @@ impl PackageBodies {
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct CrateBodies {
     pub(crate) coverage: CrateBodiesCoverage,
-    pub(crate) semantic_index: ItemLookupIndex,
+    pub(crate) item_lookup_index: ItemLookupIndex,
     pub(crate) bodies: Arena<BodyId, BodyData>,
     pub(crate) facts: Arena<BodyId, BodyFacts>,
     pub(crate) body_local_items: Arena<BodyId, BodyLocalItems>,
@@ -50,7 +50,7 @@ impl CrateBodies {
         );
         Self {
             coverage,
-            semantic_index: ItemLookupIndex::default(),
+            item_lookup_index: ItemLookupIndex::default(),
             bodies: Arena::new(),
             facts: Arena::new(),
             body_local_items: Arena::new(),
@@ -59,7 +59,7 @@ impl CrateBodies {
 
     pub(crate) fn from_build(
         coverage: CrateBodiesCoverage,
-        semantic_index: ItemLookupIndex,
+        item_lookup_index: ItemLookupIndex,
         bodies: Arena<BodyId, BodyData>,
         facts: Arena<BodyId, BodyFacts>,
         body_local_items: Arena<BodyId, BodyLocalItems>,
@@ -75,7 +75,7 @@ impl CrateBodies {
         );
         Self {
             coverage,
-            semantic_index,
+            item_lookup_index,
             bodies,
             facts,
             body_local_items,
@@ -94,8 +94,8 @@ impl CrateBodies {
         Some(BodyView::new(self.bodies.get(body)?, self.facts.get(body)?))
     }
 
-    pub fn semantic_index(&self) -> &ItemLookupIndex {
-        &self.semantic_index
+    pub fn item_lookup_index(&self) -> &ItemLookupIndex {
+        &self.item_lookup_index
     }
 
     pub fn body_local_items(&self, body: BodyId) -> Option<&BodyLocalItems> {

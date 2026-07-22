@@ -1932,6 +1932,188 @@ pub fn dirty_body(value: Dirty) {
 }
 
 #[test]
+fn dirty_overlay_lookup_index_tracks_declaration_changes() {
+    let fixture = HostFixture::build_with_package_residency_policy(
+        r#"
+//- /Cargo.toml
+[package]
+name = "dirty_overlay_lookup_index_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct User;
+
+impl User {
+    pub fn saved(&self) {}
+}
+
+pub fn inspect(value: User) {
+    let _ = value;
+}
+"#,
+        PackageResidencyPolicy::AllOffloadable,
+    );
+    let body_only_text = MarkedText::parse(
+        r#"
+pub struct User;
+
+impl User {
+    pub fn saved(&self) {}
+}
+
+pub fn inspect(value: User) {
+    value.$body_only$
+}
+"#,
+    );
+    let declaration_text = MarkedText::parse(
+        r#"
+pub struct User;
+
+impl User {
+    pub fn saved(&self) {}
+    pub fn dirty(&self) {}
+}
+
+pub fn inspect(value: User) {
+    value.$declaration$
+}
+"#,
+    );
+
+    // A body-only overlay may reuse the saved index, while a new method must invalidate that
+    // optimization and become visible through an index built from the dirty declarations.
+    let body_only = fixture.dirty_overlay("src/lib.rs", body_only_text.text());
+    let body_only = fixture.render_dirty_project(
+        &body_only,
+        body_only_text.text(),
+        &[HostObservation::completions_at(
+            "body-only dirty receiver",
+            "src/lib.rs",
+            body_only_text.offset("body_only"),
+        )],
+    );
+    let declaration = fixture.dirty_overlay("src/lib.rs", declaration_text.text());
+    let declaration = fixture.render_dirty_project(
+        &declaration,
+        declaration_text.text(),
+        &[HostObservation::completions_at(
+            "declaration-changing dirty receiver",
+            "src/lib.rs",
+            declaration_text.offset("declaration"),
+        )],
+    );
+
+    let actual = format!(
+        "body-only overlay\n{}\n\ndeclaration-changing overlay\n{}\n",
+        body_only.trim_end(),
+        declaration.trim_end(),
+    );
+    expect![[r#"
+        body-only overlay
+        completions at `body-only dirty receiver`
+        - inherent_method saved
+
+        declaration-changing overlay
+        completions at `declaration-changing dirty receiver`
+        - inherent_method dirty
+        - inherent_method saved
+    "#]]
+    .assert_eq(&actual);
+}
+
+#[test]
+fn chained_dirty_overlay_keeps_dependency_declaration_changes() {
+    let fixture = HostFixture::build_with_package_residency_policy(
+        r#"
+//- /Cargo.toml
+[workspace]
+members = ["crates/dep", "crates/app"]
+resolver = "3"
+
+//- /crates/dep/Cargo.toml
+[package]
+name = "dep"
+version = "0.1.0"
+edition = "2024"
+
+//- /crates/dep/src/lib.rs
+pub struct User;
+
+impl User {
+    pub fn saved(&self) {}
+}
+
+//- /crates/app/Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+dep = { path = "../dep" }
+
+//- /crates/app/src/lib.rs
+pub fn inspect(value: dep::User) {
+    let _ = value;
+}
+"#,
+        PackageResidencyPolicy::AllOffloadable,
+    );
+    let mut dependency_overlay = fixture.dirty_overlay_with_scope(
+        "crates/dep/src/lib.rs",
+        r#"
+pub struct User;
+
+impl User {
+    pub fn saved(&self) {}
+}
+
+impl User {
+    pub fn dirty(&self) {}
+}
+"#,
+        DirtyOverlayScope::ChangedPackages,
+    );
+    // Request cleanup must not erase the fact that this project still contains dirty-derived
+    // declarations. The next overlay needs that provenance even after the loaders are gone.
+    dependency_overlay.release_query_memory();
+    let app_text = MarkedText::parse(
+        r#"
+pub fn inspect(value: dep::User) {
+    value.$receiver$
+}
+"#,
+    );
+
+    // The second overlay changes only the app body. Its semantic view must still include the
+    // declaration introduced by the dependency overlay used as its base.
+    let app_overlay = fixture.dirty_overlay_from(
+        &dependency_overlay,
+        "crates/app/src/lib.rs",
+        app_text.text(),
+        DirtyOverlayScope::ChangedPackages,
+    );
+    let actual = fixture.render_dirty_project(
+        &app_overlay,
+        app_text.text(),
+        &[HostObservation::completions_at(
+            "receiver in overlay derived from dirty dependency",
+            "crates/app/src/lib.rs",
+            app_text.offset("receiver"),
+        )],
+    );
+
+    expect![[r#"
+        completions at `receiver in overlay derived from dirty dependency`
+        - inherent_method dirty
+        - inherent_method saved
+    "#]]
+    .assert_eq(&actual);
+}
+
+#[test]
 fn dirty_overlay_scope_controls_reverse_dependent_rebuilds() {
     let fixture = ProjectFixture::build_with_package_residency_policy(
         r#"
