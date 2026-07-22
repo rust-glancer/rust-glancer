@@ -60,7 +60,7 @@ pub(super) fn build_overlay(
     let mut overlay = project.clone();
     // A saved project should not carry request state, but clearing here also makes a cloned overlay
     // robust when library callers build one disposable overlay from another.
-    overlay.state.query_trait_selection_sessions.clear();
+    overlay.state.clear_query_cache();
     let mut changed_files = Vec::new();
     let mut fallback_package_roots = Vec::new();
 

@@ -45,6 +45,11 @@ pub(super) fn rebuild_packages(
     }
 }
 
+/// Rebuild dirty packages without running saved-project residency or allocator cleanup.
+///
+/// The rebuilt payload stays available through the matching query. Its caller owns the later
+/// request-memory release and allocator purge; doing either here would put cleanup inside the
+/// interactive overlay build.
 pub(super) fn rebuild_dirty_overlay_packages(
     state: &mut ProjectState,
     packages: &[PackageSlot],
@@ -57,11 +62,7 @@ pub(super) fn rebuild_dirty_overlay_packages(
     try_rebuild_packages(
         state,
         PackageRebuildPlan::dirty_overlay(packages, body_files),
-    )?;
-    state
-        .memory_hooks
-        .purge(ProjectMemoryPurgePoint::AfterDirtyOverlayBuild);
-    Ok(())
+    )
 }
 
 fn try_rebuild_packages(
@@ -139,8 +140,8 @@ fn try_rebuild_packages(
         &semantic_ir,
         plan.body_packages.as_slice(),
         &mut state.names,
-        loaders.def_map,
-        loaders.semantic_ir,
+        loaders.def_map.clone(),
+        loaders.semantic_ir.clone(),
         &rebuild_subset,
     );
     body_rebuilder = match plan.body_scope {
@@ -160,10 +161,19 @@ fn try_rebuild_packages(
         }
     }
     .context("while attempting to rebuild affected body IR packages")?;
-    state
-        .parse
-        .validate_saved_sources()
-        .context("while attempting to validate captured project source generation")?;
+    match plan.residency {
+        RebuildResidency::RestoreSavedState => state
+            .parse
+            .validate_saved_sources()
+            .context("while attempting to validate captured project source generation")?,
+        // Only these packages received newly derived analysis. Dependencies still come from the
+        // already-validated saved generation, while every source read made during this rebuild
+        // independently verifies the frozen descriptor before returning text.
+        RebuildResidency::KeepResident => state
+            .parse
+            .validate_saved_sources_in_packages(&package_indices)
+            .context("while attempting to validate dirty overlay source packages")?,
+    }
     state.parse.evict_saved_source_text();
 
     // ItemTree is a transient rebuild input. Drop it before pruning the weak interner so names
@@ -173,7 +183,11 @@ fn try_rebuild_packages(
     state.def_map = def_map;
     state.semantic_ir = semantic_ir;
     state.body_ir = body_ir;
-    state.query_trait_selection_sessions = trait_selection_sessions;
+    if matches!(plan.body_scope, BodyRebuildScope::DirtyFiles(_)) {
+        state.install_query_cache(loaders.clone(), trait_selection_sessions);
+    } else {
+        state.clear_query_cache();
+    }
     Shrink::shrink_to_fit(&mut state.names);
     if matches!(plan.residency, RebuildResidency::RestoreSavedState) {
         ResidencyApplication::restore(state, plan.source_packages.as_slice())

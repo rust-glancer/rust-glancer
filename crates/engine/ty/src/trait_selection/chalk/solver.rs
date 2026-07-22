@@ -7,6 +7,10 @@
 //! The state is serialized behind one mutex because a Chalk solver forest mutates as it records
 //! answers. Impl-predicate checks and associated-type projection use different forests: the first
 //! only needs one answer, while the second must retain the substitution for its result type.
+//!
+//! One exact nominal impl does not need that whole projection universe. When native selection has
+//! already proved such an impl, this module first tries to instantiate the matching semantic
+//! associated-type declaration directly and enters Chalk only for cases that need solver evidence.
 
 use std::cell::Cell;
 use std::sync::Mutex;
@@ -31,12 +35,15 @@ use super::program::ChalkProgramState;
 use super::raise;
 use crate::inference::{InferVarKind, InferenceSubstitution, InferenceTable};
 use crate::trait_selection::{AssocProjectionResult, TraitSelectionSession};
-use crate::{Clause, GenericArgs, ItemPathQuery};
+use crate::{Clause, GenericArg, GenericArgs, ItemPathQuery, SemanticSignatureQuery, Substitution};
 
 const INTER: RgChalkInterner = RgChalkInterner;
 const SOLVER_MAX_SIZE: usize = 32;
 const SETTLED_GOAL_QUANTUM_BUDGET: usize = 4_096;
 const SPECULATIVE_GOAL_QUANTUM_BUDGET: usize = 256;
+// Program construction is not resumable like solver search. Avoid starting a large visible impl
+// universe while a live inference goal is still likely to become more precise on a later pass.
+const SPECULATIVE_PROGRAM_IMPL_BUDGET: usize = 64;
 // A body may ask thousands of small solver questions. Log only a goal that is independently
 // expensive enough to explain a noticeable part of indexing time.
 const SLOW_SOLVER_GOAL: Duration = Duration::from_millis(100);
@@ -183,10 +190,50 @@ impl ChalkTraitSolver {
             return Ok(ChalkOutcome::Ambiguous(None));
         }
 
+        // `Ty::Unknown` has no Chalk representation. Validate that adapter boundary before
+        // materializing the roots: lowering the goal after a full program build would return the
+        // same `Unsupported` outcome.
+        let has_unknown = clauses.iter().any(|clause| match clause {
+            Clause::Implemented(application) => {
+                application.args.iter().any(GenericArg::has_unknown)
+            }
+            Clause::AliasEq { alias, ty } => {
+                alias.args.iter().any(GenericArg::has_unknown) || ty.has_unknown()
+            }
+        });
+        if has_unknown {
+            return Ok(ChalkOutcome::Unsupported);
+        }
+
+        // The ordinary speculative quantum budget starts after program preparation, but a large
+        // visible trait can spend hundreds of milliseconds building its transitive impl closure
+        // before the first quantum runs. Bound that preparation too. The caller retains the
+        // candidate as `Maybe` and body inference can retry once these variables become concrete.
+        let has_live_inference = clauses.iter().any(|clause| match clause {
+            Clause::Implemented(application) => application.args.iter().any(GenericArg::has_var),
+            Clause::AliasEq { alias, ty } => {
+                alias.args.iter().any(GenericArg::has_var) || ty.has_var()
+            }
+        });
+        if has_live_inference {
+            let mut root_impl_count = 0usize;
+            for clause in clauses {
+                let Clause::Implemented(application) = clause else {
+                    continue;
+                };
+                root_impl_count = root_impl_count
+                    .saturating_add(crate_items.impls_for_trait(application.def)?.len());
+                if root_impl_count > SPECULATIVE_PROGRAM_IMPL_BUDGET {
+                    return Ok(ChalkOutcome::Exhausted);
+                }
+            }
+        }
+
         let mut state = self
             .state
             .lock()
             .expect("Chalk solver-state lock should not be poisoned");
+        let program_started = Instant::now();
         let supported = state.program.ensure_for_clauses(
             item_paths,
             crate_items,
@@ -195,44 +242,36 @@ impl ChalkTraitSolver {
             clauses,
             Some(table),
         )?;
+        let program_elapsed = program_started.elapsed();
+        if program_elapsed >= SLOW_SOLVER_GOAL {
+            tracing::debug!(
+                elapsed_ms = program_elapsed.as_millis(),
+                clause_count = clauses.len(),
+                "slow Chalk proof program preparation"
+            );
+        }
         if !supported {
             return Ok(ChalkOutcome::Unsupported);
         }
-        Ok(state.prove_clauses(clauses, table, inference_cache))
+        let outcome = state.prove_clauses(clauses, table, inference_cache);
+        if program_elapsed >= SLOW_SOLVER_GOAL {
+            let solver_outcome = match &outcome {
+                ChalkOutcome::Proven(_) => "proven",
+                ChalkOutcome::Ambiguous(_) => "ambiguous",
+                ChalkOutcome::NoSolution => "no_solution",
+                ChalkOutcome::Unsupported => "unsupported",
+                ChalkOutcome::Exhausted => "exhausted",
+            };
+            tracing::debug!(solver_outcome, "slow prepared Chalk proof finished");
+        }
+        Ok(outcome)
     }
 
-    /// Load definitions referenced by visible impl predicates before candidate evaluation begins.
+    /// Normalize one associated type from an exact selected impl or from Chalk's answer.
     ///
-    /// Candidate selection checks impls one at a time. Priming the program in one pass keeps
-    /// semantic program extension outside that repeated solve loop.
-    pub(crate) fn prepare_clauses<'query, D, I>(
-        &self,
-        item_paths: &ItemPathQuery<'query, D, I>,
-        crate_items: &CrateItemQuery<'query, D, I>,
-        lookup_index: &ItemLookupIndex,
-        session: &TraitSelectionSession,
-        clauses: &[Clause],
-    ) -> Result<(), I::Error>
-    where
-        D: DefMapSource<Error = I::Error>,
-        I: ItemStoreSource<'query>,
-    {
-        self.state
-            .lock()
-            .expect("Chalk solver-state lock should not be poisoned")
-            .program
-            .ensure_for_clauses(
-                item_paths,
-                crate_items,
-                lookup_index,
-                session,
-                clauses,
-                None,
-            )
-            .map(|_| ())
-    }
-
-    /// Normalize one associated type and return any inference evidence carried by Chalk's answer.
+    /// A supported value on a proved nominal impl is instantiated before program construction.
+    /// Defaults, opaque bounds, unsupported declaration shapes, and goals without exact impl
+    /// evidence continue through the ordinary Chalk projection path.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn normalize_assoc_type<'query, D, I>(
         &self,
@@ -250,10 +289,76 @@ impl ChalkTraitSolver {
         D: DefMapSource<Error = I::Error>,
         I: ItemStoreSource<'query>,
     {
+        // Projection must not infer an unconstrained `Self` by enumerating every visible impl.
+        // Native selection has no exact evidence in this case, and another impl can be added
+        // without changing the call site, so keep the result pending before building the trait's
+        // transitive Chalk program. An explicitly selected impl remains valid evidence even when
+        // its instantiated goal still contains a caller-owned variable.
+        if selected_impl.is_none()
+            && matches!(
+                table.resolve_root_var(goal.self_ty()),
+                crate::Ty::InferVar { .. } | crate::Ty::Unknown
+            )
+        {
+            return Ok(ChalkOutcome::Ambiguous(None));
+        }
+        let has_live_inference = goal.application.args.iter().any(GenericArg::has_var)
+            || goal
+                .associated_types
+                .iter()
+                .any(|binding| binding.ty.has_var());
+        if selected_impl.is_none()
+            && has_live_inference
+            && crate_items.impls_for_trait(goal.trait_ref())?.len()
+                > SPECULATIVE_PROGRAM_IMPL_BUDGET
+        {
+            return Ok(ChalkOutcome::Exhausted);
+        }
+
+        // Native selection has already proved this exact impl and retained its substitution. Read
+        // a supported associated value directly from that impl before building Chalk's complete
+        // visible universe for the trait. Recursive aliases still return through the ordinary
+        // projection entry point, while defaults, GATs, and opaque-only evidence fall back below.
+        if let Some((impl_ref, subst)) = selected_impl
+            // A blanket impl selected for an opaque receiver may derive its associated value from
+            // that opaque's declared equality. Keep that environment evidence inside Chalk; the
+            // direct path is only needed for the indexed nominal receiver that made declaration
+            // materialization expensive in the first place.
+            && matches!(table.resolve_root_var(goal.self_ty()), crate::Ty::Adt(_))
+        {
+            let selected_value = if let Some(trait_alias_data) =
+                item_paths.items().type_alias_data(associated_ty)?
+                && ChalkLowerer::supports_associated_ty_declaration(trait_alias_data)
+                && let Some(alias) = item_paths
+                    .items()
+                    .impl_associated_type_by_name(impl_ref, trait_alias_data.name.as_str())?
+                && let Some(alias_data) = item_paths.items().type_alias_data(alias)?
+                && ChalkLowerer::supports_associated_ty_declaration(alias_data)
+            {
+                SemanticSignatureQuery::type_alias_ty_from(item_paths, alias)?
+            } else {
+                None
+            };
+
+            if let Some(selected_value) = selected_value {
+                let generics = item_paths
+                    .generics()
+                    .generics(GenericDefRef::Impl(impl_ref))?;
+                let args = subst.as_substitution().args_for(&generics);
+                let complete_subst = Substitution::from_args(&generics, &args);
+                return Ok(ChalkOutcome::Proven(AssocProjectionResult {
+                    ty: table.canonicalize(&complete_subst.apply(&selected_value)),
+                    applicability: TraitApplicability::Yes,
+                    table: table.clone(),
+                }));
+            }
+        }
+
         let mut state = self
             .state
             .lock()
             .expect("Chalk solver-state lock should not be poisoned");
+        let program_started = Instant::now();
         let supported = state.program.ensure_for_goal(
             item_paths,
             crate_items,
@@ -263,6 +368,16 @@ impl ChalkTraitSolver {
             associated_ty,
             table,
         )?;
+        let program_elapsed = program_started.elapsed();
+        if program_elapsed >= SLOW_SOLVER_GOAL {
+            tracing::debug!(
+                elapsed_ms = program_elapsed.as_millis(),
+                selected_impl = selected_impl.is_some(),
+                trait_ref = ?goal.trait_ref(),
+                ?associated_ty,
+                "slow Chalk projection program preparation"
+            );
+        }
         if !supported {
             return Ok(ChalkOutcome::Unsupported);
         }

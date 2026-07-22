@@ -1,22 +1,26 @@
 //! Bounded trait-impl selection shared by inference and editor queries.
 //!
-//! Native matching discovers canonical impl headers that may fit a resolved trait goal. Chalk then
-//! owns proof of their predicates and associated-type equalities. Keeping those phases as different
-//! types prevents exploratory editor candidates from being mistaken for established semantic facts.
+//! Native matching discovers canonical impl headers that may fit a resolved trait goal. A small
+//! bounded native proof handles concrete impl chains and compiler-known closure facts; Chalk owns
+//! the remaining predicates and associated-type equalities. Keeping discovery, native proof, and
+//! solver fallback as different types prevents exploratory editor candidates from being mistaken
+//! for established semantic facts.
 
 mod candidate;
 mod chalk;
 mod matcher;
+mod native_proof;
 mod projection;
 mod session;
 
 use rg_def_map::DefMapSource;
 use rg_ir_model::{GenericDefRef, ImplRef, TraitApplicability, TraitImplRef, TypeAliasRef};
 use rg_semantic_ir::ItemStoreSource;
-use rg_std::{ExpectedUnique, UniqueVec};
+use rg_std::ExpectedUnique;
 
 use self::candidate::TraitCandidate;
 use self::chalk::ChalkOutcome;
+use self::native_proof::NativeProofQuery;
 pub use self::projection::AssocProjectionResult;
 use self::projection::CandidateEvidence;
 pub use self::session::TraitSelectionSession;
@@ -129,10 +133,11 @@ impl TraitGoal {
     }
 }
 
-/// One trait impl whose predicates were submitted to the shared solver.
+/// One visible trait impl after the bounded proof pipeline classified its remaining conditions.
 ///
-/// `Maybe` means Chalk or canonical header matching found genuine ambiguity; it does not mean that
-/// predicate proof was silently delegated to another caller.
+/// `Yes` means its predicates and associated-type constraints were proved. `Maybe` preserves a
+/// plausible editor candidate when matching or proof is ambiguous, or when the bounded adapter
+/// cannot finish; callers must not mistake it for established semantic evidence.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TraitSelection {
     pub trait_impl: TraitImplRef,
@@ -147,8 +152,8 @@ pub struct TraitSelection {
 
 /// Semantic result of proving a related set of trait predicates.
 ///
-/// `Proven` carries a trial inference table with every equality learned by the solver. Ambiguity
-/// can carry partial guidance too, but callers must not treat that guidance as a completed proof.
+/// `Proven` carries a trial inference table with every equality learned while proving. Ambiguity can
+/// carry partial guidance too, but callers must not treat that guidance as a completed proof.
 /// `Unavailable` means the bounded adapter could not model or finish the query; it is deliberately
 /// separate from Rust-level `NoSolution`.
 #[derive(Debug, Clone)]
@@ -166,7 +171,11 @@ enum SemanticOutcome<T> {
     Unavailable,
 }
 
-/// Shared bounded trait-selection query.
+/// Orchestrates one bounded trait-selection request over a shared semantic context.
+///
+/// It discovers native impl candidates, proves small concrete impl chains without constructing a
+/// solver program, and falls back to Chalk for the remaining predicates and projections. Every
+/// path works on trial inference state until the caller explicitly adopts a result.
 pub struct TraitSelectionQuery<'query, D, I> {
     context: TyContext<'query, D, I>,
 }
@@ -213,6 +222,10 @@ where
         )
     }
 
+    /// Normalize declaration predicates, try the native proof forms, then fall back to Chalk.
+    ///
+    /// `candidate_evidence` controls only recursive associated-type normalization. Candidate proof
+    /// must not reselect the same impl while normalizing one of that impl's own predicates.
     fn prove_clauses_with_candidate_evidence(
         &self,
         clauses: &[Clause],
@@ -278,6 +291,10 @@ where
             normalized_clauses.push(table.canonicalize_clause(&clause));
         }
 
+        if let Some(proof) = NativeProofQuery::new(self).prove(&normalized_clauses, &table)? {
+            return Ok(proof);
+        }
+
         let outcome = self.context.trait_selection().prove_clauses(
             self.context.item_paths(),
             self.context.crate_items(),
@@ -293,7 +310,7 @@ where
         })
     }
 
-    /// Return the unique visible impl whose header fits and whose predicates Chalk can prove.
+    /// Return the unique visible impl whose header fits and whose predicates can be proved.
     ///
     /// This is probe mode: every candidate gets a cloned inference table, and the caller's table
     /// remains unchanged even if a candidate would solve variables.
@@ -305,6 +322,21 @@ where
         goal: &TraitGoal,
         table: &InferenceTable,
     ) -> Result<ExpectedUnique<TraitSelection>, I::Error> {
+        self.probe_with_completeness(goal, table)
+            .map(|(selection, _)| selection)
+    }
+
+    /// Probe while preserving whether every matching native candidate reached a semantic answer.
+    ///
+    /// An empty complete result can terminate queries for a concrete type whose implementations
+    /// are entirely represented by indexed impl headers. An incomplete result must remain
+    /// distinguishable: bounded Chalk work may have declined a candidate without proving that the
+    /// Rust goal has no solution.
+    fn probe_with_completeness(
+        &self,
+        goal: &TraitGoal,
+        table: &InferenceTable,
+    ) -> Result<(ExpectedUnique<TraitSelection>, bool), I::Error> {
         // A goal that carries live inference or closure identity must be re-evaluated with its
         // owning table. Fully stable semantic goals cannot change the caller's table, so cache only
         // the selected impl/substitution and attach the caller's current table on a hit.
@@ -312,7 +344,8 @@ where
         if cacheable
             && let Some(selection) = self.context.trait_selection().strict_selection(goal, table)
         {
-            return Ok(selection);
+            // Strict selections enter the cache only after every candidate was classified.
+            return Ok((selection, true));
         }
 
         let candidates = TraitCandidate::probe_all(
@@ -322,21 +355,6 @@ where
             goal,
             table,
         )?;
-
-        // Program lowering follows clauses transitively. Prime all candidate predicates once so
-        // individual proof attempts do not repeatedly extend the program under the solver lock.
-        let mut trait_impls = UniqueVec::new();
-        for candidate in &candidates {
-            trait_impls.push(candidate.trait_impl);
-        }
-        self.context
-            .trait_selection()
-            .prepare_trait_impl_predicates(
-                self.context.item_paths(),
-                self.context.crate_items(),
-                self.context.lookup_index(),
-                &trait_impls,
-            )?;
 
         let mut definite_selections = ExpectedUnique::new();
         let mut maybe_selections = ExpectedUnique::new();
@@ -369,7 +387,7 @@ where
                 .trait_selection()
                 .remember_strict_selection(goal.clone(), &selection);
         }
-        Ok(selection)
+        Ok((selection, fully_evaluated))
     }
 
     /// Prove an impl that receiver matching has already instantiated.

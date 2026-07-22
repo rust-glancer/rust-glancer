@@ -5,6 +5,8 @@
 //! datums. The result is a closed semantic scope: when the build phase starts, every associated
 //! type ID it encounters already has a declaration scheduled for the same program extension.
 
+use std::time::Instant;
+
 use rg_def_map::DefMapSource;
 use rg_ir_model::{AssocItemId, ItemOwner, TraitDefRef, TypeAliasRef};
 use rg_semantic_ir::{CrateItemQuery, ItemStoreSource};
@@ -228,6 +230,7 @@ impl ChalkProgramScope {
         D: DefMapSource<Error = I::Error>,
         I: ItemStoreSource<'query>,
     {
+        let started = Instant::now();
         let mut scope = Self {
             definitions: roots.clone(),
             ..Self::default()
@@ -347,6 +350,18 @@ impl ChalkProgramScope {
             }
         }
 
+        let elapsed = started.elapsed();
+        if elapsed >= super::SLOW_PROGRAM_EXTENSION {
+            tracing::debug!(
+                elapsed_ms = elapsed.as_millis(),
+                root_trait_count = roots.traits.len(),
+                discovered_trait_count = scope.definitions.traits.len(),
+                impl_count = scope.impls.len(),
+                opaque_type_count = scope.definitions.opaque_tys.len(),
+                function_count = scope.definitions.functions.len(),
+                "slow Chalk program scope discovery"
+            );
+        }
         Ok(scope)
     }
 }

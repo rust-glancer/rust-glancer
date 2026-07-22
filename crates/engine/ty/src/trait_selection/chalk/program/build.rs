@@ -7,12 +7,13 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Instant;
 
 use chalk_ir::{AliasTy, AssocTypeId, Substitution, Ty, TyKind, Variance, Variances, WhereClause};
 use chalk_solve::rust_ir::{AssociatedTyValueId, FnDefDatum, ImplDatum, TraitDatum};
 use rg_def_map::DefMapSource;
 use rg_ir_model::{AssocItemId, GenericDefRef, ImplRef, TraitDefRef, TypeAliasRef, TypeDefRef};
-use rg_semantic_ir::{CrateItemQuery, ImplData, ItemLookupIndex, ItemStoreSource};
+use rg_semantic_ir::{CrateItemQuery, ItemLookupIndex, ItemStoreSource};
 use rg_std::UniqueVec;
 
 use super::super::interner::RgChalkInterner;
@@ -59,11 +60,15 @@ impl ChalkProgram {
         D: DefMapSource<Error = I::Error>,
         I: ItemStoreSource<'query>,
     {
+        let extension_started = Instant::now();
         self.known_items = super::ChalkKnownItems::from_index(lookup_index);
+        let discovery_started = Instant::now();
         let scope = ChalkProgramScope::discover(item_paths, crate_items, session, roots, self)?;
+        let discovery_us = discovery_started.elapsed().as_micros();
 
         // Associated-type declarations must exist before lowering any trait/impl predicates that
         // can mention their projection IDs.
+        let associated_tys_started = Instant::now();
         let mut associated_ty_ids_by_trait = HashMap::new();
         for &trait_ref in &scope.definitions.traits {
             if !scope.trait_headers.contains_key(&trait_ref) {
@@ -81,8 +86,10 @@ impl ChalkProgram {
                 self.collect_trait_associated_tys(item_paths, &lowerer, trait_ref, trait_data)?;
             associated_ty_ids_by_trait.insert(trait_ref, associated_ty_ids);
         }
+        let associated_tys_us = associated_tys_started.elapsed().as_micros();
 
         // Once every associated-type ID exists, trait predicates can safely refer to them.
+        let trait_datums_started = Instant::now();
         for &trait_ref in &scope.definitions.traits {
             let Some(header) = scope.trait_headers.get(&trait_ref) else {
                 continue;
@@ -107,10 +114,12 @@ impl ChalkProgram {
                 .insert(trait_ref, datum.binders.len(INTER));
             self.traits.insert(trait_ref, Arc::new(datum));
         }
+        let trait_datums_us = trait_datums_started.elapsed().as_micros();
 
         // Function items participate in the same built-in `Fn*` clauses as closures. Their datum
         // is declaration-owned, so materialize the canonical signature once with its generic
         // binder rather than letting the database invent an empty `() -> ()` function.
+        let function_datums_started = Instant::now();
         for &function in &scope.definitions.functions {
             let Some(signature) = scope.function_signatures.get(&function) else {
                 continue;
@@ -126,8 +135,10 @@ impl ChalkProgram {
             self.ensure_fn_def_datum_adts(item_paths, &datum)?;
             self.functions.insert(function, Arc::new(datum));
         }
+        let function_datums_us = function_datums_started.elapsed().as_micros();
 
         // Impl datums use the same registry for their predicates and associated-type values.
+        let impl_datums_started = Instant::now();
         for &impl_ref in &scope.impls {
             let Some(header) = scope.impl_headers.get(&impl_ref) else {
                 continue;
@@ -143,7 +154,7 @@ impl ChalkProgram {
                 .generics(GenericDefRef::Impl(impl_ref))?;
             let binders = GenericBinderEnv::for_generics(&generics);
             let associated_ty_value_ids =
-                self.collect_impl_associated_ty_values(item_paths, &binders, impl_ref, impl_data)?;
+                self.collect_impl_associated_ty_values(item_paths, &binders, impl_ref, trait_ref)?;
             let lowerer = ChalkLowerer::new(&binders).with_associated_tys(&self.associated_tys);
             let Some(datum) = lowerer.impl_datum(header, associated_ty_value_ids) else {
                 continue;
@@ -163,9 +174,11 @@ impl ChalkProgram {
                 .push(impl_ref);
             self.impls.insert(impl_ref, Arc::new(datum));
         }
+        let impl_datums_us = impl_datums_started.elapsed().as_micros();
 
         // Opaque bounds are declaration predicates. Materialize them in the solver program while
         // keeping the opaque identity itself compact and independent from those predicates.
+        let opaque_datums_started = Instant::now();
         for &opaque_ref in &scope.definitions.opaque_tys {
             let Some((opaque, bounds)) = scope.opaque_bounds.get(&opaque_ref) else {
                 continue;
@@ -178,11 +191,29 @@ impl ChalkProgram {
             };
             self.opaque_tys.insert(opaque.opaque, Arc::new(datum));
         }
+        let opaque_datums_us = opaque_datums_started.elapsed().as_micros();
 
         self.materialized_traits
             .extend(scope.definitions.traits.iter().copied());
         self.materialized_opaque_owners
             .extend(scope.loaded_opaque_owners.iter().copied());
+        let elapsed = extension_started.elapsed();
+        if elapsed >= super::SLOW_PROGRAM_EXTENSION {
+            tracing::debug!(
+                elapsed_ms = elapsed.as_millis(),
+                discovered_trait_count = scope.definitions.traits.len(),
+                impl_count = scope.impls.len(),
+                opaque_type_count = scope.definitions.opaque_tys.len(),
+                function_count = scope.definitions.functions.len(),
+                discovery_us,
+                associated_tys_us,
+                trait_datums_us,
+                function_datums_us,
+                impl_datums_us,
+                opaque_datums_us,
+                "slow Chalk program materialization phases finished"
+            );
+        }
         Ok(())
     }
 
@@ -223,38 +254,53 @@ impl ChalkProgram {
         Ok(associated_ty_ids)
     }
 
+    /// Pair each trait-associated declaration with the impl item that has the same name.
+    ///
+    /// Driving this from the trait's declarations ignores unrelated impl items and ensures each
+    /// lowered value points at the associated-type ID Chalk registered for that trait.
     fn collect_impl_associated_ty_values<'query, D, I>(
         &mut self,
         item_paths: &ItemPathQuery<'query, D, I>,
         binders: &GenericBinderEnv,
         impl_ref: ImplRef,
-        impl_data: &ImplData,
+        trait_ref: TraitDefRef,
     ) -> Result<Vec<AssociatedTyValueId<RgChalkInterner>>, I::Error>
     where
         D: DefMapSource<Error = I::Error>,
         I: ItemStoreSource<'query>,
     {
-        let Some(trait_ref) = impl_data.resolved_trait_ref.as_option().copied() else {
+        let Some(trait_data) = item_paths.items().trait_data(trait_ref)? else {
             return Ok(Vec::new());
         };
 
         let mut associated_ty_value_ids = Vec::new();
-        for item in &impl_data.items {
-            let AssocItemId::TypeAlias(type_alias_id) = item else {
+        for item in &trait_data.items {
+            let AssocItemId::TypeAlias(trait_type_alias_id) = item else {
                 continue;
             };
-            let type_alias_ref = TypeAliasRef {
-                origin: impl_ref.origin,
-                id: *type_alias_id,
+            let trait_type_alias_ref = TypeAliasRef {
+                origin: trait_ref.origin,
+                id: *trait_type_alias_id,
             };
-            let Some(type_alias_data) = item_paths.items().type_alias_data(type_alias_ref)? else {
+            let Some(trait_type_alias_data) =
+                item_paths.items().type_alias_data(trait_type_alias_ref)?
+            else {
                 continue;
             };
             let Some(associated_ty_ref) = self
                 .associated_ty_by_trait_name
-                .get(&(trait_ref, type_alias_data.name.clone()))
+                .get(&(trait_ref, trait_type_alias_data.name.clone()))
                 .copied()
             else {
+                continue;
+            };
+            let Some(type_alias_ref) = item_paths
+                .items()
+                .impl_associated_type_by_name(impl_ref, trait_type_alias_data.name.as_str())?
+            else {
+                continue;
+            };
+            let Some(type_alias_data) = item_paths.items().type_alias_data(type_alias_ref)? else {
                 continue;
             };
             let Some(ty) = SemanticSignatureQuery::type_alias_ty_from(item_paths, type_alias_ref)?

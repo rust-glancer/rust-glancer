@@ -1852,14 +1852,18 @@ pub fn dirty_body(value: Dirty) {
         ],
     );
     assert_eq!(
-        overlay.state.query_trait_selection_sessions.len(),
+        overlay.state.query_trait_selection_sessions().count(),
         1,
         "dirty Body IR should expose one warmed session for its materialized crate",
     );
+    assert!(
+        overlay.state.has_query_cache(),
+        "dirty rebuilding should retain its decoded package payloads for the matching query",
+    );
     overlay.release_query_memory();
     assert!(
-        overlay.state.query_trait_selection_sessions.is_empty(),
-        "request cleanup should release warmed solver state instead of adding idle residency",
+        !overlay.state.has_query_cache(),
+        "request cleanup should release decoded payloads and warmed solver state together",
     );
     let saved_after = fixture.render(&[
         HostObservation::resident_stats("saved after dirty overlay"),

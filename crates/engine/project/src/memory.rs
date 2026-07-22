@@ -7,7 +7,6 @@ pub enum ProjectMemoryPurgePoint {
     AfterBodyIrBuild,
     AfterProjectBuild,
     AfterPackageRebuild,
-    AfterDirtyOverlayBuild,
     AfterDeferredIndexingFinish,
 }
 
@@ -19,7 +18,6 @@ impl ProjectMemoryPurgePoint {
             Self::AfterBodyIrBuild => "after body-ir build",
             Self::AfterProjectBuild => "after project build",
             Self::AfterPackageRebuild => "after package rebuild",
-            Self::AfterDirtyOverlayBuild => "after dirty overlay",
             Self::AfterDeferredIndexingFinish => "after deferred indexing finish",
         }
     }

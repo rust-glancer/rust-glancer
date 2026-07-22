@@ -1,9 +1,9 @@
 //! Associated-type and canonical type normalization for `TraitSelectionQuery`.
 //!
-//! Chalk is the projection engine for both concrete impls and environment evidence such as an
-//! opaque type's declared bounds. Native candidate matching can identify one concrete impl and
-//! preserve its trial inference table, but projection does not require that impl: recursive
-//! normalization feeds every semantic projection back through the solver boundary.
+//! A selected nominal impl can supply its associated value directly from the semantic declaration.
+//! Chalk handles the remaining cases, including environment evidence such as an opaque type's
+//! declared bounds and goals without one exact impl. Recursive normalization re-enters this same
+//! bounded boundary so nested aliases use the same evidence and inference table.
 
 use rg_def_map::DefMapSource;
 use rg_ir_model::{ItemOwner, TraitApplicability, TraitDefRef, TypeAliasRef};
@@ -52,12 +52,11 @@ where
     D: DefMapSource<Error = I::Error>,
     I: ItemStoreSource<'query>,
 {
-    /// Normalize a named associated type through Chalk's evidence for this trait goal.
+    /// Normalize a named associated type through exact impl evidence or Chalk.
     ///
-    /// A unique native impl lets the adapter instantiate the associated value already stored in
-    /// its Chalk datum. Opaque bounds provide the same kind of exact program evidence without an
-    /// impl identity. Remaining goals enter the bounded solver forest. If none of those paths can
-    /// model or decode the projection, the query returns no semantic fact.
+    /// A unique native impl lets the adapter instantiate its matching associated declaration
+    /// directly. Opaque bounds and goals without one exact impl enter the bounded solver forest.
+    /// If neither path can model or decode the projection, the query returns no semantic fact.
     pub fn normalize_assoc_type(
         &self,
         goal: &TraitGoal,
@@ -92,10 +91,24 @@ where
         candidate_evidence: CandidateEvidence,
     ) -> Result<Option<AssocProjectionResult>, I::Error> {
         let selection = match candidate_evidence {
-            CandidateEvidence::Probe => match self.probe(goal, table)? {
-                ExpectedUnique::One(selection) => Some(selection),
-                ExpectedUnique::Empty | ExpectedUnique::Ambiguous => None,
-            },
+            CandidateEvidence::Probe => {
+                let (selection, fully_evaluated) = self.probe_with_completeness(goal, table)?;
+                match selection {
+                    ExpectedUnique::One(selection) => Some(selection),
+                    // Native matching indexes every ordinary impl by the concrete ADT head. Once
+                    // all matching candidates were classified, Chalk has no additional source of
+                    // evidence for that nominal type. Opaque, generic, and callable types still
+                    // fall through because their bounds or built-in clauses can prove a goal with
+                    // no ordinary impl identity.
+                    ExpectedUnique::Empty
+                        if fully_evaluated
+                            && matches!(table.resolve_root_var(goal.self_ty()), Ty::Adt(_)) =>
+                    {
+                        return Ok(None);
+                    }
+                    ExpectedUnique::Empty | ExpectedUnique::Ambiguous => None,
+                }
+            }
             CandidateEvidence::SolverOnly => None,
         };
         let selection_table = selection

@@ -297,6 +297,36 @@ impl SourceInventory {
         }
         drop(entries);
 
+        self.validate_and_release_existence()
+    }
+
+    /// Proves that selected saved files and every module-discovery decision remain valid.
+    ///
+    /// A disposable overlay derives new analysis only for its rebuilt packages. Unchanged package
+    /// payloads still belong to the already-validated saved generation, so rereading every source
+    /// in the project would add filesystem work without strengthening the overlay's consistency.
+    pub fn validate_saved_paths<'a>(
+        &self,
+        paths: impl IntoIterator<Item = &'a Path>,
+    ) -> Result<(), SourceError> {
+        let entries = self
+            .entries
+            .read()
+            .expect("source inventory lock should not be poisoned");
+        let mut validated = HashSet::new();
+        for path in paths {
+            if validated.insert(path)
+                && let Some(entry) = entries.get(path)
+            {
+                entry.validate_saved()?;
+            }
+        }
+        drop(entries);
+
+        self.validate_and_release_existence()
+    }
+
+    fn validate_and_release_existence(&self) -> Result<(), SourceError> {
         // Then repeat module-discovery decisions. A newly created or removed candidate module can
         // change the reachable file graph even when all already-captured files are unchanged. Keep
         // the probes intact on failure so the error still describes the candidate that was checked.

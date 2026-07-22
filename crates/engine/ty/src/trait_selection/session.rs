@@ -302,35 +302,6 @@ impl TraitSelectionSession {
         Ok(candidates)
     }
 
-    /// Materialize definitions reachable from candidate predicates before proving candidates.
-    ///
-    /// Candidate selection checks matching impls one at a time. Extending the shared program here
-    /// keeps that work outside the repeated solver loop.
-    pub(crate) fn prepare_trait_impl_predicates<'query, D, I>(
-        &self,
-        item_paths: &ItemPathQuery<'query, D, I>,
-        crate_items: &CrateItemQuery<'query, D, I>,
-        lookup_index: &ItemLookupIndex,
-        trait_impls: &UniqueVec<TraitImplRef>,
-    ) -> Result<(), I::Error>
-    where
-        D: DefMapSource<Error = I::Error>,
-        I: ItemStoreSource<'query>,
-    {
-        let mut clauses = Vec::new();
-        for &trait_impl in trait_impls {
-            let Some(header) =
-                self.impl_header_with(item_paths, item_paths, trait_impl.impl_ref)?
-            else {
-                continue;
-            };
-            clauses.extend(header.clauses);
-        }
-        self.shared
-            .solver
-            .prepare_clauses(item_paths, crate_items, lookup_index, self, &clauses)
-    }
-
     /// Reattach the caller's table to a cached selection for a stable whole goal.
     ///
     /// Callers check `TraitGoal::is_cache_stable` before using this cache. Its stored payload has no

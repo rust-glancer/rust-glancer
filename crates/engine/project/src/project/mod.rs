@@ -256,8 +256,10 @@ impl Project {
 
     /// Drops state that read-only queries may lazily reconstruct from durable backing data.
     ///
-    /// Query transactions own their offloaded package payloads, so those die with the request.
-    /// Source-coordinate conversion is different: it repopulates line-index cells inside the
+    /// Saved-project transactions own their offloaded package payloads, so those die with the
+    /// request. A dirty overlay also retains the loaders and solver sessions created by its rebuild
+    /// until the matching query finishes; clearing the query cache drops that state as one unit.
+    /// Source-coordinate conversion is different again: it repopulates line-index cells inside the
     /// project itself, and the owner has to reset those cells after the request settles.
     pub fn release_query_memory(&mut self) {
         let offloadable_packages = self
@@ -275,7 +277,7 @@ impl Project {
             .parse
             .offload_line_indexes_for_packages(&offloadable_packages);
         self.state.parse.evict_saved_source_text();
-        self.state.query_trait_selection_sessions.clear();
+        self.state.clear_query_cache();
     }
 }
 

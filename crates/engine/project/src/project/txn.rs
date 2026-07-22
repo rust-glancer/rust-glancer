@@ -3,7 +3,7 @@
 use rg_ir_view::IndexedViewDb;
 use rg_package_store::PackageSubset;
 
-use super::{loading::PackageReadLoaders, state::ProjectState, subset};
+use super::{state::ProjectState, subset};
 
 /// Read transaction for project-level query APIs.
 ///
@@ -24,7 +24,7 @@ impl<'a> ProjectReadTxn<'a> {
         project: &'a ProjectState,
         subset: &PackageSubset,
     ) -> anyhow::Result<Self> {
-        let loaders = PackageReadLoaders::new(project);
+        let loaders = project.query_read_loaders();
 
         Ok(Self {
             view_db: IndexedViewDb::new(
@@ -36,7 +36,7 @@ impl<'a> ProjectReadTxn<'a> {
                     .read_txn_for_subset(loaders.semantic_ir.clone(), subset),
                 project.body_ir.read_txn_for_subset(loaders.body_ir, subset),
             )
-            .with_trait_selection_sessions(project.query_trait_selection_sessions.iter().cloned()),
+            .with_trait_selection_sessions(project.query_trait_selection_sessions()),
         })
     }
 

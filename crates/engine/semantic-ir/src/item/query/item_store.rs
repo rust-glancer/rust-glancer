@@ -464,6 +464,36 @@ where
             .and_then(|items| items.impl_data(impl_ref.id)))
     }
 
+    /// Find an associated type declared directly by this impl.
+    ///
+    /// Trait association is name-based in Rust, so both program materialization and direct
+    /// projection use this query instead of independently walking an impl's item IDs.
+    pub fn impl_associated_type_by_name(
+        &self,
+        impl_ref: ImplRef,
+        name: &str,
+    ) -> Result<Option<TypeAliasRef>, S::Error> {
+        let Some(data) = self.impl_data(impl_ref)? else {
+            return Ok(None);
+        };
+        for item in &data.items {
+            let AssocItemId::TypeAlias(id) = item else {
+                continue;
+            };
+            let alias = TypeAliasRef {
+                origin: impl_ref.origin,
+                id: *id,
+            };
+            if self
+                .type_alias_data(alias)?
+                .is_some_and(|data| data.name.as_str() == name)
+            {
+                return Ok(Some(alias));
+            }
+        }
+        Ok(None)
+    }
+
     /// Provides lowered function facts for both free functions and associated functions.
     pub fn function_data(
         &self,

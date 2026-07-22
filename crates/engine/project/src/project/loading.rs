@@ -4,7 +4,10 @@
 //! phase-specific package stores. Body IR sections remain independently lazy, but DefMap and
 //! Semantic IR packages are decoded at most once while this loader set is alive.
 
-use std::sync::{Arc, OnceLock};
+use std::{
+    fmt,
+    sync::{Arc, OnceLock},
+};
 
 use rg_body_ir::{BodyFileShard, BodyIrLoader, CrateBodies, LoadBodyIr, PackageBodiesManifest};
 use rg_def_map::PackageDefMaps as DefMapPackage;
@@ -25,6 +28,14 @@ pub(crate) struct PackageReadLoaders {
     pub(crate) def_map: PackageLoader<'static, DefMapPackage>,
     pub(crate) semantic_ir: PackageLoader<'static, PackageIr>,
     pub(crate) body_ir: BodyIrLoader<'static>,
+}
+
+impl fmt::Debug for PackageReadLoaders {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("PackageReadLoaders")
+            .finish_non_exhaustive()
+    }
 }
 
 impl PackageReadLoaders {
@@ -60,17 +71,26 @@ impl PackageReadLoaders {
 
 /// Shared request cache for package artifact revisions and decoded declaration payloads.
 ///
-/// The cache belongs to `PackageReadLoaders`, not `ProjectState`. Rebuilds and queries can create
-/// several independent read transactions without decoding the same package for each one, while
-/// dropping the outer operation still releases every offloaded payload it loaded.
+/// The cache lives behind `PackageReadLoaders`, so several read transactions can share it without
+/// making decoded dependencies permanent project state. Ordinary operations drop their loader set
+/// on return; a dirty overlay may retain the exact set only until its matching query is released.
 #[derive(Debug)]
 struct PackageArtifactReaders {
     cache_plan: WorkspaceCachePlan,
     cache_store: PackageCacheStore,
     package_source_fingerprints: Vec<Option<Fingerprint>>,
-    readers: Vec<OnceLock<PackageArtifactReader>>,
-    def_maps: Vec<OnceLock<Arc<DefMapPackage>>>,
-    semantic_irs: Vec<OnceLock<Arc<PackageIr>>>,
+    packages: Vec<PackageArtifactReadCache>,
+}
+
+/// Lazily opened and decoded sections for one package slot.
+///
+/// Keeping the three cells together makes their shared package-slot index structural. Each cell
+/// is still populated only after success, so a failed open or decode remains retryable.
+#[derive(Debug, Default)]
+struct PackageArtifactReadCache {
+    reader: OnceLock<PackageArtifactReader>,
+    def_map: OnceLock<Arc<DefMapPackage>>,
+    semantic_ir: OnceLock<Arc<PackageIr>>,
 }
 
 impl PackageArtifactReaders {
@@ -84,16 +104,14 @@ impl PackageArtifactReaders {
             cache_plan,
             cache_store,
             package_source_fingerprints,
-            readers: (0..package_count).map(|_| OnceLock::new()).collect(),
-            def_maps: (0..package_count).map(|_| OnceLock::new()).collect(),
-            semantic_irs: (0..package_count).map(|_| OnceLock::new()).collect(),
+            packages: (0..package_count)
+                .map(|_| PackageArtifactReadCache::default())
+                .collect(),
         }
     }
 
     fn def_map(&self, package: PackageSlot) -> Result<Arc<DefMapPackage>, PackageStoreError> {
-        let Some(cell) = self.def_maps.get(package.0) else {
-            return Err(PackageStoreError::MissingSlot { slot: package });
-        };
+        let cell = &self.package_cache(package)?.def_map;
         if let Some(def_map) = cell.get() {
             return Ok(Arc::clone(def_map));
         }
@@ -113,9 +131,7 @@ impl PackageArtifactReaders {
     }
 
     fn semantic_ir(&self, package: PackageSlot) -> Result<Arc<PackageIr>, PackageStoreError> {
-        let Some(cell) = self.semantic_irs.get(package.0) else {
-            return Err(PackageStoreError::MissingSlot { slot: package });
-        };
+        let cell = &self.package_cache(package)?.semantic_ir;
         if let Some(semantic_ir) = cell.get() {
             return Ok(Arc::clone(semantic_ir));
         }
@@ -132,9 +148,7 @@ impl PackageArtifactReaders {
     }
 
     fn reader(&self, package: PackageSlot) -> Result<&PackageArtifactReader, PackageStoreError> {
-        let Some(cell) = self.readers.get(package.0) else {
-            return Err(PackageStoreError::MissingSlot { slot: package });
-        };
+        let cell = &self.package_cache(package)?.reader;
 
         if let Some(reader) = cell.get() {
             return Ok(reader);
@@ -145,6 +159,15 @@ impl PackageArtifactReaders {
         Ok(cell
             .get()
             .expect("package artifact reader cell should be initialized after successful open"))
+    }
+
+    fn package_cache(
+        &self,
+        package: PackageSlot,
+    ) -> Result<&PackageArtifactReadCache, PackageStoreError> {
+        self.packages
+            .get(package.0)
+            .ok_or(PackageStoreError::MissingSlot { slot: package })
     }
 
     fn open_reader(

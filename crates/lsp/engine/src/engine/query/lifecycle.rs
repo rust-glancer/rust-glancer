@@ -78,8 +78,9 @@ impl QueryRunner<'_> {
     ///
     /// The supplied closure contains only the feature query. A stale saved-source error latches the
     /// saved generation as stale and schedules normal path recovery instead of rebuilding inside
-    /// this request. Regardless of the result, transient package loads are released before the
-    /// next engine command is accepted.
+    /// this request. Once a result is safe to publish, its response channel is completed before
+    /// request cleanup and recovery begin. Those steps still finish before the next engine command
+    /// is accepted, but they no longer add to the completed request's response latency.
     pub(crate) fn respond_to_query<T>(
         &mut self,
         context: QueryContext,
@@ -143,7 +144,6 @@ impl QueryRunner<'_> {
         let memory_control = Arc::clone(&self.memory_control);
         let memory_before = MemoryReporter::snapshot(memory_control.as_ref());
         let mut result = query(self);
-        self.project.release_query_memory();
         let stale_path = result
             .as_ref()
             .err()
@@ -157,7 +157,6 @@ impl QueryRunner<'_> {
             result = Ok(T::default());
         }
         let query_elapsed = started.elapsed();
-        MemoryReporter::purge_and_report_delta_debug(memory_control.as_ref(), label, memory_before);
         let should_recover = result
             .as_ref()
             .err()
@@ -200,17 +199,22 @@ impl QueryRunner<'_> {
                 "analysis query result discarded after document changed"
             );
             let _ = respond_to.send(Ok(T::default()));
-            if should_recover {
-                self.project.recover_after_query_cache_failure(label);
-            }
         } else if should_recover {
             // Lazy package loads can fail when an offloaded artifact becomes stale between
             // indexing and a query. The next command sees a repaired project, while this request
             // degrades to an empty answer instead of a visible JSON-RPC popup in the editor.
             let _ = respond_to.send(Ok(T::default()));
-            self.project.recover_after_query_cache_failure(label);
         } else {
             let _ = respond_to.send(result);
+        }
+
+        // Publication wakes the RPC task immediately. Request-owned loads and allocator pages are
+        // still released synchronously before this dispatcher accepts another command, but that
+        // housekeeping no longer delays a result that is already complete and safe to publish.
+        self.project.release_query_memory();
+        MemoryReporter::purge_and_report_delta_debug(memory_control.as_ref(), label, memory_before);
+        if should_recover {
+            self.project.recover_after_query_cache_failure(label);
         }
     }
 }

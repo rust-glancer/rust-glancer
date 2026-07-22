@@ -235,6 +235,7 @@ impl ChalkProgramState {
                 tracing::debug!(
                     elapsed_ms = elapsed.as_millis(),
                     trait_roots = pending_roots.traits.len(),
+                    trait_root_ids = ?pending_roots.traits.as_slice(),
                     opaque_type_roots = pending_roots.opaque_tys.len(),
                     function_roots = pending_roots.functions.len(),
                     succeeded = result.is_ok(),

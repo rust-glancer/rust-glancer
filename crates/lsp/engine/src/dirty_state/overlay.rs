@@ -14,6 +14,9 @@ use crate::{
 pub(crate) struct DirtyOverlayCache {
     memory_control: Arc<dyn MemoryControl>,
     cached: Option<CachedDirtyOverlay>,
+    #[cfg(test)]
+    // Keep this cumulative across `clear` so tests can observe an invalidation followed by rebuild.
+    rebuild_count: usize,
 }
 
 impl DirtyOverlayCache {
@@ -21,6 +24,8 @@ impl DirtyOverlayCache {
         Self {
             memory_control,
             cached: None,
+            #[cfg(test)]
+            rebuild_count: 0,
         }
     }
 
@@ -28,10 +33,16 @@ impl DirtyOverlayCache {
         self.cached = None;
     }
 
+    /// Keep the rebuilt overlay cached while releasing state owned by the query that just used it.
     pub(crate) fn release_query_memory(&mut self) {
         if let Some(cached) = &mut self.cached {
             cached.project.release_query_memory();
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn rebuild_count(&self) -> usize {
+        self.rebuild_count
     }
 
     pub(crate) fn project_for_dirty(
@@ -96,6 +107,10 @@ impl DirtyOverlayCache {
                 scope,
                 project,
             });
+            #[cfg(test)]
+            {
+                self.rebuild_count += 1;
+            }
         } else {
             tracing::debug!(
                 path = %dirty.path().display(),
