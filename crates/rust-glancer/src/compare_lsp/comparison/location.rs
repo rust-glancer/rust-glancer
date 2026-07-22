@@ -89,12 +89,10 @@ impl LocationComparison {
         &self.matched
     }
 
-    #[cfg(test)]
     pub(super) fn missing(&self) -> &[NormalizedLocation] {
         &self.missing
     }
 
-    #[cfg(test)]
     pub(super) fn extra(&self) -> &[NormalizedLocation] {
         &self.extra
     }

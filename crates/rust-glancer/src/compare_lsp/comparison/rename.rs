@@ -194,6 +194,14 @@ impl RenameEditComparison {
             rust_analyzer_unmapped: self.rust_analyzer_unmapped.clone(),
         }
     }
+
+    pub(super) fn missing(&self) -> &[NormalizedTextEdit] {
+        &self.missing
+    }
+
+    pub(super) fn extra(&self) -> &[NormalizedTextEdit] {
+        &self.extra
+    }
 }
 
 #[derive(Debug, Default)]

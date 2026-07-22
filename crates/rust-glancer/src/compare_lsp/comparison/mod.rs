@@ -204,6 +204,58 @@ impl QueryComparison {
             },
         };
 
+        // Detailed result lists are useful while investigating semantic gaps, but far too noisy for
+        // the normal comparison report. Keep one structured record per divergent query behind a
+        // dedicated debug target so `agent-debug --log ...` can capture it in the run artifact.
+        if tracing::enabled!(target: "rust_glancer::compare_lsp::divergence", tracing::Level::DEBUG)
+        {
+            match &result {
+                QueryComparisonResult::Locations(comparison)
+                    if !comparison.missing().is_empty() || !comparison.extra().is_empty() =>
+                {
+                    tracing::debug!(
+                        target: "rust_glancer::compare_lsp::divergence",
+                        query = query.label(),
+                        method = query.kind().lsp_method(),
+                        missing_count = comparison.missing().len(),
+                        extra_count = comparison.extra().len(),
+                        missing = ?comparison.missing(),
+                        extra = ?comparison.extra(),
+                        "compare-lsp location divergence"
+                    );
+                }
+                QueryComparisonResult::RenameEdits(comparison)
+                    if !comparison.missing().is_empty() || !comparison.extra().is_empty() =>
+                {
+                    tracing::debug!(
+                        target: "rust_glancer::compare_lsp::divergence",
+                        query = query.label(),
+                        method = query.kind().lsp_method(),
+                        missing_count = comparison.missing().len(),
+                        extra_count = comparison.extra().len(),
+                        missing = ?comparison.missing(),
+                        extra = ?comparison.extra(),
+                        "compare-lsp rename divergence"
+                    );
+                }
+                QueryComparisonResult::Symbols(comparison)
+                    if !comparison.missing().is_empty() || !comparison.extra().is_empty() =>
+                {
+                    tracing::debug!(
+                        target: "rust_glancer::compare_lsp::divergence",
+                        query = query.label(),
+                        method = query.kind().lsp_method(),
+                        missing_count = comparison.missing().len(),
+                        extra_count = comparison.extra().len(),
+                        missing = ?comparison.missing(),
+                        extra = ?comparison.extra(),
+                        "compare-lsp symbol divergence"
+                    );
+                }
+                _ => {}
+            }
+        }
+
         Self {
             label: query.label(),
             method: QueryMethod::from_kind(query.kind()),

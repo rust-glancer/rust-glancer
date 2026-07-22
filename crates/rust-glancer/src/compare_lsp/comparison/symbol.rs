@@ -81,6 +81,14 @@ impl SymbolComparison {
             rust_analyzer_unmapped: self.rust_analyzer_unmapped.clone(),
         }
     }
+
+    pub(super) fn missing(&self) -> &[NormalizedSymbol] {
+        &self.missing
+    }
+
+    pub(super) fn extra(&self) -> &[NormalizedSymbol] {
+        &self.extra
+    }
 }
 
 #[derive(Debug, Default)]
