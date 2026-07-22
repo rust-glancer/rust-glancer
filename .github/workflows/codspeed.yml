@@ -40,3 +40,36 @@ jobs:
         with:
           mode: simulation
           run: cargo codspeed run -p rg_project --bench analysis_pipeline
+
+  query-walltime:
+    name: Query latency
+    runs-on: codspeed-macro
+
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - uses: ./.github/actions/cargo-cache
+        with:
+          # CodSpeed macro runners can change architecture independently of the ordinary Linux
+          # runner, so do not let their compiled artifacts share one cache namespace.
+          scope: codspeed-query-walltime-${{ runner.arch }}
+          target-dir: target
+          dependency-key: ${{ hashFiles('Cargo.lock', 'Cargo.toml', 'crates/**/Cargo.toml', 'rust-toolchain.toml') }}
+
+      - name: Install cargo-codspeed
+        uses: taiki-e/install-action@16b05812d776ae1dfaabc8277e421fb6d2506419 # v2.82.7
+        with:
+          tool: cargo-codspeed@4.6.0
+
+      - name: Build query benchmark
+        run: cargo codspeed build -p rg_lsp_engine --bench query_latency
+
+      - name: Run query benchmark
+        uses: CodSpeedHQ/action@9d332c4d90b43981c3e55ae8e38e68709996240f # v4
+        with:
+          mode: walltime
+          run: cargo codspeed run -p rg_lsp_engine --bench query_latency

@@ -22,9 +22,27 @@ struct TarpcServiceNotificationPublisher {
     sender: UnboundedSender<ServiceNotification>,
 }
 
+#[derive(Clone, Debug)]
+struct ChannelServiceNotificationPublisher {
+    sender: UnboundedSender<ServiceNotification>,
+}
+
 impl ServiceNotificationsSink {
     pub fn new(notifications: NotificationsServiceClient) -> Self {
         Self::from_publisher(TarpcServiceNotificationPublisher::spawn(notifications))
+    }
+
+    /// Builds an in-process notification channel for embedded service consumers.
+    ///
+    /// The RPC process normally forwards these events over tarpc. Direct users still need the
+    /// ordered lifecycle stream, especially the deferred-indexing barrier, without standing up a
+    /// transport that adds no meaning inside the same process.
+    pub fn channel() -> (Self, UnboundedReceiver<ServiceNotification>) {
+        let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
+        (
+            Self::from_publisher(ChannelServiceNotificationPublisher { sender }),
+            receiver,
+        )
     }
 
     pub(crate) fn from_publisher(publisher: impl ServiceNotificationPublisher + 'static) -> Self {
@@ -75,5 +93,32 @@ impl ServiceNotificationPublisher for TarpcServiceNotificationPublisher {
         if self.sender.send(notification).is_err() {
             tracing::debug!("failed to enqueue service notification");
         }
+    }
+}
+
+impl ServiceNotificationPublisher for ChannelServiceNotificationPublisher {
+    fn send(&self, notification: ServiceNotification) {
+        if self.sender.send(notification).is_err() {
+            tracing::debug!("failed to enqueue in-process service notification");
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use rg_lsp_proto::ServiceNotification;
+
+    use super::ServiceNotificationsSink;
+
+    #[tokio::test]
+    async fn channel_sink_forwards_notifications() {
+        let (sink, mut receiver) = ServiceNotificationsSink::channel();
+
+        sink.send(ServiceNotification::InlayHintRefresh);
+
+        assert!(matches!(
+            receiver.recv().await,
+            Some(ServiceNotification::InlayHintRefresh),
+        ));
     }
 }
