@@ -3,7 +3,7 @@
 use expect_test::expect;
 use test_fixture::testonly::MarkedText;
 
-use super::utils::LspEngineFixture;
+use super::utils::{LspEngineFixture, LspQuery};
 
 #[tokio::test]
 async fn rename_returns_workspace_edit_for_clean_document() {
@@ -35,6 +35,74 @@ async fn rename_returns_workspace_edit_for_clean_document() {
                 - /src/lib.rs
                   - 0:11-0:15 -> Account
                   - 3:15-3:19 -> Account
+            "#]],
+        )
+        .await;
+
+    fixture.shutdown().await;
+}
+
+#[tokio::test]
+async fn record_constructor_references_and_rename_flow_through_enabled_test_module() {
+    let fixture = LspEngineFixture::initialized_with_cfg_test(
+        r#"
+        //- /Cargo.toml
+        [package]
+        name = "lsp_record_constructor_test_cfg"
+        version = "0.1.0"
+        edition = "2024"
+
+        //- /src/lib.rs
+        #[cfg(test)]
+        mod tests {
+            pub struct Us$declaration$er<T> {
+                pub value: T,
+            }
+
+            pub fn make(value: u8) {
+                let _user = Us$constructor$er::<u8> { value };
+            }
+        }
+        "#,
+        true,
+    )
+    .await;
+
+    fixture
+        .check(
+            &[
+                LspQuery::references(
+                    "record constructor references from declaration",
+                    "declaration",
+                    true,
+                ),
+                LspQuery::references(
+                    "record constructor references from use without declaration",
+                    "constructor",
+                    false,
+                ),
+            ],
+            expect![[r#"
+                record constructor references from declaration
+                - /src/lib.rs:2:15-2:19
+                - /src/lib.rs:7:20-7:24
+
+                record constructor references from use without declaration
+                - /src/lib.rs:7:20-7:24
+            "#]],
+        )
+        .await;
+
+    fixture
+        .check_rename(
+            "rename record constructor from enabled test module",
+            "constructor",
+            "Account",
+            expect![[r#"
+                rename record constructor from enabled test module
+                - /src/lib.rs
+                  - 2:15-2:19 -> Account
+                  - 7:20-7:24 -> Account
             "#]],
         )
         .await;
