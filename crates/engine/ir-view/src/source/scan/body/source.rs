@@ -57,7 +57,7 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
 
             self.push_declaration_candidates(body_ref, body, body_local_items, &mut candidates);
             self.push_macro_call_candidates(body, &mut candidates);
-            self.push_member_reference_candidates(body_ref, body, &mut candidates);
+            self.push_expression_reference_candidates(body_ref, body, &mut candidates);
             self.push_record_field_key_candidates(body_ref, body, &mut candidates);
 
             TypePathSourceScanner::in_crate(body_ref, body, self.file_id, &mut candidates).scan();
@@ -246,8 +246,11 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
         }
     }
 
-    /// Adds reference-like candidates whose useful span is narrower than the full expression.
-    fn push_member_reference_candidates(
+    /// Adds the editable name span for expressions that resolve as one semantic reference.
+    ///
+    /// This selects `value` in a path, `push` in `items.push(value)`, `name` in `user.name`, and
+    /// `User` in `model::User { name }` instead of indexing each expression's full source range.
+    fn push_expression_reference_candidates(
         &self,
         body_ref: BodyRef,
         body: BodyView<'_>,
@@ -277,6 +280,9 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
                     ..
                 } => *span,
                 ExprKind::MethodCall { .. } | ExprKind::Field { .. } => expr.source.span,
+                ExprKind::Record {
+                    path: Some(path), ..
+                } => path.last_segment_span().unwrap_or(expr.source.span),
                 _ => continue,
             };
 

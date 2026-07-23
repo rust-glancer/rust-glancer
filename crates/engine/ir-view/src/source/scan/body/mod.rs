@@ -174,7 +174,8 @@ pub(crate) enum BodySourceCandidate {
         span: Span,
         surface: BindingSurface,
     },
-    /// Lowered expression node with its useful source spelling, e.g. `id` in `user.id()`.
+    /// Lowered expression node with its useful source spelling, e.g. `id` in `user.id` or `User`
+    /// in `model::User { id }`.
     Expr {
         body: BodyRef,
         expr: ExprId,

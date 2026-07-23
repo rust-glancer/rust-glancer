@@ -140,7 +140,7 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
                 // Record expression keys can resolve to fields, while the record expression itself
                 // is still an ordinary expression candidate.
                 self.consider_record_expr_fields(body_ref, expr, &mut best);
-                let span = Self::member_reference_span(expr)
+                let span = Self::expression_reference_span(expr)
                     .filter(|span| span.touches(self.offset))
                     .unwrap_or(expr.source.span);
                 best.consider(
@@ -447,13 +447,16 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
         });
     }
 
-    fn member_reference_span(expr: &ExprData) -> Option<Span> {
+    fn expression_reference_span(expr: &ExprData) -> Option<Span> {
         match &expr.kind {
             ExprKind::Path { path } if path.segment_count() == 1 => path.segment_span(0),
             ExprKind::MethodCall {
                 method_name_span, ..
             } => *method_name_span,
             ExprKind::Field { field_span, .. } => *field_span,
+            ExprKind::Record {
+                path: Some(path), ..
+            } => path.last_segment_span(),
             _ => None,
         }
     }

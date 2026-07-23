@@ -190,7 +190,7 @@ impl<'txn, 'db> PathCompletionSiteScanner<'txn, 'db> {
         path: &BodyPath,
         namespace: ValueOrTypeNamespace,
     ) -> Option<PathCompletionSite> {
-        let last_segment_span = path.segment_span(path.segment_count().checked_sub(1)?)?;
+        let last_segment_span = path.last_segment_span()?;
         let span = self.empty_member_span(path.source_span, last_segment_span)?;
         let qualifier = path.prefix_through(path.segment_count() - 1)?;
 

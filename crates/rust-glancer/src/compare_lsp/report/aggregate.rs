@@ -20,6 +20,7 @@ pub(super) struct MethodAggregateReport {
     query_count: usize,
     comparable_count: usize,
     non_comparable_count: usize,
+    equivalence_scored: bool,
     #[serde(flatten)]
     data: MethodAggregateDataReport,
 }
@@ -32,6 +33,7 @@ impl MethodAggregateReport {
             query_count: summary.query_count,
             comparable_count: summary.comparable_count,
             non_comparable_count: summary.non_comparable_count,
+            equivalence_scored: aggregate.is_equivalence_scored(),
             data: MethodAggregateDataReport::capture(aggregate.data()),
         }
     }
@@ -57,9 +59,11 @@ impl MethodAggregateReport {
             .count_column("queries")
             .count_column("comparable")
             .count_column("non_comparable")
+            .column_as("scored", "Scored", ReportAlign::Center, None)
             .count_column("rust_glancer")
             .count_column("rust_analyzer")
             .count_column("matched")
+            .count_column("compatible")
             .count_column("missing")
             .count_column("extra")
             .column_as(
@@ -92,7 +96,8 @@ impl MethodAggregateReport {
                 .value(
                     "non_comparable",
                     ReportValue::count(self.non_comparable_count),
-                );
+                )
+                .value("scored", ReportValue::Bool(self.equivalence_scored));
 
             self.data.append_row_cells(row);
         });
@@ -146,6 +151,7 @@ struct LocationAggregateReport {
     rust_glancer_count: usize,
     rust_analyzer_count: usize,
     matched_count: usize,
+    compatible_count: usize,
     missing_count: usize,
     extra_count: usize,
     rust_glancer_unmapped_count: usize,
@@ -165,6 +171,7 @@ impl LocationAggregateReport {
                 ReportValue::count(self.rust_analyzer_count),
             )
             .value("matched", ReportValue::count(self.matched_count))
+            .value("compatible", ReportValue::count(self.compatible_count))
             .value("missing", ReportValue::count(self.missing_count))
             .value("extra", ReportValue::count(self.extra_count))
             .value(
@@ -190,6 +197,7 @@ impl From<MappedSetAggregateMetrics> for LocationAggregateReport {
             rust_glancer_count: metrics.set.rust_glancer_count,
             rust_analyzer_count: metrics.set.rust_analyzer_count,
             matched_count: metrics.set.matched_count,
+            compatible_count: metrics.set.compatible_count,
             missing_count: metrics.set.missing_count,
             extra_count: metrics.set.extra_count,
             rust_glancer_unmapped_count: metrics.rust_glancer_unmapped_count,
@@ -206,6 +214,7 @@ struct RangeAggregateReport {
     rust_glancer_count: usize,
     rust_analyzer_count: usize,
     matched_count: usize,
+    compatible_count: usize,
     missing_count: usize,
     extra_count: usize,
     match_score_percent: f64,
@@ -223,6 +232,7 @@ impl RangeAggregateReport {
                 ReportValue::count(self.rust_analyzer_count),
             )
             .value("matched", ReportValue::count(self.matched_count))
+            .value("compatible", ReportValue::count(self.compatible_count))
             .value("missing", ReportValue::count(self.missing_count))
             .value("extra", ReportValue::count(self.extra_count))
             .value(
@@ -240,6 +250,7 @@ impl From<SetComparisonMetrics> for RangeAggregateReport {
             rust_glancer_count: metrics.rust_glancer_count,
             rust_analyzer_count: metrics.rust_analyzer_count,
             matched_count: metrics.matched_count,
+            compatible_count: metrics.compatible_count,
             missing_count: metrics.missing_count,
             extra_count: metrics.extra_count,
             match_score_percent: metrics.match_score_percent,
@@ -254,6 +265,7 @@ struct SymbolAggregateReport {
     rust_glancer_count: usize,
     rust_analyzer_count: usize,
     matched_count: usize,
+    compatible_count: usize,
     missing_count: usize,
     extra_count: usize,
     rust_glancer_unmapped_count: usize,
@@ -273,6 +285,7 @@ impl SymbolAggregateReport {
                 ReportValue::count(self.rust_analyzer_count),
             )
             .value("matched", ReportValue::count(self.matched_count))
+            .value("compatible", ReportValue::count(self.compatible_count))
             .value("missing", ReportValue::count(self.missing_count))
             .value("extra", ReportValue::count(self.extra_count))
             .value(
@@ -298,6 +311,7 @@ impl From<MappedSetAggregateMetrics> for SymbolAggregateReport {
             rust_glancer_count: metrics.set.rust_glancer_count,
             rust_analyzer_count: metrics.set.rust_analyzer_count,
             matched_count: metrics.set.matched_count,
+            compatible_count: metrics.set.compatible_count,
             missing_count: metrics.set.missing_count,
             extra_count: metrics.set.extra_count,
             rust_glancer_unmapped_count: metrics.rust_glancer_unmapped_count,

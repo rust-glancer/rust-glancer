@@ -137,6 +137,11 @@ impl SourcePosition {
     pub(crate) fn to_lsp(self) -> ls_types::Position {
         ls_types::Position::new(self.line, self.character)
     }
+
+    #[cfg(test)]
+    pub(crate) const fn test_new(line: u32, character: u32) -> Self {
+        Self { line, character }
+    }
 }
 
 /// LSP request family plus method-specific options needed for comparison.

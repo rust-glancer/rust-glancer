@@ -32,9 +32,13 @@ pub(super) struct LspEngineFixture {
 
 impl LspEngineFixture {
     pub(super) async fn initialized(fixture: &str) -> Self {
-        let mut fixture = Self::new(fixture);
-        fixture.initialize().await;
-        fixture
+        Self::initialized_with_engine_config(fixture, Self::engine_config()).await
+    }
+
+    pub(super) async fn initialized_with_cfg_test(fixture: &str, enabled: bool) -> Self {
+        let mut config = Self::engine_config();
+        config.analysis.cfg.test = enabled;
+        Self::initialized_with_engine_config(fixture, config).await
     }
 
     fn new(fixture: &str) -> Self {
@@ -53,16 +57,15 @@ impl LspEngineFixture {
         }
     }
 
-    async fn initialize(&mut self) {
-        self.service
+    async fn initialized_with_engine_config(fixture: &str, config: EngineConfig) -> Self {
+        let fixture = Self::new(fixture);
+        fixture
+            .service
             .clone()
-            .initialize(
-                context::current(),
-                self.fixture.path(""),
-                Self::engine_config(),
-            )
+            .initialize(context::current(), fixture.fixture.path(""), config)
             .await
             .expect("fixture LSP engine should initialize");
+        fixture
     }
 
     fn engine_config() -> EngineConfig {
@@ -372,6 +375,23 @@ impl LspEngineFixture {
                     .goto_definition(context::current(), path, position)
                     .await
                     .expect("goto definition query should succeed");
+
+                writeln!(rendered, "{title}").expect("snapshot should be writable");
+                self.render_locations(rendered, &locations);
+            }
+            LspQuery::References {
+                title,
+                marker,
+                include_declaration,
+            } => {
+                let path = self.marker_path(markers, marker);
+                let position = self.marker_position(markers, marker);
+                let locations = self
+                    .service
+                    .clone()
+                    .references(context::current(), path, position, *include_declaration)
+                    .await
+                    .expect("references query should succeed");
 
                 writeln!(rendered, "{title}").expect("snapshot should be writable");
                 self.render_locations(rendered, &locations);
@@ -708,6 +728,11 @@ pub(super) enum LspQuery {
         title: &'static str,
         marker: &'static str,
     },
+    References {
+        title: &'static str,
+        marker: &'static str,
+        include_declaration: bool,
+    },
     Hover {
         title: &'static str,
         marker: &'static str,
@@ -725,6 +750,18 @@ pub(super) enum LspQuery {
 impl LspQuery {
     pub(super) fn goto_definition(title: &'static str, marker: &'static str) -> Self {
         Self::GotoDefinition { title, marker }
+    }
+
+    pub(super) fn references(
+        title: &'static str,
+        marker: &'static str,
+        include_declaration: bool,
+    ) -> Self {
+        Self::References {
+            title,
+            marker,
+            include_declaration,
+        }
     }
 
     pub(super) fn hover(title: &'static str, marker: &'static str) -> Self {

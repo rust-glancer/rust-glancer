@@ -52,6 +52,7 @@ pub(crate) enum ServerUnderTest {
 pub(crate) struct QueryExecution {
     label: &'static str,
     kind: QueryKind,
+    target: QueryTarget,
     rust_glancer: RawServerOutcome,
     rust_analyzer: RawServerOutcome,
 }
@@ -63,6 +64,10 @@ impl QueryExecution {
 
     pub(crate) fn kind(&self) -> QueryKind {
         self.kind
+    }
+
+    pub(crate) fn target(&self) -> QueryTarget {
+        self.target
     }
 
     pub(crate) fn outcome(&self, server: ServerUnderTest) -> &RawServerOutcome {
@@ -169,6 +174,7 @@ pub(crate) async fn run(
         results.push(QueryExecution {
             label: query_case.label(),
             kind: query_case.kind(),
+            target: query_case.target(),
             rust_glancer,
             rust_analyzer,
         });
