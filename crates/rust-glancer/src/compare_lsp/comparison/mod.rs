@@ -67,23 +67,25 @@ impl ComparisonSummary {
         &self.aggregates
     }
 
-    /// One normalized completeness score for the whole benchmark run.
+    /// One normalized semantic-equivalence score for the benchmark run.
     ///
-    /// Each method contributes equally, regardless of how many raw locations/ranges/hints it
-    /// returns. Non-comparable queries reduce that method's contribution before the method scores
-    /// are averaged.
+    /// Each semantic method contributes equally, regardless of how many raw items it returns.
+    /// Presence-only hover coverage and the intentionally presentation-tolerant inlay comparison
+    /// remain visible in their own aggregates, but do not claim semantic equivalence here.
+    /// Non-comparable queries reduce a scored method's contribution before method scores are
+    /// averaged.
     pub(crate) fn equivalence_score_percent(&self) -> Option<f64> {
-        if self.aggregates.is_empty() {
-            return None;
+        let mut total = 0.0;
+        let mut method_count = 0;
+        for aggregate in &self.aggregates {
+            let Some(score) = aggregate.equivalence_score_percent() else {
+                continue;
+            };
+            total += score;
+            method_count += 1;
         }
 
-        let total = self
-            .aggregates
-            .iter()
-            .map(MethodAggregate::equivalence_score_percent)
-            .sum::<f64>();
-
-        Some(total / self.aggregates.len() as f64)
+        (method_count > 0).then(|| total / method_count as f64)
     }
 }
 
@@ -224,6 +226,24 @@ impl QueryComparison {
                         "compare-lsp location divergence"
                     );
                 }
+                QueryComparisonResult::PrepareRenames(comparison)
+                    if !comparison.compatible().is_empty()
+                        || !comparison.missing().is_empty()
+                        || !comparison.extra().is_empty() =>
+                {
+                    tracing::debug!(
+                        target: "rust_glancer::compare_lsp::divergence",
+                        query = query.label(),
+                        method = query.kind().lsp_method(),
+                        compatible_count = comparison.compatible().len(),
+                        missing_count = comparison.missing().len(),
+                        extra_count = comparison.extra().len(),
+                        compatible = ?comparison.compatible(),
+                        missing = ?comparison.missing(),
+                        extra = ?comparison.extra(),
+                        "compare-lsp prepare-rename difference"
+                    );
+                }
                 QueryComparisonResult::RenameEdits(comparison)
                     if !comparison.missing().is_empty() || !comparison.extra().is_empty() =>
                 {
@@ -238,7 +258,7 @@ impl QueryComparison {
                         "compare-lsp rename divergence"
                     );
                 }
-                QueryComparisonResult::Symbols(comparison)
+                QueryComparisonResult::Ranges(comparison)
                     if !comparison.missing().is_empty() || !comparison.extra().is_empty() =>
                 {
                     tracing::debug!(
@@ -249,7 +269,25 @@ impl QueryComparison {
                         extra_count = comparison.extra().len(),
                         missing = ?comparison.missing(),
                         extra = ?comparison.extra(),
-                        "compare-lsp symbol divergence"
+                        "compare-lsp document-highlight divergence"
+                    );
+                }
+                QueryComparisonResult::Symbols(comparison)
+                    if !comparison.compatible().is_empty()
+                        || !comparison.missing().is_empty()
+                        || !comparison.extra().is_empty() =>
+                {
+                    tracing::debug!(
+                        target: "rust_glancer::compare_lsp::divergence",
+                        query = query.label(),
+                        method = query.kind().lsp_method(),
+                        compatible_count = comparison.compatible().len(),
+                        missing_count = comparison.missing().len(),
+                        extra_count = comparison.extra().len(),
+                        compatible = ?comparison.compatible(),
+                        missing = ?comparison.missing(),
+                        extra = ?comparison.extra(),
+                        "compare-lsp symbol difference"
                     );
                 }
                 _ => {}
@@ -413,8 +451,13 @@ impl MethodAggregate {
         &self.data
     }
 
-    fn equivalence_score_percent(&self) -> f64 {
-        self.data.equivalence_score_percent()
+    fn equivalence_score_percent(&self) -> Option<f64> {
+        self.is_equivalence_scored()
+            .then(|| self.data.equivalence_score_percent())
+    }
+
+    pub(crate) fn is_equivalence_scored(&self) -> bool {
+        self.method.is_equivalence_scored()
     }
 }
 
@@ -516,6 +559,10 @@ impl QueryMethod {
             Self::Hover => QueryKind::Hover.lsp_method(),
         }
     }
+
+    pub(crate) fn is_equivalence_scored(self) -> bool {
+        !matches!(self, Self::InlayHint | Self::Hover)
+    }
 }
 
 #[cfg(test)]
@@ -592,6 +639,11 @@ mod tests {
         assert_eq!(metrics.set.extra_count, 1);
         assert_eq!(metrics.set.recall_percent, Some(50.0),);
         assert_eq!(metrics.set.match_score_percent, 50.0);
+        assert_eq!(
+            comparison.equivalence_score_percent(),
+            Some(25.0),
+            "one non-comparable query halves the method's 50% set score",
+        );
     }
 
     #[test]
@@ -637,6 +689,11 @@ mod tests {
         assert_eq!(metrics.missing_count, 1);
         assert_eq!(metrics.extra_count, 0);
         assert_eq!(summary.non_comparable_count, 1);
+        assert_eq!(
+            comparison.equivalence_score_percent(),
+            None,
+            "presence-only hover coverage must not claim semantic equivalence",
+        );
     }
 
     fn locations(locations: Vec<NormalizedLocation>) -> NormalizedOutcome {

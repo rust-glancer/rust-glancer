@@ -33,9 +33,9 @@ impl RangeComparison {
             .copied()
             .collect::<BTreeSet<_>>();
 
-        // Highlights are scoped to the requested document, so the range itself is the stable
-        // comparable unit. Kind is deliberately ignored for now; engines often differ on read/write
-        // classification while still finding the same occurrences.
+        // Text/Read/Write kinds are a part of protocol, but they have very minor impact on the LSP experience,
+        // thus we intentionally ignore them. It is unlikely that anyone will notice, and there are way more
+        // high-priority work out there. It's not a TODO, it's a deprioritized item.
         let matched = rust_glancer_ranges
             .intersection(&rust_analyzer_ranges)
             .copied()
@@ -66,6 +66,14 @@ impl RangeComparison {
             self.missing.len(),
             self.extra.len(),
         )
+    }
+
+    pub(super) fn missing(&self) -> &[NormalizedRange] {
+        &self.missing
+    }
+
+    pub(super) fn extra(&self) -> &[NormalizedRange] {
+        &self.extra
     }
 }
 

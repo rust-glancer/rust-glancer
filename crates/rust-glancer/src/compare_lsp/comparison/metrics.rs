@@ -7,6 +7,10 @@ pub(crate) struct SetComparisonMetrics {
     pub(crate) rust_glancer_count: usize,
     pub(crate) rust_analyzer_count: usize,
     pub(crate) matched_count: usize,
+    /// Non-identical matches where rust-glancer was proven to retain at least the reference detail.
+    ///
+    /// This is a subset of `matched_count`, not an additional result count.
+    pub(crate) compatible_count: usize,
     pub(crate) missing_count: usize,
     pub(crate) extra_count: usize,
     pub(crate) match_score_percent: f64,
@@ -22,10 +26,30 @@ impl SetComparisonMetrics {
         missing_count: usize,
         extra_count: usize,
     ) -> Self {
+        Self::new_with_compatible_matches(
+            rust_glancer_count,
+            rust_analyzer_count,
+            matched_count,
+            0,
+            missing_count,
+            extra_count,
+        )
+    }
+
+    pub(super) fn new_with_compatible_matches(
+        rust_glancer_count: usize,
+        rust_analyzer_count: usize,
+        exact_match_count: usize,
+        compatible_count: usize,
+        missing_count: usize,
+        extra_count: usize,
+    ) -> Self {
+        let matched_count = exact_match_count + compatible_count;
         Self {
             rust_glancer_count,
             rust_analyzer_count,
             matched_count,
+            compatible_count,
             missing_count,
             extra_count,
             match_score_percent: Self::match_score_percent(

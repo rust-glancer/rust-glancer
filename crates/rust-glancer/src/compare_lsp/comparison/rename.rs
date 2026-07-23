@@ -19,6 +19,7 @@ pub(crate) struct PrepareRenameComparison {
     rust_glancer_count: usize,
     rust_analyzer_count: usize,
     matched: Vec<NormalizedPrepareRenameTarget>,
+    compatible: Vec<(NormalizedPrepareRenameTarget, NormalizedPrepareRenameTarget)>,
     missing: Vec<NormalizedPrepareRenameTarget>,
     extra: Vec<NormalizedPrepareRenameTarget>,
 }
@@ -39,36 +40,72 @@ impl PrepareRenameComparison {
             .cloned()
             .collect::<BTreeSet<_>>();
 
-        let matched = rust_glancer_targets
+        let mut matched = rust_glancer_targets
             .intersection(&rust_analyzer_targets)
             .cloned()
-            .collect();
-        let missing = rust_analyzer_targets
+            .collect::<Vec<_>>();
+        let mut missing = rust_analyzer_targets
             .difference(&rust_glancer_targets)
             .cloned()
-            .collect();
-        let extra = rust_glancer_targets
+            .collect::<Vec<_>>();
+        let unmatched_extra = rust_glancer_targets
             .difference(&rust_analyzer_targets)
             .cloned()
-            .collect();
+            .collect::<Vec<_>>();
+
+        // Optional response data is directional. A valid rust-glancer placeholder is compatible
+        // with rust-analyzer returning only the same range; omitting rust-analyzer's placeholder is
+        // still reported as a loss.
+        let mut compatible = Vec::new();
+        let mut extra = Vec::new();
+        for rust_glancer_target in unmatched_extra {
+            let Some(reference_index) = missing
+                .iter()
+                .position(|reference| rust_glancer_target.is_no_worse_match_for(reference))
+            else {
+                extra.push(rust_glancer_target);
+                continue;
+            };
+
+            let rust_analyzer_target = missing.remove(reference_index);
+            matched.push(rust_glancer_target.clone());
+            compatible.push((rust_glancer_target, rust_analyzer_target));
+        }
+        matched.sort();
 
         Self {
             rust_glancer_count: rust_glancer_targets.len(),
             rust_analyzer_count: rust_analyzer_targets.len(),
             matched,
+            compatible,
             missing,
             extra,
         }
     }
 
     pub(crate) fn metrics(&self) -> SetComparisonMetrics {
-        SetComparisonMetrics::new(
+        SetComparisonMetrics::new_with_compatible_matches(
             self.rust_glancer_count,
             self.rust_analyzer_count,
-            self.matched.len(),
+            self.matched.len() - self.compatible.len(),
+            self.compatible.len(),
             self.missing.len(),
             self.extra.len(),
         )
+    }
+
+    pub(super) fn compatible(
+        &self,
+    ) -> &[(NormalizedPrepareRenameTarget, NormalizedPrepareRenameTarget)] {
+        &self.compatible
+    }
+
+    pub(super) fn missing(&self) -> &[NormalizedPrepareRenameTarget] {
+        &self.missing
+    }
+
+    pub(super) fn extra(&self) -> &[NormalizedPrepareRenameTarget] {
+        &self.extra
     }
 }
 
@@ -80,6 +117,7 @@ pub(crate) struct PrepareRenameAggregate {
     rust_glancer_targets: usize,
     rust_analyzer_targets: usize,
     matched_targets: usize,
+    compatible_targets: usize,
     missing_targets: usize,
     extra_targets: usize,
 }
@@ -93,6 +131,7 @@ impl PrepareRenameAggregate {
                 self.rust_glancer_targets += comparison.rust_glancer_count;
                 self.rust_analyzer_targets += comparison.rust_analyzer_count;
                 self.matched_targets += comparison.matched.len();
+                self.compatible_targets += comparison.compatible.len();
                 self.missing_targets += comparison.missing.len();
                 self.extra_targets += comparison.extra.len();
             }
@@ -114,10 +153,11 @@ impl PrepareRenameAggregate {
     }
 
     pub(crate) fn metrics(&self) -> SetComparisonMetrics {
-        SetComparisonMetrics::new(
+        SetComparisonMetrics::new_with_compatible_matches(
             self.rust_glancer_targets,
             self.rust_analyzer_targets,
-            self.matched_targets,
+            self.matched_targets - self.compatible_targets,
+            self.compatible_targets,
             self.missing_targets,
             self.extra_targets,
         )
@@ -261,5 +301,81 @@ impl RenameEditAggregate {
             rust_glancer_unmapped_count: self.rust_glancer_unmapped_edits,
             rust_analyzer_unmapped_count: self.rust_analyzer_unmapped_edits,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::compare_lsp::normalization::{
+        NormalizedPrepareRenameSet, NormalizedPrepareRenameTarget, NormalizedRange,
+    };
+
+    use super::PrepareRenameComparison;
+
+    #[test]
+    fn accepts_a_valid_placeholder_when_the_reference_returns_only_a_range() {
+        let range = Some(NormalizedRange::test_new(3, 8, 3, 17));
+        let rust_glancer = targets(vec![NormalizedPrepareRenameTarget::test_new(
+            range,
+            Some("user_name"),
+            true,
+        )]);
+        let rust_analyzer = targets(vec![NormalizedPrepareRenameTarget::test_new(
+            range, None, true,
+        )]);
+
+        let comparison = PrepareRenameComparison::new(&rust_glancer, &rust_analyzer);
+        let metrics = comparison.metrics();
+
+        assert_eq!(metrics.matched_count, 1);
+        assert_eq!(metrics.compatible_count, 1);
+        assert_eq!(metrics.missing_count, 0);
+        assert_eq!(metrics.extra_count, 0);
+    }
+
+    #[test]
+    fn rejects_dropping_a_reference_placeholder() {
+        let range = Some(NormalizedRange::test_new(3, 8, 3, 17));
+        let rust_glancer = targets(vec![NormalizedPrepareRenameTarget::test_new(
+            range, None, true,
+        )]);
+        let rust_analyzer = targets(vec![NormalizedPrepareRenameTarget::test_new(
+            range,
+            Some("user_name"),
+            true,
+        )]);
+
+        let comparison = PrepareRenameComparison::new(&rust_glancer, &rust_analyzer);
+        let metrics = comparison.metrics();
+
+        assert_eq!(metrics.matched_count, 0);
+        assert_eq!(metrics.compatible_count, 0);
+        assert_eq!(metrics.missing_count, 1);
+        assert_eq!(metrics.extra_count, 1);
+    }
+
+    #[test]
+    fn rejects_a_placeholder_that_does_not_match_source() {
+        let range = Some(NormalizedRange::test_new(3, 8, 3, 17));
+        let rust_glancer = targets(vec![NormalizedPrepareRenameTarget::test_new(
+            range,
+            Some("other_name"),
+            false,
+        )]);
+        let rust_analyzer = targets(vec![NormalizedPrepareRenameTarget::test_new(
+            range, None, true,
+        )]);
+
+        let comparison = PrepareRenameComparison::new(&rust_glancer, &rust_analyzer);
+        let metrics = comparison.metrics();
+
+        assert_eq!(metrics.matched_count, 0);
+        assert_eq!(metrics.compatible_count, 0);
+        assert_eq!(metrics.missing_count, 1);
+        assert_eq!(metrics.extra_count, 1);
+    }
+
+    fn targets(targets: Vec<NormalizedPrepareRenameTarget>) -> NormalizedPrepareRenameSet {
+        NormalizedPrepareRenameSet::test_from_targets(targets)
     }
 }

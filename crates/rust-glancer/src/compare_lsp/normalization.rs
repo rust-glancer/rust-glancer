@@ -22,7 +22,7 @@ use serde_json::Value;
 use crate::compare_lsp::{
     execution::{ExecutionSummary, QueryExecution, RawOutcome, RawServerOutcome, ServerUnderTest},
     fixture::Fixture,
-    query::QueryKind,
+    query::{QueryKind, QueryTarget},
 };
 
 /// Query outcomes after protocol shapes and file URIs have been made comparable.
@@ -77,11 +77,13 @@ impl NormalizedQueryExecution {
             rust_glancer: NormalizedServerOutcome::from_raw(
                 fixture_root,
                 query.kind(),
+                query.target(),
                 query.outcome(ServerUnderTest::RustGlancer),
             ),
             rust_analyzer: NormalizedServerOutcome::from_raw(
                 fixture_root,
                 query.kind(),
+                query.target(),
                 query.outcome(ServerUnderTest::RustAnalyzer),
             ),
         }
@@ -125,10 +127,15 @@ pub(crate) struct NormalizedServerOutcome {
 }
 
 impl NormalizedServerOutcome {
-    fn from_raw(fixture_root: &Path, kind: QueryKind, outcome: &RawServerOutcome) -> Self {
+    fn from_raw(
+        fixture_root: &Path,
+        kind: QueryKind,
+        target: QueryTarget,
+        outcome: &RawServerOutcome,
+    ) -> Self {
         Self {
             latency: outcome.latency(),
-            value: NormalizedOutcome::from_raw(fixture_root, kind, outcome.value()),
+            value: NormalizedOutcome::from_raw(fixture_root, kind, target, outcome.value()),
         }
     }
 
@@ -165,7 +172,12 @@ pub(crate) enum NormalizedOutcome {
 }
 
 impl NormalizedOutcome {
-    fn from_raw(fixture_root: &Path, kind: QueryKind, raw_outcome: &RawOutcome) -> Self {
+    fn from_raw(
+        fixture_root: &Path,
+        kind: QueryKind,
+        target: QueryTarget,
+        raw_outcome: &RawOutcome,
+    ) -> Self {
         match raw_outcome {
             RawOutcome::Success { raw, .. } => match kind {
                 QueryKind::References { .. }
@@ -177,10 +189,12 @@ impl NormalizedOutcome {
                         Err(message) => Self::MalformedSuccess { message },
                     }
                 }
-                QueryKind::PrepareRename => match NormalizedPrepareRenameSet::from_json(raw) {
-                    Ok(targets) => Self::PrepareRenames(targets),
-                    Err(message) => Self::MalformedSuccess { message },
-                },
+                QueryKind::PrepareRename => {
+                    match NormalizedPrepareRenameSet::from_json(fixture_root, target, raw) {
+                        Ok(targets) => Self::PrepareRenames(targets),
+                        Err(message) => Self::MalformedSuccess { message },
+                    }
+                }
                 QueryKind::Rename => match NormalizedTextEditSet::from_json(fixture_root, raw) {
                     Ok(edits) => Self::RenameEdits(edits),
                     Err(message) => Self::MalformedSuccess { message },
@@ -227,7 +241,11 @@ pub(crate) struct NormalizedPrepareRenameSet {
 }
 
 impl NormalizedPrepareRenameSet {
-    fn from_json(raw: &Value) -> Result<Self, String> {
+    fn from_json(
+        fixture_root: &Path,
+        query_target: QueryTarget,
+        raw: &Value,
+    ) -> Result<Self, String> {
         if raw.is_null() {
             return Ok(Self {
                 targets: Vec::new(),
@@ -245,17 +263,26 @@ impl NormalizedPrepareRenameSet {
             PrepareRenameResponse::Range(range) => Some(NormalizedPrepareRenameTarget {
                 range: Some(NormalizedRange::from_lsp(range)),
                 default_behavior: false,
+                placeholder: None,
+                placeholder_matches_source: true,
             }),
-            PrepareRenameResponse::RangeWithPlaceholder { range, .. } => {
+            PrepareRenameResponse::RangeWithPlaceholder { range, placeholder } => {
+                let range = NormalizedRange::from_lsp(range);
+                let selected_text = range.source_text_for_query(fixture_root, query_target)?;
+
                 Some(NormalizedPrepareRenameTarget {
-                    range: Some(NormalizedRange::from_lsp(range)),
+                    range: Some(range),
                     default_behavior: false,
+                    placeholder_matches_source: placeholder == selected_text,
+                    placeholder: Some(placeholder),
                 })
             }
             PrepareRenameResponse::DefaultBehavior { default_behavior } => default_behavior
                 .then_some(NormalizedPrepareRenameTarget {
                     range: None,
                     default_behavior: true,
+                    placeholder: None,
+                    placeholder_matches_source: true,
                 }),
         };
 
@@ -266,6 +293,11 @@ impl NormalizedPrepareRenameSet {
 
     pub(crate) fn targets(&self) -> &[NormalizedPrepareRenameTarget] {
         &self.targets
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_from_targets(targets: Vec<NormalizedPrepareRenameTarget>) -> Self {
+        Self { targets }
     }
 }
 
@@ -577,6 +609,20 @@ impl NormalizedSymbolSet {
             .map(UnmappedLocation::summary)
             .collect()
     }
+
+    #[cfg(test)]
+    pub(crate) fn test_from_symbols(symbols: Vec<NormalizedSymbol>) -> Self {
+        let symbols = symbols
+            .into_iter()
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+
+        Self {
+            symbols,
+            unmapped: Vec::new(),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -701,7 +747,12 @@ impl ProtocolLocation {
     fn range(&self) -> Range {
         match self {
             Self::Location(location) => location.range,
-            Self::LocationLink(location) => location.target_range,
+            // `Location` has only the range an editor should focus. The equivalent field in a
+            // `LocationLink` is `targetSelectionRange`; `targetRange` may cover the whole item.
+            //
+            // For `fn load_user() { ... }`, compare the `load_user` selection rather than the
+            // complete function body.
+            Self::LocationLink(location) => location.target_selection_range,
         }
     }
 }
@@ -710,6 +761,44 @@ impl ProtocolLocation {
 pub(crate) struct NormalizedPrepareRenameTarget {
     range: Option<NormalizedRange>,
     default_behavior: bool,
+    placeholder: Option<String>,
+    placeholder_matches_source: bool,
+}
+
+impl NormalizedPrepareRenameTarget {
+    /// An optional, source-accurate placeholder makes a response more useful, not incompatible.
+    ///
+    /// For example, rust-analyzer may return only the range for `user_name`, while rust-glancer
+    /// returns the same range plus `"user_name"` as the editor's initial rename text. The reverse
+    /// direction is not accepted because dropping a reference placeholder loses information.
+    pub(crate) fn is_no_worse_match_for(&self, reference: &Self) -> bool {
+        if self.range != reference.range || self.default_behavior != reference.default_behavior {
+            return false;
+        }
+
+        match (&self.placeholder, &reference.placeholder) {
+            (Some(placeholder), Some(reference_placeholder)) => {
+                self.placeholder_matches_source && placeholder == reference_placeholder
+            }
+            (Some(_), None) => self.placeholder_matches_source,
+            (None, None) => true,
+            (None, Some(_)) => false,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_new(
+        range: Option<NormalizedRange>,
+        placeholder: Option<&'static str>,
+        placeholder_matches_source: bool,
+    ) -> Self {
+        Self {
+            range,
+            default_behavior: false,
+            placeholder: placeholder.map(str::to_string),
+            placeholder_matches_source,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -819,6 +908,20 @@ pub(crate) struct NormalizedSymbol {
 }
 
 impl NormalizedSymbol {
+    /// Match a more specific Rust member classification without treating kinds as interchangeable.
+    ///
+    /// LSP has separate `Method` and `Function` kinds. rust-analyzer sometimes reports an
+    /// `impl User { fn save(&self) {} }` member as `Function`, while rust-glancer retains `Method`.
+    /// Accept that direction only; reporting the same member as a plain function when the reference
+    /// knows it is a method still remains a quality loss.
+    pub(crate) fn is_no_worse_match_for(&self, reference: &Self) -> bool {
+        self.name == reference.name
+            && self.path == reference.path
+            && self.range == reference.range
+            && self.kind == symbol_kind_code(SymbolKind::METHOD)
+            && reference.kind == symbol_kind_code(SymbolKind::FUNCTION)
+    }
+
     fn push_document_symbol(symbol: DocumentSymbol, symbols: &mut BTreeSet<Self>) {
         let children = symbol.children.unwrap_or_default();
         symbols.insert(Self {
@@ -914,6 +1017,21 @@ impl NormalizedSymbol {
             range,
         })
     }
+
+    #[cfg(test)]
+    pub(crate) fn test_new(
+        name: &'static str,
+        kind: SymbolKind,
+        path: Option<&'static str>,
+        range: Option<NormalizedRange>,
+    ) -> Self {
+        Self {
+            name: name.to_string(),
+            kind: symbol_kind_code(kind),
+            path: path.map(str::to_string),
+            range,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -947,6 +1065,79 @@ impl NormalizedRange {
             end_line: range.end.line,
             end_character: range.end.character,
         }
+    }
+
+    fn source_text_for_query(
+        self,
+        fixture_root: &Path,
+        query_target: QueryTarget,
+    ) -> Result<String, String> {
+        let source_path = match query_target {
+            QueryTarget::Position { source_path, .. } | QueryTarget::Rename { source_path, .. } => {
+                source_path
+            }
+            QueryTarget::File { .. } | QueryTarget::Workspace { .. } => {
+                return Err("prepare-rename query does not identify a source position".to_string());
+            }
+        };
+        let path = fixture_root.join(source_path);
+        let source = std::fs::read_to_string(&path).map_err(|error| {
+            format!(
+                "reading prepare-rename source {} failed: {error}",
+                path.display(),
+            )
+        })?;
+
+        self.source_text(&source)
+            .map(str::to_string)
+            .ok_or_else(|| {
+                format!(
+                    "prepare-rename range {:?} does not select valid source in {}",
+                    self,
+                    path.display(),
+                )
+            })
+    }
+
+    /// Convert LSP's UTF-16 coordinates before slicing fixture source.
+    ///
+    /// A range such as `0:1..0:3` selects the two-code-unit `😀`, even though the same text takes
+    /// four UTF-8 bytes in the fixture file.
+    fn source_text(self, source: &str) -> Option<&str> {
+        let start = Self::source_offset(source, self.start_line, self.start_character)?;
+        let end = Self::source_offset(source, self.end_line, self.end_character)?;
+        (start <= end).then(|| &source[start..end])
+    }
+
+    fn source_offset(source: &str, line: u32, character: u32) -> Option<usize> {
+        let mut line_start = 0;
+        for _ in 0..line {
+            let next_line = source[line_start..].find('\n')?;
+            line_start += next_line + 1;
+        }
+
+        let remaining = &source[line_start..];
+        let mut line_end = remaining
+            .find('\n')
+            .map_or(source.len(), |offset| line_start + offset);
+        if line_end > line_start && source.as_bytes()[line_end - 1] == b'\r' {
+            line_end -= 1;
+        }
+        let line_text = &source[line_start..line_end];
+        let character = usize::try_from(character).ok()?;
+        let mut utf16_offset = 0;
+
+        for (byte_offset, value) in line_text.char_indices() {
+            if utf16_offset == character {
+                return Some(line_start + byte_offset);
+            }
+            utf16_offset += value.len_utf16();
+            if utf16_offset > character {
+                return None;
+            }
+        }
+
+        (utf16_offset == character).then_some(line_end)
     }
 }
 
@@ -1052,7 +1243,11 @@ mod tests {
 
     use serde_json::{Value, json};
 
-    use super::{NormalizedLocationSet, NormalizedRange};
+    use crate::compare_lsp::query::{QueryTarget, SourcePosition};
+
+    use super::{
+        NormalizedLocationSet, NormalizedPrepareRenameSet, NormalizedRange, NormalizedRangeSet,
+    };
 
     #[test]
     fn normalizes_location_arrays_to_fixture_relative_sets() {
@@ -1089,7 +1284,7 @@ mod tests {
         let uri = file_uri(&root, "crates/core/src/lib.rs");
         let raw = json!({
             "targetUri": uri,
-            "targetRange": range_json(10, 4, 10, 16),
+            "targetRange": range_json(9, 0, 14, 1),
             "targetSelectionRange": range_json(10, 4, 10, 16),
         });
 
@@ -1107,6 +1302,101 @@ mod tests {
                 end_line: 10,
                 end_character: 16,
             },
+        );
+    }
+
+    #[test]
+    fn validates_prepare_rename_placeholders_against_utf16_source_ranges() {
+        let root = fixture_root("prepare-rename-placeholder");
+        let source_path = "src/lib.rs";
+        let path = root.join(source_path);
+        fs::create_dir_all(path.parent().expect("source should have a parent"))
+            .expect("source parent should be created");
+        fs::write(&path, "let 😀user_name = 1;\n").expect("source should be written");
+        let raw = json!({
+            "range": range_json(0, 6, 0, 15),
+            "placeholder": "user_name",
+        });
+        let query_target = QueryTarget::Position {
+            source_path,
+            position: SourcePosition::test_new(0, 8),
+        };
+
+        let targets = NormalizedPrepareRenameSet::from_json(&root, query_target, &raw)
+            .expect("prepare-rename response should normalize");
+
+        assert_eq!(targets.targets.len(), 1);
+        assert!(
+            targets.targets[0].placeholder_matches_source,
+            "the placeholder should equal the UTF-16-selected source text",
+        );
+    }
+
+    #[test]
+    fn keeps_incorrect_prepare_rename_placeholders_visible_to_comparison() {
+        let root = fixture_root("prepare-rename-wrong-placeholder");
+        let source_path = "src/lib.rs";
+        let path = root.join(source_path);
+        fs::create_dir_all(path.parent().expect("source should have a parent"))
+            .expect("source parent should be created");
+        fs::write(&path, "let user_name = 1;\n").expect("source should be written");
+        let raw = json!({
+            "range": range_json(0, 4, 0, 13),
+            "placeholder": "other_name",
+        });
+        let query_target = QueryTarget::Position {
+            source_path,
+            position: SourcePosition::test_new(0, 6),
+        };
+
+        let targets = NormalizedPrepareRenameSet::from_json(&root, query_target, &raw)
+            .expect("prepare-rename response should normalize");
+
+        assert!(
+            !targets.targets[0].placeholder_matches_source,
+            "an invalid placeholder must not qualify as a compatible enhancement",
+        );
+    }
+
+    #[test]
+    fn ignores_document_highlight_access_kinds() {
+        let raw = json!([
+            {
+                "range": range_json(2, 4, 2, 8),
+                "kind": 2,
+            },
+            {
+                "range": range_json(2, 4, 2, 8),
+                "kind": 3,
+            },
+            {
+                "range": range_json(4, 0, 4, 3),
+            },
+            {
+                "range": range_json(4, 0, 4, 3),
+                "kind": 1,
+            },
+        ]);
+
+        let ranges = NormalizedRangeSet::from_json(&raw).expect("highlights should normalize");
+
+        assert_eq!(
+            ranges.ranges.len(),
+            2,
+            "highlights at the same range should collapse regardless of their access kind",
+        );
+    }
+
+    #[test]
+    fn slices_source_ranges_in_utf16_coordinates() {
+        let source = "a😀b";
+        let range = NormalizedRange::test_new(0, 1, 0, 3);
+
+        assert_eq!(range.source_text(source), Some("😀"));
+        assert_eq!(
+            NormalizedRange::test_new(0, 2, 0, 3).source_text(source),
+            None,
+            "a position inside a surrogate pair is not a valid LSP boundary",
         );
     }
 
