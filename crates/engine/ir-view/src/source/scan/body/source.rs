@@ -282,11 +282,7 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
                 ExprKind::MethodCall { .. } | ExprKind::Field { .. } => expr.source.span,
                 ExprKind::Record {
                     path: Some(path), ..
-                } => path
-                    .segment_count()
-                    .checked_sub(1)
-                    .and_then(|idx| path.segment_span(idx))
-                    .unwrap_or(expr.source.span),
+                } => path.last_segment_span().unwrap_or(expr.source.span),
                 _ => continue,
             };
 

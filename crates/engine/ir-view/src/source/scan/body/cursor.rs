@@ -456,10 +456,7 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
             ExprKind::Field { field_span, .. } => *field_span,
             ExprKind::Record {
                 path: Some(path), ..
-            } => path
-                .segment_count()
-                .checked_sub(1)
-                .and_then(|idx| path.segment_span(idx)),
+            } => path.last_segment_span(),
             _ => None,
         }
     }

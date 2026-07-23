@@ -258,18 +258,16 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
         };
 
         let label = match &expr_data.kind {
-            rg_body_ir::ExprKind::Path { path } => path
+            rg_body_ir::ExprKind::Path { path }
+            | rg_body_ir::ExprKind::Record {
+                path: Some(path), ..
+            } => path
                 .as_def_map_path()
                 .and_then(|path| path.last_segment_label()),
             rg_body_ir::ExprKind::MethodCall { method_name, .. } => Some(method_name.to_string()),
             rg_body_ir::ExprKind::Field { field, .. } => {
                 field.as_ref().map(|field| field.declaration_label())
             }
-            rg_body_ir::ExprKind::Record {
-                path: Some(path), ..
-            } => path
-                .as_def_map_path()
-                .and_then(|path| path.last_segment_label()),
             _ => None,
         };
         Ok(label)
