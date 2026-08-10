@@ -23,6 +23,7 @@ const HIGHLIGHT_LIMIT: usize = 10;
 pub(super) struct QueryReport {
     label: String,
     method: String,
+    equivalence_scored: bool,
     rust_glancer_ms: f64,
     rust_analyzer_ms: f64,
     result: QueryResultReport,
@@ -30,9 +31,11 @@ pub(super) struct QueryReport {
 
 impl QueryReport {
     pub(super) fn capture(query: &QueryComparison) -> Self {
+        let method = query.method();
         Self {
             label: query.label().to_string(),
-            method: query.method().lsp_method().to_string(),
+            method: method.lsp_method().to_string(),
+            equivalence_scored: method.is_equivalence_scored(),
             rust_glancer_ms: duration_ms(query.rust_glancer_latency()),
             rust_analyzer_ms: duration_ms(query.rust_analyzer_latency()),
             result: QueryResultReport::capture(query.result()),
@@ -149,6 +152,7 @@ impl QueryReport {
     fn lowest_match_score_queries(queries: &[Self]) -> Vec<(&Self, QueryCounts)> {
         let mut lowest = queries
             .iter()
+            .filter(|query| query.equivalence_scored)
             .filter_map(|query| query.counts().map(|counts| (query, counts)))
             .filter(|(_, counts)| counts.match_score_percent < 100.0)
             .collect::<Vec<_>>();
@@ -163,6 +167,7 @@ impl QueryReport {
     fn lowest_recall_queries(queries: &[Self]) -> Vec<(&Self, QueryCounts)> {
         let mut lowest = queries
             .iter()
+            .filter(|query| query.equivalence_scored)
             .filter_map(|query| query.counts().map(|counts| (query, counts)))
             .filter(|(_, counts)| counts.recall_percent.is_some_and(|recall| recall < 100.0))
             .collect::<Vec<_>>();
@@ -178,6 +183,7 @@ impl QueryReport {
     fn lowest_precision_queries(queries: &[Self]) -> Vec<(&Self, QueryCounts)> {
         let mut lowest = queries
             .iter()
+            .filter(|query| query.equivalence_scored)
             .filter_map(|query| query.counts().map(|counts| (query, counts)))
             .filter(|(_, counts)| {
                 counts
@@ -250,6 +256,7 @@ impl QueryReport {
             .count_column("rust_glancer_count")
             .count_column("rust_analyzer_count")
             .count_column("matched")
+            .count_column("compatible")
             .count_column("missing")
             .count_column("extra");
     }
@@ -342,6 +349,7 @@ impl QueryReport {
             .count_column("rust_glancer_count")
             .count_column("rust_analyzer_count")
             .count_column("matched")
+            .count_column("compatible")
             .count_column("missing")
             .count_column("extra")
             .column_as(
@@ -515,6 +523,7 @@ struct QueryCounts {
     rust_glancer_count: usize,
     rust_analyzer_count: usize,
     matched_count: usize,
+    compatible_count: usize,
     missing_count: usize,
     extra_count: usize,
     match_score_percent: f64,
@@ -533,6 +542,7 @@ impl QueryCounts {
             ReportValue::count(self.rust_analyzer_count),
         )
         .value("matched", ReportValue::count(self.matched_count))
+        .value("compatible", ReportValue::count(self.compatible_count))
         .value("missing", ReportValue::count(self.missing_count))
         .value("extra", ReportValue::count(self.extra_count))
         .value(
@@ -563,6 +573,7 @@ impl QueryCounts {
             ReportValue::count(self.rust_analyzer_count),
         )
         .value("matched", ReportValue::count(self.matched_count))
+        .value("compatible", ReportValue::count(self.compatible_count))
         .value("missing", ReportValue::count(self.missing_count))
         .value("extra", ReportValue::count(self.extra_count));
     }
@@ -609,6 +620,7 @@ struct LocationQueryReport {
     rust_glancer_count: usize,
     rust_analyzer_count: usize,
     matched_count: usize,
+    compatible_count: usize,
     missing_count: usize,
     extra_count: usize,
     rust_glancer_unmapped_count: usize,
@@ -636,6 +648,7 @@ impl From<&LocationQueryReport> for QueryCounts {
             rust_glancer_count: report.rust_glancer_count,
             rust_analyzer_count: report.rust_analyzer_count,
             matched_count: report.matched_count,
+            compatible_count: report.compatible_count,
             missing_count: report.missing_count,
             extra_count: report.extra_count,
             match_score_percent: report.match_score_percent,
@@ -651,6 +664,7 @@ impl From<MappedSetComparisonMetrics> for LocationQueryReport {
             rust_glancer_count: metrics.set.rust_glancer_count,
             rust_analyzer_count: metrics.set.rust_analyzer_count,
             matched_count: metrics.set.matched_count,
+            compatible_count: metrics.set.compatible_count,
             missing_count: metrics.set.missing_count,
             extra_count: metrics.set.extra_count,
             rust_glancer_unmapped_count: metrics.rust_glancer_unmapped_count,
@@ -669,6 +683,7 @@ struct RangeQueryReport {
     rust_glancer_count: usize,
     rust_analyzer_count: usize,
     matched_count: usize,
+    compatible_count: usize,
     missing_count: usize,
     extra_count: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -690,6 +705,7 @@ impl From<&RangeQueryReport> for QueryCounts {
             rust_glancer_count: report.rust_glancer_count,
             rust_analyzer_count: report.rust_analyzer_count,
             matched_count: report.matched_count,
+            compatible_count: report.compatible_count,
             missing_count: report.missing_count,
             extra_count: report.extra_count,
             match_score_percent: report.match_score_percent,
@@ -705,6 +721,7 @@ impl From<SetComparisonMetrics> for RangeQueryReport {
             rust_glancer_count: metrics.rust_glancer_count,
             rust_analyzer_count: metrics.rust_analyzer_count,
             matched_count: metrics.matched_count,
+            compatible_count: metrics.compatible_count,
             missing_count: metrics.missing_count,
             extra_count: metrics.extra_count,
             match_score_percent: metrics.match_score_percent,
@@ -719,6 +736,7 @@ struct SymbolQueryReport {
     rust_glancer_count: usize,
     rust_analyzer_count: usize,
     matched_count: usize,
+    compatible_count: usize,
     missing_count: usize,
     extra_count: usize,
     rust_glancer_unmapped_count: usize,
@@ -746,6 +764,7 @@ impl From<&SymbolQueryReport> for QueryCounts {
             rust_glancer_count: report.rust_glancer_count,
             rust_analyzer_count: report.rust_analyzer_count,
             matched_count: report.matched_count,
+            compatible_count: report.compatible_count,
             missing_count: report.missing_count,
             extra_count: report.extra_count,
             match_score_percent: report.match_score_percent,
@@ -761,6 +780,7 @@ impl From<MappedSetComparisonMetrics> for SymbolQueryReport {
             rust_glancer_count: metrics.set.rust_glancer_count,
             rust_analyzer_count: metrics.set.rust_analyzer_count,
             matched_count: metrics.set.matched_count,
+            compatible_count: metrics.set.compatible_count,
             missing_count: metrics.set.missing_count,
             extra_count: metrics.set.extra_count,
             rust_glancer_unmapped_count: metrics.rust_glancer_unmapped_count,

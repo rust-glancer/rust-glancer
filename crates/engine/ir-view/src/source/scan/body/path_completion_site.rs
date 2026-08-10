@@ -284,7 +284,7 @@ impl<'txn, 'db> PathCompletionSiteScanner<'txn, 'db> {
         context: BodyQualifiedPathContext,
     ) -> Option<PathCompletionSite> {
         let last_segment_idx = path.segment_count().checked_sub(1)?;
-        let last_segment_span = path.segment_span(last_segment_idx)?;
+        let last_segment_span = path.last_segment_span()?;
         let span = self.empty_member_span(path.source_span, last_segment_span)?;
         let module_qualifier = path.prefix_through(last_segment_idx);
         let associated_qualifier = path.associated_prefix_through(last_segment_idx)?.into();

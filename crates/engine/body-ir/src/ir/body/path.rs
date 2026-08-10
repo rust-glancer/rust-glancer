@@ -284,6 +284,11 @@ impl BodyPath {
         self.segments.get(segment_idx).map(BodyPathSegment::span)
     }
 
+    /// Returns the source span of the final segment, such as `User` in `model::User`.
+    pub fn last_segment_span(&self) -> Option<Span> {
+        self.segments.last().map(BodyPathSegment::span)
+    }
+
     pub fn segment_count(&self) -> usize {
         self.segments.len()
     }

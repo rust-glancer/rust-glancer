@@ -331,6 +331,86 @@ pub fn use_fn(account: Account) -> api::User {
 }
 
 #[test]
+fn rename_reuses_record_constructor_occurrences() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_rename_record_constructors"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub mod model {
+    pub struct Qual$qualified_decl$ified<T> {
+        pub value: T,
+    }
+}
+
+pub struct Us$user_decl$er<T> {
+    pub value: T,
+}
+
+pub enum Action<T> {
+    Start { value: T },
+}
+
+use crate::User as Account;
+
+pub fn make(value: u8) {
+    struct Loc$local_decl$al {
+        value: u8,
+    }
+
+    let _plain = User { value };
+    let _generic = User::<u8> { value };
+    let _qualified = model::Qual$qualified_use$ified::<u8> { value };
+    let _alias = Acc$alias_use$ount { value };
+    let _variant = Action::Sta$variant_use$rt { value };
+    let _local = Loc$local_use$al { value };
+}
+"#,
+        &[
+            AnalysisQuery::rename(
+                "rename record struct from declaration",
+                "user_decl",
+                "Entity",
+            ),
+            AnalysisQuery::rename(
+                "rename qualified generic record from use",
+                "qualified_use",
+                "Scoped",
+            ),
+            AnalysisQuery::rename("rename record variant from use", "variant_use", "Begin"),
+            AnalysisQuery::rename("rename body-local record from use", "local_use", "Nested"),
+        ],
+        expect![[r#"
+            rename record struct from declaration
+            - target `User` @ src/lib.rs:7:12-7:16
+            - `User` -> `Entity` @ src/lib.rs:7:12-7:16
+            - `User` -> `Entity` @ src/lib.rs:15:12-15:16
+            - `User` -> `Entity` @ src/lib.rs:22:18-22:22
+            - `User` -> `Entity` @ src/lib.rs:23:20-23:24
+
+            rename qualified generic record from use
+            - target `Qualified` @ src/lib.rs:24:29-24:38
+            - `Qualified` -> `Scoped` @ src/lib.rs:2:16-2:25
+            - `Qualified` -> `Scoped` @ src/lib.rs:24:29-24:38
+
+            rename record variant from use
+            - target `Start` @ src/lib.rs:26:28-26:33
+            - `Start` -> `Begin` @ src/lib.rs:12:5-12:10
+            - `Start` -> `Begin` @ src/lib.rs:26:28-26:33
+
+            rename body-local record from use
+            - target `Local` @ src/lib.rs:27:18-27:23
+            - `Local` -> `Nested` @ src/lib.rs:18:12-18:17
+            - `Local` -> `Nested` @ src/lib.rs:27:18-27:23
+        "#]],
+    );
+}
+
+#[test]
 fn rename_respects_nested_body_shadowing() {
     check_analysis_queries(
         r#"
