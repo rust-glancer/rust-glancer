@@ -138,6 +138,60 @@ pub fn use_it(input: u64) {
 }
 
 #[test]
+fn resolves_proc_macro_calls_to_their_implementation_source() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[workspace]
+members = ["macros", "app"]
+resolver = "3"
+
+//- /macros/Cargo.toml
+[package]
+name = "goto_proc_macros"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+proc-macro = true
+
+//- /macros/src/lib.rs
+extern crate proc_macro;
+
+/// Emits its input unchanged.
+#[proc_macro]
+pub fn emit(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
+    input
+}
+
+//- /app/Cargo.toml
+[package]
+name = "goto_proc_macro_app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+goto_proc_macros = { path = "../macros" }
+
+//- /app/src/lib.rs
+use goto_proc_macros::emit;
+
+pub fn use_it() {
+    em$goto_proc_macro$it!();
+}
+"#,
+        &[
+            AnalysisQuery::goto("goto proc macro implementation", "goto_proc_macro")
+                .in_lib("goto_proc_macro_app"),
+        ],
+        expect![[r#"
+            goto proc macro implementation
+            - macro emit @ 5:8-5:12
+        "#]],
+    );
+}
+
+#[test]
 fn named_module_targets_select_module_name() {
     check_analysis_queries(
         r#"

@@ -6,11 +6,13 @@
 
 pub mod locals;
 
+use anyhow::Context as _;
 use rg_ir_model::{
     BodyRef, EnumVariantRef, FieldRef, Path, PrimitiveTy, ScopeId, SemanticItemRef, TypeDefRef,
     identity::DeclarationRef, identity::ExprRef,
 };
 use rg_semantic_ir::{ItemStoreQuery, TypePathContext, TypePathResolution};
+use rg_std::ExpectedUnique;
 use rg_ty::{AdtTy, ItemPathQuery, ReferencePeelingCandidates, SemanticSignatureQuery, Ty};
 
 use crate::{
@@ -58,6 +60,18 @@ impl IndexedType {
         ReferencePeelingCandidates::new(self.raw())
             .filter_map(|candidate| candidate.ty().as_adts().first().map(|ty| ty.def))
     }
+
+    /// Return the nominal definition only when reference peeling identifies exactly one.
+    ///
+    /// `Widget`, `&Widget`, and `&&Widget` all identify `Widget`. A type with no nominal candidate
+    /// or with more than one candidate stays non-unique so callers cannot silently choose one.
+    pub fn unique_nominal_type_def(&self) -> ExpectedUnique<TypeDefRef> {
+        let mut result = ExpectedUnique::new();
+        for type_def in self.nominal_type_defs() {
+            result.push(type_def);
+        }
+        result
+    }
 }
 
 /// Projects indexed declarations and body facts into opaque editor-facing types.
@@ -83,8 +97,9 @@ impl<'a, 'db> TyView<'a, 'db> {
         let ty = match declaration {
             DeclarationRef::Module(_) => Ok(None),
             DeclarationRef::LocalDef(local_def) => {
-                let Some(SemanticItemRef::TypeDef(ty)) =
-                    ItemStoreQuery::new(self.db).semantic_item_for_local_def(local_def)?
+                let Some(SemanticItemRef::TypeDef(ty)) = ItemStoreQuery::new(self.db)
+                    .semantic_item_for_local_def(local_def)
+                    .context("look up local definition item")?
                 else {
                     return Ok(None);
                 };
@@ -106,7 +121,8 @@ impl<'a, 'db> TyView<'a, 'db> {
             DeclarationRef::BodyBinding(binding) => {
                 return self.body_view().binding_ty(binding);
             }
-        }?;
+        }
+        .context("project declaration type")?;
         Ok(ty.map(IndexedType::new))
     }
 
@@ -116,7 +132,9 @@ impl<'a, 'db> TyView<'a, 'db> {
         context: TypePathContext,
         path: &Path,
     ) -> anyhow::Result<IndexedType> {
-        let resolution = ItemPathQuery::new(self.db, self.db).resolve_type_path(context, path)?;
+        let resolution = ItemPathQuery::new(self.db, self.db)
+            .resolve_type_path(context, path)
+            .context("resolve signature type path")?;
         if matches!(resolution, TypePathResolution::Unknown)
             && let Some(primitive) = path.single_name().and_then(PrimitiveTy::from_name)
         {
@@ -150,7 +168,8 @@ impl<'a, 'db> TyView<'a, 'db> {
         path: &Path,
     ) -> anyhow::Result<IndexedType> {
         let resolution = BodyResolutionView::new(self.db)
-            .type_path_resolution(body_ref, scope, path)?
+            .type_path_resolution(body_ref, scope, path)
+            .context("resolve body type path")?
             .unwrap_or(TypePathResolution::Unknown);
         if matches!(resolution, TypePathResolution::Unknown)
             && let Some(primitive) = path.single_name().and_then(PrimitiveTy::from_name)
@@ -173,7 +192,9 @@ impl<'a, 'db> TyView<'a, 'db> {
         // Value-path type queries should use the same Body IR resolver as the main body pass, so
         // enum variants and associated functions agree between snapshots and cursor queries.
         Ok(IndexedType::new(
-            BodyResolutionView::new(self.db).nonlocal_value_path_ty(body_ref, scope, path)?,
+            BodyResolutionView::new(self.db)
+                .nonlocal_value_path_ty(body_ref, scope, path)
+                .context("resolve body value path type")?,
         ))
     }
 
@@ -186,7 +207,10 @@ impl<'a, 'db> TyView<'a, 'db> {
 
     /// Return the owning enum type for an enum variant constructor.
     fn ty_for_enum_variant(&self, variant: EnumVariantRef) -> anyhow::Result<Option<Ty>> {
-        let Some(data) = ItemStoreQuery::new(self.db).enum_variant_data(variant)? else {
+        let Some(data) = ItemStoreQuery::new(self.db)
+            .enum_variant_data(variant)
+            .context("look up enum variant data")?
+        else {
             return Ok(None);
         };
         Ok(Some(Ty::adt(AdtTy::bare(data.owner))))

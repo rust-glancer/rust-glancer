@@ -15,7 +15,7 @@ use rg_ir_model::{DefId, DefMapRef, LocalDefId, LocalDefRef, ModuleId, ModuleRef
 use rg_item_tree::{
     Documentation, ExternCrateItem, ImportAlias, ItemKind, ItemTreeId, ItemTreeRef,
     MacroDefinitionAttrs, MacroDefinitionItem, MacroUseAttr, MacroUseSelector, ModuleItem,
-    ModuleSource, Package as ItemTreePackage, UseImport, UseItem,
+    ModuleSource, Package as ItemTreePackage, UseImport, UseItem, UserFacingAttrs,
 };
 use rg_parse::FileId;
 use rg_text::Name;
@@ -169,6 +169,7 @@ impl SourceFragmentCollector<'_> {
             file_id: item.file_id,
             name_span: item.name_span,
             span: item.span,
+            user_facing_attrs: item.user_facing_attrs,
         });
         self.state
             .def_map_builder
@@ -411,6 +412,7 @@ impl SourceFragmentCollector<'_> {
             Some(module_name.clone()),
             item.name_span,
             Documentation::concat(item.docs.clone(), inner_docs),
+            item.user_facing_attrs,
             semantic_visibility,
             origin,
         );
@@ -469,12 +471,14 @@ impl SourceFragmentCollector<'_> {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn alloc_module(
         &mut self,
         parent: Option<ModuleId>,
         name: Option<Name>,
         name_span: Option<rg_parse::Span>,
         docs: Option<Documentation>,
+        user_facing_attrs: UserFacingAttrs,
         visibility: Visibility,
         origin: ModuleOrigin,
     ) -> ModuleId {
@@ -482,6 +486,7 @@ impl SourceFragmentCollector<'_> {
             name,
             name_span,
             docs,
+            user_facing_attrs,
             visibility,
             parent,
             children: Vec::new(),
@@ -541,8 +546,10 @@ impl SourceFragmentCollector<'_> {
         let imports: &[UseImport] = &use_item.imports;
 
         for (import_index, import) in imports.iter().enumerate() {
-            let path = ImportPath::from_use_path(&import.path);
-            if path.semantic().segments.is_empty() {
+            let Some(path) = ImportPath::from_use_path(&import.path, None) else {
+                continue;
+            };
+            if path.semantic().is_empty() {
                 continue;
             }
 
@@ -562,6 +569,7 @@ impl SourceFragmentCollector<'_> {
                 },
                 source: source.into(),
                 import_index,
+                user_facing_attrs: item.user_facing_attrs,
             });
             self.state
                 .def_map_builder

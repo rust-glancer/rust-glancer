@@ -1,12 +1,16 @@
-//! Qualified-path completion site scanning over Body IR.
+//! Qualified paths and associated type binding sites over Body IR.
 //!
-//! Path completion scans recognize partially typed segments in paths such as
-//! `crate::module::Us` and return the qualifier, replacement span, and expected namespace.
+//! The scanner keeps both interpretations of a path prefix: a DefMap-compatible module path and a
+//! type-shaped qualifier that retains generic arguments or `<T as Trait>` anchors. It also
+//! recognizes explicit associated bindings and the speculative pre-`=` form without conflating the
+//! latter with ordinary generic-argument completion.
 //!
 //! ```text
-//! let value: model::Us$0;  qualifier `model`, complete in the type namespace
-//! model::make$0()          qualifier `model`, complete in the value namespace
-//! model::$0                qualifier `model`, use an empty replacement span
+//! let value: model::Us$0;    qualifier `model`, type context
+//! Widget::<u8>::ne$0        type-shaped qualifier `Widget::<u8>`
+//! Iterator<It$0 = u8>       explicit associated binding
+//! Iterator<It$0>            possible binding overlaid on type completion
+//! model::$0                  qualifier `model`, empty replacement span
 //! ```
 
 use rg_ir_model::{BodyRef, CrateRef, ScopeId};
@@ -14,11 +18,16 @@ use rg_item_tree::TypePath;
 use rg_package_store::PackageStoreError;
 use rg_parse::{FileId, Span, TextSpan};
 
-use rg_body_ir::{BodyIrReadTxn, BodyPath, BodyView, ExprKind, PatData};
+use rg_body_ir::{BodyIrReadTxn, BodyPath, BodyView, ExprKind, PatData, PatKind};
 
-use super::super::{NarrowestSourceSite, TypeNamePosition, type_path::TypePathCompletionSite};
-use super::{PathCompletionSite, sites::BodyScanSites};
-use crate::lookup::name::ValueOrTypeNamespace;
+use super::super::{
+    NarrowestSourceSite, TypeNamePosition,
+    type_path::{AssociatedTypeBindingSyntax, TypePathCompletionSite},
+};
+use super::{
+    BodyAssociatedTypeBindingSite, BodyQualifiedPathContext, PathCompletionSite,
+    PatternCompletionKind, sites::BodyScanSites,
+};
 
 /// Finds the source site that belongs to a qualified-path completion offset.
 ///
@@ -52,13 +61,64 @@ impl<'txn, 'db> PathCompletionSiteScanner<'txn, 'db> {
         let mut best = NarrowestSourceSite::new();
 
         for (body_ref, body) in self.body_ir.bodies(self.crate_ref, Some(self.file_id))? {
-            // Body spans are a cheap first filter before scanning every expression and statement.
-            if !body.source().span.contains(self.offset) {
+            // A body can end at the cursor while its last path is still being typed.
+            if !body.source().span.touches(self.offset) {
                 continue;
             }
 
             self.scan_type_paths(body_ref, body, &mut best);
             self.scan_body_paths(body_ref, body, &mut best);
+        }
+
+        Ok(best.finish())
+    }
+
+    /// Find a binding name that is already followed by `=`.
+    ///
+    /// In `Iterator<It$0 = u8>`, the `=` makes `It` unambiguously an associated type binding, so
+    /// this site can replace ordinary type-argument completion.
+    pub(crate) fn associated_type_binding_site_at(
+        &self,
+    ) -> Result<Option<BodyAssociatedTypeBindingSite>, PackageStoreError> {
+        self.associated_type_binding_site_at_with(AssociatedTypeBindingSyntax::explicit_at)
+    }
+
+    /// Find a simple generic argument that may become a binding when the user types `=`.
+    ///
+    /// `Iterator<It$0>` is still valid ordinary type-argument syntax. Callers use this result as an
+    /// overlay and retain the normal type candidates for `It`.
+    pub(crate) fn implicit_associated_type_binding_site_at(
+        &self,
+    ) -> Result<Option<BodyAssociatedTypeBindingSite>, PackageStoreError> {
+        self.associated_type_binding_site_at_with(AssociatedTypeBindingSyntax::implicit_at)
+    }
+
+    fn associated_type_binding_site_at_with(
+        &self,
+        site_at: impl Fn(&TypePath, u32) -> Option<AssociatedTypeBindingSyntax>,
+    ) -> Result<Option<BodyAssociatedTypeBindingSite>, PackageStoreError> {
+        let mut best = NarrowestSourceSite::new();
+
+        for (body_ref, body) in self.body_ir.bodies(self.crate_ref, Some(self.file_id))? {
+            if !body.source().span.touches(self.offset) {
+                continue;
+            }
+
+            BodyScanSites::new(body).walk_type_paths(Some(self.file_id), |site| {
+                let Some(binding) = site_at(site.path, self.offset) else {
+                    return;
+                };
+                best.consider(
+                    BodyAssociatedTypeBindingSite {
+                        body: body_ref,
+                        scope: site.scope,
+                        trait_ref: binding.trait_ref,
+                        member_prefix_span: binding.member_prefix_span,
+                        existing_bindings: binding.existing_bindings,
+                    },
+                    site.path.source_span.len(),
+                );
+            });
         }
 
         Ok(best.finish())
@@ -97,7 +157,7 @@ impl<'txn, 'db> PathCompletionSiteScanner<'txn, 'db> {
                     body_ref,
                     expr_data.scope,
                     path,
-                    ValueOrTypeNamespace::Values,
+                    BodyQualifiedPathContext::Value,
                     best,
                 ),
                 ExprKind::Record {
@@ -106,7 +166,7 @@ impl<'txn, 'db> PathCompletionSiteScanner<'txn, 'db> {
                     body_ref,
                     expr_data.scope,
                     path,
-                    ValueOrTypeNamespace::Types,
+                    BodyQualifiedPathContext::Type,
                     best,
                 ),
                 _ => {}
@@ -127,11 +187,42 @@ impl<'txn, 'db> PathCompletionSiteScanner<'txn, 'db> {
         data: &PatData,
         best: &mut NarrowestSourceSite<PathCompletionSite>,
     ) {
-        if let Some(path) = data.kind.record_path() {
-            self.scan_body_path(body_ref, scope, path, ValueOrTypeNamespace::Types, best);
-        } else if let Some(path) = data.kind.value_path() {
-            self.scan_body_path(body_ref, scope, path, ValueOrTypeNamespace::Values, best);
-        }
+        let (path, kind) = match &data.kind {
+            PatKind::Record {
+                path: Some(path), ..
+            } => (path, PatternCompletionKind::RecordConstructor),
+            PatKind::TupleStruct {
+                path: Some(path), ..
+            } => (path, PatternCompletionKind::TupleConstructor),
+            PatKind::Path { path: Some(path) }
+            | PatKind::Binding {
+                binding: None,
+                path: Some(path),
+                ..
+            } => (path, PatternCompletionKind::Name),
+            PatKind::Binding { .. }
+            | PatKind::Tuple { .. }
+            | PatKind::Or { .. }
+            | PatKind::Slice { .. }
+            | PatKind::Ref { .. }
+            | PatKind::Box { .. }
+            | PatKind::Rest
+            | PatKind::Literal { .. }
+            | PatKind::Range { .. }
+            | PatKind::ConstBlock { .. }
+            | PatKind::Wildcard
+            | PatKind::Unsupported
+            | PatKind::TupleStruct { path: None, .. }
+            | PatKind::Record { path: None, .. }
+            | PatKind::Path { path: None } => return,
+        };
+        self.scan_body_path(
+            body_ref,
+            scope,
+            path,
+            BodyQualifiedPathContext::Pattern(kind),
+            best,
+        );
     }
 
     /// Finds a partially typed type path segment after at least one qualifier segment.
@@ -146,7 +237,8 @@ impl<'txn, 'db> PathCompletionSiteScanner<'txn, 'db> {
         position: TypeNamePosition,
     ) -> Option<PathCompletionSite> {
         let TypePathCompletionSite::Qualified {
-            qualifier,
+            module_qualifier,
+            associated_qualifier,
             member_prefix_span,
         } = TypePathCompletionSite::at(path, self.offset, position)?
         else {
@@ -156,9 +248,10 @@ impl<'txn, 'db> PathCompletionSiteScanner<'txn, 'db> {
         Some(PathCompletionSite {
             body,
             scope,
-            qualifier,
+            module_qualifier,
+            associated_qualifier,
             member_prefix_span,
-            namespace: ValueOrTypeNamespace::Types,
+            context: BodyQualifiedPathContext::Type,
         })
     }
 
@@ -188,20 +281,23 @@ impl<'txn, 'db> PathCompletionSiteScanner<'txn, 'db> {
         body: BodyRef,
         scope: ScopeId,
         path: &BodyPath,
-        namespace: ValueOrTypeNamespace,
+        context: BodyQualifiedPathContext,
     ) -> Option<PathCompletionSite> {
-        let last_segment_span = path.segment_span(path.segment_count().checked_sub(1)?)?;
+        let last_segment_idx = path.segment_count().checked_sub(1)?;
+        let last_segment_span = path.segment_span(last_segment_idx)?;
         let span = self.empty_member_span(path.source_span, last_segment_span)?;
-        let qualifier = path.prefix_through(path.segment_count() - 1)?;
+        let module_qualifier = path.prefix_through(last_segment_idx);
+        let associated_qualifier = path.associated_prefix_through(last_segment_idx)?.into();
 
         // Expression and pattern paths can use modules and types as intermediate qualifiers. The
         // surrounding syntax determines whether the missing final segment is a type or a value.
         Some(PathCompletionSite {
             body,
             scope,
-            qualifier,
+            module_qualifier,
+            associated_qualifier,
             member_prefix_span: span,
-            namespace,
+            context,
         })
     }
 
@@ -214,7 +310,7 @@ impl<'txn, 'db> PathCompletionSiteScanner<'txn, 'db> {
         body: BodyRef,
         scope: ScopeId,
         path: &BodyPath,
-        namespace: ValueOrTypeNamespace,
+        context: BodyQualifiedPathContext,
         best: &mut NarrowestSourceSite<PathCompletionSite>,
     ) {
         for idx in 1..path.segment_count() {
@@ -224,7 +320,8 @@ impl<'txn, 'db> PathCompletionSiteScanner<'txn, 'db> {
             if !span.touches(self.offset) {
                 continue;
             }
-            let Some(qualifier) = path.prefix_through(idx - 1) else {
+            let module_qualifier = path.prefix_through(idx - 1);
+            let Some(associated_qualifier) = path.associated_prefix_through(idx - 1) else {
                 continue;
             };
 
@@ -232,15 +329,16 @@ impl<'txn, 'db> PathCompletionSiteScanner<'txn, 'db> {
                 PathCompletionSite {
                     body,
                     scope,
-                    qualifier,
+                    module_qualifier,
+                    associated_qualifier: associated_qualifier.into(),
                     member_prefix_span: span,
-                    namespace,
+                    context,
                 },
                 path.source_span.len(),
             );
         }
 
-        if let Some(site) = self.empty_member_site_for_body_path(body, scope, path, namespace) {
+        if let Some(site) = self.empty_member_site_for_body_path(body, scope, path, context) {
             best.consider(site, path.source_span.len());
         }
     }

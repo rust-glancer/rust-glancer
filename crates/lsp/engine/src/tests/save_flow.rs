@@ -41,7 +41,7 @@ pub struct SavedUser {
 pub struct SavedName;
 
 pub fn demo(user: SavedUser) {
-    let _completion = user.$complete$;
+    let _completion = user.renamed_$complete$;
     let _hover = user.renamed_$hover$field;
 }
 "#,
@@ -63,7 +63,7 @@ pub fn demo(user: SavedUser) {
                 complete saved field after save
                 - renamed_field Field
                   detail: pub renamed_field: SavedName
-                  edit: /src/lib.rs:8:27-8:27 -> renamed_field
+                  edit: /src/lib.rs:8:27-8:35 -> renamed_field
 
                 hover saved field after save
                 - range: /src/lib.rs:9:22-9:35

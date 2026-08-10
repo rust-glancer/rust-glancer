@@ -28,6 +28,8 @@ pub struct Package {
     pub(crate) origin: PackageOrigin,
     /// Active cfg facts inherited from Cargo and the selected target platform.
     pub(crate) cfg_options: CfgOptions,
+    /// Manifest feature names retained for request-local `cfg(feature = ...)` completion.
+    pub(crate) declared_features: Vec<String>,
     /// All parsed files known to this package.
     pub(crate) files: FileDb,
     /// Parsed targets rooted in this package.
@@ -48,7 +50,7 @@ impl Package {
         package
             .targets
             .iter()
-            .filter(|target| matches!(target.kind, TargetKind::Lib))
+            .filter(|target| matches!(target.kind, TargetKind::Lib | TargetKind::ProcMacro))
             .cloned()
             .collect()
     }
@@ -91,6 +93,10 @@ impl Package {
 
     pub(crate) fn shrink_to_fit(&mut self) {
         self.package_name.shrink_to_fit();
+        self.declared_features.shrink_to_fit();
+        for feature in &mut self.declared_features {
+            feature.shrink_to_fit();
+        }
         self.files.shrink_to_fit();
         self.targets.shrink_to_fit();
         for target in self.targets.iter_mut() {
@@ -197,6 +203,10 @@ impl Package {
         &self.cfg_options
     }
 
+    pub fn declared_features(&self) -> &[String] {
+        &self.declared_features
+    }
+
     /// Returns all parsed targets for this package.
     pub fn targets(&self) -> &[CargoTarget] {
         self.targets.as_slice()
@@ -242,6 +252,7 @@ impl Package {
             is_workspace_member: package.is_workspace_member,
             origin: package.origin.clone(),
             cfg_options: package.cfg_options.clone(),
+            declared_features: package.declared_features.clone(),
             files,
             targets: parsed_targets,
         })

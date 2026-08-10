@@ -20,7 +20,7 @@ async fn external_source_change_refreshes_saved_project() {
         pub struct OldName;
 
         pub fn demo(user: ExternalUser) {
-            let _completion = user.$complete$;
+            let _completion = user.old_$complete$;
             let _hover = user.old_$hover$field;
         }
         "#,
@@ -38,7 +38,7 @@ async fn external_source_change_refreshes_saved_project() {
                 complete field before external change
                 - old_field Field
                   detail: pub old_field: OldName
-                  edit: /src/lib.rs:7:27-7:27 -> old_field
+                  edit: /src/lib.rs:7:27-7:31 -> old_field
 
                 hover field before external change
                 - range: /src/lib.rs:8:22-8:31
@@ -70,7 +70,7 @@ async fn external_source_change_refreshes_saved_project() {
 pub struct NewName;
 
 pub fn demo(user: ExternalUser) {
-    let _completion = user.;
+    let _completion = user.new_;
     let _hover = user.new_field;
 }
 "#,
@@ -88,7 +88,7 @@ pub fn demo(user: ExternalUser) {
                 complete field after external change
                 - new_field Field
                   detail: pub new_field: NewName
-                  edit: /src/lib.rs:7:27-7:27 -> new_field
+                  edit: /src/lib.rs:7:27-7:31 -> new_field
 
                 hover field after external change
                 - range: /src/lib.rs:8:22-8:31
@@ -132,7 +132,7 @@ async fn external_created_module_file_refreshes_saved_project() {
         pub mod generated;
 
         pub fn demo(user: generated::GeneratedUser) {
-            let _completion = user.$complete$;
+            let _completion = user.generated_$complete$;
             let _hover = user.generated_$hover$field;
         }
         "#,
@@ -165,7 +165,7 @@ pub struct GeneratedName;
                 complete field after external module creation
                 - generated_field Field
                   detail: pub generated_field: GeneratedName
-                  edit: /src/lib.rs:3:27-3:27 -> generated_field
+                  edit: /src/lib.rs:3:27-3:37 -> generated_field
 
                 hover field after external module creation
                 - range: /src/lib.rs:4:22-4:37

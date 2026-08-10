@@ -17,16 +17,17 @@ use anyhow::Context as _;
 use crate::{
     DefMapBuilder, ImportBinding, ImportData, ImportKind, ImportPath, LocalDefData, LocalDefKind,
     LocalImplData, MacroDefinitionData, ModuleData, ModuleOrigin, ModuleScope, ModuleScopeBuilder,
-    Namespace, ScopeBinding, ScopeBindingProvenance, Visibility,
+    Namespace, NamespaceSet, ScopeBinding, ScopeBindingProvenance, Visibility,
 };
 use rg_cfg_eval::{CfgEvaluator, CfgOptions};
 use rg_ir_model::{
     CrateId, CrateRef, DefId, DefMapRef, LocalDefId, LocalDefRef, ModuleId, ModuleRef,
 };
 use rg_item_tree::{
-    Documentation, EnumItem, ExternCrateItem, ItemKind, ItemNode, ItemTreeDb, ItemTreeId,
-    ItemTreeRef, MacroCallItem, MacroDefinitionAttrs, MacroDefinitionItem, MacroUseAttr,
-    MacroUseSelector, ModuleItem, ModuleSource, Package as ItemTreePackage, UseImport, UseItem,
+    Documentation, EnumItem, ExternCrateItem, FunctionItem, ItemKind, ItemNode, ItemTreeDb,
+    ItemTreeId, ItemTreeRef, MacroCallItem, MacroDefinitionAttrs, MacroDefinitionItem,
+    MacroUseAttr, MacroUseSelector, ModuleItem, ModuleSource, Package as ItemTreePackage,
+    UseImport, UseItem, UserFacingAttrs, VisibilityLevel,
 };
 use rg_parse::{CargoTarget, Package};
 use rg_text::{Name, RustEdition};
@@ -268,6 +269,7 @@ impl<'db> CrateScopeCollector<'db> {
             None,
             None,
             root_file_tree.docs.clone(),
+            UserFacingAttrs::default(),
             Visibility::Public,
             ModuleOrigin::Root {
                 file_id: target.root_file,
@@ -298,12 +300,14 @@ impl<'db> CrateScopeCollector<'db> {
     }
 
     /// Allocates one module in both the def-map payload and the base-scope table.
+    #[allow(clippy::too_many_arguments)]
     fn alloc_module(
         &mut self,
         parent: Option<ModuleId>,
         name: Option<Name>,
         name_span: Option<rg_parse::Span>,
         docs: Option<rg_item_tree::Documentation>,
+        user_facing_attrs: UserFacingAttrs,
         visibility: Visibility,
         origin: ModuleOrigin,
     ) -> ModuleId {
@@ -311,6 +315,7 @@ impl<'db> CrateScopeCollector<'db> {
             name,
             name_span,
             docs,
+            user_facing_attrs,
             visibility,
             parent,
             children: Vec::new(),
@@ -370,6 +375,23 @@ impl<'db> CrateScopeCollector<'db> {
                 ItemKind::MacroDefinition(macro_definition) => {
                     self.collect_macro_definition(module_id, item, source, macro_definition, order);
                 }
+                ItemKind::Function(function) => {
+                    if let Some(implementation) = self.collect_local_def(
+                        module_id,
+                        item,
+                        source,
+                        ScopeBindingProvenance::Direct,
+                    ) {
+                        self.collect_proc_macro_definition(
+                            module_id,
+                            item,
+                            source,
+                            function,
+                            implementation,
+                            order,
+                        );
+                    }
+                }
                 ItemKind::Enum(enum_item) => {
                     self.collect_enum(module_id, item, source, enum_item);
                 }
@@ -413,6 +435,7 @@ impl<'db> CrateScopeCollector<'db> {
             file_id: item.file_id,
             name_span: item.name_span,
             span: item.span,
+            user_facing_attrs: item.user_facing_attrs,
         });
         self.def_map_builder
             .module_mut(module_id)
@@ -510,6 +533,73 @@ impl<'db> CrateScopeCollector<'db> {
             local_def_id,
             MacroDefinitionData::from_item(
                 macro_definition,
+                item.docs.clone(),
+                self.edition,
+                self.crate_ref,
+            ),
+        );
+    }
+
+    /// Adds the exported macro identity of an annotated function without confusing that identity
+    /// with the function's ordinary value-namespace definition.
+    fn collect_proc_macro_definition(
+        &mut self,
+        module_id: ModuleId,
+        item: &ItemNode,
+        source: ItemTreeRef,
+        function: &FunctionItem,
+        implementation: LocalDefId,
+        order: ItemOrder,
+    ) {
+        let Some(proc_macro) = &function.proc_macro else {
+            return;
+        };
+        if !matches!(self.target_kind, TargetKind::ProcMacro) || Some(module_id) != self.root_module
+        {
+            return;
+        }
+
+        let local_def_id = self.def_map_builder.alloc_local_def(LocalDefData {
+            module: module_id,
+            name: proc_macro.name.clone(),
+            kind: LocalDefKind::MacroDefinition,
+            namespaces: NamespaceSet::MACROS,
+            visibility: VisibilityLevel::Public,
+            source: source.into(),
+            file_id: item.file_id,
+            name_span: item.name_span,
+            span: item.span,
+            user_facing_attrs: item.user_facing_attrs,
+        });
+        self.def_map_builder
+            .module_mut(module_id)
+            .expect("proc-macro root module should exist")
+            .local_defs
+            .push(local_def_id);
+
+        let def = DefId::Local(LocalDefRef {
+            origin: DefMapRef::Crate(self.crate_ref),
+            local_def: local_def_id,
+        });
+        self.base_scopes
+            .get_mut(module_id.0)
+            .expect("proc-macro root scope should exist")
+            .insert_binding(
+                &proc_macro.name,
+                Namespace::Macros,
+                ScopeBinding::new(def, Visibility::Public, ScopeBindingProvenance::Direct),
+            );
+        self.macro_definitions.insert(
+            local_def_id,
+            MacroDefinitionRecord {
+                order: order.clone(),
+            },
+        );
+        self.def_map_builder.insert_macro_definition(
+            local_def_id,
+            MacroDefinitionData::from_proc_macro(
+                proc_macro.kind,
+                implementation,
                 item.docs.clone(),
                 self.edition,
                 self.crate_ref,
@@ -644,6 +734,7 @@ impl<'db> CrateScopeCollector<'db> {
             Some(module_name.clone()),
             item.name_span,
             Documentation::concat(item.docs.clone(), inner_docs),
+            item.user_facing_attrs,
             semantic_visibility,
             origin,
         );
@@ -742,10 +833,12 @@ impl<'db> CrateScopeCollector<'db> {
         let imports: &[UseImport] = &use_item.imports;
 
         for (import_index, import) in imports.iter().enumerate() {
-            let path = ImportPath::from_use_path(&import.path);
+            let Some(path) = ImportPath::from_use_path(&import.path, None) else {
+                continue;
+            };
             // Imports like `use foo::{self};` strip the trailing `self`. If nothing remains, there
             // is no path to record here.
-            if path.semantic().segments.is_empty() {
+            if path.semantic().is_empty() {
                 continue;
             }
             let visibility = self
@@ -764,6 +857,7 @@ impl<'db> CrateScopeCollector<'db> {
                 },
                 source: source.into(),
                 import_index,
+                user_facing_attrs: item.user_facing_attrs,
             });
             self.def_map_builder
                 .module_mut(module_id)

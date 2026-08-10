@@ -346,6 +346,7 @@ fn fixture_with_traits_impls_aliases_and_structs(
         name: None,
         name_span: None,
         docs: None,
+        user_facing_attrs: Default::default(),
         visibility: Visibility::Public,
         parent: None,
         children: Vec::new(),
@@ -376,6 +377,7 @@ fn fixture_with_traits_impls_aliases_and_structs(
             file_id: FileId(0),
             name_span: None,
             span: fixture_span(),
+            user_facing_attrs: Default::default(),
         });
         let local_def_ref = LocalDefRef {
             origin: origin(),
@@ -405,6 +407,7 @@ fn fixture_with_traits_impls_aliases_and_structs(
             file_id: FileId(0),
             name_span: None,
             span: fixture_span(),
+            user_facing_attrs: Default::default(),
         });
         let local_def_ref = LocalDefRef {
             origin: origin(),
@@ -700,6 +703,8 @@ impl<'a> TraitSelectionFixtureParser<'a> {
                 params: Vec::new(),
                 ret_ty: Some(parse_type_ref(ret_ty)),
                 qualifiers: FunctionQualifiers::default(),
+                has_body: false,
+                proc_macro: None,
             }),
         });
     }
@@ -920,7 +925,7 @@ fn parse_type_ref(text: &str) -> TypeRef {
             ParsedBracketTy::Slice(inner) => TypeRef::Slice(Box::new(parse_type_ref(inner))),
             ParsedBracketTy::Array { inner, len } => TypeRef::Array {
                 inner: Box::new(parse_type_ref(inner)),
-                len,
+                len: len.map(|text| rg_item_tree::ConstExpr::new(text, fixture_span())),
             },
         };
     }
@@ -946,6 +951,7 @@ fn parse_item_generic_arg(text: &str) -> ItemGenericArg {
     if let Some((name, ty)) = split_top_level_keyword(text, " = ") {
         return ItemGenericArg::AssocType {
             name: Name::new(name),
+            name_span: fixture_span(),
             ty: Some(parse_type_ref(ty)),
         };
     }

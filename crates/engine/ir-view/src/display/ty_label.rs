@@ -1,13 +1,17 @@
-//! Compact type labels for UI surfaces.
+//! Compact type syntax for UI labels and trait-implementation scaffolds.
 //!
-//! This renderer intentionally favors short, recognizable names over fully-qualified debug output.
-//! The analysis layer already returns stable IDs; inlay hints and future hovers need labels that
-//! are useful while reading code.
+//! Ordinary UI rendering favors short, recognizable names over fully-qualified debug output.
+//! Trait-impl rendering adds one controlled context: a projection owned by the implemented trait,
+//! such as `<Worker as Service<u8>>::Output`, becomes the source-valid `Self::Output`. Unrelated
+//! projections remain unknown instead of being shortened to the wrong trait.
 
-use rg_ir_model::GenericParamRef;
+use rg_ir_model::{GenericParamRef, ItemOwner, TraitDefRef};
 use rg_semantic_ir::{GenericParamSource, GenericsQuery, ItemStoreQuery};
 use rg_text::RustEdition;
-use rg_ty::{AdtTy, AliasTy, GenericArg, OpaqueTy, SemanticSignatureQuery, TraitRefLowering, Ty};
+use rg_ty::{
+    AdtTy, AliasTy, GenericArg, OpaqueTy, ProjectionTy, SemanticSignatureQuery, TraitApplication,
+    TraitRefLowering, Ty,
+};
 
 use crate::{
     IndexedViewDb, display::syntax::SyntaxRenderer, item::path::PathView, ty::IndexedType,
@@ -34,6 +38,37 @@ impl<'a, 'db> TypeRenderer<'a, 'db> {
 
     /// Render the compiler representation while composing other view-level displays.
     pub(crate) fn render_ty(&self, ty: &Ty) -> anyhow::Result<Option<String>> {
+        self.render_ty_with_trait_impl(ty, None)
+    }
+
+    /// Render a type inside an implementation of one concrete trait application.
+    ///
+    /// Projections belonging to that application use `Self::Assoc`, which remains valid even
+    /// while the associated type implementation is one of the missing members being completed.
+    ///
+    /// ```text
+    /// trait Service<T> {
+    ///     type Output;
+    ///     fn handle(&self, value: T) -> Self::Output;
+    /// }
+    ///
+    /// // After the caller applies `Service<u8>`'s substitution:
+    /// u8                              -> u8
+    /// <Worker as Service<u8>>::Output -> Self::Output
+    /// ```
+    pub(crate) fn render_trait_impl_ty(
+        &self,
+        ty: &Ty,
+        application: &TraitApplication,
+    ) -> anyhow::Result<Option<String>> {
+        self.render_ty_with_trait_impl(ty, Some(application))
+    }
+
+    fn render_ty_with_trait_impl(
+        &self,
+        ty: &Ty,
+        application: Option<&TraitApplication>,
+    ) -> anyhow::Result<Option<String>> {
         match ty {
             Ty::Unit => Ok(Some("()".to_string())),
             Ty::Never => Ok(Some("!".to_string())),
@@ -42,7 +77,7 @@ impl<'a, 'db> TypeRenderer<'a, 'db> {
                 let fields = fields
                     .iter()
                     .map(|ty| {
-                        self.render_ty(ty)
+                        self.render_ty_with_trait_impl(ty, application)
                             .map(|ty| ty.unwrap_or_else(|| "_".to_string()))
                     })
                     .collect::<anyhow::Result<Vec<_>>>()?;
@@ -51,56 +86,67 @@ impl<'a, 'db> TypeRenderer<'a, 'db> {
             }
             Ty::Array { inner, len } => Ok(Some(format!(
                 "[{}; {}]",
-                self.render_ty(inner)?.unwrap_or_else(|| "_".to_string()),
+                self.render_ty_with_trait_impl(inner, application)?
+                    .unwrap_or_else(|| "_".to_string()),
                 len
             ))),
             Ty::Slice(inner) => Ok(Some(format!(
                 "[{}]",
-                self.render_ty(inner)?.unwrap_or_else(|| "_".to_string())
+                self.render_ty_with_trait_impl(inner, application)?
+                    .unwrap_or_else(|| "_".to_string())
             ))),
             Ty::Reference {
                 lifetime,
                 mutability,
                 inner,
-            } => Ok(self.render_ty(inner)?.map(|inner| {
-                let lifetime = match lifetime {
-                    rg_ty::Lifetime::Erased => String::new(),
-                    lifetime => format!("{lifetime} "),
-                };
-                let qualifier = if matches!(mutability, rg_ir_model::Mutability::Mutable) {
-                    "mut "
-                } else {
-                    ""
-                };
-                format!("&{lifetime}{qualifier}{inner}")
-            })),
-            Ty::RawPointer { mutability, inner } => Ok(self.render_ty(inner)?.map(|inner| {
-                let qualifier = if matches!(mutability, rg_ir_model::Mutability::Mutable) {
-                    "mut"
-                } else {
-                    "const"
-                };
-                format!("*{qualifier} {inner}")
-            })),
+            } => Ok(self
+                .render_ty_with_trait_impl(inner, application)?
+                .map(|inner| {
+                    let lifetime = match lifetime {
+                        rg_ty::Lifetime::Erased => String::new(),
+                        lifetime => format!("{lifetime} "),
+                    };
+                    let qualifier = if matches!(mutability, rg_ir_model::Mutability::Mutable) {
+                        "mut "
+                    } else {
+                        ""
+                    };
+                    format!("&{lifetime}{qualifier}{inner}")
+                })),
+            Ty::RawPointer { mutability, inner } => Ok(self
+                .render_ty_with_trait_impl(inner, application)?
+                .map(|inner| {
+                    let qualifier = if matches!(mutability, rg_ir_model::Mutability::Mutable) {
+                        "mut"
+                    } else {
+                        "const"
+                    };
+                    format!("*{qualifier} {inner}")
+                })),
             Ty::FnPointer { params, ret } => {
                 let params = params
                     .iter()
                     .map(|ty| {
-                        self.render_ty(ty)
+                        self.render_ty_with_trait_impl(ty, application)
                             .map(|ty| ty.unwrap_or_else(|| "_".to_string()))
                     })
                     .collect::<anyhow::Result<Vec<_>>>()?;
-                let ret = self.render_ty(ret)?.unwrap_or_else(|| "_".to_string());
+                let ret = self
+                    .render_ty_with_trait_impl(ret, application)?
+                    .unwrap_or_else(|| "_".to_string());
                 Ok(Some(format!("fn({}) -> {ret}", params.join(", "))))
             }
             Ty::Closure(closure) => Ok(Some(format!("{{closure#{}}}", closure.id))),
             Ty::FnDef(function) => Ok(PathView::new(self.db, self.syntax.edition())
                 .function_path(function.def)?
                 .map(|path| format!("{{fn {path}}}"))),
-            Ty::Adt(ty) => self.render_nominal(ty),
+            Ty::Adt(ty) => self.render_nominal(ty, application),
             Ty::Param(param) => self.render_type_param(*param),
             Ty::Alias(AliasTy::Opaque(opaque)) => self.render_opaque(opaque),
-            Ty::Alias(AliasTy::Projection(_)) => Ok(None),
+            Ty::Alias(AliasTy::Projection(projection)) => match application {
+                Some(application) => self.render_trait_impl_projection(projection, application),
+                None => Ok(None),
+            },
             // UI surfaces should only see finalized types. If a transient solver variable leaks
             // here, render it like unknown instead of exposing an internal slot identity.
             Ty::InferVar { .. } | Ty::Unknown => Ok(None),
@@ -140,7 +186,11 @@ impl<'a, 'db> TypeRenderer<'a, 'db> {
     }
 
     /// Render a nominal type by declared name and generic arguments.
-    fn render_nominal(&self, ty: &AdtTy) -> anyhow::Result<Option<String>> {
+    fn render_nominal(
+        &self,
+        ty: &AdtTy,
+        application: Option<&TraitApplication>,
+    ) -> anyhow::Result<Option<String>> {
         let Some(name) = ItemStoreQuery::new(self.db).type_def_name(ty.def)? else {
             return Ok(None);
         };
@@ -148,7 +198,40 @@ impl<'a, 'db> TypeRenderer<'a, 'db> {
         Ok(Some(format!(
             "{}{}",
             self.syntax.identifier(name),
-            self.render_generic_args(&ty.args)?
+            self.render_generic_args(&ty.args, application)?
+        )))
+    }
+
+    /// Render only projections owned by the exact trait application being implemented.
+    ///
+    /// A projection from another trait, or from the same trait under different arguments, is not
+    /// safe to shorten to `Self::Assoc`; returning `None` lets scaffold rendering use `_` instead
+    /// of emitting a path with the wrong meaning.
+    fn render_trait_impl_projection(
+        &self,
+        projection: &ProjectionTy,
+        application: &TraitApplication,
+    ) -> anyhow::Result<Option<String>> {
+        if projection.args != application.args {
+            return Ok(None);
+        }
+        let Some(data) = ItemStoreQuery::new(self.db).type_alias_data(projection.associated_ty)?
+        else {
+            return Ok(None);
+        };
+        let ItemOwner::Trait(trait_id) = data.owner else {
+            return Ok(None);
+        };
+        if (TraitDefRef {
+            origin: projection.associated_ty.origin,
+            id: trait_id,
+        }) != application.def
+        {
+            return Ok(None);
+        }
+        Ok(Some(format!(
+            "Self::{}",
+            self.syntax.identifier(&data.name)
         )))
     }
 
@@ -180,7 +263,7 @@ impl<'a, 'db> TypeRenderer<'a, 'db> {
             .args
             .iter()
             .skip(1)
-            .map(|arg| self.render_generic_arg(arg))
+            .map(|arg| self.render_generic_arg(arg, None))
             .collect::<anyhow::Result<Vec<_>>>()?;
         let items = ItemStoreQuery::new(self.db);
         for binding in &bound.associated_types {
@@ -257,23 +340,33 @@ impl<'a, 'db> TypeRenderer<'a, 'db> {
     }
 
     /// Render generic arguments including surrounding angle brackets.
-    fn render_generic_args(&self, args: &[GenericArg]) -> anyhow::Result<String> {
+    fn render_generic_args(
+        &self,
+        args: &[GenericArg],
+        application: Option<&TraitApplication>,
+    ) -> anyhow::Result<String> {
         if args.is_empty() {
             return Ok(String::new());
         }
 
         let mut rendered = Vec::new();
         for arg in args {
-            rendered.push(self.render_generic_arg(arg)?);
+            rendered.push(self.render_generic_arg(arg, application)?);
         }
 
         Ok(format!("<{}>", rendered.join(", ")))
     }
 
     /// Render one generic argument.
-    fn render_generic_arg(&self, arg: &GenericArg) -> anyhow::Result<String> {
+    fn render_generic_arg(
+        &self,
+        arg: &GenericArg,
+        application: Option<&TraitApplication>,
+    ) -> anyhow::Result<String> {
         match arg {
-            GenericArg::Type(ty) => Ok(self.render_ty(ty)?.unwrap_or_else(|| "_".to_string())),
+            GenericArg::Type(ty) => Ok(self
+                .render_ty_with_trait_impl(ty, application)?
+                .unwrap_or_else(|| "_".to_string())),
             GenericArg::Lifetime(lifetime) => Ok(lifetime.to_string()),
             GenericArg::Const(value) => Ok(value.to_string()),
         }

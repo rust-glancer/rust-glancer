@@ -1,11 +1,26 @@
+//! Syntax-preserving paths written inside expressions and patterns.
+//!
+//! DefMap paths are intentionally small: one lookup root followed by ordinary names. Body
+//! resolution also needs the pieces that affect type lowering, such as turbofish arguments and
+//! qualified-type anchors.
+//!
+//! ```text
+//! Widget::<u8>::new
+//! <T as Factory>::Output
+//! ```
+//!
+//! Both paths have useful DefMap-shaped name projections, but resolving their associated items
+//! requires the written `<u8>` and `<T as Factory>` syntax. `BodyPath` retains that source shape
+//! and projects to the smaller [`Path`] only when doing so does not invent semantics.
+
 use std::fmt;
 
 use rg_parse::Span;
 use rg_text::Name;
 use wincode::{SchemaRead, SchemaWrite};
 
-use rg_ir_model::{CrateRef, Path, PathSegment};
-use rg_item_tree::{GenericArg, TypePath, TypePathSegment, TypeRef};
+use rg_ir_model::{CrateRef, Path, PathRoot};
+use rg_item_tree::{GenericArg, TypePath, TypePathAnchor, TypePathSegment, TypeRef};
 use rg_std::{MemorySize, Shrink};
 
 /// Body expression/pattern path together with body-specific syntax details.
@@ -139,25 +154,70 @@ impl BodyPath {
         let BodyPathSegmentKind::Name(last_segment) = self.segments.last()?.kind() else {
             return None;
         };
+        let prefix = self.associated_prefix_through(self.segments.len() - 2)?;
+        Some((prefix, last_segment.as_str()))
+    }
 
-        if let [
-            BodyPathSegment {
-                kind:
-                    BodyPathSegmentKind::TypeAnchor {
-                        ty: Some(self_ty),
-                        trait_ref,
-                    },
-                ..
-            },
-            _,
-        ] = self.segments.as_slice()
-        {
-            let prefix = BodyAssociatedPathPrefix::from_type_anchor(self_ty, trait_ref.as_ref());
-            return Some((prefix, last_segment.as_str()));
+    /// Preserve the typed prefix before an associated path segment.
+    ///
+    /// Ordinary paths become a `TypeRef` with their written generic arguments intact. A bare
+    /// `<T as Trait>` anchor stays split into its self and trait syntax because it has no type-path
+    /// segment that the canonical type lowerer could project yet.
+    ///
+    /// ```text
+    /// Widget::<u8>::new              -> Type(Widget<u8>)
+    /// <T as Factory>::make           -> QualifiedTrait(T, Factory)
+    /// <T as Factory>::Output::new    -> Type(<T as Factory>::Output)
+    /// ```
+    pub fn associated_prefix_through(
+        &self,
+        segment_idx: usize,
+    ) -> Option<BodyAssociatedPathPrefix> {
+        if segment_idx >= self.segments.len() {
+            return None;
         }
 
-        let (prefix, name) = self.split_type_prefix_name()?;
-        Some((BodyAssociatedPathPrefix::Type(prefix), name))
+        let (anchor, first_name_idx) = match self.segments.first()?.kind() {
+            BodyPathSegmentKind::TypeAnchor {
+                ty: Some(self_ty),
+                trait_ref,
+            } => {
+                if segment_idx == 0 {
+                    return Some(BodyAssociatedPathPrefix::from_type_anchor(
+                        self_ty,
+                        trait_ref.as_ref(),
+                    ));
+                }
+                let anchor = match trait_ref {
+                    Some(trait_ref) => TypePathAnchor::QualifiedTrait {
+                        self_ty: Box::new(self_ty.clone()),
+                        trait_ty: Box::new(trait_ref.clone()),
+                    },
+                    None => TypePathAnchor::Type(Box::new(self_ty.clone())),
+                };
+                (Some(anchor), 1)
+            }
+            BodyPathSegmentKind::TypeAnchor { ty: None, .. } => return None,
+            BodyPathSegmentKind::Name(_)
+            | BodyPathSegmentKind::DollarCrate(_)
+            | BodyPathSegmentKind::SelfType
+            | BodyPathSegmentKind::SelfKw
+            | BodyPathSegmentKind::SuperKw
+            | BodyPathSegmentKind::CrateKw => (None, 0),
+        };
+
+        let segments = self.segments[first_name_idx..=segment_idx]
+            .iter()
+            .map(BodyPathSegment::as_type_path_segment)
+            .collect::<Option<Vec<_>>>()?;
+        (!segments.is_empty()).then_some({
+            BodyAssociatedPathPrefix::Type(TypeRef::Path(TypePath {
+                source_span: self.source_span,
+                absolute: self.absolute,
+                anchor,
+                segments,
+            }))
+        })
     }
 
     pub fn is_absolute(&self) -> bool {
@@ -178,17 +238,46 @@ impl BodyPath {
             return None;
         }
 
-        let segments = self
-            .segments
-            .iter()
-            .take(segment_idx.saturating_add(1))
-            .map(BodyPathSegment::as_def_map_segment)
-            .collect::<Option<Vec<_>>>()?;
+        let source_segments = &self.segments[..=segment_idx];
+        let (root, root_segment_count) = if self.absolute {
+            (PathRoot::Absolute, 0)
+        } else {
+            match source_segments.first()?.kind() {
+                BodyPathSegmentKind::DollarCrate(target) => (PathRoot::DollarCrate(*target), 1),
+                BodyPathSegmentKind::SelfKw if self.segments.len() > 1 => (PathRoot::SelfModule, 1),
+                BodyPathSegmentKind::SuperKw => {
+                    let count = source_segments
+                        .iter()
+                        .take_while(|segment| {
+                            matches!(segment.kind(), BodyPathSegmentKind::SuperKw)
+                        })
+                        .count();
+                    (PathRoot::Super(u16::try_from(count).ok()?), count)
+                }
+                BodyPathSegmentKind::CrateKw => (PathRoot::Crate, 1),
+                BodyPathSegmentKind::Name(_)
+                | BodyPathSegmentKind::SelfType
+                | BodyPathSegmentKind::SelfKw => (PathRoot::Relative, 0),
+                BodyPathSegmentKind::TypeAnchor { .. } => return None,
+            }
+        };
 
-        (!segments.is_empty()).then_some(Path {
-            absolute: self.absolute,
-            segments,
-        })
+        let mut segments = Vec::new();
+        for segment in &source_segments[root_segment_count..] {
+            let name = match segment.kind() {
+                BodyPathSegmentKind::Name(name) => name.clone(),
+                BodyPathSegmentKind::SelfType => Name::new("Self"),
+                BodyPathSegmentKind::SelfKw if source_segments.len() == 1 => Name::new("self"),
+                BodyPathSegmentKind::DollarCrate(_)
+                | BodyPathSegmentKind::SelfKw
+                | BodyPathSegmentKind::SuperKw
+                | BodyPathSegmentKind::CrateKw
+                | BodyPathSegmentKind::TypeAnchor { .. } => return None,
+            };
+            segments.push(name);
+        }
+
+        (!segments.is_empty() || !root.is_relative()).then_some(Path::new(root, segments))
     }
 
     pub fn segment_span(&self, segment_idx: usize) -> Option<Span> {
@@ -226,18 +315,6 @@ impl BodyPathSegment {
 
     pub fn args(&self) -> Option<&BodyPathSegmentArgs> {
         self.args.as_ref()
-    }
-
-    fn as_def_map_segment(&self) -> Option<PathSegment> {
-        match &self.kind {
-            BodyPathSegmentKind::Name(name) => Some(PathSegment::Name(name.clone())),
-            BodyPathSegmentKind::DollarCrate(target) => Some(PathSegment::DollarCrate(*target)),
-            BodyPathSegmentKind::SelfType => Some(PathSegment::Name(Name::new("Self"))),
-            BodyPathSegmentKind::SelfKw => Some(PathSegment::SelfKw),
-            BodyPathSegmentKind::SuperKw => Some(PathSegment::SuperKw),
-            BodyPathSegmentKind::CrateKw => Some(PathSegment::CrateKw),
-            BodyPathSegmentKind::TypeAnchor { .. } => None,
-        }
     }
 
     fn as_type_path_segment(&self) -> Option<TypePathSegment> {

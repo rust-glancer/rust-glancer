@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::{path::Path, sync::Arc};
 
 use anyhow::Context as _;
 
@@ -110,6 +110,30 @@ impl<'a> ProjectSnapshot<'a> {
             return Ok(None);
         };
         parsed_file.text_for_span(span)
+    }
+
+    /// Returns request-scoped source text for syntax-sensitive editor queries.
+    ///
+    /// Saved text may have been evicted after indexing; loading it here does not retain it in the
+    /// project graph once the returned `Arc` and query-local source handle are dropped.
+    pub fn file_source_text(
+        &self,
+        package: PackageSlot,
+        file: FileId,
+    ) -> anyhow::Result<Option<Arc<str>>> {
+        let Some(parsed_file) = self
+            .state
+            .parse_db()
+            .package(package.0)
+            .and_then(|package| package.parsed_file(file))
+        else {
+            return Ok(None);
+        };
+        Ok(Some(
+            parsed_file
+                .source_text()
+                .context("load parsed file source")?,
+        ))
     }
 
     /// Returns the line index used to convert offsets for a package-local file id.

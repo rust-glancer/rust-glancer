@@ -80,7 +80,9 @@ impl PackageDependency {
             TargetKind::Example | TargetKind::Test | TargetKind::Bench => {
                 self.is_normal || self.is_dev
             }
-            TargetKind::Lib | TargetKind::Bin | TargetKind::Other(_) => self.is_normal,
+            TargetKind::Lib | TargetKind::ProcMacro | TargetKind::Bin | TargetKind::Other(_) => {
+                self.is_normal
+            }
         }
     }
 }

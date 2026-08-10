@@ -9,7 +9,7 @@
 //! `CrateResolutionEnv`, so finalization can pass current fixed-point snapshots while frozen
 //! queries read persisted DefMaps.
 
-use rg_ir_model::{DefId, ImportRef, LocalDefRef, ModuleRef, Path, PathSegment};
+use rg_ir_model::{DefId, ImportRef, LocalDefRef, ModuleRef, Path, PathRoot};
 use rg_std::UniqueVec;
 use rg_text::Name;
 
@@ -31,8 +31,9 @@ pub struct UnqualifiedMacroBindings {
 
 /// Result of walking a path through the current scope graph.
 ///
-/// `unresolved_at` points at the first segment that could not be resolved. Keeping that status
-/// explicit lets callers report partial resolution without inferring failure from `resolved`.
+/// `unresolved_at` points at the first source path component that could not be resolved. Root
+/// keywords count as source components even though `Path` stores them separately from ordinary
+/// name segments.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResolvePathResult {
     pub resolved: Vec<DefId>,
@@ -128,20 +129,17 @@ impl<E: ScopeResolutionEnv + ?Sized> ScopeResolver<'_, E> {
         path: &Path,
         terminal_filter: NamespaceSet,
     ) -> Result<ResolvePathResult, E::Error> {
-        if path.absolute {
+        if !path.is_relative() {
             return Ok(Self::unresolved_at(0));
         }
 
-        let Some((first_segment, remaining_segments)) = path.segments.split_first() else {
-            return Ok(Self::unresolved_at(0));
-        };
-        let PathSegment::Name(name) = first_segment else {
+        let Some((first_segment, remaining_segments)) = path.segments().split_first() else {
             return Ok(Self::unresolved_at(0));
         };
 
         let mut current_defs = self.first_name_in_lexical_scope(
             importing_module,
-            name.as_str(),
+            first_segment.as_str(),
             NamespaceSet::for_segment(!remaining_segments.is_empty(), terminal_filter),
         )?;
         if current_defs.is_empty() {
@@ -149,13 +147,10 @@ impl<E: ScopeResolutionEnv + ?Sized> ScopeResolver<'_, E> {
         }
 
         for (segment_idx, segment) in remaining_segments.iter().enumerate() {
-            let PathSegment::Name(name) = segment else {
-                return Ok(Self::unresolved_at(segment_idx + 1));
-            };
             current_defs = self.lexical_next_name_segment(
                 importing_module,
                 current_defs,
-                name.as_str(),
+                segment.as_str(),
                 NamespaceSet::for_segment(
                     segment_idx + 1 < remaining_segments.len(),
                     terminal_filter,
@@ -607,8 +602,8 @@ impl<E: CrateResolutionEnv + ?Sized> ScopeResolver<'_, E> {
     ) -> Result<ResolvePathResult, E::Error> {
         self.resolve_path_segments(
             importing_module,
-            path.absolute,
-            &path.segments,
+            path.root(),
+            path.segments(),
             terminal_filter,
         )
     }
@@ -727,32 +722,31 @@ impl<E: CrateResolutionEnv + ?Sized> ScopeResolver<'_, E> {
         importing_module: ModuleRef,
         path: &Path,
     ) -> Result<Vec<ScopeBinding>, E::Error> {
-        let Some((terminal, prefix)) = path.segments.split_last() else {
-            return Ok(Vec::new());
-        };
-        let PathSegment::Name(name) = terminal else {
+        let Some((terminal, prefix)) = path.segments().split_last() else {
             return Ok(Vec::new());
         };
 
         let source_modules = if prefix.is_empty() {
-            if path.absolute {
-                Vec::new()
-            } else {
-                vec![importing_module]
+            match path.root() {
+                PathRoot::Relative => vec![importing_module],
+                PathRoot::Absolute => Vec::new(),
+                PathRoot::Crate
+                | PathRoot::SelfModule
+                | PathRoot::Super(_)
+                | PathRoot::DollarCrate(_) => {
+                    self.import_modules(importing_module, &Path::new(path.root(), Vec::new()))?
+                }
             }
         } else {
-            self.import_modules(
-                importing_module,
-                &Path {
-                    absolute: path.absolute,
-                    segments: prefix.to_vec(),
-                },
-            )?
+            self.import_modules(importing_module, &Path::new(path.root(), prefix.to_vec()))?
         };
 
         let mut bindings = Vec::new();
         for source_module in source_modules {
-            let Some(entry) = self.env.module_scope_entry(source_module, name.as_str())? else {
+            let Some(entry) = self
+                .env
+                .module_scope_entry(source_module, terminal.as_str())?
+            else {
                 continue;
             };
             for binding in entry.bindings(Namespace::Macros) {
@@ -772,11 +766,7 @@ impl<E: CrateResolutionEnv + ?Sized> ScopeResolver<'_, E> {
         path: &Path,
         terminal_filter: NamespaceSet,
     ) -> Result<Vec<(Namespace, ScopeBinding)>, E::Error> {
-        let Some((terminal, prefix)) = path.segments.split_last() else {
-            return Ok(Vec::new());
-        };
-
-        let PathSegment::Name(name) = terminal else {
+        let Some((terminal, prefix)) = path.segments().split_last() else {
             let resolved = self.resolve_path(importing_module, path, terminal_filter)?;
             let mut bindings = Vec::new();
             for def in resolved.resolved {
@@ -796,34 +786,30 @@ impl<E: CrateResolutionEnv + ?Sized> ScopeResolver<'_, E> {
             return Ok(bindings);
         };
 
-        if prefix.is_empty() {
+        if prefix.is_empty() && matches!(path.root(), PathRoot::Relative | PathRoot::Absolute) {
             return self.first_name_bindings(
                 importing_module,
-                path.absolute,
-                name.as_str(),
+                path.is_absolute(),
+                terminal.as_str(),
                 terminal_filter,
             );
         }
 
-        let prefix = self.resolve_path_segments(
-            importing_module,
-            path.absolute,
-            prefix,
-            NamespaceSet::TYPES,
-        )?;
+        let prefix =
+            self.resolve_path_segments(importing_module, path.root(), prefix, NamespaceSet::TYPES)?;
         let mut bindings = Vec::new();
         for def in prefix.resolved {
             match def {
                 DefId::Module(module_ref) => bindings.extend(self.bindings_in_module(
                     importing_module,
                     module_ref,
-                    name.as_str(),
+                    terminal.as_str(),
                     terminal_filter,
                 )?),
                 DefId::Local(enum_def) => bindings.extend(self.enum_variant_bindings(
                     importing_module,
                     enum_def,
-                    name.as_str(),
+                    terminal.as_str(),
                     terminal_filter,
                 )?),
                 DefId::EnumVariant(_) => {}
@@ -834,25 +820,44 @@ impl<E: CrateResolutionEnv + ?Sized> ScopeResolver<'_, E> {
 
     /// Shared path walker for ordinary item paths and imports.
     ///
-    /// The first segment chooses the initial search space. Each following segment is resolved inside
+    /// The root chooses the initial search space. Ordinary name segments are then resolved inside
     /// the modules or enum definitions produced by the previous step.
     fn resolve_path_segments(
         &self,
         importing_module: ModuleRef,
-        absolute: bool,
-        segments: &[PathSegment],
+        root: PathRoot,
+        segments: &[Name],
         terminal_filter: NamespaceSet,
     ) -> Result<ResolvePathResult, E::Error> {
-        let Some((first_segment, remaining_segments)) = segments.split_first() else {
-            return Ok(Self::unresolved_at(0));
-        };
-
-        let mut current_defs = self.first_segment(
-            importing_module,
-            absolute,
-            first_segment,
-            NamespaceSet::for_segment(!remaining_segments.is_empty(), terminal_filter),
-        )?;
+        let (mut current_defs, remaining_segments, consumed_first_name, root_component_count) =
+            match root {
+                PathRoot::Relative | PathRoot::Absolute => {
+                    let Some((first_segment, remaining_segments)) = segments.split_first() else {
+                        return Ok(Self::unresolved_at(0));
+                    };
+                    let mut defs = UniqueVec::new();
+                    for (_, binding) in self.first_name_bindings(
+                        importing_module,
+                        root.is_absolute(),
+                        first_segment.as_str(),
+                        NamespaceSet::for_segment(!remaining_segments.is_empty(), terminal_filter),
+                    )? {
+                        defs.push(binding.def);
+                    }
+                    (defs.into_vec(), remaining_segments, true, 0)
+                }
+                PathRoot::Crate
+                | PathRoot::SelfModule
+                | PathRoot::Super(_)
+                | PathRoot::DollarCrate(_) => {
+                    let defs = self.root_modules(importing_module, root)?;
+                    if segments.is_empty() && !terminal_filter.contains(Namespace::Types) {
+                        return Ok(Self::unresolved_at(0));
+                    }
+                    let root_component_count = root.written_component_count();
+                    (defs, segments, false, root_component_count)
+                }
+            };
 
         if current_defs.is_empty() {
             return Ok(Self::unresolved_at(0));
@@ -870,7 +875,9 @@ impl<E: CrateResolutionEnv + ?Sized> ScopeResolver<'_, E> {
             )?;
 
             if current_defs.is_empty() {
-                return Ok(Self::unresolved_at(segment_idx + 1));
+                return Ok(Self::unresolved_at(
+                    root_component_count + segment_idx + usize::from(consumed_first_name),
+                ));
             }
         }
 
@@ -880,61 +887,37 @@ impl<E: CrateResolutionEnv + ?Sized> ScopeResolver<'_, E> {
         })
     }
 
-    /// Resolve the path head, where Rust allows roots, lexical lookup, and prelude fallback.
-    fn first_segment(
+    /// Resolve a structured keyword or macro-hygiene root to its starting module.
+    fn root_modules(
         &self,
         importing_module: ModuleRef,
-        absolute: bool,
-        segment: &PathSegment,
-        filter: NamespaceSet,
+        root: PathRoot,
     ) -> Result<Vec<DefId>, E::Error> {
-        if absolute {
-            return match segment {
-                PathSegment::Name(name) => {
-                    let mut defs = UniqueVec::new();
-                    for (_, binding) in
-                        self.first_name_bindings(importing_module, true, name.as_str(), filter)?
-                    {
-                        defs.push(binding.def);
-                    }
-                    Ok(defs.into_vec())
+        match root {
+            PathRoot::DollarCrate(crate_ref) => Ok(self
+                .env
+                .root_module(crate_ref)?
+                .map(DefId::Module)
+                .into_iter()
+                .collect()),
+            PathRoot::SelfModule => Ok(vec![DefId::Module(importing_module)]),
+            PathRoot::Super(depth) => {
+                let mut module = Some(importing_module);
+                for _ in 0..depth {
+                    module = match module {
+                        Some(module) => self.env.parent_module(module)?,
+                        None => break,
+                    };
                 }
-                PathSegment::SelfKw
-                | PathSegment::SuperKw
-                | PathSegment::CrateKw
-                | PathSegment::DollarCrate(_) => Ok(Vec::new()),
-            };
-        }
-
-        match segment {
-            PathSegment::DollarCrate(crate_ref) => Ok(self
-                .env
-                .root_module(*crate_ref)?
-                .map(DefId::Module)
-                .into_iter()
-                .collect()),
-            PathSegment::SelfKw => Ok(vec![DefId::Module(importing_module)]),
-            PathSegment::SuperKw => Ok(self
-                .env
-                .parent_module(importing_module)?
-                .map(DefId::Module)
-                .into_iter()
-                .collect()),
-            PathSegment::CrateKw => Ok(self
+                Ok(module.map(DefId::Module).into_iter().collect())
+            }
+            PathRoot::Crate => Ok(self
                 .env
                 .root_module(importing_module.origin.origin_crate())?
                 .map(DefId::Module)
                 .into_iter()
                 .collect()),
-            PathSegment::Name(name) => {
-                let mut defs = UniqueVec::new();
-                for (_, binding) in
-                    self.first_name_bindings(importing_module, false, name.as_str(), filter)?
-                {
-                    defs.push(binding.def);
-                }
-                Ok(defs.into_vec())
-            }
+            PathRoot::Relative | PathRoot::Absolute => Ok(Vec::new()),
         }
     }
 
@@ -946,45 +929,23 @@ impl<E: CrateResolutionEnv + ?Sized> ScopeResolver<'_, E> {
         &self,
         importing_module: ModuleRef,
         current_defs: Vec<DefId>,
-        segment: &PathSegment,
+        segment: &Name,
         filter: NamespaceSet,
     ) -> Result<Vec<DefId>, E::Error> {
         let mut next_defs = UniqueVec::new();
 
         for current_def in current_defs {
             match current_def {
-                DefId::Module(module_ref) => match segment {
-                    PathSegment::SelfKw => {
-                        next_defs.push(DefId::Module(module_ref));
+                DefId::Module(module_ref) => {
+                    for resolved_def in
+                        self.name_in_module(importing_module, module_ref, segment.as_str(), filter)?
+                    {
+                        next_defs.push(resolved_def);
                     }
-                    PathSegment::SuperKw => {
-                        if let Some(parent) = self.env.parent_module(module_ref)? {
-                            next_defs.push(DefId::Module(parent));
-                        }
-                    }
-                    PathSegment::CrateKw => {
-                        if let Some(root) =
-                            self.env.root_module(module_ref.origin.origin_crate())?
-                        {
-                            next_defs.push(DefId::Module(root));
-                        }
-                    }
-                    PathSegment::DollarCrate(_) => {}
-                    PathSegment::Name(name) => {
-                        for resolved_def in self.name_in_module(
-                            importing_module,
-                            module_ref,
-                            name.as_str(),
-                            filter,
-                        )? {
-                            next_defs.push(resolved_def);
-                        }
-                    }
-                },
+                }
                 DefId::Local(local_def_ref) => {
-                    if let PathSegment::Name(name) = segment
-                        && let Some(variant) =
-                            self.enum_variant_for_name(local_def_ref, name.as_str(), filter)?
+                    if let Some(variant) =
+                        self.enum_variant_for_name(local_def_ref, segment.as_str(), filter)?
                     {
                         next_defs.push(DefId::EnumVariant(variant));
                     }

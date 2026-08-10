@@ -5,6 +5,7 @@
 //! clauses. Inference, impl matching, associated-type projection, and Chalk all consume those same
 //! shapes instead of maintaining their own `TypeRef` lowering rules.
 
+mod associated_item;
 mod autoderef;
 mod context;
 mod deref;
@@ -25,6 +26,7 @@ mod ty;
 pub use rg_ir_model::{FloatTy, Mutability, PrimitiveTy, SignedIntTy, UnsignedIntTy};
 
 pub use self::{
+    associated_item::{AssociatedItemCandidateRef, AssociatedItemQuery, AssociatedItemRef},
     autoderef::{
         Autoderef, AutoderefCandidate, AutoderefCandidates, AutoderefMode,
         ReferencePeelingCandidates,

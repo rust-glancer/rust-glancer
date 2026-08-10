@@ -169,17 +169,14 @@ impl<'txn, 'db> DefinitionSourceScanner<'txn, 'db> {
                 origin: DefMapRef::Crate(self.crate_ref),
                 module: import.module,
             };
-            let Some(segments) = import.path.segments_with_spans() else {
+            let Some(prefixes) = import.path.prefixes_with_spans() else {
                 continue;
             };
-            for (idx, (_, span)) in segments.enumerate() {
+            for (path, span) in prefixes {
                 if self.offset_matches(span) {
                     candidates.push(DefinitionSourceCandidate::UsePath {
                         module,
-                        path: Path {
-                            absolute: import.path.semantic().absolute,
-                            segments: import.path.semantic().segments[..=idx].to_vec(),
-                        },
+                        path,
                         file_id: import.source.file_id,
                         span,
                     });

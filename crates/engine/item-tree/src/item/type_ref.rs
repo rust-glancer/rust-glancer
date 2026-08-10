@@ -6,7 +6,39 @@ use rg_parse::Span;
 use rg_std::{MemorySize, Shrink};
 use rg_text::Name;
 
-use rg_ir_model::{Mutability, Path, PathSegment};
+use rg_ir_model::{Mutability, Path};
+
+/// Source-backed const-expression syntax retained by the item tree.
+///
+/// Const evaluation belongs to the type layer, but editor queries also need to know where the
+/// expression came from. Keeping the normalized text and its original span together prevents
+/// completion from reparsing a display string and then guessing how it maps back to source.
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
+pub struct ConstExpr {
+    text: String,
+    #[shrink(skip)]
+    span: Span,
+}
+
+impl ConstExpr {
+    pub fn new(text: String, span: Span) -> Self {
+        Self { text, span }
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.text
+    }
+
+    pub fn span(&self) -> Span {
+        self.span
+    }
+}
+
+impl fmt::Display for ConstExpr {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.text)
+    }
+}
 
 /// Unresolved type syntax lowered into the item tree.
 ///
@@ -35,7 +67,8 @@ pub enum TypeRef {
     Array {
         #[wincode(with = "rg_wincode_utils::WincodeDynamic<Box<TypeRef>>")]
         inner: Box<TypeRef>,
-        len: Option<String>,
+        #[wincode(with = "rg_wincode_utils::WincodeDynamic<Option<ConstExpr>>")]
+        len: Option<ConstExpr>,
     },
     FnPointer {
         #[wincode(with = "rg_wincode_utils::WincodeDynamic<Vec<TypeRef>>")]
@@ -154,6 +187,16 @@ impl fmt::Display for TypeRef {
     }
 }
 
+/// Path syntax used as a type, with source spans and generic arguments kept intact.
+///
+/// ```text
+/// Vec<u8>                 -> segments [Vec<u8>], no anchor
+/// <T as Iterator>::Item   -> qualified-trait anchor + segment [Item]
+/// ```
+///
+/// The optional anchor is structurally separate from ordinary name segments. This lets type
+/// lowering preserve `<T as Trait>` semantics while DefMap-only consumers decline an impossible
+/// plain-path projection.
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct TypePath {
     /// Full source range of the path syntax, including separators around segments.
@@ -178,14 +221,13 @@ impl TypePath {
             return None;
         }
 
-        Some(Path {
-            absolute: self.absolute,
-            segments: self
-                .segments
+        Path::from_syntax_names(
+            self.absolute,
+            self.segments
                 .iter()
-                .map(|segment| PathSegment::from_syntax_name(&segment.name))
+                .map(|segment| segment.name.clone())
                 .collect(),
-        })
+        )
     }
 
     /// Returns the DefMap path prefix ending at `end_idx`.
@@ -197,15 +239,14 @@ impl TypePath {
             return None;
         }
 
-        Some(Path {
-            absolute: self.absolute,
-            segments: self
-                .segments
+        Path::from_syntax_names(
+            self.absolute,
+            self.segments
                 .iter()
                 .take(end_idx.saturating_add(1))
-                .map(|segment| PathSegment::from_syntax_name(&segment.name))
+                .map(|segment| segment.name.clone())
                 .collect(),
-        })
+        )
     }
 
     /// Returns the name of a single-segment relative path.
@@ -319,7 +360,7 @@ impl fmt::Display for TypePathSegment {
 pub enum GenericArg {
     Type(#[wincode(with = "rg_wincode_utils::WincodeDynamic<TypeRef>")] TypeRef),
     Lifetime(Name),
-    Const(String),
+    Const(#[wincode(with = "rg_wincode_utils::WincodeDynamic<ConstExpr>")] ConstExpr),
     /// Parenthesized argument syntax on function-trait paths, such as `FnOnce(T) -> R`.
     FnTraitArgs {
         #[wincode(with = "rg_wincode_utils::WincodeDynamic<Vec<TypeRef>>")]
@@ -327,8 +368,15 @@ pub enum GenericArg {
         #[wincode(with = "rg_wincode_utils::WincodeDynamic<Box<TypeRef>>")]
         ret: Box<TypeRef>,
     },
+    /// Associated type binding such as `Item = u8` in `Iterator<Item = u8>`.
+    ///
+    /// `ty` is absent while source recovery has only the binding name. Keeping that partial shape
+    /// lets completion offer `Item` before the user types `=`.
     AssocType {
         name: Name,
+        /// Source spelling of the binding name, retained for editor replacement edits.
+        #[shrink(skip)]
+        name_span: Span,
         #[wincode(with = "rg_wincode_utils::WincodeDynamic<Option<TypeRef>>")]
         ty: Option<TypeRef>,
     },
@@ -575,7 +623,11 @@ where
             TypeRef::Array { inner, len } => {
                 f.write_str("[")?;
                 self.fmt_type_ref(inner, f)?;
-                write!(f, "; {}]", len.as_deref().unwrap_or("<unknown>"))
+                write!(
+                    f,
+                    "; {}]",
+                    len.as_ref().map(ConstExpr::as_str).unwrap_or("<unknown>")
+                )
             }
             TypeRef::FnPointer { params, ret } => {
                 f.write_str("fn(")?;
@@ -666,9 +718,9 @@ where
         match arg {
             GenericArg::Type(ty) => self.fmt_type_ref(ty, f),
             GenericArg::Lifetime(lifetime) => self.names.fmt_name(lifetime, f),
-            GenericArg::Const(value) => f.write_str(value),
+            GenericArg::Const(value) => fmt::Display::fmt(value, f),
             GenericArg::FnTraitArgs { params, ret } => self.fmt_fn_trait_args(params, ret, f),
-            GenericArg::AssocType { name, ty } => {
+            GenericArg::AssocType { name, ty, .. } => {
                 self.names.fmt_name(name, f)?;
                 if let Some(ty) = ty {
                     f.write_str(" = ")?;
@@ -743,9 +795,14 @@ mod tests {
     fn builds_def_map_paths_from_type_paths() {
         let cases = [
             (
-                "relative keywords and names",
-                type_path(false, &["crate", "super", "self", "User", "Self"]),
-                "crate::super::self::User::Self",
+                "crate root and names",
+                type_path(false, &["crate", "api", "User", "Self"]),
+                "crate::api::User::Self",
+            ),
+            (
+                "repeated super root and names",
+                type_path(false, &["super", "super", "User", "Self"]),
+                "super::super::User::Self",
             ),
             (
                 "absolute path",

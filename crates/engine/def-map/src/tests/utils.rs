@@ -6,7 +6,7 @@ use crate::{
     ScopeResolutionRef, Visibility,
 };
 use crate::{DefMapDb, testonly::DefMapFixture};
-use rg_ir_model::{CrateId, CrateRef, DefId, DefMapRef, ModuleId, ModuleRef, Path, PathSegment};
+use rg_ir_model::{CrateId, CrateRef, DefId, DefMapRef, ModuleId, ModuleRef, Path};
 use rg_item_tree::VisibilityLevel;
 use rg_package_store::PackageLoader;
 use rg_parse::{CargoTarget, FileId, Package, ParseDb};
@@ -85,6 +85,20 @@ impl PathResolutionQuery {
         }
     }
 
+    pub(super) fn proc_macro(
+        package_name: &'static str,
+        module_path: &'static str,
+        path: &'static str,
+    ) -> Self {
+        Self {
+            package_name,
+            target_kind: TargetKind::ProcMacro,
+            module_path,
+            path,
+            namespaces: NamespaceSet::ALL,
+        }
+    }
+
     pub(super) fn types(mut self) -> Self {
         self.namespaces = NamespaceSet::TYPES;
         self
@@ -92,6 +106,11 @@ impl PathResolutionQuery {
 
     pub(super) fn values(mut self) -> Self {
         self.namespaces = NamespaceSet::VALUES;
+        self
+    }
+
+    pub(super) fn macros(mut self) -> Self {
+        self.namespaces = NamespaceSet::MACROS;
         self
     }
 }
@@ -489,6 +508,8 @@ impl<'a> ProjectPathResolutionSnapshot<'a> {
             " [types]"
         } else if query.namespaces == NamespaceSet::VALUES {
             " [values]"
+        } else if query.namespaces == NamespaceSet::MACROS {
+            " [macros]"
         } else {
             ""
         };
@@ -572,22 +593,7 @@ impl<'a> ProjectPathResolutionSnapshot<'a> {
     }
 
     fn parse_path(text: &str) -> Path {
-        let (absolute, text) = match text.strip_prefix("::") {
-            Some(stripped) => (true, stripped),
-            None => (false, text),
-        };
-        let segments = text
-            .split("::")
-            .filter(|segment| !segment.is_empty())
-            .map(|segment| match segment {
-                "self" => PathSegment::SelfKw,
-                "super" => PathSegment::SuperKw,
-                "crate" => PathSegment::CrateKw,
-                name => PathSegment::Name(name.to_string().into()),
-            })
-            .collect::<Vec<_>>();
-
-        Path { absolute, segments }
+        Path::from_macro_path_text(text, None).expect("fixture path should use valid Rust syntax")
     }
 
     fn render_result(&self, result: &ResolvePathResult) -> String {

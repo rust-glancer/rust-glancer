@@ -1,10 +1,13 @@
-//! Compact Rust-ish declaration labels for hover and related UI surfaces.
+//! Compact Rust-shaped declarations for UI labels and implementation scaffolds.
 //!
-//! The renderer deliberately stays syntactic. It formats the declaration facts our IR already
-//! stores instead of trying to reconstruct rustc-perfect signatures. Canonical semantic names are
-//! passed through `SyntaxRenderer` so every emitted identifier is valid for the use-site edition.
+//! Hover-like surfaces render the declaration facts already stored in the IR. Trait-impl
+//! completion also renders method, associated type, and const prefixes after the caller supplies
+//! semantic substitutions. This renderer stays syntactic rather than reconstructing rustc-perfect
+//! signatures, and every canonical name passes through `SyntaxRenderer` for the use-site edition.
 
 use std::fmt::Write as _;
+
+use anyhow::Context as _;
 
 use rg_body_ir::BindingData;
 use rg_ir_model::Mutability;
@@ -17,12 +20,12 @@ use rg_semantic_ir::{
     UnionData,
 };
 use rg_text::RustEdition;
-use rg_ty::Ty;
+use rg_ty::{CallableSignature, Substitution, TraitApplication, Ty};
 
 use crate::{
     IndexedViewDb,
     display::{syntax::SyntaxRenderer, ty_label::TypeRenderer},
-    member::{MemberField, MemberFunction},
+    member::{MemberEnumVariantField, MemberField, MemberFunction},
 };
 
 const MEMBER_PREVIEW_LIMIT: usize = 5;
@@ -118,6 +121,95 @@ impl SignatureRenderer {
         )
     }
 
+    /// Render a trait method as an implementation stub after applying the impl's trait arguments.
+    ///
+    /// ```text
+    /// trait Service<T> {
+    ///     type Output;
+    ///     fn handle(&self, value: T) -> Self::Output;
+    /// }
+    ///
+    /// impl Service<u8> for Worker {
+    ///     // Rendered signature:
+    ///     fn handle(&self, value: u8) -> Self::Output
+    /// }
+    /// ```
+    ///
+    /// Method-owned generic names are retained, but declaration bounds are omitted: a trait impl
+    /// inherits those bounds from the trait, and omitting them avoids re-emitting parent-trait
+    /// parameters before they have been substituted into syntax-shaped predicates.
+    pub(crate) fn trait_impl_function_signature(
+        &self,
+        db: &IndexedViewDb<'_>,
+        data: &FunctionData,
+        semantic: &CallableSignature,
+        substitution: &Substitution,
+        application: &TraitApplication,
+    ) -> anyhow::Result<String> {
+        let mut signature = String::new();
+        let qualifiers = data.signature.qualifiers();
+        if qualifiers.is_const {
+            signature.push_str("const ");
+        }
+        if qualifiers.is_unsafe {
+            signature.push_str("unsafe ");
+        }
+        if qualifiers.is_async {
+            signature.push_str("async ");
+        }
+        signature.push_str("fn ");
+        write!(signature, "{}", self.syntax.identifier(&data.name))
+            .expect("string writes should not fail");
+        self.write_trait_impl_generic_params(&mut signature, data.signature.generics());
+        signature.push('(');
+
+        let types = TypeRenderer::new(db, self.syntax.edition());
+        let mut params = Vec::with_capacity(data.signature.params().len());
+        for (index, param) in data.signature.params().iter().enumerate() {
+            if param.ty.is_none() {
+                params.push(param.pat.clone());
+                continue;
+            }
+            let rendered_ty = semantic
+                .params
+                .get(index)
+                .map(|ty| substitution.apply(ty))
+                .map(|ty| types.render_trait_impl_ty(&ty, application))
+                .transpose()
+                .context("render trait method parameter type")?
+                .flatten()
+                .unwrap_or_else(|| "_".to_string());
+            params.push(format!("{}: {rendered_ty}", param.pat));
+        }
+        signature.push_str(&params.join(", "));
+        signature.push(')');
+
+        if data.signature.ret_ty().is_some() {
+            let ret = substitution.apply(&semantic.ret);
+            let ret = types
+                .render_trait_impl_ty(&ret, application)
+                .context("render trait method return type")?
+                .unwrap_or_else(|| "_".to_string());
+            signature.push_str(" -> ");
+            signature.push_str(&ret);
+        }
+        Ok(signature)
+    }
+
+    /// Render the declaration prefix before an associated type implementation's selected value.
+    pub(crate) fn trait_impl_type_alias_prefix(&self, data: &TypeAliasData) -> String {
+        let mut prefix = String::from("type ");
+        write!(prefix, "{}", self.syntax.identifier(&data.name))
+            .expect("string writes should not fail");
+        self.write_trait_impl_generic_params(&mut prefix, data.signature.generics());
+        prefix
+    }
+
+    /// Render an associated const implementation with its substituted type.
+    pub(crate) fn trait_impl_const_signature(&self, data: &ConstData, ty: &str) -> String {
+        format!("const {}: {ty}", self.syntax.identifier(&data.name))
+    }
+
     /// Render a function reached through the editor-facing member projection.
     pub fn member_function_signature(&self, function: MemberFunction<'_>) -> String {
         self.function_signature(function.data())
@@ -179,6 +271,14 @@ impl SignatureRenderer {
 
     /// Render a field reached through the editor-facing member projection.
     pub fn member_field_signature(&self, field: MemberField<'_>) -> Option<String> {
+        self.field_signature(field.data())
+    }
+
+    /// Render a field selected below an enum variant.
+    pub fn enum_variant_field_signature(
+        &self,
+        field: MemberEnumVariantField<'_>,
+    ) -> Option<String> {
         self.field_signature(field.data())
     }
 
@@ -422,7 +522,7 @@ impl SignatureRenderer {
                 }
                 if let Some(default) = &param.default {
                     text.push_str(" = ");
-                    text.push_str(default);
+                    text.push_str(default.as_str());
                 }
                 text
             }
@@ -433,6 +533,54 @@ impl SignatureRenderer {
         } else {
             format!("<{}>", params.join(", "))
         }
+    }
+
+    /// Emit only the generic declarations an impl item must repeat.
+    fn write_trait_impl_generic_params(
+        &self,
+        output: &mut String,
+        generics: Option<&GenericParams>,
+    ) {
+        let Some(generics) = generics else {
+            return;
+        };
+        if generics.lifetimes.is_empty() && generics.type_or_consts.is_empty() {
+            return;
+        }
+
+        output.push('<');
+        let mut first = true;
+        for param in &generics.lifetimes {
+            if !first {
+                output.push_str(", ");
+            }
+            first = false;
+            write!(output, "{}", self.syntax.name(&param.name))
+                .expect("string writes should not fail");
+        }
+        for param in &generics.type_or_consts {
+            if !first {
+                output.push_str(", ");
+            }
+            first = false;
+            match param {
+                TypeOrConstParamData::Type(param) => {
+                    write!(output, "{}", self.syntax.identifier(&param.name))
+                        .expect("string writes should not fail");
+                }
+                TypeOrConstParamData::Const(param) => {
+                    write!(output, "const {}: ", self.syntax.identifier(&param.name))
+                        .expect("string writes should not fail");
+                    if let Some(ty) = &param.ty {
+                        write!(output, "{}", self.syntax.type_ref(ty))
+                            .expect("string writes should not fail");
+                    } else {
+                        output.push('_');
+                    }
+                }
+            }
+        }
+        output.push('>');
     }
 
     fn generic_params_opt(&self, generics: Option<&GenericParams>) -> String {

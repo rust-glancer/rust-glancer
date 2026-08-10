@@ -1,5 +1,5 @@
 use rg_ir_model::{ImportId, LocalDefId, LocalImplId, ModuleId};
-use rg_item_tree::Documentation;
+use rg_item_tree::{Documentation, UserFacingAttrs};
 use rg_parse::{FileId, Span};
 use rg_std::{MemorySize, Shrink};
 use rg_text::Name;
@@ -13,6 +13,7 @@ pub struct ModuleData {
     pub name: Option<Name>,
     pub name_span: Option<Span>,
     pub docs: Option<Documentation>,
+    pub user_facing_attrs: UserFacingAttrs,
     /// Visibility of the declaration that introduced this module identity.
     ///
     /// Keyword imports such as `use super as parent` do not pass through the parent's textual name,

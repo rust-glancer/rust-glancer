@@ -1,15 +1,18 @@
 //! Output policies for the shared signature walk.
 //!
 //! Occurrence and completion scans visit the same declarations and type paths, but they produce
-//! different output domains. Keeping their state in separate collectors makes each result valid
-//! by construction and leaves the walker independent of a runtime scan mode.
+//! different output domains. The primary completion collector owns ordinary paths and bindings
+//! already disambiguated by `=`. A separate collector reinterprets `Trait<Na$0>` as a possible
+//! pre-`=` binding without erasing its primary meaning as a type argument. Keeping these policies
+//! separate leaves the walker independent of a runtime scan mode.
 
 use rg_item_tree::TypePath;
 use rg_parse::{FileId, Span};
 
 use super::{SignatureCompletionSite, SignatureSourceCandidate, SignatureTypePathScope};
 use crate::source::scan::{
-    NarrowestSourceSite, TypeNamePosition, type_path::TypePathCompletionSite,
+    NarrowestSourceSite, TypeNamePosition,
+    type_path::{AssociatedTypeBindingSyntax, TypePathCompletionSite},
 };
 
 /// Receives the declaration names and type paths discovered by one signature walk.
@@ -133,16 +136,31 @@ impl SignatureScanCollector for SignatureCompletionCollector {
         _file_id: FileId,
         position: TypeNamePosition,
     ) {
+        if let Some(binding) = AssociatedTypeBindingSyntax::explicit_at(path, self.offset) {
+            self.best.consider(
+                SignatureCompletionSite::AssociatedTypeBinding {
+                    scope,
+                    trait_ref: binding.trait_ref,
+                    member_prefix_span: binding.member_prefix_span,
+                    existing_bindings: binding.existing_bindings,
+                },
+                path.source_span.len(),
+            );
+            return;
+        }
+
         let Some(site) = TypePathCompletionSite::at(path, self.offset, position) else {
             return;
         };
         let site = match site {
             TypePathCompletionSite::Qualified {
-                qualifier,
+                module_qualifier,
+                associated_qualifier,
                 member_prefix_span,
             } => SignatureCompletionSite::Qualified {
                 scope,
-                qualifier,
+                module_qualifier,
+                associated_qualifier,
                 member_prefix_span,
             },
             TypePathCompletionSite::Unqualified {
@@ -157,5 +175,59 @@ impl SignatureScanCollector for SignatureCompletionCollector {
             },
         };
         self.best.consider(site, path.source_span.len());
+    }
+}
+
+/// Keeps the surrounding trait path for the speculative pre-`=` interpretation.
+///
+/// For `Iterator<It$0>`, the main collector reports `It` as a type argument. This collector runs
+/// separately and reports the same spelling as a possible associated binding, so neither
+/// interpretation has to erase the other.
+pub(super) struct ImplicitAssociatedTypeBindingCollector {
+    file_id: FileId,
+    offset: u32,
+    best: NarrowestSourceSite<SignatureCompletionSite>,
+}
+
+impl ImplicitAssociatedTypeBindingCollector {
+    pub(super) fn new(file_id: FileId, offset: u32) -> Self {
+        Self {
+            file_id,
+            offset,
+            best: NarrowestSourceSite::new(),
+        }
+    }
+
+    pub(super) fn finish(self) -> Option<SignatureCompletionSite> {
+        self.best.finish()
+    }
+}
+
+impl SignatureScanCollector for ImplicitAssociatedTypeBindingCollector {
+    fn selected_file(&self) -> Option<FileId> {
+        Some(self.file_id)
+    }
+
+    fn push_candidate(&mut self, _candidate: SignatureSourceCandidate) {}
+
+    fn push_type_path(
+        &mut self,
+        scope: SignatureTypePathScope,
+        path: &TypePath,
+        _file_id: FileId,
+        _position: TypeNamePosition,
+    ) {
+        let Some(binding) = AssociatedTypeBindingSyntax::implicit_at(path, self.offset) else {
+            return;
+        };
+        self.best.consider(
+            SignatureCompletionSite::AssociatedTypeBinding {
+                scope,
+                trait_ref: binding.trait_ref,
+                member_prefix_span: binding.member_prefix_span,
+                existing_bindings: binding.existing_bindings,
+            },
+            path.source_span.len(),
+        );
     }
 }

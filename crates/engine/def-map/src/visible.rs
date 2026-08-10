@@ -1,6 +1,6 @@
 //! Visible module-scope definitions produced by DefMap lookup.
 
-use rg_ir_model::DefId;
+use rg_ir_model::{DefId, ImportRef};
 
 use crate::scope::{ModuleScopeBuilder, Namespace};
 
@@ -20,6 +20,11 @@ pub struct VisibleScopeDef {
     pub def: DefId,
     /// Lookup source used by unqualified completions to rank familiar names first.
     pub origin: VisibleScopeOrigin,
+    /// Outermost imports that expose this binding under `label`.
+    ///
+    /// This request-local route data lets presentation honor attributes on a re-export without
+    /// enlarging every binding in the frozen namespace graph.
+    pub attribute_imports: Vec<ImportRef>,
 }
 
 /// Ordered visible definitions plus the namespace-aware shadowing rules used while collecting.
@@ -27,6 +32,10 @@ pub struct VisibleScopeDef {
 pub struct VisibleScopeDefs(Vec<VisibleScopeDef>);
 
 impl VisibleScopeDefs {
+    pub fn empty() -> Self {
+        Self(Vec::new())
+    }
+
     pub fn new(
         scope: &ModuleScopeBuilder,
         origin: VisibleScopeOrigin,
@@ -53,6 +62,17 @@ impl VisibleScopeDefs {
                             namespace,
                             def: binding.def,
                             origin,
+                            attribute_imports: binding
+                                .routes()
+                                .iter()
+                                .filter_map(|route| match route.provenance {
+                                    crate::ScopeBindingProvenance::NamedImport(import)
+                                    | crate::ScopeBindingProvenance::GlobImport(import) => {
+                                        Some(import)
+                                    }
+                                    _ => None,
+                                })
+                                .collect(),
                         },
                         skip_shadowed,
                     );

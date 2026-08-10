@@ -5,7 +5,8 @@
 //! maps into language-shaped answers.
 
 use rg_ir_model::{
-    CrateRef, DefId, DefMapRef, LocalDefRef, LocalEnumVariantRef, LocalImplRef, ModuleRef,
+    CrateRef, DefId, DefMapRef, ImportRef, LocalDefRef, LocalEnumVariantRef, LocalImplRef,
+    ModuleRef,
 };
 use rg_text::Name;
 
@@ -15,7 +16,7 @@ use super::{
 };
 
 use crate::{
-    DefMap, LocalDefData, LocalEnumVariantData, LocalEnumVariantEntry, LocalImplData,
+    DefMap, ImportData, LocalDefData, LocalEnumVariantData, LocalEnumVariantEntry, LocalImplData,
     MacroDefinitionView, ModuleData, Namespace, ScopeEntryRef, VisibleScopeDef, VisibleScopeDefs,
     VisibleScopeOrigin,
 };
@@ -67,6 +68,12 @@ pub trait DefMapSource {
         Ok(self
             .def_map_for_origin(variant_ref.origin)?
             .and_then(|def_map| def_map.local_enum_variant(variant_ref.local_enum_variant)))
+    }
+
+    fn import_data(&self, import_ref: ImportRef) -> Result<Option<&ImportData>, Self::Error> {
+        Ok(self
+            .def_map_for_origin(import_ref.origin)?
+            .and_then(|def_map| def_map.import(import_ref.import)))
     }
 
     fn local_enum_variant_entries_for_enum<'a>(
@@ -218,19 +225,8 @@ where
             VisibleScopeDefs::new(&current_scope, VisibleScopeOrigin::ModuleScope, false);
 
         let crate_ref = importing_module.origin.origin_crate();
-        let mut extern_roots = self.source.extern_roots(crate_ref)?;
-        extern_roots.sort_by(|(left, _), (right, _)| left.as_str().cmp(right.as_str()));
-        for (name, module_ref) in extern_roots {
-            let label = name;
-            defs.push(
-                VisibleScopeDef {
-                    label,
-                    namespace: Namespace::Types,
-                    def: rg_ir_model::DefId::Module(module_ref),
-                    origin: VisibleScopeOrigin::ExternRoot,
-                },
-                true,
-            );
+        for visible in self.visible_absolute_root_defs(importing_module)? {
+            defs.push(visible, true);
         }
 
         if let Some(prelude) = self.source.prelude_module(crate_ref)? {
@@ -238,6 +234,36 @@ where
             defs.extend(&prelude_scope, VisibleScopeOrigin::Prelude, true);
         }
 
+        defs.sort();
+        Ok(defs)
+    }
+
+    /// Returns names available immediately after a leading absolute `::`.
+    ///
+    /// Unlike ordinary unqualified lookup, this namespace contains only extern-prelude roots. It
+    /// is exposed separately so completion and resolution agree that `::std` does not consult the
+    /// current module or standard prelude items.
+    pub fn visible_absolute_root_defs(
+        &self,
+        importing_module: ModuleRef,
+    ) -> Result<VisibleScopeDefs, S::Error> {
+        let crate_ref = importing_module.origin.origin_crate();
+        let mut extern_roots = self.source.extern_roots(crate_ref)?;
+        extern_roots.sort_by(|(left, _), (right, _)| left.as_str().cmp(right.as_str()));
+
+        let mut defs = VisibleScopeDefs::empty();
+        for (label, module_ref) in extern_roots {
+            defs.push(
+                VisibleScopeDef {
+                    label,
+                    namespace: Namespace::Types,
+                    def: rg_ir_model::DefId::Module(module_ref),
+                    origin: VisibleScopeOrigin::ExternRoot,
+                    attribute_imports: Vec::new(),
+                },
+                false,
+            );
+        }
         defs.sort();
         Ok(defs)
     }

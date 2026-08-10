@@ -8,6 +8,86 @@ use self::utils::{
 };
 
 #[test]
+fn proc_macro_exports_do_not_lower_as_duplicate_functions() {
+    let fixture = crate::testonly::SemanticIrFixture::build(
+        r#"
+//- /Cargo.toml
+[package]
+name = "semantic_proc_macros"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+proc-macro = true
+
+//- /src/lib.rs
+extern crate proc_macro;
+
+#[proc_macro]
+pub fn emit(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
+    input
+}
+
+#[proc_macro_attribute]
+pub fn traced(
+    _attr: proc_macro::TokenStream,
+    item: proc_macro::TokenStream,
+) -> proc_macro::TokenStream {
+    item
+}
+
+#[proc_macro_derive(Stored)]
+pub fn stored(_item: proc_macro::TokenStream) -> proc_macro::TokenStream {
+    proc_macro::TokenStream::new()
+}
+"#,
+    );
+    let crate_ref = fixture
+        .def_map_fixture()
+        .crate_ref("semantic_proc_macros", rg_workspace::TargetKind::ProcMacro);
+    let def_map = fixture
+        .resident_def_map(crate_ref)
+        .expect("proc-macro def map should exist");
+    let items = fixture
+        .resident_crate_ir(crate_ref)
+        .expect("proc-macro semantic items should exist");
+
+    let mut function_names = items
+        .functions()
+        .iter()
+        .map(|function| function.name.to_string())
+        .collect::<Vec<_>>();
+    function_names.sort();
+    assert_eq!(function_names, ["emit", "stored", "traced"]);
+
+    for local_def_ref in def_map.local_def_refs() {
+        let local_def = def_map
+            .local_def(local_def_ref.local_def)
+            .expect("local definition should exist");
+        let semantic_item = items.item_for_local_def(local_def_ref.local_def);
+        match local_def.kind {
+            rg_def_map::LocalDefKind::MacroDefinition => assert!(
+                semantic_item.is_none(),
+                "macro export `{}` must not own a semantic function",
+                local_def.name,
+            ),
+            rg_def_map::LocalDefKind::Function => assert!(
+                semantic_item.is_some(),
+                "implementation function `{}` should retain its semantic item",
+                local_def.name,
+            ),
+            rg_def_map::LocalDefKind::Const
+            | rg_def_map::LocalDefKind::Enum
+            | rg_def_map::LocalDefKind::Static
+            | rg_def_map::LocalDefKind::Struct
+            | rg_def_map::LocalDefKind::Trait
+            | rg_def_map::LocalDefKind::TypeAlias
+            | rg_def_map::LocalDefKind::Union => {}
+        }
+    }
+}
+
+#[test]
 fn item_lookup_index_key_ignores_bodies_but_tracks_declarations_and_visibility() {
     let key = |dependency_alias: &str, source: &str| {
         let fixture = crate::testonly::SemanticIrFixture::build(&format!(

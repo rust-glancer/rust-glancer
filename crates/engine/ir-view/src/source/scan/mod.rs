@@ -7,23 +7,45 @@
 mod body;
 mod definition;
 mod import_completion;
+mod module_scope;
 mod signature;
+mod trait_impl;
 mod type_path;
+
+use rg_item_tree::TypeRef;
 
 pub(super) use self::{
     body::{
-        BindingSurface, BodyCursorScanner, BodySourceCandidate, BodySourceScanner,
-        BodyUnqualifiedNameContext, DotCompletionSiteScanner, PathCompletionSiteScanner,
-        RecordFieldCompletionSiteScanner, RecordFieldKeySurface, UnqualifiedCompletionSiteScanner,
-        ValueReferenceSource, ValueReferenceSurface,
+        BindingSurface, BodyCursorScanner, BodyQualifiedPathContext, BodySourceCandidate,
+        BodySourceScanner, BodyUnqualifiedNameContext, DotCompletionSiteScanner, LabelScopeScanner,
+        PathCompletionSiteScanner, PatternCompletionKind, RecordFieldCompletionSiteScanner,
+        RecordFieldKeySurface, UnqualifiedCompletionSiteScanner, ValueReferenceSource,
+        ValueReferenceSurface,
     },
     definition::{DefinitionSourceCandidate, DefinitionSourceScanner},
     import_completion::ImportPathCompletionSiteScanner,
+    module_scope::ModuleSourceSiteScanner,
     signature::{
         SignatureCompletionSite, SignatureSourceCandidate, SignatureSourceScanner,
         SignatureTypePathScope,
     },
+    trait_impl::TraitImplSourceSiteScanner,
 };
+
+/// Type-shaped projection of the path before a segment being completed.
+///
+/// Ordinary path prefixes retain their generic arguments as a `TypeRef`. A bare qualified anchor
+/// stays split until the body/signature type context can resolve both halves.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum AssociatedPathQualifier {
+    /// An ordinary type-shaped prefix such as `Widget::<u8>` or `T`.
+    Type(TypeRef),
+    /// The two sides of an explicitly selected trait prefix such as `<T as Factory>`.
+    QualifiedTrait {
+        self_ty: TypeRef,
+        trait_ref: TypeRef,
+    },
+}
 
 /// Syntactic role of a type-shaped path at the completion cursor.
 ///

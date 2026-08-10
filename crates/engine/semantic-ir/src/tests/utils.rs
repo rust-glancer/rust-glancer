@@ -5,8 +5,8 @@ use expect_test::Expect;
 use crate::ItemResolutionQuery;
 use crate::{CrateItemQuery, ItemLookupIndex, ItemStore, ItemStoreQuery};
 use crate::{SemanticIrReadTxn, testonly::SemanticIrFixture};
+use rg_ir_model::Path;
 use rg_ir_model::{CrateId, CrateRef, DefMapRef, ModuleId, ModuleRef, TypeAliasId};
-use rg_ir_model::{Path, PathSegment};
 use rg_item_tree::{FieldItem, FieldList, ParamKind, VisibilityLevel};
 use rg_package_store::PackageLoader;
 use rg_parse::{CargoTarget, Package, ParseDb};
@@ -350,22 +350,7 @@ impl<'a> ProjectSemanticQuerySnapshot<'a> {
     }
 
     fn parse_path(text: &str) -> Path {
-        let (absolute, text) = match text.strip_prefix("::") {
-            Some(stripped) => (true, stripped),
-            None => (false, text),
-        };
-        let segments = text
-            .split("::")
-            .filter(|segment| !segment.is_empty())
-            .map(|segment| match segment {
-                "self" => PathSegment::SelfKw,
-                "super" => PathSegment::SuperKw,
-                "crate" => PathSegment::CrateKw,
-                name => PathSegment::Name(name.to_string().into()),
-            })
-            .collect::<Vec<_>>();
-
-        Path { absolute, segments }
+        Path::from_macro_path_text(text, None).expect("fixture path should use valid Rust syntax")
     }
 
     fn render_type_def_ref(&self, semantic_ir: &SemanticIrReadTxn<'_>, ty: TypeDefRef) -> String {

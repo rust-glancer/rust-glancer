@@ -3,7 +3,8 @@
 //! Source queries interpret the same lowered syntax in several different ways: one scanner wants
 //! navigable value paths, another wants completion owners, and another wants record field lists.
 //! This module keeps the structural walk in one place while leaving those query-specific meanings
-//! with the callers.
+//! with the callers. Pattern walking includes function parameters, and type sites retain a
+//! body-local declaration owner when its generics differ from the enclosing body.
 //!
 //! In particular, type syntax is not limited to a `let` annotation. The same path walk must find
 //! all of these spellings while retaining the scope that owns them:
@@ -12,6 +13,7 @@
 //! let value: Option<Item> = input;
 //! let closure = |item: Item| -> Output { item };
 //! value.cast::<Target>()
+//! fn local<T>(value: T) -> Option<T> { ... }
 //! ```
 
 use rg_ir_model::{BodySource, ExprId, PatId, ScopeId};
@@ -43,6 +45,12 @@ struct TypeRefSite<'body> {
     scope: ScopeId,
     visible_bindings: usize,
     source: BodySource,
+    /// Declaration whose generic scope owns this type reference.
+    ///
+    /// Ordinary body annotations have no declaration owner and use the enclosing body's generic
+    /// scope. A type written in a body-local item signature must instead resolve parameters from
+    /// that item, even though its source payload is retained by the parent body.
+    owner_item: Option<ItemTreeId>,
     ty: &'body TypeRef,
 }
 
@@ -52,6 +60,7 @@ struct TypeRefContext {
     scope: ScopeId,
     visible_bindings: usize,
     source: BodySource,
+    owner_item: Option<ItemTreeId>,
 }
 
 impl TypeRefContext {
@@ -60,6 +69,21 @@ impl TypeRefContext {
             scope,
             visible_bindings,
             source,
+            owner_item: None,
+        }
+    }
+
+    fn for_item(
+        scope: ScopeId,
+        visible_bindings: usize,
+        source: BodySource,
+        owner_item: ItemTreeId,
+    ) -> Self {
+        Self {
+            scope,
+            visible_bindings,
+            source,
+            owner_item: Some(owner_item),
         }
     }
 }
@@ -70,6 +94,7 @@ pub(super) struct TypePathSite<'body> {
     pub(super) scope: ScopeId,
     pub(super) visible_bindings: usize,
     pub(super) file_id: FileId,
+    pub(super) owner_item: Option<ItemTreeId>,
     pub(super) path: &'body TypePath,
     /// Whether this path may name a const because it fills one whole generic argument.
     pub(super) position: TypeNamePosition,
@@ -136,6 +161,7 @@ impl<'body> BodyScanSites<'body> {
                     scope: site.scope,
                     visible_bindings: site.visible_bindings,
                     file_id: site.source.file_id,
+                    owner_item: site.owner_item,
                     path,
                     position,
                 });
@@ -165,6 +191,14 @@ impl<'body> BodyScanSites<'body> {
     }
 
     fn for_each_pattern_site(&self, mut visit: impl FnMut(PatternSite)) {
+        // Function parameter patterns are stored outside the expression arena, but they use the
+        // body's parameter scope and participate in the same pattern completion rules.
+        for param in self.body.function_params() {
+            if let Some(pat) = param.pat {
+                self.visit_pattern_site(&mut visit, self.body.param_scope(), pat);
+            }
+        }
+
         for statement in self.body.statements().iter() {
             let StmtKind::Let {
                 scope,
@@ -373,7 +407,7 @@ where
             return;
         };
 
-        let context = self.decl_context(scope, source);
+        let context = self.decl_context(scope, source, item_id);
         self.walk_source_item_type_refs(context, item);
     }
 
@@ -545,11 +579,17 @@ where
             scope: context.scope,
             visible_bindings: context.visible_bindings,
             source: context.source,
+            owner_item: context.owner_item,
             ty,
         });
     }
 
-    fn decl_context(&self, scope: ScopeId, source: BodySource) -> TypeRefContext {
-        TypeRefContext::new(scope, self.body_visible_bindings, source)
+    fn decl_context(
+        &self,
+        scope: ScopeId,
+        source: BodySource,
+        owner_item: ItemTreeId,
+    ) -> TypeRefContext {
+        TypeRefContext::for_item(scope, self.body_visible_bindings, source, owner_item)
     }
 }

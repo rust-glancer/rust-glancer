@@ -5,4 +5,5 @@ mod cfg;
 mod expansion;
 mod export;
 mod macro_use;
+mod proc_macro;
 mod textual;

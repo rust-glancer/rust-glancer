@@ -99,6 +99,7 @@ impl DefMapBuilder {
                 file_id,
                 name_span: variant.name_span,
                 span: variant.span,
+                user_facing_attrs: variant.user_facing_attrs,
             });
         }
     }
@@ -462,6 +463,10 @@ impl DefMap {
     /// Returns all imports in stable import-id order.
     pub fn imports(&self) -> &[ImportData] {
         self.data.imports.as_slice()
+    }
+
+    pub fn import(&self, import: ImportId) -> Option<&ImportData> {
+        self.data.imports.get(import)
     }
 
     /// Returns one retained generated source by id.

@@ -22,7 +22,7 @@ pub use self::{
     import::{ImportBinding, ImportData, ImportKind, ImportPath},
     local::{
         LocalDefData, LocalDefKind, LocalEnumVariantData, LocalEnumVariantEntry, LocalImplData,
-        MacroDefinitionData, MacroDefinitionPayload, MacroDefinitionView,
+        MacroDefinitionData, MacroDefinitionKind, MacroDefinitionPayload, MacroDefinitionView,
     },
     macro_expansion::{
         BodyMacroCallOrigin, BodyMacroCallSite, BodyMacroExpander, BodyMacroExpansionOutcome,

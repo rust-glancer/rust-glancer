@@ -13,6 +13,15 @@ pub(crate) fn completion_item(item: CompletionItem, line_index: &LineIndex) -> L
     let detail = completion_detail(item.detail, item.applicability);
     let insert_text_format = completion_insert_text_format(&item.insert_text);
     let text_edit = completion_text_edit(&item.label, item.insert_text, item.edit, line_index);
+    let additional_text_edits = (!item.additional_edits.is_empty()).then(|| {
+        item.additional_edits
+            .into_iter()
+            .map(|edit| TextEdit {
+                range: position::range(line_index, edit.replace),
+                new_text: edit.new_text,
+            })
+            .collect()
+    });
 
     LspCompletionItem {
         label: item.label,
@@ -20,14 +29,17 @@ pub(crate) fn completion_item(item: CompletionItem, line_index: &LineIndex) -> L
         detail,
         documentation: item.documentation.and_then(markdown_documentation),
         sort_text: Some(item.sort_text),
+        filter_text: item.filter_text,
         insert_text_format,
         text_edit,
+        additional_text_edits,
         ..Default::default()
     }
 }
 
 fn completion_kind(kind: CompletionKind) -> CompletionItemKind {
     match kind {
+        CompletionKind::Attribute => CompletionItemKind::PROPERTY,
         CompletionKind::Const => CompletionItemKind::CONSTANT,
         CompletionKind::Enum => CompletionItemKind::ENUM,
         CompletionKind::EnumVariant => CompletionItemKind::ENUM_MEMBER,
@@ -35,21 +47,24 @@ fn completion_kind(kind: CompletionKind) -> CompletionItemKind {
         CompletionKind::Function => CompletionItemKind::FUNCTION,
         CompletionKind::InherentMethod | CompletionKind::TraitMethod => CompletionItemKind::METHOD,
         CompletionKind::Keyword => CompletionItemKind::KEYWORD,
+        CompletionKind::Label | CompletionKind::Lifetime => CompletionItemKind::REFERENCE,
         CompletionKind::Macro => CompletionItemKind::FUNCTION,
         CompletionKind::Module => CompletionItemKind::MODULE,
         CompletionKind::PrimitiveType => CompletionItemKind::KEYWORD,
+        CompletionKind::Postfix => CompletionItemKind::SNIPPET,
         CompletionKind::Static => CompletionItemKind::VARIABLE,
         CompletionKind::Struct | CompletionKind::Union => CompletionItemKind::STRUCT,
         CompletionKind::Trait => CompletionItemKind::INTERFACE,
         CompletionKind::TypeAlias => CompletionItemKind::CLASS,
         CompletionKind::TypeParameter => CompletionItemKind::TYPE_PARAMETER,
         CompletionKind::Variable => CompletionItemKind::VARIABLE,
+        CompletionKind::Value => CompletionItemKind::VALUE,
     }
 }
 
 fn completion_insert_text_format(insert_text: &CompletionInsertText) -> Option<InsertTextFormat> {
     match insert_text {
-        CompletionInsertText::Plain => None,
+        CompletionInsertText::Plain | CompletionInsertText::Text(_) => None,
         CompletionInsertText::Snippet(_) => Some(InsertTextFormat::SNIPPET),
     }
 }
@@ -84,6 +99,7 @@ fn completion_text_edit(
     edit.map(|edit| {
         let new_text = match insert_text {
             CompletionInsertText::Plain => label.to_string(),
+            CompletionInsertText::Text(text) => text,
             CompletionInsertText::Snippet(snippet) => snippet,
         };
         CompletionTextEdit::Edit(TextEdit {

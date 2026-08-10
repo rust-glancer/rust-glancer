@@ -7,7 +7,7 @@ use super::{
     ItemStoreBuilder, StaticData, StructData, TraitData, TypeAliasData, TypeAliasSignature,
     UnionData,
 };
-use rg_def_map::{DefMap, ItemSource};
+use rg_def_map::{DefMap, ItemSource, LocalDefKind};
 use rg_ir_model::{
     AssocItemId, ConstId, FunctionId, ItemId, ItemOwner, LocalDefRef, LocalImplRef, ModuleRef,
     StaticId, TraitId, TypeAliasId,
@@ -56,6 +56,15 @@ where
                 .def_map
                 .local_def(local_def_ref.local_def)
                 .expect("local definition ref should be produced by this def map");
+
+            // A macro definition can point at function-shaped syntax when it is the exported
+            // identity of a procedural macro. Its LocalDef kind, not that shared source shape,
+            // decides whether it owns a semantic item. The linked implementation function travels
+            // through its own LocalDef and is lowered normally.
+            if local_def.kind == LocalDefKind::MacroDefinition {
+                continue;
+            }
+
             let item = self.reader.item(local_def.source).with_context(|| {
                 format!(
                     "while attempting to read source item for local definition {:?}",

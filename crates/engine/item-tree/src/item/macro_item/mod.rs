@@ -21,6 +21,7 @@ pub enum MacroDefinitionItem {
     /// supported sysroots. Prefer extending and testing `macro_rules!` unless a sysroot case
     /// specifically requires this form.
     MacroDef {
+        attrs: MacroDefinitionAttrs,
         #[shrink(skip)]
         args: Option<TopSubtree>,
         #[shrink(skip)]

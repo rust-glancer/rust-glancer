@@ -27,7 +27,7 @@ use super::{
     ItemKind, ItemNode, ItemTreeId, LangItem, MacroCallContext, MacroCallItem, MacroDefAst,
     MacroDefContext, MacroDefinitionItem, MacroRulesAst, MacroRulesContext, MacroUseAttr,
     MaybeFromAst, ModuleItem, ModuleSource, Package, StaticItem, StructItem, TargetRoot, TraitItem,
-    TraitItemContext, TypeAliasItem, UnionItem, UseItem, VisibilityLevel,
+    TraitItemContext, TypeAliasItem, UnionItem, UseItem, UserFacingAttrs, VisibilityLevel,
 };
 
 /// Lowers all known files for one parsed package and records target entrypoints into them.
@@ -782,6 +782,7 @@ impl<'a> FileTreeBuilder<'a> {
         );
         self.items[item_id].cfg = CfgExpr::from_attrs(item);
         self.items[item_id].lang_item = LangItem::maybe_from_ast(item, ());
+        self.items[item_id].user_facing_attrs = UserFacingAttrs::from_ast(item);
         item_id
     }
 

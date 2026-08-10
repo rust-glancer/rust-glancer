@@ -46,6 +46,7 @@ pub struct FunctionSignature {
     pub(crate) params: Box<[ParamItem]>,
     pub(crate) ret_ty: Option<TypeRef>,
     pub(crate) qualifiers: FunctionQualifiers,
+    pub(crate) has_body: bool,
 }
 
 impl FunctionSignature {
@@ -58,6 +59,7 @@ impl FunctionSignature {
             params: params.into_boxed_slice(),
             ret_ty: item.ret_ty.clone(),
             qualifiers: item.qualifiers,
+            has_body: item.has_body,
         }
     }
 
@@ -75,6 +77,11 @@ impl FunctionSignature {
 
     pub fn qualifiers(&self) -> FunctionQualifiers {
         self.qualifiers
+    }
+
+    /// Returns whether this declaration provides an implementation body.
+    pub fn has_body(&self) -> bool {
+        self.has_body
     }
 }
 
@@ -115,16 +122,23 @@ impl TypeAliasSignature {
 #[derive(Debug, Clone, PartialEq, Eq, Default, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct ConstSignature {
     pub(crate) ty: Option<TypeRef>,
+    pub(crate) has_value: bool,
 }
 
 impl ConstSignature {
     pub fn from_item(item: &ConstItem) -> Self {
         Self {
             ty: item.ty.clone(),
+            has_value: item.has_value,
         }
     }
 
     pub fn ty(&self) -> Option<&TypeRef> {
         self.ty.as_ref()
+    }
+
+    /// Returns whether this declaration provides a value after `=`.
+    pub fn has_value(&self) -> bool {
+        self.has_value
     }
 }

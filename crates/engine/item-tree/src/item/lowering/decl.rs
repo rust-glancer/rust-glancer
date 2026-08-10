@@ -1,14 +1,15 @@
 use crate::item::{
-    ConstItem, ConstParamData, Documentation, EnumItem, EnumVariantItem, FieldItem, FieldKey,
-    FieldList, FunctionItem, FunctionQualifiers, GenericParams, ImplItem, ItemTreeId,
-    LifetimeParamData, ParamItem, ParamKind, StaticItem, StructItem, TraitItem, TypeAliasItem,
-    TypeParamData, TypeRef, UnionItem, VisibilityLevel, WherePredicate,
+    ConstExpr, ConstItem, ConstParamData, Documentation, EnumItem, EnumVariantItem, FieldItem,
+    FieldKey, FieldList, FunctionItem, FunctionQualifiers, GenericParams, ImplItem, ItemTreeId,
+    LifetimeParamData, ParamItem, ParamKind, ProcMacroDefinition, ProcMacroKind, StaticItem,
+    StructItem, TraitItem, TypeAliasItem, TypeParamData, TypeRef, UnionItem, UserFacingAttrs,
+    VisibilityLevel, WherePredicate,
 };
 use rg_ir_model::Mutability;
 use rg_parse::{LineIndex, Span};
 use rg_syntax::{
     AstNode as _,
-    ast::{self, HasGenericParams, HasName, HasTypeBounds, HasVisibility},
+    ast::{self, HasAttrs, HasGenericParams, HasName, HasTypeBounds, HasVisibility},
 };
 use rg_text::{Name, NameInterner};
 
@@ -45,7 +46,12 @@ impl FromAst for GenericParams {
                             ty: param
                                 .ty()
                                 .map(|ty| TypeRef::from_ast(&ty, (line_index, &mut *interner))),
-                            default: param.default_val().map(|value| normalized_syntax(&value)),
+                            default: param.default_val().map(|value| {
+                                ConstExpr::new(
+                                    normalized_syntax(&value),
+                                    Span::from_text_range(value.syntax().text_range()),
+                                )
+                            }),
                         });
                     }
                     ast::GenericParam::LifetimeParam(param) => {
@@ -119,6 +125,52 @@ impl FromAst for FunctionItem {
     type Context<'a> = (&'a LineIndex, &'a mut NameInterner);
 
     fn from_ast(item: &Self::AstNode, (line_index, interner): Self::Context<'_>) -> Self {
+        // Proc macros are functions syntactically, but their exported name lives in the macro
+        // namespace. Retain that identity here so DefMap does not need the original attribute AST.
+        let mut proc_macro = None;
+        for attr in item.attrs().filter(|attr| attr.kind().is_outer()) {
+            let Some(meta) = attr.meta() else {
+                continue;
+            };
+            match meta.simple_name().as_deref() {
+                Some("proc_macro") => {
+                    if let Some(name) = item.name() {
+                        proc_macro = Some(ProcMacroDefinition {
+                            name: interner.intern(name.text()),
+                            kind: ProcMacroKind::FunctionLike,
+                        });
+                    }
+                }
+                Some("proc_macro_attribute") => {
+                    if let Some(name) = item.name() {
+                        proc_macro = Some(ProcMacroDefinition {
+                            name: interner.intern(name.text()),
+                            kind: ProcMacroKind::Attribute,
+                        });
+                    }
+                }
+                Some("proc_macro_derive") => {
+                    let ast::Meta::TokenTreeMeta(meta) = meta else {
+                        continue;
+                    };
+                    let Some(name) = meta.token_tree().and_then(|tokens| {
+                        tokens
+                            .syntax()
+                            .descendants_with_tokens()
+                            .filter_map(|element| element.into_token())
+                            .find(|token| token.kind().is_any_identifier())
+                    }) else {
+                        continue;
+                    };
+                    proc_macro = Some(ProcMacroDefinition {
+                        name: interner.intern(name.text()),
+                        kind: ProcMacroKind::Derive,
+                    });
+                }
+                Some(_) | None => {}
+            }
+        }
+
         Self {
             generics: GenericParams::from_ast(item, (line_index, &mut *interner)),
             params: param_list_from_ast(item.param_list(), line_index, &mut *interner),
@@ -131,6 +183,8 @@ impl FromAst for FunctionItem {
                 is_const: item.const_token().is_some(),
                 is_unsafe: item.unsafe_token().is_some(),
             },
+            has_body: item.semicolon_token().is_none(),
+            proc_macro,
         }
     }
 }
@@ -203,6 +257,7 @@ impl FromAst for EnumVariantItem {
             span,
             name_span,
             docs: <Documentation as MaybeFromAst<OuterDocs>>::maybe_from_ast(variant, OuterDocs),
+            user_facing_attrs: UserFacingAttrs::from_ast(variant),
             fields: FieldList::from_ast(&variant.field_list(), (line_index, interner)),
         }
     }
@@ -285,6 +340,7 @@ impl FromAst for ConstItem {
             ty: item
                 .ty()
                 .map(|ty| TypeRef::from_ast(&ty, (line_index, &mut *interner))),
+            has_value: item.eq_token().is_some(),
         }
     }
 }

@@ -168,7 +168,8 @@ impl<'a, 'db> BodyView<'a, 'db> {
         Ok(self
             .db
             .body_ir
-            .body(body_ref)?
+            .body(body_ref)
+            .context("read body owner module")?
             .map(|body| body.owner_module()))
     }
 
@@ -191,7 +192,12 @@ impl<'a, 'db> BodyView<'a, 'db> {
         body_ref: BodyRef,
         scope: ScopeId,
     ) -> anyhow::Result<Vec<(ScopeId, ModuleRef)>> {
-        let Some(body) = self.db.body_ir.body(body_ref)? else {
+        let Some(body) = self
+            .db
+            .body_ir
+            .body(body_ref)
+            .context("read body lexical scopes")?
+        else {
             return Ok(Vec::new());
         };
         let mut modules = Vec::new();
@@ -218,7 +224,12 @@ impl<'a, 'db> BodyView<'a, 'db> {
         body_ref: BodyRef,
         scope: ScopeId,
     ) -> anyhow::Result<HashSet<String>> {
-        let Some(body) = self.db.body_ir.body(body_ref)? else {
+        let Some(body) = self
+            .db
+            .body_ir
+            .body(body_ref)
+            .context("read body scope items")?
+        else {
             return Ok(HashSet::new());
         };
         let Some(scope_data) = body.scope(scope) else {
@@ -243,7 +254,8 @@ impl<'a, 'db> BodyView<'a, 'db> {
         Ok(self
             .db
             .body_ir
-            .body(body_ref)?
+            .body(body_ref)
+            .context("read body expression type")?
             .and_then(|body| body.expr_ty(expr).cloned())
             .map(IndexedType::new))
     }
@@ -253,17 +265,27 @@ impl<'a, 'db> BodyView<'a, 'db> {
         Ok(self
             .db
             .body_ir
-            .body(binding.body)?
+            .body(binding.body)
+            .context("read body binding type")?
             .and_then(|body| body.binding_ty(binding.binding).cloned())
             .map(IndexedType::new))
     }
 
     /// Return names visible from a body scope, ordered by lexical distance.
     pub fn lexical_names(&self, scope: BodyNameScope) -> anyhow::Result<Vec<BodyLexicalName>> {
-        let Some(body) = self.db.body_ir.body(scope.body)? else {
+        let Some(body) = self
+            .db
+            .body_ir
+            .body(scope.body)
+            .context("read body lexical names")?
+        else {
             return Ok(Vec::new());
         };
-        let body_item_store = self.db.body_ir.body_item_store(scope.body)?;
+        let body_item_store = self
+            .db
+            .body_ir
+            .body_item_store(scope.body)
+            .context("read body item store for lexical names")?;
         let mut names = Vec::new();
         let mut seen_values = HashSet::<String>::new();
         let mut seen_types = HashSet::<String>::new();
@@ -340,8 +362,9 @@ impl<'a, 'db> BodyView<'a, 'db> {
                             });
                         }
                         SemanticItemRef::TypeDef(ty) => {
-                            let has_value_constructor =
-                                ItemStoreQuery::new(self.db).type_def_has_value_constructor(ty)?;
+                            let has_value_constructor = ItemStoreQuery::new(self.db)
+                                .type_def_has_value_constructor(ty)
+                                .context("read lexical type constructor shape")?;
                             if !has_value_constructor || !seen_values.insert(name.to_string()) {
                                 continue;
                             }
@@ -388,9 +411,9 @@ impl<'a, 'db> BodyView<'a, 'db> {
                         continue;
                     }
                     let has_value_constructor = match view.item() {
-                        SemanticItemRef::TypeDef(ty) => {
-                            ItemStoreQuery::new(self.db).type_def_has_value_constructor(ty)?
-                        }
+                        SemanticItemRef::TypeDef(ty) => ItemStoreQuery::new(self.db)
+                            .type_def_has_value_constructor(ty)
+                            .context("read lexical type constructor shape")?,
                         _ => false,
                     };
                     names.push(BodyLexicalName::TypeItem {
@@ -421,7 +444,12 @@ impl<'a, 'db> BodyView<'a, 'db> {
         range: Option<TextSpan>,
     ) -> anyhow::Result<Vec<InferredBindingTy>> {
         let mut bindings = Vec::new();
-        for (_, body) in self.db.body_ir.bodies(crate_ref, Some(file_id))? {
+        for (_, body) in self
+            .db
+            .body_ir
+            .bodies(crate_ref, Some(file_id))
+            .context("read bodies for inferred bindings")?
+        {
             for (binding_idx, binding) in body.bindings().iter().enumerate() {
                 if !binding.source.is_written_in_file(file_id) {
                     continue;
@@ -464,7 +492,12 @@ impl<'a, 'db> BodyView<'a, 'db> {
         file_id: FileId,
     ) -> anyhow::Result<Vec<ResolvedFunctionCall>> {
         let mut calls = Vec::new();
-        for (body_ref, body) in self.db.body_ir.bodies(crate_ref, Some(file_id))? {
+        for (body_ref, body) in self
+            .db
+            .body_ir
+            .bodies(crate_ref, Some(file_id))
+            .context("read bodies for resolved calls")?
+        {
             for (expr_idx, expr) in body.exprs().iter().enumerate() {
                 if !expr.source.is_written_in_file(file_id) {
                     continue;
@@ -475,8 +508,9 @@ impl<'a, 'db> BodyView<'a, 'db> {
                         let Some(callee) = *callee else {
                             continue;
                         };
-                        let Some(function) =
-                            self.single_function(body.expr_declarations(body_ref, callee))?
+                        let Some(function) = self
+                            .single_function(body.expr_declarations(body_ref, callee))
+                            .context("resolve call target function")?
                         else {
                             continue;
                         };
@@ -489,7 +523,8 @@ impl<'a, 'db> BodyView<'a, 'db> {
                     }
                     ExprKind::MethodCall { args, .. } => {
                         let Some(function) = self
-                            .single_function(body.expr_declarations(body_ref, ExprId(expr_idx)))?
+                            .single_function(body.expr_declarations(body_ref, ExprId(expr_idx)))
+                            .context("resolve method call target function")?
                         else {
                             continue;
                         };
@@ -515,7 +550,12 @@ impl<'a, 'db> BodyView<'a, 'db> {
         file_id: FileId,
     ) -> anyhow::Result<Vec<BodyLocalGroup>> {
         let mut groups = Vec::new();
-        for (body_ref, body) in self.db.body_ir.bodies(crate_ref, Some(file_id))? {
+        for (body_ref, body) in self
+            .db
+            .body_ir
+            .bodies(crate_ref, Some(file_id))
+            .context("read body-local item groups")?
+        {
             groups.push(BodyLocalGroup {
                 owner: body.owner().declaration(),
                 body: body_ref,
@@ -531,10 +571,19 @@ impl<'a, 'db> BodyView<'a, 'db> {
         body_ref: BodyRef,
         file_id: FileId,
     ) -> anyhow::Result<Vec<DeclarationRef>> {
-        let Some(body) = self.db.body_ir.body(body_ref)? else {
+        let Some(body) = self
+            .db
+            .body_ir
+            .body(body_ref)
+            .context("read body-local declarations")?
+        else {
             return Ok(Vec::new());
         };
-        let body_item_store = self.db.body_ir.body_item_store(body_ref)?;
+        let body_item_store = self
+            .db
+            .body_ir
+            .body_item_store(body_ref)
+            .context("read body item store for declarations")?;
         let mut declarations = Vec::new();
 
         for scope in body.scopes() {
@@ -568,8 +617,9 @@ impl<'a, 'db> BodyView<'a, 'db> {
         for declaration in declarations {
             match declaration {
                 DeclarationRef::LocalDef(local_def) => {
-                    let Some(SemanticItemRef::Function(function)) =
-                        ItemStoreQuery::new(self.db).semantic_item_for_local_def(local_def)?
+                    let Some(SemanticItemRef::Function(function)) = ItemStoreQuery::new(self.db)
+                        .semantic_item_for_local_def(local_def)
+                        .context("resolve body-local function")?
                     else {
                         continue;
                     };

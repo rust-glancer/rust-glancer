@@ -253,6 +253,16 @@ impl ScopeBinding {
         }
         changed
     }
+
+    /// Keep a binding usable inside one crate while preventing its public routes from crossing the
+    /// crate boundary.
+    fn restrict_public_routes_to(&mut self, visible_from: ModuleRef) {
+        for route in self.routes.as_mut_slice() {
+            if route.visibility == Visibility::Public {
+                route.visibility = Visibility::Module(visible_from);
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
@@ -265,6 +275,13 @@ impl ScopeBindingRoutes {
     fn as_slice(&self) -> &[ScopeBindingRoute] {
         match self {
             Self::One(route) => std::slice::from_ref(route),
+            Self::Many(routes) => routes,
+        }
+    }
+
+    fn as_mut_slice(&mut self) -> &mut [ScopeBindingRoute] {
+        match self {
+            Self::One(route) => std::slice::from_mut(route),
             Self::Many(routes) => routes,
         }
     }
@@ -403,6 +420,30 @@ impl ModuleScopeBuilder {
         self.names
             .iter()
             .map(|(name, entry)| (name, entry.as_ref()))
+    }
+
+    /// Restrict public routes except for bindings explicitly allowed by the caller.
+    ///
+    /// Proc-macro targets use this after each import-resolution step: their implementation items
+    /// remain visible throughout the defining crate, while only direct proc-macro exports can be
+    /// named by downstream crates.
+    pub(crate) fn censor_public_bindings(
+        &mut self,
+        visible_from: ModuleRef,
+        mut should_remain_public: impl FnMut(Namespace, &ScopeBinding) -> bool,
+    ) {
+        for entry in self.names.values_mut() {
+            for namespace in Namespace::ALL {
+                entry
+                    .bindings
+                    .get_mut(namespace)
+                    .for_each_binding_mut(|binding| {
+                        if !should_remain_public(namespace, binding) {
+                            binding.restrict_public_routes_to(visible_from);
+                        }
+                    });
+            }
+        }
     }
 
     pub fn freeze(self) -> ModuleScope {
@@ -546,6 +587,18 @@ impl ScopeResolutionBuilder {
             Self::Empty => ScopeResolutionRef::Empty,
             Self::Resolved(binding) => ScopeResolutionRef::Resolved(binding),
             Self::Ambiguous(bindings) => ScopeResolutionRef::Ambiguous(bindings),
+        }
+    }
+
+    fn for_each_binding_mut(&mut self, mut apply: impl FnMut(&mut ScopeBinding)) {
+        match self {
+            Self::Empty => {}
+            Self::Resolved(binding) => apply(binding),
+            Self::Ambiguous(bindings) => {
+                for binding in bindings {
+                    apply(binding);
+                }
+            }
         }
     }
 
