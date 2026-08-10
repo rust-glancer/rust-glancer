@@ -18,19 +18,13 @@ use super::CompletionSyntaxContext;
 impl CompletionSyntaxContext<'_> {
     /// Recognize the name slot of an out-of-line `mod name;` declaration.
     pub(super) fn module_declaration_context(&self) -> Option<ModuleDeclarationCompletionContext> {
-        if let Some(module) = Self::module_at_marker(&self.marker) {
-            // Editing an inline module name must not turn it into a filesystem-module site merely
-            // because an added speculative semicolon would form a second valid parse.
-            if module.item_list().is_some() {
-                return None;
-            }
-            if module.semicolon_token().is_some() {
-                return Self::module_declaration_context_for(module);
-            }
+        let module = Self::module_at_marker(&self.marker)?;
+        // Parser recovery already retains `mod name` as a module node before the semicolon is
+        // typed. An item list, however, means the user is editing an inline module name.
+        if module.item_list().is_some() {
+            return None;
         }
-
-        let marker = self.marker_with_suffix(";")?;
-        Self::module_declaration_context_for(Self::module_at_marker(&marker)?)
+        Self::module_declaration_context_for(module)
     }
 
     fn module_at_marker(marker: &SyntaxToken) -> Option<ast::Module> {
@@ -48,7 +42,7 @@ impl CompletionSyntaxContext<'_> {
     fn module_declaration_context_for(
         module: ast::Module,
     ) -> Option<ModuleDeclarationCompletionContext> {
-        if module.semicolon_token().is_none() || module.item_list().is_some() {
+        if module.item_list().is_some() {
             return None;
         }
 
@@ -68,10 +62,87 @@ impl CompletionSyntaxContext<'_> {
             return None;
         }
 
-        // Before `!` is typed there is no macro-call node for the ordinary parser to expose. Add
-        // only the punctuation needed to ask whether this identifier/path would be an item macro.
-        let marker = self.marker_with_suffix("!();")?;
-        self.module_macro_context_at(&marker, true)
+        // Before `!` is typed there is no macro-call node. The primary parse still tells us
+        // whether the partial path is directly owned by an item list; retain that owner and read
+        // the optional qualifier from the adjacent path-token run.
+        let item_list_kind = self.incomplete_item_list_kind()?;
+        if item_list_kind == ItemListCompletionKind::TraitImpl {
+            return None;
+        }
+        Some(ModuleMacroCompletionContext::incomplete(
+            self.adjacent_marker_path_qualifier()?,
+            ItemListCompletionContext::new(item_list_kind, self.item_qualifiers()),
+        ))
+    }
+
+    fn incomplete_item_list_kind(&self) -> Option<ItemListCompletionKind> {
+        for node in self.marker.parent()?.ancestors() {
+            if ast::SourceFile::can_cast(node.kind()) {
+                return Some(ItemListCompletionKind::SourceFile);
+            }
+            if ast::ItemList::can_cast(node.kind()) {
+                return Some(ItemListCompletionKind::Module);
+            }
+            if ast::AssocItemList::can_cast(node.kind()) {
+                let parent = node.parent()?;
+                if ast::Trait::can_cast(parent.kind()) {
+                    return Some(ItemListCompletionKind::Trait);
+                }
+                let impl_ = ast::Impl::cast(parent)?;
+                return Some(if impl_.trait_().is_some() {
+                    ItemListCompletionKind::TraitImpl
+                } else {
+                    ItemListCompletionKind::InherentImpl
+                });
+            }
+
+            // A partial path may be wrapped in these recovery nodes. Any declaration, type,
+            // expression, or pattern owner means the cursor is not directly in an item list.
+            if !matches!(
+                node.kind(),
+                SyntaxKind::ERROR
+                    | SyntaxKind::NAME
+                    | SyntaxKind::NAME_REF
+                    | SyntaxKind::PATH
+                    | SyntaxKind::PATH_SEGMENT
+                    | SyntaxKind::PATH_EXPR
+                    | SyntaxKind::PATH_TYPE
+            ) {
+                return None;
+            }
+        }
+        None
+    }
+
+    /// Return the qualifier immediately before the marker without reparsing a fabricated call.
+    fn adjacent_marker_path_qualifier(&self) -> Option<Option<Path>> {
+        let mut pieces = vec![Self::MARKER.to_string()];
+        let mut token = self.marker.prev_token();
+        let mut expects_colon = true;
+        while let Some(previous) = token {
+            token = previous.prev_token();
+            if previous.kind().is_trivia() {
+                continue;
+            }
+            if expects_colon {
+                if previous.kind() != SyntaxKind::COLON2 {
+                    break;
+                }
+                pieces.push(previous.text().to_string());
+            } else if previous.kind().is_any_identifier()
+                || matches!(
+                    previous.kind(),
+                    SyntaxKind::CRATE_KW | SyntaxKind::SELF_KW | SyntaxKind::SUPER_KW
+                )
+            {
+                pieces.push(previous.text().to_string());
+            } else {
+                break;
+            }
+            expects_colon = !expects_colon;
+        }
+        pieces.reverse();
+        Self::marker_path_qualifier(&pieces.concat())
     }
 
     /// Recognize the callee path of a macro invocation used inside a body.

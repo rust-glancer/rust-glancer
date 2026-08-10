@@ -29,11 +29,10 @@ use anyhow::Context as _;
 use super::{
     CompletionQuery,
     site::{
-        CompletionSite, CompletionSiteDetector, CompletionSiteSyntax, ItemListCompletionKind,
-        NameCompletionContext, SpecializedCompletionContext, StandaloneCompletionSiteSyntax,
-        SyntaxCompletionContext,
+        CompletionSite, CompletionSiteDetector, ItemListCompletionKind, NameCompletionContext,
+        SpecializedCompletionContext, SyntaxCompletionContext,
     },
-    syntax::CompletionSyntaxContextCache,
+    syntax::CompletionSyntaxContext,
 };
 
 use self::{
@@ -68,15 +67,17 @@ impl<'a, 'db, 'source> CompletionResolver<'a, 'db, 'source> {
     /// Collects completions for one source offset, e.g. `user.$0`,
     /// `let value = crate::$0`, `let value = inp$0`, `User { na$0 }`, or `use st$0`.
     pub(crate) fn completions_at(&self) -> anyhow::Result<Vec<CompletionItem>> {
-        let mut syntax_context =
-            CompletionSyntaxContextCache::new(self.query.source_text, self.query.offset);
+        let shared_syntax = self.query.completion_source().map(|source| &source.syntax);
+        let local_syntax = shared_syntax
+            .is_none()
+            .then(|| CompletionSyntaxContext::at(self.query.source_text, self.query.offset))
+            .flatten();
+        let syntax_context = shared_syntax.or(local_syntax.as_ref());
 
         // Item lists and specialized declaration syntax are owned by the request-local classifier.
         // An incomplete `extern c$0`, for example, can resemble a lowered extern-crate name even
         // though the valid completion at this point is the `crate` keyword.
-        let syntax_domain = syntax_context
-            .get()
-            .and_then(|syntax| syntax.completion_context());
+        let syntax_domain = syntax_context.and_then(|syntax| syntax.completion_context());
         let is_plain_item_list = matches!(
             syntax_domain.as_ref(),
             Some(SyntaxCompletionContext::ItemList(context))
@@ -84,10 +85,10 @@ impl<'a, 'db, 'source> CompletionResolver<'a, 'db, 'source> {
         );
         if is_plain_item_list {
             return KeywordCompletionResolver::new(self.query.client_capabilities)
-                .completions(syntax_context.get());
+                .completions(syntax_context);
         }
-        if let Some(SyntaxCompletionContext::Specialized(context)) = syntax_domain.as_ref() {
-            let Some(syntax) = syntax_context.get() else {
+        if let Some(SyntaxCompletionContext::Specialized(context)) = syntax_domain {
+            let Some(syntax) = syntax_context else {
                 return Ok(Vec::new());
             };
             return match context {
@@ -129,71 +130,7 @@ impl<'a, 'db, 'source> CompletionResolver<'a, 'db, 'source> {
         // Keyword fragments can be useful even when the cursor does not lower
         // into a semantic completion site. For example, `f$0` at item level is
         // just incomplete text, not a Body IR or DefMap path.
-        let syntax_hint = syntax_context.get().map(|syntax| {
-            let context = syntax.completion_context();
-            let empty_path = match context.as_ref() {
-                Some(SyntaxCompletionContext::EmptyPath(context)) => Some(*context),
-                Some(
-                    SyntaxCompletionContext::Type(_)
-                    | SyntaxCompletionContext::Pattern(_)
-                    | SyntaxCompletionContext::ItemList(_)
-                    | SyntaxCompletionContext::BodyMacro(_)
-                    | SyntaxCompletionContext::ModuleMacro(_)
-                    | SyntaxCompletionContext::ModuleDeclaration(_)
-                    | SyntaxCompletionContext::Statement
-                    | SyntaxCompletionContext::Expression
-                    | SyntaxCompletionContext::Specialized(_),
-                )
-                | None => None,
-            };
-            let standalone = match context {
-                Some(SyntaxCompletionContext::ItemList(context))
-                    if context.kind() == ItemListCompletionKind::TraitImpl =>
-                {
-                    syntax
-                        .trait_impl_completion_syntax()
-                        .map(StandaloneCompletionSiteSyntax::TraitImpl)
-                }
-                Some(SyntaxCompletionContext::BodyMacro(context)) => {
-                    Some(StandaloneCompletionSiteSyntax::BodyMacro {
-                        qualifier: context.qualifier().cloned(),
-                    })
-                }
-                Some(SyntaxCompletionContext::ModuleMacro(context)) => {
-                    Some(StandaloneCompletionSiteSyntax::ModuleMacro {
-                        qualifier: context.qualifier().cloned(),
-                    })
-                }
-                Some(SyntaxCompletionContext::ModuleDeclaration(context)) => {
-                    Some(StandaloneCompletionSiteSyntax::ModuleDeclaration {
-                        has_path_attribute: context.has_path_attribute(),
-                    })
-                }
-                Some(
-                    SyntaxCompletionContext::EmptyPath(_)
-                    | SyntaxCompletionContext::Type(_)
-                    | SyntaxCompletionContext::Pattern(_)
-                    | SyntaxCompletionContext::ItemList(_)
-                    | SyntaxCompletionContext::Statement
-                    | SyntaxCompletionContext::Expression
-                    | SyntaxCompletionContext::Specialized(_),
-                )
-                | None => None,
-            };
-            let prefix = syntax.prefix();
-            CompletionSiteSyntax::new(
-                syntax.inside_use_item(),
-                syntax.after_dot(),
-                syntax.after_colon_colon(),
-                syntax.empty_qualified_path(),
-                empty_path,
-                syntax.empty_record_owner(),
-                syntax.body_owner_start(),
-                standalone,
-                prefix.span(),
-                prefix.text().to_string(),
-            )
-        });
+        let syntax_hint = syntax_context.map(CompletionSyntaxContext::site_syntax);
         let Some(site) = CompletionSiteDetector::new(self.analysis.view_db())
             .site_at(
                 self.query.crate_ref,
@@ -204,7 +141,7 @@ impl<'a, 'db, 'source> CompletionResolver<'a, 'db, 'source> {
             .context("detect completion site")?
         else {
             return KeywordCompletionResolver::new(self.query.client_capabilities)
-                .completions(syntax_context.get());
+                .completions(syntax_context);
         };
 
         match site {
@@ -213,7 +150,7 @@ impl<'a, 'db, 'source> CompletionResolver<'a, 'db, 'source> {
                     .completions(site)
             }
             CompletionSite::Dot(site) => DotCompletionResolver::new(self.analysis, self.query)
-                .completions(site, syntax_context.get()),
+                .completions(site, syntax_context),
             CompletionSite::ModuleDeclaration(site) => ModuleDeclarationCompletionResolver::new(
                 self.analysis,
                 self.query.crate_ref,
@@ -224,12 +161,12 @@ impl<'a, 'db, 'source> CompletionResolver<'a, 'db, 'source> {
                 let mut completions = ModuleMacroCompletionResolver::new(self.analysis, self.query)
                     .completions(site)
                     .context("collect module macro completions")?;
-                if let Some(SyntaxCompletionContext::ModuleMacro(context)) = syntax_domain.as_ref()
+                if let Some(SyntaxCompletionContext::ModuleMacro(context)) = syntax_domain
                     && let Some(item_list) = context.incomplete_item_list()
                 {
                     completions.extend(
                         KeywordCompletionResolver::new(self.query.client_capabilities)
-                            .item_list_completions(item_list, syntax_context.get())
+                            .item_list_completions(item_list, syntax_context)
                             .context("collect item keywords beside incomplete module macro")?,
                     );
                     completions.sort_by(|left, right| left.sort_text.cmp(&right.sort_text));
@@ -245,7 +182,7 @@ impl<'a, 'db, 'source> CompletionResolver<'a, 'db, 'source> {
                     .context("collect trait impl completions")?;
                 completions.extend(
                     KeywordCompletionResolver::new(self.query.client_capabilities)
-                        .completions(syntax_context.get())
+                        .completions(syntax_context)
                         .context("collect trait impl keyword completions")?,
                 );
                 completions.sort_by(|left, right| left.sort_text.cmp(&right.sort_text));
@@ -262,7 +199,7 @@ impl<'a, 'db, 'source> CompletionResolver<'a, 'db, 'source> {
                     replace: site.replace_span(),
                 };
                 let mut completions = UnqualifiedCompletionResolver::new(self.analysis, self.query)
-                    .completions(site)
+                    .completions(site, syntax_context)
                     .context("collect unqualified completions")?;
                 if context == NameCompletionContext::Type
                     && let Some(binding) =
@@ -284,13 +221,13 @@ impl<'a, 'db, 'source> CompletionResolver<'a, 'db, 'source> {
                     let keywords = KeywordCompletionResolver::new(self.query.client_capabilities);
                     completions.extend(match context {
                         NameCompletionContext::Pattern(_) => keywords
-                            .pattern_overlay_completions(syntax_context.get())
+                            .pattern_overlay_completions(syntax_context)
                             .context("collect pattern keyword completions")?,
                         NameCompletionContext::Type => keywords
-                            .type_overlay_completions(syntax_context.get())
+                            .type_overlay_completions(syntax_context)
                             .context("collect type keyword completions")?,
                         NameCompletionContext::Value => keywords
-                            .overlay_completions(syntax_context.get())
+                            .overlay_completions(syntax_context)
                             .context("collect expression keyword completions")?,
                         NameCompletionContext::Const => Vec::new(),
                         NameCompletionContext::Import => Vec::new(),

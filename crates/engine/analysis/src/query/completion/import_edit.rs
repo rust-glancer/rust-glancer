@@ -21,27 +21,28 @@
 
 use rg_ir_model::Path;
 use rg_parse::{Span, TextSpan};
-use rg_syntax::{AstNode as _, Edition, SourceFile, TextSize, ast, ast::HasModuleItem as _};
+use rg_syntax::{AstNode as _, TextRange, TextSize, ast, ast::HasModuleItem as _};
 
 use crate::model::{CompletionAdditionalEdit, CompletionEdit};
 
+use super::syntax::CompletionSyntaxContext;
+
 /// Plans the source-side half of accepting one auto-import completion.
 ///
-/// The planner reparses only the request buffer, chooses the innermost inline module, and verifies
-/// that its additional edit does not overlap the completion's primary identifier replacement.
-pub(super) struct AutoImportEditPlanner<'a> {
-    source: &'a str,
-    file: SourceFile,
-    offset: u32,
+/// The planner reuses the request's speculative tree, chooses the innermost inline module, and
+/// verifies that its additional edit does not overlap the primary identifier replacement.
+pub(super) struct AutoImportEditPlanner<'syntax, 'source> {
+    syntax: &'syntax CompletionSyntaxContext<'source>,
     primary_edit: CompletionEdit,
 }
 
-impl<'a> AutoImportEditPlanner<'a> {
-    pub(super) fn new(source: &'a str, offset: u32, primary_edit: CompletionEdit) -> Self {
+impl<'syntax, 'source> AutoImportEditPlanner<'syntax, 'source> {
+    pub(super) fn new(
+        syntax: &'syntax CompletionSyntaxContext<'source>,
+        primary_edit: CompletionEdit,
+    ) -> Self {
         Self {
-            source,
-            file: SourceFile::parse(source, Edition::CURRENT).tree(),
-            offset,
+            syntax,
             primary_edit,
         }
     }
@@ -82,9 +83,10 @@ impl<'a> AutoImportEditPlanner<'a> {
 
     /// Select direct items from the smallest inline module whose body contains the cursor.
     fn containing_items(&self) -> Vec<ast::Item> {
-        let cursor = TextSize::from(self.offset);
+        let cursor = TextSize::from(self.syntax.speculative_offset());
         let item_list = self
-            .file
+            .syntax
+            .speculative_file_tree()
             .syntax()
             .descendants()
             .filter_map(ast::Module::cast)
@@ -96,7 +98,7 @@ impl<'a> AutoImportEditPlanner<'a> {
             .min_by_key(|list| list.syntax().text_range().len());
 
         item_list.map_or_else(
-            || self.file.items().collect(),
+            || self.syntax.speculative_file_tree().items().collect(),
             |list| list.items().collect(),
         )
     }
@@ -152,6 +154,7 @@ impl<'a> AutoImportEditPlanner<'a> {
             let closing_brace = tree_text.rfind('}')?;
             let insertion = u32::from(use_tree.syntax().text_range().start())
                 .checked_add(u32::try_from(closing_brace).ok()?)?;
+            let insertion = self.original_insertion(insertion)?;
             let new_text = if inner.ends_with(',') {
                 format!(" {new_leaf},")
             } else {
@@ -173,7 +176,7 @@ impl<'a> AutoImportEditPlanner<'a> {
             return None;
         }
         Some(CompletionAdditionalEdit {
-            replace: Span::from_text_range(use_tree.syntax().text_range()),
+            replace: self.syntax.original_span(use_tree.syntax().text_range())?,
             new_text: format!("{prefix}::{{{existing_leaf}, {new_leaf}}}"),
         })
     }
@@ -185,19 +188,20 @@ impl<'a> AutoImportEditPlanner<'a> {
         rendered_path: &str,
     ) -> Option<CompletionAdditionalEdit> {
         if let Some(last_use) = use_items.last() {
-            let end = u32::from(last_use.syntax().text_range().end());
+            let end = self.original_insertion(u32::from(last_use.syntax().text_range().end()))?;
             let line_suffix = self
-                .source
+                .syntax
+                .source()
                 .get(usize::try_from(end).ok()?..)?
                 .split_once('\n')
                 .map_or_else(
-                    || self.source.get(usize::try_from(end).ok()?..),
+                    || self.syntax.source().get(usize::try_from(end).ok()?..),
                     |(suffix, _)| Some(suffix),
                 )?;
             if line_suffix.trim().is_empty() {
                 let indent = Self::line_indent(
-                    self.source,
-                    u32::from(last_use.syntax().text_range().start()),
+                    self.syntax.source(),
+                    self.original_insertion(u32::from(last_use.syntax().text_range().start()))?,
                 )?;
                 return Some(CompletionAdditionalEdit {
                     replace: Span {
@@ -209,8 +213,8 @@ impl<'a> AutoImportEditPlanner<'a> {
         }
 
         let first_item = items.first()?;
-        let start = u32::from(first_item.syntax().text_range().start());
-        let indent = Self::line_indent(self.source, start)?;
+        let start = self.original_insertion(u32::from(first_item.syntax().text_range().start()))?;
+        let indent = Self::line_indent(self.syntax.source(), start)?;
         Some(CompletionAdditionalEdit {
             replace: Span {
                 text: TextSpan { start, end: start },
@@ -223,6 +227,12 @@ impl<'a> AutoImportEditPlanner<'a> {
         let primary = self.primary_edit.replace.text;
         let additional = additional.text;
         primary.end <= additional.start || additional.end <= primary.start
+    }
+
+    fn original_insertion(&self, offset: u32) -> Option<u32> {
+        self.syntax
+            .original_span(TextRange::empty(TextSize::from(offset)))
+            .map(|span| span.text.start)
     }
 
     fn is_simple_use_leaf(leaf: &str) -> bool {
@@ -279,7 +289,7 @@ mod tests {
     use rg_ir_model::Path;
     use rg_parse::{Span, TextSpan};
 
-    use super::AutoImportEditPlanner;
+    use super::{AutoImportEditPlanner, CompletionSyntaxContext};
     use crate::model::CompletionEdit;
 
     #[test]
@@ -297,7 +307,9 @@ mod tests {
         for (source, expected_edit) in cases {
             let offset = u32::try_from(source.find("HashM").expect("fixture should have cursor"))
                 .expect("fixture offset should fit");
-            let planner = AutoImportEditPlanner::new(source, offset, primary(offset));
+            let syntax = CompletionSyntaxContext::at(Some(source), offset + 5)
+                .expect("completion syntax should parse");
+            let planner = AutoImportEditPlanner::new(&syntax, primary(offset));
             let edit = planner
                 .plan(&hash_map_path(), "std::collections::HashMap")
                 .expect("compatible import should produce an edit");
@@ -308,9 +320,11 @@ mod tests {
     #[test]
     fn recognizes_nested_duplicate_use_tree() {
         let source = "use std::{collections::HashMap};\nfn main() { let _: HashM; }";
-        let offset = u32::try_from(source.find("HashM").expect("fixture should have cursor"))
+        let offset = u32::try_from(source.rfind("HashM").expect("fixture should have cursor"))
             .expect("fixture offset should fit");
-        let planner = AutoImportEditPlanner::new(source, offset, primary(offset));
+        let syntax = CompletionSyntaxContext::at(Some(source), offset + 5)
+            .expect("completion syntax should parse");
+        let planner = AutoImportEditPlanner::new(&syntax, primary(offset));
         assert!(
             planner
                 .plan(&hash_map_path(), "std::collections::HashMap")
@@ -323,7 +337,9 @@ mod tests {
         let source = "mod nested {\n    fn main() { let _: HashM; }\n}\n";
         let offset = u32::try_from(source.find("HashM").expect("fixture should have cursor"))
             .expect("fixture offset should fit");
-        let planner = AutoImportEditPlanner::new(source, offset, primary(offset));
+        let syntax = CompletionSyntaxContext::at(Some(source), offset + 5)
+            .expect("completion syntax should parse");
+        let planner = AutoImportEditPlanner::new(&syntax, primary(offset));
         let edit = planner
             .plan(&hash_map_path(), "std::collections::HashMap")
             .expect("module should accept a new import");
@@ -337,6 +353,47 @@ mod tests {
             )
             .expect("fixture offset should fit")
         );
+    }
+
+    #[test]
+    fn maps_use_edits_after_short_and_long_completion_prefixes() {
+        for prefix in ["H", "AnExtremelyLongCompletionPrefix"] {
+            let source =
+                format!("fn main() {{ let _: {prefix}; }}\nuse std::collections::BTreeMap;\n");
+            let start = u32::try_from(source.find(prefix).expect("fixture should have cursor"))
+                .expect("fixture offset should fit");
+            let end = start + u32::try_from(prefix.len()).expect("fixture prefix should fit");
+            let syntax = CompletionSyntaxContext::at(Some(&source), end)
+                .expect("completion syntax should parse");
+            let planner = AutoImportEditPlanner::new(
+                &syntax,
+                CompletionEdit {
+                    replace: Span {
+                        text: TextSpan { start, end },
+                    },
+                },
+            );
+            let edit = planner
+                .plan(&hash_map_path(), "std::collections::HashMap")
+                .expect("following use item should accept a coalesced edit");
+            let tree_start = u32::try_from(
+                source
+                    .find("std::collections::BTreeMap")
+                    .expect("fixture should contain use tree"),
+            )
+            .expect("fixture offset should fit");
+
+            assert_eq!(edit.replace.text.start, tree_start, "{prefix}");
+            assert_eq!(
+                edit.replace.text.end,
+                tree_start + u32::try_from("std::collections::BTreeMap".len()).expect("text fits"),
+                "{prefix}"
+            );
+            assert_eq!(
+                edit.new_text, "std::collections::{BTreeMap, HashMap}",
+                "{prefix}"
+            );
+        }
     }
 
     fn primary(start: u32) -> CompletionEdit {

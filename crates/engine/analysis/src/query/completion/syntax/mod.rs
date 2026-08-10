@@ -6,9 +6,9 @@
 //!
 //! Focused child classifiers recognize attributes, apostrophe forms, strings and macro tokens,
 //! paths, and item/signature positions. They return the completion-domain contexts from
-//! `site`; semantic resolvers never need to inspect parser nodes. A small number of
-//! classifiers may add speculative punctuation when Rust does not form the intended node until the
-//! next character is written.
+//! `site`; semantic resolvers never need to inspect parser nodes. Incomplete forms are recovered
+//! from that one tree's error nodes and neighboring tokens instead of by parsing punctuation-added
+//! variants of the whole file.
 
 mod apostrophe;
 mod attribute;
@@ -16,57 +16,35 @@ mod item;
 mod path;
 mod string;
 
+use std::sync::OnceLock;
+
 use rg_parse::{Span, TextSpan};
 use rg_syntax::{
-    AstNode as _, AstToken as _, Edition, SourceFile, SyntaxKind, SyntaxToken, TextSize, ast,
-    ast::IsString as _,
+    AstNode as _, AstToken as _, Edition, SourceFile, SyntaxKind, SyntaxToken, TextRange, TextSize,
+    ast,
 };
 
 use crate::query::completion::site::{
-    ItemListCompletionKind, PatternCompletionKind, SpecializedCompletionContext,
-    SyntaxCompletionContext,
+    CompletionSiteSyntax, ItemListCompletionKind, PatternCompletionKind,
+    SpecializedCompletionContext, StandaloneCompletionSiteSyntax, SyntaxCompletionContext,
 };
-
-/// Lazily builds syntax context only for completion paths that need source recovery.
-pub(super) struct CompletionSyntaxContextCache<'source> {
-    source_text: Option<&'source str>,
-    offset: u32,
-    loaded: bool,
-    context: Option<CompletionSyntaxContext<'source>>,
-}
-
-impl<'source> CompletionSyntaxContextCache<'source> {
-    pub(super) fn new(source_text: Option<&'source str>, offset: u32) -> Self {
-        Self {
-            source_text,
-            offset,
-            loaded: false,
-            context: None,
-        }
-    }
-
-    /// Returns parsed request-source context, building it at most once per request.
-    pub(super) fn get(&mut self) -> Option<&CompletionSyntaxContext<'source>> {
-        if !self.loaded {
-            self.context = CompletionSyntaxContext::at(self.source_text, self.offset);
-            self.loaded = true;
-        }
-
-        self.context.as_ref()
-    }
-}
 
 /// Speculatively parsed request buffer centered on one completion offset.
 ///
-/// The marker token makes incomplete text traversable with ordinary syntax ancestry. Methods on
-/// this type normalize that ancestry into completion contexts while retaining the original prefix
-/// and source ranges used by completion edits.
+/// The marker token makes incomplete text traversable with ordinary syntax ancestry. Construction
+/// performs the request's only full-source parse and immediately stores the normalized completion
+/// domain. Resolvers can inspect the same tree for small source-shape facts, but cannot trigger a
+/// second parse by asking for classification again.
 pub(super) struct CompletionSyntaxContext<'source> {
     source: &'source str,
     offset: u32,
     prefix: CompletionPrefix<'source>,
+    file: SourceFile,
     marker: SyntaxToken,
     string_marker: Option<SyntaxToken>,
+    source_map: CompletionSourceMap,
+    classification: Option<SyntaxCompletionContext>,
+    site_syntax: OnceLock<CompletionSiteSyntax>,
 }
 
 impl<'source> CompletionSyntaxContext<'source> {
@@ -94,24 +72,25 @@ impl<'source> CompletionSyntaxContext<'source> {
             },
         };
 
-        let marker = Self::marker_token(source, prefix_start, cursor, "")?;
-        let string_marker = Self::complete_string_marker(&marker).or_else(|| {
-            Self::marker_token(source, prefix_start, cursor, "\"")
-                .and_then(|marker| Self::complete_string_marker(&marker))
-        });
-        Some(Self {
+        let (file, marker, source_map) = Self::speculative_file(source, prefix_start, cursor)?;
+        let string_marker = Self::string_marker(&marker);
+        let mut context = Self {
             source,
             offset,
             prefix,
+            file,
             marker,
             string_marker,
-        })
+            source_map,
+            classification: None,
+            site_syntax: OnceLock::new(),
+        };
+        context.classification = context.classify_completion_context();
+        Some(context)
     }
 
-    fn complete_string_marker(marker: &SyntaxToken) -> Option<SyntaxToken> {
-        let literal = ast::String::cast(marker.clone())?;
-        literal.text_range_between_quotes()?;
-        literal
+    fn string_marker(marker: &SyntaxToken) -> Option<SyntaxToken> {
+        ast::String::cast(marker.clone())?
             .syntax()
             .text()
             .to_string()
@@ -150,8 +129,90 @@ impl<'source> CompletionSyntaxContext<'source> {
             .get(usize::try_from(span.text.start).ok()?..usize::try_from(span.text.end).ok()?)
     }
 
-    /// Normalizes speculative parser ancestry into completion-domain context.
-    pub(super) fn completion_context(&self) -> Option<SyntaxCompletionContext> {
+    /// Returns the exact editor buffer represented by original-source spans.
+    pub(super) fn source(&self) -> &'source str {
+        self.source
+    }
+
+    /// Returns the completion domain computed while the speculative tree was built.
+    pub(super) fn completion_context(&self) -> Option<&SyntaxCompletionContext> {
+        self.classification.as_ref()
+    }
+
+    /// Returns all syntax-to-semantic routing facts computed with the request's one tree walk.
+    pub(super) fn site_syntax(&self) -> CompletionSiteSyntax {
+        self.site_syntax
+            .get_or_init(|| self.classify_site_syntax())
+            .clone()
+    }
+
+    fn classify_site_syntax(&self) -> CompletionSiteSyntax {
+        let context = self.completion_context();
+        let empty_path = match context {
+            Some(SyntaxCompletionContext::EmptyPath(context)) => Some(*context),
+            Some(
+                SyntaxCompletionContext::Type(_)
+                | SyntaxCompletionContext::Pattern(_)
+                | SyntaxCompletionContext::ItemList(_)
+                | SyntaxCompletionContext::BodyMacro(_)
+                | SyntaxCompletionContext::ModuleMacro(_)
+                | SyntaxCompletionContext::ModuleDeclaration(_)
+                | SyntaxCompletionContext::Statement
+                | SyntaxCompletionContext::Expression
+                | SyntaxCompletionContext::Specialized(_),
+            )
+            | None => None,
+        };
+        let standalone = match context {
+            Some(SyntaxCompletionContext::ItemList(context))
+                if context.kind() == ItemListCompletionKind::TraitImpl =>
+            {
+                self.trait_impl_completion_syntax()
+                    .map(StandaloneCompletionSiteSyntax::TraitImpl)
+            }
+            Some(SyntaxCompletionContext::BodyMacro(context)) => {
+                Some(StandaloneCompletionSiteSyntax::BodyMacro {
+                    qualifier: context.qualifier().cloned(),
+                })
+            }
+            Some(SyntaxCompletionContext::ModuleMacro(context)) => {
+                Some(StandaloneCompletionSiteSyntax::ModuleMacro {
+                    qualifier: context.qualifier().cloned(),
+                })
+            }
+            Some(SyntaxCompletionContext::ModuleDeclaration(context)) => {
+                Some(StandaloneCompletionSiteSyntax::ModuleDeclaration {
+                    has_path_attribute: context.has_path_attribute(),
+                })
+            }
+            Some(
+                SyntaxCompletionContext::EmptyPath(_)
+                | SyntaxCompletionContext::Type(_)
+                | SyntaxCompletionContext::Pattern(_)
+                | SyntaxCompletionContext::ItemList(_)
+                | SyntaxCompletionContext::Statement
+                | SyntaxCompletionContext::Expression
+                | SyntaxCompletionContext::Specialized(_),
+            )
+            | None => None,
+        };
+        let prefix = self.prefix();
+        CompletionSiteSyntax::new(
+            self.inside_use_item(),
+            self.after_dot(),
+            self.after_colon_colon(),
+            self.empty_qualified_path(),
+            empty_path,
+            self.empty_record_owner(),
+            self.body_owner_start(),
+            standalone,
+            prefix.span(),
+            prefix.text().to_string(),
+        )
+    }
+
+    /// Normalizes speculative parser ancestry into one owned completion-domain context.
+    fn classify_completion_context(&self) -> Option<SyntaxCompletionContext> {
         if let Some(context) = self.specialized_completion_context() {
             return Some(SyntaxCompletionContext::Specialized(context));
         }
@@ -336,38 +397,52 @@ impl<'source> CompletionSyntaxContext<'source> {
         None
     }
 
-    /// Reparse the request with a small suffix after the speculative identifier.
-    ///
-    /// This is reserved for syntax whose parser node does not exist until its punctuation is
-    /// written, such as `mod pars$0` and `local_i$0` at item scope. Ordinary classification keeps
-    /// using the untouched suffix from the editor buffer.
-    fn marker_with_suffix(&self, suffix: &str) -> Option<SyntaxToken> {
-        Self::marker_token(
-            self.source,
-            usize::try_from(self.prefix.span().text.start).ok()?,
-            usize::try_from(self.offset).ok()?,
-            suffix,
-        )
-    }
-
-    fn marker_token(
+    /// Builds the one speculative tree shared by classification and source-edit planning.
+    fn speculative_file(
         source: &str,
         prefix_start: usize,
         cursor: usize,
-        suffix: &str,
-    ) -> Option<SyntaxToken> {
-        let mut speculative = String::with_capacity(
-            source.len() - (cursor - prefix_start) + Self::MARKER.len() + suffix.len(),
-        );
+    ) -> Option<(SourceFile, SyntaxToken, CompletionSourceMap)> {
+        let mut speculative =
+            String::with_capacity(source.len() - (cursor - prefix_start) + Self::MARKER.len());
         speculative.push_str(source.get(..prefix_start)?);
         speculative.push_str(Self::MARKER);
-        speculative.push_str(suffix);
         speculative.push_str(source.get(cursor..)?);
 
         // TODO: Thread the real package edition through completion syntax context.
         let file = SourceFile::parse(&speculative, Edition::CURRENT).tree();
         let marker_offset = TextSize::from(u32::try_from(prefix_start).ok()?);
-        file.syntax().token_at_offset(marker_offset).right_biased()
+        let marker = file
+            .syntax()
+            .token_at_offset(marker_offset)
+            .right_biased()?;
+        let marker_end = prefix_start.checked_add(Self::MARKER.len())?;
+        let source_map = CompletionSourceMap {
+            original_prefix: TextSpan {
+                start: u32::try_from(prefix_start).ok()?,
+                end: u32::try_from(cursor).ok()?,
+            },
+            speculative_marker: TextSpan {
+                start: u32::try_from(prefix_start).ok()?,
+                end: u32::try_from(marker_end).ok()?,
+            },
+        };
+        Some((file, marker, source_map))
+    }
+
+    /// Returns the speculative file retained for source-aware completion edits.
+    pub(super) fn speculative_file_tree(&self) -> &SourceFile {
+        &self.file
+    }
+
+    /// Returns a cursor inside the speculative marker for syntax containment queries.
+    pub(super) fn speculative_offset(&self) -> u32 {
+        self.source_map.speculative_marker.end
+    }
+
+    /// Maps a syntax-tree range back into the exact request buffer.
+    pub(super) fn original_span(&self, range: TextRange) -> Option<Span> {
+        self.source_map.original_span(range)
     }
 
     fn prefix_start(source: &str, cursor: usize) -> usize {
@@ -381,6 +456,47 @@ impl<'source> CompletionSyntaxContext<'source> {
 
     fn is_identifier_continue(ch: char) -> bool {
         ch == '_' || ch.is_ascii_alphanumeric()
+    }
+}
+
+/// Offset translation for replacing the typed prefix with the fixed completion marker.
+#[derive(Debug, Clone, Copy)]
+struct CompletionSourceMap {
+    original_prefix: TextSpan,
+    speculative_marker: TextSpan,
+}
+
+impl CompletionSourceMap {
+    fn original_span(self, range: TextRange) -> Option<Span> {
+        let start = u32::from(range.start());
+        let end = u32::from(range.end());
+        let marker = self.speculative_marker;
+
+        let mapped = if end <= marker.start {
+            TextSpan { start, end }
+        } else if marker.end <= start {
+            TextSpan {
+                start: self.after_marker_offset(start)?,
+                end: self.after_marker_offset(end)?,
+            }
+        } else if start <= marker.start && marker.end <= end {
+            TextSpan {
+                start,
+                end: self.after_marker_offset(end)?,
+            }
+        } else {
+            // A range cutting through only part of the synthetic token has no faithful source
+            // counterpart. Consumers should decline the edit rather than guess.
+            return None;
+        };
+        Some(Span { text: mapped })
+    }
+
+    fn after_marker_offset(self, offset: u32) -> Option<u32> {
+        let speculative_len =
+            i64::from(self.speculative_marker.end - self.speculative_marker.start);
+        let original_len = i64::from(self.original_prefix.end - self.original_prefix.start);
+        u32::try_from(i64::from(offset) - speculative_len + original_len).ok()
     }
 }
 
@@ -682,8 +798,9 @@ mod tests {
 
         for (label, fixture, expected) in cases {
             let (source, offset) = source_with_cursor(fixture);
-            let actual = CompletionSyntaxContext::from_source(&source, offset)
-                .and_then(|syntax| Some((syntax.completion_context()?, syntax.prefix().text())));
+            let actual = CompletionSyntaxContext::from_source(&source, offset).and_then(|syntax| {
+                Some((syntax.completion_context()?.clone(), syntax.prefix().text()))
+            });
 
             assert_eq!(actual, expected, "{label}");
         }
@@ -799,7 +916,7 @@ mod tests {
         for (label, fixture, expected) in cases {
             let (source, offset) = source_with_cursor(fixture);
             let actual = CompletionSyntaxContext::from_source(&source, offset)
-                .and_then(|syntax| syntax.completion_context());
+                .and_then(|syntax| syntax.completion_context().cloned());
 
             assert_eq!(actual, expected, "{label}");
         }
@@ -825,14 +942,14 @@ mod tests {
         for (label, fixture) in cases {
             let (source, offset) = source_with_cursor(fixture);
             let actual = CompletionSyntaxContext::from_source(&source, offset)
-                .and_then(|syntax| syntax.completion_context());
+                .and_then(|syntax| syntax.completion_context().cloned());
 
             assert_eq!(actual, None, "{label}");
         }
 
         let (source, offset) = source_with_cursor("fn main() { crate::macros::item_ma$0!(); }");
         let actual = CompletionSyntaxContext::from_source(&source, offset)
-            .and_then(|syntax| syntax.completion_context());
+            .and_then(|syntax| syntax.completion_context().cloned());
         assert_eq!(
             actual,
             Some(SyntaxCompletionContext::BodyMacro(

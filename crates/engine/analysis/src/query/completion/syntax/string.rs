@@ -44,18 +44,23 @@ impl<'source> CompletionSyntaxContext<'source> {
     /// Translate speculative string offsets back to the original request source.
     pub(super) fn string_content_span_impl(&self) -> Option<Span> {
         let literal = ast::String::cast(self.string_marker.as_ref()?.clone())?;
-        let speculative = literal.text_range_between_quotes()?;
-
-        // The speculative parse replaces only the ordinary identifier prefix with MARKER. Text
-        // before the cursor keeps its offsets; text after it must be shifted back by that delta.
-        let delta = i64::try_from(Self::MARKER.len()).ok()?
-            - i64::try_from(self.prefix.text().len()).ok()?;
-        let end = i64::from(u32::from(speculative.end())) - delta;
-        let end = u32::try_from(end).ok()?;
-        let start = u32::from(speculative.start());
-        (start <= self.offset && self.offset <= end).then_some(Span {
-            text: TextSpan { start, end },
-        })
+        let span = if let Some(speculative) = literal.text_range_between_quotes() {
+            self.original_span(speculative)?
+        } else {
+            // An unterminated literal has only its opening quote, so the generic string helper
+            // cannot expose a content range. The marker lies at the live end of that content.
+            let marker = literal.text().find(Self::MARKER)?;
+            let open_quote = literal.text().get(..marker)?.find('"')?;
+            let start = u32::from(literal.syntax().text_range().start())
+                .checked_add(u32::try_from(open_quote + 1).ok()?)?;
+            Span {
+                text: TextSpan {
+                    start,
+                    end: self.offset,
+                },
+            }
+        };
+        (span.text.start <= self.offset && self.offset <= span.text.end).then_some(span)
     }
 
     /// Select the expression immediately before a field-access completion marker.

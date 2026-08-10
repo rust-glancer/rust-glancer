@@ -96,7 +96,7 @@ impl KeywordCompletionResolver {
             return Ok(Vec::new());
         };
         let context = match syntax.completion_context() {
-            Some(SyntaxCompletionContext::Type(context)) => context,
+            Some(SyntaxCompletionContext::Type(context)) => *context,
             _ => TypeCompletionContext::General,
         };
         let candidates = KeywordCandidate::for_type(context);
@@ -140,7 +140,7 @@ impl KeywordCompletionResolver {
         let Some(context) = syntax.completion_context() else {
             return Ok(Vec::new());
         };
-        let candidates = KeywordCandidate::for_context(context);
+        let candidates = KeywordCandidate::for_context(context.clone());
         Ok(self.completion_items(&candidates, syntax, sort))
     }
 

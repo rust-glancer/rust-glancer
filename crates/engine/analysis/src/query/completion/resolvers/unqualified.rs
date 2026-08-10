@@ -44,6 +44,7 @@ use super::super::{
         DefinitionCompletionRenderer, DefinitionCompletionRequest, FunctionCompletionRenderer,
         FunctionCompletionRequest, PrimitiveTypeCompletionRenderer,
     },
+    syntax::CompletionSyntaxContext,
 };
 
 /// Combines unqualified candidate families while preserving namespace-aware shadowing.
@@ -65,6 +66,7 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
     pub(super) fn completions(
         &self,
         site: UnqualifiedCompletionSite,
+        syntax_context: Option<&CompletionSyntaxContext<'_>>,
     ) -> anyhow::Result<Vec<CompletionItem>> {
         let context = site.context();
         let filter = UnqualifiedCompletionFilter::from(context);
@@ -206,15 +208,21 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
         .context("render module completion candidates")?;
 
         if !auto_import_candidates.is_empty() {
-            let source_text = match self.query.source_text {
-                Some(source_text) => Some(source_text.to_string()),
-                None => self
-                    .analysis
+            // Exact request syntax is shared with the coordinator. Semantic-only API callers do
+            // not have that tree, so load saved source only for this source-edit policy and still
+            // build at most one syntax tree on their request path.
+            let loaded_source = if syntax_context.is_none() {
+                self.analysis
                     .source_text_for_file(self.query.crate_ref.package, self.query.file_id)
-                    .context("load auto-import source text")?,
+                    .context("load auto-import source text")?
+            } else {
+                None
             };
-            if let Some(source_text) = source_text {
-                let planner = AutoImportEditPlanner::new(&source_text, self.query.offset, edit);
+            let loaded_syntax = loaded_source
+                .as_deref()
+                .and_then(|source| CompletionSyntaxContext::at(Some(source), self.query.offset));
+            if let Some(syntax_context) = syntax_context.or(loaded_syntax.as_ref()) {
+                let planner = AutoImportEditPlanner::new(syntax_context, edit);
                 self.push_auto_import_completions(
                     syntax,
                     auto_import_candidates,
@@ -578,7 +586,7 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
         candidates: Vec<DefinitionCompletionCandidate>,
         filter: UnqualifiedCompletionFilter,
         occupied: &HashSet<(String, NameNamespace)>,
-        planner: &AutoImportEditPlanner<'_>,
+        planner: &AutoImportEditPlanner<'_, '_>,
         edit: CompletionEdit,
         completions: &mut Vec<CompletionItem>,
     ) -> anyhow::Result<()> {

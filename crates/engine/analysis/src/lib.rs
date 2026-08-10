@@ -13,7 +13,7 @@ mod source_symbol;
 mod tests;
 
 pub use query::{
-    completion::{CompletionClientCapabilities, CompletionQuery},
+    completion::{CompletionClientCapabilities, CompletionQuery, CompletionSource},
     references::{ReferenceQuery, ReferenceSearchFile, ReferenceSearchLabel},
 };
 pub use rg_ir_view::SymbolKind;

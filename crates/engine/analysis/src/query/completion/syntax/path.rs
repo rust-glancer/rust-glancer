@@ -22,7 +22,6 @@ impl CompletionSyntaxContext<'_> {
         }
 
         Self::empty_record_owner_at(&self.marker)
-            .or_else(|| Self::empty_record_owner_at(&self.marker_with_suffix(" }")?))
     }
 
     fn empty_record_owner_at(marker: &rg_syntax::SyntaxToken) -> Option<Path> {
