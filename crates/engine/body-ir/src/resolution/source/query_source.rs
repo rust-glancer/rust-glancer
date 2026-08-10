@@ -109,6 +109,10 @@ where
         self.def_maps.def_map_for_origin(origin)
     }
 
+    fn crate_is_proc_macro(&self, crate_ref: CrateRef) -> Result<bool, PackageStoreError> {
+        self.def_maps.crate_is_proc_macro(crate_ref)
+    }
+
     fn extern_root(
         &self,
         crate_ref: CrateRef,

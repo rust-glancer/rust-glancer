@@ -220,6 +220,7 @@ mod tests {
             rg_text::RustEdition::Edition2024,
             vec![CrateData::new(
                 CargoTargetId(0),
+                rg_workspace::TargetKind::Lib,
                 format!("{name}_lib"),
                 None,
                 Default::default(),

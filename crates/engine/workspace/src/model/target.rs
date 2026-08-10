@@ -1,5 +1,6 @@
-use rg_std::MemorySize;
+use rg_std::{MemorySize, Shrink};
 use std::path::PathBuf;
+use wincode::{SchemaRead, SchemaWrite};
 
 /// Normalized target metadata with one target kind per target.
 #[derive(Debug, Clone, PartialEq, Eq, MemorySize)]
@@ -13,7 +14,18 @@ pub struct CargoTarget {
 ///
 /// Analysis recognizes a small set of target kinds directly. Unknown or less common kinds are kept
 /// as stable display strings instead of becoming special model variants.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, derive_more::Display, MemorySize)]
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    Eq,
+    Hash,
+    derive_more::Display,
+    SchemaRead,
+    SchemaWrite,
+    MemorySize,
+    Shrink,
+)]
 pub enum TargetKind {
     #[display("lib")]
     Lib,
@@ -40,6 +52,10 @@ impl TargetKind {
 
     pub fn is_custom_build(&self) -> bool {
         matches!(self, Self::CustomBuild)
+    }
+
+    pub fn is_proc_macro(&self) -> bool {
+        matches!(self, Self::ProcMacro)
     }
 
     /// Cargo enables `cfg(test)` for test-like targets without reporting it in rustc cfg output.

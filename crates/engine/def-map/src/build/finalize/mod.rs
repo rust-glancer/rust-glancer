@@ -870,6 +870,7 @@ fn freeze_crate_data(state: &CrateState) -> CrateData {
     // prelude rather than pretending any of these names are child modules of the crate root.
     CrateData::new(
         state.cargo_target,
+        state.target_kind.clone(),
         state.crate_name.clone(),
         Some(state.root_module),
         state.extern_prelude.freeze(),

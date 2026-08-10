@@ -8,6 +8,7 @@ use rg_ir_model::{
     CrateRef, DefId, DefMapRef, ImportRef, LocalDefRef, LocalEnumVariantRef, LocalImplRef,
     ModuleRef,
 };
+use rg_std::UniqueVec;
 use rg_text::Name;
 
 use super::{
@@ -29,6 +30,9 @@ pub trait DefMapSource {
     type Error;
 
     fn def_map_for_origin(&self, origin: DefMapRef) -> Result<Option<&DefMap>, Self::Error>;
+
+    /// Whether `crate_ref` is a host-side proc-macro implementation crate.
+    fn crate_is_proc_macro(&self, crate_ref: CrateRef) -> Result<bool, Self::Error>;
 
     fn module_data(&self, module_ref: ModuleRef) -> Result<Option<&ModuleData>, Self::Error> {
         Ok(self
@@ -110,6 +114,10 @@ impl<T: DefMapSource + ?Sized> DefMapSource for &T {
         (**self).def_map_for_origin(origin)
     }
 
+    fn crate_is_proc_macro(&self, crate_ref: CrateRef) -> Result<bool, Self::Error> {
+        (**self).crate_is_proc_macro(crate_ref)
+    }
+
     fn extern_root(
         &self,
         crate_ref: CrateRef,
@@ -150,17 +158,28 @@ where
         ScopeResolver::new(self)
     }
 
-    /// Returns crates whose DefMap roots are visible from `root`.
+    /// Returns crates whose ordinary semantic items can participate in lookup from `root`.
     ///
-    /// This is the crate-level language visibility closure: the crate itself plus crates named
-    /// by external roots and preludes reachable from it. It is intentionally separate from package
-    /// transaction inclusion, which is only a storage/materialization boundary.
-    pub fn visible_crates_from(&self, root: CrateRef) -> Result<Vec<CrateRef>, S::Error> {
+    /// A proc-macro dependency exposes macro identities, but its implementation is a host-side
+    /// program rather than a Rust library linked into the consuming crate. Stop traversal at that
+    /// edge so neither the implementation store nor its dependencies contribute methods, impls,
+    /// or language items to the consumer. The root is always included: while analysing a
+    /// proc-macro crate, its own functions and normal dependencies are ordinary local semantics.
+    ///
+    /// For example, `app -> runtime -> derive_macro -> parser` contributes `app` and `runtime` to
+    /// the app's item lookup. Analysing `derive_macro` itself contributes `derive_macro` and
+    /// `parser`.
+    pub fn item_lookup_crates_from(&self, root: CrateRef) -> Result<Vec<CrateRef>, S::Error> {
         let mut visible_crates = Vec::new();
+        let mut visited_crates = UniqueVec::new();
         let mut pending_crates = vec![root];
 
         while let Some(crate_ref) = pending_crates.pop() {
-            if visible_crates.contains(&crate_ref) {
+            if !visited_crates.push(crate_ref) {
+                continue;
+            }
+
+            if crate_ref != root && self.source.crate_is_proc_macro(crate_ref)? {
                 continue;
             }
             visible_crates.push(crate_ref);

@@ -92,6 +92,10 @@ impl DefMapSource for TraitSelectionFixture {
         Ok((origin_ref == origin()).then_some(&self.def_map))
     }
 
+    fn crate_is_proc_macro(&self, _crate_ref: CrateRef) -> Result<bool, Self::Error> {
+        Ok(false)
+    }
+
     fn extern_root(
         &self,
         _target: CrateRef,

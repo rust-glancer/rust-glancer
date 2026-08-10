@@ -59,6 +59,10 @@ impl DefMapSource for BodyBuildQuerySource<'_, '_> {
         }
     }
 
+    fn crate_is_proc_macro(&self, crate_ref: CrateRef) -> Result<bool, PackageStoreError> {
+        self.def_map.crate_is_proc_macro(crate_ref)
+    }
+
     fn extern_root(
         &self,
         crate_ref: CrateRef,
