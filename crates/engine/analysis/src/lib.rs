@@ -1,4 +1,10 @@
-mod completion_site;
+//! Transport-neutral editor queries over one frozen project snapshot.
+//!
+//! `rg_ir_view` exposes reusable semantic and source views over the indexed stores. This crate
+//! turns those facts into editor operations: navigation, hover, inlay hints, references, rename,
+//! symbols, and completion. Its result models deliberately contain no LSP types, so protocol
+//! conversion stays outside the analysis boundary.
+
 mod model;
 mod query;
 mod source_symbol;
@@ -7,25 +13,31 @@ mod source_symbol;
 mod tests;
 
 pub use query::{
-    completion::{CompletionClientCapabilities, CompletionQuery},
+    completion::{CompletionClientCapabilities, CompletionQuery, CompletionSource},
     references::{ReferenceQuery, ReferenceSearchFile, ReferenceSearchLabel},
 };
 pub use rg_ir_view::SymbolKind;
 
+use anyhow::Context as _;
 use rg_ir_model::{CrateRef, PackageSlot};
 use rg_ir_view::{IndexedViewDb, ty::IndexedType};
-use rg_parse::{FileId, ParseDb, Span};
+use rg_parse::{FileId, ModuleFileContext, ParseDb, Span};
 
 use crate::source_symbol::{SourceSymbol, SourceSymbolIndex, SourceSymbolResolver};
 
 pub use self::model::{
-    CompletionApplicability, CompletionEdit, CompletionInsertText, CompletionItem, CompletionKind,
-    CompletionTarget, DocumentSymbol, HoverBlock, HoverInfo, InlayHint, InlayHintKind,
-    InlayHintPosition, KeywordCompletion, NavigationTarget, NavigationTargetKind,
-    ReferenceLocation, RenameEdit, RenameResult, RenameTarget, SymbolAt, WorkspaceSymbol,
+    CompletionAdditionalEdit, CompletionApplicability, CompletionEdit, CompletionInsertText,
+    CompletionItem, CompletionKind, CompletionTarget, DocumentSymbol, HoverBlock, HoverInfo,
+    InlayHint, InlayHintKind, InlayHintPosition, KeywordCompletion, NavigationTarget,
+    NavigationTargetKind, ReferenceLocation, RenameEdit, RenameResult, RenameTarget, SymbolAt,
+    SyntheticCompletionTarget, WorkspaceSymbol,
 };
 
-/// High-level LSP-facing query API over one request-scoped project transaction.
+/// Request-scoped façade for editor queries over one frozen project view.
+///
+/// Most operations start with a file and source offset, then combine semantic facts from
+/// `IndexedViewDb` with exact source text from the matching parse snapshot. Results use the
+/// transport-neutral models exported by this crate; the LSP layer only converts those models.
 pub struct Analysis<'a> {
     view_db: IndexedViewDb<'a>,
     source_text: SourceTextView<'a>,
@@ -53,6 +65,14 @@ impl<'a> Analysis<'a> {
         self.source_text.text_for_span(package, file, span)
     }
 
+    pub(crate) fn source_text_for_file(
+        &self,
+        package: PackageSlot,
+        file: FileId,
+    ) -> anyhow::Result<Option<String>> {
+        self.source_text.file_text(package, file)
+    }
+
     pub(crate) fn source_line_for_offset(
         &self,
         package: PackageSlot,
@@ -60,6 +80,20 @@ impl<'a> Analysis<'a> {
         offset: u32,
     ) -> anyhow::Result<Option<u32>> {
         self.source_text.line_for_offset(package, file, offset)
+    }
+
+    pub(crate) fn module_file_candidates(
+        &self,
+        crate_ref: CrateRef,
+        file: FileId,
+        inline_module_path: &[String],
+    ) -> anyhow::Result<Vec<String>> {
+        self.source_text
+            .module_file_candidates(crate_ref, file, inline_module_path)
+    }
+
+    pub(crate) fn declared_features(&self, package: PackageSlot) -> &[String] {
+        self.source_text.declared_features(package)
     }
 
     /// Returns the smallest known symbol under a source offset.
@@ -218,9 +252,14 @@ impl<'a> Analysis<'a> {
 
     /// Returns best-effort completion candidates for a source offset.
     ///
-    /// The query carries the source position plus editor-local facts, such as live source text
-    /// and client snippet support. Recognized sites include member access, paths, lexical names,
-    /// record fields, and keywords.
+    /// Semantic sites cover dot members and postfix transforms, qualified and unqualified names,
+    /// imports, patterns, record fields, associated type bindings, and missing trait members.
+    /// Request-local syntax also supplies keywords, module declarations and macros, attributes,
+    /// lifetimes and labels, restricted visibility, const expressions, and recognized
+    /// string/macro grammars.
+    ///
+    /// The query carries the source position plus editor-local facts needed by those providers,
+    /// such as the live source buffer and snippet support.
     pub fn completions_at(
         &self,
         query: CompletionQuery<'_>,
@@ -243,10 +282,12 @@ impl<'a> Analysis<'a> {
     }
 }
 
-/// Read-only source text view paired with one analysis snapshot.
+/// Source-side companion to the indexed facts used by `Analysis`.
 ///
-/// Edit-planning queries need exact source snippets for syntax-preserving rewrites. Keeping that
-/// access here lets indexed views stay focused on semantic facts.
+/// Editor queries need facts that are intentionally absent from semantic indexes: exact source
+/// slices for rename and inlay labels, full files for edit planning, line positions, declared
+/// Cargo features, and conventional sibling files for `mod name;`. Keeping that access here lets
+/// `rg_ir_view` stay focused on reusable indexed facts.
 #[derive(Debug, Clone, Copy)]
 pub struct SourceTextView<'a> {
     parse: &'a ParseDb,
@@ -255,6 +296,37 @@ pub struct SourceTextView<'a> {
 impl<'a> SourceTextView<'a> {
     pub fn new(parse: &'a ParseDb) -> Self {
         Self { parse }
+    }
+
+    fn declared_features(&self, package: PackageSlot) -> &[String] {
+        self.parse
+            .package(package.0)
+            .map(rg_parse::Package::declared_features)
+            .unwrap_or_default()
+    }
+
+    /// Lists conventional out-of-line child modules below one file-backed source position.
+    fn module_file_candidates(
+        &self,
+        crate_ref: CrateRef,
+        file: FileId,
+        inline_module_path: &[String],
+    ) -> anyhow::Result<Vec<String>> {
+        let Some(parsed_file) = self
+            .parse
+            .package(crate_ref.package.0)
+            .and_then(|package| package.parsed_file(file))
+        else {
+            return Ok(Vec::new());
+        };
+
+        let mut context = ModuleFileContext::from_definition_file(parsed_file.path());
+        for module_name in inline_module_path {
+            context = context.descend(module_name);
+        }
+        context
+            .candidate_module_names()
+            .context("list module declaration completion candidates")
     }
 
     fn text_for_span(
@@ -271,6 +343,20 @@ impl<'a> SourceTextView<'a> {
             return Ok(None);
         };
         parsed_file.text_for_span(span)
+    }
+
+    fn file_text(&self, package: PackageSlot, file: FileId) -> anyhow::Result<Option<String>> {
+        let Some(parsed_file) = self
+            .parse
+            .package(package.0)
+            .and_then(|package| package.parsed_file(file))
+        else {
+            return Ok(None);
+        };
+        let text = parsed_file
+            .source_text()
+            .context("load completion source file text")?;
+        Ok(Some(text.to_string()))
     }
 
     fn line_for_offset(

@@ -119,6 +119,14 @@ impl DefMapSource for BodyIrFixture {
         })
     }
 
+    fn crate_is_proc_macro(&self, crate_ref: CrateRef) -> Result<bool, Self::Error> {
+        Ok(self
+            .def_map_db()
+            .resident_package(crate_ref.package)
+            .and_then(|package| package.crate_data(crate_ref.crate_id))
+            .is_some_and(rg_def_map::CrateData::is_proc_macro))
+    }
+
     fn extern_root(
         &self,
         crate_ref: CrateRef,

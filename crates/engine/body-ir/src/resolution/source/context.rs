@@ -6,11 +6,12 @@
 
 use rg_def_map::{DefMapQuery, DefMapSource};
 use rg_ir_model::{BodyRef, Path, ScopeId};
+use rg_item_tree::TypeRef;
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::{ItemLookupIndex, ItemStoreQuery, ItemStoreSource, TypePathResolution};
 use rg_ty::{
-    Autoderef, ImplMatcher, ItemPathQuery, SemanticSignatureQuery, TraitSelectionQuery,
-    TraitSelectionSession, TyContext, TypeLoweringAnchor, TypePathResolver,
+    AssociatedItemCandidateRef, Autoderef, ImplMatcher, ItemPathQuery, SemanticSignatureQuery,
+    TraitSelectionQuery, TraitSelectionSession, TyContext, TypeLoweringAnchor, TypePathResolver,
 };
 
 use crate::{BodyData, BodyView, ir::BodyQueryView};
@@ -141,6 +142,16 @@ impl<'a, D, I> BodyResolutionContext<'a, D, I> {
     pub(crate) fn item_lookup_index(&self) -> &'a ItemLookupIndex {
         self.ty.lookup_index()
     }
+
+    pub(crate) fn ty_context(
+        &self,
+    ) -> TyContext<'a, BodyQuerySource<'a, D, I>, BodyQuerySource<'a, D, I>>
+    where
+        D: Clone,
+        I: Clone,
+    {
+        self.ty.clone()
+    }
 }
 
 impl<'a, D, I> BodyResolutionContext<'a, D, I>
@@ -199,6 +210,28 @@ where
 
     pub(crate) fn associated_items(&self) -> BodyAssociatedItemQuery<'a, D, I> {
         BodyAssociatedItemQuery::new(self.clone())
+    }
+
+    /// Return every associated declaration that may follow a rich body path prefix.
+    ///
+    /// This is the narrow public adapter used by editor views. The body query remains private so
+    /// callers cannot accidentally bypass body-local item overlays or owner-scoped type lowering.
+    pub fn associated_item_candidates(
+        &self,
+        scope: ScopeId,
+        prefix: &crate::BodyAssociatedPathPrefix,
+    ) -> Result<Vec<AssociatedItemCandidateRef>, PackageStoreError> {
+        self.associated_items().candidates_for_prefix(scope, prefix)
+    }
+
+    /// Return declarations from the explicitly named trait and its supertraits.
+    pub fn trait_associated_item_candidates(
+        &self,
+        scope: ScopeId,
+        trait_ref: &TypeRef,
+    ) -> Result<Vec<AssociatedItemCandidateRef>, PackageStoreError> {
+        self.associated_items()
+            .candidates_for_trait_ref(scope, trait_ref)
     }
 
     pub(crate) fn traits(&self) -> BodyTraitQuery<'a, D, I> {

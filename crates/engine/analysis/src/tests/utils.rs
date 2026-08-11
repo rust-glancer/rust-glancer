@@ -4,9 +4,10 @@ use expect_test::Expect;
 
 use crate::{
     Analysis, CompletionApplicability, CompletionClientCapabilities, CompletionInsertText,
-    CompletionItem, CompletionQuery, DocumentSymbol, HoverInfo, InlayHint, NavigationTarget,
-    ReferenceLocation, ReferenceQuery as AnalysisReferenceQuery, ReferenceSearchFile, RenameEdit,
-    RenameResult, RenameTarget, SourceTextView, SymbolAt, WorkspaceSymbol,
+    CompletionItem, CompletionKind, CompletionQuery, DocumentSymbol, HoverInfo, InlayHint,
+    NavigationTarget, ReferenceLocation, ReferenceQuery as AnalysisReferenceQuery,
+    ReferenceSearchFile, RenameEdit, RenameResult, RenameTarget, SourceTextView, SymbolAt,
+    WorkspaceSymbol,
 };
 use rg_body_ir::{ExprData, ExprKind};
 use rg_def_map::testonly::DefMapFixture;
@@ -97,6 +98,7 @@ pub(super) struct AnalysisQuery {
     marker: &'static str,
     target: AnalysisTarget,
     kind: AnalysisQueryKind,
+    completion_label_prefix: Option<&'static str>,
 }
 
 impl AnalysisQuery {
@@ -130,6 +132,39 @@ impl AnalysisQuery {
 
     pub(super) fn complete_verbose(title: &'static str, marker: &'static str) -> Self {
         Self::new(title, marker, AnalysisQueryKind::CompletionsAtVerbose)
+    }
+
+    /// Run completion with the saved fixture text supplied as the request-local editor snapshot.
+    pub(super) fn complete_with_source(title: &'static str, marker: &'static str) -> Self {
+        Self::new(title, marker, AnalysisQueryKind::CompletionsAtWithSource)
+    }
+
+    pub(super) fn complete_verbose_with_source(title: &'static str, marker: &'static str) -> Self {
+        Self::new(
+            title,
+            marker,
+            AnalysisQueryKind::CompletionsAtVerboseWithSource,
+        )
+    }
+
+    /// Render only keyword rows from a full request-local completion query.
+    pub(super) fn complete_keywords_with_source(title: &'static str, marker: &'static str) -> Self {
+        Self::new(
+            title,
+            marker,
+            AnalysisQueryKind::CompletionKeywordsAtWithSource,
+        )
+    }
+
+    pub(super) fn complete_keywords_verbose_with_source(
+        title: &'static str,
+        marker: &'static str,
+    ) -> Self {
+        Self::new(
+            title,
+            marker,
+            AnalysisQueryKind::CompletionKeywordsAtVerboseWithSource,
+        )
     }
 
     pub(super) fn hover(title: &'static str, marker: &'static str) -> Self {
@@ -166,12 +201,19 @@ impl AnalysisQuery {
         self
     }
 
+    /// Restrict a completion snapshot to the rows that an editor would keep for this prefix.
+    pub(super) fn matching(mut self, label_prefix: &'static str) -> Self {
+        self.completion_label_prefix = Some(label_prefix);
+        self
+    }
+
     fn new(title: &'static str, marker: &'static str, kind: AnalysisQueryKind) -> Self {
         Self {
             title,
             marker,
             target: AnalysisTarget::lib(),
             kind,
+            completion_label_prefix: None,
         }
     }
 }
@@ -270,6 +312,10 @@ enum AnalysisQueryKind {
     TypeAt,
     CompletionsAt,
     CompletionsAtVerbose,
+    CompletionsAtWithSource,
+    CompletionsAtVerboseWithSource,
+    CompletionKeywordsAtWithSource,
+    CompletionKeywordsAtVerboseWithSource,
     Hover,
 }
 
@@ -666,28 +712,71 @@ impl<'a> AnalysisQuerySnapshot<'a> {
                 .expect("string writes should not fail");
             }
             AnalysisQueryKind::CompletionsAt => {
-                let query = CompletionQuery::new(target, file_id, offset).with_client_capabilities(
-                    CompletionClientCapabilities::default().with_snippet_support(true),
-                );
-                self.render_completions(
-                    self.db
-                        .analysis()
-                        .completions_at(query)
-                        .expect("fixture completion query should resolve"),
-                    &mut dump,
-                );
+                let completion_query = CompletionQuery::new(target, file_id, offset)
+                    .with_client_capabilities(
+                        CompletionClientCapabilities::default().with_snippet_support(true),
+                    );
+                let mut completions = self
+                    .db
+                    .analysis()
+                    .completions_at(completion_query)
+                    .expect("fixture completion query should resolve");
+                Self::filter_completion_labels(query, &mut completions);
+                self.render_completions(completions, &mut dump);
             }
             AnalysisQueryKind::CompletionsAtVerbose => {
-                let query = CompletionQuery::new(target, file_id, offset).with_client_capabilities(
-                    CompletionClientCapabilities::default().with_snippet_support(true),
-                );
-                self.render_completions_verbose(
-                    self.db
-                        .analysis()
-                        .completions_at(query)
-                        .expect("fixture completion query should resolve"),
-                    &mut dump,
-                );
+                let completion_query = CompletionQuery::new(target, file_id, offset)
+                    .with_client_capabilities(
+                        CompletionClientCapabilities::default().with_snippet_support(true),
+                    );
+                let mut completions = self
+                    .db
+                    .analysis()
+                    .completions_at(completion_query)
+                    .expect("fixture completion query should resolve");
+                Self::filter_completion_labels(query, &mut completions);
+                self.render_completions_verbose(completions, &mut dump);
+            }
+            AnalysisQueryKind::CompletionsAtWithSource
+            | AnalysisQueryKind::CompletionsAtVerboseWithSource
+            | AnalysisQueryKind::CompletionKeywordsAtWithSource
+            | AnalysisQueryKind::CompletionKeywordsAtVerboseWithSource => {
+                let source_text = self
+                    .db
+                    .parse_db()
+                    .package(target.package.0)
+                    .expect("completion package should exist")
+                    .parsed_file(file_id)
+                    .expect("completion file should exist")
+                    .source_text()
+                    .expect("completion source text should load");
+                let completion_query = CompletionQuery::new(target, file_id, offset)
+                    .with_source_text(&source_text)
+                    .with_client_capabilities(
+                        CompletionClientCapabilities::default().with_snippet_support(true),
+                    );
+                let mut completions = self
+                    .db
+                    .analysis()
+                    .completions_at(completion_query)
+                    .expect("fixture completion query should resolve");
+                Self::filter_completion_labels(query, &mut completions);
+                if matches!(
+                    query.kind,
+                    AnalysisQueryKind::CompletionKeywordsAtWithSource
+                        | AnalysisQueryKind::CompletionKeywordsAtVerboseWithSource
+                ) {
+                    completions.retain(|completion| completion.kind == CompletionKind::Keyword);
+                }
+                if matches!(
+                    query.kind,
+                    AnalysisQueryKind::CompletionsAtVerboseWithSource
+                        | AnalysisQueryKind::CompletionKeywordsAtVerboseWithSource
+                ) {
+                    self.render_completions_verbose(completions, &mut dump);
+                } else {
+                    self.render_completions(completions, &mut dump);
+                }
             }
             AnalysisQueryKind::Hover => {
                 self.render_hover(
@@ -703,6 +792,12 @@ impl<'a> AnalysisQuerySnapshot<'a> {
         }
 
         dump
+    }
+
+    fn filter_completion_labels(query: &AnalysisQuery, completions: &mut Vec<CompletionItem>) {
+        if let Some(prefix) = query.completion_label_prefix {
+            completions.retain(|completion| completion.label.starts_with(prefix));
+        }
     }
 
     fn query_location(&self, query: &AnalysisQuery) -> (CrateRef, FileId, u32) {
@@ -987,6 +1082,9 @@ impl<'a> AnalysisQuerySnapshot<'a> {
             if let Some(docs) = &completion.documentation {
                 writeln!(dump, "  docs: {docs}").expect("string writes should not fail");
             }
+            if let Some(filter_text) = &completion.filter_text {
+                writeln!(dump, "  filter: {filter_text}").expect("string writes should not fail");
+            }
             writeln!(dump, "  sort: {}", completion.sort_text)
                 .expect("string writes should not fail");
             if let Some(edit) = completion.edit {
@@ -994,8 +1092,22 @@ impl<'a> AnalysisQuerySnapshot<'a> {
                 writeln!(dump, "  replace: {}..{}", span.text.start, span.text.end)
                     .expect("string writes should not fail");
             }
-            if let CompletionInsertText::Snippet(snippet) = &completion.insert_text {
-                writeln!(dump, "  snippet: {snippet}").expect("string writes should not fail");
+            for edit in &completion.additional_edits {
+                writeln!(
+                    dump,
+                    "  additional: {}..{} => {:?}",
+                    edit.replace.text.start, edit.replace.text.end, edit.new_text
+                )
+                .expect("string writes should not fail");
+            }
+            match &completion.insert_text {
+                CompletionInsertText::Plain => {}
+                CompletionInsertText::Text(text) => {
+                    writeln!(dump, "  insert: {text}").expect("string writes should not fail");
+                }
+                CompletionInsertText::Snippet(snippet) => {
+                    writeln!(dump, "  snippet: {snippet}").expect("string writes should not fail");
+                }
             }
         }
     }

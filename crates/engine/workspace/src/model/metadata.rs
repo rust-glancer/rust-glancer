@@ -133,6 +133,7 @@ impl WorkspaceMetadata {
             is_workspace_member: false,
             manifest_path: sources.library_root().join(krate.name()).join("Cargo.toml"),
             cfg_options,
+            declared_features: Vec::new(),
             targets: vec![CargoTarget {
                 name: krate.name().to_string(),
                 kind: TargetKind::Lib,

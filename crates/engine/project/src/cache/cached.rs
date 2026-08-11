@@ -148,6 +148,8 @@ impl From<RustEdition> for CachedRustEdition {
 pub enum CachedTargetKind {
     #[display("lib")]
     Lib,
+    #[display("proc-macro")]
+    ProcMacro,
     #[display("bin")]
     Bin,
     #[display("example")]
@@ -166,6 +168,7 @@ impl CachedTargetKind {
     pub(super) fn from_workspace(kind: &TargetKind) -> Self {
         match kind {
             TargetKind::Lib => Self::Lib,
+            TargetKind::ProcMacro => Self::ProcMacro,
             TargetKind::Bin => Self::Bin,
             TargetKind::Example => Self::Example,
             TargetKind::Test => Self::Test,
@@ -178,12 +181,13 @@ impl CachedTargetKind {
     fn sort_order(&self) -> u8 {
         match self {
             Self::Lib => 0,
-            Self::Bin => 1,
-            Self::Example => 2,
-            Self::Test => 3,
-            Self::Bench => 4,
-            Self::CustomBuild => 5,
-            Self::Other(_) => 6,
+            Self::ProcMacro => 1,
+            Self::Bin => 2,
+            Self::Example => 3,
+            Self::Test => 4,
+            Self::Bench => 5,
+            Self::CustomBuild => 6,
+            Self::Other(_) => 7,
         }
     }
 }

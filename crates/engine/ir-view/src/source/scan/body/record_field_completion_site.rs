@@ -55,7 +55,7 @@ impl<'txn, 'db> RecordFieldCompletionSiteScanner<'txn, 'db> {
         let mut best = NarrowestSourceSite::new();
 
         for (body_ref, body) in self.body_ir.bodies(self.crate_ref, Some(self.file_id))? {
-            if !body.source().span.contains(self.offset) {
+            if !body.source().span.touches(self.offset) {
                 continue;
             }
 

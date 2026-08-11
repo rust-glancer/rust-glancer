@@ -533,9 +533,24 @@ impl LspEngineFixture {
             if let Some(detail) = &completion.detail {
                 writeln!(rendered, "  detail: {detail}").expect("snapshot should be writable");
             }
+            if let Some(filter_text) = &completion.filter_text {
+                writeln!(rendered, "  filter: {filter_text}").expect("snapshot should be writable");
+            }
 
             if let Some(edit) = &completion.text_edit {
                 self.render_completion_edit(rendered, path, edit);
+            }
+            if let Some(edits) = &completion.additional_text_edits {
+                for edit in edits {
+                    writeln!(
+                        rendered,
+                        "  additional: {}:{} -> {}",
+                        self.render_path(path),
+                        Self::render_range(edit.range),
+                        Self::render_text(&edit.new_text),
+                    )
+                    .expect("snapshot should be writable");
+                }
             }
         }
     }

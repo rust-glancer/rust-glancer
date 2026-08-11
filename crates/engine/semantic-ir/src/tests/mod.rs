@@ -8,6 +8,198 @@ use self::utils::{
 };
 
 #[test]
+fn proc_macro_exports_do_not_lower_as_duplicate_functions() {
+    let fixture = crate::testonly::SemanticIrFixture::build(
+        r#"
+//- /Cargo.toml
+[package]
+name = "semantic_proc_macros"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+proc-macro = true
+
+//- /src/lib.rs
+extern crate proc_macro;
+
+#[proc_macro]
+pub fn emit(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
+    input
+}
+
+#[proc_macro_attribute]
+pub fn traced(
+    _attr: proc_macro::TokenStream,
+    item: proc_macro::TokenStream,
+) -> proc_macro::TokenStream {
+    item
+}
+
+#[proc_macro_derive(Stored)]
+pub fn stored(_item: proc_macro::TokenStream) -> proc_macro::TokenStream {
+    proc_macro::TokenStream::new()
+}
+"#,
+    );
+    let crate_ref = fixture
+        .def_map_fixture()
+        .crate_ref("semantic_proc_macros", rg_workspace::TargetKind::ProcMacro);
+    let def_map = fixture
+        .resident_def_map(crate_ref)
+        .expect("proc-macro def map should exist");
+    let items = fixture
+        .resident_crate_ir(crate_ref)
+        .expect("proc-macro semantic items should exist");
+
+    let mut function_names = items
+        .functions()
+        .iter()
+        .map(|function| function.name.to_string())
+        .collect::<Vec<_>>();
+    function_names.sort();
+    assert_eq!(function_names, ["emit", "stored", "traced"]);
+
+    for local_def_ref in def_map.local_def_refs() {
+        let local_def = def_map
+            .local_def(local_def_ref.local_def)
+            .expect("local definition should exist");
+        let semantic_item = items.item_for_local_def(local_def_ref.local_def);
+        match local_def.kind {
+            rg_def_map::LocalDefKind::MacroDefinition => assert!(
+                semantic_item.is_none(),
+                "macro export `{}` must not own a semantic function",
+                local_def.name,
+            ),
+            rg_def_map::LocalDefKind::Function => assert!(
+                semantic_item.is_some(),
+                "implementation function `{}` should retain its semantic item",
+                local_def.name,
+            ),
+            rg_def_map::LocalDefKind::Const
+            | rg_def_map::LocalDefKind::Enum
+            | rg_def_map::LocalDefKind::Static
+            | rg_def_map::LocalDefKind::Struct
+            | rg_def_map::LocalDefKind::Trait
+            | rg_def_map::LocalDefKind::TypeAlias
+            | rg_def_map::LocalDefKind::Union => {}
+        }
+    }
+}
+
+#[test]
+fn proc_macro_implementation_stores_do_not_cross_the_dependency_boundary() {
+    let fixture = crate::testonly::SemanticIrFixture::build(
+        r#"
+//- /Cargo.toml
+[workspace]
+members = ["app", "runtime", "derive_macro", "parser"]
+resolver = "3"
+
+//- /app/Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+runtime = { path = "../runtime" }
+
+//- /app/src/lib.rs
+pub struct App;
+
+//- /runtime/Cargo.toml
+[package]
+name = "runtime"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+derive_macro = { path = "../derive_macro" }
+
+//- /runtime/src/lib.rs
+pub struct Runtime;
+
+//- /derive_macro/Cargo.toml
+[package]
+name = "derive_macro"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+parser = { path = "../parser" }
+
+//- /derive_macro/src/lib.rs
+extern crate proc_macro;
+
+struct Implementation;
+
+impl Implementation {
+    fn host_only() {}
+}
+
+#[proc_macro]
+pub fn emit(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
+    input
+}
+
+//- /parser/Cargo.toml
+[package]
+name = "parser"
+version = "0.1.0"
+edition = "2024"
+
+//- /parser/src/lib.rs
+pub struct Parser;
+"#,
+    );
+    let crate_ref =
+        |package, target_kind| fixture.def_map_fixture().crate_ref(package, target_kind);
+    let app = crate_ref("app", rg_workspace::TargetKind::Lib);
+    let runtime = crate_ref("runtime", rg_workspace::TargetKind::Lib);
+    let derive_macro = crate_ref("derive_macro", rg_workspace::TargetKind::ProcMacro);
+    let parser = crate_ref("parser", rg_workspace::TargetKind::Lib);
+    let def_maps = fixture
+        .def_map_db()
+        .read_txn(rg_package_store::PackageLoader::resident_only(
+            "resident item visibility fixture",
+        ));
+    let items = fixture
+        .semantic_ir_db()
+        .read_txn(rg_package_store::PackageLoader::resident_only(
+            "resident item visibility fixture",
+        ));
+    let visible_from = |use_site| {
+        let mut crates = crate::CrateItemQuery::new(&def_maps, &items, use_site)
+            .visible_stores()
+            .expect("visible semantic stores should load")
+            .into_iter()
+            .map(crate::ItemStore::crate_ref)
+            .collect::<Vec<_>>();
+        crates.sort_by_key(|crate_ref| (crate_ref.package.0, crate_ref.crate_id.0));
+        crates
+    };
+    let sorted = |mut crates: Vec<rg_ir_model::CrateRef>| {
+        crates.sort_by_key(|crate_ref| (crate_ref.package.0, crate_ref.crate_id.0));
+        crates
+    };
+
+    assert_eq!(
+        visible_from(app),
+        sorted(vec![app, runtime]),
+        "a consumer should see its runtime dependency, but neither a proc-macro implementation nor its host dependencies",
+    );
+    assert_eq!(
+        visible_from(derive_macro),
+        sorted(vec![derive_macro, parser]),
+        "a proc-macro crate should see its own implementation and normal host dependencies",
+    );
+}
+
+#[test]
 fn item_lookup_index_key_ignores_bodies_but_tracks_declarations_and_visibility() {
     let key = |dependency_alias: &str, source: &str| {
         let fixture = crate::testonly::SemanticIrFixture::build(&format!(

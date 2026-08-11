@@ -359,6 +359,18 @@ pub struct EnumVariantRef {
     pub index: usize,
 }
 
+/// Stable identity for one field declared by an enum variant.
+///
+/// Variant fields cannot use [`FieldRef`]: that identity is intentionally rooted at a nominal
+/// type, while two variants of the same enum may both declare a field with the same name. Keeping
+/// the variant in the identity preserves the declaration that completion and navigation mean.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize, Shrink)]
+#[shrink(leaf)]
+pub struct EnumVariantFieldRef {
+    pub owner: EnumVariantRef,
+    pub index: usize,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 #[shrink(leaf)]
 pub struct TraitImplRef {

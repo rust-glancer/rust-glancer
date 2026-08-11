@@ -61,6 +61,7 @@ impl<'body> BodyDefMapCollector<'body> {
                 name: None,
                 name_span: None,
                 docs: None,
+                user_facing_attrs: Default::default(),
                 // Synthetic body scopes are reachable only through their owning body DefMap.
                 // Public here means "no narrower module-declaration ceiling" inside that origin;
                 // it cannot expose the synthetic identity to another body or crate_ref.
@@ -149,6 +150,7 @@ impl<'body> BodyDefMapCollector<'body> {
             file_id: item.file_id,
             name_span: item.name_span,
             span: item.span,
+            user_facing_attrs: item.user_facing_attrs,
         });
         self.builder
             .module_mut(module)
@@ -245,6 +247,7 @@ impl<'body> BodyDefMapCollector<'body> {
             name: Some(module_name.clone()),
             name_span: item.name_span,
             docs,
+            user_facing_attrs: item.user_facing_attrs,
             visibility,
             parent: Some(parent),
             children: Vec::new(),
@@ -293,8 +296,10 @@ impl<'body> BodyDefMapCollector<'body> {
         use_item: &rg_item_tree::UseItem,
     ) {
         for (import_index, import) in use_item.imports.iter().enumerate() {
-            let path = ImportPath::from_use_path(&import.path);
-            if path.semantic().segments.is_empty() {
+            let Some(path) = ImportPath::from_use_path(&import.path, None) else {
+                continue;
+            };
+            if path.semantic().is_empty() {
                 continue;
             }
 
@@ -311,6 +316,7 @@ impl<'body> BodyDefMapCollector<'body> {
                 },
                 source: self.item_source(item_id, item),
                 import_index,
+                user_facing_attrs: item.user_facing_attrs,
             });
             self.builder
                 .module_mut(module)

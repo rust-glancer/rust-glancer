@@ -153,6 +153,12 @@ impl CargoMetadataLowerer {
     fn package(&self, package: cargo_metadata::Package) -> WorkspaceMetadataResult<Package> {
         let package_id = PackageId::from(&package.id);
         let mut cfg_options = self.target_cfg.clone();
+        let mut declared_features = package
+            .features
+            .keys()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+        declared_features.sort();
 
         // Custom atoms model `rustc --cfg` and apply to every Cargo package in this metadata
         // graph. `cfg(test)` stays separate because it is an analysis mode for workspace roots.
@@ -209,6 +215,7 @@ impl CargoMetadataLowerer {
             is_workspace_member,
             manifest_path,
             cfg_options,
+            declared_features,
             targets,
             dependencies: self
                 .dependencies_by_package
@@ -302,7 +309,9 @@ impl CargoMetadataLowerer {
     }
 
     fn target_kind(&self, target: &cargo_metadata::Target) -> TargetKind {
-        if target.is_kind(cargo_metadata::TargetKind::Lib) {
+        if target.is_kind(cargo_metadata::TargetKind::ProcMacro) {
+            TargetKind::ProcMacro
+        } else if target.is_kind(cargo_metadata::TargetKind::Lib) {
             TargetKind::Lib
         } else if target.is_kind(cargo_metadata::TargetKind::Bin) {
             TargetKind::Bin

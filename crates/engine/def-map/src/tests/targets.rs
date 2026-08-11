@@ -39,13 +39,11 @@ fn main() {}
         let crate_id = def_maps
             .crate_for_cargo_target(cargo_target.id)
             .expect("every parsed Cargo target should produce one semantic crate");
-        assert_eq!(
-            def_maps
-                .crate_data(crate_id)
-                .expect("allocated semantic crate should exist")
-                .cargo_target(),
-            cargo_target.id,
-        );
+        let crate_data = def_maps
+            .crate_data(crate_id)
+            .expect("allocated semantic crate should exist");
+        assert_eq!(crate_data.cargo_target(), cargo_target.id,);
+        assert_eq!(crate_data.target_kind(), &cargo_target.kind);
     }
 
     let lib = fixture.crate_ref("multi_target", TargetKind::Lib);

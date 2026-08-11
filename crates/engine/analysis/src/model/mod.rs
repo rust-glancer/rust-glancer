@@ -1,3 +1,5 @@
+//! Transport-neutral result models returned by editor analysis queries.
+
 mod completion;
 mod hover;
 mod inlay_hints;
@@ -8,8 +10,8 @@ mod symbol;
 mod symbols;
 
 pub use completion::{
-    CompletionApplicability, CompletionEdit, CompletionInsertText, CompletionItem, CompletionKind,
-    CompletionTarget, KeywordCompletion,
+    CompletionAdditionalEdit, CompletionApplicability, CompletionEdit, CompletionInsertText,
+    CompletionItem, CompletionKind, CompletionTarget, KeywordCompletion, SyntheticCompletionTarget,
 };
 pub use hover::{HoverBlock, HoverInfo};
 pub use inlay_hints::{InlayHint, InlayHintKind, InlayHintPosition};

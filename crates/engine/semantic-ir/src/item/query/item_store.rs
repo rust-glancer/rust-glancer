@@ -5,11 +5,11 @@
 
 use rg_def_map::LocalEnumVariantData;
 use rg_ir_model::{
-    AssocItemId, ConstRef, CrateRef, DefMapRef, EnumVariantRef, FieldKey, FieldRef, FunctionRef,
-    GenericDefRef, ImplRef, ItemOwner, LocalDefRef, LocalEnumVariantRef, ModuleRef,
-    SemanticItemRef, StaticRef, TraitDefRef, TypeAliasRef, TypeDefId, TypeDefRef,
+    AssocItemId, ConstRef, CrateRef, DefMapRef, EnumVariantFieldRef, EnumVariantRef, FieldKey,
+    FieldRef, FunctionRef, GenericDefRef, ImplRef, ItemOwner, LocalDefRef, LocalEnumVariantRef,
+    ModuleRef, SemanticItemRef, StaticRef, TraitDefRef, TypeAliasRef, TypeDefId, TypeDefRef,
 };
-use rg_item_tree::GenericParams;
+use rg_item_tree::{FieldList, GenericParams};
 
 use super::ItemStoreSource;
 use crate::{
@@ -330,6 +330,57 @@ where
         } else {
             Ok(None)
         }
+    }
+
+    /// Enumerates stable field refs below one enum variant.
+    pub fn fields_for_enum_variant(
+        &self,
+        variant: EnumVariantRef,
+    ) -> Result<Vec<EnumVariantFieldRef>, S::Error> {
+        let Some(data) = self.enum_variant_data(variant)? else {
+            return Ok(Vec::new());
+        };
+        Ok((0..data.variant.fields.fields().len())
+            .map(|index| EnumVariantFieldRef {
+                owner: variant,
+                index,
+            })
+            .collect())
+    }
+
+    /// Expands a variant-field ref with the source facts shared by ordinary member fields.
+    pub fn enum_variant_field_data(
+        &self,
+        field_ref: EnumVariantFieldRef,
+    ) -> Result<Option<FieldData<'a>>, S::Error> {
+        let Some(data) = self.enum_variant_data(field_ref.owner)? else {
+            return Ok(None);
+        };
+        let Some(field) = data.variant.fields.fields().get(field_ref.index) else {
+            return Ok(None);
+        };
+        Ok(Some(FieldData {
+            owner_module: data.owner_module,
+            file_id: data.file_id,
+            field,
+        }))
+    }
+
+    /// Exposes the constructor field shape for a nominal struct.
+    ///
+    /// Enums need a selected variant and unions are not pattern constructors, so neither is
+    /// flattened into this query.
+    pub fn struct_fields_for_type_def(
+        &self,
+        ty: TypeDefRef,
+    ) -> Result<Option<&'a FieldList>, S::Error> {
+        let TypeDefId::Struct(id) = ty.id else {
+            return Ok(None);
+        };
+        Ok(self
+            .item_store_for_origin(ty.origin)?
+            .and_then(|items| items.struct_data(id))
+            .map(|data| &data.fields))
     }
 
     /// Enumerates stable field refs without exposing whether the owner stores struct or union

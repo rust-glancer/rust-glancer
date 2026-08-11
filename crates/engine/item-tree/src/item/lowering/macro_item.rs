@@ -3,10 +3,7 @@ use crate::item::{
     MacroDefinitionItem, MacroUseAttr, MacroUseSelector,
 };
 use rg_cfg_eval::CfgPredicate;
-use rg_syntax::{
-    AstNode as _, TextRange,
-    ast::{self, HasAttrs as _, HasName as _},
-};
+use rg_syntax::{AstNode as _, TextRange, ast};
 use rg_text::{Name, NameInterner};
 use rg_tt::{Span, syntax_bridge::syntax_node_to_token_tree_with_span};
 
@@ -35,7 +32,7 @@ impl FromAst<MacroRulesAst> for MacroDefinitionItem {
 
     fn from_ast(item: &Self::AstNode, ctx: Self::Context<'_>) -> Self {
         Self::MacroRules {
-            attrs: macro_definition_attrs_from_macro_rules(item),
+            attrs: macro_definition_attrs(item),
             body: item.token_tree().map(|token_tree| {
                 syntax_node_to_token_tree_with_span(&token_tree, ctx.span_for_range)
             }),
@@ -49,6 +46,7 @@ impl FromAst<MacroDefAst> for MacroDefinitionItem {
 
     fn from_ast(item: &Self::AstNode, ctx: Self::Context<'_>) -> Self {
         Self::MacroDef {
+            attrs: macro_definition_attrs(item),
             args: item.args().map(|token_tree| {
                 syntax_node_to_token_tree_with_span(&token_tree, ctx.span_for_range)
             }),
@@ -97,7 +95,7 @@ impl FromAst for MacroCallItem {
     }
 }
 
-fn macro_definition_attrs_from_macro_rules(item: &ast::MacroRules) -> MacroDefinitionAttrs {
+fn macro_definition_attrs(item: &(impl ast::HasAttrs + ast::HasName)) -> MacroDefinitionAttrs {
     let mut attrs = MacroDefinitionAttrs::default();
     let name = item.name().map(|name| name.text().to_owned());
 

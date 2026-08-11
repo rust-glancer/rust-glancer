@@ -1,20 +1,24 @@
-//! Source scanning over lowered function bodies.
+//! Source scanning over lowered bodies.
 //!
 //! Body IR owns the structural body and its source facts. The indexed view owns the editor-facing
 //! interpretation: which node is under a cursor, which spelling is a reference, and which source
 //! shape can accept completion. Keeping the scanners here prevents those query concepts from
 //! becoming part of Body IR's storage API.
 //!
-//! The scanners cover three different shapes of request over the same body:
+//! The scanners cover point selection, request-local scope recovery, and whole-file occurrence
+//! collection over the same body:
 //!
 //! ```text
-//! user.na$0                  point query: select `na`
-//! User { na$0 }              completion query: select the record field slot
-//! let user = input; use(user) whole-file query: retain every declaration and reference
+//! user.na$0                     select a receiver and member prefix
+//! Iterator<It$0 = u8>          select a trait binding and its lexical scope
+//! break 'in$0                  rebuild enclosing label targets
+//! fn local<T>(value: T) {}     retain the local item's generic owner for `T`
+//! let user = input; use(user)  retain every declaration and reference
 //! ```
 
 mod cursor;
 mod dot_completion_site;
+mod label;
 mod path_completion_site;
 mod paths;
 mod record_field_completion_site;
@@ -25,16 +29,15 @@ mod unqualified_completion_site;
 mod walk;
 
 use rg_ir_model::{
-    BindingId, BodyRef, EnumVariantRef, ExprId, FieldKey, FieldRef, FunctionRef, LocalDefRef, Path,
-    ScopeId, SemanticItemRef,
+    BindingId, BodyRef, EnumVariantRef, ExprId, FieldKey, FieldRef, FunctionRef, GenericDefRef,
+    LocalDefRef, Path, ScopeId, SemanticItemRef,
 };
+use rg_item_tree::TypeRef;
 use rg_parse::{FileId, Span};
-
-use crate::lookup::name::ValueOrTypeNamespace;
 
 pub(crate) use self::{
     cursor::BodyCursorScanner, dot_completion_site::DotCompletionSiteScanner,
-    path_completion_site::PathCompletionSiteScanner,
+    label::LabelScopeScanner, path_completion_site::PathCompletionSiteScanner,
     record_field_completion_site::RecordFieldCompletionSiteScanner, source::BodySourceScanner,
     unqualified_completion_site::UnqualifiedCompletionSiteScanner,
 };
@@ -44,6 +47,8 @@ pub(crate) use self::{
 pub(crate) struct DotCompletionSite {
     pub body: BodyRef,
     pub receiver: ExprId,
+    /// Exact written source range of the receiver expression before the dot.
+    pub receiver_span: Span,
     /// Member-name prefix already typed after the dot.
     ///
     /// For a bare dot, this is an empty span at the completion offset.
@@ -55,11 +60,53 @@ pub(crate) struct DotCompletionSite {
 pub(crate) struct PathCompletionSite {
     pub body: BodyRef,
     pub scope: ScopeId,
-    /// Path before the segment being completed.
-    pub qualifier: Path,
+    /// DefMap-compatible projection used only by the module-scope provider.
+    pub module_qualifier: Option<Path>,
+    /// Type-shaped projection used only by the associated-item provider.
+    pub associated_qualifier: super::AssociatedPathQualifier,
     /// Segment prefix already typed after `::`.
     pub member_prefix_span: Span,
-    pub namespace: ValueOrTypeNamespace,
+    pub context: BodyQualifiedPathContext,
+}
+
+/// A possible associated type binding after its body and lexical scope have been attached.
+///
+/// Both forms below need the same semantic facts:
+///
+/// ```text
+/// Iterator<It$0 = u8> // `=` makes this an explicit binding
+/// Iterator<It$0>      // may become a binding when the user types `=`
+/// ```
+///
+/// `trait_ref` contains the surrounding trait path with associated bindings removed, so resolving
+/// `Iterator` does not depend on the incomplete binding. `existing_bindings` contains the other
+/// names that completion must not offer again.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct BodyAssociatedTypeBindingSite {
+    pub body: BodyRef,
+    pub scope: ScopeId,
+    pub trait_ref: TypeRef,
+    pub member_prefix_span: Span,
+    pub existing_bindings: Vec<String>,
+}
+
+impl From<rg_body_ir::BodyAssociatedPathPrefix> for super::AssociatedPathQualifier {
+    fn from(prefix: rg_body_ir::BodyAssociatedPathPrefix) -> Self {
+        match prefix {
+            rg_body_ir::BodyAssociatedPathPrefix::Type(ty) => Self::Type(ty),
+            rg_body_ir::BodyAssociatedPathPrefix::QualifiedTrait { self_ty, trait_ref } => {
+                Self::QualifiedTrait { self_ty, trait_ref }
+            }
+        }
+    }
+}
+
+/// Syntactic role selected for the final segment of a body-qualified path.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum BodyQualifiedPathContext {
+    Type,
+    Value,
+    Pattern(PatternCompletionKind),
 }
 
 /// Source site selected for an unqualified completion query inside a body.
@@ -71,6 +118,13 @@ pub(crate) struct UnqualifiedCompletionSite {
     pub member_prefix_span: Span,
     pub member_prefix: String,
     pub context: BodyUnqualifiedNameContext,
+    /// Body-local declaration whose generic parameters own this spelling.
+    ///
+    /// This is absent for ordinary body expressions and annotations, which inherit the enclosing
+    /// body's generic owner.
+    pub generic_owner: Option<GenericDefRef>,
+    /// Binding slot whose inferred type is the expectation for an ambiguous pattern name.
+    pub expected_type_binding: Option<BindingId>,
     /// Number of body-wide bindings visible before this source site.
     ///
     /// Bindings are allocated in source order, so this boundary prevents later
@@ -85,6 +139,21 @@ pub(crate) enum BodyUnqualifiedNameContext {
     Type(super::TypeNamePosition),
     /// A name in an expression, such as `inp$0` in `let value = inp$0`.
     Value,
+    /// A name in a constrained const-expression value namespace.
+    Const,
+    /// A name in pattern syntax, with the source shape that follows the completed path.
+    Pattern(PatternCompletionKind),
+}
+
+/// Surface syntax that constrains which declarations form a valid pattern path.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PatternCompletionKind {
+    /// A bare pattern path such as `Sta$0`.
+    Name,
+    /// A tuple-constructor path such as `Act$0(value)`.
+    TupleConstructor,
+    /// A record-constructor path such as `Act$0 { field }`.
+    RecordConstructor,
 }
 
 /// Source site selected for a record-field completion query.

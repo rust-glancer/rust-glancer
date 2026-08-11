@@ -89,6 +89,8 @@ pub struct Package {
     pub is_workspace_member: bool,
     pub manifest_path: PathBuf,
     pub cfg_options: CfgOptions,
+    /// Every feature declared in this package's manifest, including inactive features.
+    pub declared_features: Vec<String>,
     pub targets: Vec<CargoTarget>,
     pub dependencies: Vec<PackageDependency>,
 }

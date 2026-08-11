@@ -3,12 +3,17 @@
 use rg_def_map::DefMapSource;
 use rg_ir_model::{
     AssocItemId, ConstRef, DefMapRef, EnumVariantRef, FunctionRef, ImplRef, ItemOwner, Path,
-    ScopeId, TraitImplRef, TypeDefId, identity::DeclarationRef,
+    ScopeId, TraitApplicability, TraitImplRef, TypeDefId, identity::DeclarationRef,
 };
+use rg_item_tree::TypeRef;
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::ItemStoreSource;
 use rg_std::{ExpectedUnique, UniqueVec};
 use rg_ty::{AdtTy, ExpectedTyExt, Substitution, TraitSelection, Ty, inference::InferenceTable};
+use rg_ty::{
+    AssociatedItemCandidateRef, AssociatedItemQuery, TraitApplication, TypeLoweringAnchor,
+    TypeLoweringEnv, TypeLoweringQuery,
+};
 
 use super::traits::BodyQualifiedTraitSelection;
 
@@ -68,6 +73,126 @@ where
 {
     pub(crate) fn new(context: BodyResolutionContext<'query, D, I>) -> Self {
         Self { context }
+    }
+
+    /// Enumerate declarations reachable through a type-qualified path prefix.
+    ///
+    /// ```text
+    /// fn build<T: Factory>() {
+    ///     T::/* items from Factory and its supertraits */
+    ///     Widget::<u8>::/* variants, inherent items, and matching trait items */
+    /// }
+    /// ```
+    ///
+    /// Unlike crate-level signature lookup, this query also sees types and impls declared inside
+    /// the active body. The returned identities use the shared `rg_ty` candidate vocabulary, so
+    /// local and crate-level declarations follow the same downstream lookup path.
+    pub(crate) fn candidates_for_prefix(
+        &self,
+        scope: ScopeId,
+        prefix: &BodyAssociatedPathPrefix,
+    ) -> Result<Vec<AssociatedItemCandidateRef>, PackageStoreError> {
+        let item_paths = self.context.item_paths();
+        let lowering = TypeLoweringQuery::new(&item_paths, &self.context);
+        let env = TypeLoweringEnv::new(
+            self.context.body().owner().generic_def(),
+            TypeLoweringAnchor::Scope(scope),
+        );
+
+        match prefix {
+            BodyAssociatedPathPrefix::Type(prefix_ty_ref) => {
+                // A type-shaped prefix may contribute from a nominal receiver, bounds on that
+                // receiver, or the trait declaration named by the prefix.
+                let prefix_ty = lowering.lower(prefix_ty_ref, env.clone())?;
+                let mut session = lowering.session(env)?;
+                let owner_traits = session.trait_applications_for_type(&prefix_ty)?;
+                let direct_trait = session.lower_trait_ref(prefix_ty_ref, prefix_ty.clone())?;
+
+                let mut candidates = self.candidates_for_ty(&prefix_ty)?;
+                candidates.extend(self.candidates_for_trait_applications(owner_traits)?);
+                if let Some(direct_trait) = direct_trait {
+                    candidates.extend(
+                        self.candidates_for_trait_applications([direct_trait.application])?,
+                    );
+                }
+                Ok(candidates)
+            }
+            BodyAssociatedPathPrefix::QualifiedTrait { self_ty, trait_ref } => {
+                let self_ty = lowering.lower(self_ty, env.clone())?;
+                let mut session = lowering.session(env)?;
+                let Some(trait_ref) = session.lower_trait_ref(trait_ref, self_ty)? else {
+                    return Ok(Vec::new());
+                };
+                self.candidates_for_trait_applications([trait_ref.application])
+            }
+        }
+    }
+
+    /// Enumerate declarations from one explicitly written trait and its supertraits.
+    ///
+    /// Associated type binding syntax must not fall back to inherent items on a nominal type that
+    /// happens to resolve from the same path spelling.
+    pub(crate) fn candidates_for_trait_ref(
+        &self,
+        scope: ScopeId,
+        trait_ref: &TypeRef,
+    ) -> Result<Vec<AssociatedItemCandidateRef>, PackageStoreError> {
+        let item_paths = self.context.item_paths();
+        let lowering = TypeLoweringQuery::new(&item_paths, &self.context);
+        let env = TypeLoweringEnv::new(
+            self.context.body().owner().generic_def(),
+            TypeLoweringAnchor::Scope(scope),
+        );
+        let mut session = lowering.session(env)?;
+        let Some(trait_ref) = session.lower_trait_ref(trait_ref, Ty::Unknown)? else {
+            return Ok(Vec::new());
+        };
+        self.candidates_for_trait_applications([trait_ref.application])
+    }
+
+    /// Combine body-local impls with crate-indexed impls for one lowered prefix type.
+    fn candidates_for_ty(
+        &self,
+        ty: &Ty,
+    ) -> Result<Vec<AssociatedItemCandidateRef>, PackageStoreError> {
+        let query = AssociatedItemQuery::with_resolver(self.context.ty_context(), &self.context);
+        let mut candidates = Vec::new();
+        for receiver_ty in ty.as_adts() {
+            let receiver_ty = self
+                .context
+                .generics()
+                .complete_omitted_nominal_args(receiver_ty)?;
+            let has_crate_index = receiver_ty.def.origin.as_crate_ref().is_some();
+
+            candidates.extend(
+                query.candidates_for_nominal_from_impls(
+                    &receiver_ty,
+                    self.context
+                        .body_local_items()
+                        .inherent_impls_for_type(receiver_ty.def)?,
+                    self.context
+                        .body_local_items()
+                        .trait_impls_for_type(receiver_ty.def)?,
+                    !has_crate_index,
+                )?,
+            );
+
+            // Body-origin types have no crate-level index, so the local query above also supplies
+            // their enum variants. Crate-origin types get variants from this indexed universe;
+            // the local query contributes only impls declared inside the body.
+            if has_crate_index {
+                candidates.extend(query.candidates_for_nominal(&receiver_ty)?);
+            }
+        }
+        Ok(candidates)
+    }
+
+    fn candidates_for_trait_applications(
+        &self,
+        applications: impl IntoIterator<Item = TraitApplication>,
+    ) -> Result<Vec<AssociatedItemCandidateRef>, PackageStoreError> {
+        AssociatedItemQuery::with_resolver(self.context.ty_context(), &self.context)
+            .candidates_for_trait_applications(applications, TraitApplicability::Yes)
     }
 
     /// Resolve an associated value path from a type prefix and a final item name.
@@ -171,9 +296,8 @@ where
             return Ok(Some(Self::const_resolution(trait_consts)));
         }
 
-        // Inherent associated functions are exact candidates. Trait-associated functions are kept
-        // deliberately optimistic, following the same "prefer useful candidates over false
-        // negatives" policy as dot completion.
+        // Inherent associated functions are exact candidates. Trait-associated functions retain
+        // tentative matches when incomplete generic information cannot prove or reject the impl.
         let mut functions = UniqueVec::new();
         let table = InferenceTable::new();
         for nominal_ty in &receiver_tys {

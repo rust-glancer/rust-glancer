@@ -6,12 +6,16 @@
 //! item-tree lowering stay in separate lifetime windows.
 
 use std::{
-    collections::HashSet,
+    collections::{BTreeSet, HashSet},
+    fs as std_fs,
     path::{Path, PathBuf},
 };
 
 use anyhow::Context as _;
-use rg_syntax::ast::{self, HasAttrs, HasModuleItem, HasName};
+use rg_syntax::{
+    Edition, SourceFile,
+    ast::{self, HasAttrs, HasModuleItem, HasName},
+};
 use rg_text::identifier_text;
 
 use crate::{FileId, Package, fs};
@@ -58,6 +62,73 @@ impl ModuleFileContext {
         Self {
             child_module_dir: self.child_module_dir.join(module_name),
         }
+    }
+
+    /// Lists conventional child-module names next to this logical module.
+    ///
+    /// Both `name.rs` and `name/mod.rs` represent the same declaration candidate. The query is
+    /// deliberately request-scoped filesystem work: retaining every undeclared sibling in the
+    /// project index would impose a permanent memory cost for an occasional completion site.
+    pub fn candidate_module_names(&self) -> anyhow::Result<Vec<String>> {
+        let mut candidates = BTreeSet::new();
+        let entries = match std_fs::read_dir(&self.child_module_dir) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(error) => {
+                return Err(error).with_context(|| {
+                    format!("read module directory {}", self.child_module_dir.display())
+                });
+            }
+        };
+
+        for entry in entries {
+            let entry = entry.with_context(|| {
+                format!(
+                    "inspect module directory {}",
+                    self.child_module_dir.display()
+                )
+            })?;
+            let file_type = entry
+                .file_type()
+                .with_context(|| format!("inspect module candidate {}", entry.path().display()))?;
+            let path = entry.path();
+            let candidate = if file_type.is_file()
+                && path.extension().and_then(|extension| extension.to_str()) == Some("rs")
+            {
+                path.file_stem().and_then(|stem| stem.to_str())
+            } else if file_type.is_dir() && path.join("mod.rs").is_file() {
+                path.file_name().and_then(|name| name.to_str())
+            } else {
+                None
+            };
+            let Some(candidate) = candidate else {
+                continue;
+            };
+            if matches!(candidate, "lib" | "main" | "mod")
+                || !Self::is_valid_module_identifier(candidate)
+            {
+                continue;
+            }
+            candidates.insert(candidate.to_string());
+        }
+
+        Ok(candidates.into_iter().collect())
+    }
+
+    /// Validate the filename as a raw identifier so keyword-named modules remain candidates.
+    fn is_valid_module_identifier(candidate: &str) -> bool {
+        let parsed = SourceFile::parse(&format!("mod r#{candidate};"), Edition::CURRENT);
+        if !parsed.errors().is_empty() {
+            return false;
+        }
+        parsed
+            .tree()
+            .items()
+            .find_map(|item| match item {
+                ast::Item::Module(module) => module.name(),
+                _ => None,
+            })
+            .is_some_and(|name| identifier_text(&name.text()) == candidate)
     }
 
     /// Resolves one out-of-line module declaration according to the supported Rust file rules.

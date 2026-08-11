@@ -1825,7 +1825,7 @@ pub struct Dirty {
 }
 
 pub fn dirty_body(value: Dirty) {
-    value.$receiver$
+    value.x$receiver$
 }
 "#,
     );
@@ -1963,7 +1963,7 @@ impl User {
 }
 
 pub fn inspect(value: User) {
-    value.$body_only$
+    value.x$body_only$
 }
 "#,
     );
@@ -1977,7 +1977,7 @@ impl User {
 }
 
 pub fn inspect(value: User) {
-    value.$declaration$
+    value.x$declaration$
 }
 "#,
     );
@@ -2069,7 +2069,7 @@ impl User {
 }
 
 pub fn inspect(value: User) {
-    value.$receiver$
+    value.x$receiver$
 }
 "#,
     );
@@ -2157,7 +2157,7 @@ impl User {
     let app_text = MarkedText::parse(
         r#"
 pub fn inspect(value: dep::User) {
-    value.$receiver$
+    value.x$receiver$
 }
 "#,
     );
@@ -2323,14 +2323,20 @@ pub fn use_it() {
         - fn use_it
 
         completions at `dirty bare expression keyword`
+        - struct Dirty
+        - variable _value
         - keyword async
+        - keyword crate
         - keyword false
         - keyword if
         - keyword loop
         - keyword match
         - keyword move
         - keyword return
+        - keyword self
+        - keyword super
         - keyword true
+        - fn use_it
     "#]]
     .assert_eq(&actual);
 }

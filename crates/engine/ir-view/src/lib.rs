@@ -16,6 +16,7 @@ pub mod source;
 pub mod symbol;
 #[doc(hidden)]
 pub mod testonly;
+pub mod trait_impl;
 pub mod ty;
 
 pub use db::IndexedViewDb;

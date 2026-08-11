@@ -22,8 +22,8 @@ pub use self::ids::{
     },
     identity,
     semantic::{
-        AssocItemId, ConstId, ConstParamRef, ConstRef, EnumId, EnumVariantRef, FieldRef,
-        FunctionId, FunctionRef, GenericDefRef, GenericParamRef, ImplId, ImplRef, ItemId,
+        AssocItemId, ConstId, ConstParamRef, ConstRef, EnumId, EnumVariantFieldRef, EnumVariantRef,
+        FieldRef, FunctionId, FunctionRef, GenericDefRef, GenericParamRef, ImplId, ImplRef, ItemId,
         ItemOwner, LifetimeParamRef, LocalLifetimeParamId, LocalTypeOrConstParamId, OpaqueTyId,
         OpaqueTyRef, SemanticItemKind, SemanticItemRef, StaticId, StaticRef, StructId,
         TraitApplicability, TraitDefRef, TraitId, TraitImplRef, TypeAliasId, TypeAliasRef,
@@ -31,7 +31,7 @@ pub use self::ids::{
     },
 };
 pub use self::mutability::Mutability;
-pub use self::path::{Path, PathSegment, last_segment_name};
+pub use self::path::{Path, PathRoot};
 pub use self::{
     body_source::BodySource,
     builtin_macro::BuiltinMacroExprKind,

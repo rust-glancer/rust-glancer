@@ -13,8 +13,9 @@ use anyhow::Context as _;
 
 use crate::{
     CrateData, CrateResolutionEnv, LocalDefData, LocalEnumVariantData, LocalEnumVariantEntry,
-    MacroDefinitionEnv, MacroDefinitionView, ModuleData, ModuleScopeBuilder,
-    PackageDefMaps as DefMapPackage, ScopeEntryRef, ScopeResolutionEnv, ScopeResolver,
+    MacroDefinitionEnv, MacroDefinitionView, ModuleData, ModuleScopeBuilder, Namespace,
+    PackageDefMaps as DefMapPackage, ScopeBindingProvenance, ScopeEntryRef, ScopeResolutionEnv,
+    ScopeResolver,
 };
 use rg_ir_model::{
     CrateRef, DefId, DefMapRef, LocalDefRef, LocalEnumVariantRef, ModuleId, ModuleRef, Path,
@@ -23,7 +24,7 @@ use rg_item_tree::ItemTreeDb;
 use rg_macro_runtime::{MacroExpansionPerformancePreference, MacroExpansionRuntime};
 use rg_parse::Package;
 use rg_text::{Name, PackageNameInterners};
-use rg_workspace::WorkspaceMetadata;
+use rg_workspace::{TargetKind, WorkspaceMetadata};
 
 use crate::{DefMapReadTxn, PackageSlot, profile::metric};
 
@@ -147,7 +148,9 @@ impl ScopeMatrix {
             })
             .collect();
 
-        Self { packages }
+        let mut scopes = Self { packages };
+        scopes.censor_proc_macro_exports(states);
+        scopes
     }
 
     fn crate_scopes(&self, crate_ref: CrateRef) -> Option<&[ModuleScopeBuilder]> {
@@ -186,6 +189,56 @@ impl ScopeMatrix {
             .get_mut(crate_ref.crate_id.0)?
             .push(scope);
         Some(())
+    }
+
+    /// Apply the language-level export surface of every dirty proc-macro target.
+    ///
+    /// ```text
+    /// #[proc_macro]
+    /// pub fn emit(input: TokenStream) -> TokenStream { /* ... */ }
+    ///
+    /// pub fn helper() {}
+    /// ```
+    ///
+    /// Cargo still gives the implementation functions normal source visibility inside their own
+    /// crate. Across the crate boundary, however, only directly declared proc-macro identities are
+    /// exported: downstream code can use `emit!`, but cannot import the value `emit` or `helper`.
+    ///
+    /// Import and macro expansion are fixed-point operations. Applying the censoring to every
+    /// mutable scope snapshot prevents a public re-export or generated item from being observed by
+    /// another crate during an intermediate pass and surviving in its settled imports.
+    fn censor_proc_macro_exports(&mut self, states: &FinalizeCrateStates) {
+        for package_states in states.iter_dirty() {
+            for state in package_states {
+                if state.target_kind != TargetKind::ProcMacro {
+                    continue;
+                }
+
+                let root = ModuleRef::krate(state.crate_ref, state.root_module);
+                let def_map = state.def_map_builder.partial();
+                self.module_scope_mut(state.crate_ref, state.root_module)
+                    .expect("proc-macro root scope should exist")
+                    .censor_public_bindings(root, |namespace, binding| {
+                        if namespace != Namespace::Macros
+                            || !binding
+                                .routes()
+                                .iter()
+                                .any(|route| route.provenance == ScopeBindingProvenance::Direct)
+                        {
+                            return false;
+                        }
+
+                        let DefId::Local(local_def) = binding.def else {
+                            return false;
+                        };
+                        local_def.origin == root.origin
+                            && def_map
+                                .macro_definition(local_def.local_def)
+                                .and_then(|data| data.proc_macro_implementation())
+                                .is_some()
+                    });
+            }
+        }
     }
 }
 
@@ -702,6 +755,7 @@ fn finalize_scopes(
 
             needs_import_refresh |= expansion.changed;
             if expansion.changed {
+                current_scopes.censor_proc_macro_exports(states);
                 // Generated calls can be resolved with the same scope snapshot, but generated
                 // imports cannot. Keep the cheap path going until no more direct expansion happens.
                 next_scan_cursors = Some(scan_cursors_before_apply);
@@ -744,6 +798,7 @@ fn resolve_import_scopes(
                 })?;
             }
         }
+        next_scopes.censor_proc_macro_exports(states);
 
         if next_scopes == current_scopes {
             return Ok(current_scopes);
@@ -815,6 +870,7 @@ fn freeze_crate_data(state: &CrateState) -> CrateData {
     // prelude rather than pretending any of these names are child modules of the crate root.
     CrateData::new(
         state.cargo_target,
+        state.target_kind.clone(),
         state.crate_name.clone(),
         Some(state.root_module),
         state.extern_prelude.freeze(),

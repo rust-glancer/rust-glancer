@@ -337,6 +337,24 @@ impl MacroExpansionAttempt {
         )
     }
 
+    /// A proc macro is visible for resolution and completion, but rust-glancer deliberately does
+    /// not load or execute compiler plugin code while building DefMap.
+    fn unsupported_proc_macro(
+        crate_ref: CrateRef,
+        call_id: usize,
+        call: &MacroCallSite,
+        path_text: &str,
+    ) -> Self {
+        Self::new(
+            crate_ref,
+            call_id,
+            call,
+            Some(path_text.to_string()),
+            MacroExpansionAttemptOutcome::NoSource(MacroDirectiveState::Unsupported),
+            MacroExpansionAttemptRecord::skipped(),
+        )
+    }
+
     /// Builtin `include!` splices a real file that item-tree already lowered.
     fn include_file(
         crate_ref: CrateRef,
@@ -524,6 +542,14 @@ impl MacroExpansionAttempt {
                 path_text,
             ));
         }
+        if resolved.definition.is_proc_macro() {
+            return Ok(Self::unsupported_proc_macro(
+                state.crate_ref,
+                call_id,
+                call,
+                path_text,
+            ));
+        }
 
         // Finally hand the resolved definition and call tokens to the runtime. Def-map keeps the
         // visibility policy, while the runtime owns compilation, expansion caching, and pending
@@ -533,7 +559,7 @@ impl MacroExpansionAttempt {
             definition: resolved
                 .definition
                 .declarative_definition()
-                .expect("compiler builtin returned before declarative expansion"),
+                .expect("non-declarative macro returned after explicit dispatch"),
             path_text,
             args,
             call_file_id: call.file_id,

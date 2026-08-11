@@ -21,7 +21,7 @@ use std::{
 };
 
 use anyhow::Context as _;
-use rg_analysis::{CompletionQuery, InlayHint as AnalysisInlayHint};
+use rg_analysis::{CompletionQuery, CompletionSource, InlayHint as AnalysisInlayHint};
 use rg_lsp_proto::CompletionClientCapabilities;
 use rg_project::{AnalysisSurface, DirtyOverlayScope};
 use rg_std::UniqueVec;
@@ -94,8 +94,9 @@ impl<'a> QueryRunner<'a> {
 
     /// Collect completions from every crate interpretation of the cursor.
     ///
-    /// Dirty source text is passed separately for speculative syntax near an incomplete cursor;
-    /// semantic reads still come from the matching dirty project overlay.
+    /// Source text is loaded and classified once for this request so speculative syntax can be
+    /// shared by every crate interpretation without making saved text permanently resident.
+    /// Semantic reads still come from the matching saved project or dirty overlay.
     pub(super) fn completion(
         &mut self,
         path: PathBuf,
@@ -118,6 +119,23 @@ impl<'a> QueryRunner<'a> {
                     let crate_offsets = Self::crate_offsets(snapshot, &path, position)
                         .context("resolve completion position")?;
                     let crate_offsets_us = crate_offsets_started.elapsed().as_micros();
+                    let saved_source_text = if source_text.is_none() {
+                        let Some((context, _, _)) = crate_offsets.first() else {
+                            return Ok(Vec::new());
+                        };
+                        snapshot
+                            .file_source_text(context.package, context.file)
+                            .context("load saved completion source")?
+                    } else {
+                        None
+                    };
+                    let completion_source_text = source_text.or(saved_source_text.as_deref());
+                    let completion_source_started = Instant::now();
+                    let completion_source = completion_source_text.and_then(|source_text| {
+                        let (_, _, offset) = crate_offsets.first()?;
+                        CompletionSource::new(source_text, *offset)
+                    });
+                    let completion_source_us = completion_source_started.elapsed().as_micros();
                     let analysis_crates = crate_offsets
                         .iter()
                         .map(|(_, crate_ref, _)| *crate_ref)
@@ -145,7 +163,12 @@ impl<'a> QueryRunner<'a> {
                             .with_client_capabilities(rg_analysis::CompletionClientCapabilities {
                                 snippet_support: client_capabilities.snippet_support,
                             });
-                        if let Some(source_text) = source_text {
+                        if let Some(source) = completion_source
+                            .as_ref()
+                            .filter(|source| source.offset() == offset)
+                        {
+                            query = query.with_completion_source(source);
+                        } else if let Some(source_text) = completion_source_text {
                             query = query.with_source_text(source_text);
                         }
                         let analysis_compute_started = Instant::now();
@@ -169,6 +192,7 @@ impl<'a> QueryRunner<'a> {
                         crate_count = analysis_crates.len(),
                         result_count = completions.len(),
                         crate_offsets_us,
+                        completion_source_us,
                         analysis_load_us,
                         line_index_load_us,
                         analysis_compute_us,

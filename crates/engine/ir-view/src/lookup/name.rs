@@ -1,17 +1,21 @@
-//! Generic name lookup over module and body-local scopes.
+//! Editor-facing names from module and declaration-owned generic scopes.
 //!
-//! Completion renderers use these facts heavily, but the facts themselves are not completion
-//! concepts: they are names visible from an indexed module or lexical body scope.
+//! The view preserves the semantic facts needed after lookup: namespace and origin, declaration
+//! identity, macro syntax kind, documentation, and user-facing attributes. Type/const generic
+//! names and lifetime names stay separate because their source syntax differs. The view also
+//! exposes the narrower module-name sets required by extern roots and `pub(in ...)` ancestor paths.
+//! Completion uses these facts heavily, but ranking and insertion policy do not belong here.
 
 use anyhow::Context as _;
 use rg_def_map::{
-    DefMapQuery, DefMapSource, Namespace, NamespaceSet, VisibleScopeDef, VisibleScopeOrigin,
+    DefMapQuery, DefMapSource, MacroDefinitionKind, Namespace, NamespaceSet, VisibleScopeDef,
+    VisibleScopeOrigin,
 };
 use rg_ir_model::{
-    DefId, FunctionRef, GenericDefRef, GenericParamRef, ImplRef, ModuleRef, Path, SemanticItemRef,
-    identity::DeclarationRef,
+    DefId, FunctionRef, GenericDefRef, GenericParamRef, ImplRef, ModuleRef, Path, PathRoot,
+    SemanticItemRef, identity::DeclarationRef,
 };
-use rg_item_tree::Documentation;
+use rg_item_tree::{BuiltinMacroKind, Documentation, UserFacingAttrs};
 use rg_semantic_ir::{GenericParamSource, GenericsQuery, ItemStoreQuery};
 use rg_std::UniqueVec;
 
@@ -62,6 +66,24 @@ pub enum NameOrigin {
     ExternRoot,
 }
 
+/// Rust syntax family in which one visible macro definition can be named.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MacroKind {
+    Invocation,
+    Attribute,
+    Derive,
+}
+
+impl From<MacroDefinitionKind> for MacroKind {
+    fn from(kind: MacroDefinitionKind) -> Self {
+        match kind {
+            MacroDefinitionKind::Invocation => Self::Invocation,
+            MacroDefinitionKind::Attribute => Self::Attribute,
+            MacroDefinitionKind::Derive => Self::Derive,
+        }
+    }
+}
+
 impl From<VisibleScopeOrigin> for NameOrigin {
     fn from(origin: VisibleScopeOrigin) -> Self {
         match origin {
@@ -82,6 +104,8 @@ pub struct ModuleScopeName {
     kind: SymbolKind,
     documentation: Option<String>,
     function: Option<FunctionRef>,
+    macro_kind: Option<MacroKind>,
+    user_facing_attrs: UserFacingAttrs,
 }
 
 impl ModuleScopeName {
@@ -111,6 +135,19 @@ impl ModuleScopeName {
 
     pub fn function(&self) -> Option<FunctionRef> {
         self.function
+    }
+
+    /// Whether this macro can be invoked with `!` in ordinary source syntax.
+    pub fn is_invocation_macro(&self) -> bool {
+        self.macro_kind == Some(MacroKind::Invocation)
+    }
+
+    pub fn macro_kind(&self) -> Option<MacroKind> {
+        self.macro_kind
+    }
+
+    pub fn user_facing_attrs(&self) -> UserFacingAttrs {
+        self.user_facing_attrs
     }
 }
 
@@ -144,6 +181,27 @@ pub struct GenericScopeName {
     target: GenericScopeNameTarget,
 }
 
+/// One written lifetime parameter visible from a declaration signature.
+///
+/// Lifetimes use apostrophe syntax and therefore stay separate from ordinary generic-scope names.
+/// The label retains that syntax, for example `'item`, while the target keeps the semantic
+/// parameter used by navigation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LifetimeScopeName {
+    label: String,
+    target: GenericParamRef,
+}
+
+impl LifetimeScopeName {
+    pub fn label(&self) -> &str {
+        &self.label
+    }
+
+    pub fn target(&self) -> GenericParamRef {
+        self.target
+    }
+}
+
 impl GenericScopeName {
     pub fn label(&self) -> &str {
         &self.label
@@ -175,11 +233,25 @@ impl<'a, 'db> NameLookupView<'a, 'db> {
         qualifier: &Path,
     ) -> anyhow::Result<Vec<ModuleScopeName>> {
         let def_maps = DefMapQuery::new(self.db);
-        let resolved = def_maps.scope_resolver().resolve_path(
-            importing_module,
-            qualifier,
-            NamespaceSet::TYPES,
-        )?;
+        if qualifier.root() == PathRoot::Absolute && qualifier.segments().is_empty() {
+            let mut names = Vec::new();
+            for visible_def in def_maps
+                .visible_absolute_root_defs(importing_module)
+                .context("read absolute root names")?
+            {
+                if let Some(name) = self
+                    .module_scope_name(importing_module, visible_def)
+                    .context("project absolute root name")?
+                {
+                    names.push(name);
+                }
+            }
+            return Ok(names);
+        }
+        let resolved = def_maps
+            .scope_resolver()
+            .resolve_path(importing_module, qualifier, NamespaceSet::TYPES)
+            .context("resolve module name qualifier")?;
         let mut names = Vec::new();
 
         // Qualified module lookup only lists names from modules. Associated items hang off type
@@ -188,8 +260,14 @@ impl<'a, 'db> NameLookupView<'a, 'db> {
             let DefId::Module(source_module) = def else {
                 continue;
             };
-            for visible_def in def_maps.visible_scope_defs(importing_module, source_module)? {
-                if let Some(name) = self.module_scope_name(visible_def)? {
+            for visible_def in def_maps
+                .visible_scope_defs(importing_module, source_module)
+                .context("read qualified module names")?
+            {
+                if let Some(name) = self
+                    .module_scope_name(importing_module, visible_def)
+                    .context("project qualified module name")?
+                {
                     names.push(name);
                 }
             }
@@ -204,12 +282,77 @@ impl<'a, 'db> NameLookupView<'a, 'db> {
         module: ModuleRef,
     ) -> anyhow::Result<Vec<ModuleScopeName>> {
         let mut names = Vec::new();
-        for visible_def in DefMapQuery::new(self.db).visible_unqualified_scope_defs(module)? {
-            if let Some(name) = self.module_scope_name(visible_def)? {
+        for visible_def in DefMapQuery::new(self.db)
+            .visible_unqualified_scope_defs(module)
+            .context("read unqualified module names")?
+        {
+            if let Some(name) = self
+                .module_scope_name(module, visible_def)
+                .context("project unqualified module name")?
+            {
                 names.push(name);
             }
         }
         Ok(names)
+    }
+
+    /// Return only dependency crate roots available through the extern prelude.
+    pub fn extern_crate_names(&self, module: ModuleRef) -> anyhow::Result<Vec<ModuleScopeName>> {
+        Ok(self
+            .unqualified_module_names(module)
+            .context("read extern crate names")?
+            .into_iter()
+            .filter(|name| {
+                name.origin() == NameOrigin::ExternRoot && name.kind() == SymbolKind::Module
+            })
+            .collect())
+    }
+
+    /// Return only ancestor modules that may continue a `pub(in ...)` path.
+    ///
+    /// Ordinary path lookup can see siblings and descendants, but Rust restricts `pub(in path)` to
+    /// an ancestor of the item. At the cursor below, `api` is valid while another crate-root module
+    /// such as `tests` is not:
+    ///
+    /// ```text
+    /// mod api {
+    ///     mod detail {
+    ///         pub(in crate::ap$0) struct Token;
+    ///     }
+    /// }
+    /// ```
+    pub fn visibility_module_names_for_path(
+        &self,
+        importing_module: ModuleRef,
+        qualifier: &Path,
+    ) -> anyhow::Result<Vec<ModuleScopeName>> {
+        let mut ancestors = Vec::new();
+        let mut current = Some(importing_module);
+        while let Some(module) = current {
+            ancestors.push(module);
+            current = self
+                .db
+                .module_data(module)
+                .context("read visibility path ancestor")?
+                .and_then(|data| {
+                    data.parent.map(|parent| ModuleRef {
+                        origin: module.origin,
+                        module: parent,
+                    })
+                });
+        }
+
+        Ok(self
+            .module_names_for_path(importing_module, qualifier)
+            .context("read visibility path names")?
+            .into_iter()
+            .filter(|name| {
+                let DeclarationRef::Module(module) = name.declaration() else {
+                    return false;
+                };
+                ancestors.contains(&module)
+            })
+            .collect())
     }
 
     /// Return named parameters visible from one declaration, including inherited owner params.
@@ -268,57 +411,162 @@ impl<'a, 'db> NameLookupView<'a, 'db> {
         Ok(names)
     }
 
-    /// Convert one DefMap-visible name into the declaration facts exposed by view.
-    fn module_scope_name(
+    /// Return lifetime parameters visible from one declaration, nearest owner first.
+    ///
+    /// ```text
+    /// impl<'ctx> Wrapper<'ctx> {
+    ///     fn borrow<'item>(&'item self, value: &'ctx str) {}
+    /// }
+    /// ```
+    ///
+    /// From `borrow`, the result is `'item` followed by `'ctx`. Repeated spellings are collapsed
+    /// in that order, so a nearer declaration wins if incomplete source contains a shadowing name.
+    pub fn lifetime_scope_names(
         &self,
+        owner: GenericDefRef,
+    ) -> anyhow::Result<Vec<LifetimeScopeName>> {
+        let generics = GenericsQuery::new(self.db)
+            .generics(owner)
+            .context("read lifetime scope parameters")?;
+        let mut names = Vec::new();
+        let mut seen = UniqueVec::new();
+        for param in generics.iter().rev() {
+            let GenericParamSource::Lifetime(data) = param.source() else {
+                continue;
+            };
+            let label = data.name.to_string();
+            if seen.push(label.clone()) {
+                names.push(LifetimeScopeName {
+                    label,
+                    target: param.param(),
+                });
+            }
+        }
+        Ok(names)
+    }
+
+    /// Convert one DefMap-visible route into editor-facing declaration facts.
+    ///
+    /// The importing module matters even after DefMap has selected the name. Re-export attributes
+    /// can replace the target's user-facing attributes for that route, and cross-crate lookup must
+    /// hide unstable or `doc(hidden)` routes without hiding the same declaration inside its own
+    /// crate. Macro kind comes from DefMap metadata rather than a semantic item shape, so a
+    /// proc-macro export is not mistaken for its implementation function.
+    pub(super) fn module_scope_name(
+        &self,
+        importing_module: ModuleRef,
         visible_def: VisibleScopeDef,
     ) -> anyhow::Result<Option<ModuleScopeName>> {
+        let target_crate = match visible_def.def {
+            DefId::Module(module) => module.origin.origin_crate(),
+            DefId::Local(local) => local.origin.origin_crate(),
+            DefId::EnumVariant(variant) => variant.origin.origin_crate(),
+        };
         let mut function = None;
-        let (declaration, kind, documentation) = match visible_def.def {
+        let mut macro_kind = None;
+        let (declaration, kind, documentation, mut user_facing_attrs) = match visible_def.def {
             DefId::Module(module) => {
-                let Some(data) = self.db.module_data(module)? else {
+                let Some(data) = self
+                    .db
+                    .module_data(module)
+                    .context("read visible module data")?
+                else {
                     return Ok(None);
                 };
                 (
                     DeclarationRef::Module(module),
                     SymbolKind::Module,
                     data.docs.as_ref().map(Documentation::text),
+                    data.user_facing_attrs,
                 )
             }
             DefId::Local(local_def_ref) => {
-                let Some(data) = self.db.local_def_data(local_def_ref)? else {
+                let Some(data) = self
+                    .db
+                    .local_def_data(local_def_ref)
+                    .context("read visible local definition data")?
+                else {
                     return Ok(None);
                 };
-                if let Some(SemanticItemRef::Function(function_ref)) =
-                    ItemStoreQuery::new(self.db).semantic_item_for_local_def(local_def_ref)?
+                if let Some(SemanticItemRef::Function(function_ref)) = ItemStoreQuery::new(self.db)
+                    .semantic_item_for_local_def(local_def_ref)
+                    .context("resolve visible function definition")?
                 {
                     function = Some(function_ref);
+                }
+                if let Some(macro_definition) = DefMapQuery::new(self.db)
+                    .macro_definition_view(DefId::Local(local_def_ref))
+                    .context("read visible macro definition")?
+                {
+                    // Unknown compiler builtins include derive/attribute-only names. Exclude that
+                    // mixed bucket from invocation sites until their precise flavor is retained.
+                    if !matches!(
+                        macro_definition.data.builtin,
+                        Some(BuiltinMacroKind::Unsupported)
+                    ) {
+                        macro_kind = Some(macro_definition.data.kind.into());
+                    }
                 }
                 (
                     DeclarationRef::LocalDef(local_def_ref),
                     SymbolKind::from_local_def_kind(data.kind),
                     None,
+                    data.user_facing_attrs,
                 )
             }
             DefId::EnumVariant(variant_def) => {
                 let item_query = ItemStoreQuery::new(self.db);
-                if let Some(variant_def_data) = self.db.local_enum_variant_data(variant_def)?
+                if let Some(variant_def_data) = self
+                    .db
+                    .local_enum_variant_data(variant_def)
+                    .context("read visible enum variant definition")?
                     && let Some(variant_ref) = item_query
-                        .enum_variant_ref_for_local_enum_variant(variant_def, variant_def_data)?
+                        .enum_variant_ref_for_local_enum_variant(variant_def, variant_def_data)
+                        .context("resolve visible enum variant")?
                 {
                     let docs = item_query
-                        .enum_variant_data(variant_ref)?
+                        .enum_variant_data(variant_ref)
+                        .context("read visible enum variant data")?
                         .and_then(|data| data.variant.docs.as_ref().map(Documentation::text));
                     (
                         DeclarationRef::EnumVariant(variant_ref),
                         SymbolKind::EnumVariant,
                         docs,
+                        variant_def_data.user_facing_attrs,
                     )
                 } else {
                     return Ok(None);
                 }
             }
         };
+
+        // Attributes on an outer re-export deliberately replace declaration attributes for that
+        // route. This lets a crate expose a supported public facade over a hidden implementation,
+        // while a hidden re-export remains hidden even when its target is otherwise public.
+        let mut imported_attrs = Vec::new();
+        for import_ref in &visible_def.attribute_imports {
+            if let Some(import) = self
+                .db
+                .import_data(*import_ref)
+                .context("read visible name import attributes")?
+            {
+                imported_attrs.push(import.user_facing_attrs);
+            }
+        }
+        if !imported_attrs.is_empty() {
+            user_facing_attrs = imported_attrs
+                .iter()
+                .copied()
+                .find(|attrs| !attrs.is_doc_hidden() && !attrs.is_unstable())
+                .unwrap_or(imported_attrs[0]);
+        }
+
+        let importing_crate = importing_module.origin.origin_crate();
+        if target_crate != importing_crate
+            && (user_facing_attrs.is_doc_hidden() || user_facing_attrs.is_unstable())
+        {
+            return Ok(None);
+        }
 
         Ok(Some(ModuleScopeName {
             label: visible_def.label,
@@ -328,6 +576,8 @@ impl<'a, 'db> NameLookupView<'a, 'db> {
             kind,
             documentation,
             function,
+            macro_kind,
+            user_facing_attrs,
         }))
     }
 }

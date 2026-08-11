@@ -194,6 +194,7 @@ impl GeneratedCollector<'_> {
             file_id: item.file_id,
             name_span: item.name_span,
             span: item.span,
+            user_facing_attrs: item.user_facing_attrs,
         });
         self.state
             .def_map_builder
@@ -378,6 +379,7 @@ impl GeneratedCollector<'_> {
             name: Some(module_name.clone()),
             name_span: item.name_span,
             docs: Documentation::concat(item.docs.clone(), module_item.inner_docs.clone()),
+            user_facing_attrs: item.user_facing_attrs,
             visibility: semantic_visibility,
             parent: Some(parent_module),
             children: Vec::new(),
@@ -482,11 +484,11 @@ impl GeneratedCollector<'_> {
         let imports: &[UseImport] = &use_item.imports;
 
         for (import_index, import) in imports.iter().enumerate() {
-            let mut path = ImportPath::from_use_path(&import.path);
-            if let Some(crate_ref) = self.origin.dollar_crate {
-                path.rewrite_dollar_crate(crate_ref);
-            }
-            if path.semantic().segments.is_empty() {
+            let Some(mut path) = ImportPath::from_use_path(&import.path, self.origin.dollar_crate)
+            else {
+                continue;
+            };
+            if path.semantic().is_empty() {
                 continue;
             }
 
@@ -510,6 +512,7 @@ impl GeneratedCollector<'_> {
                 },
                 source: self.origin.source.into(),
                 import_index,
+                user_facing_attrs: item.user_facing_attrs,
             });
             self.state
                 .def_map_builder

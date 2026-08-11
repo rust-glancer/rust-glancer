@@ -334,7 +334,11 @@ impl<'a> PackageItemTreeSnapshot<'a> {
                             .expect("string writes should not fail");
                     }
                 }
-                MacroDefinitionItem::MacroDef { args, body } => {
+                MacroDefinitionItem::MacroDef {
+                    args,
+                    body,
+                    attrs: _,
+                } => {
                     if let Some(args) = args {
                         writeln!(dump, "{indent}  - args {args}")
                             .expect("string writes should not fail");

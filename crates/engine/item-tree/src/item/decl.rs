@@ -10,7 +10,9 @@ use wincode::{SchemaRead, SchemaWrite};
 use rg_parse::Span;
 use rg_text::Name;
 
-use super::{Documentation, ItemTreeId, TypeBound, TypeRef, VisibilityLevel};
+use super::{
+    ConstExpr, Documentation, ItemTreeId, TypeBound, TypeRef, UserFacingAttrs, VisibilityLevel,
+};
 use rg_ir_model::{FieldKey, Mutability};
 
 /// Generic parameters as they were written on one item declaration.
@@ -109,7 +111,7 @@ impl fmt::Display for GenericParams {
                 }
                 if let Some(default) = &param.default {
                     text.push_str(" = ");
-                    text.push_str(default);
+                    text.push_str(default.as_str());
                 }
                 text
             }
@@ -150,7 +152,8 @@ pub struct TypeParamData {
 pub struct ConstParamData {
     pub name: Name,
     pub ty: Option<TypeRef>,
-    pub default: Option<String>,
+    #[wincode(with = "rg_wincode_utils::WincodeDynamic<Option<ConstExpr>>")]
+    pub default: Option<ConstExpr>,
 }
 
 /// Type and const parameters in their shared source declaration order.
@@ -193,6 +196,38 @@ pub struct FunctionItem {
     pub params: Vec<ParamItem>,
     pub ret_ty: Option<TypeRef>,
     pub qualifiers: FunctionQualifiers,
+    /// Whether the declaration has a body instead of ending with `;`.
+    ///
+    /// Trait completion uses this bit to distinguish required methods from overridable defaults
+    /// without retaining the body syntax in the item tree.
+    pub has_body: bool,
+    /// Exported proc-macro identity when this function belongs to a proc-macro target.
+    pub proc_macro: Option<ProcMacroDefinition>,
+}
+
+/// Macro-namespace export declared by an attribute on a function-shaped item.
+///
+/// The exported name can differ from the implementation function for
+/// `#[proc_macro_derive(Name)]`. Item-tree lowering retains both by keeping this record on the
+/// ordinary [`FunctionItem`]; DefMap later allocates a separate macro definition linked to that
+/// function's local identity.
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
+pub struct ProcMacroDefinition {
+    pub name: Name,
+    pub kind: ProcMacroKind,
+}
+
+/// Rust syntax family accepted by one procedural macro export.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
+#[memsize(leaf)]
+#[shrink(leaf)]
+pub enum ProcMacroKind {
+    /// `name!(...)`.
+    FunctionLike,
+    /// `#[name]` or `#[name(...)]`.
+    Attribute,
+    /// `#[derive(Name)]`.
+    Derive,
 }
 
 #[derive(
@@ -254,6 +289,7 @@ pub struct EnumVariantItem {
     pub span: Span,
     pub name_span: Span,
     pub docs: Option<Documentation>,
+    pub user_facing_attrs: UserFacingAttrs,
     pub fields: FieldList,
 }
 
@@ -326,6 +362,8 @@ pub struct TypeAliasItem {
 pub struct ConstItem {
     pub generics: GenericParams,
     pub ty: Option<TypeRef>,
+    /// Whether the declaration supplies a value after `=`.
+    pub has_value: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]

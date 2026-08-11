@@ -325,6 +325,42 @@ where
         )
     }
 
+    /// Find the traits that the surrounding declaration says one type must implement.
+    ///
+    /// For example, while lowering `inspect`, asking about `T` returns applications of `Factory`,
+    /// `Send`, and `Clone`:
+    ///
+    /// ```text
+    /// struct Wrapper<T>(T);
+    ///
+    /// impl<T: Factory + Send> Wrapper<T> {
+    ///     fn inspect<U: Debug>(&self)
+    ///     where
+    ///         T: Clone,
+    ///     {
+    ///         T::/* Factory + Send + Clone */
+    ///     }
+    /// }
+    /// ```
+    ///
+    /// The impl supplies the parent-owner bounds, while the method supplies `Clone`. `U: Debug` is
+    /// ignored because this method keeps only clauses whose trait `Self` argument is exactly `ty`.
+    pub fn trait_applications_for_type(
+        &mut self,
+        ty: &Ty,
+    ) -> Result<UniqueVec<TraitApplication>, D::Error> {
+        let mut applications = UniqueVec::new();
+        for clause in self.lower_clauses()? {
+            let Clause::Implemented(application) = clause else {
+                continue;
+            };
+            if application.self_ty() == Some(ty) {
+                applications.push(application);
+            }
+        }
+        Ok(applications)
+    }
+
     /// Lower every trait predicate visible from this owner.
     pub(crate) fn lower_clauses(&mut self) -> Result<Vec<Clause>, D::Error> {
         let generics = self.query.item_paths.generics().generics(self.owner)?;
@@ -474,7 +510,7 @@ where
             )?)),
             TypeRef::Array { inner, len } => Ok(Ty::array(
                 self.lower_type_ref_with_mode(inner, impl_trait_mode, inference.as_deref_mut())?,
-                self.lower_const(len.as_deref())?,
+                self.lower_const(len.as_ref().map(rg_item_tree::ConstExpr::as_str))?,
             )),
             TypeRef::FnPointer { params, ret } => Ok(Ty::fn_pointer(
                 params
@@ -898,7 +934,7 @@ where
                 }
                 (GenericParamRef::Const(_), Some(ItemGenericArg::Const(value))) => {
                     syntax_index += 1;
-                    GenericArg::Const(self.lower_const(Some(value))?)
+                    GenericArg::Const(self.lower_const(Some(value.as_str()))?)
                 }
                 (GenericParamRef::Type(_), _)
                     if matches!(
@@ -934,8 +970,9 @@ where
                             generics.owner(),
                             source
                                 .default
-                                .as_deref()
-                                .expect("guard requires a const default"),
+                                .as_ref()
+                                .expect("guard requires a const default")
+                                .as_str(),
                             &resolved,
                         )?,
                     )
@@ -1012,7 +1049,7 @@ where
         for arg in syntax_args {
             let output_name;
             let (name, ty) = match arg {
-                ItemGenericArg::AssocType { name, ty } => (name, ty.as_ref()),
+                ItemGenericArg::AssocType { name, ty, .. } => (name, ty.as_ref()),
                 ItemGenericArg::FnTraitArgs { ret, .. } => {
                     output_name = rg_text::Name::new("Output");
                     (&output_name, Some(ret.as_ref()))

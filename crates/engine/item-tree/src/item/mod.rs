@@ -5,11 +5,12 @@ use rg_text::Name;
 use wincode::{SchemaRead, SchemaWrite};
 
 pub use self::{
+    attrs::UserFacingAttrs,
     decl::{
         ConstItem, ConstParamData, EnumItem, EnumVariantItem, FieldItem, FieldList, FunctionItem,
         FunctionQualifiers, GenericParams, ImplItem, LifetimeParamData, ParamItem, ParamKind,
-        SelfParamKind, StaticItem, StructItem, TraitItem, TypeAliasItem, TypeOrConstParamData,
-        TypeParamData, UnionItem, WherePredicate,
+        ProcMacroDefinition, ProcMacroKind, SelfParamKind, StaticItem, StructItem, TraitItem,
+        TypeAliasItem, TypeOrConstParamData, TypeParamData, UnionItem, WherePredicate,
     },
     docs::Documentation,
     import::{
@@ -24,12 +25,13 @@ pub use self::{
     },
     module::{ModuleItem, ModuleSource},
     type_ref::{
-        GenericArg, TraitBoundModifier, TypeBound, TypeBoundListDisplay, TypeNameFormatter,
-        TypePath, TypePathAnchor, TypePathSegment, TypeRef, TypeRefDisplay,
+        ConstExpr, GenericArg, TraitBoundModifier, TypeBound, TypeBoundListDisplay,
+        TypeNameFormatter, TypePath, TypePathAnchor, TypePathSegment, TypeRef, TypeRefDisplay,
     },
     visibility::VisibilityLevel,
 };
 
+mod attrs;
 mod decl;
 mod docs;
 mod import;
@@ -88,6 +90,8 @@ pub struct ItemNode {
     pub lang_item: Option<LangItem>,
     /// User-facing documentation lowered from doc comments or `#[doc = "..."]`.
     pub docs: Option<Documentation>,
+    /// Compact attribute subset used to filter global user-facing discovery.
+    pub user_facing_attrs: UserFacingAttrs,
     /// File where this item is declared.
     pub file_id: FileId,
     /// Source span of the declaration.
@@ -126,6 +130,7 @@ impl ItemNode {
             cfg: CfgExpr::default(),
             lang_item: None,
             docs,
+            user_facing_attrs: UserFacingAttrs::default(),
             file_id,
             span,
         }

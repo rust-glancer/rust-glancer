@@ -1,8 +1,9 @@
 //! Dot-completion site scanning over Body IR.
 //!
-//! Dot completion site scans recognize field and method access expressions that
-//! can host member completions, then return the receiver expression and typed
-//! member prefix.
+//! Dot completion scans recognize field and method access expressions that can host member
+//! completions. They retain the semantic receiver expression, its exact written span, and the
+//! typed member prefix. The span lets request-local postfix syntax verify that it is extending the
+//! same receiver before proposing a whole-expression edit.
 //!
 //! ```text
 //! user.$0       empty replacement span after the dot
@@ -50,8 +51,9 @@ impl<'txn, 'db> DotCompletionSiteScanner<'txn, 'db> {
         let mut best = NarrowestSourceSite::new();
 
         for (body_ref, body) in self.body_ir.bodies(self.crate_ref, Some(self.file_id))? {
-            // First narrow the search to bodies that can contain this completion offset.
-            if !body.source().span.contains(self.offset) {
+            // An unfinished body can end exactly at the cursor. Completion therefore accepts the
+            // closed end of the body span in addition to ordinary offsets inside it.
+            if !body.source().span.touches(self.offset) {
                 continue;
             }
 
@@ -70,6 +72,12 @@ impl<'txn, 'db> DotCompletionSiteScanner<'txn, 'db> {
                 let Some(receiver) = Self::receiver_expr(expr) else {
                     continue;
                 };
+                let Some(receiver_data) = body.expr(receiver) else {
+                    continue;
+                };
+                if !receiver_data.source.is_written_in_file(self.file_id) {
+                    continue;
+                }
                 let len = expr.source.span.len();
                 // Nested accesses can both contain the offset. The shortest expression is the
                 // one the user is completing.
@@ -77,6 +85,7 @@ impl<'txn, 'db> DotCompletionSiteScanner<'txn, 'db> {
                     DotCompletionSite {
                         body: body_ref,
                         receiver,
+                        receiver_span: receiver_data.source.span,
                         member_prefix_span,
                     },
                     len,

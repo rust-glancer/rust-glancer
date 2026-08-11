@@ -49,17 +49,28 @@ where
             return Ok(TypePathResolution::Unknown);
         }
 
+        // Preserve every type-namespace declaration kind through the identity lookup. Transparent
+        // aliases are lowered by `rg_ty`, but dropping their identity here would prevent that
+        // canonical lowerer from ever seeing the alias or its written generic arguments.
         let mut type_defs = ExpectedUnique::new();
-        for type_def in self.type_defs_for_path(context.module, path)? {
-            type_defs.push(type_def);
+        let mut type_aliases = ExpectedUnique::new();
+        let mut traits = ExpectedUnique::new();
+        for item in self.semantic_items_for_path(context.module, path)? {
+            match item {
+                SemanticItemRef::TypeDef(type_def) => type_defs.push(type_def),
+                SemanticItemRef::TypeAlias(alias) => type_aliases.push(alias),
+                SemanticItemRef::Trait(trait_ref) => traits.push(trait_ref),
+                SemanticItemRef::Impl(_)
+                | SemanticItemRef::Function(_)
+                | SemanticItemRef::Const(_)
+                | SemanticItemRef::Static(_) => {}
+            }
         }
         if !type_defs.is_empty() {
             return Ok(TypePathResolution::type_def(type_defs));
         }
-
-        let mut traits = ExpectedUnique::new();
-        for trait_ref in self.traits_for_path(context.module, path)? {
-            traits.push(trait_ref);
+        if !type_aliases.is_empty() {
+            return Ok(TypePathResolution::type_alias(type_aliases));
         }
         Ok(TypePathResolution::trait_ref(traits))
     }

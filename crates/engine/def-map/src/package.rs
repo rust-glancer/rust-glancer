@@ -5,6 +5,7 @@ use rg_ir_model::{CrateId, ModuleId, ModuleRef};
 use rg_parse::CargoTargetId;
 use rg_std::{MemorySize, Shrink};
 use rg_text::{Name, RustEdition};
+use rg_workspace::TargetKind;
 use wincode::{SchemaRead, SchemaWrite};
 
 use crate::map::DefMap;
@@ -12,11 +13,13 @@ use crate::map::DefMap;
 /// Definition and resolution state for one semantic crate.
 ///
 /// Cargo targets are source/project inputs. The semantic engine assigns a package-local `CrateId`
-/// while retaining the originating target id here for the few operations that need to return to
-/// parsed source data.
+/// while retaining the originating target id and kind here. The id lets source-facing operations
+/// return to parsed data; the kind preserves language boundaries such as the difference between a
+/// proc-macro export and its host-side implementation crate.
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct CrateData {
     cargo_target: CargoTargetId,
+    target_kind: TargetKind,
     name: String,
     root_module: Option<ModuleId>,
     // Crate-wide extern roots from Cargo dependencies and root `extern crate` declarations.
@@ -30,6 +33,7 @@ impl CrateData {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         cargo_target: CargoTargetId,
+        target_kind: TargetKind,
         name: String,
         root_module: Option<ModuleId>,
         extern_prelude: HashMap<Name, ModuleRef>,
@@ -38,6 +42,7 @@ impl CrateData {
     ) -> Self {
         Self {
             cargo_target,
+            target_kind,
             name,
             root_module,
             extern_prelude,
@@ -49,6 +54,16 @@ impl CrateData {
     /// Returns the parsed Cargo target that produced this semantic crate.
     pub fn cargo_target(&self) -> CargoTargetId {
         self.cargo_target
+    }
+
+    /// Returns the Cargo target role whose language rules apply to this semantic crate.
+    pub fn target_kind(&self) -> &TargetKind {
+        &self.target_kind
+    }
+
+    /// Whether this crate exposes proc-macro identities across its crate boundary.
+    pub fn is_proc_macro(&self) -> bool {
+        self.target_kind.is_proc_macro()
     }
 
     /// Returns the crate name used by Rust path resolution.

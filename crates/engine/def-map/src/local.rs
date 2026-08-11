@@ -1,8 +1,24 @@
+//! Source definitions retained by one DefMap before semantic item lowering.
+//!
+//! A local definition is a name-resolution identity, not necessarily a one-to-one semantic item.
+//! Procedural macros make that boundary visible:
+//!
+//! ```text
+//! #[proc_macro_derive(Stored)]
+//! pub fn stored(input: TokenStream) -> TokenStream { /* ... */ }
+//! ```
+//!
+//! The function `stored` remains the value-namespace implementation inside its defining crate,
+//! while `Stored` is a separate macro-namespace export. The two definitions share source syntax
+//! and are linked for navigation, but only the function is lowered as a semantic function. Keeping
+//! those identities separate prevents macro lookup from exposing a function call signature.
+
 use rg_ir_model::{
     CrateRef, DefMapRef, LocalDefId, LocalDefRef, LocalEnumVariantId, LocalEnumVariantRef, ModuleId,
 };
 use rg_item_tree::{
-    BuiltinMacroKind, Documentation, ItemKind, ItemTag, MacroDefinitionItem, VisibilityLevel,
+    BuiltinMacroKind, Documentation, ItemKind, ItemTag, MacroDefinitionItem, ProcMacroKind,
+    UserFacingAttrs, VisibilityLevel,
 };
 use rg_macro_runtime::DeclarativeMacroDefinition;
 use rg_parse::{FileId, Span};
@@ -32,6 +48,7 @@ pub struct LocalDefData {
     pub file_id: FileId,
     pub name_span: Option<Span>,
     pub span: Span,
+    pub user_facing_attrs: UserFacingAttrs,
 }
 
 /// One enum variant that can be named through qualified paths and imports.
@@ -54,6 +71,7 @@ pub struct LocalEnumVariantData {
     pub file_id: FileId,
     pub name_span: Span,
     pub span: Span,
+    pub user_facing_attrs: UserFacingAttrs,
 }
 
 /// Borrowed enum variant table entry paired with its stable def-map ref.
@@ -89,6 +107,8 @@ pub struct MacroDefinitionData {
     pub docs: Option<Documentation>,
     /// Compiler hook that should run instead of declarative expansion, if any.
     pub builtin: Option<BuiltinMacroKind>,
+    /// Source-syntax family in which this macro name can be used.
+    pub kind: MacroDefinitionKind,
     #[shrink(skip)]
     pub payload: MacroDefinitionPayload,
 }
@@ -105,14 +125,65 @@ impl MacroDefinitionData {
             dollar_crate,
             docs,
             builtin: Self::builtin_from_item(item),
+            kind: MacroDefinitionKind::Invocation,
             payload: MacroDefinitionPayload::from_item(item),
+        }
+    }
+
+    pub fn from_proc_macro(
+        kind: ProcMacroKind,
+        implementation: LocalDefId,
+        docs: Option<Documentation>,
+        edition: RustEdition,
+        dollar_crate: CrateRef,
+    ) -> Self {
+        Self {
+            edition,
+            dollar_crate,
+            docs,
+            builtin: None,
+            kind: kind.into(),
+            payload: MacroDefinitionPayload::ProcMacro { implementation },
+        }
+    }
+
+    /// Returns the ordinary function identity that implements this exported proc macro.
+    ///
+    /// The function and macro occupy different namespaces and remain different definitions. This
+    /// link exists for source navigation; it must not make the macro definition a semantic
+    /// function itself.
+    pub fn proc_macro_implementation(&self) -> Option<LocalDefId> {
+        match &self.payload {
+            MacroDefinitionPayload::ProcMacro { implementation } => Some(*implementation),
+            MacroDefinitionPayload::MacroRules { .. } | MacroDefinitionPayload::MacroDef { .. } => {
+                None
+            }
         }
     }
 
     fn builtin_from_item(item: &MacroDefinitionItem) -> Option<BuiltinMacroKind> {
         match item {
             MacroDefinitionItem::MacroRules { attrs, .. } => attrs.builtin,
-            MacroDefinitionItem::MacroDef { .. } => None,
+            MacroDefinitionItem::MacroDef { attrs, .. } => attrs.builtin,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
+#[memsize(leaf)]
+#[shrink(leaf)]
+pub enum MacroDefinitionKind {
+    Invocation,
+    Attribute,
+    Derive,
+}
+
+impl From<ProcMacroKind> for MacroDefinitionKind {
+    fn from(kind: ProcMacroKind) -> Self {
+        match kind {
+            ProcMacroKind::FunctionLike => Self::Invocation,
+            ProcMacroKind::Attribute => Self::Attribute,
+            ProcMacroKind::Derive => Self::Derive,
         }
     }
 }
@@ -131,13 +202,23 @@ pub enum MacroDefinitionPayload {
         #[shrink(skip)]
         body: Option<TopSubtree>,
     },
+    /// Proc macros are visible definitions, but rust-glancer never executes their host code.
+    ///
+    /// The implementation is an ordinary value-namespace function inside the defining crate. It
+    /// stays separate from the exported macro identity so semantic lowering and downstream lookup
+    /// cannot accidentally treat the macro as a callable function.
+    ProcMacro { implementation: LocalDefId },
 }
 
 impl MacroDefinitionPayload {
     fn from_item(item: &MacroDefinitionItem) -> Self {
         match item {
             MacroDefinitionItem::MacroRules { body, .. } => Self::MacroRules { body: body.clone() },
-            MacroDefinitionItem::MacroDef { args, body } => Self::MacroDef {
+            MacroDefinitionItem::MacroDef {
+                args,
+                body,
+                attrs: _,
+            } => Self::MacroDef {
                 args: args.clone(),
                 body: body.clone(),
             },
@@ -179,12 +260,28 @@ impl<'a> MacroDefinitionView<'a> {
         })
     }
 
+    /// Whether this definition requires executing a proc-macro host instead of declarative
+    /// token-tree expansion.
+    pub fn is_proc_macro(self) -> bool {
+        matches!(&self.data.payload, MacroDefinitionPayload::ProcMacro { .. })
+    }
+
+    /// Returns the defining-crate function behind a proc-macro export.
+    pub fn proc_macro_implementation(self) -> Option<LocalDefRef> {
+        self.data
+            .proc_macro_implementation()
+            .map(|local_def| LocalDefRef {
+                origin: self.def_ref.origin,
+                local_def,
+            })
+    }
+
     /// Projects retained DefMap data into the syntax-only input accepted by the macro runtime.
     ///
     /// Compiler builtins have no declarative implementation to compile, so callers must handle
     /// their builtin identity before asking for this view.
     pub fn declarative_definition(self) -> Option<DeclarativeMacroDefinition<'a>> {
-        if self.data.builtin.is_some() {
+        if self.data.builtin.is_some() || self.is_proc_macro() {
             return None;
         }
 
@@ -199,6 +296,9 @@ impl<'a> MacroDefinitionView<'a> {
                     args: args.as_ref(),
                     body: body.as_ref(),
                 }
+            }
+            MacroDefinitionPayload::ProcMacro { .. } => {
+                unreachable!("proc macros return before declarative payload projection")
             }
         })
     }

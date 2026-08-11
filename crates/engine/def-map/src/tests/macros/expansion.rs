@@ -30,6 +30,56 @@ make_user!();
 }
 
 #[test]
+fn keeps_proc_macro_calls_out_of_declarative_expansion() {
+    let project = utils::DefMapFixtureDb::build(
+        r#"
+//- /Cargo.toml
+[workspace]
+members = ["macros", "app"]
+resolver = "3"
+
+//- /macros/Cargo.toml
+[package]
+name = "fixture_macros"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+proc-macro = true
+
+//- /macros/src/lib.rs
+extern crate proc_macro;
+
+#[proc_macro]
+pub fn emit(_input: proc_macro::TokenStream) -> proc_macro::TokenStream {
+    proc_macro::TokenStream::new()
+}
+
+//- /app/Cargo.toml
+[package]
+name = "fixture_app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+fixture_macros = { path = "../macros" }
+
+//- /app/src/lib.rs
+use fixture_macros::emit;
+
+emit!();
+
+pub struct AfterProcMacroCall;
+"#,
+    );
+    let target = project.lib("fixture_app");
+
+    target.entry("AfterProcMacroCall").assert_type_exists(
+        "unsupported proc-macro execution should not abort collection of ordinary items",
+    );
+}
+
+#[test]
 fn generated_enum_variants_keep_shape_namespace_occupancy() {
     let project = utils::DefMapFixtureDb::build(
         r#"

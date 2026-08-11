@@ -1,11 +1,13 @@
-//! Edition-aware rendering for syntax-shaped semantic data.
+//! Edition-aware rendering for names, type syntax, and semantic paths.
 //!
 //! Lowering removes source-only rawness because it is not part of semantic name identity. These
-//! borrowed adapters restore `r#` while writing into the caller's final output, so presentation
-//! does not require a second owned spelling beside each canonical name.
+//! borrowed adapters restore `r#` while writing identifiers, type refs, bounds, field keys, and
+//! rooted paths into the caller's final output, so presentation does not need a second owned
+//! spelling beside each canonical name.
 
 use std::fmt;
 
+use rg_ir_model::{Path, PathRoot};
 use rg_item_tree::{
     FieldKey, TypeBound, TypeBoundListDisplay, TypeNameFormatter, TypeRef, TypeRefDisplay,
 };
@@ -63,6 +65,11 @@ impl SyntaxRenderer {
         TypeBound::display_list_with(bounds, self)
     }
 
+    /// Displays a semantic path as valid source for the use-site edition.
+    pub fn path<'a>(self, path: &'a Path) -> PathDisplay<'a> {
+        PathDisplay { syntax: self, path }
+    }
+
     fn syntax_edition(self) -> rg_syntax::Edition {
         match self.edition {
             RustEdition::Edition2015 => rg_syntax::Edition::Edition2015,
@@ -100,6 +107,55 @@ impl fmt::Display for NameDisplay<'_> {
             f.write_str("r#")?;
         }
         f.write_str(name)
+    }
+}
+
+/// Borrowed display of one semantic path using edition-correct identifier spelling.
+#[derive(Debug, Clone, Copy)]
+pub struct PathDisplay<'a> {
+    syntax: SyntaxRenderer,
+    path: &'a Path,
+}
+
+impl fmt::Display for PathDisplay<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut needs_separator = match self.path.root() {
+            PathRoot::Relative => false,
+            PathRoot::Absolute => {
+                f.write_str("::")?;
+                false
+            }
+            PathRoot::Crate => {
+                f.write_str("crate")?;
+                true
+            }
+            PathRoot::SelfModule => {
+                f.write_str("self")?;
+                true
+            }
+            PathRoot::Super(depth) => {
+                for index in 0..depth {
+                    if index > 0 {
+                        f.write_str("::")?;
+                    }
+                    f.write_str("super")?;
+                }
+                true
+            }
+            PathRoot::DollarCrate(_) => {
+                f.write_str("$crate")?;
+                true
+            }
+        };
+
+        for segment in self.path.segments() {
+            if needs_separator {
+                f.write_str("::")?;
+            }
+            fmt::Display::fmt(&self.syntax.identifier(segment.as_str()), f)?;
+            needs_separator = true;
+        }
+        Ok(())
     }
 }
 

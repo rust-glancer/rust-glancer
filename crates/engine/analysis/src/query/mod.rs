@@ -1,9 +1,9 @@
 //! Editor-facing analysis query implementations.
 //!
 //! Each module backs one public `Analysis` operation or a tightly related group of operations.
-//! Queries combine def-map, semantic IR, and body IR facts into transport-neutral result models,
-//! but leave lower-level cursor/declaration normalization and presentation formatting to sibling
-//! modules.
+//! Queries combine generic indexed views with exact request source where the editor operation
+//! needs it, then produce the transport-neutral models exported by `model`. Reusable semantic and
+//! source traversal stays in `rg_ir_view`; protocol conversion stays in the LSP crates.
 
 pub(crate) mod completion;
 pub(crate) mod hover;

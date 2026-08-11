@@ -74,6 +74,13 @@ impl DefMapSource for DefMapReadTxn<'_> {
         self.def_map(crate_ref)
     }
 
+    fn crate_is_proc_macro(&self, crate_ref: CrateRef) -> Result<bool, PackageStoreError> {
+        Ok(self
+            .package(crate_ref.package)?
+            .crate_data(crate_ref.crate_id)
+            .is_some_and(crate::CrateData::is_proc_macro))
+    }
+
     fn extern_root(
         &self,
         crate_ref: CrateRef,

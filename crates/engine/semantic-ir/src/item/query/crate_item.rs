@@ -40,9 +40,12 @@ where
         self.use_site
     }
 
-    /// Returns stores visible from this query's use-site crate.
+    /// Returns ordinary semantic stores participating in lookup from the use-site crate.
+    ///
+    /// Macro resolution has its own namespace reachability. Proc-macro implementation stores do
+    /// not enter this item universe when the macro crate is an external dependency.
     pub fn visible_stores(&self) -> Result<Vec<&'item ItemStore>, I::Error> {
-        let crates = self.def_maps.visible_crates_from(self.use_site)?;
+        let crates = self.def_maps.item_lookup_crates_from(self.use_site)?;
         self.items.stores_for_crates(&crates)
     }
 

@@ -2,7 +2,9 @@
 //!
 //! Body and item-signature scanners attach different semantic scopes to the same item-tree syntax.
 //! This module keeps the syntax walk shared so a new type shape or recovered path form cannot be
-//! supported by one scanner while silently remaining invisible to the other.
+//! supported by one scanner while silently remaining invisible to the other. It preserves both
+//! module-compatible and type-shaped qualifiers, and classifies associated bindings before either
+//! caller attaches a scope.
 //!
 //! ```text
 //! fn load(value: outer::Inner<Vec<Item>>) {}
@@ -10,20 +12,24 @@
 //!
 //! fn load(value: outer::Inn$0) {}
 //!                ^^^^^^^ qualifier `outer`, replacement span `Inn`
+//!
+//! fn read(value: Iterator<Ite$0 = u8>) {}
+//!                         ^^^ binding span; resolve the surrounding `Iterator`
 //! ```
 
 use rg_ir_model::Path;
 use rg_item_tree::{GenericArg, TypePath, TypePathAnchor, TypeRef};
 use rg_parse::{Span, TextSpan};
 
-use super::TypeNamePosition;
+use super::{AssociatedPathQualifier, TypeNamePosition};
 
 /// Cursor-shaped interpretation of one type path before a body or signature scope is attached.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum TypePathCompletionSite {
     /// A segment whose candidates come from a resolved qualifier, such as `model::Us$0`.
     Qualified {
-        qualifier: Path,
+        module_qualifier: Option<Path>,
+        associated_qualifier: AssociatedPathQualifier,
         member_prefix_span: Span,
     },
     /// A first segment whose candidates come from lexical and module scopes, such as `Us$0`.
@@ -34,6 +40,154 @@ pub(super) enum TypePathCompletionSite {
     },
 }
 
+/// Scope-free syntax interpretation of an associated type binding within a trait path.
+///
+/// `Iterator<It$0 = u8>` is not a normal type path segment: the replacement span belongs to the
+/// binding name, while candidates come only from the resolved `Iterator` trait and its
+/// supertraits.
+///
+/// There are deliberately two ways to build this value:
+///
+/// ```text
+/// Iterator<It$0 = u8> // explicit: `=` proves that `It` is a binding
+/// Iterator<It$0>      // implicit: `It` may still be an ordinary type argument
+/// ```
+///
+/// The explicit form owns the completion site. The implicit form is only an extra interpretation
+/// layered over normal type completion. A body or signature scanner attaches the semantic scope
+/// after this syntax-only step.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct AssociatedTypeBindingSyntax {
+    pub(super) trait_ref: TypeRef,
+    pub(super) member_prefix_span: Span,
+    pub(super) existing_bindings: Vec<String>,
+}
+
+impl AssociatedTypeBindingSyntax {
+    /// Interpret the associated binding that already has an `=` in source.
+    ///
+    /// All bindings are removed from the returned trait path. They constrain the trait use, but
+    /// they do not participate in resolving which trait declaration owns the candidate names.
+    pub(super) fn explicit_at(path: &TypePath, offset: u32) -> Option<Self> {
+        for (segment_idx, segment) in path.segments.iter().enumerate() {
+            let Some(touched_arg_idx) = segment.args.iter().position(|arg| {
+                matches!(
+                    arg,
+                    GenericArg::AssocType { name_span, .. } if name_span.touches(offset)
+                )
+            }) else {
+                continue;
+            };
+            let GenericArg::AssocType {
+                name_span: member_prefix_span,
+                ..
+            } = &segment.args[touched_arg_idx]
+            else {
+                unreachable!("the selected generic argument is an associated type binding")
+            };
+
+            let existing_bindings = segment
+                .args
+                .iter()
+                .enumerate()
+                .filter_map(|(arg_idx, arg)| match arg {
+                    GenericArg::AssocType { name, .. } if arg_idx != touched_arg_idx => {
+                        Some(name.to_string())
+                    }
+                    GenericArg::Type(_)
+                    | GenericArg::Lifetime(_)
+                    | GenericArg::Const(_)
+                    | GenericArg::FnTraitArgs { .. }
+                    | GenericArg::AssocType { .. }
+                    | GenericArg::Unsupported(_) => None,
+                })
+                .collect();
+
+            // Associated bindings constrain the selected trait but are not part of resolving its
+            // identity. Removing all of them also keeps an incomplete binding from feeding an
+            // unknown right-hand side back into trait lowering.
+            let mut segments = path.segments[..=segment_idx].to_vec();
+            segments[segment_idx]
+                .args
+                .retain(|arg| !matches!(arg, GenericArg::AssocType { .. }));
+            return Some(Self {
+                trait_ref: TypeRef::Path(TypePath {
+                    source_span: path.source_span,
+                    absolute: path.absolute,
+                    anchor: path.anchor.clone(),
+                    segments,
+                }),
+                member_prefix_span: *member_prefix_span,
+                existing_bindings,
+            });
+        }
+        None
+    }
+
+    /// Interpret a simple type argument as a binding name before its `=` has been written.
+    ///
+    /// `Iterator<It$0>` is syntactically indistinguishable from an ordinary type argument. The
+    /// candidate argument is removed from the trait path before resolution, and the caller uses
+    /// this site only as an overlay while keeping normal type completions.
+    pub(super) fn implicit_at(path: &TypePath, offset: u32) -> Option<Self> {
+        for (segment_idx, segment) in path.segments.iter().enumerate() {
+            for (arg_idx, arg) in segment.args.iter().enumerate() {
+                let GenericArg::Type(TypeRef::Path(binding_path)) = arg else {
+                    continue;
+                };
+                if binding_path.absolute
+                    || binding_path.anchor.is_some()
+                    || binding_path.segments.len() != 1
+                {
+                    continue;
+                }
+                let binding_segment = &binding_path.segments[0];
+                if !binding_segment.args.is_empty() || !binding_segment.span.touches(offset) {
+                    continue;
+                }
+
+                let existing_bindings = segment
+                    .args
+                    .iter()
+                    .filter_map(|arg| match arg {
+                        GenericArg::AssocType { name, .. } => Some(name.to_string()),
+                        GenericArg::Type(_)
+                        | GenericArg::Lifetime(_)
+                        | GenericArg::Const(_)
+                        | GenericArg::FnTraitArgs { .. }
+                        | GenericArg::Unsupported(_) => None,
+                    })
+                    .collect();
+
+                // Resolve the surrounding trait without treating the unfinished binding name as
+                // one of its positional generic arguments.
+                let mut segments = path.segments[..=segment_idx].to_vec();
+                segments[segment_idx].args = segments[segment_idx]
+                    .args
+                    .iter()
+                    .enumerate()
+                    .filter(|(candidate_idx, candidate)| {
+                        *candidate_idx != arg_idx
+                            && !matches!(candidate, GenericArg::AssocType { .. })
+                    })
+                    .map(|(_, candidate)| candidate.clone())
+                    .collect();
+                return Some(Self {
+                    trait_ref: TypeRef::Path(TypePath {
+                        source_span: path.source_span,
+                        absolute: path.absolute,
+                        anchor: path.anchor.clone(),
+                        segments,
+                    }),
+                    member_prefix_span: binding_segment.span,
+                    existing_bindings,
+                });
+            }
+        }
+        None
+    }
+}
+
 impl TypePathCompletionSite {
     /// Interprets the path segment touched by `offset`.
     ///
@@ -41,19 +195,19 @@ impl TypePathCompletionSite {
     /// syntax such as `outer::$0` has no final segment, so it receives an empty replacement span
     /// after the separator instead.
     pub(super) fn at(path: &TypePath, offset: u32, position: TypeNamePosition) -> Option<Self> {
-        // The segments after `<Type as Trait>` are associated-item paths, not ordinary module
-        // paths. Their completion needs associated-item lookup and is intentionally left out
-        // until that query exists.
-        if path.anchor.is_some() {
-            return None;
-        }
-
         for (idx, segment) in path.segments.iter().enumerate() {
             if !segment.span.touches(offset) {
                 continue;
             }
 
             if idx == 0 {
+                if path.anchor.is_some() {
+                    return Some(Self::Qualified {
+                        module_qualifier: None,
+                        associated_qualifier: Self::associated_qualifier(path, 0)?,
+                        member_prefix_span: segment.span,
+                    });
+                }
                 if path.absolute {
                     return None;
                 }
@@ -69,7 +223,8 @@ impl TypePathCompletionSite {
             }
 
             return Some(Self::Qualified {
-                qualifier: path.as_def_map_path_prefix(idx - 1)?,
+                module_qualifier: path.as_def_map_path_prefix(idx - 1),
+                associated_qualifier: Self::associated_qualifier(path, idx)?,
                 member_prefix_span: segment.span,
             });
         }
@@ -85,7 +240,8 @@ impl TypePathCompletionSite {
         }
 
         Some(Self::Qualified {
-            qualifier: path.as_def_map_path()?,
+            module_qualifier: path.as_def_map_path(),
+            associated_qualifier: Self::associated_qualifier(path, path.segments.len())?,
             member_prefix_span: Span {
                 text: TextSpan {
                     start: offset,
@@ -93,6 +249,36 @@ impl TypePathCompletionSite {
                 },
             },
         })
+    }
+
+    /// Builds the type-shaped prefix while preserving anchors and generic arguments.
+    fn associated_qualifier(
+        path: &TypePath,
+        prefix_segment_count: usize,
+    ) -> Option<AssociatedPathQualifier> {
+        if prefix_segment_count == 0 {
+            return match path.anchor.as_ref()? {
+                TypePathAnchor::Type(ty) => {
+                    Some(AssociatedPathQualifier::Type(ty.as_ref().clone()))
+                }
+                TypePathAnchor::QualifiedTrait { self_ty, trait_ty } => {
+                    Some(AssociatedPathQualifier::QualifiedTrait {
+                        self_ty: self_ty.as_ref().clone(),
+                        trait_ref: trait_ty.as_ref().clone(),
+                    })
+                }
+            };
+        }
+        if prefix_segment_count > path.segments.len() {
+            return None;
+        }
+
+        Some(AssociatedPathQualifier::Type(TypeRef::Path(TypePath {
+            source_span: path.source_span,
+            absolute: path.absolute,
+            anchor: path.anchor.clone(),
+            segments: path.segments[..prefix_segment_count].to_vec(),
+        })))
     }
 }
 

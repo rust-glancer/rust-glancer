@@ -1,9 +1,7 @@
 //! Field access resolution.
 
 use rg_def_map::DefMapSource;
-use rg_ir_model::{
-    EnumVariantRef, FieldKey, FieldRef, PathSegment, TypeDefId, identity::DeclarationRef,
-};
+use rg_ir_model::{EnumVariantRef, FieldKey, FieldRef, TypeDefId, identity::DeclarationRef};
 use rg_item_tree::{FieldItem, FieldList};
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::ItemStoreSource;
@@ -163,16 +161,10 @@ where
         field_key: &FieldKey,
     ) -> Result<Option<Ty>, PackageStoreError> {
         let variant_path = path.and_then(BodyPath::as_def_map_path);
-        let variant_name = match variant_path.as_ref().and_then(|path| path.segments.last()) {
-            Some(PathSegment::Name(name)) => Some(name.as_str()),
-            Some(
-                PathSegment::SelfKw
-                | PathSegment::SuperKw
-                | PathSegment::CrateKw
-                | PathSegment::DollarCrate(_),
-            )
-            | None => None,
-        };
+        let variant_name = variant_path
+            .as_ref()
+            .and_then(|path| path.segments().last())
+            .map(rg_text::Name::as_str);
         let mut candidates = ExpectedUnique::new();
 
         for candidate in ReferencePeelingCandidates::new(expected_ty) {

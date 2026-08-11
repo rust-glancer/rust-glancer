@@ -1,5 +1,6 @@
 use crate::item::{
-    GenericArg, TraitBoundModifier, TypeBound, TypePath, TypePathAnchor, TypePathSegment, TypeRef,
+    ConstExpr, GenericArg, TraitBoundModifier, TypeBound, TypePath, TypePathAnchor,
+    TypePathSegment, TypeRef,
 };
 use rg_ir_model::Mutability;
 use rg_parse::{LineIndex, Span};
@@ -23,7 +24,12 @@ impl FromAst for TypeRef {
                         .map(|ty| Self::from_ast(&ty, (line_index, &mut *interner)))
                         .unwrap_or_else(|| Self::unknown_from_text(normalized_syntax(&ty))),
                 ),
-                len: ty.const_arg().map(|arg| normalized_syntax(&arg)),
+                len: ty.const_arg().map(|arg| {
+                    ConstExpr::new(
+                        normalized_syntax(&arg),
+                        Span::from_text_range(arg.syntax().text_range()),
+                    )
+                }),
             },
             ast::Type::DynTraitType(ty) => Self::DynTrait(type_bound_list_from_ast(
                 ty.type_bound_list(),
@@ -243,16 +249,26 @@ impl FromAst for GenericArg {
 
     fn from_ast(arg: &Self::AstNode, (line_index, interner): Self::Context<'_>) -> Self {
         match arg.clone() {
-            ast::GenericArg::AssocTypeArg(arg) => Self::AssocType {
-                name: arg
-                    .name_ref()
-                    .map(|name| interner.intern(name.text()))
-                    .unwrap_or_else(|| interner.intern_missing()),
-                ty: arg
-                    .ty()
-                    .map(|ty| TypeRef::from_ast(&ty, (line_index, &mut *interner))),
-            },
-            ast::GenericArg::ConstArg(arg) => Self::Const(normalized_syntax(&arg)),
+            ast::GenericArg::AssocTypeArg(arg) => {
+                let name_ref = arg.name_ref();
+                Self::AssocType {
+                    name: name_ref
+                        .as_ref()
+                        .map(|name| interner.intern(name.text()))
+                        .unwrap_or_else(|| interner.intern_missing()),
+                    name_span: name_ref
+                        .as_ref()
+                        .map(|name| Span::from_text_range(name.syntax().text_range()))
+                        .unwrap_or_else(|| Span::from_text_range(arg.syntax().text_range())),
+                    ty: arg
+                        .ty()
+                        .map(|ty| TypeRef::from_ast(&ty, (line_index, &mut *interner))),
+                }
+            }
+            ast::GenericArg::ConstArg(arg) => Self::Const(ConstExpr::new(
+                normalized_syntax(&arg),
+                Span::from_text_range(arg.syntax().text_range()),
+            )),
             ast::GenericArg::LifetimeArg(arg) => arg
                 .lifetime()
                 .map(|lifetime| Self::Lifetime(interner.intern(lifetime.text())))

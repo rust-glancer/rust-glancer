@@ -5,8 +5,10 @@
 //! maps into language-shaped answers.
 
 use rg_ir_model::{
-    CrateRef, DefId, DefMapRef, LocalDefRef, LocalEnumVariantRef, LocalImplRef, ModuleRef,
+    CrateRef, DefId, DefMapRef, ImportRef, LocalDefRef, LocalEnumVariantRef, LocalImplRef,
+    ModuleRef,
 };
+use rg_std::UniqueVec;
 use rg_text::Name;
 
 use super::{
@@ -15,7 +17,7 @@ use super::{
 };
 
 use crate::{
-    DefMap, LocalDefData, LocalEnumVariantData, LocalEnumVariantEntry, LocalImplData,
+    DefMap, ImportData, LocalDefData, LocalEnumVariantData, LocalEnumVariantEntry, LocalImplData,
     MacroDefinitionView, ModuleData, Namespace, ScopeEntryRef, VisibleScopeDef, VisibleScopeDefs,
     VisibleScopeOrigin,
 };
@@ -28,6 +30,9 @@ pub trait DefMapSource {
     type Error;
 
     fn def_map_for_origin(&self, origin: DefMapRef) -> Result<Option<&DefMap>, Self::Error>;
+
+    /// Whether `crate_ref` is a host-side proc-macro implementation crate.
+    fn crate_is_proc_macro(&self, crate_ref: CrateRef) -> Result<bool, Self::Error>;
 
     fn module_data(&self, module_ref: ModuleRef) -> Result<Option<&ModuleData>, Self::Error> {
         Ok(self
@@ -69,6 +74,12 @@ pub trait DefMapSource {
             .and_then(|def_map| def_map.local_enum_variant(variant_ref.local_enum_variant)))
     }
 
+    fn import_data(&self, import_ref: ImportRef) -> Result<Option<&ImportData>, Self::Error> {
+        Ok(self
+            .def_map_for_origin(import_ref.origin)?
+            .and_then(|def_map| def_map.import(import_ref.import)))
+    }
+
     fn local_enum_variant_entries_for_enum<'a>(
         &'a self,
         enum_def: LocalDefRef,
@@ -101,6 +112,10 @@ impl<T: DefMapSource + ?Sized> DefMapSource for &T {
 
     fn def_map_for_origin(&self, origin: DefMapRef) -> Result<Option<&DefMap>, Self::Error> {
         (**self).def_map_for_origin(origin)
+    }
+
+    fn crate_is_proc_macro(&self, crate_ref: CrateRef) -> Result<bool, Self::Error> {
+        (**self).crate_is_proc_macro(crate_ref)
     }
 
     fn extern_root(
@@ -143,17 +158,28 @@ where
         ScopeResolver::new(self)
     }
 
-    /// Returns crates whose DefMap roots are visible from `root`.
+    /// Returns crates whose ordinary semantic items can participate in lookup from `root`.
     ///
-    /// This is the crate-level language visibility closure: the crate itself plus crates named
-    /// by external roots and preludes reachable from it. It is intentionally separate from package
-    /// transaction inclusion, which is only a storage/materialization boundary.
-    pub fn visible_crates_from(&self, root: CrateRef) -> Result<Vec<CrateRef>, S::Error> {
+    /// A proc-macro dependency exposes macro identities, but its implementation is a host-side
+    /// program rather than a Rust library linked into the consuming crate. Stop traversal at that
+    /// edge so neither the implementation store nor its dependencies contribute methods, impls,
+    /// or language items to the consumer. The root is always included: while analysing a
+    /// proc-macro crate, its own functions and normal dependencies are ordinary local semantics.
+    ///
+    /// For example, `app -> runtime -> derive_macro -> parser` contributes `app` and `runtime` to
+    /// the app's item lookup. Analysing `derive_macro` itself contributes `derive_macro` and
+    /// `parser`.
+    pub fn item_lookup_crates_from(&self, root: CrateRef) -> Result<Vec<CrateRef>, S::Error> {
         let mut visible_crates = Vec::new();
+        let mut visited_crates = UniqueVec::new();
         let mut pending_crates = vec![root];
 
         while let Some(crate_ref) = pending_crates.pop() {
-            if visible_crates.contains(&crate_ref) {
+            if !visited_crates.push(crate_ref) {
+                continue;
+            }
+
+            if crate_ref != root && self.source.crate_is_proc_macro(crate_ref)? {
                 continue;
             }
             visible_crates.push(crate_ref);
@@ -218,19 +244,8 @@ where
             VisibleScopeDefs::new(&current_scope, VisibleScopeOrigin::ModuleScope, false);
 
         let crate_ref = importing_module.origin.origin_crate();
-        let mut extern_roots = self.source.extern_roots(crate_ref)?;
-        extern_roots.sort_by(|(left, _), (right, _)| left.as_str().cmp(right.as_str()));
-        for (name, module_ref) in extern_roots {
-            let label = name;
-            defs.push(
-                VisibleScopeDef {
-                    label,
-                    namespace: Namespace::Types,
-                    def: rg_ir_model::DefId::Module(module_ref),
-                    origin: VisibleScopeOrigin::ExternRoot,
-                },
-                true,
-            );
+        for visible in self.visible_absolute_root_defs(importing_module)? {
+            defs.push(visible, true);
         }
 
         if let Some(prelude) = self.source.prelude_module(crate_ref)? {
@@ -238,6 +253,36 @@ where
             defs.extend(&prelude_scope, VisibleScopeOrigin::Prelude, true);
         }
 
+        defs.sort();
+        Ok(defs)
+    }
+
+    /// Returns names available immediately after a leading absolute `::`.
+    ///
+    /// Unlike ordinary unqualified lookup, this namespace contains only extern-prelude roots. It
+    /// is exposed separately so completion and resolution agree that `::std` does not consult the
+    /// current module or standard prelude items.
+    pub fn visible_absolute_root_defs(
+        &self,
+        importing_module: ModuleRef,
+    ) -> Result<VisibleScopeDefs, S::Error> {
+        let crate_ref = importing_module.origin.origin_crate();
+        let mut extern_roots = self.source.extern_roots(crate_ref)?;
+        extern_roots.sort_by(|(left, _), (right, _)| left.as_str().cmp(right.as_str()));
+
+        let mut defs = VisibleScopeDefs::empty();
+        for (label, module_ref) in extern_roots {
+            defs.push(
+                VisibleScopeDef {
+                    label,
+                    namespace: Namespace::Types,
+                    def: rg_ir_model::DefId::Module(module_ref),
+                    origin: VisibleScopeOrigin::ExternRoot,
+                    attribute_imports: Vec::new(),
+                },
+                false,
+            );
+        }
         defs.sort();
         Ok(defs)
     }

@@ -5,13 +5,15 @@
 //!
 //! ```text
 //! use crate::mo$0; qualifier `crate`, replace `mo`
+//! use ::st$0;      empty absolute root qualifier, replace `st`
 //! use crate::$0;   qualifier `crate`, insert into an empty span
 //! use cr$0;        unqualified lookup from the importing module
+//! use $0;          request-local empty name in the importing module
 //! ```
 
-use rg_def_map::{DefMap, DefMapReadTxn, ImportPath};
-use rg_ir_model::Path;
+use rg_def_map::{DefMap, DefMapReadTxn, ImportPath, ModuleOrigin};
 use rg_ir_model::{CrateRef, DefMapRef, ModuleRef};
+use rg_ir_model::{Path, PathRoot};
 use rg_package_store::PackageStoreError;
 use rg_parse::{FileId, Span, TextSpan};
 
@@ -33,6 +35,8 @@ pub(crate) struct ImportUnqualifiedNameSite {
     pub module: ModuleRef,
     /// Name prefix already typed in the import path.
     pub member_prefix_span: Span,
+    /// Text before the cursor, not the complete identifier retained by lowering.
+    pub member_prefix: String,
 }
 
 /// Scans import paths owned by DefMap.
@@ -103,6 +107,52 @@ impl<'txn, 'db> ImportPathCompletionSiteScanner<'txn, 'db> {
         Ok(best.finish())
     }
 
+    /// Finds the module that owns an explicit empty import such as `use $0;`.
+    pub(crate) fn empty_unqualified_site(
+        &self,
+    ) -> Result<Option<ImportUnqualifiedNameSite>, PackageStoreError> {
+        let Some(def_map) = self.def_map.def_map(self.crate_ref)? else {
+            return Ok(None);
+        };
+        let mut best = NarrowestSourceSite::new();
+        for (module_idx, module) in def_map.modules().iter().enumerate() {
+            let source_len = match module.origin {
+                ModuleOrigin::Root { file_id } if file_id == self.file_id => u32::MAX,
+                ModuleOrigin::Inline {
+                    declaration_file,
+                    declaration_span,
+                } if declaration_file == self.file_id && declaration_span.touches(self.offset) => {
+                    declaration_span.len()
+                }
+                ModuleOrigin::OutOfLine {
+                    definition_file: Some(definition_file),
+                    ..
+                } if definition_file == self.file_id => u32::MAX,
+                ModuleOrigin::Root { .. }
+                | ModuleOrigin::Synthetic { .. }
+                | ModuleOrigin::Inline { .. }
+                | ModuleOrigin::OutOfLine { .. } => continue,
+            };
+            best.consider(
+                ImportUnqualifiedNameSite {
+                    module: ModuleRef {
+                        origin: DefMapRef::Crate(self.crate_ref),
+                        module: rg_ir_model::ModuleId(module_idx),
+                    },
+                    member_prefix_span: Span {
+                        text: TextSpan {
+                            start: self.offset,
+                            end: self.offset,
+                        },
+                    },
+                    member_prefix: String::new(),
+                },
+                source_len,
+            );
+        }
+        Ok(best.finish())
+    }
+
     fn scan_import_paths(
         &self,
         def_map: &DefMap,
@@ -130,28 +180,38 @@ impl<'txn, 'db> ImportPathCompletionSiteScanner<'txn, 'db> {
         module: ModuleRef,
         path: &ImportPath,
     ) -> Option<(ImportQualifiedPathSite, u32)> {
-        let semantic = path.semantic();
-
-        for (idx, (_, span)) in path.segments_with_spans()?.enumerate().skip(1) {
+        let prefixes = path.prefixes_with_spans()?;
+        for (idx, (current, span)) in prefixes.iter().enumerate() {
             if !span.touches(self.offset) {
                 continue;
             }
 
+            // A leading absolute `::` is a root even though it has no identifier span of its own.
+            // Its first written name therefore has an empty absolute qualifier. Other first
+            // components are unqualified names or root keywords and use their dedicated flow.
+            let qualifier = if let Some((qualifier, _)) = idx
+                .checked_sub(1)
+                .and_then(|qualifier_idx| prefixes.get(qualifier_idx))
+            {
+                qualifier.clone()
+            } else if current.root() == PathRoot::Absolute && current.segments().len() == 1 {
+                Path::new(PathRoot::Absolute, Vec::new())
+            } else {
+                continue;
+            };
+
             return Some((
                 ImportQualifiedPathSite {
                     module,
-                    qualifier: Path {
-                        absolute: semantic.absolute,
-                        segments: semantic.segments[..idx].to_vec(),
-                    },
-                    member_prefix_span: span,
+                    qualifier,
+                    member_prefix_span: *span,
                 },
-                path.source_span().unwrap_or(span).len(),
+                path.source_span().unwrap_or(*span).len(),
             ));
         }
 
         let source_span = path.source_span()?;
-        let last_segment_span = path.segments_with_spans()?.last()?.1;
+        let last_segment_span = path.last_component_span()?;
         let offset_after_last_segment =
             last_segment_span.text.end <= self.offset && self.offset <= source_span.text.end;
         if source_span.text.end <= last_segment_span.text.end || !offset_after_last_segment {
@@ -161,10 +221,7 @@ impl<'txn, 'db> ImportPathCompletionSiteScanner<'txn, 'db> {
         Some((
             ImportQualifiedPathSite {
                 module,
-                qualifier: Path {
-                    absolute: semantic.absolute,
-                    segments: semantic.segments.clone(),
-                },
+                qualifier: path.semantic().clone(),
                 member_prefix_span: Span {
                     text: TextSpan {
                         start: self.offset,
@@ -183,11 +240,10 @@ impl<'txn, 'db> ImportPathCompletionSiteScanner<'txn, 'db> {
         path: &ImportPath,
     ) -> Option<(ImportUnqualifiedNameSite, u32)> {
         let semantic = path.semantic();
-        let mut segments = path.segments_with_spans()?;
-        if semantic.absolute || segments.len() != 1 {
+        if !semantic.is_relative() || semantic.segments().len() != 1 {
             return None;
         }
-        let segment_span = segments.next()?.1;
+        let segment_span = path.prefixes_with_spans()?.into_iter().next()?.1;
         if !segment_span.touches(self.offset) {
             return None;
         }
@@ -196,6 +252,11 @@ impl<'txn, 'db> ImportPathCompletionSiteScanner<'txn, 'db> {
             ImportUnqualifiedNameSite {
                 module,
                 member_prefix_span: segment_span,
+                member_prefix: super::type_path::identifier_prefix_at(
+                    semantic.single_name()?,
+                    segment_span,
+                    self.offset,
+                ),
             },
             path.source_span().unwrap_or(segment_span).len(),
         ))
