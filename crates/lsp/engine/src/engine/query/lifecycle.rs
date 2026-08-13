@@ -1,11 +1,11 @@
 //! Request lifecycle policy shared by every analysis query.
 //!
-//! Query methods only compute a result. This layer decides whether that work should run and
-//! whether its result has an honest semantic meaning. It skips cancelled requests, releases
-//! request-scoped package loads, reports stale saved-source input explicitly, and turns a
-//! recoverable package-cache failure into a temporary operational abort followed by project repair.
-//! Editor supersession is deliberately absent: only server ingress owns current open sessions and
-//! revisions, so the engine tags a successful value and lets that owner validate publication.
+//! Query methods compute a result and may stop at a request-liveness checkpoint. This layer decides
+//! whether the work should start, recognizes that internal cancellation, releases request-scoped
+//! package loads, reports stale saved-source input explicitly, and turns a recoverable package-cache
+//! failure into a temporary operational abort followed by project repair. Editor supersession is
+//! deliberately absent: only server ingress owns current open sessions and revisions, so the engine
+//! tags a successful value and lets that owner validate publication.
 //!
 //! A saved-source race follows a different path. If hover discovers that `src/lib.rs` changed on
 //! disk, hover returns `AnalysisAbort::SourceChanged`, records that the saved generation is stale,
@@ -14,6 +14,7 @@
 //! turns into a synchronous reindex.
 
 use std::{
+    fmt,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -26,6 +27,44 @@ use rg_project::Project;
 
 use super::QueryRunner;
 use crate::{engine::command::AnalysisResponse, memory::MemoryReporter};
+
+/// Read-only view of whether the caller still wants one query's result.
+///
+/// Dropping the RPC future closes the engine response channel. Feature queries receive this small
+/// capability so long-running work can notice that closure at natural boundaries. It carries no
+/// editor revision or mutable cancellation state; the response channel remains the only source of
+/// truth for this request's lifetime.
+pub(crate) struct QueryCancellation<'a> {
+    is_cancelled: &'a dyn Fn() -> bool,
+}
+
+impl<'a> QueryCancellation<'a> {
+    fn new(is_cancelled: &'a dyn Fn() -> bool) -> Self {
+        Self { is_cancelled }
+    }
+
+    /// Stop at a named query boundary if nobody can receive the result anymore.
+    pub(crate) fn checkpoint(&self, checkpoint: &'static str) -> anyhow::Result<()> {
+        if (self.is_cancelled)() {
+            return Err(QueryCancelled { checkpoint }.into());
+        }
+        Ok(())
+    }
+}
+
+/// Internal early exit caught by the query lifecycle before it can become a feature error.
+#[derive(Debug)]
+struct QueryCancelled {
+    checkpoint: &'static str,
+}
+
+impl fmt::Display for QueryCancelled {
+    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(fmt, "query cancelled at {}", self.checkpoint)
+    }
+}
+
+impl std::error::Error for QueryCancelled {}
 
 /// Request identity captured before one command begins analysis.
 ///
@@ -81,14 +120,16 @@ impl QueryRunner<'_> {
     ///
     /// The supplied closure contains only the feature query. A stale saved-source error latches the
     /// saved generation as stale and schedules normal path recovery instead of rebuilding inside
-    /// this request. Once a result is safe to publish, its response channel is completed before
-    /// request cleanup and recovery begin. Those steps still finish before the next engine command
-    /// is accepted, but they no longer add to the completed request's response latency.
+    /// this request. It also receives a read-only view of the response channel so expensive work can
+    /// stop after its caller leaves. Once a result is safe to publish, its response channel is
+    /// completed before request cleanup and recovery begin. Those steps still finish before the next
+    /// engine command is accepted, but they no longer add to the completed request's response
+    /// latency.
     pub(crate) fn respond_to_query<T>(
         &mut self,
         context: QueryContext,
         respond_to: AnalysisResponse<T>,
-        query: impl FnOnce(&mut Self) -> anyhow::Result<T>,
+        query: impl FnOnce(&mut Self, &QueryCancellation<'_>) -> anyhow::Result<T>,
     ) where
         T: Send + 'static,
     {
@@ -133,12 +174,24 @@ impl QueryRunner<'_> {
         let memory_before = MemoryReporter::snapshot(memory_control.as_ref());
         self.analysis_scope = context.scope;
         let analysis_input = context.analysis_input(self.project.generation());
-        let result = query(self);
-        let stale_path = result
+        let result = {
+            let is_cancelled = || respond_to.is_closed();
+            query(self, &QueryCancellation::new(&is_cancelled))
+        };
+        let cancelled_checkpoint = result
             .as_ref()
             .err()
-            .and_then(Project::stale_source_path)
-            .map(std::path::Path::to_path_buf);
+            .and_then(|error| error.downcast_ref::<QueryCancelled>())
+            .map(|cancelled| cancelled.checkpoint);
+        let stale_path = if cancelled_checkpoint.is_some() {
+            None
+        } else {
+            result
+                .as_ref()
+                .err()
+                .and_then(Project::stale_source_path)
+                .map(std::path::Path::to_path_buf)
+        };
         let stale_source_aborted = stale_path.is_some();
         if let Some(stale_path) = &stale_path {
             // A source race is a project-lifecycle event, not a feature-query failure. Re-enter the
@@ -146,11 +199,20 @@ impl QueryRunner<'_> {
             self.project.record_stale_source(label, stale_path);
         }
         let query_elapsed = started.elapsed();
-        let should_recover = result
-            .as_ref()
-            .err()
-            .is_some_and(Project::is_recoverable_cache_load_failure);
-        if stale_source_aborted {
+        let should_recover = cancelled_checkpoint.is_none()
+            && result
+                .as_ref()
+                .err()
+                .is_some_and(Project::is_recoverable_cache_load_failure);
+        if let Some(checkpoint) = cancelled_checkpoint {
+            tracing::debug!(
+                query = label,
+                queued_ms = queue_elapsed.as_millis(),
+                elapsed_ms = query_elapsed.as_millis(),
+                checkpoint,
+                "cancelled analysis query stopped"
+            );
+        } else if stale_source_aborted {
             tracing::info!(
                 query = label,
                 queued_ms = queue_elapsed.as_millis(),
@@ -185,7 +247,10 @@ impl QueryRunner<'_> {
             }
         }
 
-        if stale_source_aborted {
+        if cancelled_checkpoint.is_some() {
+            // The receiver is already gone. Cancellation is an execution detail, not a semantic
+            // abort or an empty feature result, so there is deliberately nothing to publish.
+        } else if stale_source_aborted {
             let _ = respond_to.send(Ok(AnalysisOutcome::Aborted(AnalysisAbort::SourceChanged)));
         } else if should_recover {
             // Lazy package loads can fail when an offloaded artifact becomes stale between
@@ -221,6 +286,7 @@ mod tests {
         time::Duration,
     };
 
+    use anyhow::Context as _;
     use rg_lsp_proto::{
         AnalysisOutcome, AnalysisScope, DocumentAnalysisSnapshot, DocumentRevision,
         EditorDocumentSnapshot, EditorSnapshot, EditorSnapshotRevision, OpenDocumentSession,
@@ -255,7 +321,7 @@ mod tests {
         runner.respond_to_query(
             QueryContext::new("workspace_symbol", Duration::ZERO),
             respond_to,
-            |_| {
+            |_, _| {
                 query_ran.set(true);
                 Ok(vec![1])
             },
@@ -288,7 +354,7 @@ mod tests {
             AnalysisScope::ChangedPackages,
         );
 
-        runner.respond_to_query(context, respond_to, |_| Ok(vec![1_usize]));
+        runner.respond_to_query(context, respond_to, |_, _| Ok(vec![1_usize]));
 
         let result = futures::executor::block_on(response)
             .expect("document query should send a response")
@@ -314,7 +380,7 @@ mod tests {
         runner.respond_to_query(
             QueryContext::new("workspace_symbol", Duration::ZERO),
             respond_to,
-            |_| Ok(Vec::<usize>::new()),
+            |_, _| Ok(Vec::<usize>::new()),
         );
 
         let result = futures::executor::block_on(response)
@@ -325,6 +391,35 @@ mod tests {
         };
         assert!(ready.value().is_empty());
         assert!(ready.input().target_document().is_none());
+    }
+
+    #[test]
+    fn query_stops_when_response_closes_during_analysis() {
+        let memory_control: Arc<dyn MemoryControl> = Arc::new(());
+        let mut project = test_project(Arc::clone(&memory_control));
+        let mut runner = QueryRunner::new(&mut project, memory_control);
+        let (respond_to, response) =
+            oneshot::channel::<anyhow::Result<AnalysisOutcome<Vec<usize>>>>();
+        let work_after_checkpoint_ran = Cell::new(false);
+
+        runner.respond_to_query(
+            QueryContext::new("completion", Duration::ZERO),
+            respond_to,
+            |_, cancellation| {
+                // Model the RPC task disappearing after the engine has already entered the query.
+                drop(response);
+                cancellation
+                    .checkpoint("test semantic work")
+                    .context("stop test query after response closure")?;
+                work_after_checkpoint_ran.set(true);
+                Ok(vec![1])
+            },
+        );
+
+        assert!(
+            !work_after_checkpoint_ran.get(),
+            "work after a closed-response checkpoint should not run",
+        );
     }
 
     fn test_project(memory_control: Arc<dyn MemoryControl>) -> ProjectCoordinator {

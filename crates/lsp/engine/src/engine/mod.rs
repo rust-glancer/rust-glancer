@@ -76,8 +76,8 @@ impl EngineHandle {
     /// Send one typed command and wait for the dispatcher to answer it.
     ///
     /// Dropping the waiting RPC future closes the response endpoint. Query lifecycle code notices
-    /// that before doing expensive analysis, so cancelled requests can remain ordinary queued
-    /// commands instead of needing a second cancellation protocol.
+    /// that before starting queued work and can expose the same liveness at feature checkpoints,
+    /// so cancellation does not need a second protocol or another request-state owner.
     pub(crate) async fn request<T>(
         &self,
         build: impl FnOnce(EngineResponse<T>) -> EngineCommand,

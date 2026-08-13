@@ -12,7 +12,7 @@ mod navigation;
 mod references;
 mod source;
 
-pub(super) use self::lifecycle::QueryContext;
+pub(super) use self::lifecycle::{QueryCancellation, QueryContext};
 
 use std::{path::Path, sync::Arc, time::Instant};
 
@@ -148,6 +148,7 @@ impl<'a> QueryRunner<'a> {
         &mut self,
         input: DocumentPositionSnapshot,
         client_capabilities: CompletionClientCapabilities,
+        cancellation: &QueryCancellation<'_>,
     ) -> anyhow::Result<Vec<ls_types::CompletionItem>> {
         let DocumentPositionSnapshot { analysis, position } = input;
         let document = Self::target_document(&analysis)?;
@@ -155,6 +156,12 @@ impl<'a> QueryRunner<'a> {
         let started = Instant::now();
         self.ensure_path("completion", analysis.editor(), &path)
             .context("prepare completion path")?;
+
+        // Materializing the request view can be substantial. An edit received during that work
+        // should prevent this obsolete request from entering the more expensive semantic phase.
+        cancellation
+            .checkpoint("after completion source preparation")
+            .context("check cancellation after completion source preparation")?;
         let source_text = document.text();
         let completions = self
             .with_query_snapshot(analysis.editor(), |snapshot| {
@@ -184,6 +191,9 @@ impl<'a> QueryRunner<'a> {
                 let mut protocol_conversion_us = 0_u128;
 
                 for (context, crate_ref, offset) in crate_offsets {
+                    cancellation
+                        .checkpoint("before completion crate interpretation")
+                        .context("check cancellation before completion crate interpretation")?;
                     let line_index_load_started = Instant::now();
                     let line_index = snapshot
                         .file_line_index(context.package, context.file)
@@ -209,6 +219,12 @@ impl<'a> QueryRunner<'a> {
                         .completions_at(query)
                         .context("compute completions")?;
                     analysis_compute_us += analysis_compute_started.elapsed().as_micros();
+
+                    // A single crate query is synchronous. If cancellation arrived while it ran,
+                    // discard its items before converting them or starting another crate.
+                    cancellation
+                        .checkpoint("after completion crate interpretation")
+                        .context("check cancellation after completion crate interpretation")?;
                     let protocol_conversion_started = Instant::now();
                     for item in items {
                         let item = completion::completion_item(item, line_index);

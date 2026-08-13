@@ -107,7 +107,7 @@ impl EngineDispatcher {
                         AnalysisScope::ChangedPackages,
                     );
                     self.query_runner()
-                        .respond_to_query(context, respond_to, |runner| {
+                        .respond_to_query(context, respond_to, |runner, _| {
                             runner.goto_definition(input)
                         });
                 }
@@ -125,7 +125,7 @@ impl EngineDispatcher {
                         AnalysisScope::ChangedPackages,
                     );
                     self.query_runner()
-                        .respond_to_query(context, respond_to, |runner| {
+                        .respond_to_query(context, respond_to, |runner, _| {
                             runner.goto_type_definition(input)
                         });
                 }
@@ -143,7 +143,7 @@ impl EngineDispatcher {
                         AnalysisScope::ReverseDependencyClosure,
                     );
                     self.query_runner()
-                        .respond_to_query(context, respond_to, |runner| {
+                        .respond_to_query(context, respond_to, |runner, _| {
                             runner.goto_implementation(input)
                         });
                 }
@@ -166,7 +166,7 @@ impl EngineDispatcher {
                         AnalysisScope::ReverseDependencyClosure,
                     );
                     self.query_runner()
-                        .respond_to_query(context, respond_to, |runner| {
+                        .respond_to_query(context, respond_to, |runner, _| {
                             runner.references(input, include_declaration)
                         });
                 }
@@ -184,7 +184,7 @@ impl EngineDispatcher {
                         AnalysisScope::ChangedPackages,
                     );
                     self.query_runner()
-                        .respond_to_query(context, respond_to, |runner| {
+                        .respond_to_query(context, respond_to, |runner, _| {
                             runner.prepare_rename(input)
                         });
                 }
@@ -207,7 +207,7 @@ impl EngineDispatcher {
                         AnalysisScope::ReverseDependencyClosure,
                     );
                     self.query_runner()
-                        .respond_to_query(context, respond_to, |runner| {
+                        .respond_to_query(context, respond_to, |runner, _| {
                             runner.rename(input, new_name)
                         });
                 }
@@ -225,7 +225,7 @@ impl EngineDispatcher {
                         AnalysisScope::ChangedPackages,
                     );
                     self.query_runner()
-                        .respond_to_query(context, respond_to, |runner| {
+                        .respond_to_query(context, respond_to, |runner, _| {
                             runner.document_highlight(input)
                         });
                 }
@@ -243,7 +243,7 @@ impl EngineDispatcher {
                         AnalysisScope::ChangedPackages,
                     );
                     self.query_runner()
-                        .respond_to_query(context, respond_to, |runner| runner.hover(input));
+                        .respond_to_query(context, respond_to, |runner, _| runner.hover(input));
                 }
                 EngineCommand::Completion {
                     input,
@@ -262,10 +262,13 @@ impl EngineDispatcher {
                         &input.analysis,
                         AnalysisScope::ChangedPackages,
                     );
-                    self.query_runner()
-                        .respond_to_query(context, respond_to, |runner| {
-                            runner.completion(input, client_capabilities)
-                        });
+                    self.query_runner().respond_to_query(
+                        context,
+                        respond_to,
+                        |runner, cancellation| {
+                            runner.completion(input, client_capabilities, cancellation)
+                        },
+                    );
                 }
                 EngineCommand::Formatting {
                     snapshot,
@@ -282,7 +285,7 @@ impl EngineDispatcher {
                         AnalysisScope::TargetDocument,
                     );
                     self.query_runner()
-                        .respond_to_query(context, respond_to, |runner| {
+                        .respond_to_query(context, respond_to, |runner, _| {
                             runner.formatting(snapshot).map(Some)
                         });
                 }
@@ -301,7 +304,7 @@ impl EngineDispatcher {
                         AnalysisScope::ChangedPackages,
                     );
                     self.query_runner()
-                        .respond_to_query(context, respond_to, |runner| {
+                        .respond_to_query(context, respond_to, |runner, _| {
                             runner.document_symbol(snapshot)
                         });
                 }
@@ -321,13 +324,15 @@ impl EngineDispatcher {
                         AnalysisScope::ChangedPackages,
                     );
                     self.query_runner()
-                        .respond_to_query(context, respond_to, |runner| runner.inlay_hint(input));
+                        .respond_to_query(context, respond_to, |runner, _| {
+                            runner.inlay_hint(input)
+                        });
                 }
                 EngineCommand::WorkspaceSymbol { query, respond_to } => {
                     tracing::trace!(query = %query, "engine command started: workspace_symbol");
                     let context = QueryContext::new("workspace_symbol", queue_elapsed);
                     self.query_runner()
-                        .respond_to_query(context, respond_to, |runner| {
+                        .respond_to_query(context, respond_to, |runner, _| {
                             runner.workspace_symbol(&query)
                         });
                 }
