@@ -4,17 +4,21 @@
 //! exception: its background thread sends an internal completion command back through the same
 //! queue, so project generation checks still happen in FIFO order with every other mutation.
 
-use std::{path::PathBuf, sync::Arc};
+use std::path::PathBuf;
 
-use rg_lsp_proto::CompletionClientCapabilities;
+use rg_lsp_proto::{
+    AnalysisOutcome, CompletionClientCapabilities, DocumentAnalysisSnapshot,
+    DocumentPositionSnapshot, DocumentRangeSnapshot,
+};
+use rg_project::SavedFileChange;
 use tokio::sync::oneshot;
-
-use crate::documents::DirtyDocumentSnapshot;
 
 use super::ProjectConfiguration;
 
 /// Response endpoint owned by one request until the engine dispatcher answers it.
 pub(crate) type EngineResponse<T> = oneshot::Sender<anyhow::Result<T>>;
+/// Response endpoint for a semantic request that may abort without producing a feature value.
+pub(crate) type AnalysisResponse<T> = EngineResponse<AnalysisOutcome<T>>;
 /// Result returned by the detached deferred-indexing thread to the project coordinator.
 pub(crate) type DeferredIndexingResult = anyhow::Result<Box<rg_project::FinishedSplitIndexing>>;
 
@@ -29,91 +33,69 @@ pub(crate) enum EngineCommand {
         configuration: ProjectConfiguration,
         respond_to: EngineResponse<()>,
     },
-    ProjectPathsChanged {
-        paths: Vec<PathBuf>,
-        /// External save/watcher caller waiting for this command.
-        ///
-        /// Stale-source recovery uses the same command without a responder so it can join the
-        /// normal FIFO path-change stream instead of rebuilding inside a query. The dispatcher
-        /// creates responder fan-out only when it coalesces several adjacent commands.
-        respond_to: Option<EngineResponse<()>>,
+    /// Background repair scheduled when a query proves that saved analysis is stale.
+    RecoverStaleSource {
+        path: PathBuf,
+    },
+    /// Exact captured sources, optionally paired with graph/discovery path changes.
+    SavedProjectChanges {
+        changes: Vec<SavedFileChange>,
+        respond_to: EngineResponse<u64>,
     },
     GotoDefinition {
-        path: PathBuf,
-        position: ls_types::Position,
-        dirty: Option<DirtyDocumentSnapshot>,
-        respond_to: EngineResponse<Vec<ls_types::Location>>,
+        input: DocumentPositionSnapshot,
+        respond_to: AnalysisResponse<Vec<ls_types::Location>>,
     },
     GotoTypeDefinition {
-        path: PathBuf,
-        position: ls_types::Position,
-        dirty: Option<DirtyDocumentSnapshot>,
-        respond_to: EngineResponse<Vec<ls_types::Location>>,
+        input: DocumentPositionSnapshot,
+        respond_to: AnalysisResponse<Vec<ls_types::Location>>,
     },
     GotoImplementation {
-        path: PathBuf,
-        position: ls_types::Position,
-        dirty: Option<DirtyDocumentSnapshot>,
-        respond_to: EngineResponse<Vec<ls_types::Location>>,
+        input: DocumentPositionSnapshot,
+        respond_to: AnalysisResponse<Vec<ls_types::Location>>,
     },
     References {
-        path: PathBuf,
-        position: ls_types::Position,
+        input: DocumentPositionSnapshot,
         include_declaration: bool,
-        dirty: Option<DirtyDocumentSnapshot>,
-        respond_to: EngineResponse<Vec<ls_types::Location>>,
+        respond_to: AnalysisResponse<Vec<ls_types::Location>>,
     },
     PrepareRename {
-        path: PathBuf,
-        position: ls_types::Position,
-        dirty: Option<DirtyDocumentSnapshot>,
-        respond_to: EngineResponse<Option<ls_types::PrepareRenameResponse>>,
+        input: DocumentPositionSnapshot,
+        respond_to: AnalysisResponse<Option<ls_types::PrepareRenameResponse>>,
     },
     Rename {
-        path: PathBuf,
-        position: ls_types::Position,
+        input: DocumentPositionSnapshot,
         new_name: String,
-        dirty: Option<DirtyDocumentSnapshot>,
-        respond_to: EngineResponse<Option<ls_types::WorkspaceEdit>>,
+        respond_to: AnalysisResponse<Option<ls_types::WorkspaceEdit>>,
     },
     DocumentHighlight {
-        path: PathBuf,
-        position: ls_types::Position,
-        dirty: Option<DirtyDocumentSnapshot>,
-        respond_to: EngineResponse<Vec<ls_types::DocumentHighlight>>,
+        input: DocumentPositionSnapshot,
+        respond_to: AnalysisResponse<Vec<ls_types::DocumentHighlight>>,
     },
     Hover {
-        path: PathBuf,
-        position: ls_types::Position,
-        dirty: Option<DirtyDocumentSnapshot>,
-        respond_to: EngineResponse<Option<ls_types::Hover>>,
+        input: DocumentPositionSnapshot,
+        respond_to: AnalysisResponse<Option<ls_types::Hover>>,
     },
     Completion {
-        path: PathBuf,
-        position: ls_types::Position,
+        input: DocumentPositionSnapshot,
         client_capabilities: CompletionClientCapabilities,
-        dirty: Option<DirtyDocumentSnapshot>,
-        respond_to: EngineResponse<Vec<ls_types::CompletionItem>>,
+        respond_to: AnalysisResponse<Vec<ls_types::CompletionItem>>,
     },
     Formatting {
-        path: PathBuf,
-        text: Arc<str>,
-        respond_to: EngineResponse<Vec<ls_types::TextEdit>>,
+        snapshot: DocumentAnalysisSnapshot,
+        respond_to: AnalysisResponse<Option<Vec<ls_types::TextEdit>>>,
     },
     DocumentSymbol {
-        path: PathBuf,
-        dirty: Option<DirtyDocumentSnapshot>,
-        respond_to: EngineResponse<Vec<ls_types::DocumentSymbol>>,
+        snapshot: DocumentAnalysisSnapshot,
+        respond_to: AnalysisResponse<Vec<ls_types::DocumentSymbol>>,
     },
     InlayHint {
-        path: PathBuf,
-        range: ls_types::Range,
-        dirty: Option<DirtyDocumentSnapshot>,
-        respond_to: EngineResponse<Vec<ls_types::InlayHint>>,
+        input: DocumentRangeSnapshot,
+        respond_to: AnalysisResponse<Vec<ls_types::InlayHint>>,
     },
     WorkspaceSymbol {
         query: String,
-        respond_to: EngineResponse<Vec<ls_types::WorkspaceSymbol>>,
+        respond_to: AnalysisResponse<Vec<ls_types::WorkspaceSymbol>>,
     },
     ReindexWorkspace {
         respond_to: EngineResponse<()>,

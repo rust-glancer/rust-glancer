@@ -5,11 +5,9 @@
 
 use std::{
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
-
-use tokio::sync::Mutex;
 
 use crate::file_identity::FileIdentity;
 
@@ -27,13 +25,19 @@ pub(crate) struct RecentEditorSaves {
 
 impl RecentEditorSaves {
     /// Remember the current disk identity of a file just saved by the editor.
-    pub(crate) async fn record_editor_save(&self, path: &Path) {
-        self.inner.lock().await.record(path);
+    pub(crate) fn record_editor_save(&self, path: &Path) {
+        self.inner
+            .lock()
+            .expect("recent editor saves mutex should not be poisoned")
+            .record(path);
     }
 
     /// Drop watched paths whose current disk identity matches a recent editor save.
-    pub(crate) async fn saves_to_process(&self, paths: Vec<PathBuf>) -> Vec<PathBuf> {
-        let mut inner = self.inner.lock().await;
+    pub(crate) fn saves_to_process(&self, paths: Vec<PathBuf>) -> Vec<PathBuf> {
+        let mut inner = self
+            .inner
+            .lock()
+            .expect("recent editor saves mutex should not be poisoned");
         paths
             .into_iter()
             .filter(|path| !inner.is_save_echo(path))
@@ -116,8 +120,8 @@ mod tests {
 
     use super::{RECENT_EDITOR_SAVE_TTL, RecentEditorSaves, RecentEditorSavesInner};
 
-    #[tokio::test]
-    async fn matching_saved_metadata_is_save_echo() {
+    #[test]
+    fn matching_saved_metadata_is_save_echo() {
         let fixture = fixture_crate(
             r#"
             //- /src/lib.rs
@@ -127,13 +131,13 @@ mod tests {
         let path = fixture.path("src/lib.rs");
         let saves = RecentEditorSaves::default();
 
-        saves.record_editor_save(&path).await;
+        saves.record_editor_save(&path);
 
-        assert!(saves.saves_to_process(vec![path]).await.is_empty());
+        assert!(saves.saves_to_process(vec![path]).is_empty());
     }
 
-    #[tokio::test]
-    async fn changed_file_metadata_is_not_save_echo() {
+    #[test]
+    fn changed_file_metadata_is_not_save_echo() {
         let fixture = fixture_crate(
             r#"
             //- /src/lib.rs
@@ -143,15 +147,15 @@ mod tests {
         let path = fixture.path("src/lib.rs");
         let saves = RecentEditorSaves::default();
 
-        saves.record_editor_save(&path).await;
+        saves.record_editor_save(&path);
         std::fs::write(&path, "pub fn external_edit() {}\n")
             .expect("fixture file should be writable");
 
-        assert_eq!(saves.saves_to_process(vec![path.clone()]).await, vec![path]);
+        assert_eq!(saves.saves_to_process(vec![path.clone()]), vec![path]);
     }
 
-    #[tokio::test]
-    async fn mixed_batches_keep_non_echo_paths() {
+    #[test]
+    fn mixed_batches_keep_non_echo_paths() {
         let fixture = fixture_crate(
             r#"
             //- /src/lib.rs
@@ -165,12 +169,10 @@ mod tests {
         let external_path = fixture.path("src/ext.rs");
         let saves = RecentEditorSaves::default();
 
-        saves.record_editor_save(&saved_path).await;
+        saves.record_editor_save(&saved_path);
 
         assert_eq!(
-            saves
-                .saves_to_process(vec![saved_path, external_path.clone()])
-                .await,
+            saves.saves_to_process(vec![saved_path, external_path.clone()]),
             vec![external_path]
         );
     }

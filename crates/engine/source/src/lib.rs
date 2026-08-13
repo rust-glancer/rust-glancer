@@ -13,9 +13,10 @@
 //! 5. Saved text may be evicted. A later reload is accepted only when it still has the captured
 //!    revision.
 //!
-//! Dirty editor text follows the same entry API, but it has no filesystem authority. It stays
-//! resident for the lifetime of the dirty overlay that owns it.
+//! Captured override text follows the same entry API, but it has no filesystem authority. It stays
+//! resident for the lifetime of the derived project that owns it.
 
+mod captured;
 mod entry;
 mod error;
 mod inventory;
@@ -23,6 +24,7 @@ mod path;
 mod revision;
 
 pub use self::{
+    captured::CapturedSource,
     entry::{SourceEntry, read_source_text},
     error::SourceError,
     inventory::SourceInventory,

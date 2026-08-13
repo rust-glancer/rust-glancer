@@ -3,7 +3,7 @@ use tower_lsp_server::{
     ls_types::{request::*, *},
 };
 
-use crate::methods::{MethodContext, internal_error, uri_to_path};
+use crate::methods::DocumentMethodContext;
 
 #[tracing::instrument(
     level = "trace", skip_all,
@@ -12,26 +12,24 @@ use crate::methods::{MethodContext, internal_error, uri_to_path};
     )
 )]
 pub(crate) async fn type_definition(
-    ctx: MethodContext,
+    ctx: DocumentMethodContext,
     params: GotoTypeDefinitionParams,
 ) -> Result<Option<GotoTypeDefinitionResponse>> {
-    let Some(path) = uri_to_path(&params.text_document_position_params.text_document.uri) else {
-        return Ok(None);
-    };
     let position = params.text_document_position_params.position;
+    let input = ctx.target_position(position)?;
     tracing::trace!("type definition request received");
-    let locations = ctx
+    let result = ctx
         .engine_client
         .query(
             "goto_type_definition",
             move |engine_client, request_context| async move {
                 engine_client
-                    .goto_type_definition(request_context, path, position)
+                    .goto_type_definition(request_context, input)
                     .await
             },
         )
-        .await
-        .map_err(internal_error)?;
+        .await;
+    let locations = ctx.finish_query(result)?;
     tracing::trace!(
         result_count = locations.len(),
         "type definition request answered"

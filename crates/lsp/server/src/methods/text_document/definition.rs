@@ -1,6 +1,6 @@
 use tower_lsp_server::{jsonrpc::Result, ls_types::*};
 
-use crate::methods::{MethodContext, internal_error, uri_to_path};
+use crate::methods::DocumentMethodContext;
 
 #[tracing::instrument(
     level = "trace", skip_all,
@@ -9,26 +9,22 @@ use crate::methods::{MethodContext, internal_error, uri_to_path};
     )
 )]
 pub(crate) async fn definition(
-    ctx: MethodContext,
+    ctx: DocumentMethodContext,
     params: GotoDefinitionParams,
 ) -> Result<Option<GotoDefinitionResponse>> {
-    let Some(path) = uri_to_path(&params.text_document_position_params.text_document.uri) else {
-        return Ok(None);
-    };
     let position = params.text_document_position_params.position;
+    let input = ctx.target_position(position)?;
     tracing::trace!("definition request received");
-    let locations = ctx
+    let result = ctx
         .engine_client
         .query(
             "goto_definition",
             move |engine_client, request_context| async move {
-                engine_client
-                    .goto_definition(request_context, path, position)
-                    .await
+                engine_client.goto_definition(request_context, input).await
             },
         )
-        .await
-        .map_err(internal_error)?;
+        .await;
+    let locations = ctx.finish_query(result)?;
     tracing::trace!(
         result_count = locations.len(),
         "definition request answered"

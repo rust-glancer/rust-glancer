@@ -1,25 +1,29 @@
-use tower_lsp_server::ls_types::*;
+use tower_lsp_server::jsonrpc::Result;
 
-use crate::methods::{MethodContext, uri_to_path};
+use crate::{
+    engine_registry::EngineRegistry,
+    ingress::{self, LifecycleEvent},
+};
 
-#[tracing::instrument(
-    level = "trace", skip_all,
-    fields(rg.version = params.text_document.version)
-)]
-pub(crate) async fn did_open(ctx: MethodContext, params: DidOpenTextDocumentParams) {
-    let Some(path) = uri_to_path(&params.text_document.uri) else {
+/// Find the engine for a session whose text was recorded before this handler started.
+///
+/// Storing the result makes that engine route available to later document requests. The editor
+/// session and its text remain available even when no engine can be found yet.
+pub(crate) async fn did_open(registry: Result<&EngineRegistry>) {
+    let Some(LifecycleEvent::Open { document, route }) = ingress::lifecycle_event().await else {
+        tracing::error!("didOpen bypassed ordered LSP ingress");
         return;
     };
-    let version = Some(params.text_document.version);
-
-    ctx.engine_client
-        .notify(
-            "did_open",
-            move |engine_client, request_context| async move {
-                engine_client
-                    .did_open(request_context, path, version, params.text_document.text)
-                    .await
-            },
-        )
-        .await;
+    let routed = match registry {
+        Ok(registry) => registry.open_document(document.path()).await,
+        Err(error) => Err(anyhow::anyhow!(error.message.into_owned())),
+    };
+    route.publish(routed);
+    if route.engine_client().is_err() {
+        tracing::debug!(
+            path = %document.path().display(),
+            session = document.session().get(),
+            "retained opened editor document without a ready engine route"
+        );
+    }
 }

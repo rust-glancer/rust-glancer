@@ -2,9 +2,9 @@
 //!
 //! This module runs `cargo check`/`cargo clippy` outside the synchronous analysis engine.
 //!
-//! `DiagnosticsHandle` is created next to the analysis engine and shares the same document freshness
-//! store. It emits diagnostics and progress through the service notification channel, so cargo
-//! diagnostics stays independent from query/indexing requests and from the concrete LSP client.
+//! It emits saved-source diagnostics and progress through the service notification channel. The
+//! server-side editor owner decides whether those saved bytes still match an open buffer before
+//! publication, so Cargo work stays independent from editor lifecycle state.
 
 use std::{
     collections::{BTreeSet, hash_map::DefaultHasher},
@@ -18,7 +18,7 @@ use ls_types::ProgressToken;
 use rg_lsp_proto::{AnalysisConfig, DiagnosticsConfig};
 use tokio::{sync::Mutex, task::JoinHandle};
 
-use crate::{debounce::Debouncer, documents::DocumentStore, service::ServiceNotificationsSink};
+use crate::{debounce::Debouncer, service::ServiceNotificationsSink};
 
 mod cargo;
 mod command;
@@ -37,20 +37,15 @@ const EXTERNAL_CHANGE_DIAGNOSTICS_DEBOUNCE: Duration = Duration::from_secs(1);
 #[derive(Clone, Debug)]
 pub(crate) struct DiagnosticsHandle {
     notifications: ServiceNotificationsSink,
-    documents: Arc<Mutex<DocumentStore>>,
     inner: Arc<Mutex<DiagnosticsHandleInner>>,
     current: Arc<Mutex<Option<CurrentDiagnostics>>>,
     external_change_debouncer: Debouncer,
 }
 
 impl DiagnosticsHandle {
-    pub(crate) fn new(
-        notifications: ServiceNotificationsSink,
-        documents: Arc<Mutex<DocumentStore>>,
-    ) -> Self {
+    pub(crate) fn new(notifications: ServiceNotificationsSink) -> Self {
         Self {
             notifications,
-            documents,
             inner: Arc::default(),
             current: Arc::default(),
             external_change_debouncer: Debouncer::new(EXTERNAL_CHANGE_DIAGNOSTICS_DEBOUNCE),
@@ -111,7 +106,6 @@ impl DiagnosticsHandle {
         let progress = DiagnosticsProgress::new(self.notifications.clone(), progress_token);
         let task = DiagnosticsTaskContext::new(
             self.notifications.clone(),
-            Arc::clone(&self.documents),
             Arc::clone(&self.inner),
             Arc::clone(&self.current),
         )
@@ -197,7 +191,9 @@ struct DiagnosticsHandleInner {
     // Cargo omits files that no longer have diagnostics, but LSP clients require an explicit empty
     // diagnostic list to clear old entries. Track the last published set so the next run can clear
     // stale files.
-    published_paths: BTreeSet<PathBuf>,
+    // Paths ever reported by Cargo are retained so a skipped clear can be offered again after an
+    // open editor buffer becomes compatible with saved-source diagnostics.
+    known_paths: BTreeSet<PathBuf>,
 }
 
 #[derive(Debug)]

@@ -8,16 +8,17 @@ use std::{
 };
 
 use rg_lsp_proto::{AnalysisConfig, PackageResidencyPolicy, ServiceNotification, SysrootDiscovery};
-use rg_project::{AnalysisSurface, DirtyOverlayScope, ProjectMemoryHooks, ProjectMemoryPurgePoint};
+use rg_project::{ProjectMemoryHooks, ProjectMemoryPurgePoint, SavedFileChange};
 use test_fixture::fixture_crate;
 
 use super::{MAX_STALE_SOURCE_RETRIES, ProjectConfiguration, ProjectCoordinator};
 use crate::{
-    documents::{DirtyDocumentSnapshotState, DocumentStore},
     engine::command::EngineCommand,
     memory::MemoryControl,
     service::{ServiceNotificationPublisher, ServiceNotificationsSink},
 };
+
+mod source_overrides;
 
 #[derive(Debug)]
 struct SourceMutations {
@@ -126,215 +127,6 @@ impl ServiceNotificationPublisher for RecordingNotifications {
 }
 
 #[test]
-fn ready_query_surfaces_and_sufficient_scope_preserve_the_matching_dirty_overlay() {
-    let fixture = fixture_crate(
-        r#"
-            //- /Cargo.toml
-            [package]
-            name = "dirty_overlay_materialization_fixture"
-            version = "0.1.0"
-            edition = "2024"
-
-            //- /src/lib.rs
-            pub fn saved() -> usize {
-                1
-            }
-            "#,
-    );
-    let source = fixture.path("src/lib.rs");
-    let (sender, receiver) = mpsc::channel();
-    let memory_control: Arc<dyn MemoryControl> = Arc::new(());
-    let notifications = ServiceNotificationsSink::from_publisher(NoopNotifications);
-    let mut project = ProjectCoordinator::new(sender, memory_control, notifications);
-    project
-        .initialize(
-            fixture.path(""),
-            ProjectConfiguration::from(AnalysisConfig {
-                package_residency_policy: PackageResidencyPolicy::AllOffloadable,
-                sysroot_discovery: SysrootDiscovery::Disabled,
-                ..AnalysisConfig::default()
-            }),
-        )
-        .expect("fixture project should initialize");
-
-    // Finish and merge the deferred payload so all-offloadable queries can read its durable
-    // artifact without replacing saved project state.
-    let initial = receiver
-        .recv_timeout(Duration::from_secs(5))
-        .expect("initial deferred indexing should return");
-    let EngineCommand::DeferredIndexingFinished { generation, result } = initial.command else {
-        panic!("initial background command should finish deferred indexing");
-    };
-    project.deferred_indexing_finished(generation, result);
-
-    let context = project
-        .saved_snapshot()
-        .expect("saved project should be available")
-        .file_contexts_for_path(&source)
-        .expect("fixture file contexts should resolve")
-        .pop()
-        .expect("fixture file should have one context");
-    let files = [(context.package, context.file)];
-    let crates = context.crates;
-    let saved_text = std::fs::read_to_string(&source).expect("saved fixture source should read");
-    let mut documents = DocumentStore::default();
-    documents.did_open_saved(source.clone(), Some(1), &saved_text);
-    documents.did_change(
-        source.clone(),
-        Some(2),
-        Some("pub fn dirty() -> usize { 2 }\n"),
-    );
-    let DirtyDocumentSnapshotState::Dirty(dirty) = documents.dirty_snapshot(&source) else {
-        panic!("changed fixture document should have a dirty text snapshot");
-    };
-
-    // Document symbols can build the overlay before a body-backed query prepares its surface.
-    // File and mixed reference-search preparation are both no-ops for finished artifacts, so the
-    // same dirty snapshot must keep hitting one cached overlay across those query shapes.
-    project
-        .with_query_snapshot(Some(&dirty), DirtyOverlayScope::ChangedPackages, |_| Ok(()))
-        .expect("first dirty query should build its overlay");
-    project
-        .materialize(AnalysisSurface::Files(&files))
-        .expect("file query surface should already be ready");
-    project
-        .with_query_snapshot(Some(&dirty), DirtyOverlayScope::ChangedPackages, |_| Ok(()))
-        .expect("second dirty query should reuse its overlay");
-    project
-        .materialize(AnalysisSurface::FilesAndCrates {
-            files: &files,
-            crates: &crates,
-        })
-        .expect("mixed query surface should already be ready");
-    project
-        .with_query_snapshot(Some(&dirty), DirtyOverlayScope::ChangedPackages, |_| Ok(()))
-        .expect("third dirty query should reuse its overlay");
-
-    assert_eq!(
-        project.project.dirty_overlay_rebuild_count(),
-        1,
-        "no-op query materialization should not evict a matching dirty overlay",
-    );
-
-    // A broader query must replace a local overlay. Once built, that broader overlay contains the
-    // changed packages too, so a later local query can reuse it without a second replacement.
-    project
-        .with_query_snapshot(
-            Some(&dirty),
-            DirtyOverlayScope::ReverseDependencyClosure,
-            |_| Ok(()),
-        )
-        .expect("workspace-wide dirty query should upgrade its overlay");
-    assert_eq!(
-        project.project.dirty_overlay_rebuild_count(),
-        2,
-        "broader scope should rebuild once",
-    );
-    project
-        .with_query_snapshot(Some(&dirty), DirtyOverlayScope::ChangedPackages, |_| Ok(()))
-        .expect("local dirty query should reuse a broader overlay");
-    assert_eq!(
-        project.project.dirty_overlay_rebuild_count(),
-        2,
-        "broader overlay should satisfy a later local query",
-    );
-}
-
-#[test]
-fn incomplete_resident_query_surface_evicts_the_matching_dirty_overlay() {
-    let fixture = fixture_crate(
-        r#"
-            //- /Cargo.toml
-            [package]
-            name = "incomplete_dirty_overlay_materialization_fixture"
-            version = "0.1.0"
-            edition = "2024"
-
-            //- /src/lib.rs
-            pub fn saved() -> usize {
-                1
-            }
-            "#,
-    );
-    let source = fixture.path("src/lib.rs");
-    let (sender, receiver) = mpsc::channel();
-    let memory_control: Arc<dyn MemoryControl> = Arc::new(());
-    let notifications = ServiceNotificationsSink::from_publisher(NoopNotifications);
-    let mut project = ProjectCoordinator::new(sender, memory_control, notifications);
-    project
-        .initialize(
-            fixture.path(""),
-            ProjectConfiguration::from(AnalysisConfig {
-                package_residency_policy: PackageResidencyPolicy::AllResident,
-                sysroot_discovery: SysrootDiscovery::Disabled,
-                ..AnalysisConfig::default()
-            }),
-        )
-        .expect("fixture project should initialize");
-
-    // Let background indexing finish, but hold its result outside the coordinator. The saved
-    // project therefore remains deterministically incomplete while no worker is still running.
-    let initial = receiver
-        .recv_timeout(Duration::from_secs(5))
-        .expect("initial deferred indexing should return");
-    let EngineCommand::DeferredIndexingFinished { generation, result } = initial.command else {
-        panic!("initial background command should finish deferred indexing");
-    };
-    let incomplete_stats = project
-        .saved_snapshot()
-        .expect("saved project should be available")
-        .stats()
-        .body_ir;
-    assert_eq!(incomplete_stats.complete_crate_count, 0);
-    assert_eq!(incomplete_stats.missing_crate_count, 1);
-
-    let context = project
-        .saved_snapshot()
-        .expect("saved project should be available")
-        .file_contexts_for_path(&source)
-        .expect("fixture file contexts should resolve")
-        .pop()
-        .expect("fixture file should have one context");
-    let files = [(context.package, context.file)];
-    let saved_text = std::fs::read_to_string(&source).expect("saved fixture source should read");
-    let mut documents = DocumentStore::default();
-    documents.did_open_saved(source.clone(), Some(1), &saved_text);
-    documents.did_change(
-        source.clone(),
-        Some(2),
-        Some("pub fn dirty() -> usize { 2 }\n"),
-    );
-    let DirtyDocumentSnapshotState::Dirty(dirty) = documents.dirty_snapshot(&source) else {
-        panic!("changed fixture document should have a dirty text snapshot");
-    };
-
-    project
-        .with_query_snapshot(Some(&dirty), DirtyOverlayScope::ChangedPackages, |_| Ok(()))
-        .expect("first dirty query should build its overlay");
-    assert_eq!(
-        project.project.dirty_overlay_rebuild_count(),
-        1,
-        "first dirty query should build once",
-    );
-
-    // This preparation fills missing resident Body IR and replaces saved package payloads. The
-    // overlay based on the old payload must be dropped before the next dirty query can run.
-    project
-        .materialize(AnalysisSurface::Files(&files))
-        .expect("incomplete file query surface should materialize");
-    project
-        .with_query_snapshot(Some(&dirty), DirtyOverlayScope::ChangedPackages, |_| Ok(()))
-        .expect("second dirty query should rebuild its evicted overlay");
-    assert_eq!(
-        project.project.dirty_overlay_rebuild_count(),
-        2,
-        "real query materialization should evict a matching dirty overlay",
-    );
-
-    project.deferred_indexing_finished(generation, result);
-}
-
-#[test]
 fn deferred_lifecycle_tracks_published_generations_not_foreground_activity() {
     let fixture = fixture_crate(
         r#"
@@ -394,7 +186,7 @@ fn deferred_lifecycle_tracks_published_generations_not_foreground_activity() {
     ));
 
     project
-        .project_paths_changed(vec![source.clone()])
+        .saved_project_changes(vec![SavedFileChange::fs_path(source.clone())])
         .expect("an unchanged watcher replay should be accepted");
     assert!(
         recorded.take().is_empty(),
@@ -404,7 +196,7 @@ fn deferred_lifecycle_tracks_published_generations_not_foreground_activity() {
     std::fs::write(&source, "pub fn updated() -> usize { 2 }\n")
         .expect("fixture source should be replaced");
     project
-        .project_paths_changed(vec![source])
+        .saved_project_changes(vec![SavedFileChange::fs_path(source)])
         .expect("saved source change should be applied");
     assert!(matches!(
         recorded.take().as_slice(),
@@ -441,7 +233,7 @@ fn deferred_lifecycle_tracks_published_generations_not_foreground_activity() {
 }
 
 #[test]
-fn project_path_change_retries_source_races_but_preserves_a_finite_lane_budget() {
+fn saved_project_change_retries_source_races_but_preserves_a_finite_lane_budget() {
     let fixture = fixture_crate(
         r#"
             //- /Cargo.toml
@@ -489,7 +281,7 @@ fn project_path_change_retries_source_races_but_preserves_a_finite_lane_budget()
     // must remain indexing until the third attempt captures a quiet generation.
     hooks.remaining.store(2, Ordering::Release);
     project
-        .project_paths_changed(vec![source.clone()])
+        .saved_project_changes(vec![SavedFileChange::fs_path(source.clone())])
         .expect("stale candidate should be retried from the newer disk revision");
 
     let deferred = receiver
@@ -515,7 +307,7 @@ fn project_path_change_retries_source_races_but_preserves_a_finite_lane_budget()
         .remaining
         .store(MAX_STALE_SOURCE_RETRIES + 1, Ordering::Release);
     let error = project
-        .project_paths_changed(vec![source])
+        .saved_project_changes(vec![SavedFileChange::fs_path(source)])
         .expect_err("continuous source changes should exhaust the retry limit");
 
     assert!(
@@ -534,7 +326,7 @@ fn project_path_change_retries_source_races_but_preserves_a_finite_lane_budget()
 }
 
 #[test]
-fn project_path_retry_collects_the_settled_source_burst() {
+fn saved_project_retry_collects_the_settled_source_burst() {
     let fixture = fixture_crate(
         r#"
             //- /Cargo.toml
@@ -589,7 +381,7 @@ fn project_path_retry_collects_the_settled_source_burst() {
 
     let published_generation = project.project.generation();
     project
-        .project_paths_changed(vec![root.clone()])
+        .saved_project_changes(vec![SavedFileChange::fs_path(root.clone())])
         .expect("an unchanged watcher replay should be accepted");
     assert_eq!(
         project.project.generation(),
@@ -606,7 +398,7 @@ fn project_path_retry_collects_the_settled_source_burst() {
     std::fs::write(&root, "mod account;\nmod user;\npub struct Candidate;\n")
         .expect("candidate fixture source should be written");
     project
-        .project_paths_changed(vec![root])
+        .saved_project_changes(vec![SavedFileChange::fs_path(root)])
         .expect("settled source burst should publish after one retry");
 
     assert_eq!(

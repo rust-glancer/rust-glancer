@@ -10,7 +10,10 @@ mod completion;
 mod config;
 mod error;
 mod notifications;
+mod outcome;
+mod saved_source;
 mod service;
+mod snapshot;
 
 pub use self::{
     client_capabilities::ClientCapabilities,
@@ -22,8 +25,15 @@ pub use self::{
     },
     error::EngineError,
     notifications::{ServiceLogLevel, ServiceNotification},
+    outcome::{AnalysisAbort, AnalysisInput, AnalysisOutcome, AnalysisReady, AnalysisScope},
+    saved_source::{CapturedSourceInput, SaveProposal, SavedProjectChanges},
     service::{
         EngineResult, EngineService, EngineServiceClient, NotificationsService,
         NotificationsServiceClient,
+    },
+    snapshot::{
+        DocumentAnalysisSnapshot, DocumentPositionSnapshot, DocumentRangeSnapshot,
+        DocumentRevision, EditorDocumentSnapshot, EditorSnapshot, EditorSnapshotRevision,
+        OpenDocumentSession, TargetDocumentRevision,
     },
 };

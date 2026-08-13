@@ -1,3 +1,10 @@
+//! Phase storage and request-local working state behind one `Project` generation.
+//!
+//! Saved and source-override projects share the same phase layout. The distinction that matters
+//! here is lifetime: saved package data follows residency policy, while decoded loaders and solver
+//! sessions retained by an editor rebuild live only through its matching query and are cleared as
+//! one `ProjectQueryCache`.
+
 use std::{
     path::Path,
     sync::{
@@ -44,11 +51,11 @@ impl ProjectGenerationId {
     }
 }
 
-/// Transient state retained only for the query matching one dirty project snapshot.
+/// Transient state retained only for the query matching one source-override project snapshot.
 ///
 /// The decoded package payloads and warmed trait-selection sessions are produced together while
-/// rebuilding a dirty overlay. Keeping them behind one option makes it impossible to retain half
-/// of that overlay's request cache after cleanup or install it across separate lifecycle steps.
+/// rebuilding that project. Keeping them behind one option makes it impossible to retain half of
+/// its request cache after cleanup or install it across separate lifecycle steps.
 #[derive(Debug, Clone)]
 pub(crate) struct ProjectQueryCache {
     loaders: PackageReadLoaders,
@@ -133,7 +140,7 @@ impl ProjectState {
         ProjectReadTxn::for_subset(self, subset)
     }
 
-    /// Installs the decoded payloads and solver state produced by this dirty rebuild as one unit.
+    /// Installs decoded payloads and solver state produced by an editor rebuild as one unit.
     pub(crate) fn install_query_cache(
         &mut self,
         loaders: PackageReadLoaders,
@@ -145,7 +152,7 @@ impl ProjectState {
         });
     }
 
-    /// Releases all transient state retained for the matching dirty query.
+    /// Releases all transient state retained for the matching source-override query.
     pub(crate) fn clear_query_cache(&mut self) {
         self.query_cache = None;
     }
@@ -157,9 +164,9 @@ impl ProjectState {
 
     /// Choose artifact loaders for one query over this project snapshot.
     ///
-    /// A dirty snapshot reuses the loader set retained by its rebuild, so the matching query does
-    /// not reopen and decode the same dependency artifacts. Saved snapshots have no retained cache
-    /// and receive a fresh request-owned loader set here.
+    /// A source-override snapshot reuses the loader set retained by its rebuild, so the matching
+    /// query does not reopen and decode the same dependency artifacts. Saved snapshots have no
+    /// retained cache and receive a fresh request-owned loader set here.
     pub(crate) fn query_read_loaders(&self) -> PackageReadLoaders {
         self.query_cache
             .as_ref()
@@ -167,9 +174,9 @@ impl ProjectState {
             .unwrap_or_else(|| PackageReadLoaders::new(self))
     }
 
-    /// Reuse solver sessions warmed while building this dirty snapshot.
+    /// Reuse solver sessions warmed while building this source-override snapshot.
     ///
-    /// Saved snapshots yield no sessions. A dirty query receives clones that share the semantic
+    /// Saved snapshots yield no sessions. An editor query receives clones that share the semantic
     /// solver state already populated during its Body IR rebuild.
     pub(crate) fn query_trait_selection_sessions(
         &self,

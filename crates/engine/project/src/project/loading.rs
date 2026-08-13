@@ -4,8 +4,8 @@
 //! phase-specific package stores. Body IR sections remain independently lazy, but DefMap and
 //! Semantic IR packages are decoded at most once while this loader set is alive.
 //!
-//! A dirty rebuild also uses this owner to compare fingerprints and then load the saved Body IR
-//! index. Both operations therefore read the same immutable artifact revision; callers do not
+//! A source-override rebuild also uses this owner to compare fingerprints and load the saved Body
+//! IR index. Both operations therefore read the same immutable artifact revision; callers do not
 //! have to coordinate revisions themselves.
 
 use std::{
@@ -77,10 +77,10 @@ impl PackageReadLoaders {
 
     /// Check whether saved item lookup indexes still describe every rebuilt crate.
     ///
-    /// Every package rebuilt by a dirty overlay is checked, including crate targets that are not
+    /// Every package rebuilt for source overrides is checked, including crate targets that are not
     /// part of the immediate body request. Saved crates must also have materialized Body IR: a
     /// skipped crate has only an empty lookup-index placeholder, regardless of whether its
-    /// declarations match. The caller enables this only for an overlay built directly from saved
+    /// declarations match. The caller enables this only for a project derived directly from saved
     /// state, so equality proves that all replaced stores and visibility edges are unchanged
     /// without walking the full dependency closure. This loader set owns both the probes checked
     /// here and the Body IR loader used by the caller, so they read the same artifact revisions.
@@ -107,7 +107,7 @@ impl PackageReadLoaders {
                 Ok(reader) => reader,
                 Err(_error) => {
                     // Reuse is optional. A missing artifact still leaves the ordinary fresh-index
-                    // path available for this dirty query.
+                    // path available for this override-backed query.
                     return Ok(false);
                 }
             };
@@ -133,7 +133,7 @@ impl PackageReadLoaders {
 ///
 /// The cache lives behind `PackageReadLoaders`, so several read transactions can share it without
 /// making decoded dependencies permanent project state. Ordinary operations drop their loader set
-/// on return; a dirty overlay may retain the exact set only until its matching query is released.
+/// on return; a source-override project may retain the exact set until its query is released.
 #[derive(Debug)]
 struct PackageArtifactReaders {
     cache_plan: WorkspaceCachePlan,

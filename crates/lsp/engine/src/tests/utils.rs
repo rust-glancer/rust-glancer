@@ -1,7 +1,11 @@
 use std::{
+    collections::HashMap,
     fmt::Write as _,
-    path::Path,
-    sync::{Arc, Mutex},
+    path::{Path, PathBuf},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicU64, Ordering},
+    },
 };
 
 use expect_test::Expect;
@@ -10,7 +14,10 @@ use ls_types::{
     Range, TextEdit, WorkspaceEdit,
 };
 use rg_lsp_proto::{
-    AnalysisConfig, CompletionClientCapabilities, EngineConfig, EngineService, ServiceNotification,
+    AnalysisAbort, AnalysisConfig, AnalysisOutcome, CapturedSourceInput,
+    CompletionClientCapabilities, DocumentAnalysisSnapshot, DocumentRevision,
+    EditorDocumentSnapshot, EditorSnapshot, EditorSnapshotRevision, EngineConfig, EngineResult,
+    EngineService, OpenDocumentSession, SaveProposal, SavedProjectChanges, ServiceNotification,
     SysrootDiscovery,
 };
 use rg_parse::LineIndex;
@@ -28,9 +35,20 @@ pub(super) struct LspEngineFixture {
     markers: FixtureMarkers,
     service: Service,
     notifications: RecordingNotifications,
+    documents: Mutex<HashMap<PathBuf, TestDocument>>,
+    next_revision: AtomicU64,
 }
 
 impl LspEngineFixture {
+    fn expect_ready<T>(outcome: AnalysisOutcome<T>, operation: &str) -> T {
+        match outcome {
+            AnalysisOutcome::Ready(ready) => ready.into_value(),
+            AnalysisOutcome::Aborted(abort) => {
+                panic!("{operation} aborted unexpectedly: {abort:?}")
+            }
+        }
+    }
+
     pub(super) async fn initialized(fixture: &str) -> Self {
         Self::initialized_with_engine_config(fixture, Self::engine_config()).await
     }
@@ -54,6 +72,8 @@ impl LspEngineFixture {
             markers,
             service,
             notifications,
+            documents: Mutex::default(),
+            next_revision: AtomicU64::new(1),
         }
     }
 
@@ -117,17 +137,7 @@ impl LspEngineFixture {
     pub(super) async fn did_open_saved(&self, path: &str, version: i32) {
         let text = std::fs::read_to_string(self.fixture.path(path))
             .expect("fixture saved document should be readable");
-
-        self.service
-            .clone()
-            .did_open(
-                context::current(),
-                self.fixture.path(path),
-                Some(version),
-                text,
-            )
-            .await
-            .expect("fixture saved document should open");
+        self.record_document(self.fixture.path(path), Some(version), text);
     }
 
     pub(super) async fn did_open_dirty(
@@ -136,16 +146,11 @@ impl LspEngineFixture {
         version: i32,
         text: MarkedText,
     ) -> DirtyDocument {
-        self.service
-            .clone()
-            .did_open(
-                context::current(),
-                self.fixture.path(path),
-                Some(version),
-                text.text().to_string(),
-            )
-            .await
-            .expect("fixture dirty document should open");
+        self.record_document(
+            self.fixture.path(path),
+            Some(version),
+            text.text().to_string(),
+        );
 
         DirtyDocument { path, text }
     }
@@ -156,45 +161,125 @@ impl LspEngineFixture {
         version: i32,
         text: MarkedText,
     ) -> DirtyDocument {
-        self.service
-            .clone()
-            .did_change(
-                context::current(),
-                self.fixture.path(path),
-                Some(version),
-                Some(text.text().to_string()),
-                1,
-            )
-            .await
-            .expect("fixture dirty document should change");
+        self.record_document(
+            self.fixture.path(path),
+            Some(version),
+            text.text().to_string(),
+        );
 
         DirtyDocument { path, text }
     }
 
+    fn record_document(&self, path: PathBuf, version: Option<i32>, text: String) {
+        let revision = self.next_revision.fetch_add(1, Ordering::Relaxed);
+        let source_path = path.canonicalize().unwrap_or_else(|_| path.clone());
+        self.documents
+            .lock()
+            .expect("fixture editor documents should not be poisoned")
+            .insert(
+                path,
+                TestDocument {
+                    source_path,
+                    version,
+                    text,
+                    revision,
+                },
+            );
+    }
+
+    fn document_snapshot(&self, path: PathBuf) -> DocumentAnalysisSnapshot {
+        let mut documents = self
+            .documents
+            .lock()
+            .expect("fixture editor documents should not be poisoned")
+            .clone();
+        let target = documents
+            .entry(path.clone())
+            .or_insert_with(|| TestDocument {
+                source_path: path.canonicalize().unwrap_or_else(|_| path.clone()),
+                version: None,
+                text: std::fs::read_to_string(&path)
+                    .expect("fixture query document should be readable"),
+                revision: 1,
+            });
+        let target_revision = DocumentRevision::new(target.revision);
+        let editor_revision = documents
+            .values()
+            .map(|document| document.revision)
+            .max()
+            .unwrap_or(1);
+        let editor_documents = documents
+            .into_iter()
+            .map(|(path, document)| {
+                EditorDocumentSnapshot::new(
+                    path,
+                    OpenDocumentSession::new(1),
+                    DocumentRevision::new(document.revision),
+                    document.version,
+                    document.text,
+                )
+                .with_source_path(document.source_path)
+            })
+            .collect();
+        let target = rg_lsp_proto::TargetDocumentRevision::new(
+            path,
+            OpenDocumentSession::new(1),
+            target_revision,
+        );
+
+        DocumentAnalysisSnapshot::new(
+            target,
+            EditorSnapshot::new(
+                EditorSnapshotRevision::new(editor_revision),
+                editor_documents,
+            ),
+        )
+    }
+
     pub(super) async fn did_save_dirty(&self, dirty: &DirtyDocument) {
-        self.notifications.clear();
-        std::fs::write(self.fixture.path(dirty.path), dirty.text.text())
+        let path = self.fixture.path(dirty.path);
+        std::fs::write(&path, dirty.text.text())
             .expect("fixture dirty document should be writable before save");
+        self.did_save_current(dirty.path)
+            .await
+            .expect("fixture dirty document should save");
+    }
+
+    pub(super) async fn did_save_current(&self, path: &str) -> EngineResult<u64> {
+        self.notifications.clear();
+        let snapshot = self.document_snapshot(self.fixture.path(path));
+        let document = snapshot
+            .document()
+            .expect("save target should be present in its editor snapshot");
+        let proposal = SaveProposal::new(
+            document.target().clone(),
+            document.client_version(),
+            document.text().to_string(),
+        );
 
         self.service
             .clone()
-            .did_save(
-                context::current(),
-                self.fixture.path(dirty.path),
-                Some(dirty.text.text().to_string()),
-            )
+            .did_save(context::current(), proposal)
             .await
-            .expect("fixture dirty document should save");
     }
 
     pub(super) async fn external_file_changed(&self, path: &str, text: &str) {
         self.notifications.clear();
         std::fs::write(self.fixture.path(path), text)
             .expect("fixture external change should be writable");
+        let path = self.fixture.path(path);
+        let changes = if path.extension().and_then(std::ffi::OsStr::to_str) == Some("rs") {
+            SavedProjectChanges::new(
+                vec![CapturedSourceInput::new(path, text.to_string())],
+                Vec::new(),
+            )
+        } else {
+            SavedProjectChanges::new(Vec::new(), vec![path])
+        };
 
         self.service
             .clone()
-            .external_project_paths_changed(context::current(), vec![self.fixture.path(path)])
+            .external_project_changes(context::current(), changes)
             .await
             .expect("fixture external file change should apply");
     }
@@ -202,6 +287,11 @@ impl LspEngineFixture {
     pub(super) fn write_file_without_notification(&self, path: &str, text: &str) {
         std::fs::write(self.fixture.path(path), text)
             .expect("fixture source should be writable without a notification");
+    }
+
+    pub(super) fn remove_file_without_notification(&self, path: &str) {
+        std::fs::remove_file(self.fixture.path(path))
+            .expect("fixture source should be removable without a notification");
     }
 
     pub(super) fn check_notification_effects(&self, expect: Expect) {
@@ -215,14 +305,14 @@ impl LspEngineFixture {
                 ServiceNotification::PublishDiagnostics {
                     path,
                     diagnostics,
-                    version,
+                    saved_text,
                 } => {
                     rendered_any_notification = true;
                     writeln!(
                         rendered,
-                        "- publish diagnostics {} version {:?} count {}",
+                        "- publish diagnostics {} saved-text-len {:?} count {}",
                         self.render_path(path.as_path()),
-                        version,
+                        saved_text.as_ref().map(String::len),
                         diagnostics.len(),
                     )
                     .expect("snapshot should be writable");
@@ -257,8 +347,8 @@ impl LspEngineFixture {
                 }
                 ServiceNotification::InlayHintRefresh => {
                     // This snapshot records stable editor-facing effects, not the exact event log.
-                    // `didChange` may have a pending debounced refresh while `didSave` sends an
-                    // immediate refresh, so duplicate invalidations are intentionally collapsed.
+                    // Several external paths can be reduced into one project replacement, so
+                    // duplicate invalidations are intentionally collapsed.
                     if !rendered_inlay_hint_refresh {
                         rendered_any_notification = true;
                         writeln!(rendered, "- inlay hint refresh")
@@ -287,26 +377,6 @@ impl LspEngineFixture {
         expect.assert_eq(&rendered);
     }
 
-    pub(super) async fn check_rename_error(
-        &self,
-        title: &'static str,
-        marker: &'static str,
-        new_name: &'static str,
-        expect: Expect,
-    ) {
-        let path = self.marker_path(QueryMarkers::Saved, marker);
-        let position = self.marker_position(QueryMarkers::Saved, marker);
-        let error = self
-            .service
-            .clone()
-            .rename(context::current(), path, position, new_name.to_string())
-            .await
-            .expect_err("rename should fail in this fixture");
-
-        let actual = format!("{title}\n- {error}\n");
-        expect.assert_eq(&actual);
-    }
-
     pub(super) async fn check_rename(
         &self,
         title: &'static str,
@@ -314,14 +384,40 @@ impl LspEngineFixture {
         new_name: &'static str,
         expect: Expect,
     ) {
-        let path = self.marker_path(QueryMarkers::Saved, marker);
-        let position = self.marker_position(QueryMarkers::Saved, marker);
-        let edit = self
+        self.check_rename_with_markers(QueryMarkers::Saved, title, marker, new_name, expect)
+            .await;
+    }
+
+    pub(super) async fn check_dirty_rename(
+        &self,
+        dirty: &DirtyDocument,
+        title: &'static str,
+        marker: &'static str,
+        new_name: &'static str,
+        expect: Expect,
+    ) {
+        self.check_rename_with_markers(QueryMarkers::Dirty(dirty), title, marker, new_name, expect)
+            .await;
+    }
+
+    async fn check_rename_with_markers(
+        &self,
+        markers: QueryMarkers<'_>,
+        title: &'static str,
+        marker: &'static str,
+        new_name: &'static str,
+        expect: Expect,
+    ) {
+        let path = self.marker_path(markers, marker);
+        let position = self.marker_position(markers, marker);
+        let input = self.document_snapshot(path).with_position(position);
+        let outcome = self
             .service
             .clone()
-            .rename(context::current(), path, position, new_name.to_string())
+            .rename(context::current(), input, new_name.to_string())
             .await
             .expect("rename query should succeed");
+        let edit = Self::expect_ready(outcome, "rename query");
 
         let mut rendered = String::new();
         writeln!(rendered, "{title}").expect("snapshot should be writable");
@@ -332,18 +428,41 @@ impl LspEngineFixture {
         expect.assert_eq(&rendered);
     }
 
+    pub(super) async fn check_rename_abort(
+        &self,
+        marker: &'static str,
+        new_name: &'static str,
+        expected: AnalysisAbort,
+    ) {
+        let path = self.marker_path(QueryMarkers::Saved, marker);
+        let position = self.marker_position(QueryMarkers::Saved, marker);
+        let input = self.document_snapshot(path).with_position(position);
+        let outcome = self
+            .service
+            .clone()
+            .rename(context::current(), input, new_name.to_string())
+            .await
+            .expect("aborted rename query should return an operational outcome");
+
+        assert_eq!(outcome, AnalysisOutcome::Aborted(expected));
+    }
+
     pub(super) async fn check_formatting(
         &self,
         title: &'static str,
         path: &'static str,
         expect: Expect,
     ) {
-        let edits = self
+        let outcome = self
             .service
             .clone()
-            .formatting(context::current(), self.fixture.path(path))
+            .formatting(
+                context::current(),
+                self.document_snapshot(self.fixture.path(path)),
+            )
             .await
             .expect("formatting query should succeed");
+        let edits = Self::expect_ready(outcome, "formatting query");
 
         let mut rendered = String::new();
         writeln!(rendered, "{title}").expect("snapshot should be writable");
@@ -369,12 +488,14 @@ impl LspEngineFixture {
             LspQuery::GotoDefinition { title, marker } => {
                 let path = self.marker_path(markers, marker);
                 let position = self.marker_position(markers, marker);
-                let locations = self
+                let input = self.document_snapshot(path).with_position(position);
+                let outcome = self
                     .service
                     .clone()
-                    .goto_definition(context::current(), path, position)
+                    .goto_definition(context::current(), input)
                     .await
                     .expect("goto definition query should succeed");
+                let locations = Self::expect_ready(outcome, "goto definition query");
 
                 writeln!(rendered, "{title}").expect("snapshot should be writable");
                 self.render_locations(rendered, &locations);
@@ -386,12 +507,14 @@ impl LspEngineFixture {
             } => {
                 let path = self.marker_path(markers, marker);
                 let position = self.marker_position(markers, marker);
-                let locations = self
+                let input = self.document_snapshot(path).with_position(position);
+                let outcome = self
                     .service
                     .clone()
-                    .references(context::current(), path, position, *include_declaration)
+                    .references(context::current(), input, *include_declaration)
                     .await
                     .expect("references query should succeed");
+                let locations = Self::expect_ready(outcome, "references query");
 
                 writeln!(rendered, "{title}").expect("snapshot should be writable");
                 self.render_locations(rendered, &locations);
@@ -399,12 +522,14 @@ impl LspEngineFixture {
             LspQuery::Hover { title, marker } => {
                 let path = self.marker_path(markers, marker);
                 let position = self.marker_position(markers, marker);
-                let hover = self
+                let input = self.document_snapshot(path.clone()).with_position(position);
+                let outcome = self
                     .service
                     .clone()
-                    .hover(context::current(), path.clone(), position)
+                    .hover(context::current(), input)
                     .await
                     .expect("hover query should succeed");
+                let hover = Self::expect_ready(outcome, "hover query");
 
                 writeln!(rendered, "{title}").expect("snapshot should be writable");
                 self.render_hover(rendered, path.as_path(), hover.as_ref());
@@ -412,28 +537,31 @@ impl LspEngineFixture {
             LspQuery::Completion { title, marker } => {
                 let path = self.marker_path(markers, marker);
                 let position = self.marker_position(markers, marker);
-                let completions = self
+                let input = self.document_snapshot(path.clone()).with_position(position);
+                let outcome = self
                     .service
                     .clone()
                     .completion(
                         context::current(),
-                        path.clone(),
-                        position,
+                        input,
                         CompletionClientCapabilities::default(),
                     )
                     .await
                     .expect("completion query should succeed");
+                let completions = Self::expect_ready(outcome, "completion query");
 
                 writeln!(rendered, "{title}").expect("snapshot should be writable");
                 self.render_completions(rendered, path.as_path(), &completions);
             }
             LspQuery::DocumentSymbol { title, path } => {
-                let symbols = self
+                let document = self.document_snapshot(self.fixture.path(path));
+                let outcome = self
                     .service
                     .clone()
-                    .document_symbol(context::current(), self.fixture.path(path))
+                    .document_symbol(context::current(), document)
                     .await
                     .expect("document symbol query should succeed");
+                let symbols = Self::expect_ready(outcome, "document symbol query");
 
                 writeln!(rendered, "{title}").expect("snapshot should be writable");
                 self.render_document_symbols(rendered, &symbols, 0);
@@ -725,6 +853,14 @@ impl LspEngineFixture {
             }
         }
     }
+}
+
+#[derive(Clone, Debug)]
+struct TestDocument {
+    source_path: PathBuf,
+    version: Option<i32>,
+    text: String,
+    revision: u64,
 }
 
 pub(super) struct DirtyDocument {

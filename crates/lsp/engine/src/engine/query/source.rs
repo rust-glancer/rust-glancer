@@ -63,18 +63,13 @@ impl QueryRunner<'_> {
         Ok(crates)
     }
 
-    /// Find every package-local project identity for a physical source path.
+    /// Find every package-local project identity for an already-selected source path.
     pub(super) fn file_contexts(
         snapshot: ProjectSnapshot<'_>,
         path: &Path,
     ) -> anyhow::Result<Vec<FileContext>> {
-        if !path.exists() {
-            tracing::debug!(path = %path.display(), "query path does not exist");
-            return Ok(Vec::new());
-        }
-
         let contexts = snapshot
-            .file_contexts_for_path(path)
+            .file_contexts_for_source_path(path)
             .context("resolve project file contexts")?;
         let target_count = contexts
             .iter()

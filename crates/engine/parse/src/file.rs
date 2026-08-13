@@ -141,7 +141,7 @@ impl<'a> ParsedFile<'a> {
         Ok(file_text.get(start..end).map(ToString::to_string))
     }
 
-    /// Returns source text from the same saved or dirty snapshot that backs this parsed file.
+    /// Returns source text from the same saved or source-override snapshot backing this parsed file.
     pub fn source_text(&self) -> anyhow::Result<Arc<str>> {
         Ok(self.data.source.text()?)
     }
@@ -220,6 +220,22 @@ impl FileDb {
             .text()
             .expect("in-memory source should remain resident");
         self.parsed_files[file_id] = Self::parse_source(&source_text, self.edition, source);
+        Some(file_id)
+    }
+
+    /// Rebind an unchanged parsed file to resident editor bytes with the same source identity.
+    pub(super) fn rebind_file_source(
+        &mut self,
+        file_path: &Path,
+        source: Arc<SourceEntry>,
+    ) -> Option<FileId> {
+        let file_id = self.file_ids_by_path.get(file_path).copied()?;
+        debug_assert_eq!(
+            self.parsed_files[file_id].source.descriptor(),
+            source.descriptor(),
+            "an unchanged editor source must preserve its parsed-file identity"
+        );
+        self.parsed_files[file_id].source = source;
         Some(file_id)
     }
 

@@ -9,8 +9,7 @@ use rg_workspace::{WorkspaceLoweringConfig, WorkspaceMetadata};
 use test_fixture::{CrateFixture, FixtureMarkers, FixtureSpec, fixture_crate_with_markers};
 
 use crate::{
-    AnalysisChangeSummary, DirtyFileChange, DirtyOverlayScope, PackageResidencyPolicy, Project,
-    SavedFileChange,
+    AnalysisChangeSummary, PackageResidencyPolicy, Project, SavedFileChange, SourceOverrideScope,
 };
 
 /// Materialized project fixture sources plus marker metadata.
@@ -101,27 +100,32 @@ impl ProjectFixture {
         Self::package_slot_by_name_in(self.project.state.parse_db(), package_name)
     }
 
-    pub fn dirty_overlay(&self, relative_path: &str, text: &str) -> Project {
-        self.dirty_overlay_with_scope(
+    pub fn source_override(&self, relative_path: &str, text: &str) -> Project {
+        self.source_override_with_scope(
             relative_path,
             text,
-            DirtyOverlayScope::ReverseDependencyClosure,
+            SourceOverrideScope::ReverseDependencyClosure,
         )
     }
 
-    pub fn dirty_overlay_with_scope(
+    pub fn source_override_with_scope(
         &self,
         relative_path: &str,
         text: &str,
-        scope: DirtyOverlayScope,
+        scope: SourceOverrideScope,
     ) -> Project {
+        let path = self
+            .path(relative_path)
+            .canonicalize()
+            .expect("fixture editor path should canonicalize");
+        let source = self
+            .project
+            .capture_known_source(&path, text)
+            .expect("fixture editor source should belong to the project");
         self.project
-            .dirty_overlay(
-                scope,
-                [DirtyFileChange::new(self.path(relative_path), text)],
-            )
-            .expect("fixture dirty overlay should build")
-            .expect("fixture dirty overlay should touch a known file")
+            .derive_with_source_overrides(scope, [source])
+            .expect("fixture source overrides should build")
+            .expect("fixture source overrides should touch a known file")
     }
 
     pub fn apply_saved_fixture(&mut self, spec: &str) -> AnalysisChangeSummary {
@@ -129,7 +133,7 @@ impl ProjectFixture {
         let changes = saved_files
             .files()
             .iter()
-            .map(|file| SavedFileChange::new(self.path(file.relative_path())))
+            .map(|file| SavedFileChange::fs_path(self.path(file.relative_path())))
             .collect::<Vec<_>>();
         self.project
             .apply_changes(changes)

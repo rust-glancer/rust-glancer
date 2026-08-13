@@ -1,5 +1,6 @@
 use std::{
-    cell::Cell,
+    cell::{Cell, RefCell},
+    collections::HashMap,
     path::{Path, PathBuf},
     sync::Arc,
     time::Duration,
@@ -9,8 +10,10 @@ use divan::{Bencher, black_box};
 use ls_types::{CompletionItem, Hover, Location, Position};
 use rg_lsp_engine::{MemoryControl, Service, ServiceNotificationsSink};
 use rg_lsp_proto::{
-    AnalysisConfig, CompletionClientCapabilities, EngineConfig, EngineService,
-    PackageResidencyPolicy, ServiceNotification, SysrootDiscovery,
+    AnalysisConfig, AnalysisOutcome, CompletionClientCapabilities, DocumentAnalysisSnapshot,
+    DocumentRevision, EditorDocumentSnapshot, EditorSnapshot, EditorSnapshotRevision, EngineConfig,
+    EngineService, OpenDocumentSession, PackageResidencyPolicy, ServiceNotification,
+    SysrootDiscovery,
 };
 use rg_parse::LineIndex;
 use tarpc::context;
@@ -46,7 +49,7 @@ fn hover_clean(bencher: Bencher<'_, '_>) {
 }
 
 // `didChange` runs as input preparation. The measured completion therefore starts at the same
-// boundary as an editor request while still paying for the lazily built dirty overlay.
+// boundary as an editor request while still paying for the lazily built source-override project.
 #[divan::bench(sample_count = 10, sample_size = 1)]
 fn completion_dirty_miss(bencher: Bencher<'_, '_>) {
     let engine = PreparedEngine::new();
@@ -60,8 +63,8 @@ fn completion_dirty_miss(bencher: Bencher<'_, '_>) {
     engine.shutdown();
 }
 
-// A second query for the same document version reuses the overlay but still goes through normal
-// request-memory release and reload behavior between requests.
+// A second query for the same document version reuses the derived project but still goes through
+// normal request-memory release and reload behavior between requests.
 #[divan::bench(sample_count = 10, sample_size = 1)]
 fn completion_dirty_hit(bencher: Bencher<'_, '_>) {
     let engine = PreparedEngine::new();
@@ -73,7 +76,7 @@ fn completion_dirty_hit(bencher: Bencher<'_, '_>) {
     engine.shutdown();
 }
 
-// References require the reverse-dependency closure, so this covers the broad dirty-overlay path
+// References require the reverse-dependency closure, so this covers the broad source-override path
 // separately from file-local hover and completion.
 #[divan::bench(sample_count = 10, sample_size = 1)]
 fn references_dirty_miss(bencher: Bencher<'_, '_>) {
@@ -89,8 +92,8 @@ fn references_dirty_miss(bencher: Bencher<'_, '_>) {
 }
 
 // Editors commonly ask a local question and then a workspace-wide one for the same edit. Preparing
-// the hover outside measurement leaves a narrow overlay cached; references must replace it with a
-// reverse-dependency overlay inside the measured request.
+// the hover outside measurement leaves a narrow override project cached; references must replace it
+// with a reverse-dependency project inside the measured request.
 #[divan::bench(sample_count = 10, sample_size = 1)]
 fn references_dirty_scope_upgrade(bencher: Bencher<'_, '_>) {
     let engine = PreparedEngine::new();
@@ -134,9 +137,19 @@ struct PreparedEngine {
     math_mean_position: [Position; 2],
     clean_hover_position: Position,
     next_document_version: Cell<i32>,
+    documents: RefCell<HashMap<PathBuf, (i32, String)>>,
 }
 
 impl PreparedEngine {
+    fn expect_ready<T>(outcome: AnalysisOutcome<T>, operation: &str) -> T {
+        match outcome {
+            AnalysisOutcome::Ready(ready) => ready.into_value(),
+            AnalysisOutcome::Aborted(abort) => {
+                panic!("query benchmark {operation} aborted unexpectedly: {abort:?}")
+            }
+        }
+    }
+
     fn new() -> Self {
         let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../../test_targets/moderate_workspace")
@@ -170,12 +183,7 @@ impl PreparedEngine {
             .expect("query benchmark Tokio runtime should build");
         let (notifications, receiver) = ServiceNotificationsSink::channel();
         let service = Service::spawn(Arc::new(()) as Arc<dyn MemoryControl>, notifications);
-        runtime.block_on(Self::initialize(
-            service.clone(),
-            receiver,
-            &workspace_root,
-            [(&app_path, &app_saved_text), (&math_path, &math_saved_text)],
-        ));
+        runtime.block_on(Self::initialize(service.clone(), receiver, &workspace_root));
 
         Self {
             runtime,
@@ -187,6 +195,7 @@ impl PreparedEngine {
             math_mean_position,
             clean_hover_position,
             next_document_version: Cell::new(2),
+            documents: RefCell::default(),
         }
     }
 
@@ -195,7 +204,6 @@ impl PreparedEngine {
         service: Service,
         mut notifications: UnboundedReceiver<ServiceNotification>,
         workspace_root: &Path,
-        opened_sources: [(&Path, &str); 2],
     ) {
         let config = EngineConfig {
             analysis: AnalysisConfig {
@@ -217,19 +225,6 @@ impl PreparedEngine {
             .initialized(context::current())
             .await
             .expect("query benchmark engine should accept initialized notification");
-
-        for (path, text) in opened_sources {
-            service
-                .clone()
-                .did_open(
-                    context::current(),
-                    path.to_path_buf(),
-                    Some(1),
-                    text.to_string(),
-                )
-                .await
-                .expect("query benchmark source should open");
-        }
 
         tokio::time::timeout(DEFERRED_INDEXING_TIMEOUT, async {
             loop {
@@ -277,47 +272,95 @@ impl PreparedEngine {
     }
 
     fn change_document(&self, relative_path: &str, version: i32, text: String) {
-        self.runtime
-            .block_on(self.service.clone().did_change(
-                context::current(),
-                self.workspace_root.join(relative_path),
-                Some(version),
-                Some(text),
-                1,
-            ))
-            .expect("query benchmark dirty document should change");
+        self.documents
+            .borrow_mut()
+            .insert(self.workspace_root.join(relative_path), (version, text));
     }
 
     fn hover(&self, relative_path: &str, position: Position) -> Option<Hover> {
-        self.runtime
-            .block_on(self.service.clone().hover(
-                context::current(),
-                self.workspace_root.join(relative_path),
-                position,
-            ))
-            .expect("query benchmark hover should succeed")
+        let input = self
+            .document_snapshot(relative_path)
+            .with_position(position);
+        let outcome = self
+            .runtime
+            .block_on(self.service.clone().hover(context::current(), input))
+            .expect("query benchmark hover should succeed");
+        Self::expect_ready(outcome, "hover")
     }
 
     fn completion(&self, relative_path: &str, position: Position) -> Vec<CompletionItem> {
-        self.runtime
+        let input = self
+            .document_snapshot(relative_path)
+            .with_position(position);
+        let outcome = self
+            .runtime
             .block_on(self.service.clone().completion(
                 context::current(),
-                self.workspace_root.join(relative_path),
-                position,
+                input,
                 CompletionClientCapabilities::default(),
             ))
-            .expect("query benchmark completion should succeed")
+            .expect("query benchmark completion should succeed");
+        Self::expect_ready(outcome, "completion")
     }
 
     fn references(&self, relative_path: &str, position: Position) -> Vec<Location> {
-        self.runtime
-            .block_on(self.service.clone().references(
-                context::current(),
-                self.workspace_root.join(relative_path),
-                position,
-                true,
-            ))
-            .expect("query benchmark references should succeed")
+        let input = self
+            .document_snapshot(relative_path)
+            .with_position(position);
+        let outcome = self
+            .runtime
+            .block_on(
+                self.service
+                    .clone()
+                    .references(context::current(), input, true),
+            )
+            .expect("query benchmark references should succeed");
+        Self::expect_ready(outcome, "references")
+    }
+
+    fn document_snapshot(&self, relative_path: &str) -> DocumentAnalysisSnapshot {
+        let path = self.workspace_root.join(relative_path);
+        let mut documents = self.documents.borrow().clone();
+        let (target_version, _) = documents.entry(path.clone()).or_insert_with(|| {
+            (
+                1,
+                std::fs::read_to_string(&path).expect("query benchmark source should be readable"),
+            )
+        });
+        let target_revision =
+            u64::try_from(*target_version).expect("benchmark versions should be positive");
+        let editor_revision = documents
+            .values()
+            .map(|(version, _)| *version)
+            .max()
+            .and_then(|version| u64::try_from(version).ok())
+            .unwrap_or(target_revision);
+        let editor_documents = documents
+            .into_iter()
+            .map(|(path, (version, text))| {
+                let revision =
+                    u64::try_from(version).expect("benchmark versions should be positive");
+                EditorDocumentSnapshot::new(
+                    path,
+                    OpenDocumentSession::new(1),
+                    DocumentRevision::new(revision),
+                    Some(version),
+                    text,
+                )
+            })
+            .collect();
+        let target = rg_lsp_proto::TargetDocumentRevision::new(
+            path,
+            OpenDocumentSession::new(1),
+            DocumentRevision::new(target_revision),
+        );
+        DocumentAnalysisSnapshot::new(
+            target,
+            EditorSnapshot::new(
+                EditorSnapshotRevision::new(editor_revision),
+                editor_documents,
+            ),
+        )
     }
 
     fn shutdown(&self) {

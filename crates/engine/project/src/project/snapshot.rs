@@ -1,3 +1,9 @@
+//! Immutable borrowed view of one selected project generation.
+//!
+//! Query code receives this façade instead of raw phase databases. Paths that already came from an
+//! editor route use their frozen project-source identity directly; filesystem canonicalization is
+//! reserved for callers that genuinely start from a saved path.
+
 use std::{path::Path, sync::Arc};
 
 use anyhow::Context as _;
@@ -176,7 +182,15 @@ impl<'a> ProjectSnapshot<'a> {
         let canonical_path = path
             .canonicalize()
             .with_context(|| format!("while attempting to canonicalize {}", path.display()))?;
-        let candidates = self.state.file_refs_for_path(&canonical_path);
+        self.file_contexts_for_source_path(&canonical_path)
+    }
+
+    /// Returns current analysis contexts for an already-selected project-source identity.
+    pub fn file_contexts_for_source_path(
+        &self,
+        source_path: &Path,
+    ) -> anyhow::Result<Vec<FileContext>> {
+        let candidates = self.state.file_refs_for_path(source_path);
 
         let package_slots = candidates
             .iter()

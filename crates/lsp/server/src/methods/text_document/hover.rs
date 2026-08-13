@@ -1,6 +1,6 @@
 use tower_lsp_server::{jsonrpc::Result, ls_types::*};
 
-use crate::methods::{MethodContext, internal_error, uri_to_path};
+use crate::methods::DocumentMethodContext;
 
 #[tracing::instrument(
     level = "trace", skip_all,
@@ -8,19 +8,20 @@ use crate::methods::{MethodContext, internal_error, uri_to_path};
         rg.position = ?params.text_document_position_params.position
     )
 )]
-pub(crate) async fn hover(ctx: MethodContext, params: HoverParams) -> Result<Option<Hover>> {
-    let Some(path) = uri_to_path(&params.text_document_position_params.text_document.uri) else {
-        return Ok(None);
-    };
+pub(crate) async fn hover(
+    ctx: DocumentMethodContext,
+    params: HoverParams,
+) -> Result<Option<Hover>> {
     let position = params.text_document_position_params.position;
+    let input = ctx.target_position(position)?;
     tracing::trace!("hover request received");
-    let hover = ctx
+    let result = ctx
         .engine_client
         .query("hover", move |engine_client, request_context| async move {
-            engine_client.hover(request_context, path, position).await
+            engine_client.hover(request_context, input).await
         })
-        .await
-        .map_err(internal_error)?;
+        .await;
+    let hover = ctx.finish_query(result)?;
     tracing::trace!(has_hover = hover.is_some(), "hover request answered");
 
     Ok(hover)

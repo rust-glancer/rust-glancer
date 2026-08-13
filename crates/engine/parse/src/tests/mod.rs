@@ -302,8 +302,13 @@ fn in_memory_source_keeps_its_line_index_when_saved_indexes_are_offloaded() {
         .canonicalize()
         .expect("fixture file should be canonicalizable");
     let dirty_text = "pub fn dirty() {\n    changed();\n}\n";
+    let source = parse
+        .source_inventory()
+        .capture_known(&file_path, dirty_text)
+        .expect("fixture editor source should be known");
+    parse.begin_source_overrides();
     let changed_files = parse
-        .reparse_file_from_source(&file_path, dirty_text)
+        .apply_source_override(&source)
         .expect("known file should reparse from dirty text");
     let changed_file = changed_files
         .first()

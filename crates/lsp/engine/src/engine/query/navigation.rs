@@ -5,60 +5,54 @@
 //! of locations reached through multiple crate roots. `NavigationQuery` only selects the semantic
 //! operation inside that shared flow.
 
-use std::{path::PathBuf, time::Instant};
+use std::time::Instant;
 
 use anyhow::Context as _;
-use rg_project::DirtyOverlayScope;
+use rg_lsp_proto::DocumentPositionSnapshot;
 use rg_std::UniqueVec;
 
 use super::QueryRunner;
-use crate::{documents::DirtyDocumentSnapshot, proto::navigation as navigation_proto};
+use crate::proto::navigation as navigation_proto;
 
 impl QueryRunner<'_> {
     pub(crate) fn goto_definition(
         &mut self,
-        path: PathBuf,
-        position: ls_types::Position,
-        dirty: Option<DirtyDocumentSnapshot>,
+        input: DocumentPositionSnapshot,
     ) -> anyhow::Result<Vec<ls_types::Location>> {
-        self.navigation_query(path, position, NavigationQuery::Definition, dirty)
+        self.navigation_query(input, NavigationQuery::Definition)
             .context("navigate to definition")
     }
 
     pub(crate) fn goto_type_definition(
         &mut self,
-        path: PathBuf,
-        position: ls_types::Position,
-        dirty: Option<DirtyDocumentSnapshot>,
+        input: DocumentPositionSnapshot,
     ) -> anyhow::Result<Vec<ls_types::Location>> {
-        self.navigation_query(path, position, NavigationQuery::TypeDefinition, dirty)
+        self.navigation_query(input, NavigationQuery::TypeDefinition)
             .context("navigate to type definition")
     }
 
     pub(crate) fn goto_implementation(
         &mut self,
-        path: PathBuf,
-        position: ls_types::Position,
-        dirty: Option<DirtyDocumentSnapshot>,
+        input: DocumentPositionSnapshot,
     ) -> anyhow::Result<Vec<ls_types::Location>> {
-        self.navigation_query(path, position, NavigationQuery::Implementation, dirty)
+        self.navigation_query(input, NavigationQuery::Implementation)
             .context("navigate to implementation")
     }
 
     /// Run the common multi-crate navigation flow selected by `query`.
     fn navigation_query(
         &mut self,
-        path: PathBuf,
-        position: ls_types::Position,
+        input: DocumentPositionSnapshot,
         query: NavigationQuery,
-        dirty: Option<DirtyDocumentSnapshot>,
     ) -> anyhow::Result<Vec<ls_types::Location>> {
+        let DocumentPositionSnapshot { analysis, position } = input;
+        let document = Self::target_document(&analysis)?;
+        let path = document.source_path().to_path_buf();
         let started = Instant::now();
-        self.ensure_path(query.name(), &path)
+        self.ensure_path(query.name(), analysis.editor(), &path)
             .context("prepare navigation path")?;
         let locations = self
-            .project
-            .with_query_snapshot(dirty.as_ref(), query.dirty_overlay_scope(), |snapshot| {
+            .with_query_snapshot(analysis.editor(), |snapshot| {
                 let crate_offsets = Self::crate_offsets(snapshot, &path, position)
                     .context("resolve navigation position")?;
                 let analysis_crates = crate_offsets
@@ -126,13 +120,6 @@ impl NavigationQuery {
             Self::Definition => "definition",
             Self::TypeDefinition => "type_definition",
             Self::Implementation => "implementation",
-        }
-    }
-
-    fn dirty_overlay_scope(self) -> DirtyOverlayScope {
-        match self {
-            Self::Definition | Self::TypeDefinition => DirtyOverlayScope::ChangedPackages,
-            Self::Implementation => DirtyOverlayScope::ReverseDependencyClosure,
         }
     }
 }

@@ -4,10 +4,11 @@
 //! boundary. This watcher owns that boundary for external edits, so editor-specific watcher
 //! behavior cannot leave the saved project behind disk.
 //!
-//! A relevant native event first marks every affected ready engine as indexing. The watcher then
-//! waits for the whole edit burst to become quiet, compares its filesystem snapshot, and sends one
-//! coalesced path update. The indexing activity stays live through that wait and through the engine
-//! rebuild, so the editor does not show `Ready` or enqueue semantic queries against changing disk.
+//! A relevant native event first publishes updating status for every affected ready engine. The
+//! watcher then waits for the whole edit burst to become quiet and compares its filesystem
+//! snapshot. The registry captures each existing Rust source once and sends one coalesced
+//! saved-project update. That update stays live through the quiet wait and engine rebuild, so the
+//! editor does not show `Ready` before the replacement finishes.
 
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -215,7 +216,7 @@ impl WorkspaceWatcher {
     /// Turn one settled native-event burst into a saved-project update.
     ///
     /// This always returns `changes` to the registry, even when every path was an editor save or
-    /// disappeared during the burst. That lets unmatched early indexing activities end as
+    /// disappeared during the burst. That lets unmatched early project updates end as
     /// cancellations instead of leaving the workspace permanently `Indexing`.
     #[tracing::instrument(level = "trace", skip_all, fields(root = %root.display()))]
     async fn forward_watcher_results(
@@ -228,7 +229,7 @@ impl WorkspaceWatcher {
     ) {
         let paths = Self::changed_paths_for_results(snapshot, root, results);
         let path_count_before_save_filter = paths.len();
-        let paths = recent_editor_saves.saves_to_process(paths).await;
+        let paths = recent_editor_saves.saves_to_process(paths);
 
         if paths.is_empty() {
             tracing::trace!(
@@ -245,7 +246,7 @@ impl WorkspaceWatcher {
         }
 
         registry
-            .external_project_paths_changed(paths, changes)
+            .finish_external_project_changes(paths, changes)
             .await;
     }
 

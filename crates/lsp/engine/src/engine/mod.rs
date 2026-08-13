@@ -11,30 +11,21 @@ mod project;
 mod query;
 
 use std::{
-    path::{Path, PathBuf},
     sync::{
         Arc,
         mpsc::{self, Sender},
     },
     thread,
-    time::{Duration, Instant},
+    time::Instant,
 };
 
 use anyhow::Context as _;
-use rg_lsp_proto::{ServiceLogLevel, ServiceNotification};
-use tokio::sync::{Mutex, oneshot};
+use rg_lsp_proto::ServiceNotification;
+use tokio::sync::oneshot;
 
 pub(crate) use self::{command::EngineCommand, project::ProjectConfiguration};
 use self::{command::EngineResponse, dispatcher::EngineDispatcher};
-use crate::{
-    debounce::Debouncer,
-    dirty_state::DirtyState,
-    documents::{DirtyDocumentSnapshotState, DocumentStore},
-    memory::MemoryControl,
-    service::ServiceNotificationsSink,
-};
-
-const INLAY_HINT_REFRESH_DEBOUNCE: Duration = Duration::from_millis(150);
+use crate::{memory::MemoryControl, service::ServiceNotificationsSink};
 
 /// Handle for the long-lived analysis engine.
 ///
@@ -44,10 +35,7 @@ const INLAY_HINT_REFRESH_DEBOUNCE: Duration = Duration::from_millis(150);
 #[derive(Clone, Debug)]
 pub(crate) struct EngineHandle {
     sender: Sender<QueuedEngineCommand>,
-    pub(crate) documents: Arc<Mutex<DocumentStore>>,
-    inlay_hint_debouncer: Debouncer,
     notifications: ServiceNotificationsSink,
-    dirty_state: DirtyState,
 }
 
 /// Separates time spent waiting behind older commands from time spent executing this command.
@@ -71,28 +59,17 @@ impl EngineHandle {
     pub(crate) fn spawn(
         memory_control: Arc<dyn MemoryControl>,
         notifications: ServiceNotificationsSink,
-        documents: Arc<Mutex<DocumentStore>>,
     ) -> Self {
         let (sender, receiver) = mpsc::channel();
-        let dirty_state = DirtyState::default();
-        let inlay_hint_debouncer = Debouncer::new(INLAY_HINT_REFRESH_DEBOUNCE);
-
         thread::spawn({
-            let dirty_state = dirty_state.clone();
             let sender = sender.clone();
             let notifications = notifications.clone();
-            move || {
-                EngineDispatcher::new(sender, memory_control, dirty_state, notifications)
-                    .run(receiver)
-            }
+            move || EngineDispatcher::new(sender, memory_control, notifications).run(receiver)
         });
 
         Self {
             sender,
-            documents,
-            inlay_hint_debouncer,
             notifications,
-            dirty_state,
         }
     }
 
@@ -116,98 +93,12 @@ impl EngineHandle {
         response.await.context("receive LSP engine response")?
     }
 
-    /// Clone the query-visible buffer snapshot before the request enters the engine queue.
+    /// Refresh semantic presentation after a saved-project change completed.
     ///
-    /// The command then carries one stable text/version pair even if the editor sends another
-    /// change while it waits. `DirtyState` separately tells the dispatcher when that pair became
-    /// stale.
-    pub(crate) async fn dirty_document_snapshot(&self, path: &Path) -> DirtyDocumentSnapshotState {
-        let documents = self.documents.lock().await;
-        let dirty = documents.dirty_snapshot(path);
-        drop(documents);
-
-        match &dirty {
-            DirtyDocumentSnapshotState::Dirty(snapshot) => {
-                tracing::debug!(
-                    path = %snapshot.path().display(),
-                    version = ?snapshot.version(),
-                    "using dirty document snapshot for analysis query"
-                );
-            }
-            DirtyDocumentSnapshotState::DirtyWithoutText => {
-                tracing::debug!(
-                    path = %path.display(),
-                    "dirty document has no full-text snapshot"
-                );
-            }
-            DirtyDocumentSnapshotState::Clean => {}
-        }
-
-        dirty
-    }
-
-    /// Publish the latest lightweight dirty identity to the synchronous engine thread.
-    pub(crate) fn sync_dirty_state(&self, path: &Path, dirty: &DirtyDocumentSnapshotState) {
-        self.dirty_state.sync_document(path, dirty);
-    }
-
-    /// Restore dirty status when disk reindexing failed after `didSave` optimistically cleaned it.
-    pub(crate) async fn mark_dirty_after_failed_save(&self, path: PathBuf, error: anyhow::Error) {
-        let mut documents = self.documents.lock().await;
-        documents.mark_dirty_after_failed_save(path.clone());
-        let freshness = documents.freshness(&path);
-        let dirty = documents.dirty_snapshot(&path);
-        self.sync_dirty_state(&path, &dirty);
-        drop(documents);
-
-        tracing::trace!(
-            path = %path.display(),
-            tracked = freshness.tracked(),
-            version = ?freshness.version(),
-            dirty = freshness.dirty(),
-            saved_len = ?freshness.saved_len(),
-            live_len = ?freshness.live_len(),
-            saved_hash = ?freshness.saved_hash(),
-            live_hash = ?freshness.live_hash(),
-            "document freshness after failed save reindex"
-        );
-
-        let message = format!("failed to process saved file: {error:#}");
-        self.notifications.send(ServiceNotification::LogMessage {
-            level: ServiceLogLevel::Error,
-            message,
-        });
-    }
-
-    /// Trace the saved/live identity after the project accepted a save reindex.
-    pub(crate) async fn log_freshness_after_save(&self, path: &Path) {
-        let freshness = self.documents.lock().await.freshness(path);
-        tracing::trace!(
-            path = %path.display(),
-            tracked = freshness.tracked(),
-            version = ?freshness.version(),
-            dirty = freshness.dirty(),
-            saved_len = ?freshness.saved_len(),
-            live_len = ?freshness.live_len(),
-            saved_hash = ?freshness.saved_hash(),
-            live_hash = ?freshness.live_hash(),
-            "document freshness after save reindex"
-        );
-    }
-
-    /// Schedules an inlay-hint refresh after nearby edit notifications settle.
-    pub(crate) fn refresh_inlay_hints_debounced(&self) {
-        let notifications = self.notifications.clone();
-        self.inlay_hint_debouncer.call(move || {
-            notifications.send(ServiceNotification::InlayHintRefresh);
-        });
-    }
-
-    /// Sends an inlay-hint refresh immediately and cancels any pending debounced refresh.
-    pub(crate) fn refresh_inlay_hints_now(&self) {
-        let notifications = self.notifications.clone();
-        self.inlay_hint_debouncer.call_now(move || {
-            notifications.send(ServiceNotification::InlayHintRefresh);
-        });
+    /// Editor edit/save refreshes originate at server ingress. External filesystem changes still
+    /// originate here because only the engine knows when their project replacement is complete.
+    pub(crate) fn refresh_inlay_hints(&self) {
+        self.notifications
+            .send(ServiceNotification::InlayHintRefresh);
     }
 }

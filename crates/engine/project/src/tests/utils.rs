@@ -11,8 +11,8 @@ use rg_package_store::PackageLoader;
 use rg_parse::FileId;
 
 use crate::{
-    AnalysisChangeSummary, DirtyFileChange, DirtyOverlayScope, FileContext, PackageResidencyPolicy,
-    Project, testonly::ProjectFixture,
+    AnalysisChangeSummary, FileContext, PackageResidencyPolicy, Project, SourceOverrideScope,
+    testonly::ProjectFixture,
 };
 
 pub(super) struct HostFixture {
@@ -100,36 +100,41 @@ impl HostFixture {
         }
     }
 
-    pub(super) fn dirty_overlay(&self, relative_path: &str, text: &str) -> Project {
-        self.dirty_overlay_with_scope(
+    pub(super) fn source_override(&self, relative_path: &str, text: &str) -> Project {
+        self.source_override_with_scope(
             relative_path,
             text,
-            DirtyOverlayScope::ReverseDependencyClosure,
+            SourceOverrideScope::ReverseDependencyClosure,
         )
     }
 
-    pub(super) fn dirty_overlay_with_scope(
+    pub(super) fn source_override_with_scope(
         &self,
         relative_path: &str,
         text: &str,
-        scope: DirtyOverlayScope,
+        scope: SourceOverrideScope,
     ) -> Project {
-        self.dirty_overlay_from(self.fixture.project(), relative_path, text, scope)
+        self.source_override_from(self.fixture.project(), relative_path, text, scope)
     }
 
-    pub(super) fn dirty_overlay_from(
+    pub(super) fn source_override_from(
         &self,
         base: &Project,
         relative_path: &str,
         text: &str,
-        scope: DirtyOverlayScope,
+        scope: SourceOverrideScope,
     ) -> Project {
-        base.dirty_overlay(
-            scope,
-            [DirtyFileChange::new(self.fixture.path(relative_path), text)],
-        )
-        .expect("fixture dirty overlay should build")
-        .expect("fixture dirty overlay should touch a known file")
+        let path = self
+            .fixture
+            .path(relative_path)
+            .canonicalize()
+            .expect("fixture editor path should canonicalize");
+        let source = base
+            .capture_known_source(&path, text)
+            .expect("fixture editor source should belong to the project");
+        base.derive_with_source_overrides(scope, [source])
+            .expect("fixture source overrides should build")
+            .expect("fixture source overrides should touch a known file")
     }
 
     pub(super) fn check(&self, observations: &[HostObservation<'_>], expect: Expect) {

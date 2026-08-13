@@ -1,3 +1,10 @@
+//! Resolves ownership once for the lifetime of an open editor document.
+//!
+//! Cargo workspace discovery is allowed when a document opens. The result is recorded in the
+//! registry and reused until close, so ordinary semantic requests never need their own routing
+//! heuristic or filesystem lookup. Files outside configured workspace folders fall back to the
+//! active ready engine when one exists.
+
 use std::{
     path::{Path, PathBuf},
     process::{Command, Output},
@@ -18,17 +25,11 @@ pub(super) struct DocumentOwner {
 }
 
 impl DocumentOwner {
-    /// Resolves the engine that owns a document, applying the requested cache behavior.
+    /// Resolves the engine that owns an opened document and remembers that route until close.
     pub(super) fn new(
         inner: &mut EngineRegistryInner,
         path: &Path,
-        cache_policy: OpenFileCachePolicy,
     ) -> anyhow::Result<Option<Self>> {
-        // Open file that needs to be removed from cache.
-        if cache_policy == OpenFileCachePolicy::Remove {
-            return Ok(inner.remove_open_file(path, None).map(Self::cached));
-        }
-
         // Do we know this file? If yes, return it.
         if let Some(id) = inner.open_file_owner(path) {
             return Ok(Some(Self::cached(id)));
@@ -47,37 +48,28 @@ impl DocumentOwner {
         // - If we open a local project that is dependency of another project in the same
         //   workspace, do we start LSP for it? What if we first open a dependency, and then
         //   "parent"?
-        // Answering these queestions is postponed until it _really_ becomes an issue and
+        // Answering these questions is postponed until it _really_ becomes an issue and
         // there will be real users affected by this heuristic.
         let Some(discovery_workspace) = inner
             .routing
             .discovery_workspace_for(path)
             .map(Path::to_path_buf)
         else {
-            return Ok(Self::fallback(inner, path, cache_policy));
+            return Ok(Self::fallback(inner, path));
         };
-
-        // This is an unknown workspace file.
-        if cache_policy == OpenFileCachePolicy::Ignore {
-            tracing::warn!(
-                path = %path.display(),
-                "had to invoke locate-project for unopened file"
-            );
-        }
 
         // Ask Cargo for the workspace root from the containing VS Code workspace folder rather
         // than from the document directory. Nested rust-toolchain overrides can be older than the
         // workspace itself and break lightweight routing before analysis gets involved.
         if let Some(workspace_root) = Self::locate_workspace_root(path, &discovery_workspace)?
-            && let Some(owner) =
-                Self::for_cargo_workspace(inner, path, workspace_root, cache_policy)
+            && let Some(owner) = Self::for_cargo_workspace(inner, path, workspace_root)
         {
             return Ok(Some(owner));
         }
 
-        // Cargo could not associate the file with a routable workspace, so keep the request
+        // Cargo could not associate the opened file with a routable workspace, so keep it
         // contextual and use the last active engine if one is available.
-        Ok(Self::fallback(inner, path, cache_policy))
+        Ok(Self::fallback(inner, path))
     }
 
     /// Reuses the engine remembered when the document was opened.
@@ -90,13 +82,9 @@ impl DocumentOwner {
         inner: &mut EngineRegistryInner,
         path: &Path,
         workspace_root: PathBuf,
-        cache_policy: OpenFileCachePolicy,
     ) -> Option<Self> {
         let route = inner.reserve_workspace_root(workspace_root)?;
-
-        if cache_policy.should_record() {
-            inner.set_open_file(path.to_path_buf(), route.id());
-        }
+        inner.set_open_file(path.to_path_buf(), route.id());
 
         Some(Self {
             route,
@@ -105,16 +93,9 @@ impl DocumentOwner {
     }
 
     /// Falls back to the last active ready engine for files outside known workspaces.
-    fn fallback(
-        inner: &mut EngineRegistryInner,
-        path: &Path,
-        cache_policy: OpenFileCachePolicy,
-    ) -> Option<Self> {
+    fn fallback(inner: &mut EngineRegistryInner, path: &Path) -> Option<Self> {
         let id = inner.active_ready_id()?;
-
-        if cache_policy.should_record() {
-            inner.set_open_file(path.to_path_buf(), id);
-        }
+        inner.set_open_file(path.to_path_buf(), id);
 
         Some(Self::existing(id, DocumentOwnerSource::ActiveFallback))
     }
@@ -245,23 +226,6 @@ pub(super) enum DocumentOwnerSource {
     OpenFileCache,
     CargoWorkspace,
     ActiveFallback,
-}
-
-/// Controls whether a resolved document owner should be remembered until didClose.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum OpenFileCachePolicy {
-    /// Remember resolved ownership for an opened document.
-    Record,
-    /// Route without changing the open-file cache.
-    Ignore,
-    /// Forget an opened document and use only its remembered owner.
-    Remove,
-}
-
-impl OpenFileCachePolicy {
-    pub(super) fn should_record(self) -> bool {
-        self == Self::Record
-    }
 }
 
 #[cfg(test)]

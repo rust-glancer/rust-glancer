@@ -13,9 +13,17 @@ export default defineConfig({
   version: vscodeTestVersion(),
   extensionDevelopmentPath: extensionRoot,
   workspaceFolder: resolve(extensionRoot, "../../test_targets"),
+  env: {
+    RUST_GLANCER_VSCODE_USER_DATA_DIR: userDataDir,
+  },
+  // The rapid-typing test needs renderer key events: programmatic document edits do not exercise
+  // VS Code's completion trigger path. Keep the debugger local and let Chromium choose the port.
   launchArgs: [
     "--disable-extensions",
     "--disable-workspace-trust",
+    "--enable-smoke-test-driver",
+    "--remote-debugging-address=127.0.0.1",
+    "--remote-debugging-port=0",
     `--user-data-dir=${userDataDir}`,
     `--extensions-dir=${extensionsDir}`,
   ],

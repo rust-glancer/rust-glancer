@@ -1,27 +1,27 @@
 use tower_lsp_server::{jsonrpc::Result, ls_types::*};
 
-use crate::methods::{MethodContext, internal_error, uri_to_path};
+use crate::methods::DocumentMethodContext;
 
 #[tracing::instrument(level = "trace", skip_all)]
 pub(crate) async fn document_symbol(
-    ctx: MethodContext,
-    params: DocumentSymbolParams,
+    ctx: DocumentMethodContext,
+    _params: DocumentSymbolParams,
 ) -> Result<Option<DocumentSymbolResponse>> {
-    let Some(path) = uri_to_path(&params.text_document.uri) else {
-        return Ok(None);
-    };
+    let document = ctx.target_document()?;
     tracing::trace!("document symbol request received");
 
-    let symbols = ctx
+    let result = ctx
         .engine_client
         .query(
             "document_symbol",
             move |engine_client, request_context| async move {
-                engine_client.document_symbol(request_context, path).await
+                engine_client
+                    .document_symbol(request_context, document)
+                    .await
             },
         )
-        .await
-        .map_err(internal_error)?;
+        .await;
+    let symbols = ctx.finish_query(result)?;
     tracing::trace!(
         result_count = symbols.len(),
         "document symbol request answered"

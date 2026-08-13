@@ -45,12 +45,12 @@ pub(super) fn rebuild_packages(
     }
 }
 
-/// Rebuild dirty packages without running saved-project residency or allocator cleanup.
+/// Rebuild packages for source overrides without saved-project residency or allocator cleanup.
 ///
 /// The rebuilt payload stays available through the matching query. Its caller owns the later
 /// request-memory release and allocator purge; doing either here would put cleanup inside the
-/// interactive overlay build.
-pub(super) fn rebuild_dirty_overlay_packages(
+/// request-local override build.
+pub(super) fn rebuild_packages_for_source_overrides(
     state: &mut ProjectState,
     packages: &[PackageSlot],
     body_files: &[BodyIrFile],
@@ -62,7 +62,7 @@ pub(super) fn rebuild_dirty_overlay_packages(
 
     try_rebuild_packages(
         state,
-        PackageRebuildPlan::dirty_overlay(
+        PackageRebuildPlan::source_overrides(
             packages,
             body_files,
             can_reuse_saved_item_lookup_indexes,
@@ -83,8 +83,8 @@ fn try_rebuild_packages(
 
     // Saved rebuilding replaces the package file table before discovering modules again. Keeping
     // the old table would make removed modules permanent members of source validation and cache
-    // snapshots even after the new ItemTree stopped reaching them. Dirty overlays are ephemeral
-    // and deliberately preserve the published file ids instead.
+    // snapshots even after the new ItemTree stopped reaching them. Source-override projects are
+    // disposable and deliberately preserve the published file ids instead.
     if matches!(plan.residency, RebuildResidency::RestoreSavedState) {
         state
             .parse
@@ -111,8 +111,8 @@ fn try_rebuild_packages(
         .purge(ProjectMemoryPurgePoint::AfterItemTreeSyntaxEviction);
 
     // Fresh indexing exposes more allocator purge boundaries because it can build the whole
-    // workspace at once. Package rebuilds are usually smaller and can run on save or dirty-overlay
-    // paths, so we avoid adding extra def-map/body purges to the interactive rebuild path.
+    // workspace at once. Package rebuilds are usually smaller and can run on save or source-
+    // override paths, so we avoid adding extra def-map/body purges to the interactive rebuild path.
     let def_map = state
         .def_map
         .package_rebuilder(
@@ -140,13 +140,16 @@ fn try_rebuild_packages(
         .build()
         .context("while attempting to rebuild affected semantic IR packages")?;
 
-    // Dirty body edits often leave crate declarations unchanged. Compare the rebuilt DefMap and
-    // Semantic IR with the compact saved fingerprints now, while those new packages are resident.
-    // Other rebuild modes keep the ordinary fresh-index construction path.
+    // A source override that changes only a function body often leaves crate declarations
+    // unchanged. Compare the rebuilt DefMap and Semantic IR with the compact saved fingerprints
+    // now, while those new packages are resident. Other rebuild modes keep the ordinary fresh-index
+    // construction path.
     let item_lookup_indexes_unchanged = if plan.can_reuse_saved_item_lookup_indexes {
         loaders
             .item_lookup_indexes_unchanged(&def_map, &semantic_ir, plan.source_packages.as_slice())
-            .context("while attempting to compare dirty item lookup indexes with saved analysis")?
+            .context(
+                "while attempting to compare rebuilt item lookup indexes with saved analysis",
+            )?
     } else {
         false
     };
@@ -172,13 +175,13 @@ fn try_rebuild_packages(
             body_rebuilder.configured_bodies(state.body_ir_policy)
         }
         BodyRebuildScope::CoverageOnly => body_rebuilder.coverage_only(state.body_ir_policy),
-        BodyRebuildScope::DirtyFiles(files) => body_rebuilder.selected_files(files.to_vec()),
+        BodyRebuildScope::OverrideFiles(files) => body_rebuilder.selected_files(files.to_vec()),
     };
     let (body_ir, trait_selection_sessions) = match plan.body_scope {
-        // Dirty queries can immediately reuse the crate-semantic solver program built while these
-        // same bodies were resolved. Saved rebuilds have no request boundary to own that state and
-        // deliberately keep the ordinary drop-on-build behavior.
-        BodyRebuildScope::DirtyFiles(_) => body_rebuilder.build_with_trait_selection_sessions(),
+        // The query that requested these overrides can immediately reuse the crate-semantic solver
+        // program built while the same bodies were resolved. Saved rebuilds have no request boundary
+        // to own that state and deliberately keep the ordinary drop-on-build behavior.
+        BodyRebuildScope::OverrideFiles(_) => body_rebuilder.build_with_trait_selection_sessions(),
         BodyRebuildScope::ConfiguredBodies | BodyRebuildScope::CoverageOnly => {
             body_rebuilder.build().map(|body_ir| (body_ir, Vec::new()))
         }
@@ -189,7 +192,7 @@ fn try_rebuild_packages(
             .parse
             .validate_saved_sources()
             .context("while attempting to validate captured project source generation")?,
-        // A dirty overlay is based on the published project generation, not on an implicit poll of
+        // A source-override project is based on the published project generation, not on a poll of
         // the latest filesystem state. Only these packages received newly derived analysis, so
         // validate them here. Dependencies deliberately remain at the saved generation until the
         // watcher publishes their update; any dependency source that this query actually reloads
@@ -197,7 +200,7 @@ fn try_rebuild_packages(
         RebuildResidency::KeepResident => state
             .parse
             .validate_saved_sources_in_packages(&package_indices)
-            .context("while attempting to validate dirty overlay source packages")?,
+            .context("while attempting to validate source-override packages")?,
     }
     state.parse.evict_saved_source_text();
 
@@ -208,7 +211,7 @@ fn try_rebuild_packages(
     state.def_map = def_map;
     state.semantic_ir = semantic_ir;
     state.body_ir = body_ir;
-    if matches!(plan.body_scope, BodyRebuildScope::DirtyFiles(_)) {
+    if matches!(plan.body_scope, BodyRebuildScope::OverrideFiles(_)) {
         state.install_query_cache(loaders.clone(), trait_selection_sessions);
     } else {
         state.clear_query_cache();
@@ -246,7 +249,7 @@ impl<'a> PackageRebuildPlan<'a> {
         }
     }
 
-    fn dirty_overlay(
+    fn source_overrides(
         source_packages: &'a [PackageSlot],
         body_files: &'a [BodyIrFile],
         can_reuse_saved_item_lookup_indexes: bool,
@@ -254,7 +257,7 @@ impl<'a> PackageRebuildPlan<'a> {
         Self {
             source_packages: PhasePackageSet::from_slice(source_packages),
             body_packages: PhasePackageSet::from_body_files(body_files),
-            body_scope: BodyRebuildScope::DirtyFiles(body_files),
+            body_scope: BodyRebuildScope::OverrideFiles(body_files),
             residency: RebuildResidency::KeepResident,
             can_reuse_saved_item_lookup_indexes,
         }
@@ -265,7 +268,7 @@ impl<'a> PackageRebuildPlan<'a> {
 enum BodyRebuildScope<'a> {
     ConfiguredBodies,
     CoverageOnly,
-    DirtyFiles(&'a [BodyIrFile]),
+    OverrideFiles(&'a [BodyIrFile]),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

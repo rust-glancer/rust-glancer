@@ -33,7 +33,7 @@ impl WorkspaceGraphChanges {
         change: &SavedFileChange,
     ) -> Self {
         let workspace_lockfile = workspace.workspace_root().join("Cargo.lock");
-        let path = change.path.as_path();
+        let path = change.path();
 
         // If `Cargo.lock` in workspace changed (e.g. `cargo update`, rebuild).
         if path == workspace_lockfile {

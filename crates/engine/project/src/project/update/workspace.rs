@@ -12,6 +12,8 @@ use rg_workspace::WorkspaceMetadata;
 
 use crate::project::{AnalysisChangeSummary, ChangedFile, Project, SavedFileChange};
 
+use super::source;
+
 pub(super) fn rebuild_workspace_graph(
     project: &mut Project,
     changes: &[SavedFileChange],
@@ -55,10 +57,24 @@ pub(super) fn rebuild_workspace_graph(
         .context("while attempting to build refreshed analysis project")?
         .state;
 
+    // A graph rebuild discovers its file set through Cargo and module traversal, but exact captured
+    // Rust inputs still own their bytes. Reinstall them into the private candidate after discovery.
+    // When traversal observed the same value this is a no-op; when disk advanced, final validation
+    // rejects the candidate instead of acknowledging a project built from newer bytes.
+    let captured_sources = changes
+        .iter()
+        .filter(|change| change.captured_source().is_some())
+        .cloned()
+        .collect::<Vec<_>>();
+    if !captured_sources.is_empty() {
+        source::apply_source_changes(project, captured_sources)
+            .context("while attempting to install captured sources after workspace rebuild")?;
+    }
+
     let mut changed_files = Vec::new();
     let mut changed_files_seen = HashSet::new();
     for change in changes {
-        for file in project.state.file_refs_for_path(&change.path) {
+        for file in project.state.file_refs_for_path(change.path()) {
             let changed_file = ChangedFile {
                 package: file.package,
                 file: file.file,

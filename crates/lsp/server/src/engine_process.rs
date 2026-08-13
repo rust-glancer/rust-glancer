@@ -1,3 +1,9 @@
+//! Subprocess and transport lifetime for one analysis engine.
+//!
+//! This layer starts the child, connects the bidirectional tarpc services, forwards its stderr,
+//! and reports process exit. It deliberately does not know about document captures or method
+//! policy; the registry owns routing and `EngineClient` owns request/status behavior.
+
 use std::{
     fmt,
     io::Write as _,
@@ -24,7 +30,9 @@ use tokio::{
 };
 use tower_lsp_server::Client as LspClient;
 
-use crate::{engine_client::EngineClient, notifications::NotificationsPublisher};
+use crate::{
+    engine_client::EngineClient, ingress::EditorStateHandle, notifications::NotificationsPublisher,
+};
 
 const ENGINE_CONNECTION_TIMEOUT: Duration = Duration::from_secs(10);
 const ENGINE_ID_ENV: &str = "RUST_GLANCER_ENGINE_ID";
@@ -42,6 +50,7 @@ pub(crate) struct EngineProcess {
 impl EngineProcess {
     pub(crate) async fn spawn(
         lsp_client: LspClient,
+        editor: EditorStateHandle,
         workspace_root: &Path,
         engine_id: String,
     ) -> anyhow::Result<(Self, EngineProcessExitMonitor)> {
@@ -82,7 +91,7 @@ impl EngineProcess {
         {
             // Accept the notification connection in the background. The main initialization path
             // only needs the engine client below; callback delivery can become ready independently.
-            let publisher = NotificationsPublisher::new(lsp_client);
+            let publisher = NotificationsPublisher::new(lsp_client, editor);
             tokio::spawn(async move {
                 let accept =
                     tokio::time::timeout(ENGINE_CONNECTION_TIMEOUT, notifications_listener.next())

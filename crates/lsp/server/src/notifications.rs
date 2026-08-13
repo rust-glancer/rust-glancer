@@ -1,3 +1,9 @@
+//! Publication of engine-originated side effects to the concrete LSP client.
+//!
+//! Progress, refreshes, and logs are direct presentation operations. Saved-source diagnostics need
+//! one extra boundary check: the server compares the reported saved text with its authoritative
+//! open editor value and keeps prior diagnostics visible when the two revisions differ.
+
 use rg_lsp_proto::{
     EngineError, EngineResult, NotificationsService, ServiceLogLevel, ServiceNotification,
 };
@@ -10,7 +16,10 @@ use tower_lsp_server::{
     },
 };
 
-use crate::client_notifications::{DeferredIndexingFinished, DeferredIndexingStarted};
+use crate::{
+    client_notifications::{DeferredIndexingFinished, DeferredIndexingStarted},
+    ingress::{DiagnosticsPublication, EditorStateHandle},
+};
 
 /// Publishes service side effects to the real LSP client.
 ///
@@ -20,11 +29,12 @@ use crate::client_notifications::{DeferredIndexingFinished, DeferredIndexingStar
 #[derive(Clone, Debug)]
 pub(crate) struct NotificationsPublisher {
     lsp_client: LspClient,
+    editor: EditorStateHandle,
 }
 
 impl NotificationsPublisher {
-    pub(crate) fn new(lsp_client: LspClient) -> Self {
-        Self { lsp_client }
+    pub(crate) fn new(lsp_client: LspClient, editor: EditorStateHandle) -> Self {
+        Self { lsp_client, editor }
     }
 }
 
@@ -34,7 +44,7 @@ impl NotificationsService for NotificationsPublisher {
         _: context::Context,
         notification: ServiceNotification,
     ) -> EngineResult<()> {
-        publish_service_notification(&self.lsp_client, notification)
+        publish_service_notification(&self.lsp_client, &self.editor, notification)
             .await
             .map_err(EngineError::from)
     }
@@ -42,14 +52,24 @@ impl NotificationsService for NotificationsPublisher {
 
 async fn publish_service_notification(
     lsp_client: &LspClient,
+    editor: &EditorStateHandle,
     notification: ServiceNotification,
 ) -> anyhow::Result<()> {
     match notification {
         ServiceNotification::PublishDiagnostics {
             path,
             diagnostics,
-            version,
+            saved_text,
         } => {
+            let DiagnosticsPublication::Publish { version } =
+                editor.diagnostics_publication(&path, saved_text.as_deref())
+            else {
+                tracing::debug!(
+                    path = %path.display(),
+                    "kept saved-source diagnostics unchanged for a newer editor snapshot"
+                );
+                return Ok(());
+            };
             let Some(uri) = Uri::from_file_path(&path) else {
                 tracing::debug!(
                     path = %path.display(),

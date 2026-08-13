@@ -60,13 +60,13 @@ pub(super) fn apply_canonical_changes(
     }
 }
 
-pub(super) fn rebuild_dirty_overlay_packages(
+pub(super) fn rebuild_packages_for_source_overrides(
     state: &mut ProjectState,
     packages: &[PackageSlot],
     body_files: &[BodyIrFile],
     can_reuse_saved_item_lookup_indexes: bool,
 ) -> anyhow::Result<()> {
-    package::rebuild_dirty_overlay_packages(
+    package::rebuild_packages_for_source_overrides(
         state,
         packages,
         body_files,

@@ -71,9 +71,15 @@ This means that we index the workspace once, and then run the queries against th
 managed to collect. If something changes, we have to reindex (at least partially); we cannot
 update the data in place.
 
-Dirty buffers are supported as overlays that retain access to existing analysis but does not
-automatically index new facts. So things like completions, hover, inlay hints work, but with
-limitations. Reindexing happens on save.
+Open editor buffers are captured as exact text values. Routing keeps both the raw editor path and
+the source identity selected from the frozen `Project`; a later rename or removal does not make an
+open session rediscover that identity from the filesystem.
+
+When captured text differs from the saved generation, the engine derives a temporary project using
+source overrides. That project can replace and traverse only sources already present in the saved
+generation. It does not canonicalize editor paths, poll source existence, or automatically index
+newly created files. Completions, hover, and inlay hints therefore work over known unsaved sources,
+while admitting new source files still requires a saved-project rebuild.
 
 It is a limitation, but  working with frozen workspaces enables really cool memory optimizations
 that we make heavy use of. These are described below.

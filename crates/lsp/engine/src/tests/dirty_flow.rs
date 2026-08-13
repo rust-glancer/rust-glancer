@@ -4,7 +4,7 @@ use test_fixture::testonly::MarkedText;
 use super::utils::{LspEngineFixture, LspQuery};
 
 #[tokio::test]
-async fn queries_use_dirty_full_text_overlay() {
+async fn queries_use_captured_unsaved_text() {
     let fixture = LspEngineFixture::initialized(
         r#"
         //- /Cargo.toml
@@ -82,6 +82,158 @@ pub fn demo(user: DirtyUser) {
                   - Field dirty_field 3:8-3:19
                 - Struct DirtyName 6:11-6:20
                 - Function demo 8:7-8:11
+            "#]],
+        )
+        .await;
+
+    fixture.shutdown().await;
+}
+
+#[tokio::test]
+async fn query_observes_unsaved_declaration_in_another_open_file() {
+    let fixture = LspEngineFixture::initialized(
+        r#"
+        //- /Cargo.toml
+        [package]
+        name = "lsp_editor_snapshot_cross_file"
+        version = "0.1.0"
+        edition = "2024"
+
+        //- /src/lib.rs
+        mod consumer;
+
+        pub struct SavedUser {
+            pub saved_field: usize,
+        }
+
+        //- /src/consumer.rs
+        use crate::SavedUser;
+
+        pub fn inspect(user: SavedUser) {
+            let _ = user.saved_field;
+        }
+        "#,
+    )
+    .await;
+
+    fixture.did_open_saved("src/lib.rs", 1).await;
+    fixture.did_open_saved("src/consumer.rs", 1).await;
+    fixture
+        .did_change_full(
+            "src/lib.rs",
+            2,
+            MarkedText::parse(
+                r#"
+mod consumer;
+
+pub struct EditorUser {
+    /// Field that exists only in the unsaved declaration file.
+    pub editor_field: usize,
+}
+"#,
+            ),
+        )
+        .await;
+    let consumer = fixture
+        .did_change_full(
+            "src/consumer.rs",
+            2,
+            MarkedText::parse(
+                r#"
+use crate::EditorUser;
+
+pub fn inspect(user: EditorUser) {
+    let _ = user.editor_$complete$;
+    let _: Editor$definition$User = user;
+}
+"#,
+            ),
+        )
+        .await;
+
+    fixture
+        .check_dirty(
+            &consumer,
+            &[
+                LspQuery::completion("complete field from unsaved sibling", "complete"),
+                LspQuery::goto_definition("navigate to unsaved sibling", "definition"),
+            ],
+            expect![[r#"
+                complete field from unsaved sibling
+                - editor_field Field
+                  detail: pub editor_field: usize
+                  edit: /src/consumer.rs:4:17-4:24 -> editor_field
+
+                navigate to unsaved sibling
+                - /src/lib.rs:3:11-3:21
+            "#]],
+        )
+        .await;
+
+    fixture.shutdown().await;
+}
+
+#[tokio::test]
+async fn open_source_remains_part_of_source_overrides_after_its_disk_path_disappears() {
+    let fixture = LspEngineFixture::initialized(
+        r#"
+        //- /Cargo.toml
+        [package]
+        name = "lsp_removed_open_source"
+        version = "0.1.0"
+        edition = "2024"
+
+        //- /src/lib.rs
+        mod entry;
+        mod removed;
+
+        pub struct User {
+            pub field: usize,
+        }
+
+        //- /src/entry.rs
+        use crate::User;
+
+        pub fn inspect(user: User) {
+            let _ = user.field;
+        }
+
+        //- /src/removed.rs
+        pub struct Removed;
+        "#,
+    )
+    .await;
+
+    fixture.did_open_saved("src/removed.rs", 1).await;
+    let entry = fixture
+        .did_open_dirty(
+            "src/entry.rs",
+            1,
+            MarkedText::parse(
+                r#"
+use crate::User;
+
+pub fn inspect(user: User) {
+    let _ = user.fi$complete$;
+}
+"#,
+            ),
+        )
+        .await;
+    fixture.remove_file_without_notification("src/removed.rs");
+
+    fixture
+        .check_dirty(
+            &entry,
+            &[LspQuery::completion(
+                "completion survives a removed open sibling",
+                "complete",
+            )],
+            expect![[r#"
+                completion survives a removed open sibling
+                - field Field
+                  detail: pub field: usize
+                  edit: /src/entry.rs:4:17-4:19 -> field
             "#]],
         )
         .await;
@@ -588,7 +740,7 @@ mod $module$
 }
 
 #[tokio::test]
-async fn restored_unsaved_open_uses_dirty_full_text_overlay() {
+async fn restored_unsaved_open_uses_captured_text() {
     let fixture = LspEngineFixture::initialized(
         r#"
         //- /Cargo.toml

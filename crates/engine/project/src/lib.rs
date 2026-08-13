@@ -7,14 +7,14 @@
 //! | --- | --- | --- | --- |
 //! | Saved analysis | Published [`ProjectGenerationId`] | The live [`Project`] | Build a private candidate and publish it only after success |
 //! | Package backing | Workspace artifact identity and saved-source fingerprint | Package cache plus resident/offloaded phase stores | Reject the artifact and rebuild from source |
-//! | Dirty analysis | Saved base generation, dirty text identity, and requested package scope | The frontend's bounded overlay cache | Rebuild the disposable overlay |
-//! | Query working set | The exact project snapshot that produced it | One request, with a short handoff from dirty rebuild to its query | Reload artifacts and recompute solver state |
+//! | Source overrides | Saved base generation, captured source identity, and requested package scope | The LSP engine's bounded source-override cache | Rebuild the disposable derived project when captured text differs |
+//! | Query working set | The exact project snapshot that produced it | One request, with a short handoff from editor rebuild to its query | Reload artifacts and recompute solver state |
 //!
-//! These layers meet through explicit snapshots. A dirty overlay derives analysis from a saved
-//! generation but does not publish source fingerprints, write artifacts, or restore saved
+//! These layers meet through explicit snapshots. A source-override project derives analysis from a
+//! saved generation but does not publish source fingerprints, write artifacts, or restore saved
 //! residency. Resident and offloaded packages remain the same logical package slots, so query code
 //! does not branch on storage location. Request-owned decoded payloads and solver sessions may be
-//! retained just long enough for the query following a dirty rebuild, then are dropped together.
+//! retained just long enough for the query following an override rebuild, then are dropped together.
 //!
 //! When adding another shortcut, keep three facts next to its owner: what exact semantic state
 //! makes reuse safe, who releases the retained data, and which ordinary path runs when it is
@@ -36,10 +36,10 @@ pub use self::{
     memory::{ProjectMemoryHooks, ProjectMemoryPurgePoint},
     profile::{BUILD_CHECKPOINTS, BuildProcessMemory, ProcessMemorySampler},
     project::{
-        AnalysisChangeSummary, AnalysisSurface, ChangedFile, DetachedSplitIndexing,
-        DirtyFileChange, DirtyOverlayScope, FileContext, FinishedSplitIndexing, Project,
-        ProjectBuilder, ProjectGenerationId, ProjectSnapshot, ProjectStats, SavedFileChange,
-        SplitIndexing, SplitIndexingMode, StartupCacheLoad,
+        AnalysisChangeSummary, AnalysisSurface, ChangedFile, DetachedSplitIndexing, FileContext,
+        FinishedSplitIndexing, Project, ProjectBuilder, ProjectGenerationId, ProjectSnapshot,
+        ProjectStats, SavedFileChange, SourceOverrideScope, SplitIndexing, SplitIndexingMode,
+        StartupCacheLoad,
     },
     residency::{PackageResidency, PackageResidencyPlan, PackageResidencyPolicy},
 };

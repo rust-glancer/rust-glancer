@@ -1,10 +1,18 @@
+//! Ownership and publication boundary for one analysis project.
+//!
+//! The host's long-lived `Project` represents one successfully published saved-source generation.
+//! Saved changes are applied to a private candidate and replace that generation only after
+//! validation succeeds. Source overrides use a disposable clone derived from exact
+//! `CapturedSource` values already known to the saved generation; that clone never publishes
+//! fingerprints or becomes another saved-state owner.
+
 mod build;
-mod dirty;
 pub(crate) mod loading;
 pub(crate) mod offloading;
 mod package_set;
 mod reference_search;
 mod snapshot;
+mod source_overrides;
 mod split_indexing;
 pub(crate) mod state;
 mod stats;
@@ -12,12 +20,14 @@ pub(crate) mod subset;
 pub(crate) mod txn;
 pub(crate) mod update;
 
+use std::collections::btree_map::Entry;
 use std::path::{Path, PathBuf};
 
 use anyhow::Context as _;
 use rg_def_map::PackageSlot;
 use rg_ir_model::CrateRef;
 use rg_parse::FileId;
+use rg_source::CapturedSource;
 use rg_workspace::WorkspaceMetadata;
 
 use self::state::ProjectState;
@@ -30,8 +40,8 @@ use rg_std::MemorySize;
 pub use self::state::ProjectGenerationId;
 pub use self::{
     build::{ProjectBuilder, SplitIndexingMode, StartupCacheLoad},
-    dirty::{DirtyFileChange, DirtyOverlayScope},
     snapshot::ProjectSnapshot,
+    source_overrides::SourceOverrideScope,
     split_indexing::{
         AnalysisSurface, DetachedSplitIndexing, FinishedSplitIndexing, SplitIndexing,
     },
@@ -40,18 +50,19 @@ pub use self::{
 
 /// Mutable owner for the current analysis state.
 ///
-/// `Project` is the LSP-facing state container: it accepts saved file changes, refreshes the
+/// `Project` is the host-facing state container: it accepts saved file changes, refreshes the
 /// derived phase databases, and hands out immutable snapshots for queries.
 ///
-/// The main project intentionally follows a rebuild-on-save model. Dirty editor buffers are handled
-/// as temporary overlays so saved-state fingerprints, package cache artifacts, and residency
-/// decisions remain tied to committed source files.
+/// The main project intentionally follows a rebuild-on-save model. Captured source overrides are
+/// handled in disposable derived projects so saved-state fingerprints, package cache artifacts,
+/// and residency decisions remain tied to committed source files.
 #[derive(Debug, Clone, MemorySize)]
 pub struct Project {
     pub(crate) state: ProjectState,
-    // Package artifacts describe the saved project. Preserve overlay provenance separately so a
-    // cloned overlay cannot use those artifacts to validate state inherited from another overlay.
-    is_dirty_overlay: bool,
+    // Package artifacts describe the saved project. Preserve override provenance separately so a
+    // derived project cannot use those artifacts to validate state inherited from another derived
+    // project.
+    has_source_overrides: bool,
 }
 
 impl Project {
@@ -194,39 +205,53 @@ impl Project {
         &mut self,
         changes: impl IntoIterator<Item = SavedFileChange>,
     ) -> anyhow::Result<AnalysisChangeSummary> {
-        let mut canonical_changes = Vec::new();
+        let mut canonical_changes = std::collections::BTreeMap::new();
 
         for change in changes {
-            let path = match change.path.canonicalize() {
-                Ok(path) => path,
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                    // We intentionally do not care about deleted module files. Valid Rust removes
-                    // or changes the surviving `mod foo;` declaration, and saving that file
-                    // rebuilds the graph. If the declaration still names the deleted file, the
-                    // project does not compile and keeping the previous analysis is good enough.
-                    //
-                    // Deleting an auto-discovered Cargo target or globbed package can technically
-                    // change a valid graph, but that uncommon case is not worth deletion-driven
-                    // reindexing either. Another surviving Cargo change or a full rebuild fixes it.
-                    continue;
+            let change = match change {
+                SavedFileChange::FsPath(path) => {
+                    let canonical_path = match path.canonicalize() {
+                        Ok(path) => path,
+                        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                            // We intentionally do not care about deleted module files. Valid Rust
+                            // removes or changes the surviving `mod foo;` declaration, and saving
+                            // that file rebuilds the graph. If the declaration still names the
+                            // deleted file, keeping the previous analysis is good enough.
+                            continue;
+                        }
+                        Err(error) => {
+                            return Err(error).with_context(|| {
+                                format!(
+                                    "while attempting to canonicalize changed file {}",
+                                    path.display()
+                                )
+                            });
+                        }
+                    };
+                    SavedFileChange::FsPath(canonical_path)
                 }
-                Err(error) => {
-                    return Err(error).with_context(|| {
-                        format!(
-                            "while attempting to canonicalize changed file {}",
-                            change.path.display()
-                        )
-                    });
-                }
+                SavedFileChange::Captured(source) => SavedFileChange::Captured(source),
             };
-            canonical_changes.push(SavedFileChange { path });
+            let path = change.path().to_path_buf();
+            match canonical_changes.entry(path) {
+                Entry::Vacant(entry) => {
+                    entry.insert(change);
+                }
+                Entry::Occupied(mut entry) => {
+                    // Exact captured bytes are the stronger input boundary. A repeated filesystem
+                    // path must not replace them with a later recapture, while a later captured
+                    // value for the same path intentionally supersedes the first.
+                    if change.captured_source().is_some() || entry.get().captured_source().is_none()
+                    {
+                        entry.insert(change);
+                    }
+                }
+            }
         }
 
-        // Watcher and editor notifications can name the same file through separate paths. Sorting
-        // after canonicalization removes aliases in O(n log n), which keeps large checkout batches
-        // away from the quadratic behavior of a Vec-backed ordered set.
-        canonical_changes.sort_by(|left, right| left.path.cmp(&right.path));
-        canonical_changes.dedup_by(|left, right| left.path == right.path);
+        // Watcher and editor notifications can name the same file through separate paths. The map
+        // removes canonical aliases while preferring the latest exact captured value for a path.
+        let canonical_changes = canonical_changes.into_values().collect::<Vec<_>>();
 
         if canonical_changes.is_empty() {
             return Ok(AnalysisChangeSummary::default());
@@ -244,24 +269,42 @@ impl Project {
         }
     }
 
-    /// Builds an ephemeral analysis project from dirty editor buffers.
+    /// Captures editor text only when the path belongs to this project generation.
+    pub fn capture_known_source(
+        &self,
+        path: &Path,
+        text: impl Into<std::sync::Arc<str>>,
+    ) -> Option<CapturedSource> {
+        self.state
+            .parse_db()
+            .source_inventory()
+            .capture_known(path, text)
+    }
+
+    /// Builds a disposable analysis project from captured source overrides.
     ///
-    /// The returned project is intentionally detached from saved-state cache lifecycle: dirty
+    /// Inputs outside the selected source generation are ignored. Matching inputs keep their exact
+    /// bytes available for lazy reads but need no derived state; if every known input matches, this
+    /// returns `None`.
+    ///
+    /// The returned project is intentionally detached from saved-state cache lifecycle: override
     /// rebuilds keep rebuilt package payloads resident and never refresh source fingerprints or
     /// package artifacts. Callers can query the returned snapshot and then drop it.
-    pub fn dirty_overlay(
+    pub fn derive_with_source_overrides(
         &self,
-        scope: DirtyOverlayScope,
-        changes: impl IntoIterator<Item = DirtyFileChange>,
+        scope: SourceOverrideScope,
+        sources: impl IntoIterator<Item = CapturedSource>,
     ) -> anyhow::Result<Option<Project>> {
-        dirty::build_overlay(self, scope, changes)
+        source_overrides::derive_project(self, scope, sources)
     }
 
     /// Drops state that read-only queries may lazily reconstruct from durable backing data.
     ///
     /// Saved-project transactions own their offloaded package payloads, so those die with the
-    /// request. A dirty overlay also retains the loaders and solver sessions created by its rebuild
-    /// until the matching query finishes; clearing the query cache drops that state as one unit.
+    /// request. A source-override project also retains the loaders and solver sessions created by
+    /// its rebuild until the matching query finishes; clearing the query cache drops that state as
+    /// one unit.
+    ///
     /// Source-coordinate conversion is different again: it repopulates line-index cells inside the
     /// project itself, and the owner has to reset those cells after the request settles.
     pub fn release_query_memory(&mut self) {
@@ -284,20 +327,37 @@ impl Project {
     }
 }
 
-/// One source file saved on disk.
+/// One saved-project input selected before candidate rebuilding starts.
 ///
-/// The project treats the filesystem as the source of truth. This keeps save handling aligned
-/// with the project's rebuild-on-save model and avoids retaining editor buffer text in analysis
-/// caches.
-#[derive(Debug, Clone, PartialEq, Eq, MemorySize)]
-pub struct SavedFileChange {
-    pub path: PathBuf,
+/// `FsPath` captures disk at the project boundary. `Captured` instead carries exact Rust text and
+/// revision from an earlier event boundary; final validation still proves that disk has not
+/// advanced before the candidate is published.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SavedFileChange {
+    Captured(CapturedSource),
+    FsPath(PathBuf),
 }
 
 impl SavedFileChange {
-    pub fn new(path: impl AsRef<Path>) -> Self {
-        Self {
-            path: path.as_ref().to_path_buf(),
+    pub fn captured(source: CapturedSource) -> Self {
+        Self::Captured(source)
+    }
+
+    pub fn fs_path(path: impl AsRef<Path>) -> Self {
+        Self::FsPath(path.as_ref().to_path_buf())
+    }
+
+    pub fn path(&self) -> &Path {
+        match self {
+            Self::Captured(source) => source.path(),
+            Self::FsPath(path) => path,
+        }
+    }
+
+    pub fn captured_source(&self) -> Option<&CapturedSource> {
+        match self {
+            Self::Captured(source) => Some(source),
+            Self::FsPath(_) => None,
         }
     }
 }

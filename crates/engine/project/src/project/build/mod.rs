@@ -173,7 +173,7 @@ impl ProjectBuilder {
         );
         Ok(Project {
             state,
-            is_dirty_overlay: false,
+            has_source_overrides: false,
         })
     }
 }

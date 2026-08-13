@@ -87,8 +87,108 @@ pub fn demo(user: SavedUser) {
 
     fixture.check_notification_effects(expect![[r#"
         notifications
-        - inlay hint refresh
+        - none
     "#]]);
+
+    fixture.shutdown().await;
+}
+
+#[tokio::test]
+async fn failed_save_validation_preserves_the_published_generation() {
+    let fixture = LspEngineFixture::initialized(
+        r#"
+        //- /Cargo.toml
+        [package]
+        name = "lsp_failed_save_validation"
+        version = "0.1.0"
+        edition = "2024"
+
+        //- /src/lib.rs
+        pub struct Published;
+        "#,
+    )
+    .await;
+    fixture.did_open_saved("src/lib.rs", 1).await;
+    let before = fixture
+        .did_save_current("src/lib.rs")
+        .await
+        .expect("unchanged saved source should return its published generation");
+
+    fixture
+        .did_change_full("src/lib.rs", 2, MarkedText::parse("pub struct Proposed;\n"))
+        .await;
+    let error = fixture
+        .did_save_current("src/lib.rs")
+        .await
+        .expect_err("disk that does not contain the proposal must reject publication");
+    let message = error.to_string();
+    assert!(
+        message.contains("stale") || message.contains("revision"),
+        "save failure should preserve its validation cause: {error:?}"
+    );
+
+    // The rejected candidate never published. Returning the editor to the still-saved disk value
+    // therefore returns the same generation, with no rollback operation.
+    fixture
+        .did_change_full(
+            "src/lib.rs",
+            3,
+            MarkedText::parse("pub struct Published;\n"),
+        )
+        .await;
+    let after = fixture
+        .did_save_current("src/lib.rs")
+        .await
+        .expect("the prior published value should remain coherent");
+    assert_eq!(after, before);
+
+    fixture.shutdown().await;
+}
+
+#[tokio::test]
+async fn failed_manifest_rebuild_leaves_the_previous_project_queryable() {
+    const MANIFEST: &str = r#"[package]
+name = "lsp_failed_manifest_save"
+version = "0.1.0"
+edition = "2024"
+"#;
+    let fixture = LspEngineFixture::initialized(
+        r#"
+        //- /Cargo.toml
+        [package]
+        name = "lsp_failed_manifest_save"
+        version = "0.1.0"
+        edition = "2024"
+
+        //- /src/lib.rs
+        pub struct Published;
+        "#,
+    )
+    .await;
+    let invalid_manifest = "[package]\nname =\n";
+    fixture
+        .did_open_dirty("Cargo.toml", 2, MarkedText::parse(invalid_manifest))
+        .await;
+    fixture.write_file_without_notification("Cargo.toml", invalid_manifest);
+
+    fixture
+        .did_save_current("Cargo.toml")
+        .await
+        .expect_err("invalid Cargo metadata must reject the project candidate");
+    fixture.write_file_without_notification("Cargo.toml", MANIFEST);
+
+    fixture
+        .check(
+            &[LspQuery::document_symbol(
+                "symbols after rejected manifest rebuild",
+                "src/lib.rs",
+            )],
+            expect![[r#"
+                symbols after rejected manifest rebuild
+                - Struct Published 0:11-0:20
+            "#]],
+        )
+        .await;
 
     fixture.shutdown().await;
 }

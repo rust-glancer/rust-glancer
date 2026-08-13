@@ -1808,6 +1808,7 @@ dependencies = [
  "tarpc",
  "test_fixture",
  "tokio",
+ "tower",
  "tower-lsp-server",
  "tracing",
  "tracing-subscriber",

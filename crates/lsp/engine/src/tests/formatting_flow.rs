@@ -70,36 +70,6 @@ async fn unchanged_formatting_returns_no_edits() {
 }
 
 #[tokio::test]
-async fn unopened_document_returns_no_formatting_response() {
-    let fixture = LspEngineFixture::initialized(
-        r#"
-        //- /Cargo.toml
-        [package]
-        name = "lsp_formatting_unopened"
-        version = "0.1.0"
-        edition = "2024"
-
-        //- /src/lib.rs
-        pub fn demo(){println!("hi");}
-        "#,
-    )
-    .await;
-
-    fixture
-        .check_formatting(
-            "format unopened document",
-            "src/lib.rs",
-            expect![[r#"
-                format unopened document
-                - no response
-            "#]],
-        )
-        .await;
-
-    fixture.shutdown().await;
-}
-
-#[tokio::test]
 async fn formatting_uses_dirty_live_text() {
     let fixture = LspEngineFixture::initialized(
         r#"

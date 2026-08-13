@@ -1,42 +1,43 @@
-//! Saved project generation and its disposable dirty overlay.
+//! Saved project generation and its disposable source-override project.
 //!
 //! `ProjectState` answers one question for query code: which `Project` snapshot should this request
-//! read? Clean requests borrow the saved project. A full-text dirty request borrows a cached
-//! single-file overlay built from that same saved generation. Source publication, query-time
-//! materialization, and dirty overlays remain distinct transitions here instead of being inferred
-//! by callers.
+//! read? Workspace-only requests borrow the saved project. Document requests borrow a cached
+//! project rebuilt from every applicable open buffer and that same saved generation. Saved source
+//! publication, query-time materialization, and source override selection remain separate
+//! transitions instead of being inferred by callers.
 
 use std::{path::PathBuf, sync::Arc};
 
 use anyhow::Context as _;
+use rg_lsp_proto::EditorSnapshot;
 use rg_project::{
-    AnalysisSurface, DetachedSplitIndexing, DirtyOverlayScope, Project, ProjectSnapshot,
+    AnalysisSurface, DetachedSplitIndexing, Project, ProjectSnapshot, SourceOverrideScope,
 };
 
-use crate::{
-    dirty_state::DirtyOverlayCache, documents::DirtyDocumentSnapshot, memory::MemoryControl,
-};
+use crate::memory::MemoryControl;
 
-/// Owns the saved project and the disposable dirty overlay used by read-only queries.
+use super::source_overrides::SourceOverrideCache;
+
+/// Owns the saved project and the disposable source-override project used by read-only queries.
 ///
 /// The saved project's generation identity is seen by asynchronous work. It changes only when
 /// `Project` successfully publishes saved source state, so background results produced from an
 /// older clone can be discarded instead of merged into a newer workspace. Split-indexing
-/// materialization intentionally keeps the same generation: it enriches analysis data for the same
-/// saved source snapshot. A materialization that replaces package payloads clears dirty overlays
-/// because they borrow the old project internals; preparing an already-ready surface leaves the
-/// matching overlay cached.
+/// saved-project enrichment intentionally keeps the same generation because it does not change
+/// source identity. Replacing saved package payloads clears source overrides because a derived
+/// project cloned the old internals. Query-time materialization instead enriches the exact saved or
+/// source-override project selected for that request.
 #[derive(Debug)]
 pub(super) struct ProjectState {
     saved: Option<Project>,
-    dirty_overlay: DirtyOverlayCache,
+    source_overrides: SourceOverrideCache,
 }
 
 impl ProjectState {
     pub(super) fn new(memory_control: Arc<dyn MemoryControl>) -> Self {
         Self {
             saved: None,
-            dirty_overlay: DirtyOverlayCache::new(memory_control),
+            source_overrides: SourceOverrideCache::new(memory_control),
         }
     }
 
@@ -44,11 +45,11 @@ impl ProjectState {
         self.saved.is_some()
     }
 
-    /// Publish a replacement saved project and invalidate overlays based on the old one.
+    /// Publish a replacement saved project and invalidate source overrides based on the old one.
     pub(super) fn replace_saved(&mut self, project: Project) -> u64 {
         let generation = project.generation_id().get();
         self.saved = Some(project);
-        self.dirty_overlay.clear();
+        self.source_overrides.clear();
         generation
     }
 
@@ -77,7 +78,7 @@ impl ProjectState {
     /// Run a mutation that may publish a new saved-source generation.
     ///
     /// The `Project` operation is responsible for its transactional update. This layer clears the
-    /// old dirty overlay because a successful source mutation gives future overlays a different
+    /// old source overrides because a successful source mutation gives future analysis a different
     /// base generation.
     pub(super) fn mutate_saved<T>(
         &mut self,
@@ -90,20 +91,20 @@ impl ProjectState {
 
         // Saved-source operations publish through `Project` only after their candidate succeeds.
         // An unchanged watcher replay returns successfully without advancing the generation, so it
-        // must not discard an overlay that still has the same saved base.
+        // must not discard a derived project that still has the same saved base.
         let previous_generation = saved.generation_id();
         let result = mutation(saved).context("mutate saved project");
         if result.is_ok() && saved.generation_id() != previous_generation {
-            self.dirty_overlay.clear();
+            self.source_overrides.clear();
         }
         result
     }
 
     /// Enrich analysis data for the same saved source snapshot.
     ///
-    /// Background merging can replace package payloads without changing source identity. Dirty
-    /// overlays still have to be discarded because they borrow the previous package payloads, even
-    /// though the public generation number stays the same.
+    /// Background merging can replace package payloads without changing source identity.
+    /// Source-override projects still have to be discarded because they borrow the previous package
+    /// payloads, even though the public generation number stays the same.
     pub(super) fn mutate_saved_preserving_generation<T>(
         &mut self,
         mutation: impl FnOnce(&mut Project) -> anyhow::Result<T>,
@@ -113,30 +114,8 @@ impl ProjectState {
             .as_mut()
             .context("saved project is not initialized")?;
 
-        self.dirty_overlay.clear();
+        self.source_overrides.clear();
         mutation(saved).context("mutate saved project without generation change")
-    }
-
-    /// Materialize a query surface without discarding an overlay for an already-ready project.
-    pub(super) fn materialize(&mut self, surface: AnalysisSurface<'_>) -> anyhow::Result<()> {
-        let Self {
-            saved,
-            dirty_overlay,
-        } = self;
-        let saved = saved.as_mut().context("saved project is not initialized")?;
-
-        // Materialization is a real mutation only for incomplete resident packages. Artifact-backed
-        // packages and already-complete residents can serve the query without changing the base
-        // shared by a cached dirty overlay.
-        if !saved.split_indexing().needs_materialization(surface) {
-            return Ok(());
-        }
-
-        dirty_overlay.clear();
-        saved
-            .split_indexing()
-            .materialize(surface)
-            .context("materialize saved project surface")
     }
 
     pub(super) fn saved_snapshot(&self) -> anyhow::Result<ProjectSnapshot<'_>> {
@@ -144,6 +123,21 @@ impl ProjectState {
             .as_ref()
             .map(Project::snapshot)
             .context("saved project is not initialized")
+    }
+
+    /// Materialize the same saved or source-override project that the query will read.
+    pub(super) fn materialize_query_project(
+        &mut self,
+        editor: &EditorSnapshot,
+        scope: SourceOverrideScope,
+        surface: AnalysisSurface<'_>,
+    ) -> anyhow::Result<()> {
+        let saved = self
+            .saved
+            .as_mut()
+            .context("saved project is not initialized")?;
+        self.source_overrides
+            .materialize_for_snapshot(saved, editor, scope, surface)
     }
 
     /// Reconcile a failed candidate with every known source changed since the published snapshot.
@@ -160,36 +154,40 @@ impl ProjectState {
         if let Some(saved) = &mut self.saved {
             saved.release_query_memory();
         }
-        self.dirty_overlay.release_query_memory();
+        self.source_overrides.release_query_memory();
     }
 
     #[cfg(test)]
-    pub(super) fn dirty_overlay_rebuild_count(&self) -> usize {
-        self.dirty_overlay.rebuild_count()
+    pub(super) fn source_override_rebuild_count(&self) -> usize {
+        self.source_overrides.rebuild_count()
     }
 
-    /// Select the saved project or matching dirty overlay and lend out one snapshot.
+    #[cfg(test)]
+    pub(super) fn has_cached_override_project(&self) -> bool {
+        self.source_overrides.has_cached_project()
+    }
+
+    /// Select the saved project or matching source-override project and lend out one snapshot.
     ///
     /// The closure keeps snapshots from escaping this state. In particular, a later command may
-    /// clear or replace the overlay without any request retaining a reference to it.
+    /// clear or replace the derived project without any request retaining a reference to it.
     pub(super) fn with_query_snapshot<T>(
         &mut self,
-        dirty: Option<&DirtyDocumentSnapshot>,
-        dirty_scope: DirtyOverlayScope,
+        editor: Option<(&EditorSnapshot, SourceOverrideScope)>,
         query: impl FnOnce(ProjectSnapshot<'_>) -> anyhow::Result<T>,
     ) -> anyhow::Result<T> {
-        let project = match dirty {
-            Some(dirty) => {
+        let project = match editor {
+            Some((editor, scope)) => {
                 let saved = self
                     .saved
                     .as_ref()
                     .context("saved project is not initialized")?;
-                self.dirty_overlay
-                    .project_for_dirty(saved, dirty, dirty_scope)
-                    .context("build dirty project overlay")?
+                self.source_overrides
+                    .project_for_snapshot(saved, editor, scope)
+                    .context("build project from source overrides")?
             }
             None => {
-                self.dirty_overlay.clear();
+                self.source_overrides.clear();
                 self.saved
                     .as_ref()
                     .context("saved project is not initialized")?

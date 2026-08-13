@@ -1,3 +1,14 @@
+//! Transport-facing `LanguageServer` implementation.
+//!
+//! This file keeps the necessarily broad LSP trait implementation readable by delegating methods
+//! with real behavior to the free-function modules under `methods`. It owns shared server services
+//! and builds the narrow document or completion context required by each handler. Feature logic,
+//! protocol conversion, and async open/save/close work stay in their narrower handler files.
+//!
+//! `didChange` is the deliberate exception. `EditorIngress` applies all of its edits to the stored
+//! document before any async handler can start. The trait method therefore has no remaining work
+//! to move into a separate handler file.
+
 use std::{
     borrow::Cow,
     path::{Path, PathBuf},
@@ -16,7 +27,9 @@ use crate::{
     config::ServerConfig,
     engine_client::EngineClient,
     engine_registry::EngineRegistry,
-    methods::{self, MethodContext},
+    ingress::{self, EditorStateHandle},
+    inlay_refresher::InlayRefresher,
+    methods::{self, CompletionMethodContext, DocumentMethodContext},
     project_watcher::ProjectWatcher,
     recent_editor_saves::RecentEditorSaves,
 };
@@ -28,16 +41,25 @@ pub(crate) struct Backend {
     project_watcher: OnceCell<ProjectWatcher>,
     client_capabilities: OnceCell<EngineClientCapabilities>,
     recent_editor_saves: RecentEditorSaves,
+    editor: EditorStateHandle,
+    inlay_refresher: InlayRefresher,
 }
 
 impl Backend {
-    pub(crate) fn new(lsp_client: LspClient) -> Self {
+    pub(crate) fn new(
+        lsp_client: LspClient,
+        recent_editor_saves: RecentEditorSaves,
+        editor: EditorStateHandle,
+        inlay_refresher: InlayRefresher,
+    ) -> Self {
         Self {
             lsp_client,
             engines: OnceCell::new(),
             project_watcher: OnceCell::new(),
             client_capabilities: OnceCell::new(),
-            recent_editor_saves: RecentEditorSaves::default(),
+            recent_editor_saves,
+            editor,
+            inlay_refresher,
         }
     }
 
@@ -49,36 +71,70 @@ impl Backend {
         })
     }
 
-    fn method_context(&self, engine_client: EngineClient) -> MethodContext {
-        MethodContext {
-            engine_client,
-            client_capabilities: self.client_capabilities.get().copied().unwrap_or_default(),
+    /// Build the engine and immutable editor snapshot required by a document method.
+    async fn document_context_for(&self, uri: &Uri) -> Result<DocumentMethodContext> {
+        let captured = ingress::document_request()
+            .ok_or_else(|| {
+                methods::internal_error(anyhow::anyhow!(
+                    "document request bypassed ordered LSP ingress"
+                ))
+            })?
+            .map_err(|unavailable| {
+                tracing::debug!(
+                    path = ?unavailable.path().map(Path::display),
+                    reason = unavailable.reason(),
+                    "document request has no current editor revision"
+                );
+                methods::temporarily_unavailable(unavailable.reason())
+            })?;
+
+        if methods::uri_to_path(uri).as_deref() != Some(captured.document().path()) {
+            return Err(methods::internal_error(anyhow::anyhow!(
+                "captured editor document does not match the LSP request URI"
+            )));
         }
+
+        // The document snapshot is ready, but its engine route may still be starting. Return a
+        // temporary result instead of making this query wait. A client retry will take another
+        // snapshot, while the server keeps the synchronized editor text in the meantime.
+        let engine_client = captured
+            .engine_client()
+            .map_err(|reason| methods::temporarily_unavailable(&reason))?;
+
+        tracing::trace!(
+            path = %captured.document().path().display(),
+            session = captured.document().session().get(),
+            revision = captured.document().revision().get(),
+            editor_revision = captured.editor_revision().get(),
+            client_version = ?captured.document().client_version(),
+            "using editor revision captured at LSP ingress"
+        );
+
+        Ok(DocumentMethodContext::new(engine_client, captured))
     }
 
-    async fn method_context_for(&self, uri: &Uri) -> Result<Option<MethodContext>> {
-        let Some(path) = methods::uri_to_path(uri) else {
-            return Ok(None);
-        };
-        self.method_context_for_path(&path).await
+    /// Add the logical request ownership used only by completion.
+    async fn completion_context_for(&self, uri: &Uri) -> Result<CompletionMethodContext> {
+        let document = self.document_context_for(uri).await?;
+        let request = ingress::completion_request().ok_or_else(|| {
+            methods::internal_error(anyhow::anyhow!(
+                "completion request bypassed ordered LSP ingress"
+            ))
+        })?;
+        let client_capabilities = self
+            .client_capabilities
+            .get()
+            .copied()
+            .unwrap_or_default()
+            .completion;
+        Ok(CompletionMethodContext::new(
+            document,
+            request,
+            client_capabilities,
+        ))
     }
 
-    async fn method_context_for_path(&self, path: &Path) -> Result<Option<MethodContext>> {
-        let Some(engine_client) = self
-            .registry()
-            .await?
-            .document(path)
-            .await
-            .inspect_err(|_| tracing::error!("failed to route LSP method to an engine"))
-            .map_err(methods::internal_error)?
-        else {
-            return Ok(None);
-        };
-
-        Ok(Some(self.method_context(engine_client)))
-    }
-
-    async fn active_method_context(&self) -> Result<Option<MethodContext>> {
+    async fn active_engine_client(&self) -> Result<Option<EngineClient>> {
         let Some(engine_client) = self
             .registry()
             .await?
@@ -89,7 +145,7 @@ impl Backend {
             return Ok(None);
         };
 
-        Ok(Some(self.method_context(engine_client)))
+        Ok(Some(engine_client))
     }
 }
 
@@ -117,8 +173,12 @@ impl LanguageServer for Backend {
                 message: Cow::Borrowed("rust-glancer client capabilities are already initialized"),
                 data: None,
             })?;
-        let engines =
-            EngineRegistry::new(self.lsp_client.clone(), workspace_folders.clone(), config);
+        let engines = EngineRegistry::new(
+            self.lsp_client.clone(),
+            workspace_folders.clone(),
+            config,
+            self.editor.clone(),
+        );
         let project_watcher = ProjectWatcher::spawn(
             workspace_folders,
             engines.clone(),
@@ -161,8 +221,7 @@ impl LanguageServer for Backend {
 
         registry.begin_shutdown().await;
         for engine_client in registry.engine_clients().await {
-            let context = self.method_context(engine_client);
-            if let Err(error) = methods::shutdown(context).await {
+            if let Err(error) = methods::shutdown(engine_client).await {
                 tracing::debug!(error = %error, "failed to shut down rust-glancer engine");
             }
         }
@@ -175,23 +234,7 @@ impl LanguageServer for Backend {
         fields(rg.method = "didOpen", rg.uri = %params.text_document.uri.as_str())
     )]
     async fn did_open(&self, params: DidOpenTextDocumentParams) {
-        let Some(path) = methods::uri_to_path(&params.text_document.uri) else {
-            return;
-        };
-        let Some(registry) = self.registry().await.ok() else {
-            return;
-        };
-        let Some(engine_client) = registry
-            .open_document(&path)
-            .await
-            .inspect_err(|_| tracing::error!("failed to route opened document to an engine"))
-            .ok()
-            .flatten()
-        else {
-            return;
-        };
-        methods::text_document::did_open::did_open(self.method_context(engine_client), params)
-            .await;
+        methods::text_document::did_open::did_open(self.registry().await).await;
     }
 
     #[tracing::instrument(
@@ -199,15 +242,10 @@ impl LanguageServer for Backend {
         fields(rg.method = "didChange", rg.uri = %params.text_document.uri.as_str())
     )]
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
-        let Some(context) = self
-            .method_context_for(&params.text_document.uri)
-            .await
-            .ok()
-            .flatten()
-        else {
-            return;
-        };
-        methods::text_document::did_change::did_change(context, params).await;
+        // `EditorIngress` already applied all accepted edits, or marked the synchronized text as
+        // unavailable if an edit was rejected, before this async method was allowed to start.
+        // There is no remaining operation to place in a separate method handler.
+        let _ = params;
     }
 
     #[tracing::instrument(
@@ -215,15 +253,8 @@ impl LanguageServer for Backend {
         fields(rg.method = "didSave", rg.uri = %params.text_document.uri.as_str())
     )]
     async fn did_save(&self, params: DidSaveTextDocumentParams) {
-        let Some(path) = methods::uri_to_path(&params.text_document.uri) else {
-            return;
-        };
-        self.recent_editor_saves.record_editor_save(&path).await;
-
-        let Some(context) = self.method_context_for_path(&path).await.ok().flatten() else {
-            return;
-        };
-        methods::text_document::did_save::did_save(context, path, params).await;
+        methods::text_document::did_save::did_save(&self.lsp_client, &self.inlay_refresher, params)
+            .await;
     }
 
     #[tracing::instrument(skip_all, fields(rg.method = "didChangeWatchedFiles"))]
@@ -239,23 +270,7 @@ impl LanguageServer for Backend {
         fields(rg.method = "didClose", rg.uri = %params.text_document.uri.as_str())
     )]
     async fn did_close(&self, params: DidCloseTextDocumentParams) {
-        let Some(path) = methods::uri_to_path(&params.text_document.uri) else {
-            return;
-        };
-        let Some(registry) = self.registry().await.ok() else {
-            return;
-        };
-        let Some(engine_client) = registry
-            .close_document(&path)
-            .await
-            .inspect_err(|_| tracing::error!("failed to route closed document to an engine"))
-            .ok()
-            .flatten()
-        else {
-            return;
-        };
-        methods::text_document::did_close::did_close(self.method_context(engine_client), params)
-            .await;
+        methods::text_document::did_close::did_close(self.registry().await).await;
     }
 
     #[tracing::instrument(
@@ -269,12 +284,9 @@ impl LanguageServer for Backend {
         &self,
         params: GotoDefinitionParams,
     ) -> Result<Option<GotoDefinitionResponse>> {
-        let Some(context) = self
-            .method_context_for(&params.text_document_position_params.text_document.uri)
-            .await?
-        else {
-            return Ok(None);
-        };
+        let context = self
+            .document_context_for(&params.text_document_position_params.text_document.uri)
+            .await?;
         methods::text_document::definition::definition(context, params).await
     }
 
@@ -289,12 +301,9 @@ impl LanguageServer for Backend {
         &self,
         params: GotoTypeDefinitionParams,
     ) -> Result<Option<GotoTypeDefinitionResponse>> {
-        let Some(context) = self
-            .method_context_for(&params.text_document_position_params.text_document.uri)
-            .await?
-        else {
-            return Ok(None);
-        };
+        let context = self
+            .document_context_for(&params.text_document_position_params.text_document.uri)
+            .await?;
         methods::text_document::type_definition::type_definition(context, params).await
     }
 
@@ -309,12 +318,9 @@ impl LanguageServer for Backend {
         &self,
         params: GotoImplementationParams,
     ) -> Result<Option<GotoImplementationResponse>> {
-        let Some(context) = self
-            .method_context_for(&params.text_document_position_params.text_document.uri)
-            .await?
-        else {
-            return Ok(None);
-        };
+        let context = self
+            .document_context_for(&params.text_document_position_params.text_document.uri)
+            .await?;
         methods::text_document::implementation::implementation(context, params).await
     }
 
@@ -326,12 +332,9 @@ impl LanguageServer for Backend {
         )
     )]
     async fn references(&self, params: ReferenceParams) -> Result<Option<Vec<Location>>> {
-        let Some(context) = self
-            .method_context_for(&params.text_document_position.text_document.uri)
-            .await?
-        else {
-            return Ok(None);
-        };
+        let context = self
+            .document_context_for(&params.text_document_position.text_document.uri)
+            .await?;
         methods::text_document::references::references(context, params).await
     }
 
@@ -346,9 +349,7 @@ impl LanguageServer for Backend {
         &self,
         params: TextDocumentPositionParams,
     ) -> Result<Option<PrepareRenameResponse>> {
-        let Some(context) = self.method_context_for(&params.text_document.uri).await? else {
-            return Ok(None);
-        };
+        let context = self.document_context_for(&params.text_document.uri).await?;
         methods::text_document::rename::prepare_rename(context, params).await
     }
 
@@ -360,12 +361,9 @@ impl LanguageServer for Backend {
         )
     )]
     async fn rename(&self, params: RenameParams) -> Result<Option<WorkspaceEdit>> {
-        let Some(context) = self
-            .method_context_for(&params.text_document_position.text_document.uri)
-            .await?
-        else {
-            return Ok(None);
-        };
+        let context = self
+            .document_context_for(&params.text_document_position.text_document.uri)
+            .await?;
         methods::text_document::rename::rename(context, params).await
     }
 
@@ -380,12 +378,9 @@ impl LanguageServer for Backend {
         &self,
         params: DocumentHighlightParams,
     ) -> Result<Option<Vec<DocumentHighlight>>> {
-        let Some(context) = self
-            .method_context_for(&params.text_document_position_params.text_document.uri)
-            .await?
-        else {
-            return Ok(None);
-        };
+        let context = self
+            .document_context_for(&params.text_document_position_params.text_document.uri)
+            .await?;
         methods::text_document::document_highlight::document_highlight(context, params).await
     }
 
@@ -397,12 +392,9 @@ impl LanguageServer for Backend {
         )
     )]
     async fn hover(&self, params: HoverParams) -> Result<Option<Hover>> {
-        let Some(context) = self
-            .method_context_for(&params.text_document_position_params.text_document.uri)
-            .await?
-        else {
-            return Ok(None);
-        };
+        let context = self
+            .document_context_for(&params.text_document_position_params.text_document.uri)
+            .await?;
         methods::text_document::hover::hover(context, params).await
     }
 
@@ -414,12 +406,9 @@ impl LanguageServer for Backend {
         )
     )]
     async fn completion(&self, params: CompletionParams) -> Result<Option<CompletionResponse>> {
-        let Some(context) = self
-            .method_context_for(&params.text_document_position.text_document.uri)
-            .await?
-        else {
-            return Ok(None);
-        };
+        let context = self
+            .completion_context_for(&params.text_document_position.text_document.uri)
+            .await?;
         methods::text_document::completion::completion(context, params).await
     }
 
@@ -428,9 +417,7 @@ impl LanguageServer for Backend {
         fields(rg.method = "formatting", rg.uri = %params.text_document.uri.as_str())
     )]
     async fn formatting(&self, params: DocumentFormattingParams) -> Result<Option<Vec<TextEdit>>> {
-        let Some(context) = self.method_context_for(&params.text_document.uri).await? else {
-            return Ok(None);
-        };
+        let context = self.document_context_for(&params.text_document.uri).await?;
         methods::text_document::formatting::formatting(context, params).await
     }
 
@@ -442,9 +429,7 @@ impl LanguageServer for Backend {
         &self,
         params: DocumentSymbolParams,
     ) -> Result<Option<DocumentSymbolResponse>> {
-        let Some(context) = self.method_context_for(&params.text_document.uri).await? else {
-            return Ok(None);
-        };
+        let context = self.document_context_for(&params.text_document.uri).await?;
         methods::text_document::document_symbol::document_symbol(context, params).await
     }
 
@@ -453,9 +438,7 @@ impl LanguageServer for Backend {
         fields(rg.method = "inlayHint", rg.uri = %params.text_document.uri.as_str())
     )]
     async fn inlay_hint(&self, params: InlayHintParams) -> Result<Option<Vec<InlayHint>>> {
-        let Some(context) = self.method_context_for(&params.text_document.uri).await? else {
-            return Ok(None);
-        };
+        let context = self.document_context_for(&params.text_document.uri).await?;
         methods::text_document::inlay_hint::inlay_hint(context, params).await
     }
 
@@ -464,10 +447,10 @@ impl LanguageServer for Backend {
         &self,
         params: WorkspaceSymbolParams,
     ) -> Result<Option<WorkspaceSymbolResponse>> {
-        let Some(context) = self.active_method_context().await? else {
+        let Some(engine_client) = self.active_engine_client().await? else {
             return Ok(Some(WorkspaceSymbolResponse::Nested(Vec::new())));
         };
-        methods::workspace::symbol::symbol(context, params).await
+        methods::workspace::symbol::symbol(engine_client, params).await
     }
 
     #[tracing::instrument(
@@ -475,14 +458,14 @@ impl LanguageServer for Backend {
         fields(rg.method = "executeCommand", rg.command = %params.command)
     )]
     async fn execute_command(&self, params: ExecuteCommandParams) -> Result<Option<LSPAny>> {
-        let Some(context) = self.active_method_context().await? else {
+        let Some(engine_client) = self.active_engine_client().await? else {
             return Err(Error {
                 code: ErrorCode::InvalidRequest,
                 message: Cow::Borrowed("Rust Glancer has no active Rust project for this command"),
                 data: None,
             });
         };
-        methods::workspace::execute_command::execute_command(context, params).await
+        methods::workspace::execute_command::execute_command(engine_client, params).await
     }
 }
 

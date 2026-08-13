@@ -2,9 +2,9 @@
 //!
 //! The saved `Project` is the semantic baseline shared by every request, but it is never shared as
 //! mutable state. `ProjectCoordinator` keeps it on the dispatcher lane, prepares query-selected
-//! deferred data, and publishes source-generation changes in command order. Dirty-buffer overlays
-//! and detached background indexing live in child modules because they borrow or clone that saved
-//! baseline without becoming alternative owners of it.
+//! deferred data, and publishes source-generation changes in command order. Disposable
+//! source-override projects and detached background indexing live in child modules because they
+//! borrow or clone that saved baseline without becoming alternative owners of it.
 //!
 //! A filesystem burst can keep changing after a watcher command reaches the engine. Project
 //! construction reports that race as a typed stale-source error. The coordinator waits for another
@@ -20,16 +20,14 @@ use std::{
 };
 
 use anyhow::Context as _;
-use rg_lsp_proto::ServiceNotification;
+use rg_lsp_proto::{EditorSnapshot, ServiceNotification};
 use rg_project::{
-    AnalysisSurface, DirtyOverlayScope, Project, ProjectMemoryHooks, ProjectMemoryPurgePoint,
-    ProjectSnapshot, SavedFileChange, SplitIndexingMode,
+    AnalysisSurface, Project, ProjectMemoryHooks, ProjectMemoryPurgePoint, ProjectSnapshot,
+    SavedFileChange, SourceOverrideScope, SplitIndexingMode,
 };
-use rg_std::UniqueVec;
 use rg_workspace::{CargoMetadataTarget, SysrootSources, WorkspaceMetadata};
 
 use crate::{
-    documents::DirtyDocumentSnapshot,
     engine::{
         QueuedEngineCommand,
         command::{DeferredIndexingResult, EngineCommand},
@@ -41,6 +39,7 @@ use crate::{
 
 mod config;
 mod deferred;
+mod source_overrides;
 mod state;
 
 pub(crate) use self::config::ProjectConfiguration;
@@ -61,7 +60,7 @@ const MAX_STALE_SOURCE_RETRIES: usize = 3;
 /// changes publish a new saved generation. Background indexing also returns here before it can be
 /// merged. Keeping all three paths together is what makes generation checks meaningful and avoids
 /// putting locks inside the semantic engine. A query that discovers newer disk contents also
-/// records a stale-source latch here, so later queries return neutral results until the queued path
+/// records a stale-source latch here, so later queries abort explicitly until the queued path
 /// mutation succeeds.
 #[derive(Debug)]
 pub(super) struct ProjectCoordinator {
@@ -220,8 +219,8 @@ impl ProjectCoordinator {
 
     /// Rebuild the whole saved workspace and schedule deferred work for the new generation.
     ///
-    /// Source races are retried before this method returns, keeping the caller's foreground
-    /// indexing activity live until a coherent replacement has actually been published. If files
+    /// Source races are retried before this method returns, keeping the caller's foreground update
+    /// live until a coherent replacement has actually been published. If files
     /// keep changing through the retry limit, the old generation remains published and the caller
     /// receives the stale-source error; a later watcher batch can try again from the queue.
     pub(super) fn reindex_workspace(&mut self) -> anyhow::Result<()> {
@@ -259,56 +258,95 @@ impl ProjectCoordinator {
         Ok(())
     }
 
-    /// Apply one coalesced watcher/save/recovery batch to the saved project.
+    /// Publish exact captured Rust source and graph/discovery paths as one saved transaction.
     ///
-    /// `Project` decides whether each path needs a source rebuild or a Cargo graph rebuild. The
-    /// coordinator owns publication, retry, and the deferred-indexing transition around that
-    /// change. If another file changes while the candidate is being built, its path joins the batch
-    /// before the whole mutation is retried. Exhausting the bounded retries rejects the command
-    /// without replacing the last coherent generation, allowing later queued work to proceed.
-    pub(super) fn project_paths_changed(&mut self, paths: Vec<PathBuf>) -> anyhow::Result<()> {
+    /// A stale path that already has a captured value rejects the proposal instead of silently
+    /// replacing it with newer disk contents. Other project sources can still use the bounded
+    /// settled-burst retry path while preserving every explicitly captured input.
+    pub(super) fn saved_project_changes(
+        &mut self,
+        changes: Vec<SavedFileChange>,
+    ) -> anyhow::Result<u64> {
         let started = Instant::now();
+        let (summary, applied_changes, stale_retries) = self
+            .apply_saved_project_changes("saved project changes", changes)
+            .context("apply saved project changes")?;
+        self.stale_source = None;
 
-        tracing::info!(path_count = paths.len(), "processing project path changes");
-        if paths.is_empty() {
-            tracing::info!(
-                applied_changes = 0usize,
-                changed_files = 0usize,
-                affected_packages = 0usize,
-                changed_crates = 0usize,
-                elapsed_ms = started.elapsed().as_millis(),
-                "project path reindex finished"
-            );
-            return Ok(());
-        }
+        tracing::info!(
+            applied_changes,
+            changed_files = summary.changed_files.len(),
+            affected_packages = summary.affected_packages.len(),
+            changed_crates = summary.changed_crates.len(),
+            stale_retries,
+            saved_project_generation = self.project.generation(),
+            elapsed_ms = started.elapsed().as_millis(),
+            "saved project changes finished"
+        );
+        let snapshot = self
+            .project
+            .saved_snapshot()
+            .context("borrow saved project snapshot")?;
+        Self::log_project_snapshot(snapshot, "after saved project changes");
 
-        let mut paths = paths.into_iter().collect::<UniqueVec<_>>();
+        Ok(self.project.generation())
+    }
+
+    /// Repair the one path whose saved revision a query proved stale.
+    pub(super) fn recover_stale_source(&mut self, path: PathBuf) -> anyhow::Result<()> {
+        self.saved_project_changes(vec![SavedFileChange::fs_path(path)])
+            .map(|_| ())
+            .context("recover stale saved source")
+    }
+
+    /// Apply one candidate batch, retrying only sources that were not explicitly captured.
+    fn apply_saved_project_changes(
+        &mut self,
+        operation: &'static str,
+        mut changes: Vec<SavedFileChange>,
+    ) -> anyhow::Result<(rg_project::AnalysisChangeSummary, usize, usize)> {
+        let captured_paths = changes
+            .iter()
+            .filter_map(|change| {
+                change
+                    .captured_source()
+                    .map(|captured| captured.path().to_path_buf())
+            })
+            .collect::<std::collections::BTreeSet<_>>();
         let mut stale_retries = 0usize;
-        let summary = loop {
+
+        loop {
             let result = self.mutate_saved_and_schedule_deferred_finish(|project| {
-                project.apply_changes(paths.iter().map(SavedFileChange::new))
+                project.apply_changes(changes.clone())
             });
             match result {
-                Ok(summary) => break summary,
+                Ok(summary) => return Ok((summary, changes.len(), stale_retries)),
                 Err(error) => {
-                    let Some(stale_path) = Self::wait_for_stale_source_retry(
-                        "project path changes",
-                        stale_retries,
-                        &error,
-                    ) else {
-                        return Err(error).context("apply project path changes");
+                    let Some(stale_path) = Project::stale_source_path(&error) else {
+                        return Err(error);
                     };
-                    paths.push(stale_path);
+                    if captured_paths.contains(stale_path) {
+                        return Err(error).context("captured source no longer matches disk");
+                    }
+                    let Some(stale_path) =
+                        Self::wait_for_stale_source_retry(operation, stale_retries, &error)
+                    else {
+                        return Err(error);
+                    };
+                    changes.push(SavedFileChange::fs_path(stale_path));
+
                     let scan_started = Instant::now();
                     match self.project.stale_saved_source_paths() {
                         Ok(stale_paths) => {
                             let discovered_paths = stale_paths.len();
                             for path in stale_paths {
-                                paths.push(path);
+                                if !captured_paths.contains(&path) {
+                                    changes.push(SavedFileChange::fs_path(path));
+                                }
                             }
                             tracing::debug!(
                                 discovered_paths,
-                                retry_path_count = paths.len(),
+                                retry_path_count = changes.len(),
                                 elapsed_ms = scan_started.elapsed().as_millis(),
                                 "collected settled source changes for project retry"
                             );
@@ -327,29 +365,7 @@ impl ProjectCoordinator {
                     stale_retries = stale_retries.saturating_add(1);
                 }
             }
-        };
-        self.stale_source = None;
-        let applied_changes = paths.len();
-        let changed_files = summary.changed_files.len();
-        let affected_packages = summary.affected_packages.len();
-        let changed_crates = summary.changed_crates.len();
-
-        tracing::info!(
-            applied_changes,
-            changed_files,
-            affected_packages,
-            changed_crates,
-            stale_retries,
-            elapsed_ms = started.elapsed().as_millis(),
-            "project path reindex finished"
-        );
-        let snapshot = self
-            .project
-            .saved_snapshot()
-            .context("borrow changed project snapshot")?;
-        Self::log_project_snapshot(snapshot, "after project path changes");
-
-        Ok(())
+        }
     }
 
     /// Reconcile one background finish on the same lane that owns saved generations.
@@ -377,37 +393,46 @@ impl ProjectCoordinator {
         }
     }
 
-    /// Materialize one query-selected analysis surface without changing source generation.
-    pub(super) fn materialize(&mut self, surface: AnalysisSurface<'_>) -> anyhow::Result<()> {
-        self.project
-            .materialize(surface)
-            .context("materialize analysis surface")
-    }
-
     pub(super) fn saved_snapshot(&self) -> anyhow::Result<ProjectSnapshot<'_>> {
         self.project
             .saved_snapshot()
             .context("borrow project snapshot")
     }
 
-    /// Run a query against saved state or a disposable single-file dirty overlay.
+    /// Materialize the same saved or source-override project that the query will read.
+    pub(super) fn materialize_query_project(
+        &mut self,
+        editor: &EditorSnapshot,
+        scope: SourceOverrideScope,
+        surface: AnalysisSurface<'_>,
+    ) -> anyhow::Result<()> {
+        self.project
+            .materialize_query_project(editor, scope, surface)
+            .context("materialize query-selected analysis surface")
+    }
+
+    /// Return the saved-source generation selected by the serialized analysis lane.
+    pub(super) fn generation(&self) -> u64 {
+        self.project.generation()
+    }
+
+    /// Run a query against saved state or one disposable source-override project.
     pub(super) fn with_query_snapshot<T>(
         &mut self,
-        dirty: Option<&DirtyDocumentSnapshot>,
-        dirty_scope: DirtyOverlayScope,
+        editor: Option<(&EditorSnapshot, SourceOverrideScope)>,
         query: impl FnOnce(ProjectSnapshot<'_>) -> anyhow::Result<T>,
     ) -> anyhow::Result<T> {
         self.project
-            .with_query_snapshot(dirty, dirty_scope, query)
+            .with_query_snapshot(editor, query)
             .context("run query with project snapshot")
     }
 
-    /// Release request-scoped loads from both saved state and the cached dirty overlay.
+    /// Release request-scoped loads from saved and source-override state.
     pub(super) fn release_query_memory(&mut self) {
         self.project.release_query_memory();
     }
 
-    /// Return the path that keeps queries neutral until saved-path recovery succeeds.
+    /// Return the path that keeps queries explicitly aborted until saved-path recovery succeeds.
     pub(super) fn stale_source(&self) -> Option<&Path> {
         self.stale_source.as_deref()
     }
@@ -415,9 +440,8 @@ impl ProjectCoordinator {
     /// Stop queries at one observed saved/disk mismatch and schedule normal path-change recovery.
     ///
     /// Recovery deliberately enters the tail of the command queue. A native watcher batch already
-    /// waiting there can run first, and adjacent path changes can coalesce. Most importantly, the
-    /// query that discovered the mismatch no longer rebuilds the whole workspace while files are
-    /// still changing.
+    /// waiting there can run first. Most importantly, the query that discovered the mismatch no
+    /// longer rebuilds the whole workspace while files are still changing.
     pub(super) fn record_stale_source(&mut self, label: &'static str, path: &Path) {
         if self.stale_source.is_some() || !self.project.is_initialized() {
             return;
@@ -431,12 +455,9 @@ impl ProjectCoordinator {
         let path = path.to_path_buf();
         self.stale_source = Some(path.clone());
 
-        // Re-enter the same mutation stream as watcher and save changes. No response endpoint is
-        // needed because the query has already degraded to its neutral result.
-        let recovery = EngineCommand::ProjectPathsChanged {
-            paths: vec![path],
-            respond_to: None,
-        };
+        // Recovery enters the tail of the same FIFO lane as saved transactions. No response
+        // endpoint is needed because the query already returned an explicit source-changed outcome.
+        let recovery = EngineCommand::RecoverStaleSource { path };
         if let Err(error) = self
             .command_sender
             .send(QueuedEngineCommand::new(recovery))
@@ -450,7 +471,7 @@ impl ProjectCoordinator {
         }
     }
 
-    /// Repair invalid package artifacts after returning an empty result for the failed query.
+    /// Repair invalid package artifacts after aborting the failed query explicitly.
     pub(super) fn recover_after_query_cache_failure(&mut self, label: &'static str) {
         if !self.project.is_initialized() {
             tracing::warn!(

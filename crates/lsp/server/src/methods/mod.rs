@@ -1,22 +1,32 @@
-use std::{borrow::Cow, path::PathBuf};
+//! LSP feature handlers and the small adapters shared between them.
+//!
+//! `Backend` owns the verbose `LanguageServer` trait implementation and delegates real feature work
+//! to the free-function modules below. Keeping those handlers separate leaves `Backend` as an index
+//! of protocol methods rather than mixing feature logic into the trait implementation.
+//!
+//! Two supporting modules define the shared boundary around those handlers:
+//!
+//! - `context` carries the exact data needed by document and completion handlers and builds engine
+//!   input from their captured editor snapshot.
+//! - `analysis_result` checks engine response tags, verifies that document results still match live
+//!   editor state, and maps engine failures to JSON-RPC errors.
 
-use tower_lsp_server::{
-    jsonrpc::{Error, ErrorCode},
-    ls_types::*,
-};
+mod analysis_result;
+mod context;
 
-use rg_lsp_proto::ClientCapabilities;
+use std::path::PathBuf;
+
+use tower_lsp_server::ls_types::*;
 
 use crate::{capabilities, engine_client::EngineClient};
 
+pub(crate) use self::{
+    analysis_result::{DocumentQueryStatus, internal_error, temporarily_unavailable},
+    context::{CompletionMethodContext, DocumentMethodContext},
+};
+
 pub(crate) mod text_document;
 pub(crate) mod workspace;
-
-#[derive(Clone, Debug)]
-pub(crate) struct MethodContext {
-    pub(crate) engine_client: EngineClient,
-    pub(crate) client_capabilities: ClientCapabilities,
-}
 
 pub(crate) fn initialize() -> InitializeResult {
     InitializeResult {
@@ -30,20 +40,12 @@ pub(crate) fn initialize() -> InitializeResult {
 }
 
 #[tracing::instrument(level = "trace", skip_all)]
-pub(crate) async fn shutdown(ctx: MethodContext) -> anyhow::Result<()> {
-    ctx.engine_client
+pub(crate) async fn shutdown(engine_client: EngineClient) -> anyhow::Result<()> {
+    engine_client
         .call_unconditional("shutdown", |engine_client, request_context| async move {
             engine_client.shutdown(request_context).await
         })
         .await
-}
-
-pub(crate) fn internal_error(error: anyhow::Error) -> Error {
-    Error {
-        code: ErrorCode::InternalError,
-        message: Cow::Owned(format!("{error:#}")),
-        data: None,
-    }
 }
 
 pub(crate) fn uri_to_path(uri: &Uri) -> Option<PathBuf> {
@@ -58,26 +60,8 @@ pub(crate) fn uri_to_path(uri: &Uri) -> Option<PathBuf> {
 mod tests {
     use std::str::FromStr;
 
-    use super::{internal_error, uri_to_path};
+    use super::uri_to_path;
     use tower_lsp_server::ls_types::Uri;
-
-    #[test]
-    fn internal_error_preserves_context_chain() {
-        let error = anyhow::anyhow!("engine response channel closed")
-            .context("while receiving engine response")
-            .context("while handling hover");
-
-        let message = internal_error(error).message;
-
-        assert_eq!(
-            message.as_ref(),
-            "while handling hover: while receiving engine response: engine response channel closed",
-        );
-        assert!(
-            !message.contains('\n'),
-            "alternate anyhow display should keep context chains on one line",
-        );
-    }
 
     #[test]
     fn uri_to_path_accepts_only_file_uris() {

@@ -3,81 +3,60 @@ use std::{collections::BTreeSet, path::PathBuf};
 use ls_types::Diagnostic;
 use rg_lsp_proto::ServiceNotification;
 
-use crate::{documents::DocumentStore, service::ServiceNotificationsSink};
+use crate::service::ServiceNotificationsSink;
 
 use super::cargo::CargoDiagnostics;
 
-/// Complete diagnostics publication for one cargo diagnostics run.
+/// Complete saved-source diagnostics output for one Cargo run.
 ///
-/// `file_diagnostics` is what should be sent to the client, while `published_paths` records
-/// which files should still have live cargo diagnostics after this plan. Dirty files may be kept
-/// live without sending a new publication, because their visible buffer no longer matches cargo's
-/// saved-file snapshot.
+/// Editor applicability is intentionally absent. Every entry carries the exact saved text
+/// observed for its path, and the server-side editor owner either publishes it at the matching
+/// client version or leaves the client's prior diagnostics visible.
 pub(super) struct WorkspaceDiagnostics {
     file_diagnostics: Vec<FileDiagnostics>,
-    published_paths: BTreeSet<PathBuf>,
+    known_paths: BTreeSet<PathBuf>,
 }
 
 impl WorkspaceDiagnostics {
-    pub(super) fn new(
-        diagnostics: CargoDiagnostics,
-        documents: &DocumentStore,
-        previous_paths: &BTreeSet<PathBuf>,
-    ) -> Self {
-        let mut file_diagnostics = Vec::new();
-        let mut published_paths = BTreeSet::new();
+    pub(super) fn new(diagnostics: CargoDiagnostics, previous_paths: &BTreeSet<PathBuf>) -> Self {
+        let mut diagnostics = diagnostics.into_inner();
+        let mut known_paths = previous_paths.clone();
+        known_paths.extend(diagnostics.keys().cloned());
 
-        for (path, diagnostics) in diagnostics.into_inner() {
-            let freshness = documents.freshness(&path);
-
-            if freshness.dirty() {
-                // Cargo diagnostics belong to the saved snapshot. When the editor has a newer
-                // dirty buffer, leave the client state untouched and let it keep remapping the
-                // last diagnostics it already knows about.
-                if previous_paths.contains(&path) {
-                    published_paths.insert(path);
+        // Re-offer clears for all formerly reported paths on every run. Publication can be skipped
+        // while an editor buffer differs from saved source, and this small path set lets a later
+        // save-triggered run apply the clear without feedback or editor state in this process.
+        let file_diagnostics = known_paths
+            .iter()
+            .cloned()
+            .map(|path| {
+                let saved_text = match rg_source::read_source_text(&path) {
+                    Ok(text) => Some(text.to_string()),
+                    Err(error) => {
+                        tracing::trace!(
+                            path = %path.display(),
+                            error = %error,
+                            "diagnostics source identity is unavailable"
+                        );
+                        None
+                    }
+                };
+                FileDiagnostics {
+                    diagnostics: diagnostics.remove(&path).unwrap_or_default(),
+                    path,
+                    saved_text,
                 }
-                continue;
-            }
-
-            let version = freshness.tracked().then(|| freshness.version()).flatten();
-            published_paths.insert(path.clone());
-            file_diagnostics.push(FileDiagnostics {
-                path,
-                diagnostics,
-                version,
-            });
-        }
-
-        for stale_path in previous_paths {
-            if published_paths.contains(stale_path) {
-                continue;
-            }
-
-            let freshness = documents.freshness(stale_path);
-            if freshness.dirty() {
-                // The latest cargo run no longer mentions this file, but clearing while the buffer
-                // is dirty would make diagnostics disappear for a state cargo never checked.
-                published_paths.insert(stale_path.clone());
-                continue;
-            }
-
-            let version = freshness.tracked().then(|| freshness.version()).flatten();
-            file_diagnostics.push(FileDiagnostics {
-                path: stale_path.clone(),
-                diagnostics: Vec::new(),
-                version,
-            });
-        }
+            })
+            .collect();
 
         Self {
             file_diagnostics,
-            published_paths,
+            known_paths,
         }
     }
 
-    pub(super) fn take_published_paths(&mut self) -> BTreeSet<PathBuf> {
-        std::mem::take(&mut self.published_paths)
+    pub(super) fn take_known_paths(&mut self) -> BTreeSet<PathBuf> {
+        std::mem::take(&mut self.known_paths)
     }
 
     pub(super) fn publish(self, notifications: &ServiceNotificationsSink) {
@@ -91,7 +70,7 @@ impl WorkspaceDiagnostics {
 struct FileDiagnostics {
     path: PathBuf,
     diagnostics: Vec<Diagnostic>,
-    version: Option<i32>,
+    saved_text: Option<String>,
 }
 
 impl FileDiagnostics {
@@ -99,7 +78,7 @@ impl FileDiagnostics {
         notifications.send(ServiceNotification::PublishDiagnostics {
             path: self.path,
             diagnostics: self.diagnostics,
-            version: self.version,
+            saved_text: self.saved_text,
         });
     }
 }
@@ -114,96 +93,32 @@ mod tests {
     use ls_types::{Diagnostic, Position, Range};
 
     use super::{super::cargo::CargoDiagnostics, WorkspaceDiagnostics};
-    use crate::documents::DocumentStore;
 
     #[test]
-    fn new_clears_stale_diagnostic_files() {
-        let previous_paths = BTreeSet::from([
-            PathBuf::from("/workspace/src/lib.rs"),
-            PathBuf::from("/workspace/src/main.rs"),
-        ]);
+    fn current_results_and_known_stale_paths_are_both_emitted() {
+        let stale = PathBuf::from("/workspace/src/lib.rs");
+        let current = PathBuf::from("/workspace/src/main.rs");
         let diagnostics = CargoDiagnostics::from_map(BTreeMap::from([(
-            PathBuf::from("/workspace/src/main.rs"),
+            current.clone(),
             vec![diagnostic("still broken")],
         )]));
 
-        let documents = DocumentStore::default();
         let workspace_diagnostics =
-            WorkspaceDiagnostics::new(diagnostics, &documents, &previous_paths);
+            WorkspaceDiagnostics::new(diagnostics, &BTreeSet::from([stale.clone()]));
 
         assert_eq!(workspace_diagnostics.file_diagnostics.len(), 2);
-        assert_eq!(
-            workspace_diagnostics.file_diagnostics[0].path,
-            PathBuf::from("/workspace/src/main.rs")
-        );
-        assert_eq!(
-            workspace_diagnostics.file_diagnostics[0].diagnostics.len(),
-            1
-        );
-        assert_eq!(
-            workspace_diagnostics.file_diagnostics[1].path,
-            PathBuf::from("/workspace/src/lib.rs")
-        );
+        assert_eq!(workspace_diagnostics.file_diagnostics[0].path, stale);
         assert!(
-            workspace_diagnostics.file_diagnostics[1]
+            workspace_diagnostics.file_diagnostics[0]
                 .diagnostics
                 .is_empty()
         );
+        assert_eq!(workspace_diagnostics.file_diagnostics[1].path, current);
         assert_eq!(
-            workspace_diagnostics.published_paths,
-            [PathBuf::from("/workspace/src/main.rs")].into()
+            workspace_diagnostics.file_diagnostics[1].diagnostics.len(),
+            1
         );
-    }
-
-    #[test]
-    fn new_leaves_dirty_documents_unpublished() {
-        let path = PathBuf::from("/workspace/src/lib.rs");
-        let diagnostics =
-            CargoDiagnostics::from_map(BTreeMap::from([(path.clone(), vec![diagnostic("new")])]));
-        let mut documents = DocumentStore::default();
-        documents.did_open_saved(path.clone(), Some(1), "fn main() {}\n");
-        documents.did_change(path.clone(), Some(2), Some("fn main() {\n}\n"));
-
-        let workspace_diagnostics =
-            WorkspaceDiagnostics::new(diagnostics, &documents, &BTreeSet::new());
-
-        assert!(workspace_diagnostics.file_diagnostics.is_empty());
-        assert!(workspace_diagnostics.published_paths.is_empty());
-    }
-
-    #[test]
-    fn new_keeps_previous_dirty_diagnostics_visible() {
-        let path = PathBuf::from("/workspace/src/lib.rs");
-        let diagnostics = CargoDiagnostics::from_map(BTreeMap::from([(
-            path.clone(),
-            vec![diagnostic("saved snapshot changed")],
-        )]));
-        let previous_paths = BTreeSet::from([path.clone()]);
-        let mut documents = DocumentStore::default();
-        documents.did_open_saved(path.clone(), Some(1), "fn main() {}\n");
-        documents.did_change(path.clone(), Some(2), Some("fn main() {\n}\n"));
-
-        let workspace_diagnostics =
-            WorkspaceDiagnostics::new(diagnostics, &documents, &previous_paths);
-
-        assert!(workspace_diagnostics.file_diagnostics.is_empty());
-        assert_eq!(workspace_diagnostics.published_paths, previous_paths);
-    }
-
-    #[test]
-    fn new_keeps_stale_dirty_diagnostics_until_clean_check() {
-        let path = PathBuf::from("/workspace/src/lib.rs");
-        let diagnostics = CargoDiagnostics::default();
-        let previous_paths = BTreeSet::from([path.clone()]);
-        let mut documents = DocumentStore::default();
-        documents.did_open_saved(path.clone(), Some(1), "fn main() {}\n");
-        documents.did_change(path, Some(2), Some("fn main() {\n}\n"));
-
-        let workspace_diagnostics =
-            WorkspaceDiagnostics::new(diagnostics, &documents, &previous_paths);
-
-        assert!(workspace_diagnostics.file_diagnostics.is_empty());
-        assert_eq!(workspace_diagnostics.published_paths, previous_paths);
+        assert_eq!(workspace_diagnostics.known_paths.len(), 2);
     }
 
     fn diagnostic(message: &str) -> Diagnostic {

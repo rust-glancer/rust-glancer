@@ -1,3 +1,9 @@
+//! Registry state that reserves routing identities and engine slots atomically.
+//!
+//! A newly discovered Cargo root becomes visible in routing at the same time its starting slot is
+//! allocated. Concurrent opens therefore wait for or reuse one process instead of racing to create
+//! separate owners for the same workspace.
+
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
@@ -8,7 +14,7 @@ use tokio::sync::Notify;
 use crate::{
     client_notifications::{ActiveWorkspaceState, ActiveWorkspaceStatus},
     config::ServerConfig,
-    engine_client::EngineAvailability,
+    engine_client::EngineProjectStatus,
 };
 
 use super::{
@@ -105,7 +111,7 @@ impl EngineRegistryInner {
         Some(status)
     }
 
-    /// Combine process lifecycle and saved-project availability into the status shown by the editor.
+    /// Combine process lifecycle and saved-project progress into the status shown by the editor.
     fn workspace_status(&self, id: EngineId) -> ActiveWorkspaceStatus {
         let root = self
             .routing
@@ -115,10 +121,10 @@ impl EngineRegistryInner {
         let slot = self.engine(id).expect("engine id should have a slot");
         let (state, message) = match slot {
             EngineSlot::Starting { .. } => (ActiveWorkspaceState::Indexing, None),
-            EngineSlot::Ready(engine) => match engine.process.engine_client().availability() {
-                EngineAvailability::Queryable => (ActiveWorkspaceState::Ready, None),
-                EngineAvailability::Indexing => (ActiveWorkspaceState::Indexing, None),
-                EngineAvailability::Unavailable(error) => {
+            EngineSlot::Ready(engine) => match engine.process.engine_client().project_status() {
+                EngineProjectStatus::Ready => (ActiveWorkspaceState::Ready, None),
+                EngineProjectStatus::Updating => (ActiveWorkspaceState::Indexing, None),
+                EngineProjectStatus::Failed(error) => {
                     (ActiveWorkspaceState::Failed, Some(error.to_string()))
                 }
             },

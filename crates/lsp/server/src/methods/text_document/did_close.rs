@@ -1,19 +1,22 @@
-use tower_lsp_server::ls_types::*;
+use tower_lsp_server::jsonrpc::Result;
 
-use crate::methods::{MethodContext, uri_to_path};
+use crate::{
+    engine_registry::EngineRegistry,
+    ingress::{self, LifecycleEvent},
+};
 
-#[tracing::instrument(level = "trace", skip_all)]
-pub(crate) async fn did_close(ctx: MethodContext, params: DidCloseTextDocumentParams) {
-    let Some(path) = uri_to_path(&params.text_document.uri) else {
+/// Remove the engine-registry route for a session already marked closed in editor state.
+///
+/// Earlier open/save work for the same path has finished before `lifecycle_event` returns. The
+/// engine itself stores no open-document lifecycle state, so it needs no close request.
+pub(crate) async fn did_close(registry: Result<&EngineRegistry>) {
+    let Some(LifecycleEvent::Close { path }) = ingress::lifecycle_event().await else {
+        tracing::error!("didClose bypassed ordered LSP ingress");
         return;
     };
 
-    ctx.engine_client
-        .notify(
-            "did_close",
-            move |engine_client, request_context| async move {
-                engine_client.did_close(request_context, path).await
-            },
-        )
-        .await;
+    // Remove the old route before a later reopen for this path can store its new route.
+    if let Ok(registry) = registry {
+        registry.close_document(&path).await;
+    }
 }

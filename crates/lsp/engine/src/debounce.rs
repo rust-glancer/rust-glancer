@@ -45,17 +45,6 @@ impl Debouncer {
         }
     }
 
-    pub(crate) fn call_now(&self, callback: impl FnOnce()) {
-        let mut pending = self.pending();
-        self.next_generation();
-        if let Some(previous) = pending.take() {
-            previous.abort();
-        }
-        drop(pending);
-
-        callback();
-    }
-
     pub(crate) fn cancel(&self) {
         let mut pending = self.pending();
         self.next_generation();

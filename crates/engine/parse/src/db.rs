@@ -9,7 +9,7 @@ use std::{
 use anyhow::Context as _;
 
 use crate::{FileId, LineIndex, Package, PackageParseSnapshot};
-use rg_source::{SourceError, SourceInventory};
+use rg_source::{CapturedSource, SourceEntry, SourceError, SourceInventory};
 use rg_std::MemorySize;
 
 /// Parsed project metadata, packages, and source files.
@@ -231,13 +231,13 @@ impl ParseDb {
         }
     }
 
-    /// Refreshes a saved file from source staged before the project update began.
+    /// Refreshes a saved file by reading disk once at the start of this project update.
     ///
     /// `canonical_file_path` must use the same canonical identity stored in the parse database.
-    /// Exact watcher replays are reported without reparsing. Unlike dirty-buffer reparsing, a
-    /// changed parsed file remains filesystem-backed so staged source text is not retained after
+    /// Exact watcher replays are reported without reparsing. Unlike editor-source reparsing, a
+    /// changed parsed file remains filesystem-backed so captured source text is not retained after
     /// the update finishes.
-    pub fn refresh_saved_file(
+    pub fn refresh_saved_file_from_disk(
         &mut self,
         canonical_file_path: &Path,
     ) -> Result<SavedFileRefresh, SourceError> {
@@ -245,6 +245,29 @@ impl ParseDb {
         self.sources.begin_capture();
         let previous = self.sources.entry(canonical_file_path);
         let source = self.sources.replace_saved_from_disk(canonical_file_path)?;
+        Ok(self.install_saved_source(canonical_file_path, known_file, previous, source))
+    }
+
+    /// Refreshes a saved file from exact source captured before this project update was submitted.
+    pub fn refresh_captured_saved_file(
+        &mut self,
+        source: &CapturedSource,
+    ) -> Result<SavedFileRefresh, SourceError> {
+        let known_file = self.contains_file_path(source.path());
+        self.sources.begin_capture();
+        let previous = self.sources.entry(source.path());
+        let entry = self.sources.replace_saved(source)?;
+        Ok(self.install_saved_source(source.path(), known_file, previous, entry))
+    }
+
+    /// Installs one already-captured saved entry into every package-local file table.
+    fn install_saved_source(
+        &mut self,
+        canonical_file_path: &Path,
+        known_file: bool,
+        previous: Option<Arc<SourceEntry>>,
+        source: Arc<SourceEntry>,
+    ) -> SavedFileRefresh {
         if known_file
             && previous.as_ref().is_some_and(|previous| {
                 previous.is_saved()
@@ -252,7 +275,7 @@ impl ParseDb {
                     && previous.byte_len() == source.byte_len()
             })
         {
-            return Ok(SavedFileRefresh::Unchanged);
+            return SavedFileRefresh::Unchanged;
         }
         let mut changed_files = Vec::new();
 
@@ -270,35 +293,44 @@ impl ParseDb {
         }
 
         if changed_files.is_empty() {
-            Ok(SavedFileRefresh::Unknown)
+            SavedFileRefresh::Unknown
         } else {
-            Ok(SavedFileRefresh::Reparsed(changed_files))
+            SavedFileRefresh::Reparsed(changed_files)
         }
     }
 
-    /// Reparses a known source file from an in-memory buffer for every package that owns it.
+    /// Opens this cloned parse database for captured overrides of already-known sources.
+    pub fn begin_source_overrides(&self) {
+        self.sources.begin_source_overrides();
+    }
+
+    /// Applies one captured source override to every package-local file identity that owns it.
     ///
-    /// Dirty-buffer analysis uses this to build an ephemeral project snapshot without changing the
-    /// saved filesystem-backed project. Unknown files are intentionally ignored: discovering new
-    /// module files still goes through ordinary root traversal and filesystem module rules.
-    pub fn reparse_file_from_source(
+    /// Matching bytes only replace the backing source handle, preserving syntax and line indexes.
+    /// Changed bytes are reparsed. In both cases later package rebuilding uses the captured value
+    /// without consulting disk for that source.
+    pub fn apply_source_override(
         &mut self,
-        file_path: &Path,
-        source: &str,
-    ) -> anyhow::Result<Vec<PackageFileRef>> {
-        let canonical_file_path = file_path
-            .canonicalize()
-            .with_context(|| format!("while attempting to canonicalize {}", file_path.display()))?;
-        let source = Arc::<str>::from(source);
-        self.sources.begin_capture();
-        let source = self
+        captured: &CapturedSource,
+    ) -> Result<Vec<PackageFileRef>, SourceError> {
+        let previous = self
             .sources
-            .replace_in_memory(&canonical_file_path, source)?;
+            .entry(captured.path())
+            .ok_or_else(|| SourceError::Unknown {
+                path: captured.path().to_path_buf(),
+            })?;
+        let unchanged = previous.revision() == captured.revision()
+            && previous.byte_len() == captured.byte_len();
+        let source = self.sources.replace_with_override(captured)?;
         let mut changed_files = Vec::new();
 
         for (package_slot, package) in self.packages.iter_mut().enumerate() {
+            if unchanged {
+                package.rebind_file_source(captured.path(), Arc::clone(&source));
+                continue;
+            }
             let Some(file_id) =
-                package.reparse_file_from_source(&canonical_file_path, Arc::clone(&source))
+                package.reparse_file_from_source(captured.path(), Arc::clone(&source))
             else {
                 continue;
             };

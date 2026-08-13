@@ -11,13 +11,14 @@ use std::{
 
 use expect_test::expect;
 use rg_analysis::ReferenceQuery;
+use rg_source::CapturedSource;
 use rg_std::MemorySize as _;
 use test_fixture::testonly::MarkedText;
 
 use self::utils::{HostFixture, HostObservation};
 use crate::{
-    AnalysisChangeSummary, AnalysisSurface, BuildProcessMemory, DirtyOverlayScope,
-    PackageResidencyPolicy, Project, ProjectMemoryHooks, ProjectMemoryPurgePoint, SavedFileChange,
+    AnalysisChangeSummary, AnalysisSurface, BuildProcessMemory, PackageResidencyPolicy, Project,
+    ProjectMemoryHooks, ProjectMemoryPurgePoint, SavedFileChange, SourceOverrideScope,
     SplitIndexingMode,
     testonly::{ProjectFixture, ProjectSourceFixture},
 };
@@ -165,7 +166,7 @@ pub struct Published;
         .expect("candidate fixture source should be written");
     hooks.arm();
     let error = project
-        .apply_change(SavedFileChange::new(&path))
+        .apply_change(SavedFileChange::fs_path(&path))
         .expect_err("concurrently changed candidate should not publish");
     assert!(
         error.chain().any(|cause| matches!(
@@ -199,6 +200,171 @@ pub struct Published;
 }
 
 #[test]
+fn captured_saved_source_publishes_the_captured_text_and_revision() {
+    let fixture = ProjectSourceFixture::build(
+        r#"
+//- /Cargo.toml
+[package]
+name = "captured_saved_source_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct Before;
+"#,
+    );
+    let path = fixture.path("src/lib.rs");
+    let mut project = fixture.build_project();
+    let previous_generation = project.generation_id();
+    let captured = CapturedSource::new(&path, "pub struct Captured;\n")
+        .expect("existing fixture source should capture");
+    std::fs::write(&path, captured.text()).expect("disk should contain the proposed saved value");
+
+    let summary = project
+        .apply_change(SavedFileChange::captured(captured.clone()))
+        .expect("matching captured source should publish");
+
+    assert_ne!(project.generation_id(), previous_generation);
+    assert_eq!(summary.affected_packages, [rg_def_map::PackageSlot(0)]);
+    let canonical = path
+        .canonicalize()
+        .expect("published fixture source should canonicalize");
+    let entry = project
+        .state
+        .parse_db()
+        .source_inventory()
+        .entry(&canonical)
+        .expect("published captured source should remain in the inventory");
+    assert_eq!(entry.revision(), captured.revision());
+    assert_eq!(
+        entry
+            .text()
+            .expect("published captured source should reload from matching disk")
+            .as_ref(),
+        "pub struct Captured;\n"
+    );
+}
+
+#[test]
+fn captured_saved_source_rejects_newer_disk_without_changing_the_published_project() {
+    let fixture = ProjectSourceFixture::build(
+        r#"
+//- /Cargo.toml
+[package]
+name = "captured_saved_source_race_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct Published;
+"#,
+    );
+    let path = fixture.path("src/lib.rs");
+    let mut project = fixture.build_project();
+    let published_generation = project.generation_id();
+    let file_id = ProjectFixture::file_id_for_path_in(project.state.parse_db(), &path);
+
+    let captured = CapturedSource::new(&path, "pub struct Proposed;\n")
+        .expect("existing fixture source should capture");
+    std::fs::write(&path, "pub struct Newer;\n")
+        .expect("disk should advance beyond the captured proposal");
+    let error = project
+        .apply_change(SavedFileChange::captured(captured))
+        .expect_err("a newer disk value must reject the captured candidate");
+
+    let canonical = path
+        .canonicalize()
+        .expect("fixture source should canonicalize");
+    assert_eq!(
+        Project::stale_source_path(&error),
+        Some(canonical.as_path()),
+        "validation should preserve the typed stale source identity"
+    );
+    assert_eq!(project.generation_id(), published_generation);
+
+    // Restore the disk proof for the still-published generation, then verify that the failed
+    // proposal never leaked into its ParseDb.
+    std::fs::write(&path, "pub struct Published;\n")
+        .expect("published fixture source should be restored");
+    let text = project
+        .snapshot()
+        .file_text_for_span(
+            rg_def_map::PackageSlot(0),
+            file_id,
+            rg_parse::Span {
+                text: rg_parse::TextSpan { start: 0, end: 21 },
+            },
+        )
+        .expect("published source should load after rejected proposal")
+        .expect("published source span should exist");
+    assert_eq!(text, "pub struct Published;");
+}
+
+#[test]
+fn graph_rebuild_cannot_acknowledge_bytes_newer_than_a_captured_source() {
+    let fixture = ProjectSourceFixture::build(
+        r#"
+//- /Cargo.toml
+[package]
+name = "captured_graph_rebuild_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct Published;
+"#,
+    );
+    let source = fixture.path("src/lib.rs");
+    let mut project = fixture.build_project();
+    let published_generation = project.generation_id();
+    let captured = CapturedSource::new(&source, "pub struct Proposed;\n")
+        .expect("existing fixture source should capture");
+    std::fs::write(&source, "pub struct Newer;\n")
+        .expect("disk should advance beyond the captured watcher value");
+
+    let error = project
+        .apply_changes([
+            SavedFileChange::fs_path(fixture.path("Cargo.toml")),
+            SavedFileChange::captured(captured),
+        ])
+        .expect_err("graph rebuilding must retain the captured Rust-source identity");
+
+    assert!(
+        Project::stale_source_path(&error).is_some(),
+        "the graph candidate should fail through saved-source validation: {error:#}"
+    );
+    assert_eq!(project.generation_id(), published_generation);
+}
+
+#[test]
+fn unchanged_captured_save_does_not_publish_a_new_generation() {
+    let fixture = ProjectSourceFixture::build(
+        r#"
+//- /Cargo.toml
+[package]
+name = "unchanged_captured_save_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct AlreadySaved;
+"#,
+    );
+    let path = fixture.path("src/lib.rs");
+    let mut project = fixture.build_project();
+    let generation = project.generation_id();
+    let captured = CapturedSource::new(&path, "pub struct AlreadySaved;\n")
+        .expect("existing fixture source should capture");
+
+    let summary = project
+        .apply_change(SavedFileChange::captured(captured))
+        .expect("unchanged captured save should be accepted");
+
+    assert_eq!(summary, AnalysisChangeSummary::default());
+    assert_eq!(project.generation_id(), generation);
+}
+
+#[test]
 fn missing_only_saved_change_batch_preserves_published_generation() {
     let fixture = ProjectSourceFixture::build(
         r#"
@@ -216,7 +382,7 @@ pub struct Published;
     let published_generation = project.generation_id();
 
     let summary = project
-        .apply_changes([SavedFileChange::new(fixture.path("src/disappeared.rs"))])
+        .apply_changes([SavedFileChange::fs_path(fixture.path("src/disappeared.rs"))])
         .expect("an obsolete saved change should be a successful no-op");
 
     assert_eq!(summary, AnalysisChangeSummary::default());
@@ -255,7 +421,10 @@ pub struct Before;
     std::fs::rename(&old, &new).expect("fixture module should be renamed");
     std::fs::write(&root, "mod new;\n").expect("fixture root should name the new module");
     let summary = project
-        .apply_changes([SavedFileChange::new(&root), SavedFileChange::new(&new)])
+        .apply_changes([
+            SavedFileChange::fs_path(&root),
+            SavedFileChange::fs_path(&new),
+        ])
         .expect("module rename should publish a new source generation");
 
     assert_eq!(summary.affected_packages, [rg_def_map::PackageSlot(0)]);
@@ -278,7 +447,7 @@ pub struct Before;
     std::fs::write(&new, "pub struct After;\n")
         .expect("renamed module should accept a later saved edit");
     project
-        .apply_change(SavedFileChange::new(&new))
+        .apply_change(SavedFileChange::fs_path(&new))
         .expect("later save should not validate the retired module path");
 }
 
@@ -345,7 +514,7 @@ pub struct Irrelevant;
     let path = fixture.path("generated/irrelevant.rs");
 
     let summary = project
-        .apply_change(SavedFileChange::new(&path))
+        .apply_change(SavedFileChange::fs_path(&path))
         .expect("irrelevant saved source should produce a valid generation");
 
     assert!(summary.changed_files.is_empty());
@@ -374,7 +543,7 @@ pub struct Irrelevant;
     std::fs::write(&root, "pub struct Updated;\n")
         .expect("known fixture source should accept a later edit");
     project
-        .apply_change(SavedFileChange::new(root))
+        .apply_change(SavedFileChange::fs_path(root))
         .expect("removed unrelated source must not poison later saved updates");
 }
 
@@ -464,9 +633,12 @@ pub struct SavedUser;
     let mut changes = saved_files
         .files()
         .iter()
-        .map(|file| SavedFileChange::new(fixture.path(file.relative_path())))
+        .map(|file| SavedFileChange::fs_path(fixture.path(file.relative_path())))
         .collect::<Vec<_>>();
-    changes.insert(1, SavedFileChange::new(fixture.path("src/disappeared.rs")));
+    changes.insert(
+        1,
+        SavedFileChange::fs_path(fixture.path("src/disappeared.rs")),
+    );
 
     let summary = project
         .apply_changes(changes)
@@ -524,7 +696,7 @@ pub struct AlreadyApplied;
         .clear();
 
     let summary = project
-        .apply_change(SavedFileChange::new(fixture.path("src/lib.rs")))
+        .apply_change(SavedFileChange::fs_path(fixture.path("src/lib.rs")))
         .expect("an unchanged watcher replay should be accepted");
 
     assert_eq!(summary, AnalysisChangeSummary::default());
@@ -567,20 +739,20 @@ pub struct User;
     std::fs::write(&user, "pub struct SavedUser;\n").expect("user fixture should be writable");
 
     // The iterator removes transient.rs only when Project asks for the second item. This places the
-    // removal after transient.rs was canonicalized and before the source-staging phase begins.
+    // removal after transient.rs was canonicalized and before the source-capture phase begins.
     let transient_for_changes = transient.clone();
     let user_for_changes = user.clone();
     let mut next_change = 0usize;
     let changes = std::iter::from_fn(move || match next_change {
         0 => {
             next_change += 1;
-            Some(SavedFileChange::new(&transient_for_changes))
+            Some(SavedFileChange::fs_path(&transient_for_changes))
         }
         1 => {
             next_change += 1;
             std::fs::remove_file(&transient_for_changes)
                 .expect("transient fixture should be removable between batch phases");
-            Some(SavedFileChange::new(&user_for_changes))
+            Some(SavedFileChange::fs_path(&user_for_changes))
         }
         _ => None,
     });
@@ -803,7 +975,7 @@ pub fn after() -> usize {
     )
     .expect("fixture source should be replaced");
     project
-        .apply_change(SavedFileChange::new(source))
+        .apply_change(SavedFileChange::fs_path(source))
         .expect("saved source update should succeed");
 
     let stats = project.stats().body_ir;
@@ -1793,12 +1965,90 @@ pub struct Account;
 }
 
 #[test]
-fn dirty_overlay_rebuilds_analysis_without_mutating_saved_project() {
+fn editor_text_matching_the_saved_generation_needs_no_derived_project() {
+    let fixture = ProjectSourceFixture::build(
+        r#"
+//- /Cargo.toml
+[package]
+name = "clean_editor_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct Saved;
+"#,
+    );
+    let project = fixture.build_project();
+    let path = fixture.path("src/lib.rs");
+    let text = std::fs::read_to_string(&path).expect("fixture source should remain readable");
+    let path = path
+        .canonicalize()
+        .expect("fixture editor path should canonicalize");
+
+    let source = project
+        .capture_known_source(&path, text)
+        .expect("fixture editor source should belong to the project");
+    let derived = project
+        .derive_with_source_overrides(SourceOverrideScope::ChangedPackages, [source])
+        .expect("clean editor source should compare with the saved generation");
+
+    assert!(
+        derived.is_none(),
+        "matching editor bytes should borrow the saved project instead of cloning it",
+    );
+}
+
+#[test]
+fn derive_with_source_overrides_does_not_discover_sources_outside_the_saved_generation() {
+    let fixture = ProjectSourceFixture::build(
+        r#"
+//- /Cargo.toml
+[package]
+name = "frozen_editor_sources"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct Saved;
+"#,
+    );
+    let project = fixture.build_project();
+    let lib_path = fixture
+        .path("src/lib.rs")
+        .canonicalize()
+        .expect("fixture library path should canonicalize");
+    let unseen_path = fixture.path("src/unseen.rs");
+    std::fs::write(&unseen_path, "pub struct Unseen;\n")
+        .expect("unseen editor-time module should be written");
+    let unseen_path = unseen_path
+        .canonicalize()
+        .expect("unseen module path should canonicalize");
+    let source = project
+        .capture_known_source(&lib_path, "mod unseen;\n")
+        .expect("fixture library source should belong to the project");
+
+    let derived = project
+        .derive_with_source_overrides(SourceOverrideScope::ChangedPackages, [source])
+        .expect("source overrides should build")
+        .expect("changed known source should create a derived project");
+    let contexts = derived
+        .snapshot()
+        .file_contexts_for_source_path(&unseen_path)
+        .expect("unseen path lookup should remain valid");
+
+    assert!(
+        contexts.is_empty(),
+        "source overrides must not admit a file absent from the saved source universe",
+    );
+}
+
+#[test]
+fn source_override_rebuilds_analysis_without_mutating_saved_project() {
     let fixture = HostFixture::build_with_package_residency_policy(
         r#"
 //- /Cargo.toml
 [package]
-name = "dirty_overlay_fixture"
+name = "source_override_fixture"
 version = "0.1.0"
 edition = "2024"
 
@@ -1831,17 +2081,17 @@ pub fn dirty_body(value: Dirty) {
     );
 
     let saved_before = fixture.render(&[
-        HostObservation::resident_stats("saved before dirty overlay"),
+        HostObservation::resident_stats("saved before source override"),
         HostObservation::workspace_symbols("Saved"),
         HostObservation::workspace_symbols("Dirty"),
     ]);
-    let mut overlay = fixture.dirty_overlay("src/lib.rs", dirty_text.text());
-    let dirty_overlay = fixture.render_dirty_project(
-        &overlay,
+    let mut derived = fixture.source_override("src/lib.rs", dirty_text.text());
+    let source_override = fixture.render_dirty_project(
+        &derived,
         dirty_text.text(),
         &[
-            HostObservation::resident_stats("dirty overlay"),
-            HostObservation::body_ir_stats("dirty overlay"),
+            HostObservation::resident_stats("source override"),
+            HostObservation::body_ir_stats("source override"),
             HostObservation::workspace_symbols("Dirty"),
             HostObservation::workspace_symbols("Saved"),
             HostObservation::completions_at(
@@ -1852,52 +2102,52 @@ pub fn dirty_body(value: Dirty) {
         ],
     );
     assert_eq!(
-        overlay.state.query_trait_selection_sessions().count(),
+        derived.state.query_trait_selection_sessions().count(),
         1,
         "dirty Body IR should expose one warmed session for its materialized crate",
     );
     assert!(
-        overlay.state.has_query_cache(),
+        derived.state.has_query_cache(),
         "dirty rebuilding should retain its decoded package payloads for the matching query",
     );
-    overlay.release_query_memory();
+    derived.release_query_memory();
     assert!(
-        !overlay.state.has_query_cache(),
+        !derived.state.has_query_cache(),
         "request cleanup should release decoded payloads and warmed solver state together",
     );
     let saved_after = fixture.render(&[
-        HostObservation::resident_stats("saved after dirty overlay"),
+        HostObservation::resident_stats("saved after source override"),
         HostObservation::workspace_symbols("Saved"),
         HostObservation::workspace_symbols("Dirty"),
     ]);
 
     let actual = format!(
-        "saved project before dirty overlay\n{}\n\ndirty overlay\n{}\n\nsaved project after dirty overlay\n{}\n",
+        "saved project before source override\n{}\n\nsource override\n{}\n\nsaved project after source override\n{}\n",
         saved_before.trim_end(),
-        dirty_overlay.trim_end(),
+        source_override.trim_end(),
         saved_after.trim_end(),
     );
     expect![[r#"
-        saved project before dirty overlay
-        resident stats `saved before dirty overlay`
+        saved project before source override
+        resident stats `saved before source override`
         - def-map crates 0
         - semantic crates 0
         - body crates 0
 
         workspace symbols `Saved`
-        - fn saved_body @ dirty_overlay_fixture[lib] src/lib.rs
-        - struct Saved @ dirty_overlay_fixture[lib] src/lib.rs
+        - fn saved_body @ source_override_fixture[lib] src/lib.rs
+        - struct Saved @ source_override_fixture[lib] src/lib.rs
 
         workspace symbols `Dirty`
         - <none>
 
-        dirty overlay
-        resident stats `dirty overlay`
+        source override
+        resident stats `source override`
         - def-map crates 1
         - semantic crates 1
         - body crates 1
 
-        body ir stats `dirty overlay`
+        body ir stats `source override`
         - crates 1
         - complete crates 0
         - partial crates 1
@@ -1906,8 +2156,8 @@ pub fn dirty_body(value: Dirty) {
         - bodies 1
 
         workspace symbols `Dirty`
-        - fn dirty_body @ dirty_overlay_fixture[lib] src/lib.rs
-        - struct Dirty @ dirty_overlay_fixture[lib] src/lib.rs
+        - fn dirty_body @ source_override_fixture[lib] src/lib.rs
+        - struct Dirty @ source_override_fixture[lib] src/lib.rs
 
         workspace symbols `Saved`
         - <none>
@@ -1915,15 +2165,15 @@ pub fn dirty_body(value: Dirty) {
         completions at `dirty receiver`
         - field field
 
-        saved project after dirty overlay
-        resident stats `saved after dirty overlay`
+        saved project after source override
+        resident stats `saved after source override`
         - def-map crates 0
         - semantic crates 0
         - body crates 0
 
         workspace symbols `Saved`
-        - fn saved_body @ dirty_overlay_fixture[lib] src/lib.rs
-        - struct Saved @ dirty_overlay_fixture[lib] src/lib.rs
+        - fn saved_body @ source_override_fixture[lib] src/lib.rs
+        - struct Saved @ source_override_fixture[lib] src/lib.rs
 
         workspace symbols `Dirty`
         - <none>
@@ -1932,12 +2182,12 @@ pub fn dirty_body(value: Dirty) {
 }
 
 #[test]
-fn dirty_overlay_lookup_index_tracks_declaration_changes() {
+fn source_override_lookup_index_tracks_declaration_changes() {
     let fixture = HostFixture::build_with_package_residency_policy(
         r#"
 //- /Cargo.toml
 [package]
-name = "dirty_overlay_lookup_index_fixture"
+name = "source_override_lookup_index_fixture"
 version = "0.1.0"
 edition = "2024"
 
@@ -1982,9 +2232,9 @@ pub fn inspect(value: User) {
 "#,
     );
 
-    // A body-only overlay may reuse the saved index, while a new method must invalidate that
+    // A body-only override may reuse the saved index, while a new method must invalidate that
     // optimization and become visible through an index built from the dirty declarations.
-    let body_only = fixture.dirty_overlay("src/lib.rs", body_only_text.text());
+    let body_only = fixture.source_override("src/lib.rs", body_only_text.text());
     let body_only = fixture.render_dirty_project(
         &body_only,
         body_only_text.text(),
@@ -1994,7 +2244,7 @@ pub fn inspect(value: User) {
             body_only_text.offset("body_only"),
         )],
     );
-    let declaration = fixture.dirty_overlay("src/lib.rs", declaration_text.text());
+    let declaration = fixture.source_override("src/lib.rs", declaration_text.text());
     let declaration = fixture.render_dirty_project(
         &declaration,
         declaration_text.text(),
@@ -2006,16 +2256,16 @@ pub fn inspect(value: User) {
     );
 
     let actual = format!(
-        "body-only overlay\n{}\n\ndeclaration-changing overlay\n{}\n",
+        "body-only override\n{}\n\ndeclaration-changing override\n{}\n",
         body_only.trim_end(),
         declaration.trim_end(),
     );
     expect![[r#"
-        body-only overlay
+        body-only override
         completions at `body-only dirty receiver`
         - inherent_method saved
 
-        declaration-changing overlay
+        declaration-changing override
         completions at `declaration-changing dirty receiver`
         - inherent_method dirty
         - inherent_method saved
@@ -2024,7 +2274,7 @@ pub fn inspect(value: User) {
 }
 
 #[test]
-fn dirty_overlay_builds_lookup_index_when_saved_dependency_bodies_were_skipped() {
+fn source_override_builds_lookup_index_when_saved_dependency_bodies_were_skipped() {
     let fixture = HostFixture::build_with_package_residency_policy(
         r#"
 //- /Cargo.toml
@@ -2076,13 +2326,13 @@ pub fn inspect(value: User) {
 
     // The dependency was skipped by the saved workspace-only body policy. Materializing its dirty
     // file must build the first real lookup index instead of reusing the saved empty placeholder.
-    let overlay = fixture.dirty_overlay_with_scope(
+    let derived = fixture.source_override_with_scope(
         "dep/src/lib.rs",
         dirty_text.text(),
-        DirtyOverlayScope::ChangedPackages,
+        SourceOverrideScope::ChangedPackages,
     );
     let actual = fixture.render_dirty_project(
-        &overlay,
+        &derived,
         dirty_text.text(),
         &[HostObservation::completions_at(
             "receiver in previously skipped dependency",
@@ -2099,7 +2349,7 @@ pub fn inspect(value: User) {
 }
 
 #[test]
-fn chained_dirty_overlay_keeps_dependency_declaration_changes() {
+fn chained_source_override_keeps_dependency_declaration_changes() {
     let fixture = HostFixture::build_with_package_residency_policy(
         r#"
 //- /Cargo.toml
@@ -2136,7 +2386,7 @@ pub fn inspect(value: dep::User) {
 "#,
         PackageResidencyPolicy::AllOffloadable,
     );
-    let mut dependency_overlay = fixture.dirty_overlay_with_scope(
+    let mut dependency_override = fixture.source_override_with_scope(
         "crates/dep/src/lib.rs",
         r#"
 pub struct User;
@@ -2149,11 +2399,11 @@ impl User {
     pub fn dirty(&self) {}
 }
 "#,
-        DirtyOverlayScope::ChangedPackages,
+        SourceOverrideScope::ChangedPackages,
     );
-    // Request cleanup must not erase the fact that this project still contains dirty-derived
-    // declarations. The next overlay needs that provenance even after the loaders are gone.
-    dependency_overlay.release_query_memory();
+    // Request cleanup must not erase the fact that this project still contains overridden
+    // declarations. The next derivation needs that provenance even after the loaders are gone.
+    dependency_override.release_query_memory();
     let app_text = MarkedText::parse(
         r#"
 pub fn inspect(value: dep::User) {
@@ -2162,26 +2412,26 @@ pub fn inspect(value: dep::User) {
 "#,
     );
 
-    // The second overlay changes only the app body. Its semantic view must still include the
-    // declaration introduced by the dependency overlay used as its base.
-    let app_overlay = fixture.dirty_overlay_from(
-        &dependency_overlay,
+    // The second override changes only the app body. Its semantic view must still include the
+    // declaration introduced by the dependency override used as its base.
+    let app_override = fixture.source_override_from(
+        &dependency_override,
         "crates/app/src/lib.rs",
         app_text.text(),
-        DirtyOverlayScope::ChangedPackages,
+        SourceOverrideScope::ChangedPackages,
     );
     let actual = fixture.render_dirty_project(
-        &app_overlay,
+        &app_override,
         app_text.text(),
         &[HostObservation::completions_at(
-            "receiver in overlay derived from dirty dependency",
+            "receiver after dependency override",
             "crates/app/src/lib.rs",
             app_text.offset("receiver"),
         )],
     );
 
     expect![[r#"
-        completions at `receiver in overlay derived from dirty dependency`
+        completions at `receiver after dependency override`
         - inherent_method dirty
         - inherent_method saved
     "#]]
@@ -2189,7 +2439,7 @@ pub fn inspect(value: dep::User) {
 }
 
 #[test]
-fn dirty_overlay_scope_controls_reverse_dependent_rebuilds() {
+fn source_override_scope_controls_reverse_dependent_rebuilds() {
     let fixture = ProjectFixture::build_with_package_residency_policy(
         r#"
 //- /Cargo.toml
@@ -2221,15 +2471,15 @@ pub fn use_dep(_: dep::Api) {}
         PackageResidencyPolicy::AllOffloadable,
     );
 
-    let local = fixture.dirty_overlay_with_scope(
+    let local = fixture.source_override_with_scope(
         "crates/dep/src/lib.rs",
         "pub struct Api;\npub struct Extra;\n",
-        DirtyOverlayScope::ChangedPackages,
+        SourceOverrideScope::ChangedPackages,
     );
-    let full = fixture.dirty_overlay_with_scope(
+    let full = fixture.source_override_with_scope(
         "crates/dep/src/lib.rs",
         "pub struct Api;\npub struct Extra;\n",
-        DirtyOverlayScope::ReverseDependencyClosure,
+        SourceOverrideScope::ReverseDependencyClosure,
     );
 
     let local_stats = local.snapshot().stats();
@@ -2242,12 +2492,12 @@ pub fn use_dep(_: dep::Api) {}
 }
 
 #[test]
-fn dirty_overlay_completes_keywords_after_parse_syntax_eviction() {
+fn source_override_completes_keywords_after_parse_syntax_eviction() {
     let fixture = HostFixture::build_with_package_residency_policy(
         r#"
 //- /Cargo.toml
 [package]
-name = "dirty_overlay_keyword_fixture"
+name = "source_override_keyword_fixture"
 version = "0.1.0"
 edition = "2024"
 
@@ -2271,9 +2521,9 @@ pub fn use_it() {
 "#,
     );
 
-    let overlay = fixture.dirty_overlay("src/lib.rs", dirty_text.text());
+    let derived = fixture.source_override("src/lib.rs", dirty_text.text());
     let actual = fixture.render_dirty_project(
-        &overlay,
+        &derived,
         dirty_text.text(),
         &[
             HostObservation::completions_at(

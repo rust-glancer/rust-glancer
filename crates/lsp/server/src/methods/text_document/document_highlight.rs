@@ -1,6 +1,6 @@
 use tower_lsp_server::{jsonrpc::Result, ls_types::*};
 
-use crate::methods::{MethodContext, internal_error, uri_to_path};
+use crate::methods::DocumentMethodContext;
 
 #[tracing::instrument(
     level = "trace", skip_all,
@@ -9,26 +9,24 @@ use crate::methods::{MethodContext, internal_error, uri_to_path};
     )
 )]
 pub(crate) async fn document_highlight(
-    ctx: MethodContext,
+    ctx: DocumentMethodContext,
     params: DocumentHighlightParams,
 ) -> Result<Option<Vec<DocumentHighlight>>> {
-    let Some(path) = uri_to_path(&params.text_document_position_params.text_document.uri) else {
-        return Ok(None);
-    };
     let position = params.text_document_position_params.position;
+    let input = ctx.target_position(position)?;
     tracing::trace!("document highlight request received");
-    let highlights = ctx
+    let result = ctx
         .engine_client
         .query(
             "document_highlight",
             move |engine_client, request_context| async move {
                 engine_client
-                    .document_highlight(request_context, path, position)
+                    .document_highlight(request_context, input)
                     .await
             },
         )
-        .await
-        .map_err(internal_error)?;
+        .await;
+    let highlights = ctx.finish_query(result)?;
     tracing::trace!(
         result_count = highlights.len(),
         "document highlight request answered"
