@@ -5,6 +5,8 @@ mod parser;
 
 use std::sync::LazyLock;
 
+use crate::compare_lsp::config::DIRTY_EDITOR_PREFIX_LINE_COUNT;
+
 pub(crate) use self::model::{QueryCase, QueryKind, QueryTarget, SourcePosition};
 
 use self::parser::parse_query_cases;
@@ -13,8 +15,19 @@ pub(crate) fn rust_analyzer_cases() -> &'static [QueryCase] {
     RUST_ANALYZER_CASES.as_slice()
 }
 
+pub(crate) fn rust_analyzer_dirty_cases() -> &'static [QueryCase] {
+    RUST_ANALYZER_DIRTY_CASES.as_slice()
+}
+
 static RUST_ANALYZER_CASES: LazyLock<Vec<QueryCase>> =
     LazyLock::new(|| parse_query_cases(RUST_ANALYZER_CASES_TEXT));
+
+static RUST_ANALYZER_DIRTY_CASES: LazyLock<Vec<QueryCase>> = LazyLock::new(|| {
+    parse_query_cases(RUST_ANALYZER_DIRTY_CASES_TEXT)
+        .into_iter()
+        .map(|query| query.shifted_lines(DIRTY_EDITOR_PREFIX_LINE_COUNT))
+        .collect()
+});
 
 // Format:
 //
@@ -191,3 +204,84 @@ crates/ide/src/references.rs:155:20 # hover/enum-variant: Some
 crates/ide/src/references.rs:156:20 # hover/enum-variant: None
 crates/ide/src/references.rs:91:8 # hover/field: search_scope
 "#;
+
+// This is intentionally a small preservation corpus rather than a second copy of the clean
+// benchmark. Coordinates below refer to the pinned saved checkout. The query model shifts them
+// past the harmless comment inserted by the dirty fixture.
+//
+// The selected cases cover current bodies, unchanged declaration headers, use items, and
+// document-wide reads. New module-level semantics and saved-only global operations are outside the
+// dirty-buffer contract and therefore do not contribute noise to this report.
+const RUST_ANALYZER_DIRTY_CASES_TEXT: &str = r#"
+[textDocument/definition]
+crates/ide/src/call_hierarchy.rs:36:4 # dirty/definition/body-qualified-call
+crates/ide/src/child_modules.rs:30:48 # dirty/definition/body-associated-function
+crates/ide/src/goto_definition.rs:125:16 # dirty/definition/body-helper-call
+crates/ide/src/goto_implementation.rs:83:28 # dirty/definition/body-implementation-helper
+crates/ide/src/lib.rs:89:21 # dirty/definition/unchanged-reexport
+crates/ide/src/references.rs:132:16 # dirty/definition/body-reference-helper
+
+[textDocument/typeDefinition]
+crates/ide/src/call_hierarchy.rs:52:12 # dirty/type-definition/current-local
+crates/ide/src/call_hierarchy.rs:20:17 # dirty/type-definition/unchanged-field-header
+crates/ide/src/navigation_target.rs:49:15 # dirty/type-definition/unchanged-struct-header
+crates/ide/src/references.rs:122:15 # dirty/type-definition/unchanged-parameter-header
+
+[textDocument/documentHighlight]
+crates/ide/src/call_hierarchy.rs:87:16 # dirty/document-highlight/current-local
+crates/ide/src/call_hierarchy.rs:43:14 # dirty/document-highlight/unchanged-function-header
+crates/ide/src/navigation_target.rs:140:11 # dirty/document-highlight/unchanged-method-header
+crates/ide/src/references.rs:178:25 # dirty/document-highlight/current-body-symbol
+
+[textDocument/documentSymbol]
+crates/ide/src/call_hierarchy.rs # dirty/document-symbol/call-hierarchy
+crates/ide/src/lib.rs # dirty/document-symbol/lib
+
+[textDocument/inlayHint]
+crates/ide/src/child_modules.rs # dirty/inlay-hint/child-modules
+crates/ide/src/hover.rs # dirty/inlay-hint/hover
+
+[textDocument/hover]
+crates/ide/src/call_hierarchy.rs:52:12 # dirty/hover/current-local
+crates/ide/src/call_hierarchy.rs:19:11 # dirty/hover/unchanged-type-header
+crates/ide/src/call_hierarchy.rs:20:8 # dirty/hover/unchanged-field-header
+crates/ide/src/hover.rs:130:14 # dirty/hover/unchanged-function-header
+crates/ide/src/lib.rs:109:24 # dirty/hover/unchanged-reexport
+"#;
+
+#[cfg(test)]
+mod tests {
+    use super::{QueryKind, QueryTarget, rust_analyzer_dirty_cases};
+    use crate::compare_lsp::config::{DIRTY_EDITOR_PREFIX, DIRTY_EDITOR_PREFIX_LINE_COUNT};
+
+    #[test]
+    fn dirty_queries_are_shifted_past_the_unsaved_prefix() {
+        assert_eq!(
+            u32::try_from(DIRTY_EDITOR_PREFIX.lines().count())
+                .expect("dirty editor prefix line count should fit u32"),
+            DIRTY_EDITOR_PREFIX_LINE_COUNT,
+        );
+        let first = rust_analyzer_dirty_cases()
+            .first()
+            .expect("dirty query corpus should not be empty");
+        let QueryTarget::Position { position, .. } = first.target() else {
+            panic!("first dirty query should target a position");
+        };
+
+        assert_eq!(position.line(), 37);
+        assert_eq!(position.character(), 4);
+    }
+
+    #[test]
+    fn dirty_corpus_contains_only_current_document_reads() {
+        assert!(rust_analyzer_dirty_cases().iter().all(|query| matches!(
+            query.kind(),
+            QueryKind::GotoDefinition
+                | QueryKind::TypeDefinition
+                | QueryKind::DocumentHighlight
+                | QueryKind::DocumentSymbol
+                | QueryKind::InlayHint
+                | QueryKind::Hover
+        )));
+    }
+}

@@ -57,6 +57,26 @@ impl StartedServers {
                 .context("Waiting for rust-analyzer post-ready settle failed")?,
         );
 
+        // Index the saved project first, then move both editors to the same stable unsaved text.
+        // Query latency should measure dirty-source analysis, not startup or a project rebuild.
+        if fixture.uses_dirty_editor_text() {
+            for source_path in &source_paths {
+                let text = fixture
+                    .editor_source_text(source_path)
+                    .context("Preparing dirty compare-lsp editor source failed")?;
+                rust_glancer_server
+                    .change_source_file(fixture.root(), source_path, text.clone())
+                    .await?;
+                rust_analyzer_server
+                    .change_source_file(fixture.root(), source_path, text)
+                    .await?;
+            }
+            tracing::info!(
+                changed_files = source_paths.len(),
+                "compare-lsp dirty editor state prepared"
+            );
+        }
+
         Ok(Self {
             rust_glancer_server,
             rust_analyzer_server,
