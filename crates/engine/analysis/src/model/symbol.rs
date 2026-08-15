@@ -3,7 +3,7 @@ use rg_ir_model::{
     ModuleRef,
     identity::{DeclarationRef, ExprRef, FunctionBodyRef, LexicalScopeRef},
 };
-use rg_ir_view::source::IndexedTypePathScope;
+use rg_ir_view::source::IndexedTypePath;
 use rg_parse::Span;
 
 /// Symbol found at one source offset.
@@ -20,8 +20,7 @@ pub enum SymbolAt {
     Expr { expr: ExprRef },
     /// Type-namespace path, e.g. `User` in a signature or `let user: User;`.
     TypePath {
-        scope: IndexedTypePathScope,
-        path: Path,
+        type_path: IndexedTypePath,
         span: Span,
     },
     /// Value-namespace path inside a lowered body.

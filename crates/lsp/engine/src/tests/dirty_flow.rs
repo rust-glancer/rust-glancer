@@ -208,6 +208,138 @@ impl F$impl$oo {
 }
 
 #[tokio::test]
+async fn dirty_module_use_paths_resolve_in_saved_module_scope() {
+    let fixture = LspEngineFixture::initialized(
+        r#"
+        //- /Cargo.toml
+        [package]
+        name = "lsp_dirty_use_paths"
+        version = "0.1.0"
+        edition = "2024"
+
+        //- /src/lib.rs
+        pub mod api {
+            pub mod nested {
+                pub struct User;
+                pub struct Account;
+            }
+        }
+
+        pub mod exports {
+            pub use crate::api::{nested::User, nested::Account as PublicAccount};
+        }
+        "#,
+    )
+    .await;
+
+    fixture.did_open_saved("src/lib.rs", 1).await;
+    let dirty = fixture
+        .did_change_full(
+            "src/lib.rs",
+            2,
+            MarkedText::parse(
+                r#"
+// An unrelated edit moves every saved import span.
+pub mod api {
+    pub mod nested {
+        pub struct User;
+        pub struct Account;
+    }
+}
+
+pub mod exports {
+    pub use crate::api::{nested::Us$user_hover$er, nested::Account as Public$alias_definition$Account};
+}
+"#,
+            ),
+        )
+        .await;
+
+    fixture
+        .check_dirty(
+            &dirty,
+            &[
+                LspQuery::hover("hover a moved re-export path", "user_hover"),
+                LspQuery::goto_definition("define a moved re-export alias", "alias_definition"),
+            ],
+            expect![[r#"
+                hover a moved re-export path
+                - range: /src/lib.rs:10:33-10:37
+                - markdown:
+                  ```rust
+                  lsp_dirty_use_paths::api::nested::User
+                  ```
+
+                  ```rust
+                  pub struct User
+                  ```
+
+                define a moved re-export alias
+                - /src/lib.rs:5:19-5:26
+            "#]],
+        )
+        .await;
+
+    fixture.shutdown().await;
+}
+
+#[tokio::test]
+async fn dirty_associated_header_type_definition_lowers_transparent_aliases() {
+    let fixture = LspEngineFixture::initialized(
+        r#"
+        //- /Cargo.toml
+        [package]
+        name = "lsp_dirty_type_alias"
+        version = "0.1.0"
+        edition = "2024"
+
+        //- /src/lib.rs
+        pub struct Wrapper<T>(pub T);
+        pub struct User;
+        pub type Alias<T> = Wrapper<T>;
+
+        pub fn inspect(_: Alias<User>) {}
+        "#,
+    )
+    .await;
+
+    fixture.did_open_saved("src/lib.rs", 1).await;
+    let dirty = fixture
+        .did_change_full(
+            "src/lib.rs",
+            2,
+            MarkedText::parse(
+                r#"
+// Move the unchanged signature away from every saved offset.
+pub struct Wrapper<T>(pub T);
+pub struct User;
+pub type Alias<T> = Wrapper<T>;
+
+pub fn inspect(_: Ali$alias_type$as<User>) {}
+"#,
+            ),
+        )
+        .await;
+
+    fixture
+        .check_dirty(
+            &dirty,
+            &[LspQuery::goto_type_definition(
+                "type of an alias in a moved header",
+                "alias_type",
+            )],
+            expect![[r#"
+                type of an alias in a moved header
+                - /src/lib.rs:2:11-2:18
+                - /src/lib.rs:3:11-3:15
+            "#]],
+        )
+        .await;
+
+    fixture.shutdown().await;
+}
+
+#[tokio::test]
 async fn completion_ignores_unsaved_changes_to_a_sibling_declaration() {
     let fixture = LspEngineFixture::initialized(
         r#"

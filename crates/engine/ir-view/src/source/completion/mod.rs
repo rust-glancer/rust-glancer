@@ -33,10 +33,10 @@ use rg_ir_model::{
 };
 use rg_item_tree::{FromAst as _, TypePath, TypeRef};
 use rg_parse::{FileId, LineIndex, Span};
-use rg_semantic_ir::TypePathContext;
 use rg_syntax::{AstNode as _, Edition, SourceFile, ast};
 use rg_text::NameInterner;
 
+use super::occurrence::IndexedSignatureTypeScope;
 use super::scan::{
     AssociatedPathQualifier, BodyQualifiedPathContext, ModuleSourceSiteScanner,
     PathCompletionSiteScanner, PatternCompletionKind, SignatureCompletionSite,
@@ -220,28 +220,6 @@ pub enum IndexedPatternCompletionKind {
     TupleConstructor,
     /// A constructor followed by named fields, such as `Act$0 { field }`.
     RecordConstructor,
-}
-
-/// Semantic owner of a type path written in an item signature.
-///
-/// The type-path context resolves module names and impl `Self`; the generic owner identifies the
-/// type and const parameters inherited by this particular declaration. For example, the cursor in
-/// `impl<T> Wrapper<T> { fn map<U>(_: U$0) {} }` needs the function owner to see `U`, while its
-/// type-path context supplies the impl's module and `Self` type.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct IndexedSignatureTypeScope {
-    context: TypePathContext,
-    generic_owner: GenericDefRef,
-}
-
-impl IndexedSignatureTypeScope {
-    pub fn context(self) -> TypePathContext {
-        self.context
-    }
-
-    pub fn generic_owner(self) -> GenericDefRef {
-        self.generic_owner
-    }
 }
 
 /// Position of an unqualified type-shaped name within its surrounding annotation.
@@ -720,9 +698,6 @@ impl<'a, 'db> SourceCompletionView<'a, 'db> {
     }
 
     fn signature_scope(scope: SignatureTypePathScope) -> IndexedSignatureTypeScope {
-        IndexedSignatureTypeScope {
-            context: scope.context,
-            generic_owner: scope.generic_owner,
-        }
+        IndexedSignatureTypeScope::new(scope.context, scope.generic_owner)
     }
 }

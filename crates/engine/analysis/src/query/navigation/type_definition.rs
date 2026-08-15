@@ -30,8 +30,11 @@ impl<'a, 'db> TypeDefinitionResolver<'a, 'db> {
         let Some(ty) = SourceSymbolResolver::new(self.0.view_db()).ty_for_symbol(symbol)? else {
             return Ok(Vec::new());
         };
+        let declarations = ty
+            .contained_nominal_type_defs()
+            .into_iter()
+            .map(DeclarationRef::from);
 
-        NavigationTargetProjection::new(self.0.view_db())
-            .targets_for_declarations(ty.nominal_type_defs().map(DeclarationRef::from))
+        NavigationTargetProjection::new(self.0.view_db()).targets_for_declarations(declarations)
     }
 }

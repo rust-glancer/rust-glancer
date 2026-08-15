@@ -246,14 +246,20 @@ impl<'a> Analysis<'a> {
         file_id: FileId,
         offset: u32,
     ) -> anyhow::Result<Option<SourceSymbol>> {
-        // Saved and exact source can share one offset. For edited source, first ask only the Body
-        // IR built from the editor text. If the cursor is in an unchanged item header instead, the
-        // declaration association below supplies the saved semantic symbol and its current range.
+        // Saved and exact source can share one offset. Edited source is read in three explicit
+        // layers: current Body IR, module-level current syntax, then an unchanged header paired to
+        // saved semantics. None of those paths interpret the current offset in a saved scanner.
         match self.current_source_relationship(crate_ref.package, file_id) {
             Some(SavedSourceRelationship::Different) => {
                 let current_body_symbols = SourceSymbolIndex::new(self.view_db())
                     .body_symbols_at(crate_ref, file_id, offset)?;
                 if let Some(symbol) = Self::narrowest_source_symbol(current_body_symbols) {
+                    return Ok(Some(symbol));
+                }
+
+                if let Some(symbol) =
+                    self.current_module_use_source_symbol(crate_ref, file_id, offset)?
+                {
                     return Ok(Some(symbol));
                 }
 
@@ -263,6 +269,30 @@ impl<'a> Analysis<'a> {
                 SourceSymbolIndex::new(self.view_db()).symbols_at(crate_ref, file_id, offset)?,
             )),
         }
+    }
+
+    /// Resolve a module-level import spelling from current syntax in its matching saved module.
+    fn current_module_use_source_symbol(
+        &self,
+        crate_ref: CrateRef,
+        file_id: FileId,
+        current_offset: u32,
+    ) -> anyhow::Result<Option<SourceSymbol>> {
+        let Some(source) = self.current_source(crate_ref.package, file_id) else {
+            return Ok(None);
+        };
+        let edition = self.view_db.crate_edition(crate_ref)?;
+        let Some(parse) = source.parse(edition) else {
+            return Ok(None);
+        };
+        let syntax = parse.tree();
+        let symbols = SourceSymbolIndex::new(self.view_db()).current_module_use_symbols_at(
+            crate_ref,
+            file_id,
+            &syntax,
+            current_offset,
+        )?;
+        Ok(Self::narrowest_source_symbol(symbols))
     }
 
     /// Find saved semantics for a current header token that has one matching saved declaration.

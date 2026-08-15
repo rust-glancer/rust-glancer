@@ -11,7 +11,8 @@ use rg_package_store::PackageStoreError;
 use rg_semantic_ir::{ItemLookupIndex, ItemStoreQuery, ItemStoreSource, TypePathResolution};
 use rg_ty::{
     AssociatedItemCandidateRef, Autoderef, ImplMatcher, ItemPathQuery, SemanticSignatureQuery,
-    TraitSelectionQuery, TraitSelectionSession, TyContext, TypeLoweringAnchor, TypePathResolver,
+    TraitSelectionQuery, TraitSelectionSession, Ty, TyContext, TypeLoweringAnchor,
+    TypePathResolver,
 };
 
 use crate::{BodyData, BodyView, ir::BodyQueryView};
@@ -186,6 +187,15 @@ where
 
     pub fn type_path_query(&self) -> BodyTypePathQuery<'a, D, I> {
         BodyTypePathQuery::new(self.clone())
+    }
+
+    /// Lower source-shaped type syntax with the generic and lexical scope of this body.
+    pub fn resolve_type_ref(
+        &self,
+        scope: ScopeId,
+        type_ref: &TypeRef,
+    ) -> Result<Ty, PackageStoreError> {
+        self.type_refs(scope).resolve(type_ref)
     }
 
     pub fn value_paths(&self) -> BodyValuePathQuery<'a, D, I> {

@@ -9,16 +9,18 @@
 //! inputs distinct instead of forcing scanners to choose a navigation result.
 
 use rg_ir_model::{
-    BodyBindingRef, CrateRef, FieldKey, ModuleRef, Path,
+    BodyBindingRef, CrateRef, FieldKey, GenericDefRef, ModuleRef, Path,
     identity::{DeclarationRef, ExprRef, FunctionBodyRef, LexicalScopeRef},
 };
+use rg_item_tree::TypeRef;
 use rg_parse::{FileId, Span};
 use rg_semantic_ir::TypePathContext;
 
 use super::scan::{
     BindingSurface, BodyCursorScanner, BodySourceCandidate, BodySourceScanner,
-    DefinitionSourceCandidate, DefinitionSourceScanner, RecordFieldKeySurface,
-    SignatureSourceCandidate, SignatureSourceScanner, ValueReferenceSource, ValueReferenceSurface,
+    CurrentUsePathScanner, DefinitionSourceCandidate, DefinitionSourceScanner,
+    RecordFieldKeySurface, SignatureSourceCandidate, SignatureSourceScanner, ValueReferenceSource,
+    ValueReferenceSurface,
 };
 use crate::{IndexedViewDb, item::declaration::DeclarationView};
 
@@ -196,10 +198,7 @@ pub enum IndexedSourceFact {
     /// A lowered expression whose exact meaning is available from Body IR.
     Expr(ExprRef),
     /// A path written in a type position, together with its signature or body scope.
-    TypePath {
-        scope: IndexedTypePathScope,
-        path: Path,
-    },
+    TypePath(IndexedTypePath),
     /// A value path without a dedicated lowered expression, most commonly a pattern path segment.
     ValuePath { scope: LexicalScopeRef, path: Path },
     /// A field key in a record expression or pattern.
@@ -219,8 +218,71 @@ pub enum IndexedSourceFact {
 /// a module alone.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IndexedTypePathScope {
-    Signature(TypePathContext),
+    Signature(IndexedSignatureTypeScope),
     Body(LexicalScopeRef),
+}
+
+/// Semantic owner of a type path written in an item signature.
+///
+/// The type-path context resolves module names and impl `Self`; the generic owner identifies the
+/// type and const parameters inherited by this particular declaration. For example, the cursor in
+/// `impl<T> Wrapper<T> { fn map<U>(_: U$0) {} }` needs the function owner to see `U`, while its
+/// type-path context supplies the impl's module and `Self` type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct IndexedSignatureTypeScope {
+    context: TypePathContext,
+    generic_owner: GenericDefRef,
+}
+
+impl IndexedSignatureTypeScope {
+    pub(crate) fn new(context: TypePathContext, generic_owner: GenericDefRef) -> Self {
+        Self {
+            context,
+            generic_owner,
+        }
+    }
+
+    pub fn context(self) -> TypePathContext {
+        self.context
+    }
+
+    pub fn generic_owner(self) -> GenericDefRef {
+        self.generic_owner
+    }
+}
+
+/// One type path with the data needed for name lookup and type lowering.
+///
+/// Every occurrence keeps the compact path used by name resolution. A cursor scan also keeps the
+/// original `TypeRef`, so a type query can lower written generic arguments such as `<User>`.
+/// Whole-file scans omit that extra copy because references and rename only need the compact path.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IndexedTypePath {
+    scope: IndexedTypePathScope,
+    path: Path,
+    type_ref: Option<TypeRef>,
+}
+
+impl IndexedTypePath {
+    fn new(scope: IndexedTypePathScope, path: Path, type_ref: Option<TypeRef>) -> Self {
+        Self {
+            scope,
+            path,
+            type_ref,
+        }
+    }
+
+    pub fn scope(&self) -> IndexedTypePathScope {
+        self.scope
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    pub(crate) fn type_ref(&self) -> Option<&TypeRef> {
+        self.type_ref.as_ref()
+    }
 }
 
 /// Finds declaration, reference, and structural source occurrences.
@@ -309,6 +371,26 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
             }
         }
         Ok(occurrences)
+    }
+
+    /// Return a module-level import occurrence whose path and span come from current syntax.
+    ///
+    /// The saved DefMap contributes only the module namespace selected by the current inline-module
+    /// path. This method never asks a saved source scanner to interpret `offset`.
+    pub fn current_module_use_occurrences_at(
+        &self,
+        crate_ref: CrateRef,
+        file_id: FileId,
+        source: &rg_syntax::SourceFile,
+        offset: u32,
+    ) -> anyhow::Result<Vec<IndexedSourceOccurrence>> {
+        Ok(
+            CurrentUsePathScanner::new(&self.db.def_map, crate_ref, file_id, source, offset)
+                .scan()?
+                .into_iter()
+                .filter_map(|candidate| Self::definition_occurrence(crate_ref, candidate))
+                .collect(),
+        )
     }
 
     /// Return declaration occurrences whose coordinates come from saved source indexes.
@@ -454,15 +536,20 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
                 self.declaration_occurrence(declaration, crate_ref, span, fallback_file_id)?
             }
             SignatureSourceCandidate::TypePath {
-                context,
+                scope,
                 path,
+                type_ref,
                 file_id,
                 span,
             } => Some(IndexedSourceOccurrence::reference(
-                IndexedSourceFact::TypePath {
-                    scope: IndexedTypePathScope::Signature(context),
+                IndexedSourceFact::TypePath(IndexedTypePath::new(
+                    IndexedTypePathScope::Signature(IndexedSignatureTypeScope::new(
+                        scope.context,
+                        scope.generic_owner,
+                    )),
                     path,
-                },
+                    type_ref,
+                )),
                 crate_ref,
                 file_id,
                 span,
@@ -674,13 +761,15 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
                 body,
                 scope,
                 path,
+                type_ref,
                 file_id,
                 ..
             } => Some(IndexedSourceOccurrence::reference(
-                IndexedSourceFact::TypePath {
-                    scope: IndexedTypePathScope::Body(LexicalScopeRef::new(body, scope)),
+                IndexedSourceFact::TypePath(IndexedTypePath::new(
+                    IndexedTypePathScope::Body(LexicalScopeRef::new(body, scope)),
                     path,
-                },
+                    type_ref,
+                )),
                 crate_ref,
                 file_id,
                 span,

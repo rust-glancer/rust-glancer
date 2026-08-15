@@ -15,7 +15,9 @@ use rg_ir_model::{BodyRef, FieldKey, Path, ScopeId};
 use rg_item_tree::TypePath;
 use rg_parse::{FileId, Span};
 
-use rg_body_ir::{BodyPath, BodyView, ExprKind, PatData, RecordExprField};
+use rg_body_ir::{
+    BodyAssociatedPathPrefix, BodyPath, BodyView, ExprKind, PatData, RecordExprField,
+};
 
 use super::{
     BodySourceCandidate, ValueReferenceSource, ValueReferenceSurface, sites::BodyScanSites,
@@ -81,13 +83,21 @@ impl<'a> TypePathSourceScanner<'a> {
 
         for (idx, segment) in path.segments.iter().enumerate() {
             if self.offset_matches(segment.span) {
-                let Some(path) = path.as_def_map_path_prefix(idx) else {
+                let Some(def_map_path) = path.as_def_map_path_prefix(idx) else {
                     continue;
                 };
                 self.candidates.push(BodySourceCandidate::TypePath {
                     body: self.body_ref,
                     scope,
-                    path,
+                    path: def_map_path,
+                    type_ref: self.offset.map(|_| {
+                        rg_item_tree::TypeRef::Path(TypePath {
+                            source_span: path.source_span,
+                            absolute: path.absolute,
+                            anchor: path.anchor.clone(),
+                            segments: path.segments[..=idx].to_vec(),
+                        })
+                    }),
                     file_id,
                     span: segment.span,
                 });
@@ -267,7 +277,13 @@ impl<'a> BodyPathSourceScanner<'a> {
                 continue;
             };
             if self.offset_matches(span) {
-                let Some(path) = path.prefix_through(idx) else {
+                let type_ref =
+                    self.offset
+                        .and_then(|_| match path.associated_prefix_through(idx) {
+                            Some(BodyAssociatedPathPrefix::Type(type_ref)) => Some(type_ref),
+                            Some(BodyAssociatedPathPrefix::QualifiedTrait { .. }) | None => None,
+                        });
+                let Some(def_map_path) = path.prefix_through(idx) else {
                     continue;
                 };
                 if idx + 1 < segment_count
@@ -278,7 +294,8 @@ impl<'a> BodyPathSourceScanner<'a> {
                     self.candidates.push(BodySourceCandidate::TypePath {
                         body: self.body_ref,
                         scope,
-                        path: path.clone(),
+                        path: def_map_path,
+                        type_ref,
                         file_id,
                         span,
                     });
@@ -290,7 +307,7 @@ impl<'a> BodyPathSourceScanner<'a> {
                         scope,
                         file_id,
                         span,
-                        source: ValueReferenceSource::Path(path),
+                        source: ValueReferenceSource::Path(def_map_path),
                         surface: ValueReferenceSurface::Plain,
                     });
                 }

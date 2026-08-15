@@ -18,11 +18,11 @@ pub use completion::{
     IndexedAssociatedTypeBindingSite, IndexedMemberAccessSite, IndexedModuleSourceSite,
     IndexedPatternCompletionKind, IndexedQualifiedPathContext, IndexedQualifiedPathScope,
     IndexedQualifiedPathSite, IndexedRecordFieldListSite, IndexedRecordOwner,
-    IndexedSignatureTypeScope, IndexedSignatureTypeSite, IndexedTraitImplSite,
-    IndexedTypeNamePosition, IndexedUnqualifiedNameContext, IndexedUnqualifiedNameScope,
-    IndexedUnqualifiedNameSite, SourceCompletionView,
+    IndexedSignatureTypeSite, IndexedTraitImplSite, IndexedTypeNamePosition,
+    IndexedUnqualifiedNameContext, IndexedUnqualifiedNameScope, IndexedUnqualifiedNameSite,
+    SourceCompletionView,
 };
 pub use occurrence::{
-    IndexedSourceFact, IndexedSourceOccurrence, IndexedSourceRole, IndexedSourceSurface,
-    IndexedTypePathScope, SourceOccurrenceView,
+    IndexedSignatureTypeScope, IndexedSourceFact, IndexedSourceOccurrence, IndexedSourceRole,
+    IndexedSourceSurface, IndexedTypePath, IndexedTypePathScope, SourceOccurrenceView,
 };

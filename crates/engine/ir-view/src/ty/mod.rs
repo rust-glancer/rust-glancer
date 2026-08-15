@@ -13,10 +13,16 @@ use rg_ir_model::{
 };
 use rg_semantic_ir::{ItemStoreQuery, TypePathContext, TypePathResolution};
 use rg_std::ExpectedUnique;
-use rg_ty::{AdtTy, ItemPathQuery, ReferencePeelingCandidates, SemanticSignatureQuery, Ty};
+use rg_ty::{
+    AdtTy, AliasTy, GenericArg, ItemPathQuery, ReferencePeelingCandidates, SemanticSignatureQuery,
+    Ty, TypeLoweringAnchor, TypeLoweringEnv, TypeLoweringQuery,
+};
 
 use crate::{
-    IndexedViewDb, body::BodyResolutionView, source::IndexedTypePathScope, ty::locals::BodyView,
+    IndexedViewDb,
+    body::BodyResolutionView,
+    source::{IndexedSignatureTypeScope, IndexedTypePath, IndexedTypePathScope},
+    ty::locals::BodyView,
 };
 
 /// An inferred type carried across the compiler-to-editor boundary.
@@ -71,6 +77,69 @@ impl IndexedType {
             result.push(type_def);
         }
         result
+    }
+
+    /// Return each nominal type contained in this type, including generic arguments.
+    ///
+    /// For `Wrapper<User>`, this returns both `Wrapper` and `User`. References and other
+    /// structural wrappers do not hide the types inside them.
+    pub fn contained_nominal_type_defs(&self) -> Vec<TypeDefRef> {
+        let mut type_defs = Vec::new();
+        Self::collect_nominal_type_defs(self.raw(), &mut type_defs);
+        type_defs
+    }
+
+    fn collect_nominal_type_defs(ty: &Ty, type_defs: &mut Vec<TypeDefRef>) {
+        match ty {
+            Ty::Adt(adt) => {
+                if !type_defs.contains(&adt.def) {
+                    type_defs.push(adt.def);
+                }
+                Self::collect_nominal_type_args(&adt.args, type_defs);
+            }
+            Ty::Tuple(fields) => {
+                for field in fields {
+                    Self::collect_nominal_type_defs(field, type_defs);
+                }
+            }
+            Ty::Array { inner, .. }
+            | Ty::Slice(inner)
+            | Ty::Reference { inner, .. }
+            | Ty::RawPointer { inner, .. } => Self::collect_nominal_type_defs(inner, type_defs),
+            Ty::FnPointer { params, ret } => {
+                for param in params {
+                    Self::collect_nominal_type_defs(param, type_defs);
+                }
+                Self::collect_nominal_type_defs(ret, type_defs);
+            }
+            Ty::Alias(AliasTy::Projection(alias)) => {
+                Self::collect_nominal_type_args(&alias.args, type_defs)
+            }
+            Ty::Alias(AliasTy::Opaque(alias)) => {
+                Self::collect_nominal_type_args(&alias.args, type_defs)
+            }
+            Ty::Closure(closure) => {
+                for param in &closure.params {
+                    Self::collect_nominal_type_defs(param, type_defs);
+                }
+                Self::collect_nominal_type_defs(&closure.ret, type_defs);
+            }
+            Ty::FnDef(function) => Self::collect_nominal_type_args(&function.args, type_defs),
+            Ty::Unit
+            | Ty::Never
+            | Ty::Primitive(_)
+            | Ty::Param(_)
+            | Ty::Unknown
+            | Ty::InferVar { .. } => {}
+        }
+    }
+
+    fn collect_nominal_type_args(args: &[GenericArg], type_defs: &mut Vec<TypeDefRef>) {
+        for arg in args {
+            if let GenericArg::Type(ty) = arg {
+                Self::collect_nominal_type_defs(ty, type_defs);
+            }
+        }
     }
 }
 
@@ -141,9 +210,9 @@ impl<'a, 'db> TyView<'a, 'db> {
             return Ok(IndexedType::new(Ty::Primitive(primitive)));
         }
 
-        Ok(IndexedType::new(Self::type_path_resolution_to_ty(
-            resolution,
-        )))
+        Ok(IndexedType::new(
+            self.type_path_resolution_to_ty(resolution)?,
+        ))
     }
 
     /// Resolve a type path from a module scope with no declaration-owned generics.
@@ -158,15 +227,46 @@ impl<'a, 'db> TyView<'a, 'db> {
     /// Resolve a type path from either signature or body source.
     pub fn ty_for_indexed_type_path(
         &self,
-        scope: IndexedTypePathScope,
-        path: &Path,
+        type_path: &IndexedTypePath,
     ) -> anyhow::Result<IndexedType> {
-        match scope {
-            IndexedTypePathScope::Signature(context) => self.ty_for_type_path(context, path),
+        if let Some(type_ref) = type_path.type_ref() {
+            let ty = match type_path.scope() {
+                IndexedTypePathScope::Signature(scope) => {
+                    self.ty_for_signature_type_ref(scope, type_ref)?
+                }
+                IndexedTypePathScope::Body(scope) => BodyResolutionView::new(self.db)
+                    .type_ref_ty(scope.body_ir(), scope.scope_id(), type_ref)?
+                    .unwrap_or(Ty::Unknown),
+            };
+            return Ok(IndexedType::new(ty));
+        }
+
+        match type_path.scope() {
+            IndexedTypePathScope::Signature(scope) => {
+                self.ty_for_type_path(scope.context(), type_path.path())
+            }
             IndexedTypePathScope::Body(scope) => {
-                self.ty_for_body_type_path(scope.body_ir(), scope.scope_id(), path)
+                self.ty_for_body_type_path(scope.body_ir(), scope.scope_id(), type_path.path())
             }
         }
+    }
+
+    /// Lower the complete type spelling from an item signature in its declaration scope.
+    fn ty_for_signature_type_ref(
+        &self,
+        scope: IndexedSignatureTypeScope,
+        type_ref: &rg_item_tree::TypeRef,
+    ) -> anyhow::Result<Ty> {
+        let item_paths = ItemPathQuery::new(self.db, self.db);
+        TypeLoweringQuery::new(&item_paths, &item_paths)
+            .lower(
+                type_ref,
+                TypeLoweringEnv::new(
+                    scope.generic_owner(),
+                    TypeLoweringAnchor::Context(scope.context()),
+                ),
+            )
+            .context("lower signature type reference")
     }
 
     /// Resolve a body type path into an indexed type.
@@ -186,9 +286,9 @@ impl<'a, 'db> TyView<'a, 'db> {
             return Ok(IndexedType::new(Ty::Primitive(primitive)));
         }
 
-        Ok(IndexedType::new(Self::type_path_resolution_to_ty(
-            resolution,
-        )))
+        Ok(IndexedType::new(
+            self.type_path_resolution_to_ty(resolution)?,
+        ))
     }
 
     /// Resolve a body value path into its expression type.
@@ -225,9 +325,16 @@ impl<'a, 'db> TyView<'a, 'db> {
         Ok(Some(Ty::adt(AdtTy::bare(data.owner))))
     }
 
-    /// Convert a type-path result to `Ty`, using unknown for non-type values.
-    fn type_path_resolution_to_ty(resolution: TypePathResolution) -> Ty {
-        Ty::from_type_path_resolution(resolution, Vec::new()).unwrap_or(Ty::Unknown)
+    /// Convert a type-path result to `Ty`, lowering transparent aliases through their declaration.
+    fn type_path_resolution_to_ty(&self, resolution: TypePathResolution) -> anyhow::Result<Ty> {
+        if let TypePathResolution::TypeAlias(alias) = resolution {
+            return Ok(SemanticSignatureQuery::new(self.db, self.db)
+                .type_alias_ty(alias)
+                .context("lower transparent type alias")?
+                .unwrap_or(Ty::Unknown));
+        }
+
+        Ok(Ty::from_type_path_resolution(resolution, Vec::new()).unwrap_or(Ty::Unknown))
     }
 
     /// Open the body-local type view.

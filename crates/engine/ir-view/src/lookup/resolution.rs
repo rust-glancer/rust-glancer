@@ -42,7 +42,8 @@ impl<'a, 'db> ResolutionView<'a, 'db> {
         path: &Path,
     ) -> anyhow::Result<Vec<DeclarationRef>> {
         match scope {
-            IndexedTypePathScope::Signature(context) => {
+            IndexedTypePathScope::Signature(scope) => {
+                let context = scope.context();
                 let declarations = self.declarations_for_semantic_type_path(context, path)?;
                 if declarations.is_empty() {
                     self.declarations_for_use_path(context.module, path)

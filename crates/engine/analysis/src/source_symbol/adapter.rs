@@ -86,7 +86,7 @@ impl SourceSymbol {
             }
             IndexedSourceFact::FunctionBody(body) => SymbolAt::FunctionBody { body },
             IndexedSourceFact::Expr(expr) => SymbolAt::Expr { expr },
-            IndexedSourceFact::TypePath { scope, path } => SymbolAt::TypePath { scope, path, span },
+            IndexedSourceFact::TypePath(type_path) => SymbolAt::TypePath { type_path, span },
             IndexedSourceFact::ValuePath { scope, path } => {
                 SymbolAt::ValuePath { scope, path, span }
             }

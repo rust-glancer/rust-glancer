@@ -155,9 +155,10 @@ impl ReferenceSearchHints {
         candidate: &SourceSymbol,
     ) -> anyhow::Result<Option<String>> {
         match candidate.symbol() {
-            SymbolAt::TypePath { path, .. }
-            | SymbolAt::ValuePath { path, .. }
-            | SymbolAt::UsePath { path, .. } => Ok(path.last_segment_label()),
+            SymbolAt::TypePath { type_path, .. } => Ok(type_path.path().last_segment_label()),
+            SymbolAt::ValuePath { path, .. } | SymbolAt::UsePath { path, .. } => {
+                Ok(path.last_segment_label())
+            }
             SymbolAt::RecordField { key, .. } => Ok(Some(key.declaration_label())),
             SymbolAt::Expr { expr } => {
                 if let IndexedSourceSurface::RecordExprShorthandValue { key, .. } =

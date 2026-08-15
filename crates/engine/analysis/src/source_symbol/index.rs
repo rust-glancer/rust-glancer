@@ -3,6 +3,7 @@
 use rg_ir_model::CrateRef;
 use rg_ir_view::{IndexedViewDb, source::SourceOccurrenceView};
 use rg_parse::FileId;
+use rg_syntax::SourceFile;
 
 use super::SourceSymbol;
 
@@ -37,6 +38,21 @@ impl<'a, 'db> SourceSymbolIndex<'a, 'db> {
     ) -> anyhow::Result<Vec<SourceSymbol>> {
         Ok(SourceOccurrenceView::new(self.db)
             .body_occurrences_at(crate_ref, file_id, offset)?
+            .into_iter()
+            .map(SourceSymbol::from_occurrence)
+            .collect())
+    }
+
+    /// Read a module-level import from current syntax and resolve it in the matching saved module.
+    pub(crate) fn current_module_use_symbols_at(
+        &self,
+        crate_ref: CrateRef,
+        file_id: FileId,
+        source: &SourceFile,
+        offset: u32,
+    ) -> anyhow::Result<Vec<SourceSymbol>> {
+        Ok(SourceOccurrenceView::new(self.db)
+            .current_module_use_occurrences_at(crate_ref, file_id, source, offset)?
             .into_iter()
             .map(SourceSymbol::from_occurrence)
             .collect())

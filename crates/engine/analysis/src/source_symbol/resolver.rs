@@ -29,8 +29,8 @@ impl<'a, 'db> SourceSymbolResolver<'a, 'db> {
                 Ok(vec![resolution.canonical_declaration(declaration)?])
             }
             SymbolAt::Expr { expr } => resolution.declarations_for_expr(expr),
-            SymbolAt::TypePath { scope, path, .. } => {
-                resolution.declarations_for_type_path(scope, &path)
+            SymbolAt::TypePath { type_path, .. } => {
+                resolution.declarations_for_type_path(type_path.scope(), type_path.path())
             }
             SymbolAt::ValuePath { scope, path, .. } => resolution.declarations_for_body_value_path(
                 scope.body_ir(),
@@ -60,8 +60,8 @@ impl<'a, 'db> SourceSymbolResolver<'a, 'db> {
                     ResolutionView::new(self.db).canonical_declaration(declaration)?;
                 ty_view.ty_for_declaration(declaration)?
             }
-            SymbolAt::TypePath { scope, path, .. } => {
-                Some(ty_view.ty_for_indexed_type_path(scope, &path)?)
+            SymbolAt::TypePath { type_path, .. } => {
+                Some(ty_view.ty_for_indexed_type_path(&type_path)?)
             }
             SymbolAt::ValuePath { scope, path, .. } => {
                 Some(ty_view.ty_for_body_value_path(scope.body_ir(), scope.scope_id(), &path)?)

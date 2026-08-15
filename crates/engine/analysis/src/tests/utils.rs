@@ -867,10 +867,14 @@ impl<'a> AnalysisQuerySnapshot<'a> {
                 )
                 .expect("string writes should not fail");
             }
-            SymbolAt::TypePath { ref path, span, .. } => {
+            SymbolAt::TypePath {
+                ref type_path,
+                span,
+            } => {
                 writeln!(
                     dump,
-                    "\n- type path {path} @ {}",
+                    "\n- type path {} @ {}",
+                    type_path.path(),
                     self.render_source_span(package, file_id, span)
                 )
                 .expect("string writes should not fail");

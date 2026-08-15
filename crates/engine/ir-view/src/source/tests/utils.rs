@@ -123,7 +123,9 @@ fn render_occurrence(
             },
             IndexedSourceFact::FunctionBody(_) => "body".to_string(),
             IndexedSourceFact::Expr(_) => "expr".to_string(),
-            IndexedSourceFact::TypePath { path, .. } => format!("type_path {path}"),
+            IndexedSourceFact::TypePath(type_path) => {
+                format!("type_path {}", type_path.path())
+            }
             IndexedSourceFact::ValuePath { path, .. } => format!("value_path {path}"),
             IndexedSourceFact::RecordField { owner, key, .. } => {
                 format!("record_field {owner}::{}", key.declaration_label())

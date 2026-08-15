@@ -88,12 +88,20 @@ impl SignatureScanCollector for SignatureOccurrenceCollector {
             if !self.offset_matches(segment.span) {
                 continue;
             }
-            let Some(path) = path.as_def_map_path_prefix(idx) else {
+            let Some(def_map_path) = path.as_def_map_path_prefix(idx) else {
                 continue;
             };
             self.push_candidate(SignatureSourceCandidate::TypePath {
-                context: scope.context,
-                path,
+                scope,
+                path: def_map_path,
+                type_ref: self.offset.map(|_| {
+                    rg_item_tree::TypeRef::Path(TypePath {
+                        source_span: path.source_span,
+                        absolute: path.absolute,
+                        anchor: path.anchor.clone(),
+                        segments: path.segments[..=idx].to_vec(),
+                    })
+                }),
                 file_id,
                 span: segment.span,
             });

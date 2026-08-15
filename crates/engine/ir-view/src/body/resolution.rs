@@ -78,6 +78,35 @@ impl<'a, 'db> BodyResolutionView<'a, 'db> {
         ))
     }
 
+    /// Lower a complete source type without dropping its written generic arguments.
+    pub(crate) fn type_ref_ty(
+        &self,
+        body_ref: BodyRef,
+        scope: ScopeId,
+        type_ref: &TypeRef,
+    ) -> anyhow::Result<Option<Ty>> {
+        let Some((body, item_lookup_index)) = self
+            .body_with_index(body_ref)
+            .context("load body type reference context")?
+        else {
+            return Ok(None);
+        };
+        let trait_selection = self.db.trait_selection_for_body(body_ref);
+
+        Ok(Some(
+            BodyResolutionContext::new(
+                self.db,
+                self.db,
+                body_ref,
+                body,
+                item_lookup_index,
+                trait_selection,
+            )
+            .resolve_type_ref(scope, type_ref)
+            .context("lower body type reference")?,
+        ))
+    }
+
     /// Resolve an enum variant selected through a body-local type path.
     pub(crate) fn type_path_enum_variant(
         &self,
