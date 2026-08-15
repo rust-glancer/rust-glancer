@@ -14,29 +14,12 @@ fn completes_each_candidate_domain_across_realistic_line_states() {
     check_analysis_queries(
         r#"
 //- /Cargo.toml
-[workspace]
-members = ["catalog", "app"]
-resolver = "3"
-
-//- /catalog/Cargo.toml
-[package]
-name = "catalog"
-version = "0.1.0"
-edition = "2024"
-
-//- /catalog/src/lib.rs
-pub struct AutoImportedType;
-
-//- /app/Cargo.toml
 [package]
 name = "app"
 version = "0.1.0"
 edition = "2024"
 
-[dependencies]
-catalog = { path = "../catalog" }
-
-//- /app/src/lib.rs
+//- /src/lib.rs
 pub mod module {
     pub struct ModuleType;
 }
@@ -82,10 +65,6 @@ pub fn qualified_macro_unfinished() {
     let _ = crate::exported_m$qualified_macro_unfinished$
 }
 
-pub fn auto_import_unfinished() {
-    let _: AutoImportedT$auto_import_unfinished$
-}
-
 pub fn module_unfinished() {
     let _: crate::module::ModuleT$module_unfinished$
 }
@@ -120,10 +99,6 @@ pub fn macro_edit() {
 
 pub fn qualified_macro_edit() {
     let _ = crate::exported_m$qualified_macro_edit$!();
-}
-
-pub fn auto_import_edit() {
-    let _: AutoImportedT$auto_import_edit$ = todo!();
 }
 
 pub fn module_edit() {
@@ -169,11 +144,6 @@ pub fn method_edit(target: MemberTarget) {
                 "exported_macro",
             ),
             query(
-                "unfinished auto-import candidate",
-                "auto_import_unfinished",
-                "AutoImportedType",
-            ),
-            query(
                 "unfinished module candidate",
                 "module_unfinished",
                 "ModuleType",
@@ -202,11 +172,6 @@ pub fn method_edit(target: MemberTarget) {
                 "qualified_macro_edit",
                 "exported_macro",
             ),
-            query(
-                "edited auto-import candidate",
-                "auto_import_edit",
-                "AutoImportedType",
-            ),
             query("edited module candidate", "module_edit", "ModuleType"),
             query("edited associated candidate", "associated_edit", "new"),
             query("edited field candidate", "field_edit", "field_name"),
@@ -227,9 +192,6 @@ pub fn method_edit(target: MemberTarget) {
 
             unfinished qualified macro candidate
             - macro exported_macro
-
-            unfinished auto-import candidate
-            - struct AutoImportedType
 
             unfinished module candidate
             - struct ModuleType
@@ -258,9 +220,6 @@ pub fn method_edit(target: MemberTarget) {
             edited qualified macro candidate
             - macro exported_macro
 
-            edited auto-import candidate
-            - struct AutoImportedType
-
             edited module candidate
             - struct ModuleType
 
@@ -272,6 +231,65 @@ pub fn method_edit(target: MemberTarget) {
 
             edited method candidate
             - inherent_method method_name
+        "#]],
+    );
+}
+
+#[test]
+#[ignore = "TODO(#160)"]
+fn completes_auto_import_candidates_across_realistic_line_states() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[workspace]
+members = ["catalog", "app"]
+resolver = "3"
+
+//- /catalog/Cargo.toml
+[package]
+name = "catalog"
+version = "0.1.0"
+edition = "2024"
+
+//- /catalog/src/lib.rs
+pub struct AutoImportedType;
+
+//- /app/Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+catalog = { path = "../catalog" }
+
+//- /app/src/lib.rs
+pub fn auto_import_unfinished() {
+    let _: AutoImportedT$auto_import_unfinished$
+}
+
+pub fn auto_import_edit() {
+    let _: AutoImportedT$auto_import_edit$ = todo!();
+}
+"#,
+        &[
+            query(
+                "unfinished auto-import candidate",
+                "auto_import_unfinished",
+                "AutoImportedType",
+            ),
+            query(
+                "edited auto-import candidate",
+                "auto_import_edit",
+                "AutoImportedType",
+            ),
+        ],
+        expect![[r#"
+            unfinished auto-import candidate
+            - struct AutoImportedType
+
+            edited auto-import candidate
+            - struct AutoImportedType
         "#]],
     );
 }

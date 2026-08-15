@@ -4,98 +4,22 @@
 //! at a time here. This is intentional: query-time materialization mutates package residency, so a
 //! pool of otherwise read-only queries would still need to coordinate ownership of the project.
 //! Background deferred indexing follows the same rule by returning its result as another command.
-//!
-//! Adjacent saved-path batches are the only commands allowed to coalesce. They can come from the
-//! watcher, an editor save, or stale-source recovery. The first interactive or lifecycle command
-//! ends the batch and keeps its original place in the queue.
-//!
-//! For example, `watch(a), watch(b), hover, watch(c)` runs as one `{a, b}` rebuild, then hover,
-//! then the `{c}` rebuild. Coalescing never pulls the last watcher command across hover.
 
-use std::{
-    path::PathBuf,
-    sync::{
-        Arc,
-        mpsc::{Receiver, Sender},
-    },
+use std::sync::{
+    Arc,
+    mpsc::{Receiver, Sender},
 };
 
 use crate::{
-    dirty_state::DirtyState,
     engine::{
         QueuedEngineCommand,
-        command::{EngineCommand, EngineResponse},
+        command::EngineCommand,
         project::ProjectCoordinator,
         query::{QueryContext, QueryRunner},
     },
     memory::MemoryControl,
     service::ServiceNotificationsSink,
 };
-
-/// Receives commands in arrival order and preserves one command read ahead during coalescing.
-///
-/// `std::sync::mpsc` has no peek operation. `pending` holds the first non-watcher command consumed
-/// while looking for another adjacent watcher batch, so `next` can return it before reading again.
-struct CommandQueue {
-    receiver: Receiver<QueuedEngineCommand>,
-    pending: Option<QueuedEngineCommand>,
-}
-
-impl CommandQueue {
-    fn new(receiver: Receiver<QueuedEngineCommand>) -> Self {
-        Self {
-            receiver,
-            pending: None,
-        }
-    }
-
-    fn next(&mut self) -> Option<QueuedEngineCommand> {
-        self.pending.take().or_else(|| self.receiver.recv().ok())
-    }
-
-    /// Merge only immediately adjacent saved-path batches.
-    ///
-    /// The first non-project command is retained in the FIFO rather than skipped, and commands
-    /// behind it remain unread so an interactive request keeps its original ordering.
-    fn collect_project_path_changes(
-        &mut self,
-        paths: Vec<PathBuf>,
-        respond_to: Option<EngineResponse<()>>,
-    ) -> (Vec<PathBuf>, Vec<EngineResponse<()>>) {
-        let mut paths = paths;
-        let mut responders = Vec::new();
-        if let Some(respond_to) = respond_to {
-            responders.push(respond_to);
-        }
-
-        while let Ok(queued) = self.receiver.try_recv() {
-            match queued.command {
-                EngineCommand::ProjectPathsChanged {
-                    paths: next_paths,
-                    respond_to,
-                } => {
-                    paths.extend(next_paths);
-                    if let Some(respond_to) = respond_to {
-                        responders.push(respond_to);
-                    }
-                }
-                command => {
-                    self.pending = Some(QueuedEngineCommand {
-                        command,
-                        enqueued_at: queued.enqueued_at,
-                    });
-                    break;
-                }
-            }
-        }
-
-        // Path-change arrival order carries no semantics. Canonicalize the batch lexically so rebuild
-        // logs and downstream traversal stay deterministic, then remove adjacent duplicates.
-        paths.sort();
-        paths.dedup();
-        (paths, responders)
-    }
-}
 
 /// Owns the engine lane and routes each command to its narrower subsystem.
 ///
@@ -105,7 +29,6 @@ impl CommandQueue {
 #[derive(Debug)]
 pub(super) struct EngineDispatcher {
     project: ProjectCoordinator,
-    dirty_state: DirtyState,
     memory_control: Arc<dyn MemoryControl>,
 }
 
@@ -113,22 +36,16 @@ impl EngineDispatcher {
     pub(super) fn new(
         sender: Sender<QueuedEngineCommand>,
         memory_control: Arc<dyn MemoryControl>,
-        dirty_state: DirtyState,
         notifications: ServiceNotificationsSink,
     ) -> Self {
         Self {
             project: ProjectCoordinator::new(sender, Arc::clone(&memory_control), notifications),
-            dirty_state,
             memory_control,
         }
     }
 
     fn query_runner(&mut self) -> QueryRunner<'_> {
-        QueryRunner::new(
-            &mut self.project,
-            &self.dirty_state,
-            Arc::clone(&self.memory_control),
-        )
+        QueryRunner::new(&mut self.project, Arc::clone(&self.memory_control))
     }
 
     /// Drain commands until shutdown or until every sender has been dropped.
@@ -137,9 +54,8 @@ impl EngineDispatcher {
     /// `QueryContext`, then delegated to the shared query lifecycle before their response is sent.
     pub(super) fn run(mut self, receiver: Receiver<QueuedEngineCommand>) {
         tracing::debug!("LSP engine dispatcher started");
-        let mut queue = CommandQueue::new(receiver);
 
-        while let Some(queued) = queue.next() {
+        while let Ok(queued) = receiver.recv() {
             let queue_elapsed = queued.enqueued_at.elapsed();
             let command = queued.command;
             // Keep the protocol-to-subsystem mapping explicit. Most arms are deliberately small:
@@ -153,265 +69,241 @@ impl EngineDispatcher {
                     tracing::trace!(root = %root.display(), "engine command started: initialize");
                     let _ = respond_to.send(self.project.initialize(root, configuration));
                 }
-                EngineCommand::ProjectPathsChanged { paths, respond_to } => {
-                    let (paths, responders) = queue.collect_project_path_changes(paths, respond_to);
+                EngineCommand::RecoverStaleSource { path } => {
                     tracing::trace!(
-                        path_count = paths.len(),
-                        request_count = responders.len(),
-                        "engine command started: project_paths_changed"
+                        path = %path.display(),
+                        "engine command started: recover_stale_source"
                     );
-                    Self::respond_to_project_path_changes(
-                        responders,
-                        self.project.project_paths_changed(paths),
-                    );
+                    if let Err(error) = self.project.recover_stale_source(path) {
+                        tracing::warn!(
+                            error = %format!("{error:#}"),
+                            "background stale-source recovery failed"
+                        );
+                    }
                 }
-                EngineCommand::GotoDefinition {
-                    path,
-                    position,
-                    dirty,
+                EngineCommand::SavedProjectChanges {
+                    changes,
                     respond_to,
                 } => {
                     tracing::trace!(
-                        path = %path.display(),
-                        line = position.line,
-                        character = position.character,
+                        change_count = changes.len(),
+                        "engine command started: saved_project_changes"
+                    );
+                    let _ = respond_to.send(self.project.saved_project_changes(changes));
+                }
+                EngineCommand::GotoDefinition { input, respond_to } => {
+                    tracing::trace!(
+                        path = %input.target().path().display(),
+                        line = input.position().line,
+                        character = input.position().character,
                         "engine command started: goto_definition"
                     );
                     let context =
-                        QueryContext::document("goto_definition", queue_elapsed, dirty.as_ref());
-                    self.query_runner()
-                        .respond_to_query(context, respond_to, |runner| {
-                            runner.goto_definition(path.clone(), position, dirty.clone())
-                        });
+                        QueryContext::global_operation("goto_definition", queue_elapsed, &input);
+                    self.query_runner().respond_to_query(
+                        context,
+                        respond_to,
+                        |runner, cancellation| runner.goto_definition(input, cancellation),
+                    );
                 }
-                EngineCommand::GotoTypeDefinition {
-                    path,
-                    position,
-                    dirty,
-                    respond_to,
-                } => {
+                EngineCommand::GotoTypeDefinition { input, respond_to } => {
                     tracing::trace!(
-                        path = %path.display(),
-                        line = position.line,
-                        character = position.character,
+                        path = %input.target().path().display(),
+                        line = input.position().line,
+                        character = input.position().character,
                         "engine command started: goto_type_definition"
                     );
-                    let context = QueryContext::document(
+                    let context = QueryContext::global_operation(
                         "goto_type_definition",
                         queue_elapsed,
-                        dirty.as_ref(),
+                        &input,
                     );
-                    self.query_runner()
-                        .respond_to_query(context, respond_to, |runner| {
-                            runner.goto_type_definition(path.clone(), position, dirty.clone())
-                        });
+                    self.query_runner().respond_to_query(
+                        context,
+                        respond_to,
+                        |runner, cancellation| runner.goto_type_definition(input, cancellation),
+                    );
                 }
-                EngineCommand::GotoImplementation {
-                    path,
-                    position,
-                    dirty,
-                    respond_to,
-                } => {
+                EngineCommand::GotoImplementation { input, respond_to } => {
                     tracing::trace!(
-                        path = %path.display(),
-                        line = position.line,
-                        character = position.character,
+                        path = %input.target().path().display(),
+                        line = input.position().line,
+                        character = input.position().character,
                         "engine command started: goto_implementation"
                     );
-                    let context = QueryContext::document(
+                    let context = QueryContext::global_operation(
                         "goto_implementation",
                         queue_elapsed,
-                        dirty.as_ref(),
+                        &input,
                     );
                     self.query_runner()
-                        .respond_to_query(context, respond_to, |runner| {
-                            runner.goto_implementation(path.clone(), position, dirty.clone())
+                        .respond_to_query(context, respond_to, |runner, _| {
+                            runner.goto_implementation(input)
                         });
                 }
                 EngineCommand::References {
-                    path,
-                    position,
+                    input,
                     include_declaration,
-                    dirty,
                     respond_to,
                 } => {
                     tracing::trace!(
-                        path = %path.display(),
-                        line = position.line,
-                        character = position.character,
+                        path = %input.target().path().display(),
+                        line = input.position().line,
+                        character = input.position().character,
                         include_declaration,
                         "engine command started: references"
                     );
                     let context =
-                        QueryContext::document("references", queue_elapsed, dirty.as_ref());
+                        QueryContext::global_operation("references", queue_elapsed, &input);
                     self.query_runner()
-                        .respond_to_query(context, respond_to, |runner| {
-                            runner.references(
-                                path.clone(),
-                                position,
-                                include_declaration,
-                                dirty.clone(),
-                            )
+                        .respond_to_query(context, respond_to, |runner, _| {
+                            runner.references(input, include_declaration)
                         });
                 }
-                EngineCommand::PrepareRename {
-                    path,
-                    position,
-                    dirty,
-                    respond_to,
-                } => {
+                EngineCommand::PrepareRename { input, respond_to } => {
                     tracing::trace!(
-                        path = %path.display(),
-                        line = position.line,
-                        character = position.character,
+                        path = %input.target().path().display(),
+                        line = input.position().line,
+                        character = input.position().character,
                         "engine command started: prepare_rename"
                     );
                     let context =
-                        QueryContext::document("prepare_rename", queue_elapsed, dirty.as_ref());
+                        QueryContext::global_operation("prepare_rename", queue_elapsed, &input);
                     self.query_runner()
-                        .respond_to_query(context, respond_to, |runner| {
-                            runner.prepare_rename(path.clone(), position, dirty.clone())
+                        .respond_to_query(context, respond_to, |runner, _| {
+                            runner.prepare_rename(input)
                         });
                 }
                 EngineCommand::Rename {
-                    path,
-                    position,
+                    input,
                     new_name,
-                    dirty,
                     respond_to,
                 } => {
                     tracing::trace!(
-                        path = %path.display(),
-                        line = position.line,
-                        character = position.character,
+                        path = %input.target().path().display(),
+                        line = input.position().line,
+                        character = input.position().character,
                         new_name = %new_name,
                         "engine command started: rename"
                     );
-                    let context = QueryContext::document("rename", queue_elapsed, dirty.as_ref());
+                    let context = QueryContext::global_operation("rename", queue_elapsed, &input);
                     self.query_runner()
-                        .respond_to_query(context, respond_to, |runner| {
-                            runner.rename(path.clone(), position, new_name.clone(), dirty.clone())
+                        .respond_to_query(context, respond_to, |runner, _| {
+                            runner.rename(input, new_name)
                         });
                 }
-                EngineCommand::DocumentHighlight {
-                    path,
-                    position,
-                    dirty,
-                    respond_to,
-                } => {
+                EngineCommand::DocumentHighlight { input, respond_to } => {
                     tracing::trace!(
-                        path = %path.display(),
-                        line = position.line,
-                        character = position.character,
+                        path = %input.document().path().display(),
+                        line = input.position().line,
+                        character = input.position().character,
                         "engine command started: document_highlight"
                     );
-                    let context =
-                        QueryContext::document("document_highlight", queue_elapsed, dirty.as_ref());
-                    self.query_runner()
-                        .respond_to_query(context, respond_to, |runner| {
-                            runner.document_highlight(path.clone(), position, dirty.clone())
-                        });
+                    let context = QueryContext::target_document(
+                        "document_highlight",
+                        queue_elapsed,
+                        input.document(),
+                    );
+                    self.query_runner().respond_to_query(
+                        context,
+                        respond_to,
+                        |runner, cancellation| runner.document_highlight(input, cancellation),
+                    );
                 }
-                EngineCommand::Hover {
-                    path,
-                    position,
-                    dirty,
-                    respond_to,
-                } => {
+                EngineCommand::Hover { input, respond_to } => {
                     tracing::trace!(
-                        path = %path.display(),
-                        line = position.line,
-                        character = position.character,
+                        path = %input.document().path().display(),
+                        line = input.position().line,
+                        character = input.position().character,
                         "engine command started: hover"
                     );
-                    let context = QueryContext::document("hover", queue_elapsed, dirty.as_ref());
-                    self.query_runner()
-                        .respond_to_query(context, respond_to, |runner| {
-                            runner.hover(path.clone(), position, dirty.clone())
-                        });
+                    let context =
+                        QueryContext::target_document("hover", queue_elapsed, input.document());
+                    self.query_runner().respond_to_query(
+                        context,
+                        respond_to,
+                        |runner, cancellation| runner.hover(input, cancellation),
+                    );
                 }
                 EngineCommand::Completion {
-                    path,
-                    position,
+                    input,
                     client_capabilities,
-                    dirty,
                     respond_to,
                 } => {
                     tracing::trace!(
-                        path = %path.display(),
-                        line = position.line,
-                        character = position.character,
+                        path = %input.document().path().display(),
+                        line = input.position().line,
+                        character = input.position().character,
                         "engine command started: completion"
                     );
-                    let context =
-                        QueryContext::document("completion", queue_elapsed, dirty.as_ref());
-                    self.query_runner()
-                        .respond_to_query(context, respond_to, |runner| {
-                            runner.completion(
-                                path.clone(),
-                                position,
-                                client_capabilities,
-                                dirty.clone(),
-                            )
-                        });
+                    let context = QueryContext::target_document(
+                        "completion",
+                        queue_elapsed,
+                        input.document(),
+                    );
+                    self.query_runner().respond_to_query(
+                        context,
+                        respond_to,
+                        |runner, cancellation| {
+                            runner.completion(input, client_capabilities, cancellation)
+                        },
+                    );
                 }
                 EngineCommand::Formatting {
-                    path,
-                    text,
+                    snapshot,
                     respond_to,
                 } => {
                     tracing::trace!(
-                        path = %path.display(),
+                        path = %snapshot.path().display(),
                         "engine command started: formatting"
                     );
-                    let context = QueryContext::new("formatting", queue_elapsed);
+                    let context =
+                        QueryContext::target_document("formatting", queue_elapsed, &snapshot);
                     self.query_runner()
-                        .respond_to_query(context, respond_to, |runner| {
-                            runner.formatting(path.clone(), Arc::clone(&text))
+                        .respond_to_query(context, respond_to, |runner, _| {
+                            runner.formatting(snapshot)
                         });
                 }
                 EngineCommand::DocumentSymbol {
-                    path,
-                    dirty,
+                    snapshot,
                     respond_to,
                 } => {
                     tracing::trace!(
-                        path = %path.display(),
+                        path = %snapshot.path().display(),
                         "engine command started: document_symbol"
                     );
                     let context =
-                        QueryContext::document("document_symbol", queue_elapsed, dirty.as_ref());
+                        QueryContext::target_document("document_symbol", queue_elapsed, &snapshot);
                     self.query_runner()
-                        .respond_to_query(context, respond_to, |runner| {
-                            runner.document_symbol(path.clone(), dirty.clone())
+                        .respond_to_query(context, respond_to, |runner, _| {
+                            runner.document_symbol(snapshot)
                         });
                 }
-                EngineCommand::InlayHint {
-                    path,
-                    range,
-                    dirty,
-                    respond_to,
-                } => {
+                EngineCommand::InlayHint { input, respond_to } => {
                     tracing::trace!(
-                        path = %path.display(),
-                        start_line = range.start.line,
-                        start_character = range.start.character,
-                        end_line = range.end.line,
-                        end_character = range.end.character,
+                        path = %input.document().path().display(),
+                        start_line = input.range().start.line,
+                        start_character = input.range().start.character,
+                        end_line = input.range().end.line,
+                        end_character = input.range().end.character,
                         "engine command started: inlay_hint"
                     );
-                    let context =
-                        QueryContext::document("inlay_hint", queue_elapsed, dirty.as_ref());
-                    self.query_runner()
-                        .respond_to_query(context, respond_to, |runner| {
-                            runner.inlay_hint(path.clone(), range, dirty.clone())
-                        });
+                    let context = QueryContext::target_document(
+                        "inlay_hint",
+                        queue_elapsed,
+                        input.document(),
+                    );
+                    self.query_runner().respond_to_query(
+                        context,
+                        respond_to,
+                        |runner, cancellation| runner.inlay_hint(input, cancellation),
+                    );
                 }
                 EngineCommand::WorkspaceSymbol { query, respond_to } => {
                     tracing::trace!(query = %query, "engine command started: workspace_symbol");
                     let context = QueryContext::new("workspace_symbol", queue_elapsed);
                     self.query_runner()
-                        .respond_to_query(context, respond_to, |runner| {
+                        .respond_to_query(context, respond_to, |runner, _| {
                             runner.workspace_symbol(&query)
                         });
                 }
@@ -435,158 +327,5 @@ impl EngineDispatcher {
         }
 
         tracing::debug!("LSP engine dispatcher stopped");
-    }
-
-    /// Answer every request merged into one saved-path batch with the same outcome.
-    ///
-    /// `anyhow::Error` is not cloneable, so the first caller receives the original context chain
-    /// and later callers receive an error rebuilt from its fully rendered message.
-    fn respond_to_project_path_changes(
-        responders: Vec<EngineResponse<()>>,
-        result: anyhow::Result<()>,
-    ) {
-        match result {
-            Ok(()) => {
-                for respond_to in responders {
-                    let _ = respond_to.send(Ok(()));
-                }
-            }
-            Err(error) => {
-                let error_message = format!("{error:#}");
-                if responders.is_empty() {
-                    tracing::warn!(
-                        error = %error_message,
-                        "background stale-source recovery failed"
-                    );
-                    return;
-                }
-                let mut responders = responders.into_iter();
-                if let Some(respond_to) = responders.next() {
-                    let _ = respond_to.send(Err(error));
-                }
-                for respond_to in responders {
-                    let _ = respond_to.send(Err(anyhow::anyhow!(error_message.clone())));
-                }
-            }
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use std::{path::PathBuf, sync::mpsc};
-
-    use tokio::sync::oneshot;
-
-    use super::{CommandQueue, EngineDispatcher};
-    use crate::engine::{QueuedEngineCommand, command::EngineCommand};
-
-    #[test]
-    fn project_path_change_collection_merges_adjacent_project_commands_and_defers_next_command() {
-        let (sender, receiver) = mpsc::channel();
-        let (first_respond_to, first_response) = oneshot::channel::<anyhow::Result<()>>();
-        let (second_respond_to, second_response) = oneshot::channel::<anyhow::Result<()>>();
-        let (symbol_respond_to, _symbol_response) =
-            oneshot::channel::<anyhow::Result<Vec<ls_types::WorkspaceSymbol>>>();
-        let (third_respond_to, _third_response) = oneshot::channel::<anyhow::Result<()>>();
-
-        sender
-            .send(QueuedEngineCommand::new(
-                EngineCommand::ProjectPathsChanged {
-                    paths: vec![test_path("a"), test_path("b")],
-                    respond_to: Some(second_respond_to),
-                },
-            ))
-            .expect("test command channel should accept adjacent project change");
-        sender
-            .send(QueuedEngineCommand::new(
-                EngineCommand::ProjectPathsChanged {
-                    paths: vec![test_path("stale")],
-                    respond_to: None,
-                },
-            ))
-            .expect("test command channel should accept background source recovery");
-        sender
-            .send(QueuedEngineCommand::new(EngineCommand::WorkspaceSymbol {
-                query: "needle".to_string(),
-                respond_to: symbol_respond_to,
-            }))
-            .expect("test command channel should accept non-project command");
-        sender
-            .send(QueuedEngineCommand::new(
-                EngineCommand::ProjectPathsChanged {
-                    paths: vec![test_path("c")],
-                    respond_to: Some(third_respond_to),
-                },
-            ))
-            .expect("test command channel should accept later project change");
-
-        let mut queue = CommandQueue::new(receiver);
-        let (paths, responders) =
-            queue.collect_project_path_changes(vec![test_path("b")], Some(first_respond_to));
-
-        assert_eq!(
-            paths,
-            vec![test_path("a"), test_path("b"), test_path("stale")],
-            "adjacent project changes should be merged and deduplicated"
-        );
-        assert_eq!(
-            responders.len(),
-            2,
-            "each merged project-change request needs its own response"
-        );
-
-        let deferred = queue
-            .next()
-            .expect("first non-project command should be deferred");
-        match deferred.command {
-            EngineCommand::WorkspaceSymbol { query, .. } => {
-                assert_eq!(query, "needle");
-            }
-            command => panic!("unexpected deferred command: {command:?}"),
-        }
-
-        let queued_after_non_project = queue
-            .next()
-            .expect("commands after the first non-project command should stay queued");
-        match queued_after_non_project.command {
-            EngineCommand::ProjectPathsChanged { paths, .. } => {
-                assert_eq!(paths, vec![test_path("c")]);
-            }
-            command => panic!("unexpected command left in queue: {command:?}"),
-        }
-
-        EngineDispatcher::respond_to_project_path_changes(responders, Ok(()));
-        futures::executor::block_on(first_response)
-            .expect("first merged project change should receive a response")
-            .expect("first merged project change should succeed");
-        futures::executor::block_on(second_response)
-            .expect("second merged project change should receive a response")
-            .expect("second merged project change should succeed");
-    }
-
-    #[test]
-    fn project_path_change_response_fanout_reports_errors_to_all_callers() {
-        let (first_respond_to, first_response) = oneshot::channel::<anyhow::Result<()>>();
-        let (second_respond_to, second_response) = oneshot::channel::<anyhow::Result<()>>();
-
-        EngineDispatcher::respond_to_project_path_changes(
-            vec![first_respond_to, second_respond_to],
-            Err(anyhow::anyhow!("batch rebuild failed")),
-        );
-
-        for response in [first_response, second_response] {
-            let error = futures::executor::block_on(response)
-                .expect("merged project change should receive an error response")
-                .expect_err("merged project change should receive the batch error");
-            assert!(
-                format!("{error:#}").contains("batch rebuild failed"),
-                "fanout error should preserve the original message"
-            );
-        }
-    }
-
-    fn test_path(name: &str) -> PathBuf {
-        PathBuf::from(format!("/workspace/src/{name}.rs"))
     }
 }

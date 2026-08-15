@@ -5,7 +5,6 @@
 //! about the response shapes each server actually returns.
 
 use std::{
-    fs,
     path::Path,
     time::{Duration, Instant},
 };
@@ -140,7 +139,7 @@ pub(crate) async fn run(
     for (query_index, query_case) in fixture.query_cases().iter().enumerate() {
         // Convert compact fixture entries into typed LSP request payloads at the last boundary.
         // The stored vector stays easy to audit while serde/ls_types still own protocol shape.
-        let request = QueryRequest::from_case(fixture.root(), query_case)?;
+        let request = QueryRequest::from_case(fixture, query_case)?;
         tracing::info!(
             query_index = query_index + 1,
             total_queries,
@@ -193,7 +192,8 @@ struct QueryRequest {
 }
 
 impl QueryRequest {
-    fn from_case(fixture_root: &Path, query_case: &QueryCase) -> anyhow::Result<Self> {
+    fn from_case(fixture: &Fixture, query_case: &QueryCase) -> anyhow::Result<Self> {
+        let fixture_root = fixture.root();
         let method = query_case.kind().lsp_method();
         let params = match (query_case.kind(), query_case.target()) {
             (
@@ -351,11 +351,7 @@ impl QueryRequest {
                         query_case.label(),
                         source_path,
                     )?,
-                    range: Self::full_document_range(
-                        fixture_root,
-                        query_case.label(),
-                        source_path,
-                    )?,
+                    range: Self::full_document_range(fixture, query_case.label(), source_path)?,
                 })
             }
             (kind, target) => anyhow::bail!(
@@ -401,16 +397,12 @@ impl QueryRequest {
     }
 
     fn full_document_range(
-        fixture_root: &Path,
+        fixture: &Fixture,
         label: &str,
         source_path: &str,
     ) -> anyhow::Result<Range> {
-        let path = fixture_root.join(source_path);
-        let source = fs::read_to_string(&path).with_context(|| {
-            format!(
-                "Reading fixture source file {} for `{label}` failed",
-                path.display()
-            )
+        let source = fixture.editor_source_text(source_path).with_context(|| {
+            format!("Reading editor source for LSP comparison query `{label}` failed")
         })?;
 
         let mut end_line = 0;

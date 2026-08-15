@@ -13,11 +13,13 @@ use std::{
 
 use anyhow::Context as _;
 use ls_types::{
-    ClientCapabilities, DidOpenTextDocumentParams, DocumentSymbolClientCapabilities,
-    InitializeParams, InitializedParams, InlayHintClientCapabilities, RenameClientCapabilities,
-    TextDocumentClientCapabilities, TextDocumentItem, WindowClientCapabilities,
-    WorkDoneProgressParams, WorkspaceClientCapabilities, WorkspaceEditClientCapabilities,
-    WorkspaceFolder, notification, notification::Notification as _, request, request::Request as _,
+    ClientCapabilities, DidChangeTextDocumentParams, DidOpenTextDocumentParams,
+    DocumentSymbolClientCapabilities, InitializeParams, InitializedParams,
+    InlayHintClientCapabilities, RenameClientCapabilities, TextDocumentClientCapabilities,
+    TextDocumentContentChangeEvent, TextDocumentItem, VersionedTextDocumentIdentifier,
+    WindowClientCapabilities, WorkDoneProgressParams, WorkspaceClientCapabilities,
+    WorkspaceEditClientCapabilities, WorkspaceFolder, notification,
+    notification::Notification as _, request, request::Request as _,
 };
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -345,6 +347,40 @@ impl RunningServer {
                     "Sending didOpen for {} to {} failed",
                     path.display(),
                     self.kind.display_name()
+                )
+            })
+    }
+
+    /// Replace one open document with the stable unsaved text used by the dirty fixture.
+    pub(super) async fn change_source_file(
+        &mut self,
+        fixture_root: &Path,
+        source_path: &str,
+        text: String,
+    ) -> anyhow::Result<()> {
+        let path = fixture_root.join(source_path);
+        let uri = file_uri(&path)?;
+        self.client
+            .notify(
+                notification::DidChangeTextDocument::METHOD,
+                lsp_params(
+                    DidChangeTextDocumentParams {
+                        text_document: VersionedTextDocumentIdentifier { uri, version: 2 },
+                        content_changes: vec![TextDocumentContentChangeEvent {
+                            range: None,
+                            range_length: None,
+                            text,
+                        }],
+                    },
+                    "didChange params",
+                )?,
+            )
+            .await
+            .with_context(|| {
+                format!(
+                    "Sending dirty didChange for {} to {} failed",
+                    path.display(),
+                    self.kind.display_name(),
                 )
             })
     }

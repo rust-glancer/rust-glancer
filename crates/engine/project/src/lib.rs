@@ -1,20 +1,17 @@
 //! Analysis project snapshots and the storage used to serve them.
 //!
 //! Several mechanisms here avoid repeating work, but they do not share one lifetime or failure
-//! policy. Read them as four layers rather than one general cache:
+//! policy. Read them as three layers rather than one general cache:
 //!
 //! | Layer | Validity | Owner | Miss or mismatch |
 //! | --- | --- | --- | --- |
 //! | Saved analysis | Published [`ProjectGenerationId`] | The live [`Project`] | Build a private candidate and publish it only after success |
 //! | Package backing | Workspace artifact identity and saved-source fingerprint | Package cache plus resident/offloaded phase stores | Reject the artifact and rebuild from source |
-//! | Dirty analysis | Saved base generation, dirty text identity, and requested package scope | The frontend's bounded overlay cache | Rebuild the disposable overlay |
-//! | Query working set | The exact project snapshot that produced it | One request, with a short handoff from dirty rebuild to its query | Reload artifacts and recompute solver state |
+//! | Query working set | The exact saved project snapshot that produced it | One request | Reload artifacts and recompute solver state |
 //!
-//! These layers meet through explicit snapshots. A dirty overlay derives analysis from a saved
-//! generation but does not publish source fingerprints, write artifacts, or restore saved
-//! residency. Resident and offloaded packages remain the same logical package slots, so query code
-//! does not branch on storage location. Request-owned decoded payloads and solver sessions may be
-//! retained just long enough for the query following a dirty rebuild, then are dropped together.
+//! These layers meet through explicit snapshots. Resident and offloaded packages remain the same
+//! logical package slots, so query code does not branch on storage location. Request-owned decoded
+//! payloads and solver sessions are released when the query finishes.
 //!
 //! When adding another shortcut, keep three facts next to its owner: what exact semantic state
 //! makes reuse safe, who releases the retained data, and which ordinary path runs when it is
@@ -31,13 +28,17 @@ mod residency;
 
 use std::sync::OnceLock;
 
+pub use rg_body_ir::{
+    CurrentBodyBuildCheckpoint as CurrentBodyAnalysisCheckpoint, CurrentBodySelection,
+};
+
 pub use self::{
     indexing::IndexingPerformancePreference,
     memory::{ProjectMemoryHooks, ProjectMemoryPurgePoint},
     profile::{BUILD_CHECKPOINTS, BuildProcessMemory, ProcessMemorySampler},
     project::{
-        AnalysisChangeSummary, AnalysisSurface, ChangedFile, DetachedSplitIndexing,
-        DirtyFileChange, DirtyOverlayScope, FileContext, FinishedSplitIndexing, Project,
+        AnalysisChangeSummary, AnalysisSurface, ChangedFile, CurrentBodyAnalysisCoverage,
+        DetachedSplitIndexing, DocumentSourceView, FileContext, FinishedSplitIndexing, Project,
         ProjectBuilder, ProjectGenerationId, ProjectSnapshot, ProjectStats, SavedFileChange,
         SplitIndexing, SplitIndexingMode, StartupCacheLoad,
     },

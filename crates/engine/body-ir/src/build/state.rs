@@ -1,6 +1,9 @@
 //! Crate-local mutable state used while Body IR resolution is assembled.
 
-use std::time::{Duration, Instant};
+use std::{
+    collections::HashMap,
+    time::{Duration, Instant},
+};
 
 use anyhow::Context as _;
 use rg_arena::Arena;
@@ -17,14 +20,17 @@ use rg_text::NameInterner;
 use rg_ty::TraitSelectionSession;
 
 use crate::{
-    BodyFacts, BodyLocalItems, BodyOwner, CrateBodies,
+    BodyFacts, BodyLocalItems, BodyOwner, CrateBodies, CurrentBody,
     resolution::{BodyResolutionContext, BodyResolutionPass},
 };
 
 use super::{
     body_def_map::BodyDefMapCollector,
     body_item_store::BodyItemStoreCollector,
-    lower::{BodyLoweringTask, BodyMacroExpansion, BodyTaskLowering, LoweredCrateBodies},
+    lower::{
+        BodyLoweringTask, BodyMacroExpansion, BodyTaskLowering, BodyTaskSource, LoweredBodyTask,
+        LoweredCrateBodies,
+    },
     pattern_binding::PatternBindingMaterializationPass,
     query_source::BodyBuildQuerySource,
 };
@@ -35,11 +41,34 @@ const SLOW_CRATE_RESOLUTION_PHASE: Duration = Duration::from_secs(1);
 // timer crosses this threshold; a normal body does not create a tracing span or event.
 const SLOW_BODY_RESOLUTION: Duration = Duration::from_secs(1);
 
+/// Semantic stages shared by saved crate builds and selected current-body builds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum BodySemanticStage {
+    ImplHeaders,
+    PatternBindings,
+    Bodies,
+}
+
+/// Time spent in each shared semantic stage.
+pub(super) struct BodySemanticTimings {
+    pub(super) impl_headers: Duration,
+    pub(super) pattern_bindings: Duration,
+    pub(super) bodies: Duration,
+}
+
 /// Coordinates all body-local facts needed to resolve one crate's bodies.
 pub(super) struct CrateBodyBuildState<'crate_data> {
     crate_ref: CrateRef,
     parse_package: &'crate_data rg_parse::Package,
     crate_bodies: LoweredCrateBodies,
+    /// Project identities for the bodies in the temporary worklist.
+    ///
+    /// Saved builds use the same ID for both arenas. A selected current build may reuse one saved
+    /// identity or allocate a request-only identity, so its worklist slot cannot stand in for a
+    /// `BodyRef`.
+    body_refs: Arena<BodyId, BodyRef>,
+    /// Worklist slot for each project or request-only body identity.
+    body_slots: HashMap<BodyRef, BodyId>,
     body_facts: Arena<BodyId, BodyFacts>,
     body_local_items: Arena<BodyId, Option<BodyLocalItems>>,
     interner: &'crate_data mut NameInterner,
@@ -52,28 +81,72 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
         crate_bodies: LoweredCrateBodies,
         interner: &'crate_data mut NameInterner,
     ) -> Self {
+        let mut body_refs = Arena::with_capacity(crate_bodies.bodies().len());
+        let mut body_slots = HashMap::with_capacity(crate_bodies.bodies().len());
+        for (body, _) in crate_bodies.bodies().iter_with_ids() {
+            let body_ref = BodyRef { crate_ref, body };
+            let allocated = body_refs.alloc(body_ref);
+            debug_assert_eq!(allocated, body);
+            body_slots.insert(body_ref, body);
+        }
         Self {
             crate_ref,
             parse_package,
             crate_bodies,
+            body_refs,
+            body_slots,
             body_facts: Arena::new(),
             body_local_items: Arena::new(),
             interner,
         }
     }
 
-    /// Resolve one lowered crate and optionally keep its warmed trait-selection state.
-    ///
-    /// A saved lookup index is trusted only because the package rebuilder checked its declaration
-    /// key before this crate was scheduled. Without one, this method builds the same index from the
-    /// declarations visible to the crate.
+    /// Start the same semantic pipeline from request-local lowered roots.
+    pub(super) fn for_current(
+        crate_ref: CrateRef,
+        parse_package: &'crate_data rg_parse::Package,
+        crate_bodies: LoweredCrateBodies,
+        body_refs: Vec<BodyRef>,
+        interner: &'crate_data mut NameInterner,
+    ) -> anyhow::Result<Self> {
+        anyhow::ensure!(
+            crate_bodies.bodies().len() == body_refs.len(),
+            "current body worklist and identity list have different lengths",
+        );
+        anyhow::ensure!(
+            body_refs.iter().all(|body| body.crate_ref == crate_ref),
+            "current body identity belongs to a different crate",
+        );
+        anyhow::ensure!(
+            body_refs.iter().enumerate().all(|(index, body)| {
+                !body_refs[..index].iter().any(|previous| previous == body)
+            }),
+            "current body identity was assigned to more than one root",
+        );
+        let body_slots = body_refs
+            .iter()
+            .copied()
+            .enumerate()
+            .map(|(slot, body_ref)| (body_ref, BodyId(slot)))
+            .collect();
+        Ok(Self {
+            crate_ref,
+            parse_package,
+            crate_bodies,
+            body_refs: Arena::from_vec(body_refs),
+            body_slots,
+            body_facts: Arena::new(),
+            body_local_items: Arena::new(),
+            interner,
+        })
+    }
+
+    /// Resolve one lowered crate and persist its crate-wide item lookup index with Body IR.
     pub(super) fn resolve(
         mut self,
         def_map: &DefMapReadTxn<'_>,
         semantic_ir: &SemanticIrReadTxn<'_>,
-        retain_trait_selection: bool,
-        saved_item_lookup_index: Option<ItemLookupIndex>,
-    ) -> anyhow::Result<(CrateBodies, Option<TraitSelectionSession>)> {
+    ) -> anyhow::Result<CrateBodies> {
         let span = tracing::debug_span!(
             "body_ir_crate_resolution",
             rg.crate_id = self.crate_ref.crate_id.0,
@@ -85,7 +158,18 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
         // the items declared within the body, and we need to match `impl`
         // blocks to their corresponding `Self` types.
         let phase_started = Instant::now();
-        self.materialize_body_local_items(def_map, semantic_ir)?;
+        let crate_ref = self.crate_ref;
+        self.materialize_body_local_items(
+            def_map,
+            semantic_ir,
+            BodyTaskSource::Saved(self.parse_package),
+            |lowered| {
+                Ok(BodyRef {
+                    crate_ref,
+                    body: lowered.body,
+                })
+            },
+        )?;
         let elapsed = phase_started.elapsed();
         let body_local_items_ms = elapsed.as_millis();
         if elapsed >= SLOW_CRATE_RESOLUTION_PHASE {
@@ -97,19 +181,12 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
             );
         }
 
-        // Choose the crate-wide item lookup index before any body query starts. Dirty rebuilds may
-        // receive the saved index after its declaration key was checked; every other build scans
-        // the stores visible from this crate. Either way, persist the chosen index with Body IR.
-        // Body-local items are overlaid through `BodyBuildQuerySource` and do not enter this index.
+        // Build the crate-wide item lookup index before any body query starts. Items declared
+        // inside a body are looked up separately through `BodyBuildQuerySource`, so they do not go
+        // into the index stored for the crate.
         let phase_started = Instant::now();
-        let item_lookup_index_reused = saved_item_lookup_index.is_some();
-        let item_lookup_index = match saved_item_lookup_index {
-            Some(index) => index,
-            None => {
-                let crate_items = CrateItemQuery::new(def_map, semantic_ir, self.crate_ref);
-                ItemLookupIndex::build_from(&crate_items)?
-            }
-        };
+        let crate_items = CrateItemQuery::new(def_map, semantic_ir, self.crate_ref);
+        let item_lookup_index = ItemLookupIndex::build_from(&crate_items)?;
         let elapsed = phase_started.elapsed();
         let item_lookup_index_ms = elapsed.as_millis();
         if elapsed >= SLOW_CRATE_RESOLUTION_PHASE {
@@ -120,55 +197,16 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
             );
         }
         let trait_selection = TraitSelectionSession::new(self.crate_ref);
-        let phase_started = Instant::now();
-        self.resolve_body_local_impl_headers(
+        let semantic_timings = self.resolve_semantics(
             def_map,
             semantic_ir,
             &item_lookup_index,
             &trait_selection,
+            |_| Ok(()),
         )?;
-        let elapsed = phase_started.elapsed();
-        let body_local_impl_headers_ms = elapsed.as_millis();
-        if elapsed >= SLOW_CRATE_RESOLUTION_PHASE {
-            tracing::debug!(
-                phase = "body_local_impl_headers",
-                elapsed_ms = elapsed.as_millis(),
-                "slow Body IR crate resolution phase"
-            );
-        }
-
-        // Identifier patterns are the last source ambiguity in structural Body IR. Resolve and
-        // compact them before the ordinary body pass receives its immutable `BodyData`.
-        let phase_started = Instant::now();
-        self.materialize_pattern_bindings(
-            def_map,
-            semantic_ir,
-            &item_lookup_index,
-            &trait_selection,
-        )?;
-        let elapsed = phase_started.elapsed();
-        let pattern_bindings_ms = elapsed.as_millis();
-        if elapsed >= SLOW_CRATE_RESOLUTION_PHASE {
-            tracing::debug!(
-                phase = "pattern_bindings",
-                elapsed_ms = elapsed.as_millis(),
-                "slow Body IR crate resolution phase"
-            );
-        }
-
-        // Do a pass on resolving body expressions.
-        let phase_started = Instant::now();
-        self.resolve_bodies(def_map, semantic_ir, &item_lookup_index, &trait_selection)?;
-        let elapsed = phase_started.elapsed();
-        let bodies_ms = elapsed.as_millis();
-        if elapsed >= SLOW_CRATE_RESOLUTION_PHASE {
-            tracing::debug!(
-                phase = "bodies",
-                elapsed_ms = elapsed.as_millis(),
-                body_count = self.crate_bodies.bodies().len(),
-                "slow Body IR crate resolution phase"
-            );
-        }
+        let body_local_impl_headers_ms = semantic_timings.impl_headers.as_millis();
+        let pattern_bindings_ms = semantic_timings.pattern_bindings.as_millis();
+        let bodies_ms = semantic_timings.bodies.as_millis();
 
         // Finalize the build state, e.g. associate each body with its corresponding
         // defmap/item store.
@@ -180,7 +218,6 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
             body_count,
             body_local_items_ms,
             item_lookup_index_ms,
-            item_lookup_index_reused,
             body_local_impl_headers_ms,
             pattern_bindings_ms,
             bodies_ms,
@@ -188,18 +225,18 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
             total_ms = resolution_started.elapsed().as_millis(),
             "Body IR crate resolution phases finished"
         );
-        let retained_trait_selection =
-            retain_trait_selection.then(|| trait_selection.fresh_inference_scope());
-        Ok((bodies, retained_trait_selection))
+        Ok(bodies)
     }
 
     // Walk every known body, collecting local facts and lowering newly discovered nested bodies.
     // This is a worklist rather than recursive descent: collecting one body can append nested
     // fn/const/static bodies, and the loop visits those appended bodies before resolution starts.
-    fn materialize_body_local_items(
+    pub(super) fn materialize_body_local_items(
         &mut self,
         def_map: &DefMapReadTxn<'_>,
         semantic_ir: &SemanticIrReadTxn<'_>,
+        task_source: BodyTaskSource<'_>,
+        mut body_ref_for_nested: impl FnMut(LoweredBodyTask) -> anyhow::Result<BodyRef>,
     ) -> anyhow::Result<()> {
         self.body_local_items.clear();
         // `body_local_items` is the cursor into `crate_bodies`: each collected slot means that
@@ -225,24 +262,89 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
             let body = self.body_local_items.next_id();
             let body_ref = self.body_ref(body);
             let items = self.collect_body_local_items(body, def_map, semantic_ir)?;
-            let fallback_module = self.crate_bodies.bodies()[body].body().fallback_module();
-            let nested_tasks =
-                Self::nested_body_tasks(body_ref, fallback_module, items.item_store());
+            if let Some((owner, owner_module)) = Self::request_root_owner_context(
+                body_ref,
+                self.crate_bodies.bodies()[body].body(),
+                &items,
+            )? {
+                self.crate_bodies.bodies_mut()[body].set_owner_context(owner, owner_module);
+            }
+            let body_data = self.crate_bodies.bodies()[body].body();
+            let nested_tasks = Self::nested_body_tasks(
+                body_ref,
+                body_data.owner(),
+                body_data.fallback_module(),
+                items.item_store(),
+            );
             let allocated = self.body_local_items.alloc(Some(items));
             debug_assert_eq!(allocated, body);
 
             if !nested_tasks.is_empty() {
-                BodyTaskLowering::new(
-                    self.parse_package,
-                    &mut self.crate_bodies,
-                    cfg,
-                    self.interner,
-                )
-                .lower_tasks(&nested_tasks, &mut macro_expansion)?;
+                BodyTaskLowering::new(task_source, &mut self.crate_bodies, cfg, self.interner)
+                    .lower_tasks(&nested_tasks, &mut macro_expansion)?
+                    .into_iter()
+                    .try_for_each(|lowered| {
+                        let body_ref = body_ref_for_nested(lowered)?;
+                        anyhow::ensure!(
+                            body_ref.crate_ref == self.crate_ref,
+                            "nested body identity belongs to a different crate",
+                        );
+                        anyhow::ensure!(
+                            !self.body_slots.contains_key(&body_ref),
+                            "nested body identity {:?} was allocated more than once",
+                            body_ref.body,
+                        );
+                        let allocated = self.body_refs.alloc(body_ref);
+                        anyhow::ensure!(
+                            allocated == lowered.body,
+                            "nested body identity worklist is not aligned with lowered bodies",
+                        );
+                        anyhow::ensure!(
+                            self.body_slots.insert(body_ref, allocated).is_none(),
+                            "nested body identity was already present in the worklist",
+                        );
+                        Ok(())
+                    })?;
             }
         }
 
         Ok(())
+    }
+
+    /// Find the semantic owner assigned to a new or changed request-local root.
+    ///
+    /// Its provisional owner uses this body's origin so it can be recognized before collection.
+    /// Nested functions use their parent body's origin instead and therefore do not enter this
+    /// path. Matching by the declaration span then attaches the exact function lowered from the
+    /// current header.
+    fn request_root_owner_context(
+        body_ref: BodyRef,
+        body: &crate::BodyData,
+        items: &BodyLocalItems,
+    ) -> anyhow::Result<Option<(BodyOwner, ModuleRef)>> {
+        if body.owner().declaration().origin() != DefMapRef::Body(body_ref) {
+            return Ok(None);
+        }
+
+        let source = body.source();
+        let mut matches =
+            items
+                .item_store()
+                .functions_with_refs()
+                .filter_map(|(function, data)| {
+                    (data.source.file_id == source.file_id && data.span == source.span)
+                        .then_some((function, data.owner))
+                });
+        let Some((function, item_owner)) = matches.next() else {
+            anyhow::bail!("request-local body root has no function declaration in its item store");
+        };
+        anyhow::ensure!(
+            matches.next().is_none(),
+            "request-local body root has more than one function declaration in its item store",
+        );
+        let owner_module = Self::owner_module_for_body_item_owner(items.item_store(), item_owner)
+            .context("request-local body root has no module in its item store")?;
+        Ok(Some((BodyOwner::Function(function), owner_module)))
     }
 
     // Collects the local items within a single already-lowered body.
@@ -257,8 +359,13 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
 
         // Finalization can see previously collected body-local DefMaps. This is what lets nested
         // bodies import names from the body scope that declared them.
-        let source =
-            BodyBuildQuerySource::new(def_map, semantic_ir, self.crate_ref, &self.body_local_items);
+        let source = BodyBuildQuerySource::new(
+            def_map,
+            semantic_ir,
+            self.crate_ref,
+            &self.body_slots,
+            &self.body_local_items,
+        );
         let def_map = BodyDefMapCollector::new(body_ref, body)
             .collect()
             .finalize(source)?;
@@ -269,6 +376,7 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
 
     fn nested_body_tasks(
         body_ref: BodyRef,
+        body_owner: BodyOwner,
         fallback_module: ModuleRef,
         item_store: &ItemStore,
     ) -> Vec<BodyLoweringTask> {
@@ -281,6 +389,9 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
             if function_ref.origin != origin {
                 continue;
             }
+            if body_owner == BodyOwner::Function(function_ref) {
+                continue;
+            }
             let Some(owner_module) =
                 Self::owner_module_for_body_item_owner(item_store, function_data.owner)
             else {
@@ -288,6 +399,7 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
             };
             tasks.push(BodyLoweringTask {
                 owner: BodyOwner::Function(function_ref),
+                request_root: false,
                 owner_module,
                 fallback_module,
                 file_id: function_data.source.file_id,
@@ -306,6 +418,7 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
                     origin,
                     id: const_id,
                 }),
+                request_root: false,
                 owner_module,
                 fallback_module,
                 file_id: const_data.source.file_id,
@@ -319,6 +432,7 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
                     origin,
                     id: static_id,
                 }),
+                request_root: false,
                 owner_module: static_data.owner,
                 fallback_module,
                 file_id: static_data.source.file_id,
@@ -339,6 +453,72 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
             ItemOwner::Trait(trait_id) => item_store.trait_data(trait_id).map(|data| data.owner),
             ItemOwner::Impl(impl_id) => item_store.impl_data(impl_id).map(|data| data.owner),
         }
+    }
+
+    /// Run the semantic stages in the same order for saved and current worklists.
+    ///
+    /// Lowering and body-local item discovery decide which bodies belong to the worklist. From
+    /// this point onward both build modes use exactly these stages: impl headers first, ambiguous
+    /// pattern bindings next, then expression facts.
+    pub(super) fn resolve_semantics(
+        &mut self,
+        def_map: &DefMapReadTxn<'_>,
+        semantic_ir: &SemanticIrReadTxn<'_>,
+        item_lookup_index: &ItemLookupIndex,
+        trait_selection: &TraitSelectionSession,
+        mut checkpoint: impl FnMut(BodySemanticStage) -> anyhow::Result<()>,
+    ) -> anyhow::Result<BodySemanticTimings> {
+        let started = Instant::now();
+        self.resolve_body_local_impl_headers(
+            def_map,
+            semantic_ir,
+            item_lookup_index,
+            trait_selection,
+        )?;
+        let impl_headers = started.elapsed();
+        Self::report_slow_semantic_stage("body_local_impl_headers", impl_headers, None);
+        checkpoint(BodySemanticStage::ImplHeaders)
+            .context("check body work after resolving body-local impl headers")?;
+
+        let started = Instant::now();
+        self.materialize_pattern_bindings(
+            def_map,
+            semantic_ir,
+            item_lookup_index,
+            trait_selection,
+        )?;
+        let pattern_bindings = started.elapsed();
+        Self::report_slow_semantic_stage("pattern_bindings", pattern_bindings, None);
+        checkpoint(BodySemanticStage::PatternBindings)
+            .context("check body work after resolving pattern bindings")?;
+
+        let started = Instant::now();
+        self.resolve_bodies(def_map, semantic_ir, item_lookup_index, trait_selection)?;
+        let bodies = started.elapsed();
+        Self::report_slow_semantic_stage("bodies", bodies, Some(self.crate_bodies.bodies().len()));
+        checkpoint(BodySemanticStage::Bodies).context("check body work after body resolution")?;
+
+        Ok(BodySemanticTimings {
+            impl_headers,
+            pattern_bindings,
+            bodies,
+        })
+    }
+
+    fn report_slow_semantic_stage(
+        phase: &'static str,
+        elapsed: Duration,
+        body_count: Option<usize>,
+    ) {
+        if elapsed < SLOW_CRATE_RESOLUTION_PHASE {
+            return;
+        }
+        tracing::debug!(
+            phase,
+            elapsed_ms = elapsed.as_millis(),
+            body_count,
+            "slow Body IR crate resolution phase"
+        );
     }
 
     // After body-local item collection, impl headers can be resolved against the body defmap and
@@ -377,6 +557,7 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
                     def_map,
                     semantic_ir,
                     self.crate_ref,
+                    &self.body_slots,
                     &self.body_local_items,
                 );
                 let context = BodyResolutionContext::for_structure(
@@ -439,15 +620,16 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
         item_lookup_index: &ItemLookupIndex,
         trait_selection: &TraitSelectionSession,
     ) -> anyhow::Result<()> {
-        let source =
-            BodyBuildQuerySource::new(def_map, semantic_ir, self.crate_ref, &self.body_local_items);
-        let crate_ref = self.crate_ref;
+        let source = BodyBuildQuerySource::new(
+            def_map,
+            semantic_ir,
+            self.crate_ref,
+            &self.body_slots,
+            &self.body_local_items,
+        );
 
         for (body_id, body) in self.crate_bodies.bodies_mut().iter_mut_with_ids() {
-            let body_ref = BodyRef {
-                crate_ref,
-                body: body_id,
-            };
+            let body_ref = self.body_refs[body_id];
             PatternBindingMaterializationPass::new(
                 &source,
                 &source,
@@ -473,16 +655,17 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
         trait_selection: &TraitSelectionSession,
     ) -> anyhow::Result<()> {
         // Make the body resolution pass aware of body-local items.
-        let source =
-            BodyBuildQuerySource::new(def_map, semantic_ir, self.crate_ref, &self.body_local_items);
-        let crate_ref = self.crate_ref;
+        let source = BodyBuildQuerySource::new(
+            def_map,
+            semantic_ir,
+            self.crate_ref,
+            &self.body_slots,
+            &self.body_local_items,
+        );
         debug_assert!(self.body_facts.is_empty());
 
         for (body_id, body) in self.crate_bodies.bodies().iter_with_ids() {
-            let body_ref = BodyRef {
-                crate_ref,
-                body: body_id,
-            };
+            let body_ref = self.body_refs[body_id];
             let body = body.body();
             let body_source = body.source();
             let started = Instant::now();
@@ -517,7 +700,46 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
         Ok(())
     }
 
+    /// Finish request-local bodies without requiring their IDs to match worklist slots.
+    pub(super) fn finish_current(mut self) -> anyhow::Result<Vec<CurrentBody>> {
+        let body_count = self.crate_bodies.bodies().len();
+        anyhow::ensure!(
+            body_count == self.body_refs.len()
+                && body_count == self.body_facts.len()
+                && body_count == self.body_local_items.len(),
+            "current Body IR worklist stages produced misaligned body data",
+        );
+
+        let body_refs = self.body_refs.into_vec();
+        let bodies = self.crate_bodies.into_bodies().into_vec();
+        let facts = self.body_facts.into_vec();
+        let local_items = self
+            .body_local_items
+            .iter_mut()
+            .map(|items| {
+                items
+                    .take()
+                    .expect("every current body should have collected body-local items")
+            })
+            .collect::<Vec<_>>();
+
+        Ok(body_refs
+            .into_iter()
+            .zip(bodies)
+            .zip(facts)
+            .zip(local_items)
+            .map(|(((body_ref, body), facts), local_items)| {
+                CurrentBody::new(body_ref, body.into_body(), facts, local_items)
+            })
+            .collect())
+    }
+
     fn finish(mut self, item_lookup_index: ItemLookupIndex) -> CrateBodies {
+        debug_assert!(
+            self.body_refs
+                .iter_with_ids()
+                .all(|(slot, body_ref)| body_ref.body == slot)
+        );
         let mut body_local_items = Arena::with_capacity(self.body_local_items.len());
         for (body, items) in self.body_local_items.iter_mut_with_ids() {
             let items = items
@@ -546,9 +768,6 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
     }
 
     fn body_ref(&self, body: BodyId) -> BodyRef {
-        BodyRef {
-            crate_ref: self.crate_ref,
-            body,
-        }
+        self.body_refs[body]
     }
 }

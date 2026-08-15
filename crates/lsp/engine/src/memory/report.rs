@@ -13,27 +13,6 @@ impl MemoryReporter {
         MemoryStats::capture(memory_control)
     }
 
-    pub(crate) fn log_delta_debug(
-        memory_control: &dyn MemoryControl,
-        label: &'static str,
-        phase: &'static str,
-        before: MemoryStats,
-    ) -> MemoryStats {
-        let after = MemoryStats::capture(memory_control);
-        let delta = MemoryDelta::between(before, after);
-        tracing::debug!(
-            target: "rg_lsp_engine::memory",
-            label,
-            phase,
-            allocated = %format_memory_report_field(after.allocated, delta.allocated),
-            active = %format_memory_report_field(after.active, delta.active),
-            resident = %format_memory_report_field(after.resident, delta.resident),
-            mapped = %format_memory_report_field(after.mapped, delta.mapped),
-            "memory report"
-        );
-        after
-    }
-
     pub(crate) fn purge_and_report(memory_control: &dyn MemoryControl, label: &'static str) {
         let before = MemoryStats::capture(memory_control);
         let after = Self::purge_after(memory_control, before);

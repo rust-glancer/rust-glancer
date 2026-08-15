@@ -166,6 +166,44 @@ impl User {
 }
 
 #[test]
+fn resolves_nominal_types_inside_a_transparent_generic_alias() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_goto_type_alias"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct Wrapper<T>(pub T);
+pub struct User;
+pub type Alias<T> = Wrapper<T>;
+
+pub fn inspect(_: Ali$signature_alias$as<User>) {
+    let _: Ali$body_alias$as<User>;
+}
+"#,
+        &[
+            AnalysisQuery::goto_type(
+                "goto nominal types inside a signature alias",
+                "signature_alias",
+            ),
+            AnalysisQuery::goto_type("goto nominal types inside a body alias", "body_alias"),
+        ],
+        expect![[r#"
+            goto nominal types inside a signature alias
+            - struct User @ 2:12-2:16
+            - struct Wrapper @ 1:12-1:19
+
+            goto nominal types inside a body alias
+            - struct User @ 2:12-2:16
+            - struct Wrapper @ 1:12-1:19
+        "#]],
+    );
+}
+
+#[test]
 fn resolves_body_local_type_definitions() {
     check_analysis_queries(
         r#"

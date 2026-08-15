@@ -14,16 +14,15 @@ use anyhow::Context as _;
 use rg_ir_model::{CrateRef, Path};
 use rg_parse::{FileId, Span};
 
-use rg_ir_view::{
-    IndexedViewDb,
-    source::{
-        IndexedAssociatedTypeBindingSite, IndexedMemberAccessSite, IndexedModuleSourceSite,
-        IndexedPatternCompletionKind, IndexedQualifiedPathContext, IndexedQualifiedPathScope,
-        IndexedQualifiedPathSite, IndexedRecordFieldListSite, IndexedSignatureTypeSite,
-        IndexedTraitImplSite, IndexedTypeNamePosition, IndexedUnqualifiedNameContext,
-        IndexedUnqualifiedNameScope, IndexedUnqualifiedNameSite, SourceCompletionView,
-    },
+use rg_ir_view::source::{
+    IndexedAssociatedTypeBindingSite, IndexedMemberAccessSite, IndexedModuleSourceSite,
+    IndexedPatternCompletionKind, IndexedQualifiedPathContext, IndexedQualifiedPathScope,
+    IndexedQualifiedPathSite, IndexedRecordFieldListSite, IndexedSignatureTypeSite,
+    IndexedTraitImplSite, IndexedTypeNamePosition, IndexedUnqualifiedNameContext,
+    IndexedUnqualifiedNameScope, IndexedUnqualifiedNameSite, SourceCompletionView,
 };
+
+use crate::{Analysis, SavedSourceRelationship};
 
 /// One normalized syntax family selected for the cursor.
 ///
@@ -70,7 +69,7 @@ impl CompletionSite {
 /// member.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct CompletionSiteSyntax {
-    inside_use_item: bool,
+    import: Option<ImportCompletionSyntax>,
     after_dot: bool,
     after_colon_colon: bool,
     empty_qualified_path: Option<QualifiedPathCompletionSyntax>,
@@ -78,6 +77,7 @@ pub(crate) struct CompletionSiteSyntax {
     empty_record_owner: Option<Path>,
     body_owner_start: Option<u32>,
     standalone: Option<StandaloneCompletionSiteSyntax>,
+    module_name: Option<ModuleNameCompletionSyntax>,
     member_prefix_span: Span,
     member_prefix: String,
 }
@@ -85,7 +85,7 @@ pub(crate) struct CompletionSiteSyntax {
 impl CompletionSiteSyntax {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
-        inside_use_item: bool,
+        import: Option<ImportCompletionSyntax>,
         after_dot: bool,
         after_colon_colon: bool,
         empty_qualified_path: Option<QualifiedPathCompletionSyntax>,
@@ -93,11 +93,12 @@ impl CompletionSiteSyntax {
         empty_record_owner: Option<Path>,
         body_owner_start: Option<u32>,
         standalone: Option<StandaloneCompletionSiteSyntax>,
+        module_name: Option<ModuleNameCompletionSyntax>,
         member_prefix_span: Span,
         member_prefix: String,
     ) -> Self {
         Self {
-            inside_use_item,
+            import,
             after_dot,
             after_colon_colon,
             empty_qualified_path,
@@ -105,8 +106,62 @@ impl CompletionSiteSyntax {
             empty_record_owner,
             body_owner_start,
             standalone,
+            module_name,
             member_prefix_span,
             member_prefix,
+        }
+    }
+}
+
+/// Information from the current `use` item needed to look up names in the saved project.
+///
+/// The `use` item may be new and therefore absent from saved source. Its enclosing module path can
+/// still locate the saved module that owns it. `qualifier` keeps the path written inside the import,
+/// such as `std::sync` in `use std::sync::Ar$0`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ImportCompletionSyntax {
+    inline_module_path: Vec<String>,
+    qualifier: Option<Path>,
+}
+
+impl ImportCompletionSyntax {
+    pub(crate) fn new(inline_module_path: Vec<String>, qualifier: Option<Path>) -> Self {
+        Self {
+            inline_module_path,
+            qualifier,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn inline_module_path(&self) -> &[String] {
+        &self.inline_module_path
+    }
+
+    #[cfg(test)]
+    pub(crate) fn qualifier(&self) -> Option<&Path> {
+        self.qualifier.as_ref()
+    }
+}
+
+/// Information needed to complete a module-level name from the saved project.
+///
+/// `inline_module_path` describes where the cursor is now, for example `outer::inner`. It remains
+/// useful when an edit moved the module away from its saved byte range. Completion is available
+/// only if that module path still exists in the saved project.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ModuleNameCompletionSyntax {
+    inline_module_path: Vec<String>,
+    context: IndexedUnqualifiedNameContext,
+}
+
+impl ModuleNameCompletionSyntax {
+    pub(crate) fn new(
+        inline_module_path: Vec<String>,
+        context: IndexedUnqualifiedNameContext,
+    ) -> Self {
+        Self {
+            inline_module_path,
+            context,
         }
     }
 }
@@ -435,7 +490,8 @@ impl UnqualifiedCompletionSite {
     pub(crate) fn context(&self) -> NameCompletionContext {
         match self.source.scope() {
             IndexedUnqualifiedNameScope::Body { context, .. }
-            | IndexedUnqualifiedNameScope::Signature { context, .. } => match context {
+            | IndexedUnqualifiedNameScope::Signature { context, .. }
+            | IndexedUnqualifiedNameScope::Module { context, .. } => match context {
                 IndexedUnqualifiedNameContext::Type { .. } => NameCompletionContext::Type,
                 IndexedUnqualifiedNameContext::Value => NameCompletionContext::Value,
                 IndexedUnqualifiedNameContext::Const => NameCompletionContext::Const,
@@ -777,18 +833,125 @@ impl RecordFieldCompletionSite {
     }
 }
 
+/// The only completion-side entry point from current syntax into saved source scanners.
+///
+/// Body scanners already read request-local Body IR and do not need translation. Saved signature
+/// scanners require an exact source match or a uniquely associated declaration header. Module
+/// lookup can additionally use the inline-module path recovered from current syntax. Keeping
+/// those rules here prevents individual completion families from treating a current offset as a
+/// saved coordinate.
+pub(super) struct CompletionSourceAttachment<'a, 'db> {
+    analysis: &'a Analysis<'db>,
+    crate_ref: CrateRef,
+    file_id: FileId,
+}
+
+impl<'a, 'db> CompletionSourceAttachment<'a, 'db> {
+    pub(super) fn new(analysis: &'a Analysis<'db>, crate_ref: CrateRef, file_id: FileId) -> Self {
+        Self {
+            analysis,
+            crate_ref,
+            file_id,
+        }
+    }
+
+    pub(super) fn source_is_different(&self) -> bool {
+        self.analysis
+            .current_source_relationship(self.crate_ref.package, self.file_id)
+            == Some(SavedSourceRelationship::Different)
+    }
+
+    pub(super) fn saved_header_offset(&self, current_offset: u32) -> anyhow::Result<Option<u32>> {
+        self.analysis
+            .saved_header_offset_for_current(self.crate_ref, self.file_id, current_offset)
+    }
+
+    /// Resolve current module syntax without relying on a coincidentally overlapping saved range.
+    pub(super) fn module_site_at(
+        &self,
+        current_offset: u32,
+        inline_module_path: &[String],
+    ) -> anyhow::Result<Option<IndexedModuleSourceSite>> {
+        let source = SourceCompletionView::new(self.analysis.view_db());
+        if let Some(saved_offset) = self.saved_header_offset(current_offset)?
+            && let Some(site) = source
+                .module_source_site_at(self.crate_ref, self.file_id, saved_offset)
+                .context("scan associated saved module source")?
+        {
+            return Ok(Some(site));
+        }
+        source.module_syntax_source_site(self.crate_ref, self.file_id, inline_module_path)
+    }
+
+    /// Attach current prefix syntax to a saved declaration-signature scope.
+    pub(super) fn signature_name_site_at(
+        &self,
+        current_offset: u32,
+        context: IndexedUnqualifiedNameContext,
+        current_prefix_span: Span,
+        current_prefix: String,
+    ) -> anyhow::Result<Option<IndexedUnqualifiedNameSite>> {
+        let Some(saved_offset) = self.saved_header_offset(current_offset)? else {
+            return Ok(None);
+        };
+        SourceCompletionView::new(self.analysis.view_db())
+            .signature_syntax_name_site_at(
+                self.crate_ref,
+                self.file_id,
+                saved_offset,
+                context,
+                current_prefix_span,
+                current_prefix,
+            )
+            .context("attach current name syntax to saved signature")
+    }
+
+    /// Add associated-type names beside ordinary type completions.
+    ///
+    /// Body IR was built from the captured document, so its scanner accepts the current offset.
+    /// A signature scanner reads saved declarations and is tried only after this method maps the
+    /// cursor into one uniquely associated saved header.
+    pub(super) fn implicit_associated_type_binding_site_at(
+        &self,
+        current_offset: u32,
+    ) -> anyhow::Result<Option<IndexedAssociatedTypeBindingSite>> {
+        let source = SourceCompletionView::new(self.analysis.view_db());
+        if let Some(site) = source
+            .body_implicit_associated_type_binding_site_at(
+                self.crate_ref,
+                self.file_id,
+                current_offset,
+            )
+            .context("scan current body for implicit associated type binding")?
+        {
+            return Ok(Some(site));
+        }
+
+        let Some(saved_offset) = self.saved_header_offset(current_offset)? else {
+            return Ok(None);
+        };
+        source
+            .signature_implicit_associated_type_binding_site_at(
+                self.crate_ref,
+                self.file_id,
+                saved_offset,
+            )
+            .context("scan associated saved signature for implicit associated type binding")
+    }
+}
+
 /// Selects one completion family without leaking source-scanner types into query assembly.
 ///
 /// Decisive parser hints handle `use`, `.`, and `::` cheaply. In incomplete syntax where those
 /// hints are unavailable, the detector asks domain scanners from the most specific body-owned
 /// shape through signature and import fallbacks.
 pub(crate) struct CompletionSiteDetector<'a, 'db> {
-    db: &'a IndexedViewDb<'db>,
+    analysis: &'a Analysis<'db>,
 }
 
 impl<'a, 'db> CompletionSiteDetector<'a, 'db> {
-    pub(crate) fn new(db: &'a IndexedViewDb<'db>) -> Self {
-        Self { db }
+    pub(crate) fn new(analysis: &'a Analysis<'db>) -> Self {
+        Self { analysis }
     }
 
     /// Classifies the cursor offset by asking the scanner that owns each syntax shape.
@@ -799,7 +962,24 @@ impl<'a, 'db> CompletionSiteDetector<'a, 'db> {
         offset: u32,
         syntax: Option<CompletionSiteSyntax>,
     ) -> anyhow::Result<Option<CompletionSite>> {
-        let source = SourceCompletionView::new(self.db);
+        let source = SourceCompletionView::new(self.analysis.view_db());
+        let attachment = CompletionSourceAttachment::new(self.analysis, crate_ref, file_id);
+        let saved_header_offset = attachment
+            .saved_header_offset(offset)
+            .context("map current completion header to saved source")?;
+        let source_is_different = attachment.source_is_different();
+        let current_prefix = syntax
+            .as_ref()
+            .map(|syntax| (syntax.member_prefix_span, syntax.member_prefix.clone()));
+        let module_name = syntax.as_ref().and_then(|syntax| {
+            syntax.module_name.clone().map(|module_name| {
+                (
+                    module_name,
+                    syntax.member_prefix_span,
+                    syntax.member_prefix.clone(),
+                )
+            })
+        });
         if let Some(syntax) = syntax {
             if let Some(standalone) = syntax.standalone {
                 let Some(module_or_impl_site) = (match standalone {
@@ -810,8 +990,15 @@ impl<'a, 'db> CompletionSiteDetector<'a, 'db> {
                             replace_span,
                             lookup_prefix,
                         } = syntax;
+                        let Some(saved_owner_start) =
+                            attachment
+                                .saved_header_offset(owner_start)
+                                .context("map current trait impl header to saved source")?
+                        else {
+                            return Ok(None);
+                        };
                         return Ok(source
-                            .trait_impl_site_at(crate_ref, file_id, owner_start)
+                            .trait_impl_site_at(crate_ref, file_id, saved_owner_start)
                             .context("scan trait impl completion site")?
                             .map(|source| {
                                 CompletionSite::TraitImpl(TraitImplCompletionSite::new(
@@ -850,8 +1037,14 @@ impl<'a, 'db> CompletionSiteDetector<'a, 'db> {
                             .map(UnqualifiedCompletionSite::new)
                             .map(CompletionSite::Unqualified));
                     }
-                    StandaloneCompletionSiteSyntax::ModuleMacro { qualifier } => source
-                        .module_source_site_at(crate_ref, file_id, offset)
+                    StandaloneCompletionSiteSyntax::ModuleMacro { qualifier } => attachment
+                        .module_site_at(
+                            offset,
+                            module_name
+                                .as_ref()
+                                .map(|(module, _, _)| module.inline_module_path.as_slice())
+                                .unwrap_or_default(),
+                        )
                         .context("scan module macro completion site")?
                         .map(|source| {
                             CompletionSite::ModuleMacro(ModuleMacroCompletionSite::new(
@@ -861,8 +1054,14 @@ impl<'a, 'db> CompletionSiteDetector<'a, 'db> {
                             ))
                         }),
                     StandaloneCompletionSiteSyntax::ModuleDeclaration { has_path_attribute } => {
-                        source
-                            .module_source_site_at(crate_ref, file_id, offset)
+                        attachment
+                            .module_site_at(
+                                offset,
+                                module_name
+                                    .as_ref()
+                                    .map(|(module, _, _)| module.inline_module_path.as_slice())
+                                    .unwrap_or_default(),
+                            )
                             .context("scan module declaration completion site")?
                             .map(|source| {
                                 CompletionSite::ModuleDeclaration(
@@ -894,6 +1093,33 @@ impl<'a, 'db> CompletionSiteDetector<'a, 'db> {
                     .map(RecordFieldCompletionSite::new)
                     .map(CompletionSite::RecordField));
             }
+            if let Some(import) = syntax.import {
+                if let Some(qualifier) = import.qualifier {
+                    return Ok(source
+                        .import_syntax_qualified_path_site(
+                            crate_ref,
+                            file_id,
+                            &import.inline_module_path,
+                            qualifier,
+                            syntax.member_prefix_span,
+                        )
+                        .context("match current qualified import to saved module")?
+                        .map(PathCompletionSite::new)
+                        .map(CompletionSite::Path));
+                }
+
+                return Ok(source
+                    .import_syntax_unqualified_name_site(
+                        crate_ref,
+                        file_id,
+                        &import.inline_module_path,
+                        syntax.member_prefix_span,
+                        syntax.member_prefix,
+                    )
+                    .context("match current import to saved module")?
+                    .map(UnqualifiedCompletionSite::new)
+                    .map(CompletionSite::Unqualified));
+            }
             if let Some(empty_path) = syntax.empty_path {
                 let indexed_context = match empty_path {
                     EmptyPathCompletionContext::Type => IndexedUnqualifiedNameContext::Type {
@@ -907,6 +1133,9 @@ impl<'a, 'db> CompletionSiteDetector<'a, 'db> {
                     EmptyPathCompletionContext::Expression
                     | EmptyPathCompletionContext::Argument => IndexedUnqualifiedNameContext::Value,
                     EmptyPathCompletionContext::Import => {
+                        if source_is_different {
+                            return Ok(None);
+                        }
                         return Ok(source
                             .import_empty_name_site_at(crate_ref, file_id, offset)
                             .context("scan empty import completion site")?
@@ -923,27 +1152,24 @@ impl<'a, 'db> CompletionSiteDetector<'a, 'db> {
                     )));
                 }
                 if let IndexedUnqualifiedNameContext::Type { position } = indexed_context {
+                    let Some(saved_offset) = saved_header_offset else {
+                        return self.module_name_site(&source, crate_ref, file_id, module_name);
+                    };
                     return Ok(source
-                        .signature_empty_type_site_at(crate_ref, file_id, offset, position)
+                        .signature_empty_type_site_at(crate_ref, file_id, saved_offset, position)
                         .context("scan empty signature completion site")?
+                        .and_then(|site| {
+                            if source_is_different {
+                                let (span, prefix) = current_prefix.clone()?;
+                                Some(site.with_current_member_prefix(span, prefix))
+                            } else {
+                                Some(site)
+                            }
+                        })
                         .map(UnqualifiedCompletionSite::new)
                         .map(CompletionSite::Unqualified));
                 }
                 return Ok(None);
-            }
-            if syntax.inside_use_item {
-                if let Some(site) = source
-                    .import_qualified_path_site_at(crate_ref, file_id, offset)
-                    .context("scan qualified import completion site")?
-                {
-                    return Ok(Some(CompletionSite::Path(PathCompletionSite::new(site))));
-                }
-
-                return Ok(source
-                    .import_unqualified_name_site_at(crate_ref, file_id, offset)
-                    .context("scan unqualified import completion site")?
-                    .map(UnqualifiedCompletionSite::new)
-                    .map(CompletionSite::Unqualified));
             }
             if syntax.after_dot {
                 return Ok(source
@@ -970,11 +1196,12 @@ impl<'a, 'db> CompletionSiteDetector<'a, 'db> {
                     }
 
                     if matches!(path.context(), NameCompletionContext::Type)
+                        && let Some(saved_offset) = saved_header_offset
                         && let Some(site) = source
                             .signature_syntax_rich_qualified_path_site_at(
                                 crate_ref,
                                 file_id,
-                                offset,
+                                saved_offset,
                                 path.qualifier(),
                                 syntax.member_prefix_span,
                             )
@@ -992,9 +1219,15 @@ impl<'a, 'db> CompletionSiteDetector<'a, 'db> {
                     return Ok(Some(CompletionSite::Path(PathCompletionSite::new(site))));
                 }
 
+                let Some(saved_offset) = saved_header_offset else {
+                    return Ok(None);
+                };
                 return Ok(source
-                    .signature_type_site_at(crate_ref, file_id, offset)
+                    .signature_type_site_at(crate_ref, file_id, saved_offset)
                     .context("scan qualified signature completion site")?
+                    .and_then(|site| {
+                        Self::attach_current_prefix(site, source_is_different, &current_prefix)
+                    })
                     .map(CompletionSite::from_signature_type_site));
             }
         }
@@ -1042,23 +1275,76 @@ impl<'a, 'db> CompletionSiteDetector<'a, 'db> {
             )));
         }
 
-        if let Some(site) = source
-            .signature_type_site_at(crate_ref, file_id, offset)
-            .context("scan signature completion site")?
+        if let Some(saved_offset) = saved_header_offset
+            && let Some(site) = source
+                .signature_type_site_at(crate_ref, file_id, saved_offset)
+                .context("scan signature completion site")?
+            && let Some(site) =
+                Self::attach_current_prefix(site, source_is_different, &current_prefix)
         {
             return Ok(Some(CompletionSite::from_signature_type_site(site)));
         }
 
-        if let Some(site) = source
-            .import_qualified_path_site_at(crate_ref, file_id, offset)
-            .context("scan qualified import completion site")?
+        if !source_is_different
+            && let Some(site) = source
+                .import_qualified_path_site_at(crate_ref, file_id, offset)
+                .context("scan qualified import completion site")?
         {
             return Ok(Some(CompletionSite::Path(PathCompletionSite::new(site))));
         }
 
+        // An edit can move module-level syntax away from every saved declaration range. The module
+        // path still tells us where to look, so continue offering saved names without treating the
+        // current declaration itself as indexed.
+        if module_name.is_some() {
+            return self.module_name_site(&source, crate_ref, file_id, module_name);
+        }
+
+        if source_is_different {
+            return Ok(None);
+        }
         Ok(source
             .import_unqualified_name_site_at(crate_ref, file_id, offset)
             .context("scan unqualified import completion site")?
+            .map(UnqualifiedCompletionSite::new)
+            .map(CompletionSite::Unqualified))
+    }
+
+    /// Saved signature scopes may be reused, but their replacement span never crosses into a
+    /// different current source. The current parser owns both the written prefix and its range.
+    fn attach_current_prefix(
+        site: IndexedSignatureTypeSite,
+        source_is_different: bool,
+        current_prefix: &Option<(Span, String)>,
+    ) -> Option<IndexedSignatureTypeSite> {
+        if !source_is_different {
+            return Some(site);
+        }
+        let (span, prefix) = current_prefix.clone()?;
+        Some(site.with_current_member_prefix(span, prefix))
+    }
+
+    /// Fall back to saved module scope when current declaration syntax has no safe saved owner.
+    fn module_name_site(
+        &self,
+        source: &SourceCompletionView<'_, '_>,
+        crate_ref: CrateRef,
+        file_id: FileId,
+        module_name: Option<(ModuleNameCompletionSyntax, Span, String)>,
+    ) -> anyhow::Result<Option<CompletionSite>> {
+        let Some((module_name, member_prefix_span, member_prefix)) = module_name else {
+            return Ok(None);
+        };
+        Ok(source
+            .module_syntax_name_site_at(
+                crate_ref,
+                file_id,
+                &module_name.inline_module_path,
+                module_name.context,
+                member_prefix_span,
+                member_prefix,
+            )
+            .context("match current module name completion site")?
             .map(UnqualifiedCompletionSite::new)
             .map(CompletionSite::Unqualified))
     }

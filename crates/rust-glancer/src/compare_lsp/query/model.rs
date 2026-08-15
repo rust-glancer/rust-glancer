@@ -90,6 +90,23 @@ impl QueryCase {
             QueryTarget::Workspace { .. } => None,
         }
     }
+
+    /// Move source positions by a fixed number of complete leading lines.
+    ///
+    /// The dirty fixture adds one comment before otherwise unchanged source. Its compact query
+    /// vector can therefore keep using the audited coordinates from the pinned checkout.
+    pub(super) fn shifted_lines(mut self, line_delta: u32) -> Self {
+        match &mut self.target {
+            QueryTarget::Position { position, .. } | QueryTarget::Rename { position, .. } => {
+                position.line = position
+                    .line
+                    .checked_add(line_delta)
+                    .expect("dirty fixture query line should fit into u32");
+            }
+            QueryTarget::File { .. } | QueryTarget::Workspace { .. } => {}
+        }
+        self
+    }
 }
 
 /// Request input shape for one query case.

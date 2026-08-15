@@ -65,6 +65,18 @@ impl<'db> LazyPackage<'db> {
         }
     }
 
+    /// Return the saved dense body count without decoding any body shard.
+    pub(super) fn body_count(
+        &self,
+        crate_ref: CrateRef,
+    ) -> Result<Option<usize>, PackageStoreError> {
+        Ok(self
+            .loaded(crate_ref.package)?
+            .manifest
+            .crate_manifest(crate_ref.crate_id)
+            .map(|manifest| manifest.body_count()))
+    }
+
     /// Load the complete crate representation.
     ///
     /// This is the expensive path used by callers that genuinely need `CrateBodies`. File-local
@@ -91,15 +103,21 @@ impl<'db> LazyPackage<'db> {
     /// Return the crate-global item index without loading its body shards.
     ///
     /// A complete crate already contains the same index, so prefer it when another query loaded
-    /// the crate first. Otherwise the index remains an independent cache unit.
+    /// the crate first. Otherwise the index remains an independent cache unit. Crates with
+    /// `Missing` or `SkippedByPolicy` coverage have no published index even though their cache
+    /// payload contains an empty placeholder.
     pub(super) fn item_lookup_index(
         &self,
         crate_ref: CrateRef,
     ) -> Result<Option<&ItemLookupIndex>, PackageStoreError> {
-        let Some(loaded_crate) = self
-            .loaded(crate_ref.package)?
-            .crate_data(crate_ref.crate_id)
-        else {
+        let loaded = self.loaded(crate_ref.package)?;
+        let Some(crate_manifest) = loaded.manifest.crate_manifest(crate_ref.crate_id) else {
+            return Ok(None);
+        };
+        if !crate_manifest.coverage().is_materialized() {
+            return Ok(None);
+        }
+        let Some(loaded_crate) = loaded.crate_data(crate_ref.crate_id) else {
             return Ok(None);
         };
         if let Some(crate_bodies) = loaded_crate.bodies.get() {

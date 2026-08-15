@@ -1,10 +1,19 @@
+//! Multi-engine lifecycle and routing owned by the LSP server.
+//!
+//! The registry is where a raw editor path is associated with one engine process. Opening a
+//! document freezes that engine and its project-source identity in `OpenDocumentRoute`; later
+//! requests reuse the session route instead of rediscovering ownership from the filesystem.
+//! Native filesystem batches take the other path: they are grouped by already-known engine roots,
+//! captured once, and forwarded as saved-project mutations.
+
 use std::{
     collections::BTreeMap,
+    io::ErrorKind,
     path::{Path, PathBuf},
     sync::{Arc, Weak},
 };
 
-use rg_lsp_proto::EngineConfig;
+use rg_lsp_proto::{CapturedSourceInput, EngineConfig, SavedProjectChanges};
 use rg_std::UniqueVec;
 use tokio::sync::Mutex;
 use tower_lsp_server::{Client as LspClient, ls_types::MessageType};
@@ -12,8 +21,9 @@ use tower_lsp_server::{Client as LspClient, ls_types::MessageType};
 use crate::{
     client_notifications::{ActiveWorkspaceChanged, ActiveWorkspaceStatus},
     config::ServerConfig,
-    engine_client::{EngineAvailabilitySnapshot, EngineClient, EngineIndexingActivity},
+    engine_client::{EngineClient, EngineProjectStatus, EngineProjectUpdate},
     engine_process::{EngineProcess, EngineProcessExit, EngineProcessExitMonitor},
+    ingress::EditorStateHandle,
 };
 
 mod document_owner;
@@ -22,7 +32,7 @@ mod slot;
 mod state;
 
 use self::{
-    document_owner::{DocumentOwner, OpenFileCachePolicy},
+    document_owner::DocumentOwner,
     routing::{EngineId, normalize_path},
     slot::{EngineEntry, EngineSlot},
     state::{EngineRegistryInner, ReservedEngineRoute, ReservedEngineStart},
@@ -35,19 +45,47 @@ use self::{
 #[derive(Clone, Debug)]
 pub(crate) struct EngineRegistry {
     lsp_client: LspClient,
+    editor: EditorStateHandle,
     inner: Arc<Mutex<EngineRegistryInner>>,
 }
 
-/// Foreground-unavailability tokens held while one native watcher burst settles and rebuilds.
+/// Engine ownership plus the project-source identity selected while routing one open document.
+///
+/// The editor URI can outlive its filesystem spelling: a rename or removal after `didOpen` must
+/// not force later analysis to rediscover which source the open session originally addressed.
+#[derive(Clone, Debug)]
+pub(crate) struct OpenDocumentRoute {
+    engine_client: EngineClient,
+    source_path: PathBuf,
+}
+
+impl OpenDocumentRoute {
+    pub(crate) fn new(engine_client: EngineClient, source_path: PathBuf) -> Self {
+        Self {
+            engine_client,
+            source_path,
+        }
+    }
+
+    pub(crate) fn engine_client(&self) -> &EngineClient {
+        &self.engine_client
+    }
+
+    pub(crate) fn source_path(&self) -> &Path {
+        &self.source_path
+    }
+}
+
+/// Foreground project updates held while one native watcher burst settles and rebuilds.
 ///
 /// The watcher is scoped to an editor workspace folder, which may contain several already-started
-/// Cargo engines. Keeping their tokens together lets every affected status change happen before
-/// the watcher waits for quiet. A token that finds no forwarded path is dropped as cancelled, so
+/// Cargo engines. Keeping their updates together lets every affected status change happen before
+/// the watcher waits for quiet. An update that finds no forwarded path is dropped as cancelled, so
 /// filtering a watcher event cannot accidentally clear an older failed status.
 #[must_use = "external project changes must be forwarded after the watcher settles"]
 #[derive(Debug)]
 pub(crate) struct ExternalProjectChanges {
-    activities: BTreeMap<EngineId, EngineIndexingActivity>,
+    updates: BTreeMap<EngineId, EngineProjectUpdate>,
 }
 
 impl EngineRegistry {
@@ -56,14 +94,44 @@ impl EngineRegistry {
         lsp_client: LspClient,
         workspace_folders: Vec<PathBuf>,
         config: ServerConfig,
+        editor: EditorStateHandle,
     ) -> Self {
         Self {
             lsp_client,
+            editor,
             inner: Arc::new(Mutex::new(EngineRegistryInner::new(
                 workspace_folders,
                 config,
             ))),
         }
+    }
+
+    /// Capture existing Rust source once; preserve graph- and deletion-shaped inputs as paths.
+    async fn capture_external_project_changes(
+        paths: Vec<PathBuf>,
+    ) -> anyhow::Result<SavedProjectChanges> {
+        let mut captured_sources = Vec::new();
+        let mut fs_path_changes = Vec::new();
+
+        for path in paths {
+            if path.extension().and_then(std::ffi::OsStr::to_str) != Some("rs") {
+                fs_path_changes.push(path);
+                continue;
+            }
+
+            match tokio::fs::read_to_string(&path).await {
+                Ok(text) => captured_sources.push(CapturedSourceInput::new(path, text)),
+                Err(error) if error.kind() == ErrorKind::NotFound => fs_path_changes.push(path),
+                Err(error) => {
+                    return Err(anyhow::anyhow!(
+                        "read external Rust source `{}` before submission: {error}",
+                        path.display()
+                    ));
+                }
+            }
+        }
+
+        Ok(SavedProjectChanges::new(captured_sources, fs_path_changes))
     }
 
     /// Returns every ready engine client for lifecycle fan-out such as shutdown.
@@ -101,11 +169,14 @@ impl EngineRegistry {
     }
 
     /// Routes a newly opened document and records exact file ownership until `didClose`.
-    pub(crate) async fn open_document(&self, path: &Path) -> anyhow::Result<Option<EngineClient>> {
+    pub(crate) async fn open_document(
+        &self,
+        path: &Path,
+    ) -> anyhow::Result<Option<OpenDocumentRoute>> {
         let path = normalize_path(path);
         let owner = {
             let mut inner = self.inner.lock().await;
-            DocumentOwner::new(&mut inner, &path, OpenFileCachePolicy::Record)?
+            DocumentOwner::new(&mut inner, &path)?
         };
         let Some(owner) = owner else {
             return Ok(None);
@@ -113,7 +184,7 @@ impl EngineRegistry {
 
         let id = owner.id();
         match self.engine_for_document_owner(owner).await {
-            Ok(Some(engine_client)) => Ok(Some(engine_client)),
+            Ok(Some(engine_client)) => Ok(Some(OpenDocumentRoute::new(engine_client, path))),
             Ok(None) => {
                 self.remove_open_file(path.as_path(), id).await;
                 Ok(None)
@@ -125,35 +196,12 @@ impl EngineRegistry {
         }
     }
 
-    /// Finds or starts the engine that should receive a document-scoped request.
-    pub(crate) async fn document(&self, path: &Path) -> anyhow::Result<Option<EngineClient>> {
-        let path = normalize_path(path);
-        let owner = {
-            let mut inner = self.inner.lock().await;
-            DocumentOwner::new(&mut inner, &path, OpenFileCachePolicy::Ignore)?
-        };
-        let Some(owner) = owner else {
-            return Ok(None);
-        };
-
-        self.engine_for_document_owner(owner).await
+    /// Forgets the route remembered while a document was open.
+    pub(crate) async fn close_document(&self, path: &Path) {
+        self.inner.lock().await.remove_open_file(path, None);
     }
 
-    /// Routes a closing document to its cached owner and forgets that ownership.
-    pub(crate) async fn close_document(&self, path: &Path) -> anyhow::Result<Option<EngineClient>> {
-        let path = normalize_path(path);
-        let owner = {
-            let mut inner = self.inner.lock().await;
-            DocumentOwner::new(&mut inner, &path, OpenFileCachePolicy::Remove)?
-        };
-        let Some(owner) = owner else {
-            return Ok(None);
-        };
-
-        self.engine_for_document_owner(owner).await
-    }
-
-    /// Mark every ready Cargo engine below one watched editor folder as indexing.
+    /// Mark every ready Cargo engine below one watched editor folder as updating.
     ///
     /// This happens on the first relevant filesystem event, before the watcher waits for a quiet
     /// period. It only touches already-known engines: a native event must not start a Cargo engine
@@ -163,26 +211,26 @@ impl EngineRegistry {
         workspace_root: &Path,
     ) -> ExternalProjectChanges {
         let inner = self.inner.lock().await;
-        let activities = inner
+        let updates = inner
             .routing
             .engine_ids_for_workspace(workspace_root)
             .filter_map(|id| {
                 let EngineSlot::Ready(engine) = inner.engine(id)? else {
                     return None;
                 };
-                Some((id, engine.process.engine_client().begin_indexing()))
+                Some((id, engine.process.engine_client().begin_project_update()))
             })
             .collect();
 
-        ExternalProjectChanges { activities }
+        ExternalProjectChanges { updates }
     }
 
     /// Finish one settled watcher burst against the ready engines that own its paths.
     ///
-    /// `changes` carries the indexing activities acquired before the settle delay. Each routed RPC
-    /// completes its matching activity as success or failure. Activities for filtered paths fall
+    /// `changes` carries the project updates acquired before the settle delay. Each routed RPC
+    /// completes its matching update as success or failure. Updates for filtered paths fall
     /// out of scope as cancellations and therefore preserve any older failure.
-    pub(crate) async fn external_project_paths_changed(
+    pub(crate) async fn finish_external_project_changes(
         &self,
         paths: Vec<PathBuf>,
         mut changes: ExternalProjectChanges,
@@ -223,21 +271,38 @@ impl EngineRegistry {
                 .collect::<Vec<_>>()
         };
 
-        // The watcher already made these engines unavailable before waiting for quiet. Transfer
-        // each early activity to its RPC so cancellation cannot publish readiness while an accepted
+        // The watcher already published updating status before waiting for quiet. Transfer each
+        // early update to its RPC so cancellation cannot publish readiness while an accepted
         // engine mutation is still queued or running.
         for (id, engine_client, paths) in paths_by_engine {
-            let activity = changes
-                .activities
+            let update = changes
+                .updates
                 .remove(&id)
-                .unwrap_or_else(|| engine_client.begin_indexing());
+                .unwrap_or_else(|| engine_client.begin_project_update());
+
+            // Existing Rust sources become immutable request values here. The engine rebuilds from
+            // these exact bytes, then independently validates them against disk immediately before
+            // publication. Missing sources remain path-shaped because deletion and discovery need
+            // the project layer to interpret the filesystem transition.
+            let request = match Self::capture_external_project_changes(paths).await {
+                Ok(request) => request,
+                Err(error) => {
+                    update.fail(&error);
+                    tracing::warn!(
+                        engine_id = id.index(),
+                        error = %format!("{error:#}"),
+                        "failed to capture external project changes"
+                    );
+                    continue;
+                }
+            };
             let result = engine_client
-                .call_with_indexing_activity(
-                    activity,
-                    "external_project_paths_changed",
+                .call_with_project_update(
+                    update,
+                    "external_project_changes",
                     |engine_client, request_context| async move {
                         engine_client
-                            .external_project_paths_changed(request_context, paths)
+                            .external_project_changes(request_context, request)
                             .await
                     },
                 )
@@ -246,12 +311,12 @@ impl EngineRegistry {
                 tracing::warn!(
                     engine_id = id.index(),
                     error = %format!("{error:#}"),
-                    "failed to apply external project path changes"
+                    "failed to apply external project changes"
                 );
             }
         }
         // Remaining guards belong to paths that were filtered out or lost their ready engine. Their
-        // `Drop` implementation cancels the activity without treating it as a successful retry.
+        // `Drop` implementation cancels the update without treating it as a successful retry.
     }
 
     async fn engine_for_document_owner(
@@ -393,7 +458,7 @@ impl EngineRegistry {
 
     /// Replaces a starting slot with a ready process and wakes waiters.
     async fn mark_ready(&self, id: EngineId, process: EngineProcess) {
-        let availability = process.engine_client().availability_changes();
+        let project_status = process.engine_client().project_status_changes();
         let (notify, status) = {
             let mut inner = self.inner.lock().await;
             let notify = inner
@@ -406,19 +471,19 @@ impl EngineRegistry {
         };
         notify.notify_waiters();
         Self::publish_active_workspace(&self.lsp_client, status).await;
-        self.spawn_availability_monitor(id, availability);
+        self.spawn_project_status_monitor(id, project_status);
     }
 
     /// Republish active-workspace status when a ready process starts or finishes foreground work.
-    fn spawn_availability_monitor(
+    fn spawn_project_status_monitor(
         &self,
         id: EngineId,
-        mut availability: tokio::sync::watch::Receiver<EngineAvailabilitySnapshot>,
+        mut project_status: tokio::sync::watch::Receiver<EngineProjectStatus>,
     ) {
         let inner = Arc::downgrade(&self.inner);
         let lsp_client = self.lsp_client.clone();
         tokio::spawn(async move {
-            while availability.changed().await.is_ok() {
+            while project_status.changed().await.is_ok() {
                 let Some(inner) = inner.upgrade() else {
                     return;
                 };
@@ -501,8 +566,13 @@ impl EngineRegistry {
         root: PathBuf,
         config: EngineConfig,
     ) -> anyhow::Result<(EngineProcess, EngineProcessExitMonitor)> {
-        let (engine, exit_monitor) =
-            EngineProcess::spawn(self.lsp_client.clone(), &root, Self::engine_id(&root)).await?;
+        let (engine, exit_monitor) = EngineProcess::spawn(
+            self.lsp_client.clone(),
+            self.editor.clone(),
+            &root,
+            Self::engine_id(&root),
+        )
+        .await?;
         let engine_client = engine.engine_client().clone();
         let initialize_root = root.clone();
         engine_client
@@ -563,6 +633,35 @@ pub struct ProjectA;
 "#;
 
     #[tokio::test]
+    async fn watcher_captures_existing_rust_text_and_preserves_graph_or_deletion_paths() {
+        let fixture = fixture_crate(WORKSPACE_FIXTURE);
+        let source = fixture.path("workspace/project_a/src/lib.rs");
+        let manifest = fixture.path("workspace/project_a/Cargo.toml");
+        let deleted_source = fixture.path("workspace/project_a/src/deleted.rs");
+        std::fs::write(&source, "pub struct Captured;\n")
+            .expect("watcher fixture source should be writable");
+
+        let changes = EngineRegistry::capture_external_project_changes(vec![
+            source.clone(),
+            manifest.clone(),
+            deleted_source.clone(),
+        ])
+        .await
+        .expect("ordinary watcher inputs should be captured");
+        std::fs::write(&source, "pub struct Later;\n")
+            .expect("disk should be able to advance after capture");
+
+        assert_eq!(changes.captured_sources().len(), 1);
+        assert_eq!(changes.captured_sources()[0].path(), source);
+        assert_eq!(
+            changes.captured_sources()[0].text(),
+            "pub struct Captured;\n",
+            "the RPC must retain the value from watcher capture"
+        );
+        assert_eq!(changes.fs_paths(), [manifest, deleted_source]);
+    }
+
+    #[tokio::test]
     async fn open_document_records_owner_before_engine_startup_completes() {
         let fixture = fixture_crate(WORKSPACE_FIXTURE);
         let (service, _socket) = initialized_service(&fixture);
@@ -571,7 +670,7 @@ pub struct ProjectA;
 
         let owner = {
             let mut inner = registry.inner.lock().await;
-            DocumentOwner::new(&mut inner, &document, OpenFileCachePolicy::Record)
+            DocumentOwner::new(&mut inner, &document)
                 .expect("open document should route through Cargo workspace")
                 .expect("workspace document should have an owner")
         };
@@ -592,31 +691,6 @@ pub struct ProjectA;
     }
 
     #[tokio::test]
-    async fn unopened_document_route_does_not_populate_open_file_cache() {
-        let fixture = fixture_crate(WORKSPACE_FIXTURE);
-        let (service, _socket) = initialized_service(&fixture);
-        let registry = &service.inner().registry;
-        let document = fixture.path("workspace/project_a/src/lib.rs");
-
-        let owner = {
-            let mut inner = registry.inner.lock().await;
-            DocumentOwner::new(&mut inner, &document, OpenFileCachePolicy::Ignore)
-                .expect("document request should route through Cargo workspace")
-                .expect("workspace document should have an owner")
-        };
-        let cached_owner = {
-            let inner = registry.inner.lock().await;
-            inner.open_file_owner(&document)
-        };
-
-        assert!(matches!(
-            owner.source(),
-            DocumentOwnerSource::CargoWorkspace
-        ));
-        assert_eq!(cached_owner, None);
-    }
-
-    #[tokio::test]
     async fn outside_workspace_document_does_not_invoke_cargo_locate_project() {
         let fixture = fixture_crate(&format!(
             "{WORKSPACE_FIXTURE}\n{}",
@@ -634,7 +708,7 @@ pub struct External;
 
         let owner = {
             let mut inner = registry.inner.lock().await;
-            DocumentOwner::new(&mut inner, &document, OpenFileCachePolicy::Ignore)
+            DocumentOwner::new(&mut inner, &document)
                 .expect("outside workspace document should not run cargo locate-project")
         };
 
@@ -651,7 +725,7 @@ pub struct External;
 
         let owner = {
             let mut inner = registry.inner.lock().await;
-            DocumentOwner::new(&mut inner, &document, OpenFileCachePolicy::Record)
+            DocumentOwner::new(&mut inner, &document)
                 .expect("open document should route through Cargo workspace")
                 .expect("workspace document should have an owner")
         };
@@ -698,7 +772,7 @@ pub struct External;
 
         let id = {
             let mut inner = registry.inner.lock().await;
-            let owner = DocumentOwner::new(&mut inner, &document, OpenFileCachePolicy::Record)
+            let owner = DocumentOwner::new(&mut inner, &document)
                 .expect("open document should route through Cargo workspace")
                 .expect("workspace document should have an owner");
             inner.set_active_id(owner.id());
@@ -732,6 +806,7 @@ pub struct External;
                 client,
                 workspace_folders.clone(),
                 ServerConfig::from_engine_config(EngineConfig::default()),
+                EditorStateHandle::default(),
             ),
         });
 

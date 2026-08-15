@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use anyhow::Context as _;
 use ls_types::{Location, Range, Uri};
 use rg_analysis::NavigationTarget;
@@ -26,6 +28,20 @@ pub(crate) fn location_for_target(
     )?;
 
     Ok(Some(Location { uri, range }))
+}
+
+/// Convert a target in the current document using that document's own line index.
+pub(crate) fn location_for_current_document(
+    path: &Path,
+    line_index: &rg_parse::LineIndex,
+    target: &NavigationTarget,
+) -> Option<Location> {
+    let uri = Uri::from_file_path(path)?;
+    let range = target
+        .span
+        .map(|span| position::range(line_index, span))
+        .unwrap_or_else(position::zero_range);
+    Some(Location { uri, range })
 }
 
 pub(crate) fn range_for_file(

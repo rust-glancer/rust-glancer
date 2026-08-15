@@ -11,7 +11,7 @@ use rg_parse::FileId;
 use rg_std::UniqueVec;
 
 use crate::{
-    Analysis,
+    Analysis, SavedSourceRelationship,
     model::{ReferenceLocation, SymbolAt},
     source_symbol::{SourceSymbol, SourceSymbolIndex, SourceSymbolResolver, SourceSymbolRole},
 };
@@ -95,16 +95,36 @@ impl<'a, 'db, 'scope> ReferenceResolver<'a, 'db, 'scope> {
     ) -> anyhow::Result<Vec<SourceSymbol>> {
         let Some(symbol) = self
             .analysis
-            .symbol_at_for_query(crate_ref, file_id, offset)?
+            .source_symbol_at_for_query(crate_ref, file_id, offset)?
         else {
             return Ok(Vec::new());
         };
-        let declarations = self.unique_declarations_for_symbol(symbol)?;
+        let declarations = self.unique_declarations_for_symbol(symbol.symbol().clone())?;
         if declarations.is_empty() {
             return Ok(Vec::new());
         }
 
-        self.source_symbols_matching_declarations(&declarations)
+        let mut symbols = self.source_symbols_matching_declarations(&declarations)?;
+        let cursor_belongs_to_result = match symbol.role() {
+            SourceSymbolRole::Reference => self.query.accepts_scan_target(ReferenceScanTarget {
+                crate_ref: symbol.crate_ref(),
+                file_id: Some(symbol.file_id()),
+            }),
+            SourceSymbolRole::Declaration => {
+                self.query.includes_declarations()
+                    && self
+                        .query
+                        .accepts_declaration(symbol.crate_ref(), symbol.file_id())
+            }
+            SourceSymbolRole::Structural => false,
+        };
+        if cursor_belongs_to_result && !symbols.contains(&symbol) {
+            // An associated edited header is a real current-source occurrence, even though its
+            // semantic fact comes from the saved project. A body-only scan cannot rediscover the
+            // header, so keep the already proven cursor occurrence explicitly.
+            symbols.push(symbol);
+        }
+        Ok(symbols)
     }
 
     pub(crate) fn source_symbols_matching_declarations(
@@ -137,6 +157,16 @@ impl<'a, 'db, 'scope> ReferenceResolver<'a, 'db, 'scope> {
                     .query
                     .accepts_declaration(location.crate_ref, location.file_id)
                 {
+                    continue;
+                }
+                if self
+                    .analysis
+                    .current_source_relationship(location.crate_ref.package, location.file_id)
+                    == Some(SavedSourceRelationship::Different)
+                {
+                    // A current Body IR scan already contains declarations that exist in the
+                    // editor. Projecting a saved fallback here would attach a saved range to
+                    // different current text.
                     continue;
                 }
                 if symbols.iter().any(|symbol| {
@@ -254,9 +284,20 @@ impl<'a, 'db, 'scope> ReferenceResolver<'a, 'db, 'scope> {
         hints: &ReferenceSearchHints,
         symbols: &mut Vec<SourceSymbol>,
     ) -> anyhow::Result<()> {
-        for candidate in SourceSymbolIndex::new(self.analysis.view_db())
-            .symbols_in_crate(scan.crate_ref, scan.file_id)?
-        {
+        let source_symbols = SourceSymbolIndex::new(self.analysis.view_db());
+        let candidates = match scan.file_id {
+            Some(file_id)
+                if self
+                    .analysis
+                    .current_source_relationship(scan.crate_ref.package, file_id)
+                    == Some(SavedSourceRelationship::Different) =>
+            {
+                source_symbols.body_symbols_in_crate(scan.crate_ref, Some(file_id))?
+            }
+            Some(_) | None => source_symbols.symbols_in_crate(scan.crate_ref, scan.file_id)?,
+        };
+
+        for candidate in candidates {
             if !self.accepts_candidate_role(candidate.role()) {
                 continue;
             }

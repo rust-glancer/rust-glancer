@@ -1,6 +1,6 @@
 use tower_lsp_server::{jsonrpc::Result, ls_types::*};
 
-use crate::methods::{MethodContext, internal_error, uri_to_path};
+use crate::methods::DocumentMethodContext;
 
 #[tracing::instrument(
     level = "trace", skip_all,
@@ -10,27 +10,25 @@ use crate::methods::{MethodContext, internal_error, uri_to_path};
     )
 )]
 pub(crate) async fn references(
-    ctx: MethodContext,
+    ctx: DocumentMethodContext,
     params: ReferenceParams,
 ) -> Result<Option<Vec<Location>>> {
-    let Some(path) = uri_to_path(&params.text_document_position.text_document.uri) else {
-        return Ok(None);
-    };
     let position = params.text_document_position.position;
+    let input = ctx.global_position(position)?;
     let include_declaration = params.context.include_declaration;
     tracing::trace!("references request received");
-    let locations = ctx
+    let result = ctx
         .engine_client
         .query(
             "references",
             move |engine_client, request_context| async move {
                 engine_client
-                    .references(request_context, path, position, include_declaration)
+                    .references(request_context, input, include_declaration)
                     .await
             },
         )
-        .await
-        .map_err(internal_error)?;
+        .await;
+    let locations = ctx.finish_global_operation(result)?;
     tracing::trace!(
         result_count = locations.len(),
         "references request answered"

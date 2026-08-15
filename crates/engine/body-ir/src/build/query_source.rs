@@ -1,5 +1,7 @@
 //! Build-time body-aware routing for shared DefMap and item-store queries.
 
+use std::collections::HashMap;
+
 use rg_arena::Arena;
 use rg_def_map::DefMapReadTxn;
 use rg_def_map::{DefMap, DefMapSource};
@@ -20,6 +22,7 @@ pub(super) struct BodyBuildQuerySource<'a, 'db> {
     def_map: &'a DefMapReadTxn<'db>,
     semantic_ir: &'a SemanticIrReadTxn<'db>,
     crate_ref: CrateRef,
+    body_slots: &'a HashMap<BodyRef, BodyId>,
     body_local_items: &'a Arena<BodyId, Option<BodyLocalItems>>,
 }
 
@@ -28,12 +31,14 @@ impl<'a, 'db> BodyBuildQuerySource<'a, 'db> {
         def_map: &'a DefMapReadTxn<'db>,
         semantic_ir: &'a SemanticIrReadTxn<'db>,
         crate_ref: CrateRef,
+        body_slots: &'a HashMap<BodyRef, BodyId>,
         body_local_items: &'a Arena<BodyId, Option<BodyLocalItems>>,
     ) -> Self {
         Self {
             def_map,
             semantic_ir,
             crate_ref,
+            body_slots,
             body_local_items,
         }
     }
@@ -43,7 +48,8 @@ impl<'a, 'db> BodyBuildQuerySource<'a, 'db> {
             return None;
         }
 
-        self.body_local_items.get(body_ref.body)?.as_ref()
+        let slot = *self.body_slots.get(&body_ref)?;
+        self.body_local_items.get(slot)?.as_ref()
     }
 }
 

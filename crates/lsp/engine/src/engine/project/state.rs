@@ -1,54 +1,34 @@
-//! Saved project generation and its disposable dirty overlay.
-//!
-//! `ProjectState` answers one question for query code: which `Project` snapshot should this request
-//! read? Clean requests borrow the saved project. A full-text dirty request borrows a cached
-//! single-file overlay built from that same saved generation. Source publication, query-time
-//! materialization, and dirty overlays remain distinct transitions here instead of being inferred
-//! by callers.
+//! Stores the saved project owned by the engine's serialized command loop.
 
-use std::{path::PathBuf, sync::Arc};
+use std::path::PathBuf;
 
 use anyhow::Context as _;
-use rg_project::{
-    AnalysisSurface, DetachedSplitIndexing, DirtyOverlayScope, Project, ProjectSnapshot,
-};
+use rg_project::{AnalysisSurface, DetachedSplitIndexing, Project, ProjectSnapshot};
 
-use crate::{
-    dirty_state::DirtyOverlayCache, documents::DirtyDocumentSnapshot, memory::MemoryControl,
-};
-
-/// Owns the saved project and the disposable dirty overlay used by read-only queries.
+/// Owns the one saved project used by all analysis queries in this engine.
 ///
-/// The saved project's generation identity is seen by asynchronous work. It changes only when
-/// `Project` successfully publishes saved source state, so background results produced from an
-/// older clone can be discarded instead of merged into a newer workspace. Split-indexing
-/// materialization intentionally keeps the same generation: it enriches analysis data for the same
-/// saved source snapshot. A materialization that replaces package payloads clears dirty overlays
-/// because they borrow the old project internals; preparing an already-ready surface leaves the
-/// matching overlay cached.
+/// Background indexing remembers the project's generation id. When it finishes, the command loop
+/// uses that id to reject work from a project that has since been replaced. Finishing deferred
+/// indexing or loading an offloaded package keeps the same id because the saved source did not
+/// change.
 #[derive(Debug)]
 pub(super) struct ProjectState {
     saved: Option<Project>,
-    dirty_overlay: DirtyOverlayCache,
 }
 
 impl ProjectState {
-    pub(super) fn new(memory_control: Arc<dyn MemoryControl>) -> Self {
-        Self {
-            saved: None,
-            dirty_overlay: DirtyOverlayCache::new(memory_control),
-        }
+    pub(super) fn new() -> Self {
+        Self { saved: None }
     }
 
     pub(super) fn is_initialized(&self) -> bool {
         self.saved.is_some()
     }
 
-    /// Publish a replacement saved project and invalidate overlays based on the old one.
+    /// Publish a replacement saved project.
     pub(super) fn replace_saved(&mut self, project: Project) -> u64 {
         let generation = project.generation_id().get();
         self.saved = Some(project);
-        self.dirty_overlay.clear();
         generation
     }
 
@@ -76,9 +56,7 @@ impl ProjectState {
 
     /// Run a mutation that may publish a new saved-source generation.
     ///
-    /// The `Project` operation is responsible for its transactional update. This layer clears the
-    /// old dirty overlay because a successful source mutation gives future overlays a different
-    /// base generation.
+    /// The `Project` operation is responsible for its transactional update.
     pub(super) fn mutate_saved<T>(
         &mut self,
         mutation: impl FnOnce(&mut Project) -> anyhow::Result<T>,
@@ -88,22 +66,12 @@ impl ProjectState {
             .as_mut()
             .context("saved project is not initialized")?;
 
-        // Saved-source operations publish through `Project` only after their candidate succeeds.
-        // An unchanged watcher replay returns successfully without advancing the generation, so it
-        // must not discard an overlay that still has the same saved base.
-        let previous_generation = saved.generation_id();
-        let result = mutation(saved).context("mutate saved project");
-        if result.is_ok() && saved.generation_id() != previous_generation {
-            self.dirty_overlay.clear();
-        }
-        result
+        mutation(saved).context("mutate saved project")
     }
 
     /// Enrich analysis data for the same saved source snapshot.
     ///
-    /// Background merging can replace package payloads without changing source identity. Dirty
-    /// overlays still have to be discarded because they borrow the previous package payloads, even
-    /// though the public generation number stays the same.
+    /// Background merging can replace package payloads without changing source identity.
     pub(super) fn mutate_saved_preserving_generation<T>(
         &mut self,
         mutation: impl FnOnce(&mut Project) -> anyhow::Result<T>,
@@ -113,30 +81,7 @@ impl ProjectState {
             .as_mut()
             .context("saved project is not initialized")?;
 
-        self.dirty_overlay.clear();
         mutation(saved).context("mutate saved project without generation change")
-    }
-
-    /// Materialize a query surface without discarding an overlay for an already-ready project.
-    pub(super) fn materialize(&mut self, surface: AnalysisSurface<'_>) -> anyhow::Result<()> {
-        let Self {
-            saved,
-            dirty_overlay,
-        } = self;
-        let saved = saved.as_mut().context("saved project is not initialized")?;
-
-        // Materialization is a real mutation only for incomplete resident packages. Artifact-backed
-        // packages and already-complete residents can serve the query without changing the base
-        // shared by a cached dirty overlay.
-        if !saved.split_indexing().needs_materialization(surface) {
-            return Ok(());
-        }
-
-        dirty_overlay.clear();
-        saved
-            .split_indexing()
-            .materialize(surface)
-            .context("materialize saved project surface")
     }
 
     pub(super) fn saved_snapshot(&self) -> anyhow::Result<ProjectSnapshot<'_>> {
@@ -144,6 +89,24 @@ impl ProjectState {
             .as_ref()
             .map(Project::snapshot)
             .context("saved project is not initialized")
+    }
+
+    /// Load deferred analysis data needed by a query without changing the source generation.
+    pub(super) fn materialize_saved_project(
+        &mut self,
+        surface: AnalysisSurface<'_>,
+    ) -> anyhow::Result<()> {
+        let saved = self
+            .saved
+            .as_mut()
+            .context("saved project is not initialized")?;
+        if saved.split_indexing().needs_materialization(surface) {
+            saved
+                .split_indexing()
+                .materialize(surface)
+                .context("materialize saved project analysis surface")?;
+        }
+        Ok(())
     }
 
     /// Reconcile a failed candidate with every known source changed since the published snapshot.
@@ -160,42 +123,5 @@ impl ProjectState {
         if let Some(saved) = &mut self.saved {
             saved.release_query_memory();
         }
-        self.dirty_overlay.release_query_memory();
-    }
-
-    #[cfg(test)]
-    pub(super) fn dirty_overlay_rebuild_count(&self) -> usize {
-        self.dirty_overlay.rebuild_count()
-    }
-
-    /// Select the saved project or matching dirty overlay and lend out one snapshot.
-    ///
-    /// The closure keeps snapshots from escaping this state. In particular, a later command may
-    /// clear or replace the overlay without any request retaining a reference to it.
-    pub(super) fn with_query_snapshot<T>(
-        &mut self,
-        dirty: Option<&DirtyDocumentSnapshot>,
-        dirty_scope: DirtyOverlayScope,
-        query: impl FnOnce(ProjectSnapshot<'_>) -> anyhow::Result<T>,
-    ) -> anyhow::Result<T> {
-        let project = match dirty {
-            Some(dirty) => {
-                let saved = self
-                    .saved
-                    .as_ref()
-                    .context("saved project is not initialized")?;
-                self.dirty_overlay
-                    .project_for_dirty(saved, dirty, dirty_scope)
-                    .context("build dirty project overlay")?
-            }
-            None => {
-                self.dirty_overlay.clear();
-                self.saved
-                    .as_ref()
-                    .context("saved project is not initialized")?
-            }
-        };
-
-        query(project.snapshot()).context("execute project query")
     }
 }

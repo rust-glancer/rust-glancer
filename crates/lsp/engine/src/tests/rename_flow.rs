@@ -1,6 +1,7 @@
 //! End-to-end rename behavior at the engine service boundary.
 
 use expect_test::expect;
+use rg_lsp_proto::AnalysisAbort;
 use test_fixture::testonly::MarkedText;
 
 use super::utils::{LspEngineFixture, LspQuery};
@@ -35,6 +36,89 @@ async fn rename_returns_workspace_edit_for_clean_document() {
                 - /src/lib.rs
                   - 0:11-0:15 -> Account
                   - 3:15-3:19 -> Account
+            "#]],
+        )
+        .await;
+
+    fixture.shutdown().await;
+}
+
+#[tokio::test]
+async fn rename_requires_save_before_using_changed_global_spans() {
+    let fixture = LspEngineFixture::initialized(
+        r#"
+        //- /Cargo.toml
+        [package]
+        name = "lsp_rename_current_source"
+        version = "0.1.0"
+        edition = "2024"
+
+        //- /src/lib.rs
+        mod consumer;
+
+        pub struct SavedUser;
+
+        //- /src/consumer.rs
+        use crate::SavedUser;
+
+        pub fn make(user: SavedUser) -> SavedUser {
+            user
+        }
+        "#,
+    )
+    .await;
+
+    fixture.did_open_saved("src/lib.rs", 1).await;
+    fixture.did_open_saved("src/consumer.rs", 1).await;
+    let declaration = fixture
+        .did_change_full(
+            "src/lib.rs",
+            2,
+            MarkedText::parse(
+                r#"
+mod consumer;
+
+pub struct EditorUser;
+"#,
+            ),
+        )
+        .await;
+    let consumer = fixture
+        .did_change_full(
+            "src/consumer.rs",
+            2,
+            MarkedText::parse(
+                r#"
+use crate::Editor$rename$User;
+
+pub fn make(user: EditorUser) -> EditorUser {
+    user
+}
+"#,
+            ),
+        )
+        .await;
+
+    fixture
+        .check_dirty_global_operations_require_save(&consumer, "rename", "Account")
+        .await;
+
+    fixture.did_save_dirty(&declaration).await;
+    fixture.did_save_dirty(&consumer).await;
+    fixture
+        .check_rename_after_save(
+            &consumer,
+            "rename after publishing both files",
+            "rename",
+            "Account",
+            expect![[r#"
+                rename after publishing both files
+                - /src/consumer.rs
+                  - 1:11-1:21 -> Account
+                  - 3:18-3:28 -> Account
+                  - 3:33-3:43 -> Account
+                - /src/lib.rs
+                  - 3:11-3:21 -> Account
             "#]],
         )
         .await;
@@ -111,63 +195,7 @@ async fn record_constructor_references_and_rename_flow_through_enabled_test_modu
 }
 
 #[tokio::test]
-async fn rename_rejects_when_other_documents_are_dirty() {
-    let fixture = LspEngineFixture::initialized(
-        r#"
-        //- /Cargo.toml
-        [package]
-        name = "lsp_rename_flow"
-        version = "0.1.0"
-        edition = "2024"
-
-        //- /src/lib.rs
-        mod other;
-
-        pub struct User;
-
-        pub fn demo() {
-            let _user: Us$rename$er;
-        }
-
-        //- /src/other.rs
-        pub fn helper() {}
-        "#,
-    )
-    .await;
-
-    fixture.did_open_saved("src/lib.rs", 1).await;
-    fixture.did_open_saved("src/other.rs", 1).await;
-    fixture
-        .did_change_full(
-            "src/other.rs",
-            2,
-            MarkedText::parse(
-                r#"
-pub fn helper() {
-    let _dirty = 1;
-}
-"#,
-            ),
-        )
-        .await;
-
-    fixture
-        .check_rename_error(
-            "rename with dirty sibling document",
-            "rename",
-            "Account",
-            expect![[r#"
-                rename with dirty sibling document
-                - rename requires saving other dirty Rust documents first
-            "#]],
-        )
-        .await;
-
-    fixture.shutdown().await;
-}
-
-#[tokio::test]
-async fn stale_source_query_returns_neutral_then_recovers_through_the_command_queue() {
+async fn stale_source_query_aborts_then_recovers_through_the_command_queue() {
     let fixture = LspEngineFixture::initialized(
         r#"
         //- /Cargo.toml
@@ -177,36 +205,31 @@ async fn stale_source_query_returns_neutral_then_recovers_through_the_command_qu
         edition = "2024"
 
         //- /src/lib.rs
-        pub struct User;
+        mod usage;
 
-        pub fn demo() {
-            let _user: Us$rename$er;
-        }
+        pub struct Us$rename$er;
+
+        //- /src/usage.rs
+        use crate::User;
+
+        pub fn first(_: User) {}
         "#,
     )
     .await;
 
-    // Simulate a watcher delay: the disk advances, but the saved project still describes `User`.
-    // Rename needs exact source text, so its first attempt detects the stale revision and returns
-    // no edit. Recovery is queued behind that query instead of rebuilding on its call stack.
+    // Simulate a watcher delay for an unopened reference file. The target capture remains exact,
+    // while the reference scan cannot reconstruct the other file at its saved
+    // revision. That mismatch still aborts explicitly and queues ordinary source recovery.
     fixture.write_file_without_notification(
-        "src/lib.rs",
-        "pub struct Acct;\n\npub fn demo() {\n    let _user: Acct;\n}\n",
+        "src/usage.rs",
+        "use crate::User;\n\npub fn first(_: User) {}\npub fn second(_: User) {}\n",
     );
     fixture
-        .check_rename(
-            "rename that discovers an unnotified source change",
-            "rename",
-            "Entity",
-            expect![[r#"
-                rename that discovers an unnotified source change
-                - none
-            "#]],
-        )
+        .check_rename_abort("rename", "Entity", AnalysisAbort::SourceChanged)
         .await;
 
-    // The recovery command was enqueued before the neutral response was published, so this second
-    // request runs after the normal path-change pipeline has published the `Acct` generation.
+    // The recovery command was enqueued before the abort was published, so this second
+    // request runs after the normal path-change pipeline has published the new usage source.
     fixture
         .check_rename(
             "rename after queued source recovery",
@@ -215,8 +238,11 @@ async fn stale_source_query_returns_neutral_then_recovers_through_the_command_qu
             expect![[r#"
                 rename after queued source recovery
                 - /src/lib.rs
+                  - 2:11-2:15 -> Entity
+                - /src/usage.rs
                   - 0:11-0:15 -> Entity
-                  - 3:15-3:19 -> Entity
+                  - 2:16-2:20 -> Entity
+                  - 3:17-3:21 -> Entity
             "#]],
         )
         .await;

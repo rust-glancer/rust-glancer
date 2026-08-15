@@ -29,11 +29,17 @@ pub(super) fn apply_source_changes(
     // large watcher batches proportional to the changed package set instead of to the number of
     // changed paths in the batch.
     for change in changes {
-        let refresh = match project
-            .state
-            .parse_db_mut()
-            .refresh_saved_file(&change.path)
-        {
+        let refresh = match change.captured_source() {
+            Some(captured) => project
+                .state
+                .parse_db_mut()
+                .refresh_captured_saved_file(captured),
+            None => project
+                .state
+                .parse_db_mut()
+                .refresh_saved_file_from_disk(change.path()),
+        };
+        let refresh = match refresh {
             Ok(refresh) => refresh,
             Err(error) if error.io_kind() == Some(std::io::ErrorKind::NotFound) => {
                 // The path disappeared after canonicalization, usually because a checkout or
@@ -44,7 +50,7 @@ pub(super) fn apply_source_changes(
                 return Err(error).with_context(|| {
                     format!(
                         "while attempting to capture saved file change for {}",
-                        change.path.display()
+                        change.path().display()
                     )
                 });
             }
@@ -58,11 +64,11 @@ pub(super) fn apply_source_changes(
                 // case, package roots are the coarse ownership boundary: rebuilding the containing
                 // package lets item-tree lowering rediscover any newly materialized `mod foo;`
                 // files through the normal Rust module rules.
-                fallback_saved_paths.insert(change.path.clone());
+                fallback_saved_paths.insert(change.path().to_path_buf());
                 for package_slot in project
                     .state
                     .workspace()
-                    .package_slots_containing_path(&change.path)
+                    .package_slots_containing_path(change.path())
                 {
                     fallback_package_roots.push(PackageSlot(package_slot));
                 }

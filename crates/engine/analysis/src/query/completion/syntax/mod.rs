@@ -18,23 +18,28 @@ mod string;
 
 use std::sync::OnceLock;
 
-use rg_parse::{Span, TextSpan};
+use rg_parse::{Span, TextSpan, enclosing_inline_module_path};
 use rg_syntax::{
     AstNode as _, AstToken as _, Edition, SourceFile, SyntaxKind, SyntaxToken, TextRange, TextSize,
     ast,
 };
 
 use crate::query::completion::site::{
-    CompletionSiteSyntax, ItemListCompletionKind, PatternCompletionKind,
-    SpecializedCompletionContext, StandaloneCompletionSiteSyntax, SyntaxCompletionContext,
+    CompletionSiteSyntax, EmptyPathCompletionContext, ItemListCompletionKind,
+    ModuleNameCompletionSyntax, PatternCompletionKind, SpecializedCompletionContext,
+    StandaloneCompletionSiteSyntax, SyntaxCompletionContext,
+};
+use rg_ir_view::source::{
+    IndexedPatternCompletionKind, IndexedTypeNamePosition, IndexedUnqualifiedNameContext,
 };
 
 /// Speculatively parsed request buffer centered on one completion offset.
 ///
 /// The marker token makes incomplete text traversable with ordinary syntax ancestry. Construction
-/// performs the request's only full-source parse and immediately stores the normalized completion
-/// domain. Resolvers can inspect the same tree for small source-shape facts, but cannot trigger a
-/// second parse by asking for classification again.
+/// performs this marker-injected parse once and immediately stores the normalized completion
+/// domain. This is separate from the ordinary current-source parse used by Body IR. Resolvers can
+/// inspect the same speculative tree for small source-shape facts, but cannot trigger another
+/// classification parse.
 pub(super) struct CompletionSyntaxContext<'source> {
     source: &'source str,
     offset: u32,
@@ -197,8 +202,50 @@ impl<'source> CompletionSyntaxContext<'source> {
             | None => None,
         };
         let prefix = self.prefix();
+        let module_name = match context {
+            Some(SyntaxCompletionContext::Type(_)) => Some(IndexedUnqualifiedNameContext::Type {
+                position: IndexedTypeNamePosition::Type,
+            }),
+            Some(SyntaxCompletionContext::Pattern(kind)) => {
+                Some(IndexedUnqualifiedNameContext::Pattern(match kind {
+                    PatternCompletionKind::Name => IndexedPatternCompletionKind::Name,
+                    PatternCompletionKind::TupleConstructor => {
+                        IndexedPatternCompletionKind::TupleConstructor
+                    }
+                    PatternCompletionKind::RecordConstructor => {
+                        IndexedPatternCompletionKind::RecordConstructor
+                    }
+                }))
+            }
+            Some(SyntaxCompletionContext::Statement | SyntaxCompletionContext::Expression) => {
+                Some(IndexedUnqualifiedNameContext::Value)
+            }
+            Some(SyntaxCompletionContext::EmptyPath(context)) => match context {
+                EmptyPathCompletionContext::Type => Some(IndexedUnqualifiedNameContext::Type {
+                    position: IndexedTypeNamePosition::Type,
+                }),
+                EmptyPathCompletionContext::GenericArgument => {
+                    Some(IndexedUnqualifiedNameContext::Type {
+                        position: IndexedTypeNamePosition::BareGenericArgument,
+                    })
+                }
+                EmptyPathCompletionContext::Expression | EmptyPathCompletionContext::Argument => {
+                    Some(IndexedUnqualifiedNameContext::Value)
+                }
+                EmptyPathCompletionContext::Import => None,
+            },
+            Some(
+                SyntaxCompletionContext::ItemList(_)
+                | SyntaxCompletionContext::BodyMacro(_)
+                | SyntaxCompletionContext::ModuleMacro(_)
+                | SyntaxCompletionContext::ModuleDeclaration(_)
+                | SyntaxCompletionContext::Specialized(_),
+            )
+            | None => None,
+        }
+        .map(|context| ModuleNameCompletionSyntax::new(self.inline_module_path(), context));
         CompletionSiteSyntax::new(
-            self.inside_use_item(),
+            self.import_completion_syntax(),
             self.after_dot(),
             self.after_colon_colon(),
             self.empty_qualified_path(),
@@ -206,9 +253,20 @@ impl<'source> CompletionSyntaxContext<'source> {
             self.empty_record_owner(),
             self.body_owner_start(),
             standalone,
+            module_name,
             prefix.span(),
             prefix.text().to_string(),
         )
+    }
+
+    /// Return the enclosing inline-module names from the current parse, outermost first.
+    pub(super) fn inline_module_path(&self) -> Vec<String> {
+        self.marker.parent().map_or_else(Vec::new, |parent| {
+            enclosing_inline_module_path(&parent)
+                .into_iter()
+                .map(|name| name.to_string())
+                .collect()
+        })
     }
 
     /// Normalizes speculative parser ancestry into one owned completion-domain context.
@@ -988,6 +1046,50 @@ mod tests {
                 "{label}: after_colon_colon"
             );
             assert_eq!(syntax.inside_use_item(), inside_use, "{label}: use item");
+        }
+    }
+
+    #[test]
+    fn preserves_import_scope_and_qualifier_from_current_syntax() {
+        let cases = [
+            ("root import", "use st$0;", Vec::<&str>::new(), None),
+            (
+                "qualified import",
+                "use std::sy$0;",
+                Vec::<&str>::new(),
+                Some("std"),
+            ),
+            (
+                "grouped import",
+                "use std::{sync::Ar$0};",
+                Vec::<&str>::new(),
+                Some("std::sync"),
+            ),
+            (
+                "inline module import",
+                "mod inner { use crate::api::On$0; }",
+                vec!["inner"],
+                Some("crate::api"),
+            ),
+        ];
+
+        for (label, fixture, expected_modules, expected_qualifier) in cases {
+            let (source, offset) = source_with_cursor(fixture);
+            let syntax = CompletionSyntaxContext::from_source(&source, offset)
+                .expect("import syntax context should be created");
+            let import = syntax
+                .import_completion_syntax()
+                .expect("current import syntax should be retained");
+            assert_eq!(
+                import.inline_module_path(),
+                expected_modules,
+                "{label}: inline modules"
+            );
+            assert_eq!(
+                import.qualifier().map(ToString::to_string).as_deref(),
+                expected_qualifier,
+                "{label}: qualifier"
+            );
         }
     }
 

@@ -1,94 +1,94 @@
+//! RPC vocabulary between the editor-facing server and one analysis engine.
+//!
+//! Document methods carry complete immutable snapshots; there is no open/change/close document
+//! protocol on this boundary. Saved-project mutations are separate and either carry exact source
+//! text or explicitly ask the project layer to interpret a filesystem path. Responses preserve
+//! operational aborts instead of folding them into feature-specific empty values.
+
 use std::path::PathBuf;
 
-use crate::{CompletionClientCapabilities, EngineConfig, EngineError, ServiceNotification};
+use crate::{
+    AnalysisOutcome, CompletionClientCapabilities, CompletionResult, DocumentPositionSnapshot,
+    DocumentQueryResult, DocumentRangeSnapshot, EditorDocumentSnapshot, EngineConfig, EngineError,
+    GlobalOperationResult, GlobalPositionSnapshot, SaveProposal, SavedProjectChanges,
+    ServiceNotification,
+};
 
 pub type EngineResult<T> = Result<T, EngineError>;
 
 /// Requests and notifications accepted by one analysis engine.
 ///
-/// The LSP server owns editor protocol concerns; an engine owns project indexing, document
-/// freshness, queries, and cargo diagnostics. This service is the narrow request vocabulary between
-/// those two domains.
+/// The LSP server owns editor protocol concerns; an engine owns project indexing, immutable-input
+/// queries, and cargo diagnostics. This service is the narrow request vocabulary between those two
+/// domains.
 #[tarpc::service]
 pub trait EngineService {
     async fn initialize(root: PathBuf, config: EngineConfig) -> EngineResult<()>;
 
     async fn initialized() -> EngineResult<()>;
 
-    async fn did_open(path: PathBuf, version: Option<i32>, text: String) -> EngineResult<()>;
+    async fn did_save(proposal: SaveProposal) -> EngineResult<u64>;
 
-    async fn did_change(
-        path: PathBuf,
-        version: Option<i32>,
-        full_text: Option<String>,
-        content_change_count: usize,
-    ) -> EngineResult<()>;
-
-    async fn did_save(path: PathBuf, text: Option<String>) -> EngineResult<()>;
-
-    /// Saved project paths changed on disk outside the editor-owned save flow.
-    async fn external_project_paths_changed(paths: Vec<PathBuf>) -> EngineResult<()>;
-
-    async fn did_close(path: PathBuf) -> EngineResult<()>;
+    /// Apply one settled external saved-project batch.
+    ///
+    /// Existing Rust files carry exact captured text. Filesystem paths are reserved for graph,
+    /// discovery, and deletion inputs that require project-domain interpretation.
+    async fn external_project_changes(changes: SavedProjectChanges) -> EngineResult<()>;
 
     async fn goto_definition(
-        path: PathBuf,
-        position: ls_types::Position,
-    ) -> EngineResult<Vec<ls_types::Location>>;
+        input: GlobalPositionSnapshot,
+    ) -> EngineResult<AnalysisOutcome<DocumentQueryResult<Vec<ls_types::Location>>>>;
 
     async fn goto_type_definition(
-        path: PathBuf,
-        position: ls_types::Position,
-    ) -> EngineResult<Vec<ls_types::Location>>;
+        input: GlobalPositionSnapshot,
+    ) -> EngineResult<AnalysisOutcome<DocumentQueryResult<Vec<ls_types::Location>>>>;
 
     async fn goto_implementation(
-        path: PathBuf,
-        position: ls_types::Position,
-    ) -> EngineResult<Vec<ls_types::Location>>;
+        input: GlobalPositionSnapshot,
+    ) -> EngineResult<AnalysisOutcome<GlobalOperationResult<Vec<ls_types::Location>>>>;
 
     async fn references(
-        path: PathBuf,
-        position: ls_types::Position,
+        input: GlobalPositionSnapshot,
         include_declaration: bool,
-    ) -> EngineResult<Vec<ls_types::Location>>;
+    ) -> EngineResult<AnalysisOutcome<GlobalOperationResult<Vec<ls_types::Location>>>>;
 
     async fn prepare_rename(
-        path: PathBuf,
-        position: ls_types::Position,
-    ) -> EngineResult<Option<ls_types::PrepareRenameResponse>>;
+        input: GlobalPositionSnapshot,
+    ) -> EngineResult<AnalysisOutcome<GlobalOperationResult<Option<ls_types::PrepareRenameResponse>>>>;
 
     async fn rename(
-        path: PathBuf,
-        position: ls_types::Position,
+        input: GlobalPositionSnapshot,
         new_name: String,
-    ) -> EngineResult<Option<ls_types::WorkspaceEdit>>;
+    ) -> EngineResult<AnalysisOutcome<GlobalOperationResult<Option<ls_types::WorkspaceEdit>>>>;
 
     async fn document_highlight(
-        path: PathBuf,
-        position: ls_types::Position,
-    ) -> EngineResult<Vec<ls_types::DocumentHighlight>>;
+        input: DocumentPositionSnapshot,
+    ) -> EngineResult<AnalysisOutcome<DocumentQueryResult<Vec<ls_types::DocumentHighlight>>>>;
 
     async fn hover(
-        path: PathBuf,
-        position: ls_types::Position,
-    ) -> EngineResult<Option<ls_types::Hover>>;
+        input: DocumentPositionSnapshot,
+    ) -> EngineResult<AnalysisOutcome<DocumentQueryResult<Option<ls_types::Hover>>>>;
 
     async fn completion(
-        path: PathBuf,
-        position: ls_types::Position,
+        input: DocumentPositionSnapshot,
         client_capabilities: CompletionClientCapabilities,
-    ) -> EngineResult<Vec<ls_types::CompletionItem>>;
+    ) -> EngineResult<AnalysisOutcome<CompletionResult>>;
 
-    async fn formatting(path: PathBuf) -> EngineResult<Option<Vec<ls_types::TextEdit>>>;
+    async fn formatting(
+        snapshot: EditorDocumentSnapshot,
+    ) -> EngineResult<AnalysisOutcome<DocumentQueryResult<Option<Vec<ls_types::TextEdit>>>>>;
 
-    async fn document_symbol(path: PathBuf) -> EngineResult<Vec<ls_types::DocumentSymbol>>;
+    async fn document_symbol(
+        snapshot: EditorDocumentSnapshot,
+    ) -> EngineResult<AnalysisOutcome<DocumentQueryResult<Vec<ls_types::DocumentSymbol>>>>;
 
     async fn inlay_hint(
-        path: PathBuf,
-        range: ls_types::Range,
-    ) -> EngineResult<Vec<ls_types::InlayHint>>;
+        input: DocumentRangeSnapshot,
+    ) -> EngineResult<AnalysisOutcome<DocumentQueryResult<Vec<ls_types::InlayHint>>>>;
 
-    async fn workspace_symbol(query: String) -> EngineResult<Vec<ls_types::WorkspaceSymbol>>;
+    async fn workspace_symbol(
+        query: String,
+    ) -> EngineResult<AnalysisOutcome<Vec<ls_types::WorkspaceSymbol>>>;
 
     async fn reindex_workspace() -> EngineResult<()>;
 

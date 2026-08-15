@@ -7,9 +7,9 @@
 use std::fmt;
 
 use crate::{
-    BodyBindingRef, BodyRef as BodyIrBodyRef, ConstRef, CrateRef, DefId, EnumVariantRef, ExprId,
-    FieldRef, FunctionRef, ImplRef, LocalDefRef, ModuleRef, ScopeId, SemanticItemRef, StaticRef,
-    TraitDefRef, TypeAliasRef, TypeDefRef,
+    BodyBindingRef, BodyRef as BodyIrBodyRef, ConstRef, CrateRef, DefId, DefMapRef, EnumVariantRef,
+    ExprId, FieldRef, FunctionRef, ImplRef, LocalDefRef, ModuleRef, ScopeId, SemanticItemRef,
+    StaticRef, TraitDefRef, TypeAliasRef, TypeDefRef,
 };
 use rg_std::{MemorySize, Shrink};
 use wincode::{SchemaRead, SchemaWrite};
@@ -149,6 +149,18 @@ impl DeclarationRef {
 
     pub fn body_binding(binding: BodyBindingRef) -> Self {
         Self::BodyBinding(binding)
+    }
+
+    /// Return the crate or body scope that owns this declaration identity.
+    pub fn origin(self) -> DefMapRef {
+        match self {
+            Self::Module(module) => module.origin,
+            Self::LocalDef(local_def) => local_def.origin,
+            Self::Item(item) => item.origin(),
+            Self::Field(field) => field.owner.origin,
+            Self::EnumVariant(variant) => variant.origin,
+            Self::BodyBinding(binding) => DefMapRef::Body(binding.body),
+        }
     }
 }
 

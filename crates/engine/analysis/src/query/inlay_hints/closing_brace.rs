@@ -11,36 +11,30 @@ use crate::{
     model::{DocumentSymbol, InlayHint, InlayHintKind, InlayHintPosition},
 };
 
+use super::InlaySource;
+
 pub(super) fn closing_brace_hints(
     analysis: &Analysis<'_>,
     crate_ref: CrateRef,
     file_id: FileId,
     range: Option<TextSpan>,
+    source: &InlaySource<'_, '_>,
 ) -> anyhow::Result<Vec<InlayHint>> {
     const MIN_LINE_DELTA: u32 = 20;
 
     let mut hints = Vec::new();
-    for candidate in ClosingBraceCandidate::collect(analysis, crate_ref, file_id)? {
-        let Some(open_line) = analysis.source_line_for_offset(
-            crate_ref.package,
-            candidate.file_id,
-            candidate.open_offset(),
-        )?
-        else {
+    for candidate in ClosingBraceCandidate::collect(analysis, crate_ref, file_id, source)? {
+        let open_line = source.line_for_offset(candidate.file_id, candidate.open_offset())?;
+        let Some(open_line) = open_line else {
             continue;
         };
-        let Some(close_line) = analysis.source_line_for_offset(
-            crate_ref.package,
-            candidate.file_id,
-            candidate.close_offset(),
-        )?
-        else {
+        let close_line = source.line_for_offset(candidate.file_id, candidate.close_offset())?;
+        let Some(close_line) = close_line else {
             continue;
         };
         if close_line.saturating_sub(open_line) < MIN_LINE_DELTA {
             continue;
         }
-
         if range.is_some_and(|range| !range.touches(candidate.close_span.text.end)) {
             continue;
         }
@@ -71,40 +65,57 @@ impl ClosingBraceCandidate {
         analysis: &Analysis<'_>,
         crate_ref: CrateRef,
         file_id: FileId,
+        source: &InlaySource<'_, '_>,
     ) -> anyhow::Result<Vec<Self>> {
         let mut candidates = Vec::new();
-        for symbol in analysis.document_symbols(crate_ref, file_id)? {
-            Self::collect_document_symbol(&symbol, &mut candidates);
+        match source.current() {
+            Some(source) => {
+                let edition = analysis.view_db().crate_edition(crate_ref)?;
+                let Some(syntax) = source.parse(edition).map(|parse| parse.tree()) else {
+                    return Ok(candidates);
+                };
+                for symbol in Analysis::document_symbols_from_syntax(&syntax) {
+                    Self::collect_document_symbol(file_id, &symbol, &mut candidates);
+                }
+            }
+            None => {
+                let outline = analysis.document_symbols(crate_ref, file_id)?;
+                for symbol in outline.symbols {
+                    Self::collect_document_symbol(outline.file_id, &symbol, &mut candidates);
+                }
+            }
         }
         for block in
             BodyStructureView::new(analysis.view_db()).closing_brace_blocks(crate_ref, file_id)?
         {
-            let label = Self::body_block_label(analysis, crate_ref, &block)?;
+            let label = Self::body_block_label(analysis, crate_ref, &block, source)?;
             if let Some(candidate) = Self::from_block_span(block.file_id(), block.span(), label) {
                 candidates.push(candidate);
             }
         }
-
         Ok(candidates)
     }
 
-    fn collect_document_symbol(symbol: &DocumentSymbol, candidates: &mut Vec<Self>) {
-        if let Some(label) = Self::symbol_label(symbol)
-            && let Some(candidate) =
-                Self::from_block_span(symbol.file_id, symbol.span, label.to_string())
+    fn collect_document_symbol(
+        file_id: FileId,
+        symbol: &DocumentSymbol,
+        candidates: &mut Vec<Self>,
+    ) {
+        if let Some(label) = Self::symbol_label(&symbol.name, symbol.kind)
+            && let Some(candidate) = Self::from_block_span(file_id, symbol.span, label)
         {
             candidates.push(candidate);
         }
 
         for child in &symbol.children {
-            Self::collect_document_symbol(child, candidates);
+            Self::collect_document_symbol(file_id, child, candidates);
         }
     }
 
-    fn symbol_label(symbol: &DocumentSymbol) -> Option<String> {
-        match symbol.kind {
-            SymbolKind::Module => Some(format!("// mod {}", symbol.name)),
-            SymbolKind::Impl => Some(format!("// {}", symbol.name)),
+    fn symbol_label(name: &str, kind: SymbolKind) -> Option<String> {
+        match kind {
+            SymbolKind::Module => Some(format!("// mod {name}")),
+            SymbolKind::Impl => Some(format!("// {name}")),
             SymbolKind::Const
             | SymbolKind::Enum
             | SymbolKind::EnumVariant
@@ -125,48 +136,38 @@ impl ClosingBraceCandidate {
         analysis: &Analysis<'_>,
         crate_ref: CrateRef,
         block: &BodyClosingBraceBlock,
+        source: &InlaySource<'_, '_>,
     ) -> anyhow::Result<String> {
         let label = match block.kind() {
             BodyClosingBraceBlockKind::Function { name } => {
                 let syntax = SyntaxRenderer::new(analysis.view_db().crate_edition(crate_ref)?);
                 format!("// fn {}", syntax.identifier(name))
             }
-            BodyClosingBraceBlockKind::Match { scrutinee } => Self::control_flow_label(
-                analysis,
-                crate_ref,
-                block.file_id(),
-                "// match",
-                *scrutinee,
-            )?,
+            BodyClosingBraceBlockKind::Match { scrutinee } => {
+                Self::control_flow_label(block.file_id(), "// match", *scrutinee, source)?
+            }
             BodyClosingBraceBlockKind::Loop => "// loop".to_string(),
-            BodyClosingBraceBlockKind::While { condition } => Self::control_flow_label(
-                analysis,
-                crate_ref,
-                block.file_id(),
-                "// while",
-                *condition,
-            )?,
+            BodyClosingBraceBlockKind::While { condition } => {
+                Self::control_flow_label(block.file_id(), "// while", *condition, source)?
+            }
             BodyClosingBraceBlockKind::For { pat, iterable } => {
-                Self::for_label(analysis, crate_ref, block.file_id(), *pat, *iterable)?
+                Self::for_label(block.file_id(), *pat, *iterable, source)?
             }
         };
         Ok(label)
     }
 
     fn control_flow_label(
-        analysis: &Analysis<'_>,
-        crate_ref: CrateRef,
         file_id: FileId,
         label: &str,
         detail_span: Option<Span>,
+        source: &InlaySource<'_, '_>,
     ) -> anyhow::Result<String> {
         let Some(detail_span) = detail_span else {
             return Ok(label.to_string());
         };
-        let Some(detail) = analysis
-            .source_text_for_span(crate_ref.package, file_id, detail_span)?
-            .and_then(Self::compact_source_label)
-        else {
+        let detail = source.text_for_span(file_id, detail_span)?;
+        let Some(detail) = detail.and_then(Self::compact_source_label) else {
             return Ok(label.to_string());
         };
 
@@ -174,16 +175,15 @@ impl ClosingBraceCandidate {
     }
 
     fn for_label(
-        analysis: &Analysis<'_>,
-        crate_ref: CrateRef,
         file_id: FileId,
         pat: Option<Span>,
         iterable: Option<Span>,
+        source: &InlaySource<'_, '_>,
     ) -> anyhow::Result<String> {
-        let Some(pat) = Self::source_detail(analysis, crate_ref, file_id, pat)? else {
+        let Some(pat) = Self::source_detail(file_id, pat, source)? else {
             return Ok("// for".to_string());
         };
-        let Some(iterable) = Self::source_detail(analysis, crate_ref, file_id, iterable)? else {
+        let Some(iterable) = Self::source_detail(file_id, iterable, source)? else {
             return Ok(format!("// for {pat}"));
         };
 
@@ -191,17 +191,15 @@ impl ClosingBraceCandidate {
     }
 
     fn source_detail(
-        analysis: &Analysis<'_>,
-        crate_ref: CrateRef,
         file_id: FileId,
         span: Option<Span>,
+        source: &InlaySource<'_, '_>,
     ) -> anyhow::Result<Option<String>> {
         let Some(span) = span else {
             return Ok(None);
         };
-        Ok(analysis
-            .source_text_for_span(crate_ref.package, file_id, span)?
-            .and_then(Self::compact_source_label))
+        let text = source.text_for_span(file_id, span)?;
+        Ok(text.and_then(Self::compact_source_label))
     }
 
     fn compact_source_label(text: String) -> Option<String> {

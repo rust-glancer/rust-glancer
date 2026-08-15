@@ -12,7 +12,7 @@ use rg_syntax::{AstNode as _, ast};
 
 use rg_cfg_eval::CfgEvaluator;
 use rg_ir_model::{BodyId, ModuleRef};
-use rg_parse::{FileId, Span};
+use rg_parse::{CurrentSource, FileId, Span};
 use rg_text::NameInterner;
 
 use crate::BodyOwner;
@@ -26,6 +26,11 @@ use super::{
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct BodyLoweringTask {
     pub(crate) owner: BodyOwner,
+    /// Include the selected declaration in this body's temporary item store.
+    ///
+    /// Saved roots already have an item-store entry. A new or changed function does not, so its
+    /// current signature and enclosing impl are lowered beside its body for this request only.
+    pub(crate) request_root: bool,
     /// Module used for body-local lookup inside this body.
     ///
     /// Top-level semantic bodies use their normal module. Nested body-local owners use the
@@ -41,8 +46,37 @@ pub(crate) struct BodyLoweringTask {
     pub(crate) span: Span,
 }
 
+/// Which immutable syntax tree scheduled body tasks must use.
+///
+/// Saved crate builds open ordinary parse-package files. A current request substitutes its one
+/// captured document while retaining the saved package for any other source reached by lowering.
+#[derive(Clone, Copy)]
+pub(crate) enum BodyTaskSource<'a> {
+    Saved(&'a rg_parse::Package),
+    Current {
+        package: &'a rg_parse::Package,
+        file: FileId,
+        source: &'a CurrentSource,
+    },
+}
+
+impl<'a> BodyTaskSource<'a> {
+    fn package(self) -> &'a rg_parse::Package {
+        match self {
+            Self::Saved(package) | Self::Current { package, .. } => package,
+        }
+    }
+}
+
+/// One task together with the worklist slot allocated for its lowered body.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct LoweredBodyTask {
+    pub(crate) body: BodyId,
+    pub(crate) task: BodyLoweringTask,
+}
+
 pub(crate) struct BodyTaskLowering<'a> {
-    parse_package: &'a rg_parse::Package,
+    source: BodyTaskSource<'a>,
     crate_bodies: &'a mut LoweredCrateBodies,
     cfg: CfgEvaluator<'a>,
     interner: &'a mut NameInterner,
@@ -50,13 +84,13 @@ pub(crate) struct BodyTaskLowering<'a> {
 
 impl<'a> BodyTaskLowering<'a> {
     pub(crate) fn new(
-        parse_package: &'a rg_parse::Package,
+        source: BodyTaskSource<'a>,
         crate_bodies: &'a mut LoweredCrateBodies,
         cfg: CfgEvaluator<'a>,
         interner: &'a mut NameInterner,
     ) -> Self {
         Self {
-            parse_package,
+            source,
             crate_bodies,
             cfg,
             interner,
@@ -71,7 +105,7 @@ impl<'a> BodyTaskLowering<'a> {
         &mut self,
         tasks: &[BodyLoweringTask],
         macro_expansion: &mut dyn BodyMacroExpansionContext,
-    ) -> anyhow::Result<Vec<BodyId>> {
+    ) -> anyhow::Result<Vec<LoweredBodyTask>> {
         let mut tasks = tasks.to_vec();
         tasks.sort_by_key(|task| task.file_id.0);
 
@@ -92,20 +126,63 @@ impl<'a> BodyTaskLowering<'a> {
         &mut self,
         file_id: FileId,
         tasks: &[BodyLoweringTask],
-        lowered: &mut Vec<BodyId>,
+        lowered: &mut Vec<LoweredBodyTask>,
         macro_expansion: &mut dyn BodyMacroExpansionContext,
     ) -> anyhow::Result<()> {
-        let parsed_file = self.parse_package.parsed_file(file_id).with_context(|| {
-            format!("while attempting to fetch parsed source file {:?}", file_id)
-        })?;
+        if let BodyTaskSource::Current {
+            package,
+            file,
+            source,
+        } = self.source
+            && file == file_id
+        {
+            let syntax = source
+                .parse(package.edition())
+                .context("current body task source was not parsed for the package edition")?
+                .tree();
+            return self.lower_file_tasks_from_syntax(
+                file_id,
+                tasks,
+                lowered,
+                macro_expansion,
+                source.line_index(),
+                &syntax,
+            );
+        }
+
+        let parsed_file = self
+            .source
+            .package()
+            .parsed_file(file_id)
+            .with_context(|| {
+                format!("while attempting to fetch parsed source file {:?}", file_id)
+            })?;
         let line_index = parsed_file
             .line_index()
             .with_context(|| format!("while attempting to load line index for {file_id:?}"))?;
         let syntax = parsed_file.parse_syntax().with_context(|| {
             format!("while attempting to parse syntax for body lowering in {file_id:?}")
         })?;
-        let syntax = syntax.tree();
+        self.lower_file_tasks_from_syntax(
+            file_id,
+            tasks,
+            lowered,
+            macro_expansion,
+            line_index,
+            &syntax.tree(),
+        )
+    }
 
+    #[allow(clippy::too_many_arguments)]
+    fn lower_file_tasks_from_syntax(
+        &mut self,
+        file_id: FileId,
+        tasks: &[BodyLoweringTask],
+        lowered: &mut Vec<LoweredBodyTask>,
+        macro_expansion: &mut dyn BodyMacroExpansionContext,
+        line_index: &rg_parse::LineIndex,
+        syntax: &rg_syntax::SourceFile,
+    ) -> anyhow::Result<()> {
         // Tasks are span-based so both top-level Semantic IR items and body-local items can use
         // the same lowering path. Build small file-local lookup maps once and reuse them below.
         let mut functions_by_span = HashMap::new();
@@ -149,8 +226,11 @@ impl<'a> BodyTaskLowering<'a> {
                         self.interner,
                         &mut *macro_expansion,
                     )
-                    .lower_function(ast_fn, body_ast);
-                    lowered.push(self.crate_bodies.alloc_body(body));
+                    .lower_function(ast_fn, body_ast, task.request_root);
+                    lowered.push(LoweredBodyTask {
+                        body: self.crate_bodies.alloc_body(body),
+                        task: *task,
+                    });
                 }
                 BodyOwner::Const(_) => {
                     let Some(ast_const) = consts_by_span.get(&Self::span_key(task.span)).cloned()
@@ -173,7 +253,10 @@ impl<'a> BodyTaskLowering<'a> {
                         &mut *macro_expansion,
                     )
                     .lower_initializer(body_ast);
-                    lowered.push(self.crate_bodies.alloc_body(body));
+                    lowered.push(LoweredBodyTask {
+                        body: self.crate_bodies.alloc_body(body),
+                        task: *task,
+                    });
                 }
                 BodyOwner::Static(_) => {
                     let Some(ast_static) = statics_by_span.get(&Self::span_key(task.span)).cloned()
@@ -196,7 +279,10 @@ impl<'a> BodyTaskLowering<'a> {
                         &mut *macro_expansion,
                     )
                     .lower_initializer(body_ast);
-                    lowered.push(self.crate_bodies.alloc_body(body));
+                    lowered.push(LoweredBodyTask {
+                        body: self.crate_bodies.alloc_body(body),
+                        task: *task,
+                    });
                 }
             }
         }

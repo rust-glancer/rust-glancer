@@ -1,3 +1,9 @@
+//! Engine-to-server side effects that are not semantic request responses.
+//!
+//! Engines do not know about a concrete LSP client. They publish protocol-level progress,
+//! diagnostics, refresh, and logging requests here; the server then applies editor currency and
+//! presentation policy before forwarding them.
+
 use std::path::PathBuf;
 
 use ls_types::{Diagnostic, NumberOrString};
@@ -9,7 +15,11 @@ pub enum ServiceNotification {
     PublishDiagnostics {
         path: PathBuf,
         diagnostics: Vec<Diagnostic>,
-        version: Option<i32>,
+        /// Exact saved source observed when this Cargo result was prepared for publication.
+        ///
+        /// The server compares these bytes with the current open document text. `None` covers
+        /// deleted or unreadable files and can only be published to a document that is not open.
+        saved_text: Option<String>,
     },
     BeginWorkDoneProgress {
         token: NumberOrString,

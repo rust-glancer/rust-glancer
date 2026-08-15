@@ -1,7 +1,7 @@
 //! Source-boundary failures that preserve enough meaning for project recovery.
 //!
-//! Ordinary I/O and UTF-8 failures explain why source could not be captured. `Stale` and
-//! `ExistenceChanged` mean something stronger: a generation was internally coherent, but the
+//! Ordinary I/O and UTF-8 failures explain why source could not be captured. `Stale`, `Missing`,
+//! and `ExistenceChanged` mean something stronger: a generation was internally coherent, but the
 //! filesystem no longer matches it. Project hosts use that distinction to retry from the newer
 //! disk state instead of treating a write that landed during construction as a permanent failure.
 
@@ -33,6 +33,11 @@ pub enum SourceError {
         expected: SourceRevision,
         actual: SourceRevision,
     },
+    /// A known saved source disappeared after the generation captured it.
+    Missing {
+        path: PathBuf,
+        expected: SourceRevision,
+    },
     /// A module candidate appeared or disappeared after file discovery.
     ExistenceChanged {
         path: PathBuf,
@@ -47,7 +52,9 @@ impl SourceError {
     /// Returns the path that invalidated an otherwise usable project generation.
     pub fn stale_path(&self) -> Option<&Path> {
         match self {
-            Self::Stale { path, .. } | Self::ExistenceChanged { path, .. } => Some(path),
+            Self::Stale { path, .. }
+            | Self::Missing { path, .. }
+            | Self::ExistenceChanged { path, .. } => Some(path),
             _ => None,
         }
     }
@@ -56,6 +63,7 @@ impl SourceError {
     pub fn io_kind(&self) -> Option<std::io::ErrorKind> {
         match self {
             Self::Io { source, .. } => Some(source.kind()),
+            Self::Missing { .. } => Some(std::io::ErrorKind::NotFound),
             _ => None,
         }
     }
@@ -75,6 +83,11 @@ impl fmt::Display for SourceError {
             } => write!(
                 f,
                 "source {} changed from revision {expected} to {actual}",
+                path.display()
+            ),
+            Self::Missing { path, expected } => write!(
+                f,
+                "source {} at revision {expected} is missing",
                 path.display()
             ),
             Self::ExistenceChanged {
@@ -100,7 +113,10 @@ impl Error for SourceError {
         match self {
             Self::Io { source, .. } => Some(source),
             Self::InvalidUtf8 { source, .. } => Some(source),
-            Self::Stale { .. } | Self::ExistenceChanged { .. } | Self::Sealed { .. } => None,
+            Self::Stale { .. }
+            | Self::Missing { .. }
+            | Self::ExistenceChanged { .. }
+            | Self::Sealed { .. } => None,
         }
     }
 }

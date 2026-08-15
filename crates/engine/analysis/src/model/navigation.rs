@@ -6,10 +6,20 @@ use rg_parse::{FileId, Span};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NavigationTarget {
     pub crate_ref: CrateRef,
+    pub source: NavigationTargetSource,
     pub kind: NavigationTargetKind,
     pub name: String,
     pub file_id: FileId,
     pub span: Option<Span>,
+}
+
+/// Which source snapshot owns the target span.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NavigationTargetSource {
+    /// The range belongs to request-local Body IR built from current editor text.
+    Current,
+    /// The range belongs to the selected saved project generation.
+    Saved,
 }
 
 /// Navigation target category.

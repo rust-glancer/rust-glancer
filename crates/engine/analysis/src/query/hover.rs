@@ -33,6 +33,14 @@ impl<'a, 'db> HoverResolver<'a, 'db> {
         else {
             return Ok(None);
         };
+        self.hover_for_source_symbol(crate_ref, source_symbol)
+    }
+
+    fn hover_for_source_symbol(
+        &self,
+        crate_ref: CrateRef,
+        source_symbol: crate::source_symbol::SourceSymbol,
+    ) -> anyhow::Result<Option<HoverInfo>> {
         let range = Some(source_symbol.span());
         let symbol = source_symbol.symbol().clone();
         let source_symbols = SourceSymbolResolver::new(self.0.view_db());
@@ -65,9 +73,10 @@ impl<'a, 'db> HoverResolver<'a, 'db> {
 
     fn module_display_name_for_symbol(symbol: &SymbolAt) -> Option<String> {
         match symbol {
-            SymbolAt::TypePath { path, .. }
-            | SymbolAt::ValuePath { path, .. }
-            | SymbolAt::UsePath { path, .. } => path.last_segment_label(),
+            SymbolAt::TypePath { type_path, .. } => type_path.path().last_segment_label(),
+            SymbolAt::ValuePath { path, .. } | SymbolAt::UsePath { path, .. } => {
+                path.last_segment_label()
+            }
             SymbolAt::FunctionBody { .. }
             | SymbolAt::Declaration { .. }
             | SymbolAt::Expr { .. }

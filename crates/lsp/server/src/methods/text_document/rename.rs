@@ -1,32 +1,28 @@
 use tower_lsp_server::{jsonrpc::Result, ls_types::*};
 
-use crate::methods::{MethodContext, internal_error, uri_to_path};
+use crate::methods::DocumentMethodContext;
 
 #[tracing::instrument(
     level = "trace", skip_all,
     fields(rg.position = ?params.position)
 )]
 pub(crate) async fn prepare_rename(
-    ctx: MethodContext,
+    ctx: DocumentMethodContext,
     params: TextDocumentPositionParams,
 ) -> Result<Option<PrepareRenameResponse>> {
-    let Some(path) = uri_to_path(&params.text_document.uri) else {
-        return Ok(None);
-    };
     let position = params.position;
+    let input = ctx.global_position(position)?;
     tracing::trace!("prepare rename request received");
-    let response = ctx
+    let result = ctx
         .engine_client
         .query(
             "prepare_rename",
             move |engine_client, request_context| async move {
-                engine_client
-                    .prepare_rename(request_context, path, position)
-                    .await
+                engine_client.prepare_rename(request_context, input).await
             },
         )
-        .await
-        .map_err(internal_error)?;
+        .await;
+    let response = ctx.finish_global_operation(result)?;
     tracing::trace!(
         has_result = response.is_some(),
         "prepare rename request answered"
@@ -43,24 +39,20 @@ pub(crate) async fn prepare_rename(
     )
 )]
 pub(crate) async fn rename(
-    ctx: MethodContext,
+    ctx: DocumentMethodContext,
     params: RenameParams,
 ) -> Result<Option<WorkspaceEdit>> {
-    let Some(path) = uri_to_path(&params.text_document_position.text_document.uri) else {
-        return Ok(None);
-    };
     let position = params.text_document_position.position;
+    let input = ctx.global_position(position)?;
     let new_name = params.new_name;
     tracing::trace!("rename request received");
-    let edit = ctx
+    let result = ctx
         .engine_client
         .query("rename", move |engine_client, request_context| async move {
-            engine_client
-                .rename(request_context, path, position, new_name)
-                .await
+            engine_client.rename(request_context, input, new_name).await
         })
-        .await
-        .map_err(internal_error)?;
+        .await;
+    let edit = ctx.finish_global_operation(result)?;
     tracing::trace!(has_edit = edit.is_some(), "rename request answered");
 
     Ok(edit)

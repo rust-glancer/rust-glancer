@@ -11,6 +11,11 @@ use rg_parse::FileId;
 
 pub use rg_ir_model::FieldKey;
 
+pub use self::build::{
+    CurrentBodyBuildCheckpoint, CurrentBodyBuildOutcome, CurrentBodyBuilder, CurrentBodySelection,
+    CurrentBodyUnavailable,
+};
+
 #[cfg(test)]
 mod tests;
 
@@ -29,7 +34,7 @@ pub use self::{
     store::{
         BodyFileEntry, BodyFileShard, BodyIrDb, BodyIrLoader, BodyIrReadTxn, BodyIrStats,
         BodyLocalItems, CrateBodies, CrateBodiesCoverage, CrateBodiesManifest, CrateBodiesStatus,
-        LoadBodyIr, PackageBodies, PackageBodiesManifest,
+        CurrentBody, CurrentBodySet, LoadBodyIr, PackageBodies, PackageBodiesManifest,
     },
 };
 

@@ -1,18 +1,16 @@
-//! RPC transport and project availability for one engine process.
+//! RPC transport and project status for one engine process.
 //!
-//! Availability is separate from engine-side execution ordering. Semantic RPC methods still enter
-//! the engine's single FIFO command lane, while lightweight document lifecycle methods update
-//! their own async state directly. This module only controls what the server does around either
-//! kind of RPC:
+//! Semantic RPC methods enter the engine's single FIFO command lane with immutable editor input.
+//! Project indexing state is presentation telemetry, not query-result policy. This module controls
+//! what the server does around each kind of RPC:
 //!
-//! - interactive requests use `EngineClient::query`, which returns an empty result while a saved
-//!   project update is active and abandons a response that crosses such an update;
-//! - save and reindex requests use `call_indexing` or `notify_indexing`, which own the matching
-//!   `Indexing -> Ready/Failed` status transition through actual engine completion;
-//! - startup, shutdown, and document lifecycle notifications use the unconditional transport
-//!   helpers because project availability does not govern those protocol messages;
-//! - the native watcher starts an indexing activity before its quiet period, then transfers that
-//!   activity to `call_with_indexing_activity` when it submits the settled batch.
+//! - interactive requests use `EngineClient::query` and preserve the engine's typed outcome;
+//! - save and reindex requests use `call_project_update`, which owns the matching status
+//!   transition through actual engine completion;
+//! - startup and shutdown use the unconditional transport helpers because presentation status
+//!   does not govern process lifecycle messages;
+//! - the native watcher starts a project update before its quiet period, then transfers that
+//!   update to `call_with_project_update` when it submits the settled batch.
 
 use std::{
     fmt,
@@ -22,67 +20,65 @@ use std::{
 };
 
 use anyhow::Context as _;
-use rg_lsp_proto::{EngineResult, EngineServiceClient};
+use rg_lsp_proto::{AnalysisOutcome, EngineResult, EngineServiceClient};
 use tarpc::client::RpcError as TarpcRpcError;
 use tokio::sync::watch;
 
-use self::availability::EngineAvailabilityState;
-pub(crate) use self::availability::{
-    EngineAvailability, EngineAvailabilitySnapshot, EngineIndexingActivity,
-};
+use self::project_status::EngineProjectStatusState;
+pub(crate) use self::project_status::{EngineProjectStatus, EngineProjectUpdate};
 
-mod availability;
+mod project_status;
 
-const INDEXING_RPC_DEADLINE: Duration = Duration::from_secs(30 * 60);
+const PROJECT_UPDATE_RPC_DEADLINE: Duration = Duration::from_secs(30 * 60);
 
-/// RPC client and saved-project availability state for one engine process.
+/// RPC client and saved-project status state for one engine process.
 ///
-/// Process readiness and project readiness are different. An engine may remain alive and accept
-/// lifecycle commands while its saved project is being rebuilt, but semantic queries must return
-/// neutral results during that interval. Keeping both decisions here gives method handlers one
-/// explicit entrypoint for each kind of call.
+/// An engine remains alive while saved project work is queued or running. Status consumers may
+/// display that transition, while semantic requests preserve their ordinary FIFO relationship to
+/// the mutation and return an explicit engine outcome.
 #[derive(Clone)]
 pub(crate) struct EngineClient {
     engine_service_client: EngineServiceClient,
-    availability: Arc<EngineAvailabilityState>,
+    project_status: Arc<EngineProjectStatusState>,
 }
 
 impl EngineClient {
     pub(crate) fn new(engine_service_client: EngineServiceClient) -> Self {
         Self {
             engine_service_client,
-            availability: Arc::new(EngineAvailabilityState::new()),
+            project_status: Arc::new(EngineProjectStatusState::new()),
         }
     }
 
-    /// Returns the project availability paired with this engine process.
-    ///
-    /// Process readiness and project readiness are deliberately separate. A process stays alive
-    /// while a watcher batch replaces its saved project, but interactive requests must treat that
-    /// interval as temporarily unavailable.
-    pub(crate) fn availability(&self) -> EngineAvailability {
-        self.availability.current().availability
+    /// Whether two route values address the same engine process and status owner.
+    pub(crate) fn same_engine(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.project_status, &other.project_status)
+    }
+
+    /// Returns the saved-project status displayed for this engine process.
+    pub(crate) fn project_status(&self) -> EngineProjectStatus {
+        self.project_status.current()
     }
 
     /// Subscribe to transitions used by the active-workspace status indicator.
-    pub(crate) fn availability_changes(&self) -> watch::Receiver<EngineAvailabilitySnapshot> {
-        self.availability.subscribe()
+    pub(crate) fn project_status_changes(&self) -> watch::Receiver<EngineProjectStatus> {
+        self.project_status.subscribe()
     }
 
     /// Mark one foreground project update as pending or running.
     ///
-    /// Activities are counted because an editor save, native watcher batch, and explicit reindex
-    /// can overlap. The project becomes queryable only after the last overlapping activity ends.
-    pub(crate) fn begin_indexing(&self) -> EngineIndexingActivity {
-        self.availability.begin()
+    /// Updates are counted because an editor save, native watcher batch, and explicit reindex
+    /// can overlap. Presentation returns to ready only after the last update ends.
+    pub(crate) fn begin_project_update(&self) -> EngineProjectUpdate {
+        self.project_status.begin()
     }
 
-    /// Call the engine without consulting or changing saved-project availability.
+    /// Call the engine without consulting or changing saved-project presentation status.
     ///
-    /// "Unconditional" describes only this server-side availability wrapper. It neither bypasses
+    /// "Unconditional" describes only this server-side status wrapper. It neither bypasses
     /// nor creates engine-side queueing: the invoked service method keeps its normal execution
-    /// route. Callers use this for startup, shutdown, and lifecycle messages whose availability is
-    /// either irrelevant or owned by a higher-level protocol.
+    /// route. Callers use this for startup, shutdown, and other messages whose presentation state
+    /// is either irrelevant or owned by a higher-level protocol.
     pub(crate) async fn call_unconditional<T, F, Fut>(
         &self,
         operation: &'static str,
@@ -98,35 +94,30 @@ impl EngineClient {
         result.map_err(anyhow::Error::from)
     }
 
-    /// Run one interactive request only while the saved project is queryable.
+    /// Run one interactive request and preserve its semantic or operational outcome.
     ///
-    /// Beginning a foreground update also invalidates an RPC that is already waiting. Dropping the
-    /// RPC future closes its response path, so queued engine work can observe cancellation without
-    /// needing a second semantic execution lane.
+    /// Saved project mutations and queries already share one engine command lane. Server-side
+    /// status transitions must not manufacture feature defaults or invalidate a coherent engine
+    /// response independently from that lane.
     pub(crate) async fn query<T, F, Fut>(
         &self,
         operation: &'static str,
         request: F,
-    ) -> anyhow::Result<T>
+    ) -> anyhow::Result<AnalysisOutcome<T>>
     where
-        T: Default,
         F: FnOnce(EngineServiceClient, tarpc::context::Context) -> Fut,
-        Fut: Future<Output = Result<EngineResult<T>, TarpcRpcError>>,
+        Fut: Future<Output = Result<EngineResult<AnalysisOutcome<T>>, TarpcRpcError>>,
     {
-        let request = self.call_unconditional(operation, request);
-        match self.availability.run_query(operation, request).await {
-            Some(result) => result,
-            None => Ok(T::default()),
-        }
+        self.call_unconditional(operation, request).await
     }
 
-    /// Run a saved-project update and publish its availability outcome.
+    /// Run a saved-project update and publish its presentation outcome.
     ///
-    /// Overlapping updates are counted by `EngineIndexingActivity`; this call returning does not
-    /// make the project queryable while another save or watcher batch is still in flight. Once the
-    /// RPC has been submitted, its activity lives in a detached task so cancelling the outer LSP
-    /// request cannot announce readiness before the engine command finishes.
-    pub(crate) async fn call_indexing<T, F, Fut>(
+    /// Overlapping updates are counted by `EngineProjectUpdate`; this call returning does not
+    /// publish ready while another save or watcher batch is still in flight. Once the RPC has been
+    /// submitted, its update lives in a detached task so cancelling the outer LSP request cannot
+    /// announce readiness before the engine command finishes.
+    pub(crate) async fn call_project_update<T, F, Fut>(
         &self,
         operation: &'static str,
         request: F,
@@ -136,18 +127,18 @@ impl EngineClient {
         F: FnOnce(EngineServiceClient, tarpc::context::Context) -> Fut + Send + 'static,
         Fut: Future<Output = Result<EngineResult<T>, TarpcRpcError>> + Send + 'static,
     {
-        let activity = self.begin_indexing();
-        self.call_with_indexing_activity(activity, operation, request)
+        let update = self.begin_project_update();
+        self.call_with_project_update(update, operation, request)
             .await
     }
 
-    /// Submit work using an activity acquired before an external settle period.
+    /// Submit work using an update acquired before an external settle period.
     ///
-    /// This is the native watcher's counterpart to `call_indexing`: it preserves the earlier
-    /// `Indexing` transition, then gives the accepted RPC the same cancellation-safe ownership.
-    pub(crate) async fn call_with_indexing_activity<T, F, Fut>(
+    /// This is the native watcher's counterpart to `call_project_update`: it preserves the earlier
+    /// status transition, then gives the accepted RPC the same cancellation-safe ownership.
+    pub(crate) async fn call_with_project_update<T, F, Fut>(
         &self,
-        activity: EngineIndexingActivity,
+        update: EngineProjectUpdate,
         operation: &'static str,
         request: F,
     ) -> anyhow::Result<T>
@@ -157,14 +148,14 @@ impl EngineClient {
         Fut: Future<Output = Result<EngineResult<T>, TarpcRpcError>> + Send + 'static,
     {
         let engine_client = self.clone();
-        activity
+        update
             .run_to_completion(
                 async move { engine_client.call_unconditional(operation, request).await },
             )
             .await
     }
 
-    /// Send a lifecycle notification regardless of saved-project availability.
+    /// Send a best-effort notification regardless of saved-project presentation status.
     ///
     /// LSP notifications have no response channel on which to surface an engine failure, so this
     /// waits for the RPC and records a debug message instead.
@@ -179,23 +170,10 @@ impl EngineClient {
         }
     }
 
-    /// Send a notification that owns a saved-project availability transition.
-    pub(crate) async fn notify_indexing<T, F, Fut>(&self, operation: &'static str, request: F)
-    where
-        T: Send + 'static,
-        F: FnOnce(EngineServiceClient, tarpc::context::Context) -> Fut + Send + 'static,
-        Fut: Future<Output = Result<EngineResult<T>, TarpcRpcError>> + Send + 'static,
-    {
-        if let Err(error) = self.call_indexing(operation, request).await {
-            let error = format!("{error:#}");
-            tracing::debug!(operation, error = %error, "engine indexing notification failed");
-        }
-    }
-
     fn context(operation: &'static str) -> tarpc::context::Context {
         let mut context = tarpc::context::current();
         if Self::operation_may_rebuild_analysis(operation) {
-            context.deadline = Instant::now() + INDEXING_RPC_DEADLINE;
+            context.deadline = Instant::now() + PROJECT_UPDATE_RPC_DEADLINE;
         }
         context
     }
@@ -203,7 +181,7 @@ impl EngineClient {
     fn operation_may_rebuild_analysis(operation: &'static str) -> bool {
         matches!(
             operation,
-            "initialize" | "reindex_workspace" | "did_save" | "external_project_paths_changed"
+            "initialize" | "reindex_workspace" | "did_save" | "external_project_changes"
         )
     }
 }
@@ -221,12 +199,12 @@ mod tests {
     use super::EngineClient;
 
     #[test]
-    fn indexing_operations_get_long_rpc_deadline() {
+    fn project_update_operations_get_long_rpc_deadline() {
         for operation in [
             "initialize",
             "reindex_workspace",
             "did_save",
-            "external_project_paths_changed",
+            "external_project_changes",
         ] {
             let context = EngineClient::context(operation);
 

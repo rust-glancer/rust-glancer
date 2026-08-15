@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use tokio::{sync::Mutex, task::JoinHandle};
 
-use crate::{documents::DocumentStore, service::ServiceNotificationsSink};
+use crate::service::ServiceNotificationsSink;
 
 use super::{
     CurrentDiagnostics, DiagnosticsHandleInner, DiagnosticsSnapshot,
@@ -13,11 +13,10 @@ use super::{
 
 /// Owns the shared handles needed by the spawned diagnostics task.
 ///
-/// Keeping the task body here lets `DiagnosticsHandle` stay focused on lifecycle decisions: whether to
-/// launch, what to cancel, and which task is currently active.
+/// Keeping the task body here lets `DiagnosticsHandle` stay focused on lifecycle decisions:
+/// whether to launch, what to cancel, and which task is active.
 pub(super) struct DiagnosticsTaskContext {
     notifications: ServiceNotificationsSink,
-    documents: Arc<Mutex<DocumentStore>>,
     inner: Arc<Mutex<DiagnosticsHandleInner>>,
     current: Arc<Mutex<Option<CurrentDiagnostics>>>,
 }
@@ -25,13 +24,11 @@ pub(super) struct DiagnosticsTaskContext {
 impl DiagnosticsTaskContext {
     pub(super) fn new(
         notifications: ServiceNotificationsSink,
-        documents: Arc<Mutex<DocumentStore>>,
         inner: Arc<Mutex<DiagnosticsHandleInner>>,
         current: Arc<Mutex<Option<CurrentDiagnostics>>>,
     ) -> Self {
         Self {
             notifications,
-            documents,
             inner,
             current,
         }
@@ -61,10 +58,9 @@ impl DiagnosticsTaskContext {
                     return;
                 }
 
-                let documents = self.documents.lock().await;
                 let mut workspace_diagnostics =
-                    WorkspaceDiagnostics::new(diagnostics, &documents, &inner.published_paths);
-                inner.published_paths = workspace_diagnostics.take_published_paths();
+                    WorkspaceDiagnostics::new(diagnostics, &inner.known_paths);
+                inner.known_paths = workspace_diagnostics.take_known_paths();
                 workspace_diagnostics
             }
             Err(error) => {

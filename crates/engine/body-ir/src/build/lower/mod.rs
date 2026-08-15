@@ -8,6 +8,7 @@ use std::time::{Duration, Instant};
 mod body;
 mod builder;
 mod crate_lowering;
+mod current_body;
 mod expr;
 mod macro_expansion;
 mod pat;
@@ -31,8 +32,12 @@ use crate::{BodyIrBuildPolicy, CrateBodiesCoverage};
 
 pub(super) use self::builder::{LoweredBodyData, PendingBindingResolution};
 use self::crate_lowering::CrateLowering;
+pub use self::current_body::{
+    CurrentBodyBuildCheckpoint, CurrentBodyBuildOutcome, CurrentBodyBuilder, CurrentBodySelection,
+    CurrentBodyUnavailable,
+};
 pub(super) use self::macro_expansion::BodyMacroExpansion;
-pub(super) use self::task::{BodyLoweringTask, BodyTaskLowering};
+pub(super) use self::task::{BodyLoweringTask, BodyTaskLowering, BodyTaskSource, LoweredBodyTask};
 use super::{local_thread_pool, materialization::BodyIrMaterialization};
 
 // These thresholds are diagnostic filters, not build budgets. Debug logging should identify

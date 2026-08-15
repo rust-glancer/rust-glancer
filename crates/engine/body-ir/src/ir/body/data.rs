@@ -82,6 +82,12 @@ impl BodyData {
         self.owner
     }
 
+    /// Attach the declaration and module allocated for a request-local root.
+    pub(crate) fn set_owner_context(&mut self, owner: BodyOwner, owner_module: ModuleRef) {
+        self.owner = owner;
+        self.owner_module = owner_module;
+    }
+
     pub fn owner_module(&self) -> ModuleRef {
         self.owner_module
     }

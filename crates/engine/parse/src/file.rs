@@ -13,6 +13,20 @@ use crate::{fs, line_index::LineIndex, span::Span};
 use rg_std::{MemorySize, Shrink};
 use wincode::{SchemaRead, SchemaWrite};
 
+/// Parse source text with the Rust edition of its owning package.
+///
+/// This entry point does not assign a project file id or retain the syntax tree. It is intended for
+/// editor text that a caller wants to inspect without adding it to the saved parse database.
+pub fn parse_source_file(source: &str, edition: RustEdition) -> SyntaxParse<SourceFile> {
+    let edition = match edition {
+        RustEdition::Edition2015 => Edition::Edition2015,
+        RustEdition::Edition2018 => Edition::Edition2018,
+        RustEdition::Edition2021 => Edition::Edition2021,
+        RustEdition::Edition2024 => Edition::Edition2024,
+    };
+    SourceFile::parse(source, edition)
+}
+
 /// Stable identifier for a parsed source file inside `FileDb`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 #[memsize(leaf)]
@@ -125,7 +139,7 @@ impl<'a> ParsedFile<'a> {
     /// Returns a freshly parsed syntax tree without storing it in the parse database.
     pub fn parse_syntax(&self) -> anyhow::Result<SyntaxParse<SourceFile>> {
         let source = self.data.source.text()?;
-        Ok(FileDb::parse_syntax(&source, self.edition))
+        Ok(parse_source_file(&source, self.edition))
     }
 
     /// Returns source text for a byte span from the same snapshot that backs this parsed file.
@@ -141,7 +155,7 @@ impl<'a> ParsedFile<'a> {
         Ok(file_text.get(start..end).map(ToString::to_string))
     }
 
-    /// Returns source text from the same saved or dirty snapshot that backs this parsed file.
+    /// Returns source text from the same saved generation backing this parsed file.
     pub fn source_text(&self) -> anyhow::Result<Arc<str>> {
         Ok(self.data.source.text()?)
     }
@@ -209,20 +223,6 @@ impl FileDb {
         Some(file_id)
     }
 
-    /// Reparses an already known file from caller-provided source text.
-    pub(super) fn reparse_file_from_source(
-        &mut self,
-        file_path: &Path,
-        source: Arc<SourceEntry>,
-    ) -> Option<FileId> {
-        let file_id = self.file_ids_by_path.get(file_path).copied()?;
-        let source_text = source
-            .text()
-            .expect("in-memory source should remain resident");
-        self.parsed_files[file_id] = Self::parse_source(&source_text, self.edition, source);
-        Some(file_id)
-    }
-
     /// Ensures that syntax for an already known file is available for AST-consuming lowering.
     pub(super) fn ensure_file_syntax(&mut self, file_id: FileId) -> anyhow::Result<()> {
         let Some(parsed_file) = self.parsed_files.get(file_id) else {
@@ -263,9 +263,7 @@ impl FileDb {
 
     pub(super) fn offload_line_indexes(&mut self) {
         for parsed_file in self.parsed_files.iter_mut() {
-            if parsed_file.source.is_saved() {
-                parsed_file.line_index.offload();
-            }
+            parsed_file.line_index.offload();
         }
     }
 
@@ -330,23 +328,13 @@ impl FileDb {
         source_backing: Arc<SourceEntry>,
     ) -> ParsedFileData {
         let line_index = LineIndex::new(source);
-        let parsed_file = Self::parse_syntax(source, edition);
+        let parsed_file = parse_source_file(source, edition);
 
         ParsedFileData {
             source: source_backing,
             line_index: LineIndexState::resident(line_index),
             syntax: Some(parsed_file),
         }
-    }
-
-    fn parse_syntax(source: &str, edition: RustEdition) -> SyntaxParse<SourceFile> {
-        let ra_edition = match edition {
-            RustEdition::Edition2015 => Edition::Edition2015,
-            RustEdition::Edition2018 => Edition::Edition2018,
-            RustEdition::Edition2021 => Edition::Edition2021,
-            RustEdition::Edition2024 => Edition::Edition2024,
-        };
-        SourceFile::parse(source, ra_edition)
     }
 }
 

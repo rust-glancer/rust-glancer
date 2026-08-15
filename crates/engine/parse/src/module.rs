@@ -13,13 +13,28 @@ use std::{
 
 use anyhow::Context as _;
 use rg_syntax::{
-    Edition, SourceFile,
+    AstNode as _, Edition, SourceFile, SyntaxNode,
     ast::{self, HasAttrs, HasModuleItem, HasName},
 };
-use rg_text::identifier_text;
+use rg_text::{Name, identifier_text};
 
 use crate::{FileId, Package, fs};
 use rg_source::SourceInventory;
+
+/// Return the inline modules that contain `node`, from the outermost module inward.
+///
+/// The syntax spelling is converted to a semantic `Name`, so `mod r#type` contributes `type`.
+/// Out-of-line modules are not part of this path because their file already identifies them.
+pub fn enclosing_inline_module_path(node: &SyntaxNode) -> Vec<Name> {
+    let mut path = node
+        .ancestors()
+        .filter_map(ast::Module::cast)
+        .filter(|module| module.item_list().is_some())
+        .filter_map(|module| module.name().map(|name| Name::new(name.text())))
+        .collect::<Vec<_>>();
+    path.reverse();
+    path
+}
 
 impl Package {
     /// Discovers reachable out-of-line module files before AST-consuming lowering allocates.
@@ -354,4 +369,32 @@ fn module_path_attr(item: &ast::Module) -> Option<String> {
     }
 
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use rg_syntax::{AstNode as _, Edition, SourceFile, ast};
+
+    use super::enclosing_inline_module_path;
+
+    #[test]
+    fn inline_module_path_uses_semantic_names() {
+        let syntax = SourceFile::parse(
+            "mod outer { mod r#type { fn target() {} } }",
+            Edition::Edition2021,
+        )
+        .tree();
+        let target = syntax
+            .syntax()
+            .descendants()
+            .find_map(ast::Fn::cast)
+            .expect("fixture should contain a function");
+
+        let path = enclosing_inline_module_path(target.syntax())
+            .into_iter()
+            .map(|name| name.to_string())
+            .collect::<Vec<_>>();
+
+        assert_eq!(path, ["outer", "type"]);
+    }
 }

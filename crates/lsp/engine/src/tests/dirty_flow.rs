@@ -4,7 +4,7 @@ use test_fixture::testonly::MarkedText;
 use super::utils::{LspEngineFixture, LspQuery};
 
 #[tokio::test]
-async fn queries_use_dirty_full_text_overlay() {
+async fn unsaved_global_declarations_are_syntax_only_until_save() {
     let fixture = LspEngineFixture::initialized(
         r#"
         //- /Cargo.toml
@@ -60,28 +60,590 @@ pub fn demo(user: DirtyUser) {
             ],
             expect![[r#"
                 complete dirty field
-                - dirty_field Field
-                  detail: pub dirty_field: DirtyName
-                  edit: /src/lib.rs:9:27-9:33 -> dirty_field
+                - none
 
                 hover dirty field
-                - range: /src/lib.rs:10:22-10:33
-                - markdown:
-                  ```rust
-                  lsp_dirty_flow::DirtyUser
-                  ```
-
-                  ```rust
-                  pub dirty_field: DirtyName
-                  ```
-
-                  Field that exists only in the unsaved buffer.
+                - none
 
                 dirty document symbols
                 - Struct DirtyUser 1:11-1:20
                   - Field dirty_field 3:8-3:19
                 - Struct DirtyName 6:11-6:20
                 - Function demo 8:7-8:11
+            "#]],
+        )
+        .await;
+
+    fixture.shutdown().await;
+}
+
+#[tokio::test]
+async fn dirty_imports_and_unchanged_item_headers_use_saved_semantics() {
+    let fixture = LspEngineFixture::initialized(
+        r#"
+        //- /Cargo.toml
+        [package]
+        name = "lsp_dirty_item_surface"
+        version = "0.1.0"
+        edition = "2024"
+
+        //- /src/lib.rs
+        pub mod api {
+            pub struct Only;
+        }
+
+        pub struct Foo;
+
+        pub struct Wrapper {
+            pub value: Foo,
+        }
+
+        impl Foo {
+            pub fn new() {
+                let saved = true;
+            }
+        }
+        "#,
+    )
+    .await;
+
+    fixture.did_open_saved("src/lib.rs", 1).await;
+    let dirty = fixture
+        .did_change_full(
+            "src/lib.rs",
+            2,
+            MarkedText::parse(
+                r#"
+use ap$root_import$;
+use crate::api::On$qualified_import$;
+
+pub mod api {
+    pub struct Only;
+}
+
+pub struct Foo;
+
+pub struct Wrapper {
+    pub value: F$type$oo,
+}
+
+impl F$impl$oo {
+    pub fn n$method$ew() {
+        let current = true;
+    }
+}
+"#,
+            ),
+        )
+        .await;
+
+    fixture
+        .check_dirty(
+            &dirty,
+            &[
+                LspQuery::completion("complete newly typed import root", "root_import"),
+                LspQuery::completion("complete newly typed qualified import", "qualified_import"),
+                LspQuery::hover("hover moved impl type", "impl"),
+                LspQuery::hover("hover method with a dirty body", "method"),
+                LspQuery::goto_definition("define moved impl type", "impl"),
+                LspQuery::goto_type_definition("type of moved field", "type"),
+                LspQuery::document_highlight("highlight moved method", "method"),
+                LspQuery::document_highlight("highlight moved field type", "type"),
+            ],
+            expect![[r#"
+                complete newly typed import root
+                - Foo Struct
+                  detail: struct Foo
+                  edit: /src/lib.rs:1:4-1:6 -> Foo
+                - Wrapper Struct
+                  detail: struct Wrapper
+                  edit: /src/lib.rs:1:4-1:6 -> Wrapper
+                - api Module
+                  detail: mod api
+                  edit: /src/lib.rs:1:4-1:6 -> api
+
+                complete newly typed qualified import
+                - Only Struct
+                  detail: struct Only
+                  edit: /src/lib.rs:2:16-2:18 -> Only
+
+                hover moved impl type
+                - range: /src/lib.rs:14:5-14:8
+                - markdown:
+                  ```rust
+                  lsp_dirty_item_surface::Foo
+                  ```
+
+                  ```rust
+                  pub struct Foo
+                  ```
+
+                hover method with a dirty body
+                - range: /src/lib.rs:15:11-15:14
+                - markdown:
+                  ```rust
+                  lsp_dirty_item_surface::Foo::new
+                  ```
+
+                  ```rust
+                  pub fn new()
+                  ```
+
+                define moved impl type
+                - /src/lib.rs:8:11-8:14
+
+                type of moved field
+                - /src/lib.rs:8:11-8:14
+
+                highlight moved method
+                - read 15:11-15:14
+
+                highlight moved field type
+                - read 11:15-11:18
+            "#]],
+        )
+        .await;
+
+    fixture.shutdown().await;
+}
+
+#[tokio::test]
+async fn dirty_module_use_paths_resolve_in_saved_module_scope() {
+    let fixture = LspEngineFixture::initialized(
+        r#"
+        //- /Cargo.toml
+        [package]
+        name = "lsp_dirty_use_paths"
+        version = "0.1.0"
+        edition = "2024"
+
+        //- /src/lib.rs
+        pub mod api {
+            pub mod nested {
+                pub struct User;
+                pub struct Account;
+            }
+        }
+
+        pub mod exports {
+            pub use crate::api::{nested::User, nested::Account as PublicAccount};
+        }
+        "#,
+    )
+    .await;
+
+    fixture.did_open_saved("src/lib.rs", 1).await;
+    let dirty = fixture
+        .did_change_full(
+            "src/lib.rs",
+            2,
+            MarkedText::parse(
+                r#"
+// An unrelated edit moves every saved import span.
+pub mod api {
+    pub mod nested {
+        pub struct User;
+        pub struct Account;
+    }
+}
+
+pub mod exports {
+    pub use crate::api::{nested::Us$user_hover$er, nested::Account as Public$alias_definition$Account};
+}
+"#,
+            ),
+        )
+        .await;
+
+    fixture
+        .check_dirty(
+            &dirty,
+            &[
+                LspQuery::hover("hover a moved re-export path", "user_hover"),
+                LspQuery::goto_definition("define a moved re-export alias", "alias_definition"),
+            ],
+            expect![[r#"
+                hover a moved re-export path
+                - range: /src/lib.rs:10:33-10:37
+                - markdown:
+                  ```rust
+                  lsp_dirty_use_paths::api::nested::User
+                  ```
+
+                  ```rust
+                  pub struct User
+                  ```
+
+                define a moved re-export alias
+                - /src/lib.rs:5:19-5:26
+            "#]],
+        )
+        .await;
+
+    fixture.shutdown().await;
+}
+
+#[tokio::test]
+async fn dirty_associated_header_type_definition_lowers_transparent_aliases() {
+    let fixture = LspEngineFixture::initialized(
+        r#"
+        //- /Cargo.toml
+        [package]
+        name = "lsp_dirty_type_alias"
+        version = "0.1.0"
+        edition = "2024"
+
+        //- /src/lib.rs
+        pub struct Wrapper<T>(pub T);
+        pub struct User;
+        pub type Alias<T> = Wrapper<T>;
+
+        pub fn inspect(_: Alias<User>) {}
+        "#,
+    )
+    .await;
+
+    fixture.did_open_saved("src/lib.rs", 1).await;
+    let dirty = fixture
+        .did_change_full(
+            "src/lib.rs",
+            2,
+            MarkedText::parse(
+                r#"
+// Move the unchanged signature away from every saved offset.
+pub struct Wrapper<T>(pub T);
+pub struct User;
+pub type Alias<T> = Wrapper<T>;
+
+pub fn inspect(_: Ali$alias_type$as<User>) {}
+"#,
+            ),
+        )
+        .await;
+
+    fixture
+        .check_dirty(
+            &dirty,
+            &[LspQuery::goto_type_definition(
+                "type of an alias in a moved header",
+                "alias_type",
+            )],
+            expect![[r#"
+                type of an alias in a moved header
+                - /src/lib.rs:2:11-2:18
+                - /src/lib.rs:3:11-3:15
+            "#]],
+        )
+        .await;
+
+    fixture.shutdown().await;
+}
+
+#[tokio::test]
+async fn completion_ignores_unsaved_changes_to_a_sibling_declaration() {
+    let fixture = LspEngineFixture::initialized(
+        r#"
+        //- /Cargo.toml
+        [package]
+        name = "lsp_current_source_cross_file"
+        version = "0.1.0"
+        edition = "2024"
+
+        //- /src/lib.rs
+        mod consumer;
+
+        pub struct SavedUser {
+            pub saved_field: usize,
+        }
+
+        //- /src/consumer.rs
+        use crate::SavedUser;
+
+        pub fn inspect(user: SavedUser) {
+            let _ = user.saved_field;
+        }
+        "#,
+    )
+    .await;
+
+    fixture.did_open_saved("src/lib.rs", 1).await;
+    fixture.did_open_saved("src/consumer.rs", 1).await;
+    fixture
+        .did_change_full(
+            "src/lib.rs",
+            2,
+            MarkedText::parse(
+                r#"
+mod consumer;
+
+pub struct SavedUser {
+    pub saved_field: usize,
+    /// Field that exists only in the unsaved sibling.
+    pub editor_field: usize,
+}
+"#,
+            ),
+        )
+        .await;
+    let consumer = fixture
+        .did_change_full(
+            "src/consumer.rs",
+            2,
+            MarkedText::parse(
+                r#"
+use crate::SavedUser;
+
+pub fn inspect(user: SavedUser) {
+    let _ = user.editor_$complete$;
+    let _: Saved$definition$User = user;
+}
+"#,
+            ),
+        )
+        .await;
+
+    fixture
+        .check_dirty(
+            &consumer,
+            &[
+                LspQuery::completion("complete from saved sibling semantics", "complete"),
+                LspQuery::goto_definition("navigate to the saved declaration", "definition"),
+            ],
+            expect![[r#"
+                complete from saved sibling semantics
+                - saved_field Field
+                  detail: pub saved_field: usize
+                  edit: /src/consumer.rs:4:17-4:24 -> saved_field
+
+                navigate to the saved declaration
+                - /src/lib.rs:3:11-3:20
+            "#]],
+        )
+        .await;
+
+    fixture.shutdown().await;
+}
+
+#[tokio::test]
+async fn definition_maps_a_saved_target_into_its_dirty_open_document() {
+    let fixture = LspEngineFixture::initialized(
+        r#"
+        //- /Cargo.toml
+        [package]
+        name = "lsp_dirty_definition_destination"
+        version = "0.1.0"
+        edition = "2024"
+
+        //- /src/lib.rs
+        mod consumer;
+        mod unrelated;
+
+        pub struct SavedUser;
+
+        //- /src/consumer.rs
+        use crate::SavedUser;
+
+        pub fn inspect(_: Saved$definition$User) {}
+
+        //- /src/unrelated.rs
+        pub struct Unrelated;
+        "#,
+    )
+    .await;
+
+    fixture.did_open_saved("src/lib.rs", 1).await;
+    fixture.did_open_saved("src/consumer.rs", 1).await;
+    fixture.did_open_saved("src/unrelated.rs", 1).await;
+    fixture
+        .did_change_full(
+            "src/lib.rs",
+            2,
+            MarkedText::parse(
+                r#"
+// Unsaved lines move the declaration away from its saved byte range.
+// Navigation must use the captured destination instead.
+mod consumer;
+mod unrelated;
+
+pub struct SavedUser;
+"#,
+            ),
+        )
+        .await;
+    fixture
+        .did_change_full(
+            "src/unrelated.rs",
+            2,
+            MarkedText::parse("pub struct DifferentUnrelated;\n"),
+        )
+        .await;
+
+    fixture
+        .check(
+            &[LspQuery::goto_definition(
+                "map a saved target into current destination text",
+                "definition",
+            )],
+            expect![[r#"
+                map a saved target into current destination text
+                - /src/lib.rs:6:11-6:20
+            "#]],
+        )
+        .await;
+
+    // Once the destination declaration itself changes, there is no structural proof for the
+    // saved range. Omitting it is safer than navigating to whatever occupies the old coordinates.
+    fixture
+        .did_change_full(
+            "src/lib.rs",
+            3,
+            MarkedText::parse(
+                r#"
+mod consumer;
+mod unrelated;
+
+pub struct CurrentUser;
+"#,
+            ),
+        )
+        .await;
+    fixture
+        .check(
+            &[LspQuery::goto_definition(
+                "omit an unprovable dirty destination",
+                "definition",
+            )],
+            expect![[r#"
+                omit an unprovable dirty destination
+                - none
+            "#]],
+        )
+        .await;
+
+    fixture.shutdown().await;
+}
+
+#[tokio::test]
+async fn definition_does_not_treat_an_overlapping_saved_range_as_current() {
+    let fixture = LspEngineFixture::initialized(
+        r#"
+        //- /Cargo.toml
+        [package]
+        name = "lsp_navigation_source_identity"
+        version = "0.1.0"
+        edition = "2024"
+
+        //- /src/lib.rs
+        pub struct SavedTarget;
+
+        pub fn inspect() {
+            let _: SavedTarget;
+        }
+        "#,
+    )
+    .await;
+
+    fixture.did_open_saved("src/lib.rs", 1).await;
+    let dirty = fixture
+        .did_change_full(
+            "src/lib.rs",
+            2,
+            MarkedText::parse(
+                r#"
+pub fn inspect() {
+    let _: Saved$definition$Target = todo!();
+}
+"#,
+            ),
+        )
+        .await;
+
+    // The saved declaration's old numeric range now falls inside the current function body. It
+    // is still a saved declaration, and there is no current declaration to map it to.
+    fixture
+        .check_dirty(
+            &dirty,
+            &[
+                LspQuery::goto_definition(
+                    "omit a saved declaration removed from current text",
+                    "definition",
+                ),
+                LspQuery::document_highlight("highlight only the current reference", "definition"),
+            ],
+            expect![[r#"
+                omit a saved declaration removed from current text
+                - none
+
+                highlight only the current reference
+                - read 2:11-2:22
+            "#]],
+        )
+        .await;
+
+    fixture.shutdown().await;
+}
+
+#[tokio::test]
+async fn completion_does_not_depend_on_an_unrelated_open_source() {
+    let fixture = LspEngineFixture::initialized(
+        r#"
+        //- /Cargo.toml
+        [package]
+        name = "lsp_removed_open_source"
+        version = "0.1.0"
+        edition = "2024"
+
+        //- /src/lib.rs
+        mod entry;
+        mod removed;
+
+        pub struct User {
+            pub field: usize,
+        }
+
+        //- /src/entry.rs
+        use crate::User;
+
+        pub fn inspect(user: User) {
+            let _ = user.field;
+        }
+
+        //- /src/removed.rs
+        pub struct Removed;
+        "#,
+    )
+    .await;
+
+    fixture.did_open_saved("src/removed.rs", 1).await;
+    let entry = fixture
+        .did_open_dirty(
+            "src/entry.rs",
+            1,
+            MarkedText::parse(
+                r#"
+use crate::User;
+
+pub fn inspect(user: User) {
+    let _ = user.fi$complete$;
+}
+"#,
+            ),
+        )
+        .await;
+    fixture.remove_file_without_notification("src/removed.rs");
+
+    fixture
+        .check_dirty(
+            &entry,
+            &[LspQuery::completion(
+                "completion survives a removed open sibling",
+                "complete",
+            )],
+            expect![[r#"
+                completion survives a removed open sibling
+                - field Field
+                  detail: pub field: usize
+                  edit: /src/entry.rs:4:17-4:19 -> field
             "#]],
         )
         .await;
@@ -100,7 +662,7 @@ async fn dirty_completion_preserves_specialized_and_postfix_edit_ranges() {
         edition = "2024"
 
         //- /src/lib.rs
-        pub fn saved() {}
+        pub fn demo(local_capture: usize, condition: bool) {}
         "#,
     )
     .await;
@@ -156,7 +718,7 @@ pub fn demo(local_capture: usize, condition: bool) {
 }
 
 #[tokio::test]
-async fn dirty_completion_uses_incomplete_function_signature() {
+async fn dirty_completion_uses_saved_semantics_for_changed_incomplete_signature() {
     let fixture = LspEngineFixture::initialized(
         r#"
         //- /Cargo.toml
@@ -196,18 +758,141 @@ pub fn demo<T, const N: usize>(value: Wrapper<Dirty$signature$
             )],
             expect![[r#"
                 dirty incomplete signature completion
-                - T TypeParameter
-                  detail: type parameter T
-                  edit: /src/lib.rs:4:46-4:51 -> T
-                - N Constant
-                  detail: const parameter N
-                  edit: /src/lib.rs:4:46-4:51 -> N
-                - DirtyFixture Struct
-                  detail: struct DirtyFixture
-                  edit: /src/lib.rs:4:46-4:51 -> DirtyFixture
-                - Wrapper Struct
-                  detail: struct Wrapper
-                  edit: /src/lib.rs:4:46-4:51 -> Wrapper
+                - Saved Struct
+                  detail: struct Saved
+                  edit: /src/lib.rs:4:46-4:51 -> Saved
+            "#]],
+        )
+        .await;
+
+    fixture.shutdown().await;
+}
+
+#[tokio::test]
+async fn dirty_moved_body_keeps_its_associated_generic_scope() {
+    let fixture = LspEngineFixture::initialized(
+        r#"
+        //- /Cargo.toml
+        [package]
+        name = "lsp_dirty_moved_body_completion"
+        version = "0.1.0"
+        edition = "2024"
+
+        //- /src/lib.rs
+        pub fn inspect<SessionGeneric: Default>() {
+            let _: SessionGeneric = SessionGeneric::default();
+        }
+        "#,
+    )
+    .await;
+
+    fixture.did_open_saved("src/lib.rs", 1).await;
+    let dirty = fixture
+        .did_change_full(
+            "src/lib.rs",
+            2,
+            MarkedText::parse(
+                r#"
+use std::fmt::Debug;
+
+pub fn inspect<SessionGeneric: Default>() {
+    let _: SessionG$generic$ = SessionGeneric::default();
+}
+"#,
+            ),
+        )
+        .await;
+
+    fixture
+        .check_dirty(
+            &dirty,
+            &[LspQuery::completion(
+                "complete a generic from a moved saved owner",
+                "generic",
+            )],
+            expect![[r#"
+                complete a generic from a moved saved owner
+                - SessionGeneric TypeParameter
+                  detail: type parameter SessionGeneric
+                  edit: /src/lib.rs:4:11-4:19 -> SessionGeneric
+            "#]],
+        )
+        .await;
+
+    fixture.shutdown().await;
+}
+
+#[tokio::test]
+async fn dirty_impl_completion_does_not_borrow_an_overlapping_saved_impl_site() {
+    let fixture = LspEngineFixture::initialized(
+        r#"
+        //- /Cargo.toml
+        [package]
+        name = "lsp_dirty_impl_completion"
+        version = "0.1.0"
+        edition = "2024"
+
+        //- /src/lib.rs
+        pub struct SyntaxDocumentSymbolCollector;
+
+        impl SyntaxDocumentSymbolCollector {}
+
+        mod nested {
+            pub struct NestedSaved;
+        }
+        "#,
+    )
+    .await;
+
+    fixture.did_open_saved("src/lib.rs", 1).await;
+    let dirty = fixture
+        .did_change_full("src/lib.rs", 2, MarkedText::parse("impl Syn$completion$"))
+        .await;
+
+    fixture
+        .check_dirty(
+            &dirty,
+            &[LspQuery::completion(
+                "dirty impl header completion",
+                "completion",
+            )],
+            expect![[r#"
+                dirty impl header completion
+                - SyntaxDocumentSymbolCollector Struct
+                  detail: struct SyntaxDocumentSymbolCollector
+                  edit: /src/lib.rs:0:5-0:8 -> SyntaxDocumentSymbolCollector
+                - nested Module
+                  detail: mod nested
+                  edit: /src/lib.rs:0:5-0:8 -> nested
+            "#]],
+        )
+        .await;
+
+    // An inline module must use its current module path too. Its byte offsets deliberately overlap
+    // different saved syntax, so a saved scanner cannot safely claim this cursor by position.
+    let nested = fixture
+        .did_change_full(
+            "src/lib.rs",
+            3,
+            MarkedText::parse(
+                r#"mod nested {
+    impl Nes$nested$
+}"#,
+            ),
+        )
+        .await;
+    fixture
+        .check_dirty(
+            &nested,
+            &[LspQuery::completion(
+                "dirty nested impl header completion",
+                "nested",
+            )],
+            expect![[r#"
+                dirty nested impl header completion
+                - NestedSaved Struct
+                  detail: struct NestedSaved
+                  edit: /src/lib.rs:1:9-1:12 -> NestedSaved
             "#]],
         )
         .await;
@@ -226,7 +911,17 @@ async fn dirty_completion_handles_associated_paths_at_incomplete_file_end() {
         edition = "2024"
 
         //- /src/lib.rs
-        pub struct Saved;
+        pub struct Widget<T>(T);
+
+        impl<T: Default> Widget<T> {
+            pub fn new() -> Self {
+                Self(T::default())
+            }
+        }
+
+        pub fn edit_in_place() {}
+
+        pub fn unfinished_at_eof() {}
         "#,
     )
     .await;
@@ -329,7 +1024,13 @@ async fn dirty_completion_handles_realistic_incomplete_typing_states() {
         pub mod typed;
 
         //- /src/typed.rs
-        pub fn saved() {}
+        impl crate::Service for crate::Worker {}
+
+        pub fn macro_run() {}
+        pub fn pattern_run(event: crate::Event) {}
+        pub fn associated_run() {}
+        pub fn record_run() {}
+        pub fn format_run(local_capture: usize) {}
 
         //- /src/typed/parser.rs
         pub struct Parser;
@@ -345,7 +1046,7 @@ async fn dirty_completion_handles_realistic_incomplete_typing_states() {
             2,
             MarkedText::parse(
                 r#"
-pub fn run() {
+pub fn macro_run() {
     let _ = crate::local_m$macro_edit$!();
 }
 "#,
@@ -392,7 +1093,7 @@ pub fn run() {
             3,
             MarkedText::parse(
                 r#"
-pub fn run(event: crate::Event) {
+pub fn pattern_run(event: crate::Event) {
     let crate::Event::Dat$tuple_pattern$(_) = event;
     let crate::Event::Sto$record_pattern$ { code: _ } = event;
 }
@@ -433,7 +1134,7 @@ pub fn run(event: crate::Event) {
             4,
             MarkedText::parse(
                 r#"
-pub fn run() {
+pub fn associated_run() {
     let _ = crate::Widget::<u8>::$associated$
 "#,
             ),
@@ -461,7 +1162,7 @@ pub fn run() {
             5,
             MarkedText::parse(
                 r#"
-pub fn run() {
+pub fn record_run() {
     let _ = crate::Record { $record$
 "#,
             ),
@@ -535,7 +1236,7 @@ impl crate::Service for crate::Worker {
             7,
             MarkedText::parse(
                 r#"
-pub fn run(local_capture: usize) {
+pub fn format_run(local_capture: usize) {
     let _ = format!("{$format_capture$
 "#,
             ),
@@ -588,7 +1289,7 @@ mod $module$
 }
 
 #[tokio::test]
-async fn restored_unsaved_open_uses_dirty_full_text_overlay() {
+async fn restored_unsaved_open_keeps_exact_syntax_without_new_global_semantics() {
     let fixture = LspEngineFixture::initialized(
         r#"
         //- /Cargo.toml
@@ -633,17 +1334,7 @@ pub fn demo(value: Restored) {
             ],
             expect![[r#"
                 hover restored field
-                - range: /src/lib.rs:9:23-9:37
-                - markdown:
-                  ```rust
-                  lsp_restored_dirty_flow::Restored
-                  ```
-
-                  ```rust
-                  pub restored_field: RestoredName
-                  ```
-
-                  Field that exists only in the restored editor buffer.
+                - none
 
                 restored document symbols
                 - Struct Restored 1:11-1:19

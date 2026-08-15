@@ -295,6 +295,7 @@ pub(crate) enum BodySourceCandidate {
         body: BodyRef,
         scope: ScopeId,
         path: Path,
+        type_ref: Option<TypeRef>,
         file_id: FileId,
         span: Span,
     },

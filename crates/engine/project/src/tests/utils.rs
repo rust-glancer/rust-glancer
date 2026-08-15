@@ -1,18 +1,14 @@
 use std::{fmt::Write as _, path::Path};
 
 use expect_test::Expect;
-use rg_analysis::{
-    CompletionApplicability, CompletionClientCapabilities, CompletionItem, CompletionQuery,
-    WorkspaceSymbol,
-};
+use rg_analysis::WorkspaceSymbol;
 use rg_def_map::PackageSlot;
 use rg_ir_model::CrateRef;
 use rg_package_store::PackageLoader;
 use rg_parse::FileId;
 
 use crate::{
-    AnalysisChangeSummary, DirtyFileChange, DirtyOverlayScope, FileContext, PackageResidencyPolicy,
-    Project, testonly::ProjectFixture,
+    AnalysisChangeSummary, FileContext, PackageResidencyPolicy, Project, testonly::ProjectFixture,
 };
 
 pub(super) struct HostFixture {
@@ -72,10 +68,10 @@ impl HostFixture {
 
         for context in contexts {
             for target in context.crates {
-                for symbol in analysis
+                let outline = analysis
                     .document_symbols(target, context.file)
-                    .expect("fixture document symbols should resolve")
-                {
+                    .expect("fixture document symbols should resolve");
+                for symbol in outline.symbols {
                     push_document_symbol_names(&symbol, &mut names);
                 }
             }
@@ -100,38 +96,6 @@ impl HostFixture {
         }
     }
 
-    pub(super) fn dirty_overlay(&self, relative_path: &str, text: &str) -> Project {
-        self.dirty_overlay_with_scope(
-            relative_path,
-            text,
-            DirtyOverlayScope::ReverseDependencyClosure,
-        )
-    }
-
-    pub(super) fn dirty_overlay_with_scope(
-        &self,
-        relative_path: &str,
-        text: &str,
-        scope: DirtyOverlayScope,
-    ) -> Project {
-        self.dirty_overlay_from(self.fixture.project(), relative_path, text, scope)
-    }
-
-    pub(super) fn dirty_overlay_from(
-        &self,
-        base: &Project,
-        relative_path: &str,
-        text: &str,
-        scope: DirtyOverlayScope,
-    ) -> Project {
-        base.dirty_overlay(
-            scope,
-            [DirtyFileChange::new(self.fixture.path(relative_path), text)],
-        )
-        .expect("fixture dirty overlay should build")
-        .expect("fixture dirty overlay should touch a known file")
-    }
-
     pub(super) fn check(&self, observations: &[HostObservation<'_>], expect: Expect) {
         let actual = self.render(observations);
         expect.assert_eq(&format!("{}\n", actual.trim_end()));
@@ -146,16 +110,7 @@ impl HostFixture {
         project: &Project,
         observations: &[HostObservation<'_>],
     ) -> String {
-        self.render_observations(project, None, observations)
-    }
-
-    pub(super) fn render_dirty_project(
-        &self,
-        project: &Project,
-        dirty_text: &str,
-        observations: &[HostObservation<'_>],
-    ) -> String {
-        self.render_observations(project, Some(dirty_text), observations)
+        self.render_observations(project, observations)
     }
 
     pub(super) fn check_save(
@@ -179,7 +134,7 @@ impl HostFixture {
         observations: &[HostObservation<'_>],
     ) -> String {
         let mut dump = self.render_change_summary(summary);
-        let observations = self.render_observations(self.fixture.project(), None, observations);
+        let observations = self.render_observations(self.fixture.project(), observations);
         if !observations.is_empty() {
             writeln!(&mut dump).expect("string writes should not fail");
             dump.push_str(&observations);
@@ -279,7 +234,6 @@ impl HostFixture {
     fn render_observations(
         &self,
         project: &Project,
-        dirty_text: Option<&str>,
         observations: &[HostObservation<'_>],
     ) -> String {
         let mut dump = String::new();
@@ -307,23 +261,6 @@ impl HostFixture {
                 }
                 HostObservation::ResidentStats { label } => {
                     self.render_resident_stats(project, label, &mut dump);
-                }
-                HostObservation::BodyIrStats { label } => {
-                    self.render_body_ir_stats(project, label, &mut dump);
-                }
-                HostObservation::CompletionsAt {
-                    label,
-                    relative_path,
-                    offset,
-                } => {
-                    self.render_completions_at(
-                        project,
-                        label,
-                        relative_path,
-                        *offset,
-                        dirty_text,
-                        &mut dump,
-                    );
                 }
             }
         }
@@ -446,113 +383,6 @@ impl HostFixture {
             .expect("string writes should not fail");
     }
 
-    fn render_body_ir_stats(&self, project: &Project, label: &str, dump: &mut String) {
-        let stats = project.snapshot().stats();
-
-        writeln!(dump, "body ir stats `{label}`").expect("string writes should not fail");
-        writeln!(dump, "- crates {}", stats.body_ir.crate_count)
-            .expect("string writes should not fail");
-        writeln!(
-            dump,
-            "- complete crates {}",
-            stats.body_ir.complete_crate_count
-        )
-        .expect("string writes should not fail");
-        writeln!(
-            dump,
-            "- partial crates {}",
-            stats.body_ir.partial_crate_count
-        )
-        .expect("string writes should not fail");
-        writeln!(
-            dump,
-            "- missing crates {}",
-            stats.body_ir.missing_crate_count
-        )
-        .expect("string writes should not fail");
-        writeln!(
-            dump,
-            "- crates skipped by policy {}",
-            stats.body_ir.skipped_by_policy_crate_count
-        )
-        .expect("string writes should not fail");
-        writeln!(dump, "- bodies {}", stats.body_ir.body_count)
-            .expect("string writes should not fail");
-    }
-
-    fn render_completions_at(
-        &self,
-        project: &Project,
-        label: &str,
-        relative_path: &str,
-        offset: usize,
-        dirty_text: Option<&str>,
-        dump: &mut String,
-    ) {
-        writeln!(dump, "completions at `{label}`").expect("string writes should not fail");
-
-        let snapshot = project.snapshot();
-        let contexts = snapshot
-            .file_contexts_for_path(self.fixture.path(relative_path))
-            .expect("fixture path should resolve to file contexts");
-        let targets = contexts
-            .iter()
-            .flat_map(|context| context.crates.iter().copied())
-            .collect::<Vec<_>>();
-        let analysis = snapshot
-            .analysis_for_crates(&targets)
-            .expect("fixture completion analysis should materialize");
-        let mut completions = Vec::new();
-        let offset = offset
-            .try_into()
-            .expect("fixture completion offset should fit into u32");
-
-        for context in contexts {
-            for target in context.crates {
-                let mut query = CompletionQuery::new(target, context.file, offset)
-                    .with_client_capabilities(
-                        CompletionClientCapabilities::default().with_snippet_support(true),
-                    );
-                if let Some(text) = dirty_text {
-                    query = query.with_source_text(text);
-                }
-                for item in analysis
-                    .completions_at(query)
-                    .expect("fixture completions should resolve")
-                {
-                    if !completions.contains(&item) {
-                        completions.push(item);
-                    }
-                }
-            }
-        }
-
-        completions.sort_by(|left, right| {
-            left.label
-                .cmp(&right.label)
-                .then(left.kind.cmp(&right.kind))
-                .then(left.applicability.cmp(&right.applicability))
-        });
-
-        if completions.is_empty() {
-            writeln!(dump, "- <none>").expect("string writes should not fail");
-            return;
-        }
-
-        for item in completions {
-            writeln!(dump, "- {}", Self::render_completion_item(&item))
-                .expect("string writes should not fail");
-        }
-    }
-
-    fn render_completion_item(item: &CompletionItem) -> String {
-        if matches!(item.applicability, CompletionApplicability::Known) {
-            return format!("{} {}", item.kind, item.label);
-        }
-
-        format!("{} {} ({})", item.kind, item.label, item.applicability)
-    }
-
     fn workspace_symbol_key(
         &self,
         project: &Project,
@@ -631,14 +461,6 @@ pub(super) enum HostObservation<'a> {
     ResidentStats {
         label: &'a str,
     },
-    BodyIrStats {
-        label: &'a str,
-    },
-    CompletionsAt {
-        label: &'a str,
-        relative_path: &'a str,
-        offset: usize,
-    },
 }
 
 impl<'a> HostObservation<'a> {
@@ -663,18 +485,6 @@ impl<'a> HostObservation<'a> {
 
     pub(super) fn resident_stats(label: &'a str) -> Self {
         Self::ResidentStats { label }
-    }
-
-    pub(super) fn body_ir_stats(label: &'a str) -> Self {
-        Self::BodyIrStats { label }
-    }
-
-    pub(super) fn completions_at(label: &'a str, relative_path: &'a str, offset: usize) -> Self {
-        Self::CompletionsAt {
-            label,
-            relative_path,
-            offset,
-        }
     }
 }
 

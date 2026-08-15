@@ -47,6 +47,12 @@ use super::super::{
     syntax::CompletionSyntaxContext,
 };
 
+// TODO(#160): Expose import discovery as an explicit code action before returning it to ordinary
+// completion. The synchronous module walk starts at a two-character prefix and adds hundreds of
+// milliseconds to each request in a large workspace. Restore completion integration only after
+// that lookup has a suitable latency boundary and has been profiled against the idle-memory goal.
+const ENABLE_AUTO_IMPORT_COMPLETIONS: bool = false;
+
 /// Combines unqualified candidate families while preserving namespace-aware shadowing.
 pub(super) struct UnqualifiedCompletionResolver<'a, 'db, 'source> {
     analysis: &'a Analysis<'db>,
@@ -99,9 +105,13 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
         let module_candidates = completion_candidates
             .module_candidates_for_unqualified(&site)
             .context("collect module completion candidates")?;
-        let auto_import_candidates = completion_candidates
-            .auto_import_candidates_for_unqualified(&site)
-            .context("collect auto-import completion candidates")?;
+        let auto_import_candidates = if ENABLE_AUTO_IMPORT_COMPLETIONS {
+            completion_candidates
+                .auto_import_candidates_for_unqualified(&site)
+                .context("collect auto-import completion candidates")?
+        } else {
+            Vec::new()
+        };
         let expected_variants = completion_candidates
             .expected_enum_variants_for_unqualified_pattern(&site)
             .context("collect expected enum variant candidates")?;
@@ -164,12 +174,17 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
         // Any accepted local/module spelling would make a same-namespace import conflict or add no
         // value. Keep this set fixed while rendering auto-imports so distinct global declarations
         // with the same label remain available for path-based disambiguation.
-        let mut auto_import_occupied = hidden.clone();
-        for candidate in &module_candidates {
-            if filter.accepts_scope_candidate(candidate.namespace(), candidate.kind()) {
-                auto_import_occupied.insert((candidate.label().to_string(), candidate.namespace()));
+        let auto_import_occupied = if auto_import_candidates.is_empty() {
+            None
+        } else {
+            let mut occupied = hidden.clone();
+            for candidate in &module_candidates {
+                if filter.accepts_scope_candidate(candidate.namespace(), candidate.kind()) {
+                    occupied.insert((candidate.label().to_string(), candidate.namespace()));
+                }
             }
-        }
+            Some(occupied)
+        };
 
         // Module candidates already retain whether they came from the immediate scope, prelude, or
         // extern root; rendering uses that origin to keep the familiar local-first order.
@@ -207,13 +222,13 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
         )
         .context("render module completion candidates")?;
 
-        if !auto_import_candidates.is_empty() {
+        if let Some(auto_import_occupied) = auto_import_occupied {
             // Exact request syntax is shared with the coordinator. Semantic-only API callers do
             // not have that tree, so load saved source only for this source-edit policy and still
             // build at most one syntax tree on their request path.
             let loaded_source = if syntax_context.is_none() {
                 self.analysis
-                    .source_text_for_file(self.query.crate_ref.package, self.query.file_id)
+                    .saved_source_text_for_file(self.query.crate_ref.package, self.query.file_id)
                     .context("load auto-import source text")?
             } else {
                 None

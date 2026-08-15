@@ -6,7 +6,7 @@ pub(crate) fn server_capabilities() -> ServerCapabilities {
         text_document_sync: Some(TextDocumentSyncCapability::Options(
             TextDocumentSyncOptions {
                 open_close: Some(true),
-                change: Some(TextDocumentSyncKind::FULL),
+                change: Some(TextDocumentSyncKind::INCREMENTAL),
                 save: Some(TextDocumentSyncSaveOptions::SaveOptions(SaveOptions {
                     include_text: Some(true),
                 })),
@@ -136,7 +136,7 @@ mod tests {
     }
 
     #[test]
-    fn tracks_open_and_changed_documents_without_unsaved_analysis() {
+    fn advertises_incremental_text_document_synchronization() {
         let capabilities = server_capabilities();
         let Some(TextDocumentSyncCapability::Options(sync)) = capabilities.text_document_sync
         else {
@@ -144,6 +144,6 @@ mod tests {
         };
 
         assert_eq!(sync.open_close, Some(true));
-        assert_eq!(sync.change, Some(TextDocumentSyncKind::FULL));
+        assert_eq!(sync.change, Some(TextDocumentSyncKind::INCREMENTAL));
     }
 }

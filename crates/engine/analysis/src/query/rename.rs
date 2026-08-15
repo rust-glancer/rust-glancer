@@ -211,9 +211,10 @@ impl<'a, 'db> RenameResolver<'a, 'db> {
         }
 
         match symbol.symbol() {
-            SymbolAt::TypePath { path, .. }
-            | SymbolAt::ValuePath { path, .. }
-            | SymbolAt::UsePath { path, .. } => Ok(path.last_segment_label()),
+            SymbolAt::TypePath { type_path, .. } => Ok(type_path.path().last_segment_label()),
+            SymbolAt::ValuePath { path, .. } | SymbolAt::UsePath { path, .. } => {
+                Ok(path.last_segment_label())
+            }
             SymbolAt::RecordField { key, .. } => Ok(Some(key.declaration_label())),
             SymbolAt::Expr { expr } => {
                 SourceOccurrenceView::new(self.analysis.view_db()).expr_source_label(*expr)
@@ -228,7 +229,7 @@ impl<'a, 'db> RenameResolver<'a, 'db> {
     /// Reads the exact source text covered by a rename surface span.
     fn source_text_for_span(&self, symbol: &SourceSymbol, span: Span) -> anyhow::Result<String> {
         self.analysis
-            .source_text_for_span(symbol.crate_ref().package, symbol.file_id(), span)
+            .saved_source_text_for_span(symbol.crate_ref().package, symbol.file_id(), span)
             .with_context(|| "while attempting to read source text for rename edit")?
             .with_context(|| "rename edit span should have source text")
     }

@@ -71,11 +71,31 @@ This means that we index the workspace once, and then run the queries against th
 managed to collect. If something changes, we have to reindex (at least partially); we cannot
 update the data in place.
 
-Dirty buffers are supported as overlays that retain access to existing analysis but does not
-automatically index new facts. So things like completions, hover, inlay hints work, but with
-limitations. Reindexing happens on save.
+Open editor buffers are captured as exact text values. Routing keeps both the raw editor path and
+the source identity selected from the frozen `Project`; a later rename or removal does not make an
+open session rediscover that identity from the filesystem.
 
-It is a limitation, but  working with frozen workspaces enables really cool memory optimizations
+The important part here is that there is still only one global `Project`, and it is made from saved
+files. Saving a file (or seeing an external filesystem change) may replace it with a new project
+generation. Typing does not create a slightly different project after every key press.
+
+This does not mean that everything in a dirty buffer is ignored. For queries about the current
+document, the server sends the text that is actually open in the editor. The engine can rebuild the
+current function, const, or static body and analyze it using declarations, traits, impls, and indexes
+from the saved project. So newly typed locals and expressions work without a save. The rebuilt body
+is thrown away after the request; it is not a tiny unsaved project or a long-lived document cache.
+
+The tradeoff is that new or significantly changed module-level things may need a save. Imagine that
+you add a new struct and immediately use it in the same dirty buffer: syntax-based features can see
+the struct, but global semantic features may still know only the previously saved project.
+
+Cross-file operations, such as references and rename, are stricter because they return saved source
+locations or edits. Before running one, the engine checks all relevant open Rust documents. If one
+of them differs from the saved project (or isn't part of it yet), it asks you to save instead of
+returning a location that may now point at something else. This rule is implemented in the
+server/engine boundary, so VS Code, Zed, Vim, and other clients get the same behavior.
+
+It is a limitation, but working with frozen workspaces enables really cool memory optimizations
 that we make heavy use of. These are described below.
 
 ## Memory efficiency

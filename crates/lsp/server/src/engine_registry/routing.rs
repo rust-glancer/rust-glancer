@@ -1,3 +1,9 @@
+//! Pure path-to-engine routing tables.
+//!
+//! This module knows workspace folders, discovered Cargo roots, and exact open-document owners. It
+//! does not start processes or perform RPCs; the surrounding registry turns its route decisions
+//! into engine lifecycle actions.
+
 use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
@@ -110,8 +116,8 @@ impl EngineRouting {
     /// Returns ready-slot candidates beneath one editor workspace folder.
     ///
     /// The native watcher is created per editor folder, while Cargo discovery can create several
-    /// more specific engine roots below it. A filesystem burst must mark every such existing
-    /// engine unavailable before waiting for the workspace-wide quiet period.
+    /// more specific engine roots below it. A filesystem burst must publish updating status for
+    /// every such existing engine before waiting for the workspace-wide quiet period.
     pub(crate) fn engine_ids_for_workspace(
         &self,
         workspace: &Path,

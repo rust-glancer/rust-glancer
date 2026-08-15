@@ -11,16 +11,19 @@
 //!
 //! A saved update starts by forking the published inventory. The maps are independent, but
 //! unchanged `SourceEntry` values are shared because an entry's descriptor never changes.
+//!
 
 use std::{
     collections::{HashMap, HashSet},
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
     sync::{Arc, RwLock},
 };
 
 use rg_std::{MemoryRecorder, MemorySize};
 
-use crate::{SourceDescriptor, SourceEntry, SourceError, SourcePath, read_source_text};
+use crate::{
+    CapturedSource, SourceDescriptor, SourceEntry, SourceError, SourcePath, read_source_text,
+};
 
 /// Path-indexed source set captured for one project generation.
 ///
@@ -53,7 +56,7 @@ impl SourceInventory {
         let sealed = *self
             .sealed
             .read()
-            .expect("source inventory seal lock should not be poisoned");
+            .expect("source inventory state lock should not be poisoned");
         Self {
             entries: RwLock::new(entries),
             existence: RwLock::new(
@@ -75,7 +78,7 @@ impl SourceInventory {
         *self
             .sealed
             .write()
-            .expect("source inventory seal lock should not be poisoned") = false;
+            .expect("source inventory state lock should not be poisoned") = false;
         self.existence
             .write()
             .expect("source existence lock should not be poisoned")
@@ -90,18 +93,21 @@ impl SourceInventory {
         *self
             .sealed
             .write()
-            .expect("source inventory seal lock should not be poisoned") = true;
+            .expect("source inventory state lock should not be poisoned") = true;
     }
 
     pub fn is_sealed(&self) -> bool {
         *self
             .sealed
             .read()
-            .expect("source inventory seal lock should not be poisoned")
+            .expect("source inventory state lock should not be poisoned")
     }
 
     /// Returns the generation's existing entry or captures a saved file for an open candidate.
     pub fn capture_saved(&self, path: &Path) -> Result<Arc<SourceEntry>, SourceError> {
+        if let Some(entry) = self.known_entry(path) {
+            return Ok(entry);
+        }
         let canonical_path = path.canonicalize().map_err(|source| SourceError::Io {
             path: path.to_path_buf(),
             source,
@@ -121,15 +127,11 @@ impl SourceInventory {
         self.insert_if_absent(path.clone(), SourceEntry::saved(path, text))
     }
 
-    /// Replaces one saved path in an open candidate using caller-staged exact text.
-    pub fn replace_saved(
-        &self,
-        canonical_path: &Path,
-        text: impl Into<Arc<str>>,
-    ) -> Result<Arc<SourceEntry>, SourceError> {
-        self.ensure_open(canonical_path)?;
-        let path = SourcePath::new(canonical_path.to_path_buf());
-        let entry = Arc::new(SourceEntry::saved(path.clone(), text.into()));
+    /// Replaces one saved path in an open candidate using caller-captured exact source.
+    pub fn replace_saved(&self, source: &CapturedSource) -> Result<Arc<SourceEntry>, SourceError> {
+        self.ensure_open(source.path())?;
+        let path = source.source_path().clone();
+        let entry = Arc::new(SourceEntry::saved_captured(source));
         self.entries
             .write()
             .expect("source inventory lock should not be poisoned")
@@ -155,29 +157,12 @@ impl SourceInventory {
             .write()
             .expect("source inventory lock should not be poisoned");
         if let Some(existing) = entries.get(&path)
-            && existing.is_saved()
             && existing.revision() == entry.revision()
             && existing.byte_len() == entry.byte_len()
         {
             return Ok(Arc::clone(existing));
         }
         entries.insert(path, Arc::clone(&entry));
-        Ok(entry)
-    }
-
-    /// Replaces one path with editor-owned text in an open dirty-overlay candidate.
-    pub fn replace_in_memory(
-        &self,
-        canonical_path: &Path,
-        text: impl Into<Arc<str>>,
-    ) -> Result<Arc<SourceEntry>, SourceError> {
-        self.ensure_open(canonical_path)?;
-        let path = SourcePath::new(canonical_path.to_path_buf());
-        let entry = Arc::new(SourceEntry::in_memory(path.clone(), text.into()));
-        self.entries
-            .write()
-            .expect("source inventory lock should not be poisoned")
-            .insert(path, Arc::clone(&entry));
         Ok(entry)
     }
 
@@ -274,11 +259,11 @@ impl SourceInventory {
         }
         self.ensure_open(path)?;
         let exists = path.is_file();
-        self.existence
+        let mut existence = self
+            .existence
             .write()
-            .expect("source existence lock should not be poisoned")
-            .insert(path.to_path_buf(), exists);
-        Ok(exists)
+            .expect("source existence lock should not be poisoned");
+        Ok(*existence.entry(path.to_path_buf()).or_insert(exists))
     }
 
     /// Proves that all filesystem observations still match the candidate being published.
@@ -294,32 +279,6 @@ impl SourceInventory {
             .expect("source inventory lock should not be poisoned");
         for entry in entries.values() {
             entry.validate_saved()?;
-        }
-        drop(entries);
-
-        self.validate_and_release_existence()
-    }
-
-    /// Proves that selected saved files and every module-discovery decision remain valid.
-    ///
-    /// A disposable overlay derives new analysis only for its rebuilt packages. Unchanged package
-    /// payloads still belong to the already-validated saved generation, so rereading every source
-    /// in the project would add filesystem work without strengthening the overlay's consistency.
-    pub fn validate_saved_paths<'a>(
-        &self,
-        paths: impl IntoIterator<Item = &'a Path>,
-    ) -> Result<(), SourceError> {
-        let entries = self
-            .entries
-            .read()
-            .expect("source inventory lock should not be poisoned");
-        let mut validated = HashSet::new();
-        for path in paths {
-            if validated.insert(path)
-                && let Some(entry) = entries.get(path)
-            {
-                entry.validate_saved()?;
-            }
         }
         drop(entries);
 
@@ -381,6 +340,29 @@ impl SourceInventory {
             });
         }
         Ok(())
+    }
+
+    /// Resolve only spelling differences that do not require filesystem observations.
+    fn known_entry(&self, path: &Path) -> Option<Arc<SourceEntry>> {
+        if let Some(entry) = self.entry(path) {
+            return Some(entry);
+        }
+
+        let mut normalized = PathBuf::new();
+        for component in path.components() {
+            match component {
+                Component::CurDir => {}
+                Component::ParentDir => {
+                    if !normalized.pop() {
+                        normalized.push(component.as_os_str());
+                    }
+                }
+                Component::Prefix(_) | Component::RootDir | Component::Normal(_) => {
+                    normalized.push(component.as_os_str());
+                }
+            }
+        }
+        self.entry(&normalized)
     }
 
     fn insert_if_absent(

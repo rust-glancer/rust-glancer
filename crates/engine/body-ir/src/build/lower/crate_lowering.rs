@@ -18,6 +18,7 @@ use crate::BodyOwner;
 
 use super::{
     BodyMacroExpansion, LoweredCrateBodies, task::BodyLoweringTask, task::BodyTaskLowering,
+    task::BodyTaskSource,
 };
 use crate::build::materialization::BodyIrMaterialization;
 
@@ -45,7 +46,7 @@ impl<'a> CrateLowering<'a> {
         let mut macro_expansion =
             BodyMacroExpansion::new(self.parse_package, self.def_map, self.cfg);
         BodyTaskLowering::new(
-            self.parse_package,
+            BodyTaskSource::Saved(self.parse_package),
             &mut self.crate_bodies,
             self.cfg,
             self.interner,
@@ -70,6 +71,7 @@ impl<'a> CrateLowering<'a> {
             };
             tasks.push(BodyLoweringTask {
                 owner: BodyOwner::Function(function_ref),
+                request_root: false,
                 owner_module,
                 fallback_module: owner_module,
                 file_id,
@@ -86,6 +88,7 @@ impl<'a> CrateLowering<'a> {
             };
             tasks.push(BodyLoweringTask {
                 owner: BodyOwner::Const(const_ref),
+                request_root: false,
                 owner_module,
                 fallback_module: owner_module,
                 file_id,
@@ -103,6 +106,7 @@ impl<'a> CrateLowering<'a> {
             };
             tasks.push(BodyLoweringTask {
                 owner: BodyOwner::Static(static_ref),
+                request_root: false,
                 owner_module,
                 fallback_module: owner_module,
                 file_id,

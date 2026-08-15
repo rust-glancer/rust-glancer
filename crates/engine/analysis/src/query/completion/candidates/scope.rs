@@ -115,7 +115,8 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
             IndexedUnqualifiedNameScope::Signature { scope, context, .. } => {
                 (scope.generic_owner(), *context)
             }
-            IndexedUnqualifiedNameScope::Import { .. } => return Ok(Vec::new()),
+            IndexedUnqualifiedNameScope::Module { .. }
+            | IndexedUnqualifiedNameScope::Import { .. } => return Ok(Vec::new()),
         };
 
         let mut candidates = Vec::new();
@@ -190,6 +191,11 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
                 context: IndexedUnqualifiedNameContext::Type { .. },
                 member_prefix,
             } => (member_prefix, PrimitiveTypePathScope::Signature(*scope)),
+            IndexedUnqualifiedNameScope::Module {
+                module,
+                context: IndexedUnqualifiedNameContext::Type { .. },
+                member_prefix,
+            } => (member_prefix, PrimitiveTypePathScope::Module(*module)),
             IndexedUnqualifiedNameScope::Body {
                 context: IndexedUnqualifiedNameContext::Value,
                 ..
@@ -214,6 +220,13 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
                 context: IndexedUnqualifiedNameContext::Pattern(_),
                 ..
             }
+            | IndexedUnqualifiedNameScope::Module {
+                context:
+                    IndexedUnqualifiedNameContext::Value
+                    | IndexedUnqualifiedNameContext::Const
+                    | IndexedUnqualifiedNameContext::Pattern(_),
+                ..
+            }
             | IndexedUnqualifiedNameScope::Import { .. } => return Ok(Vec::new()),
         };
 
@@ -232,6 +245,9 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
                 PrimitiveTypePathScope::Signature(scope) => TyView::new(self.db)
                     .ty_for_type_path(scope.context(), &path)
                     .context("resolve signature primitive type completion")?,
+                PrimitiveTypePathScope::Module(module) => TyView::new(self.db)
+                    .ty_for_module_type_path(module, &path)
+                    .context("resolve module primitive type completion")?,
             };
             if ty.primitive() == Some(primitive) {
                 candidates.push(primitive);

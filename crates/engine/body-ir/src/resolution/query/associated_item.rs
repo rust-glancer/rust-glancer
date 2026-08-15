@@ -11,8 +11,8 @@ use rg_semantic_ir::ItemStoreSource;
 use rg_std::{ExpectedUnique, UniqueVec};
 use rg_ty::{AdtTy, ExpectedTyExt, Substitution, TraitSelection, Ty, inference::InferenceTable};
 use rg_ty::{
-    AssociatedItemCandidateRef, AssociatedItemQuery, TraitApplication, TypeLoweringAnchor,
-    TypeLoweringEnv, TypeLoweringQuery,
+    AssociatedItemCandidateRef, AssociatedItemQuery, AssociatedItemRef, TraitApplication,
+    TypeLoweringAnchor, TypeLoweringEnv, TypeLoweringQuery,
 };
 
 use super::traits::BodyQualifiedTraitSelection;
@@ -163,25 +163,34 @@ where
                 .generics()
                 .complete_omitted_nominal_args(receiver_ty)?;
             let has_crate_index = receiver_ty.def.origin.as_crate_ref().is_some();
+            let body_items = self.context.body_local_items();
+            let body_inherent_names =
+                body_items.inherent_function_names_for_type(receiver_ty.def)?;
 
-            candidates.extend(
-                query.candidates_for_nominal_from_impls(
-                    &receiver_ty,
-                    self.context
-                        .body_local_items()
-                        .inherent_impls_for_type(receiver_ty.def)?,
-                    self.context
-                        .body_local_items()
-                        .trait_impls_for_type(receiver_ty.def)?,
-                    !has_crate_index,
-                )?,
-            );
+            candidates.extend(query.candidates_for_nominal_from_impls(
+                &receiver_ty,
+                body_items.inherent_impls_for_type(receiver_ty.def)?,
+                body_items.trait_impls_for_type(receiver_ty.def)?,
+                !has_crate_index,
+            )?);
 
             // Body-origin types have no crate-level index, so the local query above also supplies
             // their enum variants. Crate-origin types get variants from this indexed universe;
             // the local query contributes only impls declared inside the body.
             if has_crate_index {
-                candidates.extend(query.candidates_for_nominal(&receiver_ty)?);
+                for candidate in query.candidates_for_nominal(&receiver_ty)? {
+                    let shadows_body_item = match candidate.item() {
+                        AssociatedItemRef::Function(function) => self
+                            .context
+                            .item_query()
+                            .function_data(function)?
+                            .is_some_and(|data| body_inherent_names.contains(&data.name)),
+                        _ => false,
+                    };
+                    if !shadows_body_item {
+                        candidates.push(candidate);
+                    }
+                }
             }
         }
         Ok(candidates)
@@ -527,9 +536,15 @@ where
         }
 
         if ty.def.origin.as_crate_ref().is_some() {
-            for function_ref in self.semantic_inherent_fn_defs_for_type(ty, name)? {
-                if matcher.function_applies_to_receiver(function_ref, ty)? {
-                    self.push_associated_function(&mut functions, ty, function_ref, name)?;
+            let body_inherent_names = body_items.inherent_function_names_for_type(ty.def)?;
+            if !body_inherent_names
+                .iter()
+                .any(|body_name| body_name.as_str() == name)
+            {
+                for function_ref in self.semantic_inherent_fn_defs_for_type(ty, name)? {
+                    if matcher.function_applies_to_receiver(function_ref, ty)? {
+                        self.push_associated_function(&mut functions, ty, function_ref, name)?;
+                    }
                 }
             }
         }

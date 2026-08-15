@@ -1,5 +1,9 @@
 use serde::{Deserialize, Serialize};
 
+use crate::DocumentQueryResult;
+
+pub type CompletionResult = DocumentQueryResult<Vec<ls_types::CompletionItem>>;
+
 /// Completion client features that the analysis engine needs while rendering items.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
 pub struct CompletionClientCapabilities {

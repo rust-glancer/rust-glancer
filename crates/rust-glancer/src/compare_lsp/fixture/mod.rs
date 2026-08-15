@@ -11,6 +11,7 @@ use anyhow::Context as _;
 
 use crate::compare_lsp::{
     CliFixture,
+    config::DIRTY_EDITOR_PREFIX,
     query::{self, QueryCase, QueryTarget},
 };
 
@@ -36,13 +37,14 @@ impl Fixture {
 
         Self::validate_root(kind, &root, uses_default_root)?;
         let query_cases = Self::query_cases_for(kind);
-        Self::validate_query_files(&root, query_cases)?;
-
-        Ok(Self {
+        let fixture = Self {
             kind,
             root,
             query_cases,
-        })
+        };
+        fixture.validate_query_files()?;
+
+        Ok(fixture)
     }
 
     pub(crate) fn kind(&self) -> CliFixture {
@@ -59,7 +61,7 @@ impl Fixture {
 
     fn default_root(kind: CliFixture) -> PathBuf {
         match kind {
-            CliFixture::RustAnalyzer => {
+            CliFixture::RustAnalyzer | CliFixture::RustAnalyzerDirty => {
                 workspace_root().join("test_targets/bench_fixtures/rust-analyzer")
             }
         }
@@ -68,12 +70,18 @@ impl Fixture {
     fn query_cases_for(kind: CliFixture) -> &'static [QueryCase] {
         match kind {
             CliFixture::RustAnalyzer => query::rust_analyzer_cases(),
+            CliFixture::RustAnalyzerDirty => query::rust_analyzer_dirty_cases(),
         }
     }
 
     fn validate_root(kind: CliFixture, root: &Path, uses_default_root: bool) -> anyhow::Result<()> {
         if !root.exists() {
-            if uses_default_root && kind == CliFixture::RustAnalyzer {
+            if uses_default_root
+                && matches!(
+                    kind,
+                    CliFixture::RustAnalyzer | CliFixture::RustAnalyzerDirty
+                )
+            {
                 anyhow::bail!(
                     "rust-analyzer LSP comparison fixture is missing at {}.\n\
                      Run ./test_targets/bench_fixtures/fetch-rust-analyzer.sh, \
@@ -106,12 +114,12 @@ impl Fixture {
     }
 
     /// Check that hardcoded vector entries still point at real source positions.
-    fn validate_query_files(root: &Path, query_cases: &[QueryCase]) -> anyhow::Result<()> {
-        for query in query_cases {
+    fn validate_query_files(&self) -> anyhow::Result<()> {
+        for query in self.query_cases {
             let Some(source_path) = query.source_path() else {
                 continue;
             };
-            let path = root.join(source_path);
+            let path = self.root.join(source_path);
             if !path.is_file() {
                 anyhow::bail!(
                     "LSP comparison query `{}` points to missing file {}",
@@ -120,12 +128,7 @@ impl Fixture {
                 );
             }
 
-            let source = std::fs::read_to_string(&path).with_context(|| {
-                format!(
-                    "Reading LSP comparison query file {} failed",
-                    path.display()
-                )
-            })?;
+            let source = self.editor_source_text(source_path)?;
             let position = match query.target() {
                 QueryTarget::Position { position, .. } | QueryTarget::Rename { position, .. } => {
                     position
@@ -155,6 +158,26 @@ impl Fixture {
         }
 
         Ok(())
+    }
+
+    /// Text visible to the editor after fixture setup has finished.
+    pub(crate) fn editor_source_text(&self, source_path: &str) -> anyhow::Result<String> {
+        let path = self.root.join(source_path);
+        let saved = std::fs::read_to_string(&path).with_context(|| {
+            format!(
+                "Reading LSP comparison source file {} failed",
+                path.display()
+            )
+        })?;
+        if self.kind.uses_dirty_editor_text() {
+            Ok(format!("{DIRTY_EDITOR_PREFIX}{saved}"))
+        } else {
+            Ok(saved)
+        }
+    }
+
+    pub(crate) fn uses_dirty_editor_text(&self) -> bool {
+        self.kind.uses_dirty_editor_text()
     }
 }
 

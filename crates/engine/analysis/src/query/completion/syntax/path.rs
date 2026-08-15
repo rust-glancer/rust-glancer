@@ -4,13 +4,69 @@ use rg_ir_model::Path;
 use rg_syntax::{AstNode as _, ast};
 
 use crate::query::completion::site::{
-    ConstExpressionCompletionContext, EmptyPathCompletionContext, NameCompletionContext,
-    PatternCompletionKind, QualifiedPathCompletionSyntax, RestrictedVisibilityCompletionContext,
+    ConstExpressionCompletionContext, EmptyPathCompletionContext, ImportCompletionSyntax,
+    NameCompletionContext, PatternCompletionKind, QualifiedPathCompletionSyntax,
+    RestrictedVisibilityCompletionContext,
 };
 
 use super::CompletionSyntaxContext;
 
 impl CompletionSyntaxContext<'_> {
+    /// Read a `use` path from current syntax without requiring the import to be saved first.
+    ///
+    /// Nested use trees split a path across several AST nodes: `use std::{sync::Ar$0}` stores
+    /// `std` on the outer tree and `sync::Ar` on the inner one. Join those pieces here, then use the
+    /// enclosing module path to look up names in the saved project.
+    pub(crate) fn import_completion_syntax(&self) -> Option<ImportCompletionSyntax> {
+        if !self.inside_use_item() {
+            return None;
+        }
+
+        let mut trees = vec![
+            self.marker
+                .parent()?
+                .ancestors()
+                .find_map(ast::UseTree::cast)?,
+        ];
+        while let Some(parent) = trees
+            .last()
+            .and_then(ast::UseTree::parent_use_tree_list)
+            .map(|list| list.parent_use_tree())
+        {
+            trees.push(parent);
+        }
+        trees.reverse();
+
+        let leaf_index = trees.len().checked_sub(1)?;
+        let mut qualifier_parts = Vec::new();
+        for (index, tree) in trees.iter().enumerate() {
+            let Some(path) = tree.path() else {
+                continue;
+            };
+            let path_text = path.syntax().text().to_string();
+            if index == leaf_index {
+                if let Some(qualifier) = Self::marker_path_qualifier(&path_text)? {
+                    qualifier_parts.push(qualifier.to_string());
+                }
+            } else {
+                qualifier_parts.push(path_text);
+            }
+        }
+
+        let qualifier = if qualifier_parts.is_empty() {
+            None
+        } else {
+            Some(Path::from_macro_path_text(
+                &qualifier_parts.join("::"),
+                None,
+            )?)
+        };
+        Some(ImportCompletionSyntax::new(
+            self.inline_module_path(),
+            qualifier,
+        ))
+    }
+
     /// Return the owner of a record whose first field has not been typed yet.
     ///
     /// The saved parser may not lower `User { $0` as a record at all. The speculative marker makes

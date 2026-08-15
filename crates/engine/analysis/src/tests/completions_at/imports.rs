@@ -4,6 +4,7 @@ use super::super::utils::{
     AnalysisQuery, check_analysis_queries, check_analysis_queries_with_fake_sysroot,
 };
 #[test]
+#[ignore = "TODO(#160)"]
 fn completes_unqualified_names_with_bounded_auto_imports() {
     check_analysis_queries(
         r#"

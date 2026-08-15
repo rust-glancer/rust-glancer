@@ -9,7 +9,7 @@ from typing import Any
 
 # The rust-analyzer fixture is pinned and contains positive cases for every method below. Scores
 # remain informational, but an empty aggregate means the LSP stopped serving a feature altogether.
-EXPECTED_NONEMPTY_METHODS = {
+EXPECTED_CLEAN_METHODS = {
     "textDocument/references",
     "textDocument/definition",
     "textDocument/typeDefinition",
@@ -19,6 +19,15 @@ EXPECTED_NONEMPTY_METHODS = {
     "textDocument/documentHighlight",
     "textDocument/documentSymbol",
     "workspace/symbol",
+    "textDocument/inlayHint",
+    "textDocument/hover",
+}
+
+EXPECTED_DIRTY_METHODS = {
+    "textDocument/definition",
+    "textDocument/typeDefinition",
+    "textDocument/documentHighlight",
+    "textDocument/documentSymbol",
     "textDocument/inlayHint",
     "textDocument/hover",
 }
@@ -41,6 +50,15 @@ def liveness_failures(report: Any) -> list[str]:
     if not isinstance(report, dict):
         return ["report root is not an object"]
 
+    fixture = report.get("fixture")
+    fixture_kind = fixture.get("kind") if isinstance(fixture, dict) else None
+    if fixture_kind == "rust_analyzer":
+        expected_methods = EXPECTED_CLEAN_METHODS
+    elif fixture_kind == "rust_analyzer_dirty":
+        expected_methods = EXPECTED_DIRTY_METHODS
+    else:
+        return [f"unsupported fixture kind {fixture_kind!r}"]
+
     aggregates = report.get("aggregates")
     if not isinstance(aggregates, list):
         return ["report does not contain an aggregate list"]
@@ -51,7 +69,7 @@ def liveness_failures(report: Any) -> list[str]:
         if isinstance(aggregate, dict) and isinstance(aggregate.get("method"), str)
     }
     failures: list[str] = []
-    for method in sorted(EXPECTED_NONEMPTY_METHODS):
+    for method in sorted(expected_methods):
         aggregate = aggregates_by_method.get(method)
         if aggregate is None:
             failures.append(f"{method} is missing from the report")

@@ -8,10 +8,7 @@ use rg_parse::{FileId, ParseDb};
 use rg_workspace::{WorkspaceLoweringConfig, WorkspaceMetadata};
 use test_fixture::{CrateFixture, FixtureMarkers, FixtureSpec, fixture_crate_with_markers};
 
-use crate::{
-    AnalysisChangeSummary, DirtyFileChange, DirtyOverlayScope, PackageResidencyPolicy, Project,
-    SavedFileChange,
-};
+use crate::{AnalysisChangeSummary, PackageResidencyPolicy, Project, SavedFileChange};
 
 /// Materialized project fixture sources plus marker metadata.
 pub struct ProjectSourceFixture {
@@ -101,35 +98,12 @@ impl ProjectFixture {
         Self::package_slot_by_name_in(self.project.state.parse_db(), package_name)
     }
 
-    pub fn dirty_overlay(&self, relative_path: &str, text: &str) -> Project {
-        self.dirty_overlay_with_scope(
-            relative_path,
-            text,
-            DirtyOverlayScope::ReverseDependencyClosure,
-        )
-    }
-
-    pub fn dirty_overlay_with_scope(
-        &self,
-        relative_path: &str,
-        text: &str,
-        scope: DirtyOverlayScope,
-    ) -> Project {
-        self.project
-            .dirty_overlay(
-                scope,
-                [DirtyFileChange::new(self.path(relative_path), text)],
-            )
-            .expect("fixture dirty overlay should build")
-            .expect("fixture dirty overlay should touch a known file")
-    }
-
     pub fn apply_saved_fixture(&mut self, spec: &str) -> AnalysisChangeSummary {
         let saved_files = self.source.write_fixture_files(spec);
         let changes = saved_files
             .files()
             .iter()
-            .map(|file| SavedFileChange::new(self.path(file.relative_path())))
+            .map(|file| SavedFileChange::fs_path(self.path(file.relative_path())))
             .collect::<Vec<_>>();
         self.project
             .apply_changes(changes)

@@ -26,7 +26,9 @@ use crate::{
         CompletionEdit, CompletionInsertText, CompletionItem, CompletionKind, CompletionTarget,
         SyntheticCompletionTarget,
     },
-    query::completion::site::{LabelCompletionContext, LifetimeCompletionContext},
+    query::completion::site::{
+        CompletionSourceAttachment, LabelCompletionContext, LifetimeCompletionContext,
+    },
 };
 
 use super::super::{
@@ -173,10 +175,13 @@ impl<'a, 'db, 'source> ApostropheCompletionResolver<'a, 'db, 'source> {
                 .context("read body lifetime completion owner");
         }
 
-        Ok(source
-            .signature_syntax_name_site_at(
+        Ok(
+            CompletionSourceAttachment::new(
+                self.analysis,
                 self.query.crate_ref,
                 self.query.file_id,
+            )
+            .signature_name_site_at(
                 self.query.offset,
                 IndexedUnqualifiedNameContext::Const,
                 prefix_span,
@@ -186,8 +191,10 @@ impl<'a, 'db, 'source> ApostropheCompletionResolver<'a, 'db, 'source> {
             .and_then(|site| match site.scope() {
                 IndexedUnqualifiedNameScope::Signature { scope, .. } => Some(scope.generic_owner()),
                 IndexedUnqualifiedNameScope::Body { .. }
+                | IndexedUnqualifiedNameScope::Module { .. }
                 | IndexedUnqualifiedNameScope::Import { .. } => None,
-            }))
+            }),
+        )
     }
 
     fn apostrophe_candidate(

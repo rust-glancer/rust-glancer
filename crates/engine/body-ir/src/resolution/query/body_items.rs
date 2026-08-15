@@ -5,6 +5,7 @@ use rg_ir_model::{AssocItemId, DefMapRef, FunctionRef, ImplRef, TraitImplRef, Ty
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::{ItemStore, ItemStoreSource};
 use rg_std::UniqueVec;
+use rg_text::Name;
 
 use crate::resolution::BodyResolutionContext;
 
@@ -63,6 +64,25 @@ where
         }
 
         Ok(functions)
+    }
+
+    /// Return method names supplied by body-local inherent impls for this type.
+    ///
+    /// Body-aware lookup combines these impls with a crate-wide index. A local method replaces a
+    /// crate-indexed method with the same name inside this body; unrelated saved methods remain
+    /// visible.
+    pub(super) fn inherent_function_names_for_type(
+        &self,
+        ty: TypeDefRef,
+    ) -> Result<UniqueVec<Name>, PackageStoreError> {
+        let item_query = self.context.item_query();
+        let mut names = UniqueVec::new();
+        for function in self.inherent_functions_for_type(ty)? {
+            if let Some(data) = item_query.function_data(function)? {
+                names.push(data.name.clone());
+            }
+        }
+        Ok(names)
     }
 
     /// Return body-local trait impls whose `Self` resolves to this type.

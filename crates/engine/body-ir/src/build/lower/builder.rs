@@ -24,6 +24,10 @@ impl LoweredBodyData {
         &self.body
     }
 
+    pub(crate) fn set_owner_context(&mut self, owner: BodyOwner, owner_module: ModuleRef) {
+        self.body.set_owner_context(owner, owner_module);
+    }
+
     pub(crate) fn pending_binding_resolution(
         &self,
         binding: BindingId,
