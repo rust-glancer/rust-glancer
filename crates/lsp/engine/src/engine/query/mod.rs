@@ -30,7 +30,7 @@ use rg_lsp_proto::{
 use rg_parse::{CurrentSource, LineIndex};
 use rg_project::{
     AnalysisSurface, CurrentBodyAnalysisCheckpoint, CurrentBodyAnalysisCoverage,
-    CurrentBodySelection, FileContext, ProjectSnapshot,
+    CurrentBodySelection, DocumentSourceView, FileContext, ProjectSnapshot,
 };
 use rg_std::UniqueVec;
 use rg_text::RustEdition;
@@ -53,30 +53,133 @@ pub(super) struct QueryRunner<'a> {
 
 /// One way the target file appears in the saved project's crate graph.
 #[derive(Debug)]
-struct CurrentDocumentTarget {
+struct DocumentTarget {
     context: FileContext,
     crate_ref: rg_ir_model::CrateRef,
 }
 
-/// Current body, source position, and crate contexts prepared for a document query at one cursor.
-struct CurrentPositionAnalysis<'project> {
-    analysis: Analysis<'project>,
-    coverage: CurrentBodyAnalysisCoverage,
-    targets: Vec<CurrentDocumentTarget>,
-    source: Arc<CurrentSource>,
-    offset: u32,
+/// Editor coordinates used to choose the current bodies needed by one query.
+enum DocumentSelection {
+    Position(ls_types::Position),
+    Range(ls_types::Range),
 }
 
-impl CurrentPositionAnalysis<'_> {
-    fn target_has_exact_body(&self, target: &CurrentDocumentTarget) -> bool {
-        self.coverage
+impl DocumentSelection {
+    fn to_current_body_selection(&self, line_index: &LineIndex) -> Option<CurrentBodySelection> {
+        match self {
+            Self::Position(position) => line_index
+                .offset_from_utf16_position(crate::proto::position::parse_position(*position))
+                .map(CurrentBodySelection::AtOffset),
+            Self::Range(range) => {
+                let start = line_index.offset_from_utf16_position(
+                    crate::proto::position::parse_position(range.start),
+                )?;
+                let end = line_index.offset_from_utf16_position(
+                    crate::proto::position::parse_position(range.end),
+                )?;
+                Some(CurrentBodySelection::IntersectingRange(
+                    rg_parse::TextSpan { start, end },
+                ))
+            }
+        }
+    }
+}
+
+/// Source coordinates retained after document analysis has been prepared.
+///
+/// `DocumentSourceView::Current` is consumed when it is attached to `Analysis`. The response still
+/// needs the captured line index and the body coverage, so this smaller value keeps exactly those
+/// parts for protocol conversion and coverage reporting. It does not make another saved/current
+/// source decision.
+enum DocumentAnalysisSource {
+    /// The captured text is identical to every saved file interpretation.
+    SavedExact(LineIndex),
+    /// The captured text differs, so matching bodies were rebuilt for this request.
+    Current {
+        source: Arc<CurrentSource>,
+        coverage: CurrentBodyAnalysisCoverage,
+    },
+}
+
+impl DocumentAnalysisSource {
+    fn line_index(&self) -> &LineIndex {
+        match self {
+            Self::SavedExact(line_index) => line_index,
+            Self::Current { source, .. } => source.line_index(),
+        }
+    }
+
+    fn name(&self) -> &'static str {
+        match self {
+            Self::SavedExact(_) => "saved_exact",
+            Self::Current { .. } => "current",
+        }
+    }
+}
+
+/// Analysis, source selection, and crate contexts prepared for one document query.
+struct DocumentAnalysis<'project> {
+    snapshot: ProjectSnapshot<'project>,
+    analysis: Analysis<'project>,
+    targets: Vec<DocumentTarget>,
+    source: DocumentAnalysisSource,
+    selection: CurrentBodySelection,
+}
+
+impl DocumentAnalysis<'_> {
+    fn offset(&self) -> u32 {
+        match self.selection {
+            CurrentBodySelection::AtOffset(offset) => offset,
+            CurrentBodySelection::IntersectingRange(_) => {
+                unreachable!("position query should retain a cursor selection")
+            }
+        }
+    }
+
+    fn range(&self) -> rg_parse::TextSpan {
+        match self.selection {
+            CurrentBodySelection::IntersectingRange(range) => range,
+            CurrentBodySelection::AtOffset(_) => {
+                unreachable!("range query should retain a range selection")
+            }
+        }
+    }
+
+    fn target_has_exact_body(&self, target: &DocumentTarget) -> bool {
+        let DocumentAnalysisSource::Current { coverage, .. } = &self.source else {
+            return false;
+        };
+        let CurrentBodySelection::AtOffset(offset) = self.selection else {
+            return false;
+        };
+        coverage
             .exact_body_spans()
             .iter()
             .any(|(crate_ref, file, span)| {
                 *crate_ref == target.crate_ref
                     && *file == target.context.file
-                    && span.touches(self.offset)
+                    && span.touches(offset)
             })
+    }
+
+    /// Report whether every crate interpretation can safely use the captured source coordinates.
+    fn coverage(&self) -> DocumentQueryCoverage {
+        let DocumentAnalysisSource::Current { coverage, .. } = &self.source else {
+            return DocumentQueryCoverage::Exact;
+        };
+        if coverage.is_exact()
+            || self.targets.iter().all(|target| {
+                self.target_has_exact_body(target)
+                    || self
+                        .analysis
+                        .current_source_relationship(target.context.package, target.context.file)
+                        == Some(SavedSourceRelationship::Exact)
+            })
+        {
+            DocumentQueryCoverage::Exact
+        } else {
+            DocumentQueryCoverage::Partial
+        }
     }
 }
 
@@ -158,64 +261,129 @@ impl<'a> QueryRunner<'a> {
         Ok(None)
     }
 
-    /// Prepare current-body analysis for one editor position.
+    /// Prepare saved or current-body analysis for one editor source selection.
     ///
-    /// This converts the LSP position using the captured text, finds every crate context for the
-    /// file, and rebuilds the matching body in each context. The returned analysis still borrows
-    /// all module-level information from the saved project.
-    fn current_position_analysis<'project>(
-        snapshot: ProjectSnapshot<'project>,
+    /// Exact captured text can use the saved line index and Body IR directly. Changed text follows
+    /// the request-local body path. Cursor and range queries share this source decision but retain
+    /// their different current-body selection rules.
+    fn document_analysis<'project>(
+        &'project mut self,
+        query: &'static str,
         document: &EditorDocumentSnapshot,
-        position: ls_types::Position,
+        selection: DocumentSelection,
         cancellation: &QueryCancellation<'_>,
-    ) -> anyhow::Result<Option<CurrentPositionAnalysis<'project>>> {
-        let targets = Self::file_contexts(snapshot, document.source_path())
-            .context("resolve current document contexts")?
-            .into_iter()
-            .flat_map(|context| {
-                context
-                    .crates
-                    .clone()
-                    .into_iter()
-                    .map(move |crate_ref| CurrentDocumentTarget {
-                        context: context.clone(),
-                        crate_ref,
-                    })
-            })
-            .collect::<Vec<_>>();
-        if targets.is_empty() {
-            return Ok(None);
-        }
-        let body_targets = targets
-            .iter()
-            .map(|target| (target.crate_ref, target.context.file))
-            .collect::<Vec<_>>();
-        let source_view = snapshot
-            .prepare_current_source(&body_targets, document.text())
-            .context("prepare current document source")?;
-        let source = source_view.shared_source();
-        let Some(offset) = source
-            .line_index()
-            .offset_from_utf16_position(crate::proto::position::parse_position(position))
-        else {
-            return Ok(None);
-        };
-        let (analysis, coverage) = snapshot
-            .analysis_for_current_bodies_from_source(
-                &body_targets,
-                source_view,
-                CurrentBodySelection::AtOffset(offset),
-                |checkpoint| cancellation.checkpoint(Self::current_body_checkpoint(checkpoint)),
-            )
-            .context("build current document body analysis")?;
+    ) -> anyhow::Result<Option<DocumentAnalysis<'project>>> {
+        let started = Instant::now();
 
-        Ok(Some(CurrentPositionAnalysis {
-            analysis,
-            coverage,
-            targets,
-            source,
-            offset,
-        }))
+        // Resolve every saved interpretation, then choose its source coordinate space once. Exact
+        // text returns before current syntax or declaration associations are built.
+        let (targets, body_targets, source, body_selection) = {
+            let snapshot = self
+                .project
+                .saved_snapshot()
+                .context("borrow saved project for document analysis")?;
+            let targets = Self::file_contexts(snapshot, document.source_path())
+                .context("resolve document contexts")?
+                .into_iter()
+                .flat_map(|context| {
+                    context
+                        .crates
+                        .clone()
+                        .into_iter()
+                        .map(move |crate_ref| DocumentTarget {
+                            context: context.clone(),
+                            crate_ref,
+                        })
+                })
+                .collect::<Vec<_>>();
+            if targets.is_empty() {
+                return Ok(None);
+            }
+            let body_targets = targets
+                .iter()
+                .map(|target| (target.crate_ref, target.context.file))
+                .collect::<Vec<_>>();
+            let source = snapshot
+                .prepare_document_source(&body_targets, document.text())
+                .context("prepare document source")?;
+            let Some(body_selection) = selection.to_current_body_selection(source.line_index())
+            else {
+                return Ok(None);
+            };
+            (targets, body_targets, source, body_selection)
+        };
+
+        let prepared = match source {
+            DocumentSourceView::SavedExact(line_index) => {
+                // Exact text needs the ordinary saved bodies for this file. They are normally
+                // resident or lazy-loadable; during early startup this may finish the file's
+                // deferred Body IR before borrowing the read-only analysis snapshot.
+                let files = targets
+                    .iter()
+                    .map(|target| (target.context.package, target.context.file))
+                    .collect::<UniqueVec<_>>();
+                self.project
+                    .materialize_saved_project(AnalysisSurface::Files(files.as_slice()))
+                    .context("prepare exact saved document analysis")?;
+                cancellation
+                    .checkpoint("after exact saved document preparation")
+                    .context("check cancellation after exact saved document preparation")?;
+
+                let snapshot = self
+                    .project
+                    .saved_snapshot()
+                    .context("borrow exact saved document analysis")?;
+                let crates = targets
+                    .iter()
+                    .map(|target| target.crate_ref)
+                    .collect::<UniqueVec<_>>();
+                let analysis = snapshot
+                    .analysis_for_crates(crates.as_slice())
+                    .context("load exact saved document analysis")?;
+                DocumentAnalysis {
+                    snapshot,
+                    analysis,
+                    targets,
+                    source: DocumentAnalysisSource::SavedExact(line_index),
+                    selection: body_selection,
+                }
+            }
+            DocumentSourceView::Current(source_view) => {
+                // Different text needs syntax and Body IR owned only by this request.
+                let snapshot = self
+                    .project
+                    .saved_snapshot()
+                    .context("borrow saved project for current document")?;
+                let source = source_view.shared_source();
+                let (analysis, coverage) = snapshot
+                    .analysis_for_current_bodies_from_source(
+                        &body_targets,
+                        source_view,
+                        body_selection,
+                        |checkpoint| {
+                            cancellation.checkpoint(Self::current_body_checkpoint(checkpoint))
+                        },
+                    )
+                    .context("build current document body analysis")?;
+                DocumentAnalysis {
+                    snapshot,
+                    analysis,
+                    targets,
+                    source: DocumentAnalysisSource::Current { source, coverage },
+                    selection: body_selection,
+                }
+            }
+        };
+
+        tracing::trace!(
+            query,
+            source = prepared.source.name(),
+            selection = ?prepared.selection,
+            target_count = prepared.targets.len(),
+            elapsed_us = started.elapsed().as_micros(),
+            "document analysis prepared"
+        );
+        Ok(Some(prepared))
     }
 
     /// Load deferred package data for every saved file identity of one source path.
@@ -262,68 +430,31 @@ impl<'a> QueryRunner<'a> {
         let path = document.source_path().to_path_buf();
         let source_text = document.text();
         let started = Instant::now();
-        let snapshot_query_started = Instant::now();
-        let snapshot = self
-            .project
-            .saved_snapshot()
-            .context("borrow saved project for completion")?;
-        let contexts_started = Instant::now();
-        let targets = Self::file_contexts(snapshot, &path)
-            .context("resolve completion file contexts")?
-            .into_iter()
-            .flat_map(|context| {
-                context
-                    .crates
-                    .into_iter()
-                    .map(move |crate_ref| (crate_ref, context.file))
-            })
-            .collect::<Vec<_>>();
-        let contexts_us = contexts_started.elapsed().as_micros();
-        if targets.is_empty() {
-            return Ok(CompletionResult::new(
-                Vec::new(),
-                DocumentQueryCoverage::Partial,
-            ));
-        }
-
-        let current_source_started = Instant::now();
-        let current_source_view = snapshot
-            .prepare_current_source(&targets, source_text)
-            .context("prepare current completion source")?;
-        let current_source = current_source_view.shared_source();
-        let Some(offset) = current_source
-            .line_index()
-            .offset_from_utf16_position(crate::proto::position::parse_position(position))
+        let document_analysis_started = Instant::now();
+        let Some(current) = self
+            .document_analysis(
+                "completion",
+                document,
+                DocumentSelection::Position(position),
+                cancellation,
+            )
+            .context("prepare completion analysis")?
         else {
             return Ok(CompletionResult::new(
                 Vec::new(),
                 DocumentQueryCoverage::Partial,
             ));
         };
-        let current_source_us = current_source_started.elapsed().as_micros();
+        let document_analysis_us = document_analysis_started.elapsed().as_micros();
+        let offset = current.offset();
+        let semantic_coverage = current.coverage();
         let completion_source_started = Instant::now();
         let completion_source = CompletionSource::new(source_text, offset);
         let completion_source_us = completion_source_started.elapsed().as_micros();
 
         cancellation
-            .checkpoint("after current completion source parsing")
-            .context("check cancellation after current completion source parsing")?;
-
-        let current_body_started = Instant::now();
-        let (analysis, coverage) = snapshot
-            .analysis_for_current_bodies_from_source(
-                &targets,
-                current_source_view,
-                CurrentBodySelection::AtOffset(offset),
-                |checkpoint| cancellation.checkpoint(Self::current_body_checkpoint(checkpoint)),
-            )
-            .context("build current completion analysis")?;
-        let current_body_us = current_body_started.elapsed().as_micros();
-        let semantic_coverage = if coverage.is_exact() {
-            DocumentQueryCoverage::Exact
-        } else {
-            DocumentQueryCoverage::Partial
-        };
+            .checkpoint("after completion syntax preparation")
+            .context("check cancellation after completion syntax preparation")?;
 
         cancellation
             .checkpoint("before semantic completion")
@@ -332,21 +463,21 @@ impl<'a> QueryRunner<'a> {
         let mut completions = UniqueVec::new();
         let mut analysis_compute_us = 0_u128;
         let mut protocol_conversion_us = 0_u128;
-        for &(crate_ref, file) in &targets {
+        for target in &current.targets {
             cancellation
                 .checkpoint("before completion crate interpretation")
                 .context("check cancellation before completion crate interpretation")?;
-            let mut query = CompletionQuery::new(crate_ref, file, offset).with_client_capabilities(
-                rg_analysis::CompletionClientCapabilities {
+            let mut query = CompletionQuery::new(target.crate_ref, target.context.file, offset)
+                .with_client_capabilities(rg_analysis::CompletionClientCapabilities {
                     snippet_support: client_capabilities.snippet_support,
-                },
-            );
+                });
             query = match completion_source.as_ref() {
                 Some(source) => query.with_completion_source(source),
                 None => query.with_source_text(source_text),
             };
             let analysis_compute_started = Instant::now();
-            let items = analysis
+            let items = current
+                .analysis
                 .completions_at(query)
                 .context("compute completions")?;
             analysis_compute_us += analysis_compute_started.elapsed().as_micros();
@@ -360,28 +491,28 @@ impl<'a> QueryRunner<'a> {
             for item in items {
                 completions.push(completion::completion_item(
                     item,
-                    current_source.line_index(),
+                    current.source.line_index(),
                 ));
             }
             protocol_conversion_us += protocol_conversion_started.elapsed().as_micros();
         }
 
         let completions = completions.into_vec();
+        let source_name = current.source.name();
+        let crate_count = current.targets.len();
         let analysis_drop_started = Instant::now();
-        drop(analysis);
+        drop(current);
         let analysis_drop_us = analysis_drop_started.elapsed().as_micros();
         tracing::trace!(
-            crate_count = targets.len(),
+            crate_count,
             result_count = completions.len(),
             coverage = ?semantic_coverage,
-            current_source_us,
+            source = source_name,
+            document_analysis_us,
             completion_source_us,
-            contexts_us,
-            current_body_us,
             analysis_compute_us,
             protocol_conversion_us,
             analysis_drop_us,
-            snapshot_query_us = snapshot_query_started.elapsed().as_micros(),
             "completion saved-semantics query phases finished"
         );
 
@@ -407,13 +538,14 @@ impl<'a> QueryRunner<'a> {
         let (document, position) = input.into_parts();
         let path = document.source_path().to_path_buf();
         let started = Instant::now();
-        let snapshot = self
-            .project
-            .saved_snapshot()
-            .context("borrow saved project for hover")?;
-        let Some(current) =
-            Self::current_position_analysis(snapshot, &document, position, cancellation)
-                .context("prepare hover analysis")?
+        let Some(current) = self
+            .document_analysis(
+                "hover",
+                &document,
+                DocumentSelection::Position(position),
+                cancellation,
+            )
+            .context("prepare hover analysis")?
         else {
             return Ok(DocumentQueryResult::new(
                 None,
@@ -422,21 +554,11 @@ impl<'a> QueryRunner<'a> {
         };
 
         let mut hover = None;
-        let mut every_target_has_exact_source = true;
+        let offset = current.offset();
         for target in &current.targets {
-            let has_exact_body = current.target_has_exact_body(target);
-            let matches_saved = if has_exact_body {
-                false
-            } else {
-                current
-                    .analysis
-                    .current_source_relationship(target.context.package, target.context.file)
-                    == Some(SavedSourceRelationship::Exact)
-            };
-            every_target_has_exact_source &= has_exact_body || matches_saved;
             let info = current
                 .analysis
-                .hover(target.crate_ref, target.context.file, current.offset)
+                .hover(target.crate_ref, target.context.file, offset)
                 .context("compute hover")?;
             let Some(info) = info else {
                 continue;
@@ -448,20 +570,18 @@ impl<'a> QueryRunner<'a> {
             break;
         }
 
+        let coverage = current.coverage();
+
         tracing::trace!(
             path = %path.display(),
             line = position.line,
             character = position.character,
             has_hover = hover.is_some(),
-            exact_body = current.coverage.is_exact(),
+            source = current.source.name(),
+            coverage = ?coverage,
             elapsed_ms = started.elapsed().as_millis(),
             "hover query finished"
         );
-        let coverage = if current.coverage.is_exact() || every_target_has_exact_source {
-            DocumentQueryCoverage::Exact
-        } else {
-            DocumentQueryCoverage::Partial
-        };
         Ok(DocumentQueryResult::new(hover, coverage))
     }
 
@@ -558,89 +678,48 @@ impl<'a> QueryRunner<'a> {
         let (document, range) = input.into_parts();
         let path = document.source_path().to_path_buf();
         let started = Instant::now();
-        let snapshot = self
-            .project
-            .saved_snapshot()
-            .context("borrow saved project for inlay hints")?;
-        let targets = Self::file_contexts(snapshot, &path)
-            .context("resolve inlay-hint path")?
-            .into_iter()
-            .flat_map(|context| {
-                context
-                    .crates
-                    .into_iter()
-                    .map(move |crate_ref| (crate_ref, context.file))
-            })
-            .collect::<Vec<_>>();
-        if targets.is_empty() {
-            return Ok(DocumentQueryResult::new(
-                Vec::new(),
-                DocumentQueryCoverage::Partial,
-            ));
-        }
-        let current_source_view = snapshot
-            .prepare_current_source(&targets, document.text())
-            .context("prepare current source for inlay hints")?;
-        let current_source = current_source_view.shared_source();
-        let Some(range_start) = current_source
-            .line_index()
-            .offset_from_utf16_position(crate::proto::position::parse_position(range.start))
-        else {
-            return Ok(DocumentQueryResult::new(
-                Vec::new(),
-                DocumentQueryCoverage::Partial,
-            ));
-        };
-        let Some(range_end) = current_source
-            .line_index()
-            .offset_from_utf16_position(crate::proto::position::parse_position(range.end))
-        else {
-            return Ok(DocumentQueryResult::new(
-                Vec::new(),
-                DocumentQueryCoverage::Partial,
-            ));
-        };
-        let text_range = rg_parse::TextSpan {
-            start: range_start,
-            end: range_end,
-        };
-        let (analysis, coverage) = snapshot
-            .analysis_for_current_bodies_from_source(
-                &targets,
-                current_source_view,
-                CurrentBodySelection::IntersectingRange(text_range),
-                |checkpoint| cancellation.checkpoint(Self::current_body_checkpoint(checkpoint)),
+        let Some(current) = self
+            .document_analysis(
+                "inlay_hint",
+                &document,
+                DocumentSelection::Range(range),
+                cancellation,
             )
-            .context("build current bodies for inlay hints")?;
+            .context("prepare inlay hint analysis")?
+        else {
+            return Ok(DocumentQueryResult::new(
+                Vec::new(),
+                DocumentQueryCoverage::Partial,
+            ));
+        };
+        let text_range = current.range();
         let mut hints = UniqueVec::<AnalysisInlayHint>::new();
-        for &(crate_ref, file) in &targets {
+        for target in &current.targets {
             cancellation
                 .checkpoint("before inlay hint crate interpretation")
                 .context("check cancellation before inlay hint crate interpretation")?;
             hints.extend(
-                analysis
-                    .inlay_hints(crate_ref, file, Some(text_range))
+                current
+                    .analysis
+                    .inlay_hints(target.crate_ref, target.context.file, Some(text_range))
                     .context("compute current body inlay hints")?,
             );
         }
         let lsp_hints = hints
             .into_iter()
-            .map(|hint| inlay_hint::inlay_hint_with_line_index(current_source.line_index(), hint))
+            .map(|hint| inlay_hint::inlay_hint_with_line_index(current.source.line_index(), hint))
             .collect::<Vec<_>>();
+        let semantic_coverage = current.coverage();
 
         tracing::trace!(
             path = %path.display(),
             result_count = lsp_hints.len(),
-            exact_bodies = coverage.is_exact(),
+            source = current.source.name(),
+            coverage = ?semantic_coverage,
             elapsed_ms = started.elapsed().as_millis(),
             "inlay hint query finished"
         );
 
-        let semantic_coverage = if coverage.is_exact() {
-            DocumentQueryCoverage::Exact
-        } else {
-            DocumentQueryCoverage::Partial
-        };
         Ok(DocumentQueryResult::new(lsp_hints, semantic_coverage))
     }
 

@@ -37,7 +37,7 @@ use rg_std::MemorySize;
 pub use self::state::ProjectGenerationId;
 pub use self::{
     build::{ProjectBuilder, SplitIndexingMode, StartupCacheLoad},
-    snapshot::{CurrentBodyAnalysisCoverage, ProjectSnapshot},
+    snapshot::{CurrentBodyAnalysisCoverage, DocumentSourceView, ProjectSnapshot},
     split_indexing::{
         AnalysisSurface, DetachedSplitIndexing, FinishedSplitIndexing, SplitIndexing,
     },

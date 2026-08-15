@@ -14,7 +14,6 @@ use std::{path::Path, time::Instant};
 use anyhow::Context as _;
 use rg_analysis::{
     Analysis as QueryAnalysis, ReferenceQuery, ReferenceSearchFile, RenameEdit, RenameTarget,
-    SavedSourceRelationship,
 };
 use rg_ir_model::CrateRef;
 use rg_lsp_proto::{
@@ -24,7 +23,7 @@ use rg_lsp_proto::{
 use rg_project::{AnalysisSurface, FileContext, ProjectSnapshot};
 use rg_std::UniqueVec;
 
-use super::{QueryCancellation, QueryRunner};
+use super::{DocumentSelection, QueryCancellation, QueryRunner};
 use crate::proto::{references as references_proto, rename as rename_proto};
 
 /// Source coverage selected before a reference-like query can run.
@@ -340,13 +339,14 @@ impl QueryRunner<'_> {
         let (document, position) = input.into_parts();
         let path = document.source_path().to_path_buf();
         let started = Instant::now();
-        let snapshot = self
-            .project
-            .saved_snapshot()
-            .context("borrow saved project for document highlights")?;
-        let Some(current) =
-            Self::current_position_analysis(snapshot, &document, position, cancellation)
-                .context("prepare current document highlights")?
+        let Some(current) = self
+            .document_analysis(
+                "document_highlight",
+                &document,
+                DocumentSelection::Position(position),
+                cancellation,
+            )
+            .context("prepare document highlights")?
         else {
             return Ok(DocumentQueryResult::new(
                 Vec::new(),
@@ -354,22 +354,15 @@ impl QueryRunner<'_> {
             ));
         };
         let mut highlights = UniqueVec::new();
-        let mut every_target_has_exact_source = true;
+        let offset = current.offset();
 
         for target in &current.targets {
-            let has_exact_body = current.target_has_exact_body(target);
-            let matches_saved = !has_exact_body
-                && current
-                    .analysis
-                    .current_source_relationship(target.context.package, target.context.file)
-                    == Some(SavedSourceRelationship::Exact);
-            every_target_has_exact_source &= has_exact_body || matches_saved;
             for reference in current
                 .analysis
                 .references(
                     target.crate_ref,
                     target.context.file,
-                    current.offset,
+                    offset,
                     ReferenceQuery::file_scoped(target.crate_ref, target.context.file),
                 )
                 .context("find current document references")?
@@ -386,22 +379,19 @@ impl QueryRunner<'_> {
             }
         }
         let highlights = highlights.into_vec();
+        let coverage = current.coverage();
 
         tracing::trace!(
             path = %path.display(),
             line = position.line,
             character = position.character,
             result_count = highlights.len(),
-            exact_body = current.coverage.is_exact(),
+            source = current.source.name(),
+            coverage = ?coverage,
             elapsed_ms = started.elapsed().as_millis(),
             "document highlight query finished"
         );
 
-        let coverage = if current.coverage.is_exact() || every_target_has_exact_source {
-            DocumentQueryCoverage::Exact
-        } else {
-            DocumentQueryCoverage::Partial
-        };
         Ok(DocumentQueryResult::new(highlights, coverage))
     }
 

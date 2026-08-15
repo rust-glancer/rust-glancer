@@ -39,6 +39,31 @@ pub struct ProjectSnapshot<'a> {
     pub(super) state: &'a ProjectState,
 }
 
+/// The source data a document query should use.
+///
+/// A captured editor document can be identical to the saved file even though it arrived through
+/// the editor. In that case the saved line index and saved Body IR already describe the captured
+/// bytes, and building another syntax tree would only duplicate work. If any selected saved file
+/// differs, the query instead receives one request-local view that contains the captured syntax and
+/// its relationship to each saved file interpretation.
+#[derive(Debug)]
+pub enum DocumentSourceView {
+    /// Every selected saved file contains the captured bytes.
+    SavedExact(LineIndex),
+    /// At least one selected saved file differs from the captured bytes.
+    Current(CurrentSourceView),
+}
+
+impl DocumentSourceView {
+    /// Return the line index belonging to the captured text.
+    pub fn line_index(&self) -> &LineIndex {
+        match self {
+            Self::SavedExact(line_index) => line_index,
+            Self::Current(source) => source.source().line_index(),
+        }
+    }
+}
+
 /// Records which parts of editor text were successfully rebuilt as current Body IR.
 ///
 /// One file may be analyzed under several crate contexts. Body construction can succeed in one
@@ -80,6 +105,45 @@ impl<'a> ProjectSnapshot<'a> {
         let subset = subset::crates_with_visible_dependencies(self.state.workspace(), crates);
         let txn = self.state.read_txn_for_subset(&subset)?;
         Ok(self.state.analysis(&txn))
+    }
+
+    /// Choose the source data that can safely describe this captured document.
+    ///
+    /// This checks all crate interpretations because one editor path may represent several saved
+    /// file identities. The saved path is allowed only when all of them contain the captured bytes.
+    /// Otherwise this prepares one shared current syntax tree and the declaration associations each
+    /// interpretation needs.
+    pub fn prepare_document_source(
+        &self,
+        targets: &[(CrateRef, FileId)],
+        source: &str,
+    ) -> anyhow::Result<DocumentSourceView> {
+        let &(first_crate, first_file) = targets
+            .first()
+            .context("document source has no saved file targets")?;
+
+        let source_revision = rg_source::SourceRevision::from_bytes(source.as_bytes());
+        for &(crate_ref, file) in targets {
+            let saved_file = self
+                .state
+                .parse_db()
+                .package(crate_ref.package.0)
+                .context("saved-source target has no parse package")?
+                .parsed_file(file)
+                .context("saved-source target has no parsed file")?;
+            if saved_file.source_revision() != source_revision {
+                return self
+                    .prepare_current_source(targets, source)
+                    .map(DocumentSourceView::Current);
+            }
+        }
+
+        let line_index = self
+            .file_line_index(first_crate.package, first_file)
+            .context("load exact saved document line index")?
+            .context("exact saved document has no line index")?
+            .clone();
+        Ok(DocumentSourceView::SavedExact(line_index))
     }
 
     /// Rebuild the body at `offset` for every requested crate context, checking for cancellation after

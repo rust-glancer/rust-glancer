@@ -7,7 +7,7 @@ use std::{
 };
 
 use divan::{Bencher, black_box};
-use ls_types::{CompletionItem, Hover, Location, Position};
+use ls_types::{CompletionItem, Hover, InlayHint, Location, Position, Range};
 use rg_lsp_engine::{MemoryControl, Service, ServiceNotificationsSink};
 use rg_lsp_proto::{
     AnalysisConfig, AnalysisOutcome, CompletionClientCapabilities, DocumentQueryResult,
@@ -44,6 +44,23 @@ fn hover_clean(bencher: Bencher<'_, '_>) {
     );
 
     bencher.bench_local(|| engine.hover(APP_SOURCE, black_box(engine.clean_hover_position)));
+
+    engine.shutdown();
+}
+
+// A clean range query should read saved bodies directly instead of rebuilding every body covered
+// by the editor range.
+#[divan::bench(sample_count = 10, sample_size = 1)]
+fn inlay_hints_clean(bencher: Bencher<'_, '_>) {
+    let engine = PreparedEngine::new();
+    assert!(
+        !engine
+            .inlay_hints(APP_SOURCE, engine.clean_inlay_range)
+            .is_empty(),
+        "clean inlay-hint benchmark should return a result",
+    );
+
+    bencher.bench_local(|| engine.inlay_hints(APP_SOURCE, black_box(engine.clean_inlay_range)));
 
     engine.shutdown();
 }
@@ -116,7 +133,10 @@ struct PreparedEngine {
     app_completion_position: [Position; 2],
     math_mean_position: Position,
     clean_hover_position: Position,
+    clean_inlay_range: Range,
     next_document_version: Cell<i32>,
+    // Keep fixture I/O in `new`; measured requests only capture already-loaded editor text.
+    saved_sources: HashMap<PathBuf, String>,
     documents: RefCell<HashMap<PathBuf, (i32, String)>>,
 }
 
@@ -158,6 +178,14 @@ impl PreparedEngine {
         let math_mean_position =
             Self::position_inside(&math_saved_text, "pub fn mean", "pub fn ".len() + 1);
         let clean_hover_position = Self::position_inside(&app_saved_text, "mean(numbers)", 1);
+        let clean_inlay_range = {
+            let end_offset = u32::try_from(app_saved_text.len())
+                .expect("app benchmark source length should fit into u32");
+            let end = LineIndex::new(&app_saved_text).utf16_position(end_offset);
+            Range::new(Position::new(0, 0), Position::new(end.line, end.column))
+        };
+        let saved_sources =
+            HashMap::from([(app_path, app_saved_text), (math_path, math_saved_text)]);
 
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
@@ -175,7 +203,9 @@ impl PreparedEngine {
             app_completion_position,
             math_mean_position,
             clean_hover_position,
+            clean_inlay_range,
             next_document_version: Cell::new(2),
+            saved_sources,
             documents: RefCell::default(),
         }
     }
@@ -268,6 +298,15 @@ impl PreparedEngine {
         Self::expect_ready(outcome, "completion").into_value()
     }
 
+    fn inlay_hints(&self, relative_path: &str, range: Range) -> Vec<InlayHint> {
+        let input = self.document_snapshot(relative_path).with_range(range);
+        let outcome = self
+            .runtime
+            .block_on(self.service.clone().inlay_hint(context::current(), input))
+            .expect("query benchmark inlay hints should succeed");
+        Self::expect_document_ready(outcome, "inlay hints")
+    }
+
     fn references(&self, relative_path: &str, position: Position) -> Vec<Location> {
         let input = self.global_position_snapshot(relative_path, position);
         let outcome = self
@@ -302,7 +341,15 @@ impl PreparedEngine {
         let (target_version, _) = documents.entry(path.clone()).or_insert_with(|| {
             (
                 1,
-                std::fs::read_to_string(&path).expect("query benchmark source should be readable"),
+                self.saved_sources
+                    .get(&path)
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "query benchmark source should be prepared: {}",
+                            path.display()
+                        )
+                    })
+                    .clone(),
             )
         });
         let target_revision =

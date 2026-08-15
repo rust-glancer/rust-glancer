@@ -8,9 +8,7 @@
 use std::{collections::HashMap, path::PathBuf, time::Instant};
 
 use anyhow::Context as _;
-use rg_analysis::{
-    CurrentSourceView, NavigationTarget, NavigationTargetSource, SavedSourceRelationship,
-};
+use rg_analysis::{NavigationTarget, NavigationTargetSource, SavedSourceRelationship};
 use rg_def_map::PackageSlot;
 use rg_ir_model::CrateRef;
 use rg_lsp_proto::{
@@ -18,10 +16,10 @@ use rg_lsp_proto::{
     GlobalPositionSnapshot,
 };
 use rg_parse::FileId;
-use rg_project::ProjectSnapshot;
+use rg_project::{DocumentSourceView, ProjectSnapshot};
 use rg_std::UniqueVec;
 
-use super::{QueryCancellation, QueryRunner};
+use super::{DocumentSelection, QueryCancellation, QueryRunner};
 use crate::proto::navigation as navigation_proto;
 
 impl QueryRunner<'_> {
@@ -65,13 +63,14 @@ impl QueryRunner<'_> {
             .context("target document is absent from navigation input")?;
         let path = document.source_path().to_path_buf();
         let started = Instant::now();
-        let snapshot = self
-            .project
-            .saved_snapshot()
-            .context("borrow saved project for navigation")?;
-        let Some(current) =
-            Self::current_position_analysis(snapshot, document, position, cancellation)
-                .context("prepare current navigation analysis")?
+        let Some(current) = self
+            .document_analysis(
+                query.name(),
+                document,
+                DocumentSelection::Position(position),
+                cancellation,
+            )
+            .context("prepare navigation analysis")?
         else {
             return Ok(DocumentQueryResult::new(
                 Vec::new(),
@@ -79,24 +78,19 @@ impl QueryRunner<'_> {
             ));
         };
         let mut locations = UniqueVec::new();
-        let mut every_target_has_exact_source = true;
         let mut omitted_unsafe_target = false;
-        let mut destinations = CapturedNavigationDocuments::new(snapshot, &documents);
+        let mut destinations = CapturedNavigationDocuments::new(current.snapshot, &documents);
+        let offset = current.offset();
 
         for source in &current.targets {
-            let has_exact_body = current.target_has_exact_body(source);
-            let matches_saved = current
-                .analysis
-                .current_source_relationship(source.context.package, source.context.file)
-                == Some(SavedSourceRelationship::Exact);
             let targets = match query {
                 CurrentNavigationQuery::Definition => current
                     .analysis
-                    .goto_definition(source.crate_ref, source.context.file, current.offset)
+                    .goto_definition(source.crate_ref, source.context.file, offset)
                     .context("resolve definition targets")?,
                 CurrentNavigationQuery::TypeDefinition => current
                     .analysis
-                    .goto_type_definition(source.crate_ref, source.context.file, current.offset)
+                    .goto_type_definition(source.crate_ref, source.context.file, offset)
                     .context("resolve type-definition targets")?,
             };
 
@@ -134,7 +128,6 @@ impl QueryRunner<'_> {
                     locations.push(location);
                 }
             }
-            every_target_has_exact_source &= has_exact_body || matches_saved;
         }
 
         let locations = locations.into_vec();
@@ -151,10 +144,8 @@ impl QueryRunner<'_> {
 
         let coverage = if omitted_unsafe_target {
             DocumentQueryCoverage::Partial
-        } else if current.coverage.is_exact() || every_target_has_exact_source {
-            DocumentQueryCoverage::Exact
         } else {
-            DocumentQueryCoverage::Partial
+            current.coverage()
         };
         Ok(DocumentQueryResult::new(locations, coverage))
     }
@@ -283,24 +274,32 @@ impl<'documents, 'project> CapturedNavigationDocuments<'documents, 'project> {
             CapturedNavigationSource::Unavailable => Ok(CapturedTargetLocation::Unavailable),
             CapturedNavigationSource::Open(open) => {
                 let CapturedOpenNavigationSource { path, source } = open.as_ref();
-                let mapped_span = match (
-                    target.span,
-                    source.relationship(target.crate_ref.package, target.file_id),
-                ) {
-                    (None, _) => None,
-                    (Some(span), Some(SavedSourceRelationship::Exact)) => Some(span),
-                    (Some(span), Some(SavedSourceRelationship::Different)) => {
-                        let Some(associations) = source
-                            .declaration_associations(target.crate_ref.package, target.file_id)
-                        else {
-                            return Ok(CapturedTargetLocation::Unsafe);
-                        };
-                        let Some(current) = associations.current_header_span_for_saved(span) else {
-                            return Ok(CapturedTargetLocation::Unsafe);
-                        };
-                        Some(current)
+                let mapped_span = match source {
+                    DocumentSourceView::SavedExact(_) => target.span,
+                    DocumentSourceView::Current(source) => {
+                        match (
+                            target.span,
+                            source.relationship(target.crate_ref.package, target.file_id),
+                        ) {
+                            (None, _) => None,
+                            (Some(span), Some(SavedSourceRelationship::Exact)) => Some(span),
+                            (Some(span), Some(SavedSourceRelationship::Different)) => {
+                                let Some(associations) = source.declaration_associations(
+                                    target.crate_ref.package,
+                                    target.file_id,
+                                ) else {
+                                    return Ok(CapturedTargetLocation::Unsafe);
+                                };
+                                let Some(current) =
+                                    associations.current_header_span_for_saved(span)
+                                else {
+                                    return Ok(CapturedTargetLocation::Unsafe);
+                                };
+                                Some(current)
+                            }
+                            (Some(_), None) => return Ok(CapturedTargetLocation::Unavailable),
+                        }
                     }
-                    (Some(_), None) => return Ok(CapturedTargetLocation::Unavailable),
                 };
                 let mut current_target = target.clone();
                 current_target.source = NavigationTargetSource::Current;
@@ -308,7 +307,7 @@ impl<'documents, 'project> CapturedNavigationDocuments<'documents, 'project> {
                 Ok(
                     match navigation_proto::location_for_current_document(
                         path,
-                        source.source().line_index(),
+                        source.line_index(),
                         &current_target,
                     ) {
                         Some(location) => CapturedTargetLocation::Ready(location),
@@ -338,7 +337,7 @@ impl<'documents, 'project> CapturedNavigationDocuments<'documents, 'project> {
         };
         let source = self
             .snapshot
-            .prepare_current_source(&[(crate_ref, file)], document.text())
+            .prepare_document_source(&[(crate_ref, file)], document.text())
             .context("prepare open navigation destination source")?;
 
         Ok(CapturedNavigationSource::Open(Box::new(
@@ -360,7 +359,7 @@ enum CapturedNavigationSource {
 
 struct CapturedOpenNavigationSource {
     path: PathBuf,
-    source: CurrentSourceView,
+    source: DocumentSourceView,
 }
 
 enum CapturedTargetLocation {
