@@ -2,14 +2,15 @@
 
 mod closing_brace;
 
-use rg_ir_model::CrateRef;
+use rg_ir_model::{CrateRef, PackageSlot};
 use rg_ir_view::{
     body::BodyStructureView,
     display::ty_label::TypeRenderer,
     member::{FunctionParameterView, MemberView},
     ty::locals::BodyView,
 };
-use rg_parse::{FileId, TextSpan};
+use rg_parse::{CurrentSource, FileId, Span, TextSpan};
+use rg_std::UniqueVec;
 
 use crate::{
     Analysis,
@@ -17,6 +18,63 @@ use crate::{
 };
 
 pub(crate) struct InlayHintCollector<'a, 'db>(&'a Analysis<'db>);
+
+/// Source-coordinate operations shared by every inlay-hint family in one file.
+///
+/// The selected Body IR already determines whether its spans belong to current or saved text. Pick
+/// that source once here so individual hint providers cannot accidentally mix the two.
+pub(super) enum InlaySource<'a, 'db> {
+    Current {
+        source: &'a CurrentSource,
+        file: FileId,
+    },
+    Saved {
+        analysis: &'a Analysis<'db>,
+        package: PackageSlot,
+    },
+}
+
+impl<'a, 'db> InlaySource<'a, 'db> {
+    fn new(analysis: &'a Analysis<'db>, package: PackageSlot, file: FileId) -> Self {
+        match analysis.current_source(package, file) {
+            Some(source) => Self::Current { source, file },
+            None => Self::Saved { analysis, package },
+        }
+    }
+
+    pub(super) fn current(&self) -> Option<&CurrentSource> {
+        match self {
+            Self::Current { source, .. } => Some(source),
+            Self::Saved { .. } => None,
+        }
+    }
+
+    pub(super) fn text_for_span(&self, file: FileId, span: Span) -> anyhow::Result<Option<String>> {
+        match self {
+            Self::Current {
+                source,
+                file: source_file,
+            } if *source_file == file => Ok(source.text_for_span(span).map(ToString::to_string)),
+            Self::Current { .. } => Ok(None),
+            Self::Saved { analysis, package } => {
+                analysis.saved_source_text_for_span(*package, file, span)
+            }
+        }
+    }
+
+    pub(super) fn line_for_offset(&self, file: FileId, offset: u32) -> anyhow::Result<Option<u32>> {
+        match self {
+            Self::Current {
+                source,
+                file: source_file,
+            } if *source_file == file => Ok(source.line_for_offset(offset)),
+            Self::Current { .. } => Ok(None),
+            Self::Saved { analysis, package } => {
+                analysis.saved_source_line_for_offset(*package, file, offset)
+            }
+        }
+    }
+}
 
 impl<'a, 'db> InlayHintCollector<'a, 'db> {
     pub(crate) fn new(analysis: &'a Analysis<'db>) -> Self {
@@ -29,11 +87,12 @@ impl<'a, 'db> InlayHintCollector<'a, 'db> {
         file_id: FileId,
         range: Option<TextSpan>,
     ) -> anyhow::Result<Vec<InlayHint>> {
+        let source = InlaySource::new(self.0, crate_ref.package, file_id);
         let mut hints = self.binding_type_hints(crate_ref, file_id, range)?;
-        hints.extend(self.parameter_hints(crate_ref, file_id, range)?);
-        hints.extend(self.expression_type_hints(crate_ref, file_id, range)?);
+        hints.extend(self.parameter_hints(crate_ref, file_id, range, &source)?);
+        hints.extend(self.expression_type_hints(crate_ref, file_id, range, &source)?);
         hints.extend(closing_brace::closing_brace_hints(
-            self.0, crate_ref, file_id, range,
+            self.0, crate_ref, file_id, range, &source,
         )?);
 
         hints.sort_by_key(|hint| (hint.text_offset(), hint.label.clone()));
@@ -50,7 +109,7 @@ impl<'a, 'db> InlayHintCollector<'a, 'db> {
         // projection separate from hint families backed by declaration metadata.
         let renderer =
             TypeRenderer::new(self.0.view_db(), self.0.view_db().crate_edition(crate_ref)?);
-        let mut hints = Vec::new();
+        let mut hints = UniqueVec::new();
         for binding in
             BodyView::new(self.0.view_db()).inferred_binding_tys(crate_ref, file_id, range)?
         {
@@ -67,12 +126,10 @@ impl<'a, 'db> InlayHintCollector<'a, 'db> {
                 padding_left: None,
                 padding_right: None,
             };
-            if !hints.contains(&hint) {
-                hints.push(hint);
-            }
+            hints.push(hint);
         }
 
-        Ok(hints)
+        Ok(hints.into_vec())
     }
 
     fn expression_type_hints(
@@ -80,10 +137,11 @@ impl<'a, 'db> InlayHintCollector<'a, 'db> {
         crate_ref: CrateRef,
         file_id: FileId,
         range: Option<TextSpan>,
+        source: &InlaySource<'_, '_>,
     ) -> anyhow::Result<Vec<InlayHint>> {
         let renderer =
             TypeRenderer::new(self.0.view_db(), self.0.view_db().crate_edition(crate_ref)?);
-        let mut hints = Vec::new();
+        let mut hints = UniqueVec::new();
         for expr in
             BodyStructureView::new(self.0.view_db()).method_chain_expr_tys(crate_ref, file_id)?
         {
@@ -92,10 +150,10 @@ impl<'a, 'db> InlayHintCollector<'a, 'db> {
                 continue;
             }
             if !self.should_show_method_chain_expr_hint(
-                crate_ref,
                 expr.file_id(),
                 expr_span,
                 expr.parent_dot_span(),
+                source,
             )? {
                 continue;
             }
@@ -115,12 +173,10 @@ impl<'a, 'db> InlayHintCollector<'a, 'db> {
                 padding_left: Some(true),
                 padding_right: None,
             };
-            if !hints.contains(&hint) {
-                hints.push(hint);
-            }
+            hints.push(hint);
         }
 
-        Ok(hints)
+        Ok(hints.into_vec())
     }
 
     fn parameter_hints(
@@ -128,9 +184,10 @@ impl<'a, 'db> InlayHintCollector<'a, 'db> {
         crate_ref: CrateRef,
         file_id: FileId,
         range: Option<TextSpan>,
+        source: &InlaySource<'_, '_>,
     ) -> anyhow::Result<Vec<InlayHint>> {
         let members = MemberView::new(self.0.view_db());
-        let mut hints = Vec::new();
+        let mut hints = UniqueVec::new();
         for call in BodyView::new(self.0.view_db()).resolved_function_calls(crate_ref, file_id)? {
             let Some(function) = members.function(call.function())? else {
                 continue;
@@ -147,11 +204,8 @@ impl<'a, 'db> InlayHintCollector<'a, 'db> {
                 if range.is_some_and(|range| !range.touches(arg_span.text.start)) {
                     continue;
                 }
-                if self
-                    .0
-                    .source_text_for_span(crate_ref.package, call.file_id(), arg_span)?
-                    .is_some_and(|arg_text| arg_text.trim() == param_name)
-                {
+                let arg_text = source.text_for_span(call.file_id(), arg_span)?;
+                if arg_text.is_some_and(|arg_text| arg_text.trim() == param_name) {
                     continue;
                 }
 
@@ -164,13 +218,11 @@ impl<'a, 'db> InlayHintCollector<'a, 'db> {
                     padding_left: None,
                     padding_right: Some(true),
                 };
-                if !hints.contains(&hint) {
-                    hints.push(hint);
-                }
+                hints.push(hint);
             }
         }
 
-        Ok(hints)
+        Ok(hints.into_vec())
     }
 
     fn param_hint_name(param: FunctionParameterView<'_>) -> Option<&str> {
@@ -194,25 +246,18 @@ impl<'a, 'db> InlayHintCollector<'a, 'db> {
 
     fn should_show_method_chain_expr_hint(
         &self,
-        crate_ref: CrateRef,
         file_id: FileId,
         expr_span: rg_parse::Span,
         parent_dot_span: rg_parse::Span,
+        source: &InlaySource<'_, '_>,
     ) -> anyhow::Result<bool> {
-        let Some(expr_end_line) = self.0.source_line_for_offset(
-            crate_ref.package,
-            file_id,
-            expr_span.text.end.saturating_sub(1),
-        )?
-        else {
+        let expr_end_offset = expr_span.text.end.saturating_sub(1);
+        let expr_end_line = source.line_for_offset(file_id, expr_end_offset)?;
+        let Some(expr_end_line) = expr_end_line else {
             return Ok(false);
         };
-        let Some(parent_dot_line) = self.0.source_line_for_offset(
-            crate_ref.package,
-            file_id,
-            parent_dot_span.text.start,
-        )?
-        else {
+        let parent_dot_line = source.line_for_offset(file_id, parent_dot_span.text.start)?;
+        let Some(parent_dot_line) = parent_dot_line else {
             return Ok(false);
         };
 

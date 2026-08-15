@@ -11,11 +11,15 @@
 //! ensures that a request sees either the state before an editor message or the state after it,
 //! never a partly updated value.
 //!
-//! A document request receives its target and all open sibling documents from one global editor
-//! revision. If the editor changes while the request is alive, the capture may follow recorded
-//! edits to move its cursor into a newer snapshot. For example, typing `ck` after `RwLo|` moves the
-//! captured cursor to `RwLock|`. These links store edits rather than old full-text values, and they
-//! disappear when no request needs them.
+//! A document request captures the target text and the other open documents at the same moment.
+//! Most queries send only the target to the engine. Cross-file operations can also send the open
+//! documents, because their saved source ranges are safe only while those documents still match
+//! the saved project.
+//!
+//! Completion can follow edits made after its first capture and move the cursor into the new text.
+//! For example, typing `ck` after `RwLo|` moves the captured cursor to `RwLock|`. The history keeps
+//! only the edits needed for that move, not old copies of the full document, and disappears when no
+//! request needs it.
 //!
 //! The `lifecycle` child module runs the async parts of open/save/close. It reports when an engine
 //! route has been resolved or a close has finished, but it never stores document text, sessions,
@@ -33,8 +37,8 @@ use tokio::sync::watch;
 use tower_lsp_server::ls_types::{Position, TextDocumentContentChangeEvent};
 
 use rg_lsp_proto::{
-    DocumentAnalysisSnapshot, DocumentRevision, EditorDocumentSnapshot, EditorSnapshot,
-    EditorSnapshotRevision, OpenDocumentSession, SaveProposal, TargetDocumentRevision,
+    DocumentRevision, EditorDocumentSnapshot, GlobalPositionSnapshot, OpenDocumentSession,
+    OpenDocumentsRevision, SaveProposal, TargetDocumentRevision,
 };
 
 use crate::{engine_client::EngineClient, engine_registry::OpenDocumentRoute};
@@ -43,17 +47,17 @@ use self::lifecycle::{ClosedDocumentCleanup, LifecycleBarrier};
 pub(crate) use self::lifecycle::{LifecycleEvent, SequencedLifecycleEvent, SessionRoute};
 use super::edit::{AppliedDocumentChanges, DocumentChangeError, PositionTransform};
 
-/// Snapshot of editor state selected for one document request before its handler starts.
+/// Editor state selected for one document request before its handler starts.
 ///
-/// The target document, all open sibling documents, their session routes, and the global editor
-/// revision are selected together. The editor path identifies the open session;
-/// `analysis_snapshot` uses each resolved route to add the corresponding project source path for
-/// engine analysis. A capture may be replaced with a newer snapshot, but it never writes to
-/// `EditorState` or stores another live copy of editor state.
+/// The target, other open documents, and their engine routes all come from the same locked read of
+/// `EditorState`. `target_document` builds input for an ordinary document read. `global_position`
+/// also includes open documents routed to the same engine. This value is immutable; completion may
+/// replace it with a newer capture, but a capture never refreshes itself in place.
 #[derive(Clone, Debug)]
 pub(crate) struct CapturedDocument {
     document: Arc<EditorDocumentSnapshot>,
-    editor_revision: Arc<EditorRevisionNode>,
+    document_revision: Arc<DocumentRevisionNode>,
+    open_documents_revision: Arc<OpenDocumentsRevisionNode>,
     route: Result<OpenDocumentRoute, Arc<str>>,
     open_documents: Arc<[CapturedOpenDocument]>,
     editor: Weak<Mutex<EditorState>>,
@@ -71,15 +75,38 @@ impl CapturedDocument {
             .map_err(Arc::clone)
     }
 
-    /// Build engine input from captured documents assigned to the target document's engine.
-    ///
-    /// Every route was read when this request snapshot was taken. A sibling whose route was not
-    /// ready is therefore absent from this engine input. When that route becomes ready, editor
-    /// state advances to a new revision, and a later request can include the sibling.
-    pub(crate) fn analysis_snapshot(
+    /// Build engine input for the captured target document.
+    pub(crate) fn target_document(
         &self,
         engine_client: &EngineClient,
-    ) -> Result<DocumentAnalysisSnapshot, DocumentUnavailable> {
+    ) -> Result<EditorDocumentSnapshot, DocumentUnavailable> {
+        let target_route = self.route.as_ref().map_err(|reason| {
+            DocumentUnavailable::new(Some(self.document.path().to_path_buf()), Arc::clone(reason))
+        })?;
+        if !target_route.engine_client().same_engine(engine_client) {
+            return Err(DocumentUnavailable::new(
+                Some(self.document.path().to_path_buf()),
+                "the selected engine does not match the captured target route",
+            ));
+        }
+
+        Ok(self
+            .document
+            .as_ref()
+            .clone()
+            .with_source_path(target_route.source_path().to_path_buf()))
+    }
+
+    /// Build cross-file engine input from open documents assigned to the target's engine.
+    ///
+    /// Every route was captured before the handler started. If a Rust document is still being
+    /// routed, we cannot yet tell whether its unsaved text belongs to this engine, so the operation
+    /// waits instead of omitting that document from the safety check.
+    pub(crate) fn global_position(
+        &self,
+        engine_client: &EngineClient,
+        position: Position,
+    ) -> Result<GlobalPositionSnapshot, DocumentUnavailable> {
         let target_route = self.route.as_ref().map_err(|reason| {
             DocumentUnavailable::new(Some(self.document.path().to_path_buf()), Arc::clone(reason))
         })?;
@@ -93,10 +120,13 @@ impl CapturedDocument {
         let mut documents = Vec::new();
         let mut text_by_source_path = HashMap::<PathBuf, &str>::new();
         for captured in self.open_documents.iter() {
-            let Ok(route) = &captured.route else {
+            if !is_rust_path(&captured.path) {
                 continue;
-            };
-            if !route.engine_client().same_engine(engine_client) || !is_rust_path(&captured.path) {
+            }
+            let route = captured.route.as_ref().map_err(|reason| {
+                DocumentUnavailable::new(Some(captured.path.clone()), Arc::clone(reason))
+            })?;
+            if !route.engine_client().same_engine(engine_client) {
                 continue;
             }
             let Some(document) = &captured.document else {
@@ -125,47 +155,57 @@ impl CapturedDocument {
             );
         }
 
-        let editor = EditorSnapshot::new(self.editor_revision.revision, documents);
-        if editor.document(self.document.target()).is_none() {
+        let snapshot = GlobalPositionSnapshot::new(
+            self.document.target().clone(),
+            self.open_documents_revision.revision,
+            documents,
+            position,
+        );
+        if snapshot.target_document().is_none() {
             return Err(DocumentUnavailable::new(
                 Some(self.document.path().to_path_buf()),
-                "the target document is absent from its captured editor snapshot",
+                "the target document is absent from its captured global-operation input",
             ));
         }
-        Ok(DocumentAnalysisSnapshot::new(
-            self.document.target().clone(),
-            editor,
-        ))
+        Ok(snapshot)
     }
 
-    /// Check whether a completed result still matches the latest target and editor revisions.
+    /// Check that no relevant editor state changed while a global operation was running.
     ///
     /// Analysis may finish after another editor change. Callers publish the result only when this
-    /// check confirms that both the target document and the whole editor snapshot are unchanged.
-    pub(crate) fn is_current(
+    /// check confirms that both the target document and the captured open-documents revision are
+    /// unchanged.
+    pub(crate) fn is_global_operation_current(
         &self,
         target: &TargetDocumentRevision,
-        editor_revision: EditorSnapshotRevision,
+        open_documents_revision: OpenDocumentsRevision,
     ) -> bool {
         self.editor.upgrade().is_some_and(|editor| {
             editor
                 .lock()
                 .expect("editor state mutex should not be poisoned")
-                .is_current(target, editor_revision)
+                .is_global_operation_current(target, open_documents_revision)
         })
     }
 
-    pub(crate) fn editor_revision(&self) -> EditorSnapshotRevision {
-        self.editor_revision.revision
+    /// Check the target document only, ignoring edits in other open documents.
+    pub(crate) fn is_target_current(&self, target: &TargetDocumentRevision) -> bool {
+        self.editor.upgrade().is_some_and(|editor| {
+            editor
+                .lock()
+                .expect("editor state mutex should not be poisoned")
+                .is_target_current(target)
+        })
     }
 
-    /// Watch for any editor change that makes this captured snapshot old.
-    ///
-    /// This can stop expensive work early, but it cannot prove that a completed result is still
-    /// usable. Callers must still validate that result against the live `EditorState`.
-    pub(crate) fn editor_revision_watch(&self) -> EditorRevisionWatch {
-        EditorRevisionWatch {
-            captured: Arc::clone(&self.editor_revision),
+    pub(crate) fn open_documents_revision(&self) -> OpenDocumentsRevision {
+        self.open_documents_revision.revision
+    }
+
+    /// Watch for a new text revision or a new open session for this target document.
+    pub(crate) fn document_revision_watch(&self) -> DocumentRevisionWatch {
+        DocumentRevisionWatch {
+            captured: Arc::clone(&self.document_revision),
         }
     }
 
@@ -191,38 +231,28 @@ impl CapturedDocument {
     }
 }
 
-/// Notification that a newer global editor revision has replaced this captured snapshot.
+/// Notification that the target document has moved to another text revision or session.
 #[derive(Clone, Debug)]
-pub(crate) struct EditorRevisionWatch {
-    captured: Arc<EditorRevisionNode>,
+pub(crate) struct DocumentRevisionWatch {
+    captured: Arc<DocumentRevisionNode>,
 }
 
-impl EditorRevisionWatch {
+impl DocumentRevisionWatch {
     pub(crate) fn is_superseded(&self) -> bool {
-        self.captured.successor.borrow().is_some()
-    }
-
-    pub(crate) fn current_revision(&self) -> EditorSnapshotRevision {
-        let mut current = Arc::clone(&self.captured);
-        loop {
-            let Some(step) = current.successor.borrow().clone() else {
-                return current.revision;
-            };
-            current = Arc::clone(&step.next);
-        }
+        *self.captured.superseded.borrow()
     }
 
     pub(crate) async fn superseded(&mut self) {
-        let mut successor = self.captured.successor.subscribe();
-        while successor.borrow_and_update().is_none() {
-            if successor.changed().await.is_err() {
+        let mut superseded = self.captured.superseded.subscribe();
+        while !*superseded.borrow_and_update() {
+            if superseded.changed().await.is_err() {
                 return;
             }
         }
     }
 }
 
-/// Why a position captured for one open session cannot be moved to the newest editor snapshot.
+/// Why a position captured for one open session cannot be moved to the newest document capture.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum PositionRecaptureError {
     /// The path was closed or reopened under another open-session identity.
@@ -240,18 +270,18 @@ impl PositionRecaptureError {
     }
 }
 
-/// One immutable link in the editor-revision stream.
+/// One node in the history of open-document states used by global operations.
 ///
 /// Links point only forward. `EditorState` owns the newest node, while a live capture keeps the
 /// links after its revision alive. Once the oldest capture advances or drops, obsolete links are
 /// released without a request registry or retained full-text history.
-struct EditorRevisionNode {
-    revision: EditorSnapshotRevision,
-    successor: watch::Sender<Option<Arc<EditorRevisionStep>>>,
+struct OpenDocumentsRevisionNode {
+    revision: OpenDocumentsRevision,
+    successor: watch::Sender<Option<Arc<OpenDocumentsRevisionStep>>>,
 }
 
-impl EditorRevisionNode {
-    fn new(revision: EditorSnapshotRevision) -> Self {
+impl OpenDocumentsRevisionNode {
+    fn new(revision: OpenDocumentsRevision) -> Self {
         let (successor, _) = watch::channel(None);
         Self {
             revision,
@@ -260,19 +290,47 @@ impl EditorRevisionNode {
     }
 }
 
-impl std::fmt::Debug for EditorRevisionNode {
+impl std::fmt::Debug for OpenDocumentsRevisionNode {
     fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        fmt.debug_struct("EditorRevisionNode")
+        fmt.debug_struct("OpenDocumentsRevisionNode")
             .field("revision", &self.revision)
             .field("has_successor", &self.successor.borrow().is_some())
             .finish()
     }
 }
 
-/// Information needed to move from one accepted global editor revision to the next.
+/// Signal attached to one target document revision.
+///
+/// Unlike the global-operation history, this node is advanced only by changes to its own open
+/// session. Completion can therefore ignore unrelated sibling edits without maintaining a second
+/// document store or revision counter.
+struct DocumentRevisionNode {
+    superseded: watch::Sender<bool>,
+}
+
+impl DocumentRevisionNode {
+    fn new() -> Self {
+        let (superseded, _) = watch::channel(false);
+        Self { superseded }
+    }
+
+    fn supersede(&self) {
+        self.superseded.send_replace(true);
+    }
+}
+
+impl std::fmt::Debug for DocumentRevisionNode {
+    fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        fmt.debug_struct("DocumentRevisionNode")
+            .field("superseded", &*self.superseded.borrow())
+            .finish()
+    }
+}
+
+/// One change between two captured states of all open documents.
 #[derive(Debug)]
-struct EditorRevisionStep {
-    next: Arc<EditorRevisionNode>,
+struct OpenDocumentsRevisionStep {
+    next: Arc<OpenDocumentsRevisionNode>,
     change: EditorChange,
 }
 
@@ -438,7 +496,7 @@ impl EditorStateHandle {
 struct EditorState {
     next_session: u64,
     next_revision: u64,
-    editor_revision: Arc<EditorRevisionNode>,
+    open_documents_revision: Arc<OpenDocumentsRevisionNode>,
     documents: HashMap<PathBuf, DocumentEntry>,
 }
 
@@ -447,7 +505,9 @@ impl Default for EditorState {
         Self {
             next_session: 0,
             next_revision: 0,
-            editor_revision: Arc::new(EditorRevisionNode::new(EditorSnapshotRevision::new(0))),
+            open_documents_revision: Arc::new(OpenDocumentsRevisionNode::new(
+                OpenDocumentsRevision::new(0),
+            )),
             documents: HashMap::new(),
         }
     }
@@ -492,13 +552,14 @@ impl EditorState {
                 open: Some(OpenDocument {
                     session,
                     current: Some(document),
+                    document_revision: Arc::new(DocumentRevisionNode::new()),
                     route,
                 }),
                 last_session: session,
                 tail: current,
             },
         );
-        self.advance_editor_revision(EditorChange::Other);
+        self.advance_open_documents_revision(EditorChange::Other);
 
         sequenced
     }
@@ -532,12 +593,15 @@ impl EditorState {
             Err(error) => {
                 // The client has moved on, but the rejected ranges cannot produce an exact local
                 // value. Invalidate the old snapshot and wait for a later full replacement.
-                self.documents
+                let open = self
+                    .documents
                     .get_mut(path)
                     .and_then(|entry| entry.open.as_mut())
-                    .expect("checked open document should remain open")
-                    .current = None;
-                self.advance_editor_revision(EditorChange::Document {
+                    .expect("checked open document should remain open");
+                open.current = None;
+                open.document_revision.supersede();
+                open.document_revision = Arc::new(DocumentRevisionNode::new());
+                self.advance_open_documents_revision(EditorChange::Document {
                     path: path.to_path_buf(),
                     session,
                     position_transform: PositionTransform::Unavailable,
@@ -562,7 +626,9 @@ impl EditorState {
             applied.text,
         ));
         open.current = Some(document);
-        self.advance_editor_revision(EditorChange::Document {
+        open.document_revision.supersede();
+        open.document_revision = Arc::new(DocumentRevisionNode::new());
+        self.advance_open_documents_revision(EditorChange::Document {
             path: path.to_path_buf(),
             session,
             position_transform: applied.position_transform,
@@ -608,6 +674,7 @@ impl EditorState {
         }
         let entry = self.documents.get_mut(path)?;
         let open = entry.open.take()?;
+        open.document_revision.supersede();
         let cleanup = ClosedDocumentCleanup::new(weak_state, path.to_path_buf(), open.session);
         let (sequenced, current) = SequencedLifecycleEvent::new(
             entry.tail.clone(),
@@ -618,11 +685,11 @@ impl EditorState {
         );
         entry.last_session = open.session;
         entry.tail = current;
-        self.advance_editor_revision(EditorChange::Other);
+        self.advance_open_documents_revision(EditorChange::Other);
         Some(sequenced)
     }
 
-    /// Take the target and every open sibling from the same global editor revision.
+    /// Capture the target and every other open document under one open-documents revision.
     fn document(&self, path: Option<PathBuf>) -> Result<CapturedDocument, DocumentUnavailable> {
         let Some(path) = path else {
             return Err(DocumentUnavailable::new(
@@ -663,7 +730,8 @@ impl EditorState {
 
         Ok(CapturedDocument {
             document: Arc::clone(document),
-            editor_revision: Arc::clone(&self.editor_revision),
+            document_revision: Arc::clone(&open.document_revision),
+            open_documents_revision: Arc::clone(&self.open_documents_revision),
             route: open.route.analysis_route(),
             open_documents: open_documents.into(),
             editor: Weak::new(),
@@ -689,7 +757,7 @@ impl EditorState {
         }
         if open.current.is_none() {
             return Err(PositionRecaptureError::Unavailable(Arc::from(
-                "the newest editor revision has no complete synchronized text",
+                "the newest document revision has no complete synchronized text",
             )));
         }
 
@@ -697,11 +765,11 @@ impl EditorState {
         // captured revision must therefore reach the latest revision without a gap. Edits to the
         // target move its request position; sibling edits and route changes only select a newer
         // complete snapshot.
-        let mut revision = Arc::clone(&captured.editor_revision);
-        while !Arc::ptr_eq(&revision, &self.editor_revision) {
+        let mut revision = Arc::clone(&captured.open_documents_revision);
+        while !Arc::ptr_eq(&revision, &self.open_documents_revision) {
             let Some(step) = revision.successor.borrow().clone() else {
                 return Err(PositionRecaptureError::Unavailable(Arc::from(
-                    "the captured editor revision is not connected to the current revision",
+                    "the captured global-operation epoch is not connected to the current epoch",
                 )));
             };
             position = step.change.rebase(path, session, position)?;
@@ -716,18 +784,26 @@ impl EditorState {
         Ok((recaptured, position))
     }
 
-    fn is_current(
+    fn is_global_operation_current(
         &self,
         target: &TargetDocumentRevision,
-        editor_revision: EditorSnapshotRevision,
+        open_documents_revision: OpenDocumentsRevision,
     ) -> bool {
-        self.editor_revision.revision == editor_revision
+        self.open_documents_revision.revision == open_documents_revision
             && self
                 .documents
                 .get(target.path())
                 .and_then(|entry| entry.open.as_ref())
                 .and_then(|open| open.current.as_ref())
                 .is_some_and(|document| document.target() == target)
+    }
+
+    fn is_target_current(&self, target: &TargetDocumentRevision) -> bool {
+        self.documents
+            .get(target.path())
+            .and_then(|entry| entry.open.as_ref())
+            .and_then(|open| open.current.as_ref())
+            .is_some_and(|document| document.target() == target)
     }
 
     fn route_published(&mut self, path: &Path, session: OpenDocumentSession) {
@@ -737,7 +813,7 @@ impl EditorState {
             .and_then(|entry| entry.open.as_ref())
             .is_some_and(|open| open.session == session);
         if belongs_to_open_session {
-            self.advance_editor_revision(EditorChange::Other);
+            self.advance_open_documents_revision(EditorChange::Other);
         }
     }
 
@@ -782,27 +858,27 @@ impl EditorState {
     }
 
     /// Link the old revision to the new one and notify requests waiting for an editor change.
-    fn advance_editor_revision(&mut self, change: EditorChange) -> EditorSnapshotRevision {
+    fn advance_open_documents_revision(&mut self, change: EditorChange) -> OpenDocumentsRevision {
         let next_revision = self
-            .editor_revision
+            .open_documents_revision
             .revision
             .get()
             .checked_add(1)
-            .expect("editor snapshot-revision counter should not overflow");
-        let revision = EditorSnapshotRevision::new(next_revision);
-        let next = Arc::new(EditorRevisionNode::new(revision));
-        let previous = Arc::clone(&self.editor_revision);
+            .expect("global-operation epoch counter should not overflow");
+        let revision = OpenDocumentsRevision::new(next_revision);
+        let next = Arc::new(OpenDocumentsRevisionNode::new(revision));
+        let previous = Arc::clone(&self.open_documents_revision);
         let replaced = previous
             .successor
-            .send_replace(Some(Arc::new(EditorRevisionStep {
+            .send_replace(Some(Arc::new(OpenDocumentsRevisionStep {
                 next: Arc::clone(&next),
                 change,
             })));
         debug_assert!(
             replaced.is_none(),
-            "an editor revision must have exactly one successor"
+            "a global-operation epoch must have exactly one successor"
         );
-        self.editor_revision = next;
+        self.open_documents_revision = next;
         revision
     }
 
@@ -830,6 +906,7 @@ struct DocumentEntry {
 struct OpenDocument {
     session: OpenDocumentSession,
     current: Option<Arc<EditorDocumentSnapshot>>,
+    document_revision: Arc<DocumentRevisionNode>,
     route: SessionRoute,
 }
 

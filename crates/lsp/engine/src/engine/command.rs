@@ -7,8 +7,9 @@
 use std::path::PathBuf;
 
 use rg_lsp_proto::{
-    AnalysisOutcome, CompletionClientCapabilities, DocumentAnalysisSnapshot,
-    DocumentPositionSnapshot, DocumentRangeSnapshot,
+    AnalysisOutcome, CompletionClientCapabilities, CompletionResult, DocumentPositionSnapshot,
+    DocumentQueryResult, DocumentRangeSnapshot, EditorDocumentSnapshot, GlobalOperationResult,
+    GlobalPositionSnapshot,
 };
 use rg_project::SavedFileChange;
 use tokio::sync::oneshot;
@@ -43,55 +44,56 @@ pub(crate) enum EngineCommand {
         respond_to: EngineResponse<u64>,
     },
     GotoDefinition {
-        input: DocumentPositionSnapshot,
-        respond_to: AnalysisResponse<Vec<ls_types::Location>>,
+        input: GlobalPositionSnapshot,
+        respond_to: AnalysisResponse<DocumentQueryResult<Vec<ls_types::Location>>>,
     },
     GotoTypeDefinition {
-        input: DocumentPositionSnapshot,
-        respond_to: AnalysisResponse<Vec<ls_types::Location>>,
+        input: GlobalPositionSnapshot,
+        respond_to: AnalysisResponse<DocumentQueryResult<Vec<ls_types::Location>>>,
     },
     GotoImplementation {
-        input: DocumentPositionSnapshot,
-        respond_to: AnalysisResponse<Vec<ls_types::Location>>,
+        input: GlobalPositionSnapshot,
+        respond_to: AnalysisResponse<GlobalOperationResult<Vec<ls_types::Location>>>,
     },
     References {
-        input: DocumentPositionSnapshot,
+        input: GlobalPositionSnapshot,
         include_declaration: bool,
-        respond_to: AnalysisResponse<Vec<ls_types::Location>>,
+        respond_to: AnalysisResponse<GlobalOperationResult<Vec<ls_types::Location>>>,
     },
     PrepareRename {
-        input: DocumentPositionSnapshot,
-        respond_to: AnalysisResponse<Option<ls_types::PrepareRenameResponse>>,
+        input: GlobalPositionSnapshot,
+        respond_to:
+            AnalysisResponse<GlobalOperationResult<Option<ls_types::PrepareRenameResponse>>>,
     },
     Rename {
-        input: DocumentPositionSnapshot,
+        input: GlobalPositionSnapshot,
         new_name: String,
-        respond_to: AnalysisResponse<Option<ls_types::WorkspaceEdit>>,
+        respond_to: AnalysisResponse<GlobalOperationResult<Option<ls_types::WorkspaceEdit>>>,
     },
     DocumentHighlight {
         input: DocumentPositionSnapshot,
-        respond_to: AnalysisResponse<Vec<ls_types::DocumentHighlight>>,
+        respond_to: AnalysisResponse<DocumentQueryResult<Vec<ls_types::DocumentHighlight>>>,
     },
     Hover {
         input: DocumentPositionSnapshot,
-        respond_to: AnalysisResponse<Option<ls_types::Hover>>,
+        respond_to: AnalysisResponse<DocumentQueryResult<Option<ls_types::Hover>>>,
     },
     Completion {
         input: DocumentPositionSnapshot,
         client_capabilities: CompletionClientCapabilities,
-        respond_to: AnalysisResponse<Vec<ls_types::CompletionItem>>,
+        respond_to: AnalysisResponse<CompletionResult>,
     },
     Formatting {
-        snapshot: DocumentAnalysisSnapshot,
-        respond_to: AnalysisResponse<Option<Vec<ls_types::TextEdit>>>,
+        snapshot: EditorDocumentSnapshot,
+        respond_to: AnalysisResponse<DocumentQueryResult<Option<Vec<ls_types::TextEdit>>>>,
     },
     DocumentSymbol {
-        snapshot: DocumentAnalysisSnapshot,
-        respond_to: AnalysisResponse<Vec<ls_types::DocumentSymbol>>,
+        snapshot: EditorDocumentSnapshot,
+        respond_to: AnalysisResponse<DocumentQueryResult<Vec<ls_types::DocumentSymbol>>>,
     },
     InlayHint {
         input: DocumentRangeSnapshot,
-        respond_to: AnalysisResponse<Vec<ls_types::InlayHint>>,
+        respond_to: AnalysisResponse<DocumentQueryResult<Vec<ls_types::InlayHint>>>,
     },
     WorkspaceSymbol {
         query: String,

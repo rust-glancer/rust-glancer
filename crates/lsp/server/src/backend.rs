@@ -71,7 +71,7 @@ impl Backend {
         })
     }
 
-    /// Build the engine and immutable editor snapshot required by a document method.
+    /// Build the engine and ingress capture required by a document method.
     async fn document_context_for(&self, uri: &Uri) -> Result<DocumentMethodContext> {
         let captured = ingress::document_request()
             .ok_or_else(|| {
@@ -83,7 +83,7 @@ impl Backend {
                 tracing::debug!(
                     path = ?unavailable.path().map(Path::display),
                     reason = unavailable.reason(),
-                    "document request has no current editor revision"
+                    "document request has no current synchronized text"
                 );
                 methods::temporarily_unavailable(unavailable.reason())
             })?;
@@ -94,9 +94,9 @@ impl Backend {
             )));
         }
 
-        // The document snapshot is ready, but its engine route may still be starting. Return a
+        // The document capture is ready, but its engine route may still be starting. Return a
         // temporary result instead of making this query wait. A client retry will take another
-        // snapshot, while the server keeps the synchronized editor text in the meantime.
+        // fresh capture, while the server keeps the synchronized editor text in the meantime.
         let engine_client = captured
             .engine_client()
             .map_err(|reason| methods::temporarily_unavailable(&reason))?;
@@ -105,9 +105,8 @@ impl Backend {
             path = %captured.document().path().display(),
             session = captured.document().session().get(),
             revision = captured.document().revision().get(),
-            editor_revision = captured.editor_revision().get(),
             client_version = ?captured.document().client_version(),
-            "using editor revision captured at LSP ingress"
+            "using document revision captured at LSP ingress"
         );
 
         Ok(DocumentMethodContext::new(engine_client, captured))

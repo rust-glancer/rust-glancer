@@ -5,13 +5,17 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use rg_body_ir::BodyIrReadTxn;
+use anyhow::Context as _;
+use rg_body_ir::{
+    BodyIrReadTxn, CurrentBodyBuildCheckpoint, CurrentBodyBuildOutcome, CurrentBodyBuilder,
+    CurrentBodySelection, CurrentBodySet,
+};
 use rg_def_map::DefMapReadTxn;
 use rg_def_map::{DefMap, DefMapSource};
-use rg_ir_model::{CrateRef, DefMapRef, ModuleRef};
+use rg_ir_model::{BodyRef, CrateRef, DefMapRef, ModuleRef};
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::SemanticIrReadTxn;
-use rg_semantic_ir::{ItemStore, ItemStoreSource};
+use rg_semantic_ir::{CrateItemQuery, ItemLookupIndex, ItemStore, ItemStoreSource};
 use rg_text::RustEdition;
 use rg_ty::TraitSelectionSession;
 
@@ -27,6 +31,7 @@ pub struct IndexedViewDb<'db> {
     pub(crate) semantic_ir: SemanticIrReadTxn<'db>,
     pub(crate) body_ir: BodyIrReadTxn<'db>,
     trait_selection: Arc<Mutex<HashMap<CrateRef, TraitSelectionSession>>>,
+    body_trait_selection: Arc<Mutex<HashMap<BodyRef, TraitSelectionSession>>>,
 }
 
 impl<'db> IndexedViewDb<'db> {
@@ -40,28 +45,89 @@ impl<'db> IndexedViewDb<'db> {
             semantic_ir,
             body_ir,
             trait_selection: Arc::new(Mutex::new(HashMap::new())),
+            body_trait_selection: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
-    /// Seed crate-semantic solver state produced while building this exact indexed snapshot.
+    /// Build the current bodies chosen by one cursor or range selection.
     ///
-    /// The caller owns snapshot coherence and the lifetime policy. The view keeps the same
-    /// request-local map used by lazily created sessions, so seeded and newly encountered crates
-    /// follow one lookup path.
-    pub fn with_trait_selection_sessions(
-        self,
-        sessions: impl IntoIterator<Item = TraitSelectionSession>,
-    ) -> Self {
+    /// Selection decides which syntax roots start the worklist. Lowering may add nested bodies, so
+    /// even a cursor selection returns a collection rather than one body.
+    #[allow(clippy::too_many_arguments)]
+    pub fn build_current_bodies(
+        &self,
+        parse_package: &rg_parse::Package,
+        crate_ref: CrateRef,
+        file: rg_parse::FileId,
+        current_source: &rg_parse::CurrentSource,
+        associations: &rg_parse::DeclarationAssociationIndex,
+        supplemental_item_lookup_index: Option<&ItemLookupIndex>,
+        selection: CurrentBodySelection,
+        synthetic_body_ref: impl FnMut() -> anyhow::Result<rg_ir_model::BodyRef>,
+        checkpoint: impl FnMut(CurrentBodyBuildCheckpoint) -> anyhow::Result<()>,
+    ) -> anyhow::Result<CurrentBodyBuildOutcome> {
+        CurrentBodyBuilder::new(
+            parse_package,
+            &self.def_map,
+            &self.semantic_ir,
+            &self.body_ir,
+            crate_ref,
+            file,
+            current_source,
+            associations,
+            supplemental_item_lookup_index,
+            selection,
+        )
+        .with_trait_selection(self.trait_selection(crate_ref))
+        .build(synthetic_body_ref, checkpoint)
+    }
+
+    /// Build the crate-wide lookup needed to resolve a current body before saved bodies are ready.
+    ///
+    /// An early-start project publishes DefMap and Semantic IR before it builds saved Body IR.
+    /// Current bodies can use those already available declarations to build this smaller index
+    /// without materializing every saved body. The value belongs to the request and crate, so the
+    /// project snapshot prepares it once and shares it across current-body builds in that crate.
+    /// If saved Body IR already published the index, this method returns `None` instead.
+    pub fn build_supplemental_current_body_item_lookup_index(
+        &self,
+        crate_ref: CrateRef,
+    ) -> anyhow::Result<Option<ItemLookupIndex>> {
+        if self
+            .body_ir
+            .item_lookup_index(crate_ref)
+            .context("read the saved crate item lookup index")?
+            .is_some()
         {
-            let mut by_crate = self
-                .trait_selection
-                .lock()
-                .expect("trait-selection session map lock should not be poisoned");
-            for session in sessions {
-                by_crate.insert(session.use_site(), session);
-            }
+            return Ok(None);
         }
+
+        ItemLookupIndex::build_from(&CrateItemQuery::new(
+            &self.def_map,
+            &self.semantic_ir,
+            crate_ref,
+        ))
+        .map(Some)
+        .context("build the request-local crate item lookup index")
+    }
+
+    /// Allocate the first request-only body id after this crate's saved body ids.
+    pub fn first_synthetic_body_ref(
+        &self,
+        crate_ref: CrateRef,
+    ) -> Result<rg_ir_model::BodyRef, PackageStoreError> {
+        self.body_ir.first_synthetic_body_ref(crate_ref)
+    }
+
+    /// Add request-local body replacements without changing the saved transactions.
+    pub fn with_current_body_set(mut self, current: CurrentBodySet) -> Self {
+        self.body_ir = self.body_ir.with_current_body_set(current);
         self
+    }
+
+    /// Return whether a body identity belongs to request-local current Body IR.
+    pub fn is_current_body(&self, body_ref: BodyRef) -> bool {
+        self.body_ir.is_current_body(body_ref)
     }
 
     /// Return the solver session shared by queries at one crate use site.
@@ -76,6 +142,21 @@ impl<'db> IndexedViewDb<'db> {
             .expect("trait-selection session map lock should not be poisoned")
             .entry(use_site)
             .or_insert_with(|| TraitSelectionSession::new(use_site))
+            .clone()
+    }
+
+    /// Return the inference scope owned by one body in this analysis request.
+    ///
+    /// Separate bodies share the expensive crate-semantic solver state, but not answers that may
+    /// contain local inference variables or synthetic body identities. Repeated queries for the
+    /// same body reuse its scope until the request-owned view is dropped.
+    pub(crate) fn trait_selection_for_body(&self, body_ref: BodyRef) -> TraitSelectionSession {
+        let crate_session = self.trait_selection(body_ref.crate_ref);
+        self.body_trait_selection
+            .lock()
+            .expect("body trait-selection session map lock should not be poisoned")
+            .entry(body_ref)
+            .or_insert_with(|| crate_session.for_body(body_ref))
             .clone()
     }
 

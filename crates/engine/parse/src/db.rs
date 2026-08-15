@@ -270,9 +270,7 @@ impl ParseDb {
     ) -> SavedFileRefresh {
         if known_file
             && previous.as_ref().is_some_and(|previous| {
-                previous.is_saved()
-                    && previous.revision() == source.revision()
-                    && previous.byte_len() == source.byte_len()
+                previous.revision() == source.revision() && previous.byte_len() == source.byte_len()
             })
         {
             return SavedFileRefresh::Unchanged;
@@ -297,51 +295,6 @@ impl ParseDb {
         } else {
             SavedFileRefresh::Reparsed(changed_files)
         }
-    }
-
-    /// Opens this cloned parse database for captured overrides of already-known sources.
-    pub fn begin_source_overrides(&self) {
-        self.sources.begin_source_overrides();
-    }
-
-    /// Applies one captured source override to every package-local file identity that owns it.
-    ///
-    /// Matching bytes only replace the backing source handle, preserving syntax and line indexes.
-    /// Changed bytes are reparsed. In both cases later package rebuilding uses the captured value
-    /// without consulting disk for that source.
-    pub fn apply_source_override(
-        &mut self,
-        captured: &CapturedSource,
-    ) -> Result<Vec<PackageFileRef>, SourceError> {
-        let previous = self
-            .sources
-            .entry(captured.path())
-            .ok_or_else(|| SourceError::Unknown {
-                path: captured.path().to_path_buf(),
-            })?;
-        let unchanged = previous.revision() == captured.revision()
-            && previous.byte_len() == captured.byte_len();
-        let source = self.sources.replace_with_override(captured)?;
-        let mut changed_files = Vec::new();
-
-        for (package_slot, package) in self.packages.iter_mut().enumerate() {
-            if unchanged {
-                package.rebind_file_source(captured.path(), Arc::clone(&source));
-                continue;
-            }
-            let Some(file_id) =
-                package.reparse_file_from_source(captured.path(), Arc::clone(&source))
-            else {
-                continue;
-            };
-
-            changed_files.push(PackageFileRef {
-                package: package_slot,
-                file: file_id,
-            });
-        }
-
-        Ok(changed_files)
     }
 
     /// Returns the source inventory shared by every package-local file entry.
@@ -371,23 +324,6 @@ impl ParseDb {
     /// Rejects a generation candidate if any captured saved source changed during construction.
     pub fn validate_saved_sources(&self) -> anyhow::Result<()> {
         Ok(self.sources.validate_saved()?)
-    }
-
-    /// Rejects a partial candidate if a source in one of its rebuilt packages changed on disk.
-    ///
-    /// Sources outside these packages still belong to the already-validated saved generation.
-    /// Module-existence probes are always checked because this rebuild may have made new discovery
-    /// decisions even when the files it parsed stayed unchanged.
-    pub fn validate_saved_sources_in_packages(
-        &self,
-        package_slots: &[usize],
-    ) -> anyhow::Result<()> {
-        let paths = package_slots
-            .iter()
-            .filter_map(|package_slot| self.packages.get(*package_slot).map(Package::parsed_files));
-        Ok(self
-            .sources
-            .validate_saved_paths(paths.flatten().map(|file| file.path()))?)
     }
 
     /// Releases exact saved text while retaining strong source identity for verified reloads.

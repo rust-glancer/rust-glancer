@@ -10,11 +10,10 @@ use crate::model::{DocumentSymbol, WorkspaceSymbol};
 
 impl From<SourceOutlineDeclaration> for DocumentSymbol {
     fn from(declaration: SourceOutlineDeclaration) -> Self {
-        let (name, kind, file_id, span, selection_span) = declaration.into_parts();
+        let (name, kind, _file_id, span, selection_span) = declaration.into_parts();
         Self {
             name,
             kind,
-            file_id,
             span,
             selection_span,
             children: Vec::new(),

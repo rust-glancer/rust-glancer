@@ -1,30 +1,23 @@
-use anyhow::Context as _;
 use ls_types::{
     DocumentSymbol as LspDocumentSymbol, Location, OneOf, SymbolKind as LspSymbolKind, Uri,
     WorkspaceSymbol as LspWorkspaceSymbol,
 };
 use rg_analysis::{DocumentSymbol, SymbolKind, WorkspaceSymbol};
-use rg_def_map::PackageSlot;
+use rg_parse::LineIndex;
 use rg_project::ProjectSnapshot;
 
 use crate::proto::{navigation, position};
 
+/// Convert a syntax outline using the line index for the same editor text.
 #[allow(deprecated)]
-pub(crate) fn document_symbol(
-    snapshot: ProjectSnapshot<'_>,
-    package_slot: PackageSlot,
-    symbol: DocumentSymbol,
-) -> anyhow::Result<LspDocumentSymbol> {
-    let line_index = snapshot
-        .file_line_index(package_slot, symbol.file_id)?
-        .context("while attempting to find file for document symbol conversion")?;
+pub(crate) fn document_symbol(line_index: &LineIndex, symbol: DocumentSymbol) -> LspDocumentSymbol {
     let children = symbol
         .children
         .into_iter()
-        .map(|child| document_symbol(snapshot, package_slot, child))
-        .collect::<anyhow::Result<Vec<_>>>()?;
+        .map(|child| document_symbol(line_index, child))
+        .collect::<Vec<_>>();
 
-    Ok(LspDocumentSymbol {
+    LspDocumentSymbol {
         name: symbol.name,
         detail: None,
         kind: symbol_kind(symbol.kind),
@@ -33,7 +26,7 @@ pub(crate) fn document_symbol(
         range: position::range(line_index, symbol.span),
         selection_range: position::range(line_index, symbol.selection_span),
         children: (!children.is_empty()).then_some(children),
-    })
+    }
 }
 
 pub(crate) fn workspace_symbol(

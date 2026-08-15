@@ -44,8 +44,6 @@ pub enum SourceError {
         expected: bool,
         actual: bool,
     },
-    /// A source override attempted to introduce a path outside its saved source universe.
-    Unknown { path: PathBuf },
     /// A sealed generation was asked to discover or replace a source path.
     Sealed { path: PathBuf },
 }
@@ -106,11 +104,6 @@ impl fmt::Display for SourceError {
                 "sealed source inventory cannot discover {}",
                 path.display()
             ),
-            Self::Unknown { path } => write!(
-                f,
-                "source {} is not part of the selected project generation",
-                path.display()
-            ),
         }
     }
 }
@@ -123,7 +116,6 @@ impl Error for SourceError {
             Self::Stale { .. }
             | Self::Missing { .. }
             | Self::ExistenceChanged { .. }
-            | Self::Unknown { .. }
             | Self::Sealed { .. } => None,
         }
     }

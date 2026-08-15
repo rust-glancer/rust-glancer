@@ -11,7 +11,8 @@ mod module;
 mod scope;
 
 use rg_ir_model::{
-    BodyRef, EnumVariantFieldRef, FieldRef, FunctionRef, Path, ScopeId, identity::DeclarationRef,
+    BodyRef, EnumVariantFieldRef, FieldRef, FunctionRef, ModuleRef, Path, ScopeId,
+    identity::DeclarationRef,
 };
 use rg_ir_view::{
     IndexedViewDb,
@@ -177,6 +178,7 @@ impl GenericScopeCompletionCandidate {
 enum PrimitiveTypePathScope {
     Body { body: BodyRef, scope: ScopeId },
     Signature(IndexedSignatureTypeScope),
+    Module(ModuleRef),
 }
 
 /// Resolved dot-method identity plus the trait applicability used for ranking.

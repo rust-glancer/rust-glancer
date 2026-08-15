@@ -7,10 +7,10 @@
 
 use std::collections::HashMap;
 
-use rg_def_map::{CrateData, DefMapSource, PackageSlot};
+use rg_def_map::{DefMapSource, PackageSlot};
 use rg_ir_model::{
-    AssocItemId, DefMapRef, FunctionRef, ImplRef, SemanticItemRef, TraitDefRef, TraitImplRef,
-    TypeAliasRef, TypeDefId, TypeDefRef,
+    AssocItemId, FunctionRef, ImplRef, SemanticItemRef, TraitDefRef, TraitImplRef, TypeAliasRef,
+    TypeDefRef,
 };
 use rg_item_tree::LangItem;
 use rg_std::{MemorySize, Shrink, UniqueVec};
@@ -70,125 +70,6 @@ impl ItemLookupIndex {
         }
 
         Ok(index)
-    }
-
-    /// Encode the body-independent crate facts that can change a lookup index.
-    ///
-    /// A complete index combines stores visible from one use-site crate. Dirty analysis can reuse
-    /// that index when this key is unchanged for every rebuilt crate; dependencies outside the
-    /// rebuild keep their saved stores. The key includes the local indexed declarations together
-    /// with external roots and the selected prelude, which determine the visible store set.
-    ///
-    /// Hash maps are projected into sorted vectors before encoding. Candidate vectors keep their
-    /// construction order because that order is part of lookup behavior.
-    pub fn cache_key(crate_data: &CrateData, store: &ItemStore) -> anyhow::Result<Vec<u8>> {
-        fn origin_sort_key(origin: DefMapRef) -> (u8, usize, usize, usize) {
-            match origin {
-                DefMapRef::Crate(crate_ref) => (0, crate_ref.package.0, crate_ref.crate_id.0, 0),
-                DefMapRef::Body(body) => (
-                    1,
-                    body.crate_ref.package.0,
-                    body.crate_ref.crate_id.0,
-                    body.body.0,
-                ),
-            }
-        }
-
-        fn type_def_sort_key(ty: TypeDefRef) -> ((u8, usize, usize, usize), u8, usize) {
-            let (kind, id) = match ty.id {
-                TypeDefId::Struct(id) => (0, id.0),
-                TypeDefId::Enum(id) => (1, id.0),
-                TypeDefId::Union(id) => (2, id.0),
-            };
-            (origin_sort_key(ty.origin), kind, id)
-        }
-
-        fn trait_sort_key(trait_ref: TraitDefRef) -> ((u8, usize, usize, usize), usize) {
-            (origin_sort_key(trait_ref.origin), trait_ref.id.0)
-        }
-
-        // Fill the local part with the same code used by the runtime index. This prevents the cache
-        // key from drifting away from the data it validates.
-        let mut index = Self::default();
-        index.extend_from_store(store);
-        let Self {
-            visible_packages,
-            lang_items,
-            inherent_impls_by_type,
-            inherent_functions_by_type_and_name,
-            structural_inherent_impls,
-            trait_impls_by_type,
-            trait_impls_by_trait,
-            trait_functions_by_trait,
-            trait_functions_by_trait_and_name,
-        } = index;
-        debug_assert!(
-            visible_packages.is_empty(),
-            "a local item-store index should not contain visibility packages"
-        );
-
-        // The local item store does not own visibility edges. External roots and the prelude still
-        // belong in the key because changing either can select a different set of contributing
-        // stores when the complete index is rebuilt.
-        let mut extern_roots = crate_data
-            .extern_prelude()
-            .iter()
-            .map(|(name, module)| (name.clone(), *module))
-            .collect::<Vec<_>>();
-        extern_roots.sort_by(|(left, _), (right, _)| left.cmp(right));
-
-        // Hash-map order must not decide whether two equivalent snapshots can share an index.
-        // Sort each map after converting it to vectors, but keep candidates in their lookup order.
-        let mut inherent_impls_by_type = inherent_impls_by_type.into_iter().collect::<Vec<_>>();
-        inherent_impls_by_type.sort_by_key(|(ty, _)| type_def_sort_key(*ty));
-
-        let mut inherent_functions_by_type_and_name = inherent_functions_by_type_and_name
-            .into_iter()
-            .map(|(ty, functions)| {
-                let mut functions = functions.into_iter().collect::<Vec<_>>();
-                functions.sort_by(|(left, _), (right, _)| left.cmp(right));
-                (ty, functions)
-            })
-            .collect::<Vec<_>>();
-        inherent_functions_by_type_and_name.sort_by_key(|(ty, _)| type_def_sort_key(*ty));
-
-        let mut trait_impls_by_type = trait_impls_by_type.into_iter().collect::<Vec<_>>();
-        trait_impls_by_type.sort_by_key(|(ty, _)| type_def_sort_key(*ty));
-
-        let mut trait_impls_by_trait = trait_impls_by_trait.into_iter().collect::<Vec<_>>();
-        trait_impls_by_trait.sort_by_key(|(trait_ref, _)| trait_sort_key(*trait_ref));
-
-        let mut trait_functions_by_trait = trait_functions_by_trait.into_iter().collect::<Vec<_>>();
-        trait_functions_by_trait.sort_by_key(|(trait_ref, _)| trait_sort_key(*trait_ref));
-
-        let mut trait_functions_by_trait_and_name = trait_functions_by_trait_and_name
-            .into_iter()
-            .map(|(trait_ref, functions)| {
-                let mut functions = functions.into_iter().collect::<Vec<_>>();
-                functions.sort_by(|(left, _), (right, _)| left.cmp(right));
-                (trait_ref, functions)
-            })
-            .collect::<Vec<_>>();
-        trait_functions_by_trait_and_name.sort_by_key(|(trait_ref, _)| trait_sort_key(*trait_ref));
-
-        // This tuple is an encoding detail rather than another semantic entity. Its order is the
-        // cache contract: local index facts first, then the edges that select visible stores.
-        let key = (
-            (
-                lang_items,
-                inherent_impls_by_type,
-                inherent_functions_by_type_and_name,
-                structural_inherent_impls,
-                trait_impls_by_type,
-                trait_impls_by_trait,
-                trait_functions_by_trait,
-                trait_functions_by_trait_and_name,
-            ),
-            extern_roots,
-            crate_data.prelude(),
-        );
-        wincode::config::serialize(&key, wincode::config::Configuration::default())
-            .map_err(|error| anyhow::anyhow!("{error}"))
     }
 
     /// Packages whose semantic stores contributed to this use-site index.

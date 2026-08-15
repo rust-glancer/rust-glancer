@@ -8,9 +8,7 @@ use rg_parse::{FileId, ParseDb};
 use rg_workspace::{WorkspaceLoweringConfig, WorkspaceMetadata};
 use test_fixture::{CrateFixture, FixtureMarkers, FixtureSpec, fixture_crate_with_markers};
 
-use crate::{
-    AnalysisChangeSummary, PackageResidencyPolicy, Project, SavedFileChange, SourceOverrideScope,
-};
+use crate::{AnalysisChangeSummary, PackageResidencyPolicy, Project, SavedFileChange};
 
 /// Materialized project fixture sources plus marker metadata.
 pub struct ProjectSourceFixture {
@@ -98,34 +96,6 @@ impl ProjectFixture {
 
     pub fn package_slot_by_name(&self, package_name: &str) -> PackageSlot {
         Self::package_slot_by_name_in(self.project.state.parse_db(), package_name)
-    }
-
-    pub fn source_override(&self, relative_path: &str, text: &str) -> Project {
-        self.source_override_with_scope(
-            relative_path,
-            text,
-            SourceOverrideScope::ReverseDependencyClosure,
-        )
-    }
-
-    pub fn source_override_with_scope(
-        &self,
-        relative_path: &str,
-        text: &str,
-        scope: SourceOverrideScope,
-    ) -> Project {
-        let path = self
-            .path(relative_path)
-            .canonicalize()
-            .expect("fixture editor path should canonicalize");
-        let source = self
-            .project
-            .capture_known_source(&path, text)
-            .expect("fixture editor source should belong to the project");
-        self.project
-            .derive_with_source_overrides(scope, [source])
-            .expect("fixture source overrides should build")
-            .expect("fixture source overrides should touch a known file")
     }
 
     pub fn apply_saved_fixture(&mut self, spec: &str) -> AnalysisChangeSummary {

@@ -29,8 +29,8 @@ use anyhow::Context as _;
 use super::{
     CompletionQuery,
     site::{
-        CompletionSite, CompletionSiteDetector, ItemListCompletionKind, NameCompletionContext,
-        SpecializedCompletionContext, SyntaxCompletionContext,
+        CompletionSite, CompletionSiteDetector, CompletionSourceAttachment, ItemListCompletionKind,
+        NameCompletionContext, SpecializedCompletionContext, SyntaxCompletionContext,
     },
     syntax::CompletionSyntaxContext,
 };
@@ -131,7 +131,7 @@ impl<'a, 'db, 'source> CompletionResolver<'a, 'db, 'source> {
         // into a semantic completion site. For example, `f$0` at item level is
         // just incomplete text, not a Body IR or DefMap path.
         let syntax_hint = syntax_context.map(CompletionSyntaxContext::site_syntax);
-        let Some(site) = CompletionSiteDetector::new(self.analysis.view_db())
+        let Some(site) = CompletionSiteDetector::new(self.analysis)
             .site_at(
                 self.query.crate_ref,
                 self.query.file_id,
@@ -202,14 +202,13 @@ impl<'a, 'db, 'source> CompletionResolver<'a, 'db, 'source> {
                     .completions(site, syntax_context)
                     .context("collect unqualified completions")?;
                 if context == NameCompletionContext::Type
-                    && let Some(binding) =
-                        rg_ir_view::source::SourceCompletionView::new(self.analysis.view_db())
-                            .implicit_associated_type_binding_site_at(
-                                self.query.crate_ref,
-                                self.query.file_id,
-                                self.query.offset,
-                            )
-                            .context("detect implicit associated type binding")?
+                    && let Some(binding) = CompletionSourceAttachment::new(
+                        self.analysis,
+                        self.query.crate_ref,
+                        self.query.file_id,
+                    )
+                    .implicit_associated_type_binding_site_at(self.query.offset)
+                    .context("detect implicit associated type binding")?
                 {
                     completions.extend(
                         AssociatedTypeBindingCompletionResolver::new(self.analysis, self.query)

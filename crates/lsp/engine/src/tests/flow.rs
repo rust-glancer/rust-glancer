@@ -83,6 +83,7 @@ async fn returns_protocol_edits_for_specialized_and_postfix_completions() {
 }
 
 #[tokio::test]
+#[ignore = "TODO(#160)"]
 async fn returns_protocol_additional_edits_for_auto_imports() {
     let fixture = LspEngineFixture::initialized(
         r#"

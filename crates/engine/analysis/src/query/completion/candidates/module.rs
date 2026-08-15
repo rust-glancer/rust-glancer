@@ -163,7 +163,8 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
             IndexedUnqualifiedNameScope::Signature { scope, .. } => {
                 self.unqualified_module_candidates(scope.context().module)
             }
-            IndexedUnqualifiedNameScope::Import { module, .. } => {
+            IndexedUnqualifiedNameScope::Module { module, .. }
+            | IndexedUnqualifiedNameScope::Import { module, .. } => {
                 self.unqualified_module_candidates(*module)
             }
         }

@@ -15,8 +15,8 @@ pub use completion::{
 };
 pub use hover::{HoverBlock, HoverInfo};
 pub use inlay_hints::{InlayHint, InlayHintKind, InlayHintPosition};
-pub use navigation::{NavigationTarget, NavigationTargetKind};
+pub use navigation::{NavigationTarget, NavigationTargetKind, NavigationTargetSource};
 pub use references::ReferenceLocation;
 pub use rename::{RenameEdit, RenameResult, RenameTarget};
 pub use symbol::SymbolAt;
-pub use symbols::{DocumentSymbol, WorkspaceSymbol};
+pub use symbols::{DocumentOutline, DocumentSymbol, WorkspaceSymbol};

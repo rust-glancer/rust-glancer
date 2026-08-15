@@ -86,6 +86,14 @@ impl<T> ExpectedUnique<T> {
             Self::Ambiguous => ExpectedUnique::Ambiguous,
         }
     }
+
+    pub fn and_then<U>(self, f: impl FnOnce(T) -> ExpectedUnique<U>) -> ExpectedUnique<U> {
+        match self {
+            Self::Empty => ExpectedUnique::Empty,
+            Self::One(value) => f(value),
+            Self::Ambiguous => ExpectedUnique::Ambiguous,
+        }
+    }
 }
 
 impl<T> ExpectedUnique<T>
@@ -147,5 +155,25 @@ mod tests {
         assert_eq!(ExpectedUnique::<u8>::new().into_option(), None);
         assert_eq!(ExpectedUnique::One(1).into_option(), Some(1));
         assert_eq!(ExpectedUnique::<u8>::Ambiguous.into_option(), None);
+    }
+
+    #[test]
+    fn chains_unique_candidates_without_losing_empty_or_ambiguous_states() {
+        assert_eq!(
+            ExpectedUnique::One(2).and_then(|value| ExpectedUnique::One(value * 2)),
+            ExpectedUnique::One(4),
+        );
+        assert_eq!(
+            ExpectedUnique::<u8>::Empty.and_then(ExpectedUnique::One),
+            ExpectedUnique::Empty,
+        );
+        assert_eq!(
+            ExpectedUnique::<u8>::Ambiguous.and_then(ExpectedUnique::One),
+            ExpectedUnique::Ambiguous,
+        );
+        assert_eq!(
+            ExpectedUnique::One(2).and_then(|_| ExpectedUnique::<u8>::Ambiguous),
+            ExpectedUnique::Ambiguous,
+        );
     }
 }

@@ -1,17 +1,15 @@
-//! Converts engine analysis outcomes into values or JSON-RPC errors.
+//! Checks engine response ids before turning a response into an LSP value.
 //!
-//! Engine responses take one of two routes:
+//! Workspace queries use only a saved project id. A document query also returns the target session
+//! and text revision that it used. Cross-file operations return one more id for the full captured
+//! set of open documents. This module checks those ids against both the original request and the
+//! live editor state.
 //!
-//! - Workspace queries must carry saved-project input and do not depend on live editor text.
-//! - Document queries must identify the exact captured document and global editor revision used by
-//!   the engine. After checking those tags, the server also checks whether that editor state is
-//!   still live.
-//!
-//! Completion needs to distinguish an ordinary failure from `EditorChanged`, because it can take
-//! a newer snapshot and retry inside the same client request. Other document handlers turn that
-//! status into `ContentModified` in `DocumentMethodContext::finish_query`.
+//! Completion treats `EditorChanged` specially: it can capture the newer text and retry inside the
+//! same client request. Other document handlers return `ContentModified` and let the editor decide
+//! whether to send another request.
 
-use std::borrow::Cow;
+use std::{borrow::Cow, path::Path};
 
 use tower_lsp_server::jsonrpc::{Error, ErrorCode};
 
@@ -53,12 +51,12 @@ pub(crate) fn workspace_query<T>(result: anyhow::Result<AnalysisOutcome<T>>) -> 
     Ok(ready.into_value())
 }
 
-/// Check a document value against both its captured input and the live editor state.
+/// Check that a global result belongs to this request and that none of its documents changed.
 ///
 /// Mismatched response tags mean the engine answered a different request and are internal errors.
 /// A matching response may still be `EditorChanged` when another edit arrived while analysis was
 /// running.
-pub(super) fn document_query<T>(
+pub(super) fn global_operation_query<T>(
     result: anyhow::Result<AnalysisOutcome<T>>,
     captured: &CapturedDocument,
 ) -> Result<DocumentQueryStatus<T>, Error> {
@@ -73,22 +71,59 @@ pub(super) fn document_query<T>(
             "analysis response target does not match its captured request"
         )));
     }
-    let Some(editor_revision) = ready.input().editor_snapshot_revision() else {
+    let Some(open_documents_revision) = ready.input().open_documents_revision() else {
         return Err(internal_error(anyhow::anyhow!(
-            "document analysis response has no editor snapshot revision"
+            "global operation response has no ingress-state epoch"
         )));
     };
-    if captured.editor_revision() != editor_revision {
+    if captured.open_documents_revision() != open_documents_revision {
         return Err(internal_error(anyhow::anyhow!(
-            "analysis response editor revision does not match its captured request"
+            "global operation response does not match its captured ingress-state epoch"
         )));
     }
-    if !captured.is_current(target, editor_revision) {
+    if !captured.is_global_operation_current(target, open_documents_revision) {
         tracing::debug!(
             path = %target.path().display(),
             session = target.session().get(),
             revision = target.revision().get(),
             "analysis result was overtaken before LSP publication"
+        );
+        return Ok(DocumentQueryStatus::EditorChanged);
+    }
+    Ok(DocumentQueryStatus::Current(ready.into_value()))
+}
+
+/// Check a result that depends on its target document but not on other open documents.
+///
+/// Document-local reads use this path. A sibling may change while analysis is running without
+/// making the result stale; replacing the target text, closing it, or reopening its path still
+/// prevents publication.
+pub(super) fn target_document_query<T>(
+    result: anyhow::Result<AnalysisOutcome<T>>,
+    captured: &CapturedDocument,
+) -> Result<DocumentQueryStatus<T>, Error> {
+    let ready = ready_result(result)?;
+    let Some(target) = ready.input().target_document() else {
+        return Err(internal_error(anyhow::anyhow!(
+            "target-only analysis response has no target revision"
+        )));
+    };
+    if captured.document().target() != target {
+        return Err(internal_error(anyhow::anyhow!(
+            "target-only analysis response does not match its captured request"
+        )));
+    }
+    if ready.input().open_documents_revision().is_some() {
+        return Err(internal_error(anyhow::anyhow!(
+            "target-only analysis response unexpectedly depends on open sibling documents"
+        )));
+    }
+    if !captured.is_target_current(target) {
+        tracing::debug!(
+            path = %target.path().display(),
+            session = target.session().get(),
+            revision = target.revision().get(),
+            "target-only analysis result was overtaken before LSP publication"
         );
         return Ok(DocumentQueryStatus::EditorChanged);
     }
@@ -120,6 +155,16 @@ pub(crate) fn temporarily_unavailable(reason: &str) -> Error {
     error
 }
 
+/// Tell the client which document must be saved before a cross-file operation can run.
+pub(super) fn save_required(path: &Path) -> Error {
+    let mut error = Error::content_modified();
+    error.message = Cow::Owned(format!(
+        "save `{}` before running this operation",
+        path.display()
+    ));
+    error
+}
+
 fn logged_abort_error(abort: AnalysisAbort) -> Error {
     tracing::debug!(
         ?abort,
@@ -134,14 +179,12 @@ fn logged_abort_error(abort: AnalysisAbort) -> Error {
 mod tests {
     use std::path::PathBuf;
 
-    use rg_lsp_proto::{
-        AnalysisAbort, AnalysisInput, AnalysisOutcome, AnalysisReady, AnalysisScope,
-    };
+    use rg_lsp_proto::{AnalysisAbort, AnalysisInput, AnalysisOutcome, AnalysisReady};
     use tower_lsp_server::{jsonrpc::ErrorCode, ls_types::TextDocumentContentChangeEvent};
 
     use super::{
-        DocumentQueryStatus, OVERTAKEN_DOCUMENT_REASON, document_query, internal_error,
-        workspace_query,
+        DocumentQueryStatus, OVERTAKEN_DOCUMENT_REASON, global_operation_query, internal_error,
+        save_required, target_document_query, workspace_query,
     };
     use crate::ingress::EditorStateHandle;
 
@@ -175,6 +218,17 @@ mod tests {
     }
 
     #[test]
+    fn save_required_is_a_client_neutral_content_modified_response() {
+        let error = save_required(PathBuf::from("/workspace/src/lib.rs").as_path());
+
+        assert_eq!(error.code, ErrorCode::ContentModified);
+        assert_eq!(
+            error.message.as_ref(),
+            "save `/workspace/src/lib.rs` before running this operation",
+        );
+    }
+
+    #[test]
     fn document_query_reports_an_edit_that_arrived_after_analysis() {
         let path = PathBuf::from("/workspace/src/lib.rs");
         let editor = EditorStateHandle::default();
@@ -182,11 +236,10 @@ mod tests {
         let captured = editor
             .document(Some(path.clone()))
             .expect("opened document should be captured");
-        let input = AnalysisInput::for_target_revision(
+        let input = AnalysisInput::for_global_operation(
             11,
-            captured.editor_revision(),
+            captured.open_documents_revision(),
             captured.document().target().clone(),
-            AnalysisScope::ChangedPackages,
         );
         let ready = AnalysisOutcome::Ready(AnalysisReady::new(17_u8, input));
 
@@ -195,7 +248,7 @@ mod tests {
                 .change(&path, Some(2), &[full_change("fn second() {}")])
                 .expect("full change should apply")
         );
-        let status = document_query(Ok(ready), &captured)
+        let status = global_operation_query(Ok(ready), &captured)
             .expect("a later editor change is not an engine response error");
 
         assert!(matches!(&status, DocumentQueryStatus::EditorChanged));
@@ -204,6 +257,30 @@ mod tests {
             .expect_err("ordinary document queries must ask the client to retry");
         assert_eq!(error.code, ErrorCode::ContentModified);
         assert_eq!(error.message.as_ref(), OVERTAKEN_DOCUMENT_REASON);
+    }
+
+    #[test]
+    fn target_document_query_ignores_a_later_sibling_edit() {
+        let target = PathBuf::from("/workspace/src/lib.rs");
+        let sibling = PathBuf::from("/workspace/src/sibling.rs");
+        let editor = EditorStateHandle::default();
+        editor.open(target.clone(), Some(1), "fn target() {}".to_string());
+        editor.open(sibling.clone(), Some(1), "fn sibling() {}".to_string());
+        let captured = editor
+            .document(Some(target))
+            .expect("target document should be captured");
+        let input = AnalysisInput::for_target_document(11, captured.document().target().clone());
+        let ready = AnalysisOutcome::Ready(AnalysisReady::new(17_u8, input));
+
+        assert!(
+            editor
+                .change(&sibling, Some(2), &[full_change("fn changed() {}")])
+                .expect("full sibling change should apply")
+        );
+        let status = target_document_query(Ok(ready), &captured)
+            .expect("a sibling edit must not invalidate target-only analysis");
+
+        assert!(matches!(status, DocumentQueryStatus::Current(17)));
     }
 
     #[test]

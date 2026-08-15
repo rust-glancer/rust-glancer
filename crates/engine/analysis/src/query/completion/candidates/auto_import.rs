@@ -38,6 +38,12 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
                     IndexedUnqualifiedNameContext::Type { .. } | IndexedUnqualifiedNameContext::Value,
                 ..
             } => scope.context().module,
+            IndexedUnqualifiedNameScope::Module {
+                module,
+                context:
+                    IndexedUnqualifiedNameContext::Type { .. } | IndexedUnqualifiedNameContext::Value,
+                ..
+            } => *module,
             IndexedUnqualifiedNameScope::Body {
                 context: IndexedUnqualifiedNameContext::Const,
                 ..
@@ -52,6 +58,11 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
             }
             | IndexedUnqualifiedNameScope::Signature {
                 context: IndexedUnqualifiedNameContext::Pattern(_),
+                ..
+            }
+            | IndexedUnqualifiedNameScope::Module {
+                context:
+                    IndexedUnqualifiedNameContext::Const | IndexedUnqualifiedNameContext::Pattern(_),
                 ..
             }
             | IndexedUnqualifiedNameScope::Import { .. } => return Ok(Vec::new()),

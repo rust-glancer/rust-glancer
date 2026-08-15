@@ -76,10 +76,14 @@ impl<'a> BodyLowering<'a> {
         mut self,
         function: ast::Fn,
         body: ast::BlockExpr,
+        request_root: bool,
     ) -> LoweredBodyData {
         // Parameters live in the function's outer lexical scope. The body block gets a child scope
         // so locals do not appear before the function boundary.
         let param_scope = self.builder.alloc_scope(None);
+        if request_root {
+            self.lower_request_root_function(&function, param_scope);
+        }
         let function_params = self.lower_params(function.param_list(), param_scope);
         let params = function_params
             .iter()

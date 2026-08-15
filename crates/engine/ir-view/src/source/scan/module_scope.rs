@@ -143,4 +143,48 @@ impl<'txn, 'db> ModuleSourceSiteScanner<'txn, 'db> {
             declared_children,
         }))
     }
+
+    /// Follow a current inline-module path through the saved module tree.
+    ///
+    /// Start from the saved module backed by `file_id`, then follow names such as `outer::inner`.
+    /// This still works when edits moved the module away from its saved byte range. Return `None`
+    /// if the file has more than one possible root or any path component is missing or ambiguous.
+    pub(crate) fn module_for_inline_path(
+        def_map_txn: &DefMapReadTxn<'_>,
+        crate_ref: CrateRef,
+        file_id: FileId,
+        inline_module_path: &[String],
+    ) -> Result<Option<ModuleRef>, PackageStoreError> {
+        def_map_txn.module_for_inline_path(crate_ref, file_id, inline_module_path)
+    }
+
+    /// Return module ownership from a path recovered from current syntax rather than a saved
+    /// source offset.
+    pub(crate) fn site_for_inline_path(
+        def_map_txn: &DefMapReadTxn<'_>,
+        crate_ref: CrateRef,
+        file_id: FileId,
+        inline_module_path: &[String],
+    ) -> Result<Option<ModuleSourceSite>, PackageStoreError> {
+        let Some(module) =
+            Self::module_for_inline_path(def_map_txn, crate_ref, file_id, inline_module_path)?
+        else {
+            return Ok(None);
+        };
+        let Some(def_map) = def_map_txn.def_map(crate_ref)? else {
+            return Ok(None);
+        };
+        let declared_children = def_map
+            .module(module.module)
+            .into_iter()
+            .flat_map(|module| &module.children)
+            .map(|(name, _)| name.to_string())
+            .collect();
+
+        Ok(Some(ModuleSourceSite {
+            module,
+            inline_module_path: inline_module_path.to_vec(),
+            declared_children,
+        }))
+    }
 }

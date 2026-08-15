@@ -1,9 +1,4 @@
-//! Phase storage and request-local working state behind one `Project` generation.
-//!
-//! Saved and source-override projects share the same phase layout. The distinction that matters
-//! here is lifetime: saved package data follows residency policy, while decoded loaders and solver
-//! sessions retained by an editor rebuild live only through its matching query and are cleared as
-//! one `ProjectQueryCache`.
+//! Phase storage behind one saved `Project` generation.
 
 use std::{
     path::Path,
@@ -13,7 +8,7 @@ use std::{
     },
 };
 
-use rg_analysis::{Analysis, SourceTextView};
+use rg_analysis::{Analysis, SavedSourceView};
 use rg_body_ir::{BodyIrBuildPolicy, BodyIrDb};
 use rg_def_map::{DefMapDb, DefMapReadTxn, PackageSlot};
 use rg_ir_model::{CrateId, CrateRef};
@@ -21,7 +16,6 @@ use rg_package_store::{PackageStoreError, PackageSubset};
 use rg_parse::{FileId, ParseDb};
 use rg_semantic_ir::SemanticIrDb;
 use rg_text::PackageNameInterners;
-use rg_ty::TraitSelectionSession;
 use rg_workspace::{CargoMetadataConfig, WorkspaceLoweringConfig, WorkspaceMetadata};
 
 use crate::{
@@ -49,17 +43,6 @@ impl ProjectGenerationId {
     pub fn get(self) -> u64 {
         self.0
     }
-}
-
-/// Transient state retained only for the query matching one source-override project snapshot.
-///
-/// The decoded package payloads and warmed trait-selection sessions are produced together while
-/// rebuilding that project. Keeping them behind one option makes it impossible to retain half of
-/// its request cache after cleanup or install it across separate lifecycle steps.
-#[derive(Debug, Clone)]
-pub(crate) struct ProjectQueryCache {
-    loaders: PackageReadLoaders,
-    trait_selection_sessions: Vec<TraitSelectionSession>,
 }
 
 /// Fully built project generation.
@@ -95,8 +78,6 @@ pub(crate) struct ProjectState {
     pub(crate) def_map: DefMapDb,
     pub(crate) semantic_ir: SemanticIrDb,
     pub(crate) body_ir: BodyIrDb,
-    #[memsize(skip)]
-    pub(crate) query_cache: Option<ProjectQueryCache>,
 }
 
 impl ProjectState {
@@ -140,50 +121,9 @@ impl ProjectState {
         ProjectReadTxn::for_subset(self, subset)
     }
 
-    /// Installs decoded payloads and solver state produced by an editor rebuild as one unit.
-    pub(crate) fn install_query_cache(
-        &mut self,
-        loaders: PackageReadLoaders,
-        trait_selection_sessions: Vec<TraitSelectionSession>,
-    ) {
-        self.query_cache = Some(ProjectQueryCache {
-            loaders,
-            trait_selection_sessions,
-        });
-    }
-
-    /// Releases all transient state retained for the matching source-override query.
-    pub(crate) fn clear_query_cache(&mut self) {
-        self.query_cache = None;
-    }
-
-    #[cfg(test)]
-    pub(crate) fn has_query_cache(&self) -> bool {
-        self.query_cache.is_some()
-    }
-
-    /// Choose artifact loaders for one query over this project snapshot.
-    ///
-    /// A source-override snapshot reuses the loader set retained by its rebuild, so the matching
-    /// query does not reopen and decode the same dependency artifacts. Saved snapshots have no
-    /// retained cache and receive a fresh request-owned loader set here.
+    /// Create one request-owned loader set for this saved project snapshot.
     pub(crate) fn query_read_loaders(&self) -> PackageReadLoaders {
-        self.query_cache
-            .as_ref()
-            .map(|cache| cache.loaders.clone())
-            .unwrap_or_else(|| PackageReadLoaders::new(self))
-    }
-
-    /// Reuse solver sessions warmed while building this source-override snapshot.
-    ///
-    /// Saved snapshots yield no sessions. An editor query receives clones that share the semantic
-    /// solver state already populated during its Body IR rebuild.
-    pub(crate) fn query_trait_selection_sessions(
-        &self,
-    ) -> impl Iterator<Item = TraitSelectionSession> + '_ {
-        self.query_cache
-            .iter()
-            .flat_map(|cache| cache.trait_selection_sessions.iter().cloned())
+        PackageReadLoaders::new(self)
     }
 
     /// Starts a def-map-only read transaction over selected package slots.
@@ -194,7 +134,7 @@ impl ProjectState {
 
     /// Returns the high-level query API for this frozen project analysis.
     pub(crate) fn analysis<'a>(&'a self, txn: &ProjectReadTxn<'a>) -> Analysis<'a> {
-        Analysis::new(txn.view_db().clone(), SourceTextView::new(self.parse_db()))
+        Analysis::new(txn.view_db().clone(), SavedSourceView::new(self.parse_db()))
     }
 
     /// Iterates over non-sysroot package slots from the current Cargo graph.

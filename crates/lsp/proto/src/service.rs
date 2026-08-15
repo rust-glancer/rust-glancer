@@ -8,9 +8,10 @@
 use std::path::PathBuf;
 
 use crate::{
-    AnalysisOutcome, CompletionClientCapabilities, DocumentAnalysisSnapshot,
-    DocumentPositionSnapshot, DocumentRangeSnapshot, EngineConfig, EngineError, SaveProposal,
-    SavedProjectChanges, ServiceNotification,
+    AnalysisOutcome, CompletionClientCapabilities, CompletionResult, DocumentPositionSnapshot,
+    DocumentQueryResult, DocumentRangeSnapshot, EditorDocumentSnapshot, EngineConfig, EngineError,
+    GlobalOperationResult, GlobalPositionSnapshot, SaveProposal, SavedProjectChanges,
+    ServiceNotification,
 };
 
 pub type EngineResult<T> = Result<T, EngineError>;
@@ -35,55 +36,55 @@ pub trait EngineService {
     async fn external_project_changes(changes: SavedProjectChanges) -> EngineResult<()>;
 
     async fn goto_definition(
-        input: DocumentPositionSnapshot,
-    ) -> EngineResult<AnalysisOutcome<Vec<ls_types::Location>>>;
+        input: GlobalPositionSnapshot,
+    ) -> EngineResult<AnalysisOutcome<DocumentQueryResult<Vec<ls_types::Location>>>>;
 
     async fn goto_type_definition(
-        input: DocumentPositionSnapshot,
-    ) -> EngineResult<AnalysisOutcome<Vec<ls_types::Location>>>;
+        input: GlobalPositionSnapshot,
+    ) -> EngineResult<AnalysisOutcome<DocumentQueryResult<Vec<ls_types::Location>>>>;
 
     async fn goto_implementation(
-        input: DocumentPositionSnapshot,
-    ) -> EngineResult<AnalysisOutcome<Vec<ls_types::Location>>>;
+        input: GlobalPositionSnapshot,
+    ) -> EngineResult<AnalysisOutcome<GlobalOperationResult<Vec<ls_types::Location>>>>;
 
     async fn references(
-        input: DocumentPositionSnapshot,
+        input: GlobalPositionSnapshot,
         include_declaration: bool,
-    ) -> EngineResult<AnalysisOutcome<Vec<ls_types::Location>>>;
+    ) -> EngineResult<AnalysisOutcome<GlobalOperationResult<Vec<ls_types::Location>>>>;
 
     async fn prepare_rename(
-        input: DocumentPositionSnapshot,
-    ) -> EngineResult<AnalysisOutcome<Option<ls_types::PrepareRenameResponse>>>;
+        input: GlobalPositionSnapshot,
+    ) -> EngineResult<AnalysisOutcome<GlobalOperationResult<Option<ls_types::PrepareRenameResponse>>>>;
 
     async fn rename(
-        input: DocumentPositionSnapshot,
+        input: GlobalPositionSnapshot,
         new_name: String,
-    ) -> EngineResult<AnalysisOutcome<Option<ls_types::WorkspaceEdit>>>;
+    ) -> EngineResult<AnalysisOutcome<GlobalOperationResult<Option<ls_types::WorkspaceEdit>>>>;
 
     async fn document_highlight(
         input: DocumentPositionSnapshot,
-    ) -> EngineResult<AnalysisOutcome<Vec<ls_types::DocumentHighlight>>>;
+    ) -> EngineResult<AnalysisOutcome<DocumentQueryResult<Vec<ls_types::DocumentHighlight>>>>;
 
     async fn hover(
         input: DocumentPositionSnapshot,
-    ) -> EngineResult<AnalysisOutcome<Option<ls_types::Hover>>>;
+    ) -> EngineResult<AnalysisOutcome<DocumentQueryResult<Option<ls_types::Hover>>>>;
 
     async fn completion(
         input: DocumentPositionSnapshot,
         client_capabilities: CompletionClientCapabilities,
-    ) -> EngineResult<AnalysisOutcome<Vec<ls_types::CompletionItem>>>;
+    ) -> EngineResult<AnalysisOutcome<CompletionResult>>;
 
     async fn formatting(
-        snapshot: DocumentAnalysisSnapshot,
-    ) -> EngineResult<AnalysisOutcome<Option<Vec<ls_types::TextEdit>>>>;
+        snapshot: EditorDocumentSnapshot,
+    ) -> EngineResult<AnalysisOutcome<DocumentQueryResult<Option<Vec<ls_types::TextEdit>>>>>;
 
     async fn document_symbol(
-        snapshot: DocumentAnalysisSnapshot,
-    ) -> EngineResult<AnalysisOutcome<Vec<ls_types::DocumentSymbol>>>;
+        snapshot: EditorDocumentSnapshot,
+    ) -> EngineResult<AnalysisOutcome<DocumentQueryResult<Vec<ls_types::DocumentSymbol>>>>;
 
     async fn inlay_hint(
         input: DocumentRangeSnapshot,
-    ) -> EngineResult<AnalysisOutcome<Vec<ls_types::InlayHint>>>;
+    ) -> EngineResult<AnalysisOutcome<DocumentQueryResult<Vec<ls_types::InlayHint>>>>;
 
     async fn workspace_symbol(
         query: String,

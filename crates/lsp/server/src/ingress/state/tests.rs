@@ -117,8 +117,6 @@ fn unresolved_or_failed_route_does_not_discard_captured_editor_text() {
     let captured = state
         .document(Some(path.clone()))
         .expect("opened editor text should be captured");
-    let invalidation = captured.editor_revision_watch();
-
     assert!(
         captured
             .engine_client()
@@ -128,10 +126,12 @@ fn unresolved_or_failed_route_does_not_discard_captured_editor_text() {
 
     route.publish(Ok(None));
     assert!(captured.engine_client().is_err());
-    assert!(invalidation.is_superseded());
     assert!(
-        !captured.is_current(captured.document().target(), captured.editor_revision()),
-        "route publication changes the applicable editor snapshot revision"
+        !captured.is_global_operation_current(
+            captured.document().target(),
+            captured.open_documents_revision(),
+        ),
+        "route publication changes the applicable open-document revision"
     );
     assert_eq!(
         state
@@ -144,7 +144,7 @@ fn unresolved_or_failed_route_does_not_discard_captured_editor_text() {
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn analysis_snapshot_accepts_matching_aliases_and_rejects_conflicts() {
+async fn global_input_accepts_matching_aliases_and_rejects_conflicts() {
     // Snapshot composition needs only a stable engine identity, so the test keeps the other end of
     // this transport alive without starting an engine service.
     let (client_transport, _server_transport) = tarpc::transport::channel::unbounded();
@@ -171,9 +171,9 @@ async fn analysis_snapshot_accepts_matching_aliases_and_rejects_conflicts() {
         .document(Some(primary_path.clone()))
         .expect("primary alias should be captured");
     let snapshot = captured
-        .analysis_snapshot(&engine_client)
-        .expect("matching aliases should form one coherent editor snapshot");
-    assert_eq!(snapshot.editor().documents().len(), 2);
+        .global_position(&engine_client, Position::new(0, 0))
+        .expect("matching aliases should form one coherent global-operation input");
+    assert_eq!(snapshot.documents().len(), 2);
 
     assert!(
         state
@@ -184,9 +184,40 @@ async fn analysis_snapshot_accepts_matching_aliases_and_rejects_conflicts() {
         .document(Some(primary_path))
         .expect("primary alias should remain captured");
     let error = captured
-        .analysis_snapshot(&engine_client)
+        .global_position(&engine_client, Position::new(0, 0))
         .expect_err("conflicting aliases must not use last-writer-wins composition");
     assert!(error.reason().contains("conflicting text"));
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn global_input_waits_for_every_rust_sibling_route() {
+    let (client_transport, _server_transport) = tarpc::transport::channel::unbounded();
+    let engine_service_client =
+        EngineServiceClient::new(TarpcClientConfig::default(), client_transport).spawn();
+    let engine_client = EngineClient::new(engine_service_client);
+    let state = EditorStateHandle::default();
+    let target = PathBuf::from("/workspace/src/lib.rs");
+    let sibling = PathBuf::from("/workspace/src/sibling.rs");
+
+    let opened = state.open(target.clone(), Some(1), "mod sibling;".to_string());
+    let LifecycleEvent::Open { route, .. } = opened.event() else {
+        panic!("expected target open lifecycle event");
+    };
+    route.publish(Ok(Some(OpenDocumentRoute::new(
+        engine_client.clone(),
+        target.clone(),
+    ))));
+    state.open(sibling.clone(), Some(1), "pub struct Sibling;".to_string());
+
+    let captured = state
+        .document(Some(target))
+        .expect("target document should be captured");
+    let error = captured
+        .global_position(&engine_client, Position::new(0, 0))
+        .expect_err("an unresolved Rust sibling must keep the global operation unavailable");
+
+    assert_eq!(error.path(), Some(sibling.as_path()));
+    assert!(error.reason().contains("still being resolved"));
 }
 
 #[test]
@@ -237,28 +268,36 @@ fn save_without_text_proposes_the_exact_current_editor_value() {
 }
 
 #[test]
-fn captured_target_is_invalidated_only_by_the_editor_owner() {
+fn target_change_invalidates_both_target_and_open_document_identity() {
     let path = PathBuf::from("/workspace/src/lib.rs");
     let state = EditorStateHandle::default();
     state.open(path.clone(), Some(1), "fn first() {}".to_string());
     let captured = state
         .document(Some(path.clone()))
         .expect("opened document should be captured");
-    let invalidation = captured.editor_revision_watch();
+    let target_invalidation = captured.document_revision_watch();
 
-    assert!(captured.is_current(captured.document().target(), captured.editor_revision()));
-    assert!(!invalidation.is_superseded());
+    assert!(captured.is_global_operation_current(
+        captured.document().target(),
+        captured.open_documents_revision(),
+    ));
+    assert!(captured.is_target_current(captured.document().target()));
+    assert!(!target_invalidation.is_superseded());
     assert!(
         state
             .change(&path, Some(2), &[full("fn second() {}")])
             .expect("full change should apply")
     );
-    assert!(invalidation.is_superseded());
-    assert!(!captured.is_current(captured.document().target(), captured.editor_revision()));
+    assert!(target_invalidation.is_superseded());
+    assert!(!captured.is_global_operation_current(
+        captured.document().target(),
+        captured.open_documents_revision(),
+    ));
+    assert!(!captured.is_target_current(captured.document().target()));
 }
 
 #[test]
-fn sibling_edit_invalidates_a_captured_complete_editor_revision() {
+fn sibling_edit_invalidates_only_the_open_document_set_identity() {
     let target = PathBuf::from("/workspace/src/lib.rs");
     let sibling = PathBuf::from("/workspace/src/sibling.rs");
     let state = EditorStateHandle::default();
@@ -267,17 +306,24 @@ fn sibling_edit_invalidates_a_captured_complete_editor_revision() {
     let captured = state
         .document(Some(target))
         .expect("target document should be captured");
-    let invalidation = captured.editor_revision_watch();
+    let target_invalidation = captured.document_revision_watch();
 
     assert!(
         state
             .change(&sibling, Some(2), &[full("pub struct Second;")])
             .expect("full sibling change should apply")
     );
-    assert!(invalidation.is_superseded());
+    assert!(!target_invalidation.is_superseded());
     assert!(
-        !captured.is_current(captured.document().target(), captured.editor_revision()),
-        "a sibling change must supersede results from the older complete snapshot"
+        !captured.is_global_operation_current(
+            captured.document().target(),
+            captured.open_documents_revision(),
+        ),
+        "a sibling change must supersede a global result from the older open-document set"
+    );
+    assert!(
+        captured.is_target_current(captured.document().target()),
+        "a sibling change must not supersede target-only results"
     );
 }
 
@@ -289,13 +335,17 @@ fn close_and_reopen_invalidates_the_captured_session_signal() {
     let captured = state
         .document(Some(path.clone()))
         .expect("opened document should be captured");
-    let invalidation = captured.editor_revision_watch();
+    let invalidation = captured.document_revision_watch();
 
     state.close(&path).expect("open document should close");
     state.open(path, Some(1), "fn new_session() {}".to_string());
 
     assert!(invalidation.is_superseded());
-    assert!(!captured.is_current(captured.document().target(), captured.editor_revision()));
+    assert!(!captured.is_global_operation_current(
+        captured.document().target(),
+        captured.open_documents_revision(),
+    ));
+    assert!(!captured.is_target_current(captured.document().target()));
 }
 
 #[test]
@@ -402,7 +452,10 @@ fn sibling_change_refreshes_snapshot_without_moving_target_position() {
 
     assert_eq!(recaptured.document().text(), "impl RwLo");
     assert_eq!(position, Position::new(0, 9));
-    assert_ne!(recaptured.editor_revision(), captured.editor_revision());
+    assert_ne!(
+        recaptured.open_documents_revision(),
+        captured.open_documents_revision(),
+    );
 }
 
 #[test]
@@ -453,7 +506,7 @@ fn forward_transformations_drop_with_the_oldest_capture() {
     let captured = state
         .document(Some(path.clone()))
         .expect("opened document should be captured");
-    let old_revision = Arc::downgrade(&captured.editor_revision);
+    let old_revision = Arc::downgrade(&captured.open_documents_revision);
 
     assert!(
         state

@@ -28,37 +28,6 @@ fn saved_source_memory_disappears_after_eviction() {
 }
 
 #[test]
-fn dirty_source_memory_survives_saved_text_eviction() {
-    let dir = tempfile::tempdir().expect("temporary source directory should be created");
-    let path = dir.path().join("lib.rs");
-    fs::write(&path, "pub struct Saved;\n").expect("fixture source should be written");
-    let path = path
-        .canonicalize()
-        .expect("fixture path should canonicalize");
-
-    let inventory = SourceInventory::new();
-    inventory
-        .capture_saved(&path)
-        .expect("fixture saved source should be captured");
-    let source = inventory
-        .capture_known(&path, "pub struct DirtySourceText;\n")
-        .expect("editor source should use the known path identity");
-    inventory.begin_source_overrides();
-    let entry = inventory
-        .replace_with_override(&source)
-        .expect("editor source should be captured");
-    let before_eviction = entry.memory_size();
-
-    inventory.evict_saved_text();
-
-    assert_eq!(
-        entry.memory_size(),
-        before_eviction,
-        "captured override text is the only authority and must remain resident",
-    );
-}
-
-#[test]
 fn successful_validation_discards_existence_probes() {
     let dir = tempfile::tempdir().expect("temporary source directory should be created");
     let source_path = dir.path().join("lib.rs");
@@ -138,12 +107,11 @@ fn candidate_fork_does_not_replace_published_source() {
     published.seal();
 
     let candidate = published.fork();
-    let source = candidate
-        .capture_known(published_entry.path(), "dirty")
-        .expect("editor source should use the known path identity");
-    candidate.begin_source_overrides();
+    candidate.begin_capture();
+    let source = CapturedSource::new(published_entry.path(), "pub struct Updated;\n")
+        .expect("updated source should keep the canonical path identity");
     candidate
-        .replace_with_override(&source)
+        .replace_saved(&source)
         .expect("candidate source should be replaced");
 
     assert_eq!(

@@ -10,8 +10,6 @@ use std::sync::{
     mpsc::{Receiver, Sender},
 };
 
-use rg_lsp_proto::AnalysisScope;
-
 use crate::{
     engine::{
         QueuedEngineCommand,
@@ -95,52 +93,48 @@ impl EngineDispatcher {
                 }
                 EngineCommand::GotoDefinition { input, respond_to } => {
                     tracing::trace!(
-                        path = %input.analysis.target().path().display(),
-                        line = input.position.line,
-                        character = input.position.character,
+                        path = %input.target().path().display(),
+                        line = input.position().line,
+                        character = input.position().character,
                         "engine command started: goto_definition"
                     );
-                    let context = QueryContext::document(
-                        "goto_definition",
-                        queue_elapsed,
-                        &input.analysis,
-                        AnalysisScope::ChangedPackages,
+                    let context =
+                        QueryContext::global_operation("goto_definition", queue_elapsed, &input);
+                    self.query_runner().respond_to_query(
+                        context,
+                        respond_to,
+                        |runner, cancellation| runner.goto_definition(input, cancellation),
                     );
-                    self.query_runner()
-                        .respond_to_query(context, respond_to, |runner, _| {
-                            runner.goto_definition(input)
-                        });
                 }
                 EngineCommand::GotoTypeDefinition { input, respond_to } => {
                     tracing::trace!(
-                        path = %input.analysis.target().path().display(),
-                        line = input.position.line,
-                        character = input.position.character,
+                        path = %input.target().path().display(),
+                        line = input.position().line,
+                        character = input.position().character,
                         "engine command started: goto_type_definition"
                     );
-                    let context = QueryContext::document(
+                    let context = QueryContext::global_operation(
                         "goto_type_definition",
                         queue_elapsed,
-                        &input.analysis,
-                        AnalysisScope::ChangedPackages,
+                        &input,
                     );
-                    self.query_runner()
-                        .respond_to_query(context, respond_to, |runner, _| {
-                            runner.goto_type_definition(input)
-                        });
+                    self.query_runner().respond_to_query(
+                        context,
+                        respond_to,
+                        |runner, cancellation| runner.goto_type_definition(input, cancellation),
+                    );
                 }
                 EngineCommand::GotoImplementation { input, respond_to } => {
                     tracing::trace!(
-                        path = %input.analysis.target().path().display(),
-                        line = input.position.line,
-                        character = input.position.character,
+                        path = %input.target().path().display(),
+                        line = input.position().line,
+                        character = input.position().character,
                         "engine command started: goto_implementation"
                     );
-                    let context = QueryContext::document(
+                    let context = QueryContext::global_operation(
                         "goto_implementation",
                         queue_elapsed,
-                        &input.analysis,
-                        AnalysisScope::ReverseDependencyClosure,
+                        &input,
                     );
                     self.query_runner()
                         .respond_to_query(context, respond_to, |runner, _| {
@@ -153,18 +147,14 @@ impl EngineDispatcher {
                     respond_to,
                 } => {
                     tracing::trace!(
-                        path = %input.analysis.target().path().display(),
-                        line = input.position.line,
-                        character = input.position.character,
+                        path = %input.target().path().display(),
+                        line = input.position().line,
+                        character = input.position().character,
                         include_declaration,
                         "engine command started: references"
                     );
-                    let context = QueryContext::document(
-                        "references",
-                        queue_elapsed,
-                        &input.analysis,
-                        AnalysisScope::ReverseDependencyClosure,
-                    );
+                    let context =
+                        QueryContext::global_operation("references", queue_elapsed, &input);
                     self.query_runner()
                         .respond_to_query(context, respond_to, |runner, _| {
                             runner.references(input, include_declaration)
@@ -172,17 +162,13 @@ impl EngineDispatcher {
                 }
                 EngineCommand::PrepareRename { input, respond_to } => {
                     tracing::trace!(
-                        path = %input.analysis.target().path().display(),
-                        line = input.position.line,
-                        character = input.position.character,
+                        path = %input.target().path().display(),
+                        line = input.position().line,
+                        character = input.position().character,
                         "engine command started: prepare_rename"
                     );
-                    let context = QueryContext::document(
-                        "prepare_rename",
-                        queue_elapsed,
-                        &input.analysis,
-                        AnalysisScope::ChangedPackages,
-                    );
+                    let context =
+                        QueryContext::global_operation("prepare_rename", queue_elapsed, &input);
                     self.query_runner()
                         .respond_to_query(context, respond_to, |runner, _| {
                             runner.prepare_rename(input)
@@ -194,18 +180,13 @@ impl EngineDispatcher {
                     respond_to,
                 } => {
                     tracing::trace!(
-                        path = %input.analysis.target().path().display(),
-                        line = input.position.line,
-                        character = input.position.character,
+                        path = %input.target().path().display(),
+                        line = input.position().line,
+                        character = input.position().character,
                         new_name = %new_name,
                         "engine command started: rename"
                     );
-                    let context = QueryContext::document(
-                        "rename",
-                        queue_elapsed,
-                        &input.analysis,
-                        AnalysisScope::ReverseDependencyClosure,
-                    );
+                    let context = QueryContext::global_operation("rename", queue_elapsed, &input);
                     self.query_runner()
                         .respond_to_query(context, respond_to, |runner, _| {
                             runner.rename(input, new_name)
@@ -213,37 +194,36 @@ impl EngineDispatcher {
                 }
                 EngineCommand::DocumentHighlight { input, respond_to } => {
                     tracing::trace!(
-                        path = %input.analysis.target().path().display(),
-                        line = input.position.line,
-                        character = input.position.character,
+                        path = %input.document().path().display(),
+                        line = input.position().line,
+                        character = input.position().character,
                         "engine command started: document_highlight"
                     );
-                    let context = QueryContext::document(
+                    let context = QueryContext::target_document(
                         "document_highlight",
                         queue_elapsed,
-                        &input.analysis,
-                        AnalysisScope::ChangedPackages,
+                        input.document(),
                     );
-                    self.query_runner()
-                        .respond_to_query(context, respond_to, |runner, _| {
-                            runner.document_highlight(input)
-                        });
+                    self.query_runner().respond_to_query(
+                        context,
+                        respond_to,
+                        |runner, cancellation| runner.document_highlight(input, cancellation),
+                    );
                 }
                 EngineCommand::Hover { input, respond_to } => {
                     tracing::trace!(
-                        path = %input.analysis.target().path().display(),
-                        line = input.position.line,
-                        character = input.position.character,
+                        path = %input.document().path().display(),
+                        line = input.position().line,
+                        character = input.position().character,
                         "engine command started: hover"
                     );
-                    let context = QueryContext::document(
-                        "hover",
-                        queue_elapsed,
-                        &input.analysis,
-                        AnalysisScope::ChangedPackages,
+                    let context =
+                        QueryContext::target_document("hover", queue_elapsed, input.document());
+                    self.query_runner().respond_to_query(
+                        context,
+                        respond_to,
+                        |runner, cancellation| runner.hover(input, cancellation),
                     );
-                    self.query_runner()
-                        .respond_to_query(context, respond_to, |runner, _| runner.hover(input));
                 }
                 EngineCommand::Completion {
                     input,
@@ -251,16 +231,15 @@ impl EngineDispatcher {
                     respond_to,
                 } => {
                     tracing::trace!(
-                        path = %input.analysis.target().path().display(),
-                        line = input.position.line,
-                        character = input.position.character,
+                        path = %input.document().path().display(),
+                        line = input.position().line,
+                        character = input.position().character,
                         "engine command started: completion"
                     );
-                    let context = QueryContext::document(
+                    let context = QueryContext::target_document(
                         "completion",
                         queue_elapsed,
-                        &input.analysis,
-                        AnalysisScope::ChangedPackages,
+                        input.document(),
                     );
                     self.query_runner().respond_to_query(
                         context,
@@ -275,18 +254,14 @@ impl EngineDispatcher {
                     respond_to,
                 } => {
                     tracing::trace!(
-                        path = %snapshot.target().path().display(),
+                        path = %snapshot.path().display(),
                         "engine command started: formatting"
                     );
-                    let context = QueryContext::document(
-                        "formatting",
-                        queue_elapsed,
-                        &snapshot,
-                        AnalysisScope::TargetDocument,
-                    );
+                    let context =
+                        QueryContext::target_document("formatting", queue_elapsed, &snapshot);
                     self.query_runner()
                         .respond_to_query(context, respond_to, |runner, _| {
-                            runner.formatting(snapshot).map(Some)
+                            runner.formatting(snapshot)
                         });
                 }
                 EngineCommand::DocumentSymbol {
@@ -294,15 +269,11 @@ impl EngineDispatcher {
                     respond_to,
                 } => {
                     tracing::trace!(
-                        path = %snapshot.target().path().display(),
+                        path = %snapshot.path().display(),
                         "engine command started: document_symbol"
                     );
-                    let context = QueryContext::document(
-                        "document_symbol",
-                        queue_elapsed,
-                        &snapshot,
-                        AnalysisScope::ChangedPackages,
-                    );
+                    let context =
+                        QueryContext::target_document("document_symbol", queue_elapsed, &snapshot);
                     self.query_runner()
                         .respond_to_query(context, respond_to, |runner, _| {
                             runner.document_symbol(snapshot)
@@ -310,23 +281,23 @@ impl EngineDispatcher {
                 }
                 EngineCommand::InlayHint { input, respond_to } => {
                     tracing::trace!(
-                        path = %input.analysis.target().path().display(),
-                        start_line = input.range.start.line,
-                        start_character = input.range.start.character,
-                        end_line = input.range.end.line,
-                        end_character = input.range.end.character,
+                        path = %input.document().path().display(),
+                        start_line = input.range().start.line,
+                        start_character = input.range().start.character,
+                        end_line = input.range().end.line,
+                        end_character = input.range().end.character,
                         "engine command started: inlay_hint"
                     );
-                    let context = QueryContext::document(
+                    let context = QueryContext::target_document(
                         "inlay_hint",
                         queue_elapsed,
-                        &input.analysis,
-                        AnalysisScope::ChangedPackages,
+                        input.document(),
                     );
-                    self.query_runner()
-                        .respond_to_query(context, respond_to, |runner, _| {
-                            runner.inlay_hint(input)
-                        });
+                    self.query_runner().respond_to_query(
+                        context,
+                        respond_to,
+                        |runner, cancellation| runner.inlay_hint(input, cancellation),
+                    );
                 }
                 EngineCommand::WorkspaceSymbol { query, respond_to } => {
                     tracing::trace!(query = %query, "engine command started: workspace_symbol");

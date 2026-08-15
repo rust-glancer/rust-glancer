@@ -13,25 +13,25 @@ use std::{
     },
 };
 
-use rg_lsp_proto::{AnalysisOutcome, DocumentPositionSnapshot};
-use tower_lsp_server::ls_types::{CompletionItem, Position};
+use rg_lsp_proto::{AnalysisOutcome, CompletionResult, DocumentPositionSnapshot};
+use tower_lsp_server::ls_types::Position;
 
 use super::{
     attempt::{AttemptKey, AttemptWaiter},
     session::{RequestId, SchedulerState, SessionKey},
 };
-use crate::ingress::{CapturedDocument, EditorRevisionWatch};
+use crate::ingress::{CapturedDocument, DocumentRevisionWatch};
 
-pub(super) type CompletionResult = anyhow::Result<AnalysisOutcome<Vec<CompletionItem>>>;
-pub(super) type CompletionFuture = Pin<Box<dyn Future<Output = CompletionResult> + Send>>;
+pub(super) type CompletionAttemptResult = anyhow::Result<AnalysisOutcome<CompletionResult>>;
+pub(super) type CompletionFuture = Pin<Box<dyn Future<Output = CompletionAttemptResult> + Send>>;
 
 /// What happened to one engine query made for a still-live completion request.
 #[derive(Debug)]
 pub(crate) enum CompletionAttemptOutcome {
-    /// The engine query finished; the handler must still validate its tagged editor input.
-    Completed(CompletionResult),
-    /// The editor changed, so this request may take a newer snapshot and try again.
-    EditorAdvanced,
+    /// The engine query finished; the handler must still validate its tagged target document.
+    Completed(CompletionAttemptResult),
+    /// The target document changed, so this request may take a newer capture and try again.
+    DocumentAdvanced,
     /// A newer completion message replaced this request.
     Replaced,
 }
@@ -69,14 +69,14 @@ impl CompletionRequest {
     pub(crate) async fn submit_attempt<Run, Fut>(
         &self,
         input: DocumentPositionSnapshot,
-        invalidation: EditorRevisionWatch,
+        invalidation: DocumentRevisionWatch,
         run: Run,
     ) -> CompletionAttemptOutcome
     where
         Run: FnOnce(DocumentPositionSnapshot) -> Fut,
-        Fut: Future<Output = CompletionResult> + Send + 'static,
+        Fut: Future<Output = CompletionAttemptResult> + Send + 'static,
     {
-        let key = AttemptKey::for_position(&input);
+        let key = AttemptKey::for_input(&input);
         self.enqueue_attempt(key, invalidation, Box::pin(run(input)))
             .wait()
             .await
@@ -85,7 +85,7 @@ impl CompletionRequest {
     pub(super) fn enqueue_attempt(
         &self,
         key: AttemptKey,
-        invalidation: EditorRevisionWatch,
+        invalidation: DocumentRevisionWatch,
         run: CompletionFuture,
     ) -> AttemptWaiter {
         SchedulerState::enqueue_attempt(&self.lease, key, invalidation, run)

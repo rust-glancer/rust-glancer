@@ -12,7 +12,6 @@ use std::path::Path;
 
 use anyhow::Context as _;
 use rg_ir_model::CrateRef;
-use rg_parse::TextSpan;
 use rg_project::{FileContext, ProjectSnapshot};
 
 use super::QueryRunner;
@@ -107,42 +106,5 @@ impl QueryRunner<'_> {
             "converted LSP position to file offset"
         );
         Ok(offset)
-    }
-
-    /// Convert an LSP UTF-16 range into the byte span used by analysis queries.
-    pub(super) fn text_span_for_context(
-        snapshot: ProjectSnapshot<'_>,
-        context: &FileContext,
-        range: ls_types::Range,
-    ) -> anyhow::Result<Option<TextSpan>> {
-        let Some(line_index) = snapshot
-            .file_line_index(context.package, context.file)
-            .context("load range line index")?
-        else {
-            return Ok(None);
-        };
-        let Some(start) =
-            line_index.offset_from_utf16_position(position::parse_position(range.start))
-        else {
-            return Ok(None);
-        };
-        let Some(end) = line_index.offset_from_utf16_position(position::parse_position(range.end))
-        else {
-            return Ok(None);
-        };
-
-        let span = TextSpan { start, end };
-        tracing::trace!(
-            package = ?context.package,
-            file = ?context.file,
-            start_line = range.start.line,
-            start_character = range.start.character,
-            end_line = range.end.line,
-            end_character = range.end.character,
-            span_start = span.start,
-            span_end = span.end,
-            "converted LSP range to text span"
-        );
-        Ok(Some(span))
     }
 }

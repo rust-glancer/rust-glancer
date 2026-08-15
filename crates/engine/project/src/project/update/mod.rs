@@ -6,10 +6,9 @@ mod workspace;
 mod workspace_graph;
 
 use anyhow::Context as _;
-use rg_body_ir::BodyIrFile;
 use rg_def_map::PackageSlot;
 
-use super::{AnalysisChangeSummary, ChangedFile, Project, SavedFileChange, state::ProjectState};
+use super::{AnalysisChangeSummary, ChangedFile, Project, SavedFileChange};
 use workspace_graph::WorkspaceGraphChanges;
 
 pub(crate) use package::rebuild_resident_from_source;
@@ -58,20 +57,6 @@ pub(super) fn apply_canonical_changes(
             Ok(ProjectChangeApplication::Applied(summary))
         }
     }
-}
-
-pub(super) fn rebuild_packages_for_source_overrides(
-    state: &mut ProjectState,
-    packages: &[PackageSlot],
-    body_files: &[BodyIrFile],
-    can_reuse_saved_item_lookup_indexes: bool,
-) -> anyhow::Result<()> {
-    package::rebuild_packages_for_source_overrides(
-        state,
-        packages,
-        body_files,
-        can_reuse_saved_item_lookup_indexes,
-    )
 }
 
 pub(super) fn affected_packages(

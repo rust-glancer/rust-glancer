@@ -277,14 +277,30 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
     ///
     /// The result is intentionally a vector rather than a single “best symbol”: the smallest
     /// body-local node and a path segment can provide different facts for analysis to interpret.
+    /// The caller must know that Body IR and saved declaration indexes use the same source text.
+    /// Edited source must choose one of the narrower methods below instead.
     pub fn occurrences_at(
         &self,
         crate_ref: CrateRef,
         file_id: FileId,
         offset: u32,
     ) -> anyhow::Result<Vec<IndexedSourceOccurrence>> {
-        let mut occurrences = Vec::new();
+        let mut occurrences = self.body_occurrences_at(crate_ref, file_id, offset)?;
+        occurrences.extend(self.saved_declaration_occurrences_at(crate_ref, file_id, offset)?);
+        Ok(occurrences)
+    }
 
+    /// Return occurrences whose coordinates come from Body IR.
+    ///
+    /// This narrower query is used for an edited file whose Body IR was rebuilt from current text.
+    /// Saved declaration scanners must not receive the same numeric offset in that case.
+    pub fn body_occurrences_at(
+        &self,
+        crate_ref: CrateRef,
+        file_id: FileId,
+        offset: u32,
+    ) -> anyhow::Result<Vec<IndexedSourceOccurrence>> {
+        let mut occurrences = Vec::new();
         for candidate in
             BodyCursorScanner::new(&self.db.body_ir, crate_ref, file_id, offset).scan()?
         {
@@ -292,6 +308,21 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
                 occurrences.push(occurrence);
             }
         }
+        Ok(occurrences)
+    }
+
+    /// Return declaration occurrences whose coordinates come from saved source indexes.
+    ///
+    /// Callers need a saved offset or an exact-source proof before using this method. Body IR is
+    /// intentionally excluded so an explicitly mapped saved header cannot collide with a current
+    /// body at the same numeric range.
+    pub fn saved_declaration_occurrences_at(
+        &self,
+        crate_ref: CrateRef,
+        file_id: FileId,
+        offset: u32,
+    ) -> anyhow::Result<Vec<IndexedSourceOccurrence>> {
+        let mut occurrences = Vec::new();
         for candidate in
             DefinitionSourceScanner::at(&self.db.def_map, crate_ref, file_id, offset).scan()?
         {
@@ -308,7 +339,6 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
                 occurrences.push(occurrence);
             }
         }
-
         Ok(occurrences)
     }
 
@@ -330,11 +360,7 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
                 occurrences.push(occurrence);
             }
         }
-        for candidate in BodySourceScanner::new(&self.db.body_ir, crate_ref, file_id).scan()? {
-            if let Some(occurrence) = self.body_occurrence(crate_ref, candidate, file_id)? {
-                occurrences.push(occurrence);
-            }
-        }
+        occurrences.extend(self.body_occurrences_in_crate(crate_ref, file_id)?);
         for candidate in
             SignatureSourceScanner::in_crate(&self.db.semantic_ir, crate_ref, file_id).scan()?
         {
@@ -343,6 +369,24 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
             }
         }
 
+        Ok(occurrences)
+    }
+
+    /// Return the complete occurrence inventory from Body IR only.
+    ///
+    /// In a file rebuilt from edited text, this is the only inventory whose ranges belong to the
+    /// current document. Saved declarations must not be mixed into that editor-facing surface.
+    pub fn body_occurrences_in_crate(
+        &self,
+        crate_ref: CrateRef,
+        file_id: Option<FileId>,
+    ) -> anyhow::Result<Vec<IndexedSourceOccurrence>> {
+        let mut occurrences = Vec::new();
+        for candidate in BodySourceScanner::new(&self.db.body_ir, crate_ref, file_id).scan()? {
+            if let Some(occurrence) = self.body_occurrence(crate_ref, candidate, file_id)? {
+                occurrences.push(occurrence);
+            }
+        }
         Ok(occurrences)
     }
 

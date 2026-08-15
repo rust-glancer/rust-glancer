@@ -6,7 +6,7 @@ use crate::{
     Analysis, CompletionApplicability, CompletionClientCapabilities, CompletionInsertText,
     CompletionItem, CompletionKind, CompletionQuery, DocumentSymbol, HoverInfo, InlayHint,
     NavigationTarget, ReferenceLocation, ReferenceQuery as AnalysisReferenceQuery,
-    ReferenceSearchFile, RenameEdit, RenameResult, RenameTarget, SourceTextView, SymbolAt,
+    ReferenceSearchFile, RenameEdit, RenameResult, RenameTarget, SavedSourceView, SymbolAt,
     WorkspaceSymbol,
 };
 use rg_body_ir::{ExprData, ExprKind};
@@ -134,7 +134,7 @@ impl AnalysisQuery {
         Self::new(title, marker, AnalysisQueryKind::CompletionsAtVerbose)
     }
 
-    /// Run completion with the saved fixture text supplied as the request-local editor snapshot.
+    /// Run completion as if the saved fixture text were the document captured for this request.
     pub(super) fn complete_with_source(title: &'static str, marker: &'static str) -> Self {
         Self::new(title, marker, AnalysisQueryKind::CompletionsAtWithSource)
     }
@@ -413,7 +413,7 @@ impl AnalysisFixtureDb {
     fn analysis(&self) -> Analysis<'_> {
         Analysis::new(
             self.fixture.view_db(),
-            SourceTextView::new(self.fixture.parse_db()),
+            SavedSourceView::new(self.fixture.parse_db()),
         )
     }
 
@@ -1351,20 +1351,26 @@ impl<'a> AnalysisSymbolSnapshot<'a> {
 
     fn render_document_symbols(&self, query: &DocumentSymbolsQuery) -> String {
         let (target, file_id) = self.db.target_and_file_for_path(&query.target, query.path);
-        let symbols = self
+        let outline = self
             .db
             .analysis()
             .document_symbols(target, file_id)
             .expect("fixture document symbols should resolve");
         let mut dump = query.title.to_string();
 
-        if symbols.is_empty() {
+        if outline.symbols.is_empty() {
             writeln!(dump, "\n- <none>").expect("string writes should not fail");
             return dump;
         }
 
         writeln!(dump).expect("string writes should not fail");
-        self.render_document_symbol_list(target.package, &symbols, 0, &mut dump);
+        self.render_document_symbol_list(
+            target.package,
+            outline.file_id,
+            &outline.symbols,
+            0,
+            &mut dump,
+        );
         dump
     }
 
@@ -1412,18 +1418,20 @@ impl<'a> AnalysisSymbolSnapshot<'a> {
     fn render_document_symbol_list(
         &self,
         package: PackageSlot,
+        file_id: FileId,
         symbols: &[DocumentSymbol],
         depth: usize,
         dump: &mut String,
     ) {
         for symbol in symbols {
-            self.render_document_symbol(package, symbol, depth, dump);
+            self.render_document_symbol(package, file_id, symbol, depth, dump);
         }
     }
 
     fn render_document_symbol(
         &self,
         package: PackageSlot,
+        file_id: FileId,
         symbol: &DocumentSymbol,
         depth: usize,
         dump: &mut String,
@@ -1434,7 +1442,7 @@ impl<'a> AnalysisSymbolSnapshot<'a> {
         } else {
             format!(
                 " selection {}",
-                self.render_source_span(package, symbol.file_id, symbol.selection_span)
+                self.render_source_span(package, file_id, symbol.selection_span)
             )
         };
         let label = if symbol.kind == crate::SymbolKind::Impl {
@@ -1446,12 +1454,12 @@ impl<'a> AnalysisSymbolSnapshot<'a> {
         writeln!(
             dump,
             "{indent}- {label} @ {}{}",
-            self.render_source_span(package, symbol.file_id, symbol.span),
+            self.render_source_span(package, file_id, symbol.span),
             selection
         )
         .expect("string writes should not fail");
 
-        self.render_document_symbol_list(package, &symbol.children, depth + 1, dump);
+        self.render_document_symbol_list(package, file_id, &symbol.children, depth + 1, dump);
     }
 
     fn render_workspace_symbol(&self, symbol: &WorkspaceSymbol, dump: &mut String) {

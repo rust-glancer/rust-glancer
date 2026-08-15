@@ -11,8 +11,9 @@ use std::{path::PathBuf, sync::Arc};
 
 use anyhow::Context as _;
 use rg_lsp_proto::{
-    AnalysisOutcome, DocumentAnalysisSnapshot, DocumentPositionSnapshot, DocumentRangeSnapshot,
-    EngineConfig, EngineError, EngineResult, EngineService, SaveProposal, SavedProjectChanges,
+    AnalysisOutcome, DocumentPositionSnapshot, DocumentQueryResult, DocumentRangeSnapshot,
+    EditorDocumentSnapshot, EngineConfig, EngineError, EngineResult, EngineService,
+    GlobalOperationResult, GlobalPositionSnapshot, SaveProposal, SavedProjectChanges,
 };
 use rg_project::SavedFileChange;
 use rg_source::CapturedSource;
@@ -162,8 +163,8 @@ impl EngineService for Service {
     async fn goto_definition(
         self,
         _: context::Context,
-        input: DocumentPositionSnapshot,
-    ) -> EngineResult<AnalysisOutcome<Vec<ls_types::Location>>> {
+        input: GlobalPositionSnapshot,
+    ) -> EngineResult<AnalysisOutcome<DocumentQueryResult<Vec<ls_types::Location>>>> {
         self.engine
             .request(|respond_to| EngineCommand::GotoDefinition { input, respond_to })
             .await
@@ -173,8 +174,8 @@ impl EngineService for Service {
     async fn goto_type_definition(
         self,
         _: context::Context,
-        input: DocumentPositionSnapshot,
-    ) -> EngineResult<AnalysisOutcome<Vec<ls_types::Location>>> {
+        input: GlobalPositionSnapshot,
+    ) -> EngineResult<AnalysisOutcome<DocumentQueryResult<Vec<ls_types::Location>>>> {
         self.engine
             .request(|respond_to| EngineCommand::GotoTypeDefinition { input, respond_to })
             .await
@@ -184,8 +185,8 @@ impl EngineService for Service {
     async fn goto_implementation(
         self,
         _: context::Context,
-        input: DocumentPositionSnapshot,
-    ) -> EngineResult<AnalysisOutcome<Vec<ls_types::Location>>> {
+        input: GlobalPositionSnapshot,
+    ) -> EngineResult<AnalysisOutcome<GlobalOperationResult<Vec<ls_types::Location>>>> {
         self.engine
             .request(|respond_to| EngineCommand::GotoImplementation { input, respond_to })
             .await
@@ -195,9 +196,9 @@ impl EngineService for Service {
     async fn references(
         self,
         _: context::Context,
-        input: DocumentPositionSnapshot,
+        input: GlobalPositionSnapshot,
         include_declaration: bool,
-    ) -> EngineResult<AnalysisOutcome<Vec<ls_types::Location>>> {
+    ) -> EngineResult<AnalysisOutcome<GlobalOperationResult<Vec<ls_types::Location>>>> {
         self.engine
             .request(|respond_to| EngineCommand::References {
                 input,
@@ -211,8 +212,9 @@ impl EngineService for Service {
     async fn prepare_rename(
         self,
         _: context::Context,
-        input: DocumentPositionSnapshot,
-    ) -> EngineResult<AnalysisOutcome<Option<ls_types::PrepareRenameResponse>>> {
+        input: GlobalPositionSnapshot,
+    ) -> EngineResult<AnalysisOutcome<GlobalOperationResult<Option<ls_types::PrepareRenameResponse>>>>
+    {
         self.engine
             .request(|respond_to| EngineCommand::PrepareRename { input, respond_to })
             .await
@@ -222,9 +224,9 @@ impl EngineService for Service {
     async fn rename(
         self,
         _: context::Context,
-        input: DocumentPositionSnapshot,
+        input: GlobalPositionSnapshot,
         new_name: String,
-    ) -> EngineResult<AnalysisOutcome<Option<ls_types::WorkspaceEdit>>> {
+    ) -> EngineResult<AnalysisOutcome<GlobalOperationResult<Option<ls_types::WorkspaceEdit>>>> {
         self.engine
             .request(|respond_to| EngineCommand::Rename {
                 input,
@@ -239,7 +241,7 @@ impl EngineService for Service {
         self,
         _: context::Context,
         input: DocumentPositionSnapshot,
-    ) -> EngineResult<AnalysisOutcome<Vec<ls_types::DocumentHighlight>>> {
+    ) -> EngineResult<AnalysisOutcome<DocumentQueryResult<Vec<ls_types::DocumentHighlight>>>> {
         self.engine
             .request(|respond_to| EngineCommand::DocumentHighlight { input, respond_to })
             .await
@@ -250,7 +252,7 @@ impl EngineService for Service {
         self,
         _: context::Context,
         input: DocumentPositionSnapshot,
-    ) -> EngineResult<AnalysisOutcome<Option<ls_types::Hover>>> {
+    ) -> EngineResult<AnalysisOutcome<DocumentQueryResult<Option<ls_types::Hover>>>> {
         self.engine
             .request(|respond_to| EngineCommand::Hover { input, respond_to })
             .await
@@ -262,7 +264,7 @@ impl EngineService for Service {
         _: context::Context,
         input: DocumentPositionSnapshot,
         client_capabilities: rg_lsp_proto::CompletionClientCapabilities,
-    ) -> EngineResult<AnalysisOutcome<Vec<ls_types::CompletionItem>>> {
+    ) -> EngineResult<AnalysisOutcome<rg_lsp_proto::CompletionResult>> {
         self.engine
             .request(|respond_to| EngineCommand::Completion {
                 input,
@@ -276,8 +278,8 @@ impl EngineService for Service {
     async fn formatting(
         self,
         _: context::Context,
-        snapshot: DocumentAnalysisSnapshot,
-    ) -> EngineResult<AnalysisOutcome<Option<Vec<ls_types::TextEdit>>>> {
+        snapshot: EditorDocumentSnapshot,
+    ) -> EngineResult<AnalysisOutcome<DocumentQueryResult<Option<Vec<ls_types::TextEdit>>>>> {
         self.engine
             .request(|respond_to| EngineCommand::Formatting {
                 snapshot,
@@ -290,8 +292,8 @@ impl EngineService for Service {
     async fn document_symbol(
         self,
         _: context::Context,
-        snapshot: DocumentAnalysisSnapshot,
-    ) -> EngineResult<AnalysisOutcome<Vec<ls_types::DocumentSymbol>>> {
+        snapshot: EditorDocumentSnapshot,
+    ) -> EngineResult<AnalysisOutcome<DocumentQueryResult<Vec<ls_types::DocumentSymbol>>>> {
         self.engine
             .request(|respond_to| EngineCommand::DocumentSymbol {
                 snapshot,
@@ -305,7 +307,7 @@ impl EngineService for Service {
         self,
         _: context::Context,
         input: DocumentRangeSnapshot,
-    ) -> EngineResult<AnalysisOutcome<Vec<ls_types::InlayHint>>> {
+    ) -> EngineResult<AnalysisOutcome<DocumentQueryResult<Vec<ls_types::InlayHint>>>> {
         self.engine
             .request(|respond_to| EngineCommand::InlayHint { input, respond_to })
             .await

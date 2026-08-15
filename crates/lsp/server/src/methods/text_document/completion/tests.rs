@@ -7,9 +7,10 @@ use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use futures::StreamExt as _;
 use rg_lsp_proto::{
-    AnalysisInput, AnalysisOutcome, AnalysisReady, AnalysisScope, CompletionClientCapabilities,
-    DocumentAnalysisSnapshot, DocumentPositionSnapshot, DocumentRangeSnapshot, EngineConfig,
-    EngineResult, EngineService, EngineServiceClient, SaveProposal, SavedProjectChanges,
+    AnalysisInput, AnalysisOutcome, AnalysisReady, CompletionClientCapabilities, CompletionResult,
+    DocumentPositionSnapshot, DocumentQueryCoverage, DocumentQueryResult, DocumentRangeSnapshot,
+    EditorDocumentSnapshot, EngineConfig, EngineResult, EngineService, EngineServiceClient,
+    GlobalOperationResult, GlobalPositionSnapshot, SaveProposal, SavedProjectChanges,
 };
 use tarpc::{
     client::Config as TarpcClientConfig,
@@ -84,7 +85,8 @@ async fn did_change_retries_completion_at_rebased_position() {
         panic!("completion item should contain one additional edit");
     };
 
-    // Both edits must describe the final editor revision, not the shorter text from the first
+    // Both edits must describe the final target document revision, not the shorter text from the
+    // first attempt.
     // attempt. Applying them in source order produces the expected final document.
     let mut applied = "impl RwLock".to_string();
     applied.replace_range(5..11, &primary_edit.new_text);
@@ -110,6 +112,26 @@ async fn cancelled_completion_does_not_restart_after_did_change() {
     lsp.shutdown().await;
 }
 
+#[tokio::test(flavor = "current_thread")]
+async fn sibling_change_does_not_cancel_or_invalidate_completion() {
+    let mut lsp = CompletionLspFixture::open("impl RwLock|").await;
+    let sibling = lsp.open_sibling("pub struct Before;").await;
+    let request = lsp.request_completion().await;
+    let attempt = lsp.expect_attempt("impl RwLock|").await;
+
+    lsp.change_sibling(&sibling, "pub struct After;").await;
+    attempt.expect_running();
+    attempt.complete();
+
+    let response = lsp.expect_completion(request).await;
+    let CompletionResponse::List(response) = response else {
+        panic!("completion response should be a list");
+    };
+    assert_eq!(response.items[0].label, "RwLock");
+
+    lsp.shutdown().await;
+}
+
 /// A real LSP transport around the completion handler and a controllable engine RPC.
 ///
 /// Test scenarios use source text with `|` at the cursor. The fixture handles JSON-RPC framing,
@@ -120,6 +142,7 @@ struct CompletionLspFixture {
     client_output: BufReader<DuplexStream>,
     server: JoinHandle<()>,
     attempts: mpsc::UnboundedReceiver<ObservedCompletionAttempt>,
+    opened: Arc<Notify>,
     changed: Arc<Notify>,
     uri: Uri,
     cursor: Position,
@@ -162,6 +185,7 @@ impl CompletionLspFixture {
             client_output: BufReader::new(client_output),
             server,
             attempts,
+            opened,
             changed,
             uri,
             cursor,
@@ -206,7 +230,7 @@ impl CompletionLspFixture {
                 }
             }))
             .await;
-        tokio::time::timeout(TEST_TIMEOUT, opened.notified())
+        tokio::time::timeout(TEST_TIMEOUT, fixture.opened.notified())
             .await
             .expect("didOpen should publish the test route");
 
@@ -226,6 +250,43 @@ impl CompletionLspFixture {
         }))
         .await;
         id
+    }
+
+    async fn open_sibling(&mut self, text: &str) -> Uri {
+        let path = PathBuf::from("/workspace/src/sibling.rs");
+        let uri = Uri::from_file_path(path).expect("sibling path should convert to URI");
+        self.send(serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "textDocument/didOpen",
+            "params": {
+                "textDocument": {
+                    "uri": uri.as_str(),
+                    "languageId": "rust",
+                    "version": 1,
+                    "text": text
+                }
+            }
+        }))
+        .await;
+        tokio::time::timeout(TEST_TIMEOUT, self.opened.notified())
+            .await
+            .expect("sibling didOpen should publish its route");
+        uri
+    }
+
+    async fn change_sibling(&mut self, uri: &Uri, text: &str) {
+        self.send(serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "textDocument/didChange",
+            "params": {
+                "textDocument": { "uri": uri.as_str(), "version": 2 },
+                "contentChanges": [{ "text": text }]
+            }
+        }))
+        .await;
+        tokio::time::timeout(TEST_TIMEOUT, self.changed.notified())
+            .await
+            .expect("sibling didChange should reach its handler");
     }
 
     async fn type_at_cursor(&mut self, text: &str) {
@@ -255,16 +316,8 @@ impl CompletionLspFixture {
             .await
             .expect("semantic completion attempt should start")
             .expect("test engine should report its completion attempt");
-        assert_eq!(observed.input.position, expected_position);
-        assert_eq!(
-            observed
-                .input
-                .analysis
-                .document()
-                .expect("attempt should contain its target document")
-                .text(),
-            expected_text
-        );
+        assert_eq!(observed.input.position(), expected_position);
+        assert_eq!(observed.input.document().text(), expected_text);
         PendingCompletionAttempt {
             release: observed.release,
         }
@@ -441,6 +494,13 @@ impl PendingCompletionAttempt {
             .await
             .expect("completion attempt should be cancelled");
     }
+
+    fn expect_running(&self) {
+        assert!(
+            !self.release.is_closed(),
+            "sibling editor state must not cancel target-only completion"
+        );
+    }
 }
 
 #[derive(Clone)]
@@ -534,7 +594,7 @@ impl EngineService for GatedCompletionEngine {
         _: context::Context,
         input: DocumentPositionSnapshot,
         _: CompletionClientCapabilities,
-    ) -> EngineResult<AnalysisOutcome<Vec<CompletionItem>>> {
+    ) -> EngineResult<AnalysisOutcome<CompletionResult>> {
         let (release, released) = oneshot::channel();
         self.attempts
             .send(ObservedCompletionAttempt {
@@ -544,26 +604,25 @@ impl EngineService for GatedCompletionEngine {
             .expect("test should observe every completion RPC");
         let _ = released.await;
 
-        let analysis_input = AnalysisInput::for_target_revision(
-            1,
-            input.analysis.editor().revision(),
-            input.analysis.target().clone(),
-            AnalysisScope::ChangedPackages,
-        );
+        let analysis_input =
+            AnalysisInput::for_target_document(1, input.document().target().clone());
         Ok(AnalysisOutcome::Ready(AnalysisReady::new(
-            vec![CompletionItem {
-                label: "RwLock".to_string(),
-                kind: Some(CompletionItemKind::STRUCT),
-                text_edit: Some(CompletionTextEdit::Edit(TextEdit::new(
-                    Range::new(Position::new(0, 5), input.position),
-                    "RwLock".to_string(),
-                ))),
-                additional_text_edits: Some(vec![TextEdit::new(
-                    Range::new(Position::new(0, 0), Position::new(0, 0)),
-                    "use std::sync::RwLock;\n".to_string(),
-                )]),
-                ..CompletionItem::default()
-            }],
+            CompletionResult::new(
+                vec![CompletionItem {
+                    label: "RwLock".to_string(),
+                    kind: Some(CompletionItemKind::STRUCT),
+                    text_edit: Some(CompletionTextEdit::Edit(TextEdit::new(
+                        Range::new(Position::new(0, 5), input.position()),
+                        "RwLock".to_string(),
+                    ))),
+                    additional_text_edits: Some(vec![TextEdit::new(
+                        Range::new(Position::new(0, 0), Position::new(0, 0)),
+                        "use std::sync::RwLock;\n".to_string(),
+                    )]),
+                    ..CompletionItem::default()
+                }],
+                DocumentQueryCoverage::Exact,
+            ),
             analysis_input,
         )))
     }
@@ -598,51 +657,54 @@ impl EngineService for GatedCompletionEngine {
     async fn goto_definition(
         self,
         _: context::Context,
-        _: DocumentPositionSnapshot,
-    ) -> EngineResult<AnalysisOutcome<Vec<Location>>> {
+        _: GlobalPositionSnapshot,
+    ) -> EngineResult<AnalysisOutcome<DocumentQueryResult<Vec<Location>>>> {
         panic!("test engine only supports completion")
     }
 
     async fn goto_type_definition(
         self,
         _: context::Context,
-        _: DocumentPositionSnapshot,
-    ) -> EngineResult<AnalysisOutcome<Vec<Location>>> {
+        _: GlobalPositionSnapshot,
+    ) -> EngineResult<AnalysisOutcome<DocumentQueryResult<Vec<Location>>>> {
         panic!("test engine only supports completion")
     }
 
     async fn goto_implementation(
         self,
         _: context::Context,
-        _: DocumentPositionSnapshot,
-    ) -> EngineResult<AnalysisOutcome<Vec<Location>>> {
+        _: GlobalPositionSnapshot,
+    ) -> EngineResult<AnalysisOutcome<GlobalOperationResult<Vec<Location>>>> {
         panic!("test engine only supports completion")
     }
 
     async fn references(
         self,
         _: context::Context,
-        _: DocumentPositionSnapshot,
+        _: GlobalPositionSnapshot,
         _: bool,
-    ) -> EngineResult<AnalysisOutcome<Vec<Location>>> {
+    ) -> EngineResult<AnalysisOutcome<GlobalOperationResult<Vec<Location>>>> {
         panic!("test engine only supports completion")
     }
 
     async fn prepare_rename(
         self,
         _: context::Context,
-        _: DocumentPositionSnapshot,
-    ) -> EngineResult<AnalysisOutcome<Option<tower_lsp_server::ls_types::PrepareRenameResponse>>>
-    {
+        _: GlobalPositionSnapshot,
+    ) -> EngineResult<
+        AnalysisOutcome<
+            GlobalOperationResult<Option<tower_lsp_server::ls_types::PrepareRenameResponse>>,
+        >,
+    > {
         panic!("test engine only supports completion")
     }
 
     async fn rename(
         self,
         _: context::Context,
-        _: DocumentPositionSnapshot,
+        _: GlobalPositionSnapshot,
         _: String,
-    ) -> EngineResult<AnalysisOutcome<Option<WorkspaceEdit>>> {
+    ) -> EngineResult<AnalysisOutcome<GlobalOperationResult<Option<WorkspaceEdit>>>> {
         panic!("test engine only supports completion")
     }
 
@@ -650,7 +712,7 @@ impl EngineService for GatedCompletionEngine {
         self,
         _: context::Context,
         _: DocumentPositionSnapshot,
-    ) -> EngineResult<AnalysisOutcome<Vec<DocumentHighlight>>> {
+    ) -> EngineResult<AnalysisOutcome<DocumentQueryResult<Vec<DocumentHighlight>>>> {
         panic!("test engine only supports completion")
     }
 
@@ -658,23 +720,23 @@ impl EngineService for GatedCompletionEngine {
         self,
         _: context::Context,
         _: DocumentPositionSnapshot,
-    ) -> EngineResult<AnalysisOutcome<Option<Hover>>> {
+    ) -> EngineResult<AnalysisOutcome<DocumentQueryResult<Option<Hover>>>> {
         panic!("test engine only supports completion")
     }
 
     async fn formatting(
         self,
         _: context::Context,
-        _: DocumentAnalysisSnapshot,
-    ) -> EngineResult<AnalysisOutcome<Option<Vec<TextEdit>>>> {
+        _: EditorDocumentSnapshot,
+    ) -> EngineResult<AnalysisOutcome<DocumentQueryResult<Option<Vec<TextEdit>>>>> {
         panic!("test engine only supports completion")
     }
 
     async fn document_symbol(
         self,
         _: context::Context,
-        _: DocumentAnalysisSnapshot,
-    ) -> EngineResult<AnalysisOutcome<Vec<DocumentSymbol>>> {
+        _: EditorDocumentSnapshot,
+    ) -> EngineResult<AnalysisOutcome<DocumentQueryResult<Vec<DocumentSymbol>>>> {
         panic!("test engine only supports completion")
     }
 
@@ -682,7 +744,7 @@ impl EngineService for GatedCompletionEngine {
         self,
         _: context::Context,
         _: DocumentRangeSnapshot,
-    ) -> EngineResult<AnalysisOutcome<Vec<InlayHint>>> {
+    ) -> EngineResult<AnalysisOutcome<DocumentQueryResult<Vec<InlayHint>>>> {
         panic!("test engine only supports completion")
     }
 

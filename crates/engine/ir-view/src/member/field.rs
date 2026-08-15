@@ -75,7 +75,7 @@ impl<'a, 'db> MemberView<'a, 'db> {
             self.db,
             self.db,
             item_lookup_index,
-            self.db.trait_selection(body.crate_ref),
+            self.db.trait_selection_for_body(body),
         ));
         if let TypePathResolution::SelfType(ty) | TypePathResolution::TypeDef(ty) = resolution {
             for field_ref in member_query

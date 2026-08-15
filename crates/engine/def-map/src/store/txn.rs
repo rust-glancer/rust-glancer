@@ -1,9 +1,10 @@
 //! Read transactions over frozen def-map package data.
 
-use crate::{DefMap, DefMapSource, PackageDefMaps};
+use crate::{DefMap, DefMapSource, ModuleOrigin, PackageDefMaps};
 use rg_ir_model::{CrateId, CrateRef, DefMapRef, ModuleRef};
 use rg_package_store::{PackageStoreError, PackageStoreReadTxn};
 use rg_parse::FileId;
+use rg_std::ExpectedUnique;
 
 use crate::PackageSlot;
 
@@ -61,6 +62,82 @@ impl<'db> DefMapReadTxn<'db> {
         }
 
         Ok(crates)
+    }
+
+    /// Find the saved module named by an inline-module path from current syntax.
+    ///
+    /// The first module is the unique crate module whose definition is `file`. Components such as
+    /// `outer::inner` then follow inline child modules declared in that same file. This remains
+    /// usable after edits move those modules away from their saved byte ranges, but it deliberately
+    /// rejects new, renamed, and ambiguous module paths.
+    pub fn module_for_inline_path<T>(
+        &self,
+        crate_ref: CrateRef,
+        file: FileId,
+        inline_module_path: &[T],
+    ) -> Result<Option<ModuleRef>, PackageStoreError>
+    where
+        T: AsRef<str>,
+    {
+        let Some(def_map) = self.def_map(crate_ref)? else {
+            return Ok(None);
+        };
+
+        let mut file_module = ExpectedUnique::new();
+        for (module_index, module) in def_map.modules().iter().enumerate() {
+            let owns_definition_file = match module.origin {
+                ModuleOrigin::Root { file_id } => file_id == file,
+                ModuleOrigin::OutOfLine {
+                    definition_file: Some(definition_file),
+                    ..
+                } => definition_file == file,
+                ModuleOrigin::Synthetic { .. }
+                | ModuleOrigin::Inline { .. }
+                | ModuleOrigin::OutOfLine {
+                    definition_file: None,
+                    ..
+                } => false,
+            };
+            if owns_definition_file {
+                file_module.push(rg_ir_model::ModuleId(module_index));
+            }
+        }
+        let Some(mut module_id) = file_module.into_option() else {
+            return Ok(None);
+        };
+
+        for component in inline_module_path {
+            let Some(module) = def_map.module(module_id) else {
+                return Ok(None);
+            };
+            let mut child = ExpectedUnique::new();
+            for (name, child_id) in &module.children {
+                if name == component.as_ref() {
+                    child.push(*child_id);
+                }
+            }
+            let Some(child) = child.into_option() else {
+                return Ok(None);
+            };
+            let Some(child_data) = def_map.module(child) else {
+                return Ok(None);
+            };
+            if !matches!(
+                child_data.origin,
+                ModuleOrigin::Inline {
+                    declaration_file,
+                    ..
+                } if declaration_file == file
+            ) {
+                return Ok(None);
+            }
+            module_id = child;
+        }
+
+        Ok(Some(ModuleRef {
+            origin: DefMapRef::Crate(crate_ref),
+            module: module_id,
+        }))
     }
 }
 

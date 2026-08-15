@@ -44,12 +44,12 @@ async fn rename_returns_workspace_edit_for_clean_document() {
 }
 
 #[tokio::test]
-async fn rename_uses_unsaved_declaration_and_reference_files_as_one_snapshot() {
+async fn rename_requires_save_before_using_changed_global_spans() {
     let fixture = LspEngineFixture::initialized(
         r#"
         //- /Cargo.toml
         [package]
-        name = "lsp_rename_editor_snapshot"
+        name = "lsp_rename_current_source"
         version = "0.1.0"
         edition = "2024"
 
@@ -70,7 +70,7 @@ async fn rename_uses_unsaved_declaration_and_reference_files_as_one_snapshot() {
 
     fixture.did_open_saved("src/lib.rs", 1).await;
     fixture.did_open_saved("src/consumer.rs", 1).await;
-    fixture
+    let declaration = fixture
         .did_change_full(
             "src/lib.rs",
             2,
@@ -100,13 +100,19 @@ pub fn make(user: EditorUser) -> EditorUser {
         .await;
 
     fixture
-        .check_dirty_rename(
+        .check_dirty_global_operations_require_save(&consumer, "rename", "Account")
+        .await;
+
+    fixture.did_save_dirty(&declaration).await;
+    fixture.did_save_dirty(&consumer).await;
+    fixture
+        .check_rename_after_save(
             &consumer,
-            "rename across unsaved open files",
+            "rename after publishing both files",
             "rename",
             "Account",
             expect![[r#"
-                rename across unsaved open files
+                rename after publishing both files
                 - /src/consumer.rs
                   - 1:11-1:21 -> Account
                   - 3:18-3:28 -> Account
@@ -211,8 +217,8 @@ async fn stale_source_query_aborts_then_recovers_through_the_command_queue() {
     )
     .await;
 
-    // Simulate a watcher delay for an unopened reference file. The target's editor snapshot remains
-    // authoritative, while the reference scan cannot reconstruct the other file at its saved
+    // Simulate a watcher delay for an unopened reference file. The target capture remains exact,
+    // while the reference scan cannot reconstruct the other file at its saved
     // revision. That mismatch still aborts explicitly and queues ordinary source recovery.
     fixture.write_file_without_notification(
         "src/usage.rs",

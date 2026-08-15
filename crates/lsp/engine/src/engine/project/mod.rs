@@ -1,10 +1,9 @@
-//! Saved-project lifecycle owned by the LSP engine.
+//! Keeps the saved `Project` on the engine thread and changes it in command order.
 //!
-//! The saved `Project` is the semantic baseline shared by every request, but it is never shared as
-//! mutable state. `ProjectCoordinator` keeps it on the dispatcher lane, prepares query-selected
-//! deferred data, and publishes source-generation changes in command order. Disposable
-//! source-override projects and detached background indexing live in child modules because they
-//! borrow or clone that saved baseline without becoming alternative owners of it.
+//! Queries borrow this project and may ask the coordinator to load package data that was left on
+//! disk. Saves and file-watcher events build and publish a new project generation. Background
+//! indexing may do expensive work elsewhere, but its result comes back to this module before it can
+//! be merged. The project is therefore never shared as mutable state between those paths.
 //!
 //! A filesystem burst can keep changing after a watcher command reaches the engine. Project
 //! construction reports that race as a typed stale-source error. The coordinator waits for another
@@ -20,10 +19,10 @@ use std::{
 };
 
 use anyhow::Context as _;
-use rg_lsp_proto::{EditorSnapshot, ServiceNotification};
+use rg_lsp_proto::ServiceNotification;
 use rg_project::{
     AnalysisSurface, Project, ProjectMemoryHooks, ProjectMemoryPurgePoint, ProjectSnapshot,
-    SavedFileChange, SourceOverrideScope, SplitIndexingMode,
+    SavedFileChange, SplitIndexingMode,
 };
 use rg_workspace::{CargoMetadataTarget, SysrootSources, WorkspaceMetadata};
 
@@ -39,7 +38,6 @@ use crate::{
 
 mod config;
 mod deferred;
-mod source_overrides;
 mod state;
 
 pub(crate) use self::config::ProjectConfiguration;
@@ -54,14 +52,12 @@ const STALE_SOURCE_RETRY_DELAY: Duration = Duration::from_millis(600);
 // while still putting a finite bound on how long one command can own the engine lane.
 const MAX_STALE_SOURCE_RETRIES: usize = 3;
 
-/// The only gateway to the saved analysis project on the engine thread.
+/// The only type allowed to access the saved project on the engine thread.
 ///
-/// Queries may borrow snapshots or ask for more deferred data to be materialized, while file
-/// changes publish a new saved generation. Background indexing also returns here before it can be
-/// merged. Keeping all three paths together is what makes generation checks meaningful and avoids
-/// putting locks inside the semantic engine. A query that discovers newer disk contents also
-/// records a stale-source latch here, so later queries abort explicitly until the queued path
-/// mutation succeeds.
+/// Queries, saved file changes, and completed background indexing all pass through this owner. It
+/// can therefore compare generation ids before merging background work without putting locks in
+/// the analysis databases. If a query discovers that disk has newer text, this owner also marks the
+/// project stale so later queries stop until the queued file change publishes a replacement.
 #[derive(Debug)]
 pub(super) struct ProjectCoordinator {
     project: ProjectState,
@@ -81,7 +77,7 @@ impl ProjectCoordinator {
     ) -> Self {
         let memory_hooks = Arc::new(ProjectMemoryReporter::new(memory_control.clone()));
         Self {
-            project: ProjectState::new(memory_control),
+            project: ProjectState::new(),
             deferred_indexing_finish: DeferredIndexingFinish::new(sender.clone()),
             command_sender: sender,
             stale_source: None,
@@ -399,16 +395,14 @@ impl ProjectCoordinator {
             .context("borrow project snapshot")
     }
 
-    /// Materialize the same saved or source-override project that the query will read.
-    pub(super) fn materialize_query_project(
+    /// Load deferred package data needed by the next query.
+    pub(super) fn materialize_saved_project(
         &mut self,
-        editor: &EditorSnapshot,
-        scope: SourceOverrideScope,
         surface: AnalysisSurface<'_>,
     ) -> anyhow::Result<()> {
         self.project
-            .materialize_query_project(editor, scope, surface)
-            .context("materialize query-selected analysis surface")
+            .materialize_saved_project(surface)
+            .context("materialize saved analysis surface")
     }
 
     /// Return the saved-source generation selected by the serialized analysis lane.
@@ -416,18 +410,7 @@ impl ProjectCoordinator {
         self.project.generation()
     }
 
-    /// Run a query against saved state or one disposable source-override project.
-    pub(super) fn with_query_snapshot<T>(
-        &mut self,
-        editor: Option<(&EditorSnapshot, SourceOverrideScope)>,
-        query: impl FnOnce(ProjectSnapshot<'_>) -> anyhow::Result<T>,
-    ) -> anyhow::Result<T> {
-        self.project
-            .with_query_snapshot(editor, query)
-            .context("run query with project snapshot")
-    }
-
-    /// Release request-scoped loads from saved and source-override state.
+    /// Drop source data that was loaded only for the request that just finished.
     pub(super) fn release_query_memory(&mut self) {
         self.project.release_query_memory();
     }
@@ -472,7 +455,7 @@ impl ProjectCoordinator {
     }
 
     /// Repair invalid package artifacts after aborting the failed query explicitly.
-    pub(super) fn recover_after_query_cache_failure(&mut self, label: &'static str) {
+    pub(super) fn recover_after_package_cache_failure(&mut self, label: &'static str) {
         if !self.project.is_initialized() {
             tracing::warn!(
                 label,

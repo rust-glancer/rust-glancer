@@ -13,7 +13,7 @@ pub(crate) async fn definition(
     params: GotoDefinitionParams,
 ) -> Result<Option<GotoDefinitionResponse>> {
     let position = params.text_document_position_params.position;
-    let input = ctx.target_position(position)?;
+    let input = ctx.global_position(position)?;
     tracing::trace!("definition request received");
     let result = ctx
         .engine_client
@@ -24,7 +24,7 @@ pub(crate) async fn definition(
             },
         )
         .await;
-    let locations = ctx.finish_query(result)?;
+    let locations = ctx.finish_global_document_read(result)?;
     tracing::trace!(
         result_count = locations.len(),
         "definition request answered"

@@ -28,18 +28,16 @@ pub(crate) fn location_for_reference(
     Ok(Some(Location { uri, range }))
 }
 
-pub(crate) fn document_highlight_for_reference(
-    snapshot: ProjectSnapshot<'_>,
-    package: PackageSlot,
-    file_id: FileId,
+/// Convert a current-body reference using the line index for the same editor text.
+pub(crate) fn document_highlight_for_current_document(
+    line_index: &rg_parse::LineIndex,
     span: Span,
-) -> anyhow::Result<DocumentHighlight> {
-    Ok(DocumentHighlight {
-        range: range_for_file(snapshot, package, file_id, span)?,
-        // We use `read` highlight kind because it's simpler and barely noticeable. We'll fix it if
-        // somebody will actually notice the difference, which I doubt; until then it's not worth it.
+) -> DocumentHighlight {
+    DocumentHighlight {
+        range: position::range(line_index, span),
+        // Read/write classification is independent from source freshness and remains deferred.
         kind: Some(DocumentHighlightKind::READ),
-    })
+    }
 }
 
 fn range_for_file(

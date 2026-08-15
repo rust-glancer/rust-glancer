@@ -1,17 +1,22 @@
-//! Request lifecycle policy shared by every analysis query.
+//! Work that every analysis request does before and after its feature-specific query.
 //!
-//! Query methods compute a result and may stop at a request-liveness checkpoint. This layer decides
-//! whether the work should start, recognizes that internal cancellation, releases request-scoped
-//! package loads, reports stale saved-source input explicitly, and turns a recoverable package-cache
-//! failure into a temporary operational abort followed by project repair. Editor supersession is
-//! deliberately absent: only server ingress owns current open sessions and revisions, so the engine
-//! tags a successful value and lets that owner validate publication.
+//! `respond_to_query` owns the common flow:
+//!
+//! 1. Skip work if the caller has already dropped the response channel, or if the saved project is
+//!    already known to be stale.
+//! 2. Run the feature query and let expensive phases check whether the response is still wanted.
+//! 3. Tag a successful value with the project and document ids used to compute it.
+//! 4. Release data loaded only for this request and repair a recoverable package-cache failure.
+//!
+//! This layer does not decide whether an editor document is still current. Only server ingress
+//! owns live sessions and revisions, so the engine returns the captured ids and the server checks
+//! them before publishing the value.
 //!
 //! A saved-source race follows a different path. If hover discovers that `src/lib.rs` changed on
 //! disk, hover returns `AnalysisAbort::SourceChanged`, records that the saved generation is stale,
-//! and enqueues `src/lib.rs` on the ordinary path-change stream. Later queries return the same
-//! operational abort until that mutation publishes a coherent generation; the hover itself never
-//! turns into a synchronous reindex.
+//! and enqueues `src/lib.rs` on the normal path-change stream. Later queries return the same abort
+//! until that mutation publishes a new saved project; the hover itself never turns into a
+//! synchronous reindex.
 
 use std::{
     fmt,
@@ -20,20 +25,19 @@ use std::{
 };
 
 use rg_lsp_proto::{
-    AnalysisAbort, AnalysisInput, AnalysisOutcome, AnalysisReady, AnalysisScope,
-    DocumentAnalysisSnapshot, EditorSnapshotRevision, TargetDocumentRevision,
+    AnalysisAbort, AnalysisInput, AnalysisOutcome, AnalysisReady, EditorDocumentSnapshot,
+    GlobalPositionSnapshot, OpenDocumentsRevision, TargetDocumentRevision,
 };
 use rg_project::Project;
 
 use super::QueryRunner;
 use crate::{engine::command::AnalysisResponse, memory::MemoryReporter};
 
-/// Read-only view of whether the caller still wants one query's result.
+/// Lets expensive query phases check whether anyone still wants the result.
 ///
-/// Dropping the RPC future closes the engine response channel. Feature queries receive this small
-/// capability so long-running work can notice that closure at natural boundaries. It carries no
-/// editor revision or mutable cancellation state; the response channel remains the only source of
-/// truth for this request's lifetime.
+/// Dropping the RPC future closes the engine response channel. Long-running queries use this value
+/// to check that channel between expensive phases. It carries no document ids and keeps no second
+/// cancellation flag that could disagree with the channel.
 pub(crate) struct QueryCancellation<'a> {
     is_cancelled: &'a dyn Fn() -> bool,
 }
@@ -66,16 +70,26 @@ impl fmt::Display for QueryCancelled {
 
 impl std::error::Error for QueryCancelled {}
 
-/// Request identity captured before one command begins analysis.
+/// Common request data recorded before one command starts analysis.
 ///
-/// Queue time is recorded separately from execution time. The lightweight editor identity here is
-/// copied from the immutable command solely so it can be returned with a successful value.
+/// Queue time is kept separate from execution time. The input ids are copied from the command so a
+/// successful result can return them to the server for its final stale-result check.
 #[derive(Debug)]
 pub(crate) struct QueryContext {
     label: &'static str,
     queue_elapsed: Duration,
-    scope: AnalysisScope,
-    target: Option<(TargetDocumentRevision, EditorSnapshotRevision)>,
+    input: QueryInputIdentity,
+}
+
+/// Which editor ids, if any, must be returned with a successful result.
+#[derive(Debug)]
+enum QueryInputIdentity {
+    SavedProject,
+    GlobalOperation {
+        target: TargetDocumentRevision,
+        open_documents_revision: OpenDocumentsRevision,
+    },
+    TargetDocument(TargetDocumentRevision),
 }
 
 impl QueryContext {
@@ -83,48 +97,68 @@ impl QueryContext {
         Self {
             label,
             queue_elapsed,
-            scope: AnalysisScope::Workspace,
-            target: None,
+            input: QueryInputIdentity::SavedProject,
         }
     }
 
-    pub(crate) fn document(
+    pub(crate) fn global_operation(
         label: &'static str,
         queue_elapsed: Duration,
-        snapshot: &DocumentAnalysisSnapshot,
-        scope: AnalysisScope,
+        snapshot: &GlobalPositionSnapshot,
     ) -> Self {
         Self {
             label,
             queue_elapsed,
-            scope,
-            target: Some((snapshot.target().clone(), snapshot.editor().revision())),
+            input: QueryInputIdentity::GlobalOperation {
+                target: snapshot.target().clone(),
+                open_documents_revision: snapshot.open_documents_revision(),
+            },
+        }
+    }
+
+    /// Record a query that depends on its target document but not on open sibling documents.
+    pub(crate) fn target_document(
+        label: &'static str,
+        queue_elapsed: Duration,
+        document: &EditorDocumentSnapshot,
+    ) -> Self {
+        Self {
+            label,
+            queue_elapsed,
+            input: QueryInputIdentity::TargetDocument(document.target().clone()),
         }
     }
 
     fn analysis_input(&self, saved_project_generation: u64) -> AnalysisInput {
-        match &self.target {
-            Some((target, editor_revision)) => AnalysisInput::for_target_revision(
+        match &self.input {
+            QueryInputIdentity::SavedProject => {
+                AnalysisInput::for_saved_project(saved_project_generation)
+            }
+            QueryInputIdentity::GlobalOperation {
+                target,
+                open_documents_revision,
+            } => AnalysisInput::for_global_operation(
                 saved_project_generation,
-                *editor_revision,
+                *open_documents_revision,
                 target.clone(),
-                self.scope,
             ),
-            None => AnalysisInput::for_saved_project(saved_project_generation),
+            QueryInputIdentity::TargetDocument(target) => {
+                AnalysisInput::for_target_document(saved_project_generation, target.clone())
+            }
         }
     }
 }
 
 impl QueryRunner<'_> {
-    /// Run one read-only request through cancellation, recovery, and publication policy.
+    /// Run one read-only request through the common query lifecycle.
     ///
-    /// The supplied closure contains only the feature query. A stale saved-source error latches the
-    /// saved generation as stale and schedules normal path recovery instead of rebuilding inside
-    /// this request. It also receives a read-only view of the response channel so expensive work can
-    /// stop after its caller leaves. Once a result is safe to publish, its response channel is
-    /// completed before request cleanup and recovery begin. Those steps still finish before the next
-    /// engine command is accepted, but they no longer add to the completed request's response
-    /// latency.
+    /// The closure contains only the feature query and receives a cancellation check it can use
+    /// between expensive phases. If reading saved source proves that the project is stale, this
+    /// method schedules the normal path-change recovery instead of rebuilding inside the request.
+    ///
+    /// A finished response is sent before cleanup and recovery start. Cleanup still completes
+    /// before the dispatcher accepts the next command, but it does not add to the latency observed
+    /// by this request's caller.
     pub(crate) fn respond_to_query<T>(
         &mut self,
         context: QueryContext,
@@ -159,9 +193,8 @@ impl QueryRunner<'_> {
             return;
         }
 
-        // From here on, saved and source-override requests share the same execution path. Keeping
-        // the stale check in the context layer lets timing and cache recovery remain uniform for
-        // every analysis query.
+        // Keeping the stale check in the context layer lets timing and cache recovery remain
+        // uniform for every analysis query.
         let label = context.label;
         let queue_elapsed = context.queue_elapsed;
         tracing::trace!(
@@ -172,7 +205,6 @@ impl QueryRunner<'_> {
         let started = Instant::now();
         let memory_control = Arc::clone(&self.memory_control);
         let memory_before = MemoryReporter::snapshot(memory_control.as_ref());
-        self.analysis_scope = context.scope;
         let analysis_input = context.analysis_input(self.project.generation());
         let result = {
             let is_cancelled = || respond_to.is_closed();
@@ -272,7 +304,7 @@ impl QueryRunner<'_> {
         self.project.release_query_memory();
         MemoryReporter::purge_and_report_delta_debug(memory_control.as_ref(), label, memory_before);
         if should_recover {
-            self.project.recover_after_query_cache_failure(label);
+            self.project.recover_after_package_cache_failure(label);
         }
     }
 }
@@ -288,9 +320,8 @@ mod tests {
 
     use anyhow::Context as _;
     use rg_lsp_proto::{
-        AnalysisOutcome, AnalysisScope, DocumentAnalysisSnapshot, DocumentRevision,
-        EditorDocumentSnapshot, EditorSnapshot, EditorSnapshotRevision, OpenDocumentSession,
-        ServiceNotification,
+        AnalysisOutcome, DocumentRevision, EditorDocumentSnapshot, GlobalPositionSnapshot,
+        OpenDocumentSession, OpenDocumentsRevision, ServiceNotification,
     };
     use tokio::sync::oneshot;
 
@@ -331,7 +362,7 @@ mod tests {
     }
 
     #[test]
-    fn document_query_returns_the_exact_target_identity_used_by_analysis() {
+    fn global_operation_returns_the_exact_open_document_identity_used_by_analysis() {
         let document = EditorDocumentSnapshot::new(
             PathBuf::from("/workspace/src/lib.rs"),
             OpenDocumentSession::new(3),
@@ -339,20 +370,17 @@ mod tests {
             Some(5),
             "fn editor() {}".to_string(),
         );
-        let snapshot = DocumentAnalysisSnapshot::new(
+        let snapshot = GlobalPositionSnapshot::new(
             document.target().clone(),
-            EditorSnapshot::new(EditorSnapshotRevision::new(13), vec![document]),
+            OpenDocumentsRevision::new(13),
+            vec![document],
+            ls_types::Position::new(0, 3),
         );
         let memory_control: Arc<dyn MemoryControl> = Arc::new(());
         let mut project = test_project(Arc::clone(&memory_control));
         let mut runner = QueryRunner::new(&mut project, memory_control);
         let (respond_to, response) = oneshot::channel();
-        let context = QueryContext::document(
-            "hover",
-            Duration::ZERO,
-            &snapshot,
-            AnalysisScope::ChangedPackages,
-        );
+        let context = QueryContext::global_operation("references", Duration::ZERO, &snapshot);
 
         runner.respond_to_query(context, respond_to, |_, _| Ok(vec![1_usize]));
 
@@ -365,8 +393,8 @@ mod tests {
         assert_eq!(ready.value(), &vec![1]);
         assert_eq!(ready.input().target_document(), Some(snapshot.target()));
         assert_eq!(
-            ready.input().editor_snapshot_revision(),
-            Some(snapshot.editor().revision())
+            ready.input().open_documents_revision(),
+            Some(snapshot.open_documents_revision())
         );
     }
 

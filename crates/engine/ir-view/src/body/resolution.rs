@@ -61,7 +61,7 @@ impl<'a, 'db> BodyResolutionView<'a, 'db> {
         else {
             return Ok(None);
         };
-        let trait_selection = self.db.trait_selection(body_ref.crate_ref);
+        let trait_selection = self.db.trait_selection_for_body(body_ref);
 
         Ok(Some(
             BodyResolutionContext::new(
@@ -91,7 +91,7 @@ impl<'a, 'db> BodyResolutionView<'a, 'db> {
         else {
             return Ok(None);
         };
-        let trait_selection = self.db.trait_selection(body_ref.crate_ref);
+        let trait_selection = self.db.trait_selection_for_body(body_ref);
 
         BodyResolutionContext::new(
             self.db,
@@ -119,7 +119,7 @@ impl<'a, 'db> BodyResolutionView<'a, 'db> {
         else {
             return Ok(Vec::new());
         };
-        let trait_selection = self.db.trait_selection(body_ref.crate_ref);
+        let trait_selection = self.db.trait_selection_for_body(body_ref);
 
         BodyResolutionContext::new(
             self.db,
@@ -147,7 +147,7 @@ impl<'a, 'db> BodyResolutionView<'a, 'db> {
         else {
             return Ok(Ty::Unknown);
         };
-        let trait_selection = self.db.trait_selection(body_ref.crate_ref);
+        let trait_selection = self.db.trait_selection_for_body(body_ref);
 
         BodyResolutionContext::new(
             self.db,
@@ -174,7 +174,7 @@ impl<'a, 'db> BodyResolutionView<'a, 'db> {
         else {
             return Ok(None);
         };
-        let trait_selection = self.db.trait_selection(body_ref.crate_ref);
+        let trait_selection = self.db.trait_selection_for_body(body_ref);
 
         Ok(Some(
             BodyResolutionContext::new(
@@ -208,7 +208,7 @@ impl<'a, 'db> BodyResolutionView<'a, 'db> {
         else {
             return Ok(None);
         };
-        let trait_selection = self.db.trait_selection(body_ref.crate_ref);
+        let trait_selection = self.db.trait_selection_for_body(body_ref);
 
         Ok(Some(
             BodyResolutionContext::new(
@@ -241,7 +241,7 @@ impl<'a, 'db> BodyResolutionView<'a, 'db> {
         else {
             return Ok(None);
         };
-        let trait_selection = self.db.trait_selection(body_ref.crate_ref);
+        let trait_selection = self.db.trait_selection_for_body(body_ref);
 
         Ok(Some(
             BodyResolutionContext::new(

@@ -92,8 +92,9 @@ impl SequencedLifecycleEvent {
 ///
 /// The lookup starts when the document opens. A request may take its snapshot before the result is
 /// ready; that snapshot reports the route as unavailable rather than choosing another engine.
-/// When the result is stored, the global editor revision advances so the next request can include
-/// the document in the correct engine input. The same result is reused until the session closes.
+/// When the result is stored, the open-documents revision advances. A later global operation will
+/// therefore capture the document under its resolved engine. The same route is reused until the
+/// session closes.
 #[derive(Clone, Debug)]
 pub(crate) struct SessionRoute {
     state: Arc<Mutex<SessionRouteState>>,
@@ -162,7 +163,7 @@ impl SessionRoute {
 
 /// Notifies `EditorState` when route lookup finishes for an open session.
 ///
-/// The notification advances the global editor revision only if this is still the same open
+/// The notification advances the open-documents revision only if this is still the same open
 /// session. A route that finishes after close or reopen must not change the newer session.
 #[derive(Debug)]
 struct RoutePublication {

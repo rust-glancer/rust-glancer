@@ -1,11 +1,12 @@
-//! Analysis-query execution on top of a saved or source-override project snapshot.
+//! Runs editor queries against one saved project.
 //!
-//! Feature methods in this module do the request-local work: map an LSP path into every matching
-//! crate context, materialize deferred data when the feature needs it, run `rg_analysis`, and
-//! convert semantic results back to protocol types. `lifecycle` wraps those methods with
-//! cancellation, saved-source recovery, result tagging, and request-memory cleanup. Keeping the
-//! two layers separate lets feature code read like a query without giving it ownership of the
-//! long-lived project.
+//! A feature method first finds every crate context in which the target file appears. It loads any
+//! saved package data needed by the feature, optionally rebuilds the body around the cursor from
+//! the editor text, runs `rg_analysis`, and converts the result to LSP types. Rebuilt bodies belong
+//! only to that request; they do not turn the saved project into an unsaved copy.
+//!
+//! The `lifecycle` module wraps this feature work with cancellation, stale-source recovery, result
+//! tagging, and cleanup of data loaded for the request.
 
 mod lifecycle;
 mod navigation;
@@ -17,12 +18,20 @@ pub(super) use self::lifecycle::{QueryCancellation, QueryContext};
 use std::{path::Path, sync::Arc, time::Instant};
 
 use anyhow::Context as _;
-use rg_analysis::{CompletionQuery, CompletionSource, InlayHint as AnalysisInlayHint};
-use rg_lsp_proto::{
-    AnalysisScope, CompletionClientCapabilities, DocumentAnalysisSnapshot,
-    DocumentPositionSnapshot, DocumentRangeSnapshot, EditorDocumentSnapshot, EditorSnapshot,
+use rg_analysis::{
+    Analysis, CompletionQuery, CompletionSource, InlayHint as AnalysisInlayHint,
+    SavedSourceRelationship,
 };
-use rg_project::{AnalysisSurface, ProjectSnapshot, SourceOverrideScope};
+use rg_lsp_proto::{
+    CompletionClientCapabilities, CompletionResult, DocumentPositionSnapshot,
+    DocumentQueryCoverage, DocumentQueryResult, DocumentRangeSnapshot, EditorDocumentSnapshot,
+    GlobalPositionSnapshot,
+};
+use rg_parse::{CurrentSource, LineIndex};
+use rg_project::{
+    AnalysisSurface, CurrentBodyAnalysisCheckpoint, CurrentBodyAnalysisCoverage,
+    CurrentBodySelection, FileContext, ProjectSnapshot,
+};
 use rg_std::UniqueVec;
 use rg_text::RustEdition;
 
@@ -32,15 +41,43 @@ use crate::{
     proto::{completion, formatting as formatting_proto, hover, inlay_hint, symbols},
 };
 
-/// Borrows the engine state needed to execute one dispatched analysis request.
+/// Borrows the engine state used by one dispatched analysis request.
 ///
 /// The runner does not own project generations. It prepares the query's analysis surface, borrows
-/// a saved or source-override snapshot through `ProjectCoordinator`, and lets the shared lifecycle
-/// policy release request-scoped loads before the dispatcher accepts the next command.
+/// the saved snapshot through `ProjectCoordinator`, and lets the shared lifecycle policy release
+/// request-scoped loads before the dispatcher accepts the next command.
 pub(super) struct QueryRunner<'a> {
     project: &'a mut ProjectCoordinator,
     memory_control: Arc<dyn MemoryControl>,
-    analysis_scope: AnalysisScope,
+}
+
+/// One way the target file appears in the saved project's crate graph.
+#[derive(Debug)]
+struct CurrentDocumentTarget {
+    context: FileContext,
+    crate_ref: rg_ir_model::CrateRef,
+}
+
+/// Current body, source position, and crate contexts prepared for a document query at one cursor.
+struct CurrentPositionAnalysis<'project> {
+    analysis: Analysis<'project>,
+    coverage: CurrentBodyAnalysisCoverage,
+    targets: Vec<CurrentDocumentTarget>,
+    source: Arc<CurrentSource>,
+    offset: u32,
+}
+
+impl CurrentPositionAnalysis<'_> {
+    fn target_has_exact_body(&self, target: &CurrentDocumentTarget) -> bool {
+        self.coverage
+            .exact_body_spans()
+            .iter()
+            .any(|(crate_ref, file, span)| {
+                *crate_ref == target.crate_ref
+                    && *file == target.context.file
+                    && span.touches(self.offset)
+            })
+    }
 }
 
 impl<'a> QueryRunner<'a> {
@@ -51,68 +88,141 @@ impl<'a> QueryRunner<'a> {
         Self {
             project,
             memory_control,
-            analysis_scope: AnalysisScope::Workspace,
         }
     }
 
-    /// Borrow the source-override snapshot selected by this request's recorded analysis scope.
-    ///
-    /// The dispatcher chooses the feature scope once. Query execution and successful-result
-    /// tagging both read that same value, so cache coverage and `AnalysisInput` cannot drift apart.
-    fn with_query_snapshot<T>(
-        &mut self,
-        editor: &EditorSnapshot,
-        query: impl FnOnce(ProjectSnapshot<'_>) -> anyhow::Result<T>,
-    ) -> anyhow::Result<T> {
-        let override_scope = self.source_override_scope()?;
-        self.project
-            .with_query_snapshot(Some((editor, override_scope)), query)
-    }
-
-    fn source_override_scope(&self) -> anyhow::Result<SourceOverrideScope> {
-        let scope = match self.analysis_scope {
-            AnalysisScope::ChangedPackages => SourceOverrideScope::ChangedPackages,
-            AnalysisScope::ReverseDependencyClosure => {
-                SourceOverrideScope::ReverseDependencyClosure
+    /// Give cancellation logs a stable name for each shared current-body build boundary.
+    fn current_body_checkpoint(checkpoint: CurrentBodyAnalysisCheckpoint) -> &'static str {
+        match checkpoint {
+            CurrentBodyAnalysisCheckpoint::SourceParsed => "after current source parsing",
+            CurrentBodyAnalysisCheckpoint::OwnerAssociated => {
+                "after current body owner association"
             }
-            AnalysisScope::TargetDocument | AnalysisScope::Workspace => {
-                anyhow::bail!("non-semantic analysis scope cannot select a source-override project")
+            CurrentBodyAnalysisCheckpoint::BodyLowered => "after current body lowering",
+            CurrentBodyAnalysisCheckpoint::BodyLocalItemsCollected => {
+                "after current body-local item collection"
             }
-        };
-        Ok(scope)
+            CurrentBodyAnalysisCheckpoint::ImplHeadersResolved => {
+                "after current body-local impl header resolution"
+            }
+            CurrentBodyAnalysisCheckpoint::PatternBindingsMaterialized => {
+                "after current pattern binding resolution"
+            }
+            CurrentBodyAnalysisCheckpoint::BodyResolved => "after current body resolution",
+        }
     }
 
-    /// Materialize the exact saved or source-override project selected for this request.
-    fn materialize_query_project(
-        &mut self,
-        editor: &EditorSnapshot,
-        surface: AnalysisSurface<'_>,
-    ) -> anyhow::Result<()> {
-        let override_scope = self.source_override_scope()?;
-        self.project
-            .materialize_query_project(editor, override_scope, surface)
-    }
-
-    /// Resolve the request target from the complete editor snapshot before feature work begins.
-    fn target_document(
-        snapshot: &DocumentAnalysisSnapshot,
+    /// Find the target document inside a global operation's captured document set.
+    fn global_operation_target(
+        snapshot: &GlobalPositionSnapshot,
     ) -> anyhow::Result<&EditorDocumentSnapshot> {
         snapshot
-            .document()
-            .context("target document is absent from the editor snapshot")
+            .target_document()
+            .context("target document is absent from the global-operation input")
     }
 
-    /// Materialize deferred data for every package-local identity of one source path.
+    /// Return the first open document that does not match this saved project.
     ///
-    /// A path can belong to several crate roots, but file-shaped materialization only needs the
-    /// package/file pairs. The query later expands those files into their individual crate
-    /// contexts after the selected saved or source-override project has been enriched.
-    fn ensure_path(
-        &mut self,
-        query: &'static str,
-        editor: &EditorSnapshot,
-        path: &Path,
-    ) -> anyhow::Result<()> {
+    /// References, rename, and implementation navigation return saved byte ranges. They can use
+    /// those ranges only when every applicable open Rust document still has its saved text. A
+    /// document that is not known to the saved project also requires a save.
+    ///
+    /// TODO: Body-local references and rename may eventually use exact current-body spans. Until
+    /// that feature has one complete edit policy, keeping all global operations behind this rule
+    /// is safer and easier to predict than mixing current and saved spans in one response.
+    fn save_required_for_global_operation(
+        &self,
+        input: &GlobalPositionSnapshot,
+    ) -> anyhow::Result<Option<std::path::PathBuf>> {
+        let snapshot = self
+            .project
+            .saved_snapshot()
+            .context("borrow saved project for global-operation safety")?;
+
+        for document in input.documents() {
+            let contexts = Self::file_contexts(snapshot, document.source_path())
+                .context("resolve open document for global-operation safety")?;
+            if contexts.is_empty() {
+                return Ok(Some(document.path().to_path_buf()));
+            }
+            for context in contexts {
+                let saved = snapshot
+                    .file_source_text(context.package, context.file)
+                    .context("load saved source for global-operation safety")?;
+                if !saved.is_some_and(|source| source.as_ref() == document.text()) {
+                    return Ok(Some(document.path().to_path_buf()));
+                }
+            }
+        }
+
+        Ok(None)
+    }
+
+    /// Prepare current-body analysis for one editor position.
+    ///
+    /// This converts the LSP position using the captured text, finds every crate context for the
+    /// file, and rebuilds the matching body in each context. The returned analysis still borrows
+    /// all module-level information from the saved project.
+    fn current_position_analysis<'project>(
+        snapshot: ProjectSnapshot<'project>,
+        document: &EditorDocumentSnapshot,
+        position: ls_types::Position,
+        cancellation: &QueryCancellation<'_>,
+    ) -> anyhow::Result<Option<CurrentPositionAnalysis<'project>>> {
+        let targets = Self::file_contexts(snapshot, document.source_path())
+            .context("resolve current document contexts")?
+            .into_iter()
+            .flat_map(|context| {
+                context
+                    .crates
+                    .clone()
+                    .into_iter()
+                    .map(move |crate_ref| CurrentDocumentTarget {
+                        context: context.clone(),
+                        crate_ref,
+                    })
+            })
+            .collect::<Vec<_>>();
+        if targets.is_empty() {
+            return Ok(None);
+        }
+        let body_targets = targets
+            .iter()
+            .map(|target| (target.crate_ref, target.context.file))
+            .collect::<Vec<_>>();
+        let source_view = snapshot
+            .prepare_current_source(&body_targets, document.text())
+            .context("prepare current document source")?;
+        let source = source_view.shared_source();
+        let Some(offset) = source
+            .line_index()
+            .offset_from_utf16_position(crate::proto::position::parse_position(position))
+        else {
+            return Ok(None);
+        };
+        let (analysis, coverage) = snapshot
+            .analysis_for_current_bodies_from_source(
+                &body_targets,
+                source_view,
+                CurrentBodySelection::AtOffset(offset),
+                |checkpoint| cancellation.checkpoint(Self::current_body_checkpoint(checkpoint)),
+            )
+            .context("build current document body analysis")?;
+
+        Ok(Some(CurrentPositionAnalysis {
+            analysis,
+            coverage,
+            targets,
+            source,
+            offset,
+        }))
+    }
+
+    /// Load deferred package data for every saved file identity of one source path.
+    ///
+    /// A path can appear in several crate roots. Loading is selected by package and file, so this
+    /// first collects those pairs. The feature query expands them into crate contexts afterward.
+    fn ensure_path(&mut self, query: &'static str, path: &Path) -> anyhow::Result<()> {
         let started = Instant::now();
 
         // Resolve the path before mutating the project. One file can have several crate contexts,
@@ -128,7 +238,8 @@ impl<'a> QueryRunner<'a> {
                 .map(|context| (context.package, context.file))
                 .collect::<Vec<_>>()
         };
-        self.materialize_query_project(editor, AnalysisSurface::Files(&files))
+        self.project
+            .materialize_saved_project(AnalysisSurface::Files(&files))
             .with_context(|| format!("prepare {query} query path"))?;
         tracing::trace!(
             query,
@@ -139,228 +250,255 @@ impl<'a> QueryRunner<'a> {
         Ok(())
     }
 
-    /// Collect completions from every crate interpretation of the cursor.
-    ///
-    /// Source text is loaded and classified once for this request so speculative syntax can be
-    /// shared by every crate interpretation without making saved text permanently resident.
-    /// Semantic reads still come from the matching saved or source-override project.
+    /// Compute completions from current syntax and body facts plus saved crate-level information.
     pub(super) fn completion(
         &mut self,
         input: DocumentPositionSnapshot,
         client_capabilities: CompletionClientCapabilities,
         cancellation: &QueryCancellation<'_>,
-    ) -> anyhow::Result<Vec<ls_types::CompletionItem>> {
-        let DocumentPositionSnapshot { analysis, position } = input;
-        let document = Self::target_document(&analysis)?;
+    ) -> anyhow::Result<CompletionResult> {
+        let document = input.document();
+        let position = input.position();
         let path = document.source_path().to_path_buf();
-        let started = Instant::now();
-        self.ensure_path("completion", analysis.editor(), &path)
-            .context("prepare completion path")?;
-
-        // Materializing the request view can be substantial. An edit received during that work
-        // should prevent this obsolete request from entering the more expensive semantic phase.
-        cancellation
-            .checkpoint("after completion source preparation")
-            .context("check cancellation after completion source preparation")?;
         let source_text = document.text();
-        let completions = self
-            .with_query_snapshot(analysis.editor(), |snapshot| {
-                let snapshot_query_started = Instant::now();
-                let crate_offsets_started = Instant::now();
-                let crate_offsets = Self::crate_offsets(snapshot, &path, position)
-                    .context("resolve completion position")?;
-                let crate_offsets_us = crate_offsets_started.elapsed().as_micros();
-                let completion_source_started = Instant::now();
-                let completion_source = crate_offsets.first().and_then(|_| {
-                    let (_, _, offset) = crate_offsets.first()?;
-                    CompletionSource::new(source_text, *offset)
-                });
-                let completion_source_us = completion_source_started.elapsed().as_micros();
-                let analysis_crates = crate_offsets
-                    .iter()
-                    .map(|(_, crate_ref, _)| *crate_ref)
-                    .collect::<Vec<_>>();
-                let analysis_load_started = Instant::now();
-                let analysis = snapshot
-                    .analysis_for_crates(&analysis_crates)
-                    .context("load completion analysis")?;
-                let analysis_load_us = analysis_load_started.elapsed().as_micros();
-                let mut completions = UniqueVec::new();
-                let mut line_index_load_us = 0_u128;
-                let mut analysis_compute_us = 0_u128;
-                let mut protocol_conversion_us = 0_u128;
-
-                for (context, crate_ref, offset) in crate_offsets {
-                    cancellation
-                        .checkpoint("before completion crate interpretation")
-                        .context("check cancellation before completion crate interpretation")?;
-                    let line_index_load_started = Instant::now();
-                    let line_index = snapshot
-                        .file_line_index(context.package, context.file)
-                        .context("load completion line index")?;
-                    line_index_load_us += line_index_load_started.elapsed().as_micros();
-                    let Some(line_index) = line_index else {
-                        continue;
-                    };
-                    let mut query = CompletionQuery::new(crate_ref, context.file, offset)
-                        .with_client_capabilities(rg_analysis::CompletionClientCapabilities {
-                            snippet_support: client_capabilities.snippet_support,
-                        });
-                    if let Some(source) = completion_source
-                        .as_ref()
-                        .filter(|source| source.offset() == offset)
-                    {
-                        query = query.with_completion_source(source);
-                    } else {
-                        query = query.with_source_text(source_text);
-                    }
-                    let analysis_compute_started = Instant::now();
-                    let items = analysis
-                        .completions_at(query)
-                        .context("compute completions")?;
-                    analysis_compute_us += analysis_compute_started.elapsed().as_micros();
-
-                    // A single crate query is synchronous. If cancellation arrived while it ran,
-                    // discard its items before converting them or starting another crate.
-                    cancellation
-                        .checkpoint("after completion crate interpretation")
-                        .context("check cancellation after completion crate interpretation")?;
-                    let protocol_conversion_started = Instant::now();
-                    for item in items {
-                        let item = completion::completion_item(item, line_index);
-                        completions.push(item);
-                    }
-                    protocol_conversion_us += protocol_conversion_started.elapsed().as_micros();
-                }
-
-                let completions = completions.into_vec();
-                let analysis_drop_started = Instant::now();
-                drop(analysis);
-                let analysis_drop_us = analysis_drop_started.elapsed().as_micros();
-                tracing::trace!(
-                    crate_count = analysis_crates.len(),
-                    result_count = completions.len(),
-                    crate_offsets_us,
-                    completion_source_us,
-                    analysis_load_us,
-                    line_index_load_us,
-                    analysis_compute_us,
-                    protocol_conversion_us,
-                    analysis_drop_us,
-                    total_us = snapshot_query_started.elapsed().as_micros(),
-                    "completion snapshot query phases finished"
-                );
-                Ok(completions)
+        let started = Instant::now();
+        let snapshot_query_started = Instant::now();
+        let snapshot = self
+            .project
+            .saved_snapshot()
+            .context("borrow saved project for completion")?;
+        let contexts_started = Instant::now();
+        let targets = Self::file_contexts(snapshot, &path)
+            .context("resolve completion file contexts")?
+            .into_iter()
+            .flat_map(|context| {
+                context
+                    .crates
+                    .into_iter()
+                    .map(move |crate_ref| (crate_ref, context.file))
             })
-            .context("run completion query")?;
+            .collect::<Vec<_>>();
+        let contexts_us = contexts_started.elapsed().as_micros();
+        if targets.is_empty() {
+            return Ok(CompletionResult::new(
+                Vec::new(),
+                DocumentQueryCoverage::Partial,
+            ));
+        }
+
+        let current_source_started = Instant::now();
+        let current_source_view = snapshot
+            .prepare_current_source(&targets, source_text)
+            .context("prepare current completion source")?;
+        let current_source = current_source_view.shared_source();
+        let Some(offset) = current_source
+            .line_index()
+            .offset_from_utf16_position(crate::proto::position::parse_position(position))
+        else {
+            return Ok(CompletionResult::new(
+                Vec::new(),
+                DocumentQueryCoverage::Partial,
+            ));
+        };
+        let current_source_us = current_source_started.elapsed().as_micros();
+        let completion_source_started = Instant::now();
+        let completion_source = CompletionSource::new(source_text, offset);
+        let completion_source_us = completion_source_started.elapsed().as_micros();
+
+        cancellation
+            .checkpoint("after current completion source parsing")
+            .context("check cancellation after current completion source parsing")?;
+
+        let current_body_started = Instant::now();
+        let (analysis, coverage) = snapshot
+            .analysis_for_current_bodies_from_source(
+                &targets,
+                current_source_view,
+                CurrentBodySelection::AtOffset(offset),
+                |checkpoint| cancellation.checkpoint(Self::current_body_checkpoint(checkpoint)),
+            )
+            .context("build current completion analysis")?;
+        let current_body_us = current_body_started.elapsed().as_micros();
+        let semantic_coverage = if coverage.is_exact() {
+            DocumentQueryCoverage::Exact
+        } else {
+            DocumentQueryCoverage::Partial
+        };
+
+        cancellation
+            .checkpoint("before semantic completion")
+            .context("check cancellation before semantic completion")?;
+
+        let mut completions = UniqueVec::new();
+        let mut analysis_compute_us = 0_u128;
+        let mut protocol_conversion_us = 0_u128;
+        for &(crate_ref, file) in &targets {
+            cancellation
+                .checkpoint("before completion crate interpretation")
+                .context("check cancellation before completion crate interpretation")?;
+            let mut query = CompletionQuery::new(crate_ref, file, offset).with_client_capabilities(
+                rg_analysis::CompletionClientCapabilities {
+                    snippet_support: client_capabilities.snippet_support,
+                },
+            );
+            query = match completion_source.as_ref() {
+                Some(source) => query.with_completion_source(source),
+                None => query.with_source_text(source_text),
+            };
+            let analysis_compute_started = Instant::now();
+            let items = analysis
+                .completions_at(query)
+                .context("compute completions")?;
+            analysis_compute_us += analysis_compute_started.elapsed().as_micros();
+
+            // A crate query is synchronous. If it was overtaken, discard its items before
+            // conversion and before starting another crate interpretation.
+            cancellation
+                .checkpoint("after completion crate interpretation")
+                .context("check cancellation after completion crate interpretation")?;
+            let protocol_conversion_started = Instant::now();
+            for item in items {
+                completions.push(completion::completion_item(
+                    item,
+                    current_source.line_index(),
+                ));
+            }
+            protocol_conversion_us += protocol_conversion_started.elapsed().as_micros();
+        }
+
+        let completions = completions.into_vec();
+        let analysis_drop_started = Instant::now();
+        drop(analysis);
+        let analysis_drop_us = analysis_drop_started.elapsed().as_micros();
+        tracing::trace!(
+            crate_count = targets.len(),
+            result_count = completions.len(),
+            coverage = ?semantic_coverage,
+            current_source_us,
+            completion_source_us,
+            contexts_us,
+            current_body_us,
+            analysis_compute_us,
+            protocol_conversion_us,
+            analysis_drop_us,
+            snapshot_query_us = snapshot_query_started.elapsed().as_micros(),
+            "completion saved-semantics query phases finished"
+        );
 
         tracing::trace!(
             path = %path.display(),
             line = position.line,
             character = position.character,
             result_count = completions.len(),
+            coverage = ?semantic_coverage,
             elapsed_ms = started.elapsed().as_millis(),
             "completion query finished"
         );
 
-        Ok(completions)
+        Ok(CompletionResult::new(completions, semantic_coverage))
     }
 
     /// Return the first usable hover from the path's possible crate contexts.
     pub(super) fn hover(
         &mut self,
         input: DocumentPositionSnapshot,
-    ) -> anyhow::Result<Option<ls_types::Hover>> {
-        let DocumentPositionSnapshot { analysis, position } = input;
-        let document = Self::target_document(&analysis)?;
+        cancellation: &QueryCancellation<'_>,
+    ) -> anyhow::Result<DocumentQueryResult<Option<ls_types::Hover>>> {
+        let (document, position) = input.into_parts();
         let path = document.source_path().to_path_buf();
         let started = Instant::now();
-        self.ensure_path("hover", analysis.editor(), &path)
-            .context("prepare hover path")?;
-        let hover = self
-            .with_query_snapshot(analysis.editor(), |snapshot| {
-                let crate_offsets = Self::crate_offsets(snapshot, &path, position)
-                    .context("resolve hover position")?;
-                let analysis_crates = crate_offsets
-                    .iter()
-                    .map(|(_, crate_ref, _)| *crate_ref)
-                    .collect::<Vec<_>>();
-                let analysis = snapshot
-                    .analysis_for_crates(&analysis_crates)
-                    .context("load hover analysis")?;
+        let snapshot = self
+            .project
+            .saved_snapshot()
+            .context("borrow saved project for hover")?;
+        let Some(current) =
+            Self::current_position_analysis(snapshot, &document, position, cancellation)
+                .context("prepare hover analysis")?
+        else {
+            return Ok(DocumentQueryResult::new(
+                None,
+                DocumentQueryCoverage::Partial,
+            ));
+        };
 
-                for (context, crate_ref, offset) in crate_offsets {
-                    let Some(info) = analysis
-                        .hover(crate_ref, context.file, offset)
-                        .context("compute hover")?
-                    else {
-                        continue;
-                    };
-                    let Some(line_index) = snapshot
-                        .file_line_index(context.package, context.file)
-                        .context("load hover line index")?
-                    else {
-                        continue;
-                    };
-                    let Some(hover) = hover::hover(info, line_index) else {
-                        continue;
-                    };
-                    return Ok(Some(hover));
-                }
-
-                Ok(None)
-            })
-            .context("run hover query")?;
+        let mut hover = None;
+        let mut every_target_has_exact_source = true;
+        for target in &current.targets {
+            let has_exact_body = current.target_has_exact_body(target);
+            let matches_saved = if has_exact_body {
+                false
+            } else {
+                current
+                    .analysis
+                    .current_source_relationship(target.context.package, target.context.file)
+                    == Some(SavedSourceRelationship::Exact)
+            };
+            every_target_has_exact_source &= has_exact_body || matches_saved;
+            let info = if has_exact_body || matches_saved {
+                current
+                    .analysis
+                    .hover(target.crate_ref, target.context.file, current.offset)
+                    .context("compute hover")?
+            } else {
+                // Text before an unchanged item can move its header away from every saved span.
+                // Reuse saved semantics only when its syntax identifies one saved declaration.
+                current
+                    .analysis
+                    .current_header_hover(target.crate_ref, target.context.file, current.offset)
+                    .context("compute current declaration-header hover")?
+            };
+            let Some(info) = info else {
+                continue;
+            };
+            let Some(value) = hover::hover(info, current.source.line_index()) else {
+                continue;
+            };
+            hover = Some(value);
+            break;
+        }
 
         tracing::trace!(
             path = %path.display(),
             line = position.line,
             character = position.character,
             has_hover = hover.is_some(),
+            exact_body = current.coverage.is_exact(),
             elapsed_ms = started.elapsed().as_millis(),
             "hover query finished"
         );
-        Ok(hover)
+        let coverage = if current.coverage.is_exact() || every_target_has_exact_source {
+            DocumentQueryCoverage::Exact
+        } else {
+            DocumentQueryCoverage::Partial
+        };
+        Ok(DocumentQueryResult::new(hover, coverage))
     }
 
-    /// Merge the document outline produced through every crate that owns this file.
+    /// Build the document outline directly from the syntax shown by the editor.
     pub(super) fn document_symbol(
         &mut self,
-        analysis: DocumentAnalysisSnapshot,
-    ) -> anyhow::Result<Vec<ls_types::DocumentSymbol>> {
-        let document = Self::target_document(&analysis)?;
+        document: EditorDocumentSnapshot,
+    ) -> anyhow::Result<DocumentQueryResult<Vec<ls_types::DocumentSymbol>>> {
         let path = document.source_path().to_path_buf();
         let started = Instant::now();
-        let lsp_symbols = self
-            .with_query_snapshot(analysis.editor(), |snapshot| {
-                let contexts =
-                    Self::file_contexts(snapshot, &path).context("resolve document-symbol path")?;
-                let analysis_crates = contexts
-                    .iter()
-                    .flat_map(|context| context.crates.iter().copied())
-                    .collect::<Vec<_>>();
-                let analysis = snapshot
-                    .analysis_for_crates(&analysis_crates)
-                    .context("load document-symbol analysis")?;
-                let mut lsp_symbols = UniqueVec::new();
-
-                for context in contexts {
-                    for crate_ref in context.crates {
-                        let symbols = analysis
-                            .document_symbols(crate_ref, context.file)
-                            .context("collect document symbols")?;
-                        for symbol in symbols {
-                            let symbol =
-                                symbols::document_symbol(snapshot, context.package, symbol)
-                                    .context("convert document symbol")?;
-                            lsp_symbols.push(symbol);
-                        }
-                    }
-                }
-
-                Ok(lsp_symbols.into_vec())
-            })
-            .context("run document-symbol query")?;
+        let snapshot = self
+            .project
+            .saved_snapshot()
+            .context("borrow saved project for document symbols")?;
+        let contexts =
+            Self::file_contexts(snapshot, &path).context("resolve document-symbol path")?;
+        // The saved package is needed only for its Rust edition. A standalone Rust file may have
+        // no package, so parse it with the newest supported edition and still return its outline.
+        let edition = contexts
+            .first()
+            .and_then(|context| snapshot.package_edition(context.package))
+            .unwrap_or(RustEdition::Edition2024);
+        let syntax = rg_parse::parse_source_file(document.text(), edition).tree();
+        let line_index = LineIndex::new(document.text());
+        let lsp_symbols = Analysis::document_symbols_from_syntax(&syntax)
+            .into_iter()
+            .map(|symbol| symbols::document_symbol(&line_index, symbol))
+            .collect::<Vec<_>>();
 
         tracing::trace!(
             path = %path.display(),
@@ -369,7 +507,10 @@ impl<'a> QueryRunner<'a> {
             "document symbol query finished"
         );
 
-        Ok(lsp_symbols)
+        Ok(DocumentQueryResult::new(
+            lsp_symbols,
+            DocumentQueryCoverage::Exact,
+        ))
     }
 
     /// Format the live editor text using the owning package's Rust edition.
@@ -378,9 +519,8 @@ impl<'a> QueryRunner<'a> {
     /// edition metadata, and documents outside known packages use the newest supported edition.
     pub(super) fn formatting(
         &mut self,
-        analysis: DocumentAnalysisSnapshot,
-    ) -> anyhow::Result<Vec<ls_types::TextEdit>> {
-        let document = Self::target_document(&analysis)?;
+        document: EditorDocumentSnapshot,
+    ) -> anyhow::Result<DocumentQueryResult<Option<Vec<ls_types::TextEdit>>>> {
         let path = document.source_path().to_path_buf();
         let text = document.text();
         let started = Instant::now();
@@ -412,83 +552,108 @@ impl<'a> QueryRunner<'a> {
             "formatting query finished"
         );
 
-        Ok(edits)
+        Ok(DocumentQueryResult::new(
+            Some(edits),
+            DocumentQueryCoverage::Exact,
+        ))
     }
 
     /// Merge inlay hints from every crate context covering the requested source range.
     pub(super) fn inlay_hint(
         &mut self,
         input: DocumentRangeSnapshot,
-    ) -> anyhow::Result<Vec<ls_types::InlayHint>> {
-        let DocumentRangeSnapshot { analysis, range } = input;
-        let document = Self::target_document(&analysis)?;
+        cancellation: &QueryCancellation<'_>,
+    ) -> anyhow::Result<DocumentQueryResult<Vec<ls_types::InlayHint>>> {
+        let (document, range) = input.into_parts();
         let path = document.source_path().to_path_buf();
         let started = Instant::now();
-        self.ensure_path("inlay_hint", analysis.editor(), &path)
-            .context("prepare inlay-hint path")?;
-        let lsp_hints = self
-            .with_query_snapshot(analysis.editor(), |snapshot| {
-                let contexts =
-                    Self::file_contexts(snapshot, &path).context("resolve inlay-hint path")?;
-                let analysis_crates = contexts
-                    .iter()
-                    .flat_map(|context| context.crates.iter().copied())
-                    .collect::<Vec<_>>();
-                let analysis = snapshot
-                    .analysis_for_crates(&analysis_crates)
-                    .context("load inlay-hint analysis")?;
-                // A semantic hint already contains its file and source span. The package is only
-                // retained so protocol conversion can load that file, and is intentionally not
-                // part of deduplication when two crate contexts produce the same hint.
-                let mut hints = Vec::<(rg_def_map::PackageSlot, AnalysisInlayHint)>::new();
-
-                for context in contexts {
-                    let Some(range) = Self::text_span_for_context(snapshot, &context, range)
-                        .context("convert inlay-hint range")?
-                    else {
-                        continue;
-                    };
-
-                    for crate_ref in context.crates {
-                        for hint in analysis
-                            .inlay_hints(crate_ref, context.file, Some(range))
-                            .context("compute inlay hints")?
-                        {
-                            if !hints
-                                .iter()
-                                .any(|(_, existing_hint)| existing_hint == &hint)
-                            {
-                                hints.push((context.package, hint));
-                            }
-                        }
-                    }
-                }
-
-                let mut lsp_hints = Vec::new();
-                for (package, hint) in hints {
-                    let Some(hint) = inlay_hint::inlay_hint(snapshot, package, hint)
-                        .context("convert inlay hint")?
-                    else {
-                        continue;
-                    };
-                    lsp_hints.push(hint);
-                }
-
-                Ok(lsp_hints)
+        let snapshot = self
+            .project
+            .saved_snapshot()
+            .context("borrow saved project for inlay hints")?;
+        let targets = Self::file_contexts(snapshot, &path)
+            .context("resolve inlay-hint path")?
+            .into_iter()
+            .flat_map(|context| {
+                context
+                    .crates
+                    .into_iter()
+                    .map(move |crate_ref| (crate_ref, context.file))
             })
-            .context("run inlay-hint query")?;
+            .collect::<Vec<_>>();
+        if targets.is_empty() {
+            return Ok(DocumentQueryResult::new(
+                Vec::new(),
+                DocumentQueryCoverage::Partial,
+            ));
+        }
+        let current_source_view = snapshot
+            .prepare_current_source(&targets, document.text())
+            .context("prepare current source for inlay hints")?;
+        let current_source = current_source_view.shared_source();
+        let Some(range_start) = current_source
+            .line_index()
+            .offset_from_utf16_position(crate::proto::position::parse_position(range.start))
+        else {
+            return Ok(DocumentQueryResult::new(
+                Vec::new(),
+                DocumentQueryCoverage::Partial,
+            ));
+        };
+        let Some(range_end) = current_source
+            .line_index()
+            .offset_from_utf16_position(crate::proto::position::parse_position(range.end))
+        else {
+            return Ok(DocumentQueryResult::new(
+                Vec::new(),
+                DocumentQueryCoverage::Partial,
+            ));
+        };
+        let text_range = rg_parse::TextSpan {
+            start: range_start,
+            end: range_end,
+        };
+        let (analysis, coverage) = snapshot
+            .analysis_for_current_bodies_from_source(
+                &targets,
+                current_source_view,
+                CurrentBodySelection::IntersectingRange(text_range),
+                |checkpoint| cancellation.checkpoint(Self::current_body_checkpoint(checkpoint)),
+            )
+            .context("build current bodies for inlay hints")?;
+        let mut hints = UniqueVec::<AnalysisInlayHint>::new();
+        for &(crate_ref, file) in &targets {
+            cancellation
+                .checkpoint("before inlay hint crate interpretation")
+                .context("check cancellation before inlay hint crate interpretation")?;
+            hints.extend(
+                analysis
+                    .inlay_hints(crate_ref, file, Some(text_range))
+                    .context("compute current body inlay hints")?,
+            );
+        }
+        let lsp_hints = hints
+            .into_iter()
+            .map(|hint| inlay_hint::inlay_hint_with_line_index(current_source.line_index(), hint))
+            .collect::<Vec<_>>();
 
         tracing::trace!(
             path = %path.display(),
             result_count = lsp_hints.len(),
+            exact_bodies = coverage.is_exact(),
             elapsed_ms = started.elapsed().as_millis(),
             "inlay hint query finished"
         );
 
-        Ok(lsp_hints)
+        let semantic_coverage = if coverage.is_exact() {
+            DocumentQueryCoverage::Exact
+        } else {
+            DocumentQueryCoverage::Partial
+        };
+        Ok(DocumentQueryResult::new(lsp_hints, semantic_coverage))
     }
 
-    /// Search project-wide saved state without source overrides or path materialization.
+    /// Search the saved workspace index without loading source files for a document path.
     pub(super) fn workspace_symbol(
         &mut self,
         query: &str,
@@ -496,7 +661,8 @@ impl<'a> QueryRunner<'a> {
         let started = Instant::now();
         let lsp_symbols = self
             .project
-            .with_query_snapshot(None, |snapshot| {
+            .saved_snapshot()
+            .and_then(|snapshot| {
                 let analysis = snapshot
                     .full_analysis()
                     .context("load workspace-symbol analysis")?;

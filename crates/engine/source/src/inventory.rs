@@ -12,10 +12,6 @@
 //! A saved update starts by forking the published inventory. The maps are independent, but
 //! unchanged `SourceEntry` values are shared because an entry's descriptor never changes.
 //!
-//! A disposable source-override candidate uses the same inventory API with a stricter source
-//! universe. It may replace already-known entries with captured text and follow module
-//! declarations to other known entries, but it cannot discover a new path from disk. That keeps
-//! the derived analysis anchored to the saved generation selected by the caller.
 
 use std::{
     collections::{HashMap, HashSet},
@@ -38,22 +34,7 @@ use crate::{
 pub struct SourceInventory {
     entries: RwLock<HashMap<SourcePath, Arc<SourceEntry>>>,
     existence: RwLock<HashMap<PathBuf, bool>>,
-    state: RwLock<InventoryState>,
-}
-
-/// Construction state: whether the inventory is sealed and which sources it may admit.
-#[derive(Debug, Clone, Copy, Default)]
-struct InventoryState {
-    sealed: bool,
-    mode: InventoryMode,
-}
-
-/// Source-admission policy for the candidate being built.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-enum InventoryMode {
-    #[default]
-    SavedCandidate,
-    SourceOverrides,
+    sealed: RwLock<bool>,
 }
 
 impl SourceInventory {
@@ -72,8 +53,8 @@ impl SourceInventory {
             .read()
             .expect("source inventory lock should not be poisoned")
             .clone();
-        let state = *self
-            .state
+        let sealed = *self
+            .sealed
             .read()
             .expect("source inventory state lock should not be poisoned");
         Self {
@@ -84,7 +65,7 @@ impl SourceInventory {
                     .expect("source existence lock should not be poisoned")
                     .clone(),
             ),
-            state: RwLock::new(state),
+            sealed: RwLock::new(sealed),
         }
     }
 
@@ -95,31 +76,9 @@ impl SourceInventory {
     /// generation decided that `foo.rs` did not exist.
     pub fn begin_capture(&self) {
         *self
-            .state
+            .sealed
             .write()
-            .expect("source inventory state lock should not be poisoned") = InventoryState {
-            sealed: false,
-            mode: InventoryMode::SavedCandidate,
-        };
-        self.existence
-            .write()
-            .expect("source existence lock should not be poisoned")
-            .clear();
-    }
-
-    /// Opens a disposable source-override candidate over exactly this inventory's source universe.
-    ///
-    /// Module discovery may follow declarations to another already-known source, but it must not
-    /// admit a file merely because that path happens to exist on disk after the saved generation
-    /// was published.
-    pub fn begin_source_overrides(&self) {
-        *self
-            .state
-            .write()
-            .expect("source inventory state lock should not be poisoned") = InventoryState {
-            sealed: false,
-            mode: InventoryMode::SourceOverrides,
-        };
+            .expect("source inventory state lock should not be poisoned") = false;
         self.existence
             .write()
             .expect("source existence lock should not be poisoned")
@@ -131,17 +90,17 @@ impl SourceInventory {
     /// Sealing does not make known source unreadable. It only prevents later phases or query code
     /// from silently adding paths that were absent from the generation's discovery pass.
     pub fn seal(&self) {
-        self.state
+        *self
+            .sealed
             .write()
-            .expect("source inventory state lock should not be poisoned")
-            .sealed = true;
+            .expect("source inventory state lock should not be poisoned") = true;
     }
 
     pub fn is_sealed(&self) -> bool {
-        self.state
+        *self
+            .sealed
             .read()
             .expect("source inventory state lock should not be poisoned")
-            .sealed
     }
 
     /// Returns the generation's existing entry or captures a saved file for an open candidate.
@@ -149,12 +108,6 @@ impl SourceInventory {
         if let Some(entry) = self.known_entry(path) {
             return Ok(entry);
         }
-        if self.mode() == InventoryMode::SourceOverrides {
-            return Err(SourceError::Unknown {
-                path: path.to_path_buf(),
-            });
-        }
-
         let canonical_path = path.canonicalize().map_err(|source| SourceError::Io {
             path: path.to_path_buf(),
             source,
@@ -172,24 +125,6 @@ impl SourceInventory {
         let text = read_source_text(&canonical_path)?;
         let path = SourcePath::new(canonical_path);
         self.insert_if_absent(path.clone(), SourceEntry::saved(path, text))
-    }
-
-    /// Captures caller-provided text only when `path` belongs to this frozen source inventory.
-    pub fn capture_known(&self, path: &Path, text: impl Into<Arc<str>>) -> Option<CapturedSource> {
-        let entry = self.known_entry(path)?;
-        Some(CapturedSource::from_source_path(
-            entry.source_path().clone(),
-            text,
-        ))
-    }
-
-    /// Keeps exact matching captured bytes available to an otherwise unchanged saved generation.
-    ///
-    /// This only fills the evictable text cell of the existing immutable source identity. It does
-    /// not create a source override or change any derived analysis state.
-    pub fn retain_matching_text(&self, source: &CapturedSource) -> bool {
-        self.entry(source.path())
-            .is_some_and(|entry| entry.retain_matching_text(source))
     }
 
     /// Replaces one saved path in an open candidate using caller-captured exact source.
@@ -222,33 +157,12 @@ impl SourceInventory {
             .write()
             .expect("source inventory lock should not be poisoned");
         if let Some(existing) = entries.get(&path)
-            && existing.is_saved()
             && existing.revision() == entry.revision()
             && existing.byte_len() == entry.byte_len()
         {
             return Ok(Arc::clone(existing));
         }
         entries.insert(path, Arc::clone(&entry));
-        Ok(entry)
-    }
-
-    /// Replaces one known path with captured text in a source-override candidate.
-    pub fn replace_with_override(
-        &self,
-        source: &CapturedSource,
-    ) -> Result<Arc<SourceEntry>, SourceError> {
-        self.ensure_open(source.path())?;
-        if self.mode() != InventoryMode::SourceOverrides || self.entry(source.path()).is_none() {
-            return Err(SourceError::Unknown {
-                path: source.path().to_path_buf(),
-            });
-        }
-        let path = source.source_path().clone();
-        let entry = Arc::new(SourceEntry::in_memory(path.clone(), source.shared_text()));
-        self.entries
-            .write()
-            .expect("source inventory lock should not be poisoned")
-            .insert(path, Arc::clone(&entry));
         Ok(entry)
     }
 
@@ -344,11 +258,7 @@ impl SourceInventory {
             return Ok(exists);
         }
         self.ensure_open(path)?;
-        let exists = if self.mode() == InventoryMode::SourceOverrides {
-            self.known_entry(path).is_some()
-        } else {
-            path.is_file()
-        };
+        let exists = path.is_file();
         let mut existence = self
             .existence
             .write()
@@ -375,35 +285,6 @@ impl SourceInventory {
         self.validate_and_release_existence()
     }
 
-    /// Proves that selected saved files and every module-discovery decision remain valid.
-    ///
-    /// A source-override project derives new analysis only for its rebuilt packages. Unchanged
-    /// package payloads still belong to the already-validated saved generation, so rereading every
-    /// source would add filesystem work without strengthening the derived project's consistency.
-    pub fn validate_saved_paths<'a>(
-        &self,
-        paths: impl IntoIterator<Item = &'a Path>,
-    ) -> Result<(), SourceError> {
-        if self.mode() == InventoryMode::SourceOverrides {
-            return self.validate_and_release_existence();
-        }
-        let entries = self
-            .entries
-            .read()
-            .expect("source inventory lock should not be poisoned");
-        let mut validated = HashSet::new();
-        for path in paths {
-            if validated.insert(path)
-                && let Some(entry) = entries.get(path)
-            {
-                entry.validate_saved()?;
-            }
-        }
-        drop(entries);
-
-        self.validate_and_release_existence()
-    }
-
     fn validate_and_release_existence(&self) -> Result<(), SourceError> {
         // Then repeat module-discovery decisions. A newly created or removed candidate module can
         // change the reachable file graph even when all already-captured files are unchanged. Keep
@@ -412,11 +293,6 @@ impl SourceInventory {
             .existence
             .write()
             .expect("source existence lock should not be poisoned");
-        if self.mode() == InventoryMode::SourceOverrides {
-            existence.clear();
-            existence.shrink_to_fit();
-            return Ok(());
-        }
         for (path, expected) in existence.iter() {
             let actual = path.is_file();
             if actual != *expected {
@@ -464,13 +340,6 @@ impl SourceInventory {
             });
         }
         Ok(())
-    }
-
-    fn mode(&self) -> InventoryMode {
-        self.state
-            .read()
-            .expect("source inventory state lock should not be poisoned")
-            .mode
     }
 
     /// Resolve only spelling differences that do not require filesystem observations.

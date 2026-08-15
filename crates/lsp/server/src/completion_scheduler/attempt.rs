@@ -1,73 +1,59 @@
 //! One completion engine attempt and the consumers that share its result.
 //!
 //! The session queue decides which attempt may run. This module owns the mechanics of running that
-//! attempt: its exact snapshot identity, engine future, editor-invalidation signal, interruption
+//! attempt: its captured document identity, engine future, target-invalidation signal, interruption
 //! signal, and shared result channel.
 
 use std::sync::Arc;
 
 use rg_lsp_proto::{
-    AnalysisOutcome, DocumentPositionSnapshot, DocumentRevision, EditorSnapshotRevision,
+    AnalysisOutcome, CompletionResult, DocumentPositionSnapshot, DocumentRevision,
     TargetDocumentRevision,
 };
 use tokio::sync::watch;
-use tower_lsp_server::ls_types::{CompletionItem, Position};
+use tower_lsp_server::ls_types::Position;
 
 use super::{
-    request::{CompletionAttemptOutcome, CompletionFuture, CompletionResult},
+    request::{CompletionAttemptOutcome, CompletionAttemptResult, CompletionFuture},
     session::{RequestId, SessionKey},
 };
-use crate::ingress::{CapturedDocument, EditorRevisionWatch};
+use crate::ingress::{CapturedDocument, DocumentRevisionWatch};
 
-/// Identity of one engine attempt for an exact editor snapshot and cursor.
+/// Identity of one engine attempt for a captured target document and cursor.
 ///
 /// Matching only the text or cursor is insufficient: work may be shared only when the open
-/// session, document revision, global editor revision, and cursor all match.
+/// session, document revision, and cursor all match.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(super) struct AttemptKey {
     pub(super) session: SessionKey,
     pub(super) document_revision: DocumentRevision,
-    pub(super) editor_revision: EditorSnapshotRevision,
     pub(super) line: u32,
     pub(super) character: u32,
 }
 
 impl AttemptKey {
-    pub(super) fn for_position(input: &DocumentPositionSnapshot) -> Self {
-        Self::new(
-            input.analysis.target().clone(),
-            input.analysis.editor().revision(),
-            input.position,
-        )
+    pub(super) fn for_input(input: &DocumentPositionSnapshot) -> Self {
+        Self::new(input.document().target().clone(), input.position())
     }
 
     pub(super) fn for_capture(captured: &CapturedDocument, position: Position) -> Self {
-        Self::new(
-            captured.document().target().clone(),
-            captured.editor_revision(),
-            position,
-        )
+        Self::new(captured.document().target().clone(), position)
     }
 
-    fn new(
-        target: TargetDocumentRevision,
-        editor_revision: EditorSnapshotRevision,
-        position: Position,
-    ) -> Self {
+    fn new(target: TargetDocumentRevision, position: Position) -> Self {
         Self {
             session: SessionKey {
                 path: target.path().to_path_buf(),
                 session: target.session(),
             },
             document_revision: target.revision(),
-            editor_revision,
             line: position.line,
             character: position.character,
         }
     }
 }
 
-/// Links an exact snapshot and cursor to the logical request allowed to own that work.
+/// Links a captured document and cursor to the logical request allowed to own that work.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct AttemptIdentity {
     pub(super) request: RequestId,
@@ -77,7 +63,7 @@ pub(super) struct AttemptIdentity {
 /// One accepted engine attempt, including the future that has not yet completed.
 pub(super) struct AttemptJob {
     identity: AttemptIdentity,
-    invalidation: EditorRevisionWatch,
+    invalidation: DocumentRevisionWatch,
     run: CompletionFuture,
     result: AttemptResultPublisher,
 }
@@ -86,7 +72,7 @@ impl AttemptJob {
     pub(super) fn new(
         request: RequestId,
         key: AttemptKey,
-        invalidation: EditorRevisionWatch,
+        invalidation: DocumentRevisionWatch,
         run: CompletionFuture,
     ) -> (Self, AttemptWaiter) {
         let (result, waiter) = AttemptResultPublisher::channel();
@@ -175,7 +161,6 @@ impl RunningAttempt {
             path = %self.job.identity.key.session.path.display(),
             session = self.job.identity.key.session.session.get(),
             revision = self.job.identity.key.document_revision.get(),
-            editor_revision = self.job.identity.key.editor_revision.get(),
             line = self.job.identity.key.line,
             character = self.job.identity.key.character,
             "started completion semantic attempt"
@@ -188,7 +173,6 @@ impl RunningAttempt {
                     path = %self.job.identity.key.session.path.display(),
                     session = self.job.identity.key.session.session.get(),
                     revision = self.job.identity.key.document_revision.get(),
-                    editor_revision = self.job.identity.key.editor_revision.get(),
                     line = self.job.identity.key.line,
                     character = self.job.identity.key.character,
                     "cancelled completion after every coalesced consumer closed"
@@ -211,7 +195,6 @@ impl RunningAttempt {
                     path = %self.job.identity.key.session.path.display(),
                     session = self.job.identity.key.session.session.get(),
                     revision = self.job.identity.key.document_revision.get(),
-                    editor_revision = self.job.identity.key.editor_revision.get(),
                     line = self.job.identity.key.line,
                     character = self.job.identity.key.character,
                     ?reason,
@@ -224,20 +207,17 @@ impl RunningAttempt {
                     path = %self.job.identity.key.session.path.display(),
                     session = self.job.identity.key.session.session.get(),
                     revision = self.job.identity.key.document_revision.get(),
-                    editor_revision = self.job.identity.key.editor_revision.get(),
-                    current_editor_revision = self.job.invalidation.current_revision().get(),
                     line = self.job.identity.key.line,
                     character = self.job.identity.key.character,
-                    "cancelled semantic attempt after editor advancement"
+                    "cancelled semantic attempt after target document advancement"
                 );
-                Some(SharedAttemptOutcome::EditorAdvanced)
+                Some(SharedAttemptOutcome::DocumentAdvanced)
             }
             result = self.job.run.as_mut() => {
                 tracing::trace!(
                     path = %self.job.identity.key.session.path.display(),
                     session = self.job.identity.key.session.session.get(),
                     revision = self.job.identity.key.document_revision.get(),
-                    editor_revision = self.job.identity.key.editor_revision.get(),
                     line = self.job.identity.key.line,
                     character = self.job.identity.key.character,
                     failed = result.is_err(),
@@ -252,7 +232,7 @@ impl RunningAttempt {
 /// Why the handler should stop waiting for this particular engine attempt.
 #[derive(Clone, Copy, Debug)]
 pub(super) enum AttemptStopReason {
-    EditorAdvanced,
+    DocumentAdvanced,
     Replaced,
 }
 
@@ -278,14 +258,14 @@ impl AttemptStopSignal {
 /// Engine errors become shared text here because `anyhow::Error` itself cannot be cloned.
 #[derive(Clone, Debug)]
 pub(super) enum SharedAttemptOutcome {
-    Outcome(AnalysisOutcome<Vec<CompletionItem>>),
+    Outcome(AnalysisOutcome<CompletionResult>),
     Failed(Arc<str>),
-    EditorAdvanced,
+    DocumentAdvanced,
     Replaced,
 }
 
 impl SharedAttemptOutcome {
-    fn from_result(result: CompletionResult) -> Self {
+    fn from_result(result: CompletionAttemptResult) -> Self {
         match result {
             Ok(outcome) => Self::Outcome(outcome),
             Err(error) => Self::Failed(Arc::from(format!("{error:#}"))),
@@ -296,7 +276,7 @@ impl SharedAttemptOutcome {
 impl From<AttemptStopReason> for SharedAttemptOutcome {
     fn from(reason: AttemptStopReason) -> Self {
         match reason {
-            AttemptStopReason::EditorAdvanced => Self::EditorAdvanced,
+            AttemptStopReason::DocumentAdvanced => Self::DocumentAdvanced,
             AttemptStopReason::Replaced => Self::Replaced,
         }
     }
@@ -309,7 +289,7 @@ impl From<SharedAttemptOutcome> for CompletionAttemptOutcome {
             SharedAttemptOutcome::Failed(error) => {
                 Self::Completed(Err(anyhow::anyhow!(error.to_string())))
             }
-            SharedAttemptOutcome::EditorAdvanced => Self::EditorAdvanced,
+            SharedAttemptOutcome::DocumentAdvanced => Self::DocumentAdvanced,
             SharedAttemptOutcome::Replaced => Self::Replaced,
         }
     }

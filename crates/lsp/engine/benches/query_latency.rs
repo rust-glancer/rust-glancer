@@ -10,10 +10,10 @@ use divan::{Bencher, black_box};
 use ls_types::{CompletionItem, Hover, Location, Position};
 use rg_lsp_engine::{MemoryControl, Service, ServiceNotificationsSink};
 use rg_lsp_proto::{
-    AnalysisConfig, AnalysisOutcome, CompletionClientCapabilities, DocumentAnalysisSnapshot,
-    DocumentRevision, EditorDocumentSnapshot, EditorSnapshot, EditorSnapshotRevision, EngineConfig,
-    EngineService, OpenDocumentSession, PackageResidencyPolicy, ServiceNotification,
-    SysrootDiscovery,
+    AnalysisConfig, AnalysisOutcome, CompletionClientCapabilities, DocumentQueryResult,
+    DocumentRevision, EditorDocumentSnapshot, EngineConfig, EngineService, GlobalOperationResult,
+    GlobalPositionSnapshot, OpenDocumentSession, OpenDocumentsRevision, PackageResidencyPolicy,
+    ServiceNotification, SysrootDiscovery, TargetDocumentRevision,
 };
 use rg_parse::LineIndex;
 use tarpc::context;
@@ -28,7 +28,7 @@ fn main() {
 }
 
 // =============================================================================
-// Saved and dirty query latency
+// Saved and current-source query latency
 // =============================================================================
 
 // Initialization is intentionally outside Divan's measured closure. Every query begins from a
@@ -48,13 +48,13 @@ fn hover_clean(bencher: Bencher<'_, '_>) {
     engine.shutdown();
 }
 
-// `didChange` runs as input preparation. The measured completion therefore starts at the same
-// boundary as an editor request while still paying for the lazily built source-override project.
+// Input preparation alternates between two document revisions. The measured query therefore pays
+// for rebuilding the edited body, while declarations and traits still come from the saved project.
 #[divan::bench(sample_count = 10, sample_size = 1)]
-fn completion_dirty_miss(bencher: Bencher<'_, '_>) {
+fn completion_current_body_after_edit(bencher: Bencher<'_, '_>) {
     let engine = PreparedEngine::new();
     let validation_position = engine.prepare_app_dirty();
-    expect_report_field_completions(&engine.completion(APP_SOURCE, validation_position));
+    expect_current_body_completions(&engine.completion(APP_SOURCE, validation_position));
 
     bencher
         .with_inputs(|| engine.prepare_app_dirty())
@@ -63,63 +63,44 @@ fn completion_dirty_miss(bencher: Bencher<'_, '_>) {
     engine.shutdown();
 }
 
-// A second query for the same document version reuses the derived project but still goes through
-// normal request-memory release and reload behavior between requests.
+// A repeated query for one document revision rebuilds only its request-local current-body view.
+// This catches accidental retained caches as well as avoidable repeated-query overhead.
 #[divan::bench(sample_count = 10, sample_size = 1)]
-fn completion_dirty_hit(bencher: Bencher<'_, '_>) {
+fn completion_current_body_repeated(bencher: Bencher<'_, '_>) {
     let engine = PreparedEngine::new();
     let position = engine.prepare_app_dirty();
-    expect_report_field_completions(&engine.completion(APP_SOURCE, position));
+    expect_current_body_completions(&engine.completion(APP_SOURCE, position));
 
     bencher.bench_local(|| engine.completion(APP_SOURCE, black_box(position)));
 
     engine.shutdown();
 }
 
-// References require the reverse-dependency closure, so this covers the broad source-override path
-// separately from file-local hover and completion.
+// References read the saved global index and verify that every open document still matches it.
 #[divan::bench(sample_count = 10, sample_size = 1)]
-fn references_dirty_miss(bencher: Bencher<'_, '_>) {
+fn references_saved(bencher: Bencher<'_, '_>) {
     let engine = PreparedEngine::new();
-    let validation_position = engine.prepare_math_dirty();
+    let validation_position = engine.math_mean_position;
     expect_mean_references(&engine.references(MATH_SOURCE, validation_position));
 
-    bencher
-        .with_inputs(|| engine.prepare_math_dirty())
-        .bench_local_values(|position| engine.references(MATH_SOURCE, black_box(position)));
+    bencher.bench_local(|| engine.references(MATH_SOURCE, black_box(validation_position)));
 
     engine.shutdown();
 }
 
-// Editors commonly ask a local question and then a workspace-wide one for the same edit. Preparing
-// the hover outside measurement leaves a narrow override project cached; references must replace it
-// with a reverse-dependency project inside the measured request.
-#[divan::bench(sample_count = 10, sample_size = 1)]
-fn references_dirty_scope_upgrade(bencher: Bencher<'_, '_>) {
-    let engine = PreparedEngine::new();
-    let validation_position = engine.prepare_math_scope_upgrade();
-    expect_mean_references(&engine.references(MATH_SOURCE, validation_position));
-
-    bencher
-        .with_inputs(|| engine.prepare_math_scope_upgrade())
-        .bench_local_values(|position| engine.references(MATH_SOURCE, black_box(position)));
-
-    engine.shutdown();
-}
-
-fn expect_report_field_completions(completions: &[CompletionItem]) {
-    for expected in ["average", "total"] {
-        assert!(
-            completions.iter().any(|item| item.label == expected),
-            "dirty completion benchmark should contain the `{expected}` field",
-        );
-    }
+fn expect_current_body_completions(completions: &[CompletionItem]) {
+    assert!(
+        completions
+            .iter()
+            .any(|item| item.label == "query_bench_numbers"),
+        "current-body completion benchmark should contain its newly typed local",
+    );
 }
 
 fn expect_mean_references(locations: &[Location]) {
     assert!(
         locations.len() >= 2,
-        "dirty references benchmark should find the declaration and at least one use",
+        "references benchmark should find the declaration and at least one use",
     );
 }
 
@@ -133,8 +114,7 @@ struct PreparedEngine {
     workspace_root: PathBuf,
     app_dirty_text: [String; 2],
     app_completion_position: [Position; 2],
-    math_dirty_text: [String; 2],
-    math_mean_position: [Position; 2],
+    math_mean_position: Position,
     clean_hover_position: Position,
     next_document_version: Cell<i32>,
     documents: RefCell<HashMap<PathBuf, (i32, String)>>,
@@ -148,6 +128,13 @@ impl PreparedEngine {
                 panic!("query benchmark {operation} aborted unexpectedly: {abort:?}")
             }
         }
+    }
+
+    fn expect_document_ready<T>(
+        outcome: AnalysisOutcome<DocumentQueryResult<T>>,
+        operation: &str,
+    ) -> T {
+        Self::expect_ready(outcome, operation).into_value()
     }
 
     fn new() -> Self {
@@ -167,14 +154,9 @@ impl PreparedEngine {
         ];
         let app_completion_position = app_dirty_text
             .each_ref()
-            .map(|text| Self::position_after(text, "query_bench_report."));
-        let math_dirty_text = [
-            Self::math_dirty_text(&math_saved_text, 1),
-            Self::math_dirty_text(&math_saved_text, 2),
-        ];
-        let math_mean_position = math_dirty_text
-            .each_ref()
-            .map(|text| Self::position_inside(text, "pub fn mean", "pub fn ".len() + 1));
+            .map(|text| Self::position_after(text, "let _query_bench_selected = query_bench_"));
+        let math_mean_position =
+            Self::position_inside(&math_saved_text, "pub fn mean", "pub fn ".len() + 1);
         let clean_hover_position = Self::position_inside(&app_saved_text, "mean(numbers)", 1);
 
         let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -191,7 +173,6 @@ impl PreparedEngine {
             workspace_root,
             app_dirty_text,
             app_completion_position,
-            math_dirty_text,
             math_mean_position,
             clean_hover_position,
             next_document_version: Cell::new(2),
@@ -255,22 +236,6 @@ impl PreparedEngine {
         self.app_completion_position[variant]
     }
 
-    fn prepare_math_dirty(&self) -> Position {
-        let (version, variant) = self.next_version_and_variant();
-        self.change_document(MATH_SOURCE, version, self.math_dirty_text[variant].clone());
-        self.math_mean_position[variant]
-    }
-
-    fn prepare_math_scope_upgrade(&self) -> Position {
-        let position = self.prepare_math_dirty();
-        let hover = self.hover(MATH_SOURCE, position);
-        assert!(
-            hover.is_some(),
-            "scope-upgrade setup hover should return a result",
-        );
-        position
-    }
-
     fn change_document(&self, relative_path: &str, version: i32, text: String) {
         self.documents
             .borrow_mut()
@@ -285,7 +250,7 @@ impl PreparedEngine {
             .runtime
             .block_on(self.service.clone().hover(context::current(), input))
             .expect("query benchmark hover should succeed");
-        Self::expect_ready(outcome, "hover")
+        Self::expect_document_ready(outcome, "hover")
     }
 
     fn completion(&self, relative_path: &str, position: Position) -> Vec<CompletionItem> {
@@ -300,13 +265,11 @@ impl PreparedEngine {
                 CompletionClientCapabilities::default(),
             ))
             .expect("query benchmark completion should succeed");
-        Self::expect_ready(outcome, "completion")
+        Self::expect_ready(outcome, "completion").into_value()
     }
 
     fn references(&self, relative_path: &str, position: Position) -> Vec<Location> {
-        let input = self
-            .document_snapshot(relative_path)
-            .with_position(position);
+        let input = self.global_position_snapshot(relative_path, position);
         let outcome = self
             .runtime
             .block_on(
@@ -315,10 +278,25 @@ impl PreparedEngine {
                     .references(context::current(), input, true),
             )
             .expect("query benchmark references should succeed");
-        Self::expect_ready(outcome, "references")
+        match Self::expect_ready(outcome, "references") {
+            GlobalOperationResult::Ready(locations) => locations,
+            GlobalOperationResult::SaveRequired { path } => {
+                panic!(
+                    "clean references benchmark unexpectedly requires saving {}",
+                    path.display(),
+                )
+            }
+        }
     }
 
-    fn document_snapshot(&self, relative_path: &str) -> DocumentAnalysisSnapshot {
+    fn capture_open_documents(
+        &self,
+        relative_path: &str,
+    ) -> (
+        TargetDocumentRevision,
+        OpenDocumentsRevision,
+        Vec<EditorDocumentSnapshot>,
+    ) {
         let path = self.workspace_root.join(relative_path);
         let mut documents = self.documents.borrow().clone();
         let (target_version, _) = documents.entry(path.clone()).or_insert_with(|| {
@@ -329,13 +307,13 @@ impl PreparedEngine {
         });
         let target_revision =
             u64::try_from(*target_version).expect("benchmark versions should be positive");
-        let editor_revision = documents
+        let open_documents_revision = documents
             .values()
             .map(|(version, _)| *version)
             .max()
             .and_then(|version| u64::try_from(version).ok())
             .unwrap_or(target_revision);
-        let editor_documents = documents
+        let open_documents = documents
             .into_iter()
             .map(|(path, (version, text))| {
                 let revision =
@@ -349,18 +327,34 @@ impl PreparedEngine {
                 )
             })
             .collect();
-        let target = rg_lsp_proto::TargetDocumentRevision::new(
+        let target = TargetDocumentRevision::new(
             path,
             OpenDocumentSession::new(1),
             DocumentRevision::new(target_revision),
         );
-        DocumentAnalysisSnapshot::new(
+        (
             target,
-            EditorSnapshot::new(
-                EditorSnapshotRevision::new(editor_revision),
-                editor_documents,
-            ),
+            OpenDocumentsRevision::new(open_documents_revision),
+            open_documents,
         )
+    }
+
+    fn document_snapshot(&self, relative_path: &str) -> EditorDocumentSnapshot {
+        let (target, _, documents) = self.capture_open_documents(relative_path);
+        documents
+            .into_iter()
+            .find(|document| document.target() == &target)
+            .expect("query benchmark snapshot should contain its target")
+    }
+
+    fn global_position_snapshot(
+        &self,
+        relative_path: &str,
+        position: Position,
+    ) -> GlobalPositionSnapshot {
+        let (target, open_documents_revision, documents) =
+            self.capture_open_documents(relative_path);
+        GlobalPositionSnapshot::new(target, open_documents_revision, documents, position)
     }
 
     fn shutdown(&self) {
@@ -383,61 +377,22 @@ impl PreparedEngine {
     }
 
     fn app_dirty_text(saved: &str, revision: u8) -> String {
-        let import = "use moderate_workspace_text::{collect_unique_words, first_line};\n";
-        let with_report = saved.replacen(
-            import,
-            &format!(
-                "{import}\nstruct QueryBenchReport {{\n    total: i64,\n    average: f64,\n}}\n"
-            ),
-            1,
-        );
-        assert_ne!(
-            with_report, saved,
-            "app benchmark import marker should exist"
-        );
-
         let unique = "    let unique = collect_unique_words(body).len();\n";
-        let dirty = with_report.replacen(
+        let dirty = saved.replacen(
             unique,
             &format!(
                 concat!(
                     "{unique}",
-                    "    let query_bench_report = QueryBenchReport {{ total, average: avg }};\n",
+                    "    let query_bench_numbers = numbers;\n",
                     "    let _query_bench_revision = {revision}_u8;\n",
-                    "    let _query_bench_selected = query_bench_report.;\n",
+                    "    let _query_bench_selected = query_bench_;\n",
                 ),
                 unique = unique,
                 revision = revision
             ),
             1,
         );
-        assert_ne!(
-            dirty, with_report,
-            "app benchmark expression marker should exist",
-        );
-        dirty
-    }
-
-    fn math_dirty_text(saved: &str, revision: u8) -> String {
-        let calculation =
-            "    let total = sum(values);\n    Some(total as f64 / values.len() as f64)\n";
-        let dirty = saved.replacen(
-            calculation,
-            &format!(
-                concat!(
-                    "    let total = sum(values);\n",
-                    "    let denominator = values.len() as f64;\n",
-                    "    let _query_bench_revision = {revision}_u8;\n",
-                    "    Some(total as f64 / denominator)\n",
-                ),
-                revision = revision
-            ),
-            1,
-        );
-        assert_ne!(
-            dirty, saved,
-            "math benchmark calculation marker should exist"
-        );
+        assert_ne!(dirty, saved, "app benchmark expression marker should exist",);
         dirty
     }
 

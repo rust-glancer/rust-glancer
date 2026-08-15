@@ -33,6 +33,14 @@ impl<'a, 'db> HoverResolver<'a, 'db> {
         else {
             return Ok(None);
         };
+        self.hover_for_source_symbol(crate_ref, source_symbol)
+    }
+
+    fn hover_for_source_symbol(
+        &self,
+        crate_ref: CrateRef,
+        source_symbol: crate::source_symbol::SourceSymbol,
+    ) -> anyhow::Result<Option<HoverInfo>> {
         let range = Some(source_symbol.span());
         let symbol = source_symbol.symbol().clone();
         let source_symbols = SourceSymbolResolver::new(self.0.view_db());
@@ -61,6 +69,39 @@ impl<'a, 'db> HoverResolver<'a, 'db> {
         }
 
         Ok((!blocks.is_empty()).then_some(HoverInfo { range, blocks }))
+    }
+
+    /// Show saved hover information for a declaration whose header is unchanged in the editor.
+    ///
+    /// For example, adding text before `fn load()` moves its byte range but does not change which
+    /// function it is. We match the current header and its containing headers to one declaration in
+    /// the saved source, then compute hover from that declaration. A new, renamed, or ambiguous
+    /// declaration has no safe saved match and returns no hover until the file is saved.
+    pub(crate) fn current_header_hover(
+        &self,
+        crate_ref: CrateRef,
+        file_id: FileId,
+        offset: u32,
+    ) -> anyhow::Result<Option<HoverInfo>> {
+        let Some(association) = self
+            .0
+            .associated_saved_header_at(crate_ref, file_id, offset)?
+        else {
+            return Ok(None);
+        };
+        let Some(source_symbol) = self.0.saved_declaration_symbol_at_for_query(
+            crate_ref,
+            file_id,
+            association.saved_span().text.start,
+        )?
+        else {
+            return Ok(None);
+        };
+        let Some(mut hover) = self.hover_for_source_symbol(crate_ref, source_symbol)? else {
+            return Ok(None);
+        };
+        hover.range = Some(association.current_span());
+        Ok(Some(hover))
     }
 
     fn module_display_name_for_symbol(symbol: &SymbolAt) -> Option<String> {

@@ -18,8 +18,6 @@ use crate::{
     service::{ServiceNotificationPublisher, ServiceNotificationsSink},
 };
 
-mod source_overrides;
-
 #[derive(Debug)]
 struct SourceMutations {
     remaining: AtomicUsize,

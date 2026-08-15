@@ -35,8 +35,7 @@ impl<'a> ProjectReadTxn<'a> {
                     .semantic_ir
                     .read_txn_for_subset(loaders.semantic_ir.clone(), subset),
                 project.body_ir.read_txn_for_subset(loaders.body_ir, subset),
-            )
-            .with_trait_selection_sessions(project.query_trait_selection_sessions()),
+            ),
         })
     }
 

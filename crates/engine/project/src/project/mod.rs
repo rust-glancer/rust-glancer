@@ -1,10 +1,8 @@
-//! Ownership and publication boundary for one analysis project.
+//! Owns one saved analysis project and replaces it only after a successful rebuild.
 //!
-//! The host's long-lived `Project` represents one successfully published saved-source generation.
-//! Saved changes are applied to a private candidate and replace that generation only after
-//! validation succeeds. Source overrides use a disposable clone derived from exact
-//! `CapturedSource` values already known to the saved generation; that clone never publishes
-//! fingerprints or becomes another saved-state owner.
+//! A saved change is first applied to a private candidate. The candidate becomes the new `Project`
+//! only after it has been fully built and its source has been checked. Queries may load package
+//! data that was left on disk, but loading that data does not create another source generation.
 
 mod build;
 pub(crate) mod loading;
@@ -12,7 +10,6 @@ pub(crate) mod offloading;
 mod package_set;
 mod reference_search;
 mod snapshot;
-mod source_overrides;
 mod split_indexing;
 pub(crate) mod state;
 mod stats;
@@ -40,8 +37,7 @@ use rg_std::MemorySize;
 pub use self::state::ProjectGenerationId;
 pub use self::{
     build::{ProjectBuilder, SplitIndexingMode, StartupCacheLoad},
-    snapshot::ProjectSnapshot,
-    source_overrides::SourceOverrideScope,
+    snapshot::{CurrentBodyAnalysisCoverage, ProjectSnapshot},
     split_indexing::{
         AnalysisSurface, DetachedSplitIndexing, FinishedSplitIndexing, SplitIndexing,
     },
@@ -52,17 +48,9 @@ pub use self::{
 ///
 /// `Project` is the host-facing state container: it accepts saved file changes, refreshes the
 /// derived phase databases, and hands out immutable snapshots for queries.
-///
-/// The main project intentionally follows a rebuild-on-save model. Captured source overrides are
-/// handled in disposable derived projects so saved-state fingerprints, package cache artifacts,
-/// and residency decisions remain tied to committed source files.
 #[derive(Debug, Clone, MemorySize)]
 pub struct Project {
     pub(crate) state: ProjectState,
-    // Package artifacts describe the saved project. Preserve override provenance separately so a
-    // derived project cannot use those artifacts to validate state inherited from another derived
-    // project.
-    has_source_overrides: bool,
 }
 
 impl Project {
@@ -269,44 +257,11 @@ impl Project {
         }
     }
 
-    /// Captures editor text only when the path belongs to this project generation.
-    pub fn capture_known_source(
-        &self,
-        path: &Path,
-        text: impl Into<std::sync::Arc<str>>,
-    ) -> Option<CapturedSource> {
-        self.state
-            .parse_db()
-            .source_inventory()
-            .capture_known(path, text)
-    }
-
-    /// Builds a disposable analysis project from captured source overrides.
+    /// Drop source text and line indexes that a later query can load again.
     ///
-    /// Inputs outside the selected source generation are ignored. Matching inputs keep their exact
-    /// bytes available for lazy reads but need no derived state; if every known input matches, this
-    /// returns `None`.
-    ///
-    /// The returned project is intentionally detached from saved-state cache lifecycle: override
-    /// rebuilds keep rebuilt package payloads resident and never refresh source fingerprints or
-    /// package artifacts. Callers can query the returned snapshot and then drop it.
-    pub fn derive_with_source_overrides(
-        &self,
-        scope: SourceOverrideScope,
-        sources: impl IntoIterator<Item = CapturedSource>,
-    ) -> anyhow::Result<Option<Project>> {
-        source_overrides::derive_project(self, scope, sources)
-    }
-
-    /// Drops state that read-only queries may lazily reconstruct from durable backing data.
-    ///
-    /// Saved-project transactions own their offloaded package payloads, so those die with the
-    /// request. A source-override project also retains the loaders and solver sessions created by
-    /// its rebuild until the matching query finishes; clearing the query cache drops that state as
-    /// one unit.
-    ///
-    /// Source-coordinate conversion is different again: it repopulates line-index cells inside the
-    /// project itself, and the owner has to reset those cells after the request settles.
+    /// Offloaded package payloads already disappear with their read transaction. Source text and
+    /// line indexes are cached inside the saved project while converting byte ranges, so they need
+    /// this explicit cleanup after the request.
     pub fn release_query_memory(&mut self) {
         let offloadable_packages = self
             .state
@@ -323,15 +278,15 @@ impl Project {
             .parse
             .offload_line_indexes_for_packages(&offloadable_packages);
         self.state.parse.evict_saved_source_text();
-        self.state.clear_query_cache();
     }
 }
 
-/// One saved-project input selected before candidate rebuilding starts.
+/// One file change submitted to the saved project.
 ///
-/// `FsPath` captures disk at the project boundary. `Captured` instead carries exact Rust text and
-/// revision from an earlier event boundary; final validation still proves that disk has not
-/// advanced before the candidate is published.
+/// `Captured` already contains the Rust text read by the event producer, for example an editor save
+/// or a settled file-watcher event. `FsPath` asks the project to inspect the filesystem because the
+/// change may add, remove, or rediscover project structure. Both paths are checked against disk
+/// before the rebuilt project is published.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SavedFileChange {
     Captured(CapturedSource),

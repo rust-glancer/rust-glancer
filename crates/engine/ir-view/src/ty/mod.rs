@@ -8,8 +8,8 @@ pub mod locals;
 
 use anyhow::Context as _;
 use rg_ir_model::{
-    BodyRef, EnumVariantRef, FieldRef, Path, PrimitiveTy, ScopeId, SemanticItemRef, TypeDefRef,
-    identity::DeclarationRef, identity::ExprRef,
+    BodyRef, EnumVariantRef, FieldRef, ModuleRef, Path, PrimitiveTy, ScopeId, SemanticItemRef,
+    TypeDefRef, identity::DeclarationRef, identity::ExprRef,
 };
 use rg_semantic_ir::{ItemStoreQuery, TypePathContext, TypePathResolution};
 use rg_std::ExpectedUnique;
@@ -144,6 +144,15 @@ impl<'a, 'db> TyView<'a, 'db> {
         Ok(IndexedType::new(Self::type_path_resolution_to_ty(
             resolution,
         )))
+    }
+
+    /// Resolve a type path from a module scope with no declaration-owned generics.
+    pub fn ty_for_module_type_path(
+        &self,
+        module: ModuleRef,
+        path: &Path,
+    ) -> anyhow::Result<IndexedType> {
+        self.ty_for_type_path(TypePathContext::module(module), path)
     }
 
     /// Resolve a type path from either signature or body source.

@@ -5,7 +5,7 @@ use rg_ir_model::CrateRef;
 use rg_ir_view::{IndexedViewDb, symbol::SymbolView};
 use rg_parse::FileId;
 
-use crate::model::DocumentSymbol;
+use crate::model::{DocumentOutline, DocumentSymbol};
 
 pub(crate) struct DocumentSymbolCollector<'a, 'db>(&'a IndexedViewDb<'db>);
 
@@ -18,11 +18,12 @@ impl<'a, 'db> DocumentSymbolCollector<'a, 'db> {
         &self,
         crate_ref: CrateRef,
         file_id: FileId,
-    ) -> Result<Vec<DocumentSymbol>> {
-        Ok(SymbolView::new(self.0)
+    ) -> Result<DocumentOutline> {
+        let symbols = SymbolView::new(self.0)
             .source_outline(crate_ref, file_id)?
             .into_iter()
             .map(DocumentSymbol::from)
-            .collect())
+            .collect();
+        Ok(DocumentOutline { file_id, symbols })
     }
 }

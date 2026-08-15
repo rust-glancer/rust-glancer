@@ -20,7 +20,7 @@ use super::{
     },
     request::{CompletionFuture, CompletionRequestLease},
 };
-use crate::ingress::EditorRevisionWatch;
+use crate::ingress::DocumentRevisionWatch;
 
 /// Identity assigned to one logical completion request at ingress.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -100,7 +100,7 @@ impl SchedulerState {
     pub(super) fn enqueue_attempt(
         request: &CompletionRequestLease,
         key: AttemptKey,
-        invalidation: EditorRevisionWatch,
+        invalidation: DocumentRevisionWatch,
         run: CompletionFuture,
     ) -> AttemptWaiter {
         if request.is_replaced() {
@@ -114,13 +114,11 @@ impl SchedulerState {
                 path = %key.session.path.display(),
                 session = key.session.session.get(),
                 revision = key.document_revision.get(),
-                editor_revision = key.editor_revision.get(),
-                current_editor_revision = invalidation.current_revision().get(),
                 line = key.line,
                 character = key.character,
                 "completion attempt was obsolete at scheduler admission"
             );
-            return AttemptWaiter::ready(SharedAttemptOutcome::EditorAdvanced);
+            return AttemptWaiter::ready(SharedAttemptOutcome::DocumentAdvanced);
         }
 
         let Some(state) = request.scheduler().upgrade() else {
@@ -153,7 +151,6 @@ impl SchedulerState {
                     path = %logged_key.session.path.display(),
                     session = logged_key.session.session.get(),
                     revision = logged_key.document_revision.get(),
-                    editor_revision = logged_key.editor_revision.get(),
                     line = logged_key.line,
                     character = logged_key.character,
                     "coalesced duplicate completion with active semantic attempt"
@@ -165,7 +162,6 @@ impl SchedulerState {
                     path = %logged_key.session.path.display(),
                     session = logged_key.session.session.get(),
                     revision = logged_key.document_revision.get(),
-                    editor_revision = logged_key.editor_revision.get(),
                     line = logged_key.line,
                     character = logged_key.character,
                     "coalesced duplicate completion with pending semantic attempt"
@@ -187,13 +183,12 @@ impl SchedulerState {
                         path = %identity.key.session.path.display(),
                         session = identity.key.session.session.get(),
                         revision = identity.key.document_revision.get(),
-                        editor_revision = identity.key.editor_revision.get(),
                         line = identity.key.line,
                         character = identity.key.character,
                         "replaced pending completion attempt"
                     );
                     let outcome = if identity.request == request.id {
-                        SharedAttemptOutcome::EditorAdvanced
+                        SharedAttemptOutcome::DocumentAdvanced
                     } else {
                         SharedAttemptOutcome::Replaced
                     };
@@ -305,7 +300,6 @@ impl CaptureTransition {
                     path = %key.session.path.display(),
                     session = key.session.session.get(),
                     revision = key.document_revision.get(),
-                    editor_revision = key.editor_revision.get(),
                     line = key.line,
                     character = key.character,
                     "captured duplicate logical completion request"
@@ -324,7 +318,6 @@ impl CaptureTransition {
                     path = %key.session.path.display(),
                     session = key.session.session.get(),
                     revision = key.document_revision.get(),
-                    editor_revision = key.editor_revision.get(),
                     line = key.line,
                     character = key.character,
                     replaced_existing_request,
@@ -396,7 +389,7 @@ impl SessionQueue {
                 }
 
                 let reason = if active.identity().request == job.identity().request {
-                    AttemptStopReason::EditorAdvanced
+                    AttemptStopReason::DocumentAdvanced
                 } else {
                     AttemptStopReason::Replaced
                 };

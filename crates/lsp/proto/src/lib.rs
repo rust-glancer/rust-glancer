@@ -8,7 +8,9 @@
 mod client_capabilities;
 mod completion;
 mod config;
+mod document_query;
 mod error;
+mod global_operation;
 mod notifications;
 mod outcome;
 mod saved_source;
@@ -17,23 +19,24 @@ mod snapshot;
 
 pub use self::{
     client_capabilities::ClientCapabilities,
-    completion::CompletionClientCapabilities,
+    completion::{CompletionClientCapabilities, CompletionResult},
     config::{
         AnalysisCfgConfig, AnalysisConfig, CargoMetadataConfig, CargoMetadataTarget,
         DiagnosticsConfig, EngineConfig, IndexingPerformancePreference, PackageResidencyPolicy,
         SysrootDiscovery,
     },
+    document_query::{DocumentQueryCoverage, DocumentQueryResult},
     error::EngineError,
+    global_operation::GlobalOperationResult,
     notifications::{ServiceLogLevel, ServiceNotification},
-    outcome::{AnalysisAbort, AnalysisInput, AnalysisOutcome, AnalysisReady, AnalysisScope},
+    outcome::{AnalysisAbort, AnalysisInput, AnalysisOutcome, AnalysisReady},
     saved_source::{CapturedSourceInput, SaveProposal, SavedProjectChanges},
     service::{
         EngineResult, EngineService, EngineServiceClient, NotificationsService,
         NotificationsServiceClient,
     },
     snapshot::{
-        DocumentAnalysisSnapshot, DocumentPositionSnapshot, DocumentRangeSnapshot,
-        DocumentRevision, EditorDocumentSnapshot, EditorSnapshot, EditorSnapshotRevision,
-        OpenDocumentSession, TargetDocumentRevision,
+        DocumentPositionSnapshot, DocumentRangeSnapshot, DocumentRevision, EditorDocumentSnapshot,
+        GlobalPositionSnapshot, OpenDocumentSession, OpenDocumentsRevision, TargetDocumentRevision,
     },
 };

@@ -26,7 +26,7 @@ pub(crate) async fn document_highlight(
             },
         )
         .await;
-    let highlights = ctx.finish_query(result)?;
+    let highlights = ctx.finish_document_read(result)?;
     tracing::trace!(
         result_count = highlights.len(),
         "document highlight request answered"

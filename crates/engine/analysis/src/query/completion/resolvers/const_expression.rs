@@ -18,7 +18,9 @@ use rg_ir_view::source::{IndexedUnqualifiedNameContext, SourceCompletionView};
 use crate::{
     Analysis,
     model::{CompletionEdit, CompletionItem, CompletionKind, SyntheticCompletionTarget},
-    query::completion::site::{ConstExpressionCompletionContext, UnqualifiedCompletionSite},
+    query::completion::site::{
+        CompletionSourceAttachment, ConstExpressionCompletionContext, UnqualifiedCompletionSite,
+    },
 };
 
 use super::super::{
@@ -72,9 +74,13 @@ impl<'a, 'db, 'source> ConstExpressionCompletionResolver<'a, 'db, 'source> {
         ]);
 
         if let Some(qualifier) = context.qualifier() {
-            let Some(source_site) = SourceCompletionView::new(self.analysis.view_db())
-                .module_source_site_at(self.query.crate_ref, self.query.file_id, self.query.offset)
-                .context("find qualified const completion module")?
+            let Some(source_site) = CompletionSourceAttachment::new(
+                self.analysis,
+                self.query.crate_ref,
+                self.query.file_id,
+            )
+            .module_site_at(self.query.offset, &syntax.inline_module_path())
+            .context("find qualified const completion module")?
             else {
                 return Ok(completions);
             };
@@ -120,16 +126,18 @@ impl<'a, 'db, 'source> ConstExpressionCompletionResolver<'a, 'db, 'source> {
                 prefix.text().to_string(),
             )
             .context("find body const completion site")?
-            .or(source
-                .signature_syntax_name_site_at(
-                    self.query.crate_ref,
-                    self.query.file_id,
-                    self.query.offset,
-                    IndexedUnqualifiedNameContext::Const,
-                    prefix.span(),
-                    prefix.text().to_string(),
-                )
-                .context("find signature const completion site")?);
+            .or(CompletionSourceAttachment::new(
+                self.analysis,
+                self.query.crate_ref,
+                self.query.file_id,
+            )
+            .signature_name_site_at(
+                self.query.offset,
+                IndexedUnqualifiedNameContext::Const,
+                prefix.span(),
+                prefix.text().to_string(),
+            )
+            .context("find signature const completion site")?);
         if let Some(site) = site {
             completions.extend(
                 UnqualifiedCompletionResolver::new(self.analysis, self.query)

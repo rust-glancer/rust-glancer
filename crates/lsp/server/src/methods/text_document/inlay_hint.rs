@@ -22,7 +22,7 @@ pub(crate) async fn inlay_hint(
             },
         )
         .await;
-    let hints = ctx.finish_query(result)?;
+    let hints = ctx.finish_document_read(result)?;
     tracing::trace!(result_count = hints.len(), "inlay hint request answered");
 
     Ok(Some(hints))

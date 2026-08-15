@@ -3,7 +3,9 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use rg_lsp_proto::{AnalysisInput, AnalysisOutcome, AnalysisReady};
+use rg_lsp_proto::{
+    AnalysisInput, AnalysisOutcome, AnalysisReady, CompletionResult, DocumentQueryCoverage,
+};
 use tokio::sync::{mpsc, oneshot};
 use tower_lsp_server::ls_types::{Position, Range, TextDocumentContentChangeEvent};
 
@@ -15,7 +17,7 @@ use super::{
 use crate::ingress::{CapturedDocument, EditorStateHandle};
 
 #[tokio::test(flavor = "current_thread")]
-async fn editor_advance_is_an_attempt_transition_not_an_engine_abort() {
+async fn document_advance_is_an_attempt_transition_not_an_engine_abort() {
     let scheduler = CompletionScheduler::default();
     let (editor, path, captured) = open_document();
     let request = scheduler.capture_request(&captured, Position::new(0, 20));
@@ -30,13 +32,49 @@ async fn editor_advance_is_an_attempt_transition_not_an_engine_abort() {
 
     change(&editor, &path, 20, "Changed");
 
-    assert_editor_advanced(response.wait().await);
+    assert_document_advanced(response.wait().await);
     drop(request);
     assert_eq!(scheduler.session_count(), 0);
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn late_admission_returns_editor_advance_without_starting_semantic_work() {
+async fn sibling_edits_do_not_interrupt_a_target_document_attempt() {
+    let scheduler = CompletionScheduler::default();
+    let (editor, _path, captured) = open_document();
+    let sibling = PathBuf::from("/workspace/src/sibling.rs");
+    editor.open(sibling.clone(), Some(1), "pub struct Sibling;".to_string());
+    let request = scheduler.capture_request(&captured, Position::new(0, 20));
+    let (started, mut starts) = mpsc::unbounded_channel();
+    let (finish, finished) = oneshot::channel();
+    let response = enqueue(
+        &request,
+        &captured,
+        20,
+        observed_job(
+            1,
+            started,
+            Box::pin(async move {
+                let _ = finished.await;
+            }),
+        ),
+    );
+    assert_eq!(starts.recv().await, Some(1));
+
+    change(&editor, &sibling, 19, "Changed");
+    tokio::task::yield_now().await;
+    assert!(
+        !finish.is_closed(),
+        "a sibling edit must leave target-only semantic work running"
+    );
+
+    finish.send(()).expect("target attempt should still finish");
+    assert_completed(response.wait().await);
+    drop(request);
+    assert_eq!(scheduler.session_count(), 0);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn late_admission_returns_document_advance_without_starting_semantic_work() {
     let scheduler = CompletionScheduler::default();
     let (editor, path, captured) = open_document();
     let request = scheduler.capture_request(&captured, Position::new(0, 20));
@@ -50,7 +88,7 @@ async fn late_admission_returns_editor_advance_without_starting_semantic_work() 
         observed_job(1, started, Box::pin(pending())),
     );
 
-    assert_editor_advanced(response.wait().await);
+    assert_document_advanced(response.wait().await);
     assert!(starts.try_recv().is_err());
     drop(request);
     assert_eq!(scheduler.session_count(), 0);
@@ -197,7 +235,7 @@ async fn a_new_attempt_for_the_same_request_advances_duplicate_waiters() {
         observed_job(2, started, Box::pin(async {})),
     );
 
-    assert_editor_advanced(old.wait().await);
+    assert_document_advanced(old.wait().await);
     assert_eq!(starts.recv().await, Some(2));
     assert_completed(new.wait().await);
     drop(request);
@@ -214,7 +252,7 @@ async fn dropping_every_waiter_cancels_work_and_releases_the_session_queue() {
     let (dropped, dropped_rx) = oneshot::channel();
     let response = request.enqueue_attempt(
         AttemptKey::for_capture(&captured, Position::new(0, 1)),
-        captured.editor_revision_watch(),
+        captured.document_revision_watch(),
         Box::pin(async move {
             let _notice = DropNotice(Some(dropped));
             started
@@ -255,7 +293,7 @@ async fn close_and_reopen_ends_the_old_request_and_releases_its_session_queue() 
         .expect("the original document session should close");
     editor.open(path, Some(1), "pub struct Reopened;".to_string());
 
-    assert_editor_advanced(response.wait().await);
+    assert_document_advanced(response.wait().await);
     let error = captured
         .recapture_position(Position::new(0, 20))
         .expect_err("an old completion request must not cross into the reopened session");
@@ -272,7 +310,7 @@ async fn engine_abort_and_failure_remain_completed_attempt_outcomes() {
     let aborted_request = scheduler.capture_request(&captured, Position::new(0, 1));
     let aborted = aborted_request.enqueue_attempt(
         AttemptKey::for_capture(&captured, Position::new(0, 1)),
-        captured.editor_revision_watch(),
+        captured.document_revision_watch(),
         Box::pin(async {
             Ok(AnalysisOutcome::Aborted(
                 rg_lsp_proto::AnalysisAbort::SourceChanged,
@@ -290,7 +328,7 @@ async fn engine_abort_and_failure_remain_completed_attempt_outcomes() {
     let failed_request = scheduler.capture_request(&captured, Position::new(0, 2));
     let failed = failed_request.enqueue_attempt(
         AttemptKey::for_capture(&captured, Position::new(0, 2)),
-        captured.editor_revision_watch(),
+        captured.document_revision_watch(),
         Box::pin(async { Err(anyhow::anyhow!("semantic failure")) }),
     );
     let CompletionAttemptOutcome::Completed(Err(error)) = failed.wait().await else {
@@ -319,7 +357,7 @@ fn enqueue(
 ) -> AttemptWaiter {
     request.enqueue_attempt(
         AttemptKey::for_capture(captured, Position::new(0, character)),
-        captured.editor_revision_watch(),
+        captured.document_revision_watch(),
         run,
     )
 }
@@ -335,7 +373,7 @@ fn observed_job(
             .expect("test should observe every started completion");
         wait.await;
         Ok(AnalysisOutcome::Ready(AnalysisReady::new(
-            Vec::new(),
+            CompletionResult::new(Vec::new(), DocumentQueryCoverage::Exact),
             AnalysisInput::for_saved_project(label),
         )))
     })
@@ -367,8 +405,11 @@ fn assert_completed(outcome: CompletionAttemptOutcome) {
     ));
 }
 
-fn assert_editor_advanced(outcome: CompletionAttemptOutcome) {
-    assert!(matches!(outcome, CompletionAttemptOutcome::EditorAdvanced));
+fn assert_document_advanced(outcome: CompletionAttemptOutcome) {
+    assert!(matches!(
+        outcome,
+        CompletionAttemptOutcome::DocumentAdvanced
+    ));
 }
 
 fn assert_replaced(outcome: CompletionAttemptOutcome) {

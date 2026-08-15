@@ -49,7 +49,7 @@ tokio::task_local! {
     /// - `lifecycle_event` waits for an earlier open/save/close handler for the same document, then
     ///   returns the async work assigned to this handler.
     /// - `document_request` takes the immutable document snapshot chosen for this request. It is
-    ///   one-shot so a method cannot later switch to another editor revision by accident.
+    ///   one-shot so a method cannot later switch to a newer document revision by accident.
     /// - `completion_request` returns the request identity used to detect a newer completion.
     ///
     /// When an open/save/close handler finishes, `EditorIngress::call` marks its work as finished

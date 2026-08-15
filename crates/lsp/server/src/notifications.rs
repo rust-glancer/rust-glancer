@@ -66,7 +66,7 @@ async fn publish_service_notification(
             else {
                 tracing::debug!(
                     path = %path.display(),
-                    "kept saved-source diagnostics unchanged for a newer editor snapshot"
+                    "kept saved-source diagnostics unchanged for newer open document text"
                 );
                 return Ok(());
             };

@@ -11,7 +11,7 @@ pub(crate) async fn prepare_rename(
     params: TextDocumentPositionParams,
 ) -> Result<Option<PrepareRenameResponse>> {
     let position = params.position;
-    let input = ctx.target_position(position)?;
+    let input = ctx.global_position(position)?;
     tracing::trace!("prepare rename request received");
     let result = ctx
         .engine_client
@@ -22,7 +22,7 @@ pub(crate) async fn prepare_rename(
             },
         )
         .await;
-    let response = ctx.finish_query(result)?;
+    let response = ctx.finish_global_operation(result)?;
     tracing::trace!(
         has_result = response.is_some(),
         "prepare rename request answered"
@@ -43,7 +43,7 @@ pub(crate) async fn rename(
     params: RenameParams,
 ) -> Result<Option<WorkspaceEdit>> {
     let position = params.text_document_position.position;
-    let input = ctx.target_position(position)?;
+    let input = ctx.global_position(position)?;
     let new_name = params.new_name;
     tracing::trace!("rename request received");
     let result = ctx
@@ -52,7 +52,7 @@ pub(crate) async fn rename(
             engine_client.rename(request_context, input, new_name).await
         })
         .await;
-    let edit = ctx.finish_query(result)?;
+    let edit = ctx.finish_global_operation(result)?;
     tracing::trace!(has_edit = edit.is_some(), "rename request answered");
 
     Ok(edit)

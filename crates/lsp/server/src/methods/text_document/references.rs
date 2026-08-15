@@ -14,7 +14,7 @@ pub(crate) async fn references(
     params: ReferenceParams,
 ) -> Result<Option<Vec<Location>>> {
     let position = params.text_document_position.position;
-    let input = ctx.target_position(position)?;
+    let input = ctx.global_position(position)?;
     let include_declaration = params.context.include_declaration;
     tracing::trace!("references request received");
     let result = ctx
@@ -28,7 +28,7 @@ pub(crate) async fn references(
             },
         )
         .await;
-    let locations = ctx.finish_query(result)?;
+    let locations = ctx.finish_global_operation(result)?;
     tracing::trace!(
         result_count = locations.len(),
         "references request answered"

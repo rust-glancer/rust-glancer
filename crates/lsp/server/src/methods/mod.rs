@@ -6,8 +6,8 @@
 //!
 //! Two supporting modules define the shared boundary around those handlers:
 //!
-//! - `context` carries the exact data needed by document and completion handlers and builds engine
-//!   input from their captured editor snapshot.
+//! - `context` turns the editor snapshot captured by ingress into either a target-document request
+//!   or a cross-file request with all relevant open documents.
 //! - `analysis_result` checks engine response tags, verifies that document results still match live
 //!   editor state, and maps engine failures to JSON-RPC errors.
 

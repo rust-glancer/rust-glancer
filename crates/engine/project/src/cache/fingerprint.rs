@@ -3,7 +3,6 @@
 //! Fingerprints are built from explicit field tags and length-prefixed values. This keeps cache
 //! paths independent from Rust's `Hash`, debug formatting, and future serialization bytes.
 
-use anyhow::Context as _;
 use rg_std::MemorySize;
 use std::{fmt, path::Path};
 use wincode::{SchemaRead, SchemaWrite};
@@ -168,23 +167,6 @@ impl FingerprintBuilder {
             );
         }
 
-        Ok(builder.finalize())
-    }
-
-    /// Fingerprint the crate-local facts that can change a composite item lookup index.
-    ///
-    /// Semantic IR owns the canonical input shape, including body-independent declaration facts
-    /// and the visibility edges that decide which unchanged stores enter the use-site index. This
-    /// layer only gives those stable bytes a package-cache fingerprint domain.
-    pub(crate) fn item_lookup_index(
-        crate_data: &rg_def_map::CrateData,
-        items: &rg_semantic_ir::ItemStore,
-    ) -> anyhow::Result<Fingerprint> {
-        let key = rg_semantic_ir::ItemLookupIndex::cache_key(crate_data, items)
-            .context("while attempting to encode item lookup index key")?;
-
-        let mut builder = Self::new("item-lookup-index");
-        builder.bytes("key", &key);
         Ok(builder.finalize())
     }
 

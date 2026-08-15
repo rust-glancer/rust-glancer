@@ -1,20 +1,14 @@
-//! Exact source input captured before a consumer starts rebuilding.
+//! Source text and path fixed together before a saved-project rebuild starts.
 //!
-//! Saved-project events use `CapturedSource::new`, which canonicalizes a filesystem path at the
-//! capture boundary. Editor snapshots take the other route: the LSP engine first proves that a
-//! document belongs to the selected generation, then reuses that generation's `SourcePath` without
-//! consulting the filesystem again. Both forms keep path, text, revision, and byte length in one
-//! immutable value.
+//! `CapturedSource::new` canonicalizes the path as soon as an event supplies the text. It then
+//! keeps that path, text, revision, and byte length in one value, so a later project update cannot
+//! accidentally combine text from one moment with a path identity from another.
 
 use std::{path::Path, sync::Arc};
 
 use crate::{SourceDescriptor, SourceError, SourcePath, SourceRevision};
 
-/// One canonical Rust source value captured before project composition.
-///
-/// External saved-source capture canonicalizes its path. Editor capture instead reuses the
-/// `SourcePath` already owned by a selected project generation, so an open buffer never has to
-/// rediscover its identity from the filesystem.
+/// One canonical Rust source file captured before rebuilding the saved project.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CapturedSource {
     descriptor: SourceDescriptor,
@@ -31,12 +25,6 @@ impl CapturedSource {
         let text = text.into();
         let descriptor = SourceDescriptor::new(SourcePath::new(canonical_path), text.as_bytes());
         Ok(Self { descriptor, text })
-    }
-
-    pub(crate) fn from_source_path(source_path: SourcePath, text: impl Into<Arc<str>>) -> Self {
-        let text = text.into();
-        let descriptor = SourceDescriptor::new(source_path, text.as_bytes());
-        Self { descriptor, text }
     }
 
     pub fn path(&self) -> &Path {

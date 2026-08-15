@@ -21,7 +21,7 @@ pub(crate) async fn document_symbol(
             },
         )
         .await;
-    let symbols = ctx.finish_query(result)?;
+    let symbols = ctx.finish_document_read(result)?;
     tracing::trace!(
         result_count = symbols.len(),
         "document symbol request answered"

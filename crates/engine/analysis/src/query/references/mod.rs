@@ -11,7 +11,7 @@ use rg_parse::FileId;
 use rg_std::UniqueVec;
 
 use crate::{
-    Analysis,
+    Analysis, SavedSourceRelationship,
     model::{ReferenceLocation, SymbolAt},
     source_symbol::{SourceSymbol, SourceSymbolIndex, SourceSymbolResolver, SourceSymbolRole},
 };
@@ -139,6 +139,16 @@ impl<'a, 'db, 'scope> ReferenceResolver<'a, 'db, 'scope> {
                 {
                     continue;
                 }
+                if self
+                    .analysis
+                    .current_source_relationship(location.crate_ref.package, location.file_id)
+                    == Some(SavedSourceRelationship::Different)
+                {
+                    // A current Body IR scan already contains declarations that exist in the
+                    // editor. Projecting a saved fallback here would attach a saved range to
+                    // different current text.
+                    continue;
+                }
                 if symbols.iter().any(|symbol| {
                     symbol.role() == SourceSymbolRole::Declaration
                         && symbol.crate_ref() == location.crate_ref
@@ -254,9 +264,20 @@ impl<'a, 'db, 'scope> ReferenceResolver<'a, 'db, 'scope> {
         hints: &ReferenceSearchHints,
         symbols: &mut Vec<SourceSymbol>,
     ) -> anyhow::Result<()> {
-        for candidate in SourceSymbolIndex::new(self.analysis.view_db())
-            .symbols_in_crate(scan.crate_ref, scan.file_id)?
-        {
+        let source_symbols = SourceSymbolIndex::new(self.analysis.view_db());
+        let candidates = match scan.file_id {
+            Some(file_id)
+                if self
+                    .analysis
+                    .current_source_relationship(scan.crate_ref.package, file_id)
+                    == Some(SavedSourceRelationship::Different) =>
+            {
+                source_symbols.body_symbols_in_crate(scan.crate_ref, Some(file_id))?
+            }
+            Some(_) | None => source_symbols.symbols_in_crate(scan.crate_ref, scan.file_id)?,
+        };
+
+        for candidate in candidates {
             if !self.accepts_candidate_role(candidate.role()) {
                 continue;
             }

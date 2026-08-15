@@ -16,7 +16,7 @@ pub(crate) async fn implementation(
     params: GotoImplementationParams,
 ) -> Result<Option<GotoImplementationResponse>> {
     let position = params.text_document_position_params.position;
-    let input = ctx.target_position(position)?;
+    let input = ctx.global_position(position)?;
     tracing::trace!("implementation request received");
     let result = ctx
         .engine_client
@@ -29,7 +29,7 @@ pub(crate) async fn implementation(
             },
         )
         .await;
-    let locations = ctx.finish_query(result)?;
+    let locations = ctx.finish_global_operation(result)?;
     tracing::trace!(
         result_count = locations.len(),
         "implementation request answered"

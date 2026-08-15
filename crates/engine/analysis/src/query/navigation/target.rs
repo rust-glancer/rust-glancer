@@ -1,12 +1,12 @@
 //! Concrete navigation target projection.
 
-use rg_ir_model::{ModuleRef, identity::DeclarationRef};
+use rg_ir_model::{DefMapRef, ModuleRef, identity::DeclarationRef};
 use rg_ir_view::{
     IndexedViewDb,
     item::declaration::{Declaration, DeclarationView},
 };
 
-use crate::model::{NavigationTarget, NavigationTargetKind};
+use crate::model::{NavigationTarget, NavigationTargetKind, NavigationTargetSource};
 
 /// Converts stable IR identities into concrete editor navigation targets.
 ///
@@ -36,20 +36,24 @@ impl<'a, 'db> NavigationTargetProjection<'a, 'db> {
 
     fn target_for_declaration(
         &self,
-        declaration: DeclarationRef,
+        declaration_ref: DeclarationRef,
     ) -> anyhow::Result<Option<NavigationTarget>> {
-        match declaration {
+        match declaration_ref {
             DeclarationRef::Module(module) => self.target_for_module(module),
             DeclarationRef::LocalDef(_)
             | DeclarationRef::Item(_)
             | DeclarationRef::Field(_)
             | DeclarationRef::EnumVariant(_)
             | DeclarationRef::BodyBinding(_) => {
-                let Some(declaration) = DeclarationView::new(self.0).declaration(declaration)?
+                let Some(declaration) =
+                    DeclarationView::new(self.0).declaration(declaration_ref)?
                 else {
                     return Ok(None);
                 };
-                Ok(Some(self.navigation_target(declaration)?))
+                Ok(Some(self.navigation_target(
+                    declaration,
+                    self.source_for_declaration(declaration_ref),
+                )?))
             }
         }
     }
@@ -61,6 +65,7 @@ impl<'a, 'db> NavigationTargetProjection<'a, 'db> {
             // file. Named modules are ordinary declarations.
             return Ok(Some(NavigationTarget {
                 crate_ref: module_ref.origin.origin_crate(),
+                source: NavigationTargetSource::Saved,
                 kind: NavigationTargetKind::Module,
                 name: "crate".to_string(),
                 file_id,
@@ -77,6 +82,7 @@ impl<'a, 'db> NavigationTargetProjection<'a, 'db> {
             .to_string();
         Ok(Some(NavigationTarget {
             crate_ref: declaration.crate_ref(),
+            source: self.source_for_declaration(DeclarationRef::Module(module_ref)),
             kind: NavigationTargetKind::from(declaration.kind()),
             name,
             file_id: declaration.file_id(),
@@ -84,16 +90,33 @@ impl<'a, 'db> NavigationTargetProjection<'a, 'db> {
         }))
     }
 
-    fn navigation_target(&self, declaration: Declaration) -> anyhow::Result<NavigationTarget> {
+    fn navigation_target(
+        &self,
+        declaration: Declaration,
+        source: NavigationTargetSource,
+    ) -> anyhow::Result<NavigationTarget> {
         let name = DeclarationView::new(self.0)
             .declaration_site_name(&declaration)?
             .to_string();
         Ok(NavigationTarget {
             crate_ref: declaration.crate_ref(),
+            source,
             kind: NavigationTargetKind::from(declaration.kind()),
             name,
             file_id: declaration.file_id(),
             span: Some(declaration.selection_span()),
         })
+    }
+
+    /// A declaration is current only when its identity belongs to a rebuilt current body.
+    /// Numeric ranges cannot answer this: saved and current text may put unrelated declarations at
+    /// the same offsets.
+    fn source_for_declaration(&self, declaration: DeclarationRef) -> NavigationTargetSource {
+        match declaration.origin() {
+            DefMapRef::Body(body_ref) if self.0.is_current_body(body_ref) => {
+                NavigationTargetSource::Current
+            }
+            DefMapRef::Crate(_) | DefMapRef::Body(_) => NavigationTargetSource::Saved,
+        }
     }
 }

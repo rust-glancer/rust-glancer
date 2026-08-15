@@ -1,28 +1,28 @@
-//! Engine result envelope and the input identity that makes a result publishable.
+//! Separates a real analysis result from a request that had to stop.
 //!
-//! Feature values alone cannot distinguish “the query found nothing” from “the engine could not
-//! answer for this captured generation.” `AnalysisOutcome` keeps those cases separate. Successful
-//! values also return the saved/editor identity used by analysis, allowing the server—the owner of
-//! live editor state—to reject a result overtaken after the engine finished.
+//! An empty completion, hover, or location list can be a valid answer. It must not look the same as
+//! a query that could not use its captured input. `AnalysisOutcome` keeps those cases separate.
+//! Successful results also return the project and editor ids used by the engine, so the server can
+//! reject a result if the editor changed before publication.
 
 use serde::{Deserialize, Serialize};
 
-use crate::{EditorSnapshotRevision, TargetDocumentRevision};
+use crate::{OpenDocumentsRevision, TargetDocumentRevision};
 
-/// Semantic result of one interactive analysis request.
+/// Result of one interactive analysis request.
 ///
 /// An empty value inside `Ready` is a real answer. `Aborted` means analysis could not safely
 /// answer for the request's captured input, so protocol adapters must not turn it into the
 /// feature's empty value.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AnalysisOutcome<T> {
-    /// Analysis produced a semantic value for the attached immutable input.
+    /// Analysis produced a value for the attached immutable input.
     Ready(AnalysisReady<T>),
     /// Analysis stopped for an expected operational reason and produced no feature value.
     Aborted(AnalysisAbort),
 }
 
-/// Successful value paired with the immutable project/editor input used to compute it.
+/// Successful value paired with the project and editor ids used to compute it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AnalysisReady<T> {
     value: T,
@@ -47,39 +47,36 @@ impl<T> AnalysisReady<T> {
     }
 }
 
-/// Breadth of project/editor input selected for one operation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum AnalysisScope {
-    /// Use the captured target text directly without building a source-override project.
-    TargetDocument,
-    /// Rebuild packages containing changed editor sources; suitable for file-local queries.
-    ChangedPackages,
-    /// Also rebuild reverse dependents for cross-package references and edits.
-    ReverseDependencyClosure,
-    /// Use the saved workspace without source overrides.
-    Workspace,
-}
-
-/// Exact saved/editor generation combination used by one successful analysis operation.
+/// Project and editor ids that the server must validate before publishing a result.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AnalysisInput {
     saved_project_generation: u64,
-    editor_snapshot_revision: Option<EditorSnapshotRevision>,
-    scope: AnalysisScope,
+    open_documents_revision: Option<OpenDocumentsRevision>,
     target_document: Option<TargetDocumentRevision>,
 }
 
 impl AnalysisInput {
-    pub fn for_target_revision(
+    /// Tag a result that depends on every captured open document staying unchanged.
+    pub fn for_global_operation(
         saved_project_generation: u64,
-        editor_snapshot_revision: EditorSnapshotRevision,
+        open_documents_revision: OpenDocumentsRevision,
         target_document: TargetDocumentRevision,
-        scope: AnalysisScope,
     ) -> Self {
         Self {
             saved_project_generation,
-            editor_snapshot_revision: Some(editor_snapshot_revision),
-            scope,
+            open_documents_revision: Some(open_documents_revision),
+            target_document: Some(target_document),
+        }
+    }
+
+    /// Tag a result that depends on its target document but not on open sibling documents.
+    pub fn for_target_document(
+        saved_project_generation: u64,
+        target_document: TargetDocumentRevision,
+    ) -> Self {
+        Self {
+            saved_project_generation,
+            open_documents_revision: None,
             target_document: Some(target_document),
         }
     }
@@ -87,8 +84,7 @@ impl AnalysisInput {
     pub const fn for_saved_project(saved_project_generation: u64) -> Self {
         Self {
             saved_project_generation,
-            editor_snapshot_revision: None,
-            scope: AnalysisScope::Workspace,
+            open_documents_revision: None,
             target_document: None,
         }
     }
@@ -97,12 +93,8 @@ impl AnalysisInput {
         self.saved_project_generation
     }
 
-    pub const fn editor_snapshot_revision(&self) -> Option<EditorSnapshotRevision> {
-        self.editor_snapshot_revision
-    }
-
-    pub const fn scope(&self) -> AnalysisScope {
-        self.scope
+    pub const fn open_documents_revision(&self) -> Option<OpenDocumentsRevision> {
+        self.open_documents_revision
     }
 
     pub fn target_document(&self) -> Option<&TargetDocumentRevision> {

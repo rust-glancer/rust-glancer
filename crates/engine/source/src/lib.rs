@@ -13,9 +13,6 @@
 //! 5. Saved text may be evicted. A later reload is accepted only when it still has the captured
 //!    revision.
 //!
-//! Captured override text follows the same entry API, but it has no filesystem authority. It stays
-//! resident for the lifetime of the derived project that owns it.
-
 mod captured;
 mod entry;
 mod error;

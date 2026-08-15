@@ -17,8 +17,8 @@ pub enum ServiceNotification {
         diagnostics: Vec<Diagnostic>,
         /// Exact saved source observed when this Cargo result was prepared for publication.
         ///
-        /// The server compares these bytes with an open editor snapshot. `None` covers deleted or
-        /// unreadable files and can only be published to a document that is not open.
+        /// The server compares these bytes with the current open document text. `None` covers
+        /// deleted or unreadable files and can only be published to a document that is not open.
         saved_text: Option<String>,
     },
     BeginWorkDoneProgress {

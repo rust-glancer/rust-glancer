@@ -14,7 +14,7 @@
 //! leaking into an attribute argument list.
 
 use anyhow::Context as _;
-use rg_ir_view::{lookup::name::MacroKind, source::SourceCompletionView};
+use rg_ir_view::lookup::name::MacroKind;
 
 use crate::{
     Analysis,
@@ -22,7 +22,9 @@ use crate::{
         CompletionEdit, CompletionInsertText, CompletionItem, CompletionKind,
         SyntheticCompletionTarget,
     },
-    query::completion::site::{AttributeCompletionContext, AttributeCompletionKind},
+    query::completion::site::{
+        AttributeCompletionContext, AttributeCompletionKind, CompletionSourceAttachment,
+    },
 };
 
 use super::super::{
@@ -85,9 +87,13 @@ impl<'a, 'db, 'source> AttributeCompletionResolver<'a, 'db, 'source> {
         let Some(macro_kind) = macro_kind else {
             return Ok(completions);
         };
-        let Some(source_site) = SourceCompletionView::new(self.analysis.view_db())
-            .module_source_site_at(self.query.crate_ref, self.query.file_id, self.query.offset)
-            .context("find attribute completion module")?
+        let Some(source_site) = CompletionSourceAttachment::new(
+            self.analysis,
+            self.query.crate_ref,
+            self.query.file_id,
+        )
+        .module_site_at(self.query.offset, &syntax.inline_module_path())
+        .context("find attribute completion module")?
         else {
             return Ok(completions);
         };

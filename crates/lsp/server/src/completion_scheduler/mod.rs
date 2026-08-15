@@ -1,9 +1,9 @@
 //! Keeps completion engine work bounded while the editor is changing quickly.
 //!
 //! Ordered ingress creates a [`CompletionRequest`] for every completion message before its async
-//! handler starts. The request then submits one engine attempt for each immutable editor snapshot
-//! that the handler tries. A newer completion message replaces the whole request; an edit may
-//! instead let the same request move its cursor and try a newer snapshot.
+//! handler starts. The request submits an engine attempt using one captured document revision. If
+//! that document changes, the same request may move its cursor and try the newer revision. A newer
+//! completion message, on the other hand, replaces the whole request.
 //!
 //! Requests compete only inside one open document session. That session is either idle or running
 //! one attempt with, at most, the latest newer attempt waiting behind it. Exact duplicate requests
