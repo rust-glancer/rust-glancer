@@ -14,6 +14,7 @@ use std::{path::Path, time::Instant};
 use anyhow::Context as _;
 use rg_analysis::{
     Analysis as QueryAnalysis, ReferenceQuery, ReferenceSearchFile, RenameEdit, RenameTarget,
+    SavedSourceRelationship,
 };
 use rg_ir_model::CrateRef;
 use rg_lsp_proto::{
@@ -353,9 +354,20 @@ impl QueryRunner<'_> {
             ));
         };
         let mut highlights = UniqueVec::new();
+        let mut every_target_has_safe_coordinates = true;
 
         for target in &current.targets {
-            if !current.target_has_exact_body(target) {
+            let has_exact_body = current.target_has_exact_body(target);
+            // Rebuilt body spans already use editor coordinates. Saved item spans are safe too
+            // when the editor text is byte-for-byte equal to the source that produced them.
+            let matches_saved = !has_exact_body
+                && current
+                    .analysis
+                    .current_source_relationship(target.context.package, target.context.file)
+                    == Some(SavedSourceRelationship::Exact);
+            let has_safe_coordinates = has_exact_body || matches_saved;
+            every_target_has_safe_coordinates &= has_safe_coordinates;
+            if !has_safe_coordinates {
                 continue;
             }
             for reference in current
@@ -391,7 +403,7 @@ impl QueryRunner<'_> {
             "document highlight query finished"
         );
 
-        let coverage = if current.coverage.is_exact() {
+        let coverage = if current.coverage.is_exact() || every_target_has_safe_coordinates {
             DocumentQueryCoverage::Exact
         } else {
             DocumentQueryCoverage::Partial

@@ -115,6 +115,50 @@ pub fn untouched(_changed: usize) {
 }
 
 #[tokio::test]
+async fn document_highlights_saved_items_when_editor_source_is_exact() {
+    let fixture = LspEngineFixture::initialized(
+        r#"
+        //- /Cargo.toml
+        [package]
+        name = "lsp_exact_document_highlights"
+        version = "0.1.0"
+        edition = "2024"
+
+        //- /src/lib.rs
+        pub trait Serv$trait$ice {}
+
+        pub fn insp$function$ect() {}
+
+        pub fn use_items<T: Service>() {
+            inspect();
+        }
+        "#,
+    )
+    .await;
+
+    fixture.did_open_saved("src/lib.rs", 1).await;
+    fixture
+        .check(
+            &[
+                LspQuery::document_highlight("highlight an exact trait item", "trait"),
+                LspQuery::document_highlight("highlight an exact function item", "function"),
+            ],
+            expect![[r#"
+                highlight an exact trait item
+                - read 0:10-0:17
+                - read 4:20-4:27
+
+                highlight an exact function item
+                - read 2:7-2:14
+                - read 5:4-5:11
+            "#]],
+        )
+        .await;
+
+    fixture.shutdown().await;
+}
+
+#[tokio::test]
 async fn inlay_hints_skip_bodyless_declarations_and_leave_engine_available() {
     let fixture = LspEngineFixture::initialized(
         r#"

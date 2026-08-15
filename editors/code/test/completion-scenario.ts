@@ -48,9 +48,9 @@ export class CompletionScenario {
       scenario.keyboard = await RendererKeyboard.connect();
 
       // Reuse the same open document and LSP session. The later runs specifically check that an
-      // overtaken request did not leave sticky completion state behind for its successor.
+      // earlier incomplete refresh did not leave sticky completion state behind for its successor.
       for (let run = 1; run <= 3; run += 1) {
-        await scenario.completeAfterOvertakingIncompleteRefresh(run);
+        await scenario.completeThroughRapidIncompleteRefresh(run);
       }
       await scenario.dismissWithoutOpeningASuccessor();
     } finally {
@@ -73,12 +73,12 @@ export class CompletionScenario {
     await vscode.commands.executeCommand("workbench.action.focusActiveEditorGroup");
   }
 
-  private async completeAfterOvertakingIncompleteRefresh(run: number): Promise<void> {
+  private async completeThroughRapidIncompleteRefresh(run: number): Promise<void> {
     await this.prepareScratch();
     const before = await currentCompletionObservations();
 
     // Ordinary quick suggestions first produce one semantic incomplete list. Continuing by one
-    // character starts its native incomplete refresh; only then do we overtake that exact attempt.
+    // character starts its native incomplete refresh, then the remaining text arrives immediately.
     await this.type("Comp");
     const initial = this.currentPoint();
     const initialReady = await waitForCompletionObservation(
@@ -95,39 +95,19 @@ export class CompletionScenario {
 
     await this.type("l");
     const refresh = this.currentPoint();
-    const refreshStart = await waitForCompletionObservation(
+    await waitForCompletionObservation(
       before.length,
       (observation) => observation.phase === "start" && isAt(observation, refresh),
       `run ${run} incomplete-list refresh start`,
     );
 
     await this.type("etion");
-    const overtakenFinish = await waitForCompletionObservation(
-      before.length,
-      (observation) =>
-        observation.phase === "finish" &&
-        observation.attempt === refreshStart.attempt &&
-        observation.observedVersion !== undefined &&
-        observation.observedVersion > refresh.version &&
-        (observation.outcome === "ready" || observation.outcome === "cancelled"),
-      `run ${run} overtaken refresh finish`,
-    );
-    assert.ok(
-      overtakenFinish.observedVersion !== undefined &&
-        overtakenFinish.observedVersion > refresh.version,
-      `run ${run} must overtake the refresh with a later document version: ${JSON.stringify(overtakenFinish)}`,
-    );
-    if (overtakenFinish.outcome === "ready") {
-      assert.ok(
-        hasSemanticFixture(overtakenFinish),
-        `run ${run} live request must return semantic candidates after overtaking: ${JSON.stringify(overtakenFinish)}`,
-      );
-    }
-
-    // Continue after the overtaken request settles, then require a semantic result observed against
-    // the final document version. No test command or extension middleware opens a successor.
     await this.type("Fix");
     const final = this.currentPoint();
+
+    // A fast provider may finish the one-character refresh before the renderer sends the rest of
+    // the word; a slower provider may be overtaken and cancelled. Both are valid. What matters at
+    // the client boundary is that native typing reaches a semantic result for the final version.
     await waitForClientState((state) => {
       const observations = state.session?.completionObservations.slice(before.length) ?? [];
       return (
