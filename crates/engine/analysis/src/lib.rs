@@ -51,17 +51,17 @@ pub struct Analysis<'a> {
 }
 
 /// One token range proven to name the same declaration in current and saved source.
-pub(crate) struct AssociatedSavedHeader {
+struct AssociatedSavedHeader {
     current: Span,
     saved: Span,
 }
 
 impl AssociatedSavedHeader {
-    pub(crate) fn current_span(&self) -> Span {
+    fn current_span(&self) -> Span {
         self.current
     }
 
-    pub(crate) fn saved_span(&self) -> Span {
+    fn saved_span(&self) -> Span {
         self.saved
     }
 
@@ -167,7 +167,7 @@ impl<'a> Analysis<'a> {
     ///
     /// Matching uses the request's ordinary current parse and its prepared declaration
     /// associations. New, renamed, or ambiguous declarations have no safe saved header.
-    pub(crate) fn associated_saved_header_at(
+    fn associated_saved_header_at(
         &self,
         crate_ref: CrateRef,
         file: FileId,
@@ -246,31 +246,44 @@ impl<'a> Analysis<'a> {
         file_id: FileId,
         offset: u32,
     ) -> anyhow::Result<Option<SourceSymbol>> {
-        let symbols = match self.current_source_relationship(crate_ref.package, file_id) {
-            Some(SavedSourceRelationship::Different) => SourceSymbolIndex::new(self.view_db())
-                .body_symbols_at(crate_ref, file_id, offset)?,
-            Some(SavedSourceRelationship::Exact) | None => {
-                SourceSymbolIndex::new(self.view_db()).symbols_at(crate_ref, file_id, offset)?
-            }
-        };
+        // Saved and exact source can share one offset. For edited source, first ask only the Body
+        // IR built from the editor text. If the cursor is in an unchanged item header instead, the
+        // declaration association below supplies the saved semantic symbol and its current range.
+        match self.current_source_relationship(crate_ref.package, file_id) {
+            Some(SavedSourceRelationship::Different) => {
+                let current_body_symbols = SourceSymbolIndex::new(self.view_db())
+                    .body_symbols_at(crate_ref, file_id, offset)?;
+                if let Some(symbol) = Self::narrowest_source_symbol(current_body_symbols) {
+                    return Ok(Some(symbol));
+                }
 
-        Ok(Self::narrowest_source_symbol(symbols))
+                self.associated_header_source_symbol(crate_ref, file_id, offset)
+            }
+            Some(SavedSourceRelationship::Exact) | None => Ok(Self::narrowest_source_symbol(
+                SourceSymbolIndex::new(self.view_db()).symbols_at(crate_ref, file_id, offset)?,
+            )),
+        }
     }
 
-    /// Look up a declaration at an offset already mapped into saved source coordinates.
-    pub(crate) fn saved_declaration_symbol_at_for_query(
+    /// Find saved semantics for a current header token that has one matching saved declaration.
+    fn associated_header_source_symbol(
         &self,
         crate_ref: CrateRef,
         file_id: FileId,
-        saved_offset: u32,
+        current_offset: u32,
     ) -> anyhow::Result<Option<SourceSymbol>> {
+        let Some(association) =
+            self.associated_saved_header_at(crate_ref, file_id, current_offset)?
+        else {
+            return Ok(None);
+        };
         let symbols = SourceSymbolIndex::new(self.view_db()).saved_declaration_symbols_at(
             crate_ref,
             file_id,
-            saved_offset,
+            association.saved_span().text.start,
         )?;
-
-        Ok(Self::narrowest_source_symbol(symbols))
+        Ok(Self::narrowest_source_symbol(symbols)
+            .and_then(|symbol| symbol.for_associated_header(association.current_span())))
     }
 
     fn narrowest_source_symbol(symbols: Vec<SourceSymbol>) -> Option<SourceSymbol> {
@@ -349,16 +362,6 @@ impl<'a> Analysis<'a> {
         offset: u32,
     ) -> anyhow::Result<Option<HoverInfo>> {
         query::hover::HoverResolver::new(self).hover(crate_ref, file_id, offset)
-    }
-
-    /// Returns saved hover information when an item header still matches the current source.
-    pub fn current_header_hover(
-        &self,
-        crate_ref: CrateRef,
-        file_id: FileId,
-        offset: u32,
-    ) -> anyhow::Result<Option<HoverInfo>> {
-        query::hover::HoverResolver::new(self).current_header_hover(crate_ref, file_id, offset)
     }
 
     /// Returns best-effort source references for the symbol under a source offset.

@@ -95,16 +95,36 @@ impl<'a, 'db, 'scope> ReferenceResolver<'a, 'db, 'scope> {
     ) -> anyhow::Result<Vec<SourceSymbol>> {
         let Some(symbol) = self
             .analysis
-            .symbol_at_for_query(crate_ref, file_id, offset)?
+            .source_symbol_at_for_query(crate_ref, file_id, offset)?
         else {
             return Ok(Vec::new());
         };
-        let declarations = self.unique_declarations_for_symbol(symbol)?;
+        let declarations = self.unique_declarations_for_symbol(symbol.symbol().clone())?;
         if declarations.is_empty() {
             return Ok(Vec::new());
         }
 
-        self.source_symbols_matching_declarations(&declarations)
+        let mut symbols = self.source_symbols_matching_declarations(&declarations)?;
+        let cursor_belongs_to_result = match symbol.role() {
+            SourceSymbolRole::Reference => self.query.accepts_scan_target(ReferenceScanTarget {
+                crate_ref: symbol.crate_ref(),
+                file_id: Some(symbol.file_id()),
+            }),
+            SourceSymbolRole::Declaration => {
+                self.query.includes_declarations()
+                    && self
+                        .query
+                        .accepts_declaration(symbol.crate_ref(), symbol.file_id())
+            }
+            SourceSymbolRole::Structural => false,
+        };
+        if cursor_belongs_to_result && !symbols.contains(&symbol) {
+            // An associated edited header is a real current-source occurrence, even though its
+            // semantic fact comes from the saved project. A body-only scan cannot rediscover the
+            // header, so keep the already proven cursor occurrence explicitly.
+            symbols.push(symbol);
+        }
+        Ok(symbols)
     }
 
     pub(crate) fn source_symbols_matching_declarations(

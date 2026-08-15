@@ -94,6 +94,10 @@ async fn dirty_imports_and_unchanged_item_headers_use_saved_semantics() {
 
         pub struct Foo;
 
+        pub struct Wrapper {
+            pub value: Foo,
+        }
+
         impl Foo {
             pub fn new() {
                 let saved = true;
@@ -119,6 +123,10 @@ pub mod api {
 
 pub struct Foo;
 
+pub struct Wrapper {
+    pub value: F$type$oo,
+}
+
 impl F$impl$oo {
     pub fn n$method$ew() {
         let current = true;
@@ -137,12 +145,19 @@ impl F$impl$oo {
                 LspQuery::completion("complete newly typed qualified import", "qualified_import"),
                 LspQuery::hover("hover moved impl type", "impl"),
                 LspQuery::hover("hover method with a dirty body", "method"),
+                LspQuery::goto_definition("define moved impl type", "impl"),
+                LspQuery::goto_type_definition("type of moved field", "type"),
+                LspQuery::document_highlight("highlight moved method", "method"),
+                LspQuery::document_highlight("highlight moved field type", "type"),
             ],
             expect![[r#"
                 complete newly typed import root
                 - Foo Struct
                   detail: struct Foo
                   edit: /src/lib.rs:1:4-1:6 -> Foo
+                - Wrapper Struct
+                  detail: struct Wrapper
+                  edit: /src/lib.rs:1:4-1:6 -> Wrapper
                 - api Module
                   detail: mod api
                   edit: /src/lib.rs:1:4-1:6 -> api
@@ -153,7 +168,7 @@ impl F$impl$oo {
                   edit: /src/lib.rs:2:16-2:18 -> Only
 
                 hover moved impl type
-                - range: /src/lib.rs:10:5-10:8
+                - range: /src/lib.rs:14:5-14:8
                 - markdown:
                   ```rust
                   lsp_dirty_item_surface::Foo
@@ -164,7 +179,7 @@ impl F$impl$oo {
                   ```
 
                 hover method with a dirty body
-                - range: /src/lib.rs:11:11-11:14
+                - range: /src/lib.rs:15:11-15:14
                 - markdown:
                   ```rust
                   lsp_dirty_item_surface::Foo::new
@@ -173,6 +188,18 @@ impl F$impl$oo {
                   ```rust
                   pub fn new()
                   ```
+
+                define moved impl type
+                - /src/lib.rs:8:11-8:14
+
+                type of moved field
+                - /src/lib.rs:8:11-8:14
+
+                highlight moved method
+                - read 15:11-15:14
+
+                highlight moved field type
+                - read 11:15-11:18
             "#]],
         )
         .await;

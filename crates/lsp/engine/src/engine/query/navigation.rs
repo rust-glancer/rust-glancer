@@ -85,18 +85,10 @@ impl QueryRunner<'_> {
 
         for source in &current.targets {
             let has_exact_body = current.target_has_exact_body(source);
-            let mut matches_saved = None;
-            if !has_exact_body {
-                let matches = current
-                    .analysis
-                    .current_source_relationship(source.context.package, source.context.file)
-                    == Some(SavedSourceRelationship::Exact);
-                matches_saved = Some(matches);
-                if !matches {
-                    every_target_has_exact_source = false;
-                    continue;
-                }
-            }
+            let matches_saved = current
+                .analysis
+                .current_source_relationship(source.context.package, source.context.file)
+                == Some(SavedSourceRelationship::Exact);
             let targets = match query {
                 CurrentNavigationQuery::Definition => current
                     .analysis
@@ -142,7 +134,7 @@ impl QueryRunner<'_> {
                     locations.push(location);
                 }
             }
-            every_target_has_exact_source &= has_exact_body || matches_saved == Some(true);
+            every_target_has_exact_source &= has_exact_body || matches_saved;
         }
 
         let locations = locations.into_vec();

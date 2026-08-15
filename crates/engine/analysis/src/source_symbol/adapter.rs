@@ -48,6 +48,20 @@ impl SourceSymbol {
         &self.surface
     }
 
+    /// Keep saved semantic identity, but report the token range proven in current source.
+    pub(crate) fn for_associated_header(mut self, current_span: Span) -> Option<Self> {
+        match &mut self.symbol {
+            SymbolAt::Declaration { span, .. }
+            | SymbolAt::TypePath { span, .. }
+            | SymbolAt::ValuePath { span, .. }
+            | SymbolAt::RecordField { span, .. }
+            | SymbolAt::UsePath { span, .. } => *span = current_span,
+            SymbolAt::FunctionBody { .. } | SymbolAt::Expr { .. } => return None,
+        }
+        self.span = current_span;
+        Some(self)
+    }
+
     pub(crate) fn plain_declaration(
         declaration: DeclarationRef,
         crate_ref: CrateRef,

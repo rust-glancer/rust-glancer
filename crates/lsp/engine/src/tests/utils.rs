@@ -620,6 +620,21 @@ impl LspEngineFixture {
                 writeln!(rendered, "{title}").expect("snapshot should be writable");
                 self.render_locations(rendered, &locations);
             }
+            LspQuery::GotoTypeDefinition { title, marker } => {
+                let path = self.marker_path(markers, marker);
+                let position = self.marker_position(markers, marker);
+                let input = self.global_position_snapshot(path, position);
+                let outcome = self
+                    .service
+                    .clone()
+                    .goto_type_definition(context::current(), input)
+                    .await
+                    .expect("goto type definition query should succeed");
+                let locations = Self::expect_document_ready(outcome, "goto type definition query");
+
+                writeln!(rendered, "{title}").expect("snapshot should be writable");
+                self.render_locations(rendered, &locations);
+            }
             LspQuery::GotoImplementation { title, marker } => {
                 let path = self.marker_path(markers, marker);
                 let position = self.marker_position(markers, marker);
@@ -1137,6 +1152,10 @@ pub(super) enum LspQuery {
         title: &'static str,
         marker: &'static str,
     },
+    GotoTypeDefinition {
+        title: &'static str,
+        marker: &'static str,
+    },
     GotoImplementation {
         title: &'static str,
         marker: &'static str,
@@ -1173,6 +1192,10 @@ pub(super) enum LspQuery {
 impl LspQuery {
     pub(super) fn goto_definition(title: &'static str, marker: &'static str) -> Self {
         Self::GotoDefinition { title, marker }
+    }
+
+    pub(super) fn goto_type_definition(title: &'static str, marker: &'static str) -> Self {
+        Self::GotoTypeDefinition { title, marker }
     }
 
     pub(super) fn goto_implementation(title: &'static str, marker: &'static str) -> Self {

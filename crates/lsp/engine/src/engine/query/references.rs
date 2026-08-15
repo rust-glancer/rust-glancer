@@ -354,22 +354,16 @@ impl QueryRunner<'_> {
             ));
         };
         let mut highlights = UniqueVec::new();
-        let mut every_target_has_safe_coordinates = true;
+        let mut every_target_has_exact_source = true;
 
         for target in &current.targets {
             let has_exact_body = current.target_has_exact_body(target);
-            // Rebuilt body spans already use editor coordinates. Saved item spans are safe too
-            // when the editor text is byte-for-byte equal to the source that produced them.
             let matches_saved = !has_exact_body
                 && current
                     .analysis
                     .current_source_relationship(target.context.package, target.context.file)
                     == Some(SavedSourceRelationship::Exact);
-            let has_safe_coordinates = has_exact_body || matches_saved;
-            every_target_has_safe_coordinates &= has_safe_coordinates;
-            if !has_safe_coordinates {
-                continue;
-            }
+            every_target_has_exact_source &= has_exact_body || matches_saved;
             for reference in current
                 .analysis
                 .references(
@@ -403,7 +397,7 @@ impl QueryRunner<'_> {
             "document highlight query finished"
         );
 
-        let coverage = if current.coverage.is_exact() || every_target_has_safe_coordinates {
+        let coverage = if current.coverage.is_exact() || every_target_has_exact_source {
             DocumentQueryCoverage::Exact
         } else {
             DocumentQueryCoverage::Partial

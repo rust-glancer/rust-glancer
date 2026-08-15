@@ -434,19 +434,10 @@ impl<'a> QueryRunner<'a> {
                     == Some(SavedSourceRelationship::Exact)
             };
             every_target_has_exact_source &= has_exact_body || matches_saved;
-            let info = if has_exact_body || matches_saved {
-                current
-                    .analysis
-                    .hover(target.crate_ref, target.context.file, current.offset)
-                    .context("compute hover")?
-            } else {
-                // Text before an unchanged item can move its header away from every saved span.
-                // Reuse saved semantics only when its syntax identifies one saved declaration.
-                current
-                    .analysis
-                    .current_header_hover(target.crate_ref, target.context.file, current.offset)
-                    .context("compute current declaration-header hover")?
-            };
+            let info = current
+                .analysis
+                .hover(target.crate_ref, target.context.file, current.offset)
+                .context("compute hover")?;
             let Some(info) = info else {
                 continue;
             };
