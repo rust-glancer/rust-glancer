@@ -20,11 +20,14 @@ use std::{
 };
 
 use anyhow::Context as _;
-use rg_lsp_proto::ServiceNotification;
+use rg_lsp_proto::{EngineError, QueryError, QueryValue, ServiceNotification};
 use tokio::sync::oneshot;
 
 pub(crate) use self::{command::EngineCommand, project::ProjectConfiguration};
-use self::{command::EngineResponse, dispatcher::EngineDispatcher};
+use self::{
+    command::{EngineResponder, QueryResponder},
+    dispatcher::EngineDispatcher,
+};
 use crate::{memory::MemoryControl, service::ServiceNotificationsSink};
 
 /// Handle for the long-lived analysis engine.
@@ -73,14 +76,14 @@ impl EngineHandle {
         }
     }
 
-    /// Send one typed command and wait for the dispatcher to answer it.
+    /// Send one typed command and wait for its response channel.
     ///
     /// Dropping the waiting RPC future closes the response endpoint. Query lifecycle code notices
     /// that before starting queued work and can expose the same liveness at feature checkpoints,
     /// so cancellation does not need a second protocol or another request-state owner.
-    pub(crate) async fn request<T>(
+    async fn dispatch<T>(
         &self,
-        build: impl FnOnce(EngineResponse<T>) -> EngineCommand,
+        build: impl FnOnce(oneshot::Sender<T>) -> EngineCommand,
     ) -> anyhow::Result<T>
     where
         T: Send + 'static,
@@ -90,7 +93,31 @@ impl EngineHandle {
             .send(QueuedEngineCommand::new(build(respond_to)))
             .context("send LSP engine command")?;
 
-        response.await.context("receive LSP engine response")?
+        response.await.context("receive LSP engine response")
+    }
+
+    pub(crate) async fn request<T>(
+        &self,
+        build: impl FnOnce(EngineResponder<T>) -> EngineCommand,
+    ) -> anyhow::Result<T>
+    where
+        T: Send + 'static,
+    {
+        self.dispatch(build).await?
+    }
+
+    /// Send a semantic query and keep execution failures inside the query error model.
+    pub(crate) async fn query<T>(
+        &self,
+        build: impl FnOnce(QueryResponder<T>) -> EngineCommand,
+    ) -> Result<QueryValue<T>, QueryError>
+    where
+        T: Send + 'static,
+    {
+        match self.dispatch(build).await {
+            Ok(result) => result,
+            Err(error) => Err(QueryError::Internal(EngineError::from(error))),
+        }
     }
 
     /// Refresh semantic presentation after a saved-project change completed.

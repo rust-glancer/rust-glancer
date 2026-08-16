@@ -11,9 +11,9 @@ use std::{path::PathBuf, sync::Arc};
 
 use anyhow::Context as _;
 use rg_lsp_proto::{
-    AnalysisOutcome, DocumentPositionSnapshot, DocumentQueryResult, DocumentRangeSnapshot,
-    EditorDocumentSnapshot, EngineConfig, EngineError, EngineResult, EngineService,
-    GlobalOperationResult, GlobalPositionSnapshot, SaveProposal, SavedProjectChanges,
+    DocumentPositionSnapshot, DocumentRangeSnapshot, EditorDocumentSnapshot, EngineConfig,
+    EngineError, EngineResult, EngineService, GlobalPositionSnapshot, QueryError, QueryValue,
+    SaveProposal, SavedProjectChanges,
 };
 use rg_project::SavedFileChange;
 use rg_source::CapturedSource;
@@ -164,33 +164,30 @@ impl EngineService for Service {
         self,
         _: context::Context,
         input: GlobalPositionSnapshot,
-    ) -> EngineResult<AnalysisOutcome<DocumentQueryResult<Vec<ls_types::Location>>>> {
+    ) -> Result<QueryValue<Vec<ls_types::Location>>, QueryError> {
         self.engine
-            .request(|respond_to| EngineCommand::GotoDefinition { input, respond_to })
+            .query(|respond_to| EngineCommand::GotoDefinition { input, respond_to })
             .await
-            .map_err(EngineError::from)
     }
 
     async fn goto_type_definition(
         self,
         _: context::Context,
         input: GlobalPositionSnapshot,
-    ) -> EngineResult<AnalysisOutcome<DocumentQueryResult<Vec<ls_types::Location>>>> {
+    ) -> Result<QueryValue<Vec<ls_types::Location>>, QueryError> {
         self.engine
-            .request(|respond_to| EngineCommand::GotoTypeDefinition { input, respond_to })
+            .query(|respond_to| EngineCommand::GotoTypeDefinition { input, respond_to })
             .await
-            .map_err(EngineError::from)
     }
 
     async fn goto_implementation(
         self,
         _: context::Context,
         input: GlobalPositionSnapshot,
-    ) -> EngineResult<AnalysisOutcome<GlobalOperationResult<Vec<ls_types::Location>>>> {
+    ) -> Result<QueryValue<Vec<ls_types::Location>>, QueryError> {
         self.engine
-            .request(|respond_to| EngineCommand::GotoImplementation { input, respond_to })
+            .query(|respond_to| EngineCommand::GotoImplementation { input, respond_to })
             .await
-            .map_err(EngineError::from)
     }
 
     async fn references(
@@ -198,27 +195,24 @@ impl EngineService for Service {
         _: context::Context,
         input: GlobalPositionSnapshot,
         include_declaration: bool,
-    ) -> EngineResult<AnalysisOutcome<GlobalOperationResult<Vec<ls_types::Location>>>> {
+    ) -> Result<QueryValue<Vec<ls_types::Location>>, QueryError> {
         self.engine
-            .request(|respond_to| EngineCommand::References {
+            .query(|respond_to| EngineCommand::References {
                 input,
                 include_declaration,
                 respond_to,
             })
             .await
-            .map_err(EngineError::from)
     }
 
     async fn prepare_rename(
         self,
         _: context::Context,
         input: GlobalPositionSnapshot,
-    ) -> EngineResult<AnalysisOutcome<GlobalOperationResult<Option<ls_types::PrepareRenameResponse>>>>
-    {
+    ) -> Result<QueryValue<Option<ls_types::PrepareRenameResponse>>, QueryError> {
         self.engine
-            .request(|respond_to| EngineCommand::PrepareRename { input, respond_to })
+            .query(|respond_to| EngineCommand::PrepareRename { input, respond_to })
             .await
-            .map_err(EngineError::from)
     }
 
     async fn rename(
@@ -226,37 +220,34 @@ impl EngineService for Service {
         _: context::Context,
         input: GlobalPositionSnapshot,
         new_name: String,
-    ) -> EngineResult<AnalysisOutcome<GlobalOperationResult<Option<ls_types::WorkspaceEdit>>>> {
+    ) -> Result<QueryValue<Option<ls_types::WorkspaceEdit>>, QueryError> {
         self.engine
-            .request(|respond_to| EngineCommand::Rename {
+            .query(|respond_to| EngineCommand::Rename {
                 input,
                 new_name,
                 respond_to,
             })
             .await
-            .map_err(EngineError::from)
     }
 
     async fn document_highlight(
         self,
         _: context::Context,
         input: DocumentPositionSnapshot,
-    ) -> EngineResult<AnalysisOutcome<DocumentQueryResult<Vec<ls_types::DocumentHighlight>>>> {
+    ) -> Result<QueryValue<Vec<ls_types::DocumentHighlight>>, QueryError> {
         self.engine
-            .request(|respond_to| EngineCommand::DocumentHighlight { input, respond_to })
+            .query(|respond_to| EngineCommand::DocumentHighlight { input, respond_to })
             .await
-            .map_err(EngineError::from)
     }
 
     async fn hover(
         self,
         _: context::Context,
         input: DocumentPositionSnapshot,
-    ) -> EngineResult<AnalysisOutcome<DocumentQueryResult<Option<ls_types::Hover>>>> {
+    ) -> Result<QueryValue<Option<ls_types::Hover>>, QueryError> {
         self.engine
-            .request(|respond_to| EngineCommand::Hover { input, respond_to })
+            .query(|respond_to| EngineCommand::Hover { input, respond_to })
             .await
-            .map_err(EngineError::from)
     }
 
     async fn completion(
@@ -264,65 +255,60 @@ impl EngineService for Service {
         _: context::Context,
         input: DocumentPositionSnapshot,
         client_capabilities: rg_lsp_proto::CompletionClientCapabilities,
-    ) -> EngineResult<AnalysisOutcome<rg_lsp_proto::CompletionResult>> {
+    ) -> Result<QueryValue<Vec<ls_types::CompletionItem>>, QueryError> {
         self.engine
-            .request(|respond_to| EngineCommand::Completion {
+            .query(|respond_to| EngineCommand::Completion {
                 input,
                 client_capabilities,
                 respond_to,
             })
             .await
-            .map_err(EngineError::from)
     }
 
     async fn formatting(
         self,
         _: context::Context,
         snapshot: EditorDocumentSnapshot,
-    ) -> EngineResult<AnalysisOutcome<DocumentQueryResult<Option<Vec<ls_types::TextEdit>>>>> {
+    ) -> Result<QueryValue<Option<Vec<ls_types::TextEdit>>>, QueryError> {
         self.engine
-            .request(|respond_to| EngineCommand::Formatting {
+            .query(|respond_to| EngineCommand::Formatting {
                 snapshot,
                 respond_to,
             })
             .await
-            .map_err(EngineError::from)
     }
 
     async fn document_symbol(
         self,
         _: context::Context,
         snapshot: EditorDocumentSnapshot,
-    ) -> EngineResult<AnalysisOutcome<DocumentQueryResult<Vec<ls_types::DocumentSymbol>>>> {
+    ) -> Result<QueryValue<Vec<ls_types::DocumentSymbol>>, QueryError> {
         self.engine
-            .request(|respond_to| EngineCommand::DocumentSymbol {
+            .query(|respond_to| EngineCommand::DocumentSymbol {
                 snapshot,
                 respond_to,
             })
             .await
-            .map_err(EngineError::from)
     }
 
     async fn inlay_hint(
         self,
         _: context::Context,
         input: DocumentRangeSnapshot,
-    ) -> EngineResult<AnalysisOutcome<DocumentQueryResult<Vec<ls_types::InlayHint>>>> {
+    ) -> Result<QueryValue<Vec<ls_types::InlayHint>>, QueryError> {
         self.engine
-            .request(|respond_to| EngineCommand::InlayHint { input, respond_to })
+            .query(|respond_to| EngineCommand::InlayHint { input, respond_to })
             .await
-            .map_err(EngineError::from)
     }
 
     async fn workspace_symbol(
         self,
         _: context::Context,
         query: String,
-    ) -> EngineResult<AnalysisOutcome<Vec<ls_types::WorkspaceSymbol>>> {
+    ) -> Result<QueryValue<Vec<ls_types::WorkspaceSymbol>>, QueryError> {
         self.engine
-            .request(|respond_to| EngineCommand::WorkspaceSymbol { query, respond_to })
+            .query(|respond_to| EngineCommand::WorkspaceSymbol { query, respond_to })
             .await
-            .map_err(EngineError::from)
     }
 
     async fn reindex_workspace(self, _: context::Context) -> EngineResult<()> {

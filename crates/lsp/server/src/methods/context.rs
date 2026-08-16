@@ -11,15 +11,15 @@
 use tower_lsp_server::{jsonrpc::Error, ls_types::*};
 
 use rg_lsp_proto::{
-    AnalysisOutcome, CompletionClientCapabilities, DocumentPositionSnapshot, DocumentQueryResult,
-    DocumentRangeSnapshot, EditorDocumentSnapshot, GlobalOperationResult, GlobalPositionSnapshot,
+    CompletionClientCapabilities, DocumentPositionSnapshot, DocumentRangeSnapshot,
+    EditorDocumentSnapshot, GlobalPositionSnapshot, QueryError, QueryValue,
 };
 
 use crate::completion_scheduler::CompletionRequest;
 use crate::engine_client::EngineClient;
 use crate::ingress::CapturedDocument;
 
-use super::analysis_result::{self, DocumentQueryStatus, save_required, temporarily_unavailable};
+use super::query_response::{self, into_lsp_error, temporarily_unavailable};
 
 /// Engine and captured editor state used by one document method attempt.
 ///
@@ -86,64 +86,20 @@ impl DocumentMethodContext {
             })
     }
 
-    /// Return a global result only if all documents used by it are still unchanged.
+    /// Finish a global operation only if all documents used by it are still unchanged.
     pub(crate) fn finish_global_operation<T>(
         &self,
-        result: anyhow::Result<AnalysisOutcome<GlobalOperationResult<T>>>,
+        result: Result<QueryValue<T>, QueryError>,
     ) -> Result<T, Error> {
-        let result =
-            analysis_result::global_operation_query(result, &self.captured)?.into_lsp_result()?;
-        match result {
-            GlobalOperationResult::Ready(value) => Ok(value),
-            GlobalOperationResult::SaveRequired { path } => {
-                tracing::debug!(
-                    path = %path.display(),
-                    "global operation requires saved source"
-                );
-                Err(save_required(&path))
-            }
-        }
-    }
-
-    /// Return a cross-file document result only while the captured open-document set is current.
-    ///
-    /// Definition queries may omit an unsafe dirty destination and report partial coverage. They
-    /// do not require saving unrelated documents, but their locations still depend on the open
-    /// documents captured by the request.
-    pub(crate) fn finish_global_document_read<T>(
-        &self,
-        result: anyhow::Result<AnalysisOutcome<DocumentQueryResult<T>>>,
-    ) -> Result<T, Error> {
-        let result =
-            analysis_result::global_operation_query(result, &self.captured)?.into_lsp_result()?;
-        if result.coverage().is_partial() {
-            tracing::debug!(
-                path = %self.captured.document().path().display(),
-                coverage = ?result.coverage(),
-                "cross-file document read omitted source ranges that could not be mapped"
-            );
-        }
-        Ok(result.into_value())
+        query_response::validate_global_operation(result, &self.captured).map_err(into_lsp_error)
     }
 
     /// Return a document result after checking that its target is still unchanged.
-    ///
-    /// Partial coverage is still a valid best-effort result. Log it here so we can see when a query
-    /// had to use saved project information instead of rebuilding every current body it needed.
-    pub(crate) fn finish_document_read<T>(
+    pub(crate) fn finish_target_query<T>(
         &self,
-        result: anyhow::Result<AnalysisOutcome<DocumentQueryResult<T>>>,
+        result: Result<QueryValue<T>, QueryError>,
     ) -> Result<T, Error> {
-        let result =
-            analysis_result::target_document_query(result, &self.captured)?.into_lsp_result()?;
-        if result.coverage().is_partial() {
-            tracing::debug!(
-                path = %self.captured.document().path().display(),
-                coverage = ?result.coverage(),
-                "document read used current syntax and saved global semantics"
-            );
-        }
-        Ok(result.into_value())
+        query_response::validate_target_document(result, &self.captured).map_err(into_lsp_error)
     }
 }
 
@@ -185,11 +141,11 @@ impl CompletionMethodContext {
     /// Check one completed engine attempt without deciding whether the LSP request should end.
     ///
     /// `EditorChanged` goes back to the completion loop, which can take a newer snapshot and try
-    /// again. Engine aborts, transport failures, and mismatched response tags are still errors.
+    /// again. Other query failures and mismatched response scopes are returned to the caller.
     pub(crate) fn finish_attempt<T>(
         &self,
-        result: anyhow::Result<AnalysisOutcome<T>>,
-    ) -> Result<DocumentQueryStatus<T>, Error> {
-        analysis_result::target_document_query(result, self.document.captured_document())
+        result: Result<QueryValue<T>, QueryError>,
+    ) -> Result<T, QueryError> {
+        query_response::validate_target_document(result, self.document.captured_document())
     }
 }

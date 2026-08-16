@@ -21,7 +21,7 @@ pub(crate) async fn hover(
             engine_client.hover(request_context, input).await
         })
         .await;
-    let hover = ctx.finish_document_read(result)?;
+    let hover = ctx.finish_target_query(result)?;
     tracing::trace!(has_hover = hover.is_some(), "hover request answered");
 
     Ok(hover)

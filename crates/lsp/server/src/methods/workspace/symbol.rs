@@ -1,6 +1,6 @@
 use tower_lsp_server::{jsonrpc::Result, ls_types::*};
 
-use crate::{engine_client::EngineClient, methods::analysis_result};
+use crate::{engine_client::EngineClient, methods::query_response};
 
 #[tracing::instrument(
     level = "trace", skip_all,
@@ -12,7 +12,7 @@ pub(crate) async fn symbol(
 ) -> Result<Option<WorkspaceSymbolResponse>> {
     let query = params.query;
     tracing::trace!("workspace symbol request received");
-    let symbols = analysis_result::workspace_query(
+    let symbols = query_response::validate_workspace(
         engine_client
             .query(
                 "workspace_symbol",
@@ -21,7 +21,8 @@ pub(crate) async fn symbol(
                 },
             )
             .await,
-    )?;
+    )
+    .map_err(query_response::into_lsp_error)?;
     tracing::trace!(
         result_count = symbols.len(),
         "workspace symbol request answered"

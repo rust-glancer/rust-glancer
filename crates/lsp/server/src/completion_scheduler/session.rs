@@ -3,7 +3,7 @@
 //! A session remembers the newest logical completion request captured at ingress. Its work is
 //! either idle or consists of one active engine attempt plus, at most, the latest pending attempt.
 //! This module owns those queue transitions. Each individual attempt owns the mechanics needed to
-//! run its engine future and share its result.
+//! run its engine future and share its outcome.
 
 use std::{
     collections::HashMap,
@@ -16,9 +16,9 @@ use rg_lsp_proto::OpenDocumentSession;
 use super::{
     attempt::{
         ActiveAttempt, AttemptIdentity, AttemptJob, AttemptKey, AttemptStopReason,
-        AttemptStopSignal, AttemptWaiter, RunningAttempt, SharedAttemptOutcome,
+        AttemptStopSignal, AttemptWaiter, RunningAttempt,
     },
-    request::{CompletionFuture, CompletionRequestLease},
+    request::{CompletionAttemptOutcome, CompletionFuture, CompletionRequestLease},
 };
 use crate::ingress::DocumentRevisionWatch;
 
@@ -104,7 +104,7 @@ impl SchedulerState {
         run: CompletionFuture,
     ) -> AttemptWaiter {
         if request.is_replaced() {
-            return AttemptWaiter::ready(SharedAttemptOutcome::Replaced);
+            return AttemptWaiter::ready(CompletionAttemptOutcome::Replaced);
         }
 
         // The editor may have changed before the handler reached the scheduler. Return the same
@@ -118,11 +118,11 @@ impl SchedulerState {
                 character = key.character,
                 "completion attempt was obsolete at scheduler admission"
             );
-            return AttemptWaiter::ready(SharedAttemptOutcome::DocumentAdvanced);
+            return AttemptWaiter::ready(CompletionAttemptOutcome::DocumentAdvanced);
         }
 
         let Some(state) = request.scheduler().upgrade() else {
-            return AttemptWaiter::ready(SharedAttemptOutcome::Replaced);
+            return AttemptWaiter::ready(CompletionAttemptOutcome::Replaced);
         };
         let (job, waiter) = AttemptJob::new(request.id, key, invalidation, run);
         let session = job.identity().key.session.clone();
@@ -132,14 +132,14 @@ impl SchedulerState {
                 .lock()
                 .expect("completion scheduler mutex should not be poisoned");
             let Some(queue) = state_guard.sessions.get_mut(&session) else {
-                return AttemptWaiter::ready(SharedAttemptOutcome::Replaced);
+                return AttemptWaiter::ready(CompletionAttemptOutcome::Replaced);
             };
             if !queue
                 .current
                 .as_ref()
                 .is_some_and(|current| current.id == request.id)
             {
-                return AttemptWaiter::ready(SharedAttemptOutcome::Replaced);
+                return AttemptWaiter::ready(CompletionAttemptOutcome::Replaced);
             }
 
             queue.schedule(job)
@@ -188,9 +188,9 @@ impl SchedulerState {
                         "replaced pending completion attempt"
                     );
                     let outcome = if identity.request == request.id {
-                        SharedAttemptOutcome::DocumentAdvanced
+                        CompletionAttemptOutcome::DocumentAdvanced
                     } else {
-                        SharedAttemptOutcome::Replaced
+                        CompletionAttemptOutcome::Replaced
                     };
                     replaced.complete(outcome);
                 }
@@ -208,7 +208,7 @@ impl SchedulerState {
     ) {
         loop {
             let identity = running.identity().clone();
-            let result_publisher = running.result_publisher().clone();
+            let outcome_publisher = running.outcome_publisher().clone();
             let outcome = running.run().await;
             drop(running);
 
@@ -219,7 +219,7 @@ impl SchedulerState {
                 .expect("completion scheduler mutex should not be poisoned")
                 .finish_attempt(&session, &identity);
             if let Some(outcome) = outcome {
-                result_publisher.complete(outcome);
+                outcome_publisher.complete(outcome);
             }
 
             let Some(next) = next else {
@@ -324,7 +324,7 @@ impl CaptureTransition {
                     "captured logical completion request"
                 );
                 if let Some(pending) = pending {
-                    pending.complete(SharedAttemptOutcome::Replaced);
+                    pending.complete(CompletionAttemptOutcome::Replaced);
                 }
                 if let Some(active_stop) = active_stop {
                     active_stop.send(AttemptStopReason::Replaced);

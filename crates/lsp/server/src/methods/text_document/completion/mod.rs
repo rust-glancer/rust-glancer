@@ -10,11 +10,12 @@
 //! semantic attempt with the newer document. A separate completion message from the editor
 //! replaces the whole logical request, including any attempt it is running.
 
+use rg_lsp_proto::QueryError;
 use tower_lsp_server::{jsonrpc::Result, ls_types::*};
 
 use crate::{
     completion_scheduler::CompletionAttemptOutcome,
-    methods::{self, CompletionMethodContext, DocumentQueryStatus},
+    methods::{self, CompletionMethodContext},
 };
 
 #[tracing::instrument(
@@ -105,22 +106,15 @@ pub(crate) async fn completion(
                         "completion request was replaced by a newer request point",
                     ));
                 }
-                match ctx.finish_attempt(result)? {
-                    DocumentQueryStatus::Current(completions) => {
-                        if completions.coverage().is_partial() {
-                            tracing::debug!(
-                                path = %captured.document().path().display(),
-                                "completion used current syntax and saved global semantics; saving may improve global completeness"
-                            );
-                        }
+                match ctx.finish_attempt(result) {
+                    Ok(completions) => {
                         tracing::trace!(
-                            result_count = completions.value().len(),
-                            coverage = ?completions.coverage(),
+                            result_count = completions.len(),
                             "completion request answered"
                         );
-                        return Ok(Some(incomplete_response(completions.into_value())));
+                        return Ok(Some(incomplete_response(completions)));
                     }
-                    DocumentQueryStatus::EditorChanged => {
+                    Err(QueryError::EditorChanged) => {
                         tracing::debug!(
                             path = %captured.document().path().display(),
                             session = captured.document().session().get(),
@@ -128,6 +122,7 @@ pub(crate) async fn completion(
                             "completion result was overtaken before publication; recapturing"
                         );
                     }
+                    Err(error) => return Err(methods::into_lsp_error(error)),
                 }
             }
         }

@@ -3,9 +3,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use rg_lsp_proto::{
-    AnalysisInput, AnalysisOutcome, AnalysisReady, CompletionResult, DocumentQueryCoverage,
-};
+use rg_lsp_proto::{EngineError, QueryError, QueryScope, QueryValue};
 use tokio::sync::{mpsc, oneshot};
 use tower_lsp_server::ls_types::{Position, Range, TextDocumentContentChangeEvent};
 
@@ -17,7 +15,7 @@ use super::{
 use crate::ingress::{CapturedDocument, EditorStateHandle};
 
 #[tokio::test(flavor = "current_thread")]
-async fn document_advance_is_an_attempt_transition_not_an_engine_abort() {
+async fn document_advance_is_an_attempt_transition_not_a_query_error() {
     let scheduler = CompletionScheduler::default();
     let (editor, path, captured) = open_document();
     let request = scheduler.capture_request(&captured, Position::new(0, 20));
@@ -303,33 +301,28 @@ async fn close_and_reopen_ends_the_old_request_and_releases_its_session_queue() 
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn engine_abort_and_failure_remain_completed_attempt_outcomes() {
+async fn query_errors_remain_completed_attempt_outcomes() {
     let scheduler = CompletionScheduler::default();
     let (_editor, _path, captured) = open_document();
 
-    let aborted_request = scheduler.capture_request(&captured, Position::new(0, 1));
-    let aborted = aborted_request.enqueue_attempt(
+    let unavailable_request = scheduler.capture_request(&captured, Position::new(0, 1));
+    let unavailable = unavailable_request.enqueue_attempt(
         AttemptKey::for_capture(&captured, Position::new(0, 1)),
         captured.document_revision_watch(),
-        Box::pin(async {
-            Ok(AnalysisOutcome::Aborted(
-                rg_lsp_proto::AnalysisAbort::SourceChanged,
-            ))
-        }),
+        Box::pin(async { Err(QueryError::SavedSourceChanged) }),
     );
-    let CompletionAttemptOutcome::Completed(Ok(AnalysisOutcome::Aborted(abort))) =
-        aborted.wait().await
+    let CompletionAttemptOutcome::Completed(Err(QueryError::SavedSourceChanged)) =
+        unavailable.wait().await
     else {
-        panic!("engine abort should remain a completed semantic attempt");
+        panic!("query error should remain a completed semantic attempt");
     };
-    assert_eq!(abort, rg_lsp_proto::AnalysisAbort::SourceChanged);
-    drop(aborted_request);
+    drop(unavailable_request);
 
     let failed_request = scheduler.capture_request(&captured, Position::new(0, 2));
     let failed = failed_request.enqueue_attempt(
         AttemptKey::for_capture(&captured, Position::new(0, 2)),
         captured.document_revision_watch(),
-        Box::pin(async { Err(anyhow::anyhow!("semantic failure")) }),
+        Box::pin(async { Err(QueryError::Internal(EngineError::new("semantic failure"))) }),
     );
     let CompletionAttemptOutcome::Completed(Err(error)) = failed.wait().await else {
         panic!("engine failure should remain a completed semantic attempt");
@@ -372,10 +365,7 @@ fn observed_job(
             .send(label)
             .expect("test should observe every started completion");
         wait.await;
-        Ok(AnalysisOutcome::Ready(AnalysisReady::new(
-            CompletionResult::new(Vec::new(), DocumentQueryCoverage::Exact),
-            AnalysisInput::for_saved_project(label),
-        )))
+        Ok(QueryValue::new(Vec::new(), QueryScope::SavedProject))
     })
 }
 
@@ -401,7 +391,7 @@ fn change(editor: &EditorStateHandle, path: &Path, character: u32, text: &str) {
 fn assert_completed(outcome: CompletionAttemptOutcome) {
     assert!(matches!(
         outcome,
-        CompletionAttemptOutcome::Completed(Ok(AnalysisOutcome::Ready(_)))
+        CompletionAttemptOutcome::Completed(Ok(_))
     ));
 }
 

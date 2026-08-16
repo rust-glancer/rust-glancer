@@ -8,11 +8,11 @@
 //!
 //! - `context` turns the editor snapshot captured by ingress into either a target-document request
 //!   or a cross-file request with all relevant open documents.
-//! - `analysis_result` checks engine response tags, verifies that document results still match live
+//! - `query_response` checks engine response tags, verifies that document results still match live
 //!   editor state, and maps engine failures to JSON-RPC errors.
 
-mod analysis_result;
 mod context;
+mod query_response;
 
 use std::path::PathBuf;
 
@@ -21,8 +21,8 @@ use tower_lsp_server::ls_types::*;
 use crate::{capabilities, engine_client::EngineClient};
 
 pub(crate) use self::{
-    analysis_result::{DocumentQueryStatus, internal_error, temporarily_unavailable},
     context::{CompletionMethodContext, DocumentMethodContext},
+    query_response::{internal_error, into_lsp_error, temporarily_unavailable},
 };
 
 pub(crate) mod text_document;

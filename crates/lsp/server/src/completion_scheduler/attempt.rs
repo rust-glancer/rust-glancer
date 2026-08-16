@@ -1,20 +1,17 @@
-//! One completion engine attempt and the consumers that share its result.
+//! One completion engine attempt and the consumers that share its outcome.
 //!
 //! The session queue decides which attempt may run. This module owns the mechanics of running that
 //! attempt: its captured document identity, engine future, target-invalidation signal, interruption
-//! signal, and shared result channel.
-
-use std::sync::Arc;
+//! signal, and shared outcome channel.
 
 use rg_lsp_proto::{
-    AnalysisOutcome, CompletionResult, DocumentPositionSnapshot, DocumentRevision,
-    TargetDocumentRevision,
+    DocumentPositionSnapshot, DocumentRevision, EngineError, QueryError, TargetDocumentRevision,
 };
 use tokio::sync::watch;
 use tower_lsp_server::ls_types::Position;
 
 use super::{
-    request::{CompletionAttemptOutcome, CompletionAttemptResult, CompletionFuture},
+    request::{CompletionAttemptOutcome, CompletionFuture},
     session::{RequestId, SessionKey},
 };
 use crate::ingress::{CapturedDocument, DocumentRevisionWatch};
@@ -65,7 +62,7 @@ pub(super) struct AttemptJob {
     identity: AttemptIdentity,
     invalidation: DocumentRevisionWatch,
     run: CompletionFuture,
-    result: AttemptResultPublisher,
+    outcome: AttemptOutcomePublisher,
 }
 
 impl AttemptJob {
@@ -75,13 +72,13 @@ impl AttemptJob {
         invalidation: DocumentRevisionWatch,
         run: CompletionFuture,
     ) -> (Self, AttemptWaiter) {
-        let (result, waiter) = AttemptResultPublisher::channel();
+        let (outcome, waiter) = AttemptOutcomePublisher::channel();
         (
             Self {
                 identity: AttemptIdentity { request, key },
                 invalidation,
                 run,
-                result,
+                outcome,
             },
             waiter,
         )
@@ -91,7 +88,7 @@ impl AttemptJob {
         let (stop, stopped) = AttemptStopSignal::channel();
         let active = ActiveAttempt {
             identity: self.identity.clone(),
-            result: self.result.clone(),
+            outcome: self.outcome.clone(),
             stop,
         };
         (active, RunningAttempt { job: self, stopped })
@@ -101,23 +98,23 @@ impl AttemptJob {
         &self.identity
     }
 
-    fn result_publisher(&self) -> &AttemptResultPublisher {
-        &self.result
+    fn outcome_publisher(&self) -> &AttemptOutcomePublisher {
+        &self.outcome
     }
 
     pub(super) fn subscribe(&self) -> AttemptWaiter {
-        self.result.subscribe()
+        self.outcome.subscribe()
     }
 
-    pub(super) fn complete(&self, outcome: SharedAttemptOutcome) {
-        self.result.complete(outcome);
+    pub(super) fn complete(&self, outcome: CompletionAttemptOutcome) {
+        self.outcome.complete(outcome);
     }
 }
 
 /// The small projection of a running job that remains visible to later submissions.
 pub(super) struct ActiveAttempt {
     identity: AttemptIdentity,
-    result: AttemptResultPublisher,
+    outcome: AttemptOutcomePublisher,
     stop: AttemptStopSignal,
 }
 
@@ -127,11 +124,11 @@ impl ActiveAttempt {
     }
 
     pub(super) fn has_waiters(&self) -> bool {
-        self.result.has_waiters()
+        self.outcome.has_waiters()
     }
 
     pub(super) fn subscribe(&self) -> AttemptWaiter {
-        self.result.subscribe()
+        self.outcome.subscribe()
     }
 
     pub(super) fn stop_signal(&self) -> AttemptStopSignal {
@@ -150,12 +147,12 @@ impl RunningAttempt {
         self.job.identity()
     }
 
-    pub(super) fn result_publisher(&self) -> &AttemptResultPublisher {
-        self.job.result_publisher()
+    pub(super) fn outcome_publisher(&self) -> &AttemptOutcomePublisher {
+        self.job.outcome_publisher()
     }
 
     /// Wait for the first reason this attempt should stop being active.
-    pub(super) async fn run(&mut self) -> Option<SharedAttemptOutcome> {
+    pub(super) async fn run(&mut self) -> Option<CompletionAttemptOutcome> {
         tracing::trace!(
             request = self.job.identity.request.0,
             path = %self.job.identity.key.session.path.display(),
@@ -168,7 +165,7 @@ impl RunningAttempt {
 
         tokio::select! {
             biased;
-            _ = self.job.result.closed() => {
+            _ = self.job.outcome.closed() => {
                 tracing::trace!(
                     path = %self.job.identity.key.session.path.display(),
                     session = self.job.identity.key.session.session.get(),
@@ -211,7 +208,7 @@ impl RunningAttempt {
                     character = self.job.identity.key.character,
                     "cancelled semantic attempt after target document advancement"
                 );
-                Some(SharedAttemptOutcome::DocumentAdvanced)
+                Some(CompletionAttemptOutcome::DocumentAdvanced)
             }
             result = self.job.run.as_mut() => {
                 tracing::trace!(
@@ -223,7 +220,7 @@ impl RunningAttempt {
                     failed = result.is_err(),
                     "completed scheduled completion semantic attempt"
                 );
-                Some(SharedAttemptOutcome::from_result(result))
+                Some(CompletionAttemptOutcome::Completed(result))
             },
         }
     }
@@ -253,27 +250,7 @@ impl AttemptStopSignal {
     }
 }
 
-/// Clonable value placed in the shared result channel.
-///
-/// Engine errors become shared text here because `anyhow::Error` itself cannot be cloned.
-#[derive(Clone, Debug)]
-pub(super) enum SharedAttemptOutcome {
-    Outcome(AnalysisOutcome<CompletionResult>),
-    Failed(Arc<str>),
-    DocumentAdvanced,
-    Replaced,
-}
-
-impl SharedAttemptOutcome {
-    fn from_result(result: CompletionAttemptResult) -> Self {
-        match result {
-            Ok(outcome) => Self::Outcome(outcome),
-            Err(error) => Self::Failed(Arc::from(format!("{error:#}"))),
-        }
-    }
-}
-
-impl From<AttemptStopReason> for SharedAttemptOutcome {
+impl From<AttemptStopReason> for CompletionAttemptOutcome {
     fn from(reason: AttemptStopReason) -> Self {
         match reason {
             AttemptStopReason::DocumentAdvanced => Self::DocumentAdvanced,
@@ -282,26 +259,13 @@ impl From<AttemptStopReason> for SharedAttemptOutcome {
     }
 }
 
-impl From<SharedAttemptOutcome> for CompletionAttemptOutcome {
-    fn from(outcome: SharedAttemptOutcome) -> Self {
-        match outcome {
-            SharedAttemptOutcome::Outcome(outcome) => Self::Completed(Ok(outcome)),
-            SharedAttemptOutcome::Failed(error) => {
-                Self::Completed(Err(anyhow::anyhow!(error.to_string())))
-            }
-            SharedAttemptOutcome::DocumentAdvanced => Self::DocumentAdvanced,
-            SharedAttemptOutcome::Replaced => Self::Replaced,
-        }
-    }
-}
-
-/// Publisher kept by the queue and worker while duplicate consumers wait for one result.
+/// Publisher kept by the queue and worker while duplicate consumers wait for one outcome.
 #[derive(Clone)]
-pub(super) struct AttemptResultPublisher {
-    sender: watch::Sender<Option<SharedAttemptOutcome>>,
+pub(super) struct AttemptOutcomePublisher {
+    sender: watch::Sender<Option<CompletionAttemptOutcome>>,
 }
 
-impl AttemptResultPublisher {
+impl AttemptOutcomePublisher {
     fn channel() -> (Self, AttemptWaiter) {
         let (sender, receiver) = watch::channel(None);
         (Self { sender }, AttemptWaiter { receiver })
@@ -321,33 +285,35 @@ impl AttemptResultPublisher {
         self.sender.closed().await;
     }
 
-    pub(super) fn complete(&self, outcome: SharedAttemptOutcome) {
+    pub(super) fn complete(&self, outcome: CompletionAttemptOutcome) {
         self.sender.send_replace(Some(outcome));
     }
 }
 
-/// One consumer of a shared attempt result.
+/// One consumer of a shared attempt outcome.
 ///
 /// Dropping every waiter lets the worker stop polling engine work that nobody can use.
 pub(super) struct AttemptWaiter {
-    receiver: watch::Receiver<Option<SharedAttemptOutcome>>,
+    receiver: watch::Receiver<Option<CompletionAttemptOutcome>>,
 }
 
 impl AttemptWaiter {
-    pub(super) fn ready(outcome: SharedAttemptOutcome) -> Self {
-        let (result, waiter) = AttemptResultPublisher::channel();
-        result.complete(outcome);
+    pub(super) fn ready(outcome: CompletionAttemptOutcome) -> Self {
+        let (publisher, waiter) = AttemptOutcomePublisher::channel();
+        publisher.complete(outcome);
         waiter
     }
 
     pub(super) async fn wait(mut self) -> CompletionAttemptOutcome {
         loop {
-            if let Some(result) = self.receiver.borrow_and_update().clone() {
-                return result.into();
+            if let Some(outcome) = self.receiver.borrow_and_update().clone() {
+                return outcome;
             }
             if self.receiver.changed().await.is_err() {
-                return CompletionAttemptOutcome::Completed(Err(anyhow::anyhow!(
-                    "scheduled completion result sender dropped before responding"
+                return CompletionAttemptOutcome::Completed(Err(QueryError::Internal(
+                    EngineError::new(
+                        "scheduled completion outcome sender dropped before responding",
+                    ),
                 )));
             }
         }

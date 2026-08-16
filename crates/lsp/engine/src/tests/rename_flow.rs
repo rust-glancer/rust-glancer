@@ -1,7 +1,7 @@
 //! End-to-end rename behavior at the engine service boundary.
 
 use expect_test::expect;
-use rg_lsp_proto::AnalysisAbort;
+use rg_lsp_proto::QueryError;
 use test_fixture::testonly::MarkedText;
 
 use super::utils::{LspEngineFixture, LspQuery};
@@ -195,7 +195,7 @@ async fn record_constructor_references_and_rename_flow_through_enabled_test_modu
 }
 
 #[tokio::test]
-async fn stale_source_query_aborts_then_recovers_through_the_command_queue() {
+async fn stale_source_query_returns_an_error_then_recovers_through_the_command_queue() {
     let fixture = LspEngineFixture::initialized(
         r#"
         //- /Cargo.toml
@@ -219,16 +219,16 @@ async fn stale_source_query_aborts_then_recovers_through_the_command_queue() {
 
     // Simulate a watcher delay for an unopened reference file. The target capture remains exact,
     // while the reference scan cannot reconstruct the other file at its saved
-    // revision. That mismatch still aborts explicitly and queues ordinary source recovery.
+    // revision. That mismatch returns an explicit error and queues ordinary source recovery.
     fixture.write_file_without_notification(
         "src/usage.rs",
         "use crate::User;\n\npub fn first(_: User) {}\npub fn second(_: User) {}\n",
     );
     fixture
-        .check_rename_abort("rename", "Entity", AnalysisAbort::SourceChanged)
+        .check_rename_error("rename", "Entity", QueryError::SavedSourceChanged)
         .await;
 
-    // The recovery command was enqueued before the abort was published, so this second
+    // The recovery command was enqueued before the error was returned, so this second
     // request runs after the normal path-change pipeline has published the new usage source.
     fixture
         .check_rename(

@@ -301,7 +301,7 @@ impl EngineDispatcher {
                 }
                 EngineCommand::WorkspaceSymbol { query, respond_to } => {
                     tracing::trace!(query = %query, "engine command started: workspace_symbol");
-                    let context = QueryContext::new("workspace_symbol", queue_elapsed);
+                    let context = QueryContext::saved_project("workspace_symbol", queue_elapsed);
                     self.query_runner()
                         .respond_to_query(context, respond_to, |runner, _| {
                             runner.workspace_symbol(&query)

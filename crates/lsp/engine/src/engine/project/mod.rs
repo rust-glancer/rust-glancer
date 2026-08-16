@@ -405,17 +405,12 @@ impl ProjectCoordinator {
             .context("materialize saved analysis surface")
     }
 
-    /// Return the saved-source generation selected by the serialized analysis lane.
-    pub(super) fn generation(&self) -> u64 {
-        self.project.generation()
-    }
-
     /// Drop source data that was loaded only for the request that just finished.
     pub(super) fn release_query_memory(&mut self) {
         self.project.release_query_memory();
     }
 
-    /// Return the path that keeps queries explicitly aborted until saved-path recovery succeeds.
+    /// Return the path that blocks new queries until saved-path recovery succeeds.
     pub(super) fn stale_source(&self) -> Option<&Path> {
         self.stale_source.as_deref()
     }
@@ -439,7 +434,7 @@ impl ProjectCoordinator {
         self.stale_source = Some(path.clone());
 
         // Recovery enters the tail of the same FIFO lane as saved transactions. No response
-        // endpoint is needed because the query already returned an explicit source-changed outcome.
+        // endpoint is needed because the query already returned an explicit source-changed error.
         let recovery = EngineCommand::RecoverStaleSource { path };
         if let Err(error) = self
             .command_sender
@@ -454,7 +449,7 @@ impl ProjectCoordinator {
         }
     }
 
-    /// Repair invalid package artifacts after aborting the failed query explicitly.
+    /// Repair invalid package artifacts after returning an error for the failed query.
     pub(super) fn recover_after_package_cache_failure(&mut self, label: &'static str) {
         if !self.project.is_initialized() {
             tracing::warn!(
