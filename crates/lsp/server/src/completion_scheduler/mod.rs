@@ -7,7 +7,7 @@
 //!
 //! Requests compete only inside one open document session. That session is either idle or running
 //! one attempt with, at most, the latest newer attempt waiting behind it. Exact duplicate requests
-//! and attempts share their result instead of starting duplicate engine work.
+//! and attempts share their outcome instead of starting duplicate engine work.
 //!
 //! This module does not own editor text, revisions, or retry policy. `EditorState` remains the
 //! source of editor state, and the completion method decides whether to recapture after an attempt

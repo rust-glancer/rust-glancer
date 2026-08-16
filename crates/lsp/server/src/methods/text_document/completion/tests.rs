@@ -7,10 +7,9 @@ use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use futures::StreamExt as _;
 use rg_lsp_proto::{
-    AnalysisInput, AnalysisOutcome, AnalysisReady, CompletionClientCapabilities, CompletionResult,
-    DocumentPositionSnapshot, DocumentQueryCoverage, DocumentQueryResult, DocumentRangeSnapshot,
+    CompletionClientCapabilities, DocumentPositionSnapshot, DocumentRangeSnapshot,
     EditorDocumentSnapshot, EngineConfig, EngineResult, EngineService, EngineServiceClient,
-    GlobalOperationResult, GlobalPositionSnapshot, SaveProposal, SavedProjectChanges,
+    GlobalPositionSnapshot, QueryError, QueryScope, QueryValue, SaveProposal, SavedProjectChanges,
 };
 use tarpc::{
     client::Config as TarpcClientConfig,
@@ -594,7 +593,7 @@ impl EngineService for GatedCompletionEngine {
         _: context::Context,
         input: DocumentPositionSnapshot,
         _: CompletionClientCapabilities,
-    ) -> EngineResult<AnalysisOutcome<CompletionResult>> {
+    ) -> Result<QueryValue<Vec<CompletionItem>>, QueryError> {
         let (release, released) = oneshot::channel();
         self.attempts
             .send(ObservedCompletionAttempt {
@@ -604,27 +603,23 @@ impl EngineService for GatedCompletionEngine {
             .expect("test should observe every completion RPC");
         let _ = released.await;
 
-        let analysis_input =
-            AnalysisInput::for_target_document(1, input.document().target().clone());
-        Ok(AnalysisOutcome::Ready(AnalysisReady::new(
-            CompletionResult::new(
-                vec![CompletionItem {
-                    label: "RwLock".to_string(),
-                    kind: Some(CompletionItemKind::STRUCT),
-                    text_edit: Some(CompletionTextEdit::Edit(TextEdit::new(
-                        Range::new(Position::new(0, 5), input.position()),
-                        "RwLock".to_string(),
-                    ))),
-                    additional_text_edits: Some(vec![TextEdit::new(
-                        Range::new(Position::new(0, 0), Position::new(0, 0)),
-                        "use std::sync::RwLock;\n".to_string(),
-                    )]),
-                    ..CompletionItem::default()
-                }],
-                DocumentQueryCoverage::Exact,
-            ),
-            analysis_input,
-        )))
+        let scope = QueryScope::TargetDocument(input.document().target().clone());
+        Ok(QueryValue::new(
+            vec![CompletionItem {
+                label: "RwLock".to_string(),
+                kind: Some(CompletionItemKind::STRUCT),
+                text_edit: Some(CompletionTextEdit::Edit(TextEdit::new(
+                    Range::new(Position::new(0, 5), input.position()),
+                    "RwLock".to_string(),
+                ))),
+                additional_text_edits: Some(vec![TextEdit::new(
+                    Range::new(Position::new(0, 0), Position::new(0, 0)),
+                    "use std::sync::RwLock;\n".to_string(),
+                )]),
+                ..CompletionItem::default()
+            }],
+            scope,
+        ))
     }
 
     // This deliberately narrow test engine implements the remaining RPC surface only so the
@@ -658,7 +653,7 @@ impl EngineService for GatedCompletionEngine {
         self,
         _: context::Context,
         _: GlobalPositionSnapshot,
-    ) -> EngineResult<AnalysisOutcome<DocumentQueryResult<Vec<Location>>>> {
+    ) -> Result<QueryValue<Vec<Location>>, QueryError> {
         panic!("test engine only supports completion")
     }
 
@@ -666,7 +661,7 @@ impl EngineService for GatedCompletionEngine {
         self,
         _: context::Context,
         _: GlobalPositionSnapshot,
-    ) -> EngineResult<AnalysisOutcome<DocumentQueryResult<Vec<Location>>>> {
+    ) -> Result<QueryValue<Vec<Location>>, QueryError> {
         panic!("test engine only supports completion")
     }
 
@@ -674,7 +669,7 @@ impl EngineService for GatedCompletionEngine {
         self,
         _: context::Context,
         _: GlobalPositionSnapshot,
-    ) -> EngineResult<AnalysisOutcome<GlobalOperationResult<Vec<Location>>>> {
+    ) -> Result<QueryValue<Vec<Location>>, QueryError> {
         panic!("test engine only supports completion")
     }
 
@@ -683,7 +678,7 @@ impl EngineService for GatedCompletionEngine {
         _: context::Context,
         _: GlobalPositionSnapshot,
         _: bool,
-    ) -> EngineResult<AnalysisOutcome<GlobalOperationResult<Vec<Location>>>> {
+    ) -> Result<QueryValue<Vec<Location>>, QueryError> {
         panic!("test engine only supports completion")
     }
 
@@ -691,11 +686,8 @@ impl EngineService for GatedCompletionEngine {
         self,
         _: context::Context,
         _: GlobalPositionSnapshot,
-    ) -> EngineResult<
-        AnalysisOutcome<
-            GlobalOperationResult<Option<tower_lsp_server::ls_types::PrepareRenameResponse>>,
-        >,
-    > {
+    ) -> Result<QueryValue<Option<tower_lsp_server::ls_types::PrepareRenameResponse>>, QueryError>
+    {
         panic!("test engine only supports completion")
     }
 
@@ -704,7 +696,7 @@ impl EngineService for GatedCompletionEngine {
         _: context::Context,
         _: GlobalPositionSnapshot,
         _: String,
-    ) -> EngineResult<AnalysisOutcome<GlobalOperationResult<Option<WorkspaceEdit>>>> {
+    ) -> Result<QueryValue<Option<WorkspaceEdit>>, QueryError> {
         panic!("test engine only supports completion")
     }
 
@@ -712,7 +704,7 @@ impl EngineService for GatedCompletionEngine {
         self,
         _: context::Context,
         _: DocumentPositionSnapshot,
-    ) -> EngineResult<AnalysisOutcome<DocumentQueryResult<Vec<DocumentHighlight>>>> {
+    ) -> Result<QueryValue<Vec<DocumentHighlight>>, QueryError> {
         panic!("test engine only supports completion")
     }
 
@@ -720,7 +712,7 @@ impl EngineService for GatedCompletionEngine {
         self,
         _: context::Context,
         _: DocumentPositionSnapshot,
-    ) -> EngineResult<AnalysisOutcome<DocumentQueryResult<Option<Hover>>>> {
+    ) -> Result<QueryValue<Option<Hover>>, QueryError> {
         panic!("test engine only supports completion")
     }
 
@@ -728,7 +720,7 @@ impl EngineService for GatedCompletionEngine {
         self,
         _: context::Context,
         _: EditorDocumentSnapshot,
-    ) -> EngineResult<AnalysisOutcome<DocumentQueryResult<Option<Vec<TextEdit>>>>> {
+    ) -> Result<QueryValue<Option<Vec<TextEdit>>>, QueryError> {
         panic!("test engine only supports completion")
     }
 
@@ -736,7 +728,7 @@ impl EngineService for GatedCompletionEngine {
         self,
         _: context::Context,
         _: EditorDocumentSnapshot,
-    ) -> EngineResult<AnalysisOutcome<DocumentQueryResult<Vec<DocumentSymbol>>>> {
+    ) -> Result<QueryValue<Vec<DocumentSymbol>>, QueryError> {
         panic!("test engine only supports completion")
     }
 
@@ -744,7 +736,7 @@ impl EngineService for GatedCompletionEngine {
         self,
         _: context::Context,
         _: DocumentRangeSnapshot,
-    ) -> EngineResult<AnalysisOutcome<DocumentQueryResult<Vec<InlayHint>>>> {
+    ) -> Result<QueryValue<Vec<InlayHint>>, QueryError> {
         panic!("test engine only supports completion")
     }
 
@@ -752,7 +744,7 @@ impl EngineService for GatedCompletionEngine {
         self,
         _: context::Context,
         _: String,
-    ) -> EngineResult<AnalysisOutcome<Vec<WorkspaceSymbol>>> {
+    ) -> Result<QueryValue<Vec<WorkspaceSymbol>>, QueryError> {
         panic!("test engine only supports completion")
     }
 

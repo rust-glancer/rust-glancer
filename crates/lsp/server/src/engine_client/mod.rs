@@ -4,7 +4,7 @@
 //! Project indexing state is presentation telemetry, not query-result policy. This module controls
 //! what the server does around each kind of RPC:
 //!
-//! - interactive requests use `EngineClient::query` and preserve the engine's typed outcome;
+//! - interactive requests use `EngineClient::query` and preserve the engine's typed result;
 //! - save and reindex requests use `call_project_update`, which owns the matching status
 //!   transition through actual engine completion;
 //! - startup and shutdown use the unconditional transport helpers because presentation status
@@ -20,7 +20,7 @@ use std::{
 };
 
 use anyhow::Context as _;
-use rg_lsp_proto::{AnalysisOutcome, EngineResult, EngineServiceClient};
+use rg_lsp_proto::{EngineError, EngineResult, EngineServiceClient, QueryError, QueryValue};
 use tarpc::client::RpcError as TarpcRpcError;
 use tokio::sync::watch;
 
@@ -35,7 +35,7 @@ const PROJECT_UPDATE_RPC_DEADLINE: Duration = Duration::from_secs(30 * 60);
 ///
 /// An engine remains alive while saved project work is queued or running. Status consumers may
 /// display that transition, while semantic requests preserve their ordinary FIFO relationship to
-/// the mutation and return an explicit engine outcome.
+/// the mutation and return an explicit query result.
 #[derive(Clone)]
 pub(crate) struct EngineClient {
     engine_service_client: EngineServiceClient,
@@ -94,7 +94,7 @@ impl EngineClient {
         result.map_err(anyhow::Error::from)
     }
 
-    /// Run one interactive request and preserve its semantic or operational outcome.
+    /// Run one interactive request and preserve its typed query result.
     ///
     /// Saved project mutations and queries already share one engine command lane. Server-side
     /// status transitions must not manufacture feature defaults or invalidate a coherent engine
@@ -103,12 +103,19 @@ impl EngineClient {
         &self,
         operation: &'static str,
         request: F,
-    ) -> anyhow::Result<AnalysisOutcome<T>>
+    ) -> Result<QueryValue<T>, QueryError>
     where
         F: FnOnce(EngineServiceClient, tarpc::context::Context) -> Fut,
-        Fut: Future<Output = Result<EngineResult<AnalysisOutcome<T>>, TarpcRpcError>>,
+        Fut: Future<Output = Result<Result<QueryValue<T>, QueryError>, TarpcRpcError>>,
     {
-        self.call_unconditional(operation, request).await
+        match request(self.engine_service_client.clone(), Self::context(operation)).await {
+            Ok(result) => result,
+            Err(error) => {
+                let error = anyhow::Error::new(error)
+                    .context(format!("while attempting to call engine RPC `{operation}`"));
+                Err(QueryError::Internal(EngineError::from(error)))
+            }
+        }
     }
 
     /// Run a saved-project update and publish its presentation outcome.

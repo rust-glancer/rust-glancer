@@ -8,28 +8,24 @@
 mod client_capabilities;
 mod completion;
 mod config;
-mod document_query;
 mod error;
-mod global_operation;
 mod notifications;
-mod outcome;
+mod query;
 mod saved_source;
 mod service;
 mod snapshot;
 
 pub use self::{
     client_capabilities::ClientCapabilities,
-    completion::{CompletionClientCapabilities, CompletionResult},
+    completion::CompletionClientCapabilities,
     config::{
         AnalysisCfgConfig, AnalysisConfig, CargoMetadataConfig, CargoMetadataTarget,
         DiagnosticsConfig, EngineConfig, IndexingPerformancePreference, PackageResidencyPolicy,
         SysrootDiscovery,
     },
-    document_query::{DocumentQueryCoverage, DocumentQueryResult},
     error::EngineError,
-    global_operation::GlobalOperationResult,
     notifications::{ServiceLogLevel, ServiceNotification},
-    outcome::{AnalysisAbort, AnalysisInput, AnalysisOutcome, AnalysisReady},
+    query::{QueryError, QueryScope, QueryValue},
     saved_source::{CapturedSourceInput, SaveProposal, SavedProjectChanges},
     service::{
         EngineResult, EngineService, EngineServiceClient, NotificationsService,

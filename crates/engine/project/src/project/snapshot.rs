@@ -64,27 +64,26 @@ impl DocumentSourceView {
     }
 }
 
-/// Records which parts of editor text were successfully rebuilt as current Body IR.
+/// Describes what happened while current bodies were built for one request.
 ///
-/// One file may be analyzed under several crate contexts. Body construction can succeed in one
-/// context and fail in another, so the caller needs more than a single yes/no flag. The successful
-/// spans tell later queries where current Body IR is safe to use; `unavailable` records the crate
-/// contexts where a query may need saved or syntax-only information instead.
+/// One editor path may belong to several crate contexts, and each context is built separately. The
+/// returned analysis already contains every body that succeeded. This summary lets diagnostics and
+/// tests see whether another context was unavailable and which source spans were rebuilt.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CurrentBodyAnalysisCoverage {
+pub struct CurrentBodyBuildSummary {
     unavailable: Vec<(CrateRef, CurrentBodyUnavailable)>,
-    exact_body_spans: Vec<(CrateRef, FileId, Span)>,
+    rebuilt_body_spans: Vec<(CrateRef, FileId, Span)>,
 }
 
-impl CurrentBodyAnalysisCoverage {
+impl CurrentBodyBuildSummary {
     /// Returns whether body selection and rebuilding succeeded in every requested crate context.
-    pub fn is_exact(&self) -> bool {
+    pub fn is_complete(&self) -> bool {
         self.unavailable.is_empty()
     }
 
     /// Source spans of bodies that were rebuilt from the editor text.
-    pub fn exact_body_spans(&self) -> &[(CrateRef, FileId, Span)] {
-        &self.exact_body_spans
+    pub fn rebuilt_body_spans(&self) -> &[(CrateRef, FileId, Span)] {
+        &self.rebuilt_body_spans
     }
 
     #[cfg(test)]
@@ -152,13 +151,13 @@ impl<'a> ProjectSnapshot<'a> {
     /// The returned `Analysis` borrows declarations, traits, and impls from this saved project, but
     /// uses the supplied source for any body that can be matched to a saved owner. A body that
     /// cannot be matched is left out; this method never creates a second unsaved project.
-    pub fn analysis_for_current_bodies_with_checkpoints(
+    pub fn analysis_for_current_bodies_at_offset(
         &self,
         targets: &[(CrateRef, FileId)],
         source: &str,
         offset: u32,
         checkpoint: impl FnMut(CurrentBodyBuildCheckpoint) -> anyhow::Result<()>,
-    ) -> anyhow::Result<(Analysis<'a>, CurrentBodyAnalysisCoverage)> {
+    ) -> anyhow::Result<(Analysis<'a>, CurrentBodyBuildSummary)> {
         let source = self.prepare_current_source(targets, source)?;
         self.analysis_for_current_bodies_from_source(
             targets,
@@ -246,7 +245,7 @@ impl<'a> ProjectSnapshot<'a> {
         current_source_view: CurrentSourceView,
         selection: CurrentBodySelection,
         mut checkpoint: impl FnMut(CurrentBodyBuildCheckpoint) -> anyhow::Result<()>,
-    ) -> anyhow::Result<(Analysis<'a>, CurrentBodyAnalysisCoverage)> {
+    ) -> anyhow::Result<(Analysis<'a>, CurrentBodyBuildSummary)> {
         let current_source = current_source_view.source();
 
         let crates = targets
@@ -268,7 +267,7 @@ impl<'a> ProjectSnapshot<'a> {
         }
         let mut bodies = Vec::new();
         let mut unavailable = Vec::new();
-        let mut exact_body_spans = Vec::new();
+        let mut rebuilt_body_spans = Vec::new();
         let mut masked_files = HashSet::new();
         let mut next_synthetic_body_ids = HashMap::<CrateRef, usize>::new();
 
@@ -331,7 +330,7 @@ impl<'a> ProjectSnapshot<'a> {
             )?;
             for body in built_bodies {
                 let source_span = body.source_span();
-                exact_body_spans.push((crate_ref, file, source_span));
+                rebuilt_body_spans.push((crate_ref, file, source_span));
                 bodies.push(body);
             }
             unavailable.extend(
@@ -348,9 +347,9 @@ impl<'a> ProjectSnapshot<'a> {
             .with_current_source(current_source_view);
         Ok((
             analysis,
-            CurrentBodyAnalysisCoverage {
+            CurrentBodyBuildSummary {
                 unavailable,
-                exact_body_spans,
+                rebuilt_body_spans,
             },
         ))
     }

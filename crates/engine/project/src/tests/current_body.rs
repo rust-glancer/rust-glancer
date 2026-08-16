@@ -3,7 +3,7 @@ use rg_body_ir::{CurrentBodyBuildCheckpoint, CurrentBodySelection, CurrentBodyUn
 use test_fixture::testonly::MarkedText;
 
 use crate::{
-    CurrentBodyAnalysisCoverage, Project, SplitIndexingMode,
+    CurrentBodyBuildSummary, Project, SplitIndexingMode,
     testonly::{ProjectFixture, ProjectSourceFixture},
 };
 
@@ -110,10 +110,8 @@ pub fn inspect() {
             .expect("completion marker should fit into u32");
         let completion_source = CompletionSource::new(current.text(), offset)
             .expect("current source should produce completion syntax");
-        let (analysis, coverage) = snapshot
-            .analysis_for_current_bodies_with_checkpoints(&targets, current.text(), offset, |_| {
-                Ok(())
-            })
+        let (analysis, summary) = snapshot
+            .analysis_for_current_bodies_at_offset(&targets, current.text(), offset, |_| Ok(()))
             .expect("early-start current body should build");
         let labels = targets
             .iter()
@@ -133,8 +131,8 @@ pub fn inspect() {
             "completion at {marker} should contain {expected}, got {labels:?}",
         );
         assert!(
-            coverage.is_exact(),
-            "early-start completion should have exact current-body coverage: {coverage:?}",
+            summary.is_complete(),
+            "early-start completion should build every selected current body: {summary:?}",
         );
     }
 
@@ -177,14 +175,14 @@ pub fn inspect() {
         ("associated", "create"),
         ("local_item", "body_helper"),
     ] {
-        let (labels, coverage) = fixture.completion_labels(&current, marker);
+        let (labels, summary) = fixture.completion_labels(&current, marker);
         assert!(
             labels.iter().any(|label| label == expected),
             "completion at {marker} should contain {expected}, got {labels:?}",
         );
         assert!(
-            coverage.is_exact(),
-            "completion at {marker} should use exact current-body semantics: {coverage:?}",
+            summary.is_complete(),
+            "completion at {marker} should have a complete current-body build: {summary:?}",
         );
     }
 }
@@ -220,15 +218,15 @@ pub fn inspect() {
 "#,
     );
 
-    let (labels, coverage) = fixture.completion_labels(&current, "cursor");
+    let (labels, summary) = fixture.completion_labels(&current, "cursor");
 
     assert!(
         labels.iter().any(|label| label == "current_method"),
         "a new nested body should see the impl collected from its current parent: {labels:?}",
     );
     assert!(
-        coverage.is_exact(),
-        "the associated root worklist should own the new nested body: {coverage:?}",
+        summary.is_complete(),
+        "the associated root worklist should own the new nested body: {summary:?}",
     );
 }
 
@@ -240,15 +238,15 @@ fn current_body_keeps_an_unfinished_record_literal_inside_its_saved_owner() {
     let _ = Saved { $cursor$"#,
     );
 
-    let (labels, coverage) = fixture.completion_labels(&current, "cursor");
+    let (labels, summary) = fixture.completion_labels(&current, "cursor");
 
     assert!(
         labels.iter().any(|label| label == "field"),
         "saved record fields should remain available at an unfinished current literal: {labels:?}",
     );
     assert!(
-        coverage.is_exact(),
-        "the trailing incomplete literal should still belong to inspect: {coverage:?}",
+        summary.is_complete(),
+        "the trailing incomplete literal should still belong to inspect: {summary:?}",
     );
 }
 
@@ -298,9 +296,12 @@ pub mod left {
 "#,
     );
 
-    let (labels, coverage) = fixture.completion_labels(&current, "owner");
+    let (labels, summary) = fixture.completion_labels(&current, "owner");
 
-    assert!(coverage.is_exact(), "left::Item::inspect should associate");
+    assert!(
+        summary.is_complete(),
+        "left::Item::inspect should associate"
+    );
     assert!(labels.iter().any(|label| label == "left_only"));
     assert!(!labels.iter().any(|label| label == "right_only"));
 }
@@ -316,17 +317,17 @@ pub fn inspect(value: Saved) {
 }
 "#,
     );
-    let (labels, coverage) = fixture.completion_labels(&changed_signature, "cursor");
+    let (labels, summary) = fixture.completion_labels(&changed_signature, "cursor");
     assert!(
-        coverage.is_exact(),
-        "a changed function signature should receive a request-local semantic root: {coverage:?}",
+        summary.is_complete(),
+        "a changed function signature should receive a request-local semantic root: {summary:?}",
     );
     assert!(
         labels.iter().any(|label| label == "saved_method"),
         "the changed parameter type should be available inside the current body: {labels:?}",
     );
-    let (items, coverage) = fixture.completion_items(&changed_signature, "recursive");
-    assert!(coverage.is_exact());
+    let (items, summary) = fixture.completion_items(&changed_signature, "recursive");
+    assert!(summary.is_complete());
     let recursive = items
         .iter()
         .filter(|item| item.label == "inspect")
@@ -352,17 +353,17 @@ pub fn newly_added(value: Saved) {
 }
 "#,
     );
-    let (labels, coverage) = fixture.completion_labels(&new_owner, "cursor");
+    let (labels, summary) = fixture.completion_labels(&new_owner, "cursor");
     assert!(
-        coverage.is_exact(),
-        "a new function should receive a request-local semantic root: {coverage:?}",
+        summary.is_complete(),
+        "a new function should receive a request-local semantic root: {summary:?}",
     );
     assert!(
         labels.iter().any(|label| label == "saved_method"),
         "the new function should combine its current parameter with saved item facts: {labels:?}",
     );
-    let (items, coverage) = fixture.completion_items(&new_owner, "recursive");
-    assert!(coverage.is_exact());
+    let (items, summary) = fixture.completion_items(&new_owner, "recursive");
+    assert!(summary.is_complete());
     let recursive = items
         .iter()
         .filter(|item| item.label == "newly_added")
@@ -396,7 +397,7 @@ pub fn inspect() {
     );
     assert_eq!(
         ambiguous
-            .coverage(&one_current_owner, "cursor")
+            .build_summary(&one_current_owner, "cursor")
             .unavailable(),
         &[(
             ambiguous.crate_ref(),
@@ -492,10 +493,10 @@ impl Service {
             ),
         ),
     ] {
-        let (associated, coverage) = fixture.completion_items(&current, "associated");
+        let (associated, summary) = fixture.completion_items(&current, "associated");
         assert!(
-            coverage.is_exact(),
-            "{root_name} should receive exact request-local method semantics: {coverage:?}",
+            summary.is_complete(),
+            "{root_name} should receive exact request-local method semantics: {summary:?}",
         );
         let current_rows = associated
             .iter()
@@ -520,8 +521,8 @@ impl Service {
             );
         }
 
-        let (members, coverage) = fixture.completion_items(&current, "member");
-        assert!(coverage.is_exact());
+        let (members, summary) = fixture.completion_items(&current, "member");
+        assert!(summary.is_complete());
         for member_name in [root_name, "value"] {
             assert!(
                 members.iter().any(|item| item.label == member_name),
@@ -529,8 +530,8 @@ impl Service {
             );
         }
 
-        let (parameters, coverage) = fixture.completion_items(&current, "parameter");
-        assert!(coverage.is_exact());
+        let (parameters, summary) = fixture.completion_items(&current, "parameter");
+        assert!(summary.is_complete());
         assert!(
             parameters
                 .iter()
@@ -538,8 +539,8 @@ impl Service {
             "the current parameter type should drive method lookup: {parameters:?}",
         );
 
-        let (nested, coverage) = fixture.completion_items(&current, "nested_associated");
-        assert!(coverage.is_exact());
+        let (nested, summary) = fixture.completion_items(&current, "nested_associated");
+        assert!(summary.is_complete());
         let current_rows = nested
             .iter()
             .filter(|item| item.label == root_name)
@@ -582,14 +583,14 @@ impl Service {
 }
 "#,
     );
-    let (labels, coverage) = fixture.completion_labels(&current, "dirty_method");
-    assert!(coverage.is_exact());
+    let (labels, summary) = fixture.completion_labels(&current, "dirty_method");
+    assert!(summary.is_complete());
     assert!(
         !labels.iter().any(|label| label == "added_member"),
         "a new method must not become visible from a different body before save: {labels:?}",
     );
-    let (labels, coverage) = fixture.completion_labels(&current, "dirty_type");
-    assert!(coverage.is_exact());
+    let (labels, summary) = fixture.completion_labels(&current, "dirty_type");
+    assert!(summary.is_complete());
     assert!(
         !labels.iter().any(|label| label == "DirtyType"),
         "a new type must not enter saved module lookup before save: {labels:?}",
@@ -624,9 +625,9 @@ pub mod nested {
     );
 
     for (current, expected) in [(root, "RootSaved"), (nested, "NestedSaved")] {
-        let (labels, coverage) = fixture.completion_labels(&current, "cursor");
+        let (labels, summary) = fixture.completion_labels(&current, "cursor");
         assert_eq!(
-            coverage.unavailable(),
+            summary.unavailable(),
             &[(
                 fixture.crate_ref(),
                 CurrentBodyUnavailable::NoBodyAtPosition,
@@ -668,7 +669,7 @@ pub fn inspect() {
 
     for (index, stop_at) in checkpoints.into_iter().enumerate() {
         let mut visited = Vec::new();
-        let error = match snapshot.analysis_for_current_bodies_with_checkpoints(
+        let error = match snapshot.analysis_for_current_bodies_at_offset(
             &targets,
             current.text(),
             offset,
@@ -738,7 +739,7 @@ pub fn unselected() {
             Some(SavedSourceRelationship::Exact),
         );
     }
-    let (analysis, coverage) = snapshot
+    let (analysis, summary) = snapshot
         .analysis_for_current_bodies_from_source(
             &targets,
             source,
@@ -747,7 +748,7 @@ pub fn unselected() {
         )
         .expect("selected exact body should build");
 
-    assert!(coverage.is_exact());
+    assert!(summary.is_complete());
     for (crate_ref, file) in targets {
         let hints = analysis
             .inlay_hints(crate_ref, file, None)
@@ -826,7 +827,7 @@ fn unfinished
     let source = snapshot
         .prepare_current_source(&targets, current.text())
         .expect("current range source should prepare");
-    let (analysis, coverage) = snapshot
+    let (analysis, summary) = snapshot
         .analysis_for_current_bodies_from_source(
             &targets,
             source,
@@ -836,10 +837,10 @@ fn unfinished
         .expect("current bodies in the requested range should build");
 
     assert!(
-        coverage.is_exact(),
-        "an unrelated changed owner should not make the requested range partial: {coverage:?}",
+        summary.is_complete(),
+        "an unrelated changed owner should not make the requested range incomplete: {summary:?}",
     );
-    assert_eq!(coverage.exact_body_spans().len(), 1);
+    assert_eq!(summary.rebuilt_body_spans().len(), 1);
     let [(crate_ref, file)] = targets.as_slice() else {
         panic!("fixture should have exactly one crate interpretation");
     };
@@ -887,7 +888,7 @@ pub fn inspect() {
     let source = snapshot
         .prepare_current_source(&targets, current)
         .expect("current range source should prepare");
-    let (analysis, coverage) = snapshot
+    let (analysis, summary) = snapshot
         .analysis_for_current_bodies_from_source(
             &targets,
             source,
@@ -896,10 +897,10 @@ pub fn inspect() {
         )
         .expect("ambiguous current roots should fail closed without breaking the request");
 
-    assert!(coverage.exact_body_spans().is_empty());
-    assert_eq!(coverage.unavailable().len(), 2);
+    assert!(summary.rebuilt_body_spans().is_empty());
+    assert_eq!(summary.unavailable().len(), 2);
     assert!(
-        coverage
+        summary
             .unavailable()
             .iter()
             .all(|(_, reason)| *reason == CurrentBodyUnavailable::AmbiguousSavedOwner),
@@ -922,19 +923,19 @@ impl CurrentBodyFixture {
         &self,
         current: &MarkedText,
         marker: &str,
-    ) -> (Vec<String>, CurrentBodyAnalysisCoverage) {
-        let (items, coverage) = self.completion_items(current, marker);
+    ) -> (Vec<String>, CurrentBodyBuildSummary) {
+        let (items, summary) = self.completion_items(current, marker);
         let mut labels = items.into_iter().map(|item| item.label).collect::<Vec<_>>();
         labels.sort();
         labels.dedup();
-        (labels, coverage)
+        (labels, summary)
     }
 
     fn completion_items(
         &self,
         current: &MarkedText,
         marker: &str,
-    ) -> (Vec<CompletionItem>, CurrentBodyAnalysisCoverage) {
+    ) -> (Vec<CompletionItem>, CurrentBodyBuildSummary) {
         let snapshot = self.fixture.project().snapshot();
         let before = self.fixture.project().stats();
         let targets = self.targets();
@@ -944,10 +945,8 @@ impl CurrentBodyFixture {
             .expect("current-body marker should fit into u32");
         let completion_source = CompletionSource::new(current.text(), offset)
             .expect("current body should produce completion syntax");
-        let (analysis, coverage) = snapshot
-            .analysis_for_current_bodies_with_checkpoints(&targets, current.text(), offset, |_| {
-                Ok(())
-            })
+        let (analysis, summary) = snapshot
+            .analysis_for_current_bodies_at_offset(&targets, current.text(), offset, |_| Ok(()))
             .expect("current body should build against the saved fixture");
         let mut items = Vec::new();
 
@@ -966,31 +965,28 @@ impl CurrentBodyFixture {
             before,
             "request-local current-body analysis must not change saved project stores",
         );
-        (items, coverage)
+        (items, summary)
     }
 
-    fn coverage(&self, current: &MarkedText, marker: &str) -> CurrentBodyAnalysisCoverage {
+    fn build_summary(&self, current: &MarkedText, marker: &str) -> CurrentBodyBuildSummary {
         let snapshot = self.fixture.project().snapshot();
         let offset = current
             .offset(marker)
             .try_into()
             .expect("current-body marker should fit into u32");
         let before = self.fixture.project().stats();
-        let (analysis, coverage) = snapshot
-            .analysis_for_current_bodies_with_checkpoints(
-                &self.targets(),
-                current.text(),
-                offset,
-                |_| Ok(()),
-            )
-            .expect("current-body coverage should be reported");
+        let (analysis, summary) = snapshot
+            .analysis_for_current_bodies_at_offset(&self.targets(), current.text(), offset, |_| {
+                Ok(())
+            })
+            .expect("current-body build summary should be returned");
         drop(analysis);
         assert_eq!(
             self.fixture.project().stats(),
             before,
             "request-local current-body analysis must not change saved project stores",
         );
-        coverage
+        summary
     }
 
     fn targets(&self) -> Vec<(rg_ir_model::CrateRef, rg_parse::FileId)> {

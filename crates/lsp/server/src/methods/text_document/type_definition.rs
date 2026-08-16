@@ -29,7 +29,7 @@ pub(crate) async fn type_definition(
             },
         )
         .await;
-    let locations = ctx.finish_global_document_read(result)?;
+    let locations = ctx.finish_global_operation(result)?;
     tracing::trace!(
         result_count = locations.len(),
         "type definition request answered"

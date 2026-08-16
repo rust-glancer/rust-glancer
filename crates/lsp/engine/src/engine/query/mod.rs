@@ -13,24 +13,21 @@ mod navigation;
 mod references;
 mod source;
 
+use self::lifecycle::QueryRunError;
 pub(super) use self::lifecycle::{QueryCancellation, QueryContext};
 
 use std::{path::Path, sync::Arc, time::Instant};
 
 use anyhow::Context as _;
-use rg_analysis::{
-    Analysis, CompletionQuery, CompletionSource, InlayHint as AnalysisInlayHint,
-    SavedSourceRelationship,
-};
+use rg_analysis::{Analysis, CompletionQuery, CompletionSource, InlayHint as AnalysisInlayHint};
 use rg_lsp_proto::{
-    CompletionClientCapabilities, CompletionResult, DocumentPositionSnapshot,
-    DocumentQueryCoverage, DocumentQueryResult, DocumentRangeSnapshot, EditorDocumentSnapshot,
-    GlobalPositionSnapshot,
+    CompletionClientCapabilities, DocumentPositionSnapshot, DocumentRangeSnapshot,
+    EditorDocumentSnapshot, GlobalPositionSnapshot,
 };
 use rg_parse::{CurrentSource, LineIndex};
 use rg_project::{
-    AnalysisSurface, CurrentBodyAnalysisCheckpoint, CurrentBodyAnalysisCoverage,
-    CurrentBodySelection, DocumentSourceView, FileContext, ProjectSnapshot,
+    AnalysisSurface, CurrentBodyBuildCheckpoint, CurrentBodySelection, DocumentSourceView,
+    FileContext, ProjectSnapshot,
 };
 use rg_std::UniqueVec;
 use rg_text::RustEdition;
@@ -88,31 +85,27 @@ impl DocumentSelection {
 /// Source coordinates retained after document analysis has been prepared.
 ///
 /// `DocumentSourceView::Current` is consumed when it is attached to `Analysis`. The response still
-/// needs the captured line index and the body coverage, so this smaller value keeps exactly those
-/// parts for protocol conversion and coverage reporting. It does not make another saved/current
-/// source decision.
+/// needs the captured line index, so this smaller value keeps exactly what protocol conversion
+/// needs. It does not make another saved/current source decision.
 enum DocumentAnalysisSource {
     /// The captured text is identical to every saved file interpretation.
     SavedExact(LineIndex),
     /// The captured text differs, so matching bodies were rebuilt for this request.
-    Current {
-        source: Arc<CurrentSource>,
-        coverage: CurrentBodyAnalysisCoverage,
-    },
+    Current(Arc<CurrentSource>),
 }
 
 impl DocumentAnalysisSource {
     fn line_index(&self) -> &LineIndex {
         match self {
             Self::SavedExact(line_index) => line_index,
-            Self::Current { source, .. } => source.line_index(),
+            Self::Current(source) => source.line_index(),
         }
     }
 
     fn name(&self) -> &'static str {
         match self {
             Self::SavedExact(_) => "saved_exact",
-            Self::Current { .. } => "current",
+            Self::Current(_) => "current",
         }
     }
 }
@@ -144,43 +137,6 @@ impl DocumentAnalysis<'_> {
             }
         }
     }
-
-    fn target_has_exact_body(&self, target: &DocumentTarget) -> bool {
-        let DocumentAnalysisSource::Current { coverage, .. } = &self.source else {
-            return false;
-        };
-        let CurrentBodySelection::AtOffset(offset) = self.selection else {
-            return false;
-        };
-        coverage
-            .exact_body_spans()
-            .iter()
-            .any(|(crate_ref, file, span)| {
-                *crate_ref == target.crate_ref
-                    && *file == target.context.file
-                    && span.touches(offset)
-            })
-    }
-
-    /// Report whether every crate interpretation can safely use the captured source coordinates.
-    fn coverage(&self) -> DocumentQueryCoverage {
-        let DocumentAnalysisSource::Current { coverage, .. } = &self.source else {
-            return DocumentQueryCoverage::Exact;
-        };
-        if coverage.is_exact()
-            || self.targets.iter().all(|target| {
-                self.target_has_exact_body(target)
-                    || self
-                        .analysis
-                        .current_source_relationship(target.context.package, target.context.file)
-                        == Some(SavedSourceRelationship::Exact)
-            })
-        {
-            DocumentQueryCoverage::Exact
-        } else {
-            DocumentQueryCoverage::Partial
-        }
-    }
 }
 
 impl<'a> QueryRunner<'a> {
@@ -195,23 +151,21 @@ impl<'a> QueryRunner<'a> {
     }
 
     /// Give cancellation logs a stable name for each shared current-body build boundary.
-    fn current_body_checkpoint(checkpoint: CurrentBodyAnalysisCheckpoint) -> &'static str {
+    fn current_body_checkpoint(checkpoint: CurrentBodyBuildCheckpoint) -> &'static str {
         match checkpoint {
-            CurrentBodyAnalysisCheckpoint::SourceParsed => "after current source parsing",
-            CurrentBodyAnalysisCheckpoint::OwnerAssociated => {
-                "after current body owner association"
-            }
-            CurrentBodyAnalysisCheckpoint::BodyLowered => "after current body lowering",
-            CurrentBodyAnalysisCheckpoint::BodyLocalItemsCollected => {
+            CurrentBodyBuildCheckpoint::SourceParsed => "after current source parsing",
+            CurrentBodyBuildCheckpoint::OwnerAssociated => "after current body owner association",
+            CurrentBodyBuildCheckpoint::BodyLowered => "after current body lowering",
+            CurrentBodyBuildCheckpoint::BodyLocalItemsCollected => {
                 "after current body-local item collection"
             }
-            CurrentBodyAnalysisCheckpoint::ImplHeadersResolved => {
+            CurrentBodyBuildCheckpoint::ImplHeadersResolved => {
                 "after current body-local impl header resolution"
             }
-            CurrentBodyAnalysisCheckpoint::PatternBindingsMaterialized => {
+            CurrentBodyBuildCheckpoint::PatternBindingsMaterialized => {
                 "after current pattern binding resolution"
             }
-            CurrentBodyAnalysisCheckpoint::BodyResolved => "after current body resolution",
+            CurrentBodyBuildCheckpoint::BodyResolved => "after current body resolution",
         }
     }
 
@@ -355,7 +309,7 @@ impl<'a> QueryRunner<'a> {
                     .saved_snapshot()
                     .context("borrow saved project for current document")?;
                 let source = source_view.shared_source();
-                let (analysis, coverage) = snapshot
+                let (analysis, build_summary) = snapshot
                     .analysis_for_current_bodies_from_source(
                         &body_targets,
                         source_view,
@@ -365,11 +319,16 @@ impl<'a> QueryRunner<'a> {
                         },
                     )
                     .context("build current document body analysis")?;
+                tracing::trace!(
+                    query,
+                    complete_current_body_build = build_summary.is_complete(),
+                    "current document bodies prepared"
+                );
                 DocumentAnalysis {
                     snapshot,
                     analysis,
                     targets,
-                    source: DocumentAnalysisSource::Current { source, coverage },
+                    source: DocumentAnalysisSource::Current(source),
                     selection: body_selection,
                 }
             }
@@ -424,7 +383,7 @@ impl<'a> QueryRunner<'a> {
         input: DocumentPositionSnapshot,
         client_capabilities: CompletionClientCapabilities,
         cancellation: &QueryCancellation<'_>,
-    ) -> anyhow::Result<CompletionResult> {
+    ) -> Result<Vec<ls_types::CompletionItem>, QueryRunError> {
         let document = input.document();
         let position = input.position();
         let path = document.source_path().to_path_buf();
@@ -440,14 +399,10 @@ impl<'a> QueryRunner<'a> {
             )
             .context("prepare completion analysis")?
         else {
-            return Ok(CompletionResult::new(
-                Vec::new(),
-                DocumentQueryCoverage::Partial,
-            ));
+            return Ok(Vec::new());
         };
         let document_analysis_us = document_analysis_started.elapsed().as_micros();
         let offset = current.offset();
-        let semantic_coverage = current.coverage();
         let completion_source_started = Instant::now();
         let completion_source = CompletionSource::new(source_text, offset);
         let completion_source_us = completion_source_started.elapsed().as_micros();
@@ -506,7 +461,6 @@ impl<'a> QueryRunner<'a> {
         tracing::trace!(
             crate_count,
             result_count = completions.len(),
-            coverage = ?semantic_coverage,
             source = source_name,
             document_analysis_us,
             completion_source_us,
@@ -521,12 +475,11 @@ impl<'a> QueryRunner<'a> {
             line = position.line,
             character = position.character,
             result_count = completions.len(),
-            coverage = ?semantic_coverage,
             elapsed_ms = started.elapsed().as_millis(),
             "completion query finished"
         );
 
-        Ok(CompletionResult::new(completions, semantic_coverage))
+        Ok(completions)
     }
 
     /// Return the first usable hover from the path's possible crate contexts.
@@ -534,7 +487,7 @@ impl<'a> QueryRunner<'a> {
         &mut self,
         input: DocumentPositionSnapshot,
         cancellation: &QueryCancellation<'_>,
-    ) -> anyhow::Result<DocumentQueryResult<Option<ls_types::Hover>>> {
+    ) -> Result<Option<ls_types::Hover>, QueryRunError> {
         let (document, position) = input.into_parts();
         let path = document.source_path().to_path_buf();
         let started = Instant::now();
@@ -547,10 +500,7 @@ impl<'a> QueryRunner<'a> {
             )
             .context("prepare hover analysis")?
         else {
-            return Ok(DocumentQueryResult::new(
-                None,
-                DocumentQueryCoverage::Partial,
-            ));
+            return Ok(None);
         };
 
         let mut hover = None;
@@ -570,26 +520,23 @@ impl<'a> QueryRunner<'a> {
             break;
         }
 
-        let coverage = current.coverage();
-
         tracing::trace!(
             path = %path.display(),
             line = position.line,
             character = position.character,
             has_hover = hover.is_some(),
             source = current.source.name(),
-            coverage = ?coverage,
             elapsed_ms = started.elapsed().as_millis(),
             "hover query finished"
         );
-        Ok(DocumentQueryResult::new(hover, coverage))
+        Ok(hover)
     }
 
     /// Build the document outline directly from the syntax shown by the editor.
     pub(super) fn document_symbol(
         &mut self,
         document: EditorDocumentSnapshot,
-    ) -> anyhow::Result<DocumentQueryResult<Vec<ls_types::DocumentSymbol>>> {
+    ) -> Result<Vec<ls_types::DocumentSymbol>, QueryRunError> {
         let path = document.source_path().to_path_buf();
         let started = Instant::now();
         let snapshot = self
@@ -618,10 +565,7 @@ impl<'a> QueryRunner<'a> {
             "document symbol query finished"
         );
 
-        Ok(DocumentQueryResult::new(
-            lsp_symbols,
-            DocumentQueryCoverage::Exact,
-        ))
+        Ok(lsp_symbols)
     }
 
     /// Format the live editor text using the owning package's Rust edition.
@@ -631,7 +575,7 @@ impl<'a> QueryRunner<'a> {
     pub(super) fn formatting(
         &mut self,
         document: EditorDocumentSnapshot,
-    ) -> anyhow::Result<DocumentQueryResult<Option<Vec<ls_types::TextEdit>>>> {
+    ) -> Result<Option<Vec<ls_types::TextEdit>>, QueryRunError> {
         let path = document.source_path().to_path_buf();
         let text = document.text();
         let started = Instant::now();
@@ -663,10 +607,7 @@ impl<'a> QueryRunner<'a> {
             "formatting query finished"
         );
 
-        Ok(DocumentQueryResult::new(
-            Some(edits),
-            DocumentQueryCoverage::Exact,
-        ))
+        Ok(Some(edits))
     }
 
     /// Merge inlay hints from every crate context covering the requested source range.
@@ -674,7 +615,7 @@ impl<'a> QueryRunner<'a> {
         &mut self,
         input: DocumentRangeSnapshot,
         cancellation: &QueryCancellation<'_>,
-    ) -> anyhow::Result<DocumentQueryResult<Vec<ls_types::InlayHint>>> {
+    ) -> Result<Vec<ls_types::InlayHint>, QueryRunError> {
         let (document, range) = input.into_parts();
         let path = document.source_path().to_path_buf();
         let started = Instant::now();
@@ -687,10 +628,7 @@ impl<'a> QueryRunner<'a> {
             )
             .context("prepare inlay hint analysis")?
         else {
-            return Ok(DocumentQueryResult::new(
-                Vec::new(),
-                DocumentQueryCoverage::Partial,
-            ));
+            return Ok(Vec::new());
         };
         let text_range = current.range();
         let mut hints = UniqueVec::<AnalysisInlayHint>::new();
@@ -709,25 +647,22 @@ impl<'a> QueryRunner<'a> {
             .into_iter()
             .map(|hint| inlay_hint::inlay_hint_with_line_index(current.source.line_index(), hint))
             .collect::<Vec<_>>();
-        let semantic_coverage = current.coverage();
-
         tracing::trace!(
             path = %path.display(),
             result_count = lsp_hints.len(),
             source = current.source.name(),
-            coverage = ?semantic_coverage,
             elapsed_ms = started.elapsed().as_millis(),
             "inlay hint query finished"
         );
 
-        Ok(DocumentQueryResult::new(lsp_hints, semantic_coverage))
+        Ok(lsp_hints)
     }
 
     /// Search the saved workspace index without loading source files for a document path.
     pub(super) fn workspace_symbol(
         &mut self,
         query: &str,
-    ) -> anyhow::Result<Vec<ls_types::WorkspaceSymbol>> {
+    ) -> Result<Vec<ls_types::WorkspaceSymbol>, QueryRunError> {
         let started = Instant::now();
         let lsp_symbols = self
             .project

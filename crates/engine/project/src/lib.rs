@@ -28,16 +28,14 @@ mod residency;
 
 use std::sync::OnceLock;
 
-pub use rg_body_ir::{
-    CurrentBodyBuildCheckpoint as CurrentBodyAnalysisCheckpoint, CurrentBodySelection,
-};
+pub use rg_body_ir::{CurrentBodyBuildCheckpoint, CurrentBodySelection};
 
 pub use self::{
     indexing::IndexingPerformancePreference,
     memory::{ProjectMemoryHooks, ProjectMemoryPurgePoint},
     profile::{BUILD_CHECKPOINTS, BuildProcessMemory, ProcessMemorySampler},
     project::{
-        AnalysisChangeSummary, AnalysisSurface, ChangedFile, CurrentBodyAnalysisCoverage,
+        AnalysisChangeSummary, AnalysisSurface, ChangedFile, CurrentBodyBuildSummary,
         DetachedSplitIndexing, DocumentSourceView, FileContext, FinishedSplitIndexing, Project,
         ProjectBuilder, ProjectGenerationId, ProjectSnapshot, ProjectStats, SavedFileChange,
         SplitIndexing, SplitIndexingMode, StartupCacheLoad,

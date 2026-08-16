@@ -11,15 +11,12 @@ use anyhow::Context as _;
 use rg_analysis::{NavigationTarget, NavigationTargetSource, SavedSourceRelationship};
 use rg_def_map::PackageSlot;
 use rg_ir_model::CrateRef;
-use rg_lsp_proto::{
-    DocumentQueryCoverage, DocumentQueryResult, EditorDocumentSnapshot, GlobalOperationResult,
-    GlobalPositionSnapshot,
-};
+use rg_lsp_proto::{EditorDocumentSnapshot, GlobalPositionSnapshot};
 use rg_parse::FileId;
 use rg_project::{DocumentSourceView, ProjectSnapshot};
 use rg_std::UniqueVec;
 
-use super::{DocumentSelection, QueryCancellation, QueryRunner};
+use super::{DocumentSelection, QueryCancellation, QueryRunError, QueryRunner};
 use crate::proto::navigation as navigation_proto;
 
 impl QueryRunner<'_> {
@@ -27,26 +24,27 @@ impl QueryRunner<'_> {
         &mut self,
         input: GlobalPositionSnapshot,
         cancellation: &QueryCancellation<'_>,
-    ) -> anyhow::Result<DocumentQueryResult<Vec<ls_types::Location>>> {
-        self.current_navigation_query(input, CurrentNavigationQuery::Definition, cancellation)
-            .context("navigate to definition")
+    ) -> Result<Vec<ls_types::Location>, QueryRunError> {
+        Ok(self
+            .current_navigation_query(input, CurrentNavigationQuery::Definition, cancellation)
+            .context("navigate to definition")?)
     }
 
     pub(crate) fn goto_type_definition(
         &mut self,
         input: GlobalPositionSnapshot,
         cancellation: &QueryCancellation<'_>,
-    ) -> anyhow::Result<DocumentQueryResult<Vec<ls_types::Location>>> {
-        self.current_navigation_query(input, CurrentNavigationQuery::TypeDefinition, cancellation)
-            .context("navigate to type definition")
+    ) -> Result<Vec<ls_types::Location>, QueryRunError> {
+        Ok(self
+            .current_navigation_query(input, CurrentNavigationQuery::TypeDefinition, cancellation)
+            .context("navigate to type definition")?)
     }
 
     pub(crate) fn goto_implementation(
         &mut self,
         input: GlobalPositionSnapshot,
-    ) -> anyhow::Result<GlobalOperationResult<Vec<ls_types::Location>>> {
+    ) -> Result<Vec<ls_types::Location>, QueryRunError> {
         self.saved_implementation_query(input)
-            .context("navigate to implementation")
     }
 
     /// Resolve a definition or type definition using the current body and saved declarations.
@@ -55,7 +53,7 @@ impl QueryRunner<'_> {
         input: GlobalPositionSnapshot,
         query: CurrentNavigationQuery,
         cancellation: &QueryCancellation<'_>,
-    ) -> anyhow::Result<DocumentQueryResult<Vec<ls_types::Location>>> {
+    ) -> anyhow::Result<Vec<ls_types::Location>> {
         let (target, _, documents, position) = input.into_parts();
         let document = documents
             .iter()
@@ -72,10 +70,7 @@ impl QueryRunner<'_> {
             )
             .context("prepare navigation analysis")?
         else {
-            return Ok(DocumentQueryResult::new(
-                Vec::new(),
-                DocumentQueryCoverage::Partial,
-            ));
+            return Ok(Vec::new());
         };
         let mut locations = UniqueVec::new();
         let mut omitted_unsafe_target = false;
@@ -142,21 +137,26 @@ impl QueryRunner<'_> {
             "navigation query finished"
         );
 
-        let coverage = if omitted_unsafe_target {
-            DocumentQueryCoverage::Partial
-        } else {
-            current.coverage()
-        };
-        Ok(DocumentQueryResult::new(locations, coverage))
+        if omitted_unsafe_target {
+            tracing::debug!(
+                query = query.name(),
+                path = %path.display(),
+                "omitted navigation target without a safe current-source location"
+            );
+        }
+        Ok(locations)
     }
 
     /// Resolve implementations after checking that saved ranges still match all open documents.
     fn saved_implementation_query(
         &mut self,
         input: GlobalPositionSnapshot,
-    ) -> anyhow::Result<GlobalOperationResult<Vec<ls_types::Location>>> {
-        if let Some(path) = self.save_required_for_global_operation(&input)? {
-            return Ok(GlobalOperationResult::save_required(path));
+    ) -> Result<Vec<ls_types::Location>, QueryRunError> {
+        if let Some(path) = self
+            .save_required_for_global_operation(&input)
+            .context("check implementation source safety")?
+        {
+            return Err(QueryRunError::SaveRequired(path));
         }
         let document = Self::global_operation_target(&input)?;
         let path = document.source_path().to_path_buf();
@@ -202,7 +202,7 @@ impl QueryRunner<'_> {
             elapsed_ms = started.elapsed().as_millis(),
             "implementation query finished"
         );
-        Ok(GlobalOperationResult::ready(locations))
+        Ok(locations)
     }
 }
 

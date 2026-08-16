@@ -13,8 +13,8 @@
 //! them before publishing the value.
 //!
 //! A saved-source race follows a different path. If hover discovers that `src/lib.rs` changed on
-//! disk, hover returns `AnalysisAbort::SourceChanged`, records that the saved generation is stale,
-//! and enqueues `src/lib.rs` on the normal path-change stream. Later queries return the same abort
+//! disk, hover returns `QueryError::SavedSourceChanged`, records that the saved generation is stale,
+//! and enqueues `src/lib.rs` on the normal path-change stream. Later queries return the same error
 //! until that mutation publishes a new saved project; the hover itself never turns into a
 //! synchronous reindex.
 
@@ -25,13 +25,38 @@ use std::{
 };
 
 use rg_lsp_proto::{
-    AnalysisAbort, AnalysisInput, AnalysisOutcome, AnalysisReady, EditorDocumentSnapshot,
-    GlobalPositionSnapshot, OpenDocumentsRevision, TargetDocumentRevision,
+    EditorDocumentSnapshot, EngineError, GlobalPositionSnapshot, QueryError, QueryScope, QueryValue,
 };
 use rg_project::Project;
 
 use super::QueryRunner;
-use crate::{engine::command::AnalysisResponse, memory::MemoryReporter};
+use crate::{engine::command::QueryResponder, memory::MemoryReporter};
+
+/// Error kept by `QueryRunner` until the query lifecycle classifies it for the protocol.
+///
+/// Most failures keep their rich `anyhow` chain while this layer checks for cancellation, stale
+/// source, and recoverable cache failures. Operations that require saved editor text use the
+/// separate variant because that is an expected request outcome, not an engine failure.
+#[derive(Debug)]
+pub(crate) enum QueryRunError {
+    SaveRequired(std::path::PathBuf),
+    Analysis(anyhow::Error),
+}
+
+impl QueryRunError {
+    fn as_error(&self) -> Option<&anyhow::Error> {
+        match self {
+            Self::SaveRequired(_) => None,
+            Self::Analysis(error) => Some(error),
+        }
+    }
+}
+
+impl From<anyhow::Error> for QueryRunError {
+    fn from(error: anyhow::Error) -> Self {
+        Self::Analysis(error)
+    }
+}
 
 /// Lets expensive query phases check whether anyone still wants the result.
 ///
@@ -72,32 +97,21 @@ impl std::error::Error for QueryCancelled {}
 
 /// Common request data recorded before one command starts analysis.
 ///
-/// Queue time is kept separate from execution time. The input ids are copied from the command so a
-/// successful result can return them to the server for its final stale-result check.
+/// Queue time is kept separate from execution time. The scope is copied from the command so a
+/// successful result can tell the server which editor state needs a final check.
 #[derive(Debug)]
 pub(crate) struct QueryContext {
     label: &'static str,
     queue_elapsed: Duration,
-    input: QueryInputIdentity,
-}
-
-/// Which editor ids, if any, must be returned with a successful result.
-#[derive(Debug)]
-enum QueryInputIdentity {
-    SavedProject,
-    GlobalOperation {
-        target: TargetDocumentRevision,
-        open_documents_revision: OpenDocumentsRevision,
-    },
-    TargetDocument(TargetDocumentRevision),
+    scope: QueryScope,
 }
 
 impl QueryContext {
-    pub(crate) fn new(label: &'static str, queue_elapsed: Duration) -> Self {
+    pub(crate) fn saved_project(label: &'static str, queue_elapsed: Duration) -> Self {
         Self {
             label,
             queue_elapsed,
-            input: QueryInputIdentity::SavedProject,
+            scope: QueryScope::SavedProject,
         }
     }
 
@@ -109,7 +123,7 @@ impl QueryContext {
         Self {
             label,
             queue_elapsed,
-            input: QueryInputIdentity::GlobalOperation {
+            scope: QueryScope::GlobalOperation {
                 target: snapshot.target().clone(),
                 open_documents_revision: snapshot.open_documents_revision(),
             },
@@ -125,26 +139,7 @@ impl QueryContext {
         Self {
             label,
             queue_elapsed,
-            input: QueryInputIdentity::TargetDocument(document.target().clone()),
-        }
-    }
-
-    fn analysis_input(&self, saved_project_generation: u64) -> AnalysisInput {
-        match &self.input {
-            QueryInputIdentity::SavedProject => {
-                AnalysisInput::for_saved_project(saved_project_generation)
-            }
-            QueryInputIdentity::GlobalOperation {
-                target,
-                open_documents_revision,
-            } => AnalysisInput::for_global_operation(
-                saved_project_generation,
-                *open_documents_revision,
-                target.clone(),
-            ),
-            QueryInputIdentity::TargetDocument(target) => {
-                AnalysisInput::for_target_document(saved_project_generation, target.clone())
-            }
+            scope: QueryScope::TargetDocument(document.target().clone()),
         }
     }
 }
@@ -162,41 +157,45 @@ impl QueryRunner<'_> {
     pub(crate) fn respond_to_query<T>(
         &mut self,
         context: QueryContext,
-        respond_to: AnalysisResponse<T>,
-        query: impl FnOnce(&mut Self, &QueryCancellation<'_>) -> anyhow::Result<T>,
+        respond_to: QueryResponder<T>,
+        query: impl FnOnce(&mut Self, &QueryCancellation<'_>) -> Result<T, QueryRunError>,
     ) where
         T: Send + 'static,
     {
+        let QueryContext {
+            label,
+            queue_elapsed,
+            scope,
+        } = context;
+
         // LSP cancellation drops the RPC handler waiting on this response. The command may still
         // be in the dispatcher queue, but there is no reason to materialize packages or run
         // analysis once nobody can receive the result.
         if respond_to.is_closed() {
             tracing::debug!(
-                label = context.label,
-                queued_ms = context.queue_elapsed.as_millis(),
+                label,
+                queued_ms = queue_elapsed.as_millis(),
                 "cancelled analysis query skipped"
             );
             return;
         }
 
         // Once one query proves that the saved generation no longer describes disk, all later
-        // queries are known to be unsafe. They remain cheap explicit aborts until the queued
+        // queries are known to be unsafe. They return the same cheap error until the queued
         // watcher/recovery mutation publishes a coherent generation.
         if let Some(stale_source) = self.project.stale_source() {
             tracing::debug!(
-                label = context.label,
+                label,
                 path = %stale_source.display(),
-                queued_ms = context.queue_elapsed.as_millis(),
+                queued_ms = queue_elapsed.as_millis(),
                 "analysis query skipped for stale saved generation"
             );
-            let _ = respond_to.send(Ok(AnalysisOutcome::Aborted(AnalysisAbort::SourceChanged)));
+            let _ = respond_to.send(Err(QueryError::SavedSourceChanged));
             return;
         }
 
         // Keeping the stale check in the context layer lets timing and cache recovery remain
         // uniform for every analysis query.
-        let label = context.label;
-        let queue_elapsed = context.queue_elapsed;
         tracing::trace!(
             label,
             queued_ms = queue_elapsed.as_millis(),
@@ -205,7 +204,6 @@ impl QueryRunner<'_> {
         let started = Instant::now();
         let memory_control = Arc::clone(&self.memory_control);
         let memory_before = MemoryReporter::snapshot(memory_control.as_ref());
-        let analysis_input = context.analysis_input(self.project.generation());
         let result = {
             let is_cancelled = || respond_to.is_closed();
             query(self, &QueryCancellation::new(&is_cancelled))
@@ -213,6 +211,7 @@ impl QueryRunner<'_> {
         let cancelled_checkpoint = result
             .as_ref()
             .err()
+            .and_then(QueryRunError::as_error)
             .and_then(|error| error.downcast_ref::<QueryCancelled>())
             .map(|cancelled| cancelled.checkpoint);
         let stale_path = if cancelled_checkpoint.is_some() {
@@ -221,13 +220,14 @@ impl QueryRunner<'_> {
             result
                 .as_ref()
                 .err()
+                .and_then(QueryRunError::as_error)
                 .and_then(Project::stale_source_path)
                 .map(std::path::Path::to_path_buf)
         };
-        let stale_source_aborted = stale_path.is_some();
+        let saved_source_changed = stale_path.is_some();
         if let Some(stale_path) = &stale_path {
             // A source race is a project-lifecycle event, not a feature-query failure. Re-enter the
-            // FIFO mutation stream and abort this response while that recovery catches up.
+            // FIFO mutation stream and stop this response while that recovery catches up.
             self.project.record_stale_source(label, stale_path);
         }
         let query_elapsed = started.elapsed();
@@ -235,6 +235,7 @@ impl QueryRunner<'_> {
             && result
                 .as_ref()
                 .err()
+                .and_then(QueryRunError::as_error)
                 .is_some_and(Project::is_recoverable_cache_load_failure);
         if let Some(checkpoint) = cancelled_checkpoint {
             tracing::debug!(
@@ -244,13 +245,13 @@ impl QueryRunner<'_> {
                 checkpoint,
                 "cancelled analysis query stopped"
             );
-        } else if stale_source_aborted {
+        } else if saved_source_changed {
             tracing::info!(
                 query = label,
                 queued_ms = queue_elapsed.as_millis(),
                 elapsed_ms = query_elapsed.as_millis(),
-                status = "aborted",
-                abort = ?AnalysisAbort::SourceChanged,
+                status = "saved_source_changed",
+                error = ?QueryError::SavedSourceChanged,
                 "analysis query completed"
             );
         } else {
@@ -264,7 +265,17 @@ impl QueryRunner<'_> {
                         "analysis query completed"
                     );
                 }
-                Err(error) => {
+                Err(QueryRunError::SaveRequired(path)) => {
+                    tracing::debug!(
+                        query = label,
+                        queued_ms = queue_elapsed.as_millis(),
+                        elapsed_ms = query_elapsed.as_millis(),
+                        status = "save_required",
+                        path = %path.display(),
+                        "analysis query completed"
+                    );
+                }
+                Err(QueryRunError::Analysis(error)) => {
                     let error = format!("{error:#}");
                     tracing::warn!(
                         query = label,
@@ -281,21 +292,23 @@ impl QueryRunner<'_> {
 
         if cancelled_checkpoint.is_some() {
             // The receiver is already gone. Cancellation is an execution detail, not a semantic
-            // abort or an empty feature result, so there is deliberately nothing to publish.
-        } else if stale_source_aborted {
-            let _ = respond_to.send(Ok(AnalysisOutcome::Aborted(AnalysisAbort::SourceChanged)));
+            // query error or an empty feature result, so there is deliberately nothing to publish.
+        } else if saved_source_changed {
+            let _ = respond_to.send(Err(QueryError::SavedSourceChanged));
         } else if should_recover {
             // Lazy package loads can fail when an offloaded artifact becomes stale between
             // indexing and a query. The next command sees a repaired project; this request remains
             // explicitly unavailable instead of pretending the feature found no result.
-            let _ = respond_to.send(Ok(AnalysisOutcome::Aborted(
-                AnalysisAbort::TemporarilyUnavailable,
-            )));
+            let _ = respond_to.send(Err(QueryError::TemporarilyUnavailable));
         } else {
-            let _ = respond_to
-                .send(result.map(|value| {
-                    AnalysisOutcome::Ready(AnalysisReady::new(value, analysis_input))
-                }));
+            let result = match result {
+                Ok(value) => Ok(QueryValue::new(value, scope)),
+                Err(QueryRunError::SaveRequired(path)) => Err(QueryError::SaveRequired { path }),
+                Err(QueryRunError::Analysis(error)) => {
+                    Err(QueryError::Internal(EngineError::from(error)))
+                }
+            };
+            let _ = respond_to.send(result);
         }
 
         // Publication wakes the RPC task immediately. Request-owned loads and allocator pages are
@@ -320,8 +333,8 @@ mod tests {
 
     use anyhow::Context as _;
     use rg_lsp_proto::{
-        AnalysisOutcome, DocumentRevision, EditorDocumentSnapshot, GlobalPositionSnapshot,
-        OpenDocumentSession, OpenDocumentsRevision, ServiceNotification,
+        DocumentRevision, EditorDocumentSnapshot, GlobalPositionSnapshot, OpenDocumentSession,
+        OpenDocumentsRevision, QueryError, QueryScope, QueryValue, ServiceNotification,
     };
     use tokio::sync::oneshot;
 
@@ -345,12 +358,12 @@ mod tests {
         let mut project = test_project(Arc::clone(&memory_control));
         let mut runner = QueryRunner::new(&mut project, memory_control);
         let (respond_to, response) =
-            oneshot::channel::<anyhow::Result<AnalysisOutcome<Vec<usize>>>>();
+            oneshot::channel::<Result<QueryValue<Vec<usize>>, QueryError>>();
         drop(response);
         let query_ran = Cell::new(false);
 
         runner.respond_to_query(
-            QueryContext::new("workspace_symbol", Duration::ZERO),
+            QueryContext::saved_project("workspace_symbol", Duration::ZERO),
             respond_to,
             |_, _| {
                 query_ran.set(true);
@@ -384,41 +397,37 @@ mod tests {
 
         runner.respond_to_query(context, respond_to, |_, _| Ok(vec![1_usize]));
 
-        let result = futures::executor::block_on(response)
-            .expect("document query should send a response")
-            .expect("document query should succeed");
-        let AnalysisOutcome::Ready(ready) = result else {
-            panic!("document query should be ready");
-        };
-        assert_eq!(ready.value(), &vec![1]);
-        assert_eq!(ready.input().target_document(), Some(snapshot.target()));
+        let result =
+            futures::executor::block_on(response).expect("document query should send a response");
+        let response = result.expect("document query should succeed");
+        assert_eq!(response.value(), &vec![1]);
         assert_eq!(
-            ready.input().open_documents_revision(),
-            Some(snapshot.open_documents_revision())
+            response.scope(),
+            &QueryScope::GlobalOperation {
+                target: snapshot.target().clone(),
+                open_documents_revision: snapshot.open_documents_revision(),
+            }
         );
     }
 
     #[test]
-    fn valid_empty_query_remains_a_ready_semantic_result() {
+    fn valid_empty_query_remains_successful() {
         let memory_control: Arc<dyn MemoryControl> = Arc::new(());
         let mut project = test_project(Arc::clone(&memory_control));
         let mut runner = QueryRunner::new(&mut project, memory_control);
         let (respond_to, response) = oneshot::channel();
 
         runner.respond_to_query(
-            QueryContext::new("workspace_symbol", Duration::ZERO),
+            QueryContext::saved_project("workspace_symbol", Duration::ZERO),
             respond_to,
             |_, _| Ok(Vec::<usize>::new()),
         );
 
         let result = futures::executor::block_on(response)
-            .expect("valid empty query should send a response")
-            .expect("valid empty query should succeed");
-        let AnalysisOutcome::Ready(ready) = result else {
-            panic!("valid empty query should remain ready");
-        };
-        assert!(ready.value().is_empty());
-        assert!(ready.input().target_document().is_none());
+            .expect("valid empty query should send a response");
+        let response = result.expect("valid empty query should remain successful");
+        assert!(response.value().is_empty());
+        assert_eq!(response.scope(), &QueryScope::SavedProject);
     }
 
     #[test]
@@ -427,11 +436,11 @@ mod tests {
         let mut project = test_project(Arc::clone(&memory_control));
         let mut runner = QueryRunner::new(&mut project, memory_control);
         let (respond_to, response) =
-            oneshot::channel::<anyhow::Result<AnalysisOutcome<Vec<usize>>>>();
+            oneshot::channel::<Result<QueryValue<Vec<usize>>, QueryError>>();
         let work_after_checkpoint_ran = Cell::new(false);
 
         runner.respond_to_query(
-            QueryContext::new("completion", Duration::ZERO),
+            QueryContext::saved_project("completion", Duration::ZERO),
             respond_to,
             |_, cancellation| {
                 // Model the RPC task disappearing after the engine has already entered the query.

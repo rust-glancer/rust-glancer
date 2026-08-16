@@ -10,10 +10,10 @@ use divan::{Bencher, black_box};
 use ls_types::{CompletionItem, Hover, InlayHint, Location, Position, Range};
 use rg_lsp_engine::{MemoryControl, Service, ServiceNotificationsSink};
 use rg_lsp_proto::{
-    AnalysisConfig, AnalysisOutcome, CompletionClientCapabilities, DocumentQueryResult,
-    DocumentRevision, EditorDocumentSnapshot, EngineConfig, EngineService, GlobalOperationResult,
-    GlobalPositionSnapshot, OpenDocumentSession, OpenDocumentsRevision, PackageResidencyPolicy,
-    ServiceNotification, SysrootDiscovery, TargetDocumentRevision,
+    AnalysisConfig, CompletionClientCapabilities, DocumentRevision, EditorDocumentSnapshot,
+    EngineConfig, EngineService, GlobalPositionSnapshot, OpenDocumentSession,
+    OpenDocumentsRevision, PackageResidencyPolicy, ServiceNotification, SysrootDiscovery,
+    TargetDocumentRevision,
 };
 use rg_parse::LineIndex;
 use tarpc::context;
@@ -141,22 +141,6 @@ struct PreparedEngine {
 }
 
 impl PreparedEngine {
-    fn expect_ready<T>(outcome: AnalysisOutcome<T>, operation: &str) -> T {
-        match outcome {
-            AnalysisOutcome::Ready(ready) => ready.into_value(),
-            AnalysisOutcome::Aborted(abort) => {
-                panic!("query benchmark {operation} aborted unexpectedly: {abort:?}")
-            }
-        }
-    }
-
-    fn expect_document_ready<T>(
-        outcome: AnalysisOutcome<DocumentQueryResult<T>>,
-        operation: &str,
-    ) -> T {
-        Self::expect_ready(outcome, operation).into_value()
-    }
-
     fn new() -> Self {
         let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../../test_targets/moderate_workspace")
@@ -280,7 +264,7 @@ impl PreparedEngine {
             .runtime
             .block_on(self.service.clone().hover(context::current(), input))
             .expect("query benchmark hover should succeed");
-        Self::expect_document_ready(outcome, "hover")
+        outcome.into_value()
     }
 
     fn completion(&self, relative_path: &str, position: Position) -> Vec<CompletionItem> {
@@ -295,7 +279,7 @@ impl PreparedEngine {
                 CompletionClientCapabilities::default(),
             ))
             .expect("query benchmark completion should succeed");
-        Self::expect_ready(outcome, "completion").into_value()
+        outcome.into_value()
     }
 
     fn inlay_hints(&self, relative_path: &str, range: Range) -> Vec<InlayHint> {
@@ -304,7 +288,7 @@ impl PreparedEngine {
             .runtime
             .block_on(self.service.clone().inlay_hint(context::current(), input))
             .expect("query benchmark inlay hints should succeed");
-        Self::expect_document_ready(outcome, "inlay hints")
+        outcome.into_value()
     }
 
     fn references(&self, relative_path: &str, position: Position) -> Vec<Location> {
@@ -317,15 +301,7 @@ impl PreparedEngine {
                     .references(context::current(), input, true),
             )
             .expect("query benchmark references should succeed");
-        match Self::expect_ready(outcome, "references") {
-            GlobalOperationResult::Ready(locations) => locations,
-            GlobalOperationResult::SaveRequired { path } => {
-                panic!(
-                    "clean references benchmark unexpectedly requires saving {}",
-                    path.display(),
-                )
-            }
-        }
+        outcome.into_value()
     }
 
     fn capture_open_documents(

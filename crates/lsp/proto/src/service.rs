@@ -3,15 +3,14 @@
 //! Document methods carry complete immutable snapshots; there is no open/change/close document
 //! protocol on this boundary. Saved-project mutations are separate and either carry exact source
 //! text or explicitly ask the project layer to interpret a filesystem path. Responses preserve
-//! operational aborts instead of folding them into feature-specific empty values.
+//! operational failures instead of folding them into feature-specific empty values.
 
 use std::path::PathBuf;
 
 use crate::{
-    AnalysisOutcome, CompletionClientCapabilities, CompletionResult, DocumentPositionSnapshot,
-    DocumentQueryResult, DocumentRangeSnapshot, EditorDocumentSnapshot, EngineConfig, EngineError,
-    GlobalOperationResult, GlobalPositionSnapshot, SaveProposal, SavedProjectChanges,
-    ServiceNotification,
+    CompletionClientCapabilities, DocumentPositionSnapshot, DocumentRangeSnapshot,
+    EditorDocumentSnapshot, EngineConfig, EngineError, GlobalPositionSnapshot, QueryError,
+    QueryValue, SaveProposal, SavedProjectChanges, ServiceNotification,
 };
 
 pub type EngineResult<T> = Result<T, EngineError>;
@@ -37,58 +36,58 @@ pub trait EngineService {
 
     async fn goto_definition(
         input: GlobalPositionSnapshot,
-    ) -> EngineResult<AnalysisOutcome<DocumentQueryResult<Vec<ls_types::Location>>>>;
+    ) -> Result<QueryValue<Vec<ls_types::Location>>, QueryError>;
 
     async fn goto_type_definition(
         input: GlobalPositionSnapshot,
-    ) -> EngineResult<AnalysisOutcome<DocumentQueryResult<Vec<ls_types::Location>>>>;
+    ) -> Result<QueryValue<Vec<ls_types::Location>>, QueryError>;
 
     async fn goto_implementation(
         input: GlobalPositionSnapshot,
-    ) -> EngineResult<AnalysisOutcome<GlobalOperationResult<Vec<ls_types::Location>>>>;
+    ) -> Result<QueryValue<Vec<ls_types::Location>>, QueryError>;
 
     async fn references(
         input: GlobalPositionSnapshot,
         include_declaration: bool,
-    ) -> EngineResult<AnalysisOutcome<GlobalOperationResult<Vec<ls_types::Location>>>>;
+    ) -> Result<QueryValue<Vec<ls_types::Location>>, QueryError>;
 
     async fn prepare_rename(
         input: GlobalPositionSnapshot,
-    ) -> EngineResult<AnalysisOutcome<GlobalOperationResult<Option<ls_types::PrepareRenameResponse>>>>;
+    ) -> Result<QueryValue<Option<ls_types::PrepareRenameResponse>>, QueryError>;
 
     async fn rename(
         input: GlobalPositionSnapshot,
         new_name: String,
-    ) -> EngineResult<AnalysisOutcome<GlobalOperationResult<Option<ls_types::WorkspaceEdit>>>>;
+    ) -> Result<QueryValue<Option<ls_types::WorkspaceEdit>>, QueryError>;
 
     async fn document_highlight(
         input: DocumentPositionSnapshot,
-    ) -> EngineResult<AnalysisOutcome<DocumentQueryResult<Vec<ls_types::DocumentHighlight>>>>;
+    ) -> Result<QueryValue<Vec<ls_types::DocumentHighlight>>, QueryError>;
 
     async fn hover(
         input: DocumentPositionSnapshot,
-    ) -> EngineResult<AnalysisOutcome<DocumentQueryResult<Option<ls_types::Hover>>>>;
+    ) -> Result<QueryValue<Option<ls_types::Hover>>, QueryError>;
 
     async fn completion(
         input: DocumentPositionSnapshot,
         client_capabilities: CompletionClientCapabilities,
-    ) -> EngineResult<AnalysisOutcome<CompletionResult>>;
+    ) -> Result<QueryValue<Vec<ls_types::CompletionItem>>, QueryError>;
 
     async fn formatting(
         snapshot: EditorDocumentSnapshot,
-    ) -> EngineResult<AnalysisOutcome<DocumentQueryResult<Option<Vec<ls_types::TextEdit>>>>>;
+    ) -> Result<QueryValue<Option<Vec<ls_types::TextEdit>>>, QueryError>;
 
     async fn document_symbol(
         snapshot: EditorDocumentSnapshot,
-    ) -> EngineResult<AnalysisOutcome<DocumentQueryResult<Vec<ls_types::DocumentSymbol>>>>;
+    ) -> Result<QueryValue<Vec<ls_types::DocumentSymbol>>, QueryError>;
 
     async fn inlay_hint(
         input: DocumentRangeSnapshot,
-    ) -> EngineResult<AnalysisOutcome<DocumentQueryResult<Vec<ls_types::InlayHint>>>>;
+    ) -> Result<QueryValue<Vec<ls_types::InlayHint>>, QueryError>;
 
     async fn workspace_symbol(
         query: String,
-    ) -> EngineResult<AnalysisOutcome<Vec<ls_types::WorkspaceSymbol>>>;
+    ) -> Result<QueryValue<Vec<ls_types::WorkspaceSymbol>>, QueryError>;
 
     async fn reindex_workspace() -> EngineResult<()>;
 

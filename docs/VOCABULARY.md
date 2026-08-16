@@ -18,9 +18,9 @@ This document aims to provide better intel on how these are used.
 - **Current body**: a function, const, or static body rebuilt from an editor document snapshot for
   one request. It can contain newly typed locals and expressions, while module-level declarations,
   traits, and impls still come from the saved project. It disappears when the request is done.
-- **Document query coverage**: tells us whether a document query managed to rebuild all current
-  information it normally needs. A partial result is still a normal best-effort result; it is not a
-  request failure or a fake empty answer.
+- **Current body build summary**: records which editor bodies were rebuilt for one request and why
+  another crate interpretation could not be rebuilt. This is diagnostic information about the
+  build, not another kind of query result.
 - **Global operation**: a cross-file query such as references, rename, or goto implementation. Its
   identities and source locations come from the saved project, so it checks relevant open documents
   first and asks for a save if those locations cannot be used safely.

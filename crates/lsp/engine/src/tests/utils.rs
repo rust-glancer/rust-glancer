@@ -16,11 +16,10 @@ use ls_types::{
     TextEdit, WorkspaceEdit,
 };
 use rg_lsp_proto::{
-    AnalysisAbort, AnalysisConfig, AnalysisOutcome, CapturedSourceInput,
-    CompletionClientCapabilities, DocumentQueryResult, DocumentRevision, EditorDocumentSnapshot,
-    EngineConfig, EngineResult, EngineService, GlobalOperationResult, GlobalPositionSnapshot,
-    OpenDocumentSession, OpenDocumentsRevision, SaveProposal, SavedProjectChanges,
-    ServiceNotification, SysrootDiscovery, TargetDocumentRevision,
+    AnalysisConfig, CapturedSourceInput, CompletionClientCapabilities, DocumentRevision,
+    EditorDocumentSnapshot, EngineConfig, EngineResult, EngineService, GlobalPositionSnapshot,
+    OpenDocumentSession, OpenDocumentsRevision, QueryError, QueryValue, SaveProposal,
+    SavedProjectChanges, ServiceNotification, SysrootDiscovery, TargetDocumentRevision,
 };
 use rg_parse::LineIndex;
 use tarpc::context;
@@ -42,46 +41,14 @@ pub(super) struct LspEngineFixture {
 }
 
 impl LspEngineFixture {
-    fn expect_ready<T>(outcome: AnalysisOutcome<T>, operation: &str) -> T {
-        match outcome {
-            AnalysisOutcome::Ready(ready) => ready.into_value(),
-            AnalysisOutcome::Aborted(abort) => {
-                panic!("{operation} aborted unexpectedly: {abort:?}")
-            }
-        }
-    }
-
-    fn expect_document_ready<T>(
-        outcome: AnalysisOutcome<DocumentQueryResult<T>>,
-        operation: &str,
-    ) -> T {
-        Self::expect_ready(outcome, operation).into_value()
-    }
-
-    fn expect_global_ready<T>(
-        outcome: AnalysisOutcome<GlobalOperationResult<T>>,
-        operation: &str,
-    ) -> T {
-        match Self::expect_ready(outcome, operation) {
-            GlobalOperationResult::Ready(value) => value,
-            GlobalOperationResult::SaveRequired { path } => {
-                panic!(
-                    "{operation} unexpectedly requires saving {}",
-                    path.display()
-                )
-            }
-        }
-    }
-
     fn expect_save_required<T>(
-        outcome: AnalysisOutcome<GlobalOperationResult<T>>,
+        outcome: Result<QueryValue<T>, QueryError>,
         operation: &str,
     ) -> PathBuf {
-        match Self::expect_ready(outcome, operation) {
-            GlobalOperationResult::SaveRequired { path } => path,
-            GlobalOperationResult::Ready(_) => {
-                panic!("{operation} unexpectedly ran against unsaved source")
-            }
+        match outcome {
+            Err(QueryError::SaveRequired { path }) => path,
+            Ok(_) => panic!("{operation} unexpectedly ran against unsaved source"),
+            Err(error) => panic!("{operation} failed unexpectedly: {error}"),
         }
     }
 
@@ -461,8 +428,7 @@ impl LspEngineFixture {
                 self.global_position_snapshot(path.clone(), position),
                 true,
             )
-            .await
-            .expect("dirty references query should return an operational result");
+            .await;
         let implementation = self
             .service
             .clone()
@@ -470,8 +436,7 @@ impl LspEngineFixture {
                 context::current(),
                 self.global_position_snapshot(path.clone(), position),
             )
-            .await
-            .expect("dirty implementation query should return an operational result");
+            .await;
         let prepare_rename = self
             .service
             .clone()
@@ -479,8 +444,7 @@ impl LspEngineFixture {
                 context::current(),
                 self.global_position_snapshot(path.clone(), position),
             )
-            .await
-            .expect("dirty prepare-rename query should return an operational result");
+            .await;
         let rename = self
             .service
             .clone()
@@ -489,8 +453,7 @@ impl LspEngineFixture {
                 self.global_position_snapshot(path.clone(), position),
                 new_name.to_string(),
             )
-            .await
-            .expect("dirty rename query should return an operational result");
+            .await;
 
         for required_path in [
             Self::expect_save_required(references, "dirty references query"),
@@ -537,7 +500,7 @@ impl LspEngineFixture {
             .rename(context::current(), input, new_name.to_string())
             .await
             .expect("rename query should succeed");
-        let edit = Self::expect_global_ready(outcome, "rename query");
+        let edit = outcome.into_value();
 
         let mut rendered = String::new();
         writeln!(rendered, "{title}").expect("snapshot should be writable");
@@ -548,11 +511,11 @@ impl LspEngineFixture {
         expect.assert_eq(&rendered);
     }
 
-    pub(super) async fn check_rename_abort(
+    pub(super) async fn check_rename_error(
         &self,
         marker: &'static str,
         new_name: &'static str,
-        expected: AnalysisAbort,
+        expected: QueryError,
     ) {
         let path = self.marker_path(QueryMarkers::Saved, marker);
         let position = self.marker_position(QueryMarkers::Saved, marker);
@@ -561,10 +524,9 @@ impl LspEngineFixture {
             .service
             .clone()
             .rename(context::current(), input, new_name.to_string())
-            .await
-            .expect("aborted rename query should return an operational outcome");
+            .await;
 
-        assert_eq!(outcome, AnalysisOutcome::Aborted(expected));
+        assert_eq!(outcome, Err(expected));
     }
 
     pub(super) async fn check_formatting(
@@ -582,7 +544,7 @@ impl LspEngineFixture {
             )
             .await
             .expect("formatting query should succeed");
-        let edits = Self::expect_document_ready(outcome, "formatting query");
+        let edits = outcome.into_value();
 
         let mut rendered = String::new();
         writeln!(rendered, "{title}").expect("snapshot should be writable");
@@ -615,7 +577,7 @@ impl LspEngineFixture {
                     .goto_definition(context::current(), input)
                     .await
                     .expect("goto definition query should succeed");
-                let locations = Self::expect_document_ready(outcome, "goto definition query");
+                let locations = outcome.into_value();
 
                 writeln!(rendered, "{title}").expect("snapshot should be writable");
                 self.render_locations(rendered, &locations);
@@ -630,7 +592,7 @@ impl LspEngineFixture {
                     .goto_type_definition(context::current(), input)
                     .await
                     .expect("goto type definition query should succeed");
-                let locations = Self::expect_document_ready(outcome, "goto type definition query");
+                let locations = outcome.into_value();
 
                 writeln!(rendered, "{title}").expect("snapshot should be writable");
                 self.render_locations(rendered, &locations);
@@ -645,7 +607,7 @@ impl LspEngineFixture {
                     .goto_implementation(context::current(), input)
                     .await
                     .expect("goto implementation query should succeed");
-                let locations = Self::expect_global_ready(outcome, "goto implementation query");
+                let locations = outcome.into_value();
 
                 writeln!(rendered, "{title}").expect("snapshot should be writable");
                 self.render_locations(rendered, &locations);
@@ -664,7 +626,7 @@ impl LspEngineFixture {
                     .references(context::current(), input, *include_declaration)
                     .await
                     .expect("references query should succeed");
-                let locations = Self::expect_global_ready(outcome, "references query");
+                let locations = outcome.into_value();
 
                 writeln!(rendered, "{title}").expect("snapshot should be writable");
                 self.render_locations(rendered, &locations);
@@ -679,7 +641,7 @@ impl LspEngineFixture {
                     .hover(context::current(), input)
                     .await
                     .expect("hover query should succeed");
-                let hover = Self::expect_document_ready(outcome, "hover query");
+                let hover = outcome.into_value();
 
                 writeln!(rendered, "{title}").expect("snapshot should be writable");
                 self.render_hover(rendered, path.as_path(), hover.as_ref());
@@ -694,7 +656,7 @@ impl LspEngineFixture {
                     .document_highlight(context::current(), input)
                     .await
                     .expect("document highlight query should succeed");
-                let highlights = Self::expect_document_ready(outcome, "document highlight query");
+                let highlights = outcome.into_value();
 
                 writeln!(rendered, "{title}").expect("snapshot should be writable");
                 Self::render_document_highlights(rendered, &highlights);
@@ -715,11 +677,11 @@ impl LspEngineFixture {
                     )
                     .await
                     .expect("completion query should succeed");
-                let completions = Self::expect_ready(outcome, "completion query");
-                Self::assert_completion_edits_fit_source(&current_text, completions.value());
+                let completions = outcome.into_value();
+                Self::assert_completion_edits_fit_source(&current_text, &completions);
 
                 writeln!(rendered, "{title}").expect("snapshot should be writable");
-                self.render_completions(rendered, path.as_path(), completions.value());
+                self.render_completions(rendered, path.as_path(), &completions);
             }
             LspQuery::DocumentSymbol { title, path } => {
                 let document = self.document_snapshot(self.fixture.path(path));
@@ -729,7 +691,7 @@ impl LspEngineFixture {
                     .document_symbol(context::current(), document)
                     .await
                     .expect("document symbol query should succeed");
-                let symbols = Self::expect_document_ready(outcome, "document symbol query");
+                let symbols = outcome.into_value();
 
                 writeln!(rendered, "{title}").expect("snapshot should be writable");
                 self.render_document_symbols(rendered, &symbols, 0);
@@ -752,7 +714,7 @@ impl LspEngineFixture {
                     .inlay_hint(context::current(), input)
                     .await
                     .expect("inlay hint query should succeed");
-                let hints = Self::expect_document_ready(outcome, "inlay hint query");
+                let hints = outcome.into_value();
 
                 writeln!(rendered, "{title}").expect("snapshot should be writable");
                 Self::render_inlay_hints(rendered, &hints);

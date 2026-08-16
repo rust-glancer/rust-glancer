@@ -16,14 +16,11 @@ use rg_analysis::{
     Analysis as QueryAnalysis, ReferenceQuery, ReferenceSearchFile, RenameEdit, RenameTarget,
 };
 use rg_ir_model::CrateRef;
-use rg_lsp_proto::{
-    DocumentPositionSnapshot, DocumentQueryCoverage, DocumentQueryResult, GlobalOperationResult,
-    GlobalPositionSnapshot,
-};
+use rg_lsp_proto::{DocumentPositionSnapshot, GlobalPositionSnapshot};
 use rg_project::{AnalysisSurface, FileContext, ProjectSnapshot};
 use rg_std::UniqueVec;
 
-use super::{DocumentSelection, QueryCancellation, QueryRunner};
+use super::{DocumentSelection, QueryCancellation, QueryRunError, QueryRunner};
 use crate::proto::{references as references_proto, rename as rename_proto};
 
 /// Source coverage selected before a reference-like query can run.
@@ -131,9 +128,12 @@ impl QueryRunner<'_> {
         &mut self,
         input: GlobalPositionSnapshot,
         include_declaration: bool,
-    ) -> anyhow::Result<GlobalOperationResult<Vec<ls_types::Location>>> {
-        if let Some(path) = self.save_required_for_global_operation(&input)? {
-            return Ok(GlobalOperationResult::save_required(path));
+    ) -> Result<Vec<ls_types::Location>, QueryRunError> {
+        if let Some(path) = self
+            .save_required_for_global_operation(&input)
+            .context("check references source safety")?
+        {
+            return Err(QueryRunError::SaveRequired(path));
         }
         let document = Self::global_operation_target(&input)?;
         let path = document.source_path().to_path_buf();
@@ -187,16 +187,19 @@ impl QueryRunner<'_> {
             "references query finished"
         );
 
-        Ok(GlobalOperationResult::ready(locations))
+        Ok(locations)
     }
 
     /// Return a rename range only for a workspace-owned target whose source still matches.
     pub(crate) fn prepare_rename(
         &mut self,
         input: GlobalPositionSnapshot,
-    ) -> anyhow::Result<GlobalOperationResult<Option<ls_types::PrepareRenameResponse>>> {
-        if let Some(path) = self.save_required_for_global_operation(&input)? {
-            return Ok(GlobalOperationResult::save_required(path));
+    ) -> Result<Option<ls_types::PrepareRenameResponse>, QueryRunError> {
+        if let Some(path) = self
+            .save_required_for_global_operation(&input)
+            .context("check prepare-rename source safety")?
+        {
+            return Err(QueryRunError::SaveRequired(path));
         }
         let document = Self::global_operation_target(&input)?;
         let path = document.source_path().to_path_buf();
@@ -250,7 +253,7 @@ impl QueryRunner<'_> {
             "prepare rename query finished"
         );
 
-        Ok(GlobalOperationResult::ready(response))
+        Ok(response)
     }
 
     /// Build one all-or-nothing workspace edit from every matching crate context.
@@ -261,9 +264,12 @@ impl QueryRunner<'_> {
         &mut self,
         input: GlobalPositionSnapshot,
         new_name: String,
-    ) -> anyhow::Result<GlobalOperationResult<Option<ls_types::WorkspaceEdit>>> {
-        if let Some(path) = self.save_required_for_global_operation(&input)? {
-            return Ok(GlobalOperationResult::save_required(path));
+    ) -> Result<Option<ls_types::WorkspaceEdit>, QueryRunError> {
+        if let Some(path) = self
+            .save_required_for_global_operation(&input)
+            .context("check rename source safety")?
+        {
+            return Err(QueryRunError::SaveRequired(path));
         }
         let document = Self::global_operation_target(&input)?;
         let path = document.source_path().to_path_buf();
@@ -327,7 +333,7 @@ impl QueryRunner<'_> {
             "rename query finished"
         );
 
-        Ok(GlobalOperationResult::ready(edit))
+        Ok(edit)
     }
 
     /// Reuse file-scoped reference search to highlight occurrences in the requested document.
@@ -335,7 +341,7 @@ impl QueryRunner<'_> {
         &mut self,
         input: DocumentPositionSnapshot,
         cancellation: &QueryCancellation<'_>,
-    ) -> anyhow::Result<DocumentQueryResult<Vec<ls_types::DocumentHighlight>>> {
+    ) -> Result<Vec<ls_types::DocumentHighlight>, QueryRunError> {
         let (document, position) = input.into_parts();
         let path = document.source_path().to_path_buf();
         let started = Instant::now();
@@ -348,10 +354,7 @@ impl QueryRunner<'_> {
             )
             .context("prepare document highlights")?
         else {
-            return Ok(DocumentQueryResult::new(
-                Vec::new(),
-                DocumentQueryCoverage::Partial,
-            ));
+            return Ok(Vec::new());
         };
         let mut highlights = UniqueVec::new();
         let offset = current.offset();
@@ -379,20 +382,17 @@ impl QueryRunner<'_> {
             }
         }
         let highlights = highlights.into_vec();
-        let coverage = current.coverage();
-
         tracing::trace!(
             path = %path.display(),
             line = position.line,
             character = position.character,
             result_count = highlights.len(),
             source = current.source.name(),
-            coverage = ?coverage,
             elapsed_ms = started.elapsed().as_millis(),
             "document highlight query finished"
         );
 
-        Ok(DocumentQueryResult::new(highlights, coverage))
+        Ok(highlights)
     }
 
     /// Resolve the declaration scope and choose a safe text-prefiltered file set when possible.

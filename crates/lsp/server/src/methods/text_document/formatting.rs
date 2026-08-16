@@ -19,7 +19,7 @@ pub(crate) async fn formatting(
             },
         )
         .await;
-    let edits = ctx.finish_document_read(result)?;
+    let edits = ctx.finish_target_query(result)?;
     tracing::trace!(
         result_count = edits.as_ref().map(Vec::len),
         "formatting request answered"
