@@ -6,8 +6,8 @@
 
 ## Development commands
 
-The recommended way to work with the project is via the [project Justfile](../Justfile) and
-the [extension Justfile](../editors/code/Justfile).
+The recommended way to work with the project is via the [project Justfile](../../Justfile) and
+the [extension Justfile](../../editors/code/Justfile).
 
 Extension `just` commands can be invoked via submodules, e.g. `just client build`.
 
