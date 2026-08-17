@@ -36,6 +36,8 @@ build:
     cargo build --workspace --release
 
 package-vsix:
+    just client::install
+    just client::build
     just client::package-vsix
 
 bench:

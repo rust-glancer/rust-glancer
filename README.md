@@ -1,37 +1,39 @@
 # rust-glancer
 
-[![CodSpeed](https://img.shields.io/endpoint?url=https://codspeed.io/badge.json)](https://codspeed.io/rust-glancer/rust-glancer?utm_source=badge)
+An experimental LSP implementation that is optimized for low memory usage and
+~instant editor restarts.
 
-An incomplete-by-design LSP that trades completeness for speed and memory.
-`rust-analyzer` is great, but it is just too heavy.
+This project aims to be 90% complete, being complete enough for day-to-day work
+without trying to be rust-analyzer 2.0.
 
-This project aims to get you 70% there, with most low-hanging fruit supported,
-but not more.
+See [the project docs](https://rust-glancer.github.io/docs) for more details.
 
-See [SCOPE](docs/SCOPE.md) to see the idea behind the project, and [ARCHITECTURE](docs/ARCHITECTURE.md)
-to understand how it works and how it's different from `rust-analyzer`.
+## Installation
+
+Covered in [docs](docs/src/usage/INSTALL.md).
 
 ## AI use disclaimer
 
-This project was created with heavy use of LLMs. It is not vibe coded and it is not AI slop, though.
-If you want to learn about AI journey, how it went wrong, and how it become right again, [see this PR](https://github.com/rust-glancer/rust-glancer/pull/78).
+This project is being built with heavy use of LLMs.
+LLMs are used as a tool, not as a brain replacement.
 
-At no point were LLMs used as a replacement for a brain. So if you consider it to be slop, then it is _my_ slop.
+I do consider the code to be _my_, and I am spending a lot of time caring about the code
+quality. So I consider it to be rather readable and maintainable. It might not be the
+idiomatic example of compiler-adjacent tooling (I don't have that much domain experience),
+but I am working on improving it as I work on it.
 
-Keep in mind, however, that I am not an LSP expert. I learn as I build it, so if something is not good enough, _eventually_ I will notice and fix this. It's all a part of journey, and not every code smell is caused by AI (though many certainly are).
+So if it is slop, then it is _my_ slop, and the best way to help is to tell me what's
+wrong. This way I will be able to learn something and hopefully make the project better.
 
 ## Acknowledgements
 
-The `rust-analyzer` project is great, and some parts are heavily influenced by or even borrowed from there.
-I truly believe that success of Rust as a language can be attributed, among other reasons, to having such
-a cool LSP.
-
-As a result, this project is not a _replacement_ for `rust-analyzer`; it is an _alternative_ for those
-who are ready for some compromises.
+[rust-analyzer](https://github.com/rust-lang/rust-analyzer) is an obvious inspiration, motivation, source of learning material and the place where I've hijacked a ton of ideas. Rust is lucky to have such a great LSP, and everyone working on it is awesome.
+[chalk](https://github.com/rust-lang/chalk) turned out a really pleasant project to integrate, and it comes with [lovely documentation](https://rust-lang.github.io/chalk/book/)
+Without [jemalloc](https://github.com/jemalloc/jemalloc) and [tikv-jemallocator](https://github.com/tikv/jemallocator) this project wouldn't have been possible. Not only it's awesome as an allocator, but it's also saved me hundreds of hours profiling allocations.
 
 ## Contributing
 
-See [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md).
+See [docs/src/intro/CONTRIBUTING.md](docs/src/intro/CONTRIBUTING.md).
 
 ## License
 

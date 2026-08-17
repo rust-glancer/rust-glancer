@@ -122,6 +122,17 @@ jobs:
       - name: Run cargo deny
         run: cargo deny check
 
+  docs:
+    name: docs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: taiki-e/install-action@16b05812d776ae1dfaabc8277e421fb6d2506419 # v2.82.7
+        with:
+          tool: mdbook@0.5.4
+      - name: Build documentation
+        run: mdbook build docs
+
   pr-checks:
     name: pr-checks
     runs-on: ubuntu-latest
@@ -131,6 +142,7 @@ jobs:
       - test-targets
       - client
       - vsix-package
+      - docs
     steps:
       - name: Decide on PR checks
         uses: re-actors/alls-green@05ac9388f0aebcb5727afa17fcccfecd6f8ec5fe # v1.2.2

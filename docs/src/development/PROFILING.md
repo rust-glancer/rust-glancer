@@ -6,7 +6,7 @@ It comes in three flavors:
 - Memory profiling
 - Stats gathering.
 
-Profiling is done primarily with [rg_profile](../../crates/lib/profile/) crate.
+Profiling is done primarily with [rg_profile](https://github.com/rust-glancer/rust-glancer/tree/main/crates/lib/profile) crate.
 It provides a way to declare profiling descriptors of different kinds, e.g.
 counters, gauges, named metrics families, and checkpoints.
 
@@ -18,8 +18,8 @@ filtering: `foo.bar` enables [`foo.bar`, `foo`], but not `foo.bar.baz`, which is
 convenient for enabling profiling up to a certain level.
 
 The best way to learn the syntax is to look for examples, primarily in the 
-[rg_project](../../crates/engine/project/) crate, and to see doc-comment on the
-[`declare_metrics` macro](../../crates/lib/profile/src/macros.rs).
+[rg_project](https://github.com/rust-glancer/rust-glancer/tree/main/crates/engine/project) crate, and to see doc-comment on the
+[`declare_metrics` macro](https://github.com/rust-glancer/rust-glancer/blob/main/crates/lib/profile/src/macros.rs).
 
 ## Memory
 
