@@ -17,7 +17,7 @@ meaningless to run both.
 ## VS Code
 
 You have two options:
-1. [Install the extension from the official marketplace](TODO).
+1. [Install the extension from the official marketplace](https://marketplace.visualstudio.com/items?itemName=rust-glancer.rust-glancer).
 2. Build and install VSIX from the repository.
 
 The extension is maintained and will be updated, but given that VS Code extensions
