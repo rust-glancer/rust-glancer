@@ -1,4 +1,4 @@
-# Architecture
+# Architecture overview
 
 This project implements an LSP server and VS Code LSP client extension.
 The server supports multiple workspace folders per project, and at a high level

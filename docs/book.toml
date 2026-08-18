@@ -1,0 +1,18 @@
+[book]
+title = "rust-glancer"
+authors = ["Igor Aleksanov"]
+description = "Documentation for the rust-glancer Rust language server."
+language = "en"
+src = "src"
+
+[rust]
+edition = "2024"
+
+[build]
+build-dir = "../target/book"
+create-missing = false
+
+[output.html]
+git-repository-url = "https://github.com/rust-glancer/rust-glancer"
+git-repository-icon = "fab-github"
+edit-url-template = "https://github.com/rust-glancer/rust-glancer/edit/main/docs/{path}"

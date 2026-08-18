@@ -1600,7 +1600,7 @@ checksum = "dc897dd8d9e8bd1ed8cdad82b5966c3e0ecae09fb1907d58efaa013543185d0a"
 
 [[package]]
 name = "rg_analysis"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "anyhow",
  "derive_more",
@@ -1619,7 +1619,7 @@ dependencies = [
 
 [[package]]
 name = "rg_arena"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "rg_std",
  "wincode",
@@ -1627,7 +1627,7 @@ dependencies = [
 
 [[package]]
 name = "rg_body_ir"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "anyhow",
  "derive_more",
@@ -1653,7 +1653,7 @@ dependencies = [
 
 [[package]]
 name = "rg_cfg_eval"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "rg_std",
  "rg_syntax",
@@ -1662,7 +1662,7 @@ dependencies = [
 
 [[package]]
 name = "rg_codegen"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -1676,7 +1676,7 @@ dependencies = [
 
 [[package]]
 name = "rg_def_map"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "anyhow",
  "derive_more",
@@ -1700,7 +1700,7 @@ dependencies = [
 
 [[package]]
 name = "rg_ir_model"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "derive_more",
  "rg_arena",
@@ -1713,7 +1713,7 @@ dependencies = [
 
 [[package]]
 name = "rg_ir_view"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "anyhow",
  "derive_more",
@@ -1732,7 +1732,7 @@ dependencies = [
 
 [[package]]
 name = "rg_item_tree"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "anyhow",
  "derive_more",
@@ -1756,7 +1756,7 @@ dependencies = [
 
 [[package]]
 name = "rg_lsp_engine"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "anyhow",
  "cargo_metadata",
@@ -1784,7 +1784,7 @@ dependencies = [
 
 [[package]]
 name = "rg_lsp_proto"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "anyhow",
  "ls-types",
@@ -1796,7 +1796,7 @@ dependencies = [
 
 [[package]]
 name = "rg_lsp_server"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "anyhow",
  "futures",
@@ -1816,7 +1816,7 @@ dependencies = [
 
 [[package]]
 name = "rg_macro_expand"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "anyhow",
  "expect-test",
@@ -1834,7 +1834,7 @@ dependencies = [
 
 [[package]]
 name = "rg_macro_runtime"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "anyhow",
  "rayon",
@@ -1848,7 +1848,7 @@ dependencies = [
 
 [[package]]
 name = "rg_package_store"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "rg_std",
  "rg_workspace",
@@ -1857,7 +1857,7 @@ dependencies = [
 
 [[package]]
 name = "rg_parse"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "anyhow",
  "expect-test",
@@ -1874,7 +1874,7 @@ dependencies = [
 
 [[package]]
 name = "rg_parser"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "drop_bomb",
  "edition",
@@ -1888,11 +1888,11 @@ dependencies = [
 
 [[package]]
 name = "rg_profile"
-version = "0.1.0"
+version = "0.0.0"
 
 [[package]]
 name = "rg_project"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "anyhow",
  "atomic-write-file",
@@ -1926,7 +1926,7 @@ dependencies = [
 
 [[package]]
 name = "rg_semantic_ir"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "anyhow",
  "derive_more",
@@ -1945,7 +1945,7 @@ dependencies = [
 
 [[package]]
 name = "rg_source"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "blake3",
  "rg_std",
@@ -1955,7 +1955,7 @@ dependencies = [
 
 [[package]]
 name = "rg_std"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "ls-types",
  "rg_std_derive",
@@ -1964,7 +1964,7 @@ dependencies = [
 
 [[package]]
 name = "rg_std_derive"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1973,7 +1973,7 @@ dependencies = [
 
 [[package]]
 name = "rg_syntax"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "either",
  "expect-test",
@@ -1993,7 +1993,7 @@ dependencies = [
 
 [[package]]
 name = "rg_text"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "rg_std",
  "wincode",
@@ -2001,7 +2001,7 @@ dependencies = [
 
 [[package]]
 name = "rg_tt"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "ra-ap-rustc_lexer",
  "rg_parser",
@@ -2015,7 +2015,7 @@ dependencies = [
 
 [[package]]
 name = "rg_ty"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "chalk-engine",
  "chalk-ir",
@@ -2035,14 +2035,14 @@ dependencies = [
 
 [[package]]
 name = "rg_wincode_utils"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "wincode",
 ]
 
 [[package]]
 name = "rg_workspace"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "cargo_metadata",
  "derive_more",
@@ -2057,7 +2057,7 @@ dependencies = [
 
 [[package]]
 name = "rust-glancer"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -2401,7 +2401,7 @@ dependencies = [
 
 [[package]]
 name = "test_fixture"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "cargo_metadata",
  "tempfile",

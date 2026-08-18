@@ -107,7 +107,7 @@ Important caveat: this table prints data _after the phase_, so it does not repre
 allocation, which can be much higher during the phase because of transient allocations.
 For peak RSS, extra profiling might be required.
 
-[ra]: ../test_targets/bench_fixtures/fetch-rust-analyzer.sh
+[ra]: https://github.com/rust-glancer/rust-glancer/blob/main/test_targets/bench_fixtures/fetch-rust-analyzer.sh
 
 ### Layered allocations
 

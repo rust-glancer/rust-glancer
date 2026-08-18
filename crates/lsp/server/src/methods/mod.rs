@@ -28,12 +28,16 @@ pub(crate) use self::{
 pub(crate) mod text_document;
 pub(crate) mod workspace;
 
+// Cargo package versions intentionally stay at 0.0.0. Release Please updates this artifact version
+// so the server reports the same version as the published extension.
+const SERVER_VERSION: &str = "0.1.0"; // x-release-please-version
+
 pub(crate) fn initialize() -> InitializeResult {
     InitializeResult {
         capabilities: capabilities::server_capabilities(),
         server_info: Some(ServerInfo {
             name: "rust-glancer".to_string(),
-            version: Some(env!("CARGO_PKG_VERSION").to_string()),
+            version: Some(SERVER_VERSION.to_string()),
         }),
         offset_encoding: None,
     }

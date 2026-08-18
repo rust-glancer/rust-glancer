@@ -7,7 +7,7 @@
   "license": "MIT OR Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "https://github.com/popzxc/rust-glancer"
+    "url": "https://github.com/rust-glancer/rust-glancer"
   },
   "engines": {
     "vscode": "^1.119.0"

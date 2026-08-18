@@ -6,8 +6,8 @@
 
 ## Development commands
 
-The recommended way to work with the project is via the [project Justfile](../Justfile) and
-the [extension Justfile](../editors/code/Justfile).
+The recommended way to work with the project is via the [project Justfile](https://github.com/rust-glancer/rust-glancer/blob/main/Justfile) and
+the [extension Justfile](https://github.com/rust-glancer/rust-glancer/blob/main/editors/code/Justfile).
 
 Extension `just` commands can be invoked via submodules, e.g. `just client build`.
 
@@ -31,7 +31,7 @@ This project has commands to measure memory usage, profile, and benchmark the pr
 For profiling and measuring memory, check out:
 
 ```sh
-cargo run --release -- analyze --help
+just analyze --help
 ```
 
 Note that measuring memory affects profiling, so don't interpret the phase timings
