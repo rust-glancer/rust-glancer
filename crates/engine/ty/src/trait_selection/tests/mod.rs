@@ -1,8 +1,41 @@
 mod utils;
 
 use expect_test::expect;
+use rg_ir_model::{TypeAliasId, TypeAliasRef};
 
 use self::utils::*;
+use crate::inference::InferenceTable;
+use crate::{GenericArg, ProjectionTy};
+
+#[test]
+fn projection_cycle_identity_ignores_fresh_inference_slots() {
+    let mut table = InferenceTable::new();
+    let first_slot = table.new_type_var();
+    let fresh_slot = table.new_type_var();
+    let associated_ty = TypeAliasRef {
+        origin: origin(),
+        id: TypeAliasId(0),
+    };
+    let first = ProjectionTy {
+        associated_ty,
+        args: vec![GenericArg::Type(Box::new(first_slot))].into(),
+    };
+    let repeated = ProjectionTy {
+        associated_ty,
+        args: vec![GenericArg::Type(Box::new(fresh_slot))].into(),
+    };
+    let unrelated = ProjectionTy {
+        associated_ty: TypeAliasRef {
+            origin: origin(),
+            id: TypeAliasId(1),
+        },
+        args: repeated.args.clone(),
+    };
+
+    assert_ne!(first, repeated);
+    assert!(first.equivalent_modulo_inference_ids(&repeated));
+    assert!(!first.equivalent_modulo_inference_ids(&unrelated));
+}
 
 #[test]
 fn probe_selects_direct_from_iterator_impl_and_solves_destination_arg() {

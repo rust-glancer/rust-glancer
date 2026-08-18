@@ -144,6 +144,14 @@ pub struct ProjectionTy {
     pub args: GenericArgs,
 }
 
+impl ProjectionTy {
+    /// Compare projections after bijectively renaming transient inference-variable IDs.
+    pub(crate) fn equivalent_modulo_inference_ids(&self, other: &Self) -> bool {
+        self.associated_ty == other.associated_ty
+            && self.args.equivalent_modulo_inference_ids(&other.args)
+    }
+}
+
 /// One opaque `impl Trait` occurrence instantiated with its owner's generic arguments.
 ///
 /// In `fn make<T>() -> impl Iterator<Item = T>`, `opaque` identifies this particular `impl Trait`

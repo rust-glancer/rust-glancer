@@ -334,7 +334,12 @@ where
                     associated_ty: alias.associated_ty,
                     args: self.normalize_args(&alias.args, table, active, candidate_evidence)?,
                 };
-                if active.contains(&alias) {
+                // Solver retries can reproduce one projection with freshly allocated inference
+                // slots. Their numeric IDs differ, but they still describe the same obligation.
+                if active
+                    .iter()
+                    .any(|active_alias| active_alias.equivalent_modulo_inference_ids(&alias))
+                {
                     return Ok(Ty::Alias(AliasTy::Projection(alias)));
                 }
 
