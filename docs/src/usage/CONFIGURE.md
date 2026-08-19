@@ -48,13 +48,16 @@ For example:
 }
 ```
 
+Another (maybe) important configuration is `Indexing: Performance Preference`:
+`lower-peak-memory` makes the indexer use less concurrency, making it slower, but also reducing peak
+allocations during indexing. Exact reduction can vary by machine/os/project, so if the default
+(faster builds) does not work for you and you are affected by high peak RAM, you can try changing
+this option.
+
 ## Tweaking options
 
 Following settings _can_ be changed, but probably shouldn't.
 
-- `Indexing: Performance Preference`: `lower-peak-memory` makes the indexer use less concurrency,
-  making it slower, but also reducing peak allocations during indexing. Exact reduction can vary
-  by machine/os/project, but based on anecdotal measurements I've had, it's <20% from peak burst.
 - `Cache: Package Residency`: you can make it so that not everything is offloaded to the filesystem.
   In theory, it can make Rust Glancer faster. In practice, if you don't care about memory usage,
   `rust-analyzer` will probably work better for you.
