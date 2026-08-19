@@ -200,38 +200,40 @@ where
         subst: &InferenceSubstitution,
         table: &InferenceTable,
     ) -> Result<TraitProof, I::Error> {
-        self.prove_clauses_with_candidate_evidence(clauses, subst, table, CandidateEvidence::Probe)
+        self.prove_clauses_with_candidate_evidence(clauses, subst, table, CandidateEvidence::ROOT)
     }
 
-    /// Prove predicates belonging to a native candidate without selecting that candidate again.
+    /// Prove predicates belonging to a native candidate without recursively selecting an impl
+    /// already on the same proof path.
     ///
-    /// Candidate selection may recursively encounter projections in the candidate's own bounds.
-    /// Chalk's forest owns cycle handling there; native projection probes are reserved for callers
-    /// that enter through the outer semantic-query boundary.
+    /// A candidate's predicates may project through an unrelated predicate-free impl. That direct
+    /// declaration is useful native evidence; candidates that need another proof remain together
+    /// in the outer Chalk goal.
     fn prove_candidate_clauses(
         &self,
         clauses: &[Clause],
         subst: &InferenceSubstitution,
         table: &InferenceTable,
+        active_impls: &[ImplRef],
     ) -> Result<TraitProof, I::Error> {
         self.prove_clauses_with_candidate_evidence(
             clauses,
             subst,
             table,
-            CandidateEvidence::SolverOnly,
+            CandidateEvidence::within(active_impls),
         )
     }
 
     /// Normalize declaration predicates, try the native proof forms, then fall back to Chalk.
     ///
-    /// `candidate_evidence` controls only recursive associated-type normalization. Candidate proof
-    /// must not reselect the same impl while normalizing one of that impl's own predicates.
+    /// `candidate_evidence` controls only recursive associated-type normalization. Its active path
+    /// enables cheap declaration projection without recursively building a second trait engine.
     fn prove_clauses_with_candidate_evidence(
         &self,
         clauses: &[Clause],
         subst: &InferenceSubstitution,
         table: &InferenceTable,
-        candidate_evidence: CandidateEvidence,
+        candidate_evidence: CandidateEvidence<'_>,
     ) -> Result<TraitProof, I::Error> {
         if clauses.is_empty() {
             return Ok(TraitProof::Proven(table.clone()));
@@ -262,7 +264,7 @@ where
                         args.push(arg);
                     }
                     application.args = args.into();
-                    Clause::Implemented(application)
+                    Some(Clause::Implemented(application))
                 }
                 Clause::AliasEq { mut alias, ty } => {
                     let mut args = Vec::with_capacity(alias.args.len());
@@ -285,10 +287,40 @@ where
                     let (ty, next_table) =
                         self.normalize_ty_with_candidate_evidence(&ty, &table, candidate_evidence)?;
                     table = next_table;
-                    Clause::AliasEq { alias, ty }
+
+                    // A declaration-owned associated equality is itself a projection proof, not
+                    // merely a type containing projections. Resolve an exact selected value here
+                    // so the native impl-chain prover can consume the remaining ordinary bounds.
+                    // Ambiguous guidance may refine the table but keeps the equality for Chalk.
+                    let projection = self.normalize_projection_once(
+                        &alias,
+                        &table,
+                        candidate_evidence.native_only(),
+                    )?;
+                    if let Some(projection) = projection {
+                        let (projected_ty, applicability, projected_table) =
+                            projection.into_parts();
+                        table = projected_table;
+                        if table.try_unify(&projected_ty, &ty).is_err() {
+                            return Ok(TraitProof::NoSolution);
+                        }
+                        if applicability == TraitApplicability::Yes && !ty.has_unknown() {
+                            None
+                        } else {
+                            Some(Clause::AliasEq { alias, ty })
+                        }
+                    } else {
+                        Some(Clause::AliasEq { alias, ty })
+                    }
                 }
             };
-            normalized_clauses.push(table.canonicalize_clause(&clause));
+            if let Some(clause) = clause {
+                normalized_clauses.push(table.canonicalize_clause(&clause));
+            }
+        }
+
+        if normalized_clauses.is_empty() {
+            return Ok(TraitProof::Proven(table));
         }
 
         if let Some(proof) = NativeProofQuery::new(self).prove(&normalized_clauses, &table)? {
@@ -337,10 +369,23 @@ where
         goal: &TraitGoal,
         table: &InferenceTable,
     ) -> Result<(ExpectedUnique<TraitSelection>, bool), I::Error> {
+        self.probe_with_completeness_avoiding(goal, table, CandidateEvidence::ROOT)
+    }
+
+    /// Probe candidates while reserving active impls for the outer Chalk goal.
+    fn probe_with_completeness_avoiding(
+        &self,
+        goal: &TraitGoal,
+        table: &InferenceTable,
+        candidate_evidence: CandidateEvidence<'_>,
+    ) -> Result<(ExpectedUnique<TraitSelection>, bool), I::Error> {
+        let active_impls = candidate_evidence.active_impls();
         // A goal that carries live inference or closure identity must be re-evaluated with its
         // owning table. Fully stable semantic goals cannot change the caller's table, so cache only
-        // the selected impl/substitution and attach the caller's current table on a hit.
-        let cacheable = goal.is_cache_stable();
+        // the selected impl/substitution and attach the caller's current table on a hit. Recursive
+        // candidate proof cannot use this cache because a cached answer may itself be on the active
+        // path.
+        let cacheable = active_impls.is_empty() && goal.is_cache_stable();
         if cacheable
             && let Some(selection) = self.context.trait_selection().strict_selection(goal, table)
         {
@@ -360,7 +405,14 @@ where
         let mut maybe_selections = ExpectedUnique::new();
         let mut fully_evaluated = true;
         for candidate in candidates {
-            let selection = match self.select_candidate(goal, candidate)? {
+            if active_impls.contains(&candidate.trait_impl.impl_ref) {
+                // Returning an ordinary empty result here would incorrectly prove absence for a
+                // nominal receiver. Mark the probe incomplete so projection normalization enters
+                // Chalk, whose forest owns recursive semantic goals.
+                crate::profile::metric::NATIVE_CANDIDATE_CYCLES.inc();
+                return Ok((ExpectedUnique::new(), false));
+            }
+            let selection = match self.select_candidate(goal, candidate, candidate_evidence)? {
                 SemanticOutcome::Available(selection) => selection,
                 SemanticOutcome::Rejected => continue,
                 SemanticOutcome::Unavailable => {
@@ -450,7 +502,8 @@ where
         // cannot classify it. The trial starts from the caller's live inference state, so any
         // body-owned variables keep their original identities.
         let unavailable = candidate.clone();
-        let outcome = self.select_candidate_with_header(&goal, candidate, header)?;
+        let outcome =
+            self.select_candidate_with_header(&goal, candidate, header, CandidateEvidence::ROOT)?;
         let selection = match outcome {
             SemanticOutcome::Available(selection) => {
                 self.context
@@ -487,6 +540,7 @@ where
         &self,
         goal: &TraitGoal,
         candidate: TraitCandidate,
+        candidate_evidence: CandidateEvidence<'_>,
     ) -> Result<SemanticOutcome<TraitSelection>, I::Error> {
         let Some(header) = self.context.trait_selection().impl_header_with(
             self.context.item_paths(),
@@ -496,7 +550,7 @@ where
         else {
             return Ok(SemanticOutcome::Unavailable);
         };
-        self.select_candidate_with_header(goal, candidate, &header)
+        self.select_candidate_with_header(goal, candidate, &header, candidate_evidence)
     }
 
     /// Prove a candidate whose canonical header is already available to the caller.
@@ -505,6 +559,7 @@ where
         goal: &TraitGoal,
         candidate: TraitCandidate,
         header: &crate::ImplHeader,
+        candidate_evidence: CandidateEvidence<'_>,
     ) -> Result<SemanticOutcome<TraitSelection>, I::Error> {
         let TraitCandidate {
             trait_impl,
@@ -512,6 +567,16 @@ where
             mut applicability,
             mut table,
         } = candidate;
+
+        // Candidate-aware projection is a declaration shortcut, not recursive trait solving.
+        // A predicate-free impl can provide its associated value immediately. If this impl has
+        // conditions of its own, keep the original projection equality in the caller's combined
+        // Chalk goal; proving it here would branch candidate trees and materialize one program per
+        // leaf.
+        if !candidate_evidence.allows_solver_fallback() && !header.clauses.is_empty() {
+            crate::profile::metric::NATIVE_CANDIDATE_PREDICATE_DECLINES.inc();
+            return Ok(SemanticOutcome::Unavailable);
+        }
 
         let generics = self
             .context
@@ -523,8 +588,12 @@ where
         if header.clauses.is_empty() {
             crate::profile::metric::PREDICATE_FREE_CANDIDATES.inc();
         } else {
+            let active_impls = candidate_evidence.active_impls();
+            let mut candidate_path = Vec::with_capacity(active_impls.len() + 1);
+            candidate_path.extend_from_slice(active_impls);
+            candidate_path.push(trait_impl.impl_ref);
             let predicate_applicability =
-                self.prove_candidate_clauses(&header.clauses, &subst, &table)?;
+                self.prove_candidate_clauses(&header.clauses, &subst, &table, &candidate_path)?;
             match predicate_applicability {
                 TraitProof::Proven(proven_table) => table = proven_table,
                 TraitProof::Ambiguous(guided_table) => {

@@ -350,7 +350,7 @@ pub struct TraitRefLowering {
 ///
 /// A bound such as `T: Iterator<Item = User>` becomes one `Implemented` clause for
 /// `T: Iterator` and one `AliasEq` clause for `<T as Iterator>::Item = User`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Clause {
     Implemented(TraitApplication),
     AliasEq { alias: ProjectionTy, ty: Ty },

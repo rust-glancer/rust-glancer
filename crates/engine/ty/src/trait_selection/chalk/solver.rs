@@ -13,6 +13,7 @@
 //! opaque bounds, and other cases that need the complete program.
 
 use std::cell::Cell;
+use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -42,6 +43,7 @@ const INTER: RgChalkInterner = RgChalkInterner;
 const SOLVER_MAX_SIZE: usize = 32;
 const SETTLED_GOAL_QUANTUM_BUDGET: usize = 4_096;
 const SPECULATIVE_GOAL_QUANTUM_BUDGET: usize = 256;
+const UNRESOLVED_PROJECTION_GOAL_QUANTUM_BUDGET: usize = 256;
 // Program construction is not resumable like solver search. Avoid admitting a live inference goal
 // with a large receiver-compatible root set while it is likely to become more precise later.
 const SPECULATIVE_ROOT_IMPL_BUDGET: usize = 64;
@@ -121,6 +123,14 @@ pub(crate) struct ChalkTraitSolver {
 /// closures and inference slots, then drops the forests when the body finishes.
 pub(crate) struct ChalkInferenceCache {
     forests: Mutex<ChalkSolverForests>,
+    declined_proofs: Mutex<HashMap<Vec<Clause>, DeclinedProof>>,
+}
+
+/// A bounded adapter result that cannot become more precise without different input clauses.
+#[derive(Clone, Copy)]
+enum DeclinedProof {
+    Unsupported,
+    Exhausted,
 }
 
 /// Mutable crate program together with answers safe to reuse across bodies.
@@ -143,7 +153,29 @@ impl ChalkInferenceCache {
     pub(crate) fn new() -> Self {
         Self {
             forests: Mutex::new(ChalkSolverForests::new()),
+            declined_proofs: Mutex::new(HashMap::new()),
         }
+    }
+
+    /// Reuse only declines from this body's exact canonical clauses.
+    ///
+    /// Solver forests may resume incomplete search, but body inference should not spend another
+    /// full allowance on an unchanged obligation merely because an unrelated expression made the
+    /// outer fixed point run again. A changed inference solution produces different canonical
+    /// clauses and therefore gets a fresh attempt.
+    fn declined_proof(&self, clauses: &[Clause]) -> Option<DeclinedProof> {
+        self.declined_proofs
+            .lock()
+            .expect("Chalk declined-proof cache lock should not be poisoned")
+            .get(clauses)
+            .copied()
+    }
+
+    fn remember_declined_proof(&self, clauses: &[Clause], declined: DeclinedProof) {
+        self.declined_proofs
+            .lock()
+            .expect("Chalk declined-proof cache lock should not be poisoned")
+            .insert(clauses.to_vec(), declined);
     }
 }
 
@@ -170,6 +202,14 @@ impl ChalkTraitSolver {
         D: DefMapSource<Error = I::Error>,
         I: ItemStoreSource<'query>,
     {
+        if let Some(declined) = inference_cache.declined_proof(clauses) {
+            crate::profile::metric::DECLINED_GOAL_REUSES.inc();
+            return Ok(match declined {
+                DeclinedProof::Unsupported => ChalkOutcome::Unsupported,
+                DeclinedProof::Exhausted => ChalkOutcome::Exhausted,
+            });
+        }
+
         // Trait selection is allowed to refine arguments after `Self` has a selectable head; it
         // must not infer an unconstrained `Self` by enumerating every visible impl. Apart from
         // being an unbounded search in a large crate, choosing from today's impl set would be the
@@ -203,6 +243,7 @@ impl ChalkTraitSolver {
             }
         });
         if has_unknown {
+            inference_cache.remember_declined_proof(clauses, DeclinedProof::Unsupported);
             return Ok(ChalkOutcome::Unsupported);
         }
 
@@ -231,6 +272,7 @@ impl ChalkTraitSolver {
                         table,
                     )?);
                 if root_impl_count > SPECULATIVE_ROOT_IMPL_BUDGET {
+                    inference_cache.remember_declined_proof(clauses, DeclinedProof::Exhausted);
                     return Ok(ChalkOutcome::Exhausted);
                 }
             }
@@ -258,6 +300,7 @@ impl ChalkTraitSolver {
             );
         }
         if !supported {
+            inference_cache.remember_declined_proof(clauses, DeclinedProof::Unsupported);
             return Ok(ChalkOutcome::Unsupported);
         }
         let outcome = state.prove_clauses(clauses, table, inference_cache);
@@ -270,6 +313,15 @@ impl ChalkTraitSolver {
                 ChalkOutcome::Exhausted => "exhausted",
             };
             tracing::debug!(solver_outcome, "slow prepared Chalk proof finished");
+        }
+        match &outcome {
+            ChalkOutcome::Unsupported => {
+                inference_cache.remember_declined_proof(clauses, DeclinedProof::Unsupported);
+            }
+            ChalkOutcome::Exhausted => {
+                inference_cache.remember_declined_proof(clauses, DeclinedProof::Exhausted);
+            }
+            ChalkOutcome::Proven(_) | ChalkOutcome::Ambiguous(_) | ChalkOutcome::NoSolution => {}
         }
         Ok(outcome)
     }
@@ -448,9 +500,20 @@ impl ChalkSolverState {
                 alias.args.iter().any(|arg| arg.has_var()) || ty.has_var()
             }
         });
+        let has_unresolved_projection = clauses.iter().any(|clause| match clause {
+            Clause::Implemented(application) => {
+                application.args.iter().any(|arg| arg.has_projection())
+            }
+            Clause::AliasEq { .. } => true,
+        });
         let quantum_budget = if has_live_inference {
+            crate::profile::metric::SOLVER_GOAL_SHAPES.inc("impl_bounds.live_inference");
             SPECULATIVE_GOAL_QUANTUM_BUDGET
+        } else if has_unresolved_projection {
+            crate::profile::metric::SOLVER_GOAL_SHAPES.inc("impl_bounds.unresolved_projection");
+            UNRESOLVED_PROJECTION_GOAL_QUANTUM_BUDGET
         } else {
+            crate::profile::metric::SOLVER_GOAL_SHAPES.inc("impl_bounds.settled");
             SETTLED_GOAL_QUANTUM_BUDGET
         };
         let budget = SolverBudget::new(quantum_budget);
@@ -507,33 +570,54 @@ impl ChalkSolverState {
                 clause_count = clauses.len(),
                 quantum_budget,
                 has_live_inference,
+                has_unresolved_projection,
                 cache_scope = if cache_stable { "crate" } else { "body" },
                 "slow Chalk solver goal"
             );
         }
-        if budget.exhausted() {
-            return ChalkOutcome::Exhausted;
-        }
-        let Some(solution) = solution else {
-            return ChalkOutcome::NoSolution;
-        };
-        if solution.is_ambig() {
-            crate::profile::metric::SOLVER_AMBIGUOUS_GOALS.inc();
-        }
+        let outcome = 'outcome: {
+            if budget.exhausted() {
+                break 'outcome ChalkOutcome::Exhausted;
+            }
+            let Some(solution) = solution else {
+                break 'outcome ChalkOutcome::NoSolution;
+            };
+            if solution.is_ambig() {
+                crate::profile::metric::SOLVER_AMBIGUOUS_GOALS.inc();
+            }
 
-        let Some(subst) = solution.definite_subst(INTER) else {
-            return if solution.is_ambig() {
-                ChalkOutcome::Ambiguous(None)
-            } else {
-                ChalkOutcome::Proven(table.clone())
+            let Some(subst) = solution.definite_subst(INTER) else {
+                break 'outcome if solution.is_ambig() {
+                    ChalkOutcome::Ambiguous(None)
+                } else {
+                    ChalkOutcome::Proven(table.clone())
+                };
+            };
+            break 'outcome match Self::table_from_subst(&lowering.variables, &subst, table) {
+                Ok(table) if solution.is_ambig() => ChalkOutcome::Ambiguous(Some(table)),
+                Ok(table) => ChalkOutcome::Proven(table),
+                Err(AnswerFailure::Unsupported) => ChalkOutcome::Unsupported,
+                Err(AnswerFailure::Conflicting) => ChalkOutcome::NoSolution,
             };
         };
-        match Self::table_from_subst(&lowering.variables, &subst, table) {
-            Ok(table) if solution.is_ambig() => ChalkOutcome::Ambiguous(Some(table)),
-            Ok(table) => ChalkOutcome::Proven(table),
-            Err(AnswerFailure::Unsupported) => ChalkOutcome::Unsupported,
-            Err(AnswerFailure::Conflicting) => ChalkOutcome::NoSolution,
+        match &outcome {
+            ChalkOutcome::Proven(_) => {
+                crate::profile::metric::SOLVER_GOAL_OUTCOMES.inc("impl_bounds.proven");
+            }
+            ChalkOutcome::Ambiguous(_) => {
+                crate::profile::metric::SOLVER_GOAL_OUTCOMES.inc("impl_bounds.ambiguous");
+            }
+            ChalkOutcome::NoSolution => {
+                crate::profile::metric::SOLVER_GOAL_OUTCOMES.inc("impl_bounds.no_solution");
+            }
+            ChalkOutcome::Unsupported => {
+                crate::profile::metric::SOLVER_GOAL_OUTCOMES.inc("impl_bounds.unsupported");
+            }
+            ChalkOutcome::Exhausted => {
+                crate::profile::metric::SOLVER_GOAL_OUTCOMES.inc("impl_bounds.exhausted");
+            }
         }
+        outcome
     }
 
     fn normalize_assoc_type(
@@ -621,6 +705,13 @@ impl ChalkSolverState {
 
         let canonical_goal = chalk_goal.into_peeled_goal(INTER);
         crate::profile::metric::SOLVER_GOALS.inc();
+        if selected_impl.is_some() {
+            crate::profile::metric::SOLVER_GOAL_SHAPES.inc("assoc_projection.selected_impl");
+        } else if has_live_inference {
+            crate::profile::metric::SOLVER_GOAL_SHAPES.inc("assoc_projection.live_inference");
+        } else {
+            crate::profile::metric::SOLVER_GOAL_SHAPES.inc("assoc_projection.settled");
+        }
         let started = Instant::now();
         let budget = SolverBudget::new(quantum_budget);
         // Projection answers containing body-owned identities have the same lifetime as the
@@ -666,36 +757,56 @@ impl ChalkSolverState {
                 "slow Chalk solver goal"
             );
         }
-        if budget.exhausted() {
-            return ChalkOutcome::Exhausted;
-        }
-        let Some(solution) = solution else {
-            return ChalkOutcome::NoSolution;
-        };
-        if solution.is_ambig() {
-            crate::profile::metric::SOLVER_AMBIGUOUS_GOALS.inc();
-        }
-
-        let applicability = if solution.is_ambig() {
-            TraitApplicability::Maybe
-        } else {
-            TraitApplicability::Yes
-        };
-        if let Some(subst) = solution.definite_subst(INTER) {
-            return match Self::projection_result_from_subst(
-                &projection,
-                &subst,
-                table,
-                applicability,
-            ) {
-                Ok(result) if solution.is_ambig() => ChalkOutcome::Ambiguous(Some(result)),
-                Ok(result) => ChalkOutcome::Proven(result),
-                Err(AnswerFailure::Unsupported) => ChalkOutcome::Unsupported,
-                Err(AnswerFailure::Conflicting) => ChalkOutcome::NoSolution,
+        let outcome = 'outcome: {
+            if budget.exhausted() {
+                break 'outcome ChalkOutcome::Exhausted;
+            }
+            let Some(solution) = solution else {
+                break 'outcome ChalkOutcome::NoSolution;
             };
-        }
+            if solution.is_ambig() {
+                crate::profile::metric::SOLVER_AMBIGUOUS_GOALS.inc();
+            }
 
-        ChalkOutcome::Ambiguous(None)
+            let applicability = if solution.is_ambig() {
+                TraitApplicability::Maybe
+            } else {
+                TraitApplicability::Yes
+            };
+            if let Some(subst) = solution.definite_subst(INTER) {
+                break 'outcome match Self::projection_result_from_subst(
+                    &projection,
+                    &subst,
+                    table,
+                    applicability,
+                ) {
+                    Ok(result) if solution.is_ambig() => ChalkOutcome::Ambiguous(Some(result)),
+                    Ok(result) => ChalkOutcome::Proven(result),
+                    Err(AnswerFailure::Unsupported) => ChalkOutcome::Unsupported,
+                    Err(AnswerFailure::Conflicting) => ChalkOutcome::NoSolution,
+                };
+            }
+
+            break 'outcome ChalkOutcome::Ambiguous(None);
+        };
+        match &outcome {
+            ChalkOutcome::Proven(_) => {
+                crate::profile::metric::SOLVER_GOAL_OUTCOMES.inc("assoc_projection.proven");
+            }
+            ChalkOutcome::Ambiguous(_) => {
+                crate::profile::metric::SOLVER_GOAL_OUTCOMES.inc("assoc_projection.ambiguous");
+            }
+            ChalkOutcome::NoSolution => {
+                crate::profile::metric::SOLVER_GOAL_OUTCOMES.inc("assoc_projection.no_solution");
+            }
+            ChalkOutcome::Unsupported => {
+                crate::profile::metric::SOLVER_GOAL_OUTCOMES.inc("assoc_projection.unsupported");
+            }
+            ChalkOutcome::Exhausted => {
+                crate::profile::metric::SOLVER_GOAL_OUTCOMES.inc("assoc_projection.exhausted");
+            }
+        }
+        outcome
     }
 
     /// Decode one substitution produced for the projection existential and its input variables.
