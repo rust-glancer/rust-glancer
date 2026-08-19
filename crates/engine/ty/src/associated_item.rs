@@ -141,9 +141,7 @@ where
                 .inherent_impls_for_type(receiver_ty.def),
             self.context
                 .lookup_index()
-                .trait_impls_for_type(receiver_ty.def)
-                .cloned()
-                .unwrap_or_default(),
+                .trait_impls_for_type(receiver_ty.def),
             true,
         )
     }

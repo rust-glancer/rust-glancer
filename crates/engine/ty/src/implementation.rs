@@ -108,12 +108,7 @@ where
         for candidate in autoderef.candidates(AutoderefMode::MethodReceiver, receiver_ty) {
             let candidate = candidate?;
             for ty in candidate.ty().as_adts() {
-                let trait_impls = self
-                    .context
-                    .lookup_index()
-                    .trait_impls_for_type(ty.def)
-                    .cloned()
-                    .unwrap_or_default();
+                let trait_impls = self.context.lookup_index().trait_impls_for_type(ty.def);
                 for trait_impl in trait_impls {
                     if trait_impl.trait_ref != trait_ref {
                         continue;

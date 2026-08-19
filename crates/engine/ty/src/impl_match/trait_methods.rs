@@ -43,9 +43,7 @@ where
         let trait_impls = self
             .context
             .lookup_index()
-            .trait_impls_for_type(receiver_ty.def)
-            .cloned()
-            .unwrap_or_default();
+            .trait_impls_for_type(receiver_ty.def);
         self.trait_function_candidates_from_impls(trait_impls, receiver_ty, method_name, table)
     }
 

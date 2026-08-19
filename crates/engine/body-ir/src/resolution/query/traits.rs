@@ -149,9 +149,7 @@ where
             let semantic_impls = self
                 .context
                 .item_lookup_index()
-                .trait_impls_for_type(ty.def)
-                .cloned()
-                .unwrap_or_default();
+                .trait_impls_for_type(ty.def);
             self.push_matching_qualified_trait_impls(&mut impls, semantic_impls, ty, application)?;
         }
 

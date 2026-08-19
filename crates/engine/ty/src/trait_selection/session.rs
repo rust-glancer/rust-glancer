@@ -393,7 +393,7 @@ impl TraitSelectionSession {
         &self,
         item_paths: &ItemPathQuery<'query, D, I>,
         trait_ref: TraitDefRef,
-        visible_impls: &UniqueVec<TraitImplRef>,
+        visible_impls: impl IntoIterator<Item = TraitImplRef>,
         self_head: TraitSelfHead,
     ) -> Result<UniqueVec<TraitImplRef>, I::Error>
     where
@@ -419,7 +419,7 @@ impl TraitSelectionSession {
         // from its semantic `Self` fingerprint. The per-trait lock makes initialization
         // single-flight without serializing indexes for unrelated traits.
         let mut built = TraitImplCandidateIndex::default();
-        for &trait_impl in visible_impls {
+        for trait_impl in visible_impls {
             let Some(header) =
                 self.impl_header_with(item_paths, item_paths, trait_impl.impl_ref)?
             else {

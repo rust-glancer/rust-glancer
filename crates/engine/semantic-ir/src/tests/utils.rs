@@ -184,10 +184,7 @@ impl<'a> ProjectSemanticQuerySnapshot<'a> {
         type_defs
             .into_iter()
             .map(|ty| {
-                let trait_impls = lookup_index
-                    .trait_impls_for_type(ty)
-                    .cloned()
-                    .unwrap_or_default();
+                let trait_impls = lookup_index.trait_impls_for_type(ty);
                 let mut traits = UniqueVec::new();
                 let mut trait_functions = UniqueVec::new();
                 let mut trait_impl_functions = UniqueVec::new();

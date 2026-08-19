@@ -9,8 +9,8 @@ use std::collections::HashMap;
 
 use rg_def_map::{DefMapSource, PackageSlot};
 use rg_ir_model::{
-    AssocItemId, FunctionRef, ImplRef, SemanticItemRef, TraitDefRef, TraitImplRef, TypeAliasRef,
-    TypeDefRef,
+    AssocItemId, CrateRef, FunctionRef, ImplId, ImplRef, SemanticItemRef, TraitDefRef, TraitId,
+    TraitImplRef, TypeAliasRef, TypeDefRef,
 };
 use rg_item_tree::LangItem;
 use rg_std::{MemorySize, Shrink, UniqueVec};
@@ -36,8 +36,8 @@ pub struct ItemLookupIndex {
     inherent_impls_by_type: HashMap<TypeDefRef, UniqueVec<ImplRef>>,
     inherent_functions_by_type_and_name: HashMap<TypeDefRef, HashMap<Name, UniqueVec<FunctionRef>>>,
     structural_inherent_impls: UniqueVec<ImplRef>,
-    trait_impls_by_type: HashMap<TypeDefRef, UniqueVec<TraitImplRef>>,
-    trait_impls_by_trait: HashMap<TraitDefRef, UniqueVec<TraitImplRef>>,
+    trait_impls_by_type: HashMap<TypeDefRef, UniqueVec<IndexedTraitImplRef>>,
+    trait_impls_by_trait: HashMap<TraitDefRef, UniqueVec<IndexedImplRef>>,
     // Trait impl lookup produces trait identities first; this cache then expands each trait into
     // its associated function declarations without reopening the trait item every time.
     trait_functions_by_trait: HashMap<TraitDefRef, UniqueVec<FunctionRef>>,
@@ -161,13 +161,13 @@ impl ItemLookupIndex {
                 self.trait_impls_by_trait
                     .entry(*trait_ref)
                     .or_default()
-                    .push(trait_impl);
+                    .push(IndexedImplRef::from_crate(impl_ref));
 
                 if let Some(self_ty) = impl_data.resolved_self_ty.as_option() {
                     self.trait_impls_by_type
                         .entry(*self_ty)
                         .or_default()
-                        .push(trait_impl);
+                        .push(IndexedTraitImplRef::from_crate(trait_impl));
                 }
             }
         }
@@ -267,7 +267,11 @@ impl ItemLookupIndex {
     pub fn impls_for_type(&self, ty: TypeDefRef) -> UniqueVec<ImplRef> {
         let mut impls = self.inherent_impls_for_type(ty);
         if let Some(trait_impls) = self.trait_impls_by_type.get(&ty) {
-            impls.extend(trait_impls.iter().map(|trait_impl| trait_impl.impl_ref));
+            impls.extend(
+                trait_impls
+                    .iter()
+                    .map(|trait_impl| trait_impl.expand().impl_ref),
+            );
         }
         impls
     }
@@ -278,21 +282,31 @@ impl ItemLookupIndex {
             .get(&trait_ref)
             .into_iter()
             .flat_map(|trait_impls| trait_impls.iter())
-            .map(|trait_impl| trait_impl.impl_ref)
+            .map(|impl_ref| impl_ref.expand())
             .collect()
     }
 
     /// Returns trait impl candidates indexed for a receiver type.
-    pub fn trait_impls_for_type(&self, ty: TypeDefRef) -> Option<&UniqueVec<TraitImplRef>> {
-        self.trait_impls_by_type.get(&ty)
+    pub fn trait_impls_for_type(&self, ty: TypeDefRef) -> UniqueVec<TraitImplRef> {
+        self.trait_impls_by_type
+            .get(&ty)
+            .into_iter()
+            .flat_map(|trait_impls| trait_impls.iter())
+            .map(|trait_impl| trait_impl.expand())
+            .collect()
     }
 
     /// Returns trait impl candidates indexed by the implemented trait.
     pub fn trait_impls_for_trait(
         &self,
         trait_ref: TraitDefRef,
-    ) -> Option<&UniqueVec<TraitImplRef>> {
-        self.trait_impls_by_trait.get(&trait_ref)
+    ) -> Option<impl ExactSizeIterator<Item = TraitImplRef> + Clone + '_> {
+        self.trait_impls_by_trait.get(&trait_ref).map(move |impls| {
+            impls.iter().map(move |impl_ref| TraitImplRef {
+                impl_ref: impl_ref.expand(),
+                trait_ref,
+            })
+        })
     }
 
     /// Returns trait-declared functions if the trait was visible when the index was built.
@@ -312,6 +326,70 @@ impl ItemLookupIndex {
         Some(IndexedTraitFunctions {
             functions: functions_by_name.get(name),
         })
+    }
+}
+
+/// Crate-only impl identity retained inside a crate-visible lookup index.
+///
+/// A general [`ImplRef`] also has to represent body-local declarations, which makes its
+/// [`rg_ir_model::DefMapRef`] origin larger. Entries collected from semantic item stores cannot be
+/// body-local, so retaining the crate directly avoids paying for that unused variant millions of
+/// times. Query methods expand this back to the ordinary public identity at their boundary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
+#[memsize(leaf)]
+#[shrink(leaf)]
+struct IndexedImplRef {
+    crate_ref: CrateRef,
+    id: ImplId,
+}
+
+impl IndexedImplRef {
+    fn from_crate(impl_ref: ImplRef) -> Self {
+        Self {
+            crate_ref: impl_ref
+                .origin
+                .as_crate_ref()
+                .expect("semantic item-store impl should have a crate origin"),
+            id: impl_ref.id,
+        }
+    }
+
+    fn expand(self) -> ImplRef {
+        ImplRef::new(rg_ir_model::DefMapRef::Crate(self.crate_ref), self.id)
+    }
+}
+
+/// Compact trait impl identity used where the trait is not already present as the map key.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
+#[memsize(leaf)]
+#[shrink(leaf)]
+struct IndexedTraitImplRef {
+    impl_ref: IndexedImplRef,
+    trait_crate: CrateRef,
+    trait_id: TraitId,
+}
+
+impl IndexedTraitImplRef {
+    fn from_crate(trait_impl: TraitImplRef) -> Self {
+        Self {
+            impl_ref: IndexedImplRef::from_crate(trait_impl.impl_ref),
+            trait_crate: trait_impl
+                .trait_ref
+                .origin
+                .as_crate_ref()
+                .expect("semantic item-store trait should have a crate origin"),
+            trait_id: trait_impl.trait_ref.id,
+        }
+    }
+
+    fn expand(self) -> TraitImplRef {
+        TraitImplRef {
+            impl_ref: self.impl_ref.expand(),
+            trait_ref: TraitDefRef::new(
+                rg_ir_model::DefMapRef::Crate(self.trait_crate),
+                self.trait_id,
+            ),
+        }
     }
 }
 

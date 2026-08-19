@@ -505,9 +505,7 @@ where
         let semantic_trait_impls = self
             .context
             .item_lookup_index()
-            .trait_impls_for_type(ty.def)
-            .cloned()
-            .unwrap_or_default();
+            .trait_impls_for_type(ty.def);
         self.push_trait_associated_const_candidates_for_impls(
             &mut items,
             semantic_trait_impls,
