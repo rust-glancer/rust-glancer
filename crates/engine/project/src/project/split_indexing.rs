@@ -345,6 +345,7 @@ fn materialize_files(
             loaders.semantic_ir,
             &rebuild_subset,
         )
+        .worker_limit(state.indexing_preference.body_ir_worker_limit())
         .selected_files(body_files.into_vec())
         .build();
 
@@ -426,6 +427,7 @@ fn materialize_packages(state: &mut ProjectState, packages: &[PackageSlot]) -> a
             loaders.semantic_ir,
             &rebuild_subset,
         )
+        .worker_limit(state.indexing_preference.body_ir_worker_limit())
         // Query-driven finishing intentionally overrides the eager indexing policy. If a query
         // needs to scan a package, missing bodies would be false negatives rather than saved work.
         .configured_bodies(BodyIrBuildPolicy::all_packages())
@@ -483,6 +485,7 @@ fn finish_resident_packages_with_sampler(
             loaders.semantic_ir,
             &finish_subset,
         )
+        .worker_limit(state.indexing_preference.body_ir_worker_limit())
         .configured_bodies(state.body_ir_policy);
     let body_ir = match priority_packages {
         Some(priority_packages) => {

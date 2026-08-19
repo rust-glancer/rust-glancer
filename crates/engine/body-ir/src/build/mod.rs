@@ -9,7 +9,7 @@ mod query_source;
 mod resolve;
 mod state;
 
-use std::time::Instant;
+use std::{num::NonZeroUsize, time::Instant};
 
 use anyhow::Context as _;
 
@@ -87,6 +87,7 @@ impl<'db, 'names> BodyIrDbBuilder<'db, 'names> {
             self.semantic_ir.package_count(),
             self.policy,
             self.interners.as_mut(),
+            None,
         )?;
         let resolved = resolve::resolve_packages(
             packages,
@@ -94,6 +95,7 @@ impl<'db, 'names> BodyIrDbBuilder<'db, 'names> {
             self.interners.as_mut(),
             &def_map_txn,
             &semantic_ir_txn,
+            None,
         )
         .context("while attempting to resolve body IR packages")?;
         let packages = compact_packages_two_phase(resolved);
@@ -132,6 +134,7 @@ pub struct BodyIrDbPackageRebuilder<'db, 'names> {
     def_map_loader: PackageLoader<'db, DefMapPackage>,
     semantic_ir_loader: PackageLoader<'db, PackageIr>,
     subset: &'db PackageSubset,
+    worker_limit: Option<NonZeroUsize>,
 }
 
 impl<'db, 'names> BodyIrDbPackageRebuilder<'db, 'names> {
@@ -160,6 +163,7 @@ impl<'db, 'names> BodyIrDbPackageRebuilder<'db, 'names> {
             def_map_loader,
             semantic_ir_loader,
             subset,
+            worker_limit: None,
         }
     }
 
@@ -177,6 +181,15 @@ impl<'db, 'names> BodyIrDbPackageRebuilder<'db, 'names> {
 
     pub fn selected_files(mut self, files: Vec<BodyIrFile>) -> Self {
         self.materialization = BodyIrMaterializationPlan::SelectedFiles(files);
+        self
+    }
+
+    /// Bounds package-level lowering and resolution pools for this build.
+    ///
+    /// `None` keeps Rayon's machine-default pool width. A limit is useful for indexing modes that
+    /// prefer lower per-worker allocation overlap over maximum package throughput.
+    pub fn worker_limit(mut self, worker_limit: Option<NonZeroUsize>) -> Self {
+        self.worker_limit = worker_limit;
         self
     }
 
@@ -230,6 +243,7 @@ impl<'db, 'names> BodyIrDbPackageRebuilder<'db, 'names> {
             materialization,
             &packages,
             self.interners,
+            self.worker_limit,
         )
         .context("while attempting to lower rebuilt body IR packages")?;
         let lowering_ms = lowering_started.elapsed().as_millis();
@@ -245,6 +259,7 @@ impl<'db, 'names> BodyIrDbPackageRebuilder<'db, 'names> {
             &semantic_ir_txn,
             priority_packages,
             publish_priority,
+            self.worker_limit,
         )
         .context("while attempting to resolve rebuilt body IR packages")?;
         let resolution_ms = resolution_started.elapsed().as_millis();
@@ -272,6 +287,7 @@ impl<'db, 'names> BodyIrDbPackageRebuilder<'db, 'names> {
         tracing::trace!(
             ?materialization,
             package_count = packages.len(),
+            worker_limit = self.worker_limit.map(NonZeroUsize::get),
             clone_ms,
             setup_ms,
             lowering_ms,
@@ -316,9 +332,21 @@ fn compact_package_copy(package: &PackageBodies) -> PackageBodies {
     compacted
 }
 
-fn local_thread_pool(thread_name_prefix: &'static str) -> anyhow::Result<rayon::ThreadPool> {
-    rayon::ThreadPoolBuilder::new()
-        .thread_name(move |index| format!("{thread_name_prefix}-{index}"))
+fn local_thread_pool(
+    thread_name_prefix: &'static str,
+    worker_limit: Option<NonZeroUsize>,
+) -> anyhow::Result<rayon::ThreadPool> {
+    let mut builder = rayon::ThreadPoolBuilder::new()
+        .thread_name(move |index| format!("{thread_name_prefix}-{index}"));
+    if let Some(worker_limit) = worker_limit {
+        let worker_count = std::thread::available_parallelism()
+            .map(usize::from)
+            .unwrap_or(worker_limit.get())
+            .min(worker_limit.get());
+        builder = builder.num_threads(worker_count);
+    }
+
+    builder
         .build()
         .with_context(|| format!("while attempting to create {thread_name_prefix} thread pool"))
 }
@@ -328,4 +356,25 @@ fn normalized_package_slots(packages: &[PackageSlot]) -> Vec<PackageSlot> {
     slots.sort_by_key(|slot| slot.0);
     slots.dedup();
     slots
+}
+
+#[cfg(test)]
+mod tests {
+    use std::num::NonZeroUsize;
+
+    use super::local_thread_pool;
+
+    #[test]
+    fn body_ir_thread_pool_honors_worker_limit() {
+        let worker_limit = NonZeroUsize::new(2).expect("test worker limit should be non-zero");
+        let expected_workers = std::thread::available_parallelism()
+            .map(usize::from)
+            .unwrap_or(worker_limit.get())
+            .min(worker_limit.get());
+
+        let thread_pool = local_thread_pool("rg-body-test", Some(worker_limit))
+            .expect("limited Body IR thread pool should build");
+
+        assert_eq!(thread_pool.current_num_threads(), expected_workers);
+    }
 }

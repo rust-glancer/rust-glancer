@@ -106,16 +106,19 @@ fn try_rebuild_packages(state: &mut ProjectState, packages: &[PackageSlot]) -> a
         .build()
         .context("while attempting to rebuild affected semantic IR packages")?;
 
-    let body_rebuilder = state.body_ir.package_rebuilder(
-        &state.parse,
-        &def_map,
-        &semantic_ir,
-        packages.as_slice(),
-        &mut state.names,
-        loaders.def_map.clone(),
-        loaders.semantic_ir.clone(),
-        &rebuild_subset,
-    );
+    let body_rebuilder = state
+        .body_ir
+        .package_rebuilder(
+            &state.parse,
+            &def_map,
+            &semantic_ir,
+            packages.as_slice(),
+            &mut state.names,
+            loaders.def_map.clone(),
+            loaders.semantic_ir.clone(),
+            &rebuild_subset,
+        )
+        .worker_limit(state.indexing_preference.body_ir_worker_limit());
     let body_rebuilder = match state.split_indexing_mode {
         SplitIndexingMode::Full => body_rebuilder.configured_bodies(state.body_ir_policy),
         SplitIndexingMode::EarlyStart => body_rebuilder.coverage_only(state.body_ir_policy),

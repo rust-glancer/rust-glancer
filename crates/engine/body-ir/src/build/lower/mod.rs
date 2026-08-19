@@ -3,7 +3,10 @@
 //! This pass does not resolve names. It records the source shape, lexical scopes,
 //! and visibility-order binding boundaries so the later resolution pass can stay focused.
 
-use std::time::{Duration, Instant};
+use std::{
+    num::NonZeroUsize,
+    time::{Duration, Instant},
+};
 
 mod body;
 mod builder;
@@ -90,6 +93,7 @@ pub(super) fn build_packages(
     package_count: usize,
     policy: BodyIrBuildPolicy,
     interners: &mut PackageNameInterners,
+    worker_limit: Option<NonZeroUsize>,
 ) -> anyhow::Result<Vec<LoweredPackageBodies>> {
     validate_package_inputs(parse, package_count, interners)?;
 
@@ -104,6 +108,7 @@ pub(super) fn build_packages(
         interners,
         &selected,
         &mut packages,
+        worker_limit,
     )?;
 
     Ok(packages
@@ -119,6 +124,7 @@ pub(super) fn build_selected_packages(
     scope: BodyIrMaterialization<'_>,
     package_slots: &[PackageSlot],
     interners: &mut PackageNameInterners,
+    worker_limit: Option<NonZeroUsize>,
 ) -> anyhow::Result<Vec<(PackageSlot, LoweredPackageBodies)>> {
     validate_package_inputs(parse, parse.package_count(), interners)?;
     validate_selected_packages(parse.package_count(), package_slots)?;
@@ -139,6 +145,7 @@ pub(super) fn build_selected_packages(
         interners,
         &selected,
         &mut packages,
+        worker_limit,
     )?;
 
     Ok(packages
@@ -148,6 +155,7 @@ pub(super) fn build_selected_packages(
         .collect())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_package_outputs(
     parse: &ParseDb,
     def_map: &DefMapReadTxn<'_>,
@@ -156,6 +164,7 @@ fn build_package_outputs(
     interners: &mut PackageNameInterners,
     selected: &[bool],
     packages: &mut [Option<LoweredPackageBodies>],
+    worker_limit: Option<NonZeroUsize>,
 ) -> anyhow::Result<()> {
     anyhow::ensure!(
         selected.len() == parse.package_count(),
@@ -164,7 +173,7 @@ fn build_package_outputs(
         parse.package_count(),
     );
 
-    let thread_pool = local_thread_pool("rg-body-lower")?;
+    let thread_pool = local_thread_pool("rg-body-lower", worker_limit)?;
 
     // Body lowering is package-local: each worker receives one parse package, one name interner,
     // and one output slot. Non-selected rebuild slots stay absent from this temporary output.

@@ -224,16 +224,18 @@ pub(super) fn build(
     // ----------------
     let baseline_body_ir =
         BodyIrDb::from_package_store(offloaded_package_store(parse.package_count()));
-    let mut body_rebuilder = baseline_body_ir.package_rebuilder(
-        &parse,
-        &def_map,
-        &semantic_ir,
-        build_plan.source_packages.as_slice(),
-        &mut names,
-        loaders.def_map,
-        loaders.semantic_ir,
-        &rebuild_subset,
-    );
+    let mut body_rebuilder = baseline_body_ir
+        .package_rebuilder(
+            &parse,
+            &def_map,
+            &semantic_ir,
+            build_plan.source_packages.as_slice(),
+            &mut names,
+            loaders.def_map,
+            loaders.semantic_ir,
+            &rebuild_subset,
+        )
+        .worker_limit(indexing_preference.body_ir_worker_limit());
     body_rebuilder = match split_indexing_mode {
         SplitIndexingMode::Full => body_rebuilder.configured_bodies(body_ir_policy),
         SplitIndexingMode::EarlyStart => body_rebuilder.coverage_only(body_ir_policy),

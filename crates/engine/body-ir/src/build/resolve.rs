@@ -2,6 +2,7 @@
 
 use std::{
     collections::{BTreeSet, VecDeque},
+    num::NonZeroUsize,
     sync::Mutex,
     time::{Duration, Instant},
 };
@@ -34,10 +35,11 @@ pub(super) fn resolve_packages(
     interners: &mut PackageNameInterners,
     def_map: &DefMapReadTxn<'_>,
     semantic_ir: &SemanticIrReadTxn<'_>,
+    worker_limit: Option<NonZeroUsize>,
 ) -> anyhow::Result<Vec<PackageBodies>> {
     let profile_context = rg_profile::ProfileThreadContext::capture();
     let declarations = TraitSelectionDeclarationCache::new();
-    let thread_pool = local_thread_pool("rg-body-resolve")?;
+    let thread_pool = local_thread_pool("rg-body-resolve", worker_limit)?;
     let resolved = thread_pool
         .install(|| {
             packages
@@ -69,6 +71,7 @@ pub(super) fn resolve_packages(
 /// workers can then touch the same interner, so package resolution needs no extra synchronization.
 /// The jobs also share canonical crate declaration lowering, while keeping their visibility and
 /// solver state inside the corresponding crate session.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn resolve_selected_packages(
     packages: Vec<(PackageSlot, LoweredPackageBodies)>,
     parse: &rg_parse::ParseDb,
@@ -77,6 +80,7 @@ pub(super) fn resolve_selected_packages(
     semantic_ir: &SemanticIrReadTxn<'_>,
     priority_packages: Option<&(dyn Fn() -> Vec<PackageSlot> + Sync)>,
     publish_priority: &(dyn Fn(PackageSlot, PackageBodies) + Sync),
+    worker_limit: Option<NonZeroUsize>,
 ) -> anyhow::Result<Vec<(PackageSlot, PackageBodies)>> {
     let profile_context = rg_profile::ProfileThreadContext::capture();
     let declarations = TraitSelectionDeclarationCache::new();
@@ -116,7 +120,7 @@ pub(super) fn resolve_selected_packages(
         next_package_idx = package_slot.0 + 1;
     }
 
-    let thread_pool = local_thread_pool("rg-body-resolve")?;
+    let thread_pool = local_thread_pool("rg-body-resolve", worker_limit)?;
     let Some(priority_packages) = priority_packages else {
         let resolved = thread_pool
             .install(|| {
