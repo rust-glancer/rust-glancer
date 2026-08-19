@@ -63,7 +63,14 @@ impl ChalkProgram {
         let extension_started = Instant::now();
         self.known_items = super::ChalkKnownItems::from_index(lookup_index);
         let discovery_started = Instant::now();
-        let scope = ChalkProgramScope::discover(item_paths, crate_items, session, roots, self)?;
+        let scope = ChalkProgramScope::discover(
+            item_paths,
+            crate_items,
+            lookup_index,
+            session,
+            roots,
+            self,
+        )?;
         let discovery_elapsed = discovery_started.elapsed();
 
         // Associated-type declarations must exist before lowering any trait/impl predicates that

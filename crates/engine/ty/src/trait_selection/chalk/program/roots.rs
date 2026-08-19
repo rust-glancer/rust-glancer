@@ -9,7 +9,7 @@ use std::time::Instant;
 
 use rg_def_map::DefMapSource;
 use rg_ir_model::{AssocItemId, ItemOwner, TraitDefRef, TypeAliasRef};
-use rg_semantic_ir::{CrateItemQuery, ItemStoreSource};
+use rg_semantic_ir::{CrateItemQuery, ItemLookupIndex, ItemStoreSource};
 
 use super::{ChalkProgram, ChalkProgramRoots, ChalkProgramScope};
 use crate::inference::InferenceTable;
@@ -222,6 +222,7 @@ impl ChalkProgramScope {
     pub(super) fn discover<'query, D, I>(
         item_paths: &ItemPathQuery<'query, D, I>,
         crate_items: &CrateItemQuery<'query, D, I>,
+        lookup_index: &ItemLookupIndex,
         session: &TraitSelectionSession,
         roots: &ChalkProgramRoots,
         program: &ChalkProgram,
@@ -265,44 +266,24 @@ impl ChalkProgramScope {
                     scope.trait_headers.insert(trait_ref, header);
                 }
 
-                for impl_ref in crate_items.impls_for_trait(trait_ref)? {
-                    if !scope.impls.push(impl_ref) {
-                        continue;
-                    }
-                    let Some(header) =
-                        session.impl_header_with(item_paths, item_paths, impl_ref)?
-                    else {
-                        continue;
-                    };
-                    scope
-                        .definitions
-                        .collect_ty(item_paths, &header.self_ty, None)?;
-                    if let Some(trait_ref) = &header.trait_ref {
-                        scope.definitions.collect_trait_ref(item_paths, trait_ref)?;
-                    }
-                    scope
-                        .definitions
-                        .collect_clauses(item_paths, &header.clauses, None)?;
-
-                    // Associated values may themselves project through another trait. Discover
-                    // that trait before lowering so every referenced associated-type datum exists.
-                    if let Some(impl_data) = crate_items.items().impl_data(impl_ref)? {
-                        for item in &impl_data.items {
-                            let AssocItemId::TypeAlias(id) = item else {
-                                continue;
-                            };
-                            let alias = TypeAliasRef {
-                                origin: impl_ref.origin,
-                                id: *id,
-                            };
-                            if let Some(ty) =
-                                SemanticSignatureQuery::type_alias_ty_from(item_paths, alias)?
-                            {
-                                scope.definitions.collect_ty(item_paths, &ty, None)?;
-                            }
+                // Crate-origin traits use the visibility-scoped index that was already built for
+                // this use site. Body-origin traits are intentionally absent from that index, so
+                // keep their lookup inside the owning body store.
+                if trait_ref.origin.as_crate_ref().is_some() {
+                    if let Some(impls) = lookup_index.trait_impls_for_trait(trait_ref) {
+                        for trait_impl in impls {
+                            scope.discover_impl(
+                                item_paths,
+                                crate_items,
+                                session,
+                                trait_impl.impl_ref,
+                            )?;
                         }
                     }
-                    scope.impl_headers.insert(impl_ref, header);
+                } else {
+                    for impl_ref in crate_items.impls_for_trait(trait_ref)? {
+                        scope.discover_impl(item_paths, crate_items, session, impl_ref)?;
+                    }
                 }
             }
 
@@ -363,5 +344,57 @@ impl ChalkProgramScope {
             );
         }
         Ok(scope)
+    }
+
+    /// Add one impl and every semantic definition reachable from its header and values.
+    fn discover_impl<'query, D, I>(
+        &mut self,
+        item_paths: &ItemPathQuery<'query, D, I>,
+        crate_items: &CrateItemQuery<'query, D, I>,
+        session: &TraitSelectionSession,
+        impl_ref: rg_ir_model::ImplRef,
+    ) -> Result<(), I::Error>
+    where
+        D: DefMapSource<Error = I::Error>,
+        I: ItemStoreSource<'query>,
+    {
+        // Each semantic impl has one resolved trait, and the trait queue visits every identity
+        // once. Keeping this invariant avoids a quadratic ordered-set check for large programs.
+        #[cfg(debug_assertions)]
+        assert!(
+            self.discovered_impls.insert(impl_ref),
+            "a Chalk scope must discover each impl through exactly one trait"
+        );
+        self.impls.push(impl_ref);
+
+        let Some(header) = session.impl_header_with(item_paths, item_paths, impl_ref)? else {
+            return Ok(());
+        };
+        self.definitions
+            .collect_ty(item_paths, &header.self_ty, None)?;
+        if let Some(trait_ref) = &header.trait_ref {
+            self.definitions.collect_trait_ref(item_paths, trait_ref)?;
+        }
+        self.definitions
+            .collect_clauses(item_paths, &header.clauses, None)?;
+
+        // Associated values may themselves project through another trait. Discover that trait
+        // before lowering so every referenced associated-type datum exists.
+        if let Some(impl_data) = crate_items.items().impl_data(impl_ref)? {
+            for item in &impl_data.items {
+                let AssocItemId::TypeAlias(id) = item else {
+                    continue;
+                };
+                let alias = TypeAliasRef {
+                    origin: impl_ref.origin,
+                    id: *id,
+                };
+                if let Some(ty) = SemanticSignatureQuery::type_alias_ty_from(item_paths, alias)? {
+                    self.definitions.collect_ty(item_paths, &ty, None)?;
+                }
+            }
+        }
+        self.impl_headers.insert(impl_ref, header);
+        Ok(())
     }
 }

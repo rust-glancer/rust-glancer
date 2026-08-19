@@ -76,7 +76,9 @@ struct ChalkProgramRoots {
 struct ChalkProgramScope {
     definitions: ChalkProgramRoots,
     trait_headers: HashMap<TraitDefRef, crate::signature::TraitHeader>,
-    impls: UniqueVec<ImplRef>,
+    impls: Vec<ImplRef>,
+    #[cfg(debug_assertions)] // Used to assert uniqueness without expensive `UniqueVec`
+    discovered_impls: std::collections::HashSet<ImplRef>,
     impl_headers: HashMap<ImplRef, crate::ImplHeader>,
     opaque_bounds: HashMap<OpaqueTyRef, (crate::OpaqueTy, Vec<TraitRefLowering>)>,
     function_signatures: HashMap<FunctionRef, crate::CallableSignature>,
