@@ -21,8 +21,8 @@ use super::super::lower::{
     ChalkLowerer, GenericBinderEnv, adt_datum, chalk_assoc_type_id, chalk_assoc_type_value_id,
 };
 use super::{ChalkProgram, ChalkProgramRoots, ChalkProgramScope};
+use crate::ItemPathQuery;
 use crate::trait_selection::TraitSelectionSession;
-use crate::{ItemPathQuery, SemanticSignatureQuery};
 
 const INTER: RgChalkInterner = RgChalkInterner;
 
@@ -160,8 +160,9 @@ impl ChalkProgram {
                 .generics()
                 .generics(GenericDefRef::Impl(impl_ref))?;
             let binders = GenericBinderEnv::for_generics(&generics);
-            let associated_ty_value_ids =
-                self.collect_impl_associated_ty_values(item_paths, &binders, impl_ref, trait_ref)?;
+            let associated_ty_value_ids = self.collect_impl_associated_ty_values(
+                item_paths, session, &binders, impl_ref, trait_ref,
+            )?;
             let lowerer = ChalkLowerer::new(&binders).with_associated_tys(&self.associated_tys);
             let Some(datum) = lowerer.impl_datum(header, associated_ty_value_ids) else {
                 continue;
@@ -289,6 +290,7 @@ impl ChalkProgram {
     fn collect_impl_associated_ty_values<'query, D, I>(
         &mut self,
         item_paths: &ItemPathQuery<'query, D, I>,
+        session: &TraitSelectionSession,
         binders: &GenericBinderEnv,
         impl_ref: ImplRef,
         trait_ref: TraitDefRef,
@@ -331,8 +333,7 @@ impl ChalkProgram {
             let Some(type_alias_data) = item_paths.items().type_alias_data(type_alias_ref)? else {
                 continue;
             };
-            let Some(ty) = SemanticSignatureQuery::type_alias_ty_from(item_paths, type_alias_ref)?
-            else {
+            let Some(ty) = session.type_alias_ty_with(item_paths, type_alias_ref)? else {
                 continue;
             };
             let value = ChalkLowerer::new(binders)

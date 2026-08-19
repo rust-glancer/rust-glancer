@@ -22,6 +22,8 @@ declare_metrics! {
             duration PROGRAM_BUILD_TIME = "timings.program_build";
             /// Definitions discovered while constructing Chalk programs, grouped by kind.
             keyed_counter PROGRAM_DEFINITIONS_BY_KIND = "program.definitions" [report super::BY_COUNT, title "Chalk program definitions"];
+            /// Declaration-cache lookups grouped by declaration kind and hit or miss.
+            keyed_counter DECLARATION_CACHE_ACCESSES = "program.declaration_cache" [report super::BY_COUNT, title "Chalk declaration cache"];
             /// Chalk program construction time grouped by materialization phase.
             keyed_duration PROGRAM_BUILD_TIME_BY_PHASE = "timings.program_build_phase" [report super::BY_DURATION, title "Chalk program build phases"];
             /// Chalk predicate goals sent to the solver.

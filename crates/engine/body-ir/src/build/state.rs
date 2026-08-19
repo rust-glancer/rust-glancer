@@ -17,7 +17,7 @@ use rg_semantic_ir::{
 };
 use rg_std::ExpectedUnique;
 use rg_text::NameInterner;
-use rg_ty::TraitSelectionSession;
+use rg_ty::{TraitSelectionDeclarationCache, TraitSelectionSession};
 
 use crate::{
     BodyFacts, BodyLocalItems, BodyOwner, CrateBodies, CurrentBody,
@@ -142,10 +142,15 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
     }
 
     /// Resolve one lowered crate and persist its crate-wide item lookup index with Body IR.
+    ///
+    /// The crate gets its own use-site visibility, candidate indexes, and solver answers. Only
+    /// canonical crate declarations are reused from the cache owned by the surrounding project
+    /// build.
     pub(super) fn resolve(
         mut self,
         def_map: &DefMapReadTxn<'_>,
         semantic_ir: &SemanticIrReadTxn<'_>,
+        declarations: &TraitSelectionDeclarationCache,
     ) -> anyhow::Result<CrateBodies> {
         let span = tracing::debug_span!(
             "body_ir_crate_resolution",
@@ -196,7 +201,8 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
                 "slow Body IR crate resolution phase"
             );
         }
-        let trait_selection = TraitSelectionSession::new(self.crate_ref);
+        let trait_selection =
+            TraitSelectionSession::new_with_declaration_cache(self.crate_ref, declarations.clone());
         let semantic_timings = self.resolve_semantics(
             def_map,
             semantic_ir,

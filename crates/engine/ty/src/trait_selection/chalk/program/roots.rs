@@ -14,7 +14,7 @@ use rg_semantic_ir::{CrateItemQuery, ItemLookupIndex, ItemStoreSource};
 use super::{ChalkProgram, ChalkProgramRoots, ChalkProgramScope};
 use crate::inference::InferenceTable;
 use crate::trait_selection::TraitSelectionSession;
-use crate::{Clause, ItemPathQuery, SemanticSignatureQuery, TraitRefLowering};
+use crate::{Clause, ItemPathQuery, TraitRefLowering};
 
 impl ChalkProgramRoots {
     pub(super) fn is_empty(&self) -> bool {
@@ -254,9 +254,7 @@ impl ChalkProgramScope {
                     continue;
                 }
 
-                if let Some(header) =
-                    SemanticSignatureQuery::trait_header_from(item_paths, trait_ref)?
-                {
+                if let Some(header) = session.trait_header_with(item_paths, trait_ref)? {
                     scope
                         .definitions
                         .collect_ty(item_paths, &header.self_ty, None)?;
@@ -297,14 +295,20 @@ impl ChalkProgramScope {
                     continue;
                 }
 
-                for (opaque, bounds) in
-                    SemanticSignatureQuery::opaque_bounds_for_owner_from(item_paths, opaque.owner)?
+                for (opaque, bounds) in session
+                    .opaque_bounds_for_owner_with(item_paths, opaque.owner)?
+                    .iter()
                 {
                     scope.definitions.opaque_tys.push(opaque.opaque);
-                    for bound in &bounds {
+                    for bound in bounds {
                         scope.definitions.collect_trait_ref(item_paths, bound)?;
                     }
-                    scope.opaque_bounds.insert(opaque.opaque, (opaque, bounds));
+                    // Discovery borrows this owner summary only while walking it. Keep owned
+                    // values in the program scope so its later materialization is independent
+                    // from that borrow.
+                    scope
+                        .opaque_bounds
+                        .insert(opaque.opaque, (opaque.clone(), bounds.clone()));
                 }
             }
 
@@ -314,8 +318,7 @@ impl ChalkProgramScope {
                 if program.functions.contains_key(&function) {
                     continue;
                 }
-                let Some(signature) = SemanticSignatureQuery::function_from(item_paths, function)?
-                else {
+                let Some(signature) = session.function_signature_with(item_paths, function)? else {
                     continue;
                 };
                 for param in &signature.params {
@@ -389,7 +392,7 @@ impl ChalkProgramScope {
                     origin: impl_ref.origin,
                     id: *id,
                 };
-                if let Some(ty) = SemanticSignatureQuery::type_alias_ty_from(item_paths, alias)? {
+                if let Some(ty) = session.type_alias_ty_with(item_paths, alias)? {
                     self.definitions.collect_ty(item_paths, &ty, None)?;
                 }
             }

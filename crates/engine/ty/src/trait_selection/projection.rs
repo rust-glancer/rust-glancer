@@ -17,7 +17,7 @@ use super::{ChalkOutcome, TraitGoal, TraitSelection, TraitSelectionQuery};
 use crate::inference::InferenceTable;
 use crate::{
     AdtTy, AliasTy, ClosureTy, FnDefTy, GenericArg, GenericArgs, OpaqueTy, ProjectionTy,
-    SemanticSignatureQuery, Substitution, TraitApplication, Ty,
+    Substitution, TraitApplication, Ty,
 };
 
 /// Result of normalizing one selected associated type projection.
@@ -295,8 +295,10 @@ where
         if !can_project_directly(alias_data) {
             return Ok(None);
         }
-        let Some(selected_value) =
-            SemanticSignatureQuery::type_alias_ty_from(self.context.item_paths(), alias)?
+        let Some(selected_value) = self
+            .context
+            .trait_selection()
+            .type_alias_ty_with(self.context.item_paths(), alias)?
         else {
             return Ok(None);
         };

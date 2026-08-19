@@ -71,17 +71,18 @@ struct ChalkProgramRoots {
 ///
 /// This is temporary build data. It keeps canonical headers beside their identities so the build
 /// phase does not repeat semantic lowering while it turns the discovered closure into Chalk
-/// datums.
+/// datums. Discovery and materialization therefore read the same declaration values even when
+/// those values are shared with other use-site sessions through the snapshot declaration cache.
 #[derive(Default)]
 struct ChalkProgramScope {
     definitions: ChalkProgramRoots,
-    trait_headers: HashMap<TraitDefRef, crate::signature::TraitHeader>,
+    trait_headers: HashMap<TraitDefRef, Arc<crate::signature::TraitHeader>>,
     impls: Vec<ImplRef>,
     #[cfg(debug_assertions)] // Used to assert uniqueness without expensive `UniqueVec`
     discovered_impls: std::collections::HashSet<ImplRef>,
-    impl_headers: HashMap<ImplRef, crate::ImplHeader>,
+    impl_headers: HashMap<ImplRef, Arc<crate::ImplHeader>>,
     opaque_bounds: HashMap<OpaqueTyRef, (crate::OpaqueTy, Vec<TraitRefLowering>)>,
-    function_signatures: HashMap<FunctionRef, crate::CallableSignature>,
+    function_signatures: HashMap<FunctionRef, Arc<crate::CallableSignature>>,
     loaded_opaque_owners: UniqueVec<GenericDefRef>,
 }
 

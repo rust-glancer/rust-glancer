@@ -5,9 +5,15 @@
 //! the remaining predicates and associated-type equalities. Keeping discovery, native proof, and
 //! solver fallback as different types prevents exploratory editor candidates from being mistaken
 //! for established semantic facts.
+//!
+//! Canonical crate declarations have a wider reuse boundary than solver state. Their lowered types
+//! can be shared by sessions over the same semantic snapshot, while visible impl indexes, Chalk
+//! forests, body declarations, and inference answers remain owned by the use-site session that
+//! produced them.
 
 mod candidate;
 mod chalk;
+mod declaration_cache;
 mod matcher;
 mod native_proof;
 mod projection;
@@ -20,6 +26,7 @@ use rg_std::ExpectedUnique;
 
 use self::candidate::TraitCandidate;
 use self::chalk::ChalkOutcome;
+pub use self::declaration_cache::TraitSelectionDeclarationCache;
 use self::native_proof::NativeProofQuery;
 pub use self::projection::AssocProjectionResult;
 use self::projection::CandidateEvidence;

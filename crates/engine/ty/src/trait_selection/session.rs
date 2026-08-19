@@ -1,11 +1,18 @@
-//! Ownership and cache lifetimes for one trait-selection use-site crate.
+//! Ownership and cache lifetimes for trait selection.
 //!
-//! Crate-semantic state is shared by every query for the use-site. A session adds one inference
-//! cache whose answers may contain body-owned variables and closure identities.
+//! Trait selection reuses work at three different boundaries:
 //!
-//! `TraitSelectionSession::new` starts both layers. `fresh_inference_scope` and `for_body` keep the
-//! crate layer and replace only the inference layer. Cloning any session shares all of the state it
-//! already owns; a clone does not accidentally start another solver program or inference cache.
+//! 1. `TraitSelectionDeclarationCache` belongs to one immutable semantic snapshot. Sessions for
+//!    different use-site crates may share it because canonical crate declaration types do not
+//!    contain visibility decisions or solver answers.
+//! 2. `TraitSelectionShared` belongs to one use-site crate. It owns that crate's visible candidate
+//!    indexes, growing Chalk program, stable solver forests, and body-origin impl headers.
+//! 3. `TraitSelectionSession` adds an inference cache. That cache may contain live variables and
+//!    closure identities, so `fresh_inference_scope` and `for_body` replace only this layer.
+//!
+//! Cloning a session shares every layer already attached to it. `new` creates a standalone
+//! declaration layer; `new_with_declaration_cache` joins the snapshot layer supplied by a project
+//! build or query owner.
 
 use std::{
     collections::HashMap,
@@ -14,16 +21,22 @@ use std::{
 };
 
 use rg_def_map::DefMapSource;
-use rg_ir_model::{CrateRef, ImplRef, TraitApplicability, TraitDefRef, TraitImplRef, TypeAliasRef};
+use rg_ir_model::{
+    CrateRef, FunctionRef, GenericDefRef, ImplRef, TraitApplicability, TraitDefRef, TraitImplRef,
+    TypeAliasRef,
+};
 use rg_semantic_ir::{CrateItemQuery, ItemLookupIndex, ItemStoreSource};
 use rg_std::{ExpectedUnique, UniqueVec};
 
 use super::chalk::{ChalkInferenceCache, ChalkOutcome, ChalkTraitSolver};
+use super::declaration_cache::{OpaqueBounds, TraitSelectionDeclarationCache};
 use super::matcher::{TraitImplCandidateIndex, TraitSelfHead};
 use super::{AssocProjectionResult, TraitGoal, TraitSelection};
 use crate::inference::{InferenceSubstitution, InferenceTable};
-use crate::signature::impl_header_with;
-use crate::{Clause, ItemPathQuery, TypePathResolver};
+use crate::signature::impl_header_with as lower_impl_header;
+use crate::{
+    CallableSignature, Clause, ItemPathQuery, SemanticSignatureQuery, Ty, TypePathResolver,
+};
 
 /// Cross-body part of a cached selection.
 ///
@@ -60,17 +73,20 @@ type TraitImplCandidateIndexes = Mutex<HashMap<TraitDefRef, SharedTraitImplCandi
 type ExactCandidateApplicabilities =
     Mutex<HashMap<TraitImplRef, HashMap<TraitGoal, TraitApplicability>>>;
 
-/// Crate-semantic solver state shared by every session for one use-site crate.
+/// Crate-semantic solver state shared by one use-site session and its inference scopes.
 ///
-/// Everything here is safe to keep after a body finishes. The separate inference cache on
-/// `TraitSelectionSession` is the only place allowed to retain answers containing body variables
-/// or closure identities.
+/// Everything here is safe to keep for the rest of the snapshot after one body finishes. The
+/// separate inference cache on `TraitSelectionSession` is the only place allowed to retain answers
+/// containing body variables or closure identities.
 struct TraitSelectionShared {
     use_site: CrateRef,
+    /// Use-site-independent crate declarations shared across sessions over the same snapshot.
+    declarations: TraitSelectionDeclarationCache,
     /// Growing Chalk program plus solver forests for body-independent goals.
     solver: ChalkTraitSolver,
-    /// Canonical headers lowered once and reused by candidate indexing and proof.
-    impl_headers: Mutex<HashMap<ImplRef, Option<crate::ImplHeader>>>,
+    /// Body-origin headers cannot enter the snapshot declaration cache because lexical views may
+    /// differ between requests. Keep them within the session that owns their body source.
+    body_impl_headers: Mutex<HashMap<ImplRef, Option<Arc<crate::ImplHeader>>>>,
     /// Per-trait indexes that narrow visible impls by the outer shape of `Self`.
     trait_impl_candidates: TraitImplCandidateIndexes,
     /// Unique whole-goal selections whose inputs contain no body-owned identity.
@@ -80,11 +96,12 @@ struct TraitSelectionShared {
 }
 
 impl TraitSelectionShared {
-    fn new(use_site: CrateRef) -> Self {
+    fn new(use_site: CrateRef, declarations: TraitSelectionDeclarationCache) -> Self {
         Self {
             use_site,
+            declarations,
             solver: ChalkTraitSolver::new(),
-            impl_headers: Mutex::new(HashMap::new()),
+            body_impl_headers: Mutex::new(HashMap::new()),
             trait_impl_candidates: Mutex::new(HashMap::new()),
             strict_selections: Mutex::new(HashMap::new()),
             exact_candidate_applicabilities: Mutex::new(HashMap::new()),
@@ -115,9 +132,25 @@ impl fmt::Debug for TraitSelectionSession {
 }
 
 impl TraitSelectionSession {
+    /// Start a standalone use-site session with its own declaration cache.
+    ///
+    /// Use [`Self::new_with_declaration_cache`] when several use-site crates are analyzed from the
+    /// same semantic snapshot and should share canonical crate declaration lowering.
     pub fn new(use_site: CrateRef) -> Self {
+        Self::new_with_declaration_cache(use_site, TraitSelectionDeclarationCache::new())
+    }
+
+    /// Start one use-site solver while reusing canonical crate declarations from the same snapshot.
+    ///
+    /// Another use-site session given the same `declarations` handle shares only declaration-owned
+    /// types. Visibility indexes, solver forests, stable answers, and inference caches start fresh
+    /// for this use-site crate; clones of this returned session then share those layers normally.
+    pub fn new_with_declaration_cache(
+        use_site: CrateRef,
+        declarations: TraitSelectionDeclarationCache,
+    ) -> Self {
         Self {
-            shared: Arc::new(TraitSelectionShared::new(use_site)),
+            shared: Arc::new(TraitSelectionShared::new(use_site, declarations)),
             inference_cache: Arc::new(ChalkInferenceCache::new()),
         }
     }
@@ -128,10 +161,10 @@ impl TraitSelectionSession {
 
     /// Keep crate-semantic solver state while starting an independent inference scope.
     ///
-    /// This is the safe handoff between separate build or query operations. Chalk's program,
-    /// canonical impl headers, candidate indexes, and stable answers remain shared, while answers
-    /// containing inference variables or body identities stay with the operation that created
-    /// them.
+    /// This is the safe handoff between independent inference operations over the same snapshot.
+    /// Snapshot crate declarations, Chalk's program, candidate indexes, and stable answers remain
+    /// shared, while answers containing inference variables or body identities stay with the
+    /// operation that created them.
     pub fn fresh_inference_scope(&self) -> Self {
         Self {
             shared: self.shared.clone(),
@@ -211,40 +244,51 @@ impl TraitSelectionSession {
         )
     }
 
-    /// Lower each canonical impl header once for this visible crate context.
+    /// Reuse an impl header without crossing the resolver boundary that produced it.
+    ///
+    /// A crate-origin impl has one canonical header for the semantic snapshot, so all use-site
+    /// sessions may share its lowering. A body-origin impl can resolve through request-local items;
+    /// its header therefore stays in the use-site session that owns that body source.
     pub(crate) fn impl_header_with<'query, D, I, R>(
         &self,
         item_paths: &ItemPathQuery<'query, D, I>,
         resolver: &R,
         impl_ref: ImplRef,
-    ) -> Result<Option<crate::ImplHeader>, I::Error>
+    ) -> Result<Option<Arc<crate::ImplHeader>>, I::Error>
     where
         D: DefMapSource<Error = I::Error>,
         I: ItemStoreSource<'query>,
         R: TypePathResolver<Error = I::Error>,
     {
+        if impl_ref.origin.as_crate_ref().is_some() {
+            return self.shared.declarations.impl_header(impl_ref, || {
+                lower_impl_header(item_paths, resolver, impl_ref)
+            });
+        }
+
         if let Some(header) = self
             .shared
-            .impl_headers
+            .body_impl_headers
             .lock()
-            .expect("trait selection impl-header cache lock should not be poisoned")
+            .expect("body impl-header cache lock should not be poisoned")
             .get(&impl_ref)
             .cloned()
         {
             return Ok(header);
         }
 
-        let header = impl_header_with(item_paths, resolver, impl_ref)?;
-        self.remember_impl_header(impl_ref, header.clone());
+        let header = lower_impl_header(item_paths, resolver, impl_ref)?.map(Arc::new);
+        self.remember_body_impl_header(impl_ref, header.clone());
         Ok(header)
     }
 
-    fn remember_impl_header(&self, impl_ref: ImplRef, header: Option<crate::ImplHeader>) {
+    /// Publish a body header without letting a later conservative miss erase a successful load.
+    fn remember_body_impl_header(&self, impl_ref: ImplRef, header: Option<Arc<crate::ImplHeader>>) {
         let mut headers = self
             .shared
-            .impl_headers
+            .body_impl_headers
             .lock()
-            .expect("trait selection impl-header cache lock should not be poisoned");
+            .expect("body impl-header cache lock should not be poisoned");
         // Parallel misses can finish out of order. A successfully lowered header may replace a
         // conservative miss, while a late miss must not erase a header another worker found.
         if header.is_some() {
@@ -252,6 +296,93 @@ impl TraitSelectionSession {
         } else {
             headers.entry(impl_ref).or_insert(None);
         }
+    }
+
+    /// Lower a trait's canonical `Self` and predicates at the lifetime allowed by its origin.
+    ///
+    /// Crate traits use the snapshot declaration cache. Body traits are lowered from the caller's
+    /// body-aware item view and are not placed in that cross-use-site cache.
+    pub(crate) fn trait_header_with<'query, D, I>(
+        &self,
+        item_paths: &ItemPathQuery<'query, D, I>,
+        trait_ref: TraitDefRef,
+    ) -> Result<Option<Arc<crate::signature::TraitHeader>>, I::Error>
+    where
+        D: DefMapSource<Error = I::Error>,
+        I: ItemStoreSource<'query>,
+    {
+        if trait_ref.origin.as_crate_ref().is_some() {
+            return self.shared.declarations.trait_header(trait_ref, || {
+                SemanticSignatureQuery::trait_header_from(item_paths, trait_ref)
+            });
+        }
+        Ok(SemanticSignatureQuery::trait_header_from(item_paths, trait_ref)?.map(Arc::new))
+    }
+
+    /// Lower the value behind a declaration such as `type Item = Vec<T>`.
+    ///
+    /// Crate aliases use the snapshot declaration cache. A body alias may name local items, so it
+    /// is lowered from the caller's item view instead of being shared across use-site sessions.
+    pub(crate) fn type_alias_ty_with<'query, D, I>(
+        &self,
+        item_paths: &ItemPathQuery<'query, D, I>,
+        alias: TypeAliasRef,
+    ) -> Result<Option<Arc<Ty>>, I::Error>
+    where
+        D: DefMapSource<Error = I::Error>,
+        I: ItemStoreSource<'query>,
+    {
+        if alias.origin.as_crate_ref().is_some() {
+            return self.shared.declarations.type_alias_ty(alias, || {
+                SemanticSignatureQuery::type_alias_ty_from(item_paths, alias)
+            });
+        }
+        Ok(SemanticSignatureQuery::type_alias_ty_from(item_paths, alias)?.map(Arc::new))
+    }
+
+    /// Lower a function's canonical params, return type, and clauses.
+    ///
+    /// Crate functions use the snapshot declaration cache. Body functions are lowered through the
+    /// body-aware item view instead of being shared across use-site sessions.
+    pub(crate) fn function_signature_with<'query, D, I>(
+        &self,
+        item_paths: &ItemPathQuery<'query, D, I>,
+        function: FunctionRef,
+    ) -> Result<Option<Arc<CallableSignature>>, I::Error>
+    where
+        D: DefMapSource<Error = I::Error>,
+        I: ItemStoreSource<'query>,
+    {
+        if function.origin.as_crate_ref().is_some() {
+            return self.shared.declarations.function_signature(function, || {
+                SemanticSignatureQuery::function_from(item_paths, function)
+            });
+        }
+        Ok(SemanticSignatureQuery::function_from(item_paths, function)?.map(Arc::new))
+    }
+
+    /// Lower every opaque identity and bound declared by one generic owner.
+    ///
+    /// For `fn items<T>() -> impl Iterator<Item = T>`, this keeps the opaque return identity beside
+    /// its lowered `Iterator` bound. Crate owners use the snapshot cache; body owners are lowered
+    /// from their local item view.
+    pub(crate) fn opaque_bounds_for_owner_with<'query, D, I>(
+        &self,
+        item_paths: &ItemPathQuery<'query, D, I>,
+        owner: GenericDefRef,
+    ) -> Result<Arc<OpaqueBounds>, I::Error>
+    where
+        D: DefMapSource<Error = I::Error>,
+        I: ItemStoreSource<'query>,
+    {
+        if owner.origin().as_crate_ref().is_some() {
+            return self.shared.declarations.opaque_bounds(owner, || {
+                SemanticSignatureQuery::opaque_bounds_for_owner_from(item_paths, owner)
+            });
+        }
+        Ok(Arc::new(
+            SemanticSignatureQuery::opaque_bounds_for_owner_from(item_paths, owner)?,
+        ))
     }
 
     /// Narrow one trait's visible impls to headers with this outer `Self` shape.

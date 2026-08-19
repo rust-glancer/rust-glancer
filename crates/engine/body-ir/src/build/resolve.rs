@@ -13,6 +13,7 @@ use rg_ir_model::{CrateId, CrateRef};
 use rg_semantic_ir::SemanticIrReadTxn;
 use rg_std::Shrink;
 use rg_text::{NameInterner, PackageNameInterners};
+use rg_ty::TraitSelectionDeclarationCache;
 
 use crate::{CrateBodies, PackageBodies};
 
@@ -22,6 +23,11 @@ use super::{local_thread_pool, lower::LoweredPackageBodies, state::CrateBodyBuil
 // normal scheduling variance.
 const SLOW_PACKAGE_RESOLUTION: Duration = Duration::from_secs(2);
 
+/// Resolve all materialized packages against one semantic snapshot.
+///
+/// Each crate still needs its own trait-selection session because impl visibility and solver
+/// answers depend on the use-site crate. Canonical crate declaration shapes do not, so package
+/// workers share one build-scoped declaration cache.
 pub(super) fn resolve_packages(
     packages: Vec<LoweredPackageBodies>,
     parse: &rg_parse::ParseDb,
@@ -30,6 +36,7 @@ pub(super) fn resolve_packages(
     semantic_ir: &SemanticIrReadTxn<'_>,
 ) -> anyhow::Result<Vec<PackageBodies>> {
     let profile_context = rg_profile::ProfileThreadContext::capture();
+    let declarations = TraitSelectionDeclarationCache::new();
     let thread_pool = local_thread_pool("rg-body-resolve")?;
     let resolved = thread_pool
         .install(|| {
@@ -47,6 +54,7 @@ pub(super) fn resolve_packages(
                         interner,
                         def_map,
                         semantic_ir,
+                        &declarations,
                     )
                 })
                 .collect::<anyhow::Result<Vec<_>>>()
@@ -59,6 +67,8 @@ pub(super) fn resolve_packages(
 ///
 /// Before starting Rayon jobs, give each package mutable access to its own name interner. No two
 /// workers can then touch the same interner, so package resolution needs no extra synchronization.
+/// The jobs also share canonical crate declaration lowering, while keeping their visibility and
+/// solver state inside the corresponding crate session.
 pub(super) fn resolve_selected_packages(
     packages: Vec<(PackageSlot, LoweredPackageBodies)>,
     parse: &rg_parse::ParseDb,
@@ -69,6 +79,7 @@ pub(super) fn resolve_selected_packages(
     publish_priority: &(dyn Fn(PackageSlot, PackageBodies) + Sync),
 ) -> anyhow::Result<Vec<(PackageSlot, PackageBodies)>> {
     let profile_context = rg_profile::ProfileThreadContext::capture();
+    let declarations = TraitSelectionDeclarationCache::new();
     // Selected rebuilds are sparse, but resolution may discover nested bodies and lower them,
     // which needs mutable access to the matching package name interner. The rebuilder normalizes
     // package slots, so walking the interner slice left-to-right lets us prepare disjoint jobs that
@@ -119,6 +130,7 @@ pub(super) fn resolve_selected_packages(
                             interner,
                             def_map,
                             semantic_ir,
+                            &declarations,
                         )?;
                         Ok((package_slot, package))
                     })
@@ -170,6 +182,7 @@ pub(super) fn resolve_selected_packages(
                             interner,
                             def_map,
                             semantic_ir,
+                            &declarations,
                         )?;
                         Ok(ResolvedPackage {
                             package: package_slot,
@@ -250,6 +263,7 @@ fn resolve_package(
     interner: &mut NameInterner,
     def_map_txn: &DefMapReadTxn<'_>,
     semantic_ir: &SemanticIrReadTxn<'_>,
+    declarations: &TraitSelectionDeclarationCache,
 ) -> anyhow::Result<PackageBodies> {
     let crate_count = package.len();
     let span = tracing::debug_span!(
@@ -274,8 +288,11 @@ fn resolve_package(
                 crate_id: CrateId(crate_idx),
             };
 
-            CrateBodyBuildState::new(crate_ref, parse_package, crate_bodies, interner)
-                .resolve(def_map_txn, semantic_ir)
+            CrateBodyBuildState::new(crate_ref, parse_package, crate_bodies, interner).resolve(
+                def_map_txn,
+                semantic_ir,
+                declarations,
+            )
         })
         .collect::<anyhow::Result<Vec<_>>>()?;
 
