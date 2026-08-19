@@ -1307,6 +1307,78 @@ pub fn dep_value() -> usize {
 }
 
 #[test]
+fn final_detached_merge_keeps_priority_package_offloaded() {
+    let fixture = ProjectSourceFixture::build(
+        r#"
+//- /Cargo.toml
+[package]
+name = "offloaded_priority_merge"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub fn value() -> usize {
+    1
+}
+"#,
+    );
+    let mut project = Project::builder(fixture.workspace_metadata())
+        .split_indexing_mode(SplitIndexingMode::EarlyStart)
+        .package_residency_policy(PackageResidencyPolicy::AllOffloadable)
+        .build()
+        .expect("early-start offloadable project build should succeed");
+    let priority_finished = Arc::new(Mutex::new(None));
+    let priority_publication = Arc::clone(&priority_finished);
+    let final_finished = project
+        .detach_split_indexing()
+        .finish_with_package_priority(
+            || vec![rg_def_map::PackageSlot(0)],
+            move |finished| {
+                let previous = priority_publication
+                    .lock()
+                    .expect("priority publication should not be poisoned")
+                    .replace(finished);
+                assert!(
+                    previous.is_none(),
+                    "one-package build should publish priority data once",
+                );
+            },
+        )
+        .expect("background deferred indexing should succeed");
+    let priority_finished = priority_finished
+        .lock()
+        .expect("priority publication should not be poisoned")
+        .take()
+        .expect("priority package should publish before the final result");
+
+    assert!(
+        project
+            .split_indexing()
+            .merge_finished(priority_finished)
+            .expect("priority package should merge"),
+        "priority publication should finish the saved package",
+    );
+    assert_eq!(
+        project.stats().body_ir.crate_count,
+        0,
+        "priority publication should return the finished package to offloaded residency",
+    );
+
+    assert!(
+        !project
+            .split_indexing()
+            .merge_finished(final_finished)
+            .expect("final background result should reconcile"),
+        "the final result should not reinstall an already-offloaded priority package",
+    );
+    assert_eq!(
+        project.stats().body_ir.crate_count,
+        0,
+        "final reconciliation should preserve offloaded residency",
+    );
+}
+
+#[test]
 fn residency_keeps_partial_deferred_payload_transient_and_resident() {
     let fixture = ProjectSourceFixture::build(
         r#"

@@ -583,6 +583,13 @@ fn merge_finished_packages(
     // finished a package while the detached build was running, in which case equal or older
     // coverage must not replace it.
     for (package, finished_bodies) in finished {
+        // An offloaded slot already has a durable package artifact. A priority publication can
+        // reach that state before the final detached result returns the same package, and putting
+        // the duplicate back would turn a deliberately lazy slot into retained Body IR again.
+        if state.body_ir.package_is_offloaded(package) {
+            continue;
+        }
+
         let should_replace = state
             .body_ir
             .resident_package(package)
