@@ -389,6 +389,25 @@ impl ProjectCoordinator {
         }
     }
 
+    /// Publish one resolved priority package without ending the lifecycle.
+    pub(super) fn deferred_indexing_priority_package_finished(
+        &mut self,
+        generation: u64,
+        finished: rg_project::FinishedSplitIndexing,
+    ) {
+        self.deferred_indexing_finish.priority_package_returned(
+            &mut self.project,
+            generation,
+            finished,
+        );
+    }
+
+    /// Update package scheduling priority from an editor open/close hint.
+    pub(super) fn set_deferred_indexing_priority(&mut self, path: PathBuf, prioritized: bool) {
+        self.deferred_indexing_finish
+            .set_priority(&self.project, path, prioritized);
+    }
+
     pub(super) fn saved_snapshot(&self) -> anyhow::Result<ProjectSnapshot<'_>> {
         self.project
             .saved_snapshot()

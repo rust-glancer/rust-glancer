@@ -637,6 +637,16 @@ impl EngineService for GatedCompletionEngine {
         panic!("test engine only supports completion")
     }
 
+    async fn set_deferred_indexing_priority(
+        self,
+        _: context::Context,
+        _: PathBuf,
+        _: bool,
+    ) -> EngineResult<()> {
+        // Raw didOpen/didClose in these tests may carry the ordinary best-effort scheduler hint.
+        Ok(())
+    }
+
     async fn did_save(self, _: context::Context, _: SaveProposal) -> EngineResult<u64> {
         panic!("test engine only supports completion")
     }

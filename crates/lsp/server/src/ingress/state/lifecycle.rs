@@ -41,8 +41,8 @@ pub(crate) enum LifecycleEvent {
         proposal: SaveProposal,
         route: SessionRoute,
     },
-    /// Remove the registry route after earlier async work for this path has finished.
-    Close { path: PathBuf },
+    /// Remove the registry route and its deferred-indexing priority after earlier work finishes.
+    Close { path: PathBuf, route: SessionRoute },
 }
 
 /// One async lifecycle step together with the earlier step it must wait for.

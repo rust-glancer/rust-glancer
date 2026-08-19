@@ -74,6 +74,11 @@ impl Project {
         self.state.workspace()
     }
 
+    /// Return package slots whose parsed source inventory contains this path.
+    pub fn package_slots_for_path(&self, path: &Path) -> anyhow::Result<Vec<PackageSlot>> {
+        split_indexing::package_slots_for_path(&self.state, path)
+    }
+
     /// Returns package residency decisions for this project.
     pub fn package_residency_plan(&self) -> &PackageResidencyPlan {
         self.state.package_residency_plan()
@@ -167,8 +172,8 @@ impl Project {
     /// Early-start indexing lets the saved project become queryable while deferred payloads are
     /// still missing. Background completion must run on a clone so it cannot block the command
     /// loop, but callers should not receive that clone as a general-purpose `Project`. Returning a
-    /// narrow handle keeps the only supported detached operation explicit: finish deferred indexing
-    /// and later merge the result back into saved state.
+    /// narrow handle keeps the only supported detached operation explicit: finish deferred indexing,
+    /// publish priority packages early, and return the final result to saved state.
     //
     // TODO: Make project snapshots cheap to detach, especially parse state, so background
     // completion does not have to clone large parse arenas on the caller thread.

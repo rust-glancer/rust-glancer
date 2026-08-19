@@ -3,6 +3,7 @@
 use std::path::PathBuf;
 
 use anyhow::Context as _;
+use rg_def_map::PackageSlot;
 use rg_project::{AnalysisSurface, DetachedSplitIndexing, Project, ProjectSnapshot};
 
 /// Owns the one saved project used by all analysis queries in this engine.
@@ -89,6 +90,16 @@ impl ProjectState {
             .as_ref()
             .map(Project::snapshot)
             .context("saved project is not initialized")
+    }
+
+    pub(super) fn package_slots_for_path(
+        &self,
+        path: &std::path::Path,
+    ) -> anyhow::Result<Vec<PackageSlot>> {
+        self.saved
+            .as_ref()
+            .context("saved project is not initialized")?
+            .package_slots_for_path(path)
     }
 
     /// Load deferred analysis data needed by a query without changing the source generation.

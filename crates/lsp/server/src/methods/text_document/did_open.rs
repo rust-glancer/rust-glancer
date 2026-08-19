@@ -19,11 +19,26 @@ pub(crate) async fn did_open(registry: Result<&EngineRegistry>) {
         Err(error) => Err(anyhow::anyhow!(error.message.into_owned())),
     };
     route.publish(routed);
-    if route.engine_client().is_err() {
-        tracing::debug!(
-            path = %document.path().display(),
-            session = document.session().get(),
-            "retained opened editor document without a ready engine route"
-        );
+    match route.engine_client() {
+        Ok(engine_client) => {
+            let path = document.path().to_path_buf();
+            engine_client
+                .notify(
+                    "set_deferred_indexing_priority",
+                    move |engine_client, request_context| async move {
+                        engine_client
+                            .set_deferred_indexing_priority(request_context, path, true)
+                            .await
+                    },
+                )
+                .await;
+        }
+        Err(_) => {
+            tracing::debug!(
+                path = %document.path().display(),
+                session = document.session().get(),
+                "retained opened editor document without a ready engine route"
+            );
+        }
     }
 }

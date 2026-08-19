@@ -311,6 +311,31 @@ impl EngineDispatcher {
                     tracing::trace!("engine command started: reindex_workspace");
                     let _ = respond_to.send(self.project.reindex_workspace());
                 }
+                EngineCommand::SetDeferredIndexingPriority {
+                    path,
+                    prioritized,
+                    respond_to,
+                } => {
+                    tracing::trace!(
+                        path = %path.display(),
+                        prioritized,
+                        "engine command started: set_deferred_indexing_priority"
+                    );
+                    self.project
+                        .set_deferred_indexing_priority(path, prioritized);
+                    let _ = respond_to.send(Ok(()));
+                }
+                EngineCommand::DeferredIndexingPriorityPackageFinished {
+                    generation,
+                    finished,
+                } => {
+                    tracing::trace!(
+                        generation,
+                        "engine command started: deferred_indexing_priority_package_finished"
+                    );
+                    self.project
+                        .deferred_indexing_priority_package_finished(generation, *finished);
+                }
                 EngineCommand::DeferredIndexingFinished { generation, result } => {
                     tracing::trace!(
                         generation,

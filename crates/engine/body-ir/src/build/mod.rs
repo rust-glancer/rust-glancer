@@ -181,6 +181,27 @@ impl<'db, 'names> BodyIrDbPackageRebuilder<'db, 'names> {
     }
 
     pub fn build(self) -> anyhow::Result<BodyIrDb> {
+        self.build_with_optional_package_priority(None, &|_, _| {})
+    }
+
+    /// Build every selected package once while publishing priority packages as they resolve.
+    ///
+    /// The callback receives a compact copy. The ordinary build still retains all resolved
+    /// packages until its two-phase compaction, so publication does not change the final database
+    /// or split one build into cache-cold sub-builds.
+    pub fn build_with_package_priority(
+        self,
+        priority_packages: &(dyn Fn() -> Vec<PackageSlot> + Sync),
+        publish_priority: &(dyn Fn(PackageSlot, PackageBodies) + Sync),
+    ) -> anyhow::Result<BodyIrDb> {
+        self.build_with_optional_package_priority(Some(priority_packages), publish_priority)
+    }
+
+    fn build_with_optional_package_priority(
+        self,
+        priority_packages: Option<&(dyn Fn() -> Vec<PackageSlot> + Sync)>,
+        publish_priority: &(dyn Fn(PackageSlot, PackageBodies) + Sync),
+    ) -> anyhow::Result<BodyIrDb> {
         // 1. Start with the old snapshot so untouched package slots remain shared. The read
         // transactions may load dependencies from the bounded subset while selected packages are
         // rebuilt in memory.
@@ -222,6 +243,8 @@ impl<'db, 'names> BodyIrDbPackageRebuilder<'db, 'names> {
             self.interners,
             &def_map_txn,
             &semantic_ir_txn,
+            priority_packages,
+            publish_priority,
         )
         .context("while attempting to resolve rebuilt body IR packages")?;
         let resolution_ms = resolution_started.elapsed().as_millis();

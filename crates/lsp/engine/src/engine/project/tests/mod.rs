@@ -231,6 +231,107 @@ fn deferred_lifecycle_tracks_published_generations_not_foreground_activity() {
 }
 
 #[test]
+fn open_document_package_is_published_before_full_deferred_result() {
+    let fixture = fixture_crate(
+        r#"
+            //- /Cargo.toml
+            [workspace]
+            members = ["app", "helper"]
+            resolver = "2"
+
+            //- /app/Cargo.toml
+            [package]
+            name = "deferred_priority_app"
+            version = "0.1.0"
+            edition = "2024"
+
+            //- /app/src/lib.rs
+            pub fn app() -> usize { 1 }
+
+            //- /helper/Cargo.toml
+            [package]
+            name = "deferred_priority_helper"
+            version = "0.1.0"
+            edition = "2024"
+
+            //- /helper/src/lib.rs
+            pub fn first() -> usize { 1 }
+            pub fn second() -> usize { 2 }
+            pub fn third() -> usize { 3 }
+            "#,
+    );
+    let (sender, receiver) = mpsc::channel();
+    let memory_control: Arc<dyn MemoryControl> = Arc::new(());
+    let recorded = RecordingNotifications::default();
+    let notifications = ServiceNotificationsSink::from_publisher(recorded.clone());
+    let mut project = ProjectCoordinator::new(sender, memory_control, notifications);
+    project
+        .initialize(
+            fixture.path(""),
+            ProjectConfiguration::from(AnalysisConfig {
+                package_residency_policy: PackageResidencyPolicy::AllResident,
+                sysroot_discovery: SysrootDiscovery::Disabled,
+                ..AnalysisConfig::default()
+            }),
+        )
+        .expect("fixture project should initialize");
+    assert!(matches!(
+        recorded.take().as_slice(),
+        [ServiceNotification::DeferredIndexingStarted { .. }]
+    ));
+
+    // The worker is already live when this didOpen-derived hint reaches its package queue.
+    project.set_deferred_indexing_priority(fixture.path("helper/src/lib.rs"), true);
+    let first = receiver
+        .recv_timeout(Duration::from_secs(5))
+        .expect("the prioritized package should return");
+    let EngineCommand::DeferredIndexingPriorityPackageFinished {
+        generation,
+        finished,
+    } = first.command
+    else {
+        panic!("the open-document package should publish before the final background result");
+    };
+    project.deferred_indexing_priority_package_finished(generation, *finished);
+
+    let first_stats = project
+        .saved_snapshot()
+        .expect("partially finished saved project should be available")
+        .stats()
+        .body_ir;
+    assert_eq!(first_stats.complete_crate_count, 1);
+    assert_eq!(
+        first_stats.body_count, 3,
+        "the three-body open-document package should be the first publication",
+    );
+    assert!(
+        recorded.take().is_empty(),
+        "an intermediate package publication must not end deferred indexing",
+    );
+
+    let final_command = receiver
+        .recv_timeout(Duration::from_secs(5))
+        .expect("the remaining background package should return");
+    let EngineCommand::DeferredIndexingFinished { generation, result } = final_command.command
+    else {
+        panic!("the final package result should complete deferred indexing");
+    };
+    project.deferred_indexing_finished(generation, result);
+
+    let finished_stats = project
+        .saved_snapshot()
+        .expect("finished saved project should be available")
+        .stats()
+        .body_ir;
+    assert_eq!(finished_stats.complete_crate_count, 2);
+    assert_eq!(finished_stats.body_count, 4);
+    assert!(matches!(
+        recorded.take().as_slice(),
+        [ServiceNotification::DeferredIndexingFinished { .. }]
+    ));
+}
+
+#[test]
 fn saved_project_change_retries_source_races_but_preserves_a_finite_lane_budget() {
     let fixture = fixture_crate(
         r#"

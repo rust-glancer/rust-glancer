@@ -100,6 +100,17 @@ pub(crate) enum EngineCommand {
     ReindexWorkspace {
         respond_to: EngineResponder<()>,
     },
+    /// Update the editor-derived package priority used by deferred background indexing.
+    SetDeferredIndexingPriority {
+        path: PathBuf,
+        prioritized: bool,
+        respond_to: EngineResponder<()>,
+    },
+    /// Publish a priority package while the same detached build continues in the background.
+    DeferredIndexingPriorityPackageFinished {
+        generation: u64,
+        finished: Box<rg_project::FinishedSplitIndexing>,
+    },
     /// Re-enters a background result onto the lane that owns the saved project.
     DeferredIndexingFinished {
         generation: u64,

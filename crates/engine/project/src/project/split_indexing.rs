@@ -12,7 +12,7 @@
 //! - `materialize` makes the analysis surface needed by one query available, such as one file for
 //!   hover or a mix of files and crates for reference search.
 //! - `DetachedSplitIndexing` and `merge_finished` let an LSP background clone finish deferred
-//!   payloads and merge package-wise improvements back into the saved project.
+//!   payloads, publish priority packages early, and merge those improvements into the saved project.
 //!
 //! That last path has to be monotonic. Query-time materialization may finish a package before the
 //! background clone finishes, so a stale background result must not replace better saved coverage
@@ -61,13 +61,13 @@ pub enum AnalysisSurface<'a> {
 ///
 /// - `materialize` is the on-demand path. It prepares exactly the source surface a query needs
 ///   before that query runs, so reference search and rename do not miss body-local uses.
-/// - `finish` is the background or batch path. It completes the remaining deferred payloads chosen
-///   by the project's configured indexing policy and then reapplies package residency.
+/// - `finish` is the background path. It completes the remaining deferred payloads chosen by the
+///   project's configured indexing policy and then reapplies package residency.
 ///
 /// Detached finishing uses the same policy, but runs through `DetachedSplitIndexing` so callers
 /// cannot accidentally treat a project clone as an ordinary live project. The clone stays hidden
-/// behind that capability until it becomes `FinishedSplitIndexing` and can be merged back into the
-/// saved project.
+/// behind that capability while `FinishedSplitIndexing` package improvements are published back
+/// into the saved project.
 pub struct SplitIndexing<'project> {
     project: &'project mut Project,
 }
@@ -140,21 +140,90 @@ impl DetachedSplitIndexing {
         Self { project }
     }
 
-    /// Finish deferred indexing inside the detached project clone.
+    /// Return the packages still selected by the configured deferred-indexing policy.
+    pub fn unfinished_packages(&self) -> Vec<PackageSlot> {
+        unfinished_split_indexing_packages(&self.project.state)
+    }
+
+    /// Return package slots whose parsed source inventory contains this path.
+    ///
+    /// Editor paths do not have to use the same spelling as Cargo metadata paths, so the lookup
+    /// canonicalizes before consulting the detached project's package-local file tables.
+    pub fn package_slots_for_path(
+        &self,
+        path: &std::path::Path,
+    ) -> anyhow::Result<Vec<PackageSlot>> {
+        package_slots_for_path(&self.project.state, path)
+    }
+
+    /// Finish all deferred work while publishing priority packages as soon as they resolve.
+    ///
+    /// Every package still belongs to one Body IR build. The callback is an early copy-out point,
+    /// not another build boundary, so the remaining background work keeps its ordinary parallel
+    /// scheduling and shared read transactions.
+    pub fn finish_with_package_priority(
+        self,
+        priority_packages: impl Fn() -> Vec<PackageSlot> + Sync,
+        publish_priority: impl Fn(FinishedSplitIndexing) + Sync,
+    ) -> anyhow::Result<FinishedSplitIndexing> {
+        self.finish_with_optional_package_priority(Some(&priority_packages), &publish_priority)
+    }
+
+    /// Finish every remaining package inside the detached project clone.
     pub fn finish(self) -> anyhow::Result<FinishedSplitIndexing> {
-        finish_detached_project(self.project)
+        self.finish_with_optional_package_priority(None, &|_| {})
+    }
+
+    fn finish_with_optional_package_priority(
+        mut self,
+        priority_packages: Option<&(dyn Fn() -> Vec<PackageSlot> + Sync)>,
+        publish_priority: &(dyn Fn(FinishedSplitIndexing) + Sync),
+    ) -> anyhow::Result<FinishedSplitIndexing> {
+        let packages = unfinished_split_indexing_packages(&self.project.state);
+        let publish_package = |package, bodies| {
+            publish_priority(FinishedSplitIndexing {
+                packages: vec![(package, bodies)],
+            });
+        };
+        let mut sampler = BuildMemorySampler::disabled();
+        finish_resident_packages_with_sampler(
+            &mut self.project.state,
+            &packages,
+            priority_packages,
+            &publish_package,
+            &mut sampler,
+        )
+        .context("while attempting to finish detached deferred packages")?;
+        capture_finished_packages(&self.project.state, &packages)
     }
 }
 
-/// Result of finishing split indexing inside a detached project clone.
+pub(super) fn package_slots_for_path(
+    state: &ProjectState,
+    path: &std::path::Path,
+) -> anyhow::Result<Vec<PackageSlot>> {
+    let canonical_path = path
+        .canonicalize()
+        .with_context(|| format!("while attempting to canonicalize {}", path.display()))?;
+    let mut packages = state
+        .parse
+        .file_refs_for_path(&canonical_path)
+        .into_iter()
+        .map(|file| PackageSlot(file.package))
+        .collect::<Vec<_>>();
+    packages.sort_unstable();
+    packages.dedup();
+    Ok(packages)
+}
+
+/// Package payloads finished inside a detached project clone.
 ///
-/// The project stays owned by this value until merge time. That lets the saved project decide,
-/// package by package, whether the detached result is still an improvement over any on-demand work
-/// that happened while the background clone was running.
+/// A background worker can publish one of these values while its detached build continues through
+/// later packages. The saved project still decides package by package whether each payload is an
+/// improvement over on-demand work that happened in parallel.
 #[derive(Debug, Clone, MemorySize)]
 pub struct FinishedSplitIndexing {
-    project: Project,
-    packages: Vec<PackageSlot>,
+    packages: Vec<(PackageSlot, PackageBodies)>,
 }
 
 /// Finish deferred indexing without recording build checkpoints.
@@ -187,28 +256,13 @@ fn materialize_surface(
     }
 }
 
-/// Complete deferred indexing inside a detached project so it can later be merged into saved state.
-fn finish_detached_project(mut project: Project) -> anyhow::Result<FinishedSplitIndexing> {
-    let mut sampler = BuildMemorySampler::disabled();
-    let packages = finish_resident_with_sampler(&mut project.state, &mut sampler)?;
-    Ok(FinishedSplitIndexing { project, packages })
-}
-
 /// Merge a detached finish result, returning whether it improved the saved project.
 fn merge_finished_project(
     state: &mut ProjectState,
     finished: FinishedSplitIndexing,
 ) -> anyhow::Result<bool> {
-    let packages = merge_finished_packages(state, &finished.project.state, &finished.packages)
-        .context("while attempting to merge deferred indexing packages");
-
-    // Package replacement clones the improvements into the saved project. Drop the detached
-    // project before applying residency: it can own a complete second Body IR, and purging while
-    // that clone is alive cannot return its allocator pages. This also matters when on-demand
-    // materialization already produced equal or better coverage and there is nothing to merge.
-    drop(finished);
-
-    let packages = packages?;
+    let packages = merge_finished_packages(state, finished.packages)
+        .context("while attempting to merge deferred indexing packages")?;
     if packages.is_empty() {
         return Ok(false);
     }
@@ -397,27 +451,45 @@ fn finish_resident_with_sampler(
     sampler: &mut BuildMemorySampler,
 ) -> anyhow::Result<Vec<PackageSlot>> {
     let packages = unfinished_split_indexing_packages(state);
+    finish_resident_packages_with_sampler(state, &packages, None, &|_, _| {}, sampler)
+        .context("while attempting to finish resident deferred packages")?;
+    Ok(packages)
+}
+
+/// Complete the already-normalized deferred package set in one Body IR build.
+fn finish_resident_packages_with_sampler(
+    state: &mut ProjectState,
+    packages: &[PackageSlot],
+    priority_packages: Option<&(dyn Fn() -> Vec<PackageSlot> + Sync)>,
+    publish_priority: &(dyn Fn(PackageSlot, PackageBodies) + Sync),
+    sampler: &mut BuildMemorySampler,
+) -> anyhow::Result<()> {
     if packages.is_empty() {
-        return Ok(packages);
+        return Ok(());
     }
 
     let finish_subset =
-        PhasePackageSet::from_slice(&packages).visible_dependency_subset(&state.workspace);
+        PhasePackageSet::from_slice(packages).visible_dependency_subset(&state.workspace);
     let loaders = PackageReadLoaders::new(state);
-    let body_ir = state
+    let rebuilder = state
         .body_ir
         .package_rebuilder(
             &state.parse,
             &state.def_map,
             &state.semantic_ir,
-            &packages,
+            packages,
             &mut state.names,
             loaders.def_map,
             loaders.semantic_ir,
             &finish_subset,
         )
-        .configured_bodies(state.body_ir_policy)
-        .build();
+        .configured_bodies(state.body_ir_policy);
+    let body_ir = match priority_packages {
+        Some(priority_packages) => {
+            rebuilder.build_with_package_priority(priority_packages, publish_priority)
+        }
+        None => rebuilder.build(),
+    };
 
     // Fresh construction evicts this same reloadable text before exposing retained-state memory.
     // Deferred finishing must do so before its purge and checkpoints as well; otherwise source
@@ -432,7 +504,7 @@ fn finish_resident_with_sampler(
         .purge(ProjectMemoryPurgePoint::AfterBodyIrBuild);
     record_project_checkpoint(state, sampler, "after deferred indexing");
 
-    Ok(packages)
+    Ok(())
 }
 
 /// Apply package residency without adding profiler checkpoints.
@@ -475,18 +547,14 @@ fn record_project_checkpoint(
     record_build_checkpoint(label, project_bytes, project_bytes, process_memory);
 }
 
-/// Merge only package-wise coverage improvements from a detached background finish.
-fn merge_finished_packages(
-    state: &mut ProjectState,
-    finished: &ProjectState,
+/// Copy finished packages out of the detached project for final publication.
+fn capture_finished_packages(
+    state: &ProjectState,
     packages: &[PackageSlot],
-) -> anyhow::Result<Vec<PackageSlot>> {
-    let mut replacements = Vec::new();
-
-    // Decide every replacement before mutating the saved project. If the finished payload is
-    // missing a promised package, fail without leaving a half-merged saved state behind.
+) -> anyhow::Result<FinishedSplitIndexing> {
+    let mut finished = Vec::with_capacity(packages.len());
     for &package in packages {
-        let finished_bodies = finished
+        let bodies = state
             .body_ir
             .resident_package(package)
             .with_context(|| {
@@ -494,19 +562,36 @@ fn merge_finished_packages(
                     "while attempting to read finished deferred payload package {}",
                     package.0,
                 )
-            })?;
+            })?
+            .clone();
+        finished.push((package, bodies));
+    }
+    Ok(FinishedSplitIndexing { packages: finished })
+}
+
+/// Merge only package-wise coverage improvements from detached background work.
+fn merge_finished_packages(
+    state: &mut ProjectState,
+    finished: Vec<(PackageSlot, PackageBodies)>,
+) -> anyhow::Result<Vec<PackageSlot>> {
+    let mut replacements = Vec::new();
+
+    // Decide every replacement before mutating the saved project. Query-time preparation may have
+    // finished a package while the detached build was running, in which case equal or older
+    // coverage must not replace it.
+    for (package, finished_bodies) in finished {
         let should_replace = state
             .body_ir
             .resident_package(package)
             .map(|current_bodies| {
-                body_payload_is_coverage_improvement(current_bodies, finished_bodies)
+                body_payload_is_coverage_improvement(current_bodies, &finished_bodies)
             })
             .unwrap_or(true);
 
         // The background clone can lag behind query-time preparation. Keep the saved package when
         // the detached version would only be equal or worse.
         if should_replace {
-            replacements.push((package, finished_bodies.clone()));
+            replacements.push((package, finished_bodies));
         }
     }
 
