@@ -41,8 +41,8 @@ use rg_semantic_ir::ItemStoreSource;
 use rg_std::UniqueVec;
 
 use crate::{
-    AdtTy, Clause, ImplMatcher, ItemPathQuery, SemanticSignatureQuery, TraitApplication, Ty,
-    TyContext, TypePathResolver, inference::InferenceTable,
+    AdtTy, Clause, ImplMatcher, ItemPathQuery, TraitApplication, Ty, TyContext, TypePathResolver,
+    inference::InferenceTable,
 };
 
 /// Stable declaration identity returned by associated-item discovery.
@@ -141,9 +141,7 @@ where
                 .inherent_impls_for_type(receiver_ty.def),
             self.context
                 .lookup_index()
-                .trait_impls_for_type(receiver_ty.def)
-                .cloned()
-                .unwrap_or_default(),
+                .trait_impls_for_type(receiver_ty.def),
             true,
         )
     }
@@ -299,10 +297,12 @@ where
 
         // The canonical trait header has already lowered `Self: Super` predicates. Filtering on
         // the trait's own `Self` excludes unrelated bounds on its other generic parameters.
-        if let Some(header) =
-            SemanticSignatureQuery::trait_header_from(self.context.item_paths(), trait_ref)?
+        if let Some(header) = self
+            .context
+            .trait_selection()
+            .trait_header_with(self.context.item_paths(), trait_ref)?
         {
-            for clause in header.clauses {
+            for clause in &header.clauses {
                 let Clause::Implemented(application) = clause else {
                     continue;
                 };

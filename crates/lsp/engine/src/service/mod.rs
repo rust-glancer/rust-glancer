@@ -80,6 +80,22 @@ impl EngineService for Service {
         Ok(())
     }
 
+    async fn set_deferred_indexing_priority(
+        self,
+        _: context::Context,
+        path: PathBuf,
+        prioritized: bool,
+    ) -> EngineResult<()> {
+        self.engine
+            .request(|respond_to| EngineCommand::SetDeferredIndexingPriority {
+                path,
+                prioritized,
+                respond_to,
+            })
+            .await
+            .map_err(EngineError::from)
+    }
+
     async fn did_save(self, _: context::Context, proposal: SaveProposal) -> EngineResult<u64> {
         let client_version = proposal.client_version();
         let (target, text) = proposal.into_parts();

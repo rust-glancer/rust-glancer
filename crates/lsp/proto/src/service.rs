@@ -1,9 +1,10 @@
 //! RPC vocabulary between the editor-facing server and one analysis engine.
 //!
-//! Document methods carry complete immutable snapshots; there is no open/change/close document
-//! protocol on this boundary. Saved-project mutations are separate and either carry exact source
-//! text or explicitly ask the project layer to interpret a filesystem path. Responses preserve
-//! operational failures instead of folding them into feature-specific empty values.
+//! Document methods carry complete immutable snapshots; there is no second document-text lifecycle
+//! on this boundary. A lightweight open-path hint may affect only deferred package scheduling.
+//! Saved-project mutations are separate and either carry exact source text or explicitly ask the
+//! project layer to interpret a filesystem path. Responses preserve operational failures instead
+//! of folding them into feature-specific empty values.
 
 use std::path::PathBuf;
 
@@ -25,6 +26,9 @@ pub trait EngineService {
     async fn initialize(root: PathBuf, config: EngineConfig) -> EngineResult<()>;
 
     async fn initialized() -> EngineResult<()>;
+
+    /// Move the package containing an open editor path ahead of ordinary deferred work.
+    async fn set_deferred_indexing_priority(path: PathBuf, prioritized: bool) -> EngineResult<()>;
 
     async fn did_save(proposal: SaveProposal) -> EngineResult<u64>;
 

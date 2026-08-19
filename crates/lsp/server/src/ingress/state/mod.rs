@@ -680,6 +680,7 @@ impl EditorState {
             entry.tail.clone(),
             LifecycleEvent::Close {
                 path: path.to_path_buf(),
+                route: open.route,
             },
             Some(cleanup),
         );

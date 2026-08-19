@@ -10,6 +10,7 @@ mod clean;
 mod rebuild;
 
 use anyhow::Context as _;
+use rayon::prelude::*;
 
 use crate::{
     CrateData, CrateResolutionEnv, LocalDefData, LocalEnumVariantData, LocalEnumVariantEntry,
@@ -48,6 +49,10 @@ type CrateScopeMatrix = Vec<ModuleScopeBuilder>;
 
 /// Mutable module scopes for every crate inside one package.
 type PackageScopeMatrix = Vec<CrateScopeMatrix>;
+
+// Below this size, dispatching packages through a worker pool costs more than the import work.
+const PARALLEL_IMPORT_RESOLUTION_PACKAGE_THRESHOLD: usize = 32;
+const LOWER_PEAK_MEMORY_IMPORT_RESOLUTION_THREAD_LIMIT: usize = 2;
 
 /// Collected crate states that must be finalized.
 ///
@@ -239,6 +244,110 @@ impl ScopeMatrix {
                     });
             }
         }
+    }
+}
+
+/// Owns the worker pool used to apply imports for large package sets.
+///
+/// One fixed-point pass reads only from the immutable previous `ScopeMatrix`, while each dirty
+/// package writes to its own part of the next matrix. That makes package-level work independent;
+/// fixed-point passes themselves remain serial so later passes observe a complete snapshot. The
+/// pool is local to finalization, so its worker threads do not become retained LSP state.
+struct ImportResolutionExecutor {
+    performance_preference: MacroExpansionPerformancePreference,
+    thread_pool: Option<rayon::ThreadPool>,
+}
+
+impl ImportResolutionExecutor {
+    fn new(performance_preference: MacroExpansionPerformancePreference) -> Self {
+        Self {
+            performance_preference,
+            thread_pool: None,
+        }
+    }
+
+    /// Apply one complete import pass, using parallel package jobs only when there is enough work.
+    fn apply_pass(
+        &mut self,
+        states: &FinalizeCrateStates,
+        env: &FinalizeResolutionEnv<'_>,
+        next_scopes: &mut ScopeMatrix,
+    ) -> anyhow::Result<()> {
+        let apply_package = |(next_package, package_states): (
+            &mut Option<PackageScopeMatrix>,
+            &Option<PackageCrateStates>,
+        )|
+         -> anyhow::Result<()> {
+            let (Some(next_package), Some(package_states)) =
+                (next_package.as_mut(), package_states.as_ref())
+            else {
+                assert!(
+                    next_package.is_none() && package_states.is_none(),
+                    "scope and crate-state package slots should match"
+                );
+                return Ok(());
+            };
+            assert_eq!(
+                next_package.len(),
+                package_states.len(),
+                "scope and crate-state crate slots should match"
+            );
+
+            for (next_crate, state) in next_package.iter_mut().zip(package_states) {
+                apply_imports(state, env, next_crate).with_context(|| {
+                    format!(
+                        "while attempting to resolve imports for {}",
+                        state.crate_name
+                    )
+                })?;
+            }
+
+            Ok(())
+        };
+
+        let dirty_package_count = states.iter_dirty().count();
+        if dirty_package_count < PARALLEL_IMPORT_RESOLUTION_PACKAGE_THRESHOLD {
+            return next_scopes
+                .packages
+                .iter_mut()
+                .zip(&states.packages)
+                .try_for_each(apply_package);
+        }
+
+        self.thread_pool()?.install(|| {
+            next_scopes
+                .packages
+                .par_iter_mut()
+                .zip(states.packages.par_iter())
+                .try_for_each(apply_package)
+        })
+    }
+
+    fn thread_pool(&mut self) -> anyhow::Result<&rayon::ThreadPool> {
+        if self.thread_pool.is_none() {
+            let mut builder = rayon::ThreadPoolBuilder::new()
+                .thread_name(|index| format!("rg-def-map-imports-{index}"));
+            if self.performance_preference == MacroExpansionPerformancePreference::LowerPeakMemory {
+                // Import jobs are smaller than macro expansion jobs, but their transient scope
+                // tables still multiply with worker count. Honor the same build preference here.
+                let worker_count = std::thread::available_parallelism()
+                    .map(usize::from)
+                    .unwrap_or(LOWER_PEAK_MEMORY_IMPORT_RESOLUTION_THREAD_LIMIT)
+                    .min(LOWER_PEAK_MEMORY_IMPORT_RESOLUTION_THREAD_LIMIT);
+                builder = builder.num_threads(worker_count);
+            }
+
+            self.thread_pool = Some(
+                builder
+                    .build()
+                    .context("while attempting to create import resolution thread pool")?,
+            );
+        }
+
+        Ok(self
+            .thread_pool
+            .as_ref()
+            .expect("import resolution thread pool should be initialized"))
     }
 }
 
@@ -680,6 +789,7 @@ fn finalize_scopes(
     performance_preference: MacroExpansionPerformancePreference,
 ) -> anyhow::Result<()> {
     let mut macro_runtime = MacroExpansionRuntime::new(performance_preference);
+    let mut import_executor = ImportResolutionExecutor::new(performance_preference);
     let mut expansion_passes = 0;
     metric::EXPANSION_PASS_LIMIT.record_count(MAX_MACRO_EXPANSION_PASSES);
 
@@ -690,7 +800,7 @@ fn finalize_scopes(
         // includes items generated by earlier macro rounds, because those items were written back
         // into `states` before the next round begins.
         let timer = metric::TIMING_RESOLVE_IMPORT_SCOPES.start_timer();
-        let mut current_scopes = resolve_import_scopes(old, states)?;
+        let mut current_scopes = resolve_import_scopes(old, states, &mut import_executor)?;
         timer.finish();
 
         // Macro expansion can introduce more macro calls that are visible in the same scope
@@ -703,7 +813,7 @@ fn finalize_scopes(
                 // names generated before the cap settle into module scopes.
                 mark_retryable_macros_skipped_by_limit(states);
                 let timer = metric::TIMING_RESOLVE_IMPORT_SCOPES.start_timer();
-                current_scopes = resolve_import_scopes(old, states)?;
+                current_scopes = resolve_import_scopes(old, states, &mut import_executor)?;
                 timer.finish();
                 freeze_resolved_scopes(old, states, current_scopes)?;
                 return Ok(());
@@ -779,25 +889,19 @@ fn finalize_scopes(
 fn resolve_import_scopes(
     old: Option<&DefMapReadTxn<'_>>,
     states: &FinalizeCrateStates,
+    executor: &mut ImportResolutionExecutor,
 ) -> anyhow::Result<ScopeMatrix> {
+    metric::IMPORT_RESOLUTION_RUNS.inc();
     let mut current_scopes = states.base_scopes();
 
     loop {
+        metric::IMPORT_RESOLUTION_PASSES.inc();
         let mut next_scopes = states.base_scopes();
 
         // Every iteration starts from the directly declared names, then layers import-derived
         // bindings on top of that snapshot.
         let env = FinalizeResolutionEnv::new(old, states, &current_scopes);
-        for package_states in states.iter_dirty() {
-            for state in package_states {
-                apply_imports(state, &env, &mut next_scopes).with_context(|| {
-                    format!(
-                        "while attempting to resolve imports for {}",
-                        state.crate_name
-                    )
-                })?;
-            }
-        }
+        executor.apply_pass(states, &env, &mut next_scopes)?;
         next_scopes.censor_proc_macro_exports(states);
 
         if next_scopes == current_scopes {

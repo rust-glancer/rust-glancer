@@ -126,6 +126,16 @@ impl BodyIrDb {
             .and_then(|entry| entry.as_resident())
     }
 
+    /// Returns whether one package slot exists but its Body IR payload is not resident.
+    ///
+    /// This distinguishes a deliberately lazy slot from an invalid slot; [`Self::resident_package`]
+    /// returns `None` for both.
+    pub fn package_is_offloaded(&self, package: PackageSlot) -> bool {
+        self.packages
+            .raw_entry(package)
+            .is_some_and(|entry| entry.is_offloaded())
+    }
+
     /// Replaces one package payload while preserving the surrounding package-store shape.
     ///
     /// This is used by project-level monotonic Body IR merges, where a background completion

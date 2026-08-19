@@ -6,15 +6,18 @@
 //! bounded boundary so nested aliases use the same evidence and inference table.
 
 use rg_def_map::DefMapSource;
-use rg_ir_model::{GenericDefRef, ItemOwner, TraitApplicability, TraitDefRef, TypeAliasRef};
+use rg_ir_model::{
+    GenericDefRef, ImplRef, ItemOwner, TraitApplicability, TraitDefRef, TypeAliasRef,
+};
 use rg_semantic_ir::ItemStoreSource;
 use rg_std::ExpectedUnique;
 
+use super::matcher::TraitSelfHead;
 use super::{ChalkOutcome, TraitGoal, TraitSelection, TraitSelectionQuery};
 use crate::inference::InferenceTable;
 use crate::{
     AdtTy, AliasTy, ClosureTy, FnDefTy, GenericArg, GenericArgs, OpaqueTy, ProjectionTy,
-    SemanticSignatureQuery, Substitution, TraitApplication, Ty,
+    Substitution, TraitApplication, Ty,
 };
 
 /// Result of normalizing one selected associated type projection.
@@ -28,17 +31,47 @@ pub struct AssocProjectionResult {
     pub table: InferenceTable,
 }
 
-/// Whether recursive normalization may use native candidate selection as extra evidence.
+/// Native impls already being proved while recursively normalizing associated projections.
 ///
-/// An outer query starts in `Probe` mode. Once candidate predicates are being proved, recursively
-/// probing the same candidate would re-enter native selection; `SolverOnly` leaves that cycle to
-/// Chalk's own forest instead.
+/// Candidate predicates often mention an associated type supplied by a different predicate-free
+/// impl. That declaration is cheap native evidence and should not force the entire predicate into
+/// Chalk. The path also tells normalization to preserve solver-shaped projections for the outer
+/// combined goal instead of solving each one independently.
 #[derive(Clone, Copy)]
-pub(super) enum CandidateEvidence {
-    /// Use native selection to instantiate an already-proved impl value before solver search.
-    Probe,
-    /// Stay inside Chalk while normalizing a predicate that native selection is proving.
-    SolverOnly,
+pub(super) struct CandidateEvidence<'path> {
+    active_impls: &'path [ImplRef],
+    native_declarations_only: bool,
+}
+
+impl CandidateEvidence<'static> {
+    pub(super) const ROOT: Self = Self {
+        active_impls: &[],
+        native_declarations_only: false,
+    };
+}
+
+impl<'path> CandidateEvidence<'path> {
+    pub(super) fn within(active_impls: &'path [ImplRef]) -> Self {
+        Self {
+            active_impls,
+            native_declarations_only: true,
+        }
+    }
+
+    pub(super) fn active_impls(self) -> &'path [ImplRef] {
+        self.active_impls
+    }
+
+    pub(super) fn native_only(self) -> Self {
+        Self {
+            native_declarations_only: true,
+            ..self
+        }
+    }
+
+    pub(super) fn allows_solver_fallback(self) -> bool {
+        !self.native_declarations_only
+    }
 }
 
 impl AssocProjectionResult {
@@ -67,7 +100,7 @@ where
             return Ok(None);
         };
         let Some(mut projection) =
-            self.normalize_assoc_type_once(goal, associated_ty, table, CandidateEvidence::Probe)?
+            self.normalize_assoc_type_once(goal, associated_ty, table, CandidateEvidence::ROOT)?
         else {
             return Ok(None);
         };
@@ -76,7 +109,7 @@ where
             &projection.ty,
             &mut table,
             &mut Vec::new(),
-            CandidateEvidence::Probe,
+            CandidateEvidence::ROOT,
         )?;
         projection.table = table;
         Ok(Some(projection))
@@ -88,29 +121,43 @@ where
         goal: &TraitGoal,
         associated_ty: TypeAliasRef,
         table: &InferenceTable,
-        candidate_evidence: CandidateEvidence,
+        candidate_evidence: CandidateEvidence<'_>,
     ) -> Result<Option<AssocProjectionResult>, I::Error> {
-        let selection = match candidate_evidence {
-            CandidateEvidence::Probe => {
-                let (selection, fully_evaluated) = self.probe_with_completeness(goal, table)?;
-                match selection {
-                    ExpectedUnique::One(selection) => Some(selection),
-                    // Native matching indexes every ordinary impl by the concrete ADT head. Once
-                    // all matching candidates were classified, Chalk has no additional source of
-                    // evidence for that nominal type. Opaque, generic, and callable types still
-                    // fall through because their bounds or built-in clauses can prove a goal with
-                    // no ordinary impl identity.
-                    ExpectedUnique::Empty
-                        if fully_evaluated
-                            && matches!(table.resolve_root_var(goal.self_ty()), Ty::Adt(_)) =>
-                    {
-                        return Ok(None);
-                    }
-                    ExpectedUnique::Empty | ExpectedUnique::Ambiguous => None,
-                }
+        if !candidate_evidence.allows_solver_fallback() {
+            let self_ty = table.resolve_root_var(goal.self_ty());
+            let is_stable_headed_goal = goal.is_cache_stable()
+                && !goal.application.args.iter().any(GenericArg::has_unknown)
+                && TraitSelfHead::from_ty(&self_ty).is_some();
+            if !is_stable_headed_goal {
+                crate::profile::metric::NATIVE_CANDIDATE_UNSTABLE_DECLINES.inc();
+                return Ok(None);
             }
-            CandidateEvidence::SolverOnly => None,
+        }
+
+        let (selection, fully_evaluated) =
+            self.probe_with_completeness_avoiding(goal, table, candidate_evidence)?;
+        if !candidate_evidence.allows_solver_fallback() && !fully_evaluated {
+            // A predicate-bearing or recursive competing candidate can change the associated
+            // value. Keep the equality for Chalk unless native discovery classified the complete
+            // matching set.
+            return Ok(None);
+        }
+        let selection = match selection {
+            ExpectedUnique::One(selection) => Some(selection),
+            // Native matching indexes every ordinary impl by the concrete ADT head. Once all
+            // matching candidates were classified, Chalk has no additional source of evidence
+            // for that nominal type. Opaque, generic, and callable types still fall through
+            // because their bounds or built-in clauses can prove a goal with no ordinary impl
+            // identity.
+            ExpectedUnique::Empty
+                if fully_evaluated
+                    && matches!(table.resolve_root_var(goal.self_ty()), Ty::Adt(_)) =>
+            {
+                return Ok(None);
+            }
+            ExpectedUnique::Empty | ExpectedUnique::Ambiguous => None,
         };
+
         let selection_table = selection
             .as_ref()
             .map(|selection| &selection.table)
@@ -122,7 +169,15 @@ where
         if let Some(selection) = &selection
             && let Some(projection) = self.project_selected_impl(goal, associated_ty, selection)?
         {
+            crate::profile::metric::NATIVE_ASSOC_PROJECTIONS.inc();
             return Ok(Some(projection));
+        }
+
+        // Native-only normalization is performed while preparing a larger predicate conjunction.
+        // Preserve anything that is not a direct declaration so the caller submits one combined
+        // Chalk goal instead of materializing a transitive program for each equality separately.
+        if !candidate_evidence.allows_solver_fallback() {
+            return Ok(None);
         }
 
         let projection = self.context.trait_selection().normalize_assoc_type(
@@ -151,6 +206,41 @@ where
             projection.applicability = selection.applicability.and(projection.applicability);
         }
         Ok(Some(projection))
+    }
+
+    /// Normalize one already-resolved projection identity through the same candidate path as a
+    /// type-tree projection.
+    ///
+    /// Alias-equality predicates use this entry point before native proof. A definite selected
+    /// value can discharge the equality without asking Chalk to rediscover the same impl.
+    pub(super) fn normalize_projection_once(
+        &self,
+        alias: &ProjectionTy,
+        table: &InferenceTable,
+        candidate_evidence: CandidateEvidence<'_>,
+    ) -> Result<Option<AssocProjectionResult>, I::Error> {
+        let Some(data) = self
+            .context
+            .item_paths()
+            .items()
+            .type_alias_data(alias.associated_ty)?
+        else {
+            return Ok(None);
+        };
+        let ItemOwner::Trait(trait_id) = data.owner else {
+            return Ok(None);
+        };
+        let goal = TraitGoal {
+            application: TraitApplication {
+                def: TraitDefRef {
+                    origin: alias.associated_ty.origin,
+                    id: trait_id,
+                },
+                args: alias.args.clone(),
+            },
+            associated_types: Vec::new(),
+        };
+        self.normalize_assoc_type_once(&goal, alias.associated_ty, table, candidate_evidence)
     }
 
     /// Instantiate a plain associated value from an already-proved nominal impl.
@@ -205,8 +295,10 @@ where
         if !can_project_directly(alias_data) {
             return Ok(None);
         }
-        let Some(selected_value) =
-            SemanticSignatureQuery::type_alias_ty_from(self.context.item_paths(), alias)?
+        let Some(selected_value) = self
+            .context
+            .trait_selection()
+            .type_alias_ty_with(self.context.item_paths(), alias)?
         else {
             return Ok(None);
         };
@@ -236,14 +328,14 @@ where
         ty: &Ty,
         table: &InferenceTable,
     ) -> Result<(Ty, InferenceTable), I::Error> {
-        self.normalize_ty_with_candidate_evidence(ty, table, CandidateEvidence::Probe)
+        self.normalize_ty_with_candidate_evidence(ty, table, CandidateEvidence::ROOT)
     }
 
     pub(super) fn normalize_ty_with_candidate_evidence(
         &self,
         ty: &Ty,
         table: &InferenceTable,
-        candidate_evidence: CandidateEvidence,
+        candidate_evidence: CandidateEvidence<'_>,
     ) -> Result<(Ty, InferenceTable), I::Error> {
         let mut table = table.clone();
         let ty =
@@ -256,7 +348,7 @@ where
         ty: &Ty,
         table: &mut InferenceTable,
         active: &mut Vec<ProjectionTy>,
-        candidate_evidence: CandidateEvidence,
+        candidate_evidence: CandidateEvidence<'_>,
     ) -> Result<Ty, I::Error> {
         Ok(match ty {
             Ty::Tuple(fields) => Ty::tuple(
@@ -334,41 +426,20 @@ where
                     associated_ty: alias.associated_ty,
                     args: self.normalize_args(&alias.args, table, active, candidate_evidence)?,
                 };
-                if active.contains(&alias) {
+                // Solver retries can reproduce one projection with freshly allocated inference
+                // slots. Their numeric IDs differ, but they still describe the same obligation.
+                if active
+                    .iter()
+                    .any(|active_alias| active_alias.equivalent_modulo_inference_ids(&alias))
+                {
                     return Ok(Ty::Alias(AliasTy::Projection(alias)));
                 }
-
-                let Some(data) = self
-                    .context
-                    .item_paths()
-                    .items()
-                    .type_alias_data(alias.associated_ty)?
-                else {
-                    return Ok(Ty::Alias(AliasTy::Projection(alias)));
-                };
-                let ItemOwner::Trait(trait_id) = data.owner else {
-                    return Ok(Ty::Alias(AliasTy::Projection(alias)));
-                };
-                let goal = TraitGoal {
-                    application: TraitApplication {
-                        def: TraitDefRef {
-                            origin: alias.associated_ty.origin,
-                            id: trait_id,
-                        },
-                        args: alias.args.clone(),
-                    },
-                    associated_types: Vec::new(),
-                };
 
                 // Associated values can form cycles across multiple aliases. Stop at the first
                 // repeated semantic projection and keep that alias visible to the caller.
                 active.push(alias.clone());
-                let normalized = self.normalize_assoc_type_once(
-                    &goal,
-                    alias.associated_ty,
-                    table,
-                    candidate_evidence,
-                )?;
+                let normalized =
+                    self.normalize_projection_once(&alias, table, candidate_evidence)?;
                 let ty = if let Some(normalized) = normalized {
                     let (ty, _applicability, normalized_table) = normalized.into_parts();
                     *table = normalized_table;
@@ -405,7 +476,7 @@ where
         args: &GenericArgs,
         table: &mut InferenceTable,
         active: &mut Vec<ProjectionTy>,
-        candidate_evidence: CandidateEvidence,
+        candidate_evidence: CandidateEvidence<'_>,
     ) -> Result<GenericArgs, I::Error> {
         args.iter()
             .map(|arg| {

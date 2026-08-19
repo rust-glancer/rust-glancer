@@ -306,6 +306,53 @@ make_fields!(id, age);
     }
 
     #[test]
+    fn matcher_error_does_not_transcribe_partial_repetition() {
+        let file = ast::SourceFile::parse(
+            r#"
+macro_rules! expand_params {
+    (
+        $($code:literal),+,
+        $(param: $param:expr,)?
+    ) => {{
+        let _ = expand_params!(@param $($param)*);
+    }};
+    (@param) => { () };
+    (@param $param:expr) => { $param };
+}
+
+expand_params!("RAND", param: value.clone());
+"#,
+            Edition::CURRENT,
+        )
+        .ok()
+        .expect("test source should parse");
+        let macro_rules = file
+            .syntax()
+            .descendants()
+            .find_map(ast::MacroRules::cast)
+            .expect("test source should contain macro_rules");
+        let call = file
+            .syntax()
+            .descendants()
+            .filter_map(ast::MacroCall::cast)
+            .last()
+            .expect("test source should contain a macro call");
+
+        let macro_rules = stored_macro_rules_body(&macro_rules);
+        let (args, call_site) = stored_call_args(&call);
+        let mac = DeclarativeMacro::from_macro_rules_tokens(&macro_rules, Edition::CURRENT)
+            .expect("macro should compile");
+        let error = mac
+            .expand_call_tokens(&args, call_site, ExpansionParseKind::Expr)
+            .expect_err("invalid macro input should fail to expand");
+
+        assert!(
+            error.to_string().contains("expected literal"),
+            "unexpected expansion error: {error:#}",
+        );
+    }
+
+    #[test]
     fn renders_joint_path_punctuation() {
         check_expansion(
             r#"

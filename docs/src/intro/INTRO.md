@@ -26,7 +26,12 @@ It does not come for free, though:
   less precise than one of saved buffer. Indexing happens only on save, so when you're typing we're
   performing a "shallow" analysis. It's better covered in [limitations](../usage/LIMITATIONS.md).
 
-And obviously Rust Glancer is a much younger project than rust-analyzer, so it's less complete:
+Another important property is that workspaces are handled by dedicated handlers and are lazy:
+indexing doesn't start until you open a project. Similarly, if something goes wrong with one
+of the projects (rust workspace) in vs code workspace (multiple projects), other engines are
+not affected.
+
+Now, obviously Rust Glancer is a much younger project than rust-analyzer, so it's less complete:
 - Type inference doesn't work in some cases
 - There are bugs here and there
 - Advanced features like proc macros are not supported.

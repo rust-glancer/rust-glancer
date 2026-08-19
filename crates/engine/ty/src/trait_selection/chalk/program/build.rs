@@ -21,8 +21,8 @@ use super::super::lower::{
     ChalkLowerer, GenericBinderEnv, adt_datum, chalk_assoc_type_id, chalk_assoc_type_value_id,
 };
 use super::{ChalkProgram, ChalkProgramRoots, ChalkProgramScope};
+use crate::ItemPathQuery;
 use crate::trait_selection::TraitSelectionSession;
-use crate::{ItemPathQuery, SemanticSignatureQuery};
 
 const INTER: RgChalkInterner = RgChalkInterner;
 
@@ -63,8 +63,15 @@ impl ChalkProgram {
         let extension_started = Instant::now();
         self.known_items = super::ChalkKnownItems::from_index(lookup_index);
         let discovery_started = Instant::now();
-        let scope = ChalkProgramScope::discover(item_paths, crate_items, session, roots, self)?;
-        let discovery_us = discovery_started.elapsed().as_micros();
+        let scope = ChalkProgramScope::discover(
+            item_paths,
+            crate_items,
+            lookup_index,
+            session,
+            roots,
+            self,
+        )?;
+        let discovery_elapsed = discovery_started.elapsed();
 
         // Associated-type declarations must exist before lowering any trait/impl predicates that
         // can mention their projection IDs.
@@ -86,7 +93,7 @@ impl ChalkProgram {
                 self.collect_trait_associated_tys(item_paths, &lowerer, trait_ref, trait_data)?;
             associated_ty_ids_by_trait.insert(trait_ref, associated_ty_ids);
         }
-        let associated_tys_us = associated_tys_started.elapsed().as_micros();
+        let associated_tys_elapsed = associated_tys_started.elapsed();
 
         // Once every associated-type ID exists, trait predicates can safely refer to them.
         let trait_datums_started = Instant::now();
@@ -114,7 +121,7 @@ impl ChalkProgram {
                 .insert(trait_ref, datum.binders.len(INTER));
             self.traits.insert(trait_ref, Arc::new(datum));
         }
-        let trait_datums_us = trait_datums_started.elapsed().as_micros();
+        let trait_datums_elapsed = trait_datums_started.elapsed();
 
         // Function items participate in the same built-in `Fn*` clauses as closures. Their datum
         // is declaration-owned, so materialize the canonical signature once with its generic
@@ -135,7 +142,7 @@ impl ChalkProgram {
             self.ensure_fn_def_datum_adts(item_paths, &datum)?;
             self.functions.insert(function, Arc::new(datum));
         }
-        let function_datums_us = function_datums_started.elapsed().as_micros();
+        let function_datums_elapsed = function_datums_started.elapsed();
 
         // Impl datums use the same registry for their predicates and associated-type values.
         let impl_datums_started = Instant::now();
@@ -153,8 +160,9 @@ impl ChalkProgram {
                 .generics()
                 .generics(GenericDefRef::Impl(impl_ref))?;
             let binders = GenericBinderEnv::for_generics(&generics);
-            let associated_ty_value_ids =
-                self.collect_impl_associated_ty_values(item_paths, &binders, impl_ref, trait_ref)?;
+            let associated_ty_value_ids = self.collect_impl_associated_ty_values(
+                item_paths, session, &binders, impl_ref, trait_ref,
+            )?;
             let lowerer = ChalkLowerer::new(&binders).with_associated_tys(&self.associated_tys);
             let Some(datum) = lowerer.impl_datum(header, associated_ty_value_ids) else {
                 continue;
@@ -174,7 +182,7 @@ impl ChalkProgram {
                 .push(impl_ref);
             self.impls.insert(impl_ref, Arc::new(datum));
         }
-        let impl_datums_us = impl_datums_started.elapsed().as_micros();
+        let impl_datums_elapsed = impl_datums_started.elapsed();
 
         // Opaque bounds are declaration predicates. Materialize them in the solver program while
         // keeping the opaque identity itself compact and independent from those predicates.
@@ -191,7 +199,28 @@ impl ChalkProgram {
             };
             self.opaque_tys.insert(opaque.opaque, Arc::new(datum));
         }
-        let opaque_datums_us = opaque_datums_started.elapsed().as_micros();
+        let opaque_datums_elapsed = opaque_datums_started.elapsed();
+
+        // Program construction is concurrent across use-site crates, so wall time alone cannot
+        // show which repeated semantic operation consumed the worker pool. Keep aggregate input
+        // counts and phase timings alongside the existing total build duration.
+        crate::profile::metric::PROGRAM_DEFINITIONS_BY_KIND
+            .add("traits", scope.definitions.traits.len() as u64);
+        crate::profile::metric::PROGRAM_DEFINITIONS_BY_KIND.add("impls", scope.impls.len() as u64);
+        crate::profile::metric::PROGRAM_DEFINITIONS_BY_KIND
+            .add("opaque_types", scope.definitions.opaque_tys.len() as u64);
+        crate::profile::metric::PROGRAM_DEFINITIONS_BY_KIND
+            .add("functions", scope.definitions.functions.len() as u64);
+        for (phase, elapsed) in [
+            ("scope_discovery", discovery_elapsed),
+            ("associated_types", associated_tys_elapsed),
+            ("trait_datums", trait_datums_elapsed),
+            ("function_datums", function_datums_elapsed),
+            ("impl_datums", impl_datums_elapsed),
+            ("opaque_datums", opaque_datums_elapsed),
+        ] {
+            crate::profile::metric::PROGRAM_BUILD_TIME_BY_PHASE.record(phase, elapsed);
+        }
 
         self.materialized_traits
             .extend(scope.definitions.traits.iter().copied());
@@ -205,12 +234,12 @@ impl ChalkProgram {
                 impl_count = scope.impls.len(),
                 opaque_type_count = scope.definitions.opaque_tys.len(),
                 function_count = scope.definitions.functions.len(),
-                discovery_us,
-                associated_tys_us,
-                trait_datums_us,
-                function_datums_us,
-                impl_datums_us,
-                opaque_datums_us,
+                discovery_us = discovery_elapsed.as_micros(),
+                associated_tys_us = associated_tys_elapsed.as_micros(),
+                trait_datums_us = trait_datums_elapsed.as_micros(),
+                function_datums_us = function_datums_elapsed.as_micros(),
+                impl_datums_us = impl_datums_elapsed.as_micros(),
+                opaque_datums_us = opaque_datums_elapsed.as_micros(),
                 "slow Chalk program materialization phases finished"
             );
         }
@@ -261,6 +290,7 @@ impl ChalkProgram {
     fn collect_impl_associated_ty_values<'query, D, I>(
         &mut self,
         item_paths: &ItemPathQuery<'query, D, I>,
+        session: &TraitSelectionSession,
         binders: &GenericBinderEnv,
         impl_ref: ImplRef,
         trait_ref: TraitDefRef,
@@ -303,8 +333,7 @@ impl ChalkProgram {
             let Some(type_alias_data) = item_paths.items().type_alias_data(type_alias_ref)? else {
                 continue;
             };
-            let Some(ty) = SemanticSignatureQuery::type_alias_ty_from(item_paths, type_alias_ref)?
-            else {
+            let Some(ty) = session.type_alias_ty_with(item_paths, type_alias_ref)? else {
                 continue;
             };
             let value = ChalkLowerer::new(binders)

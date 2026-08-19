@@ -1,13 +1,20 @@
 //! Resolves lowered Body IR while a build mutator has privileged package access.
 
-use std::time::{Duration, Instant};
+use std::{
+    collections::{BTreeSet, VecDeque},
+    num::NonZeroUsize,
+    sync::Mutex,
+    time::{Duration, Instant},
+};
 
 use anyhow::Context as _;
 use rayon::prelude::*;
 use rg_def_map::{DefMapReadTxn, PackageSlot};
 use rg_ir_model::{CrateId, CrateRef};
 use rg_semantic_ir::SemanticIrReadTxn;
+use rg_std::Shrink;
 use rg_text::{NameInterner, PackageNameInterners};
+use rg_ty::TraitSelectionDeclarationCache;
 
 use crate::{CrateBodies, PackageBodies};
 
@@ -17,15 +24,22 @@ use super::{local_thread_pool, lower::LoweredPackageBodies, state::CrateBodyBuil
 // normal scheduling variance.
 const SLOW_PACKAGE_RESOLUTION: Duration = Duration::from_secs(2);
 
+/// Resolve all materialized packages against one semantic snapshot.
+///
+/// Each crate still needs its own trait-selection session because impl visibility and solver
+/// answers depend on the use-site crate. Canonical crate declaration shapes do not, so package
+/// workers share one build-scoped declaration cache.
 pub(super) fn resolve_packages(
     packages: Vec<LoweredPackageBodies>,
     parse: &rg_parse::ParseDb,
     interners: &mut PackageNameInterners,
     def_map: &DefMapReadTxn<'_>,
     semantic_ir: &SemanticIrReadTxn<'_>,
+    worker_limit: Option<NonZeroUsize>,
 ) -> anyhow::Result<Vec<PackageBodies>> {
     let profile_context = rg_profile::ProfileThreadContext::capture();
-    let thread_pool = local_thread_pool("rg-body-resolve")?;
+    let declarations = TraitSelectionDeclarationCache::new();
+    let thread_pool = local_thread_pool("rg-body-resolve", worker_limit)?;
     let resolved = thread_pool
         .install(|| {
             packages
@@ -42,6 +56,7 @@ pub(super) fn resolve_packages(
                         interner,
                         def_map,
                         semantic_ir,
+                        &declarations,
                     )
                 })
                 .collect::<anyhow::Result<Vec<_>>>()
@@ -54,14 +69,21 @@ pub(super) fn resolve_packages(
 ///
 /// Before starting Rayon jobs, give each package mutable access to its own name interner. No two
 /// workers can then touch the same interner, so package resolution needs no extra synchronization.
+/// The jobs also share canonical crate declaration lowering, while keeping their visibility and
+/// solver state inside the corresponding crate session.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn resolve_selected_packages(
     packages: Vec<(PackageSlot, LoweredPackageBodies)>,
     parse: &rg_parse::ParseDb,
     interners: &mut PackageNameInterners,
     def_map: &DefMapReadTxn<'_>,
     semantic_ir: &SemanticIrReadTxn<'_>,
+    priority_packages: Option<&(dyn Fn() -> Vec<PackageSlot> + Sync)>,
+    publish_priority: &(dyn Fn(PackageSlot, PackageBodies) + Sync),
+    worker_limit: Option<NonZeroUsize>,
 ) -> anyhow::Result<Vec<(PackageSlot, PackageBodies)>> {
     let profile_context = rg_profile::ProfileThreadContext::capture();
+    let declarations = TraitSelectionDeclarationCache::new();
     // Selected rebuilds are sparse, but resolution may discover nested bodies and lower them,
     // which needs mutable access to the matching package name interner. The rebuilder normalizes
     // package slots, so walking the interner slice left-to-right lets us prepare disjoint jobs that
@@ -98,28 +120,143 @@ pub(super) fn resolve_selected_packages(
         next_package_idx = package_slot.0 + 1;
     }
 
-    // Every job now has exclusive access to one interner, so resolution can run in parallel.
-    let thread_pool = local_thread_pool("rg-body-resolve")?;
-    let resolved = thread_pool
-        .install(|| {
-            jobs.into_par_iter()
-                .map(|(package_slot, parse_package, package, interner)| {
-                    let _profile_guard = profile_context.enter();
-                    let package = resolve_package(
-                        package_slot,
-                        parse_package,
-                        package,
-                        interner,
-                        def_map,
-                        semantic_ir,
-                    )?;
-                    Ok((package_slot, package))
-                })
-                .collect::<anyhow::Result<Vec<_>>>()
-        })
-        .context("while attempting to resolve selected body IR packages")?;
+    let thread_pool = local_thread_pool("rg-body-resolve", worker_limit)?;
+    let Some(priority_packages) = priority_packages else {
+        let resolved = thread_pool
+            .install(|| {
+                jobs.into_par_iter()
+                    .map(|(package_slot, parse_package, package, interner)| {
+                        let _profile_guard = profile_context.enter();
+                        let package = resolve_package(
+                            package_slot,
+                            parse_package,
+                            package,
+                            interner,
+                            def_map,
+                            semantic_ir,
+                            &declarations,
+                        )?;
+                        Ok((package_slot, package))
+                    })
+                    .collect::<anyhow::Result<Vec<_>>>()
+            })
+            .context("while attempting to resolve selected body IR packages")?;
+        return Ok(resolved);
+    };
+
+    // Rayon normally commits the entire indexed iterator to its work-stealing queues up front.
+    // Keep package jobs in this small shared queue instead so a didOpen arriving during resolution
+    // can move its package ahead of work that has not started yet. Workers hold the lock only while
+    // selecting a package; resolution itself remains fully parallel.
+    let job_count = jobs.len();
+    let jobs = Mutex::new(VecDeque::from(jobs));
+    let resolved = Mutex::new(Vec::with_capacity(job_count));
+    let worker_count = thread_pool.current_num_threads().min(job_count);
+    thread_pool.scope(|scope| {
+        for _ in 0..worker_count {
+            scope.spawn(|_| {
+                loop {
+                    let priorities = priority_packages().into_iter().collect::<BTreeSet<_>>();
+                    ResolvedPackage::publish_resolved_priorities(
+                        &resolved,
+                        &priorities,
+                        publish_priority,
+                    );
+
+                    let job = {
+                        let mut jobs = jobs
+                            .lock()
+                            .expect("Body IR package resolution queue should not be poisoned");
+                        let job_idx = jobs
+                            .iter()
+                            .position(|(package, _, _, _)| priorities.contains(package))
+                            .unwrap_or(0);
+                        jobs.remove(job_idx)
+                    };
+                    let Some((package_slot, parse_package, package, interner)) = job else {
+                        break;
+                    };
+
+                    let result = (|| {
+                        let _profile_guard = profile_context.enter();
+                        let package = resolve_package(
+                            package_slot,
+                            parse_package,
+                            package,
+                            interner,
+                            def_map,
+                            semantic_ir,
+                            &declarations,
+                        )?;
+                        Ok(ResolvedPackage {
+                            package: package_slot,
+                            bodies: package,
+                            priority_published: false,
+                        })
+                    })();
+                    resolved
+                        .lock()
+                        .expect("Body IR package resolution results should not be poisoned")
+                        .push(result);
+                }
+            });
+        }
+    });
+
+    // Capture a priority update that raced with the last worker returning. If it arrived any later,
+    // the complete result is already about to be published through the ordinary final path.
+    let priorities = priority_packages().into_iter().collect::<BTreeSet<_>>();
+    ResolvedPackage::publish_resolved_priorities(&resolved, &priorities, publish_priority);
+    let mut resolved = resolved
+        .into_inner()
+        .expect("Body IR package resolution results should not be poisoned")
+        .into_iter()
+        .collect::<anyhow::Result<Vec<_>>>()?
+        .into_iter()
+        .map(|resolved| (resolved.package, resolved.bodies))
+        .collect::<Vec<_>>();
+    resolved.sort_by_key(|(package, _)| package.0);
 
     Ok(resolved)
+}
+
+#[derive(Debug)]
+struct ResolvedPackage {
+    package: PackageSlot,
+    bodies: PackageBodies,
+    priority_published: bool,
+}
+
+impl ResolvedPackage {
+    /// Publish compact copies for packages that became editor priorities after resolving.
+    fn publish_resolved_priorities(
+        resolved: &Mutex<Vec<anyhow::Result<Self>>>,
+        priorities: &BTreeSet<PackageSlot>,
+        publish_priority: &(dyn Fn(PackageSlot, PackageBodies) + Sync),
+    ) {
+        let publications = {
+            let mut resolved = resolved
+                .lock()
+                .expect("Body IR package resolution results should not be poisoned");
+            resolved
+                .iter_mut()
+                .filter_map(|resolved| resolved.as_mut().ok())
+                .filter(|resolved| {
+                    !resolved.priority_published && priorities.contains(&resolved.package)
+                })
+                .map(|resolved| {
+                    resolved.priority_published = true;
+                    let mut publishable = resolved.bodies.clone();
+                    Shrink::shrink_to_fit(&mut publishable);
+                    (resolved.package, publishable)
+                })
+                .collect::<Vec<_>>()
+        };
+
+        for (package, bodies) in publications {
+            publish_priority(package, bodies);
+        }
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -130,6 +267,7 @@ fn resolve_package(
     interner: &mut NameInterner,
     def_map_txn: &DefMapReadTxn<'_>,
     semantic_ir: &SemanticIrReadTxn<'_>,
+    declarations: &TraitSelectionDeclarationCache,
 ) -> anyhow::Result<PackageBodies> {
     let crate_count = package.len();
     let span = tracing::debug_span!(
@@ -154,8 +292,11 @@ fn resolve_package(
                 crate_id: CrateId(crate_idx),
             };
 
-            CrateBodyBuildState::new(crate_ref, parse_package, crate_bodies, interner)
-                .resolve(def_map_txn, semantic_ir)
+            CrateBodyBuildState::new(crate_ref, parse_package, crate_bodies, interner).resolve(
+                def_map_txn,
+                semantic_ir,
+                declarations,
+            )
         })
         .collect::<anyhow::Result<Vec<_>>>()?;
 

@@ -16,6 +16,10 @@ declare_metrics! {
         scope "def_map.finalization" {
             /// Number of fixpoint rounds required to finalize all def maps.
             counter ROUNDS = "rounds";
+            /// Number of complete import fixed-point runs.
+            counter IMPORT_RESOLUTION_RUNS = "import_resolution.runs";
+            /// Number of scope snapshots evaluated across all import fixed-point runs.
+            counter IMPORT_RESOLUTION_PASSES = "import_resolution.passes";
             /// Number of macro-expansion passes performed during finalization.
             counter EXPANSION_PASSES = "expansion_passes";
             /// Maximum number of macro-expansion passes allowed for one finalization run.

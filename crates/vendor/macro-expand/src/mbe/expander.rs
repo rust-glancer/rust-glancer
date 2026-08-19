@@ -56,14 +56,33 @@ pub(crate) fn expand_rules(
         }
     }
     if let Some((match_, rule, idx)) = match_ {
-        // if we got here, there was no match without errors
+        // If every arm failed to match, the public expansion API returns the matcher error and
+        // discards generated syntax. Do not transcribe the matcher's partial bindings: repetitions
+        // can otherwise keep replaying an incomplete binding until the 65,536-iteration safety
+        // limit, only for the generated token tree to be discarded with the error.
+        let matcher::Match {
+            bindings,
+            err: match_err,
+            ..
+        } = match_;
+        if let Some(error) = match_err {
+            return ExpandResult::new(
+                (
+                    tt::TopSubtree::empty(tt::DelimSpan::from_single(call_site)),
+                    idx.try_into().ok(),
+                ),
+                error,
+            );
+        }
+
+        // If we got here, one arm matched but its transcriber reported an error.
         let ExpandResult {
             value,
             err: transcribe_err,
-        } = transcriber::transcribe(&rule.rhs, &match_.bindings, marker, call_site);
+        } = transcriber::transcribe(&rule.rhs, &bindings, marker, call_site);
         ExpandResult {
             value: (value, idx.try_into().ok()),
-            err: match_.err.or(transcribe_err),
+            err: transcribe_err,
         }
     } else {
         ExpandResult::new(

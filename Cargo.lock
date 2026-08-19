@@ -1681,6 +1681,7 @@ dependencies = [
  "anyhow",
  "derive_more",
  "expect-test",
+ "rayon",
  "rg_arena",
  "rg_cfg_eval",
  "rg_ir_model",
@@ -1694,6 +1695,7 @@ dependencies = [
  "rg_text",
  "rg_tt",
  "rg_workspace",
+ "rustc-hash 2.1.2",
  "test_fixture",
  "wincode",
 ]

@@ -1,7 +1,8 @@
 //! Canonical impl-header matching for receiver-based item queries.
 //!
-//! All entry points consume `SemanticSignatureQuery::impl_header` results. Syntax HIR remains
-//! available to declaration views, but receiver matching never interprets a `TypeRef` itself.
+//! Every entry point consumes canonical `ImplHeader` values from the signature-lowering boundary.
+//! Syntax HIR remains available to declaration views, but receiver matching never interprets a
+//! `TypeRef` itself.
 
 mod inherent;
 mod trait_methods;
@@ -44,11 +45,11 @@ where
 
     /// Return the canonical header used by every matching operation.
     pub fn impl_header(&self, impl_ref: ImplRef) -> Result<Option<ImplHeader>, D::Error> {
-        self.context.trait_selection().impl_header_with(
-            self.context.item_paths(),
-            &self.resolver,
-            impl_ref,
-        )
+        Ok(self
+            .context
+            .trait_selection()
+            .impl_header_with(self.context.item_paths(), &self.resolver, impl_ref)?
+            .map(|header| (*header).clone()))
     }
 
     /// Match the impl's semantic `Self` pattern and return owner-scoped bindings.

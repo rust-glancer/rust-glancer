@@ -57,7 +57,7 @@ impl TraitCandidate {
                 visible_impls,
                 self_head,
             )?,
-            None => visible_impls.clone(),
+            None => visible_impls.collect(),
         };
 
         let mut candidates = Vec::new();
