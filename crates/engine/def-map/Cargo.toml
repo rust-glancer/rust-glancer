@@ -12,6 +12,8 @@ description.workspace = true
 [dependencies]
 anyhow.workspace = true
 derive_more = { workspace = true, features = ["display"] }
+rayon.workspace = true
+rustc-hash.workspace = true
 wincode.workspace = true
 rg_arena.workspace = true
 rg_cfg_eval.workspace = true

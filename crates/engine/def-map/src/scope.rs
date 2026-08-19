@@ -5,12 +5,13 @@
 //! merges multiple routes to the same definition. Frozen scopes retain that decision so queries do
 //! not have to reconstruct precedence from a list of candidates.
 
-use std::{cmp::Ordering, collections::HashMap};
+use std::cmp::Ordering;
 
 use rg_ir_model::{DefId, ImportRef, ModuleRef};
 use rg_item_tree::FieldList;
 use rg_std::{MemorySize, Shrink};
 use rg_text::Name;
+use rustc_hash::FxHashMap;
 use wincode::{SchemaRead, SchemaWrite};
 
 /// The three independent meaning slots represented by a DefMap scope.
@@ -392,7 +393,7 @@ pub(crate) struct ScopeNameEntry {
 /// Mutable module scope used while collecting declarations and applying imports.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ModuleScopeBuilder {
-    names: HashMap<Name, ScopeEntryBuilder>,
+    names: FxHashMap<Name, ScopeEntryBuilder>,
 }
 
 impl ModuleScopeBuilder {

@@ -5,13 +5,10 @@
 //! fixed-point snapshot, then uses the same result shape to record imports that remain unresolved
 //! after the scopes stop changing.
 
-use crate::{CrateResolutionEnv, ScopeResolver};
+use crate::{CrateResolutionEnv, ModuleScopeBuilder, ScopeResolver};
 use rg_ir_model::{CrateRef, DefMapRef, ImportId, ImportRef, ModuleRef};
 
-use super::{
-    collect::CrateState,
-    finalize::{FinalizeCrateStates, ScopeMatrix},
-};
+use super::{collect::CrateState, finalize::FinalizeCrateStates};
 
 /// Unresolved import ids for one module.
 type ModuleUnresolvedImports = Vec<ImportId>;
@@ -68,7 +65,7 @@ impl UnresolvedImports {
 pub(super) fn apply_imports(
     state: &CrateState,
     env: &impl CrateResolutionEnv<Error = rg_package_store::PackageStoreError>,
-    next_scopes: &mut ScopeMatrix,
+    next_scopes: &mut [ModuleScopeBuilder],
 ) -> anyhow::Result<()> {
     let resolver = ScopeResolver::new(env);
     for (import_id, import) in state.def_map_builder.partial().imports_with_ids() {
@@ -79,7 +76,7 @@ pub(super) fn apply_imports(
         };
         let resolution = resolver.resolve_import(import_owner, import_ref, import)?;
         let target_scope = next_scopes
-            .module_scope_mut(state.crate_ref, import.module)
+            .get_mut(import.module.0)
             .expect("crate scope should exist for every import");
         for introduced in resolution.introduced {
             target_scope.insert_binding(&introduced.name, introduced.namespace, introduced.binding);
