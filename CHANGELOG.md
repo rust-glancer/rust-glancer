@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.1](https://github.com/rust-glancer/rust-glancer/compare/v0.1.0...v0.1.1) (2026-08-20)
+
+
+### Bug Fixes
+
+* Last minute fixes (type inference) ([#168](https://github.com/rust-glancer/rust-glancer/issues/168)) ([16efa5b](https://github.com/rust-glancer/rust-glancer/commit/16efa5b05cc4db811fb7c35e2cfbe371daac742b))
+
 ## 0.1.0 (2026-08-20)
 
 
