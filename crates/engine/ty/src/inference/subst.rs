@@ -113,6 +113,16 @@ impl InferenceSubstitution {
         table.finalize_generic_args(&args)
     }
 
+    /// Finalize durable arguments when the owning inference operation stopped incomplete.
+    pub fn finalize_args_without_numeric_defaults(
+        &self,
+        table: &InferenceTable,
+        params: impl IntoIterator<Item = GenericParamRef>,
+    ) -> GenericArgs {
+        let args = self.0.args_for_params(params);
+        table.finalize_generic_args_without_numeric_defaults(&args)
+    }
+
     /// Give the function's own type parameters fresh variables, shadowing only by identity.
     pub fn shadow_type_params(&mut self, table: &mut InferenceTable, generics: &Generics<'_>) {
         for param in generics.iter_self() {

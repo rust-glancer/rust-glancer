@@ -619,7 +619,7 @@ impl BodyInferenceCtx {
             .map(|ty| GenericArg::Type(Box::new(self.table.canonicalize(ty))))
             .collect::<GenericArgs>();
         BodyInferenceProgress {
-            calls: self.finalize_calls(),
+            calls: self.finalize_calls(true),
             inference_facts,
         }
     }
@@ -631,43 +631,61 @@ impl BodyInferenceCtx {
     /// Consume live inference state into the persisted body sidecar.
     ///
     /// This is the only boundary that writes expression and binding types into `BodyFacts`.
-    /// Unsolved numeric variables receive their language defaults; other unresolved or cyclic
-    /// slots become unknown, and selected calls retain only finalized full-arity arguments.
-    pub(crate) fn finish(self, mut facts: BodyFacts) -> BodyFacts {
+    /// After convergence, unsolved numeric variables receive their language defaults. An
+    /// incomplete fixed point instead keeps every unresolved slot unknown because later evidence
+    /// could still choose a non-default numeric type. Selected calls retain only finalized
+    /// full-arity arguments under the same policy.
+    pub(crate) fn finish(self, mut facts: BodyFacts, inference_complete: bool) -> BodyFacts {
         debug_assert_eq!(facts.exprs.len(), self.expr_tys.as_slice().len());
         debug_assert_eq!(facts.bindings.len(), self.binding_tys.as_slice().len());
 
         for expr_idx in 0..self.expr_tys.as_slice().len() {
             let expr = ExprId(expr_idx);
-            facts.set_expr_ty(expr, self.finalize_expr_ty(expr));
+            let ty = self.finalize_ty(self.expr_tys.get_ref(expr), inference_complete);
+            facts.set_expr_ty(expr, ty);
         }
         for binding_idx in 0..self.binding_tys.as_slice().len() {
             let binding = BindingId(binding_idx);
-            facts.set_binding_ty(binding, self.finalize_binding_ty(binding));
+            let ty = self.finalize_ty(self.binding_tys.get_ref(binding), inference_complete);
+            facts.set_binding_ty(binding, ty);
         }
-        facts.set_calls(self.finalize_calls());
+        facts.set_calls(self.finalize_calls(inference_complete));
         facts
     }
 
+    #[cfg(test)]
     pub(crate) fn finalize_expr_ty(&self, expr: ExprId) -> Ty {
         self.expr_tys.finalize(&self.table, expr)
     }
 
+    #[cfg(test)]
     pub(crate) fn finalize_binding_ty(&self, binding: BindingId) -> Ty {
         self.binding_tys.finalize(&self.table, binding)
     }
 
     /// Finalize only expressions for which call lookup selected one semantic function.
-    fn finalize_calls(&self) -> Vec<(ExprId, CallFacts)> {
+    fn finalize_calls(&self, inference_complete: bool) -> Vec<(ExprId, CallFacts)> {
         self.call_inference
             .iter()
             .enumerate()
             .filter_map(|(index, state)| {
-                state
-                    .as_ref()
-                    .map(|state| (ExprId(index), state.finalize(&self.table)))
+                state.as_ref().map(|state| {
+                    (
+                        ExprId(index),
+                        state.finalize(&self.table, inference_complete),
+                    )
+                })
             })
             .collect()
+    }
+
+    /// Erase live variables under the policy chosen by the outer fixed-point boundary.
+    fn finalize_ty(&self, ty: &Ty, inference_complete: bool) -> Ty {
+        if inference_complete {
+            self.table.finalize(ty)
+        } else {
+            self.table.finalize_without_numeric_defaults(ty)
+        }
     }
 
     /// Return whether a fact still points into the inference table.

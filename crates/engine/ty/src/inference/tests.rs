@@ -108,6 +108,22 @@ fn finalizes_unsolved_variables_to_stable_fallbacks() {
 }
 
 #[test]
+fn incomplete_finalization_does_not_default_numeric_variables() {
+    let mut table = InferenceTable::new();
+    let int_var = table.new_integer_var();
+    let float_var = table.new_float_var();
+
+    assert_eq!(
+        table.finalize_without_numeric_defaults(&int_var),
+        Ty::Unknown
+    );
+    assert_eq!(
+        table.finalize_without_numeric_defaults(&float_var),
+        Ty::Unknown
+    );
+}
+
+#[test]
 fn conflicting_variables_finalize_to_unknown() {
     let mut table = InferenceTable::new();
     let var = table.new_type_var();
@@ -312,6 +328,45 @@ fn nested_var_links_do_not_create_indirect_cycles() {
         Err(super::InferenceConflict)
     );
     assert_eq!(table.finalize(&container), concrete_vec_ty(Ty::Unknown));
+}
+
+#[test]
+fn recursive_evidence_through_alias_conflicts_the_representative() {
+    let mut table = InferenceTable::new();
+    let representative = table.new_type_var();
+    let alias = table.new_type_var();
+
+    assert!(table.unify(&representative, &alias));
+    assert_eq!(table.resolve_root_var(&alias), representative);
+
+    // The recursive spelling uses the alias, but both slots describe one equality class. The
+    // representative must become conflicting so it cannot accept an unrelated concrete type.
+    assert!(table.unify(&alias, &vec_ty(alias.clone())));
+    assert!(!table.unify(&representative, &user_ty()));
+    assert_eq!(table.finalize(&representative), Ty::Unknown);
+    assert_eq!(table.finalize(&alias), Ty::Unknown);
+}
+
+#[test]
+fn long_structural_variable_chain_checks_cycles_without_recursing() {
+    let mut table = InferenceTable::new();
+    let vars = (0..50_000)
+        .map(|_| table.new_type_var())
+        .collect::<Vec<_>>();
+
+    // Each slot contributes only one structural layer, but following their solutions creates a
+    // chain deep enough to consume the thread stack if the occurs check uses recursive calls.
+    for pair in vars.windows(2) {
+        assert!(table.unify(&pair[0], &vec_ty(pair[1].clone())));
+    }
+
+    assert_eq!(
+        table.try_unify(
+            vars.last().expect("the test creates inference variables"),
+            &vars[0],
+        ),
+        Err(super::InferenceConflict)
+    );
 }
 
 #[test]

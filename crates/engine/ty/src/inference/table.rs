@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use super::{
     traversal::{InferenceTyFolder, same_generic_arg_shape, same_ty_shape},
     var::{InferVarId, InferVarKind},
@@ -19,6 +21,13 @@ enum InferVarValue {
     Solved(Ty),
     /// The variable saw incompatible evidence and must finalize conservatively.
     Conflict,
+}
+
+/// Fallback used when a numeric inference slot has no semantic evidence.
+#[derive(Clone, Copy)]
+enum NumericFallback {
+    LanguageDefault,
+    Unknown,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -145,12 +154,32 @@ impl InferenceTable {
     }
 
     pub fn finalize(&self, ty: &Ty) -> Ty {
-        TableFinalizer::new(self).fold_ty(ty)
+        TableFinalizer::new(self, NumericFallback::LanguageDefault).fold_ty(ty)
+    }
+
+    /// Finalize inference state that stopped before reaching a fixed point.
+    ///
+    /// Ordinary type variables already become `Unknown`. Numeric variables must do the same here:
+    /// their `i32` / `f64` defaults are language conclusions only after all available constraints
+    /// have propagated.
+    pub fn finalize_without_numeric_defaults(&self, ty: &Ty) -> Ty {
+        TableFinalizer::new(self, NumericFallback::Unknown).fold_ty(ty)
     }
 
     /// Finalize every type-bearing position in a semantic argument list.
     pub(crate) fn finalize_generic_args(&self, args: &GenericArgs) -> GenericArgs {
-        let mut finalizer = TableFinalizer::new(self);
+        let mut finalizer = TableFinalizer::new(self, NumericFallback::LanguageDefault);
+        args.iter()
+            .map(|arg| finalizer.fold_generic_arg(arg))
+            .collect()
+    }
+
+    /// Finalize durable arguments after an incomplete inference operation.
+    pub(crate) fn finalize_generic_args_without_numeric_defaults(
+        &self,
+        args: &GenericArgs,
+    ) -> GenericArgs {
+        let mut finalizer = TableFinalizer::new(self, NumericFallback::Unknown);
         args.iter()
             .map(|arg| finalizer.fold_generic_arg(arg))
             .collect()
@@ -382,11 +411,15 @@ impl InferenceTable {
         // Avoid recursive solutions such as `?T = Vec<?T>`. Solved variables nested inside the
         // evidence must be followed as well: `?A = Vec<?B>` and `?B = ?T` make `?T = ?A`
         // recursive even though `?T` is not present in the stored `Vec<?B>` syntax.
-        if self.ty_contains_var_or_cycle(&evidence, id, &mut Vec::new()) {
+        if self.ty_contains_var_or_cycle(&evidence, id) {
             let result = if Self::shallow_infer_var(&evidence).is_some_and(|(_, var)| var == id) {
                 UnifyResult::compatible()
             } else {
-                self.mark_conflict(id)
+                // Equality aliases share one representative. Poisoning only the spelling that
+                // happened to occur in recursive evidence would detach it from that class and let
+                // the representative accept a later concrete solution.
+                let representative = self.infer_var_representative(id, kind);
+                self.mark_conflict(representative)
             };
             return result;
         }
@@ -418,81 +451,128 @@ impl InferenceTable {
     /// The active stack also rejects evidence that already contains a recursive slot graph. Such
     /// a graph should not be constructible through this table, but accepting it as new evidence
     /// would spread the invalid state and make later type traversal unsafe.
-    fn ty_contains_var_or_cycle(
-        &self,
-        ty: &Ty,
-        needle: InferVarId,
-        active_vars: &mut Vec<InferVarId>,
-    ) -> bool {
-        match ty {
-            Ty::InferVar { kind, id } => {
-                if *id == needle || active_vars.contains(id) {
-                    return true;
-                }
-
-                let Some(slot) = self.slots.get(id.index()) else {
-                    return false;
-                };
-                if slot.kind != *kind {
-                    return false;
-                }
-                let InferVarValue::Solved(solution) = &slot.value else {
-                    return false;
-                };
-
-                active_vars.push(*id);
-                let contains = self.ty_contains_var_or_cycle(solution, needle, active_vars);
-                active_vars.pop();
-                contains
-            }
-            Ty::Tuple(fields) => fields
-                .iter()
-                .any(|field| self.ty_contains_var_or_cycle(field, needle, active_vars)),
-            Ty::Array { inner, .. }
-            | Ty::Slice(inner)
-            | Ty::Reference { inner, .. }
-            | Ty::RawPointer { inner, .. } => {
-                self.ty_contains_var_or_cycle(inner, needle, active_vars)
-            }
-            Ty::FnPointer { params, ret } => {
-                params
-                    .iter()
-                    .any(|param| self.ty_contains_var_or_cycle(param, needle, active_vars))
-                    || self.ty_contains_var_or_cycle(ret, needle, active_vars)
-            }
-            Ty::Adt(ty) => ty
-                .args
-                .iter()
-                .any(|arg| self.generic_arg_contains_var_or_cycle(arg, needle, active_vars)),
-            Ty::Alias(alias) => alias
-                .args()
-                .iter()
-                .any(|arg| self.generic_arg_contains_var_or_cycle(arg, needle, active_vars)),
-            Ty::FnDef(function) => function
-                .args
-                .iter()
-                .any(|arg| self.generic_arg_contains_var_or_cycle(arg, needle, active_vars)),
-            Ty::Closure(closure) => {
-                closure
-                    .params
-                    .iter()
-                    .any(|param| self.ty_contains_var_or_cycle(param, needle, active_vars))
-                    || self.ty_contains_var_or_cycle(&closure.ret, needle, active_vars)
-            }
-            Ty::Unit | Ty::Never | Ty::Primitive(_) | Ty::Param(_) | Ty::Unknown => false,
+    fn ty_contains_var_or_cycle<'a>(&'a self, ty: &'a Ty, needle: InferVarId) -> bool {
+        // A solved structural chain can be much longer than the source type that created each
+        // individual slot. Use an explicit DFS so malformed/generated evidence cannot consume the
+        // thread stack, and retain both visiting/finished sets so shared DAG nodes are not mistaken
+        // for cycles.
+        enum Step<'ty> {
+            Visit(&'ty Ty),
+            FinishVar(InferVarId),
         }
+
+        let mut steps = vec![Step::Visit(ty)];
+        let mut active_vars = HashSet::new();
+        let mut finished_vars = HashSet::new();
+        while let Some(step) = steps.pop() {
+            let ty = match step {
+                Step::Visit(ty) => ty,
+                Step::FinishVar(id) => {
+                    active_vars.remove(&id);
+                    finished_vars.insert(id);
+                    continue;
+                }
+            };
+
+            match ty {
+                Ty::InferVar { kind, id } => {
+                    if *id == needle || active_vars.contains(id) {
+                        return true;
+                    }
+                    if finished_vars.contains(id) {
+                        continue;
+                    }
+
+                    let Some(slot) = self.slots.get(id.index()) else {
+                        continue;
+                    };
+                    if slot.kind != *kind {
+                        continue;
+                    }
+                    let InferVarValue::Solved(solution) = &slot.value else {
+                        continue;
+                    };
+
+                    active_vars.insert(*id);
+                    steps.push(Step::FinishVar(*id));
+                    steps.push(Step::Visit(solution));
+                }
+                Ty::Tuple(fields) => {
+                    steps.extend(fields.iter().map(Step::Visit));
+                }
+                Ty::Array { inner, .. }
+                | Ty::Slice(inner)
+                | Ty::Reference { inner, .. }
+                | Ty::RawPointer { inner, .. } => steps.push(Step::Visit(inner)),
+                Ty::FnPointer { params, ret } => {
+                    steps.push(Step::Visit(ret));
+                    steps.extend(params.iter().map(Step::Visit));
+                }
+                Ty::Adt(ty) => {
+                    steps.extend(
+                        ty.args
+                            .iter()
+                            .filter_map(GenericArg::as_ty)
+                            .map(Step::Visit),
+                    );
+                }
+                Ty::Alias(alias) => {
+                    steps.extend(
+                        alias
+                            .args()
+                            .iter()
+                            .filter_map(GenericArg::as_ty)
+                            .map(Step::Visit),
+                    );
+                }
+                Ty::FnDef(function) => {
+                    steps.extend(
+                        function
+                            .args
+                            .iter()
+                            .filter_map(GenericArg::as_ty)
+                            .map(Step::Visit),
+                    );
+                }
+                Ty::Closure(closure) => {
+                    steps.push(Step::Visit(&closure.ret));
+                    steps.extend(closure.params.iter().map(Step::Visit));
+                }
+                Ty::Unit | Ty::Never | Ty::Primitive(_) | Ty::Param(_) | Ty::Unknown => {}
+            }
+        }
+        false
     }
 
-    fn generic_arg_contains_var_or_cycle(
-        &self,
-        arg: &GenericArg,
-        needle: InferVarId,
-        active_vars: &mut Vec<InferVarId>,
-    ) -> bool {
-        match arg {
-            GenericArg::Type(ty) => self.ty_contains_var_or_cycle(ty, needle, active_vars),
-            GenericArg::Lifetime(_) | GenericArg::Const(_) => false,
+    /// Follow variable-to-variable links to the slot that owns their shared evidence.
+    fn infer_var_representative(&self, id: InferVarId, kind: InferVarKind) -> InferVarId {
+        let mut current_id = id;
+        let mut current_kind = kind;
+        let mut visited = HashSet::new();
+        while visited.insert(current_id) {
+            let Some(slot) = self.slots.get(current_id.index()) else {
+                break;
+            };
+            if slot.kind != current_kind {
+                break;
+            }
+            let InferVarValue::Solved(Ty::InferVar {
+                kind: next_kind,
+                id: next_id,
+            }) = &slot.value
+            else {
+                break;
+            };
+            let Some(next_slot) = self.slots.get(next_id.index()) else {
+                break;
+            };
+            if next_slot.kind != *next_kind {
+                break;
+            }
+            current_id = *next_id;
+            current_kind = *next_kind;
         }
+        current_id
     }
 
     fn solve_unsolved_var(&mut self, id: InferVarId, evidence: &Ty) -> UnifyResult {
@@ -873,13 +953,15 @@ impl InferenceTyFolder for TableCanonicalizer<'_> {
 struct TableFinalizer<'table> {
     table: &'table InferenceTable,
     active_vars: Vec<InferVarId>,
+    numeric_fallback: NumericFallback,
 }
 
 impl<'table> TableFinalizer<'table> {
-    fn new(table: &'table InferenceTable) -> Self {
+    fn new(table: &'table InferenceTable, numeric_fallback: NumericFallback) -> Self {
         Self {
             table,
             active_vars: Vec::new(),
+            numeric_fallback,
         }
     }
 }
@@ -920,10 +1002,17 @@ impl InferenceTyFolder for TableFinalizer<'_> {
         }
 
         match &slot.value {
-            InferVarValue::Unsolved => match kind {
-                InferVarKind::Type => Ty::Unknown,
-                InferVarKind::Integer => Ty::Primitive(PrimitiveTy::DEFAULT_INT),
-                InferVarKind::Float => Ty::Primitive(PrimitiveTy::DEFAULT_FLOAT),
+            InferVarValue::Unsolved => match (kind, self.numeric_fallback) {
+                (InferVarKind::Type, _)
+                | (InferVarKind::Integer | InferVarKind::Float, NumericFallback::Unknown) => {
+                    Ty::Unknown
+                }
+                (InferVarKind::Integer, NumericFallback::LanguageDefault) => {
+                    Ty::Primitive(PrimitiveTy::DEFAULT_INT)
+                }
+                (InferVarKind::Float, NumericFallback::LanguageDefault) => {
+                    Ty::Primitive(PrimitiveTy::DEFAULT_FLOAT)
+                }
             },
             InferVarValue::Solved(ty) => {
                 self.active_vars.push(id);

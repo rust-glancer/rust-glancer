@@ -153,7 +153,7 @@ where
             );
         }
 
-        Ok(self.inference.finish(self.facts))
+        Ok(self.inference.finish(self.facts, converged))
     }
 
     fn transfer_expressions_and_patterns(&mut self) -> Result<bool, PackageStoreError> {
