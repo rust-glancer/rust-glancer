@@ -9,7 +9,7 @@ import { EXTENSION_COMMANDS } from "../src/commands";
 import { CompletionScenario } from "./completion-scenario";
 import { readySession, waitForClientState, waitForOutput } from "./extension-harness";
 
-const EXTENSION_ID = "rust-glancer.rust-glancer-code";
+const EXTENSION_ID = "rust-glancer.rust-glancer";
 
 suite("Rust Glancer extension", () => {
   test("starts one real server and routes multiple Rust workspaces", async () => {

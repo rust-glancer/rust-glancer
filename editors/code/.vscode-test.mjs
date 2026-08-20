@@ -5,8 +5,8 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const extensionRoot = dirname(fileURLToPath(import.meta.url));
-const userDataDir = mkdtempSync(resolve(tmpdir(), "rust-glancer-code-user-data-"));
-const extensionsDir = mkdtempSync(resolve(tmpdir(), "rust-glancer-code-extensions-"));
+const userDataDir = mkdtempSync(resolve(tmpdir(), "rust-glancer-user-data-"));
+const extensionsDir = mkdtempSync(resolve(tmpdir(), "rust-glancer-extensions-"));
 
 export default defineConfig({
   files: "out/test/**/*.test.js",
