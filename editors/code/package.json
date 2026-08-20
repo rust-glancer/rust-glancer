@@ -1,5 +1,5 @@
 {
-  "name": "rust-glancer-code",
+  "name": "rust-glancer",
   "displayName": "Rust Glancer",
   "description": "VS Code client for the rust-glancer language server.",
   "version": "0.1.0",
