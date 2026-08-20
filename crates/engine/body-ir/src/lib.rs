@@ -1,6 +1,7 @@
 use rg_std::MemorySize;
 mod build;
 mod ir;
+mod profile;
 mod resolution;
 mod store;
 #[doc(hidden)]
@@ -9,6 +10,7 @@ pub mod testonly;
 use rg_def_map::PackageSlot;
 use rg_parse::FileId;
 
+pub use self::profile::profile_descriptors;
 pub use rg_ir_model::FieldKey;
 
 pub use self::build::{

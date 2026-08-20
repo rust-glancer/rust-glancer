@@ -42,10 +42,14 @@ pub(super) struct CallInferenceState {
 
 impl CallInferenceState {
     /// Collapse the call-owned inference substitution into its persistent semantic form.
-    pub(super) fn finalize(&self, table: &InferenceTable) -> CallFacts {
-        let generic_args = self
-            .subst
-            .finalize_args(table, self.generic_params.iter().copied());
+    pub(super) fn finalize(&self, table: &InferenceTable, inference_complete: bool) -> CallFacts {
+        let params = self.generic_params.iter().copied();
+        let generic_args = if inference_complete {
+            self.subst.finalize_args(table, params)
+        } else {
+            self.subst
+                .finalize_args_without_numeric_defaults(table, params)
+        };
         CallFacts::new(self.function, generic_args)
     }
 }

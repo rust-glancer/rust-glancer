@@ -13,6 +13,7 @@ use rg_std::ExpectedUnique;
 
 use super::{
     TraitGoal, TraitProof, TraitSelectionQuery, candidate::TraitCandidate, matcher::TraitSelfHead,
+    session::TraitWorkKind,
 };
 use crate::inference::InferenceTable;
 use crate::{Clause, GenericArg, TraitApplication, Ty};
@@ -182,13 +183,35 @@ where
             application: application.clone(),
             associated_types: Vec::new(),
         };
-        for candidate in TraitCandidate::probe_all(
+        let Some(plausible_impls) = TraitCandidate::plausible_impls(
             self.selection.context.item_paths(),
             self.selection.context.lookup_index(),
             self.selection.context.trait_selection(),
             &goal,
             table,
-        )? {
+        )?
+        else {
+            return Ok(None);
+        };
+        for trait_impl in plausible_impls {
+            if !self
+                .selection
+                .context
+                .trait_selection()
+                .consume_work(TraitWorkKind::CandidateProbe, 1)
+            {
+                return Ok(None);
+            }
+            let Some(candidate) = TraitCandidate::probe_impl(
+                self.selection.context.item_paths(),
+                self.selection.context.trait_selection(),
+                &goal,
+                table,
+                trait_impl,
+            )?
+            else {
+                continue;
+            };
             let Some(header) = self.selection.context.trait_selection().impl_header_with(
                 self.selection.context.item_paths(),
                 self.selection.context.item_paths(),
@@ -251,18 +274,39 @@ where
             application: application.clone(),
             associated_types: Vec::new(),
         };
-        let candidates = TraitCandidate::probe_all(
+        let Some(plausible_impls) = TraitCandidate::plausible_impls(
             self.selection.context.item_paths(),
             self.selection.context.lookup_index(),
             self.selection.context.trait_selection(),
             &goal,
             table,
-        )?;
+        )?
+        else {
+            return Ok(None);
+        };
         let mut exact = ExpectedUnique::new();
-        let mut all = ExpectedUnique::new();
+        let mut fallbacks = ExpectedUnique::new();
         let mut has_unavailable = false;
 
-        for candidate in candidates {
+        for trait_impl in plausible_impls {
+            if !self
+                .selection
+                .context
+                .trait_selection()
+                .consume_work(TraitWorkKind::CandidateProbe, 1)
+            {
+                return Ok(None);
+            }
+            let Some(candidate) = TraitCandidate::probe_impl(
+                self.selection.context.item_paths(),
+                self.selection.context.trait_selection(),
+                &goal,
+                table,
+                trait_impl,
+            )?
+            else {
+                continue;
+            };
             let Some(header) = self.selection.context.trait_selection().impl_header_with(
                 self.selection.context.item_paths(),
                 self.selection.context.item_paths(),
@@ -312,9 +356,10 @@ where
                 continue;
             };
             let proof = (candidate.trait_impl.impl_ref, proven_table);
-            all.push(proof.clone());
             if TraitSelfHead::from_ty(&header.self_ty) == Some(goal_head) {
                 exact.push(proof);
+            } else {
+                fallbacks.push(proof);
             }
         }
 
@@ -325,7 +370,7 @@ where
             ExpectedUnique::One((_, table)) => table,
             ExpectedUnique::Ambiguous => return Ok(None),
             ExpectedUnique::Empty if has_unavailable => return Ok(None),
-            ExpectedUnique::Empty => match all {
+            ExpectedUnique::Empty => match fallbacks {
                 ExpectedUnique::One((_, table)) => table,
                 ExpectedUnique::Ambiguous => return Ok(None),
                 ExpectedUnique::Empty => return Ok(Some(TraitProof::NoSolution)),

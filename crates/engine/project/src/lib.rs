@@ -56,6 +56,7 @@ pub fn profile_descriptors() -> &'static [rg_profile::ProfileDescriptor] {
         .get_or_init(|| {
             let mut descriptors = Vec::new();
             descriptors.extend_from_slice(profile::profile_descriptors());
+            descriptors.extend_from_slice(rg_body_ir::profile_descriptors());
             descriptors.extend_from_slice(rg_def_map::profile_descriptors());
             descriptors.extend_from_slice(rg_ty::profile_descriptors());
             descriptors

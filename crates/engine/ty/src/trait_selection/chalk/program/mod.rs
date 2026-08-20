@@ -56,6 +56,13 @@ pub(super) struct ChalkProgramState {
     program: ChalkProgram,
 }
 
+/// Whether the goal-directed database is ready for one solver query.
+pub(super) enum ProgramAvailability {
+    Ready,
+    Unsupported,
+    Exhausted,
+}
+
 /// Semantic definitions that can become entry points into one Chalk program.
 ///
 /// A goal normally contributes one or two traits. Opaque types are roots too because their bounds
@@ -177,7 +184,7 @@ impl ChalkProgramState {
         session: &TraitSelectionSession,
         clauses: &[Clause],
         table: Option<&InferenceTable>,
-    ) -> Result<bool, I::Error>
+    ) -> Result<ProgramAvailability, I::Error>
     where
         D: DefMapSource<Error = I::Error>,
         I: ItemStoreSource<'query>,
@@ -198,7 +205,7 @@ impl ChalkProgramState {
         goal: &TraitGoal,
         associated_ty: TypeAliasRef,
         table: &InferenceTable,
-    ) -> Result<bool, I::Error>
+    ) -> Result<ProgramAvailability, I::Error>
     where
         D: DefMapSource<Error = I::Error>,
         I: ItemStoreSource<'query>,
@@ -216,7 +223,7 @@ impl ChalkProgramState {
         lookup_index: &ItemLookupIndex,
         session: &TraitSelectionSession,
         roots: &ChalkProgramRoots,
-    ) -> Result<bool, I::Error>
+    ) -> Result<ProgramAvailability, I::Error>
     where
         D: DefMapSource<Error = I::Error>,
         I: ItemStoreSource<'query>,
@@ -241,11 +248,13 @@ impl ChalkProgramState {
                     trait_root_ids = ?pending_roots.traits.as_slice(),
                     opaque_type_roots = pending_roots.opaque_tys.len(),
                     function_roots = pending_roots.functions.len(),
-                    succeeded = result.is_ok(),
+                    succeeded = matches!(&result, Ok(true)),
                     "slow Chalk program extension"
                 );
             }
-            result?;
+            if !result? {
+                return Ok(ProgramAvailability::Exhausted);
+            }
             self.roots.merge(&pending_roots);
         }
 
@@ -255,10 +264,17 @@ impl ChalkProgramState {
         // Function callbacks have a stronger invariant: every function type in this query must
         // have real datum. Unsupported signatures are omitted by the builder and stop the query
         // before Chalk can ask its mandatory callback for fabricated data.
-        Ok(roots
-            .functions
-            .iter()
-            .all(|function| self.program.functions.contains_key(function)))
+        Ok(
+            if roots
+                .functions
+                .iter()
+                .all(|function| self.program.functions.contains_key(function))
+            {
+                ProgramAvailability::Ready
+            } else {
+                ProgramAvailability::Unsupported
+            },
+        )
     }
 
     pub(super) fn database(&self) -> &ChalkProgram {

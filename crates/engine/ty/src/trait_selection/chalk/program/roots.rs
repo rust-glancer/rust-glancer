@@ -13,7 +13,7 @@ use rg_semantic_ir::{CrateItemQuery, ItemLookupIndex, ItemStoreSource};
 
 use super::{ChalkProgram, ChalkProgramRoots, ChalkProgramScope};
 use crate::inference::InferenceTable;
-use crate::trait_selection::TraitSelectionSession;
+use crate::trait_selection::{TraitSelectionSession, session::TraitWorkKind};
 use crate::{Clause, ItemPathQuery, TraitRefLowering};
 
 impl ChalkProgramRoots {
@@ -226,7 +226,7 @@ impl ChalkProgramScope {
         session: &TraitSelectionSession,
         roots: &ChalkProgramRoots,
         program: &ChalkProgram,
-    ) -> Result<Self, I::Error>
+    ) -> Result<Option<Self>, I::Error>
     where
         D: DefMapSource<Error = I::Error>,
         I: ItemStoreSource<'query>,
@@ -253,6 +253,9 @@ impl ChalkProgramScope {
                 if program.materialized_traits.contains(&trait_ref) {
                     continue;
                 }
+                if !session.consume_work(TraitWorkKind::ProgramDefinition, 1) {
+                    return Ok(None);
+                }
 
                 if let Some(header) = session.trait_header_with(item_paths, trait_ref)? {
                     scope
@@ -270,17 +273,21 @@ impl ChalkProgramScope {
                 if trait_ref.origin.as_crate_ref().is_some() {
                     if let Some(impls) = lookup_index.trait_impls_for_trait(trait_ref) {
                         for trait_impl in impls {
-                            scope.discover_impl(
+                            if !scope.discover_impl(
                                 item_paths,
                                 crate_items,
                                 session,
                                 trait_impl.impl_ref,
-                            )?;
+                            )? {
+                                return Ok(None);
+                            }
                         }
                     }
                 } else {
                     for impl_ref in crate_items.impls_for_trait(trait_ref)? {
-                        scope.discover_impl(item_paths, crate_items, session, impl_ref)?;
+                        if !scope.discover_impl(item_paths, crate_items, session, impl_ref)? {
+                            return Ok(None);
+                        }
                     }
                 }
             }
@@ -293,6 +300,9 @@ impl ChalkProgramScope {
                 }
                 if !scope.loaded_opaque_owners.push(opaque.owner) {
                     continue;
+                }
+                if !session.consume_work(TraitWorkKind::ProgramDefinition, 1) {
+                    return Ok(None);
                 }
 
                 for (opaque, bounds) in session
@@ -317,6 +327,9 @@ impl ChalkProgramScope {
                 function_cursor += 1;
                 if program.functions.contains_key(&function) {
                     continue;
+                }
+                if !session.consume_work(TraitWorkKind::ProgramDefinition, 1) {
+                    return Ok(None);
                 }
                 let Some(signature) = session.function_signature_with(item_paths, function)? else {
                     continue;
@@ -346,7 +359,7 @@ impl ChalkProgramScope {
                 "slow Chalk program scope discovery"
             );
         }
-        Ok(scope)
+        Ok(Some(scope))
     }
 
     /// Add one impl and every semantic definition reachable from its header and values.
@@ -356,11 +369,15 @@ impl ChalkProgramScope {
         crate_items: &CrateItemQuery<'query, D, I>,
         session: &TraitSelectionSession,
         impl_ref: rg_ir_model::ImplRef,
-    ) -> Result<(), I::Error>
+    ) -> Result<bool, I::Error>
     where
         D: DefMapSource<Error = I::Error>,
         I: ItemStoreSource<'query>,
     {
+        if !session.consume_work(TraitWorkKind::ProgramDefinition, 1) {
+            return Ok(false);
+        }
+
         // Each semantic impl has one resolved trait, and the trait queue visits every identity
         // once. Keeping this invariant avoids a quadratic ordered-set check for large programs.
         #[cfg(debug_assertions)]
@@ -371,7 +388,7 @@ impl ChalkProgramScope {
         self.impls.push(impl_ref);
 
         let Some(header) = session.impl_header_with(item_paths, item_paths, impl_ref)? else {
-            return Ok(());
+            return Ok(true);
         };
         self.definitions
             .collect_ty(item_paths, &header.self_ty, None)?;
@@ -398,6 +415,6 @@ impl ChalkProgramScope {
             }
         }
         self.impl_headers.insert(impl_ref, header);
-        Ok(())
+        Ok(true)
     }
 }

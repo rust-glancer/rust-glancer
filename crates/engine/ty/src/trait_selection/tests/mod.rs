@@ -1,11 +1,17 @@
 mod utils;
 
+use std::fmt::Write as _;
+
 use expect_test::expect;
 use rg_ir_model::{TypeAliasId, TypeAliasRef};
+use rg_semantic_ir::CrateItemQuery;
 
 use self::utils::*;
+use super::TraitSelectionSession;
+use super::chalk::{ChalkInferenceCache, ChalkOutcome, ChalkTraitSolver};
+use super::projection::NORMALIZATION_DEPTH_LIMIT;
 use crate::inference::InferenceTable;
-use crate::{GenericArg, ProjectionTy};
+use crate::{AliasTy, Clause, GenericArg, ItemPathQuery, ProjectionTy, Ty};
 
 #[test]
 fn projection_cycle_identity_ignores_fresh_inference_slots() {
@@ -35,6 +41,145 @@ fn projection_cycle_identity_ignores_fresh_inference_slots() {
     assert_ne!(first, repeated);
     assert!(first.equivalent_modulo_inference_ids(&repeated));
     assert!(!first.equivalent_modulo_inference_ids(&unrelated));
+}
+
+#[test]
+fn body_work_exhaustion_keeps_candidate_search_incomplete() {
+    let profile = rg_profile::test_support::ProfileTest::start(
+        crate::profile_descriptors(),
+        "ty.trait_selection.chalk",
+    );
+    let fixture = TraitSelectionFixture::new(
+        r#"
+            traits
+              trait#0 Marker
+            structs
+              struct#0 User
+            impls
+              impl#0 impl Marker for User
+        "#,
+    );
+    let parsed = TraitSelectionQueryParser::new(&fixture).parse_goal("User: Marker");
+    let query = query_with_session(
+        &fixture,
+        TraitSelectionSession::new(fixture.target).with_work_limit(0),
+    );
+
+    let (selection, complete) = query
+        .probe_with_completeness(&parsed.goal, &parsed.table)
+        .expect("bounded candidate query should not fail");
+
+    assert!(selection.is_empty());
+    assert!(
+        !complete,
+        "work exhaustion must not prove candidate absence"
+    );
+    profile.finish().assert_keyed_counter(
+        crate::profile::metric::WORK_LIMIT_EXHAUSTIONS,
+        "body_work.candidate_index",
+        1,
+    );
+}
+
+#[test]
+fn program_work_exhaustion_does_not_publish_a_partial_extension() {
+    let fixture = TraitSelectionFixture::new(
+        r#"
+            traits
+              trait#0 Marker
+            structs
+              struct#0 User
+            impls
+              impl#0 impl Marker for User
+        "#,
+    );
+    let parsed = TraitSelectionQueryParser::new(&fixture).parse_goal("User: Marker");
+    let clauses = [Clause::Implemented(parsed.goal.application)];
+    let item_paths = ItemPathQuery::new(&fixture, &fixture);
+    let crate_items = CrateItemQuery::new(&fixture, &fixture, fixture.target);
+    let solver = ChalkTraitSolver::new();
+
+    let limited = TraitSelectionSession::new(fixture.target).with_work_limit(1);
+    let outcome = solver
+        .prove_clauses(
+            &item_paths,
+            &crate_items,
+            fixture.lookup_index(),
+            &limited,
+            &ChalkInferenceCache::new(),
+            &clauses,
+            &parsed.table,
+        )
+        .expect("bounded Chalk query should not fail");
+    assert!(matches!(outcome, ChalkOutcome::Exhausted));
+
+    // Discovery builds a temporary scope. A later unbounded query must be able to materialize the
+    // same roots from scratch rather than observe a half-published solver database.
+    let outcome = solver
+        .prove_clauses(
+            &item_paths,
+            &crate_items,
+            fixture.lookup_index(),
+            &TraitSelectionSession::new(fixture.target),
+            &ChalkInferenceCache::new(),
+            &clauses,
+            &parsed.table,
+        )
+        .expect("retry after bounded Chalk discovery should not fail");
+    assert!(matches!(outcome, ChalkOutcome::Proven(_)));
+}
+
+#[test]
+fn recursive_projection_normalization_stops_at_its_depth_limit() {
+    let chain_len = NORMALIZATION_DEPTH_LIMIT + 6;
+    let mut source = String::from("traits\n  trait#0 Next\nstructs\n");
+    for index in 0..chain_len {
+        writeln!(source, "  struct#{index} S{index}").expect("string writes should not fail");
+    }
+    writeln!(source, "  struct#{chain_len} User\nimpls").expect("string writes should not fail");
+    for index in 0..chain_len {
+        writeln!(source, "  impl#{index} impl Next for S{index}")
+            .expect("string writes should not fail");
+    }
+    writeln!(source, "type aliases\n  type#0 trait#0::Item")
+        .expect("string writes should not fail");
+    for index in 0..chain_len {
+        if index + 1 == chain_len {
+            writeln!(source, "  type#{} impl#{index}::Item = User", index + 1)
+                .expect("string writes should not fail");
+        } else {
+            writeln!(
+                source,
+                "  type#{} impl#{index}::Item = <S{} as Next>::Item",
+                index + 1,
+                index + 1,
+            )
+            .expect("string writes should not fail");
+        }
+    }
+
+    let fixture = TraitSelectionFixture::new(&source);
+    let profile = rg_profile::test_support::ProfileTest::start(
+        crate::profile_descriptors(),
+        "ty.trait_selection.chalk",
+    );
+    let projection = query(&fixture)
+        .normalize_assoc_type(
+            &TraitSelectionQueryParser::new(&fixture)
+                .parse_assoc_goal("<S0 as Next>::Item")
+                .goal,
+            "Item",
+            &InferenceTable::new(),
+        )
+        .expect("bounded projection query should not fail")
+        .expect("the first projection should have an exact native impl");
+
+    assert!(matches!(projection.ty, Ty::Alias(AliasTy::Projection(_))));
+    profile.finish().assert_keyed_counter(
+        crate::profile::metric::WORK_LIMIT_EXHAUSTIONS,
+        "normalization_depth",
+        1,
+    );
 }
 
 #[test]
@@ -618,13 +763,16 @@ fn blanket_impl_proves_nested_adapter_with_dependent_associated_bound() {
 }
 
 #[test]
-fn probe_rejects_bare_inference_var_blanket_self_match() {
+fn probe_rejects_bare_inference_receiver_for_all_impl_shapes() {
     check_trait_selection_queries(
         r#"
             traits
               trait#0 Marker
+            structs
+              struct#0 User
             impls
               impl#0 impl<T> Marker for T [resolved self: empty]
+              impl#1 impl Marker for User
         "#,
         vec![TraitSelectionCase::probe(
             "reject bare inference receiver",

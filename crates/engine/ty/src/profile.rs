@@ -13,6 +13,10 @@ const BY_DURATION: ProfileReport = ProfileReport {
 
 declare_metrics! {
     pub(crate) mod metric {
+        scope "ty.lowering" {
+            /// Recursive source-type lowering stopped at a semantic cycle or depth boundary.
+            keyed_counter TYPE_LOWERING_LIMIT_EXHAUSTIONS = "limit_exhaustions" [report super::BY_COUNT, title "Type-lowering limit exhaustions"];
+        }
         scope "ty.trait_selection.chalk" {
             /// Impl candidates whose header matched and had no predicates left for Chalk to prove.
             counter PREDICATE_FREE_CANDIDATES = "candidates.predicate_free";
@@ -36,6 +40,8 @@ declare_metrics! {
             keyed_counter SOLVER_GOAL_SHAPES = "solver.goal_shapes" [report super::BY_COUNT, title "Chalk solver goal shapes"];
             /// Repeated body-local goals served from a previous bounded decline.
             counter DECLINED_GOAL_REUSES = "solver.declined_goal_reuses";
+            /// Body-owned aggregate work or recursive normalization stopped at a safety boundary.
+            keyed_counter WORK_LIMIT_EXHAUSTIONS = "work_limit_exhaustions" [report super::BY_COUNT, title "Trait-selection work-limit exhaustions"];
             /// Associated projections instantiated directly from a selected native impl.
             counter NATIVE_ASSOC_PROJECTIONS = "native.assoc_projections";
             /// Candidate projection probes stopped at an actual recursive impl cycle.

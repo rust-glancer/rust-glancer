@@ -543,3 +543,192 @@ pub fn forward<R>(callback: fn(User) -> R) -> R {
         "#]],
     );
 }
+
+#[test]
+fn never_closure_satisfies_generic_callable_output() {
+    check_project_body_ir_with_fake_sysroot(
+        r#"
+//- /Cargo.toml
+[package]
+name = "body_never_closure_callable_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct User;
+pub struct Error;
+pub struct ReportedError;
+
+pub trait BuildFrom<T> {}
+
+pub trait Convert<T> {
+    fn convert(self) -> T;
+}
+
+impl<T, U> Convert<U> for T
+where
+    U: BuildFrom<T>,
+{
+    fn convert(self) -> U {
+        loop {}
+    }
+}
+
+impl BuildFrom<Error> for ReportedError {}
+
+pub enum Outcome<T, E> {
+    Ok(T),
+    Err(E),
+}
+
+impl<T, E> Outcome<T, E> {
+    pub fn unwrap_or_else<F>(self, fallback: F) -> T
+    where
+        F: FnOnce(E) -> T,
+    {
+        loop {}
+    }
+}
+
+pub fn source() -> Outcome<User, Error> {
+    loop {}
+}
+
+pub fn abort() -> ! {
+    loop {}
+}
+
+pub fn report(_: &ReportedError) {}
+
+pub fn use_it() -> User {
+    source().unwrap_or_else(|error| {
+        report(&error.convert());
+        abort()
+    })
+}
+"#,
+        expect![[r#"
+            package alloc
+
+            alloc [lib]
+            skipped
+
+            package body_never_closure_callable_fixture
+
+            body_never_closure_callable_fixture [lib]
+            body b0 fn body_never_closure_callable_fixture[lib]::crate::source @ 36:1-38:2
+            scopes
+            - s0 parent <none>: <none>
+            - s1 parent s0: <none>
+            - s2 parent s1: <none>
+            bindings
+            body
+            expr e2 block s1 => nominal enum body_never_closure_callable_fixture[lib]::crate::Outcome<nominal struct body_never_closure_callable_fixture[lib]::crate::User, nominal struct body_never_closure_callable_fixture[lib]::crate::Error> @ 36:41-38:2
+              tail
+                expr e1 loop => nominal enum body_never_closure_callable_fixture[lib]::crate::Outcome<nominal struct body_never_closure_callable_fixture[lib]::crate::User, nominal struct body_never_closure_callable_fixture[lib]::crate::Error> @ 37:5-37:12
+                  body
+                    expr e0 block s2 => () @ 37:10-37:12
+
+
+            body b1 fn body_never_closure_callable_fixture[lib]::crate::abort @ 40:1-42:2
+            scopes
+            - s0 parent <none>: <none>
+            - s1 parent s0: <none>
+            - s2 parent s1: <none>
+            bindings
+            body
+            expr e2 block s1 => ! @ 40:21-42:2
+              tail
+                expr e1 loop => ! @ 41:5-41:12
+                  body
+                    expr e0 block s2 => () @ 41:10-41:12
+
+
+            body b2 fn body_never_closure_callable_fixture[lib]::crate::report @ 44:1-44:36
+            scopes
+            - s0 parent <none>: <none>
+            - s1 parent s0: <none>
+            bindings
+            body
+            expr e0 block s1 => () @ 44:34-44:36
+
+
+            body b3 fn body_never_closure_callable_fixture[lib]::crate::use_it @ 46:1-51:2
+            scopes
+            - s0 parent <none>: <none>
+            - s1 parent s0: <none>
+            - s2 parent s1: v0
+            - s3 parent s2: <none>
+            bindings
+            - v0 param error `error` => nominal struct body_never_closure_callable_fixture[lib]::crate::Error @ 47:30-47:35
+            body
+            expr e12 block s1 => nominal struct body_never_closure_callable_fixture[lib]::crate::User @ 46:25-51:2
+              tail
+                expr e11 method_call unwrap_or_else -> fn impl Outcome<T, E>::unwrap_or_else => nominal struct body_never_closure_callable_fixture[lib]::crate::User @ 47:5-50:7
+                  receiver
+                    expr e1 call => nominal enum body_never_closure_callable_fixture[lib]::crate::Outcome<nominal struct body_never_closure_callable_fixture[lib]::crate::User, nominal struct body_never_closure_callable_fixture[lib]::crate::Error> @ 47:5-47:13
+                      callee
+                        expr e0 path source -> fn body_never_closure_callable_fixture[lib]::crate::source => function item fn body_never_closure_callable_fixture[lib]::crate::source @ 47:5-47:11
+                  arg
+                    expr e10 closure s2 (v0) => closure #10 @ 47:29-50:6
+                      body
+                        expr e9 block s3 => nominal struct body_never_closure_callable_fixture[lib]::crate::User @ 47:37-50:6
+                          stmt s0 expr; @ 48:9-48:34
+                            expr e6 call => () @ 48:9-48:33
+                              callee
+                                expr e2 path report -> fn body_never_closure_callable_fixture[lib]::crate::report => function item fn body_never_closure_callable_fixture[lib]::crate::report @ 48:9-48:15
+                              arg
+                                expr e5 wrapper ref => &nominal struct body_never_closure_callable_fixture[lib]::crate::ReportedError @ 48:16-48:32
+                                  inner
+                                    expr e4 method_call convert => nominal struct body_never_closure_callable_fixture[lib]::crate::ReportedError @ 48:17-48:32
+                                      receiver
+                                        expr e3 path error -> local v0 => nominal struct body_never_closure_callable_fixture[lib]::crate::Error @ 48:17-48:22
+                          tail
+                            expr e8 call => ! @ 49:9-49:16
+                              callee
+                                expr e7 path abort -> fn body_never_closure_callable_fixture[lib]::crate::abort => function item fn body_never_closure_callable_fixture[lib]::crate::abort @ 49:9-49:14
+
+
+            body b4 fn impl Convert<U> for T::convert @ 15:5-17:6
+            scopes
+            - s0 parent <none>: v0
+            - s1 parent s0: <none>
+            - s2 parent s1: <none>
+            bindings
+            - v0 self_param self `self` => param T @ 15:16-15:20
+            body
+            expr e2 block s1 => param U @ 15:27-17:6
+              tail
+                expr e1 loop => param U @ 16:9-16:16
+                  body
+                    expr e0 block s2 => () @ 16:14-16:16
+
+
+            body b5 fn impl Outcome<T, E>::unwrap_or_else @ 28:5-33:6
+            scopes
+            - s0 parent <none>: v0, v1
+            - s1 parent s0: <none>
+            - s2 parent s1: <none>
+            bindings
+            - v0 self_param self `self` => nominal enum body_never_closure_callable_fixture[lib]::crate::Outcome<param T, param E> @ 28:30-28:34
+            - v1 param fallback `fallback`: F => param F @ 28:36-28:44
+            body
+            expr e2 block s1 => param T @ 31:5-33:6
+              tail
+                expr e1 loop => param T @ 32:9-32:16
+                  body
+                    expr e0 block s2 => () @ 32:14-32:16
+
+
+            package core
+
+            core [lib]
+            skipped
+
+            package std
+
+            std [lib]
+            skipped
+        "#]],
+    );
+}

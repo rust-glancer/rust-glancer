@@ -89,6 +89,7 @@ impl<Id: InferenceFactId> InferenceFacts<Id> {
         self.refine(table, id, ty)
     }
 
+    #[cfg(test)]
     pub(super) fn finalize(&self, table: &InferenceTable, id: Id) -> Ty {
         table.finalize(self.get_ref(id))
     }

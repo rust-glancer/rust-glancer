@@ -13,12 +13,17 @@ use rg_semantic_ir::ItemStoreSource;
 use rg_std::ExpectedUnique;
 
 use super::matcher::TraitSelfHead;
+use super::session::{TraitWorkKind, TraitWorkLimit};
 use super::{ChalkOutcome, TraitGoal, TraitSelection, TraitSelectionQuery};
 use crate::inference::InferenceTable;
 use crate::{
     AdtTy, AliasTy, ClosureTy, FnDefTy, GenericArg, GenericArgs, OpaqueTy, ProjectionTy,
     Substitution, TraitApplication, Ty,
 };
+
+// Projection results can keep producing a different, larger projection without repeating an
+// exact semantic cycle. Bound that expansion before it can consume the thread stack.
+pub(super) const NORMALIZATION_DEPTH_LIMIT: usize = 64;
 
 /// Result of normalizing one selected associated type projection.
 ///
@@ -110,6 +115,7 @@ where
             &mut table,
             &mut Vec::new(),
             CandidateEvidence::ROOT,
+            0,
         )?;
         projection.table = table;
         Ok(Some(projection))
@@ -339,7 +345,7 @@ where
     ) -> Result<(Ty, InferenceTable), I::Error> {
         let mut table = table.clone();
         let ty =
-            self.normalize_ty_with_table(ty, &mut table, &mut Vec::new(), candidate_evidence)?;
+            self.normalize_ty_with_table(ty, &mut table, &mut Vec::new(), candidate_evidence, 0)?;
         Ok((ty, table))
     }
 
@@ -349,13 +355,33 @@ where
         table: &mut InferenceTable,
         active: &mut Vec<ProjectionTy>,
         candidate_evidence: CandidateEvidence<'_>,
+        depth: usize,
     ) -> Result<Ty, I::Error> {
+        let session = self.context.trait_selection();
+        if depth >= NORMALIZATION_DEPTH_LIMIT {
+            session.report_limit(
+                TraitWorkLimit::NormalizationDepth,
+                Some(NORMALIZATION_DEPTH_LIMIT),
+            );
+            return Ok(ty.clone());
+        }
+        if !session.consume_work(TraitWorkKind::NormalizationStep, 1) {
+            return Ok(ty.clone());
+        }
+        let child_depth = depth + 1;
+
         Ok(match ty {
             Ty::Tuple(fields) => Ty::tuple(
                 fields
                     .iter()
                     .map(|field| {
-                        self.normalize_ty_with_table(field, table, active, candidate_evidence)
+                        self.normalize_ty_with_table(
+                            field,
+                            table,
+                            active,
+                            candidate_evidence,
+                            child_depth,
+                        )
                     })
                     .collect::<Result<_, _>>()?,
             ),
@@ -365,12 +391,17 @@ where
                     table,
                     active,
                     candidate_evidence,
+                    child_depth,
                 )?),
                 len: *len,
             },
-            Ty::Slice(inner) => {
-                Ty::slice(self.normalize_ty_with_table(inner, table, active, candidate_evidence)?)
-            }
+            Ty::Slice(inner) => Ty::slice(self.normalize_ty_with_table(
+                inner,
+                table,
+                active,
+                candidate_evidence,
+                child_depth,
+            )?),
             Ty::Reference {
                 lifetime,
                 mutability,
@@ -378,28 +409,58 @@ where
             } => Ty::reference_with_lifetime(
                 *lifetime,
                 *mutability,
-                self.normalize_ty_with_table(inner, table, active, candidate_evidence)?,
+                self.normalize_ty_with_table(
+                    inner,
+                    table,
+                    active,
+                    candidate_evidence,
+                    child_depth,
+                )?,
             ),
             Ty::RawPointer { mutability, inner } => Ty::raw_pointer(
                 *mutability,
-                self.normalize_ty_with_table(inner, table, active, candidate_evidence)?,
+                self.normalize_ty_with_table(
+                    inner,
+                    table,
+                    active,
+                    candidate_evidence,
+                    child_depth,
+                )?,
             ),
             Ty::FnPointer { params, ret } => Ty::fn_pointer(
                 params
                     .iter()
                     .map(|param| {
-                        self.normalize_ty_with_table(param, table, active, candidate_evidence)
+                        self.normalize_ty_with_table(
+                            param,
+                            table,
+                            active,
+                            candidate_evidence,
+                            child_depth,
+                        )
                     })
                     .collect::<Result<_, _>>()?,
-                self.normalize_ty_with_table(ret, table, active, candidate_evidence)?,
+                self.normalize_ty_with_table(ret, table, active, candidate_evidence, child_depth)?,
             ),
             Ty::Adt(ty) => Ty::Adt(AdtTy {
                 def: ty.def,
-                args: self.normalize_args(&ty.args, table, active, candidate_evidence)?,
+                args: self.normalize_args(
+                    &ty.args,
+                    table,
+                    active,
+                    candidate_evidence,
+                    child_depth,
+                )?,
             }),
             Ty::FnDef(function) => Ty::FnDef(FnDefTy {
                 def: function.def,
-                args: self.normalize_args(&function.args, table, active, candidate_evidence)?,
+                args: self.normalize_args(
+                    &function.args,
+                    table,
+                    active,
+                    candidate_evidence,
+                    child_depth,
+                )?,
             }),
             Ty::Closure(closure) => Ty::Closure(ClosureTy {
                 id: closure.id,
@@ -407,7 +468,13 @@ where
                     .params
                     .iter()
                     .map(|param| {
-                        self.normalize_ty_with_table(param, table, active, candidate_evidence)
+                        self.normalize_ty_with_table(
+                            param,
+                            table,
+                            active,
+                            candidate_evidence,
+                            child_depth,
+                        )
                     })
                     .collect::<Result<_, _>>()?,
                 ret: Box::new(self.normalize_ty_with_table(
@@ -415,16 +482,29 @@ where
                     table,
                     active,
                     candidate_evidence,
+                    child_depth,
                 )?),
             }),
             Ty::Alias(AliasTy::Opaque(opaque)) => Ty::Alias(AliasTy::Opaque(OpaqueTy {
                 opaque: opaque.opaque,
-                args: self.normalize_args(&opaque.args, table, active, candidate_evidence)?,
+                args: self.normalize_args(
+                    &opaque.args,
+                    table,
+                    active,
+                    candidate_evidence,
+                    child_depth,
+                )?,
             })),
             Ty::Alias(AliasTy::Projection(alias)) => {
                 let alias = ProjectionTy {
                     associated_ty: alias.associated_ty,
-                    args: self.normalize_args(&alias.args, table, active, candidate_evidence)?,
+                    args: self.normalize_args(
+                        &alias.args,
+                        table,
+                        active,
+                        candidate_evidence,
+                        child_depth,
+                    )?,
                 };
                 // Solver retries can reproduce one projection with freshly allocated inference
                 // slots. Their numeric IDs differ, but they still describe the same obligation.
@@ -443,7 +523,13 @@ where
                 let ty = if let Some(normalized) = normalized {
                     let (ty, _applicability, normalized_table) = normalized.into_parts();
                     *table = normalized_table;
-                    self.normalize_ty_with_table(&ty, table, active, candidate_evidence)?
+                    self.normalize_ty_with_table(
+                        &ty,
+                        table,
+                        active,
+                        candidate_evidence,
+                        child_depth,
+                    )?
                 } else {
                     Ty::Alias(AliasTy::Projection(alias))
                 };
@@ -477,12 +563,13 @@ where
         table: &mut InferenceTable,
         active: &mut Vec<ProjectionTy>,
         candidate_evidence: CandidateEvidence<'_>,
+        depth: usize,
     ) -> Result<GenericArgs, I::Error> {
         args.iter()
             .map(|arg| {
                 Ok(match arg {
                     GenericArg::Type(ty) => GenericArg::Type(Box::new(
-                        self.normalize_ty_with_table(ty, table, active, candidate_evidence)?,
+                        self.normalize_ty_with_table(ty, table, active, candidate_evidence, depth)?,
                     )),
                     GenericArg::Lifetime(_) | GenericArg::Const(_) => arg.clone(),
                 })

@@ -27,6 +27,11 @@ use super::{
     pattern::PatternInferenceTransfer,
 };
 
+// Most bodies settle after a handful of rounds, but a single slot may legitimately gain several
+// layers of evidence. Keep the emergency ceiling independent of body size: slot count is not a
+// sound convergence bound, while a fixed high limit still prevents an endless rescan.
+const MAX_BODY_INFERENCE_PASSES: usize = 128;
+
 /// Shared state for the body-resolution fixed-point pass.
 ///
 /// The structural body is borrowed and never mutated. Name resolution accumulates directly in the
@@ -118,18 +123,37 @@ where
         // Expressions, patterns, calls, and expected types all exchange evidence through the same
         // inference context. Revisit the transfer rules while that context or declaration
         // resolution changes; there is no ordinary-fact pass to refresh afterward.
-        let max_passes = self.body.exprs().len() + self.body.bindings().len() + 1;
-        for _ in 0..max_passes {
+        let mut converged = false;
+        let mut final_resolution_changed = false;
+        let mut final_inference_changed = false;
+        for _ in 0..MAX_BODY_INFERENCE_PASSES {
             let before = self.inference.progress();
             let resolution_changed = self.transfer_expressions_and_patterns()?;
             InferenceTransferPass::new(&mut self).apply_once()?;
+            let inference_changed = self.inference.has_progressed_since(&before);
 
-            if !resolution_changed && !self.inference.has_progressed_since(&before) {
+            if !resolution_changed && !inference_changed {
+                converged = true;
                 break;
             }
+            final_resolution_changed = resolution_changed;
+            final_inference_changed = inference_changed;
         }
 
-        Ok(self.inference.finish(self.facts))
+        if !converged {
+            crate::profile::metric::FIXED_POINT_EXHAUSTIONS.inc();
+            tracing::warn!(
+                body = ?self.env.body_ref(),
+                max_passes = MAX_BODY_INFERENCE_PASSES,
+                expression_count = self.body.exprs().len(),
+                binding_count = self.body.bindings().len(),
+                final_resolution_changed,
+                final_inference_changed,
+                "body inference stopped at the fixed-point pass limit; unresolved facts remain unknown"
+            );
+        }
+
+        Ok(self.inference.finish(self.facts, converged))
     }
 
     fn transfer_expressions_and_patterns(&mut self) -> Result<bool, PackageStoreError> {

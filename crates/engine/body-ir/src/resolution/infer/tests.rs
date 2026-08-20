@@ -119,6 +119,33 @@ fn expected_type_seeds_an_expression_without_producer_evidence() {
 }
 
 #[test]
+fn repeated_nested_unknown_instantiation_reuses_expression_slots() {
+    let mut context = BodyInferenceCtx::new(1, 0, 0);
+    let return_ty = vec_ty(Ty::Unknown);
+
+    assert!(context.instantiate_expr_nested_unknown_ty(ExprId(0), &return_ty));
+    let first_inference_ty = context.expr_ty(ExprId(0));
+    let before = context.progress();
+
+    assert!(!context.instantiate_expr_nested_unknown_ty(ExprId(0), &return_ty));
+    assert_eq!(context.expr_ty(ExprId(0)), first_inference_ty);
+    assert!(!context.has_progressed_since(&before));
+}
+
+#[test]
+fn never_expression_does_not_solve_its_expected_type_slot() {
+    let mut context = BodyInferenceCtx::new(1, 0, 0);
+    context.set_expr_infer_ty(ExprId(0), Ty::Never);
+    let expected = context.table.new_type_var();
+
+    assert!(!context.constrain_expr_ty(ExprId(0), &expected));
+    assert!(context.table.unify(&expected, &user_ty()));
+
+    assert_eq!(context.finalize_expr_ty(ExprId(0)), Ty::Never);
+    assert_eq!(context.table.finalize(&expected), user_ty());
+}
+
+#[test]
 fn binding_path_equality_carries_early_expected_type_back_to_the_binding() {
     let mut context = BodyInferenceCtx::new(1, 1, 0);
     context.constrain_expr_ty(ExprId(0), &vec_ty(user_ty()));

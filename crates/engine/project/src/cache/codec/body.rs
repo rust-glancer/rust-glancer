@@ -32,7 +32,7 @@ use rg_semantic_ir::ItemLookupIndex;
 use wincode::{SchemaRead, SchemaWrite};
 
 use super::{
-    PACKAGE_CACHE_SECTION_LIMIT_BYTES, PackageCacheCodec, PackageCacheProbe,
+    PACKAGE_CACHE_DECODE_LIMIT_BYTES, PackageCacheCodec, PackageCacheProbe,
     PackageCacheSectionRange,
 };
 
@@ -190,16 +190,17 @@ impl PackageCacheCodec {
         let manifest = wincode::config::serialize(&manifest, Self::wincode_config())
             .map_err(|error| anyhow::anyhow!("{error}"))
             .context("while attempting to serialize package cache Body IR manifest")?;
+        anyhow::ensure!(
+            manifest.len() <= PACKAGE_CACHE_DECODE_LIMIT_BYTES,
+            "package cache Body IR manifest has {} bytes, limit is {PACKAGE_CACHE_DECODE_LIMIT_BYTES}",
+            manifest.len(),
+        );
         let manifest_len = u64::try_from(manifest.len())
             .context("package cache Body IR manifest length does not fit u64")?;
         let total_len = BODY_CACHE_CONTAINER_PREFIX_BYTES
             .checked_add(manifest.len())
             .and_then(|len| len.checked_add(payload.len()))
             .context("package cache Body IR section length overflows usize")?;
-        anyhow::ensure!(
-            total_len <= PACKAGE_CACHE_SECTION_LIMIT_BYTES,
-            "package cache Body IR section has {total_len} bytes, limit is {PACKAGE_CACHE_SECTION_LIMIT_BYTES}",
-        );
 
         // 4. Keep the three final fragments separate. The package writer can emit them in this
         // order without allocating and copying another complete Body IR buffer.
@@ -219,6 +220,10 @@ impl PackageCacheCodec {
         let len = end
             .checked_sub(start)
             .context("Body IR payload end precedes its start")?;
+        anyhow::ensure!(
+            len <= PACKAGE_CACHE_DECODE_LIMIT_BYTES,
+            "package cache Body IR payload has {len} bytes, limit is {PACKAGE_CACHE_DECODE_LIMIT_BYTES}",
+        );
         Ok(PackageCacheSectionRange {
             offset: u64::try_from(start).context("Body IR payload offset does not fit u64")?,
             len: u64::try_from(len).context("Body IR payload length does not fit u64")?,
@@ -248,8 +253,8 @@ impl PackageCacheCodec {
         let manifest_len = usize::try_from(manifest_len)
             .context("package cache Body IR manifest length does not fit usize")?;
         anyhow::ensure!(
-            manifest_len <= PACKAGE_CACHE_SECTION_LIMIT_BYTES,
-            "package cache Body IR manifest has {manifest_len} bytes, limit is {PACKAGE_CACHE_SECTION_LIMIT_BYTES}",
+            manifest_len <= PACKAGE_CACHE_DECODE_LIMIT_BYTES,
+            "package cache Body IR manifest has {manifest_len} bytes, limit is {PACKAGE_CACHE_DECODE_LIMIT_BYTES}",
         );
         Ok(manifest_len)
     }
@@ -381,8 +386,8 @@ impl PackageCacheCodec {
                     range.offset,
                 );
                 anyhow::ensure!(
-                    range.len <= PACKAGE_CACHE_SECTION_LIMIT_BYTES as u64,
-                    "package cache Body IR payload has {} bytes, limit is {PACKAGE_CACHE_SECTION_LIMIT_BYTES}",
+                    range.len <= PACKAGE_CACHE_DECODE_LIMIT_BYTES as u64,
+                    "package cache Body IR payload has {} bytes, limit is {PACKAGE_CACHE_DECODE_LIMIT_BYTES}",
                     range.len,
                 );
                 next_offset = next_offset

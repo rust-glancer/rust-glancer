@@ -33,10 +33,12 @@ use super::super::matcher::TraitSelfHead;
 use super::evidence::{ProjectionAliasLowering, SolverAnswerVars, SolverVariableEnv};
 use super::interner::RgChalkInterner;
 use super::lower::{ChalkLowerer, GenericBinderEnv};
-use super::program::ChalkProgramState;
+use super::program::{ChalkProgramState, ProgramAvailability};
 use super::raise;
 use crate::inference::{InferVarKind, InferenceSubstitution, InferenceTable};
-use crate::trait_selection::{AssocProjectionResult, TraitSelectionSession};
+use crate::trait_selection::{
+    AssocProjectionResult, TraitSelectionSession, session::TraitWorkKind,
+};
 use crate::{Clause, GenericArg, GenericArgs, ItemPathQuery, TraitApplication};
 
 const INTER: RgChalkInterner = RgChalkInterner;
@@ -92,9 +94,13 @@ impl SolverBudget {
         }
     }
 
-    fn should_continue(&self) -> bool {
+    fn should_continue(&self, session: &TraitSelectionSession) -> bool {
         let remaining = self.remaining.get();
         if remaining == 0 {
+            self.exhausted.set(true);
+            return false;
+        }
+        if !session.consume_work(TraitWorkKind::SolverQuantum, 1) {
             self.exhausted.set(true);
             return false;
         }
@@ -283,7 +289,7 @@ impl ChalkTraitSolver {
             .lock()
             .expect("Chalk solver-state lock should not be poisoned");
         let program_started = Instant::now();
-        let supported = state.program.ensure_for_clauses(
+        let availability = state.program.ensure_for_clauses(
             item_paths,
             crate_items,
             lookup_index,
@@ -299,11 +305,18 @@ impl ChalkTraitSolver {
                 "slow Chalk proof program preparation"
             );
         }
-        if !supported {
-            inference_cache.remember_declined_proof(clauses, DeclinedProof::Unsupported);
-            return Ok(ChalkOutcome::Unsupported);
+        match availability {
+            ProgramAvailability::Ready => {}
+            ProgramAvailability::Unsupported => {
+                inference_cache.remember_declined_proof(clauses, DeclinedProof::Unsupported);
+                return Ok(ChalkOutcome::Unsupported);
+            }
+            ProgramAvailability::Exhausted => {
+                inference_cache.remember_declined_proof(clauses, DeclinedProof::Exhausted);
+                return Ok(ChalkOutcome::Exhausted);
+            }
         }
-        let outcome = state.prove_clauses(clauses, table, inference_cache);
+        let outcome = state.prove_clauses(clauses, table, inference_cache, session);
         if program_elapsed >= SLOW_SOLVER_GOAL {
             let solver_outcome = match &outcome {
                 ChalkOutcome::Proven(_) => "proven",
@@ -380,7 +393,7 @@ impl ChalkTraitSolver {
             .lock()
             .expect("Chalk solver-state lock should not be poisoned");
         let program_started = Instant::now();
-        let supported = state.program.ensure_for_goal(
+        let availability = state.program.ensure_for_goal(
             item_paths,
             crate_items,
             lookup_index,
@@ -399,8 +412,10 @@ impl ChalkTraitSolver {
                 "slow Chalk projection program preparation"
             );
         }
-        if !supported {
-            return Ok(ChalkOutcome::Unsupported);
+        match availability {
+            ProgramAvailability::Ready => {}
+            ProgramAvailability::Unsupported => return Ok(ChalkOutcome::Unsupported),
+            ProgramAvailability::Exhausted => return Ok(ChalkOutcome::Exhausted),
         }
         let selected_impl = if let Some((impl_ref, subst)) = selected_impl {
             let generics = item_paths
@@ -416,6 +431,7 @@ impl ChalkTraitSolver {
             selected_impl.as_ref(),
             table,
             inference_cache,
+            session,
         ))
     }
 
@@ -446,9 +462,18 @@ impl ChalkTraitSolver {
         else {
             return Ok(visible_impls.len());
         };
-        Ok(session
-            .indexed_trait_impl_candidates(item_paths, application.def, visible_impls, self_head)?
-            .len())
+        let Some(candidates) = session.indexed_trait_impl_candidates(
+            item_paths,
+            application.def,
+            visible_impls,
+            self_head,
+        )?
+        else {
+            // The caller classifies a count above its admission limit as exhausted. Preserve that
+            // distinction instead of making an unavailable index look like an empty impl set.
+            return Ok(usize::MAX);
+        };
+        Ok(candidates.len())
     }
 }
 
@@ -477,6 +502,7 @@ impl ChalkSolverState {
         clauses: &[Clause],
         table: &InferenceTable,
         inference_cache: &ChalkInferenceCache,
+        session: &TraitSelectionSession,
     ) -> ChalkOutcome<InferenceTable> {
         let binders = GenericBinderEnv::empty();
         let lowerer = ChalkLowerer::new(&binders)
@@ -539,7 +565,7 @@ impl ChalkSolverState {
             self.stable_forests.impl_bounds_solver.solve_limited(
                 self.program.database(),
                 &canonical_goal,
-                &|| budget.should_continue(),
+                &|| budget.should_continue(session),
             )
         } else {
             inference_cache
@@ -548,7 +574,7 @@ impl ChalkSolverState {
                 .expect("Chalk inference-cache lock should not be poisoned")
                 .impl_bounds_solver
                 .solve_limited(self.program.database(), &canonical_goal, &|| {
-                    budget.should_continue()
+                    budget.should_continue(session)
                 })
         };
         let elapsed = started.elapsed();
@@ -627,6 +653,7 @@ impl ChalkSolverState {
         selected_impl: Option<&(ImplRef, GenericArgs)>,
         table: &InferenceTable,
         inference_cache: &ChalkInferenceCache,
+        session: &TraitSelectionSession,
     ) -> ChalkOutcome<AssocProjectionResult> {
         if !self.program.associated_tys().contains_key(&assoc_type_ref) {
             return ChalkOutcome::NoSolution;
@@ -722,7 +749,7 @@ impl ChalkSolverState {
             self.stable_forests.assoc_projection_solver.solve_limited(
                 self.program.database(),
                 &canonical_goal,
-                &|| budget.should_continue(),
+                &|| budget.should_continue(session),
             )
         } else {
             inference_cache
@@ -731,7 +758,7 @@ impl ChalkSolverState {
                 .expect("Chalk inference-cache lock should not be poisoned")
                 .assoc_projection_solver
                 .solve_limited(self.program.database(), &canonical_goal, &|| {
-                    budget.should_continue()
+                    budget.should_continue(session)
                 })
         };
         let elapsed = started.elapsed();

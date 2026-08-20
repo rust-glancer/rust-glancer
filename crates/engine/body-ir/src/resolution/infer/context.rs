@@ -211,16 +211,31 @@ impl BodyInferenceCtx {
             return false;
         }
 
+        // A fixed-point revisit often presents the same weak producer shape again, for example
+        // `Vec<unknown>` after this expression already owns `Vec<?T>`. The existing structure can
+        // absorb any new concrete evidence directly; allocating another `?T` would only grow an
+        // alias chain that is invisible to convergence.
+        let existing_ty = self.root_resolved_expr_ty(expr);
+        if !matches!(existing_ty, Ty::Unknown | Ty::InferVar { .. }) && !existing_ty.has_unknown() {
+            return self.set_expr_infer_ty(expr, ty.clone());
+        }
+
         let (infer_ty, used_vars) = {
             let mut builder = UnknownTypeInstantiationBuilder::new(&mut self.table);
             let infer_ty = builder.ty_from_ty(ty);
             (infer_ty, builder.used_type_vars())
         };
 
-        if used_vars {
-            self.set_expr_infer_ty(expr, infer_ty);
+        if !used_vars {
+            return false;
         }
-        used_vars
+
+        // A partially known fact may contain both live variables and raw `Unknown` children.
+        // Unification links its existing variables, while refinement installs slots for the raw
+        // children so the next pass sees a complete stable structure.
+        self.set_expr_infer_ty(expr, infer_ty.clone());
+        self.refine_expr_fact(expr, infer_ty);
+        true
     }
 
     pub(crate) fn set_expr_integer_var(&mut self, expr: ExprId) {
@@ -564,6 +579,15 @@ impl BodyInferenceCtx {
     }
 
     pub(crate) fn constrain_expr_ty(&mut self, expr: ExprId, expected_ty: &Ty) -> bool {
+        // A diverging expression can inhabit every expected value type, but its own type remains
+        // `!`. Treating this as equality would solve a destination slot to `!`; later evidence for
+        // the real destination type would then conflict instead of refining that slot.
+        if matches!(self.root_resolved_expr_ty(expr), Ty::Never)
+            && !matches!(self.table.resolve_root_var(expected_ty), Ty::Never)
+        {
+            return false;
+        }
+
         // `Unknown` means that no producer fact has arrived yet. Expected types are still real
         // evidence, so retain their shape now; a later producer will unify with or refine it.
         self.set_expr_infer_ty(expr, expected_ty.clone())
@@ -595,7 +619,7 @@ impl BodyInferenceCtx {
             .map(|ty| GenericArg::Type(Box::new(self.table.canonicalize(ty))))
             .collect::<GenericArgs>();
         BodyInferenceProgress {
-            calls: self.finalize_calls(),
+            calls: self.finalize_calls(true),
             inference_facts,
         }
     }
@@ -607,43 +631,61 @@ impl BodyInferenceCtx {
     /// Consume live inference state into the persisted body sidecar.
     ///
     /// This is the only boundary that writes expression and binding types into `BodyFacts`.
-    /// Unsolved numeric variables receive their language defaults; other unresolved or cyclic
-    /// slots become unknown, and selected calls retain only finalized full-arity arguments.
-    pub(crate) fn finish(self, mut facts: BodyFacts) -> BodyFacts {
+    /// After convergence, unsolved numeric variables receive their language defaults. An
+    /// incomplete fixed point instead keeps every unresolved slot unknown because later evidence
+    /// could still choose a non-default numeric type. Selected calls retain only finalized
+    /// full-arity arguments under the same policy.
+    pub(crate) fn finish(self, mut facts: BodyFacts, inference_complete: bool) -> BodyFacts {
         debug_assert_eq!(facts.exprs.len(), self.expr_tys.as_slice().len());
         debug_assert_eq!(facts.bindings.len(), self.binding_tys.as_slice().len());
 
         for expr_idx in 0..self.expr_tys.as_slice().len() {
             let expr = ExprId(expr_idx);
-            facts.set_expr_ty(expr, self.finalize_expr_ty(expr));
+            let ty = self.finalize_ty(self.expr_tys.get_ref(expr), inference_complete);
+            facts.set_expr_ty(expr, ty);
         }
         for binding_idx in 0..self.binding_tys.as_slice().len() {
             let binding = BindingId(binding_idx);
-            facts.set_binding_ty(binding, self.finalize_binding_ty(binding));
+            let ty = self.finalize_ty(self.binding_tys.get_ref(binding), inference_complete);
+            facts.set_binding_ty(binding, ty);
         }
-        facts.set_calls(self.finalize_calls());
+        facts.set_calls(self.finalize_calls(inference_complete));
         facts
     }
 
+    #[cfg(test)]
     pub(crate) fn finalize_expr_ty(&self, expr: ExprId) -> Ty {
         self.expr_tys.finalize(&self.table, expr)
     }
 
+    #[cfg(test)]
     pub(crate) fn finalize_binding_ty(&self, binding: BindingId) -> Ty {
         self.binding_tys.finalize(&self.table, binding)
     }
 
     /// Finalize only expressions for which call lookup selected one semantic function.
-    fn finalize_calls(&self) -> Vec<(ExprId, CallFacts)> {
+    fn finalize_calls(&self, inference_complete: bool) -> Vec<(ExprId, CallFacts)> {
         self.call_inference
             .iter()
             .enumerate()
             .filter_map(|(index, state)| {
-                state
-                    .as_ref()
-                    .map(|state| (ExprId(index), state.finalize(&self.table)))
+                state.as_ref().map(|state| {
+                    (
+                        ExprId(index),
+                        state.finalize(&self.table, inference_complete),
+                    )
+                })
             })
             .collect()
+    }
+
+    /// Erase live variables under the policy chosen by the outer fixed-point boundary.
+    fn finalize_ty(&self, ty: &Ty, inference_complete: bool) -> Ty {
+        if inference_complete {
+            self.table.finalize(ty)
+        } else {
+            self.table.finalize_without_numeric_defaults(ty)
+        }
     }
 
     /// Return whether a fact still points into the inference table.
