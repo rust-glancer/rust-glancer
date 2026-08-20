@@ -16,7 +16,7 @@
 //! Wincode is the representation inside each section, not a long-lived compatibility promise.
 //! Schema compatibility comes from the version in the probe header. Every decoder also validates
 //! structural relationships against the probe, exact section consumption, declared ranges, and
-//! allocation limits before returning engine data.
+//! per-decode allocation limits before returning engine data.
 //!
 //! The codec only deals with bytes and engine values. It does not open files or decide whether a
 //! cache miss should trigger a rebuild; those responsibilities belong to the cache store and the
@@ -41,12 +41,13 @@ const PACKAGE_CACHE_CONTAINER_MAGIC: [u8; 8] = *b"RGPKG\0\0\x01";
 /// Bytes needed to discover every outer section without decoding wincode data.
 pub(crate) const PACKAGE_CACHE_CONTAINER_PREFIX_BYTES: usize = 8 + 4 * size_of::<u64>();
 
-// Protect section decoding from corrupted lengths while leaving ample room for realistic large
-// package phases. The complete container may exceed this because each phase is bounded separately.
-const PACKAGE_CACHE_SECTION_LIMIT_BYTES: usize = 256 * 1024 * 1024;
+// Protect one decoded allocation from corrupted lengths while leaving ample room for realistic
+// phase payloads. Body IR is a nested lazy container, so its aggregate section may exceed this;
+// its manifest and every independently decoded lookup index or file shard remain bounded.
+const PACKAGE_CACHE_DECODE_LIMIT_BYTES: usize = 256 * 1024 * 1024;
 
 type PackageCacheWincodeConfig =
-    wincode::config::Configuration<true, PACKAGE_CACHE_SECTION_LIMIT_BYTES>;
+    wincode::config::Configuration<true, PACKAGE_CACHE_DECODE_LIMIT_BYTES>;
 
 /// Absolute byte range in the outer file, or relative range in a nested payload.
 ///
@@ -109,9 +110,9 @@ impl EncodedPackageCacheArtifact {
 impl PackageCacheLayout {
     /// Turn the fixed prefix into trusted file ranges.
     ///
-    /// Besides checking magic and individual size limits, this requires the four ranges to end
-    /// exactly at `file_len`. A truncated file and a file with unexplained trailing bytes are both
-    /// rejected before any wincode decoder sees their contents.
+    /// Besides checking magic and eagerly decoded section limits, this requires the four ranges to
+    /// end exactly at `file_len`. A truncated file and a file with unexplained trailing bytes are
+    /// both rejected before any wincode decoder sees their contents.
     pub(crate) fn decode_prefix(prefix: &[u8], file_len: u64) -> anyhow::Result<Self> {
         // 1. The caller should have read exactly the fixed directory. Validate that assumption and
         // reject unrelated files before interpreting their next bytes as lengths.
@@ -139,15 +140,26 @@ impl PackageCacheLayout {
             cursor = end;
         }
 
-        // 3. Convert lengths into contiguous absolute ranges. The checked cursor prevents a
+        // 3. Probe, DefMap, and Semantic IR are each read and decoded as one allocation. Body IR is
+        // different: its outer section is only a directory over independently bounded payloads,
+        // so limiting their package-wide sum would reject large packages without reducing the
+        // size of any read or decode.
+        for (section, len) in [
+            ("probe", lengths[0]),
+            ("DefMap", lengths[1]),
+            ("Semantic IR", lengths[2]),
+        ] {
+            anyhow::ensure!(
+                len <= PACKAGE_CACHE_DECODE_LIMIT_BYTES as u64,
+                "package cache {section} section has {len} bytes, limit is {PACKAGE_CACHE_DECODE_LIMIT_BYTES}",
+            );
+        }
+
+        // 4. Convert lengths into contiguous absolute ranges. The checked cursor prevents a
         // corrupted length from wrapping around to an earlier part of the file.
         let mut next_offset = u64::try_from(PACKAGE_CACHE_CONTAINER_PREFIX_BYTES)
             .expect("package cache prefix length should fit into u64");
         let mut next_range = |len: u64| -> anyhow::Result<PackageCacheSectionRange> {
-            anyhow::ensure!(
-                len <= PACKAGE_CACHE_SECTION_LIMIT_BYTES as u64,
-                "package cache section has {len} bytes, limit is {PACKAGE_CACHE_SECTION_LIMIT_BYTES}",
-            );
             let range = PackageCacheSectionRange {
                 offset: next_offset,
                 len,
@@ -164,7 +176,7 @@ impl PackageCacheLayout {
             semantic_ir: next_range(lengths[2])?,
             body_ir: next_range(lengths[3])?,
         };
-        // 4. All declared sections together must account for the complete artifact.
+        // 5. All declared sections together must account for the complete artifact.
         anyhow::ensure!(
             next_offset == file_len,
             "package cache sections end at byte {next_offset}, file has {file_len} bytes",
@@ -176,15 +188,24 @@ impl PackageCacheLayout {
     fn encode_prefix(
         section_lengths: [usize; 4],
     ) -> anyhow::Result<[u8; PACKAGE_CACHE_CONTAINER_PREFIX_BYTES]> {
+        // Body IR is written as one contiguous outer section, but later reads only allocate its
+        // bounded manifest or one bounded nested payload. Keep the aggregate out of this check.
+        for (section, length) in [
+            ("probe", section_lengths[0]),
+            ("DefMap", section_lengths[1]),
+            ("Semantic IR", section_lengths[2]),
+        ] {
+            anyhow::ensure!(
+                length <= PACKAGE_CACHE_DECODE_LIMIT_BYTES,
+                "package cache {section} section has {length} bytes, limit is {PACKAGE_CACHE_DECODE_LIMIT_BYTES}",
+            );
+        }
+
         let mut prefix = [0_u8; PACKAGE_CACHE_CONTAINER_PREFIX_BYTES];
         prefix[..PACKAGE_CACHE_CONTAINER_MAGIC.len()]
             .copy_from_slice(&PACKAGE_CACHE_CONTAINER_MAGIC);
         let mut cursor = PACKAGE_CACHE_CONTAINER_MAGIC.len();
         for length in section_lengths {
-            anyhow::ensure!(
-                length <= PACKAGE_CACHE_SECTION_LIMIT_BYTES,
-                "package cache section has {length} bytes, limit is {PACKAGE_CACHE_SECTION_LIMIT_BYTES}",
-            );
             let end = cursor + size_of::<u64>();
             prefix[cursor..end].copy_from_slice(
                 &u64::try_from(length)
@@ -281,10 +302,10 @@ impl PackageCacheCodec {
     /// Use one bounded wincode configuration for every independently decoded storage unit.
     ///
     /// The preallocation limit is defensive against malformed cache lengths. It is not a total
-    /// artifact limit: the outer file can contain several separately bounded sections.
+    /// artifact limit: Body IR can contain many independently bounded storage units.
     fn wincode_config() -> PackageCacheWincodeConfig {
         wincode::config::Configuration::default()
-            .with_preallocation_size_limit::<PACKAGE_CACHE_SECTION_LIMIT_BYTES>()
+            .with_preallocation_size_limit::<PACKAGE_CACHE_DECODE_LIMIT_BYTES>()
     }
 
     fn validate_header(header: &PackageCacheHeader) -> anyhow::Result<()> {
@@ -375,5 +396,30 @@ impl PackageCacheCodec {
         Self::validate_def_map(input.def_map, probe)?;
         Self::validate_semantic_ir(input.semantic_ir, probe)?;
         Self::validate_body_ir(input.body_ir, probe)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn package_layout_allows_body_ir_larger_than_one_decode_unit() {
+        // No allocation follows this declared length: opening Body IR reads its small directory,
+        // then one independently bounded payload. Exercise both prefix writing and validation.
+        let body_ir_len = PACKAGE_CACHE_DECODE_LIMIT_BYTES + 1;
+        let prefix = PackageCacheLayout::encode_prefix([0, 0, 0, body_ir_len])
+            .expect("aggregate Body IR should not use the per-decode limit");
+        let body_ir_len =
+            u64::try_from(body_ir_len).expect("fixture Body IR section length should fit u64");
+        let file_len = u64::try_from(PACKAGE_CACHE_CONTAINER_PREFIX_BYTES)
+            .expect("package cache prefix length should fit u64")
+            .checked_add(body_ir_len)
+            .expect("fixture package cache length should fit u64");
+
+        let layout = PackageCacheLayout::decode_prefix(&prefix, file_len)
+            .expect("aggregate Body IR layout should validate");
+
+        assert_eq!(layout.body_ir.len, body_ir_len);
     }
 }

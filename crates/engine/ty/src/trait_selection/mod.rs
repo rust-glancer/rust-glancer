@@ -31,6 +31,7 @@ use self::native_proof::NativeProofQuery;
 pub use self::projection::AssocProjectionResult;
 use self::projection::CandidateEvidence;
 pub use self::session::TraitSelectionSession;
+use self::session::TraitWorkKind;
 use crate::inference::{InferenceSubstitution, InferenceTable};
 use crate::{
     AssocTypeBinding, Clause, GenericArg, GenericArgs, Substitution, TraitApplication,
@@ -400,18 +401,28 @@ where
             return Ok((selection, true));
         }
 
-        let plausible_impls = TraitCandidate::plausible_impls(
+        let Some(plausible_impls) = TraitCandidate::plausible_impls(
             self.context.item_paths(),
             self.context.lookup_index(),
             self.context.trait_selection(),
             goal,
             table,
-        )?;
+        )?
+        else {
+            return Ok((ExpectedUnique::new(), false));
+        };
 
         let mut definite_selections = ExpectedUnique::new();
         let mut maybe_selections = ExpectedUnique::new();
         let mut fully_evaluated = true;
         for trait_impl in plausible_impls {
+            if !self
+                .context
+                .trait_selection()
+                .consume_work(TraitWorkKind::CandidateProbe, 1)
+            {
+                return Ok((ExpectedUnique::new(), false));
+            }
             let Some(candidate) = TraitCandidate::probe_impl(
                 self.context.item_paths(),
                 self.context.trait_selection(),

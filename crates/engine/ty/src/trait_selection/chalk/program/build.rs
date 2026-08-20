@@ -55,7 +55,7 @@ impl ChalkProgram {
         lookup_index: &ItemLookupIndex,
         session: &TraitSelectionSession,
         roots: &ChalkProgramRoots,
-    ) -> Result<(), I::Error>
+    ) -> Result<bool, I::Error>
     where
         D: DefMapSource<Error = I::Error>,
         I: ItemStoreSource<'query>,
@@ -63,14 +63,17 @@ impl ChalkProgram {
         let extension_started = Instant::now();
         self.known_items = super::ChalkKnownItems::from_index(lookup_index);
         let discovery_started = Instant::now();
-        let scope = ChalkProgramScope::discover(
+        let Some(scope) = ChalkProgramScope::discover(
             item_paths,
             crate_items,
             lookup_index,
             session,
             roots,
             self,
-        )?;
+        )?
+        else {
+            return Ok(false);
+        };
         let discovery_elapsed = discovery_started.elapsed();
 
         // Associated-type declarations must exist before lowering any trait/impl predicates that
@@ -243,7 +246,7 @@ impl ChalkProgram {
                 "slow Chalk program materialization phases finished"
             );
         }
-        Ok(())
+        Ok(true)
     }
 
     fn collect_trait_associated_tys<'query, D, I>(

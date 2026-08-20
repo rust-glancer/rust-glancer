@@ -149,3 +149,42 @@ where
         "#]],
     );
 }
+
+#[test]
+fn recursive_supertrait_projection_stops_at_unknown_argument() {
+    check_project_body_ir(
+        r#"
+//- /Cargo.toml
+[package]
+name = "body_recursive_supertrait_projection_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub trait Base<T> {
+    type Item;
+}
+
+pub trait Derived: Base<Self::Item> {}
+
+pub fn use_it<T: Derived>(value: T::Item) {
+    value;
+}
+"#,
+        expect![[r#"
+            package body_recursive_supertrait_projection_fixture
+
+            body_recursive_supertrait_projection_fixture [lib]
+            body b0 fn body_recursive_supertrait_projection_fixture[lib]::crate::use_it @ 7:1-9:2
+            scopes
+            - s0 parent <none>: v0
+            - s1 parent s0: <none>
+            bindings
+            - v0 param value `value`: T::Item => projection type trait body_recursive_supertrait_projection_fixture[lib]::crate::Base::Item<param T, <unknown>> @ 7:27-7:32
+            body
+            expr e1 block s1 => () @ 7:43-9:2
+              stmt s0 expr; @ 8:5-8:11
+                expr e0 path value -> local v0 => projection type trait body_recursive_supertrait_projection_fixture[lib]::crate::Base::Item<param T, <unknown>> @ 8:5-8:10
+        "#]],
+    );
+}

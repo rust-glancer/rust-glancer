@@ -17,13 +17,16 @@
 use std::{
     collections::HashMap,
     fmt,
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+    },
 };
 
 use rg_def_map::DefMapSource;
 use rg_ir_model::{
-    CrateRef, FunctionRef, GenericDefRef, ImplRef, TraitApplicability, TraitDefRef, TraitImplRef,
-    TypeAliasRef,
+    BodyRef, CrateRef, FunctionRef, GenericDefRef, ImplRef, TraitApplicability, TraitDefRef,
+    TraitImplRef, TypeAliasRef,
 };
 use rg_semantic_ir::{CrateItemQuery, ItemLookupIndex, ItemStoreSource};
 use rg_std::{ExpectedUnique, UniqueVec};
@@ -73,6 +76,105 @@ type TraitImplCandidateIndexes = Mutex<HashMap<TraitDefRef, SharedTraitImplCandi
 type ExactCandidateApplicabilities =
     Mutex<HashMap<TraitImplRef, HashMap<TraitGoal, TraitApplicability>>>;
 
+// One body can legitimately ask many cheap questions, while a pathological body must not turn
+// thousands of individually bounded operations into unbounded aggregate work. This allowance is
+// deliberately much larger than one settled Chalk goal and is shared by every clone of the
+// body-owned session.
+const BODY_TRAIT_WORK_LIMIT: usize = 65_536;
+
+/// Deterministic work charged to one body-owned trait-selection session.
+#[derive(Clone, Copy)]
+pub(super) enum TraitWorkKind {
+    CandidateIndex,
+    CandidateProbe,
+    ProgramDefinition,
+    NormalizationStep,
+    SolverQuantum,
+}
+
+impl TraitWorkKind {
+    fn label(self) -> &'static str {
+        match self {
+            Self::CandidateIndex => "body_work.candidate_index",
+            Self::CandidateProbe => "body_work.candidate_probe",
+            Self::ProgramDefinition => "body_work.program_definition",
+            Self::NormalizationStep => "body_work.normalization_step",
+            Self::SolverQuantum => "body_work.solver_quantum",
+        }
+    }
+}
+
+/// The boundary that made a best-effort trait query stop.
+#[derive(Clone, Copy)]
+pub(super) enum TraitWorkLimit {
+    Aggregate(TraitWorkKind),
+    NormalizationDepth,
+}
+
+impl TraitWorkLimit {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Aggregate(kind) => kind.label(),
+            Self::NormalizationDepth => "normalization_depth",
+        }
+    }
+}
+
+/// Work and reporting state shared by every clone of one inference scope.
+struct TraitWorkTracker {
+    body: Option<BodyRef>,
+    limit: Option<usize>,
+    remaining: AtomicUsize,
+    reported: AtomicBool,
+}
+
+impl TraitWorkTracker {
+    fn unbounded() -> Self {
+        Self {
+            body: None,
+            limit: None,
+            remaining: AtomicUsize::new(usize::MAX),
+            reported: AtomicBool::new(false),
+        }
+    }
+
+    fn for_body(body: BodyRef, limit: usize) -> Self {
+        Self {
+            body: Some(body),
+            limit: Some(limit),
+            remaining: AtomicUsize::new(limit),
+            reported: AtomicBool::new(false),
+        }
+    }
+
+    /// Reserve work before starting an operation so concurrent session clones cannot overspend.
+    fn consume(&self, amount: usize) -> bool {
+        if self.limit.is_none() || amount == 0 {
+            return true;
+        }
+
+        let mut remaining = self.remaining.load(Ordering::Relaxed);
+        loop {
+            if remaining < amount {
+                return false;
+            }
+            match self.remaining.compare_exchange_weak(
+                remaining,
+                remaining - amount,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => return true,
+                Err(observed) => remaining = observed,
+            }
+        }
+    }
+
+    fn mark_reported(&self) -> bool {
+        !self.reported.swap(true, Ordering::Relaxed)
+    }
+}
+
 /// Crate-semantic solver state shared by one use-site session and its inference scopes.
 ///
 /// Everything here is safe to keep for the rest of the snapshot after one body finishes. The
@@ -121,6 +223,7 @@ impl TraitSelectionShared {
 pub struct TraitSelectionSession {
     shared: Arc<TraitSelectionShared>,
     inference_cache: Arc<ChalkInferenceCache>,
+    work: Arc<TraitWorkTracker>,
 }
 
 impl fmt::Debug for TraitSelectionSession {
@@ -152,6 +255,7 @@ impl TraitSelectionSession {
         Self {
             shared: Arc::new(TraitSelectionShared::new(use_site, declarations)),
             inference_cache: Arc::new(ChalkInferenceCache::new()),
+            work: Arc::new(TraitWorkTracker::unbounded()),
         }
     }
 
@@ -169,6 +273,7 @@ impl TraitSelectionSession {
         Self {
             shared: self.shared.clone(),
             inference_cache: Arc::new(ChalkInferenceCache::new()),
+            work: Arc::new(TraitWorkTracker::unbounded()),
         }
     }
 
@@ -177,12 +282,55 @@ impl TraitSelectionSession {
     /// Closure identities and live inference variables cannot produce reusable crate-wide Chalk
     /// answers. Clones of the returned session share those answers during this body's fixed point,
     /// and dropping the session releases them before the next body starts.
-    pub fn for_body(&self, body: rg_ir_model::BodyRef) -> Self {
+    pub fn for_body(&self, body: BodyRef) -> Self {
         assert_eq!(
             body.crate_ref, self.shared.use_site,
             "body trait-selection scope must use the session crate"
         );
-        self.fresh_inference_scope()
+        Self {
+            shared: self.shared.clone(),
+            inference_cache: Arc::new(ChalkInferenceCache::new()),
+            work: Arc::new(TraitWorkTracker::for_body(body, BODY_TRAIT_WORK_LIMIT)),
+        }
+    }
+
+    /// Charge deterministic work to this inference scope before starting an expensive step.
+    ///
+    /// Standalone editor queries remain governed by their operation-specific limits. Body-owned
+    /// sessions additionally share one aggregate allowance across fixed-point rounds and clones.
+    pub(super) fn consume_work(&self, kind: TraitWorkKind, amount: usize) -> bool {
+        if self.work.consume(amount) {
+            return true;
+        }
+        self.report_limit(TraitWorkLimit::Aggregate(kind), self.work.limit);
+        false
+    }
+
+    /// Report one fail-soft boundary per inference scope without flooding a pathological body.
+    pub(super) fn report_limit(&self, kind: TraitWorkLimit, limit: Option<usize>) {
+        if !self.work.mark_reported() {
+            return;
+        }
+        crate::profile::metric::WORK_LIMIT_EXHAUSTIONS.inc(kind.label());
+        tracing::warn!(
+            use_site = ?self.shared.use_site,
+            body = ?self.work.body,
+            limit_kind = kind.label(),
+            limit,
+            "trait selection stopped at a work limit; affected results remain unavailable"
+        );
+    }
+
+    #[cfg(test)]
+    pub(super) fn with_work_limit(mut self, limit: usize) -> Self {
+        self.work = Arc::new(TraitWorkTracker::for_body(
+            BodyRef {
+                crate_ref: self.shared.use_site,
+                body: rg_ir_model::BodyId(0),
+            },
+            limit,
+        ));
+        self
     }
 
     /// Prove one conjunction using this session's crate program and inference-scope cache.
@@ -395,7 +543,7 @@ impl TraitSelectionSession {
         trait_ref: TraitDefRef,
         visible_impls: impl IntoIterator<Item = TraitImplRef>,
         self_head: TraitSelfHead,
-    ) -> Result<UniqueVec<TraitImplRef>, I::Error>
+    ) -> Result<Option<UniqueVec<TraitImplRef>>, I::Error>
     where
         D: DefMapSource<Error = I::Error>,
         I: ItemStoreSource<'query>,
@@ -412,12 +560,16 @@ impl TraitSelectionSession {
             .lock()
             .expect("trait impl candidate-index lock should not be poisoned");
         if let Some(index) = index.as_ref() {
-            return Ok(index.candidates(self_head));
+            return Ok(Some(index.candidates(self_head)));
         }
 
         // Lower every visible header for this trait once, then answer all later receiver queries
         // from its semantic `Self` fingerprint. The per-trait lock makes initialization
         // single-flight without serializing indexes for unrelated traits.
+        let visible_impls = visible_impls.into_iter().collect::<Vec<_>>();
+        if !self.consume_work(TraitWorkKind::CandidateIndex, visible_impls.len()) {
+            return Ok(None);
+        }
         let mut built = TraitImplCandidateIndex::default();
         for trait_impl in visible_impls {
             let Some(header) =
@@ -430,7 +582,7 @@ impl TraitSelectionSession {
 
         let candidates = built.candidates(self_head);
         *index = Some(built);
-        Ok(candidates)
+        Ok(Some(candidates))
     }
 
     /// Reattach the caller's table to a cached selection for a stable whole goal.

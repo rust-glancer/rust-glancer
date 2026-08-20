@@ -13,7 +13,7 @@ use rg_semantic_ir::{ItemLookupIndex, ItemStoreSource};
 use rg_std::UniqueVec;
 
 use super::matcher::{CandidateMatcher, TraitSelfHead};
-use super::{TraitGoal, TraitSelectionSession};
+use super::{TraitGoal, TraitSelectionSession, session::TraitWorkKind};
 use crate::inference::{InferenceSubstitution, InferenceTable};
 use crate::{ItemPathQuery, Ty};
 
@@ -43,7 +43,7 @@ impl TraitCandidate {
         session: &TraitSelectionSession,
         goal: &TraitGoal,
         table: &InferenceTable,
-    ) -> Result<UniqueVec<TraitImplRef>, I::Error>
+    ) -> Result<Option<UniqueVec<TraitImplRef>>, I::Error>
     where
         D: DefMapSource<Error = I::Error>,
         I: ItemStoreSource<'query>,
@@ -56,21 +56,27 @@ impl TraitCandidate {
         // semantics, probing a bare slot would clone the whole body table once for every concrete
         // impl before eventually calling the result ambiguous.
         if matches!(self_ty, Ty::InferVar { .. } | Ty::Unknown) {
-            return Ok(UniqueVec::new());
+            return Ok(Some(UniqueVec::new()));
         }
         let trait_ref = goal.trait_ref();
         let Some(visible_impls) = lookup_index.trait_impls_for_trait(trait_ref) else {
-            return Ok(UniqueVec::new());
+            return Ok(Some(UniqueVec::new()));
         };
-        Ok(match TraitSelfHead::from_ty(&self_ty) {
+        match TraitSelfHead::from_ty(&self_ty) {
             Some(self_head) => session.indexed_trait_impl_candidates(
                 item_paths,
                 trait_ref,
                 visible_impls,
                 self_head,
-            )?,
-            None => visible_impls.collect(),
-        })
+            ),
+            None => {
+                let visible_impls = visible_impls.collect::<Vec<_>>();
+                if !session.consume_work(TraitWorkKind::CandidateIndex, visible_impls.len()) {
+                    return Ok(None);
+                }
+                Ok(Some(visible_impls.into_iter().collect()))
+            }
+        }
     }
 
     /// Match one plausible impl against the goal using an isolated trial table.
@@ -127,7 +133,10 @@ impl TraitCandidate {
         I: ItemStoreSource<'query>,
     {
         let mut candidates = Vec::new();
-        for trait_impl in Self::plausible_impls(item_paths, lookup_index, session, goal, table)? {
+        let plausible_impls =
+            Self::plausible_impls(item_paths, lookup_index, session, goal, table)?
+                .expect("unbounded candidate fixture query should not exhaust work");
+        for trait_impl in plausible_impls {
             if let Some(candidate) = Self::probe_impl(item_paths, session, goal, table, trait_impl)?
             {
                 candidates.push(candidate);

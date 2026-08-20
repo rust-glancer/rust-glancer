@@ -22,6 +22,10 @@ use crate::{
     TraitRefLowering, Ty,
 };
 
+// Source syntax can be deeply nested even without aliases or projections. This is an emergency
+// boundary for malformed/generated input; ordinary Rust types stay far below it.
+const MAX_TYPE_LOWERING_DEPTH: usize = 128;
+
 /// Name-lookup starting point for paths encountered during type lowering.
 ///
 /// A path written in a body may resolve through its lexical `Scope`, including body-local items.
@@ -135,6 +139,9 @@ where
             subst,
             alias_stack: Vec::new(),
             param_projection_stack: Vec::new(),
+            associated_projection_stack: Vec::new(),
+            type_ref_depth: 0,
+            limit_reported: false,
             opaque_indices: Vec::new(),
             opaque_bounds: Vec::new(),
             argument_impl_trait_indices: Vec::new(),
@@ -149,8 +156,8 @@ where
 /// Mutable state shared while one complete signature is lowered.
 ///
 /// Keeping a session across all parameters is what gives anonymous `impl Trait` occurrences a
-/// stable owner-local order. Alias and parameter-projection stacks keep recursive source types
-/// bounded, while owner and lookup context change only for the duration of nested declarations.
+/// stable owner-local order. Alias and projection stacks keep recursive source types bounded,
+/// while owner and lookup context change only for the duration of nested declarations.
 pub struct TypeLoweringSession<'lower, 'query, D, I, R> {
     query: &'lower TypeLoweringQuery<'lower, 'query, D, I, R>,
     owner: GenericDefRef,
@@ -158,6 +165,9 @@ pub struct TypeLoweringSession<'lower, 'query, D, I, R> {
     subst: Substitution,
     alias_stack: Vec<TypeAliasRef>,
     param_projection_stack: Vec<(TypeParamRef, rg_text::Name)>,
+    associated_projection_stack: Vec<(TraitDefRef, rg_text::Name)>,
+    type_ref_depth: usize,
+    limit_reported: bool,
     opaque_indices: Vec<(GenericDefRef, usize)>,
     opaque_bounds: Vec<(OpaqueTy, Vec<TraitRefLowering>)>,
     argument_impl_trait_indices: Vec<(GenericDefRef, usize)>,
@@ -458,6 +468,23 @@ where
     }
 
     fn lower_type_ref_with_mode(
+        &mut self,
+        ty: &TypeRef,
+        impl_trait_mode: ImplTraitMode,
+        inference: Option<&mut InferenceTable>,
+    ) -> Result<Ty, D::Error> {
+        if self.type_ref_depth >= MAX_TYPE_LOWERING_DEPTH {
+            self.report_limit("type_ref_depth", Some(MAX_TYPE_LOWERING_DEPTH));
+            return Ok(Ty::Unknown);
+        }
+
+        self.type_ref_depth += 1;
+        let result = self.lower_type_ref_with_mode_inner(ty, impl_trait_mode, inference);
+        self.type_ref_depth -= 1;
+        result
+    }
+
+    fn lower_type_ref_with_mode_inner(
         &mut self,
         ty: &TypeRef,
         impl_trait_mode: ImplTraitMode,
@@ -1091,7 +1118,44 @@ where
         application: &TraitApplication,
         name: &rg_text::Name,
     ) -> Result<Option<ProjectionTy>, D::Error> {
-        self.associated_type_projection_inner(application, name, &[])
+        // Supertrait arguments can refer back to the associated item being searched for. The
+        // lineage inside the graph walk cannot see that re-entry because lowering the argument
+        // starts a fresh walk, so retain the semantic request across the complete lowering session.
+        if self
+            .associated_projection_stack
+            .iter()
+            .any(|(trait_ref, candidate)| *trait_ref == application.def && candidate == name)
+        {
+            self.report_limit("associated_projection_cycle", None);
+            return Ok(None);
+        }
+
+        self.associated_projection_stack
+            .push((application.def, name.clone()));
+        let result = self.associated_type_projection_inner(application, name, &[]);
+        let popped = self
+            .associated_projection_stack
+            .pop()
+            .expect("projection request was pushed above");
+        debug_assert_eq!(popped.0, application.def);
+        debug_assert_eq!(popped.1, *name);
+        result
+    }
+
+    /// Make a fail-soft lowering boundary observable without flooding one signature walk.
+    fn report_limit(&mut self, kind: &'static str, limit: Option<usize>) {
+        if self.limit_reported {
+            return;
+        }
+        self.limit_reported = true;
+        crate::profile::metric::TYPE_LOWERING_LIMIT_EXHAUSTIONS.inc(kind);
+        tracing::warn!(
+            owner = ?self.owner,
+            anchor = ?self.anchor,
+            limit_kind = kind,
+            limit,
+            "type lowering stopped at a recursion limit; affected types remain unknown"
+        );
     }
 
     fn associated_type_projection_inner(

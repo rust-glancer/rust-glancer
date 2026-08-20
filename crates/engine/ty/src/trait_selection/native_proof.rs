@@ -13,6 +13,7 @@ use rg_std::ExpectedUnique;
 
 use super::{
     TraitGoal, TraitProof, TraitSelectionQuery, candidate::TraitCandidate, matcher::TraitSelfHead,
+    session::TraitWorkKind,
 };
 use crate::inference::InferenceTable;
 use crate::{Clause, GenericArg, TraitApplication, Ty};
@@ -182,14 +183,25 @@ where
             application: application.clone(),
             associated_types: Vec::new(),
         };
-        let plausible_impls = TraitCandidate::plausible_impls(
+        let Some(plausible_impls) = TraitCandidate::plausible_impls(
             self.selection.context.item_paths(),
             self.selection.context.lookup_index(),
             self.selection.context.trait_selection(),
             &goal,
             table,
-        )?;
+        )?
+        else {
+            return Ok(None);
+        };
         for trait_impl in plausible_impls {
+            if !self
+                .selection
+                .context
+                .trait_selection()
+                .consume_work(TraitWorkKind::CandidateProbe, 1)
+            {
+                return Ok(None);
+            }
             let Some(candidate) = TraitCandidate::probe_impl(
                 self.selection.context.item_paths(),
                 self.selection.context.trait_selection(),
@@ -262,18 +274,29 @@ where
             application: application.clone(),
             associated_types: Vec::new(),
         };
-        let plausible_impls = TraitCandidate::plausible_impls(
+        let Some(plausible_impls) = TraitCandidate::plausible_impls(
             self.selection.context.item_paths(),
             self.selection.context.lookup_index(),
             self.selection.context.trait_selection(),
             &goal,
             table,
-        )?;
+        )?
+        else {
+            return Ok(None);
+        };
         let mut exact = ExpectedUnique::new();
         let mut fallbacks = ExpectedUnique::new();
         let mut has_unavailable = false;
 
         for trait_impl in plausible_impls {
+            if !self
+                .selection
+                .context
+                .trait_selection()
+                .consume_work(TraitWorkKind::CandidateProbe, 1)
+            {
+                return Ok(None);
+            }
             let Some(candidate) = TraitCandidate::probe_impl(
                 self.selection.context.item_paths(),
                 self.selection.context.trait_selection(),

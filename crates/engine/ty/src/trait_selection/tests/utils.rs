@@ -56,6 +56,10 @@ impl TraitSelectionFixture {
         TraitSelectionFixtureParser::new(source).parse()
     }
 
+    pub(super) fn lookup_index(&self) -> &ItemLookupIndex {
+        &self.lookup_index
+    }
+
     fn type_ref_by_name(&self, name: &str) -> Option<TypeDefRef> {
         self.type_refs_by_name.get(name).copied()
     }
@@ -64,7 +68,11 @@ impl TraitSelectionFixture {
         self.trait_refs_by_name.get(name).copied()
     }
 
-    fn associated_ty_by_name(&self, trait_ref: TraitDefRef, name: &str) -> Option<TypeAliasRef> {
+    pub(super) fn associated_ty_by_name(
+        &self,
+        trait_ref: TraitDefRef,
+        name: &str,
+    ) -> Option<TypeAliasRef> {
         let trait_data = self.store.trait_data(trait_ref.id)?;
         trait_data.items.iter().find_map(|item| {
             let AssocItemId::TypeAlias(id) = item else {
@@ -514,11 +522,18 @@ fn type_ref_path_name(ty: &TypeRef) -> Option<String> {
 pub(super) fn query(
     fixture: &TraitSelectionFixture,
 ) -> TraitSelectionQuery<'_, &TraitSelectionFixture, &TraitSelectionFixture> {
+    query_with_session(fixture, TraitSelectionSession::new(fixture.target))
+}
+
+pub(super) fn query_with_session(
+    fixture: &TraitSelectionFixture,
+    session: TraitSelectionSession,
+) -> TraitSelectionQuery<'_, &TraitSelectionFixture, &TraitSelectionFixture> {
     TraitSelectionQuery::new(TyContext::new(
         fixture,
         fixture,
         &fixture.lookup_index,
-        TraitSelectionSession::new(fixture.target),
+        session,
     ))
 }
 
@@ -1137,17 +1152,17 @@ struct TraitSelectionSnapshot {
     cases: Vec<TraitSelectionCase>,
 }
 
-struct ParsedTraitQuery {
-    goal: TraitGoal,
-    table: InferenceTable,
+pub(super) struct ParsedTraitQuery {
+    pub(super) goal: TraitGoal,
+    pub(super) table: InferenceTable,
     vars: Vec<NamedInferVar>,
     var_names: HashMap<String, String>,
 }
 
-struct ParsedAssocQuery {
-    goal: TraitGoal,
-    assoc_name: String,
-    table: InferenceTable,
+pub(super) struct ParsedAssocQuery {
+    pub(super) goal: TraitGoal,
+    pub(super) assoc_name: String,
+    pub(super) table: InferenceTable,
     vars: Vec<NamedInferVar>,
     var_names: HashMap<String, String>,
 }
@@ -1157,7 +1172,7 @@ struct NamedInferVar {
     ty: Ty,
 }
 
-struct TraitSelectionQueryParser<'a> {
+pub(super) struct TraitSelectionQueryParser<'a> {
     fixture: &'a TraitSelectionFixture,
     table: InferenceTable,
     vars: Vec<NamedInferVar>,
@@ -1165,7 +1180,7 @@ struct TraitSelectionQueryParser<'a> {
 }
 
 impl<'a> TraitSelectionQueryParser<'a> {
-    fn new(fixture: &'a TraitSelectionFixture) -> Self {
+    pub(super) fn new(fixture: &'a TraitSelectionFixture) -> Self {
         Self {
             fixture,
             table: InferenceTable::new(),
@@ -1174,7 +1189,7 @@ impl<'a> TraitSelectionQueryParser<'a> {
         }
     }
 
-    fn parse_goal(mut self, text: &str) -> ParsedTraitQuery {
+    pub(super) fn parse_goal(mut self, text: &str) -> ParsedTraitQuery {
         let (self_ty, trait_path) = split_top_level_keyword(text, ": ")
             .expect("trait query should be written as `Self: Trait<Args>`");
         let (trait_ref, args, associated_types) = self.parse_trait_path(trait_path);
@@ -1189,7 +1204,7 @@ impl<'a> TraitSelectionQueryParser<'a> {
         }
     }
 
-    fn parse_assoc_goal(mut self, text: &str) -> ParsedAssocQuery {
+    pub(super) fn parse_assoc_goal(mut self, text: &str) -> ParsedAssocQuery {
         let text = text.trim();
         assert!(
             text.starts_with('<'),
