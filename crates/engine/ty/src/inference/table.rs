@@ -1,5 +1,5 @@
 use super::{
-    traversal::{InferenceTyFolder, same_generic_arg_shape, same_ty_shape, ty_contains_var},
+    traversal::{InferenceTyFolder, same_generic_arg_shape, same_ty_shape},
     var::{InferVarId, InferVarKind},
 };
 use crate::{
@@ -379,9 +379,10 @@ impl InferenceTable {
             return UnifyResult::compatible();
         }
 
-        // Avoid recursive solutions such as `?T = Vec<?T>`. The check uses root evidence so
-        // variable links like `?U = ?T` do not later allow the reverse `?T = ?U` cycle.
-        if ty_contains_var(&evidence, id) {
+        // Avoid recursive solutions such as `?T = Vec<?T>`. Solved variables nested inside the
+        // evidence must be followed as well: `?A = Vec<?B>` and `?B = ?T` make `?T = ?A`
+        // recursive even though `?T` is not present in the stored `Vec<?B>` syntax.
+        if self.ty_contains_var_or_cycle(&evidence, id, &mut Vec::new()) {
             let result = if Self::shallow_infer_var(&evidence).is_some_and(|(_, var)| var == id) {
                 UnifyResult::compatible()
             } else {
@@ -412,8 +413,120 @@ impl InferenceTable {
         }
     }
 
+    /// Follow solved slots while checking whether evidence would make a variable recursive.
+    ///
+    /// The active stack also rejects evidence that already contains a recursive slot graph. Such
+    /// a graph should not be constructible through this table, but accepting it as new evidence
+    /// would spread the invalid state and make later type traversal unsafe.
+    fn ty_contains_var_or_cycle(
+        &self,
+        ty: &Ty,
+        needle: InferVarId,
+        active_vars: &mut Vec<InferVarId>,
+    ) -> bool {
+        match ty {
+            Ty::InferVar { kind, id } => {
+                if *id == needle || active_vars.contains(id) {
+                    return true;
+                }
+
+                let Some(slot) = self.slots.get(id.index()) else {
+                    return false;
+                };
+                if slot.kind != *kind {
+                    return false;
+                }
+                let InferVarValue::Solved(solution) = &slot.value else {
+                    return false;
+                };
+
+                active_vars.push(*id);
+                let contains = self.ty_contains_var_or_cycle(solution, needle, active_vars);
+                active_vars.pop();
+                contains
+            }
+            Ty::Tuple(fields) => fields
+                .iter()
+                .any(|field| self.ty_contains_var_or_cycle(field, needle, active_vars)),
+            Ty::Array { inner, .. }
+            | Ty::Slice(inner)
+            | Ty::Reference { inner, .. }
+            | Ty::RawPointer { inner, .. } => {
+                self.ty_contains_var_or_cycle(inner, needle, active_vars)
+            }
+            Ty::FnPointer { params, ret } => {
+                params
+                    .iter()
+                    .any(|param| self.ty_contains_var_or_cycle(param, needle, active_vars))
+                    || self.ty_contains_var_or_cycle(ret, needle, active_vars)
+            }
+            Ty::Adt(ty) => ty
+                .args
+                .iter()
+                .any(|arg| self.generic_arg_contains_var_or_cycle(arg, needle, active_vars)),
+            Ty::Alias(alias) => alias
+                .args()
+                .iter()
+                .any(|arg| self.generic_arg_contains_var_or_cycle(arg, needle, active_vars)),
+            Ty::FnDef(function) => function
+                .args
+                .iter()
+                .any(|arg| self.generic_arg_contains_var_or_cycle(arg, needle, active_vars)),
+            Ty::Closure(closure) => {
+                closure
+                    .params
+                    .iter()
+                    .any(|param| self.ty_contains_var_or_cycle(param, needle, active_vars))
+                    || self.ty_contains_var_or_cycle(&closure.ret, needle, active_vars)
+            }
+            Ty::Unit | Ty::Never | Ty::Primitive(_) | Ty::Param(_) | Ty::Unknown => false,
+        }
+    }
+
+    fn generic_arg_contains_var_or_cycle(
+        &self,
+        arg: &GenericArg,
+        needle: InferVarId,
+        active_vars: &mut Vec<InferVarId>,
+    ) -> bool {
+        match arg {
+            GenericArg::Type(ty) => self.ty_contains_var_or_cycle(ty, needle, active_vars),
+            GenericArg::Lifetime(_) | GenericArg::Const(_) => false,
+        }
+    }
+
     fn solve_unsolved_var(&mut self, id: InferVarId, evidence: &Ty) -> UnifyResult {
         let kind = self.slots[id.index()].kind;
+        // Equality between same-kind variables is symmetric, so keep the oldest slot as the
+        // representative. Directional links based on call order build chains such as
+        // `?0 -> ?1 -> ?2`; every later canonicalization then recursively walks that chain.
+        // Stable representatives instead make later variables point back into the body-owned
+        // slots that existed before them.
+        if let Some((evidence_kind, evidence_id)) = Self::shallow_infer_var(evidence)
+            && evidence_kind == kind
+        {
+            let (representative, alias) = if id.index() <= evidence_id.index() {
+                (id, evidence_id)
+            } else {
+                (evidence_id, id)
+            };
+            if representative == alias {
+                return UnifyResult::compatible();
+            }
+
+            debug_assert!(matches!(
+                self.slots[representative.index()].value,
+                InferVarValue::Unsolved
+            ));
+            debug_assert!(matches!(
+                self.slots[alias.index()].value,
+                InferVarValue::Unsolved
+            ));
+            self.slots[alias.index()].value =
+                InferVarValue::Solved(Ty::var_for_kind(kind, representative));
+            return UnifyResult::changed();
+        }
+
         // Numeric variables may be unified with an ordinary type variable. Link through the type
         // variable so a later or already-known primitive solution is shared by both slots.
         if let Some((var_kind, var)) = Self::shallow_infer_var(evidence)

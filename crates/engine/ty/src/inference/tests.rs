@@ -265,14 +265,53 @@ fn indirect_var_links_do_not_create_reverse_cycles() {
     assert!(table.unify(&second, &third));
     assert!(!table.unify(&third, &first));
 
-    assert_eq!(table.resolve_root_var(&first), third);
-    assert_eq!(table.resolve_root_var(&second), third);
+    assert_eq!(table.resolve_root_var(&second), first);
+    assert_eq!(table.resolve_root_var(&third), first);
 
     assert!(table.unify(&third, &fourth));
     assert!(!table.unify(&fourth, &first));
-    assert_eq!(table.resolve_root_var(&first), fourth);
-    assert_eq!(table.resolve_root_var(&second), fourth);
-    assert_eq!(table.resolve_root_var(&third), fourth);
+    assert_eq!(table.resolve_root_var(&second), first);
+    assert_eq!(table.resolve_root_var(&third), first);
+    assert_eq!(table.resolve_root_var(&fourth), first);
+}
+
+#[test]
+fn long_variable_equality_sequence_finalizes_without_recursive_alias_walk() {
+    let mut table = InferenceTable::new();
+    let vars = (0..50_000)
+        .map(|_| table.new_type_var())
+        .collect::<Vec<_>>();
+
+    // Equality is symmetric. A long sequence should share one representative instead of storing
+    // a directional `?0 -> ?1 -> ?2` chain whose later resolution consumes the thread stack.
+    for pair in vars.windows(2) {
+        assert!(table.unify(&pair[0], &pair[1]));
+    }
+    assert!(table.unify(
+        vars.last().expect("the test creates inference variables"),
+        &user_ty()
+    ));
+
+    assert_eq!(table.finalize(&vars[0]), user_ty());
+}
+
+#[test]
+fn nested_var_links_do_not_create_indirect_cycles() {
+    let mut table = InferenceTable::new();
+    let container = table.new_type_var();
+    let element = table.new_type_var();
+    let alias = table.new_type_var();
+
+    assert!(table.unify(&container, &vec_ty(element.clone())));
+    assert!(table.unify(&element, &alias));
+
+    // `container = Vec<element>` and `element = alias` make `alias = container` recursive,
+    // even though the target variable is hidden behind both a type shape and another slot.
+    assert_eq!(
+        table.try_unify(&alias, &container),
+        Err(super::InferenceConflict)
+    );
+    assert_eq!(table.finalize(&container), concrete_vec_ty(Ty::Unknown));
 }
 
 #[test]
@@ -283,8 +322,8 @@ fn canonicalizes_variable_aliases_inside_type_shapes() {
 
     assert!(table.unify(&element, &alias));
 
-    assert_eq!(table.canonicalize(&element), alias);
-    assert_eq!(table.canonicalize(&vec_ty(element)), vec_ty(alias));
+    assert_eq!(table.canonicalize(&alias), element);
+    assert_eq!(table.canonicalize(&vec_ty(alias)), vec_ty(element));
 }
 
 #[test]

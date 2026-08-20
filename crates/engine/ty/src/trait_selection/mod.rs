@@ -255,7 +255,7 @@ where
             let clause = match clause {
                 Clause::Implemented(mut application) => {
                     let mut args = Vec::with_capacity(application.args.len());
-                    for arg in &application.args {
+                    for arg in application.args.iter() {
                         let arg = match arg {
                             GenericArg::Type(ty) => {
                                 let (ty, next_table) = self.normalize_ty_with_candidate_evidence(
@@ -275,7 +275,7 @@ where
                 }
                 Clause::AliasEq { mut alias, ty } => {
                     let mut args = Vec::with_capacity(alias.args.len());
-                    for arg in &alias.args {
+                    for arg in alias.args.iter() {
                         let arg = match arg {
                             GenericArg::Type(ty) => {
                                 let (ty, next_table) = self.normalize_ty_with_candidate_evidence(
@@ -400,7 +400,7 @@ where
             return Ok((selection, true));
         }
 
-        let candidates = TraitCandidate::probe_all(
+        let plausible_impls = TraitCandidate::plausible_impls(
             self.context.item_paths(),
             self.context.lookup_index(),
             self.context.trait_selection(),
@@ -411,7 +411,17 @@ where
         let mut definite_selections = ExpectedUnique::new();
         let mut maybe_selections = ExpectedUnique::new();
         let mut fully_evaluated = true;
-        for candidate in candidates {
+        for trait_impl in plausible_impls {
+            let Some(candidate) = TraitCandidate::probe_impl(
+                self.context.item_paths(),
+                self.context.trait_selection(),
+                goal,
+                table,
+                trait_impl,
+            )?
+            else {
+                continue;
+            };
             if active_impls.contains(&candidate.trait_impl.impl_ref) {
                 // Returning an ordinary empty result here would incorrectly prove absence for a
                 // nominal receiver. Mark the probe incomplete so projection normalization enters

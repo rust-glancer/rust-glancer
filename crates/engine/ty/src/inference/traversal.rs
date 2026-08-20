@@ -145,55 +145,6 @@ pub(super) trait InferenceTyFolder {
     }
 }
 
-/// Return whether a type contains a specific inference variable.
-pub(super) fn ty_contains_var(ty: &Ty, needle: InferVarId) -> bool {
-    match ty {
-        Ty::InferVar { id, .. } => *id == needle,
-        Ty::Tuple(fields) => fields.iter().any(|field| ty_contains_var(field, needle)),
-        Ty::Array { inner, .. }
-        | Ty::Slice(inner)
-        | Ty::Reference { inner, .. }
-        | Ty::RawPointer { inner, .. } => ty_contains_var(inner, needle),
-        Ty::FnPointer { params, ret } => {
-            params.iter().any(|param| ty_contains_var(param, needle))
-                || ty_contains_var(ret, needle)
-        }
-        Ty::Adt(ty) => ty
-            .args
-            .iter()
-            .any(|arg| generic_arg_contains_var(arg, needle)),
-        Ty::Alias(alias) => match alias {
-            AliasTy::Projection(alias) => alias
-                .args
-                .iter()
-                .any(|arg| generic_arg_contains_var(arg, needle)),
-            AliasTy::Opaque(alias) => alias
-                .args
-                .iter()
-                .any(|arg| generic_arg_contains_var(arg, needle)),
-        },
-        Ty::FnDef(function) => function
-            .args
-            .iter()
-            .any(|arg| generic_arg_contains_var(arg, needle)),
-        Ty::Closure(closure) => {
-            closure
-                .params
-                .iter()
-                .any(|param| ty_contains_var(param, needle))
-                || ty_contains_var(&closure.ret, needle)
-        }
-        Ty::Unit | Ty::Never | Ty::Primitive(_) | Ty::Param(_) | Ty::Unknown => false,
-    }
-}
-
-fn generic_arg_contains_var(arg: &GenericArg, needle: InferVarId) -> bool {
-    match arg {
-        GenericArg::Type(ty) => ty_contains_var(ty, needle),
-        GenericArg::Lifetime(_) | GenericArg::Const(_) => false,
-    }
-}
-
 /// Return whether two types can use the same inference structural branch.
 pub(super) fn same_ty_shape(lhs: &Ty, rhs: &Ty) -> bool {
     match (lhs, rhs) {

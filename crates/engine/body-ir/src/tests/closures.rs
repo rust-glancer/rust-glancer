@@ -543,3 +543,70 @@ pub fn forward<R>(callback: fn(User) -> R) -> R {
         "#]],
     );
 }
+
+#[test]
+fn never_closure_satisfies_generic_callable_output() {
+    check_project_body_ir_with_fake_sysroot(
+        r#"
+//- /Cargo.toml
+[package]
+name = "body_never_closure_callable_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct User;
+pub struct Error;
+pub struct ReportedError;
+
+pub trait BuildFrom<T> {}
+
+pub trait Convert<T> {
+    fn convert(self) -> T;
+}
+
+impl<T, U> Convert<U> for T
+where
+    U: BuildFrom<T>,
+{
+    fn convert(self) -> U {
+        loop {}
+    }
+}
+
+impl BuildFrom<Error> for ReportedError {}
+
+pub enum Outcome<T, E> {
+    Ok(T),
+    Err(E),
+}
+
+impl<T, E> Outcome<T, E> {
+    pub fn unwrap_or_else<F>(self, fallback: F) -> T
+    where
+        F: FnOnce(E) -> T,
+    {
+        loop {}
+    }
+}
+
+pub fn source() -> Outcome<User, Error> {
+    loop {}
+}
+
+pub fn abort() -> ! {
+    loop {}
+}
+
+pub fn report(_: &ReportedError) {}
+
+pub fn use_it() -> User {
+    source().unwrap_or_else(|error| {
+        report(&error.convert());
+        abort()
+    })
+}
+"#,
+        expect![[r#""#]],
+    );
+}

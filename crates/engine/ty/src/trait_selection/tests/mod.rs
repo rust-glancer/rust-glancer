@@ -618,13 +618,16 @@ fn blanket_impl_proves_nested_adapter_with_dependent_associated_bound() {
 }
 
 #[test]
-fn probe_rejects_bare_inference_var_blanket_self_match() {
+fn probe_rejects_bare_inference_receiver_for_all_impl_shapes() {
     check_trait_selection_queries(
         r#"
             traits
               trait#0 Marker
+            structs
+              struct#0 User
             impls
               impl#0 impl<T> Marker for T [resolved self: empty]
+              impl#1 impl Marker for User
         "#,
         vec![TraitSelectionCase::probe(
             "reject bare inference receiver",

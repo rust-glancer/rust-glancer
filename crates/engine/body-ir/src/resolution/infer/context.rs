@@ -211,16 +211,31 @@ impl BodyInferenceCtx {
             return false;
         }
 
+        // A fixed-point revisit often presents the same weak producer shape again, for example
+        // `Vec<unknown>` after this expression already owns `Vec<?T>`. The existing structure can
+        // absorb any new concrete evidence directly; allocating another `?T` would only grow an
+        // alias chain that is invisible to convergence.
+        let existing_ty = self.root_resolved_expr_ty(expr);
+        if !matches!(existing_ty, Ty::Unknown | Ty::InferVar { .. }) && !existing_ty.has_unknown() {
+            return self.set_expr_infer_ty(expr, ty.clone());
+        }
+
         let (infer_ty, used_vars) = {
             let mut builder = UnknownTypeInstantiationBuilder::new(&mut self.table);
             let infer_ty = builder.ty_from_ty(ty);
             (infer_ty, builder.used_type_vars())
         };
 
-        if used_vars {
-            self.set_expr_infer_ty(expr, infer_ty);
+        if !used_vars {
+            return false;
         }
-        used_vars
+
+        // A partially known fact may contain both live variables and raw `Unknown` children.
+        // Unification links its existing variables, while refinement installs slots for the raw
+        // children so the next pass sees a complete stable structure.
+        self.set_expr_infer_ty(expr, infer_ty.clone());
+        self.refine_expr_fact(expr, infer_ty);
+        true
     }
 
     pub(crate) fn set_expr_integer_var(&mut self, expr: ExprId) {
@@ -564,6 +579,15 @@ impl BodyInferenceCtx {
     }
 
     pub(crate) fn constrain_expr_ty(&mut self, expr: ExprId, expected_ty: &Ty) -> bool {
+        // A diverging expression can inhabit every expected value type, but its own type remains
+        // `!`. Treating this as equality would solve a destination slot to `!`; later evidence for
+        // the real destination type would then conflict instead of refining that slot.
+        if matches!(self.root_resolved_expr_ty(expr), Ty::Never)
+            && !matches!(self.table.resolve_root_var(expected_ty), Ty::Never)
+        {
+            return false;
+        }
+
         // `Unknown` means that no producer fact has arrived yet. Expected types are still real
         // evidence, so retain their shape now; a later producer will unify with or refine it.
         self.set_expr_infer_ty(expr, expected_ty.clone())
