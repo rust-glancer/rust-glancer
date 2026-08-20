@@ -1,7 +1,15 @@
 #!/usr/bin/env node
 
 import { spawnSync } from "node:child_process";
-import { chmodSync, copyFileSync, existsSync, mkdirSync, rmSync } from "node:fs";
+import {
+  chmodSync,
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -37,7 +45,10 @@ const executableName = rustTarget.includes("windows") ? "rust-glancer.exe" : "ru
 const builtServer = join(workspaceRoot, "target", rustTarget, "release", executableName);
 const bundledServerDir = join(extensionRoot, "server");
 const bundledServer = join(bundledServerDir, executableName);
-const workspaceLicense = join(workspaceRoot, "LICENSE");
+const workspaceLicenses = [
+  join(workspaceRoot, "LICENSE-MIT"),
+  join(workspaceRoot, "LICENSE-APACHE"),
+];
 const extensionLicense = join(extensionRoot, "LICENSE");
 
 if (!options.skipBuild) {
@@ -60,9 +71,21 @@ if (!rustTarget.includes("windows")) {
 }
 
 mkdirSync(dirname(outPath), { recursive: true });
-if (existsSync(workspaceLicense)) {
-  copyFileSync(workspaceLicense, extensionLicense);
+
+// VSCE recognizes one conventionally named license asset. Build that asset from the two
+// canonical repository licenses so extension users receive both choices of the dual license.
+for (const workspaceLicense of workspaceLicenses) {
+  if (!existsSync(workspaceLicense)) {
+    fail(`Expected license file does not exist: ${workspaceLicense}`);
+  }
 }
+const licenseNotice =
+  "Rust Glancer is released under either the MIT License or the Apache License, " +
+  "Version 2.0, at your option.";
+const licenseTexts = workspaceLicenses.map((workspaceLicense) =>
+  readFileSync(workspaceLicense, "utf8").trimEnd(),
+);
+writeFileSync(extensionLicense, `${[licenseNotice, ...licenseTexts].join("\n\n\n")}\n`);
 
 const vsce = vsceBin();
 if (!existsSync(vsce)) {
