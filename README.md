@@ -10,7 +10,7 @@ See [the project docs](https://rust-glancer.github.io/docs) for more details.
 
 ## Installation
 
-Covered in [docs](docs/src/usage/INSTALL.md).
+Covered in [docs](https://rust-glancer.github.io/docs/usage/INSTALL.html).
 
 ## AI use disclaimer
 
@@ -28,12 +28,14 @@ wrong. This way I will be able to learn something and hopefully make the project
 ## Acknowledgements
 
 [rust-analyzer](https://github.com/rust-lang/rust-analyzer) is an obvious inspiration, motivation, source of learning material and the place where I've hijacked a ton of ideas. Rust is lucky to have such a great LSP, and everyone working on it is awesome.
-[chalk](https://github.com/rust-lang/chalk) turned out a really pleasant project to integrate, and it comes with [lovely documentation](https://rust-lang.github.io/chalk/book/)
+
+[chalk](https://github.com/rust-lang/chalk) turned out a really pleasant project to integrate, and it comes with [lovely documentation](https://rust-lang.github.io/chalk/book/).
+
 Without [jemalloc](https://github.com/jemalloc/jemalloc) and [tikv-jemallocator](https://github.com/tikv/jemallocator) this project wouldn't have been possible. Not only it's awesome as an allocator, but it's also saved me hundreds of hours profiling allocations.
 
 ## Contributing
 
-See [docs/src/intro/CONTRIBUTING.md](docs/src/intro/CONTRIBUTING.md).
+See [CONTRIBUTING.md](docs/src/intro/CONTRIBUTING.md).
 
 ## License
 
