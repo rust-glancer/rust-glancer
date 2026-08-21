@@ -11,7 +11,7 @@ use anyhow::Context as _;
 use rayon::prelude::*;
 use rg_def_map::{DefMapReadTxn, PackageSlot};
 use rg_ir_model::{CrateId, CrateRef};
-use rg_semantic_ir::SemanticIrReadTxn;
+use rg_semantic_ir::{ItemLookupQueryCache, SemanticIrReadTxn};
 use rg_std::Shrink;
 use rg_text::{NameInterner, PackageNameInterners};
 use rg_ty::TraitSelectionDeclarationCache;
@@ -39,6 +39,7 @@ pub(super) fn resolve_packages(
 ) -> anyhow::Result<Vec<PackageBodies>> {
     let profile_context = rg_profile::ProfileThreadContext::capture();
     let declarations = TraitSelectionDeclarationCache::new();
+    let item_lookup_cache = ItemLookupQueryCache::new();
     let thread_pool = local_thread_pool("rg-body-resolve", worker_limit)?;
     let resolved = thread_pool
         .install(|| {
@@ -57,11 +58,13 @@ pub(super) fn resolve_packages(
                         def_map,
                         semantic_ir,
                         &declarations,
+                        &item_lookup_cache,
                     )
                 })
                 .collect::<anyhow::Result<Vec<_>>>()
         })
         .context("while attempting to resolve body IR packages")?;
+    record_lookup_cache_stats(&item_lookup_cache);
     Ok(resolved)
 }
 
@@ -84,6 +87,7 @@ pub(super) fn resolve_selected_packages(
 ) -> anyhow::Result<Vec<(PackageSlot, PackageBodies)>> {
     let profile_context = rg_profile::ProfileThreadContext::capture();
     let declarations = TraitSelectionDeclarationCache::new();
+    let item_lookup_cache = ItemLookupQueryCache::new();
     // Selected rebuilds are sparse, but resolution may discover nested bodies and lower them,
     // which needs mutable access to the matching package name interner. The rebuilder normalizes
     // package slots, so walking the interner slice left-to-right lets us prepare disjoint jobs that
@@ -135,12 +139,14 @@ pub(super) fn resolve_selected_packages(
                             def_map,
                             semantic_ir,
                             &declarations,
+                            &item_lookup_cache,
                         )?;
                         Ok((package_slot, package))
                     })
                     .collect::<anyhow::Result<Vec<_>>>()
             })
             .context("while attempting to resolve selected body IR packages")?;
+        record_lookup_cache_stats(&item_lookup_cache);
         return Ok(resolved);
     };
 
@@ -187,6 +193,7 @@ pub(super) fn resolve_selected_packages(
                             def_map,
                             semantic_ir,
                             &declarations,
+                            &item_lookup_cache,
                         )?;
                         Ok(ResolvedPackage {
                             package: package_slot,
@@ -217,7 +224,17 @@ pub(super) fn resolve_selected_packages(
         .collect::<Vec<_>>();
     resolved.sort_by_key(|(package, _)| package.0);
 
+    record_lookup_cache_stats(&item_lookup_cache);
     Ok(resolved)
+}
+
+fn record_lookup_cache_stats(cache: &ItemLookupQueryCache) {
+    let stats = cache.stats();
+    crate::profile::metric::DEPENDENCY_CACHE_CONSTRUCTIONS
+        .add(stats.dependency_cache_constructions as u64);
+    crate::profile::metric::DEPENDENCY_CACHE_REUSES.add(stats.dependency_cache_reuses as u64);
+    crate::profile::metric::DEPENDENCY_RESULT_HITS.add(stats.dependency_result_hits as u64);
+    crate::profile::metric::DEPENDENCY_RESULT_MISSES.add(stats.dependency_result_misses as u64);
 }
 
 #[derive(Debug)]
@@ -268,6 +285,7 @@ fn resolve_package(
     def_map_txn: &DefMapReadTxn<'_>,
     semantic_ir: &SemanticIrReadTxn<'_>,
     declarations: &TraitSelectionDeclarationCache,
+    item_lookup_cache: &ItemLookupQueryCache,
 ) -> anyhow::Result<PackageBodies> {
     let crate_count = package.len();
     let span = tracing::debug_span!(
@@ -296,6 +314,7 @@ fn resolve_package(
                 def_map_txn,
                 semantic_ir,
                 declarations,
+                item_lookup_cache,
             )
         })
         .collect::<anyhow::Result<Vec<_>>>()?;

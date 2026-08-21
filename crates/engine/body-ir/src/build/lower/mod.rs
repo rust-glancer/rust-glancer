@@ -301,7 +301,7 @@ fn build_package_with_interner(
             .chain(consts.iter().map(|(_, file_id, _)| *file_id))
             .chain(statics.iter().map(|(_, file_id, _)| *file_id))
             .collect::<Vec<_>>();
-        let coverage = scope.crate_coverage(package, parse_package, &body_files);
+        let coverage = scope.crate_coverage(crate_ref, parse_package, parse_target, &body_files);
         if !coverage.is_materialized() {
             crates.push(LoweredCrateBodies::with_coverage(coverage));
             continue;
@@ -317,7 +317,7 @@ fn build_package_with_interner(
             def_map,
             semantic_ir,
             scope,
-            package,
+            crate_ref,
             functions,
             consts,
             statics,
@@ -397,19 +397,32 @@ fn validate_selected_files(
     package_count: usize,
     scope: &BodyIrMaterialization<'_>,
 ) -> anyhow::Result<()> {
-    let BodyIrMaterialization::SelectedFiles(files) = scope else {
-        return Ok(());
-    };
-
-    if let Some(file) = files
-        .iter()
-        .copied()
-        .find(|file| file.package.0 >= package_count)
-    {
-        anyhow::bail!(
-            "body IR file package slot {} is out of bounds for {package_count} parsed packages",
-            file.package.0,
-        );
+    match scope {
+        BodyIrMaterialization::SelectedFiles(files) => {
+            if let Some(file) = files
+                .iter()
+                .copied()
+                .find(|file| file.crate_ref.package.0 >= package_count)
+            {
+                anyhow::bail!(
+                    "body IR file package slot {} is out of bounds for {package_count} parsed packages",
+                    file.crate_ref.package.0,
+                );
+            }
+        }
+        BodyIrMaterialization::SelectedCrates(crates) => {
+            if let Some(crate_ref) = crates
+                .iter()
+                .copied()
+                .find(|crate_ref| crate_ref.package.0 >= package_count)
+            {
+                anyhow::bail!(
+                    "Body IR crate package slot {} is out of bounds for {package_count} parsed packages",
+                    crate_ref.package.0,
+                );
+            }
+        }
+        BodyIrMaterialization::ConfiguredBodies(_) | BodyIrMaterialization::CoverageOnly(_) => {}
     }
 
     Ok(())

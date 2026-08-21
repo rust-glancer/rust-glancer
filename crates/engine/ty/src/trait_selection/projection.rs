@@ -189,7 +189,7 @@ where
         let projection = self.context.trait_selection().normalize_assoc_type(
             self.context.item_paths(),
             self.context.crate_items(),
-            self.context.lookup_index(),
+            self.context.item_lookup(),
             goal,
             associated_ty,
             selection

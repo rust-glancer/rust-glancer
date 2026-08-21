@@ -27,7 +27,7 @@ use chalk_solve::Solver;
 use chalk_solve::ext::GoalExt;
 use rg_def_map::DefMapSource;
 use rg_ir_model::{GenericDefRef, ImplRef, TraitApplicability};
-use rg_semantic_ir::{CrateItemQuery, ItemLookupIndex, ItemStoreSource};
+use rg_semantic_ir::{CrateItemQuery, ItemLookupQuery, ItemStoreSource};
 
 use super::super::matcher::TraitSelfHead;
 use super::evidence::{ProjectionAliasLowering, SolverAnswerVars, SolverVariableEnv};
@@ -198,7 +198,7 @@ impl ChalkTraitSolver {
         &self,
         item_paths: &ItemPathQuery<'query, D, I>,
         crate_items: &CrateItemQuery<'query, D, I>,
-        lookup_index: &ItemLookupIndex,
+        item_lookup: &ItemLookupQuery<'_>,
         session: &TraitSelectionSession,
         inference_cache: &ChalkInferenceCache,
         clauses: &[Clause],
@@ -272,7 +272,7 @@ impl ChalkTraitSolver {
                 root_impl_count =
                     root_impl_count.saturating_add(Self::speculative_root_impl_count(
                         item_paths,
-                        lookup_index,
+                        item_lookup,
                         session,
                         application,
                         table,
@@ -292,7 +292,7 @@ impl ChalkTraitSolver {
         let availability = state.program.ensure_for_clauses(
             item_paths,
             crate_items,
-            lookup_index,
+            item_lookup,
             session,
             clauses,
             Some(table),
@@ -345,7 +345,7 @@ impl ChalkTraitSolver {
         &self,
         item_paths: &ItemPathQuery<'query, D, I>,
         crate_items: &CrateItemQuery<'query, D, I>,
-        lookup_index: &ItemLookupIndex,
+        item_lookup: &ItemLookupQuery<'_>,
         session: &TraitSelectionSession,
         inference_cache: &ChalkInferenceCache,
         goal: &crate::trait_selection::TraitGoal,
@@ -379,7 +379,7 @@ impl ChalkTraitSolver {
             && has_live_inference
             && Self::speculative_root_impl_count(
                 item_paths,
-                lookup_index,
+                item_lookup,
                 session,
                 &goal.application,
                 table,
@@ -396,7 +396,7 @@ impl ChalkTraitSolver {
         let availability = state.program.ensure_for_goal(
             item_paths,
             crate_items,
-            lookup_index,
+            item_lookup,
             session,
             goal,
             associated_ty,
@@ -442,7 +442,7 @@ impl ChalkTraitSolver {
     /// expensive. Blanket and headless impls remain candidates for every receiver.
     fn speculative_root_impl_count<'query, D, I>(
         item_paths: &ItemPathQuery<'query, D, I>,
-        lookup_index: &ItemLookupIndex,
+        item_lookup: &ItemLookupQuery<'_>,
         session: &TraitSelectionSession,
         application: &TraitApplication,
         table: &InferenceTable,
@@ -451,7 +451,7 @@ impl ChalkTraitSolver {
         D: DefMapSource<Error = I::Error>,
         I: ItemStoreSource<'query>,
     {
-        let Some(visible_impls) = lookup_index.trait_impls_for_trait(application.def) else {
+        let Some(visible_impls) = item_lookup.trait_impls_for_trait(application.def) else {
             return Ok(0);
         };
         let Some(self_head) = application

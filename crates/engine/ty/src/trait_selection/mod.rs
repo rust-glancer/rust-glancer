@@ -338,7 +338,7 @@ where
         let outcome = self.context.trait_selection().prove_clauses(
             self.context.item_paths(),
             self.context.crate_items(),
-            self.context.lookup_index(),
+            self.context.item_lookup(),
             &normalized_clauses,
             &table,
         )?;
@@ -403,7 +403,7 @@ where
 
         let Some(plausible_impls) = TraitCandidate::plausible_impls(
             self.context.item_paths(),
-            self.context.lookup_index(),
+            self.context.item_lookup(),
             self.context.trait_selection(),
             goal,
             table,
@@ -674,7 +674,7 @@ where
             let projection = self.context.trait_selection().normalize_assoc_type(
                 self.context.item_paths(),
                 self.context.crate_items(),
-                self.context.lookup_index(),
+                self.context.item_lookup(),
                 &projection_goal,
                 constraint.associated_ty,
                 Some((impl_ref, subst)),

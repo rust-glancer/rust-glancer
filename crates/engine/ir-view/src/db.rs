@@ -15,7 +15,9 @@ use rg_def_map::{DefMap, DefMapSource};
 use rg_ir_model::{BodyRef, CrateRef, DefMapRef, ModuleRef};
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::SemanticIrReadTxn;
-use rg_semantic_ir::{CrateItemQuery, ItemLookupIndex, ItemStore, ItemStoreSource};
+use rg_semantic_ir::{
+    CrateItemQuery, ItemLookupQuery, ItemLookupQueryCache, ItemStore, ItemStoreSource,
+};
 use rg_text::RustEdition;
 use rg_ty::TraitSelectionSession;
 
@@ -32,6 +34,7 @@ pub struct IndexedViewDb<'db> {
     pub(crate) body_ir: BodyIrReadTxn<'db>,
     trait_selection: Arc<Mutex<HashMap<CrateRef, TraitSelectionSession>>>,
     body_trait_selection: Arc<Mutex<HashMap<BodyRef, TraitSelectionSession>>>,
+    item_lookup_cache: ItemLookupQueryCache,
 }
 
 impl<'db> IndexedViewDb<'db> {
@@ -46,6 +49,7 @@ impl<'db> IndexedViewDb<'db> {
             body_ir,
             trait_selection: Arc::new(Mutex::new(HashMap::new())),
             body_trait_selection: Arc::new(Mutex::new(HashMap::new())),
+            item_lookup_cache: ItemLookupQueryCache::new(),
         }
     }
 
@@ -61,7 +65,6 @@ impl<'db> IndexedViewDb<'db> {
         file: rg_parse::FileId,
         current_source: &rg_parse::CurrentSource,
         associations: &rg_parse::DeclarationAssociationIndex,
-        supplemental_item_lookup_index: Option<&ItemLookupIndex>,
         selection: CurrentBodySelection,
         synthetic_body_ref: impl FnMut() -> anyhow::Result<rg_ir_model::BodyRef>,
         checkpoint: impl FnMut(CurrentBodyBuildCheckpoint) -> anyhow::Result<()>,
@@ -75,40 +78,11 @@ impl<'db> IndexedViewDb<'db> {
             file,
             current_source,
             associations,
-            supplemental_item_lookup_index,
+            self.item_lookup_cache.clone(),
             selection,
         )
         .with_trait_selection(self.trait_selection(crate_ref))
         .build(synthetic_body_ref, checkpoint)
-    }
-
-    /// Build the crate-wide lookup needed to resolve a current body before saved bodies are ready.
-    ///
-    /// An early-start project publishes DefMap and Semantic IR before it builds saved Body IR.
-    /// Current bodies can use those already available declarations to build this smaller index
-    /// without materializing every saved body. The value belongs to the request and crate, so the
-    /// project snapshot prepares it once and shares it across current-body builds in that crate.
-    /// If saved Body IR already published the index, this method returns `None` instead.
-    pub fn build_supplemental_current_body_item_lookup_index(
-        &self,
-        crate_ref: CrateRef,
-    ) -> anyhow::Result<Option<ItemLookupIndex>> {
-        if self
-            .body_ir
-            .item_lookup_index(crate_ref)
-            .context("read the saved crate item lookup index")?
-            .is_some()
-        {
-            return Ok(None);
-        }
-
-        ItemLookupIndex::build_from(&CrateItemQuery::new(
-            &self.def_map,
-            &self.semantic_ir,
-            crate_ref,
-        ))
-        .map(Some)
-        .context("build the request-local crate item lookup index")
     }
 
     /// Allocate the first request-only body id after this crate's saved body ids.
@@ -128,6 +102,21 @@ impl<'db> IndexedViewDb<'db> {
     /// Return whether a body identity belongs to request-local current Body IR.
     pub fn is_current_body(&self, body_ref: BodyRef) -> bool {
         self.body_ir.is_current_body(body_ref)
+    }
+
+    /// Assemble the declarations visible from one crate without copying dependency indexes.
+    ///
+    /// Semantic IR owns one local index per crate. This request-local query keeps those indexes
+    /// borrowed and adds only the small visibility and memoization layer needed by type queries.
+    pub(crate) fn item_lookup_query(
+        &self,
+        use_site: CrateRef,
+    ) -> anyhow::Result<ItemLookupQuery<'_>> {
+        ItemLookupQuery::build_with_cache(
+            &CrateItemQuery::new(&self.def_map, &self.semantic_ir, use_site),
+            &self.item_lookup_cache,
+        )
+        .context("assemble visible semantic item indexes")
     }
 
     /// Return the solver session shared by queries at one crate use site.

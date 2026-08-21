@@ -74,7 +74,7 @@ impl SemanticIrDb {
             let Some(package) = entry.as_resident() else {
                 continue;
             };
-            for items in package.crates() {
+            for (crate_idx, items) in package.crates().iter().enumerate() {
                 stats.crate_count += 1;
                 stats.struct_count += items.structs().len();
                 stats.union_count += items.unions().len();
@@ -85,6 +85,10 @@ impl SemanticIrDb {
                 stats.type_alias_count += items.type_aliases().len();
                 stats.const_count += items.consts().len();
                 stats.static_count += items.statics().len();
+                if let Some(index) = package.crate_lookup_index(rg_ir_model::CrateId(crate_idx)) {
+                    stats.lookup_index_count += 1;
+                    stats.lookup_index_entry_count += index.entry_count();
+                }
             }
         }
 
@@ -101,6 +105,14 @@ impl SemanticIrDb {
         self.packages
             .raw_entry(package)
             .and_then(|entry| entry.as_resident())
+    }
+
+    /// Replaces one package payload while preserving the surrounding package-store shape.
+    ///
+    /// Exact on-demand Body IR rebuilds use this to temporarily restore an artifact-backed
+    /// package. Rewriting that artifact requires every phase payload to be resident together.
+    pub fn replace_package(&mut self, package: PackageSlot, package_ir: PackageIr) -> Option<()> {
+        self.packages.replace(package, package_ir)
     }
 
     pub fn read_txn<'db>(
@@ -144,7 +156,7 @@ impl SemanticIrDbMutator<'_> {
         package: PackageSlot,
         package_ir: PackageIr,
     ) -> Option<()> {
-        self.db.packages.replace(package, package_ir)
+        self.db.replace_package(package, package_ir)
     }
 
     pub(crate) fn set_impl_header_facts(
@@ -171,6 +183,14 @@ impl SemanticIrDbMutator<'_> {
         for package in packages {
             if let Some(package) = self.db.packages.get_unique_mut(*package) {
                 Shrink::shrink_to_fit(package);
+            }
+        }
+    }
+
+    pub(crate) fn rebuild_lookup_indexes(&mut self, packages: &[PackageSlot]) {
+        for package in packages {
+            if let Some(package) = self.db.packages.make_mut(*package) {
+                package.rebuild_lookup_indexes();
             }
         }
     }

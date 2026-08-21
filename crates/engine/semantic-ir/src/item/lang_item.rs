@@ -1,7 +1,7 @@
 //! Compiler language identities at crate-local and use-site visibility layers.
 //!
 //! Semantic lowering first records `#[lang = "..."]` beside the typed item id in its owning
-//! `ItemStore`. `ItemLookupIndex` later merges those sparse declarations across the stores visible
+//! `ItemStore`. `ItemLookupQuery` later merges those sparse declarations across the stores visible
 //! from one crate. Consumers therefore ask for the real declaration identity without relying on a
 //! crate name, module path, or re-export spelling.
 

@@ -7,8 +7,10 @@
 use anyhow::Context as _;
 
 use rg_cfg_eval::CfgEvaluator;
-use rg_def_map::{DefMapReadTxn, PackageSlot};
-use rg_ir_model::{ConstRef, FunctionRef, ImplRef, ItemOwner, ModuleRef, StaticRef, TraitDefRef};
+use rg_def_map::DefMapReadTxn;
+use rg_ir_model::{
+    ConstRef, CrateRef, FunctionRef, ImplRef, ItemOwner, ModuleRef, StaticRef, TraitDefRef,
+};
 use rg_parse::{FileId, Span};
 use rg_semantic_ir::ItemStoreQuery;
 use rg_semantic_ir::SemanticIrReadTxn;
@@ -31,7 +33,7 @@ pub(super) struct CrateLowering<'a> {
     pub(super) def_map: &'a DefMapReadTxn<'a>,
     pub(super) semantic_ir: &'a SemanticIrReadTxn<'a>,
     pub(super) scope: BodyIrMaterialization<'a>,
-    pub(super) package: PackageSlot,
+    pub(super) crate_ref: CrateRef,
     pub(super) functions: Vec<FunctionLoweringTarget>,
     pub(super) consts: Vec<ConstLoweringTarget>,
     pub(super) statics: Vec<StaticLoweringTarget>,
@@ -63,7 +65,7 @@ impl<'a> CrateLowering<'a> {
         let mut tasks = Vec::new();
 
         for &(function_ref, file_id, span) in &self.functions {
-            if !self.scope.should_lower_body_file(self.package, file_id) {
+            if !self.scope.should_lower_body_file(self.crate_ref, file_id) {
                 continue;
             }
             let Some(owner_module) = Self::owner_module(self.semantic_ir, function_ref)? else {
@@ -80,7 +82,7 @@ impl<'a> CrateLowering<'a> {
         }
 
         for &(const_ref, file_id, span) in &self.consts {
-            if !self.scope.should_lower_body_file(self.package, file_id) {
+            if !self.scope.should_lower_body_file(self.crate_ref, file_id) {
                 continue;
             }
             let Some(owner_module) = Self::const_owner_module(self.semantic_ir, const_ref)? else {
@@ -97,7 +99,7 @@ impl<'a> CrateLowering<'a> {
         }
 
         for &(static_ref, file_id, span) in &self.statics {
-            if !self.scope.should_lower_body_file(self.package, file_id) {
+            if !self.scope.should_lower_body_file(self.crate_ref, file_id) {
                 continue;
             }
             let Some(owner_module) = Self::static_owner_module(self.semantic_ir, static_ref)?

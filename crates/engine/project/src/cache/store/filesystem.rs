@@ -35,6 +35,7 @@ use super::super::{
     CachedPackage, Fingerprint, PackageCacheCodec, PackageCacheInstance, PackageCacheWriteInput,
     WorkspaceCachePlan,
 };
+use super::artifact::PackageArtifactReader;
 
 const CACHE_PACKAGES_DIR_NAME: &str = "packages";
 const CACHE_GENERATION_DIR_PREFIX: &str = "graph-";
@@ -302,6 +303,24 @@ impl PackageCacheUpdate<'_> {
     /// Encode borrowed resident phases and write their final fragments in format order.
     pub(crate) fn write_input(&self, input: PackageCacheWriteInput<'_>) -> anyhow::Result<()> {
         let encoded = PackageCacheCodec::encode_write_input(input)?;
+        let path = self.store.package_artifact_path(&input.header.package);
+        PackageCacheStore::write_atomically(&path, |file| encoded.write_to(file))
+    }
+
+    /// Rewrite one package while copying encoded Body IR for untouched cached targets.
+    pub(crate) fn write_input_reusing_cached_body_ir(
+        &self,
+        input: PackageCacheWriteInput<'_>,
+        reader: &PackageArtifactReader,
+    ) -> anyhow::Result<()> {
+        let encoded = PackageCacheCodec::encode_write_input_reusing_cached_body_ir(
+            input,
+            |crate_id, file| {
+                reader
+                    .read_encoded_body_file_shard(crate_id, file)
+                    .map_err(anyhow::Error::new)
+            },
+        )?;
         let path = self.store.package_artifact_path(&input.header.package);
         PackageCacheStore::write_atomically(&path, |file| encoded.write_to(file))
     }

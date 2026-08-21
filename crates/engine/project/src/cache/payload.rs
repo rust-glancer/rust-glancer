@@ -4,7 +4,7 @@
 //!
 //! The cache writes these values as one atomic revision, but it does not encode them as one wincode
 //! object. [`PackageCacheProbe`] is the small startup section; DefMap and Semantic IR are separate
-//! sections; Body IR is further divided into item lookup indexes and source-file shards. Writes
+//! sections; Body IR is further divided into a routing manifest and source-file shards. Writes
 //! borrow those phase values through [`PackageCacheWriteInput`] instead of assembling an owned
 //! aggregate.
 

@@ -1,7 +1,31 @@
-//! Whether a crate has all, some, or none of its bodies materialized.
+//! Retained Body IR materialization coverage for crates and packages.
 
+use rg_ir_model::CrateId;
 use rg_std::{MemorySize, Shrink};
 use wincode::{SchemaRead, SchemaWrite};
+
+/// Compact crate coverage retained for one package even when its body payload is offloaded.
+///
+/// Queries only need this directory to decide whether a target must be materialized. An offloaded
+/// package keeps it directly in its package-store entry instead of reopening the cache artifact or
+/// retaining the much larger body arenas.
+#[derive(Debug, Clone, PartialEq, Eq, MemorySize, Shrink)]
+pub struct PackageBodiesCoverage {
+    crates: Box<[CrateBodiesCoverage]>,
+}
+
+impl PackageBodiesCoverage {
+    /// Preserve the semantic-crate order used by `CrateId` inside this package.
+    pub fn from_crates(crates: Vec<CrateBodiesCoverage>) -> Self {
+        Self {
+            crates: crates.into_boxed_slice(),
+        }
+    }
+
+    pub(crate) fn crate_coverage(&self, crate_id: CrateId) -> Option<CrateBodiesCoverage> {
+        self.crates.get(crate_id.0).copied()
+    }
+}
 
 /// How much of a crate's body surface has been materialized.
 #[derive(
@@ -28,7 +52,7 @@ pub enum CrateBodiesCoverage {
     /// The crate has body sources, but none of them were selected for this materialization pass.
     #[display("missing")]
     Missing,
-    /// The configured package policy intentionally did not build bodies for this crate.
+    /// The configured package-and-target policy intentionally did not build bodies for this crate.
     #[display("skipped-by-policy")]
     SkippedByPolicy,
 }

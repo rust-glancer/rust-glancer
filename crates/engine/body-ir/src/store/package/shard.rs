@@ -21,8 +21,7 @@ use anyhow::Context as _;
 use rg_arena::{Arena, ArenaId as _};
 use rg_ir_model::{BodyId, CrateId};
 use rg_parse::FileId;
-use rg_semantic_ir::ItemLookupIndex;
-use rg_std::MemorySize;
+use rg_std::{MemorySize, Shrink};
 use wincode::{SchemaRead, SchemaWrite};
 
 use super::{BodyLocalItems, CrateBodies, CrateBodiesCoverage, PackageBodies};
@@ -38,11 +37,11 @@ impl PackageBodies {
     }
 }
 
-/// Package-level Body IR directory used before any item lookup index or body payload is decoded.
+/// Package-level Body IR directory used before any body payload is decoded.
 ///
-/// This deliberately contains only crate manifests. Item lookup indexes and file shards are
-/// separate payloads in the cache container.
-#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
+/// This deliberately contains only crate manifests. Source-file shards are separate payloads in
+/// the cache container.
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct PackageBodiesManifest {
     crates: Arena<CrateId, CrateBodiesManifest>,
 }
@@ -61,7 +60,7 @@ impl PackageBodiesManifest {
 ///
 /// `body_files` supports direct `BodyId -> FileId` lookup. `files` stores the sorted unique file
 /// list so a crate-wide query can enumerate every shard without scanning the body mapping first.
-#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct CrateBodiesManifest {
     coverage: CrateBodiesCoverage,
     body_files: Arena<BodyId, FileId>,
@@ -154,18 +153,19 @@ impl CrateBodies {
     /// The `body_files` arena preserves one entry per body id. The separate file list is sorted and
     /// deduplicated to make serialized output deterministic and shard iteration straightforward.
     pub fn manifest(&self) -> CrateBodiesManifest {
-        debug_assert_eq!(
-            self.bodies.len(),
-            self.facts.len(),
-            "every built body should have paired semantic facts",
-        );
-        debug_assert_eq!(
-            self.bodies.len(),
-            self.body_local_items.len(),
-            "every built body should have paired body-local items",
+        if let Some(manifest) = self.cached_manifest() {
+            return manifest.clone();
+        }
+
+        debug_assert!(
+            self.bodies().iter().enumerate().all(|(body_idx, _)| {
+                let body = BodyId(body_idx);
+                self.body_facts(body).is_some() && self.body_local_items(body).is_some()
+            }),
+            "every built body should have aligned semantic sidecars",
         );
         let body_files = self
-            .bodies
+            .bodies()
             .iter()
             .map(|body| body.source().file_id)
             .collect::<Vec<_>>();
@@ -174,7 +174,7 @@ impl CrateBodies {
         files.dedup();
 
         CrateBodiesManifest {
-            coverage: self.coverage,
+            coverage: self.coverage(),
             body_files: Arena::from_vec(body_files),
             files,
         }
@@ -184,27 +184,36 @@ impl CrateBodies {
     ///
     /// Continuing the module example, asking for `lib.rs` returns entries for body 0 and body 2,
     /// each paired with its body-local items. The stable ids are not renumbered.
-    pub fn file_shard(&self, file: FileId) -> BodyFileShard {
+    ///
+    /// This requires decoded resident arenas. A cached rewrite placeholder has only the routing
+    /// manifest; its caller must copy the validated encoded shard from the previous artifact.
+    pub fn file_shard(&self, file: FileId) -> anyhow::Result<BodyFileShard> {
+        anyhow::ensure!(
+            !self.has_cached_payload(),
+            "cached Body IR payload has no decoded file shards",
+        );
         let entries = self
-            .bodies
-            .iter_with_ids()
+            .bodies()
+            .iter()
+            .enumerate()
             .filter(|(_, body)| body.source().file_id == file)
-            .map(|(body, data)| BodyFileEntry {
-                body,
-                data: data.clone(),
-                facts: self
-                    .facts
-                    .get(body)
-                    .expect("every built body should have paired semantic facts")
-                    .clone(),
-                local_items: self
-                    .body_local_items
-                    .get(body)
-                    .expect("every built body should have paired body-local items")
-                    .clone(),
+            .map(|(body_idx, data)| {
+                let body = BodyId(body_idx);
+                BodyFileEntry {
+                    body,
+                    data: data.clone(),
+                    facts: self
+                        .body_facts(body)
+                        .expect("every built body should have paired semantic facts")
+                        .clone(),
+                    local_items: self
+                        .body_local_items(body)
+                        .expect("every built body should have paired body-local items")
+                        .clone(),
+                }
             })
             .collect();
-        BodyFileShard { file, entries }
+        Ok(BodyFileShard { file, entries })
     }
 
     /// Reassemble the ordinary dense crate representation after loading all of its shards.
@@ -214,7 +223,6 @@ impl CrateBodies {
     /// recorded by the manifest, and every dense body slot must be filled exactly once.
     pub fn from_storage_parts(
         manifest: &CrateBodiesManifest,
-        item_lookup_index: ItemLookupIndex,
         shards: Vec<BodyFileShard>,
     ) -> anyhow::Result<Self> {
         // Start with the final dense shape, but leave every slot empty. Shard entries carry stable
@@ -287,12 +295,11 @@ impl CrateBodies {
             })
             .collect::<anyhow::Result<Vec<_>>>()?;
 
-        Ok(Self {
-            coverage: manifest.coverage,
-            item_lookup_index,
-            bodies: Arena::from_vec(bodies),
-            facts: Arena::from_vec(facts),
-            body_local_items: Arena::from_vec(body_local_items),
-        })
+        Ok(Self::from_resident_parts(
+            manifest.coverage,
+            Arena::from_vec(bodies),
+            Arena::from_vec(facts),
+            Arena::from_vec(body_local_items),
+        ))
     }
 }

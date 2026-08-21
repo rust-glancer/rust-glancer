@@ -302,20 +302,37 @@ impl<'a> ResidencyApplication<'a> {
             )
         })?;
 
-        update
-            .write_input(PackageCacheWriteInput::new(
-                &header,
-                &parse,
-                def_map,
-                semantic_ir,
-                body_ir,
-            ))
-            .with_context(|| {
-                format!(
-                    "while attempting to write package cache artifact for package {}",
-                    package.0,
-                )
-            })
+        let input = PackageCacheWriteInput::new(&header, &parse, def_map, semantic_ir, body_ir);
+        let write = if body_ir.has_cached_payloads() {
+            // An exact on-demand rebuild owns only the changed target. Pin the prior artifact
+            // revision and copy untouched target shards from it while the atomic replacement is
+            // assembled. The package returns to lazy residency immediately after this write.
+            let reader = project
+                .cache_store
+                .open_artifact(&header)
+                .with_context(|| {
+                    format!(
+                        "while attempting to open prior cache artifact for package {}",
+                        package.0,
+                    )
+                })?
+                .with_context(|| {
+                    format!(
+                        "prior cache artifact is missing for package {} with cached Body IR payloads",
+                        package.0,
+                    )
+                })?;
+            update.write_input_reusing_cached_body_ir(input, &reader)
+        } else {
+            update.write_input(input)
+        };
+
+        write.with_context(|| {
+            format!(
+                "while attempting to write package cache artifact for package {}",
+                package.0,
+            )
+        })
     }
 
     /// Offloads one package from every artifact-backed phase database.

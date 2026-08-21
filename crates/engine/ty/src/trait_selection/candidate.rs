@@ -9,7 +9,7 @@
 
 use rg_def_map::DefMapSource;
 use rg_ir_model::{TraitApplicability, TraitImplRef};
-use rg_semantic_ir::{ItemLookupIndex, ItemStoreSource};
+use rg_semantic_ir::{ItemLookupQuery, ItemStoreSource};
 use rg_std::UniqueVec;
 
 use super::matcher::{CandidateMatcher, TraitSelfHead};
@@ -39,7 +39,7 @@ impl TraitCandidate {
     /// visible impl.
     pub(super) fn plausible_impls<'query, D, I>(
         item_paths: &ItemPathQuery<'query, D, I>,
-        lookup_index: &ItemLookupIndex,
+        item_lookup: &ItemLookupQuery<'_>,
         session: &TraitSelectionSession,
         goal: &TraitGoal,
         table: &InferenceTable,
@@ -59,7 +59,7 @@ impl TraitCandidate {
             return Ok(Some(UniqueVec::new()));
         }
         let trait_ref = goal.trait_ref();
-        let Some(visible_impls) = lookup_index.trait_impls_for_trait(trait_ref) else {
+        let Some(visible_impls) = item_lookup.trait_impls_for_trait(trait_ref) else {
             return Ok(Some(UniqueVec::new()));
         };
         match TraitSelfHead::from_ty(&self_ty) {
@@ -70,7 +70,7 @@ impl TraitCandidate {
                 self_head,
             ),
             None => {
-                let visible_impls = visible_impls.collect::<Vec<_>>();
+                let visible_impls = visible_impls.into_vec();
                 if !session.consume_work(TraitWorkKind::CandidateIndex, visible_impls.len()) {
                     return Ok(None);
                 }
@@ -123,7 +123,7 @@ impl TraitCandidate {
     #[cfg(test)]
     pub(super) fn probe_all<'query, D, I>(
         item_paths: &ItemPathQuery<'query, D, I>,
-        lookup_index: &ItemLookupIndex,
+        item_lookup: &ItemLookupQuery<'_>,
         session: &TraitSelectionSession,
         goal: &TraitGoal,
         table: &InferenceTable,
@@ -133,9 +133,8 @@ impl TraitCandidate {
         I: ItemStoreSource<'query>,
     {
         let mut candidates = Vec::new();
-        let plausible_impls =
-            Self::plausible_impls(item_paths, lookup_index, session, goal, table)?
-                .expect("unbounded candidate fixture query should not exhaust work");
+        let plausible_impls = Self::plausible_impls(item_paths, item_lookup, session, goal, table)?
+            .expect("unbounded candidate fixture query should not exhaust work");
         for trait_impl in plausible_impls {
             if let Some(candidate) = Self::probe_impl(item_paths, session, goal, table, trait_impl)?
             {

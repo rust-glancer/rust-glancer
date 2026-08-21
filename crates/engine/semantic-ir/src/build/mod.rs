@@ -32,6 +32,10 @@ impl<'db> SemanticIrDbBuilder<'db> {
             let mut mutator = db.mutator();
             impl_headers::resolve_impl_headers(&mut mutator, self.def_map)
                 .context("while attempting to resolve semantic IR impl headers")?;
+            let packages = (0..mutator.package_count())
+                .map(PackageSlot)
+                .collect::<Vec<_>>();
+            mutator.rebuild_lookup_indexes(&packages);
             mutator.compact_storage();
         }
         Ok(db)
@@ -104,6 +108,7 @@ impl<'db> SemanticIrDbPackageRebuilder<'db> {
         {
             let mut mutator = next.mutator();
             impl_headers::apply_impl_header_resolutions(&mut mutator, impl_resolutions);
+            mutator.rebuild_lookup_indexes(&packages);
             mutator.compact_packages(&packages);
         }
 

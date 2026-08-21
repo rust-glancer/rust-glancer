@@ -114,6 +114,18 @@ impl DefMapDb {
             .and_then(|entry| entry.as_resident())
     }
 
+    /// Replaces one package payload while preserving the surrounding package-store shape.
+    ///
+    /// Exact on-demand Body IR rebuilds use this to temporarily restore an artifact-backed
+    /// package. Rewriting that artifact requires every phase payload to be resident together.
+    pub fn replace_package(
+        &mut self,
+        package_slot: PackageSlot,
+        package: PackageDefMaps,
+    ) -> Option<()> {
+        self.packages.replace(package_slot, package)
+    }
+
     pub fn read_txn<'db>(
         &'db self,
         loader: PackageLoader<'db, PackageDefMaps>,
@@ -144,7 +156,7 @@ impl DefMapDbMutator<'_> {
         package_slot: PackageSlot,
         package: PackageDefMaps,
     ) -> Option<()> {
-        self.db.packages.replace(package_slot, package)
+        self.db.replace_package(package_slot, package)
     }
 
     pub(crate) fn compact_storage(&mut self) {

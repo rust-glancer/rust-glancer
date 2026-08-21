@@ -1,26 +1,26 @@
 //! Coherent inputs for crate-scoped type queries.
 
 use rg_def_map::DefMapSource;
-use rg_semantic_ir::{CrateItemQuery, ItemLookupIndex, ItemStoreSource};
+use rg_semantic_ir::{CrateItemQuery, ItemLookupQuery, ItemStoreSource};
 
 use crate::{ItemPathQuery, TraitSelectionSession};
 
 /// Shared query environment for type reasoning at one crate use site.
 ///
-/// Path lookup, visible-item lookup, the semantic lookup index, and trait selection all describe
+/// Path lookup, visible-item lookup, the semantic lookup query, and trait selection all describe
 /// one visibility universe. `TyContext` keeps that unit intact, constructs both item-query views
 /// from the same routing providers, and prevents nested queries from silently replacing the shared
 /// solver session.
 ///
 /// For example, method lookup may autoderef a receiver and then prove a trait impl for the adjusted
 /// type. Both steps must use the crate where the method is called as their use site; mixing a lookup
-/// index from one crate with a solver session from another would produce a coherent-looking but
+/// query from one crate with a solver session from another would produce a coherent-looking but
 /// invalid result.
 #[derive(Clone)]
 pub struct TyContext<'query, D, I> {
     item_paths: ItemPathQuery<'query, D, I>,
     crate_items: CrateItemQuery<'query, D, I>,
-    lookup_index: &'query ItemLookupIndex,
+    item_lookup: ItemLookupQuery<'query>,
     trait_selection: TraitSelectionSession,
 }
 
@@ -36,14 +36,14 @@ where
     pub fn new(
         def_maps: D,
         items: I,
-        lookup_index: &'query ItemLookupIndex,
+        item_lookup: ItemLookupQuery<'query>,
         trait_selection: TraitSelectionSession,
     ) -> Self {
         let use_site = trait_selection.use_site();
         Self {
             item_paths: ItemPathQuery::new(def_maps.clone(), items.clone()),
             crate_items: CrateItemQuery::new(def_maps, items, use_site),
-            lookup_index,
+            item_lookup,
             trait_selection,
         }
     }
@@ -58,8 +58,8 @@ impl<'query, D, I> TyContext<'query, D, I> {
         &self.crate_items
     }
 
-    pub fn lookup_index(&self) -> &'query ItemLookupIndex {
-        self.lookup_index
+    pub fn item_lookup(&self) -> &ItemLookupQuery<'query> {
+        &self.item_lookup
     }
 
     pub fn trait_selection(&self) -> &TraitSelectionSession {

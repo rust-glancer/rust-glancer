@@ -13,7 +13,7 @@ use chalk_ir::{AliasTy, AssocTypeId, Substitution, Ty, TyKind, Variance, Varianc
 use chalk_solve::rust_ir::{AssociatedTyValueId, FnDefDatum, ImplDatum, TraitDatum};
 use rg_def_map::DefMapSource;
 use rg_ir_model::{AssocItemId, GenericDefRef, ImplRef, TraitDefRef, TypeAliasRef, TypeDefRef};
-use rg_semantic_ir::{CrateItemQuery, ItemLookupIndex, ItemStoreSource};
+use rg_semantic_ir::{CrateItemQuery, ItemLookupQuery, ItemStoreSource};
 use rg_std::UniqueVec;
 
 use super::super::interner::RgChalkInterner;
@@ -52,7 +52,7 @@ impl ChalkProgram {
         &mut self,
         item_paths: &ItemPathQuery<'query, D, I>,
         crate_items: &CrateItemQuery<'query, D, I>,
-        lookup_index: &ItemLookupIndex,
+        item_lookup: &ItemLookupQuery<'_>,
         session: &TraitSelectionSession,
         roots: &ChalkProgramRoots,
     ) -> Result<bool, I::Error>
@@ -61,12 +61,12 @@ impl ChalkProgram {
         I: ItemStoreSource<'query>,
     {
         let extension_started = Instant::now();
-        self.known_items = super::ChalkKnownItems::from_index(lookup_index);
+        self.known_items = super::ChalkKnownItems::from_lookup(item_lookup);
         let discovery_started = Instant::now();
         let Some(scope) = ChalkProgramScope::discover(
             item_paths,
             crate_items,
-            lookup_index,
+            item_lookup,
             session,
             roots,
             self,

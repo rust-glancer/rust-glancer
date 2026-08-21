@@ -3,11 +3,10 @@
 //! These values sit on top of a saved Body IR read transaction for one request. They let local
 //! analysis see newly typed expressions and bindings without creating another project generation.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 use rg_ir_model::{BodyRef, CrateRef};
 use rg_parse::{FileId, Span};
-use rg_semantic_ir::ItemLookupIndex;
 
 use crate::{BodyData, BodyFacts, BodyView};
 
@@ -66,20 +65,16 @@ impl CurrentBody {
 /// at unrelated text. Exact source does not need that whole-file mask, so unselected saved bodies
 /// remain available.
 ///
-/// Early-start indexing may also leave out the saved crate-wide item lookup index. In that case,
-/// the request builds one replacement index per crate and shares it between all current bodies.
 #[derive(Debug, Default)]
 pub struct CurrentBodySet {
     masked_files: HashSet<(CrateRef, FileId)>,
     bodies: Vec<CurrentBody>,
-    supplemental_item_lookup_indexes: HashMap<CrateRef, ItemLookupIndex>,
 }
 
 impl CurrentBodySet {
     pub fn new(
         masked_files: HashSet<(CrateRef, FileId)>,
         bodies: Vec<CurrentBody>,
-        supplemental_item_lookup_indexes: HashMap<CrateRef, ItemLookupIndex>,
     ) -> anyhow::Result<Self> {
         let mut body_refs = HashSet::new();
         anyhow::ensure!(
@@ -90,7 +85,6 @@ impl CurrentBodySet {
         Ok(Self {
             masked_files,
             bodies,
-            supplemental_item_lookup_indexes,
         })
     }
 
@@ -114,12 +108,5 @@ impl CurrentBodySet {
 
     pub(crate) fn contains_body(&self, body_ref: BodyRef) -> bool {
         self.bodies.iter().any(|body| body.body_ref == body_ref)
-    }
-
-    pub(crate) fn supplemental_item_lookup_index(
-        &self,
-        crate_ref: CrateRef,
-    ) -> Option<&ItemLookupIndex> {
-        self.supplemental_item_lookup_indexes.get(&crate_ref)
     }
 }

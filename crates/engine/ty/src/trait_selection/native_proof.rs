@@ -66,13 +66,13 @@ where
         clauses: &[Clause],
         table: &InferenceTable,
     ) -> Option<TraitProof> {
-        let lookup_index = self.selection.context.lookup_index();
+        let item_lookup = self.selection.context.item_lookup();
         let callable_traits = [
-            lookup_index.lang_trait(LangItem::Fn),
-            lookup_index.lang_trait(LangItem::FnMut),
-            lookup_index.lang_trait(LangItem::FnOnce),
+            item_lookup.lang_trait(LangItem::Fn),
+            item_lookup.lang_trait(LangItem::FnMut),
+            item_lookup.lang_trait(LangItem::FnOnce),
         ];
-        let output_alias = lookup_index.lang_type_alias(LangItem::FnOnceOutput)?;
+        let output_alias = item_lookup.lang_type_alias(LangItem::FnOnceOutput)?;
         let mut table = table.clone();
 
         for clause in clauses {
@@ -185,7 +185,7 @@ where
         };
         let Some(plausible_impls) = TraitCandidate::plausible_impls(
             self.selection.context.item_paths(),
-            self.selection.context.lookup_index(),
+            self.selection.context.item_lookup(),
             self.selection.context.trait_selection(),
             &goal,
             table,
@@ -276,7 +276,7 @@ where
         };
         let Some(plausible_impls) = TraitCandidate::plausible_impls(
             self.selection.context.item_paths(),
-            self.selection.context.lookup_index(),
+            self.selection.context.item_lookup(),
             self.selection.context.trait_selection(),
             &goal,
             table,

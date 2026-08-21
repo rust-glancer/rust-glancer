@@ -4,8 +4,8 @@ use rg_def_map::{DefMapQuery, DefMapSource};
 use rg_ir_model::{CrateRef, DefMapRef, ImplRef, TraitDefRef};
 use rg_std::UniqueVec;
 
-use super::{ItemStoreQuery, ItemStoreSource};
-use crate::ItemStore;
+use super::{ItemLookupIndexSource, ItemStoreQuery, ItemStoreSource};
+use crate::{ItemLookupIndex, ItemStore};
 
 /// Item queries that need a Rust language visibility context.
 ///
@@ -47,6 +47,17 @@ where
     pub fn visible_stores(&self) -> Result<Vec<&'item ItemStore>, I::Error> {
         let crates = self.def_maps.item_lookup_crates_from(self.use_site)?;
         self.items.stores_for_crates(&crates)
+    }
+
+    /// Returns the visible semantic stores paired with declaration-local lookup indexes.
+    pub fn visible_indexed_stores(
+        &self,
+    ) -> Result<Vec<(&'item ItemStore, &'item ItemLookupIndex)>, I::Error>
+    where
+        I: ItemLookupIndexSource<'item>,
+    {
+        let crates = self.def_maps.item_lookup_crates_from(self.use_site)?;
+        self.items.indexed_stores_for_crates(&crates)
     }
 
     /// Searches visible impls for a trait ref while keeping duplicate refs out of the result.

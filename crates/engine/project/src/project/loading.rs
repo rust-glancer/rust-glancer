@@ -18,7 +18,6 @@ use rg_def_map::PackageSlot;
 use rg_ir_model::CrateId;
 use rg_package_store::{LoadPackage, PackageLoader, PackageStoreError};
 use rg_parse::FileId;
-use rg_semantic_ir::ItemLookupIndex;
 use rg_semantic_ir::PackageIr;
 
 use crate::cache::{Fingerprint, PackageArtifactReader, PackageCacheStore, WorkspaceCachePlan};
@@ -31,6 +30,7 @@ pub(crate) struct PackageReadLoaders {
     pub(crate) def_map: PackageLoader<'static, DefMapPackage>,
     pub(crate) semantic_ir: PackageLoader<'static, PackageIr>,
     pub(crate) body_ir: BodyIrLoader<'static>,
+    artifacts: Arc<PackageArtifactReaders>,
 }
 
 impl fmt::Debug for PackageReadLoaders {
@@ -67,8 +67,22 @@ impl PackageReadLoaders {
             semantic_ir: PackageLoader::new(SemanticIrPackageLoader {
                 artifacts: Arc::clone(&artifacts),
             }),
-            body_ir: BodyIrLoader::new(BodyIrPackageLoader { artifacts }),
+            body_ir: BodyIrLoader::new(BodyIrPackageLoader {
+                artifacts: Arc::clone(&artifacts),
+            }),
+            artifacts,
         }
+    }
+
+    /// Restore declarations plus a manifest-only Body IR overlay for an exact target rebuild.
+    ///
+    /// Untouched Body IR shards remain encoded in the old artifact. The synchronous residency
+    /// transition copies them into the rewritten artifact after replacing the requested target.
+    pub(crate) fn load_package_payloads(
+        &self,
+        package: PackageSlot,
+    ) -> Result<(DefMapPackage, PackageIr, rg_body_ir::PackageBodies), PackageStoreError> {
+        self.artifacts.package_payloads(package)
     }
 }
 
@@ -148,6 +162,27 @@ impl PackageArtifactReaders {
         Ok(Arc::clone(cell.get().expect(
             "decoded semantic-IR cell should be initialized after successful load",
         )))
+    }
+
+    fn package_payloads(
+        &self,
+        package: PackageSlot,
+    ) -> Result<(DefMapPackage, PackageIr, rg_body_ir::PackageBodies), PackageStoreError> {
+        let reader = self.reader(package)?;
+        let def_map = reader
+            .read_def_map()
+            .map_err(|error| error.into_package_store_error(package))?;
+        let semantic_ir = reader
+            .read_semantic_ir()
+            .map_err(|error| error.into_package_store_error(package))?;
+        // Exact rebuilding still needs a resident package shape so it can replace one crate slot.
+        // Keep only each sibling's routing manifest here; decoding those body shards would restore
+        // the target fan-out that on-demand materialization is intended to avoid.
+        let body_manifest = reader
+            .read_body_ir_manifest()
+            .map_err(|error| error.into_package_store_error(package))?;
+        let body_ir = rg_body_ir::PackageBodies::from_cached_manifest(&body_manifest);
+        Ok((def_map, semantic_ir, body_ir))
     }
 
     fn reader(&self, package: PackageSlot) -> Result<&PackageArtifactReader, PackageStoreError> {
@@ -230,18 +265,6 @@ impl LoadBodyIr for BodyIrPackageLoader {
         self.artifacts
             .reader(package)?
             .read_body_ir_manifest()
-            .map(Arc::new)
-            .map_err(|error| error.into_package_store_error(package))
-    }
-
-    fn load_item_lookup_index(
-        &self,
-        package: PackageSlot,
-        crate_id: CrateId,
-    ) -> Result<Arc<ItemLookupIndex>, PackageStoreError> {
-        self.artifacts
-            .reader(package)?
-            .read_item_lookup_index(crate_id)
             .map(Arc::new)
             .map_err(|error| error.into_package_store_error(package))
     }

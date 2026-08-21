@@ -9,7 +9,6 @@
 //! operations:
 //!
 //! ```text
-//! item_lookup_index(crate_ref)  -> crate-wide lookup tables
 //! bodies(crate_ref, Some(file)) -> one source-file shard
 //! body(body_ref)                -> the shard named by the manifest
 //! crate_bodies(crate_ref)       -> complete crate
@@ -28,7 +27,7 @@ use rg_def_map::PackageSlot;
 use rg_ir_model::{BodyId, BodyRef, CrateRef};
 use rg_package_store::PackageStoreError;
 use rg_parse::FileId;
-use rg_semantic_ir::{ItemLookupIndex, ItemStore};
+use rg_semantic_ir::ItemStore;
 
 use self::lazy::{LazyPackage, PackageReadEntry};
 pub use self::loader::{BodyIrLoader, LoadBodyIr};
@@ -105,8 +104,7 @@ impl<'db> BodyIrReadTxn<'db> {
 
     /// Return the complete crate, loading every required Body IR storage unit when offloaded.
     ///
-    /// Prefer the narrower query methods when the caller needs one body, one file, or only the
-    /// crate-global item lookup index.
+    /// Prefer the narrower query methods when the caller needs one body or one file.
     pub fn crate_bodies(
         &self,
         crate_ref: CrateRef,
@@ -119,32 +117,6 @@ impl<'db> BodyIrReadTxn<'db> {
         match self.entry(crate_ref.package)? {
             PackageReadEntry::Resident(package) => Ok(package.crate_bodies(crate_ref.crate_id)),
             PackageReadEntry::Lazy(package) => package.crate_bodies(crate_ref),
-            PackageReadEntry::Excluded => unreachable!("excluded entries fail in entry()"),
-        }
-    }
-
-    /// Return the crate-global lookup index without materializing body payloads.
-    ///
-    /// The index answers repeated receiver, trait, and language-item questions. It is stored
-    /// separately because those questions should not decode every body in a large crate.
-    ///
-    /// `Missing` and `SkippedByPolicy` crates still have an empty `CrateBodies` placeholder so the
-    /// package keeps its crate shape. That placeholder has no published lookup data, so this method
-    /// returns `None` until a materialized build provides the real index.
-    pub fn item_lookup_index(
-        &self,
-        crate_ref: CrateRef,
-    ) -> Result<Option<&ItemLookupIndex>, PackageStoreError> {
-        if let Some(index) = self.current.supplemental_item_lookup_index(crate_ref) {
-            return Ok(Some(index));
-        }
-
-        match self.entry(crate_ref.package)? {
-            PackageReadEntry::Resident(package) => Ok(package
-                .crate_bodies(crate_ref.crate_id)
-                .filter(|bodies| bodies.coverage().is_materialized())
-                .map(CrateBodies::item_lookup_index)),
-            PackageReadEntry::Lazy(package) => package.item_lookup_index(crate_ref),
             PackageReadEntry::Excluded => unreachable!("excluded entries fail in entry()"),
         }
     }

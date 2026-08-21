@@ -1,6 +1,6 @@
 //! Startup cache probing for fresh project builds.
 
-use rg_body_ir::BodyIrBuildPolicy;
+use rg_body_ir::{BodyIrBuildPolicy, PackageBodiesCoverage};
 use rg_def_map::PackageSlot;
 use rg_parse::{PackageParseSnapshot, ParseDb};
 use rg_workspace::WorkspaceMetadata;
@@ -10,6 +10,16 @@ use crate::{
     cache::{CachedPackage, PackageCacheProbe, PackageCacheStore, WorkspaceCachePlan},
     profile::metric,
 };
+
+/// Source decision and retained cache metadata for one package slot.
+pub(super) enum StartupPackageSelection {
+    /// Rebuild this package because it or one of its dependencies missed cache validation.
+    BuildFromSource,
+    /// Keep this validated package lazy and retain only the coverage needed before payload reads.
+    Cached {
+        body_ir_coverage: PackageBodiesCoverage,
+    },
+}
 
 /// Checks whether offloadable packages can be seeded from existing cache artifacts.
 ///
@@ -50,8 +60,9 @@ impl<'a> StartupCacheProbe<'a> {
     ///
     /// A package-local cache hit is only tentative. If one dependency must rebuild, every reverse
     /// dependent must rebuild with it because cached scopes can retain dependency-local arena IDs.
-    /// Parse restoration therefore happens only after the miss closure stops growing.
-    pub(super) fn source_packages(&mut self) -> Vec<PackageSlot> {
+    /// Parse restoration therefore happens only after the miss closure stops growing. The result
+    /// remains in package-slot order, and every accepted hit carries its validated Body IR coverage.
+    pub(super) fn select(&mut self) -> Vec<StartupPackageSelection> {
         let package_count = self.parse.package_count();
         let mut probes = (0..package_count).map(|_| None).collect::<Vec<_>>();
         let mut source_packages = vec![false; package_count];
@@ -103,10 +114,18 @@ impl<'a> StartupCacheProbe<'a> {
             break;
         }
 
-        source_packages
+        probes
             .into_iter()
             .enumerate()
-            .filter_map(|(package_idx, must_build)| must_build.then_some(PackageSlot(package_idx)))
+            .map(|(package_idx, probe)| {
+                if source_packages[package_idx] {
+                    return StartupPackageSelection::BuildFromSource;
+                }
+                let probe = probe.expect("cache-hit package should retain its probe");
+                StartupPackageSelection::Cached {
+                    body_ir_coverage: PackageBodiesCoverage::from_crates(probe.body_ir_coverage),
+                }
+            })
             .collect()
     }
 
@@ -180,16 +199,21 @@ impl<'a> StartupCacheProbe<'a> {
             .parse
             .package(package.0)
             .expect("startup cache probe package slot should exist in parse db");
-        if !self.body_ir_policy.should_lower_package(parse_package) {
-            return true;
-        }
-
-        // A body artifact produced by a narrower policy can still be structurally valid while
-        // containing skipped crates. Reject it so the requested policy gets a full source rebuild.
-        let matches_policy = probe
-            .body_ir_coverage
-            .iter()
-            .all(|coverage| coverage.is_complete());
+        // A body artifact produced by a narrower target policy can still be structurally valid.
+        // Validate every aligned Cargo target so configured secondary skips remain reusable while
+        // an exhaustive all-target build rejects those same skips.
+        let matches_policy = probe.body_ir_coverage.len() == parse_package.targets().len()
+            && probe
+                .body_ir_coverage
+                .iter()
+                .zip(parse_package.targets())
+                .all(|(coverage, target)| {
+                    coverage.is_complete()
+                        || (!self
+                            .body_ir_policy
+                            .should_lower_target(parse_package, target)
+                            && matches!(coverage, rg_body_ir::CrateBodiesCoverage::SkippedByPolicy))
+                });
 
         if !matches_policy {
             metric::CACHE_PROBE_BODY_IR_POLICY_MISMATCHES.inc();

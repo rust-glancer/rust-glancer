@@ -38,6 +38,8 @@ impl ProjectReport {
                 type_alias_count: stats.semantic_ir.type_alias_count,
                 const_count: stats.semantic_ir.const_count,
                 static_count: stats.semantic_ir.static_count,
+                lookup_index_count: stats.semantic_ir.lookup_index_count,
+                lookup_index_entry_count: stats.semantic_ir.lookup_index_entry_count,
             },
             // TODO: We're missing local items in the body IR report (e.g. items/impls/functions).
             body_ir: BodyIrReport {
@@ -116,6 +118,8 @@ pub(crate) struct SemanticIrReport {
     pub(crate) type_alias_count: usize,
     pub(crate) const_count: usize,
     pub(crate) static_count: usize,
+    pub(crate) lookup_index_count: usize,
+    pub(crate) lookup_index_entry_count: usize,
 }
 
 impl SemanticIrReport {
@@ -136,6 +140,17 @@ impl SemanticIrReport {
             .count_as("type_alias_count", "type aliases", self.type_alias_count)
             .count_as("const_count", "consts", self.const_count)
             .count_as("static_count", "statics", self.static_count);
+        fields
+            .count_as(
+                "lookup_index_count",
+                "local lookup indexes",
+                self.lookup_index_count,
+            )
+            .count_as(
+                "lookup_index_entry_count",
+                "local lookup index entries",
+                self.lookup_index_entry_count,
+            );
     }
 }
 

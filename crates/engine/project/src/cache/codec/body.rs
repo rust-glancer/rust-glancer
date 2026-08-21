@@ -1,16 +1,15 @@
-//! Nested directory and codecs for item lookup indexes and file-granular Body IR payloads.
+//! Nested directory and codecs for file-granular Body IR payloads.
 //!
 //! Body IR is commonly the largest phase, and most interactive queries care about the file under
 //! the cursor. Its section therefore has another container:
 //!
 //! ```text
-//! RGBODY magic | manifest len | manifest | crate 0 lookup index | file shard | ...
+//! RGBODY magic | manifest len | manifest | file shard | ...
 //! ```
 //!
 //! The manifest maps every stable body id to a source file and records the relative byte range for
-//! every item lookup index and file shard. A file-local query reads the manifest once and then one
-//! shard. Crate-global operations may read every shard or ask the loader to reconstruct a full
-//! crate.
+//! every file shard. A file-local query reads the manifest once and then one shard. Crate-global
+//! operations may read every shard or ask the loader to reconstruct a full crate.
 //!
 //! This is still one section of one atomically published package file. Sharding changes read and
 //! decode granularity without creating a transaction protocol for hundreds of independent files.
@@ -28,7 +27,6 @@ use anyhow::Context as _;
 use rg_body_ir::{BodyFileShard, CrateBodiesManifest, PackageBodies, PackageBodiesManifest};
 use rg_ir_model::CrateId;
 use rg_parse::FileId;
-use rg_semantic_ir::ItemLookupIndex;
 use wincode::{SchemaRead, SchemaWrite};
 
 use super::{
@@ -36,7 +34,7 @@ use super::{
     PackageCacheSectionRange,
 };
 
-const BODY_CACHE_CONTAINER_MAGIC: [u8; 8] = *b"RGBODY\0\x01";
+const BODY_CACHE_CONTAINER_MAGIC: [u8; 8] = *b"RGBODY\0\x02";
 /// Bytes needed to discover the variable-size Body IR manifest.
 pub(crate) const BODY_CACHE_CONTAINER_PREFIX_BYTES: usize = 8 + size_of::<u64>();
 
@@ -59,10 +57,9 @@ struct PackageBodyCacheManifest {
     crates: Vec<CrateBodyCacheLayout>,
 }
 
-/// Relative ranges for one crate's item lookup index and source-file shards.
+/// Relative ranges for one crate's source-file shards.
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite)]
 struct CrateBodyCacheLayout {
-    item_lookup_index: PackageCacheSectionRange,
     files: Vec<BodyFileCacheRange>,
 }
 
@@ -100,16 +97,6 @@ impl PackageBodyCacheIndex {
         &self.manifest
     }
 
-    /// Return the section-relative range for one crate's item lookup index.
-    pub(crate) fn item_lookup_index_range(
-        &self,
-        crate_id: CrateId,
-    ) -> Option<PackageCacheSectionRange> {
-        self.crates
-            .get(crate_id.0)
-            .map(|crate_layout| self.payload_range(crate_layout.item_lookup_index))
-    }
-
     /// Return the section-relative range for one crate and source file.
     pub(crate) fn file_range(
         &self,
@@ -143,46 +130,82 @@ impl PackageCacheCodec {
     /// Body ids stay stable throughout this transformation. A file shard carries the original ids,
     /// while the logical manifest records which file owns each id.
     pub(super) fn encode_body_ir(body_ir: &PackageBodies) -> anyhow::Result<EncodedBodyIr> {
+        Self::encode_body_ir_with_cached_shards(body_ir, None)
+    }
+
+    /// Encode a mixed package while copying untouched target shards from its previous artifact.
+    ///
+    /// Exact-target materialization can provide decoded arenas for the requested target and only
+    /// cached manifests for its siblings. This method encodes the new arenas normally, then asks
+    /// the callback for each sibling's already encoded file range instead of reconstructing those
+    /// potentially large body arenas.
+    pub(super) fn encode_body_ir_reusing_cached_shards(
+        body_ir: &PackageBodies,
+        read_cached_shard: &mut dyn FnMut(CrateId, FileId) -> anyhow::Result<Vec<u8>>,
+    ) -> anyhow::Result<EncodedBodyIr> {
+        Self::encode_body_ir_with_cached_shards(body_ir, Some(read_cached_shard))
+    }
+
+    fn encode_body_ir_with_cached_shards(
+        body_ir: &PackageBodies,
+        mut read_cached_shard: Option<&mut dyn FnMut(CrateId, FileId) -> anyhow::Result<Vec<u8>>>,
+    ) -> anyhow::Result<EncodedBodyIr> {
         // 1. Build the logical directory first. It tells us which source-file shards each crate
         // needs, but does not contain encoded byte ranges yet.
         let bodies = body_ir.manifest();
         let mut payload = Vec::new();
         let mut crates = Vec::with_capacity(body_ir.crates().len());
 
-        // 2. Serialize one item lookup index and one source file at a time. Each append returns its
-        // range relative to `payload`. This avoids a second package-sized set of temporary shards.
+        // 2. Serialize one source file at a time. Each append returns its range relative to
+        // `payload`. This avoids a second package-sized set of temporary shards.
         for (crate_idx, crate_bodies) in body_ir.crates().iter().enumerate() {
-            let item_lookup_index_start = payload.len();
-            wincode::config::serialize_into(
-                &mut payload,
-                crate_bodies.item_lookup_index(),
-                Self::wincode_config(),
-            )
-            .map_err(|error| anyhow::anyhow!("{error}"))
-            .context("while attempting to serialize package cache item lookup index")?;
-            let item_lookup_index =
-                Self::body_payload_range(item_lookup_index_start, payload.len())?;
-
             let crate_id = CrateId(crate_idx);
             let crate_manifest = bodies
                 .crate_manifest(crate_id)
                 .expect("Body IR manifest should mirror package crates");
             let mut files = Vec::with_capacity(crate_manifest.files().len());
             for &file in crate_manifest.files() {
-                let shard = crate_bodies.file_shard(file);
                 let shard_start = payload.len();
-                wincode::config::serialize_into(&mut payload, &shard, Self::wincode_config())
-                    .map_err(|error| anyhow::anyhow!("{error}"))
-                    .context("while attempting to serialize package cache Body IR file shard")?;
+                if crate_bodies.has_cached_payload() {
+                    // Exact on-demand materialization leaves sibling bodies in their old artifact.
+                    // Copy those validated encoded ranges directly rather than constructing large
+                    // resident arenas solely so this package-shaped artifact can be rewritten.
+                    let read_cached_shard = read_cached_shard.as_mut().with_context(|| {
+                        format!(
+                            "Body IR crate {crate_idx} uses a cached payload without a shard source"
+                        )
+                    })?;
+                    let bytes = read_cached_shard(crate_id, file).with_context(|| {
+                        format!(
+                            "while attempting to copy cached Body IR file {:?} for crate {crate_idx}",
+                            file,
+                        )
+                    })?;
+                    anyhow::ensure!(
+                        bytes.len() <= PACKAGE_CACHE_DECODE_LIMIT_BYTES,
+                        "package cache Body IR payload has {} bytes, limit is {PACKAGE_CACHE_DECODE_LIMIT_BYTES}",
+                        bytes.len(),
+                    );
+                    payload.extend_from_slice(&bytes);
+                } else {
+                    let shard = crate_bodies.file_shard(file).with_context(|| {
+                        format!(
+                            "while attempting to build Body IR file {:?} for crate {crate_idx}",
+                            file,
+                        )
+                    })?;
+                    wincode::config::serialize_into(&mut payload, &shard, Self::wincode_config())
+                        .map_err(|error| anyhow::anyhow!("{error}"))
+                        .context(
+                            "while attempting to serialize package cache Body IR file shard",
+                        )?;
+                }
                 files.push(BodyFileCacheRange {
                     file,
                     range: Self::body_payload_range(shard_start, payload.len())?,
                 });
             }
-            crates.push(CrateBodyCacheLayout {
-                item_lookup_index,
-                files,
-            });
+            crates.push(CrateBodyCacheLayout { files });
         }
 
         // 3. The physical directory can be encoded only after every payload range is known.
@@ -299,13 +322,6 @@ impl PackageCacheCodec {
         })
     }
 
-    /// Decode one item lookup index from its validated range.
-    pub(crate) fn decode_item_lookup_index(bytes: &[u8]) -> anyhow::Result<ItemLookupIndex> {
-        wincode::config::deserialize_exact::<ItemLookupIndex, _>(bytes, Self::wincode_config())
-            .map_err(|error| anyhow::anyhow!("{error}"))
-            .context("while attempting to deserialize package cache item lookup index")
-    }
-
     /// Decode one file shard and verify that it contains exactly the bodies assigned to that file.
     pub(crate) fn decode_body_file_shard(
         bytes: &[u8],
@@ -377,9 +393,7 @@ impl PackageCacheCodec {
     ) -> anyhow::Result<()> {
         let mut next_offset = 0_u64;
         for crate_layout in &manifest.crates {
-            let ranges = std::iter::once(crate_layout.item_lookup_index)
-                .chain(crate_layout.files.iter().map(|file| file.range));
-            for range in ranges {
+            for range in crate_layout.files.iter().map(|file| file.range) {
                 anyhow::ensure!(
                     range.offset == next_offset,
                     "package cache Body IR payload range starts at byte {}, expected {next_offset}",

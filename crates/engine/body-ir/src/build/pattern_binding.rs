@@ -17,7 +17,7 @@ use rg_ir_model::{
 };
 use rg_item_tree::{FieldList, SelfParamKind, TypeRef};
 use rg_package_store::PackageStoreError;
-use rg_semantic_ir::{ItemLookupIndex, ItemStoreSource};
+use rg_semantic_ir::{ItemLookupQuery, ItemStoreSource};
 use rg_ty::{ExpectedAdtTyExt, ReferencePeelingCandidates, TraitSelectionSession, Ty};
 
 use crate::{
@@ -38,7 +38,7 @@ use super::lower::{LoweredBodyData, PendingBindingResolution};
 pub(crate) struct PatternBindingMaterializationPass<'query, 'body, D, I> {
     def_maps: &'query D,
     item_stores: &'query I,
-    item_lookup_index: &'query ItemLookupIndex,
+    item_lookup_query: &'query ItemLookupQuery<'query>,
     body_ref: rg_ir_model::BodyRef,
     trait_selection: &'query TraitSelectionSession,
     body: &'body mut LoweredBodyData,
@@ -52,7 +52,7 @@ where
     pub(crate) fn new(
         def_maps: &'query D,
         item_stores: &'query I,
-        item_lookup_index: &'query ItemLookupIndex,
+        item_lookup_query: &'query ItemLookupQuery<'query>,
         body_ref: rg_ir_model::BodyRef,
         body: &'body mut LoweredBodyData,
         trait_selection: &'query TraitSelectionSession,
@@ -60,7 +60,7 @@ where
         Self {
             def_maps,
             item_stores,
-            item_lookup_index,
+            item_lookup_query,
             body_ref,
             trait_selection,
             body,
@@ -73,7 +73,7 @@ where
             self.item_stores,
             self.body_ref,
             self.body.body(),
-            self.item_lookup_index,
+            self.item_lookup_query,
             self.trait_selection.clone(),
         )
     }

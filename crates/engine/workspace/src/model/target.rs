@@ -46,6 +46,15 @@ pub enum TargetKind {
 }
 
 impl TargetKind {
+    /// Returns whether this target belongs to ordinary eager semantic analysis.
+    ///
+    /// Libraries, proc macros, and binaries are the targets users most often edit directly.
+    /// Tests, benches, examples, build scripts, and unknown Cargo target kinds are secondary
+    /// targets that can be materialized when a query actually needs them.
+    pub fn is_primary_analysis_target(&self) -> bool {
+        matches!(self, Self::Lib | Self::ProcMacro | Self::Bin)
+    }
+
     pub fn is_lib(&self) -> bool {
         matches!(self, Self::Lib | Self::ProcMacro)
     }

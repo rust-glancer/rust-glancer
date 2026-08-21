@@ -1,4 +1,5 @@
 mod current_body;
+mod split_indexing;
 mod utils;
 
 use std::{
@@ -1046,7 +1047,7 @@ pub fn second() -> usize {
     project
         .split_indexing()
         .materialize(AnalysisSurface::Files(&[(
-            lib_context.package,
+            lib_context.crates[0],
             lib_context.file,
         )]))
         .expect("lib file deferred analysis should materialize");
@@ -1081,7 +1082,7 @@ pub fn second() -> usize {
     project
         .split_indexing()
         .materialize(AnalysisSurface::Files(&[(
-            other_context.package,
+            other_context.crates[0],
             other_context.file,
         )]))
         .expect("other file deferred analysis should materialize");
@@ -1181,7 +1182,7 @@ pub fn demo(user: User) -> usize {
 
     let search_body_files = search_files
         .iter()
-        .map(|file| (file.crate_ref.package, file.file_id))
+        .map(|file| (file.crate_ref, file.file_id))
         .collect::<Vec<_>>();
     project
         .split_indexing()
@@ -1446,7 +1447,7 @@ pub fn helper() -> usize {
     project
         .split_indexing()
         .materialize(AnalysisSurface::Files(&[(
-            lib_context.package,
+            lib_context.crates[0],
             lib_context.file,
         )]))
         .expect("lib file deferred analysis should materialize");
@@ -1457,7 +1458,7 @@ pub fn helper() -> usize {
     project
         .split_indexing()
         .materialize(AnalysisSurface::Files(&[(
-            helper_context.package,
+            helper_context.crates[0],
             helper_context.file,
         )]))
         .expect("helper deferred indexing should apply residency");
@@ -1529,7 +1530,7 @@ pub fn value() -> usize {
 
     project
         .split_indexing()
-        .materialize(AnalysisSurface::Files(&[(context.package, context.file)]))
+        .materialize(AnalysisSurface::Files(&[(target, context.file)]))
         .expect("file-local preparation should treat finished offloaded payload as ready");
     assert!(
         project

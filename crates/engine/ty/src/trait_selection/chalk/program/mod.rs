@@ -32,7 +32,7 @@ use rg_ir_model::{
     FunctionRef, GenericDefRef, ImplRef, OpaqueTyRef, TraitDefRef, TypeAliasRef, TypeDefRef,
 };
 use rg_item_tree::LangItem;
-use rg_semantic_ir::{CrateItemQuery, ItemLookupIndex, ItemStoreSource};
+use rg_semantic_ir::{CrateItemQuery, ItemLookupQuery, ItemStoreSource};
 use rg_std::UniqueVec;
 use rg_text::Name;
 
@@ -93,7 +93,7 @@ struct ChalkProgramScope {
     loaded_opaque_owners: UniqueVec<GenericDefRef>,
 }
 
-/// Materialized Chalk datums and the lookup indexes needed by Chalk's database callbacks.
+/// Materialized Chalk datums and the lookup tables needed by Chalk's database callbacks.
 ///
 /// The program only contains definitions reachable from goals seen by its solver. Once a trait is
 /// materialized, however, all of its visible impls are added together so extending the program
@@ -127,12 +127,12 @@ struct ChalkKnownItems {
 }
 
 impl ChalkKnownItems {
-    fn from_index(index: &ItemLookupIndex) -> Self {
+    fn from_lookup(item_lookup: &ItemLookupQuery<'_>) -> Self {
         Self {
-            fn_trait: index.lang_trait(LangItem::Fn),
-            fn_mut_trait: index.lang_trait(LangItem::FnMut),
-            fn_once_trait: index.lang_trait(LangItem::FnOnce),
-            fn_once_output: index.lang_type_alias(LangItem::FnOnceOutput),
+            fn_trait: item_lookup.lang_trait(LangItem::Fn),
+            fn_mut_trait: item_lookup.lang_trait(LangItem::FnMut),
+            fn_once_trait: item_lookup.lang_trait(LangItem::FnOnce),
+            fn_once_output: item_lookup.lang_type_alias(LangItem::FnOnceOutput),
         }
     }
 
@@ -180,7 +180,7 @@ impl ChalkProgramState {
         &mut self,
         item_paths: &ItemPathQuery<'query, D, I>,
         crate_items: &CrateItemQuery<'query, D, I>,
-        lookup_index: &ItemLookupIndex,
+        item_lookup: &ItemLookupQuery<'_>,
         session: &TraitSelectionSession,
         clauses: &[Clause],
         table: Option<&InferenceTable>,
@@ -191,7 +191,7 @@ impl ChalkProgramState {
     {
         let mut roots = ChalkProgramRoots::default();
         roots.collect_clauses(item_paths, clauses, table)?;
-        self.ensure_roots(item_paths, crate_items, lookup_index, session, &roots)
+        self.ensure_roots(item_paths, crate_items, item_lookup, session, &roots)
     }
 
     /// Make every definition reachable from this projection goal available to Chalk.
@@ -200,7 +200,7 @@ impl ChalkProgramState {
         &mut self,
         item_paths: &ItemPathQuery<'query, D, I>,
         crate_items: &CrateItemQuery<'query, D, I>,
-        lookup_index: &ItemLookupIndex,
+        item_lookup: &ItemLookupQuery<'_>,
         session: &TraitSelectionSession,
         goal: &TraitGoal,
         associated_ty: TypeAliasRef,
@@ -213,14 +213,14 @@ impl ChalkProgramState {
         let mut roots = ChalkProgramRoots::default();
         roots.collect_goal(item_paths, goal, table)?;
         roots.collect_associated_ty(item_paths, associated_ty)?;
-        self.ensure_roots(item_paths, crate_items, lookup_index, session, &roots)
+        self.ensure_roots(item_paths, crate_items, item_lookup, session, &roots)
     }
 
     fn ensure_roots<'query, D, I>(
         &mut self,
         item_paths: &ItemPathQuery<'query, D, I>,
         crate_items: &CrateItemQuery<'query, D, I>,
-        lookup_index: &ItemLookupIndex,
+        item_lookup: &ItemLookupQuery<'_>,
         session: &TraitSelectionSession,
         roots: &ChalkProgramRoots,
     ) -> Result<ProgramAvailability, I::Error>
@@ -235,7 +235,7 @@ impl ChalkProgramState {
             let result = self.program.extend(
                 item_paths,
                 crate_items,
-                lookup_index,
+                item_lookup,
                 session,
                 &pending_roots,
             );

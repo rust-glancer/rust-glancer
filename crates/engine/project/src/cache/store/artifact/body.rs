@@ -2,7 +2,7 @@
 //!
 //! The outer artifact layout gives the reader one large Body IR range. The first Body IR request
 //! reads a fixed nested prefix and the manifest following it, then caches the validated directory
-//! in `body_index`. Later requests use that directory to read one item lookup index or file shard.
+//! in `body_index`. Later requests use that directory to read one file shard.
 //!
 //! Ranges in the decoded index are relative to the Body IR section. `read_body_range` checks them
 //! against that section and translates them into outer-file offsets before using the shared reader.
@@ -12,7 +12,6 @@ use std::time::Instant;
 use rg_body_ir::{BodyFileShard, CrateBodies, PackageBodiesManifest};
 use rg_ir_model::CrateId;
 use rg_parse::FileId;
-use rg_semantic_ir::ItemLookupIndex;
 
 use super::{PackageArtifactReader, PackageCacheReadError};
 use crate::{
@@ -32,29 +31,6 @@ impl PackageArtifactReader {
         &self,
     ) -> Result<PackageBodiesManifest, PackageCacheReadError> {
         Ok(self.body_index()?.manifest().clone())
-    }
-
-    /// Read one item lookup index without reading its bodies.
-    pub(crate) fn read_item_lookup_index(
-        &self,
-        crate_id: CrateId,
-    ) -> Result<ItemLookupIndex, PackageCacheReadError> {
-        let range = self
-            .body_index()?
-            .item_lookup_index_range(crate_id)
-            .ok_or_else(|| {
-                self.decode_error(anyhow::anyhow!(
-                    "Body IR manifest has no item lookup index for {:?}",
-                    crate_id,
-                ))
-            })?;
-        let bytes = self.read_body_range("body_ir.item_lookup_index", range)?;
-        let started = Instant::now();
-        let decoded = self
-            .decode_with_names(|| PackageCacheCodec::decode_item_lookup_index(&bytes))
-            .map_err(|error| self.decode_error(error));
-        metric::CACHE_SECTION_DECODE.record("body_ir.item_lookup_index", started.elapsed());
-        decoded
     }
 
     /// Read one source file's bodies and validate them against the crate manifest.
@@ -91,7 +67,41 @@ impl PackageArtifactReader {
         decoded
     }
 
-    /// Reconstruct a complete resident crate from its index and every declared file shard.
+    /// Read one validated encoded shard for a package artifact rewrite.
+    ///
+    /// Exact target materialization uses this path for untouched siblings. Their logical manifest
+    /// has already been decoded and validated, while their potentially large body arenas never
+    /// need to be reconstructed just to copy the bytes into the replacement package artifact.
+    pub(crate) fn read_encoded_body_file_shard(
+        &self,
+        crate_id: CrateId,
+        file: FileId,
+    ) -> Result<Vec<u8>, PackageCacheReadError> {
+        let index = self.body_index()?;
+        let crate_manifest = index.manifest().crate_manifest(crate_id).ok_or_else(|| {
+            self.decode_error(anyhow::anyhow!(
+                "Body IR manifest has no crate {:?}",
+                crate_id,
+            ))
+        })?;
+        if !crate_manifest.files().contains(&file) {
+            return Err(self.decode_error(anyhow::anyhow!(
+                "Body IR manifest has no file {:?} in crate {:?}",
+                file,
+                crate_id,
+            )));
+        }
+        let range = index.file_range(crate_id, file).ok_or_else(|| {
+            self.decode_error(anyhow::anyhow!(
+                "Body IR directory has no file {:?} in crate {:?}",
+                file,
+                crate_id,
+            ))
+        })?;
+        self.read_body_range("body_ir.file.copy", range)
+    }
+
+    /// Reconstruct a complete resident crate from every declared file shard.
     ///
     /// This is the intentionally broad loading path used when a caller asks for `CrateBodies`
     /// rather than a file-local view.
@@ -106,13 +116,12 @@ impl PackageArtifactReader {
                 crate_id,
             ))
         })?;
-        let item_lookup_index = self.read_item_lookup_index(crate_id)?;
         let shards = crate_manifest
             .files()
             .iter()
             .map(|&file| self.read_body_file_shard(crate_id, file))
             .collect::<Result<Vec<_>, _>>()?;
-        CrateBodies::from_storage_parts(crate_manifest, item_lookup_index, shards)
+        CrateBodies::from_storage_parts(crate_manifest, shards)
             .map_err(|error| self.decode_error(error))
     }
 
