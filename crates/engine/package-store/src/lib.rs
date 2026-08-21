@@ -3,7 +3,9 @@
 //! Package payloads are retained behind `Arc` while resident, and selected slots can be marked as
 //! offloaded after a durable package artifact is written by the project cache layer. Read
 //! transactions can receive a loader for offloaded slots, so callers still work with logical
-//! package slots instead of treating residency as project topology.
+//! package slots instead of treating residency as project topology. A phase may also retain a
+//! compact summary inside an offloaded slot when a query needs metadata without loading the full
+//! payload.
 
 mod error;
 mod loader;
@@ -60,29 +62,58 @@ impl PackageSubset {
 }
 
 /// Package storage keyed by the stable package slots of one workspace snapshot.
+///
+/// `OffloadedState` defaults to `()` for phases that drop their entire payload. A phase with useful
+/// compact state can provide another type, which is then stored directly in the offloaded variant
+/// instead of in a separately synchronized side table.
 // Dev note: we intentionally do not expose convenience methods like `resident_packages`,
 // since they would give an interface over `&T` or `&mut T`, they are prone for hard-to-find
 // bugs; instead, we expose verbose APIs to force caller to think about the state of the
 // package entry.
 // tl;dr: we don't want to make an illusion of "here are all the packages" while returning
 // _not_ all the packages.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct PackageStore<T> {
-    packages: Vec<PackageEntry<T>>,
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PackageStore<T, OffloadedState = ()> {
+    packages: Vec<PackageEntry<T, OffloadedState>>,
+}
+
+// An empty store does not need an empty payload or offloaded-state value. Keeping this impl
+// unconditional lets phase-specific metadata omit `Default` when an empty summary would be invalid.
+impl<T, OffloadedState> Default for PackageStore<T, OffloadedState> {
+    fn default() -> Self {
+        Self {
+            packages: Vec::new(),
+        }
+    }
 }
 
 impl<T> PackageStore<T> {
-    /// Freezes freshly built package payloads into the retained store.
+    /// Freezes phase payloads into a store whose offloaded entries retain no extra state.
     pub fn from_vec(packages: Vec<T>) -> Self {
-        Self::from_entries(packages.into_iter().map(PackageEntry::resident).collect())
+        Self::from_resident_packages(packages)
+    }
+}
+
+impl<T, OffloadedState> PackageStore<T, OffloadedState> {
+    /// Freezes freshly built payloads into a store with this phase's offloaded-state type.
+    pub fn from_resident_packages(packages: Vec<T>) -> Self {
+        Self::from_entries(
+            packages
+                .into_iter()
+                .map(|package| PackageEntry {
+                    state: PackageEntryState::Resident(Arc::new(package)),
+                })
+                .collect(),
+        )
     }
 
     /// Builds a store from explicit resident/offloaded package entries.
     ///
-    /// Fresh builds usually start from `from_vec` and then offload selected slots after durable
-    /// artifacts are written. Startup-cache loading already knows the final residency decision, so
-    /// it can build the same logical store shape without first materializing every package.
-    pub fn from_entries(packages: Vec<PackageEntry<T>>) -> Self {
+    /// Fresh builds usually start through one of the resident constructors and then offload
+    /// selected slots after durable artifacts are written. Startup-cache loading already knows the
+    /// final residency decision, so it can build the same logical store shape without first
+    /// materializing every package.
+    pub fn from_entries(packages: Vec<PackageEntry<T, OffloadedState>>) -> Self {
         Self { packages }
     }
 
@@ -95,17 +126,19 @@ impl<T> PackageStore<T> {
     }
 
     /// Returns one raw package storage entry by package slot.
-    pub fn raw_entry(&self, package: PackageSlot) -> Option<&PackageEntry<T>> {
+    pub fn raw_entry(&self, package: PackageSlot) -> Option<&PackageEntry<T, OffloadedState>> {
         self.packages.get(package.0)
     }
 
     /// Iterates over all raw package storage entries, including offloaded slots.
-    pub fn raw_entries(&self) -> impl Iterator<Item = &PackageEntry<T>> + '_ {
+    pub fn raw_entries(&self) -> impl Iterator<Item = &PackageEntry<T, OffloadedState>> + '_ {
         self.packages.iter()
     }
 
     /// Iterates over all raw package storage entries together with their original package slots.
-    pub fn raw_entries_with_slots(&self) -> impl Iterator<Item = (PackageSlot, &PackageEntry<T>)> {
+    pub fn raw_entries_with_slots(
+        &self,
+    ) -> impl Iterator<Item = (PackageSlot, &PackageEntry<T, OffloadedState>)> {
         self.packages
             .iter()
             .enumerate()
@@ -113,7 +146,9 @@ impl<T> PackageStore<T> {
     }
 
     /// Iterates over all mutable raw package storage entries, including offloaded slots.
-    pub fn raw_entries_mut(&mut self) -> impl Iterator<Item = &mut PackageEntry<T>> + '_ {
+    pub fn raw_entries_mut(
+        &mut self,
+    ) -> impl Iterator<Item = &mut PackageEntry<T, OffloadedState>> + '_ {
         self.packages.iter_mut()
     }
 
@@ -161,14 +196,24 @@ impl<T> PackageStore<T> {
     /// Replaces one package payload while preserving all other cloned snapshot entries.
     pub fn replace(&mut self, package: PackageSlot, value: T) -> Option<()> {
         let slot = self.packages.get_mut(package.0)?;
-        *slot = PackageEntry::resident(value);
+        *slot = PackageEntry {
+            state: PackageEntryState::Resident(Arc::new(value)),
+        };
         Some(())
     }
 
     /// Drops one resident payload after a durable package artifact has been written.
-    pub fn offload(&mut self, package: PackageSlot) -> Option<()> {
+    pub fn offload(&mut self, package: PackageSlot) -> Option<()>
+    where
+        OffloadedState: Default,
+    {
+        self.offload_with(package, OffloadedState::default())
+    }
+
+    /// Drops one resident payload while retaining a small phase-specific summary in its slot.
+    pub fn offload_with(&mut self, package: PackageSlot, state: OffloadedState) -> Option<()> {
         let slot = self.packages.get_mut(package.0)?;
-        *slot = PackageEntry::offloaded();
+        *slot = PackageEntry::offloaded_with(state);
         Some(())
     }
 
@@ -188,29 +233,36 @@ impl<T> PackageStore<T> {
 
 /// Retained storage state for one package slot.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PackageEntry<T> {
-    state: PackageEntryState<T>,
+pub struct PackageEntry<T, OffloadedState = ()> {
+    state: PackageEntryState<T, OffloadedState>,
 }
 
 /// Internal representation for one package-store entry.
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum PackageEntryState<T> {
+enum PackageEntryState<T, OffloadedState> {
     Resident(Arc<T>),
-    Offloaded,
+    Offloaded(OffloadedState),
 }
 
 impl<T> PackageEntry<T> {
-    /// Creates an immediately available package payload.
+    /// Creates an immediately available package payload with no extra offloaded state.
     pub fn resident(package: T) -> Self {
         Self {
             state: PackageEntryState::Resident(Arc::new(package)),
         }
     }
 
-    /// Creates a package slot that must be materialized through the read transaction loader.
+    /// Creates a lazy package slot that retains no state beyond its package identity.
     pub fn offloaded() -> Self {
+        Self::offloaded_with(())
+    }
+}
+
+impl<T, OffloadedState> PackageEntry<T, OffloadedState> {
+    /// Creates a lazy package slot with a small summary that remains directly queryable.
+    pub fn offloaded_with(state: OffloadedState) -> Self {
         Self {
-            state: PackageEntryState::Offloaded,
+            state: PackageEntryState::Offloaded(state),
         }
     }
 
@@ -218,7 +270,7 @@ impl<T> PackageEntry<T> {
     pub fn as_resident(&self) -> Option<&T> {
         match &self.state {
             PackageEntryState::Resident(package) => Some(package.as_ref()),
-            PackageEntryState::Offloaded => None,
+            PackageEntryState::Offloaded(_) => None,
         }
     }
 
@@ -226,20 +278,28 @@ impl<T> PackageEntry<T> {
     pub fn resident_arc(&self) -> Option<Arc<T>> {
         match &self.state {
             PackageEntryState::Resident(package) => Some(Arc::clone(package)),
-            PackageEntryState::Offloaded => None,
+            PackageEntryState::Offloaded(_) => None,
+        }
+    }
+
+    /// Returns the compact state retained in place of an offloaded package payload.
+    pub fn as_offloaded(&self) -> Option<&OffloadedState> {
+        match &self.state {
+            PackageEntryState::Resident(_) => None,
+            PackageEntryState::Offloaded(state) => Some(state),
         }
     }
 
     /// Returns whether this slot has been intentionally dropped from resident memory.
     pub fn is_offloaded(&self) -> bool {
-        matches!(self.state, PackageEntryState::Offloaded)
+        matches!(self.state, PackageEntryState::Offloaded(_))
     }
 
     /// Returns unique mutable access to the resident payload, if no cloned snapshot shares it.
     pub fn as_resident_unique_mut(&mut self) -> Option<&mut T> {
         match &mut self.state {
             PackageEntryState::Resident(package) => Arc::get_mut(package),
-            PackageEntryState::Offloaded => None,
+            PackageEntryState::Offloaded(_) => None,
         }
     }
 
@@ -249,14 +309,15 @@ impl<T> PackageEntry<T> {
     {
         match &mut self.state {
             PackageEntryState::Resident(package) => Some(Arc::make_mut(package)),
-            PackageEntryState::Offloaded => None,
+            PackageEntryState::Offloaded(_) => None,
         }
     }
 }
 
-impl<T> Shrink for PackageStore<T>
+impl<T, OffloadedState> Shrink for PackageStore<T, OffloadedState>
 where
     T: Shrink,
+    OffloadedState: Shrink,
 {
     fn shrink_to_fit(&mut self) {
         self.packages.shrink_to_fit();
@@ -266,36 +327,45 @@ where
     }
 }
 
-impl<T> Shrink for PackageEntry<T>
+impl<T, OffloadedState> Shrink for PackageEntry<T, OffloadedState>
 where
     T: Shrink,
+    OffloadedState: Shrink,
 {
     fn shrink_to_fit(&mut self) {
         // Resident payloads may be shared with older snapshots or read transactions. Compacting
         // only uniquely-owned payloads preserves copy-on-write sharing instead of cloning data
         // just to release spare capacity.
-        if let Some(package) = self.as_resident_unique_mut() {
-            Shrink::shrink_to_fit(package);
+        match &mut self.state {
+            PackageEntryState::Resident(package) => {
+                if let Some(package) = Arc::get_mut(package) {
+                    Shrink::shrink_to_fit(package);
+                }
+            }
+            PackageEntryState::Offloaded(state) => Shrink::shrink_to_fit(state),
         }
     }
 }
 
-impl<T> MemorySize for PackageStore<T>
+impl<T, OffloadedState> MemorySize for PackageStore<T, OffloadedState>
 where
     T: MemorySize,
+    OffloadedState: MemorySize,
 {
     fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
         self.packages.record_memory_children(recorder);
     }
 }
 
-impl<T> MemorySize for PackageEntry<T>
+impl<T, OffloadedState> MemorySize for PackageEntry<T, OffloadedState>
 where
     T: MemorySize,
+    OffloadedState: MemorySize,
 {
     fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
-        if let PackageEntryState::Resident(package) = &self.state {
-            package.record_memory_children(recorder);
+        match &self.state {
+            PackageEntryState::Resident(package) => package.record_memory_children(recorder),
+            PackageEntryState::Offloaded(state) => state.record_memory_children(recorder),
         }
     }
 }
@@ -364,6 +434,31 @@ mod tests {
             vec![(0, "workspace"), (1, "dependency")]
         );
         assert_eq!(changed_residents, vec![(0, "workspace"), (1, "rebuilt")]);
+    }
+
+    #[test]
+    fn offloaded_entries_keep_phase_specific_state() {
+        let mut store: PackageStore<&str, &str> =
+            PackageStore::from_resident_packages(vec!["resident bodies"]);
+        store
+            .offload_with(PackageSlot(0), "complete coverage")
+            .expect("package slot should exist");
+
+        assert_eq!(
+            store
+                .raw_entry(PackageSlot(0))
+                .and_then(PackageEntry::as_offloaded),
+            Some(&"complete coverage"),
+        );
+
+        store
+            .replace(PackageSlot(0), "resident bodies")
+            .expect("package slot should exist");
+        let resident = store
+            .raw_entry(PackageSlot(0))
+            .expect("package slot should exist");
+        assert_eq!(resident.as_resident(), Some(&"resident bodies"));
+        assert!(resident.as_offloaded().is_none());
     }
 
     #[test]

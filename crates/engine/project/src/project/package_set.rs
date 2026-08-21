@@ -18,12 +18,6 @@ pub(super) struct PhasePackageSet {
 }
 
 impl PhasePackageSet {
-    pub(super) fn all(package_count: usize) -> Self {
-        Self {
-            packages: (0..package_count).map(PackageSlot).collect(),
-        }
-    }
-
     pub(super) fn from_packages(packages: Vec<PackageSlot>) -> Self {
         Self { packages }
     }
@@ -97,22 +91,10 @@ mod tests {
 
     #[test]
     fn package_sets_project_to_package_indices() {
-        let cases = [
-            ("all packages", PhasePackageSet::all(3), vec![0, 1, 2]),
-            (
-                "explicit package order",
-                PhasePackageSet::from_packages(vec![
-                    PackageSlot(3),
-                    PackageSlot(1),
-                    PackageSlot(4),
-                ]),
-                vec![3, 1, 4],
-            ),
-        ];
+        let packages =
+            PhasePackageSet::from_packages(vec![PackageSlot(3), PackageSlot(1), PackageSlot(4)]);
 
-        for (case, set, expected_indices) in cases {
-            assert_eq!(set.package_indices(), expected_indices, "{case}");
-        }
+        assert_eq!(packages.package_indices(), vec![3, 1, 4]);
     }
 
     #[test]

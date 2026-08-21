@@ -12,7 +12,7 @@ mod shard;
 
 pub use self::{
     body_local_items::BodyLocalItems,
-    coverage::{CrateBodiesCoverage, CrateBodiesStatus},
+    coverage::{CrateBodiesCoverage, CrateBodiesStatus, PackageBodiesCoverage},
     resident::{CrateBodies, PackageBodies},
     shard::{BodyFileEntry, BodyFileShard, CrateBodiesManifest, PackageBodiesManifest},
 };

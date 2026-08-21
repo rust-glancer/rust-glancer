@@ -450,6 +450,18 @@ fn offloaded_secondary_target_materialization_rewrites_exact_cached_coverage() {
             .package_is_offloaded(first_test.package),
         "improved package should return to lazy residency after rewriting its artifact",
     );
+    assert!(
+        !project
+            .split_indexing()
+            .needs_materialization(AnalysisSurface::Crates(&[first_test])),
+        "materialized target coverage should remain available after offloading",
+    );
+    assert!(
+        project
+            .split_indexing()
+            .needs_materialization(AnalysisSurface::Crates(&[second_test])),
+        "an untouched sibling target should remain deferred",
+    );
 
     let cached_package = project
         .state
@@ -472,26 +484,57 @@ fn offloaded_secondary_target_materialization_rewrites_exact_cached_coverage() {
         "rewriting one cached test must leave its sibling deferred",
     );
 
-    let header = project
-        .state
-        .cache_plan
-        .artifact_header(
-            first_test.package,
-            &project.state.package_source_fingerprints,
-        )
-        .expect("fixture package should still have an artifact header");
-    let reader = project
-        .state
-        .cache_store
-        .open_artifact(&header)
-        .expect("rewritten package artifact should open")
-        .expect("rewritten package artifact should exist");
+    // Inspect the rewritten revision without keeping its reader pinned across the restart below.
+    {
+        let header = project
+            .state
+            .cache_plan
+            .artifact_header(
+                first_test.package,
+                &project.state.package_source_fingerprints,
+            )
+            .expect("fixture package should still have an artifact header");
+        let reader = project
+            .state
+            .cache_store
+            .open_artifact(&header)
+            .expect("rewritten package artifact should open")
+            .expect("rewritten package artifact should exist");
+        assert!(
+            !reader
+                .read_body_crate(library.crate_id)
+                .expect("untouched library Body IR should survive the artifact rewrite")
+                .bodies()
+                .is_empty(),
+            "the copied sibling shard should retain its bodies",
+        );
+    }
+
+    // A new project generation should seed the same decisions from the validated startup probe.
+    // In particular, policy alone cannot tell that one secondary target was explicitly completed.
+    drop(project);
+    let mut restarted = Project::builder(fixture.workspace_metadata())
+        .split_indexing_mode(SplitIndexingMode::EarlyStart)
+        .package_residency_policy(PackageResidencyPolicy::AllOffloadable)
+        .build()
+        .expect("rewritten target coverage should survive a startup cache hit");
     assert!(
-        !reader
-            .read_body_crate(library.crate_id)
-            .expect("untouched library Body IR should survive the artifact rewrite")
-            .bodies()
-            .is_empty(),
-        "the copied sibling shard should retain its bodies",
+        restarted
+            .state
+            .body_ir
+            .package_is_offloaded(first_test.package),
+        "startup cache hit should keep the package payload lazy",
+    );
+    assert!(
+        !restarted
+            .split_indexing()
+            .needs_materialization(AnalysisSurface::Crates(&[first_test])),
+        "startup coverage should remember the completed secondary target",
+    );
+    assert!(
+        restarted
+            .split_indexing()
+            .needs_materialization(AnalysisSurface::Crates(&[second_test])),
+        "startup coverage should preserve the untouched deferred sibling",
     );
 }

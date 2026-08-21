@@ -9,7 +9,7 @@ use wincode::{SchemaRead, SchemaWrite};
 
 use super::{
     BodyLocalItems, CrateBodiesCoverage, CrateBodiesManifest, CrateBodiesStatus,
-    PackageBodiesManifest,
+    PackageBodiesCoverage, PackageBodiesManifest,
 };
 use crate::{BodyData, BodyFacts, BodyView};
 
@@ -32,6 +32,13 @@ impl PackageBodies {
 
     pub fn crate_bodies(&self, crate_id: CrateId) -> Option<&CrateBodies> {
         self.crates.get(crate_id)
+    }
+
+    /// Build the compact coverage directory that remains resident after this payload is offloaded.
+    pub(crate) fn coverage(&self) -> PackageBodiesCoverage {
+        PackageBodiesCoverage::from_crates(
+            self.crates().iter().map(CrateBodies::coverage).collect(),
+        )
     }
 
     /// Build the temporary package overlay used to improve one target in a cached package.

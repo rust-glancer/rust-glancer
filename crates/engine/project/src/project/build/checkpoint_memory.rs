@@ -10,8 +10,9 @@ use rg_text::PackageNameInterners;
 use crate::{
     cache::Fingerprint,
     profile::{BuildMemorySampler, record_build_checkpoint},
-    project::package_set::PhasePackageSet,
 };
+
+use super::phases::PackageBuildPlan;
 
 /// Snapshot of the phase locals that are still alive at a build checkpoint.
 ///
@@ -21,7 +22,7 @@ use crate::{
 pub(super) struct CheckpointMemory<'a> {
     names: Option<&'a PackageNameInterners>,
     parse: Option<&'a ParseDb>,
-    build_plan: Option<&'a PhasePackageSet>,
+    build_plan: Option<&'a PackageBuildPlan>,
     item_tree: Option<&'a ItemTreeDb>,
     source_fingerprints: Option<&'a Vec<Option<Fingerprint>>>,
     def_map: Option<&'a DefMapDb>,
@@ -154,7 +155,7 @@ macro_rules! impl_checkpoint_memory_from {
 
 impl_checkpoint_memory_from!(PackageNameInterners, names);
 impl_checkpoint_memory_from!(ParseDb, parse);
-impl_checkpoint_memory_from!(PhasePackageSet, build_plan);
+impl_checkpoint_memory_from!(PackageBuildPlan, build_plan);
 impl_checkpoint_memory_from!(ItemTreeDb, item_tree);
 impl_checkpoint_memory_from!(Vec<Option<Fingerprint>>, source_fingerprints);
 impl_checkpoint_memory_from!(DefMapDb, def_map);

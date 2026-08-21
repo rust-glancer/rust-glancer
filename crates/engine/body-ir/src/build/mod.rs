@@ -222,9 +222,9 @@ impl<'db, 'names> BodyIrDbPackageRebuilder<'db, 'names> {
         priority_packages: Option<&(dyn Fn() -> Vec<PackageSlot> + Sync)>,
         publish_priority: &(dyn Fn(PackageSlot, PackageBodies) + Sync),
     ) -> anyhow::Result<BodyIrDb> {
-        // 1. Start with the old snapshot so untouched package slots remain shared. The read
-        // transactions may load dependencies from the bounded subset while selected packages are
-        // rebuilt in memory.
+        // 1. Start with the old snapshot so untouched resident payloads remain shared and
+        // offloaded slots keep their coverage summaries. The read transactions may load
+        // dependencies from the bounded subset while selected packages are rebuilt in memory.
         let rebuild_started = Instant::now();
         let clone_started = Instant::now();
         let mut next = self.old.clone();

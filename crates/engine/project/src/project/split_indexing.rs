@@ -93,8 +93,8 @@ impl<'project> SplitIndexing<'project> {
 
     /// Returns whether preparing the requested query surface would replace retained state.
     ///
-    /// Offloaded packages do not need materialization because query transactions can read their
-    /// durable artifacts without replacing retained project state.
+    /// Offloaded payloads keep their compact crate coverage resident, so this decision does not
+    /// need to reopen package artifacts that the eventual query may load separately.
     pub fn needs_materialization(&self, surface: AnalysisSurface<'_>) -> bool {
         match surface {
             AnalysisSurface::Files(files) => files.iter().any(|&(crate_ref, file)| {
@@ -374,10 +374,10 @@ fn materialize_files(state: &mut ProjectState, files: &[(CrateRef, FileId)]) -> 
 
 /// Return whether a file-local query still needs source rebuilding before it can run.
 ///
-/// Non-resident Body IR packages are already backed by durable cache artifacts. Query transactions
-/// can lazy-load them much more cheaply than rebuilding the package from source, so they are ready
-/// for this on-demand path. Resident complete packages are also ready. Partial packages only need a
-/// rebuild when the requested file's bodies are not among the already-materialized bodies.
+/// Offloaded packages use their retained crate coverage: complete targets are ready for lazy query
+/// loading, while deferred targets must first be restored and completed. Resident complete crates
+/// are also ready. Partial crates only need a rebuild when the requested file's bodies are not
+/// among the already-materialized bodies.
 fn body_file_needs_materialization(
     state: &ProjectState,
     crate_ref: CrateRef,
@@ -720,33 +720,11 @@ fn configured_crate_is_finished(
 
 /// Return whether an exact crate request still lacks complete Body IR.
 fn crate_needs_materialization(state: &ProjectState, crate_ref: CrateRef) -> bool {
-    if let Some(crate_bodies) = state
-        .body_ir
-        .resident_package(crate_ref.package)
-        .and_then(|package| package.crate_bodies(crate_ref.crate_id))
-    {
-        return !crate_bodies.coverage().is_complete();
-    }
-    if !state.body_ir.package_is_offloaded(crate_ref.package) {
-        return true;
-    }
-
-    cached_crate_coverage(state, crate_ref)
-        .map(|coverage| !coverage.is_complete())
-        // A missing or corrupt artifact still needs the materialization path so it can report the
-        // typed cache error instead of silently running with absent bodies.
-        .unwrap_or(true)
-}
-
-fn cached_crate_coverage(state: &ProjectState, crate_ref: CrateRef) -> Option<CrateBodiesCoverage> {
-    let cached_package = state.cache_plan.package(crate_ref.package)?;
     state
-        .cache_store
-        .read_probe_for_package(cached_package)
-        .ok()??
-        .body_ir_coverage
-        .get(crate_ref.crate_id.0)
-        .copied()
+        .body_ir
+        .crate_coverage(crate_ref)
+        .map(|coverage| !coverage.is_complete())
+        .unwrap_or(true)
 }
 
 /// Restore the package containers needed to rebuild one target from an offloaded package.

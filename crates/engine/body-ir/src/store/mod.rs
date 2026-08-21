@@ -10,7 +10,8 @@ pub use self::{
     db::{BodyIrDb, BodyIrStats},
     package::{
         BodyFileEntry, BodyFileShard, BodyLocalItems, CrateBodies, CrateBodiesCoverage,
-        CrateBodiesManifest, CrateBodiesStatus, PackageBodies, PackageBodiesManifest,
+        CrateBodiesManifest, CrateBodiesStatus, PackageBodies, PackageBodiesCoverage,
+        PackageBodiesManifest,
     },
     txn::{BodyIrLoader, BodyIrReadTxn, LoadBodyIr},
 };
