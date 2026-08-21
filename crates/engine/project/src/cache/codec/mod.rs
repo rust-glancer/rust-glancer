@@ -25,6 +25,8 @@
 use anyhow::Context as _;
 use rg_body_ir::PackageBodies;
 use rg_def_map::PackageDefMaps as DefMapPackage;
+use rg_ir_model::CrateId;
+use rg_parse::FileId;
 use rg_semantic_ir::PackageIr;
 use wincode::{SchemaRead, SchemaWrite};
 
@@ -43,7 +45,7 @@ pub(crate) const PACKAGE_CACHE_CONTAINER_PREFIX_BYTES: usize = 8 + 4 * size_of::
 
 // Protect one decoded allocation from corrupted lengths while leaving ample room for realistic
 // phase payloads. Body IR is a nested lazy container, so its aggregate section may exceed this;
-// its manifest and every independently decoded lookup index or file shard remain bounded.
+// its manifest and every independently decoded file shard remain bounded.
 const PACKAGE_CACHE_DECODE_LIMIT_BYTES: usize = 256 * 1024 * 1024;
 
 type PackageCacheWincodeConfig =
@@ -231,7 +233,27 @@ impl PackageCacheCodec {
     ) -> anyhow::Result<EncodedPackageCacheArtifact> {
         let probe = PackageCacheProbe::from_write_input(input);
         Self::validate_write_input(input, &probe)?;
+        let body_ir = Self::encode_body_ir(input.body_ir)?;
+        Self::encode_write_input_sections(input, probe, body_ir)
+    }
 
+    /// Encode a package overlay while copying cached sibling Body IR shards verbatim.
+    pub(crate) fn encode_write_input_reusing_cached_body_ir(
+        input: PackageCacheWriteInput<'_>,
+        mut read_cached_shard: impl FnMut(CrateId, FileId) -> anyhow::Result<Vec<u8>>,
+    ) -> anyhow::Result<EncodedPackageCacheArtifact> {
+        let probe = PackageCacheProbe::from_write_input(input);
+        Self::validate_write_input(input, &probe)?;
+        let body_ir =
+            Self::encode_body_ir_reusing_cached_shards(input.body_ir, &mut read_cached_shard)?;
+        Self::encode_write_input_sections(input, probe, body_ir)
+    }
+
+    fn encode_write_input_sections(
+        input: PackageCacheWriteInput<'_>,
+        probe: PackageCacheProbe,
+        body_ir: EncodedBodyIr,
+    ) -> anyhow::Result<EncodedPackageCacheArtifact> {
         // Encode every phase separately. The resulting lengths become the fixed outer directory,
         // so readers can later decode one phase without walking through the preceding phases.
         let probe = wincode::config::serialize(&probe, Self::wincode_config())
@@ -243,7 +265,6 @@ impl PackageCacheCodec {
         let semantic_ir = wincode::config::serialize(input.semantic_ir, Self::wincode_config())
             .map_err(|error| anyhow::anyhow!("{error}"))
             .context("while attempting to serialize package cache semantic IR section")?;
-        let body_ir = Self::encode_body_ir(input.body_ir)?;
 
         // The prefix is built only after every section has a final length.
         let prefix = PackageCacheLayout::encode_prefix([

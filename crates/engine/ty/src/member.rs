@@ -145,7 +145,7 @@ where
         receiver_ty: &AdtTy,
     ) -> Result<UniqueVec<FunctionRef>, D::Error> {
         self.context
-            .lookup_index()
+            .item_lookup()
             .inherent_functions_for_type(self.context.item_paths().items(), receiver_ty.def)
     }
 }

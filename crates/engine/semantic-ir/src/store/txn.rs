@@ -1,6 +1,6 @@
 //! Read transactions over frozen Semantic IR package data.
 
-use crate::{ItemStore, ItemStoreSource};
+use crate::{ItemLookupIndex, ItemLookupIndexSource, ItemStore, ItemStoreSource};
 use rg_def_map::PackageSlot;
 use rg_ir_model::{CrateRef, DefMapRef};
 use rg_package_store::{PackageStoreError, PackageStoreReadTxn};
@@ -25,6 +25,18 @@ impl<'db> SemanticIrReadTxn<'db> {
     pub fn items(&self, crate_ref: CrateRef) -> Result<Option<&ItemStore>, PackageStoreError> {
         let package = self.package(crate_ref.package)?;
         Ok(package.crate_items(crate_ref.crate_id))
+    }
+
+    /// Return the declaration-local lookup index for one semantic crate.
+    ///
+    /// This access does not compose visible dependencies. Callers that perform use-site lookup pass
+    /// the returned indexes through [`crate::ItemLookupQuery`].
+    pub fn item_lookup_index(
+        &self,
+        crate_ref: CrateRef,
+    ) -> Result<Option<&ItemLookupIndex>, PackageStoreError> {
+        let package = self.package(crate_ref.package)?;
+        Ok(package.crate_lookup_index(crate_ref.crate_id))
     }
 
     pub fn included_stores(&self) -> Result<Vec<&ItemStore>, PackageStoreError> {
@@ -53,5 +65,14 @@ impl<'a, 'db> ItemStoreSource<'a> for &'a SemanticIrReadTxn<'db> {
 
     fn included_stores(&self) -> Result<Vec<&'a ItemStore>, Self::Error> {
         (*self).included_stores()
+    }
+}
+
+impl<'a, 'db> ItemLookupIndexSource<'a> for &'a SemanticIrReadTxn<'db> {
+    fn item_lookup_index(
+        &self,
+        crate_ref: CrateRef,
+    ) -> Result<Option<&'a ItemLookupIndex>, PackageStoreError> {
+        (*self).item_lookup_index(crate_ref)
     }
 }

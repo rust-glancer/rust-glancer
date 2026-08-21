@@ -11,10 +11,10 @@ use rg_ir_model::{
 };
 use rg_item_tree::{FieldList, GenericParams};
 
-use super::ItemStoreSource;
+use super::{ItemLookupIndexSource, ItemStoreSource};
 use crate::{
-    ConstData, EnumData, EnumVariantData, FieldData, FunctionData, ImplData, ItemStore,
-    SemanticItemView, StaticData, TraitData, TypeAliasData, TypePathContext,
+    ConstData, EnumData, EnumVariantData, FieldData, FunctionData, ImplData, ItemLookupIndex,
+    ItemStore, SemanticItemView, StaticData, TraitData, TypeAliasData, TypePathContext,
 };
 
 /// Shared item queries over any storage that can route `DefMapRef` origins to item stores.
@@ -68,6 +68,27 @@ where
             if let Some(store) = self.item_store_for_origin(DefMapRef::Crate(*crate_ref))? {
                 stores.push(store);
             }
+        }
+        Ok(stores)
+    }
+
+    /// Returns declaration stores and their aligned local lookup indexes for exact crates.
+    pub fn indexed_stores_for_crates(
+        &self,
+        crates: &[CrateRef],
+    ) -> Result<Vec<(&'a ItemStore, &'a ItemLookupIndex)>, S::Error>
+    where
+        S: ItemLookupIndexSource<'a>,
+    {
+        let mut stores = Vec::new();
+        for crate_ref in crates {
+            let Some(store) = self.item_store_for_origin(DefMapRef::Crate(*crate_ref))? else {
+                continue;
+            };
+            let Some(index) = self.source.item_lookup_index(*crate_ref)? else {
+                continue;
+            };
+            stores.push((store, index));
         }
         Ok(stores)
     }

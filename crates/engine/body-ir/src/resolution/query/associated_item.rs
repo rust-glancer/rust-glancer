@@ -474,7 +474,7 @@ where
 
         self.associated_const_candidate_for_impls(
             self.context
-                .item_lookup_index()
+                .item_lookup_query()
                 .inherent_impls_for_type(ty.def),
             ty,
             name,
@@ -504,7 +504,7 @@ where
 
         let semantic_trait_impls = self
             .context
-            .item_lookup_index()
+            .item_lookup_query()
             .trait_impls_for_type(ty.def);
         self.push_trait_associated_const_candidates_for_impls(
             &mut items,
@@ -629,7 +629,7 @@ where
         Ok(consts)
     }
 
-    /// Read crate-visible inherent functions from the persisted lookup index.
+    /// Read crate-visible inherent functions from the semantic lookup query.
     fn semantic_inherent_fn_defs_for_type(
         &self,
         ty: &AdtTy,
@@ -637,10 +637,8 @@ where
     ) -> Result<UniqueVec<FunctionRef>, PackageStoreError> {
         Ok(self
             .context
-            .item_lookup_index()
-            .inherent_functions_for_type_and_name(ty.def, name)
-            .cloned()
-            .unwrap_or_default())
+            .item_lookup_query()
+            .inherent_functions_for_type_and_name(ty.def, name))
     }
 
     /// Add a function only if it is static and has the requested name.

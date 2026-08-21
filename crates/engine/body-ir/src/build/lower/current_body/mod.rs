@@ -25,7 +25,7 @@ use rg_ir_model::{
     TraitDefRef,
 };
 use rg_parse::{CurrentSource, DeclarationAssociationIndex, FileId, Span, TextSpan};
-use rg_semantic_ir::{ItemLookupIndex, ItemStoreQuery};
+use rg_semantic_ir::{CrateItemQuery, ItemLookupQuery, ItemLookupQueryCache, ItemStoreQuery};
 use rg_std::ExpectedUnique;
 use rg_text::NameInterner;
 use rg_ty::TraitSelectionSession;
@@ -100,7 +100,7 @@ pub struct CurrentBodyBuilder<'source, 'db> {
     file: FileId,
     current_source: &'source CurrentSource,
     associations: &'source DeclarationAssociationIndex,
-    supplemental_item_lookup_index: Option<&'source ItemLookupIndex>,
+    item_lookup_cache: ItemLookupQueryCache,
     selection: CurrentBodySelection,
     trait_selection: TraitSelectionSession,
 }
@@ -130,7 +130,7 @@ impl<'source, 'db> CurrentBodyBuilder<'source, 'db> {
         file: FileId,
         current_source: &'source CurrentSource,
         associations: &'source DeclarationAssociationIndex,
-        supplemental_item_lookup_index: Option<&'source ItemLookupIndex>,
+        item_lookup_cache: ItemLookupQueryCache,
         selection: CurrentBodySelection,
     ) -> Self {
         Self {
@@ -142,7 +142,7 @@ impl<'source, 'db> CurrentBodyBuilder<'source, 'db> {
             file,
             current_source,
             associations,
-            supplemental_item_lookup_index,
+            item_lookup_cache,
             selection,
             trait_selection: TraitSelectionSession::new(crate_ref),
         }
@@ -314,11 +314,10 @@ impl<'source, 'db> CurrentBodyBuilder<'source, 'db> {
             roots.iter().map(|root| root.body_ref),
         )?;
 
-        let item_lookup_index = self
-            .saved_body_ir
-            .item_lookup_index(self.crate_ref)?
-            .or(self.supplemental_item_lookup_index)
-            .context("current body has no crate item lookup index")?;
+        let crate_items = CrateItemQuery::new(self.def_map, self.semantic_ir, self.crate_ref);
+        let item_lookup_query =
+            ItemLookupQuery::build_with_cache(&crate_items, &self.item_lookup_cache)
+                .context("build the current body's visible item lookup query")?;
 
         let cfg = self.cfg()?;
         let mut interner = NameInterner::new();
@@ -394,7 +393,7 @@ impl<'source, 'db> CurrentBodyBuilder<'source, 'db> {
         let semantic_timings = build.resolve_semantics(
             self.def_map,
             self.semantic_ir,
-            item_lookup_index,
+            &item_lookup_query,
             &self.trait_selection,
             |stage| {
                 checkpoint(match stage {

@@ -21,8 +21,8 @@ use rg_item_tree::{
 };
 use rg_semantic_ir::{
     CrateItemQuery, FunctionData, FunctionSignature, GenericParamSource, GenericsQuery, ImplData,
-    ItemLookupIndex, ItemStore, ItemStoreBuilder, ItemStoreSource, StructData, TraitData,
-    TypeAliasData, TypeAliasSignature,
+    ItemLookupIndex, ItemLookupIndexSource, ItemLookupQuery, ItemStore, ItemStoreBuilder,
+    ItemStoreSource, StructData, TraitData, TypeAliasData, TypeAliasSignature,
 };
 use rg_std::ExpectedUnique;
 use rg_text::Name;
@@ -56,8 +56,9 @@ impl TraitSelectionFixture {
         TraitSelectionFixtureParser::new(source).parse()
     }
 
-    pub(super) fn lookup_index(&self) -> &ItemLookupIndex {
-        &self.lookup_index
+    pub(super) fn lookup_query(&self) -> ItemLookupQuery<'_> {
+        ItemLookupQuery::build_from(&CrateItemQuery::new(self, self, self.target))
+            .expect("fixture lookup query should build")
     }
 
     fn type_ref_by_name(&self, name: &str) -> Option<TypeDefRef> {
@@ -137,6 +138,15 @@ impl<'a> ItemStoreSource<'a> for &'a TraitSelectionFixture {
 
     fn included_stores(&self) -> Result<Vec<&'a ItemStore>, Self::Error> {
         Ok(vec![&self.store])
+    }
+}
+
+impl<'a> ItemLookupIndexSource<'a> for &'a TraitSelectionFixture {
+    fn item_lookup_index(
+        &self,
+        crate_ref: CrateRef,
+    ) -> Result<Option<&'a ItemLookupIndex>, Self::Error> {
+        Ok((crate_ref == self.target).then_some(&self.lookup_index))
     }
 }
 
@@ -493,11 +503,7 @@ fn fixture_with_traits_impls_aliases_and_structs(
             .trait_refs_by_name
             .insert(data.name.to_string(), trait_ref);
     }
-    {
-        let crate_items = CrateItemQuery::new(&fixture, &fixture, fixture.target);
-        fixture.lookup_index =
-            ItemLookupIndex::build_from(&crate_items).expect("fixture lookup index should build");
-    }
+    fixture.lookup_index = ItemLookupIndex::build_from_store(&fixture.store);
     fixture
 }
 
@@ -529,12 +535,8 @@ pub(super) fn query_with_session(
     fixture: &TraitSelectionFixture,
     session: TraitSelectionSession,
 ) -> TraitSelectionQuery<'_, &TraitSelectionFixture, &TraitSelectionFixture> {
-    TraitSelectionQuery::new(TyContext::new(
-        fixture,
-        fixture,
-        &fixture.lookup_index,
-        session,
-    ))
+    let lookup_query = fixture.lookup_query();
+    TraitSelectionQuery::new(TyContext::new(fixture, fixture, lookup_query, session))
 }
 
 #[derive(Clone, Copy)]
@@ -1412,9 +1414,10 @@ impl TraitSelectionSnapshot {
 
         let item_paths = ItemPathQuery::new(&self.fixture, &self.fixture);
         let session = TraitSelectionSession::new(self.fixture.target);
+        let lookup_query = self.fixture.lookup_query();
         let candidates = TraitCandidate::probe_all(
             &item_paths,
-            &self.fixture.lookup_index,
+            &lookup_query,
             &session,
             &parsed.goal,
             &parsed.table,
@@ -1464,6 +1467,7 @@ impl TraitSelectionSnapshot {
             let session = TraitSelectionSession::new(self.fixture.target);
             let solver = ChalkTraitSolver::new();
             let inference_cache = ChalkInferenceCache::new();
+            let lookup_query = self.fixture.lookup_query();
             let associated_ty = self
                 .fixture
                 .associated_ty_by_name(parsed.goal.trait_ref(), &parsed.assoc_name)
@@ -1472,7 +1476,7 @@ impl TraitSelectionSnapshot {
                 .normalize_assoc_type(
                     &item_paths,
                     &crate_items,
-                    &self.fixture.lookup_index,
+                    &lookup_query,
                     &session,
                     &inference_cache,
                     &parsed.goal,

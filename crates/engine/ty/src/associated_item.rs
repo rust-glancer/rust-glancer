@@ -137,10 +137,10 @@ where
         self.candidates_for_nominal_from_impls(
             receiver_ty,
             self.context
-                .lookup_index()
+                .item_lookup()
                 .inherent_impls_for_type(receiver_ty.def),
             self.context
-                .lookup_index()
+                .item_lookup()
                 .trait_impls_for_type(receiver_ty.def),
             true,
         )

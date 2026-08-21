@@ -98,13 +98,14 @@ fn program_work_exhaustion_does_not_publish_a_partial_extension() {
     let item_paths = ItemPathQuery::new(&fixture, &fixture);
     let crate_items = CrateItemQuery::new(&fixture, &fixture, fixture.target);
     let solver = ChalkTraitSolver::new();
+    let lookup_query = fixture.lookup_query();
 
     let limited = TraitSelectionSession::new(fixture.target).with_work_limit(1);
     let outcome = solver
         .prove_clauses(
             &item_paths,
             &crate_items,
-            fixture.lookup_index(),
+            &lookup_query,
             &limited,
             &ChalkInferenceCache::new(),
             &clauses,
@@ -119,7 +120,7 @@ fn program_work_exhaustion_does_not_publish_a_partial_extension() {
         .prove_clauses(
             &item_paths,
             &crate_items,
-            fixture.lookup_index(),
+            &lookup_query,
             &TraitSelectionSession::new(fixture.target),
             &ChalkInferenceCache::new(),
             &clauses,

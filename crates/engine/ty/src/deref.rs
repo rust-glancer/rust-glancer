@@ -79,12 +79,12 @@ where
     /// malformed declarations from combining an otherwise valid `Deref` trait with an unrelated
     /// `#[lang = "deref_target"]` alias.
     fn canonical_deref_items(&self) -> Result<Option<(TraitDefRef, rg_text::Name)>, D::Error> {
-        let Some(deref_trait) = self.context.lookup_index().lang_trait(LangItem::Deref) else {
+        let Some(deref_trait) = self.context.item_lookup().lang_trait(LangItem::Deref) else {
             return Ok(None);
         };
         let Some(target_alias) = self
             .context
-            .lookup_index()
+            .item_lookup()
             .lang_type_alias(LangItem::DerefTarget)
         else {
             return Ok(None);

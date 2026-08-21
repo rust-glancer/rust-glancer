@@ -19,7 +19,7 @@
 //! with an older partial view.
 
 use anyhow::Context as _;
-use rg_body_ir::{BodyIrBuildPolicy, BodyIrFile, CrateBodiesCoverage, PackageBodies};
+use rg_body_ir::{BodyIrFile, CrateBodiesCoverage, PackageBodies};
 use rg_def_map::PackageSlot;
 use rg_ir_model::CrateRef;
 use rg_parse::FileId;
@@ -36,19 +36,19 @@ use crate::{
 
 /// Source surface whose deferred analysis data must be available before a query runs.
 ///
-/// File surfaces are used when a query is tied to a concrete source file. Crate surfaces are
-/// broader: preparing a crate means that all deferred data in its owning package may be needed.
+/// File surfaces are used when a query is tied to one semantic interpretation of a concrete
+/// source file. Crate surfaces prepare complete bodies for exactly the listed semantic crates.
 /// Reference search can need both shapes when a text prefilter narrows some work to files while
 /// another part of the query still needs whole-crate coverage.
 #[derive(Debug, Clone, Copy)]
 pub enum AnalysisSurface<'a> {
-    /// Prepare deferred data needed by analysis rooted in these package-local source files.
-    Files(&'a [(PackageSlot, FileId)]),
-    /// Prepare all deferred data for the packages that own these crates.
+    /// Prepare deferred data needed by analysis rooted in these crate-local source files.
+    Files(&'a [(CrateRef, FileId)]),
+    /// Prepare complete deferred data for these exact semantic crates.
     Crates(&'a [CrateRef]),
-    /// Prepare exact file coverage first, then finish crate-owning packages.
+    /// Prepare exact file coverage first, then complete the listed crates.
     FilesAndCrates {
-        files: &'a [(PackageSlot, FileId)],
+        files: &'a [(CrateRef, FileId)],
         crates: &'a [CrateRef],
     },
 }
@@ -97,14 +97,12 @@ impl<'project> SplitIndexing<'project> {
     /// durable artifacts without replacing retained project state.
     pub fn needs_materialization(&self, surface: AnalysisSurface<'_>) -> bool {
         match surface {
-            AnalysisSurface::Files(files) => files.iter().any(|&(package, file)| {
-                body_file_needs_materialization(&self.project.state, package, file)
+            AnalysisSurface::Files(files) => files.iter().any(|&(crate_ref, file)| {
+                body_file_needs_materialization(&self.project.state, crate_ref, file)
             }),
-            AnalysisSurface::Crates(crates) => {
-                let packages = PhasePackageSet::from_crates(crates);
-                !packages_needing_finished_split_indexing(&self.project.state, packages.as_slice())
-                    .is_empty()
-            }
+            AnalysisSurface::Crates(crates) => crates
+                .iter()
+                .any(|&crate_ref| crate_needs_materialization(&self.project.state, crate_ref)),
             AnalysisSurface::FilesAndCrates { files, crates } => {
                 self.needs_materialization(AnalysisSurface::Files(files))
                     || self.needs_materialization(AnalysisSurface::Crates(crates))
@@ -275,44 +273,49 @@ fn merge_finished_project(
 /// Returns whether the current deferred-analysis payload can be written to a durable package cache.
 ///
 /// For this split-indexing mode the deferred payload is Body IR. Complete crate coverage is
-/// durable, and policy-skipped crates are durable when the configured eager policy would skip the
-/// whole package anyway. Partial selected-file coverage is intentionally transient: writing it as a
-/// package artifact would make future startup-cache reads look complete while silently missing
-/// bodies that were never materialized.
+/// durable, and policy-skipped secondary targets are durable when their target kind agrees with
+/// the configured eager policy. Partial selected-file coverage is intentionally transient: writing
+/// it as a package artifact would make future startup-cache reads look complete while silently
+/// missing bodies that were never materialized.
 pub(crate) fn package_deferred_payload_is_durable(
     state: &ProjectState,
     package: PackageSlot,
 ) -> bool {
-    let Some(parse_package) = state.parse.package(package.0) else {
-        return false;
-    };
     let Some(body_ir) = state.body_ir.resident_package(package) else {
         return false;
     };
 
-    body_ir.crates().iter().all(|crate_bodies| {
-        crate_bodies.coverage().is_complete()
-            || (!state.body_ir_policy.should_lower_package(parse_package)
-                && matches!(
-                    crate_bodies.coverage(),
-                    CrateBodiesCoverage::SkippedByPolicy
-                ))
-    })
+    configured_package_is_finished(state, package, body_ir)
 }
 
 /// Materialize the deferred payload for a set of source files.
 ///
 /// This is the narrow on-demand path used by file-local LSP queries. The deferred payload is stored
-/// as package-shaped Body IR, so the rebuild below keeps any already-materialized files selected as
-/// well as the newly requested files.
-fn materialize_files(
-    state: &mut ProjectState,
-    files: &[(PackageSlot, FileId)],
-) -> anyhow::Result<()> {
+/// as package-shaped Body IR, so the rebuild keeps already-materialized files for the same exact
+/// crate interpretation as well as the newly requested files.
+fn materialize_files(state: &mut ProjectState, files: &[(CrateRef, FileId)]) -> anyhow::Result<()> {
+    // A cached package cannot retain a partial resident target beside lazy sibling shards. Promote
+    // only the requested target interpretations to complete coverage, rewrite the artifact, and
+    // return the package to lazy residency before handling ordinary resident selected-file work.
+    // This keeps the manifest-only overlay inside one synchronous lifecycle transition.
+    let cached_crates = files
+        .iter()
+        .map(|&(crate_ref, _)| crate_ref)
+        .filter(|&crate_ref| {
+            state.body_ir.package_is_offloaded(crate_ref.package)
+                && crate_needs_materialization(state, crate_ref)
+        })
+        .collect::<UniqueVec<_>>();
+    if !cached_crates.is_empty() {
+        materialize_crates(state, cached_crates.as_slice()).context(
+            "while attempting to complete cached targets requested by file materialization",
+        )?;
+    }
+
     let mut body_files = files
         .iter()
-        .filter(|&&(package, file)| body_file_needs_materialization(state, package, file))
-        .map(|&(package, file)| BodyIrFile::new(package, file))
+        .filter(|&&(crate_ref, file)| body_file_needs_materialization(state, crate_ref, file))
+        .map(|&(crate_ref, file)| BodyIrFile::new(crate_ref, file))
         .collect::<UniqueVec<_>>();
     if body_files.is_empty() {
         return Ok(());
@@ -322,6 +325,7 @@ fn materialize_files(
     // preparing one new file cannot accidentally discard earlier on-demand coverage from the same
     // package.
     let requested_packages = PhasePackageSet::from_body_files(body_files.as_slice());
+    restore_offloaded_packages_for_body_rebuild(state, requested_packages.as_slice())?;
     for package in requested_packages.iter() {
         if let Some(body_ir) = state.body_ir.resident_package(package) {
             extend_with_materialized_body_files(package, body_ir, &mut body_files);
@@ -376,44 +380,43 @@ fn materialize_files(
 /// rebuild when the requested file's bodies are not among the already-materialized bodies.
 fn body_file_needs_materialization(
     state: &ProjectState,
-    package: PackageSlot,
+    crate_ref: CrateRef,
     file: FileId,
 ) -> bool {
-    let Some(body_ir) = state.body_ir.resident_package(package) else {
-        return false;
+    let Some(body_ir) = state.body_ir.resident_package(crate_ref.package) else {
+        return crate_needs_materialization(state, crate_ref);
     };
-
-    if body_ir
-        .crates()
-        .iter()
-        .all(|crate_bodies| crate_bodies.coverage().is_complete())
-    {
+    let Some(crate_bodies) = body_ir.crate_bodies(crate_ref.crate_id) else {
+        return true;
+    };
+    if crate_bodies.coverage().is_complete() {
         return false;
     }
 
-    !body_ir.crates().iter().any(|crate_bodies| {
-        crate_bodies
-            .bodies()
-            .iter()
-            .any(|body| body.source().is_written() && body.source().file_id == file)
-    })
+    !crate_bodies
+        .bodies()
+        .iter()
+        .any(|body| body.source().is_written() && body.source().file_id == file)
 }
 
-/// Treat crate readiness as package readiness, because deferred payloads are package-shaped.
+/// Materialize complete bodies for exactly the requested semantic crates.
+///
+/// For a package with a library and many test targets, requesting one test replaces only that
+/// test's crate slot. If the package was offloaded, sibling targets remain as cached manifest
+/// placeholders until the package artifact is rewritten with their existing encoded shards.
 fn materialize_crates(state: &mut ProjectState, crates: &[CrateRef]) -> anyhow::Result<()> {
-    let packages = PhasePackageSet::from_crates(crates);
-    materialize_packages(state, packages.as_slice())
-}
-
-/// Complete requested resident packages for a query that cannot safely work from partial data.
-fn materialize_packages(state: &mut ProjectState, packages: &[PackageSlot]) -> anyhow::Result<()> {
-    let packages = packages_needing_finished_split_indexing(state, packages);
-    if packages.is_empty() {
+    let crates = crates
+        .iter()
+        .copied()
+        .filter(|&crate_ref| crate_needs_materialization(state, crate_ref))
+        .collect::<UniqueVec<_>>();
+    if crates.is_empty() {
         return Ok(());
     }
 
-    let rebuild_subset =
-        PhasePackageSet::from_slice(&packages).visible_dependency_subset(&state.workspace);
+    let packages = PhasePackageSet::from_crates(crates.as_slice());
+    restore_offloaded_packages_for_body_rebuild(state, packages.as_slice())?;
+    let rebuild_subset = packages.visible_dependency_subset(&state.workspace);
     let loaders = PackageReadLoaders::new(state);
     let body_ir = state
         .body_ir
@@ -421,28 +424,27 @@ fn materialize_packages(state: &mut ProjectState, packages: &[PackageSlot]) -> a
             &state.parse,
             &state.def_map,
             &state.semantic_ir,
-            &packages,
+            packages.as_slice(),
             &mut state.names,
             loaders.def_map,
             loaders.semantic_ir,
             &rebuild_subset,
         )
         .worker_limit(state.indexing_preference.body_ir_worker_limit())
-        // Query-driven finishing intentionally overrides the eager indexing policy. If a query
-        // needs to scan a package, missing bodies would be false negatives rather than saved work.
-        .configured_bodies(BodyIrBuildPolicy::all_packages())
+        .selected_crates(crates)
         .build();
 
     // Package materialization has the same source lifetime as file-local materialization. Keep
     // only the derived Body IR after the builder finishes, including on its error path.
     state.parse.evict_saved_source_text();
-    let body_ir = body_ir
-        .context("while attempting to materialize complete deferred analysis for packages")?;
+    let body_ir =
+        body_ir.context("while attempting to materialize complete deferred analysis for crates")?;
 
     state.body_ir = body_ir;
     Shrink::shrink_to_fit(&mut state.names);
-    apply_finished_residency(state, &packages).context(
-        "while attempting to apply residency after preparing complete deferred analysis for packages",
+    let finished_packages = finished_resident_packages(state, packages.as_slice());
+    apply_finished_residency(state, &finished_packages).context(
+        "while attempting to apply residency after preparing complete deferred analysis for crates",
     )?;
     Ok(())
 }
@@ -590,18 +592,18 @@ fn merge_finished_packages(
             continue;
         }
 
-        let should_replace = state
-            .body_ir
-            .resident_package(package)
-            .map(|current_bodies| {
-                body_payload_is_coverage_improvement(current_bodies, &finished_bodies)
-            })
-            .unwrap_or(true);
+        let replacement = match state.body_ir.resident_package(package) {
+            Some(current_bodies) => {
+                merge_body_payload_improvements(current_bodies, &finished_bodies)
+            }
+            None => Some(finished_bodies),
+        };
 
-        // The background clone can lag behind query-time preparation. Keep the saved package when
-        // the detached version would only be equal or worse.
-        if should_replace {
-            replacements.push((package, finished_bodies));
+        // The background clone can lag behind query-time preparation. Merge improvements one
+        // semantic crate at a time so its newly completed primary target cannot downgrade an
+        // on-demand test target, or vice versa.
+        if let Some(replacement) = replacement {
+            replacements.push((package, replacement));
         }
     }
 
@@ -633,21 +635,10 @@ fn unfinished_split_indexing_packages(state: &ProjectState) -> Vec<PackageSlot> 
 
     for package_idx in 0..state.parse.package_count() {
         let package = PackageSlot(package_idx);
-        let Some(parse_package) = state.parse.package(package_idx) else {
-            continue;
-        };
-        if !state.body_ir_policy.should_lower_package(parse_package) {
-            continue;
-        }
-
         let Some(body_ir) = state.body_ir.resident_package(package) else {
             continue;
         };
-        if body_ir
-            .crates()
-            .iter()
-            .all(|crate_bodies| crate_bodies.coverage().is_complete())
-        {
+        if configured_package_is_finished(state, package, body_ir) {
             continue;
         }
 
@@ -655,31 +646,6 @@ fn unfinished_split_indexing_packages(state: &ProjectState) -> Vec<PackageSlot> 
     }
 
     packages
-}
-
-/// Keep only requested resident packages that still need complete deferred payloads.
-fn packages_needing_finished_split_indexing(
-    state: &ProjectState,
-    packages: &[PackageSlot],
-) -> Vec<PackageSlot> {
-    let mut needed = UniqueVec::new();
-
-    for &package in packages {
-        let Some(body_ir) = state.body_ir.resident_package(package) else {
-            continue;
-        };
-        if body_ir
-            .crates()
-            .iter()
-            .all(|crate_bodies| crate_bodies.coverage().is_complete())
-        {
-            continue;
-        }
-
-        needed.push(package);
-    }
-
-    needed.into_vec()
 }
 
 /// Return packages from this set that have become complete after a partial rebuild.
@@ -690,16 +656,151 @@ fn finished_resident_packages(state: &ProjectState, packages: &[PackageSlot]) ->
         let Some(body_ir) = state.body_ir.resident_package(package) else {
             continue;
         };
-        if body_ir
-            .crates()
-            .iter()
-            .all(|crate_bodies| crate_bodies.coverage().is_complete())
-        {
+        if configured_package_is_finished(state, package, body_ir) {
             finished.push(package);
         }
     }
 
     finished
+}
+
+/// Return whether every semantic crate in a package satisfies the eager-target policy.
+fn configured_package_is_finished(
+    state: &ProjectState,
+    package: PackageSlot,
+    bodies: &PackageBodies,
+) -> bool {
+    bodies
+        .crates()
+        .iter()
+        .enumerate()
+        .all(|(crate_idx, crate_bodies)| {
+            configured_crate_is_finished(
+                state,
+                CrateRef {
+                    package,
+                    crate_id: rg_ir_model::CrateId(crate_idx),
+                },
+                crate_bodies.coverage(),
+            )
+        })
+}
+
+/// Return whether one crate satisfies the project's configured eager-target policy.
+///
+/// An explicitly materialized secondary target is complete and therefore durable. A still
+/// deferred secondary target is also finished for ordinary background indexing, but only when its
+/// `SkippedByPolicy` marker agrees with the Cargo target kind.
+fn configured_crate_is_finished(
+    state: &ProjectState,
+    crate_ref: CrateRef,
+    coverage: CrateBodiesCoverage,
+) -> bool {
+    if coverage.is_complete() {
+        return true;
+    }
+    if !matches!(coverage, CrateBodiesCoverage::SkippedByPolicy) {
+        return false;
+    }
+
+    let Some(parse_package) = state.parse.package(crate_ref.package.0) else {
+        return false;
+    };
+    // Semantic crate ids are allocated from Cargo targets in their parse-package order. Use that
+    // structural identity here so residency checks do not need to load an offloaded DefMap merely
+    // to validate a deliberate secondary-target skip.
+    let Some(parse_target) = parse_package.targets().get(crate_ref.crate_id.0) else {
+        return false;
+    };
+
+    !state
+        .body_ir_policy
+        .should_lower_target(parse_package, parse_target)
+}
+
+/// Return whether an exact crate request still lacks complete Body IR.
+fn crate_needs_materialization(state: &ProjectState, crate_ref: CrateRef) -> bool {
+    if let Some(crate_bodies) = state
+        .body_ir
+        .resident_package(crate_ref.package)
+        .and_then(|package| package.crate_bodies(crate_ref.crate_id))
+    {
+        return !crate_bodies.coverage().is_complete();
+    }
+    if !state.body_ir.package_is_offloaded(crate_ref.package) {
+        return true;
+    }
+
+    cached_crate_coverage(state, crate_ref)
+        .map(|coverage| !coverage.is_complete())
+        // A missing or corrupt artifact still needs the materialization path so it can report the
+        // typed cache error instead of silently running with absent bodies.
+        .unwrap_or(true)
+}
+
+fn cached_crate_coverage(state: &ProjectState, crate_ref: CrateRef) -> Option<CrateBodiesCoverage> {
+    let cached_package = state.cache_plan.package(crate_ref.package)?;
+    state
+        .cache_store
+        .read_probe_for_package(cached_package)
+        .ok()??
+        .body_ir_coverage
+        .get(crate_ref.crate_id.0)
+        .copied()
+}
+
+/// Restore the package containers needed to rebuild one target from an offloaded package.
+///
+/// DefMap and Semantic IR are restored as ordinary package payloads because Body IR rebuilding
+/// reads them. Body IR restores only crate manifests: the builder replaces requested crate slots,
+/// and the cache writer later copies untouched sibling shards from the old artifact. The temporary
+/// mixed package is never published to ordinary Body IR queries.
+fn restore_offloaded_packages_for_body_rebuild(
+    state: &mut ProjectState,
+    packages: &[PackageSlot],
+) -> anyhow::Result<()> {
+    let offloaded = packages
+        .iter()
+        .copied()
+        .filter(|&package| state.body_ir.package_is_offloaded(package))
+        .collect::<Vec<_>>();
+    if offloaded.is_empty() {
+        return Ok(());
+    }
+
+    let loaders = PackageReadLoaders::new(state);
+    // Decode every requested package before mutating project state. A corrupt later artifact must
+    // not leave an earlier package half-restored when the exact materialization request fails.
+    let restored = offloaded
+        .into_iter()
+        .map(|package| {
+            loaders
+                .load_package_payloads(package)
+                .map(|payloads| (package, payloads))
+                .with_context(|| {
+                    format!(
+                        "restore offloaded package {} for exact target materialization",
+                        package.0
+                    )
+                })
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
+
+    for (package, (def_map, semantic_ir, bodies)) in restored {
+        state
+            .def_map
+            .replace_package(package, def_map)
+            .context("offloaded DefMap package slot should exist")?;
+        state
+            .semantic_ir
+            .replace_package(package, semantic_ir)
+            .context("offloaded Semantic IR package slot should exist")?;
+        state
+            .body_ir
+            .replace_package(package, bodies)
+            .context("offloaded Body IR package slot should exist")?;
+    }
+    Ok(())
 }
 
 /// Preserve already-materialized file bodies when a selected-file rebuild replaces a package.
@@ -708,41 +809,51 @@ fn extend_with_materialized_body_files(
     body_ir: &PackageBodies,
     files: &mut UniqueVec<BodyIrFile>,
 ) {
-    for crate_bodies in body_ir.crates() {
+    for (crate_idx, crate_bodies) in body_ir.crates().iter().enumerate() {
         if !crate_bodies.coverage().is_materialized() {
             continue;
         }
+        let crate_ref = CrateRef {
+            package,
+            crate_id: rg_ir_model::CrateId(crate_idx),
+        };
         for body in crate_bodies.bodies() {
             let source = body.source();
             if source.is_written() {
-                files.push(BodyIrFile::new(package, source.file_id));
+                files.push(BodyIrFile::new(crate_ref, source.file_id));
             }
         }
     }
 }
 
-/// Return whether `finished` can replace `current` without losing crate coverage.
+/// Merge the better payload for each semantic crate without downgrading sibling target coverage.
 ///
-/// Equal coverage is not treated as an improvement: replacing identical packages would create extra
-/// churn and can still disturb residency/cache state.
-fn body_payload_is_coverage_improvement(current: &PackageBodies, finished: &PackageBodies) -> bool {
+/// Equal coverage keeps the saved payload. Besides avoiding churn, this preserves query-time body
+/// data when a detached build reaches the same coverage through an older source snapshot.
+fn merge_body_payload_improvements(
+    current: &PackageBodies,
+    finished: &PackageBodies,
+) -> Option<PackageBodies> {
     if current.crates().len() != finished.crates().len() {
-        return false;
+        return None;
     }
 
     let mut improved = false;
-    for (current, finished) in current.crates().iter().zip(finished.crates()) {
-        let current_rank = body_coverage_rank(current.coverage());
-        let finished_rank = body_coverage_rank(finished.coverage());
-        if finished_rank < current_rank {
-            return false;
-        }
-        if finished_rank > current_rank {
-            improved = true;
-        }
-    }
+    let crates = current
+        .crates()
+        .iter()
+        .zip(finished.crates())
+        .map(|(current, finished)| {
+            if body_coverage_rank(finished.coverage()) > body_coverage_rank(current.coverage()) {
+                improved = true;
+                finished.clone()
+            } else {
+                current.clone()
+            }
+        })
+        .collect();
 
-    improved
+    improved.then(|| PackageBodies::new(crates))
 }
 
 fn body_coverage_rank(coverage: CrateBodiesCoverage) -> u8 {

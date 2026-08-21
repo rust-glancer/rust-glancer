@@ -42,7 +42,7 @@ where
     ) -> Result<Vec<(FunctionRef, TraitSelection)>, D::Error> {
         let trait_impls = self
             .context
-            .lookup_index()
+            .item_lookup()
             .trait_impls_for_type(receiver_ty.def);
         self.trait_function_candidates_from_impls(trait_impls, receiver_ty, method_name, table)
     }
@@ -68,13 +68,13 @@ where
             if let Some(method_name) = method_name
                 && let Some(indexed_functions) = self
                     .context
-                    .lookup_index()
+                    .item_lookup()
                     .trait_functions_by_name(trait_impl.trait_ref, method_name)
             {
                 if indexed_functions.is_empty() {
                     continue;
                 }
-                indexed_trait_functions = indexed_functions.functions().cloned();
+                indexed_trait_functions = Some(indexed_functions);
             }
 
             let Some(selection) = self.trait_impl_match(trait_impl, receiver_ty, table)? else {
@@ -85,12 +85,12 @@ where
                 functions
             } else if let Some(functions) = self
                 .context
-                .lookup_index()
+                .item_lookup()
                 .trait_functions(trait_impl.trait_ref)
             {
-                functions.clone()
+                functions
             } else {
-                // Crate traits are guaranteed to be present in the semantic lookup index. A
+                // Crate traits are guaranteed to be present in the semantic lookup query. A
                 // body-local trait deliberately is not: its declaration lives in the active body
                 // store, alongside the local impl passed in by the caller.
                 if !matches!(trait_impl.trait_ref.origin, DefMapRef::Body(_)) {

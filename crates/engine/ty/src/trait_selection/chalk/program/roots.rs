@@ -9,7 +9,7 @@ use std::time::Instant;
 
 use rg_def_map::DefMapSource;
 use rg_ir_model::{AssocItemId, ItemOwner, TraitDefRef, TypeAliasRef};
-use rg_semantic_ir::{CrateItemQuery, ItemLookupIndex, ItemStoreSource};
+use rg_semantic_ir::{CrateItemQuery, ItemLookupQuery, ItemStoreSource};
 
 use super::{ChalkProgram, ChalkProgramRoots, ChalkProgramScope};
 use crate::inference::InferenceTable;
@@ -222,7 +222,7 @@ impl ChalkProgramScope {
     pub(super) fn discover<'query, D, I>(
         item_paths: &ItemPathQuery<'query, D, I>,
         crate_items: &CrateItemQuery<'query, D, I>,
-        lookup_index: &ItemLookupIndex,
+        item_lookup: &ItemLookupQuery<'_>,
         session: &TraitSelectionSession,
         roots: &ChalkProgramRoots,
         program: &ChalkProgram,
@@ -271,7 +271,7 @@ impl ChalkProgramScope {
                 // this use site. Body-origin traits are intentionally absent from that index, so
                 // keep their lookup inside the owning body store.
                 if trait_ref.origin.as_crate_ref().is_some() {
-                    if let Some(impls) = lookup_index.trait_impls_for_trait(trait_ref) {
+                    if let Some(impls) = item_lookup.trait_impls_for_trait(trait_ref) {
                         for trait_impl in impls {
                             if !scope.discover_impl(
                                 item_paths,

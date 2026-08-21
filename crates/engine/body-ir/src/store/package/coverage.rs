@@ -28,7 +28,7 @@ pub enum CrateBodiesCoverage {
     /// The crate has body sources, but none of them were selected for this materialization pass.
     #[display("missing")]
     Missing,
-    /// The configured package policy intentionally did not build bodies for this crate.
+    /// The configured package-and-target policy intentionally did not build bodies for this crate.
     #[display("skipped-by-policy")]
     SkippedByPolicy,
 }

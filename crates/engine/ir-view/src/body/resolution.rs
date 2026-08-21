@@ -9,7 +9,7 @@ use anyhow::Context as _;
 use rg_body_ir::{BodyAssociatedPathPrefix, BodyResolutionContext, BodyView};
 use rg_ir_model::{BodyRef, EnumVariantRef, Path, ScopeId, identity::DeclarationRef};
 use rg_item_tree::TypeRef;
-use rg_semantic_ir::{ItemLookupIndex, TypePathResolution};
+use rg_semantic_ir::{ItemLookupQuery, TypePathResolution};
 use rg_ty::{AssociatedItemCandidateRef, MemberMethodCandidateRef, Ty};
 
 use crate::IndexedViewDb;
@@ -24,10 +24,10 @@ impl<'a, 'db> BodyResolutionView<'a, 'db> {
         Self { db }
     }
 
-    fn body_with_index(
+    fn body_with_lookup(
         &self,
         body_ref: BodyRef,
-    ) -> anyhow::Result<Option<(BodyView<'_>, &ItemLookupIndex)>> {
+    ) -> anyhow::Result<Option<(BodyView<'_>, ItemLookupQuery<'_>)>> {
         let Some(body) = self
             .db
             .body_ir
@@ -36,16 +36,12 @@ impl<'a, 'db> BodyResolutionView<'a, 'db> {
         else {
             return Ok(None);
         };
-        let Some(item_lookup_index) = self
+        let item_lookup_query = self
             .db
-            .body_ir
-            .item_lookup_index(body_ref.crate_ref)
-            .context("load item lookup index for body resolution")?
-        else {
-            return Ok(None);
-        };
+            .item_lookup_query(body_ref.crate_ref)
+            .context("assemble item lookup query for body resolution")?;
 
-        Ok(Some((body, item_lookup_index)))
+        Ok(Some((body, item_lookup_query)))
     }
 
     /// Resolve a type path in a body scope.
@@ -55,8 +51,8 @@ impl<'a, 'db> BodyResolutionView<'a, 'db> {
         scope: ScopeId,
         path: &Path,
     ) -> anyhow::Result<Option<TypePathResolution>> {
-        let Some((body, item_lookup_index)) = self
-            .body_with_index(body_ref)
+        let Some((body, item_lookup_query)) = self
+            .body_with_lookup(body_ref)
             .context("load body type path context")?
         else {
             return Ok(None);
@@ -69,7 +65,7 @@ impl<'a, 'db> BodyResolutionView<'a, 'db> {
                 self.db,
                 body_ref,
                 body,
-                item_lookup_index,
+                &item_lookup_query,
                 trait_selection,
             )
             .type_path_query()
@@ -85,8 +81,8 @@ impl<'a, 'db> BodyResolutionView<'a, 'db> {
         scope: ScopeId,
         type_ref: &TypeRef,
     ) -> anyhow::Result<Option<Ty>> {
-        let Some((body, item_lookup_index)) = self
-            .body_with_index(body_ref)
+        let Some((body, item_lookup_query)) = self
+            .body_with_lookup(body_ref)
             .context("load body type reference context")?
         else {
             return Ok(None);
@@ -99,7 +95,7 @@ impl<'a, 'db> BodyResolutionView<'a, 'db> {
                 self.db,
                 body_ref,
                 body,
-                item_lookup_index,
+                &item_lookup_query,
                 trait_selection,
             )
             .resolve_type_ref(scope, type_ref)
@@ -114,8 +110,8 @@ impl<'a, 'db> BodyResolutionView<'a, 'db> {
         scope: ScopeId,
         path: &Path,
     ) -> anyhow::Result<Option<EnumVariantRef>> {
-        let Some((body, item_lookup_index)) = self
-            .body_with_index(body_ref)
+        let Some((body, item_lookup_query)) = self
+            .body_with_lookup(body_ref)
             .context("load body enum variant context")?
         else {
             return Ok(None);
@@ -127,7 +123,7 @@ impl<'a, 'db> BodyResolutionView<'a, 'db> {
             self.db,
             body_ref,
             body,
-            item_lookup_index,
+            &item_lookup_query,
             trait_selection,
         )
         .type_path_query()
@@ -142,8 +138,8 @@ impl<'a, 'db> BodyResolutionView<'a, 'db> {
         scope: ScopeId,
         path: &Path,
     ) -> anyhow::Result<Vec<DeclarationRef>> {
-        let Some((body, item_lookup_index)) = self
-            .body_with_index(body_ref)
+        let Some((body, item_lookup_query)) = self
+            .body_with_lookup(body_ref)
             .context("load body value path context")?
         else {
             return Ok(Vec::new());
@@ -155,7 +151,7 @@ impl<'a, 'db> BodyResolutionView<'a, 'db> {
             self.db,
             body_ref,
             body,
-            item_lookup_index,
+            &item_lookup_query,
             trait_selection,
         )
         .value_paths()
@@ -170,8 +166,8 @@ impl<'a, 'db> BodyResolutionView<'a, 'db> {
         scope: ScopeId,
         path: &Path,
     ) -> anyhow::Result<Ty> {
-        let Some((body, item_lookup_index)) = self
-            .body_with_index(body_ref)
+        let Some((body, item_lookup_query)) = self
+            .body_with_lookup(body_ref)
             .context("load body value type context")?
         else {
             return Ok(Ty::Unknown);
@@ -183,7 +179,7 @@ impl<'a, 'db> BodyResolutionView<'a, 'db> {
             self.db,
             body_ref,
             body,
-            item_lookup_index,
+            &item_lookup_query,
             trait_selection,
         )
         .value_paths()
@@ -197,8 +193,8 @@ impl<'a, 'db> BodyResolutionView<'a, 'db> {
         body_ref: BodyRef,
         ty: &Ty,
     ) -> anyhow::Result<Option<Vec<MemberMethodCandidateRef>>> {
-        let Some((body, item_lookup_index)) = self
-            .body_with_index(body_ref)
+        let Some((body, item_lookup_query)) = self
+            .body_with_lookup(body_ref)
             .context("load body method context")?
         else {
             return Ok(None);
@@ -211,7 +207,7 @@ impl<'a, 'db> BodyResolutionView<'a, 'db> {
                 self.db,
                 body_ref,
                 body,
-                item_lookup_index,
+                &item_lookup_query,
                 trait_selection,
             )
             .methods()
@@ -231,8 +227,8 @@ impl<'a, 'db> BodyResolutionView<'a, 'db> {
         scope: ScopeId,
         prefix: &BodyAssociatedPathPrefix,
     ) -> anyhow::Result<Option<Vec<AssociatedItemCandidateRef>>> {
-        let Some((body, item_lookup_index)) = self
-            .body_with_index(body_ref)
+        let Some((body, item_lookup_query)) = self
+            .body_with_lookup(body_ref)
             .context("load body associated item context")?
         else {
             return Ok(None);
@@ -245,7 +241,7 @@ impl<'a, 'db> BodyResolutionView<'a, 'db> {
                 self.db,
                 body_ref,
                 body,
-                item_lookup_index,
+                &item_lookup_query,
                 trait_selection,
             )
             .associated_item_candidates(scope, prefix)
@@ -264,8 +260,8 @@ impl<'a, 'db> BodyResolutionView<'a, 'db> {
         scope: ScopeId,
         trait_ref: &TypeRef,
     ) -> anyhow::Result<Option<Vec<AssociatedItemCandidateRef>>> {
-        let Some((body, item_lookup_index)) = self
-            .body_with_index(body_ref)
+        let Some((body, item_lookup_query)) = self
+            .body_with_lookup(body_ref)
             .context("load body trait item context")?
         else {
             return Ok(None);
@@ -278,7 +274,7 @@ impl<'a, 'db> BodyResolutionView<'a, 'db> {
                 self.db,
                 body_ref,
                 body,
-                item_lookup_index,
+                &item_lookup_query,
                 trait_selection,
             )
             .trait_associated_item_candidates(scope, trait_ref)

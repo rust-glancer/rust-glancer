@@ -80,18 +80,14 @@ impl<'a, 'db> MemberView<'a, 'db> {
         qualifier: &IndexedAssociatedPathQualifier,
     ) -> anyhow::Result<Vec<MemberAssociatedItemCandidate>> {
         let use_site = scope.context().module.origin.origin_crate();
-        let Some(item_lookup_index) = self
+        let item_lookup_query = self
             .db
-            .body_ir
-            .item_lookup_index(use_site)
-            .context("read signature associated item index")?
-        else {
-            return Ok(Vec::new());
-        };
+            .item_lookup_query(use_site)
+            .context("assemble signature associated item lookup")?;
         let ty_context = TyContext::new(
             self.db,
             self.db,
-            item_lookup_index,
+            item_lookup_query,
             self.db.trait_selection(use_site),
         );
         let query = AssociatedItemQuery::new(ty_context);
@@ -186,18 +182,14 @@ impl<'a, 'db> MemberView<'a, 'db> {
         trait_ref: &rg_item_tree::TypeRef,
     ) -> anyhow::Result<Vec<MemberAssociatedItemCandidate>> {
         let use_site = scope.context().module.origin.origin_crate();
-        let Some(item_lookup_index) = self
+        let item_lookup_query = self
             .db
-            .body_ir
-            .item_lookup_index(use_site)
-            .context("read trait binding item index")?
-        else {
-            return Ok(Vec::new());
-        };
+            .item_lookup_query(use_site)
+            .context("assemble trait binding item lookup")?;
         let ty_context = TyContext::new(
             self.db,
             self.db,
-            item_lookup_index,
+            item_lookup_query,
             self.db.trait_selection(use_site),
         );
         let query = AssociatedItemQuery::new(ty_context);

@@ -56,7 +56,7 @@ impl QueryRunner<'_> {
         plans: &[ReferenceSearchPlan],
     ) -> anyhow::Result<()> {
         let started = Instant::now();
-        let mut files = UniqueVec::<(rg_def_map::PackageSlot, rg_parse::FileId)>::new();
+        let mut files = UniqueVec::<(CrateRef, rg_parse::FileId)>::new();
         let mut targets = UniqueVec::<CrateRef>::new();
 
         // `None` means the scan needs whole crates. A present file list means text prefiltering has
@@ -64,11 +64,7 @@ impl QueryRunner<'_> {
         for plan in plans {
             match &plan.files {
                 Some(plan_files) => {
-                    files.extend(
-                        plan_files
-                            .iter()
-                            .map(|file| (file.crate_ref.package, file.file_id)),
-                    );
+                    files.extend(plan_files.iter().map(|file| (file.crate_ref, file.file_id)));
                 }
                 None => targets.extend(plan.targets.iter().copied()),
             }

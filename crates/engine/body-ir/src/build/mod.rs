@@ -15,9 +15,10 @@ use anyhow::Context as _;
 
 use rg_def_map::PackageDefMaps as DefMapPackage;
 use rg_def_map::PackageSlot;
+use rg_ir_model::{CrateId, CrateRef};
 use rg_package_store::{PackageLoader, PackageSubset};
 use rg_semantic_ir::PackageIr;
-use rg_std::Shrink;
+use rg_std::{Shrink, UniqueVec};
 use rg_text::PackageNameInterners;
 
 use crate::{BodyIrBuildPolicy, BodyIrDb, BodyIrFile, PackageBodies};
@@ -167,7 +168,7 @@ impl<'db, 'names> BodyIrDbPackageRebuilder<'db, 'names> {
         }
     }
 
-    /// Lowers body contents selected by the package policy.
+    /// Lowers body contents selected by the package-and-target policy.
     pub fn configured_bodies(mut self, policy: BodyIrBuildPolicy) -> Self {
         self.materialization = BodyIrMaterializationPlan::ConfiguredBodies(policy);
         self
@@ -181,6 +182,12 @@ impl<'db, 'names> BodyIrDbPackageRebuilder<'db, 'names> {
 
     pub fn selected_files(mut self, files: Vec<BodyIrFile>) -> Self {
         self.materialization = BodyIrMaterializationPlan::SelectedFiles(files);
+        self
+    }
+
+    /// Rebuild complete Body IR for exact semantic crates without selecting sibling targets.
+    pub fn selected_crates(mut self, crates: UniqueVec<CrateRef>) -> Self {
+        self.materialization = BodyIrMaterializationPlan::SelectedCrates(crates);
         self
     }
 
@@ -234,7 +241,7 @@ impl<'db, 'names> BodyIrDbPackageRebuilder<'db, 'names> {
         let setup_ms = setup_started.elapsed().as_millis();
 
         // 2. Lower only the requested bodies. Crates whose resulting coverage is unmaterialized
-        // remain in the package shape, but skip lookup-index construction and body resolution.
+        // remain in the package shape, but skip lookup-query construction and body resolution.
         let lowering_started = Instant::now();
         let rebuilt_packages = lower::build_selected_packages(
             self.parse,
@@ -273,6 +280,8 @@ impl<'db, 'names> BodyIrDbPackageRebuilder<'db, 'names> {
         {
             let mut mutator = next.mutator();
             for (package, rebuilt) in compacted_packages {
+                let rebuilt =
+                    retain_unselected_crates(self.old, package, rebuilt, materialization)?;
                 mutator.replace_package(package, rebuilt).with_context(|| {
                     format!("while attempting to replace body IR package {}", package.0)
                 })?;
@@ -300,6 +309,58 @@ impl<'db, 'names> BodyIrDbPackageRebuilder<'db, 'names> {
         );
         Ok(next)
     }
+}
+
+/// Preserve sibling target payloads during an exact file- or crate-selected rebuild.
+///
+/// Body IR storage stays package-shaped, but selection is semantic-crate-shaped. Replacing only
+/// the selected crate slots prevents one integration test or example from resetting every other
+/// target in the same Cargo package.
+fn retain_unselected_crates(
+    old: &BodyIrDb,
+    package: PackageSlot,
+    rebuilt: PackageBodies,
+    materialization: materialization::BodyIrMaterialization<'_>,
+) -> anyhow::Result<PackageBodies> {
+    if matches!(
+        materialization,
+        materialization::BodyIrMaterialization::ConfiguredBodies(_)
+            | materialization::BodyIrMaterialization::CoverageOnly(_)
+    ) {
+        return Ok(rebuilt);
+    }
+
+    let previous = old.resident_package(package).with_context(|| {
+        format!(
+            "exact Body IR rebuild requires resident package {}",
+            package.0
+        )
+    })?;
+    anyhow::ensure!(
+        previous.crates().len() == rebuilt.crates().len(),
+        "exact Body IR rebuild changed package {} crate count from {} to {}",
+        package.0,
+        previous.crates().len(),
+        rebuilt.crates().len(),
+    );
+
+    let crates = rebuilt
+        .crates()
+        .iter()
+        .enumerate()
+        .map(|(crate_idx, crate_bodies)| {
+            let crate_ref = CrateRef {
+                package,
+                crate_id: CrateId(crate_idx),
+            };
+            if materialization.selects_crate(crate_ref) {
+                crate_bodies.clone()
+            } else {
+                previous.crates()[crate_idx].clone()
+            }
+        })
+        .collect();
+    Ok(PackageBodies::new(crates))
 }
 
 fn compact_packages_two_phase(packages: Vec<PackageBodies>) -> Vec<PackageBodies> {

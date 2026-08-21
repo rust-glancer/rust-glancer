@@ -22,18 +22,14 @@ impl<'a, 'db> MemberView<'a, 'db> {
         ty: &IndexedType,
     ) -> anyhow::Result<Vec<MemberField<'view>>> {
         let mut fields = Vec::new();
-        let Some(item_lookup_index) = self
+        let item_lookup_query = self
             .db
-            .body_ir
-            .item_lookup_index(use_site)
-            .context("read field candidate item index")?
-        else {
-            return Ok(fields);
-        };
+            .item_lookup_query(use_site)
+            .context("assemble field candidate item lookup")?;
         let member_query = MemberQuery::new(TyContext::new(
             self.db,
             self.db,
-            item_lookup_index,
+            item_lookup_query,
             self.db.trait_selection(use_site),
         ));
         for field_ref in member_query
@@ -63,18 +59,14 @@ impl<'a, 'db> MemberView<'a, 'db> {
         };
 
         let mut fields = Vec::new();
-        let Some(item_lookup_index) = self
+        let item_lookup_query = self
             .db
-            .body_ir
-            .item_lookup_index(body.crate_ref)
-            .context("read body field item index")?
-        else {
-            return Ok(fields);
-        };
+            .item_lookup_query(body.crate_ref)
+            .context("assemble body field item lookup")?;
         let member_query = MemberQuery::new(TyContext::new(
             self.db,
             self.db,
-            item_lookup_index,
+            item_lookup_query,
             self.db.trait_selection_for_body(body),
         ));
         if let TypePathResolution::SelfType(ty) | TypePathResolution::TypeDef(ty) = resolution {

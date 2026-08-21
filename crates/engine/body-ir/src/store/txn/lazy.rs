@@ -7,7 +7,7 @@
 //! ```text
 //! first Body IR query
 //!     -> package manifest
-//!     -> item lookup index, one file shard, or the complete crate
+//!     -> one file shard or the complete crate
 //! ```
 //!
 //! For example, scanning `src/foo.rs` loads the manifest and the shard for `foo.rs`. Asking for all
@@ -25,7 +25,6 @@ use rg_def_map::PackageSlot;
 use rg_ir_model::{BodyRef, CrateId, CrateRef};
 use rg_package_store::PackageStoreError;
 use rg_parse::FileId;
-use rg_semantic_ir::ItemLookupIndex;
 
 use super::BodyIrLoader;
 use crate::{
@@ -49,8 +48,8 @@ pub(super) enum PackageReadEntry<'db> {
 /// Lazily decoded pieces of one offloaded package.
 ///
 /// Loading begins with `loaded`, which contains the manifest and creates empty cells for every
-/// item lookup index and file shard described by it. Those cells are then filled independently as
-/// query methods need them.
+/// file shard described by it. Those cells are then filled independently as query methods need
+/// them.
 #[derive(Debug, Clone)]
 pub(super) struct LazyPackage<'db> {
     loader: BodyIrLoader<'db>,
@@ -98,38 +97,6 @@ impl<'db> LazyPackage<'db> {
             let _ = loaded_crate.bodies.set(crate_bodies);
         }
         Ok(loaded_crate.bodies.get().map(Arc::as_ref))
-    }
-
-    /// Return the crate-global item index without loading its body shards.
-    ///
-    /// A complete crate already contains the same index, so prefer it when another query loaded
-    /// the crate first. Otherwise the index remains an independent cache unit. Crates with
-    /// `Missing` or `SkippedByPolicy` coverage have no published index even though their cache
-    /// payload contains an empty placeholder.
-    pub(super) fn item_lookup_index(
-        &self,
-        crate_ref: CrateRef,
-    ) -> Result<Option<&ItemLookupIndex>, PackageStoreError> {
-        let loaded = self.loaded(crate_ref.package)?;
-        let Some(crate_manifest) = loaded.manifest.crate_manifest(crate_ref.crate_id) else {
-            return Ok(None);
-        };
-        if !crate_manifest.coverage().is_materialized() {
-            return Ok(None);
-        }
-        let Some(loaded_crate) = loaded.crate_data(crate_ref.crate_id) else {
-            return Ok(None);
-        };
-        if let Some(crate_bodies) = loaded_crate.bodies.get() {
-            return Ok(Some(crate_bodies.item_lookup_index()));
-        }
-        if loaded_crate.item_lookup_index.get().is_none() {
-            let index = self
-                .loader
-                .load_item_lookup_index(crate_ref.package, crate_ref.crate_id)?;
-            let _ = loaded_crate.item_lookup_index.set(index);
-        }
-        Ok(loaded_crate.item_lookup_index.get().map(Arc::as_ref))
     }
 
     /// Enumerate one file's bodies, or all crate bodies when `file` is absent.
@@ -296,7 +263,6 @@ impl LoadedPackage {
             .crates()
             .iter()
             .map(|crate_manifest| LoadedCrate {
-                item_lookup_index: OnceLock::new(),
                 shards: crate_manifest
                     .files()
                     .iter()
@@ -317,11 +283,10 @@ impl LoadedPackage {
 /// Independently loadable pieces of one crate.
 ///
 /// `bodies` is the complete fallback representation. Once it is present, query methods prefer it
-/// over `item_lookup_index` and `shards`, but already-loaded smaller pieces remain harmless and keep
-/// any references returned earlier by the transaction valid.
+/// over `shards`, but already-loaded smaller pieces remain harmless and keep any references
+/// returned earlier by the transaction valid.
 #[derive(Debug, Clone)]
 struct LoadedCrate {
-    item_lookup_index: OnceLock<Arc<ItemLookupIndex>>,
     shards: Vec<(FileId, OnceLock<Arc<BodyFileShard>>)>,
     bodies: OnceLock<Arc<CrateBodies>>,
 }

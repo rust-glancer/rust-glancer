@@ -44,12 +44,12 @@ where
 
     /// Returns impl blocks whose resolved self type mentions this nominal type definition.
     pub fn impls_for_type_def(&self, ty: TypeDefRef) -> Result<UniqueVec<ImplRef>, D::Error> {
-        Ok(self.context.lookup_index().impls_for_type(ty))
+        Ok(self.context.item_lookup().impls_for_type(ty))
     }
 
     /// Returns impl blocks that resolve to the requested trait.
     pub fn impls_for_trait(&self, trait_ref: TraitDefRef) -> Result<UniqueVec<ImplRef>, D::Error> {
-        Ok(self.context.lookup_index().impls_for_trait(trait_ref))
+        Ok(self.context.item_lookup().impls_for_trait(trait_ref))
     }
 
     /// Returns concrete functions that implement or correspond to the selected function.
@@ -108,7 +108,7 @@ where
         for candidate in autoderef.candidates(AutoderefMode::MethodReceiver, receiver_ty) {
             let candidate = candidate?;
             for ty in candidate.ty().as_adts() {
-                let trait_impls = self.context.lookup_index().trait_impls_for_type(ty.def);
+                let trait_impls = self.context.item_lookup().trait_impls_for_type(ty.def);
                 for trait_impl in trait_impls {
                     if trait_impl.trait_ref != trait_ref {
                         continue;

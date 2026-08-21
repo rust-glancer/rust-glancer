@@ -28,7 +28,7 @@ use rg_ir_model::{
     BodyRef, CrateRef, FunctionRef, GenericDefRef, ImplRef, TraitApplicability, TraitDefRef,
     TraitImplRef, TypeAliasRef,
 };
-use rg_semantic_ir::{CrateItemQuery, ItemLookupIndex, ItemStoreSource};
+use rg_semantic_ir::{CrateItemQuery, ItemLookupQuery, ItemStoreSource};
 use rg_std::{ExpectedUnique, UniqueVec};
 
 use super::chalk::{ChalkInferenceCache, ChalkOutcome, ChalkTraitSolver};
@@ -341,7 +341,7 @@ impl TraitSelectionSession {
         &self,
         item_paths: &ItemPathQuery<'query, D, I>,
         crate_items: &CrateItemQuery<'query, D, I>,
-        lookup_index: &ItemLookupIndex,
+        item_lookup: &ItemLookupQuery<'_>,
         clauses: &[Clause],
         table: &InferenceTable,
     ) -> Result<ChalkOutcome<InferenceTable>, I::Error>
@@ -352,7 +352,7 @@ impl TraitSelectionSession {
         self.shared.solver.prove_clauses(
             item_paths,
             crate_items,
-            lookup_index,
+            item_lookup,
             self,
             &self.inference_cache,
             clauses,
@@ -369,7 +369,7 @@ impl TraitSelectionSession {
         &self,
         item_paths: &ItemPathQuery<'query, D, I>,
         crate_items: &CrateItemQuery<'query, D, I>,
-        lookup_index: &ItemLookupIndex,
+        item_lookup: &ItemLookupQuery<'_>,
         goal: &TraitGoal,
         associated_ty: TypeAliasRef,
         selected_impl: Option<(ImplRef, &InferenceSubstitution)>,
@@ -382,7 +382,7 @@ impl TraitSelectionSession {
         self.shared.solver.normalize_assoc_type(
             item_paths,
             crate_items,
-            lookup_index,
+            item_lookup,
             self,
             &self.inference_cache,
             goal,

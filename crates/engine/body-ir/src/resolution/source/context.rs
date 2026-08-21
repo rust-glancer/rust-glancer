@@ -1,6 +1,6 @@
 //! Shared provider construction for body resolution.
 //!
-//! Resolution components should not each remember how to wire DefMap, item-store, lookup-index,
+//! Resolution components should not each remember how to wire DefMap, item-store, lookup-query,
 //! solver-session, and body providers together. This context keeps that routing in one place while
 //! still exposing only read-only access to the active body.
 
@@ -8,7 +8,7 @@ use rg_def_map::{DefMapQuery, DefMapSource};
 use rg_ir_model::{BodyRef, Path, ScopeId};
 use rg_item_tree::TypeRef;
 use rg_package_store::PackageStoreError;
-use rg_semantic_ir::{ItemLookupIndex, ItemStoreQuery, ItemStoreSource, TypePathResolution};
+use rg_semantic_ir::{ItemLookupQuery, ItemStoreQuery, ItemStoreSource, TypePathResolution};
 use rg_ty::{
     AssociatedItemCandidateRef, Autoderef, ImplMatcher, ItemPathQuery, SemanticSignatureQuery,
     TraitSelectionQuery, TraitSelectionSession, Ty, TyContext, TypeLoweringAnchor,
@@ -41,7 +41,7 @@ type BodyImplMatcher<'context, 'query, D, I> = ImplMatcher<
 
 /// Read-only provider bundle shared by body semantic queries.
 ///
-/// The context keeps DefMap, item-store, item-lookup-index, trait-selection, and active-body routing
+/// The context keeps DefMap, item-store, item-lookup-query, trait-selection, and active-body routing
 /// coherent while small query objects own the actual operations. A finalized consumer supplies
 /// `BodyView`; indexing can instead supply structural-only data or a crate-private inference
 /// snapshot. Query APIs that need types therefore read through `query_body`, whose source is
@@ -62,12 +62,12 @@ where
         item_stores: I,
         body_ref: BodyRef,
         body: BodyView<'a>,
-        item_lookup_index: &'a ItemLookupIndex,
+        item_lookup_query: &ItemLookupQuery<'a>,
         trait_selection: TraitSelectionSession,
     ) -> Self {
         Self::from_source(
             BodyQuerySource::new(def_maps, item_stores, body_ref, body),
-            item_lookup_index,
+            item_lookup_query,
             trait_selection,
         )
     }
@@ -81,12 +81,12 @@ where
         item_stores: I,
         body_ref: BodyRef,
         body: &'a BodyData,
-        item_lookup_index: &'a ItemLookupIndex,
+        item_lookup_query: &ItemLookupQuery<'a>,
         trait_selection: TraitSelectionSession,
     ) -> Self {
         Self::from_source(
             BodyQuerySource::for_structure(def_maps, item_stores, body_ref, body),
-            item_lookup_index,
+            item_lookup_query,
             trait_selection,
         )
     }
@@ -97,19 +97,19 @@ where
         item_stores: I,
         body_ref: BodyRef,
         body: BodyQueryView<'a>,
-        item_lookup_index: &'a ItemLookupIndex,
+        item_lookup_query: &ItemLookupQuery<'a>,
         trait_selection: TraitSelectionSession,
     ) -> Self {
         Self::from_source(
             BodyQuerySource::for_query(def_maps, item_stores, body_ref, body),
-            item_lookup_index,
+            item_lookup_query,
             trait_selection,
         )
     }
 
     fn from_source(
         source: BodyQuerySource<'a, D, I>,
-        item_lookup_index: &'a ItemLookupIndex,
+        item_lookup_query: &ItemLookupQuery<'a>,
         trait_selection: TraitSelectionSession,
     ) -> Self {
         assert_eq!(
@@ -120,7 +120,7 @@ where
         let ty = TyContext::new(
             source.clone(),
             source.clone(),
-            item_lookup_index,
+            item_lookup_query.clone(),
             trait_selection,
         );
         Self { source, ty }
@@ -140,8 +140,8 @@ impl<'a, D, I> BodyResolutionContext<'a, D, I> {
         self.source.query_body()
     }
 
-    pub(crate) fn item_lookup_index(&self) -> &'a ItemLookupIndex {
-        self.ty.lookup_index()
+    pub(crate) fn item_lookup_query(&self) -> &ItemLookupQuery<'a> {
+        self.ty.item_lookup()
     }
 
     pub(crate) fn ty_context(

@@ -274,11 +274,7 @@ where
         // Structural inherent impls model language/core-provided builtins such as `impl<T> [T]`.
         // Body-local impl lookup remains nominal-only because block-local impls are useful for
         // local structs, not for defining new inherent methods on builtin shaped types.
-        let impl_refs = self
-            .context
-            .item_lookup_index()
-            .structural_inherent_impls()
-            .clone();
+        let impl_refs = self.context.item_lookup_query().structural_inherent_impls();
         for impl_ref in impl_refs {
             self.push_structural_inherent_functions_for_impl(
                 &item_query,
@@ -365,12 +361,9 @@ where
         receiver_ty: &AdtTy,
         method_name: Option<&str>,
     ) -> Result<UniqueVec<FunctionRef>, PackageStoreError> {
-        let index = self.context.item_lookup_index();
+        let index = self.context.item_lookup_query();
         match method_name {
-            Some(name) => Ok(index
-                .inherent_functions_for_type_and_name(receiver_ty.def, name)
-                .cloned()
-                .unwrap_or_default()),
+            Some(name) => Ok(index.inherent_functions_for_type_and_name(receiver_ty.def, name)),
             None => {
                 let item_query = self.context.item_query();
                 index.inherent_functions_for_type(&item_query, receiver_ty.def)

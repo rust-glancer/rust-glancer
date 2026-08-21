@@ -2,9 +2,8 @@
 //!
 //! Query code normally sees [`PackageBodies`] and [`CrateBodies`]: compact arenas indexed by the
 //! engine's stable ids. The cache cannot decode one source file out of those arenas directly, so
-//! [`shard`] describes a second representation made of a small routing manifest, one crate-global
-//! item lookup index, and one payload per source file. Loading every shard reconstructs exactly the
-//! ordinary resident representation.
+//! [`shard`] describes a second representation made of a small routing manifest and one payload
+//! per source file. Loading every shard reconstructs exactly the ordinary resident representation.
 
 mod body_local_items;
 mod coverage;

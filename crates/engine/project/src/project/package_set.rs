@@ -37,7 +37,7 @@ impl PhasePackageSet {
     pub(super) fn from_body_files(files: &[BodyIrFile]) -> Self {
         let mut packages = files
             .iter()
-            .map(|file| file.package)
+            .map(|file| file.crate_ref.package)
             .collect::<UniqueVec<_>>()
             .into_vec();
         packages.sort_by_key(|package| package.0);
@@ -118,10 +118,34 @@ mod tests {
     #[test]
     fn body_file_sets_are_sorted_and_deduplicated() {
         let files = [
-            BodyIrFile::new(PackageSlot(2), FileId(0)),
-            BodyIrFile::new(PackageSlot(0), FileId(1)),
-            BodyIrFile::new(PackageSlot(2), FileId(2)),
-            BodyIrFile::new(PackageSlot(1), FileId(3)),
+            BodyIrFile::new(
+                CrateRef {
+                    package: PackageSlot(2),
+                    crate_id: rg_ir_model::CrateId(0),
+                },
+                FileId(0),
+            ),
+            BodyIrFile::new(
+                CrateRef {
+                    package: PackageSlot(0),
+                    crate_id: rg_ir_model::CrateId(0),
+                },
+                FileId(1),
+            ),
+            BodyIrFile::new(
+                CrateRef {
+                    package: PackageSlot(2),
+                    crate_id: rg_ir_model::CrateId(1),
+                },
+                FileId(2),
+            ),
+            BodyIrFile::new(
+                CrateRef {
+                    package: PackageSlot(1),
+                    crate_id: rg_ir_model::CrateId(0),
+                },
+                FileId(3),
+            ),
         ];
 
         let set = PhasePackageSet::from_body_files(&files);

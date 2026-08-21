@@ -256,15 +256,6 @@ impl<'a> ProjectSnapshot<'a> {
             subset::crates_with_visible_dependencies(self.state.workspace(), crates.as_slice());
         let txn = self.state.read_txn_for_subset(&subset)?;
         let view_db = txn.view_db();
-        let mut supplemental_item_lookup_indexes = HashMap::new();
-        for &crate_ref in &crates {
-            if let Some(index) = view_db
-                .build_supplemental_current_body_item_lookup_index(crate_ref)
-                .context("prepare current-body crate item lookup")?
-            {
-                supplemental_item_lookup_indexes.insert(crate_ref, index);
-            }
-        }
         let mut bodies = Vec::new();
         let mut unavailable = Vec::new();
         let mut rebuilt_body_spans = Vec::new();
@@ -323,7 +314,6 @@ impl<'a> ProjectSnapshot<'a> {
                 file,
                 current_source,
                 associations,
-                supplemental_item_lookup_indexes.get(&crate_ref),
                 selection,
                 &mut synthetic_body_ref,
                 &mut checkpoint,
@@ -340,7 +330,7 @@ impl<'a> ProjectSnapshot<'a> {
             );
         }
 
-        let current = CurrentBodySet::new(masked_files, bodies, supplemental_item_lookup_indexes)
+        let current = CurrentBodySet::new(masked_files, bodies)
             .context("assemble current bodies for the request")?;
         let view_db = txn.view_db().clone().with_current_body_set(current);
         let analysis = Analysis::new(view_db, SavedSourceView::new(self.state.parse_db()))

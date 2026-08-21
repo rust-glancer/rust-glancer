@@ -12,4 +12,6 @@ pub struct SemanticIrStats {
     pub type_alias_count: usize,
     pub const_count: usize,
     pub static_count: usize,
+    pub lookup_index_count: usize,
+    pub lookup_index_entry_count: usize,
 }

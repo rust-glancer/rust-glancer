@@ -2,7 +2,7 @@
 //!
 //! The trait speaks in Body IR units rather than cache files. This keeps the project layer free to
 //! choose its artifact format, while the transaction can explicitly request the manifest, one
-//! item lookup index, one source-file shard, or a complete crate.
+//! source-file shard, or a complete crate.
 
 use std::sync::Arc;
 
@@ -10,7 +10,6 @@ use rg_def_map::PackageSlot;
 use rg_ir_model::CrateId;
 use rg_package_store::PackageStoreError;
 use rg_parse::FileId;
-use rg_semantic_ir::ItemLookupIndex;
 
 use crate::{BodyFileShard, CrateBodies, PackageBodiesManifest};
 
@@ -20,12 +19,6 @@ pub trait LoadBodyIr: std::fmt::Debug + Send + Sync {
         &self,
         package: PackageSlot,
     ) -> Result<Arc<PackageBodiesManifest>, PackageStoreError>;
-
-    fn load_item_lookup_index(
-        &self,
-        package: PackageSlot,
-        crate_id: CrateId,
-    ) -> Result<Arc<ItemLookupIndex>, PackageStoreError>;
 
     fn load_file_shard(
         &self,
@@ -58,14 +51,6 @@ impl<'db> BodyIrLoader<'db> {
         package: PackageSlot,
     ) -> Result<Arc<PackageBodiesManifest>, PackageStoreError> {
         self.loader.load_manifest(package)
-    }
-
-    pub(super) fn load_item_lookup_index(
-        &self,
-        package: PackageSlot,
-        crate_id: CrateId,
-    ) -> Result<Arc<ItemLookupIndex>, PackageStoreError> {
-        self.loader.load_item_lookup_index(package, crate_id)
     }
 
     pub(super) fn load_file_shard(
@@ -116,17 +101,6 @@ impl LoadBodyIr for ResidentOnlyBodyIrLoader {
         &self,
         package: PackageSlot,
     ) -> Result<Arc<PackageBodiesManifest>, PackageStoreError> {
-        panic!(
-            "{} should not load offloaded package {}",
-            self.context, package.0
-        )
-    }
-
-    fn load_item_lookup_index(
-        &self,
-        package: PackageSlot,
-        _target: CrateId,
-    ) -> Result<Arc<ItemLookupIndex>, PackageStoreError> {
         panic!(
             "{} should not load offloaded package {}",
             self.context, package.0

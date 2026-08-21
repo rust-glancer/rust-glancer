@@ -180,16 +180,21 @@ impl<'a> StartupCacheProbe<'a> {
             .parse
             .package(package.0)
             .expect("startup cache probe package slot should exist in parse db");
-        if !self.body_ir_policy.should_lower_package(parse_package) {
-            return true;
-        }
-
-        // A body artifact produced by a narrower policy can still be structurally valid while
-        // containing skipped crates. Reject it so the requested policy gets a full source rebuild.
-        let matches_policy = probe
-            .body_ir_coverage
-            .iter()
-            .all(|coverage| coverage.is_complete());
+        // A body artifact produced by a narrower target policy can still be structurally valid.
+        // Validate every aligned Cargo target so configured secondary skips remain reusable while
+        // an exhaustive all-target build rejects those same skips.
+        let matches_policy = probe.body_ir_coverage.len() == parse_package.targets().len()
+            && probe
+                .body_ir_coverage
+                .iter()
+                .zip(parse_package.targets())
+                .all(|(coverage, target)| {
+                    coverage.is_complete()
+                        || (!self
+                            .body_ir_policy
+                            .should_lower_target(parse_package, target)
+                            && matches!(coverage, rg_body_ir::CrateBodiesCoverage::SkippedByPolicy))
+                });
 
         if !matches_policy {
             metric::CACHE_PROBE_BODY_IR_POLICY_MISMATCHES.inc();

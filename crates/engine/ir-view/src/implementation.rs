@@ -49,9 +49,7 @@ impl<'a, 'db> ImplementationView<'a, 'db> {
             return Ok(None);
         }
 
-        let Some(implementation_query) = self.implementation_query(body_ref.crate_ref)? else {
-            return Ok(None);
-        };
+        let implementation_query = self.implementation_query(body_ref.crate_ref)?;
         let mut implementations = UniqueVec::new();
         for declaration in declarations {
             let Some(function) = self.function_ref_for_declaration(declaration)? else {
@@ -73,9 +71,7 @@ impl<'a, 'db> ImplementationView<'a, 'db> {
         declaration: DeclarationRef,
     ) -> anyhow::Result<UniqueVec<DeclarationRef>> {
         let mut implementations = UniqueVec::new();
-        let Some(implementation_query) = self.implementation_query(use_site)? else {
-            return Ok(implementations);
-        };
+        let implementation_query = self.implementation_query(use_site)?;
 
         match declaration {
             DeclarationRef::Item(item) => match item {
@@ -148,9 +144,7 @@ impl<'a, 'db> ImplementationView<'a, 'db> {
         ty: &IndexedType,
     ) -> anyhow::Result<UniqueVec<DeclarationRef>> {
         let mut implementations = UniqueVec::new();
-        let Some(implementation_query) = self.implementation_query(use_site)? else {
-            return Ok(implementations);
-        };
+        let implementation_query = self.implementation_query(use_site)?;
         for implementation in implementation_query.impls_for_ty(ty.raw())? {
             implementations.push(DeclarationRef::from(implementation));
         }
@@ -216,17 +210,14 @@ impl<'a, 'db> ImplementationView<'a, 'db> {
     fn implementation_query(
         &self,
         use_site: CrateRef,
-    ) -> anyhow::Result<Option<ImplementationQuery<'_, &IndexedViewDb<'_>, &IndexedViewDb<'_>>>>
-    {
-        let Some(item_lookup_index) = self.db.body_ir.item_lookup_index(use_site)? else {
-            return Ok(None);
-        };
-        Ok(Some(ImplementationQuery::new(TyContext::new(
+    ) -> anyhow::Result<ImplementationQuery<'_, &IndexedViewDb<'_>, &IndexedViewDb<'_>>> {
+        let item_lookup_query = self.db.item_lookup_query(use_site)?;
+        Ok(ImplementationQuery::new(TyContext::new(
             self.db,
             self.db,
-            item_lookup_index,
+            item_lookup_query,
             self.db.trait_selection(use_site),
-        ))))
+        )))
     }
 
     /// Extract a function ref from a declaration when it denotes a function.

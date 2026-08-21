@@ -23,10 +23,11 @@ pub use self::{
     item::{
         ConstData, ConstSignature, CrateItemQuery, EnumData, EnumVariantData, FieldData,
         FunctionData, FunctionSignature, GenericParamSource, GenericParamView, Generics,
-        GenericsQuery, ImplData, ItemLookupIndex, ItemResolutionQuery, ItemStore, ItemStoreBuilder,
-        ItemStoreLowerer, ItemStoreQuery, ItemStoreSource, ItemStoreSourceReader, SemanticItemView,
-        StaticData, StructData, TraitData, TypeAliasData, TypeAliasSignature, TypePathContext,
-        TypePathResolution, UnionData,
+        GenericsQuery, ImplData, ItemLookupIndex, ItemLookupIndexSource, ItemLookupQuery,
+        ItemLookupQueryCache, ItemLookupQueryCacheStats, ItemResolutionQuery, ItemStore,
+        ItemStoreBuilder, ItemStoreLowerer, ItemStoreQuery, ItemStoreSource, ItemStoreSourceReader,
+        SemanticItemView, StaticData, StructData, TraitData, TypeAliasData, TypeAliasSignature,
+        TypePathContext, TypePathResolution, UnionData,
     },
     store::{SemanticIrDb, SemanticIrReadTxn},
 };

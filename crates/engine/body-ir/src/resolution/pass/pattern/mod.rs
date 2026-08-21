@@ -133,7 +133,7 @@ where
                         // `IntoIterator::into_iter` call. Model its item type as the ordinary
                         // `<typeof(value) as IntoIterator>::Item` projection, using the same live
                         // inference table as the rest of the body.
-                        let lang_items = self.context.item_lookup_index();
+                        let lang_items = self.context.item_lookup_query();
                         let Some(into_iter) = lang_items.lang_function(LangItem::IntoIter) else {
                             continue;
                         };

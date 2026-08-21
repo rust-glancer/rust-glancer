@@ -26,7 +26,11 @@ pub use self::{
     generics::{GenericParamSource, GenericParamView, Generics},
     lookup_index::ItemLookupIndex,
     lowering::{ItemStoreLowerer, ItemStoreSourceReader},
-    query::{CrateItemQuery, GenericsQuery, ItemResolutionQuery, ItemStoreQuery, ItemStoreSource},
+    query::{
+        CrateItemQuery, GenericsQuery, ItemLookupIndexSource, ItemLookupQuery,
+        ItemLookupQueryCache, ItemLookupQueryCacheStats, ItemResolutionQuery, ItemStoreQuery,
+        ItemStoreSource,
+    },
     signature::{ConstSignature, FunctionSignature, TypeAliasSignature},
     store::{ItemStore, ItemStoreBuilder},
     type_path_resolution::TypePathResolution,

@@ -8,7 +8,7 @@ use rg_def_map::DefMapSource;
 use rg_ir_model::{BindingId, BodyRef, ExprId};
 use rg_item_tree::SelfParamKind;
 use rg_package_store::PackageStoreError;
-use rg_semantic_ir::{ItemLookupIndex, ItemStoreSource};
+use rg_semantic_ir::{ItemLookupQuery, ItemStoreSource};
 use rg_ty::{ExpectedAdtTyExt, TraitSelectionSession, Ty};
 
 use crate::{
@@ -53,7 +53,7 @@ where
     pub(crate) fn new(
         def_maps: &'query D,
         item_stores: &'query I,
-        item_lookup_index: &'query ItemLookupIndex,
+        item_lookup_query: &'query ItemLookupQuery<'query>,
         body_ref: BodyRef,
         body: &'body BodyData,
         trait_selection: &'query TraitSelectionSession,
@@ -61,7 +61,7 @@ where
         let env = BodyResolutionEnv::new(
             def_maps,
             item_stores,
-            item_lookup_index,
+            item_lookup_query,
             body_ref,
             trait_selection.for_body(body_ref),
         );

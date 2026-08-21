@@ -274,7 +274,7 @@ impl<'a> QueryRunner<'a> {
                 // deferred Body IR before borrowing the read-only analysis snapshot.
                 let files = targets
                     .iter()
-                    .map(|target| (target.context.package, target.context.file))
+                    .map(|target| (target.crate_ref, target.context.file))
                     .collect::<UniqueVec<_>>();
                 self.project
                     .materialize_saved_project(AnalysisSurface::Files(files.as_slice()))
@@ -347,13 +347,13 @@ impl<'a> QueryRunner<'a> {
 
     /// Load deferred package data for every saved file identity of one source path.
     ///
-    /// A path can appear in several crate roots. Loading is selected by package and file, so this
-    /// first collects those pairs. The feature query expands them into crate contexts afterward.
+    /// A path can appear in several crate roots. Preserve every exact crate/file interpretation so
+    /// preparing a shared source does not implicitly materialize sibling Cargo targets.
     fn ensure_path(&mut self, query: &'static str, path: &Path) -> anyhow::Result<()> {
         let started = Instant::now();
 
         // Resolve the path before mutating the project. One file can have several crate contexts,
-        // but file-shaped materialization only needs package-local file identities.
+        // and each interpretation has independent deferred Body IR coverage.
         let files = {
             let snapshot = self
                 .project
@@ -362,7 +362,13 @@ impl<'a> QueryRunner<'a> {
             Self::file_contexts(snapshot, path)
                 .context("resolve query path")?
                 .into_iter()
-                .map(|context| (context.package, context.file))
+                .flat_map(|context| {
+                    let file = context.file;
+                    context
+                        .crates
+                        .into_iter()
+                        .map(move |crate_ref| (crate_ref, file))
+                })
                 .collect::<Vec<_>>()
         };
         self.project

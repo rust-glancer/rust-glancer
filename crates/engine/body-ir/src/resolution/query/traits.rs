@@ -148,7 +148,7 @@ where
         if ty.def.origin.as_crate_ref().is_some() {
             let semantic_impls = self
                 .context
-                .item_lookup_index()
+                .item_lookup_query()
                 .trait_impls_for_type(ty.def);
             self.push_matching_qualified_trait_impls(&mut impls, semantic_impls, ty, application)?;
         }

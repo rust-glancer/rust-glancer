@@ -41,18 +41,14 @@ impl<'a, 'db> MemberView<'a, 'db> {
         use_site: CrateRef,
         ty: &Ty,
     ) -> anyhow::Result<Vec<MemberMethodCandidateRef>> {
-        let Some(item_lookup_index) = self
+        let item_lookup_query = self
             .db
-            .body_ir
-            .item_lookup_index(use_site)
-            .context("read method candidate item index")?
-        else {
-            return Ok(Vec::new());
-        };
+            .item_lookup_query(use_site)
+            .context("assemble method candidate item lookup")?;
         let member_query = MemberQuery::new(TyContext::new(
             self.db,
             self.db,
-            item_lookup_index,
+            item_lookup_query,
             self.db.trait_selection(use_site),
         ));
         member_query
