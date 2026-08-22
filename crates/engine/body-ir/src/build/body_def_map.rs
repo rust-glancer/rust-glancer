@@ -16,7 +16,8 @@ use rg_ir_model::{
     ModuleRef,
 };
 use rg_item_tree::{
-    Documentation, EnumItem, ImportAlias, ItemKind, ItemNode, ItemTreeId, ModuleSource,
+    Documentation, EnumItem, ExternBlockItem, ImportAlias, ItemKind, ItemNode, ItemTreeId,
+    ModuleSource,
 };
 use rg_package_store::PackageStoreError;
 use rg_text::Name;
@@ -116,13 +117,35 @@ impl<'body> BodyDefMapCollector<'body> {
             ItemKind::Use(use_item) => self.collect_use(module, item_id, item, use_item),
             ItemKind::Impl(_) => self.collect_local_impl(module, item_id, item),
             ItemKind::Enum(enum_item) => self.collect_enum(module, item_id, item, enum_item),
+            ItemKind::ExternBlock(extern_block) => {
+                self.collect_extern_block(module, item_id, item, extern_block)
+            }
             ItemKind::MacroCall(_)
             | ItemKind::MacroDefinition(_)
             | ItemKind::ExternCrate(_)
-            | ItemKind::ExternBlock
             | ItemKind::AsmExpr => {}
             _ => {
                 self.collect_local_def(module, item_id, item);
+            }
+        }
+    }
+
+    fn collect_extern_block(
+        &mut self,
+        module: ModuleId,
+        block_id: ItemTreeId,
+        block: &ItemNode,
+        extern_block: &ExternBlockItem,
+    ) {
+        let block_source = self.item_source(block_id, block);
+        for child_id in &extern_block.items {
+            let Some(child) = self.body.source_item(*child_id).cloned() else {
+                continue;
+            };
+            // Body-local macro calls remain retained source items, but the ordinary local-def
+            // classifier rejects them and this path never queues expansion.
+            if let Some(local_def) = self.collect_local_def(module, *child_id, &child) {
+                self.builder.insert_foreign_block(local_def, block_source);
             }
         }
     }

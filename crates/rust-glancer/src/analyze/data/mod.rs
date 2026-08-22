@@ -13,11 +13,6 @@ pub(crate) use self::stages::AnalysisSetupReport;
 use self::{memory::MemoryReport, profile::ProfileSnapshotReport, project::ProjectReport};
 use crate::report::ReportDocument;
 
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct ReportDocumentOptions {
-    pub(crate) include_memory: bool,
-}
-
 /// Machine-readable result of one `analyze` run.
 #[derive(Debug, Serialize)]
 pub(crate) struct AnalyzeReport {
@@ -70,7 +65,7 @@ impl AnalyzeReport {
         serde_json::to_string_pretty(self)
     }
 
-    pub(crate) fn document(&self, options: ReportDocumentOptions) -> ReportDocument {
+    pub(crate) fn document(&self, include_analysis_setup: bool) -> ReportDocument {
         let mut document = ReportDocument::builder("analyze")
             .title("rust-glancer analysis built")
             .section("project", |section| {
@@ -78,7 +73,7 @@ impl AnalyzeReport {
                 self.project.append_document(section);
             });
 
-        if options.include_memory {
+        if include_analysis_setup {
             document = document.section("analysis_setup", |section| {
                 section.group("summary", "Summary");
                 self.analysis_setup.append_document(section);

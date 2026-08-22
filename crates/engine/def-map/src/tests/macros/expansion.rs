@@ -27,6 +27,15 @@ make_user!();
     target
         .entry("User")
         .assert_type_exists("macro expansion should add generated structs to the module scope");
+    assert!(
+        project
+            .def_map_db()
+            .resident_package(crate::PackageSlot(0))
+            .expect("macro fixture package should remain resident")
+            .macro_expansion_limits()
+            .is_empty(),
+        "successful expansion should not retain an empty limit diagnostic",
+    );
 }
 
 #[test]
@@ -378,7 +387,20 @@ macro_rules! recurse {
     };
 }
 
+macro_rules! finite_start {
+    () => {
+        finite_end!();
+    };
+}
+
+macro_rules! finite_end {
+    () => {
+        pub struct FiniteResult;
+    };
+}
+
 recurse!();
+finite_start!();
 
 pub struct After;
 "#,
@@ -389,6 +411,9 @@ pub struct After;
     target
         .entry("After")
         .assert_type_exists("macro expansion limit should not abort def-map finalization");
+    target
+        .entry("FiniteResult")
+        .assert_type_exists("an independent finite chain should complete before the limit");
     snapshot.assert_gauge_bool_with_message(
         metric::EXPANSION_PASS_LIMIT_REACHED,
         true,
@@ -404,6 +429,24 @@ pub struct After;
         |skipped| skipped > 0,
         "recursive macro expansion should leave some retryable calls skipped by limit",
     );
+
+    let reports = project
+        .def_map_db()
+        .macro_expansion_limit_reports()
+        .collect::<Vec<_>>();
+    let [report] = reports.as_slice() else {
+        panic!("the affected crate should retain one bounded macro-limit report");
+    };
+    assert_eq!(report.package_name, "recursive_macro_fixture");
+    assert_eq!(report.crate_name, "recursive_macro_fixture");
+    let [recursive] = report.groups.as_slice() else {
+        panic!("only recursive fallout should remain pending at the limit");
+    };
+    assert_eq!(recursive.macro_name, "recurse");
+    assert_eq!(recursive.source_call_count, 0);
+    assert_eq!(recursive.generated_call_count, 1);
+    assert!(recursive.chain_truncated);
+    assert!(recursive.example_chain.iter().all(|name| name == "recurse"));
 }
 
 #[test]
@@ -731,6 +774,9 @@ pub mod prelude {
         pub use crate::make_item;
     }
 }
+
+//- /sysroot/library/proc_macro/src/lib.rs
+pub struct TokenStream;
 "#,
     );
     let target = project.lib("app");

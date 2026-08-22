@@ -92,20 +92,27 @@ impl CrateData {
     }
 }
 
-/// Def maps for all semantic crates inside one parsed package.
+/// Frozen def maps and bounded build diagnostics for one parsed package.
 #[derive(Debug, Clone, PartialEq, Eq, Default, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct PackageDefMaps {
     pub(crate) name: String,
     pub(crate) edition: RustEdition,
     pub(crate) crates: Arena<CrateId, CrateData>,
+    macro_expansion_limits: Vec<MacroExpansionLimitReport>,
 }
 
 impl PackageDefMaps {
-    pub fn new(name: String, edition: RustEdition, crates: Vec<CrateData>) -> Self {
+    pub fn new(
+        name: String,
+        edition: RustEdition,
+        crates: Vec<CrateData>,
+        macro_expansion_limits: Vec<MacroExpansionLimitReport>,
+    ) -> Self {
         Self {
             name,
             edition,
             crates: Arena::from_vec(crates),
+            macro_expansion_limits,
         }
     }
 
@@ -139,4 +146,43 @@ impl PackageDefMaps {
     pub fn def_map(&self, crate_id: CrateId) -> Option<&DefMap> {
         self.crate_data(crate_id).map(CrateData::def_map)
     }
+
+    /// Returns bounded diagnostics retained when this package hit the global macro pass limit.
+    pub fn macro_expansion_limits(&self) -> &[MacroExpansionLimitReport] {
+        &self.macro_expansion_limits
+    }
+}
+
+/// Bounded summary of calls left retryable in one crate when the macro guard fired.
+///
+/// The summary groups calls by their rendered macro path and retains one ancestry example instead
+/// of tokens or a complete expansion graph. A pathological expansion therefore stays cheap to
+/// persist in package artifacts and copy into reports.
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
+pub struct MacroExpansionLimitReport {
+    /// Cargo package containing the affected semantic crate.
+    pub package_name: String,
+    /// Semantic crate whose worklist reached the guard.
+    pub crate_name: String,
+    /// Represented calls grouped by rendered macro identity.
+    pub groups: Vec<MacroExpansionLimitGroup>,
+    /// Calls not represented after the shared rendered-group budget was exhausted.
+    pub omitted_call_count: usize,
+}
+
+/// Calls with one rendered macro identity that were skipped by the expansion limit.
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
+pub struct MacroExpansionLimitGroup {
+    /// Full written path when available, otherwise the final callee name or `<unknown>`.
+    pub macro_name: String,
+    /// Total calls represented by this group.
+    pub skipped_call_count: usize,
+    /// Represented calls written directly in source.
+    pub source_call_count: usize,
+    /// Represented calls produced by another macro expansion.
+    pub generated_call_count: usize,
+    /// One source-to-leaf ancestry example, such as `entry -> recurse -> recurse`.
+    pub example_chain: Vec<String>,
+    /// Whether the ancestry example stopped before reaching a valid source call.
+    pub chain_truncated: bool,
 }

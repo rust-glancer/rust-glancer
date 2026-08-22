@@ -48,6 +48,17 @@ pub(super) fn check_project_path_resolution_with_sysroot(
     expect.assert_eq(&actual);
 }
 
+pub(super) fn check_project_path_resolution_with_fake_sysroot(
+    fixture: &str,
+    queries: &[PathResolutionQuery],
+    expect: Expect,
+) {
+    let db = DefMapFixtureDb::build_with_fake_sysroot(fixture);
+    let actual = ProjectPathResolutionSnapshot::new(&db, queries).render();
+    let actual = format!("{}\n", actual.trim_end());
+    expect.assert_eq(&actual);
+}
+
 pub(super) struct PathResolutionQuery {
     package_name: &'static str,
     target_kind: TargetKind,

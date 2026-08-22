@@ -7,10 +7,11 @@ use rg_syntax::{
 
 use rg_ir_model::{ExprId, Mutability, ScopeId, StmtId};
 use rg_item_tree::{
-    ConstItem, Documentation, EnumItem, ExternCrateItem, FromAst as _, FunctionItem, ImplItem,
-    ImplItemContext, InnerDocs, ItemKind, ItemNode, ItemTreeId, MacroUseAttr, MaybeFromAst,
-    ModuleItem, ModuleSource, OuterDocs, SelfParamKind, StaticItem, StructItem, TraitItem,
-    TraitItemContext, TypeAliasItem, UnionItem, UseItem, VisibilityLevel,
+    ConstItem, Documentation, EnumItem, ExternBlockItem, ExternCrateItem, FromAst as _,
+    FunctionItem, ImplItem, ImplItemContext, InnerDocs, ItemKind, ItemNode, ItemTreeId,
+    MacroCallItem, MacroUseAttr, MaybeFromAst, ModuleItem, ModuleSource, OuterDocs, SelfParamKind,
+    StaticItem, StructItem, TraitItem, TraitItemContext, TypeAliasItem, UnionItem, UseItem,
+    VisibilityLevel,
 };
 use rg_parse::Span;
 use rg_text::Name;
@@ -470,13 +471,16 @@ impl BodyLowering<'_> {
                     item.syntax(),
                 ))
             }
-            ast::Item::ExternBlock(item) => Some(self.named_source_item_node(
-                ItemKind::ExternBlock,
-                None,
-                VisibilityLevel::Private,
-                None,
-                item.syntax(),
-            )),
+            ast::Item::ExternBlock(item) => {
+                let extern_block = self.lower_source_extern_block(item);
+                Some(self.named_source_item_node(
+                    ItemKind::ExternBlock(extern_block),
+                    None,
+                    VisibilityLevel::Private,
+                    <Documentation as MaybeFromAst<OuterDocs>>::maybe_from_ast(item, OuterDocs),
+                    item.syntax(),
+                ))
+            }
             ast::Item::ExternCrate(item) => {
                 let (name, name_span) = self.source_name_ref(item.name_ref());
                 let kind =
@@ -617,6 +621,97 @@ impl BodyLowering<'_> {
                 None
             }
         }
+    }
+
+    /// Lowers `extern "C" { fn read(); }` into a block plus its child source items.
+    ///
+    /// The children are allocated without scopes here. Body DefMap collection exposes their names
+    /// in the containing module and keeps the block as their foreign owner.
+    fn lower_source_extern_block(&mut self, block: &ast::ExternBlock) -> ExternBlockItem {
+        let mut items = Vec::new();
+        if let Some(item_list) = block.extern_item_list() {
+            for item in item_list.extern_items() {
+                let Some(item) = self.cfg.enabled_syntax(item) else {
+                    continue;
+                };
+                let source = self.source(item.syntax());
+                let node = match item {
+                    ast::ExternItem::Fn(item) => {
+                        let kind = ItemKind::Function(FunctionItem::from_ast(
+                            &item,
+                            (self.line_index, &mut *self.interner),
+                        ));
+                        self.named_source_item_node(
+                            kind,
+                            item.name(),
+                            VisibilityLevel::from_ast(&item.visibility(), ()),
+                            <Documentation as MaybeFromAst<OuterDocs>>::maybe_from_ast(
+                                &item, OuterDocs,
+                            ),
+                            item.syntax(),
+                        )
+                    }
+                    ast::ExternItem::Static(item) => {
+                        let kind = ItemKind::Static(StaticItem::from_ast(
+                            &item,
+                            (self.line_index, &mut *self.interner),
+                        ));
+                        self.named_source_item_node(
+                            kind,
+                            item.name(),
+                            VisibilityLevel::from_ast(&item.visibility(), ()),
+                            <Documentation as MaybeFromAst<OuterDocs>>::maybe_from_ast(
+                                &item, OuterDocs,
+                            ),
+                            item.syntax(),
+                        )
+                    }
+                    ast::ExternItem::TypeAlias(item) => {
+                        let kind = ItemKind::TypeAlias(TypeAliasItem::from_ast(
+                            &item,
+                            (self.line_index, &mut *self.interner),
+                        ));
+                        self.named_source_item_node(
+                            kind,
+                            item.name(),
+                            VisibilityLevel::from_ast(&item.visibility(), ()),
+                            <Documentation as MaybeFromAst<OuterDocs>>::maybe_from_ast(
+                                &item, OuterDocs,
+                            ),
+                            item.syntax(),
+                        )
+                    }
+                    ast::ExternItem::MacroCall(item) => {
+                        // Body-local foreign macros remain source-visible, but their token payload
+                        // is omitted because this path deliberately never schedules expansion.
+                        let path = item.path().map(|path| path.syntax().text().to_string());
+                        let callee = item
+                            .path()
+                            .and_then(|path| path.segment())
+                            .and_then(|segment| segment.name_ref())
+                            .map(|name_ref| self.interner.intern(name_ref.text()));
+                        Self::source_item_node(
+                            ItemKind::MacroCall(MacroCallItem {
+                                path,
+                                callee,
+                                args: None,
+                                builtin: None,
+                            }),
+                            None,
+                            None,
+                            VisibilityLevel::Private,
+                            <Documentation as MaybeFromAst<OuterDocs>>::maybe_from_ast(
+                                &item, OuterDocs,
+                            ),
+                            source,
+                        )
+                    }
+                };
+                items.push(self.builder.alloc_scopeless_source_item(node, source));
+            }
+        }
+
+        ExternBlockItem::from_ast(block, items)
     }
 
     fn lower_source_module_item(&mut self, item: &ast::Module) -> ModuleItem {

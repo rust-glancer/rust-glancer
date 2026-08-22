@@ -23,11 +23,12 @@ use rg_tt::{
 
 use super::{
     BuiltinMacroItem, CfgExpr, CfgSelectArmItem, ConstItem, Documentation, EnumItem,
-    ExternCrateItem, FileTree, FromAst, FunctionItem, ImplItem, ImplItemContext, InnerDocs,
-    ItemKind, ItemNode, ItemTreeId, LangItem, MacroCallContext, MacroCallItem, MacroDefAst,
-    MacroDefContext, MacroDefinitionItem, MacroRulesAst, MacroRulesContext, MacroUseAttr,
-    MaybeFromAst, ModuleItem, ModuleSource, Package, StaticItem, StructItem, TargetRoot, TraitItem,
-    TraitItemContext, TypeAliasItem, UnionItem, UseItem, UserFacingAttrs, VisibilityLevel,
+    ExternBlockItem, ExternCrateItem, FileTree, FromAst, FunctionItem, ImplItem, ImplItemContext,
+    InnerDocs, ItemKind, ItemNode, ItemTreeId, LangItem, MacroCallContext, MacroCallItem,
+    MacroDefAst, MacroDefContext, MacroDefinitionItem, MacroRulesAst, MacroRulesContext,
+    MacroUseAttr, MaybeFromAst, ModuleItem, ModuleSource, Package, StaticItem, StructItem,
+    TargetRoot, TraitItem, TraitItemContext, TypeAliasItem, UnionItem, UseItem, UserFacingAttrs,
+    VisibilityLevel,
 };
 
 /// Lowers all known files for one parsed package and records target entrypoints into them.
@@ -234,13 +235,16 @@ impl<'db> PackageLowering<'db> {
                 VisibilityLevel::from_ast(&item.visibility(), ()),
                 &item,
             )),
-            ast::Item::ExternBlock(item) => Some(builder.alloc_item(
-                ItemKind::ExternBlock,
-                None,
-                None,
-                VisibilityLevel::Private,
-                item.syntax().text_range(),
-            )),
+            ast::Item::ExternBlock(item) => {
+                let extern_block = self.lower_extern_block(builder, &item);
+                Some(builder.alloc_documented_item(
+                    ItemKind::ExternBlock(extern_block),
+                    None,
+                    None,
+                    VisibilityLevel::Private,
+                    &item,
+                ))
+            }
             ast::Item::ExternCrate(item) => Some(
                 builder.alloc_documented_item(
                     ItemKind::ExternCrate(ExternCrateItem::from_ast(&item, &mut *self.interner)),
@@ -411,6 +415,77 @@ impl<'db> PackageLowering<'db> {
         };
 
         Ok(item_id)
+    }
+
+    /// Lowers direct declarations while keeping the extern block as their stable owner.
+    ///
+    /// Nested macro calls remain as children so source scans can still see them. DefMap does not
+    /// enqueue those calls: expanding inside a foreign block needs declaration-only handling,
+    /// rather than ordinary item-position macro collection.
+    fn lower_extern_block(
+        &mut self,
+        builder: &mut FileTreeBuilder<'_>,
+        block: &ast::ExternBlock,
+    ) -> ExternBlockItem {
+        let mut items = Vec::new();
+        if let Some(item_list) = block.extern_item_list() {
+            for item in item_list.extern_items() {
+                let item = match item {
+                    ast::ExternItem::Fn(item) => builder.alloc_documented_item(
+                        ItemKind::Function(FunctionItem::from_ast(
+                            &item,
+                            (builder.line_index, &mut *self.interner),
+                        )),
+                        self.intern_ast_name(item.name()),
+                        item.name().map(|name| name.syntax().text_range()),
+                        VisibilityLevel::from_ast(&item.visibility(), ()),
+                        &item,
+                    ),
+                    ast::ExternItem::Static(item) => builder.alloc_documented_item(
+                        ItemKind::Static(StaticItem::from_ast(
+                            &item,
+                            (builder.line_index, &mut *self.interner),
+                        )),
+                        self.intern_ast_name(item.name()),
+                        item.name().map(|name| name.syntax().text_range()),
+                        VisibilityLevel::from_ast(&item.visibility(), ()),
+                        &item,
+                    ),
+                    ast::ExternItem::TypeAlias(item) => builder.alloc_documented_item(
+                        ItemKind::TypeAlias(TypeAliasItem::from_ast(
+                            &item,
+                            (builder.line_index, &mut *self.interner),
+                        )),
+                        self.intern_ast_name(item.name()),
+                        item.name().map(|name| name.syntax().text_range()),
+                        VisibilityLevel::from_ast(&item.visibility(), ()),
+                        &item,
+                    ),
+                    ast::ExternItem::MacroCall(item) => {
+                        let macro_edition = macro_edition(self.parse_package.edition());
+                        let mut span_for_range =
+                            |range| builder.tt_span_for_range(range, macro_edition);
+                        builder.alloc_documented_item(
+                            ItemKind::MacroCall(MacroCallItem::from_ast(
+                                &item,
+                                MacroCallContext {
+                                    interner: &mut *self.interner,
+                                    builtin: None,
+                                    span_for_range: &mut span_for_range,
+                                },
+                            )),
+                            None,
+                            None,
+                            VisibilityLevel::Private,
+                            &item,
+                        )
+                    }
+                };
+                items.push(item);
+            }
+        }
+
+        ExternBlockItem::from_ast(block, items)
     }
 
     /// Eagerly lowers source-like builtin macros while this file context is still available.

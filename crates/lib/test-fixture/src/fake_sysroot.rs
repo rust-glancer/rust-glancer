@@ -96,6 +96,14 @@ const FILES: &[FakeSysrootFile] = &[
         relative_path: "sysroot/library/std/src/sync/mod.rs",
         contents: include_str!("../assets/fake_sysroot/std/src/sync/mod.rs"),
     },
+    FakeSysrootFile {
+        relative_path: "sysroot/library/proc_macro/Cargo.toml",
+        contents: include_str!("../assets/fake_sysroot/proc_macro/Cargo.toml"),
+    },
+    FakeSysrootFile {
+        relative_path: "sysroot/library/proc_macro/src/lib.rs",
+        contents: include_str!("../assets/fake_sysroot/proc_macro/src/lib.rs"),
+    },
 ];
 
 pub(crate) fn files() -> &'static [FakeSysrootFile] {

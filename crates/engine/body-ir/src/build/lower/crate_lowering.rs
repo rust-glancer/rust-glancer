@@ -63,12 +63,32 @@ impl<'a> CrateLowering<'a> {
     /// inspecting `BodyData::owner`; never cast item IDs to `BodyId`.
     fn selected_body_tasks(&self) -> anyhow::Result<Vec<BodyLoweringTask>> {
         let mut tasks = Vec::new();
+        let item_query = ItemStoreQuery::new(self.semantic_ir);
 
         for &(function_ref, file_id, span) in &self.functions {
             if !self.scope.should_lower_body_file(self.crate_ref, file_id) {
                 continue;
             }
-            let Some(owner_module) = Self::owner_module(self.semantic_ir, function_ref)? else {
+            let Some(function) = item_query.function_data(function_ref).with_context(|| {
+                format!(
+                    "while attempting to inspect body availability for function {:?}",
+                    function_ref.id
+                )
+            })?
+            else {
+                continue;
+            };
+            if !function.signature.has_body() {
+                // Foreign functions and required trait methods are declarations, not missing body
+                // work. Excluding them here keeps coverage counters about materializable bodies.
+                continue;
+            }
+            let Some(owner_module) = Self::owner_module_for_item_owner(
+                self.semantic_ir,
+                function_ref.origin,
+                function.owner,
+            )?
+            else {
                 continue;
             };
             tasks.push(BodyLoweringTask {
@@ -102,10 +122,31 @@ impl<'a> CrateLowering<'a> {
             if !self.scope.should_lower_body_file(self.crate_ref, file_id) {
                 continue;
             }
-            let Some(owner_module) = Self::static_owner_module(self.semantic_ir, static_ref)?
+            let Some(data) = item_query.static_data(static_ref).with_context(|| {
+                format!(
+                    "while attempting to inspect body availability for static {:?}",
+                    static_ref.id
+                )
+            })?
             else {
                 continue;
             };
+            // Function signatures carry `has_body`; statics do not. Consult the sparse foreign
+            // owner map before scheduling initializer lowering for a static declaration.
+            let is_foreign = match data.local_def.origin {
+                rg_ir_model::DefMapRef::Crate(crate_ref) => self
+                    .def_map
+                    .def_map(crate_ref)
+                    .context("while attempting to inspect static declaration ownership")?
+                    .is_some_and(|def_map| {
+                        def_map.foreign_block(data.local_def.local_def).is_some()
+                    }),
+                rg_ir_model::DefMapRef::Body(_) => false,
+            };
+            if is_foreign {
+                continue;
+            }
+            let owner_module = data.owner;
             tasks.push(BodyLoweringTask {
                 owner: BodyOwner::Static(static_ref),
                 request_root: false,
@@ -117,24 +158,6 @@ impl<'a> CrateLowering<'a> {
         }
 
         Ok(tasks)
-    }
-
-    fn owner_module(
-        semantic_ir: &SemanticIrReadTxn<'_>,
-        function: FunctionRef,
-    ) -> anyhow::Result<Option<ModuleRef>> {
-        let item_query = ItemStoreQuery::new(semantic_ir);
-        let Some(function_data) = item_query.function_data(function).with_context(|| {
-            format!(
-                "while attempting to fetch semantic IR function {:?}",
-                function.id
-            )
-        })?
-        else {
-            return Ok(None);
-        };
-
-        Self::owner_module_for_item_owner(semantic_ir, function.origin, function_data.owner)
     }
 
     fn const_owner_module(
@@ -150,14 +173,6 @@ impl<'a> CrateLowering<'a> {
         };
 
         Self::owner_module_for_item_owner(semantic_ir, konst.origin, const_data.owner)
-    }
-
-    fn static_owner_module(
-        semantic_ir: &SemanticIrReadTxn<'_>,
-        static_ref: StaticRef,
-    ) -> anyhow::Result<Option<ModuleRef>> {
-        let item_query = ItemStoreQuery::new(semantic_ir);
-        Ok(item_query.static_data(static_ref)?.map(|data| data.owner))
     }
 
     fn owner_module_for_item_owner(

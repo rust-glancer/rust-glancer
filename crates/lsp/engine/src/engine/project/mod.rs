@@ -144,21 +144,23 @@ impl ProjectCoordinator {
         .context("normalize Cargo metadata")?;
         let workspace_root = workspace.workspace_root().to_path_buf();
         let sysroot = if configuration.discover_sysroot {
-            SysrootSources::discover(workspace.workspace_root())
+            let sysroot = SysrootSources::discover(workspace.workspace_root());
+            match &sysroot {
+                Some(sysroot) => {
+                    tracing::info!(
+                        library_root = %sysroot.library_root().display(),
+                        "sysroot sources discovered"
+                    );
+                }
+                None => {
+                    tracing::info!("sysroot sources unavailable");
+                }
+            }
+            sysroot
         } else {
+            tracing::info!("sysroot source discovery disabled");
             None
         };
-        match &sysroot {
-            Some(sysroot) => {
-                tracing::info!(
-                    library_root = %sysroot.library_root().display(),
-                    "sysroot sources discovered"
-                );
-            }
-            None => {
-                tracing::info!("sysroot sources unavailable");
-            }
-        }
 
         // Build only through the early-start boundary. This is the first state queries may see.
         let workspace = workspace.with_sysroot_sources(sysroot);
@@ -196,7 +198,7 @@ impl ProjectCoordinator {
             .project
             .saved_snapshot()
             .context("borrow initialized project snapshot")?;
-        Self::log_project_snapshot(snapshot, "initial early-start index");
+        Self::log_project_build(snapshot, "initial early-start index");
         tracing::info!(
             workspace_root = %workspace_root.display(),
             elapsed_ms = started.elapsed().as_millis(),
@@ -244,7 +246,7 @@ impl ProjectCoordinator {
             .project
             .saved_snapshot()
             .context("borrow reindexed project snapshot")?;
-        Self::log_project_snapshot(snapshot, "manual reindex");
+        Self::log_project_build(snapshot, "manual reindex");
         tracing::info!(
             elapsed_ms = started.elapsed().as_millis(),
             stale_retries,
@@ -283,7 +285,11 @@ impl ProjectCoordinator {
             .project
             .saved_snapshot()
             .context("borrow saved project snapshot")?;
-        Self::log_project_snapshot(snapshot, "after saved project changes");
+        if summary.affected_packages.is_empty() {
+            Self::log_project_snapshot(snapshot, "after saved project changes");
+        } else {
+            Self::log_project_build(snapshot, "after saved project changes");
+        }
 
         Ok(self.project.generation())
     }
@@ -492,7 +498,7 @@ impl ProjectCoordinator {
                     .project
                     .saved_snapshot()
                     .expect("project should remain initialized after cache recovery");
-                Self::log_project_snapshot(snapshot, "after package cache recovery");
+                Self::log_project_build(snapshot, "after package cache recovery");
                 tracing::info!(
                     label,
                     elapsed_ms = started.elapsed().as_millis(),
@@ -596,6 +602,12 @@ impl ProjectCoordinator {
     fn log_project_snapshot(snapshot: ProjectSnapshot<'_>, label: &'static str) {
         ProjectStats::capture(snapshot).log_info(label);
         log_retained_memory(snapshot, label);
+    }
+
+    /// Log project shape plus diagnostics produced by a newly completed def-map build.
+    fn log_project_build(snapshot: ProjectSnapshot<'_>, label: &'static str) {
+        Self::log_project_snapshot(snapshot, label);
+        ProjectStats::log_macro_expansion_limit(snapshot.macro_expansion_limit_summary(), label);
     }
 }
 

@@ -16,16 +16,36 @@ pub(crate) struct ProjectReport {
 impl ProjectReport {
     pub(crate) fn capture(project: &Project) -> Self {
         let stats = project.stats();
+        let mut macro_expansion_limits =
+            Vec::with_capacity(stats.def_map.macro_expansion_limit_crate_count);
+        macro_expansion_limits.extend(
+            project
+                .macro_expansion_limit_reports()
+                .map(MacroExpansionLimitReport::from),
+        );
+
         Self {
             indexing_preference: project.indexing_preference().config_name().to_string(),
-            packages: PackageReport::capture(project),
+            packages: PackageReport::capture(project, &stats),
             def_map: DefMapReport {
+                report_population: "resident_crate_maps",
+                resident_package_count: stats.def_map.resident_package_count,
                 crate_count: stats.def_map.crate_count,
                 module_count: stats.def_map.module_count,
                 local_def_count: stats.def_map.local_def_count,
                 local_impl_count: stats.def_map.local_impl_count,
                 import_count: stats.def_map.import_count,
                 unresolved_import_count: stats.def_map.unresolved_import_count,
+                workspace_unresolved_import_count: stats
+                    .def_map
+                    .unresolved_imports_by_origin
+                    .workspace,
+                dependency_unresolved_import_count: stats
+                    .def_map
+                    .unresolved_imports_by_origin
+                    .dependency,
+                sysroot_unresolved_import_count: stats.def_map.unresolved_imports_by_origin.sysroot,
+                macro_expansion_limits,
             },
             semantic_ir: SemanticIrReport {
                 crate_count: stats.semantic_ir.crate_count,
@@ -80,19 +100,35 @@ impl ProjectReport {
     }
 }
 
+/// Serializable DefMap counters over the resident crate-map population.
+///
+/// The origin counters classify where each unresolved `use` was written. They partition the total;
+/// they do not claim that a workspace, dependency, or sysroot package caused the failure.
 #[derive(Debug, Serialize)]
 pub(crate) struct DefMapReport {
+    pub(crate) report_population: &'static str,
+    pub(crate) resident_package_count: usize,
     pub(crate) crate_count: usize,
     pub(crate) module_count: usize,
     pub(crate) local_def_count: usize,
     pub(crate) local_impl_count: usize,
     pub(crate) import_count: usize,
     pub(crate) unresolved_import_count: usize,
+    pub(crate) workspace_unresolved_import_count: usize,
+    pub(crate) dependency_unresolved_import_count: usize,
+    pub(crate) sysroot_unresolved_import_count: usize,
+    pub(crate) macro_expansion_limits: Vec<MacroExpansionLimitReport>,
 }
 
 impl DefMapReport {
     fn append_fields(&self, fields: &mut ReportFieldsBuilder) {
         fields
+            .text("report_population", self.report_population)
+            .count_as(
+                "resident_package_count",
+                "resident packages",
+                self.resident_package_count,
+            )
             .count_as("crate_count", "crates", self.crate_count)
             .count_as("module_count", "modules", self.module_count)
             .count_as("local_def_count", "local definitions", self.local_def_count)
@@ -102,7 +138,110 @@ impl DefMapReport {
                 "unresolved_import_count",
                 "unresolved imports",
                 self.unresolved_import_count,
+            )
+            .count_as(
+                "workspace_unresolved_import_count",
+                "workspace unresolved imports",
+                self.workspace_unresolved_import_count,
+            )
+            .count_as(
+                "dependency_unresolved_import_count",
+                "dependency unresolved imports",
+                self.dependency_unresolved_import_count,
+            )
+            .count_as(
+                "sysroot_unresolved_import_count",
+                "sysroot unresolved imports",
+                self.sysroot_unresolved_import_count,
+            )
+            .count_as(
+                "macro_expansion_limit_crate_count",
+                "crates affected by macro expansion limit",
+                self.macro_expansion_limits.len(),
             );
+
+        for (report_index, report) in self.macro_expansion_limits.iter().enumerate() {
+            for (group_index, group) in report.groups.iter().enumerate() {
+                let mut detail = format!(
+                    "{}/{} {}: {} skipped ({} source, {} generated)",
+                    report.package_name,
+                    report.crate_name,
+                    group.macro_name,
+                    group.skipped_call_count,
+                    group.source_call_count,
+                    group.generated_call_count,
+                );
+                if !group.example_chain.is_empty() {
+                    detail.push_str("; chain ");
+                    detail.push_str(&group.example_chain.join(" -> "));
+                    if group.chain_truncated {
+                        detail.push_str(" -> …");
+                    }
+                }
+                fields.text(
+                    format!("macro_expansion_limit_{report_index}_{group_index}"),
+                    detail,
+                );
+            }
+            if report.omitted_call_count > 0 {
+                fields.count_as(
+                    format!("macro_expansion_limit_{report_index}_omitted_call_count"),
+                    format!(
+                        "{}/{} omitted macro-limit calls",
+                        report.package_name, report.crate_name
+                    ),
+                    report.omitted_call_count,
+                );
+            }
+        }
+    }
+}
+
+/// Report-facing copy of one crate's bounded macro-limit diagnostic.
+#[derive(Debug, Serialize)]
+pub(crate) struct MacroExpansionLimitReport {
+    pub(crate) package_name: String,
+    pub(crate) crate_name: String,
+    pub(crate) groups: Vec<MacroExpansionLimitGroup>,
+    pub(crate) omitted_call_count: usize,
+}
+
+impl From<&rg_project::MacroExpansionLimitReport> for MacroExpansionLimitReport {
+    fn from(report: &rg_project::MacroExpansionLimitReport) -> Self {
+        Self {
+            package_name: report.package_name.clone(),
+            crate_name: report.crate_name.clone(),
+            groups: report
+                .groups
+                .iter()
+                .map(MacroExpansionLimitGroup::from)
+                .collect(),
+            omitted_call_count: report.omitted_call_count,
+        }
+    }
+}
+
+/// Counts and one source-to-leaf ancestry example for a rendered macro identity.
+#[derive(Debug, Serialize)]
+pub(crate) struct MacroExpansionLimitGroup {
+    pub(crate) macro_name: String,
+    pub(crate) skipped_call_count: usize,
+    pub(crate) source_call_count: usize,
+    pub(crate) generated_call_count: usize,
+    pub(crate) example_chain: Vec<String>,
+    pub(crate) chain_truncated: bool,
+}
+
+impl From<&rg_project::MacroExpansionLimitGroup> for MacroExpansionLimitGroup {
+    fn from(group: &rg_project::MacroExpansionLimitGroup) -> Self {
+        Self {
+            macro_name: group.macro_name.clone(),
+            skipped_call_count: group.skipped_call_count,
+            source_call_count: group.source_call_count,
+            generated_call_count: group.generated_call_count,
+            example_chain: group.example_chain.clone(),
+            chain_truncated: group.chain_truncated,
+        }
     }
 }
 

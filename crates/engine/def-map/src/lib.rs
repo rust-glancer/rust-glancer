@@ -31,7 +31,7 @@ pub use self::{
     },
     map::{DefMap, DefMapBuilder, PartialDefMap},
     module::{ModuleData, ModuleOrigin},
-    package::{CrateData, PackageDefMaps},
+    package::{CrateData, MacroExpansionLimitGroup, MacroExpansionLimitReport, PackageDefMaps},
     profile::profile_descriptors,
     query::{
         CrateResolutionEnv, DefMapQuery, DefMapSource, GlobImportSource, ImportResolution,
@@ -47,7 +47,7 @@ pub use self::{
         BodyItemSourceRef, GeneratedItemRef, GeneratedSourceData, GeneratedSourceId, ItemSource,
         ItemSourceKind,
     },
-    store::{DefMapDb, DefMapReadTxn, DefMapStats},
+    store::{DefMapDb, DefMapReadTxn, DefMapStats, UnresolvedImportStats},
     visible::{VisibleScopeDef, VisibleScopeDefs, VisibleScopeOrigin},
 };
 

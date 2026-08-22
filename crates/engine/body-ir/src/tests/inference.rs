@@ -425,6 +425,11 @@ pub fn expected_destination(def_map: &DefMap) {
             core [lib]
             skipped
 
+            package proc_macro
+
+            proc_macro [lib]
+            skipped
+
             package std
 
             std [lib]

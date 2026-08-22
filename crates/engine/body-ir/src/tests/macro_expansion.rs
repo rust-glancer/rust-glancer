@@ -95,6 +95,11 @@ pub fn use_it() -> u8 {
             core [lib]
             skipped
 
+            package proc_macro
+
+            proc_macro [lib]
+            skipped
+
             package std
 
             std [lib]
@@ -629,6 +634,11 @@ pub fn via_cfg_select() -> i32 {
                 expr e0 literal int `7` => i32 @ 2:5-2:6
 
 
+            package proc_macro
+
+            proc_macro [lib]
+            skipped
+
             package std
 
             std [lib]
@@ -773,6 +783,11 @@ pub mod local {
             package core
 
             core [lib]
+            skipped
+
+            package proc_macro
+
+            proc_macro [lib]
             skipped
 
             package std
@@ -954,6 +969,11 @@ pub mod shadow {
             core [lib]
             skipped
 
+            package proc_macro
+
+            proc_macro [lib]
+            skipped
+
             package std
 
             std [lib]
@@ -1007,6 +1027,9 @@ pub mod prelude {
         pub use crate::format_args;
     }
 }
+
+//- /sysroot/library/proc_macro/src/lib.rs
+pub struct TokenStream;
 "#,
         expect![[r#"
             package alloc
@@ -1035,6 +1058,11 @@ pub mod prelude {
             package core
 
             core [lib]
+            skipped
+
+            package proc_macro
+
+            proc_macro [lib]
             skipped
 
             package std
@@ -1138,6 +1166,11 @@ pub fn use_it() {
             package core
 
             core [lib]
+            skipped
+
+            package proc_macro
+
+            proc_macro [lib]
             skipped
 
             package std

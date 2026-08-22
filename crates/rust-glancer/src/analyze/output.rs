@@ -7,10 +7,7 @@ use std::{
 
 use anyhow::Context as _;
 
-use super::{
-    config::OutputFormat,
-    data::{AnalyzeReport, ReportDocumentOptions},
-};
+use super::{config::OutputFormat, data::AnalyzeReport};
 use crate::report::{self, ReportDocument};
 
 pub(crate) fn write_report(
@@ -35,7 +32,7 @@ fn render_report(
     match output_format {
         OutputFormat::Text => {
             let mut output = String::new();
-            let document = analyze_report.document(document_options(include_memory));
+            let document = analyze_report.document(include_memory);
             report::TextRenderer
                 .render(&document, &mut output)
                 .expect("writing to a string should not fail");
@@ -49,7 +46,7 @@ fn render_report(
             Ok(output)
         }
         OutputFormat::RichJson => {
-            let document = analyze_report.document(document_options(include_memory));
+            let document = analyze_report.document(include_memory);
             let mut output = report::RichJsonRenderer
                 .render(&document)
                 .context("while attempting to render rich analyze JSON report")?;
@@ -57,15 +54,11 @@ fn render_report(
             Ok(output)
         }
         OutputFormat::Html => {
-            let document = analyze_report.document(document_options(include_memory));
+            let document = analyze_report.document(include_memory);
             let path = write_html_report(&document)?;
             Ok(format!("wrote HTML report to {}\n", path.display()))
         }
     }
-}
-
-fn document_options(include_memory: bool) -> ReportDocumentOptions {
-    ReportDocumentOptions { include_memory }
 }
 
 fn write_html_report(document: &ReportDocument) -> anyhow::Result<PathBuf> {

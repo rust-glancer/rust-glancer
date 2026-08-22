@@ -383,6 +383,9 @@ pub mod marker {
 pub mod marker {
     pub struct Std;
 }
+
+//- /sysroot/library/proc_macro/src/lib.rs
+pub struct TokenStream;
 "#,
         expect![[r#"
             workspace .
@@ -416,6 +419,17 @@ pub mod marker {
             dependencies
             - <none>
 
+            package proc_macro [sysroot]
+            manifest sysroot/library/proc_macro/Cargo.toml
+            source sysroot
+            edition 2024
+            targets
+            - proc_macro [lib] sysroot/library/proc_macro/src/lib.rs
+            dependencies
+            - alloc -> alloc
+            - core -> core
+            - std -> std
+
             package std [sysroot]
             manifest sysroot/library/std/Cargo.toml
             source sysroot
@@ -426,6 +440,51 @@ pub mod marker {
             - alloc -> alloc
             - core -> core
         "#]],
+    );
+}
+
+#[test]
+fn explicit_sysroot_root_requires_every_modeled_crate() {
+    let incomplete = fixture_crate(
+        r#"
+//- /Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+
+//- /sysroot/library/core/src/lib.rs
+pub struct Core;
+//- /sysroot/library/alloc/src/lib.rs
+pub struct Alloc;
+//- /sysroot/library/std/src/lib.rs
+pub struct Std;
+"#,
+    );
+    assert!(
+        SysrootSources::from_library_root(incomplete.path("sysroot/library")).is_none(),
+        "a source tree without proc_macro should be rejected",
+    );
+
+    let complete = fixture_crate(
+        r#"
+//- /Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+
+//- /sysroot/library/core/src/lib.rs
+pub struct Core;
+//- /sysroot/library/alloc/src/lib.rs
+pub struct Alloc;
+//- /sysroot/library/std/src/lib.rs
+pub struct Std;
+//- /sysroot/library/proc_macro/src/lib.rs
+pub struct TokenStream;
+"#,
+    );
+    assert!(
+        SysrootSources::from_library_root(complete.path("sysroot/library")).is_some(),
+        "all modeled crate roots should form a usable sysroot",
     );
 }
 
@@ -460,6 +519,9 @@ pub mod marker {
 pub mod marker {
     pub struct Std;
 }
+
+//- /sysroot/library/proc_macro/src/lib.rs
+pub struct TokenStream;
 "#,
     );
     let sysroot = SysrootSources::from_library_root(fixture.path("sysroot/library"))
@@ -479,7 +541,7 @@ pub mod marker {
         "fixture should exercise package-local feature cfgs",
     );
 
-    for name in ["core", "alloc", "std"] {
+    for name in ["core", "alloc", "std", "proc_macro"] {
         let package = workspace
             .packages()
             .iter()

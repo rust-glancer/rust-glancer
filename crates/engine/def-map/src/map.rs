@@ -12,6 +12,7 @@ use rg_item_tree::{EnumItem, FieldList, ItemKind, VisibilityLevel};
 use rg_parse::FileId;
 
 use crate::{
+    ItemSource,
     import::ImportData,
     local::{
         LocalDefData, LocalEnumVariantData, LocalEnumVariantEntry, LocalImplData,
@@ -28,6 +29,8 @@ struct DefMapData {
     local_defs: Arena<LocalDefId, LocalDefData>,
     local_enum_variants: Arena<LocalEnumVariantId, LocalEnumVariantData>,
     macro_definitions: HashMap<LocalDefId, MacroDefinitionData>,
+    /// Sparse ownership for declarations collected through an extern block.
+    foreign_blocks: HashMap<LocalDefId, ItemSource>,
     local_impls: Arena<LocalImplId, LocalImplData>,
     imports: Arena<ImportId, ImportData>,
     generated_sources: Arena<GeneratedSourceId, GeneratedSourceData>,
@@ -113,6 +116,13 @@ impl DefMapBuilder {
             .data
             .macro_definitions
             .insert(local_def, macro_definition);
+    }
+
+    /// Records the extern block that owns one otherwise-ordinary local definition.
+    ///
+    /// This stays in a sparse map so normal Rust declarations do not pay a per-item memory cost.
+    pub fn insert_foreign_block(&mut self, local_def: LocalDefId, block: ItemSource) {
+        self.def_map.data.foreign_blocks.insert(local_def, block);
     }
 
     pub fn alloc_local_impl(&mut self, local_impl: LocalImplData) -> LocalImplId {
@@ -441,6 +451,11 @@ impl DefMap {
     /// Returns a declarative macro payload by its local definition id.
     pub fn macro_definition(&self, local_def: LocalDefId) -> Option<&MacroDefinitionData> {
         self.data.macro_definitions.get(&local_def)
+    }
+
+    /// Returns the retained extern-block owner for a foreign declaration.
+    pub fn foreign_block(&self, local_def: LocalDefId) -> Option<ItemSource> {
+        self.data.foreign_blocks.get(&local_def).copied()
     }
 
     /// Returns impl block data by id.

@@ -1,7 +1,7 @@
 use super::{
     decl::{
-        ConstItem, EnumItem, FunctionItem, ImplItem, StaticItem, StructItem, TraitItem,
-        TypeAliasItem, UnionItem,
+        ConstItem, EnumItem, ExternBlockItem, FunctionItem, ImplItem, StaticItem, StructItem,
+        TraitItem, TypeAliasItem, UnionItem,
     },
     import::{ExternCrateItem, UseItem},
     macro_item::{MacroCallItem, MacroDefinitionItem},
@@ -25,7 +25,7 @@ pub enum ItemKind {
     #[display("enum")]
     Enum(EnumItem),
     #[display("extern_block")]
-    ExternBlock,
+    ExternBlock(ExternBlockItem),
     #[display("extern_crate")]
     ExternCrate(ExternCrateItem),
     #[display("fn")]
@@ -59,7 +59,7 @@ impl ItemKind {
             Self::AsmExpr => ItemTag::AsmExpr,
             Self::Const(_) => ItemTag::Const,
             Self::Enum(_) => ItemTag::Enum,
-            Self::ExternBlock => ItemTag::ExternBlock,
+            Self::ExternBlock(_) => ItemTag::ExternBlock,
             Self::ExternCrate(_) => ItemTag::ExternCrate,
             Self::Function(_) => ItemTag::Function,
             Self::Impl(_) => ItemTag::Impl,

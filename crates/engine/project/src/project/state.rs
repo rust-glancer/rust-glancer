@@ -26,7 +26,10 @@ use crate::{
 use rg_std::MemorySize;
 
 use super::{
-    build::SplitIndexingMode, loading::PackageReadLoaders, stats::ProjectStats, txn::ProjectReadTxn,
+    build::SplitIndexingMode,
+    loading::PackageReadLoaders,
+    stats::{MacroExpansionLimitBuildSummary, ProjectStats},
+    txn::ProjectReadTxn,
 };
 
 /// Identity of one successfully published saved-source project generation.
@@ -75,6 +78,7 @@ pub(crate) struct ProjectState {
     pub(crate) memory_hooks: Arc<dyn ProjectMemoryHooks>,
     pub(crate) names: PackageNameInterners,
     pub(crate) parse: ParseDb,
+    pub(crate) macro_expansion_limit_summary: MacroExpansionLimitBuildSummary,
     pub(crate) def_map: DefMapDb,
     pub(crate) semantic_ir: SemanticIrDb,
     pub(crate) body_ir: BodyIrDb,

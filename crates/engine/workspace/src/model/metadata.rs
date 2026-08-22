@@ -11,7 +11,7 @@ use rg_std::MemorySize;
 
 use super::{
     dependency::PackageDependency,
-    package::{Package, PackageId, PackageOrigin, PackageSource},
+    package::{Package, PackageId, PackageOrigin, PackageSlot, PackageSource},
     target::{CargoTarget, TargetKind},
 };
 
@@ -28,7 +28,7 @@ pub struct WorkspaceMetadata {
     // Cargo features active for that package.
     target_cfg_options: CfgOptions,
     packages: Vec<Package>,
-    package_by_id: HashMap<PackageId, usize>,
+    package_by_id: HashMap<PackageId, PackageSlot>,
 }
 
 impl WorkspaceMetadata {
@@ -64,7 +64,11 @@ impl WorkspaceMetadata {
             .and_then(SysrootSources::from_library_root)
     }
 
-    /// Adds `core`, `alloc`, and `std` from rust-src and injects them into normal packages.
+    /// Adds the complete modeled sysroot package set.
+    ///
+    /// `core`, `alloc`, and `std` remain ordinary compiler-provided roots for every target. The
+    /// `proc_macro` root is target-specific and is attached later while DefMap builds the extern
+    /// prelude; representing it as a normal Cargo dependency would leak it into sibling targets.
     pub fn add_sysroot_sources(&mut self, sources: SysrootSources) {
         if self
             .packages
@@ -76,9 +80,8 @@ impl WorkspaceMetadata {
 
         let target_cfg = self.target_cfg_options.clone();
         let mut sysroot_packages = SysrootCrate::ALL
-            .iter()
-            .copied()
-            .map(|krate| Self::sysroot_package(&sources, krate, target_cfg.clone()))
+            .into_iter()
+            .map(|krate| Self::build_sysroot_package(&sources, krate, target_cfg.clone()))
             .collect::<Vec<_>>();
 
         for package in &mut self.packages {
@@ -86,7 +89,9 @@ impl WorkspaceMetadata {
                 continue;
             }
 
-            for krate in SysrootCrate::ALL {
+            // These roots are implicit for every Rust target. `proc_macro` is intentionally
+            // omitted here because only proc-macro targets receive that compiler-provided crate.
+            for krate in [SysrootCrate::Core, SysrootCrate::Alloc, SysrootCrate::Std] {
                 if package
                     .dependencies
                     .iter()
@@ -107,7 +112,7 @@ impl WorkspaceMetadata {
         self.rebuild_package_index();
     }
 
-    fn sysroot_package(
+    fn build_sysroot_package(
         sources: &SysrootSources,
         krate: SysrootCrate,
         cfg_options: CfgOptions,
@@ -121,6 +126,14 @@ impl WorkspaceMetadata {
             SysrootCrate::Std => vec![
                 PackageDependency::normal(PackageId::sysroot(SysrootCrate::Core), "core"),
                 PackageDependency::normal(PackageId::sysroot(SysrootCrate::Alloc), "alloc"),
+            ],
+            // The public proc_macro facade is a compiler-provided crate, but its source uses the
+            // ordinary standard-library surface. Stop at these modeled roots instead of pulling
+            // compiler-private bridge crates into the workspace graph.
+            SysrootCrate::ProcMacro => vec![
+                PackageDependency::normal(PackageId::sysroot(SysrootCrate::Core), "core"),
+                PackageDependency::normal(PackageId::sysroot(SysrootCrate::Alloc), "alloc"),
+                PackageDependency::normal(PackageId::sysroot(SysrootCrate::Std), "std"),
             ],
         };
 
@@ -147,11 +160,11 @@ impl WorkspaceMetadata {
         self.package_by_id = Self::package_index(&self.packages);
     }
 
-    fn package_index(packages: &[Package]) -> HashMap<PackageId, usize> {
+    fn package_index(packages: &[Package]) -> HashMap<PackageId, PackageSlot> {
         packages
             .iter()
             .enumerate()
-            .map(|(idx, package)| (package.id.clone(), idx))
+            .map(|(idx, package)| (package.id.clone(), PackageSlot(idx)))
             .collect()
     }
 
@@ -167,8 +180,17 @@ impl WorkspaceMetadata {
 
     /// Returns one package by normalized package id.
     pub fn package(&self, package_id: &PackageId) -> Option<&Package> {
-        let slot = self.package_by_id.get(package_id).copied()?;
-        self.packages.get(slot)
+        self.packages.get(self.package_slot(package_id)?.0)
+    }
+
+    /// Returns the snapshot-local slot for one normalized package id.
+    pub fn package_slot(&self, package_id: &PackageId) -> Option<PackageSlot> {
+        self.package_by_id.get(package_id).copied()
+    }
+
+    /// Returns one compiler-provided package when sysroot sources were modeled.
+    pub fn sysroot_package(&self, krate: SysrootCrate) -> Option<&Package> {
+        self.package(&PackageId::sysroot(krate))
     }
 
     /// Returns package slots whose manifest directory contains `path`.

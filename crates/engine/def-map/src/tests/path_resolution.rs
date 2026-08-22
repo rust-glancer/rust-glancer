@@ -273,6 +273,9 @@ pub mod prelude {
         pub use alloc::marker::Vec;
     }
 }
+
+//- /sysroot/library/proc_macro/src/lib.rs
+pub struct TokenStream;
 "#,
         &[
             PathResolutionQuery::lib("app", "crate", "std::marker::Std"),
@@ -339,6 +342,9 @@ pub mod prelude {
         pub use crate::marker::NewPrelude;
     }
 }
+
+//- /sysroot/library/proc_macro/src/lib.rs
+pub struct TokenStream;
 "#,
         &[
             PathResolutionQuery::lib("app", "crate", "LegacyPrelude"),
@@ -388,6 +394,9 @@ pub struct Alloc;
 pub mod prelude {
     pub mod rust_2024 {}
 }
+
+//- /sysroot/library/proc_macro/src/lib.rs
+pub struct TokenStream;
 "#,
         &[PathResolutionQuery::lib(
             "core",

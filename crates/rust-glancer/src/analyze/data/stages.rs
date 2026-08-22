@@ -4,7 +4,7 @@ use serde::Serialize;
 
 use crate::report::{ReportSectionBuilder, ReportTableBuilder};
 
-/// Timings collected before the project pipeline itself starts.
+/// Timings collected before the project pipeline starts.
 #[derive(Debug, Clone, Copy, Serialize)]
 pub(crate) struct AnalysisSetupReport {
     pub(crate) cargo_metadata_ms: f64,

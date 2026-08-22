@@ -24,8 +24,8 @@ use rg_ir_model::{
     CrateId, CrateRef, DefId, DefMapRef, LocalDefId, LocalDefRef, ModuleId, ModuleRef,
 };
 use rg_item_tree::{
-    Documentation, EnumItem, ExternCrateItem, FunctionItem, ItemKind, ItemNode, ItemTreeDb,
-    ItemTreeId, ItemTreeRef, MacroCallItem, MacroDefinitionAttrs, MacroDefinitionItem,
+    Documentation, EnumItem, ExternBlockItem, ExternCrateItem, FunctionItem, ItemKind, ItemNode,
+    ItemTreeDb, ItemTreeId, ItemTreeRef, MacroCallItem, MacroDefinitionAttrs, MacroDefinitionItem,
     MacroUseAttr, MacroUseSelector, ModuleItem, ModuleSource, Package as ItemTreePackage,
     UseImport, UseItem, UserFacingAttrs, VisibilityLevel,
 };
@@ -36,8 +36,8 @@ use rg_workspace::TargetKind;
 use crate::PackageSlot;
 
 use super::macros::{
-    ItemOrder, MacroCallSite, MacroDefinitionRecord, MacroDirective, MacroDirectiveState,
-    MacroUseImport, TextualMacroScopes,
+    ItemOrder, MacroCallOrigin, MacroCallSite, MacroDefinitionRecord, MacroDirective,
+    MacroDirectiveState, MacroUseImport, PendingMacroExpansionLimitReport, TextualMacroScopes,
 };
 
 /// Collected state for one crate before fixed-point import resolution.
@@ -61,6 +61,7 @@ pub(super) struct CrateState {
     pub(super) textual_macro_scopes: TextualMacroScopes,
     pub(super) macro_use_imports: Vec<MacroUseImport>,
     pub(super) macro_directives: Vec<MacroDirective>,
+    pub(super) macro_expansion_limit: Option<PendingMacroExpansionLimitReport>,
 }
 
 /// Mutable crate-wide extern prelude assembled while DefMap is built.
@@ -116,9 +117,10 @@ impl ExternPreludeBuilder {
 }
 
 impl CrateState {
-    pub(super) fn push_macro_call(&mut self, call: MacroCallSite) {
+    pub(super) fn push_macro_call(&mut self, call: MacroCallSite, origin: MacroCallOrigin) {
         self.macro_directives.push(MacroDirective {
             call,
+            origin,
             state: MacroDirectiveState::Pending,
         });
     }
@@ -296,6 +298,7 @@ impl<'db> CrateScopeCollector<'db> {
             textual_macro_scopes: self.textual_macro_scopes,
             macro_use_imports: self.macro_use_imports,
             macro_directives: self.macro_directives,
+            macro_expansion_limit: None,
         })
     }
 
@@ -353,6 +356,9 @@ impl<'db> CrateScopeCollector<'db> {
                 continue;
             }
             match &item.kind {
+                ItemKind::ExternBlock(extern_block) => {
+                    self.collect_extern_block(item_tree, module_id, source, extern_block);
+                }
                 ItemKind::ExternCrate(extern_crate) => {
                     self.collect_extern_crate(module_id, item, extern_crate);
                 }
@@ -402,6 +408,44 @@ impl<'db> CrateScopeCollector<'db> {
         }
 
         Ok(())
+    }
+
+    /// Exposes supported foreign declarations in the enclosing Rust module.
+    ///
+    /// For `extern "C" { fn read(); }`, `read` gets an ordinary module binding. Its separate block
+    /// owner remains available so later phases can tell that the function is a declaration, not a
+    /// Rust body that failed to lower.
+    fn collect_extern_block(
+        &mut self,
+        item_tree: &ItemTreePackage,
+        module_id: ModuleId,
+        block_source: ItemTreeRef,
+        extern_block: &ExternBlockItem,
+    ) {
+        for child_id in &extern_block.items {
+            let child_source = ItemTreeRef {
+                file_id: block_source.file_id,
+                item: *child_id,
+            };
+            let child = item_tree
+                .item(child_source)
+                .expect("extern-block child should exist while collecting def map");
+            if !self.is_item_enabled(child) {
+                continue;
+            }
+
+            // Macro calls are retained by ItemTree for source fidelity, but this path never adds
+            // them to the expansion queue. The ordinary local-def classifier rejects them here.
+            if let Some(local_def) = self.collect_local_def(
+                module_id,
+                child,
+                child_source,
+                ScopeBindingProvenance::Direct,
+            ) {
+                self.def_map_builder
+                    .insert_foreign_block(local_def, block_source.into());
+            }
+        }
     }
 
     fn is_item_enabled(&self, item: &ItemNode) -> bool {
@@ -663,6 +707,7 @@ impl<'db> CrateScopeCollector<'db> {
                 span: item.span,
                 order,
             },
+            origin: MacroCallOrigin::Source,
             state: MacroDirectiveState::Pending,
         });
     }

@@ -230,6 +230,7 @@ pub(crate) fn build_resident_state(
         memory_hooks,
         names: phases.names,
         parse: phases.parse,
+        macro_expansion_limit_summary: phases.macro_expansion_limit_summary,
         def_map: phases.def_map,
         semantic_ir: phases.semantic_ir,
         body_ir: phases.body_ir,

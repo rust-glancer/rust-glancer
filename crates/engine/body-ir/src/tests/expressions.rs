@@ -209,6 +209,11 @@ pub fn configure(f: impl FnOnce(&mut AttrVec)) {
             core [lib]
             skipped
 
+            package proc_macro
+
+            proc_macro [lib]
+            skipped
+
             package std
 
             std [lib]
@@ -768,6 +773,11 @@ pub fn use_it(wrapper: Wrapper) {
             package core
 
             core [lib]
+            skipped
+
+            package proc_macro
+
+            proc_macro [lib]
             skipped
 
             package std

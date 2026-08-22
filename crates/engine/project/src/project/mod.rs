@@ -41,7 +41,7 @@ pub use self::{
     split_indexing::{
         AnalysisSurface, DetachedSplitIndexing, FinishedSplitIndexing, SplitIndexing,
     },
-    stats::ProjectStats,
+    stats::{MacroExpansionLimitBuildSummary, ProjectStats},
 };
 
 /// Mutable owner for the current analysis state.
@@ -92,6 +92,13 @@ impl Project {
     /// Returns coarse status counters without exposing raw phase databases.
     pub fn stats(&self) -> ProjectStats {
         self.state.stats()
+    }
+
+    /// Iterates bounded macro-expansion-limit diagnostics from resident packages.
+    pub fn macro_expansion_limit_reports(
+        &self,
+    ) -> impl Iterator<Item = &rg_def_map::MacroExpansionLimitReport> {
+        self.state.def_map.macro_expansion_limit_reports()
     }
 
     /// Returns whether an analysis error came from disposable package-cache storage.

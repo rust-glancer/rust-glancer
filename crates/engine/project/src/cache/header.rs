@@ -21,7 +21,7 @@ use super::{cached::CachedPackage, fingerprint::Fingerprint};
 // Note for LLMs: this project is WIP, stop changing this version! I'm the only developer!111
 // I'll just rebuild the cache when stuff changes!!! Stahp!!!
 pub const CURRENT_PACKAGE_CACHE_SCHEMA_VERSION: PackageCacheSchemaVersion =
-    PackageCacheSchemaVersion(6);
+    PackageCacheSchemaVersion(7);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize)]
 #[memsize(leaf)]

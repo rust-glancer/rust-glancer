@@ -14,6 +14,7 @@ use crate::{
     project::{
         SplitIndexingMode, StartupCacheLoad, build, loading::PackageReadLoaders,
         offloading::ResidencyApplication, package_set::PhasePackageSet, state::ProjectState,
+        stats::MacroExpansionLimitBuildSummary,
     },
 };
 
@@ -93,6 +94,8 @@ fn try_rebuild_packages(state: &mut ProjectState, packages: &[PackageSlot]) -> a
         .build()
         .context("while attempting to rebuild affected def-map packages")?;
     drop(old_def_map_txn);
+    let macro_expansion_limit_summary =
+        MacroExpansionLimitBuildSummary::capture(&def_map, packages.as_slice());
     let semantic_ir = state
         .semantic_ir
         .package_rebuilder(
@@ -136,6 +139,7 @@ fn try_rebuild_packages(state: &mut ProjectState, packages: &[PackageSlot]) -> a
     // that did not survive into retained DBs are no longer treated as live.
     drop(item_tree);
 
+    state.macro_expansion_limit_summary = macro_expansion_limit_summary;
     state.def_map = def_map;
     state.semantic_ir = semantic_ir;
     state.body_ir = body_ir;

@@ -19,7 +19,7 @@ use crate::{
     profile::{BuildMemorySampler, metric},
     project::{
         SplitIndexingMode, StartupCacheLoad, loading::PackageReadLoaders,
-        package_set::PhasePackageSet,
+        package_set::PhasePackageSet, stats::MacroExpansionLimitBuildSummary,
     },
 };
 
@@ -47,6 +47,7 @@ pub(super) struct BuiltPhases {
     pub(super) package_source_fingerprints: Vec<Option<Fingerprint>>,
     pub(super) names: PackageNameInterners,
     pub(super) parse: ParseDb,
+    pub(super) macro_expansion_limit_summary: MacroExpansionLimitBuildSummary,
     pub(super) def_map: DefMapDb,
     pub(super) semantic_ir: SemanticIrDb,
     pub(super) body_ir: BodyIrDb,
@@ -256,6 +257,12 @@ pub(super) fn build(
         body_ir,
     );
     memory.checkpoint(sampler, metric::BODY_IR_MEMORY, &body_ir);
+
+    // Capture the diagnostic before residency can offload a freshly built package. Only package
+    // slots expanded from source belong to this build; cache hits carry older artifacts and did
+    // not encounter the expansion guard during this indexing operation.
+    let macro_expansion_limit_summary =
+        MacroExpansionLimitBuildSummary::capture(&def_map, build_plan.source_packages.as_slice());
     drop(build_plan);
 
     // --------------------------
@@ -279,6 +286,7 @@ pub(super) fn build(
         package_source_fingerprints: source_fingerprints,
         names,
         parse,
+        macro_expansion_limit_summary,
         def_map,
         semantic_ir,
         body_ir,

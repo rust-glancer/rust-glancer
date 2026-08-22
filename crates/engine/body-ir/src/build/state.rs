@@ -8,7 +8,7 @@ use std::{
 use anyhow::Context as _;
 use rg_arena::Arena;
 use rg_cfg_eval::CfgEvaluator;
-use rg_def_map::DefMapReadTxn;
+use rg_def_map::{DefMap, DefMapReadTxn};
 use rg_ir_model::{
     BodyId, BodyRef, ConstRef, CrateRef, DefMapRef, ItemOwner, ModuleRef, StaticRef,
 };
@@ -282,6 +282,7 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
                 body_ref,
                 body_data.owner(),
                 body_data.fallback_module(),
+                items.def_map(),
                 items.item_store(),
             );
             let allocated = self.body_local_items.alloc(Some(items));
@@ -386,6 +387,7 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
         body_ref: BodyRef,
         body_owner: BodyOwner,
         fallback_module: ModuleRef,
+        def_map: &DefMap,
         item_store: &ItemStore,
     ) -> Vec<BodyLoweringTask> {
         let origin = DefMapRef::Body(body_ref);
@@ -398,6 +400,11 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
                 continue;
             }
             if body_owner == BodyOwner::Function(function_ref) {
+                continue;
+            }
+            // Required trait methods and foreign functions live in the item store but do not own
+            // a body that can become a nested lowering task.
+            if !function_data.signature.has_body() {
                 continue;
             }
             let Some(owner_module) =
@@ -434,7 +441,15 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
             });
         }
 
+        // Foreign statics have no initializer to lower. Unlike functions, their declaration data
+        // has no `has_body` bit, so the retained extern-block owner carries that distinction.
         for (static_id, static_data) in item_store.statics().iter_with_ids() {
+            if def_map
+                .foreign_block(static_data.local_def.local_def)
+                .is_some()
+            {
+                continue;
+            }
             tasks.push(BodyLoweringTask {
                 owner: BodyOwner::Static(StaticRef {
                     origin,

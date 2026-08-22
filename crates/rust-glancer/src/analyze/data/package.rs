@@ -1,4 +1,4 @@
-use rg_project::{PackageResidency, Project};
+use rg_project::{PackageResidency, Project, ProjectStats};
 use serde::Serialize;
 
 use crate::report::ReportFieldsBuilder;
@@ -13,8 +13,7 @@ pub(crate) struct PackageReport {
 }
 
 impl PackageReport {
-    pub(crate) fn capture(project: &Project) -> Self {
-        let stats = project.stats();
+    pub(crate) fn capture(project: &Project, stats: &ProjectStats) -> Self {
         let residency = project.package_residency_plan();
         let resident_count = residency
             .packages()
