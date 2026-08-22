@@ -1,9 +1,9 @@
 use crate::item::{
-    ConstExpr, ConstItem, ConstParamData, Documentation, EnumItem, EnumVariantItem, FieldItem,
-    FieldKey, FieldList, FunctionItem, FunctionQualifiers, GenericParams, ImplItem, ItemTreeId,
-    LifetimeParamData, ParamItem, ParamKind, ProcMacroDefinition, ProcMacroKind, StaticItem,
-    StructItem, TraitItem, TypeAliasItem, TypeParamData, TypeRef, UnionItem, UserFacingAttrs,
-    VisibilityLevel, WherePredicate,
+    ConstExpr, ConstItem, ConstParamData, Documentation, EnumItem, EnumVariantItem,
+    ExternBlockItem, FieldItem, FieldKey, FieldList, FunctionItem, FunctionQualifiers,
+    GenericParams, ImplItem, ItemTreeId, LifetimeParamData, ParamItem, ParamKind,
+    ProcMacroDefinition, ProcMacroKind, StaticItem, StructItem, TraitItem, TypeAliasItem,
+    TypeParamData, TypeRef, UnionItem, UserFacingAttrs, VisibilityLevel, WherePredicate,
 };
 use rg_ir_model::Mutability;
 use rg_parse::{LineIndex, Span};
@@ -185,6 +185,22 @@ impl FromAst for FunctionItem {
             },
             has_body: item.semicolon_token().is_none(),
             proc_macro,
+        }
+    }
+}
+
+impl FromAst for ExternBlockItem {
+    type AstNode = ast::ExternBlock;
+    type Context<'a> = Vec<ItemTreeId>;
+
+    fn from_ast(block: &Self::AstNode, items: Self::Context<'_>) -> Self {
+        Self {
+            items,
+            abi: block
+                .abi()
+                .and_then(|abi| abi.string_token())
+                .map(|token| token.text().to_string()),
+            is_unsafe: block.unsafe_token().is_some(),
         }
     }
 }

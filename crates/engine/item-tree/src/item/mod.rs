@@ -7,10 +7,11 @@ use wincode::{SchemaRead, SchemaWrite};
 pub use self::{
     attrs::UserFacingAttrs,
     decl::{
-        ConstItem, ConstParamData, EnumItem, EnumVariantItem, FieldItem, FieldList, FunctionItem,
-        FunctionQualifiers, GenericParams, ImplItem, LifetimeParamData, ParamItem, ParamKind,
-        ProcMacroDefinition, ProcMacroKind, SelfParamKind, StaticItem, StructItem, TraitItem,
-        TypeAliasItem, TypeOrConstParamData, TypeParamData, UnionItem, WherePredicate,
+        ConstItem, ConstParamData, EnumItem, EnumVariantItem, ExternBlockItem, FieldItem,
+        FieldList, FunctionItem, FunctionQualifiers, GenericParams, ImplItem, LifetimeParamData,
+        ParamItem, ParamKind, ProcMacroDefinition, ProcMacroKind, SelfParamKind, StaticItem,
+        StructItem, TraitItem, TypeAliasItem, TypeOrConstParamData, TypeParamData, UnionItem,
+        WherePredicate,
     },
     docs::Documentation,
     import::{

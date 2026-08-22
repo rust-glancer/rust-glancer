@@ -10,12 +10,12 @@ use anyhow::{Context as _, Result};
 use crate::GeneratedSourceData;
 use rg_arena::Arena;
 use rg_item_tree::{
-    CfgExpr, ConstItem, Documentation, EnumItem, ExternCrateItem, FromAst, FunctionItem, ImplItem,
-    ImplItemContext, InnerDocs, ItemKind, ItemNode, ItemTreeId, LangItem, MacroCallContext,
-    MacroCallItem, MacroDefAst, MacroDefContext, MacroDefinitionItem, MacroRulesAst,
-    MacroRulesContext, MaybeFromAst, ModuleItem, ModuleSource, OuterDocs, StaticItem, StructItem,
-    TraitItem, TraitItemContext, TypeAliasItem, UnionItem, UseItem, UserFacingAttrs,
-    VisibilityLevel,
+    CfgExpr, ConstItem, Documentation, EnumItem, ExternBlockItem, ExternCrateItem, FromAst,
+    FunctionItem, ImplItem, ImplItemContext, InnerDocs, ItemKind, ItemNode, ItemTreeId, LangItem,
+    MacroCallContext, MacroCallItem, MacroDefAst, MacroDefContext, MacroDefinitionItem,
+    MacroRulesAst, MacroRulesContext, MaybeFromAst, ModuleItem, ModuleSource, OuterDocs,
+    StaticItem, StructItem, TraitItem, TraitItemContext, TypeAliasItem, UnionItem, UseItem,
+    UserFacingAttrs, VisibilityLevel,
 };
 use rg_macro_runtime::{ExpansionSyntax, macro_edition};
 use rg_parse::{FileId, LineIndex, Span};
@@ -118,13 +118,16 @@ impl<'a> GeneratedSourceLowering<'a> {
                 let visibility = VisibilityLevel::from_ast(&item.visibility(), ());
                 Some(self.alloc_documented_item(kind, name, name_range, visibility, &item))
             }
-            ast::Item::ExternBlock(item) => Some(self.alloc_item(
-                ItemKind::ExternBlock,
-                None,
-                None,
-                VisibilityLevel::Private,
-                item.syntax().text_range(),
-            )),
+            ast::Item::ExternBlock(item) => {
+                let extern_block = self.lower_extern_block(&item);
+                Some(self.alloc_documented_item(
+                    ItemKind::ExternBlock(extern_block),
+                    None,
+                    None,
+                    VisibilityLevel::Private,
+                    &item,
+                ))
+            }
             ast::Item::ExternCrate(item) => {
                 let kind =
                     ItemKind::ExternCrate(ExternCrateItem::from_ast(&item, &mut *self.interner));
@@ -289,6 +292,80 @@ impl<'a> GeneratedSourceLowering<'a> {
         };
 
         Ok(item_id)
+    }
+
+    /// Mirrors source ItemTree lowering for declarations owned by a generated extern block.
+    fn lower_extern_block(&mut self, block: &ast::ExternBlock) -> ExternBlockItem {
+        let mut items = Vec::new();
+        if let Some(item_list) = block.extern_item_list() {
+            for item in item_list.extern_items() {
+                let item = match item {
+                    ast::ExternItem::Fn(item) => {
+                        let kind = ItemKind::Function(FunctionItem::from_ast(
+                            &item,
+                            (&self.line_index, &mut *self.interner),
+                        ));
+                        let name = self.intern_ast_name(item.name());
+                        let name_range = item.name().map(|name| name.syntax().text_range());
+                        let visibility = VisibilityLevel::from_ast(&item.visibility(), ());
+                        self.alloc_documented_item(kind, name, name_range, visibility, &item)
+                    }
+                    ast::ExternItem::Static(item) => {
+                        let kind = ItemKind::Static(StaticItem::from_ast(
+                            &item,
+                            (&self.line_index, &mut *self.interner),
+                        ));
+                        let name = self.intern_ast_name(item.name());
+                        let name_range = item.name().map(|name| name.syntax().text_range());
+                        let visibility = VisibilityLevel::from_ast(&item.visibility(), ());
+                        self.alloc_documented_item(kind, name, name_range, visibility, &item)
+                    }
+                    ast::ExternItem::TypeAlias(item) => {
+                        let kind = ItemKind::TypeAlias(TypeAliasItem::from_ast(
+                            &item,
+                            (&self.line_index, &mut *self.interner),
+                        ));
+                        let name = self.intern_ast_name(item.name());
+                        let name_range = item.name().map(|name| name.syntax().text_range());
+                        let visibility = VisibilityLevel::from_ast(&item.visibility(), ());
+                        self.alloc_documented_item(kind, name, name_range, visibility, &item)
+                    }
+                    ast::ExternItem::MacroCall(item) => {
+                        let span_map = self.span_map.clone();
+                        let origin_file_id = self.origin.file_id;
+                        let origin_span = self.origin.span;
+                        let edition = self.edition;
+                        let mut span_for_range = move |range| {
+                            tt_span_for_range(
+                                &span_map,
+                                origin_file_id,
+                                origin_span,
+                                edition,
+                                range,
+                            )
+                        };
+                        let kind = ItemKind::MacroCall(MacroCallItem::from_ast(
+                            &item,
+                            MacroCallContext {
+                                interner: &mut *self.interner,
+                                builtin: None,
+                                span_for_range: &mut span_for_range,
+                            },
+                        ));
+                        self.alloc_documented_item(
+                            kind,
+                            None,
+                            None,
+                            VisibilityLevel::Private,
+                            &item,
+                        )
+                    }
+                };
+                items.push(item);
+            }
+        }
+
+        ExternBlockItem::from_ast(block, items)
     }
 
     fn lower_module_item(&mut self, item: &ast::Module) -> Result<ModuleItem> {

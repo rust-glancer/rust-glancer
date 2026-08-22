@@ -360,6 +360,11 @@ pub fn use_it(packages: &[Package], array: [Package; 3], pairs: [(Package, UserI
             core [lib]
             skipped
 
+            package proc_macro
+
+            proc_macro [lib]
+            skipped
+
             package std
 
             std [lib]
@@ -447,6 +452,11 @@ pub fn use_it(def_map: &DefMap) {
             package core
 
             core [lib]
+            skipped
+
+            package proc_macro
+
+            proc_macro [lib]
             skipped
 
             package std
@@ -554,6 +564,11 @@ pub fn use_it(def_map: &DefMap) {
             package core
 
             core [lib]
+            skipped
+
+            package proc_macro
+
+            proc_macro [lib]
             skipped
 
             package std

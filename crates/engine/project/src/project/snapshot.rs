@@ -29,8 +29,11 @@ use rg_std::{MemorySize, UniqueVec};
 use rg_text::RustEdition;
 
 use super::{
-    FileContext, reference_search::ReferenceSearchPlanner, state::ProjectState,
-    stats::ProjectStats, subset,
+    FileContext,
+    reference_search::ReferenceSearchPlanner,
+    state::ProjectState,
+    stats::{MacroExpansionLimitBuildSummary, ProjectStats},
+    subset,
 };
 
 /// Immutable project view used to answer LSP-shaped queries.
@@ -463,6 +466,11 @@ impl<'a> ProjectSnapshot<'a> {
 
     pub fn stats(&self) -> ProjectStats {
         self.state.stats()
+    }
+
+    /// Returns bounded diagnostics from the def-map packages built for this project state.
+    pub fn macro_expansion_limit_summary(&self) -> &MacroExpansionLimitBuildSummary {
+        &self.state.macro_expansion_limit_summary
     }
 
     /// Returns an approximate retained-memory total for the current immutable analysis graph.

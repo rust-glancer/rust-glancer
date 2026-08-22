@@ -16,7 +16,7 @@ use anyhow::Context as _;
 
 use rg_parse::Package;
 use rg_text::{Name, PackageNameInterners};
-use rg_workspace::WorkspaceMetadata;
+use rg_workspace::{SysrootCrate, WorkspaceMetadata};
 
 use rg_ir_model::{CrateId, CrateRef, DefMapRef, ModuleId, ModuleRef};
 
@@ -74,6 +74,10 @@ pub(super) fn build_implicit_roots(
                 })
         })
         .collect::<HashMap<_, _>>();
+    let proc_macro_root = workspace
+        .sysroot_package(SysrootCrate::ProcMacro)
+        .and_then(|package| lib_targets.get(&package.id))
+        .map(|(crate_ref, _)| *crate_ref);
     let mut roots = Vec::with_capacity(packages.len());
 
     for (package_slot, package) in packages.iter().enumerate() {
@@ -106,6 +110,21 @@ pub(super) fn build_implicit_roots(
                     interner.intern(lib_name),
                     ModuleRef {
                         origin: DefMapRef::Crate(lib_crate),
+                        module: ModuleId(0),
+                    },
+                );
+            }
+
+            // Rustc supplies `proc_macro` only to proc-macro targets. This is not a Cargo
+            // dependency: a normal library or binary sibling in the same package must not see the
+            // root just because another target exports procedural macros.
+            if target.kind.is_proc_macro()
+                && let Some(proc_macro_root) = proc_macro_root
+            {
+                crate_roots.insert(
+                    interner.intern(SysrootCrate::ProcMacro.name()),
+                    ModuleRef {
+                        origin: DefMapRef::Crate(proc_macro_root),
                         module: ModuleId(0),
                     },
                 );

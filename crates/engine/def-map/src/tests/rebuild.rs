@@ -127,6 +127,64 @@ make_dep_item!();
     );
 }
 
+#[test]
+fn rebuild_collects_foreign_declarations_in_the_dirty_package() {
+    let fixture = RebuildFixture::build(
+        r#"
+//- /Cargo.toml
+[workspace]
+members = ["crates/dep", "crates/app"]
+resolver = "3"
+
+//- /crates/dep/Cargo.toml
+[package]
+name = "dep"
+version = "0.1.0"
+edition = "2024"
+
+//- /crates/dep/src/lib.rs
+pub struct Dep;
+
+//- /crates/app/Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+dep = { path = "../dep" }
+
+//- /crates/app/src/lib.rs
+pub struct Before;
+"#,
+        "dep",
+    );
+    let rebuilt = fixture.rebuild_package_after_edit(
+        r#"
+//- /crates/app/src/lib.rs
+unsafe extern "C" {
+    pub fn rebuilt_foreign();
+    pub type RebuiltOpaque;
+}
+
+pub use self::RebuiltOpaque as ImportedOpaque;
+"#,
+        "app",
+    );
+
+    let root = rebuilt.lib_root_module("app");
+    for name in ["rebuilt_foreign", "RebuiltOpaque", "ImportedOpaque"] {
+        assert!(
+            root.scope.entry(name).is_some(),
+            "rebuilt app root should retain foreign-derived binding `{name}`",
+        );
+    }
+    assert!(
+        root.unresolved_imports.is_empty(),
+        "a reexport of a rebuilt foreign type should resolve",
+    );
+}
+
 /// Rebuilds one edited package against an old snapshot with one clean package offloaded.
 struct RebuildFixture {
     fixture: CrateFixture,

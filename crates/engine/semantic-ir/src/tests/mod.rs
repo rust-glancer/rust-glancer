@@ -501,6 +501,50 @@ pub static mut CACHE_READY: bool = false;
 }
 
 #[test]
+fn lowers_source_and_generated_foreign_declaration_signatures() {
+    check_project_semantic_ir(
+        r#"
+//- /Cargo.toml
+[package]
+name = "foreign_semantic_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+extern "C" {
+    pub fn foreign_fn(input: u32) -> u64;
+    pub static mut FOREIGN_STATIC: u32;
+    pub type Opaque;
+}
+
+macro_rules! make_foreign {
+    () => {
+        extern "C" {
+            pub fn generated_fn(input: u8) -> u16;
+            pub static GENERATED_STATIC: u8;
+            pub type GeneratedOpaque;
+        }
+    };
+}
+
+make_foreign!();
+"#,
+        expect![[r#"
+            package foreign_semantic_fixture
+
+            foreign_semantic_fixture [lib]
+            crate
+            - pub fn foreign_fn(input: u32) -> u64
+            - pub static mut FOREIGN_STATIC: u32
+            - pub type Opaque
+            - pub fn generated_fn(input: u8) -> u16
+            - pub static GENERATED_STATIC: u8
+            - pub type GeneratedOpaque
+        "#]],
+    );
+}
+
+#[test]
 fn preserves_absolute_type_path_prefixes() {
     check_project_semantic_ir(
         r#"
@@ -675,6 +719,9 @@ pub struct Alloc;
 pub mod prelude {
     pub mod rust_2024 {}
 }
+
+//- /sysroot/library/proc_macro/src/lib.rs
+pub struct TokenStream;
 "#,
         &[SemanticQuery::lib("core", "CoreType")],
         expect![[r#"
@@ -734,6 +781,9 @@ impl Marker for AllocType {
 pub mod prelude {
     pub mod rust_2024 {}
 }
+
+//- /sysroot/library/proc_macro/src/lib.rs
+pub struct TokenStream;
 "#,
         &[SemanticQuery::lib("alloc", "AllocType")],
         expect![[r#"

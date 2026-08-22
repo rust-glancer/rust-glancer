@@ -4,6 +4,6 @@ mod db;
 mod txn;
 
 pub use self::{
-    db::{DefMapDb, DefMapStats},
+    db::{DefMapDb, DefMapStats, UnresolvedImportStats},
     txn::DefMapReadTxn,
 };

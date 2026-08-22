@@ -601,6 +601,9 @@ pub struct Alloc;
 pub mod collections {
     pub struct HashMap<K, V>;
 }
+
+//- /sysroot/library/proc_macro/src/lib.rs
+pub struct TokenStream;
 "#,
         &[
             AnalysisQuery::complete("first generic arg completions", "key_arg")

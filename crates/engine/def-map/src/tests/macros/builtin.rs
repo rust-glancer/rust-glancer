@@ -44,6 +44,9 @@ pub mod prelude {
         pub use crate::include;
     }
 }
+
+//- /sysroot/library/proc_macro/src/lib.rs
+pub struct TokenStream;
 "#;
 
 fn builtin_macro_fixture(fixture: &str) -> String {
@@ -465,6 +468,12 @@ pub struct Dep;
             dep [lib]
             crate
             - Dep : type [pub struct dep[lib]::crate::Dep] | value [pub struct dep[lib]::crate::Dep]
+
+            package proc_macro
+
+            proc_macro [lib]
+            crate
+            - TokenStream : type [pub struct proc_macro[lib]::crate::TokenStream] | value [pub struct proc_macro[lib]::crate::TokenStream]
 
             package std
 

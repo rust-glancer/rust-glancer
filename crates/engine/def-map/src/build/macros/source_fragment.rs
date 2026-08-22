@@ -13,9 +13,9 @@ use crate::{
 };
 use rg_ir_model::{DefId, DefMapRef, LocalDefId, LocalDefRef, ModuleId, ModuleRef};
 use rg_item_tree::{
-    Documentation, ExternCrateItem, ImportAlias, ItemKind, ItemTreeId, ItemTreeRef,
-    MacroDefinitionAttrs, MacroDefinitionItem, MacroUseAttr, MacroUseSelector, ModuleItem,
-    ModuleSource, Package as ItemTreePackage, UseImport, UseItem, UserFacingAttrs,
+    Documentation, ExternBlockItem, ExternCrateItem, ImportAlias, ItemKind, ItemTreeId,
+    ItemTreeRef, MacroDefinitionAttrs, MacroDefinitionItem, MacroUseAttr, MacroUseSelector,
+    ModuleItem, ModuleSource, Package as ItemTreePackage, UseImport, UseItem, UserFacingAttrs,
 };
 use rg_parse::FileId;
 use rg_text::Name;
@@ -23,14 +23,15 @@ use rg_text::Name;
 use crate::build::{collect::CrateState, finalize::ScopeMatrix, macros::MacroExpansionApplyResult};
 
 use super::{
-    ItemOrder, MacroCallSite, MacroDefinitionRecord, MacroDirective, MacroDirectiveState,
-    MacroUseImport,
+    ItemOrder, MacroCallOrigin, MacroCallSite, MacroDefinitionRecord, MacroDirective,
+    MacroDirectiveState, MacroUseImport,
 };
 
 /// Source-fragment collection starts at the macro call's module and textual order.
 pub(super) struct SourceFragmentOrigin {
     pub(super) module: ModuleId,
     pub(super) order: ItemOrder,
+    pub(super) parent_call: usize,
 }
 
 /// Collector for item-tree nodes that should behave like ordinary source at the call site.
@@ -108,6 +109,9 @@ impl SourceFragmentCollector<'_> {
         // From this point on the collector mirrors ordinary item collection. The main difference
         // is that every allocated def keeps the fragment item's `ItemTreeRef` and source span.
         match &item.kind {
+            ItemKind::ExternBlock(extern_block) => {
+                self.collect_extern_block(module_id, source, extern_block);
+            }
             ItemKind::ExternCrate(extern_crate) => {
                 self.collect_extern_crate(module_id, item, extern_crate);
             }
@@ -135,6 +139,39 @@ impl SourceFragmentCollector<'_> {
         }
 
         Ok(())
+    }
+
+    fn collect_extern_block(
+        &mut self,
+        module_id: ModuleId,
+        block_source: ItemTreeRef,
+        extern_block: &ExternBlockItem,
+    ) {
+        for child_id in &extern_block.items {
+            let child_source = ItemTreeRef {
+                file_id: block_source.file_id,
+                item: *child_id,
+            };
+            let child = self
+                .item_tree
+                .item(child_source)
+                .expect("source-fragment extern child should exist while collecting def map");
+            if !self.is_item_enabled(child) {
+                continue;
+            }
+            // Retained nested macro calls are not queued by extern-block collection. The ordinary
+            // local-def classifier rejects them while accepting the supported declarations.
+            if let Some(local_def) = self.collect_local_def(
+                module_id,
+                child,
+                child_source,
+                ScopeBindingProvenance::Direct,
+            ) {
+                self.state
+                    .def_map_builder
+                    .insert_foreign_block(local_def, block_source.into());
+            }
+        }
     }
 
     fn is_item_enabled(&self, item: &rg_item_tree::ItemNode) -> bool {
@@ -334,6 +371,9 @@ impl SourceFragmentCollector<'_> {
                 file_id: item.file_id,
                 span: item.span,
                 order,
+            },
+            origin: MacroCallOrigin::Generated {
+                parent_call: self.origin.parent_call,
             },
             state: MacroDirectiveState::Pending,
         });

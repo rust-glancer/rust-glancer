@@ -61,9 +61,13 @@ pub(crate) fn analyze(
         .context("while attempting to normalize Cargo metadata")
     })?;
 
-    let (sysroot, sysroot_elapsed) =
-        measure_time(|| Ok(SysrootSources::discover(workspace.workspace_root())))?;
-    let workspace: WorkspaceMetadata = workspace.with_sysroot_sources(sysroot);
+    // `analyze` is a development diagnostic. Continuing without standard-library sources would
+    // make its coverage counters misleading, so require the complete rust-src component here.
+    let (sysroot, sysroot_elapsed) = measure_time(|| {
+        SysrootSources::discover(workspace.workspace_root())
+            .context("discover complete sysroot sources (run rustup component add rust-src)")
+    })?;
+    let workspace: WorkspaceMetadata = workspace.with_sysroot_sources(Some(sysroot));
     let memory_control = crate::memory::memory_control();
     let analysis_setup =
         data::AnalysisSetupReport::new(metadata_elapsed, workspace_elapsed, sysroot_elapsed);

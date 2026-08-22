@@ -1001,3 +1001,38 @@ pub fn add_two_numbers(left: i32, right: i32) -> i32 {
         "#]],
     );
 }
+
+#[test]
+fn extern_blocks_own_lowered_foreign_declarations() {
+    utils::check_project_item_tree(
+        r#"
+//- /Cargo.toml
+[package]
+name = "foreign_tree"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+unsafe extern "C" {
+    pub fn foreign_fn(input: u32) -> u64;
+    pub static FOREIGN_STATIC: u32;
+    pub type Opaque;
+    nested_call!();
+}
+"#,
+        expect![[r#"
+            package foreign_tree
+
+            targets
+            - foreign_tree [lib] -> lib.rs
+
+            files
+            file lib.rs
+            - extern_block [unsafe abi "C"]
+              - pub fn foreign_fn
+              - pub static FOREIGN_STATIC
+              - pub type_alias Opaque
+              - macro_call [nested_call]
+        "#]],
+    );
+}

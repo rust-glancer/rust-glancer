@@ -212,6 +212,11 @@ pub fn use_it(attr: Attr) {
             core [lib]
             skipped
 
+            package proc_macro
+
+            proc_macro [lib]
+            skipped
+
             package std
 
             std [lib]
@@ -284,6 +289,11 @@ pub fn use_it() {
             package core
 
             core [lib]
+            skipped
+
+            package proc_macro
+
+            proc_macro [lib]
             skipped
 
             package std
@@ -457,6 +467,11 @@ pub fn use_it() {
             core [lib]
             skipped
 
+            package proc_macro
+
+            proc_macro [lib]
+            skipped
+
             package std
 
             std [lib]
@@ -534,6 +549,11 @@ pub fn forward<R>(callback: fn(User) -> R) -> R {
             package core
 
             core [lib]
+            skipped
+
+            package proc_macro
+
+            proc_macro [lib]
             skipped
 
             package std
@@ -723,6 +743,11 @@ pub fn use_it() -> User {
             package core
 
             core [lib]
+            skipped
+
+            package proc_macro
+
+            proc_macro [lib]
             skipped
 
             package std

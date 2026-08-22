@@ -251,7 +251,7 @@ impl BenchFixture {
             .name_interners(&mut names)
             .build()
             .unwrap_or_else(|error| panic!("{target} def map should build: {error}"));
-        let def_map_imports = def_map.stats().import_count;
+        let def_map_imports = def_map.stats(&workspace).import_count;
 
         let semantic_ir = SemanticIrDb::builder(&item_tree, &def_map)
             .build()

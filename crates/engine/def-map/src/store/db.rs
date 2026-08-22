@@ -1,17 +1,17 @@
 //! Def-map package store and transaction entry points.
 
-use crate::{DefMap, PackageDefMaps};
+use crate::{DefMap, MacroExpansionLimitReport, PackageDefMaps};
 use rg_ir_model::{CrateId, CrateRef};
 use rg_item_tree::ItemTreeDb;
 use rg_package_store::{PackageLoader, PackageStore, PackageSubset};
 use rg_text::PackageNameInterners;
-use rg_workspace::WorkspaceMetadata;
 
 use crate::{
     DefMapReadTxn, PackageSlot,
     build::{DefMapDbBuilder, DefMapDbPackageRebuilder},
 };
 use rg_std::{MemorySize, Shrink};
+use rg_workspace::{PackageOrigin, WorkspaceMetadata};
 
 /// Frozen def maps for all parsed packages and semantic crates.
 #[derive(Debug, Clone, PartialEq, Eq, Default, MemorySize)]
@@ -87,24 +87,71 @@ impl DefMapDb {
             })
     }
 
-    /// Returns coarse DefMap totals for the current project report.
-    pub fn stats(&self) -> DefMapStats {
+    /// Returns coarse DefMap totals for the resident package population.
+    ///
+    /// Offloaded packages are intentionally not loaded for reporting. Origin totals therefore use
+    /// exactly the same resident crate maps as the aggregate count.
+    pub fn stats(&self, workspace: &WorkspaceMetadata) -> DefMapStats {
         let mut stats = DefMapStats::default();
 
-        for (_, def_map) in self.resident_crate_maps() {
+        for (_, entry) in self.packages.raw_entries_with_slots() {
+            let Some(package) = entry.as_resident() else {
+                continue;
+            };
+            stats.resident_package_count += 1;
+            stats.macro_expansion_limit_crate_count += package.macro_expansion_limits().len();
+        }
+
+        for (crate_ref, def_map) in self.resident_crate_maps() {
             stats.crate_count += 1;
             stats.module_count += def_map.modules().len();
             stats.local_def_count += def_map.local_defs().len();
             stats.local_impl_count += def_map.local_impls().len();
             stats.import_count += def_map.imports().len();
-            stats.unresolved_import_count += def_map
+            let unresolved = def_map
                 .modules()
                 .iter()
                 .map(|module| module.unresolved_imports.len())
                 .sum::<usize>();
+            stats.unresolved_import_count += unresolved;
+
+            let package = workspace
+                .packages()
+                .get(crate_ref.package.0)
+                .expect("def-map package slot should match workspace metadata");
+            match &package.origin {
+                PackageOrigin::Workspace => {
+                    stats.unresolved_imports_by_origin.workspace += unresolved;
+                }
+                PackageOrigin::Dependency => {
+                    stats.unresolved_imports_by_origin.dependency += unresolved;
+                }
+                PackageOrigin::Sysroot(_) => {
+                    stats.unresolved_imports_by_origin.sysroot += unresolved;
+                }
+            }
         }
 
+        assert_eq!(
+            stats.unresolved_import_count,
+            stats.unresolved_imports_by_origin.total(),
+            "origin-aware unresolved imports should equal the resident aggregate",
+        );
+
         stats
+    }
+
+    /// Iterates bounded macro-limit diagnostics retained by resident packages.
+    ///
+    /// Status capture uses only the count in [`DefMapStats`]. Callers that intend to present the
+    /// diagnostic details opt into walking these frozen reports explicitly.
+    pub fn macro_expansion_limit_reports(
+        &self,
+    ) -> impl Iterator<Item = &MacroExpansionLimitReport> {
+        self.packages
+            .raw_entries_with_slots()
+            .filter_map(|(_, entry)| entry.as_resident())
+            .flat_map(|package| package.macro_expansion_limits().iter())
     }
 
     /// Returns one resident package def-map set by package slot.
@@ -182,15 +229,40 @@ impl DefMapDbMutator<'_> {
     }
 }
 
-/// Coarse totals for reporting that the DefMap phase produced useful data.
+/// Coarse totals over the resident DefMap payloads used for status output.
+///
+/// The aggregate unresolved-import count and its origin split cover the same crate-map population.
+/// Offloaded packages stay offloaded while these counters are captured.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, MemorySize)]
 pub struct DefMapStats {
+    pub resident_package_count: usize,
     pub crate_count: usize,
     pub module_count: usize,
     pub local_def_count: usize,
     pub local_impl_count: usize,
     pub import_count: usize,
     pub unresolved_import_count: usize,
+    pub unresolved_imports_by_origin: UnresolvedImportStats,
+    /// Resident crates with a retained macro-expansion-limit report.
+    pub macro_expansion_limit_crate_count: usize,
+}
+
+/// Unresolved imports grouped by the role of the package containing the `use` item.
+///
+/// This is ownership, not a diagnosis of why resolution failed. For example,
+/// `use core::missing;` written inside a dependency counts as dependency-owned even though the
+/// path begins with a sysroot crate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, MemorySize)]
+pub struct UnresolvedImportStats {
+    pub workspace: usize,
+    pub dependency: usize,
+    pub sysroot: usize,
+}
+
+impl UnresolvedImportStats {
+    pub fn total(self) -> usize {
+        self.workspace + self.dependency + self.sysroot
+    }
 }
 
 #[cfg(test)]
@@ -239,6 +311,7 @@ mod tests {
                 None,
                 DefMapBuilder::new(crate_ref).build(),
             )],
+            Vec::new(),
         )
     }
 }

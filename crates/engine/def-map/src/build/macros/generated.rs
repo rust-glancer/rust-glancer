@@ -13,8 +13,9 @@ use crate::{
 };
 use rg_ir_model::{CrateRef, DefId, DefMapRef, LocalDefId, LocalDefRef, ModuleId, ModuleRef};
 use rg_item_tree::{
-    Documentation, ImportAlias, ItemKind, ItemNode, ItemTreeId, ItemTreeRef, MacroCallItem,
-    MacroDefinitionAttrs, MacroDefinitionItem, ModuleItem, ModuleSource, UseImport, UseItem,
+    Documentation, ExternBlockItem, ImportAlias, ItemKind, ItemNode, ItemTreeId, ItemTreeRef,
+    MacroCallItem, MacroDefinitionAttrs, MacroDefinitionItem, ModuleItem, ModuleSource, UseImport,
+    UseItem,
 };
 use rg_macro_runtime::ExpansionSyntax;
 use rg_parse::{FileId, Span};
@@ -25,7 +26,7 @@ use crate::profile::metric;
 use crate::{GeneratedItemRef, GeneratedSourceId, ItemSource};
 
 use super::{
-    ItemOrder, MacroCallSite, MacroDefinitionRecord, MacroExpansionApplyResult,
+    ItemOrder, MacroCallOrigin, MacroCallSite, MacroDefinitionRecord, MacroExpansionApplyResult,
     generated_tree::GeneratedSourceLowering,
 };
 
@@ -38,6 +39,7 @@ pub(super) struct GeneratedOrigin {
     pub(super) span: Span,
     pub(super) order: ItemOrder,
     pub(super) dollar_crate: Option<CrateRef>,
+    pub(super) parent_call: usize,
 }
 
 /// Small collector that mirrors normal def-map collection for already-expanded syntax.
@@ -150,7 +152,10 @@ impl GeneratedCollector<'_> {
             ItemKind::Impl(_) => {
                 self.collect_local_impl(module_id, &item, generated_source, item_id)
             }
-            ItemKind::AsmExpr | ItemKind::ExternBlock | ItemKind::ExternCrate(_) => {}
+            ItemKind::ExternBlock(extern_block) => {
+                self.collect_extern_block(module_id, extern_block, generated_source, item_id)
+            }
+            ItemKind::AsmExpr | ItemKind::ExternCrate(_) => {}
             _ => {
                 self.collect_named_def(
                     module_id,
@@ -159,6 +164,43 @@ impl GeneratedCollector<'_> {
                     item_id,
                     ScopeBindingProvenance::Direct,
                 );
+            }
+        }
+    }
+
+    /// Collects supported children of a generated extern block into the call-site module.
+    fn collect_extern_block(
+        &mut self,
+        module_id: ModuleId,
+        extern_block: &ExternBlockItem,
+        generated_source: GeneratedSourceId,
+        block_id: ItemTreeId,
+    ) {
+        let block_source = self.item_source(generated_source, block_id);
+        for child_id in &extern_block.items {
+            let child = self
+                .state
+                .def_map_builder
+                .partial()
+                .generated_source(generated_source)
+                .and_then(|source| source.item(*child_id))
+                .expect("generated extern-block child should exist while collecting def map")
+                .clone();
+            if !self.is_item_enabled(&child) {
+                continue;
+            }
+            // Retained nested macro calls are intentionally not added to the expansion queue. The
+            // ordinary local-def classifier rejects them here.
+            if let Some(local_def) = self.collect_named_def(
+                module_id,
+                &child,
+                generated_source,
+                *child_id,
+                ScopeBindingProvenance::Direct,
+            ) {
+                self.state
+                    .def_map_builder
+                    .insert_foreign_block(local_def, block_source);
             }
         }
     }
@@ -445,18 +487,23 @@ impl GeneratedCollector<'_> {
     ) {
         // Macro-generated `include!("...")` would need a real file-relative expansion context to
         // resolve safely. The generated lowerer therefore records no builtin payload here.
-        self.state.push_macro_call(MacroCallSite {
-            module: module_id,
-            source: self.origin.source,
-            path: macro_call.path.clone(),
-            callee: macro_call.callee.clone(),
-            args: macro_call.args.clone(),
-            builtin: macro_call.builtin.clone(),
-            dollar_crate: self.origin.dollar_crate,
-            file_id: item.file_id,
-            span: item.span,
-            order,
-        });
+        self.state.push_macro_call(
+            MacroCallSite {
+                module: module_id,
+                source: self.origin.source,
+                path: macro_call.path.clone(),
+                callee: macro_call.callee.clone(),
+                args: macro_call.args.clone(),
+                builtin: macro_call.builtin.clone(),
+                dollar_crate: self.origin.dollar_crate,
+                file_id: item.file_id,
+                span: item.span,
+                order,
+            },
+            MacroCallOrigin::Generated {
+                parent_call: self.origin.parent_call,
+            },
+        );
     }
 
     fn collect_local_impl(

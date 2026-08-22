@@ -1,3 +1,9 @@
+//! Discovers and validates source roots for compiler-provided Rust crates.
+//!
+//! The LSP can continue without rust-src, so discovery returns `None` when the selected toolchain
+//! has no complete source tree. A usable tree must contain every compiler-provided crate that
+//! rust-glancer models.
+
 use rg_std::MemorySize;
 use std::{
     fmt,
@@ -12,16 +18,19 @@ pub enum SysrootCrate {
     Core,
     Alloc,
     Std,
+    ProcMacro,
 }
 
 impl SysrootCrate {
-    pub const ALL: [Self; 3] = [Self::Core, Self::Alloc, Self::Std];
+    /// Every sysroot crate that rust-glancer models from an installed rust-src component.
+    pub(crate) const ALL: [Self; 4] = [Self::Core, Self::Alloc, Self::Std, Self::ProcMacro];
 
     pub fn name(self) -> &'static str {
         match self {
             Self::Core => "core",
             Self::Alloc => "alloc",
             Self::Std => "std",
+            Self::ProcMacro => "proc_macro",
         }
     }
 }
@@ -32,19 +41,20 @@ impl fmt::Display for SysrootCrate {
     }
 }
 
-/// Rust source tree discovered from `rustc --print sysroot`.
+/// Validated Rust source tree discovered from `rustc --print sysroot`.
+///
+/// Construction requires source roots for every crate represented by [`SysrootCrate`]. This
+/// matches the complete `library` tree installed by the standard rust-src component.
 #[derive(Debug, Clone, PartialEq, Eq, MemorySize)]
 pub struct SysrootSources {
-    pub(crate) sysroot_root: PathBuf,
     pub(crate) library_root: PathBuf,
 }
 
 impl SysrootSources {
     /// Discovers rust-src using the toolchain selected for `workspace_root`.
     ///
-    /// Missing `rustc`, a failing command, or missing rust-src all simply disable sysroot support.
-    /// The analysis pipeline is still useful without sysroot crates, and the user can install
-    /// `rust-src` when they want standard-library navigation.
+    /// Missing `rustc`, a failing command, or missing rust-src all disable sysroot support for the
+    /// caller. The LSP remains useful without standard-library sources.
     pub fn discover(workspace_root: &Path) -> Option<Self> {
         let output = Command::new("rustc")
             .arg("--print")
@@ -62,7 +72,13 @@ impl SysrootSources {
             return None;
         }
 
-        Self::from_sysroot_root(sysroot_root)
+        let library_root = sysroot_root
+            .join("lib")
+            .join("rustlib")
+            .join("src")
+            .join("rust")
+            .join("library");
+        Self::from_library_root(library_root)
     }
 
     /// Builds a sysroot source model from an explicit `.../rust/library` path.
@@ -70,46 +86,23 @@ impl SysrootSources {
     /// This is mostly used by tests, where a tiny fake sysroot is easier and more deterministic
     /// than relying on the developer's installed toolchain.
     pub fn from_library_root(library_root: impl Into<PathBuf>) -> Option<Self> {
-        let library_root = library_root.into();
-        Self::from_roots(library_root.clone(), library_root)
+        let library_root = library_root.into().canonicalize().ok()?;
+        let sources = Self { library_root };
+
+        SysrootCrate::ALL
+            .iter()
+            .all(|krate| sources.crate_root(*krate).is_file())
+            .then_some(sources)
     }
 
     pub fn library_root(&self) -> &Path {
         &self.library_root
     }
 
-    pub fn crate_root(&self, krate: SysrootCrate) -> PathBuf {
+    pub(crate) fn crate_root(&self, krate: SysrootCrate) -> PathBuf {
         self.library_root
             .join(krate.name())
             .join("src")
             .join("lib.rs")
-    }
-
-    fn from_sysroot_root(sysroot_root: PathBuf) -> Option<Self> {
-        let library_root = sysroot_root
-            .join("lib")
-            .join("rustlib")
-            .join("src")
-            .join("rust")
-            .join("library");
-        Self::from_roots(sysroot_root, library_root)
-    }
-
-    fn from_roots(sysroot_root: PathBuf, library_root: PathBuf) -> Option<Self> {
-        let sysroot_root = sysroot_root.canonicalize().ok()?;
-        let library_root = library_root.canonicalize().ok()?;
-        let sources = Self {
-            sysroot_root,
-            library_root,
-        };
-
-        if SysrootCrate::ALL
-            .iter()
-            .all(|krate| sources.crate_root(*krate).is_file())
-        {
-            Some(sources)
-        } else {
-            None
-        }
     }
 }

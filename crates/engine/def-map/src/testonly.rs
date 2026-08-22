@@ -11,6 +11,7 @@ use crate::{DefMapDb, PackageSlot};
 pub struct DefMapFixture {
     item_tree: ItemTreeFixture,
     def_map: DefMapDb,
+    workspace: WorkspaceMetadata,
 }
 
 impl DefMapFixture {
@@ -57,7 +58,11 @@ impl DefMapFixture {
             .build()
             .expect("fixture def map db should build");
 
-        Self { item_tree, def_map }
+        Self {
+            item_tree,
+            def_map,
+            workspace,
+        }
     }
 
     pub fn parse_db(&self) -> &ParseDb {
@@ -70,6 +75,10 @@ impl DefMapFixture {
 
     pub fn def_map_db(&self) -> &DefMapDb {
         &self.def_map
+    }
+
+    pub fn workspace(&self) -> &WorkspaceMetadata {
+        &self.workspace
     }
 
     pub fn resident_def_map(&self, crate_ref: CrateRef) -> Option<&DefMap> {

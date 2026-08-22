@@ -1770,6 +1770,60 @@ make_item!(Admin);
 }
 
 #[test]
+fn macro_expansion_limit_build_summary_survives_offloading_and_refreshes_on_rebuild() {
+    let fixture = ProjectSourceFixture::build(
+        r#"
+//- /Cargo.toml
+[package]
+name = "macro_limit_summary_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+macro_rules! recurse {
+    () => {
+        recurse!();
+    };
+}
+
+recurse!();
+"#,
+    );
+    let source_path = fixture.path("src/lib.rs");
+    let mut project = Project::builder(fixture.workspace_metadata())
+        .package_residency_policy(PackageResidencyPolicy::AllOffloadable)
+        .build()
+        .expect("recursive macro fixture should build a bounded project");
+
+    // The detailed report leaves memory with the package payload, while the small build summary
+    // remains available to the host that publishes the project.
+    assert_eq!(project.macro_expansion_limit_reports().count(), 0);
+    let snapshot = project.snapshot();
+    let summary = snapshot.macro_expansion_limit_summary();
+    assert_eq!(summary.affected_crate_count(), 1);
+    assert!(summary.skipped_macro_call_count() > 0);
+    assert_eq!(
+        summary.listed_crates(),
+        ["macro_limit_summary_fixture/macro_limit_summary_fixture"]
+    );
+    assert_eq!(summary.omitted_crate_count(), 0);
+
+    std::fs::write(&source_path, "pub struct Finished;\n")
+        .expect("fixture source should accept a finite replacement");
+    let change = project
+        .apply_change(SavedFileChange::fs_path(source_path))
+        .expect("finite replacement should rebuild the affected package");
+    assert_eq!(change.affected_packages.len(), 1);
+    assert!(
+        project
+            .snapshot()
+            .macro_expansion_limit_summary()
+            .is_empty(),
+        "a later successful expansion build should not retain the previous warning summary",
+    );
+}
+
+#[test]
 fn reference_search_crates_follow_workspace_reverse_dependencies() {
     let fixture = ProjectSourceFixture::build(
         r#"

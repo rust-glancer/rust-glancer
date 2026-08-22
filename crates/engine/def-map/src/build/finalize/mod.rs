@@ -14,9 +14,9 @@ use rayon::prelude::*;
 
 use crate::{
     CrateData, CrateResolutionEnv, LocalDefData, LocalEnumVariantData, LocalEnumVariantEntry,
-    MacroDefinitionEnv, MacroDefinitionView, ModuleData, ModuleScopeBuilder, Namespace,
-    PackageDefMaps as DefMapPackage, ScopeBindingProvenance, ScopeEntryRef, ScopeResolutionEnv,
-    ScopeResolver,
+    MacroDefinitionEnv, MacroDefinitionView, MacroExpansionLimitReport, ModuleData,
+    ModuleScopeBuilder, Namespace, PackageDefMaps as DefMapPackage, ScopeBindingProvenance,
+    ScopeEntryRef, ScopeResolutionEnv, ScopeResolver,
 };
 use rg_ir_model::{
     CrateRef, DefId, DefMapRef, LocalDefRef, LocalEnumVariantRef, ModuleId, ModuleRef, Path,
@@ -663,10 +663,24 @@ pub(super) fn finalize_crate_states(
 
 /// Freezes collected crate states into the package payload stored by `DefMapDb`.
 pub(super) fn freeze_package(package: &Package, package_states: &[CrateState]) -> DefMapPackage {
+    let package_name = package.package_name().to_string();
+    let macro_expansion_limits = package_states
+        .iter()
+        .filter_map(|state| {
+            let report = state.macro_expansion_limit.as_ref()?;
+            Some(MacroExpansionLimitReport {
+                package_name: package_name.clone(),
+                crate_name: state.crate_name.clone(),
+                groups: report.groups.clone(),
+                omitted_call_count: report.omitted_call_count,
+            })
+        })
+        .collect();
     DefMapPackage::new(
-        package.package_name().to_string(),
+        package_name,
         package.edition(),
         package_states.iter().map(freeze_crate_data).collect(),
+        macro_expansion_limits,
     )
 }
 

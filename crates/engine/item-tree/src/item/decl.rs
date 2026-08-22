@@ -205,6 +205,21 @@ pub struct FunctionItem {
     pub proc_macro: Option<ProcMacroDefinition>,
 }
 
+/// One foreign declaration block and the item-tree nodes declared directly inside it.
+///
+/// The children keep ordinary function, static, type-alias, and macro-call payloads. Retaining the
+/// block as their owner lets name resolution expose supported declarations in the surrounding
+/// scope without erasing the ABI boundary needed by later foreign-item semantics.
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
+pub struct ExternBlockItem {
+    /// Direct child declarations in source order.
+    pub items: Vec<ItemTreeId>,
+    /// Explicit ABI token text, including quotes, such as `"C"`.
+    pub abi: Option<String>,
+    /// Whether the block was written as `unsafe extern ...`.
+    pub is_unsafe: bool,
+}
+
 /// Macro-namespace export declared by an attribute on a function-shaped item.
 ///
 /// The exported name can differ from the implementation function for

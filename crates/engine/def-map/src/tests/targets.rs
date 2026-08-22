@@ -171,3 +171,49 @@ pub fn normal_work() {}
         "#]],
     );
 }
+
+#[test]
+fn proc_macro_sysroot_root_is_visible_only_to_proc_macro_targets() {
+    utils::check_project_path_resolution_with_fake_sysroot(
+        r#"
+//- /Cargo.toml
+[package]
+name = "mixed_targets"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+proc-macro = true
+
+[[bin]]
+name = "ordinary"
+path = "src/main.rs"
+
+//- /src/lib.rs
+use proc_macro::TokenStream;
+
+fn consume(_stream: TokenStream) {}
+
+//- /src/main.rs
+use proc_macro::TokenStream;
+
+fn main() {}
+"#,
+        &[
+            utils::PathResolutionQuery::proc_macro(
+                "mixed_targets",
+                "crate",
+                "proc_macro::TokenStream",
+            ),
+            utils::PathResolutionQuery::proc_macro("mixed_targets", "crate", "TokenStream"),
+            utils::PathResolutionQuery::bin("mixed_targets", "crate", "proc_macro::TokenStream"),
+            utils::PathResolutionQuery::bin("mixed_targets", "crate", "TokenStream"),
+        ],
+        expect![[r#"
+            mixed_targets [proc-macro] crate resolves proc_macro::TokenStream -> struct proc_macro[lib]::crate::TokenStream
+            mixed_targets [proc-macro] crate resolves TokenStream -> struct proc_macro[lib]::crate::TokenStream
+            mixed_targets [bin] crate resolves proc_macro::TokenStream -> <none> (unresolved at segment #0)
+            mixed_targets [bin] crate resolves TokenStream -> <none> (unresolved at segment #0)
+        "#]],
+    );
+}

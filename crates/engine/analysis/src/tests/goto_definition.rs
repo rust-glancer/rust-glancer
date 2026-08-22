@@ -742,6 +742,9 @@ pub mod prelude {
         pub use crate::marker::StdPrelude;
     }
 }
+
+//- /sysroot/library/proc_macro/src/lib.rs
+pub struct TokenStream;
 "#,
         &[
             AnalysisQuery::goto("goto prelude type", "goto_prelude")
@@ -793,6 +796,9 @@ pub mod prelude {
         pub use crate::marker::StdPrelude;
     }
 }
+
+//- /sysroot/library/proc_macro/src/lib.rs
+pub struct TokenStream;
 "#,
         &[
             AnalysisQuery::goto("goto prelude type shadowed by value", "goto_value_shadow")

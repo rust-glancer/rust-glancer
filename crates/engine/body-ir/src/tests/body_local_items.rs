@@ -1,10 +1,85 @@
 use expect_test::expect;
-use rg_def_map::PackageSlot;
+use rg_def_map::{ItemSourceKind, PackageSlot};
 use rg_ir_model::{BodyId, BodyRef, CrateRef};
 
 use crate::testonly::BodyIrFixture;
 
 use super::utils::check_project_body_ir;
+
+#[test]
+fn body_local_extern_blocks_collect_declarations_without_scheduling_foreign_bodies() {
+    let db = BodyIrFixture::build(
+        r#"
+//- /Cargo.toml
+[package]
+name = "body_local_foreign"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+macro_rules! nested_foreign_macro {
+    () => {
+        struct MustNotExpand;
+    };
+}
+
+pub fn outer() {
+    extern "C" {
+        fn local_foreign(input: u8) -> u16;
+        static LOCAL_FOREIGN: u8;
+        type LocalOpaque;
+        nested_foreign_macro!();
+    }
+
+    let _: LocalOpaque;
+}
+"#,
+    );
+    let package = db
+        .parse_db()
+        .packages()
+        .first()
+        .expect("fixture should contain one package");
+    let target = package
+        .targets()
+        .first()
+        .expect("fixture package should contain one target");
+    let crate_ref = CrateRef {
+        package: PackageSlot(0),
+        crate_id: rg_ir_model::CrateId(target.id.0),
+    };
+    let crate_bodies = db
+        .body_ir_db()
+        .resident_package(crate_ref.package)
+        .and_then(|package| package.crate_bodies(crate_ref.crate_id))
+        .expect("fixture crate bodies should exist");
+    assert_eq!(
+        crate_bodies.bodies().len(),
+        1,
+        "foreign functions and statics should not create body work",
+    );
+
+    let body_ref = BodyRef {
+        crate_ref,
+        body: BodyId(0),
+    };
+    let def_map = db
+        .resident_body_def_map(body_ref)
+        .expect("outer body should contain a finalized local def map");
+    let mut names = def_map
+        .local_defs()
+        .iter()
+        .map(|local_def| local_def.name.to_string())
+        .collect::<Vec<_>>();
+    names.sort();
+    assert_eq!(names, ["LOCAL_FOREIGN", "LocalOpaque", "local_foreign"]);
+    for local_def in def_map.local_def_refs() {
+        let block = def_map
+            .foreign_block(local_def.local_def)
+            .expect("every local foreign declaration should retain its block owner");
+        assert!(matches!(block.kind, ItemSourceKind::Body(_)));
+    }
+}
 
 #[test]
 fn resolves_body_local_structs_before_module_structs() {

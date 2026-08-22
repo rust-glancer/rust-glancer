@@ -354,3 +354,60 @@ pub struct Record { pub value: u8 }
         .assert_type_exists("record structs should occupy the type namespace")
         .assert_value_missing("record structs should not contribute a value constructor binding");
 }
+
+#[test]
+fn resident_unresolved_import_totals_are_partitioned_by_package_origin() {
+    let fixture = crate::testonly::DefMapFixture::build_with_sysroot(
+        r#"
+//- /Cargo.toml
+[workspace]
+members = ["app"]
+exclude = ["dep"]
+resolver = "3"
+
+//- /app/Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+dep = { path = "../dep" }
+
+//- /app/src/lib.rs
+use missing_workspace::Thing;
+
+//- /dep/Cargo.toml
+[package]
+name = "dep"
+version = "0.1.0"
+edition = "2024"
+
+//- /dep/src/lib.rs
+use missing_dependency::Thing;
+
+//- /sysroot/library/core/src/lib.rs
+use missing_sysroot::Thing;
+
+//- /sysroot/library/alloc/src/lib.rs
+pub struct Alloc;
+
+//- /sysroot/library/std/src/lib.rs
+pub struct Std;
+
+//- /sysroot/library/proc_macro/src/lib.rs
+pub struct TokenStream;
+"#,
+    );
+    let stats = fixture.def_map_db().stats(fixture.workspace());
+
+    assert_eq!(stats.unresolved_imports_by_origin.workspace, 1);
+    assert_eq!(stats.unresolved_imports_by_origin.dependency, 1);
+    assert_eq!(stats.unresolved_imports_by_origin.sysroot, 1);
+    assert_eq!(stats.unresolved_import_count, 3);
+    assert_eq!(
+        stats.unresolved_import_count,
+        stats.unresolved_imports_by_origin.total(),
+        "origin totals should describe exactly the resident aggregate",
+    );
+}

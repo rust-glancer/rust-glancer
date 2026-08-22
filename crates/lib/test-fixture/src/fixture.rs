@@ -295,9 +295,9 @@ impl CrateFixture {
 
     /// Adds rust-glancer's small shared fake sysroot under `/sysroot/library`.
     ///
-    /// The fake sysroot is intentionally incomplete. It focuses on APIs whose standard-library
-    /// shape matters for name resolution and type inference tests: edition prelude wiring,
-    /// and common elements -- for the exact list check `assets/fake_sysroot`.
+    /// The fake sysroot contains every compiler-provided crate root expected by discovery, but
+    /// exposes only the small API surface needed by name resolution and type inference tests. For
+    /// the exact list of modeled APIs, check `assets/fake_sysroot`.
     ///
     /// This method panics if the fixture already defines one of the shared fake sysroot files.
     /// Tests that need a custom sysroot should keep using explicit `/sysroot/library/...` fixture

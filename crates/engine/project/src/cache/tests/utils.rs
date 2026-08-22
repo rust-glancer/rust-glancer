@@ -561,9 +561,14 @@ pub(super) fn check_offloaded_dependency_query(fixture: &str, expect: Expect) {
         .snapshot()
         .full_analysis()
         .expect("offloaded package read transaction should load");
-    let mut symbols = analysis
-        .workspace_symbols("DepType")
-        .expect("fixture workspace symbols should resolve");
+    let mut symbols = Vec::new();
+    for query in ["DepType", "dep_foreign", "DEP_STATIC", "DepOpaque"] {
+        symbols.extend(
+            analysis
+                .workspace_symbols(query)
+                .expect("fixture workspace symbols should resolve"),
+        );
+    }
     symbols.sort_by_key(|symbol| {
         (
             symbol.kind,

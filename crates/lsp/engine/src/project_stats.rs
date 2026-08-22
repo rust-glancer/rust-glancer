@@ -3,7 +3,7 @@
 //! These counters describe the retained analysis graph, not allocator behavior. Keeping them out
 //! of memory reporting makes save/index logs easier to read and keeps each subsystem honest.
 
-use rg_project::ProjectSnapshot;
+use rg_project::{MacroExpansionLimitBuildSummary, ProjectSnapshot};
 
 use crate::memory::format_bytes;
 
@@ -58,6 +58,25 @@ impl ProjectStats {
             label,
             stats = %self,
             "project stats"
+        );
+    }
+
+    /// Report degraded def-map coverage once at the host boundary that published the build.
+    pub(crate) fn log_macro_expansion_limit(
+        summary: &MacroExpansionLimitBuildSummary,
+        label: &'static str,
+    ) {
+        if summary.is_empty() {
+            return;
+        }
+
+        tracing::warn!(
+            label,
+            affected_crate_count = summary.affected_crate_count(),
+            skipped_macro_call_count = summary.skipped_macro_call_count(),
+            affected_crates = ?summary.listed_crates(),
+            omitted_affected_crate_count = summary.omitted_crate_count(),
+            "macro expansion was truncated after reaching the pass limit; analysis may be incomplete; run rust-glancer analyze for details"
         );
     }
 }

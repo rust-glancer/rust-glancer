@@ -171,6 +171,16 @@ impl<'a> PackageItemTreeSnapshot<'a> {
             }
         }
 
+        if let ItemKind::ExternBlock(extern_block) = &item.kind {
+            let abi = extern_block.abi.as_deref().unwrap_or("<default>");
+            let safety = if extern_block.is_unsafe {
+                "unsafe "
+            } else {
+                ""
+            };
+            line.push_str(&format!(" [{safety}abi {abi}]"));
+        }
+
         if let ItemKind::MacroCall(macro_call) = &item.kind {
             let path = macro_call.path.as_deref().unwrap_or("<missing>");
             line.push_str(&format!(" [{path}]"));
@@ -227,6 +237,15 @@ impl<'a> PackageItemTreeSnapshot<'a> {
                 let child = file_tree
                     .item(*child_id)
                     .expect("inline child item id should exist while rendering");
+                self.render_item(file_tree, child, depth + 1, dump);
+            }
+        }
+
+        if let ItemKind::ExternBlock(extern_block) = &item.kind {
+            for child_id in &extern_block.items {
+                let child = file_tree
+                    .item(*child_id)
+                    .expect("extern-block child item id should exist while rendering");
                 self.render_item(file_tree, child, depth + 1, dump);
             }
         }

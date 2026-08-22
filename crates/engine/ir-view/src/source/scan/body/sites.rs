@@ -455,8 +455,12 @@ where
             ItemKind::Function(item) => self.walk_fn_def_type_refs(context, item),
             ItemKind::Impl(item) => self.walk_impl_item_type_refs(context, item),
             ItemKind::Module(item) => self.walk_module_item_type_refs(context, item),
+            ItemKind::ExternBlock(item) => {
+                for child in &item.items {
+                    self.walk_source_item_id_type_refs(context.scope, *child);
+                }
+            }
             ItemKind::AsmExpr
-            | ItemKind::ExternBlock
             | ItemKind::ExternCrate(_)
             | ItemKind::MacroCall(_)
             | ItemKind::MacroDefinition(_)

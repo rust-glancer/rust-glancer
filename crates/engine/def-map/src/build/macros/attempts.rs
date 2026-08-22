@@ -176,6 +176,7 @@ pub(crate) fn apply_expansion_attempts(
                     origin: SourceFragmentOrigin {
                         module: attempt.origin.module,
                         order: attempt.origin.order,
+                        parent_call: attempt.call_id,
                     },
                     result: MacroExpansionApplyResult::default(),
                 }
@@ -208,6 +209,7 @@ pub(crate) fn apply_expansion_attempts(
                     origin: SourceFragmentOrigin {
                         module: attempt.origin.module,
                         order: attempt.origin.order,
+                        parent_call: attempt.call_id,
                     },
                     result: MacroExpansionApplyResult::default(),
                 }
@@ -490,6 +492,7 @@ impl MacroExpansionAttempt {
                 span: call.span,
                 order: call.order.clone(),
                 dollar_crate: None,
+                parent_call: call_id,
             },
             outcome,
             record,
