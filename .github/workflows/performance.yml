@@ -55,6 +55,9 @@ jobs:
           target-dir: target
           dependency-key: ${{ hashFiles('Cargo.lock', 'Cargo.toml', 'crates/**/Cargo.toml', 'rust-toolchain.toml') }}
 
+      - name: Install rust-src
+        run: rustup component add rust-src
+
       - name: Download base memory profile
         if: github.event_name == 'pull_request'
         uses: ./.github/actions/download-performance-baseline
@@ -117,6 +120,9 @@ jobs:
           exclude-paths: |
             !target/gungraun
             !target/gungraun/**
+
+      - name: Install rust-src
+        run: rustup component add rust-src
 
       - uses: awalsh128/cache-apt-pkgs-action@2c09a5e66da6c8016428a2172bd76e5e4f14bb17 # v1
         with:
