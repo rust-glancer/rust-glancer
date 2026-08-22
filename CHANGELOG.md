@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.2](https://github.com/rust-glancer/rust-glancer/compare/v0.1.1...v0.1.2) (2026-08-22)
+
+
+### Features
+
+* Model extern items and proc macro crate ([#176](https://github.com/rust-glancer/rust-glancer/issues/176)) ([b63c615](https://github.com/rust-glancer/rust-glancer/commit/b63c61536cd6a58ec0281f208cfeab17615c4781))
+* Optimize indexing for packages with many targets ([#172](https://github.com/rust-glancer/rust-glancer/issues/172)) ([110b2df](https://github.com/rust-glancer/rust-glancer/commit/110b2df8aba6c2db340041aa03a6bd6c7102f37b))
+
 ## [0.1.1](https://github.com/rust-glancer/rust-glancer/compare/v0.1.0...v0.1.1) (2026-08-20)
 
 
