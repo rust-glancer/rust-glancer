@@ -193,9 +193,7 @@ fn main() {}
         .workspace_packages()
         .find(|package| package.name == "missing_target_fixture")
         .expect("fixture package should be present");
-    let package_root = fixture
-        .path("Cargo.toml")
-        .canonicalize()
+    let package_root = rg_std::path::canonicalize(fixture.path("Cargo.toml"))
         .expect("fixture manifest should canonicalize")
         .parent()
         .expect("fixture manifest should have a parent")
@@ -746,9 +744,7 @@ pub struct App;
     assert_eq!(
         manifests,
         vec![
-            fixture
-                .path("Cargo.toml")
-                .canonicalize()
+            rg_std::path::canonicalize(fixture.path("Cargo.toml"))
                 .expect("fixture manifest should canonicalize")
         ],
     );
@@ -861,14 +857,10 @@ pub struct Dep;
         WorkspaceMetadata::for_tests(fixture.metadata(), WorkspaceLoweringConfig::default())
             .expect("fixture workspace metadata should build");
 
-    let app_api = fixture
-        .path("crates/app/src")
-        .canonicalize()
+    let app_api = rg_std::path::canonicalize(fixture.path("crates/app/src"))
         .expect("fixture src dir should canonicalize")
         .join("api.rs");
-    let generated_api = fixture
-        .path("")
-        .canonicalize()
+    let generated_api = rg_std::path::canonicalize(fixture.path(""))
         .expect("fixture root should canonicalize")
         .join("generated/api.rs");
 

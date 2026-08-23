@@ -489,8 +489,7 @@ impl<'a> ProjectSnapshot<'a> {
         path: impl AsRef<Path>,
     ) -> anyhow::Result<Vec<FileContext>> {
         let path = path.as_ref();
-        let canonical_path = path
-            .canonicalize()
+        let canonical_path = rg_std::path::canonicalize(path)
             .with_context(|| format!("while attempting to canonicalize {}", path.display()))?;
         self.file_contexts_for_source_path(&canonical_path)
     }

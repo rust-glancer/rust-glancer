@@ -135,8 +135,7 @@ fn captured_saved_source_keeps_canonical_path_text_and_revision_together() {
 
     assert_eq!(
         change.path(),
-        path.canonicalize()
-            .expect("fixture path should canonicalize")
+        rg_std::path::canonicalize(path).expect("fixture path should canonicalize")
     );
     assert_eq!(change.text(), text);
     assert_eq!(

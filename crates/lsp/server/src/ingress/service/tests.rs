@@ -69,8 +69,7 @@ async fn later_request_keeps_incrementally_changed_text_when_futures_finish_in_r
         RecentEditorSaves::default(),
         CompletionScheduler::default(),
     );
-    let uri =
-        Uri::from_file_path("/workspace/src/lib.rs").expect("test path should convert to URI");
+    let uri = document_uri();
 
     let open = service.call(
         Request::build("textDocument/didOpen")
@@ -135,8 +134,7 @@ async fn completion_ownership_is_decided_in_wire_order_before_handlers_are_polle
         RecentEditorSaves::default(),
         CompletionScheduler::default(),
     );
-    let uri =
-        Uri::from_file_path("/workspace/src/lib.rs").expect("test path should convert to URI");
+    let uri = document_uri();
 
     service
         .call(
@@ -369,6 +367,16 @@ fn framed_notifications(methods: &[&str]) -> Vec<u8> {
             format!("Content-Length: {}\r\n\r\n{body}", body.len()).into_bytes()
         })
         .collect()
+}
+
+/// `Uri::from_file_path` requires an absolute host path, which on Windows means
+/// a drive letter, so the synthetic document path is anchored at the temp dir.
+fn document_uri() -> Uri {
+    let path = std::env::temp_dir()
+        .join("workspace")
+        .join("src")
+        .join("lib.rs");
+    Uri::from_file_path(path).expect("test path should convert to URI")
 }
 
 fn completion_request_message(uri: &Uri, id: i64, character: u32) -> Request {

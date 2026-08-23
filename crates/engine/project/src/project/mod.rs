@@ -210,7 +210,7 @@ impl Project {
         for change in changes {
             let change = match change {
                 SavedFileChange::FsPath(path) => {
-                    let canonical_path = match path.canonicalize() {
+                    let canonical_path = match rg_std::path::canonicalize(&path) {
                         Ok(path) => path,
                         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                             // We intentionally do not care about deleted module files. Valid Rust

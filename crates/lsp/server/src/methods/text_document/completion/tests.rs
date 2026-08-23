@@ -46,6 +46,13 @@ use crate::{
 
 const TEST_TIMEOUT: Duration = Duration::from_secs(2);
 
+/// `Uri::from_file_path` requires an absolute host path, which on Windows means a drive
+/// letter, so the synthetic document paths are anchored at the temp dir.
+fn workspace_uri(relative: &str) -> Uri {
+    let path = std::env::temp_dir().join("workspace").join(relative);
+    Uri::from_file_path(path).expect("test path should convert to URI")
+}
+
 #[tokio::test(flavor = "current_thread")]
 async fn did_change_retries_completion_at_rebased_position() {
     let mut lsp = CompletionLspFixture::open("impl RwLo|").await;
@@ -177,8 +184,7 @@ impl CompletionLspFixture {
         let (client_input, server_input) = tokio::io::duplex(64 * 1024);
         let (server_output, client_output) = tokio::io::duplex(64 * 1024);
         let server = tokio::spawn(Server::new(server_input, server_output, socket).serve(service));
-        let path = PathBuf::from("/workspace/src/lib.rs");
-        let uri = Uri::from_file_path(&path).expect("test path should convert to URI");
+        let uri = workspace_uri("src/lib.rs");
         let mut fixture = Self {
             client_input,
             client_output: BufReader::new(client_output),
@@ -252,8 +258,7 @@ impl CompletionLspFixture {
     }
 
     async fn open_sibling(&mut self, text: &str) -> Uri {
-        let path = PathBuf::from("/workspace/src/sibling.rs");
-        let uri = Uri::from_file_path(path).expect("sibling path should convert to URI");
+        let uri = workspace_uri("src/sibling.rs");
         self.send(serde_json::json!({
             "jsonrpc": "2.0",
             "method": "textDocument/didOpen",

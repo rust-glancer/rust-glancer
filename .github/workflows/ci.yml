@@ -43,6 +43,22 @@ jobs:
       - name: Run tests
         run: cargo nextest run --workspace
 
+  tests-windows:
+    name: tests-windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: ./.github/actions/cargo-cache
+        with:
+          scope: ci-${{ github.job }}
+          target-dir: target
+          dependency-key: ${{ hashFiles('Cargo.lock', 'Cargo.toml', 'crates/**/Cargo.toml', 'rust-toolchain.toml') }}
+      - uses: taiki-e/install-action@16b05812d776ae1dfaabc8277e421fb6d2506419 # v2.82.7
+        with:
+          tool: cargo-nextest@0.9.132
+      - name: Run tests
+        run: cargo nextest run --workspace
+
   test-targets:
     name: test-targets
     runs-on: ubuntu-latest
@@ -141,6 +157,7 @@ jobs:
     needs:
       - lints
       - tests
+      - tests-windows
       - test-targets
       - client
       - vsix-package

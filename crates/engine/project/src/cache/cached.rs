@@ -49,7 +49,9 @@ pub struct CachedPath(#[memsize(inline)] pub(crate) String);
 
 impl CachedPath {
     pub(super) fn from_workspace_path(path: &Path) -> Self {
-        Self(path.display().to_string())
+        // Store paths with forward slashes so cached artifacts stay byte-identical across
+        // host platforms; every platform's path APIs accept this spelling.
+        Self(path.to_string_lossy().replace('\\', "/"))
     }
 
     pub fn as_path(&self) -> &Path {

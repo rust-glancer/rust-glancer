@@ -226,9 +226,8 @@ pub struct Before;
 
     assert_ne!(project.generation_id(), previous_generation);
     assert_eq!(summary.affected_packages, [rg_def_map::PackageSlot(0)]);
-    let canonical = path
-        .canonicalize()
-        .expect("published fixture source should canonicalize");
+    let canonical =
+        rg_std::path::canonicalize(path).expect("published fixture source should canonicalize");
     let entry = project
         .state
         .parse_db()
@@ -272,9 +271,7 @@ pub struct Published;
         .apply_change(SavedFileChange::captured(captured))
         .expect_err("a newer disk value must reject the captured candidate");
 
-    let canonical = path
-        .canonicalize()
-        .expect("fixture source should canonicalize");
+    let canonical = rg_std::path::canonicalize(&path).expect("fixture source should canonicalize");
     assert_eq!(
         Project::stale_source_path(&error),
         Some(canonical.as_path()),
@@ -413,8 +410,7 @@ pub struct Before;
     let mut project = fixture.build_project();
     let root = fixture.path("src/lib.rs");
     let old = fixture.path("src/old.rs");
-    let old_canonical = old
-        .canonicalize()
+    let old_canonical = rg_std::path::canonicalize(&old)
         .expect("old module path should canonicalize before rename");
     let new = fixture.path("src/new.rs");
 
@@ -775,8 +771,7 @@ pub struct User;
         .to_path_buf();
     assert_eq!(
         changed_path,
-        user.canonicalize()
-            .expect("user fixture should canonicalize"),
+        rg_std::path::canonicalize(user).expect("user fixture should canonicalize"),
         "a disappeared path should not prevent later batch members from rebuilding"
     );
 }
@@ -909,9 +904,7 @@ pub fn value() -> usize {
     assert_eq!(stats.missing_crate_count, 1);
     assert_eq!(stats.body_count, 0);
 
-    let source_path = fixture
-        .path("src/lib.rs")
-        .canonicalize()
+    let source_path = rg_std::path::canonicalize(fixture.path("src/lib.rs"))
         .expect("fixture source path should canonicalize");
     let source_entry = project
         .state
@@ -1033,9 +1026,7 @@ pub fn second() -> usize {
         .expect("lib file contexts should resolve")
         .pop()
         .expect("lib file should have one context");
-    let lib_path = fixture
-        .path("src/lib.rs")
-        .canonicalize()
+    let lib_path = rg_std::path::canonicalize(fixture.path("src/lib.rs"))
         .expect("lib source path should canonicalize");
     let lib_source = project
         .state
@@ -1068,9 +1059,7 @@ pub fn second() -> usize {
         .expect("other file contexts should resolve")
         .pop()
         .expect("other file should have one context");
-    let other_path = fixture
-        .path("src/other.rs")
-        .canonicalize()
+    let other_path = rg_std::path::canonicalize(fixture.path("src/other.rs"))
         .expect("other source path should canonicalize");
     let other_source = project
         .state

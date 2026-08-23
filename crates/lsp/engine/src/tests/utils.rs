@@ -181,7 +181,7 @@ impl LspEngineFixture {
 
     fn record_document(&self, path: PathBuf, version: Option<i32>, text: String) {
         let revision = self.next_revision.fetch_add(1, Ordering::Relaxed);
-        let source_path = path.canonicalize().unwrap_or_else(|_| path.clone());
+        let source_path = rg_std::path::canonicalize(&path).unwrap_or_else(|_| path.clone());
         self.documents
             .lock()
             .expect("fixture editor documents should not be poisoned")
@@ -212,7 +212,7 @@ impl LspEngineFixture {
         let target = documents
             .entry(path.clone())
             .or_insert_with(|| TestDocument {
-                source_path: path.canonicalize().unwrap_or_else(|_| path.clone()),
+                source_path: rg_std::path::canonicalize(&path).unwrap_or_else(|_| path.clone()),
                 version: None,
                 text: std::fs::read_to_string(&path)
                     .expect("fixture query document should be readable"),
@@ -1050,15 +1050,14 @@ impl LspEngineFixture {
     }
 
     fn render_path(&self, path: &Path) -> String {
-        let root = self
-            .fixture
-            .path("")
-            .canonicalize()
+        let root = rg_std::path::canonicalize(self.fixture.path(""))
             .expect("fixture root should canonicalize");
-        let path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+        let path = rg_std::path::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
 
         if let Ok(relative) = path.strip_prefix(root) {
-            return format!("/{}", relative.display());
+            // Render with forward slashes so expectations stay portable across host platforms.
+            let relative = relative.to_string_lossy().replace('\\', "/");
+            return format!("/{relative}");
         }
 
         path.display().to_string()

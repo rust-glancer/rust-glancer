@@ -18,10 +18,11 @@ pub struct CapturedSource {
 impl CapturedSource {
     pub fn new(path: impl AsRef<Path>, text: impl Into<Arc<str>>) -> Result<Self, SourceError> {
         let path = path.as_ref();
-        let canonical_path = path.canonicalize().map_err(|source| SourceError::Io {
-            path: path.to_path_buf(),
-            source,
-        })?;
+        let canonical_path =
+            rg_std::path::canonicalize(path).map_err(|source| SourceError::Io {
+                path: path.to_path_buf(),
+                source,
+            })?;
         let text = text.into();
         let descriptor = SourceDescriptor::new(SourcePath::new(canonical_path), text.as_bytes());
         Ok(Self { descriptor, text })

@@ -16,9 +16,7 @@ pub(super) fn check_parse_db_after_module_discovery(fixture: &str, expect: Expec
 
 fn check_parse_db_with(fixture: &str, mode: ParseFixtureMode, expect: Expect) {
     let fixture = fixture_crate(fixture);
-    let root = fixture
-        .path("")
-        .canonicalize()
+    let root = rg_std::path::canonicalize(fixture.path(""))
         .expect("fixture root should be canonicalizable");
     let display_root = fixture.path("");
     let workspace =
@@ -138,17 +136,22 @@ impl<'a> ProjectParseSnapshot<'a> {
 
     fn path_label(&self, path: &Path) -> String {
         if let Ok(relative) = path.strip_prefix(self.root) {
-            return relative.display().to_string();
+            return render_relative(relative);
         }
         if let Ok(relative) = path.strip_prefix(self.display_root) {
-            return relative.display().to_string();
+            return render_relative(relative);
         }
-        if let Ok(canonical_path) = path.canonicalize()
+        if let Ok(canonical_path) = rg_std::path::canonicalize(path)
             && let Ok(relative) = canonical_path.strip_prefix(self.root)
         {
-            return relative.display().to_string();
+            return render_relative(relative);
         }
 
-        path.display().to_string()
+        // Render with forward slashes so expectations stay portable across host platforms.
+        path.to_string_lossy().replace('\\', "/")
     }
+}
+
+fn render_relative(relative: &Path) -> String {
+    relative.to_string_lossy().replace('\\', "/")
 }

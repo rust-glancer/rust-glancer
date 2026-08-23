@@ -4,7 +4,7 @@ use std::{
 };
 
 pub(crate) fn canonicalize_path(path: &Path) -> io::Result<PathBuf> {
-    path.canonicalize().map_err(|error| {
+    rg_std::path::canonicalize(path).map_err(|error| {
         io::Error::new(
             error.kind(),
             format!(

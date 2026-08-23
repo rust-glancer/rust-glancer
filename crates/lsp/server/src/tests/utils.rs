@@ -157,11 +157,12 @@ impl RoutingFixture {
     fn render_path(&self, path: &Path) -> String {
         let root = self.path("");
         let path = normalize_path(path);
+        // Render with forward slashes so expectations stay portable across host platforms.
         if let Ok(relative) = path.strip_prefix(root) {
-            return format!("/{}", relative.display());
+            return format!("/{}", relative.to_string_lossy().replace('\\', "/"));
         }
 
-        path.display().to_string()
+        path.to_string_lossy().replace('\\', "/")
     }
 
     fn path(&self, path: &str) -> PathBuf {

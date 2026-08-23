@@ -86,7 +86,7 @@ impl SysrootSources {
     /// This is mostly used by tests, where a tiny fake sysroot is easier and more deterministic
     /// than relying on the developer's installed toolchain.
     pub fn from_library_root(library_root: impl Into<PathBuf>) -> Option<Self> {
-        let library_root = library_root.into().canonicalize().ok()?;
+        let library_root = rg_std::path::canonicalize(library_root.into()).ok()?;
         let sources = Self { library_root };
 
         SysrootCrate::ALL

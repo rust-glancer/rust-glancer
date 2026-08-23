@@ -262,7 +262,7 @@
     "lint:fix": "npm run lint -- --fix",
     "package:vsix": "node scripts/package-vsix.mjs",
     "test": "npm run test:unit && npm run test:e2e",
-    "test:e2e": "npm run compile && npm run compile:test && cargo build --release -p rust-glancer && RUST_GLANCER_EXTENSION_TEST=1 __RUST_GLANCER_SERVER=\"$(pwd)/../../target/release/rust-glancer\" vscode-test",
+    "test:e2e": "npm run compile && npm run compile:test && cargo build --release -p rust-glancer && node scripts/run-e2e.mjs",
     "test:unit": "node -e \"require('node:fs').rmSync('out-unit', { recursive: true, force: true })\" && npm run compile:unit && node --test out-unit/unit/*.test.js",
     "watch": "tsc --noEmit -watch -p .",
     "vscode:prepublish": "npm run compile"

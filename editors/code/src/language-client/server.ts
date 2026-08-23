@@ -122,10 +122,16 @@ function buildEnv(config: ExtensionConfig): NodeJS.ProcessEnv {
 }
 
 function expandEnv(value: string, env: NodeJS.ProcessEnv): string {
-  return value.replace(/\$([A-Za-z_][A-Za-z0-9_]*)|\$\{([^}]+)\}/g, (_, plain, braced) => {
-    const key = plain ?? braced;
-    return env[key] ?? "";
-  });
+  return (
+    value
+      .replace(/\$([A-Za-z_][A-Za-z0-9_]*)|\$\{([^}]+)\}/g, (_, plain, braced) => {
+        const key = plain ?? braced;
+        return env[key] ?? "";
+      })
+      // Windows-style references are expanded in a second pass so mixed `$VAR`/`%VAR%`
+      // inputs keep working.
+      .replace(/%([A-Za-z_][A-Za-z0-9_]*)%/g, (_, key) => env[key] ?? "")
+  );
 }
 
 function normalizeOptionalString(value: string | undefined): string | undefined {

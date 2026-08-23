@@ -256,7 +256,7 @@ impl<'a> CargoDiagnosticMapper<'a> {
 }
 
 fn canonicalized(path: PathBuf) -> PathBuf {
-    path.canonicalize().unwrap_or(path)
+    rg_std::path::canonicalize(&path).unwrap_or(path)
 }
 
 #[cfg(test)]

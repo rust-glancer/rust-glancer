@@ -178,12 +178,13 @@ impl DocumentOwner {
         } else {
             discovery_workspace.join(workspace_manifest)
         };
-        let workspace_manifest = workspace_manifest.canonicalize().with_context(|| {
-            format!(
-                "while attempting to canonicalize Cargo workspace manifest {}",
-                workspace_manifest.display()
-            )
-        })?;
+        let workspace_manifest =
+            rg_std::path::canonicalize(&workspace_manifest).with_context(|| {
+                format!(
+                    "while attempting to canonicalize Cargo workspace manifest {}",
+                    workspace_manifest.display()
+                )
+            })?;
 
         Ok(Some(
             workspace_manifest

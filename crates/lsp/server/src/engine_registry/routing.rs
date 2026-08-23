@@ -160,5 +160,5 @@ pub(crate) enum WorkspaceEngineRoute {
 
 pub(crate) fn normalize_path(path: impl AsRef<Path>) -> PathBuf {
     let path = path.as_ref();
-    path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+    rg_std::path::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }

@@ -162,9 +162,8 @@ impl ProjectFixture {
     }
 
     pub fn file_id_for_path_in(parse: &ParseDb, path: &Path) -> FileId {
-        let canonical_path = path
-            .canonicalize()
-            .expect("fixture source path should canonicalize");
+        let canonical_path =
+            rg_std::path::canonicalize(path).expect("fixture source path should canonicalize");
 
         parse
             .packages()

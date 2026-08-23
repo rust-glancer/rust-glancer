@@ -108,10 +108,11 @@ impl SourceInventory {
         if let Some(entry) = self.known_entry(path) {
             return Ok(entry);
         }
-        let canonical_path = path.canonicalize().map_err(|source| SourceError::Io {
-            path: path.to_path_buf(),
-            source,
-        })?;
+        let canonical_path =
+            rg_std::path::canonicalize(path).map_err(|source| SourceError::Io {
+                path: path.to_path_buf(),
+                source,
+            })?;
 
         // Known entries are valid in sealed generations. Only the first capture represents file
         // discovery and therefore needs the inventory to be open.

@@ -164,6 +164,7 @@ fn relative_path(root: &Path, path: &Path) -> String {
     if relative_path.as_os_str().is_empty() {
         ".".to_string()
     } else {
-        relative_path.display().to_string()
+        // Render with forward slashes so expectations stay portable across host platforms.
+        relative_path.to_string_lossy().replace('\\', "/")
     }
 }

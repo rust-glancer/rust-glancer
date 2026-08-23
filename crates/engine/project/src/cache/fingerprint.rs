@@ -214,8 +214,8 @@ impl FingerprintBuilder {
     }
 
     fn path(&mut self, field: &str, workspace_root: &Path, path: &Path) {
-        let path = path.strip_prefix(workspace_root).unwrap_or(path);
-        self.str(field, &path.display().to_string());
+        let relative = path.strip_prefix(workspace_root).unwrap_or(path);
+        self.str(field, &Self::portable_path(relative));
     }
 
     fn package_id(&mut self, field: &str, workspace_root: &Path, package_id: &CachedPackageId) {
@@ -226,7 +226,9 @@ impl FingerprintBuilder {
     }
 
     fn normalize_package_id(workspace_root: &Path, package_id: &CachedPackageId) -> String {
-        let root_path = workspace_root.display().to_string();
+        // Cargo renders package IDs as URLs with forward slashes on every platform, while our
+        // normalized workspace roots follow host separators; compare both spellings portably.
+        let root_path = Self::portable_path(workspace_root);
         let mut root_paths = vec![root_path];
 
         // Cargo package IDs can preserve the non-canonical `/var` spelling on macOS while our
@@ -241,12 +243,20 @@ impl FingerprintBuilder {
         let mut package_id = package_id.to_string();
         for root_path in &root_paths {
             package_id = package_id.replace(&format!("file://{root_path}"), "file://./");
+            // URL-form ids keep an extra slash before drive letters (`file:///D:/...`).
+            package_id = package_id.replace(&format!("file:///{root_path}"), "file://./");
         }
         for root_path in root_paths {
             package_id = package_id.replace(&root_path, ".");
         }
 
         package_id.replace("file://.//", "file://./")
+    }
+
+    /// Renders a path with forward slashes so cache identities do not depend on the host
+    /// path separator.
+    fn portable_path(path: &Path) -> String {
+        path.to_string_lossy().replace('\\', "/")
     }
 
     fn str(&mut self, field: &str, value: &str) {

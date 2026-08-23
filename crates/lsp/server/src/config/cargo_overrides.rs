@@ -161,7 +161,9 @@ impl CargoConfigOverride {
 
 fn override_roots(path: &str, workspace_folders: &[PathBuf]) -> Vec<PathBuf> {
     let path = PathBuf::from(path);
-    if path.is_absolute() {
+    // `has_root` also accepts rooted-but-driveless paths such as `/repo`, which are not
+    // `is_absolute()` on Windows yet still express an anchored location.
+    if path.has_root() {
         return vec![normalize_path(path)];
     }
 
@@ -173,5 +175,5 @@ fn override_roots(path: &str, workspace_folders: &[PathBuf]) -> Vec<PathBuf> {
 
 fn normalize_path(path: impl AsRef<Path>) -> PathBuf {
     let path = path.as_ref();
-    path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+    rg_std::path::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }

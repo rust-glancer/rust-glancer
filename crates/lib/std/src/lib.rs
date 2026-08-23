@@ -11,6 +11,7 @@
 
 pub mod expected_unique;
 pub mod memsize;
+pub mod path;
 pub mod shrink;
 pub mod unique;
 

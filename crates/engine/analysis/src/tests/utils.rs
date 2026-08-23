@@ -1324,7 +1324,8 @@ impl<'a> AnalysisQuerySnapshot<'a> {
         let path = package
             .file_path(file_id)
             .expect("reference file should exist while rendering file path");
-        let path = path.to_string_lossy();
+        // Normalize host separators first so `/src/` matching works on Windows too.
+        let path = path.to_string_lossy().replace('\\', "/");
 
         let relative_path = path
             .rfind("/src/")
@@ -1540,7 +1541,8 @@ impl<'a> AnalysisSymbolSnapshot<'a> {
         let path = package
             .file_path(file_id)
             .expect("symbol file should exist while rendering file path");
-        let path = path.to_string_lossy();
+        // Normalize host separators first so `/src/` matching works on Windows too.
+        let path = path.to_string_lossy().replace('\\', "/");
 
         path.rfind("/src/")
             .map(|idx| path[idx + 1..].to_string())

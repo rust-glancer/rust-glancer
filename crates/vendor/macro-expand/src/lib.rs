@@ -198,7 +198,7 @@ impl ExpansionSyntax {
 #[cfg(test)]
 mod tests {
     use expect_test::{Expect, expect};
-    use rg_syntax::{AstNode as _, ast};
+    use rg_syntax::ast;
 
     use super::*;
 

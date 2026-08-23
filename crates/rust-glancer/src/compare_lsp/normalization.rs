@@ -36,7 +36,7 @@ impl NormalizedSummary {
         fixture: &Fixture,
         execution: &ExecutionSummary,
     ) -> anyhow::Result<Self> {
-        let fixture_root = fixture.root().canonicalize().with_context(|| {
+        let fixture_root = rg_std::path::canonicalize(fixture.root()).with_context(|| {
             format!(
                 "Canonicalizing LSP comparison fixture root {} failed",
                 fixture.root().display(),
@@ -1431,8 +1431,7 @@ mod tests {
             .join("rust-glancer-compare-lsp-normalization")
             .join(format!("{}-{}", name, std::process::id()));
         fs::create_dir_all(&root).expect("test fixture root should be created");
-        root.canonicalize()
-            .expect("test fixture root should canonicalize")
+        rg_std::path::canonicalize(root).expect("test fixture root should canonicalize")
     }
 
     fn file_uri(root: &Path, relative_path: &str) -> String {

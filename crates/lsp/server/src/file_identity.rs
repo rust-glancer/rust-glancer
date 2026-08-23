@@ -25,7 +25,7 @@ impl FileIdentity {
         }
 
         Some((
-            path.canonicalize().unwrap_or_else(|_| path.to_path_buf()),
+            rg_std::path::canonicalize(path).unwrap_or_else(|_| path.to_path_buf()),
             Self {
                 len: metadata.len(),
                 modified: metadata.modified().ok()?,

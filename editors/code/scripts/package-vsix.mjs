@@ -87,9 +87,11 @@ const licenseTexts = workspaceLicenses.map((workspaceLicense) =>
 );
 writeFileSync(extensionLicense, `${[licenseNotice, ...licenseTexts].join("\n\n\n")}\n`);
 
-const vsce = vsceBin();
-if (!existsSync(vsce)) {
-  fail(`Expected local vsce binary does not exist: ${vsce}. Run npm install in editors/code.`);
+// The publisher is invoked through its JS entry instead of the `.bin` shim: Node refuses to
+// spawn `.cmd` shims without a shell on Windows (CVE-2024-27980 mitigation).
+const vsceEntry = join(extensionRoot, "node_modules", "@vscode", "vsce", "vsce");
+if (!existsSync(vsceEntry)) {
+  fail(`Expected local vsce entry does not exist: ${vsceEntry}. Run npm install in editors/code.`);
 }
 
 const vsceArgs = ["package", "-o", outPath, "--target", vsCodeTarget];
@@ -97,7 +99,7 @@ if (options.preRelease) {
   vsceArgs.push("--pre-release");
 }
 
-run(vsce, vsceArgs, { cwd: extensionRoot });
+run(process.execPath, [vsceEntry, ...vsceArgs], { cwd: extensionRoot });
 console.log(`Packaged ${outPath}`);
 
 function parseArgs(args) {
@@ -155,11 +157,6 @@ function detectHostTarget() {
     fail("Could not detect rustc host target from `rustc -vV`.");
   }
   return host;
-}
-
-function vsceBin() {
-  const name = process.platform === "win32" ? "vsce.cmd" : "vsce";
-  return join(extensionRoot, "node_modules", ".bin", name);
 }
 
 function run(command, args, options) {

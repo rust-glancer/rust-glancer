@@ -1755,7 +1755,9 @@ fn render_dependency_kinds(dependency: &CachedDependency) -> String {
 }
 
 fn normalize_package_id(root: &Path, package_id: &str) -> String {
-    let root_path = root.display().to_string();
+    // Mirrors the production normalization: package IDs are URL-form with forward slashes,
+    // while workspace roots follow host separators.
+    let root_path = root.to_string_lossy().replace('\\', "/");
     let mut root_paths = vec![root_path];
 
     // Cargo package IDs may preserve the non-canonical `/var` spelling on macOS while normalized
@@ -1770,6 +1772,8 @@ fn normalize_package_id(root: &Path, package_id: &str) -> String {
     let mut package_id = package_id.to_string();
     for root_path in &root_paths {
         package_id = package_id.replace(&format!("file://{root_path}"), "file://./");
+        // URL-form ids keep an extra slash before drive letters (`file:///D:/...`).
+        package_id = package_id.replace(&format!("file:///{root_path}"), "file://./");
     }
     for root_path in root_paths {
         package_id = package_id.replace(&root_path, ".");

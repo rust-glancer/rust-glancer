@@ -57,6 +57,9 @@ jobs:
           - runner: macos-15
             rust_target: aarch64-apple-darwin
             vscode_target: darwin-arm64
+          - runner: windows-latest
+            rust_target: x86_64-pc-windows-msvc
+            vscode_target: win32-x64
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
@@ -136,6 +139,7 @@ jobs:
             "../../dist/rust-glancer-${RELEASE_VERSION}-linux-arm64.vsix"
             "../../dist/rust-glancer-${RELEASE_VERSION}-darwin-x64.vsix"
             "../../dist/rust-glancer-${RELEASE_VERSION}-darwin-arm64.vsix"
+            "../../dist/rust-glancer-${RELEASE_VERSION}-win32-x64.vsix"
           )
 
           for package in "${packages[@]}"; do

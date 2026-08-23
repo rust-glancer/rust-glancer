@@ -9,8 +9,23 @@ use rg_text::RustEdition;
 /// Runs rustfmt as a pure text transformer for LSP formatting.
 pub(crate) fn rustfmt(text: &str, edition: RustEdition) -> anyhow::Result<String> {
     let edition = edition.to_string();
+    // Pin the newline style to the document's own convention. rustfmt's `Auto` detection
+    // falls back to the host default when the input contains no newline at all, which makes
+    // formatting differ between platforms for single-line documents.
+    let newline_style = if text.contains("\r\n") {
+        "windows"
+    } else {
+        "unix"
+    };
     let mut child = Command::new("rustfmt")
-        .args(["--emit", "stdout", "--edition", edition.as_str()])
+        .args([
+            "--emit",
+            "stdout",
+            "--edition",
+            edition.as_str(),
+            "--config",
+            &format!("newline_style={newline_style}"),
+        ])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

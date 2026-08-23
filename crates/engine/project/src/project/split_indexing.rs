@@ -200,8 +200,7 @@ pub(super) fn package_slots_for_path(
     state: &ProjectState,
     path: &std::path::Path,
 ) -> anyhow::Result<Vec<PackageSlot>> {
-    let canonical_path = path
-        .canonicalize()
+    let canonical_path = rg_std::path::canonicalize(path)
         .with_context(|| format!("while attempting to canonicalize {}", path.display()))?;
     let mut packages = state
         .parse

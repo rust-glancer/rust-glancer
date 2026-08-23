@@ -142,10 +142,10 @@ struct PreparedEngine {
 
 impl PreparedEngine {
     fn new() -> Self {
-        let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../../test_targets/moderate_workspace")
-            .canonicalize()
-            .expect("moderate workspace benchmark fixture should exist");
+        let workspace_root = rg_std::path::canonicalize(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../test_targets/moderate_workspace"),
+        )
+        .expect("moderate workspace benchmark fixture should exist");
         let app_path = workspace_root.join(APP_SOURCE);
         let math_path = workspace_root.join(MATH_SOURCE);
         let app_saved_text =

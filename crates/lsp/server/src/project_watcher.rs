@@ -351,7 +351,7 @@ impl WorkspaceWatcher {
 
     fn normalize_root(path: impl AsRef<Path>) -> PathBuf {
         let path = path.as_ref();
-        path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+        rg_std::path::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
     }
 }
 
@@ -384,7 +384,7 @@ impl WatchedProjectPath {
 
     fn normalize(path: impl AsRef<Path>) -> PathBuf {
         let path = path.as_ref();
-        path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+        rg_std::path::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
     }
 
     fn is_project_input(path: &Path) -> bool {
@@ -636,12 +636,9 @@ mod tests {
             .expect("first watcher result should be available");
         let results = WorkspaceWatcher::collect_settled_results(first, &mut receiver).await;
         let paths = WorkspaceWatcher::changed_paths_for_results(&mut snapshot, &root, results);
-        let account = account
-            .canonicalize()
-            .expect("account fixture should canonicalize");
-        let user = user
-            .canonicalize()
-            .expect("user fixture should canonicalize");
+        let account =
+            rg_std::path::canonicalize(account).expect("account fixture should canonicalize");
+        let user = rg_std::path::canonicalize(user).expect("user fixture should canonicalize");
 
         assert_eq!(
             paths,

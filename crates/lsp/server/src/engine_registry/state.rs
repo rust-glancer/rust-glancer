@@ -174,6 +174,7 @@ impl EngineRegistryInner {
 
 /// Registry action after routing has been resolved under the state lock.
 #[derive(Debug)]
+#[allow(clippy::large_enum_variant)] // Routing actions are short-lived; boxing adds churn.
 pub(super) enum ReservedEngineRoute {
     Existing(EngineId),
     Spawn(ReservedEngineStart),

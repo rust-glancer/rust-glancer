@@ -433,15 +433,15 @@ impl HostFixture {
 
     fn display_path(&self, path: &Path) -> String {
         let display_root = self.fixture.path("");
-        let root = display_root
-            .canonicalize()
-            .expect("fixture root should canonicalize");
+        let root =
+            rg_std::path::canonicalize(&display_root).expect("fixture root should canonicalize");
 
+        // Render with forward slashes so expectations stay portable across host platforms.
         path.strip_prefix(&root)
             .or_else(|_| path.strip_prefix(&display_root))
             .unwrap_or(path)
-            .display()
-            .to_string()
+            .to_string_lossy()
+            .replace('\\', "/")
     }
 }
 
