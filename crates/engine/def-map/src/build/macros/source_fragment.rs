@@ -5,14 +5,14 @@
 //! `ItemTreeRef`s, file-relative module resolution, impl lowering, extern crates, and macro-use
 //! behavior instead of taking a generated-only path.
 
-use std::sync::Arc;
+use std::{collections::HashSet, sync::Arc};
 
 use anyhow::{Context as _, Result};
 
 use crate::{
     ImportBinding, ImportData, ImportKind, ImportPath, LocalDefData, LocalDefKind, LocalImplData,
-    MacroDefinitionData, ModuleData, ModuleOrigin, ModuleScope, Namespace, ScopeBinding,
-    ScopeBindingProvenance, Visibility,
+    MacroDefinitionData, ModuleData, ModuleFileSelection, ModuleOrigin, ModuleScope, Namespace,
+    ScopeBinding, ScopeBindingProvenance, Visibility,
 };
 use rg_ir_model::{DefId, DefMapRef, LocalDefId, LocalDefRef, ModuleId, ModuleRef};
 use rg_item_tree::{
@@ -51,6 +51,7 @@ pub(super) struct SourceFragmentCollector<'a> {
     pub(super) item_tree: &'a ItemTreePackage,
     pub(super) origin: SourceFragmentOrigin,
     pub(super) result: MacroExpansionApplyResult,
+    pub(super) active_files: HashSet<FileId>,
 }
 
 impl SourceFragmentCollector<'_> {
@@ -63,7 +64,7 @@ impl SourceFragmentCollector<'_> {
         // belong to the caller's module, but their source refs and spans still point to `file_id`.
         let origin_order = self.origin.order.clone();
         let module_file_context = Arc::clone(&self.origin.module_file_context);
-        self.collect_items(
+        self.collect_file_items(
             self.origin.module,
             file_id,
             &file_tree.top_level,
@@ -82,7 +83,7 @@ impl SourceFragmentCollector<'_> {
             format!("while attempting to fetch module item tree for {file_id:?}")
         })?;
         let module_file_context = Arc::clone(&self.origin.module_file_context);
-        self.collect_items(
+        self.collect_file_items(
             self.origin.module,
             file_id,
             &file_tree.top_level,
@@ -101,7 +102,7 @@ impl SourceFragmentCollector<'_> {
         // file tree ahead of time. Def-map only picks the active fragment and collects those item
         // ids at the macro call position.
         let origin_order = self.origin.order.clone();
-        self.collect_items(
+        self.collect_file_items(
             self.origin.module,
             file_id,
             items,
@@ -109,6 +110,27 @@ impl SourceFragmentCollector<'_> {
             Arc::clone(&self.origin.module_file_context),
         )?;
         Ok(self.result)
+    }
+
+    /// Walks one real file while stopping only cycles on the active source path.
+    ///
+    /// Completed files are removed from the set so another module interpretation can collect the
+    /// same file under a different context.
+    fn collect_file_items(
+        &mut self,
+        module_id: ModuleId,
+        file_id: FileId,
+        items: &[ItemTreeId],
+        order_for: impl Fn(usize) -> ItemOrder,
+        module_file_context: Arc<ModuleFileContext>,
+    ) -> Result<()> {
+        if !self.active_files.insert(file_id) {
+            return Ok(());
+        }
+        let collected =
+            self.collect_items(module_id, file_id, items, order_for, module_file_context);
+        self.active_files.remove(&file_id);
+        collected
     }
 
     fn collect_items(
@@ -492,6 +514,9 @@ impl SourceFragmentCollector<'_> {
                 declaration_file: item.file_id,
                 declaration_span: item.span,
                 definition_file: resolved_file.as_ref().map(|(file_id, _)| *file_id),
+                file_selection: ModuleFileSelection::from_path_override(
+                    module_item.path_override.as_deref(),
+                ),
             },
         };
         let inner_docs = match source {
@@ -561,7 +586,7 @@ impl SourceFragmentCollector<'_> {
                         definition_file
                     )
                 })?;
-                self.collect_items(
+                self.collect_file_items(
                     child_module,
                     definition_file,
                     &file_tree.top_level,

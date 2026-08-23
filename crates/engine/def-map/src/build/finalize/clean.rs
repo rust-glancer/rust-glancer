@@ -49,6 +49,9 @@ pub(crate) fn build_db(
         None,
     )
     .context("while attempting to finish crate states")?;
+    crate_states
+        .ensure_no_generated_module_requests()
+        .context("while attempting to validate direct DefMap construction")?;
 
     let packages = parse
         .packages()

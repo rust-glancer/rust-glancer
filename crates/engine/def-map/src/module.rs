@@ -50,7 +50,34 @@ pub enum ModuleOrigin {
         declaration_file: FileId,
         declaration_span: Span,
         definition_file: Option<FileId>,
+        /// How the definition file was selected.
+        ///
+        /// A `#[path]` file resolves its own children beside that file, even when its filename
+        /// looks like an ordinary flat module. Keeping this provenance avoids retaining complete
+        /// filesystem contexts in every frozen module.
+        file_selection: ModuleFileSelection,
     },
+}
+
+/// Source rule that selected an out-of-line module's definition file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
+#[memsize(leaf)]
+#[shrink(leaf)]
+pub enum ModuleFileSelection {
+    /// Ordinary `name.rs` or `name/mod.rs` lookup.
+    Conventional,
+    /// A direct `#[path = "..."]` attribute.
+    PathAttribute,
+}
+
+impl ModuleFileSelection {
+    pub fn from_path_override(path_override: Option<&str>) -> Self {
+        if path_override.is_some() {
+            Self::PathAttribute
+        } else {
+            Self::Conventional
+        }
+    }
 }
 
 impl ModuleOrigin {

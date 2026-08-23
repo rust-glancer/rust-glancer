@@ -31,7 +31,7 @@ pub use self::{
         BodyMacroStmtExpansionOutcome, BodyMacroTypeExpansionOutcome, ExpandedBodyMacro,
     },
     map::{DefMap, DefMapBuilder, PartialDefMap},
-    module::{ModuleData, ModuleOrigin},
+    module::{ModuleData, ModuleFileSelection, ModuleOrigin},
     package::{CrateData, MacroExpansionLimitGroup, MacroExpansionLimitReport, PackageDefMaps},
     profile::profile_descriptors,
     query::{

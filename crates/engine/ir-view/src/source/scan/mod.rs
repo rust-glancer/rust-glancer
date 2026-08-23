@@ -26,7 +26,7 @@ pub(super) use self::{
     current_use::CurrentUsePathScanner,
     definition::{DefinitionSourceCandidate, DefinitionSourceScanner},
     import_completion::ImportPathCompletionSiteScanner,
-    module_scope::ModuleSourceSiteScanner,
+    module_scope::{ModuleFileBase, ModuleSourceSiteScanner},
     signature::{
         SignatureCompletionSite, SignatureSourceCandidate, SignatureSourceScanner,
         SignatureTypePathScope,

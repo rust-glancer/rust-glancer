@@ -14,8 +14,8 @@ use anyhow::{Context as _, Result};
 
 use crate::{
     ImportBinding, ImportData, ImportKind, ImportPath, LocalDefData, LocalDefKind, LocalImplData,
-    MacroDefinitionData, ModuleData, ModuleOrigin, ModuleScope, Namespace, ScopeBinding,
-    ScopeBindingProvenance, Visibility,
+    MacroDefinitionData, ModuleData, ModuleFileSelection, ModuleOrigin, ModuleScope, Namespace,
+    ScopeBinding, ScopeBindingProvenance, Visibility,
 };
 use rg_ir_model::{CrateRef, DefId, DefMapRef, LocalDefId, LocalDefRef, ModuleId, ModuleRef};
 use rg_item_tree::{
@@ -517,6 +517,9 @@ impl GeneratedCollector<'_> {
                                 declaration_file: item.file_id,
                                 declaration_span: item.span,
                                 definition_file: Some(definition_file),
+                                file_selection: ModuleFileSelection::from_path_override(
+                                    module_item.path_override.as_deref(),
+                                ),
                             },
                             inner_docs,
                             Some((definition_file, child_context)),
@@ -614,6 +617,7 @@ impl GeneratedCollector<'_> {
                         module_file_context: child_context,
                     },
                     result: MacroExpansionApplyResult::default(),
+                    active_files: Default::default(),
                 }
                 .collect_module_file(definition_file)?;
                 self.result.merge(collected);

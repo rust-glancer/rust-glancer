@@ -307,6 +307,9 @@ pub(crate) fn rebuild_packages(
         None,
     )
     .context("while attempting to finish rebuilt crate states")?;
+    crate_states
+        .ensure_no_generated_module_requests()
+        .context("while attempting to validate direct DefMap package reconstruction")?;
 
     // Preserve the old snapshot shape and swap in only rebuilt package payloads. This keeps the DB
     // immutable from query consumers' point of view while avoiding a whole-workspace replacement.

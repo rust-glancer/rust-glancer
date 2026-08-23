@@ -8,8 +8,8 @@
 //! - a clean build has no baseline and marks every package dirty;
 //! - a package rebuild has an old baseline and marks only affected packages dirty.
 //!
-//! Direct `build` methods do not consume generated module source requests, so generated out-of-line
-//! modules remain unavailable there. Project construction uses
+//! Direct `build` methods cannot consume generated module source requests and return an error
+//! instead of freezing a partial snapshot. Project construction uses
 //! `DefMapDbPackageRebuilder::start_build_session` instead: that session exposes the requests and
 //! resumes after the project adds their files.
 
@@ -80,9 +80,10 @@ impl<'a, 'names> DefMapDbBuilder<'a, 'names> {
         self
     }
 
-    /// Finalizes without the project-owned late-source boundary.
+    /// Finalizes when the already-lowered source set is sufficient.
     ///
-    /// Generated out-of-line module requests remain unavailable in this direct build mode.
+    /// Returns an error rather than a partial snapshot when macro expansion requests an
+    /// out-of-line module, because this one-shot path cannot perform source discovery.
     pub fn build(mut self) -> anyhow::Result<DefMapDb> {
         let mut db = finalize::build_db(
             self.workspace,
@@ -167,9 +168,10 @@ impl<'a, 'db> DefMapDbPackageRebuilder<'a, 'db> {
         )
     }
 
-    /// Rebuilds without consuming generated module source requests.
+    /// Rebuilds when the already-lowered source set is sufficient.
     ///
-    /// Use `start_build_session` when generated module declarations should resolve to real files.
+    /// Returns an error rather than a partial snapshot when generated module declarations require
+    /// source discovery. Use `start_build_session` for the resumable project-owned path.
     pub fn build(self) -> anyhow::Result<DefMapDb> {
         let mut db = finalize::rebuild_packages(
             self.old,

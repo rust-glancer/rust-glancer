@@ -99,6 +99,20 @@ impl ModuleFileContext {
         }
     }
 
+    /// Recreates the child context of a file selected by `#[path = "..."]`.
+    ///
+    /// Unlike a conventional flat module, the file's children stay beside the selected file.
+    pub fn for_path_attribute_file(definition_file: &Path) -> Self {
+        let parent_dir = definition_file
+            .parent()
+            .expect("definition file should have a parent directory")
+            .to_path_buf();
+        Self {
+            child_module_dir: parent_dir.clone(),
+            path_attr_dir: parent_dir,
+        }
+    }
+
     /// Enters an inline module, including the directory override introduced by `#[path]`.
     pub fn descend_inline(&self, module_name: &str, path_override: Option<&str>) -> Self {
         let child_module_dir = path_override

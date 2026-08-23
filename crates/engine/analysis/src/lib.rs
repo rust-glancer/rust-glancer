@@ -22,7 +22,7 @@ pub use rg_ir_view::SymbolKind;
 
 use anyhow::Context as _;
 use rg_ir_model::{CrateRef, PackageSlot};
-use rg_ir_view::{IndexedViewDb, ty::IndexedType};
+use rg_ir_view::{IndexedViewDb, source::IndexedModuleFileBase, ty::IndexedType};
 use rg_parse::{
     CurrentSource, DeclarationAssociationIndex, DeclarationHeaderCursor, FileId, ModuleFileContext,
     ParseDb, Span,
@@ -124,10 +124,11 @@ impl<'a> Analysis<'a> {
         &self,
         crate_ref: CrateRef,
         file: FileId,
+        file_base: IndexedModuleFileBase,
         inline_module_path: &[String],
     ) -> anyhow::Result<Vec<String>> {
         self.saved_source
-            .module_file_candidates(crate_ref, file, inline_module_path)
+            .module_file_candidates(crate_ref, file, file_base, inline_module_path)
     }
 
     pub(crate) fn declared_features(&self, package: PackageSlot) -> &[String] {
@@ -586,6 +587,7 @@ impl<'a> SavedSourceView<'a> {
         &self,
         crate_ref: CrateRef,
         file: FileId,
+        file_base: IndexedModuleFileBase,
         inline_module_path: &[String],
     ) -> anyhow::Result<Vec<String>> {
         let Some(parsed_file) = self
@@ -596,7 +598,19 @@ impl<'a> SavedSourceView<'a> {
             return Ok(Vec::new());
         };
 
-        let mut context = ModuleFileContext::from_definition_file(parsed_file.path());
+        let mut context = match file_base {
+            IndexedModuleFileBase::TargetRoot => {
+                ModuleFileContext::for_target_root(parsed_file.path())
+            }
+            IndexedModuleFileBase::Conventional => {
+                ModuleFileContext::from_definition_file(parsed_file.path())
+            }
+            IndexedModuleFileBase::PathAttribute => {
+                ModuleFileContext::for_path_attribute_file(parsed_file.path())
+            }
+        };
+        // TODO: Carry direct `#[path]` overrides on inline-module ancestors in the indexed source
+        // site. Their directory cannot be reconstructed from the semantic name alone.
         for module_name in inline_module_path {
             context = context.descend_inline(module_name, None);
         }

@@ -13,6 +13,46 @@ use crate::PackageDefMaps;
 use crate::{DefMapDb, PackageSlot};
 
 #[test]
+fn direct_build_rejects_generated_module_source_requests() {
+    let fixture = fixture_crate(
+        r#"
+//- /Cargo.toml
+[package]
+name = "direct_generated_module_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+macro_rules! make_late {
+    () => {
+        mod late;
+    };
+}
+
+make_late!();
+
+//- /src/late.rs
+pub struct Late;
+"#,
+    );
+    let workspace =
+        WorkspaceMetadata::for_tests(fixture.metadata(), WorkspaceLoweringConfig::default())
+            .expect("fixture workspace metadata should build");
+    let (parse, item_tree, mut names) = RebuildFixture::build_item_tree(&workspace);
+
+    let error = DefMapDb::builder(&workspace, &parse, &item_tree)
+        .name_interners(&mut names)
+        .build()
+        .expect_err("a direct build should not freeze unresolved generated modules");
+
+    let message = format!("{error:#}");
+    assert!(
+        message.contains("generated out-of-line module source request"),
+        "direct build should explain why it cannot return a complete DefMap: {error:#}",
+    );
+}
+
+#[test]
 fn rebuild_resolves_dirty_imports_through_clean_packages() {
     let fixture = RebuildFixture::build(
         r#"

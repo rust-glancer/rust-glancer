@@ -185,6 +185,17 @@ impl FinalizeCrateStates {
 
         requests.into_vec()
     }
+
+    /// Prevents one-shot builders from freezing unresolved generated module continuations.
+    pub(super) fn ensure_no_generated_module_requests(&self) -> anyhow::Result<()> {
+        let requests = self.generated_module_requests();
+        anyhow::ensure!(
+            requests.is_empty(),
+            "DefMap construction requires {} generated out-of-line module source request(s); use the project-owned resumable build path",
+            requests.len(),
+        );
+        Ok(())
+    }
 }
 
 /// Fixed-point machinery retained across project-owned source discovery pauses.

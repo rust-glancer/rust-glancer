@@ -185,6 +185,7 @@ pub(crate) fn apply_expansion_attempts(
                         module_file_context: attempt.origin.module_file_context,
                     },
                     result: MacroExpansionApplyResult::default(),
+                    active_files: Default::default(),
                 }
                 .collect_file(file_id);
                 let directive_state = match collected {
@@ -219,6 +220,7 @@ pub(crate) fn apply_expansion_attempts(
                         module_file_context: attempt.origin.module_file_context,
                     },
                     result: MacroExpansionApplyResult::default(),
+                    active_files: Default::default(),
                 }
                 .collect_fragment(file_id, &items);
                 let directive_state = match collected {

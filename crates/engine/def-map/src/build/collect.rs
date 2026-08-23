@@ -11,14 +11,18 @@
 //! here. Collection also carries each logical module's filesystem context into queued macro calls.
 //! That context is construction-only, but a later expansion needs it if it emits `mod child;`.
 
-use std::{collections::HashMap, path::PathBuf, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    path::PathBuf,
+    sync::Arc,
+};
 
 use anyhow::Context as _;
 
 use crate::{
     DefMapBuilder, ImportBinding, ImportData, ImportKind, ImportPath, LocalDefData, LocalDefKind,
-    LocalImplData, MacroDefinitionData, ModuleData, ModuleOrigin, ModuleScope, ModuleScopeBuilder,
-    Namespace, NamespaceSet, ScopeBinding, ScopeBindingProvenance, Visibility,
+    LocalImplData, MacroDefinitionData, ModuleData, ModuleFileSelection, ModuleOrigin, ModuleScope,
+    ModuleScopeBuilder, Namespace, NamespaceSet, ScopeBinding, ScopeBindingProvenance, Visibility,
 };
 use rg_cfg_eval::{CfgEvaluator, CfgOptions};
 use rg_ir_model::{
@@ -302,6 +306,7 @@ struct CrateScopeCollector<'db> {
     textual_macro_scopes: TextualMacroScopes,
     macro_use_imports: Vec<MacroUseImport>,
     macro_directives: Vec<MacroDirective>,
+    active_files: HashSet<rg_parse::FileId>,
 }
 
 impl<'db> CrateScopeCollector<'db> {
@@ -329,6 +334,7 @@ impl<'db> CrateScopeCollector<'db> {
             textual_macro_scopes: TextualMacroScopes::default(),
             macro_use_imports: Vec::new(),
             macro_directives: Vec::new(),
+            active_files: HashSet::default(),
         }
     }
 
@@ -360,14 +366,20 @@ impl<'db> CrateScopeCollector<'db> {
         );
         self.root_module = Some(root_module);
 
-        self.collect_items_in_context(
+        let inserted = self.active_files.insert(root_file);
+        debug_assert!(
+            inserted,
+            "a fresh collector should not have an active root file"
+        );
+        let collected = self.collect_items_in_context(
             item_tree,
             root_module,
             root_file,
             &root_file_tree.top_level,
             root_context,
-        )
-        .context("while attempting to collect root file items")?;
+        );
+        self.active_files.remove(&root_file);
+        collected.context("while attempting to collect root file items")?;
 
         Ok(CrateState {
             crate_ref: self.crate_ref,
@@ -873,6 +885,9 @@ impl<'db> CrateScopeCollector<'db> {
                 declaration_file: item.file_id,
                 declaration_span: item.span,
                 definition_file: resolved_file.as_ref().map(|(file_id, _)| *file_id),
+                file_selection: ModuleFileSelection::from_path_override(
+                    module_item.path_override.as_deref(),
+                ),
             },
         };
 
@@ -933,6 +948,11 @@ impl<'db> CrateScopeCollector<'db> {
                 let Some((definition_file, child_context)) = resolved_file else {
                     return Ok(());
                 };
+                // Allocate the declaration above, but do not re-enter a file already on this
+                // source path. The same completed file may still be interpreted elsewhere later.
+                if !self.active_files.insert(definition_file) {
+                    return Ok(());
+                }
                 // Out-of-line modules point at another lowered file tree.
                 let file_tree = item_tree.file(definition_file).with_context(|| {
                     format!(
@@ -940,14 +960,15 @@ impl<'db> CrateScopeCollector<'db> {
                         definition_file
                     )
                 })?;
-                self.collect_items_in_context(
+                let collected = self.collect_items_in_context(
                     item_tree,
                     child_module,
                     definition_file,
                     &file_tree.top_level,
                     child_context,
-                )
-                .context("while attempting to collect out-of-line module items")?;
+                );
+                self.active_files.remove(&definition_file);
+                collected.context("while attempting to collect out-of-line module items")?;
             }
         }
         if let Some(macro_use) = &module_item.macro_use

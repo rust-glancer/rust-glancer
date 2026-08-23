@@ -253,6 +253,57 @@ pub struct Nested;
 }
 
 #[test]
+fn generated_module_collection_terminates_on_file_cycles() {
+    let fixture = HostFixture::build(
+        r#"
+//- /Cargo.toml
+[package]
+name = "generated_module_cycle_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+macro_rules! make_generated {
+    () => {
+        pub mod generated;
+    };
+}
+
+make_generated!();
+
+//- /src/generated.rs
+pub struct Generated;
+
+#[path = "cycle.rs"]
+pub mod cycle;
+
+//- /src/cycle.rs
+pub struct Cycle;
+
+#[path = "generated.rs"]
+pub mod generated_again;
+"#,
+    );
+
+    fixture.check(
+        &[
+            HostObservation::workspace_symbols("Generated"),
+            HostObservation::workspace_symbols("Cycle"),
+        ],
+        expect![[r#"
+            workspace symbols `Generated`
+            - module generated @ generated_module_cycle_fixture[lib] src/lib.rs
+            - module generated_again @ generated_module_cycle_fixture[lib] src/cycle.rs
+            - struct Generated @ generated_module_cycle_fixture[lib] src/generated.rs
+
+            workspace symbols `Cycle`
+            - module cycle @ generated_module_cycle_fixture[lib] src/generated.rs
+            - struct Cycle @ generated_module_cycle_fixture[lib] src/cycle.rs
+        "#]],
+    );
+}
+
+#[test]
 fn generated_modules_in_custom_target_roots_resolve_beside_the_root() {
     let fixture = HostFixture::build(
         r#"
