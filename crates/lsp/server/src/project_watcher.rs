@@ -70,18 +70,32 @@ impl ProjectWatcher {
             .into_iter()
             .map(WorkspaceWatcher::normalize_root)
         {
-            let workspace = WorkspaceWatcher::spawn(
+            match WorkspaceWatcher::spawn(
                 root.clone(),
                 registry.clone(),
                 recent_editor_saves.clone(),
-            )
-            .with_context(|| {
-                format!(
-                    "while attempting to start saved-project watcher for {}",
-                    root.display()
-                )
-            })?;
-            workspaces.push(workspace);
+            ) {
+                Ok(workspace) => workspaces.push(workspace),
+                Err(error) => {
+                    // Native watching is unavailable on some legitimate Windows locations such as
+                    // network shares and `\\wsl$` mounts. Editor-driven saves still reach the
+                    // engine through ingress; only external filesystem changes lose their live
+                    // trigger on this root, so degrade instead of failing initialization.
+                    tracing::warn!(
+                        root = %root.display(),
+                        error = %error,
+                        "failed to start saved-project watcher; continuing without \
+                         external-change watching for this root"
+                    );
+                }
+            }
+        }
+
+        if workspaces.is_empty() {
+            tracing::warn!(
+                "no workspace roots could be watched; external saved-project changes are not \
+                 detected until restart or editor save"
+            );
         }
 
         Ok(Self {
