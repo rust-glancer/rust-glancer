@@ -1,7 +1,8 @@
 use crate::ItemStore;
-use rg_def_map::DefMap;
 use rg_def_map::testonly::DefMapFixture;
+use rg_def_map::{DefMap, PackageSlot};
 use rg_ir_model::CrateRef;
+use rg_package_store::{PackageLoader, PackageStore, PackageSubset};
 use rg_parse::ParseDb;
 
 use crate::SemanticIrDb;
@@ -26,8 +27,22 @@ impl SemanticIrFixture {
     }
 
     pub fn build_from_def_map(def_map: DefMapFixture) -> Self {
-        let semantic_ir = SemanticIrDb::builder(def_map.item_tree_db(), def_map.def_map_db())
-            .build()
+        let package_count = def_map.parse_db().package_count();
+        let packages = (0..package_count).map(PackageSlot).collect::<Vec<_>>();
+        let subset = PackageSubset::all(package_count);
+        let baseline = SemanticIrDb::from_package_store(PackageStore::all_offloaded(package_count));
+
+        // Fixtures build every package from source, but still enter Semantic IR through the same
+        // baseline-replacement path used by project construction.
+        let semantic_ir = baseline
+            .build_packages(
+                def_map.item_tree_db(),
+                def_map.def_map_db(),
+                &packages,
+                PackageLoader::resident_only("fixture DefMap"),
+                PackageLoader::resident_only("fixture Semantic IR"),
+                &subset,
+            )
             .expect("fixture semantic ir db should build");
 
         Self {

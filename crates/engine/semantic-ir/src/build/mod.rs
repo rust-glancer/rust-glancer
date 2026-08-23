@@ -11,77 +11,28 @@ use rg_package_store::{PackageLoader, PackageSubset};
 
 use crate::{PackageIr, SemanticIrDb};
 
-/// Builder for a fresh semantic IR snapshot.
-pub struct SemanticIrDbBuilder<'db> {
-    item_tree: &'db rg_item_tree::ItemTreeDb,
-    def_map: &'db rg_def_map::DefMapDb,
-}
-
-impl<'db> SemanticIrDbBuilder<'db> {
-    pub(crate) fn new(
-        item_tree: &'db rg_item_tree::ItemTreeDb,
-        def_map: &'db rg_def_map::DefMapDb,
-    ) -> Self {
-        Self { item_tree, def_map }
-    }
-
-    pub fn build(self) -> anyhow::Result<SemanticIrDb> {
-        let packages = lower::build_packages(self.item_tree, self.def_map)?;
-        let mut db = SemanticIrDb::from_packages(packages);
-        {
-            let mut mutator = db.mutator();
-            impl_headers::resolve_impl_headers(&mut mutator, self.def_map)
-                .context("while attempting to resolve semantic IR impl headers")?;
-            let packages = (0..mutator.package_count())
-                .map(PackageSlot)
-                .collect::<Vec<_>>();
-            mutator.rebuild_lookup_indexes(&packages);
-            mutator.compact_storage();
-        }
-        Ok(db)
-    }
-}
-
-/// Builder for a semantic IR snapshot that replaces selected packages.
-pub struct SemanticIrDbPackageRebuilder<'db> {
-    old: &'db SemanticIrDb,
-    item_tree: &'db rg_item_tree::ItemTreeDb,
-    def_map: &'db rg_def_map::DefMapDb,
-    packages: &'db [PackageSlot],
-    def_map_loader: PackageLoader<'db, DefMapPackage>,
-    semantic_ir_loader: PackageLoader<'db, PackageIr>,
-    subset: &'db PackageSubset,
-}
-
-impl<'db> SemanticIrDbPackageRebuilder<'db> {
-    pub(crate) fn new(
-        old: &'db SemanticIrDb,
+impl SemanticIrDb {
+    /// Builds selected Semantic IR packages on top of this snapshot.
+    ///
+    /// Fresh construction starts from an all-offloaded snapshot, while saved updates start from the
+    /// previous project snapshot. Both cases use the same package replacement and lazy-read protocol.
+    #[allow(clippy::too_many_arguments)]
+    pub fn build_packages<'db>(
+        &'db self,
         item_tree: &'db rg_item_tree::ItemTreeDb,
         def_map: &'db rg_def_map::DefMapDb,
         packages: &'db [PackageSlot],
         def_map_loader: PackageLoader<'db, DefMapPackage>,
         semantic_ir_loader: PackageLoader<'db, PackageIr>,
         subset: &'db PackageSubset,
-    ) -> SemanticIrDbPackageRebuilder<'db> {
-        Self {
-            old,
-            item_tree,
-            def_map,
-            packages,
-            def_map_loader,
-            semantic_ir_loader,
-            subset,
-        }
-    }
-
-    pub fn build(self) -> anyhow::Result<SemanticIrDb> {
-        let mut next = self.old.clone();
-        let packages = normalized_package_slots(self.packages);
+    ) -> anyhow::Result<Self> {
+        let mut next = self.clone();
+        let packages = normalized_package_slots(packages);
 
         {
             let mut mutator = next.mutator();
             for package in &packages {
-                let rebuilt = lower::build_package(self.item_tree, self.def_map, *package)?;
+                let rebuilt = lower::build_package(item_tree, def_map, *package)?;
                 mutator
                     .replace_package(*package, rebuilt)
                     .with_context(|| {
@@ -93,16 +44,14 @@ impl<'db> SemanticIrDbPackageRebuilder<'db> {
             }
         }
 
-        let def_map_txn = self
-            .def_map
-            .read_txn_for_subset(self.def_map_loader, self.subset);
-        let semantic_ir_txn = next.read_txn_for_subset(self.semantic_ir_loader, self.subset);
+        let def_map_txn = def_map.read_txn_for_subset(def_map_loader, subset);
+        let semantic_ir_txn = next.read_txn_for_subset(semantic_ir_loader, subset);
         let impl_resolutions = impl_headers::impl_header_resolutions_for_packages(
             &semantic_ir_txn,
             &def_map_txn,
             &packages,
         )
-        .context("while attempting to resolve rebuilt semantic IR impl headers")?;
+        .context("while attempting to resolve selected semantic IR impl headers")?;
         drop(semantic_ir_txn);
 
         {

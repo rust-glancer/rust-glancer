@@ -5,14 +5,14 @@ use rg_def_map::PackageSlot;
 use rg_ir_model::CrateRef;
 use rg_package_store::{PackageLoader, PackageStore, PackageSubset};
 use rg_semantic_ir::PackageIr;
-use rg_std::{MemorySize, Shrink};
+use rg_std::MemorySize;
 use rg_text::PackageNameInterners;
 
 use super::{
     BodyIrLoader, BodyIrReadTxn, CrateBodiesCoverage, CrateBodiesStatus, PackageBodies,
     PackageBodiesCoverage,
 };
-use crate::build::{BodyIrDbBuilder, BodyIrDbPackageRebuilder};
+use crate::build::BodyIrDbBuilder;
 
 /// Coarse totals for reporting that the Body IR phase produced useful data.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, MemorySize)]
@@ -42,18 +42,11 @@ pub struct BodyIrDb {
 }
 
 impl BodyIrDb {
-    /// Starts building Body IR.
-    pub fn builder<'db>(
-        parse: &'db rg_parse::ParseDb,
-        def_map: &'db rg_def_map::DefMapDb,
-        semantic_ir: &'db rg_semantic_ir::SemanticIrDb,
-    ) -> BodyIrDbBuilder<'db, 'static> {
-        BodyIrDbBuilder::new(parse, def_map, semantic_ir)
-    }
-
-    /// Starts rebuilding selected packages against lazy read views.
+    /// Starts replacing selected packages on top of this snapshot.
+    ///
+    /// The returned builder requires one explicit materialization selection before it can build.
     #[allow(clippy::too_many_arguments)]
-    pub fn package_rebuilder<'db, 'names>(
+    pub fn builder<'db, 'names>(
         &'db self,
         parse: &'db rg_parse::ParseDb,
         def_map: &'db rg_def_map::DefMapDb,
@@ -63,8 +56,8 @@ impl BodyIrDb {
         def_map_loader: PackageLoader<'db, DefMapPackage>,
         semantic_ir_loader: PackageLoader<'db, PackageIr>,
         subset: &'db PackageSubset,
-    ) -> BodyIrDbPackageRebuilder<'db, 'names> {
-        BodyIrDbPackageRebuilder::new(
+    ) -> BodyIrDbBuilder<'db, 'names> {
+        BodyIrDbBuilder::new(
             self,
             parse,
             def_map,
@@ -75,10 +68,6 @@ impl BodyIrDb {
             semantic_ir_loader,
             subset,
         )
-    }
-
-    pub(crate) fn from_packages(packages: Vec<PackageBodies>) -> Self {
-        Self::from_package_store(PackageStore::from_resident_packages(packages))
     }
 
     /// Builds a Body IR database from an already shaped package store.
@@ -214,10 +203,6 @@ impl BodyIrDbMutator<'_> {
     ) -> Option<()> {
         self.db.replace_package(package, bodies)
     }
-
-    pub(crate) fn compact_storage(&mut self) {
-        Shrink::shrink_to_fit(&mut self.db.packages);
-    }
 }
 
 #[cfg(test)]
@@ -225,6 +210,7 @@ mod tests {
     use rg_arena::Arena;
     use rg_def_map::PackageSlot;
     use rg_ir_model::{CrateId, CrateRef};
+    use rg_package_store::{PackageEntry, PackageStore};
 
     use crate::{BodyIrDb, CrateBodies, CrateBodiesCoverage, PackageBodies};
 
@@ -239,10 +225,13 @@ mod tests {
             package,
             crate_id: CrateId(1),
         };
-        let mut db = BodyIrDb::from_packages(vec![PackageBodies::new(vec![
-            CrateBodies::empty(CrateBodiesCoverage::Missing),
-            CrateBodies::empty(CrateBodiesCoverage::SkippedByPolicy),
-        ])]);
+        let mut db =
+            BodyIrDb::from_package_store(PackageStore::from_entries(vec![PackageEntry::resident(
+                PackageBodies::new(vec![
+                    CrateBodies::empty(CrateBodiesCoverage::Missing),
+                    CrateBodies::empty(CrateBodiesCoverage::SkippedByPolicy),
+                ]),
+            )]));
 
         assert_eq!(
             db.crate_coverage(first_crate),

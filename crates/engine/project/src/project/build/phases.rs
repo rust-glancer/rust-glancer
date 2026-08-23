@@ -148,7 +148,7 @@ pub(super) fn build(
     // replaced in every phase DB; omitted packages remain cache-backed and are loaded lazily
     // through the same package artifact whenever a dependency query needs them.
     let baseline_def_map =
-        DefMapDb::from_package_store(offloaded_package_store(parse.package_count()));
+        DefMapDb::from_package_store(PackageStore::all_offloaded(parse.package_count()));
     let baseline_def_map_txn =
         baseline_def_map.read_txn_for_subset(loaders.def_map.clone(), &rebuild_subset);
     // Macro expansion may now request an out-of-line module. Keep Parse and ItemTree mutable while
@@ -213,9 +213,9 @@ pub(super) fn build(
     // 7. Build semantic IR
     // --------------------
     let baseline_semantic_ir =
-        SemanticIrDb::from_package_store(offloaded_package_store(parse.package_count()));
+        SemanticIrDb::from_package_store(PackageStore::all_offloaded(parse.package_count()));
     let semantic_ir = baseline_semantic_ir
-        .package_rebuilder(
+        .build_packages(
             &item_tree,
             &def_map,
             build_plan.source_packages.as_slice(),
@@ -223,7 +223,6 @@ pub(super) fn build(
             loaders.semantic_ir.clone(),
             &rebuild_subset,
         )
-        .build()
         .context("while attempting to build semantic ir db")?;
     let memory = checkpoint_memory!(
         names,
@@ -257,15 +256,15 @@ pub(super) fn build(
     // 9. Build body IR
     // ----------------
     // Cache-hit slots retain only the coverage already accepted by startup probing. Source-built
-    // slots use their conservative seed until the rebuilder replaces them below.
+    // slots use their conservative seed until the builder replaces them below.
     let body_ir_entries = std::mem::take(&mut build_plan.body_ir_coverage)
         .into_iter()
         .map(PackageEntry::offloaded_with)
         .collect();
     let baseline_body_ir =
         BodyIrDb::from_package_store(PackageStore::from_entries(body_ir_entries));
-    let mut body_rebuilder = baseline_body_ir
-        .package_rebuilder(
+    let mut body_builder = baseline_body_ir
+        .builder(
             &parse,
             &def_map,
             &semantic_ir,
@@ -276,11 +275,11 @@ pub(super) fn build(
             &rebuild_subset,
         )
         .worker_limit(indexing_preference.body_ir_worker_limit());
-    body_rebuilder = match split_indexing_mode {
-        SplitIndexingMode::Full => body_rebuilder.configured_bodies(body_ir_policy),
-        SplitIndexingMode::EarlyStart => body_rebuilder.coverage_only(body_ir_policy),
+    body_builder = match split_indexing_mode {
+        SplitIndexingMode::Full => body_builder.configured_bodies(body_ir_policy),
+        SplitIndexingMode::EarlyStart => body_builder.coverage_only(body_ir_policy),
     };
-    let body_ir = body_rebuilder
+    let body_ir = body_builder
         .build()
         .context("while attempting to build body ir db")?;
     // This validation covers both captured late files and the missing-path probes that answered
@@ -395,7 +394,7 @@ impl PackageBuildPlan {
                 .collect(),
         );
 
-        // BodyIrDb needs one package-shaped offloaded entry before its rebuilder starts. Cache hits
+        // BodyIrDb needs one package-shaped offloaded entry before its builder starts. Cache hits
         // already have exact coverage. Source packages receive a conservative policy-shaped value
         // that is replaced by their actual build output before the database escapes.
         let body_ir_coverage = parse
@@ -425,12 +424,4 @@ impl PackageBuildPlan {
             body_ir_coverage,
         }
     }
-}
-
-fn offloaded_package_store<T>(package_count: usize) -> PackageStore<T> {
-    PackageStore::from_entries(
-        (0..package_count)
-            .map(|_| PackageEntry::offloaded())
-            .collect(),
-    )
 }

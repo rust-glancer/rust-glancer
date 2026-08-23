@@ -259,6 +259,7 @@ impl UnresolvedImportStats {
 mod tests {
     use crate::{CrateData, DefMapBuilder};
     use rg_ir_model::CrateRef;
+    use rg_package_store::PackageEntry;
     use rg_parse::CargoTargetId;
 
     use super::*;
@@ -266,10 +267,10 @@ mod tests {
     #[test]
     fn crate_maps_preserve_package_slots_when_middle_package_is_offloaded() {
         let mut db = DefMapDb {
-            packages: PackageStore::from_vec(vec![
-                package_with_one_crate("workspace"),
-                package_with_one_crate("offloaded"),
-                package_with_one_crate("dependency"),
+            packages: PackageStore::from_entries(vec![
+                PackageEntry::resident(package_with_one_crate("workspace")),
+                PackageEntry::resident(package_with_one_crate("offloaded")),
+                PackageEntry::resident(package_with_one_crate("dependency")),
             ]),
         };
 

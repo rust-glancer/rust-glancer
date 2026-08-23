@@ -13,19 +13,6 @@ use rg_item_tree::{ItemNode, ItemTreeDb, Package as ItemTreePackage};
 
 use crate::{ItemStoreLowerer, ItemStoreSourceReader, PackageIr};
 
-pub(super) fn build_packages(
-    item_tree: &ItemTreeDb,
-    def_map: &DefMapDb,
-) -> anyhow::Result<Vec<PackageIr>> {
-    let mut packages = Vec::with_capacity(def_map.package_count());
-
-    for package_idx in 0..def_map.package_count() {
-        packages.push(build_package(item_tree, def_map, PackageSlot(package_idx))?);
-    }
-
-    Ok(packages)
-}
-
 pub(super) fn build_package(
     item_tree: &ItemTreeDb,
     def_map: &DefMapDb,

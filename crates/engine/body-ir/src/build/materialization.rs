@@ -10,7 +10,7 @@ use rg_std::UniqueVec;
 
 use crate::{BodyIrBuildPolicy, BodyIrFile, CrateBodiesCoverage};
 
-/// Owned Body IR materialization plan stored by a package rebuilder.
+/// Owned Body IR materialization plan stored by a package builder.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum BodyIrMaterializationPlan {
     /// Lower the full body surface selected by the configured build policy.

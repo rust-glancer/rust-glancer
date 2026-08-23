@@ -7,7 +7,6 @@ use std::{
     sync::{Mutex, OnceLock},
 };
 
-use rg_body_ir::{BodyIrBuildPolicy, BodyIrDb};
 use rg_def_map::DefMapDb;
 use rg_item_tree::ItemTreeDb;
 use rg_parse::ParseDb;
@@ -244,8 +243,9 @@ impl BenchFixture {
         // for the item-tree benchmark, and use the post-item-tree parse for downstream phases.
         let mut parse_before_def_map = parse.clone();
         let mut names = PackageNameInterners::new(parse_before_def_map.package_count());
-        let item_tree_before_def_map = ItemTreeDb::build(&mut parse_before_def_map, &mut names)
-            .unwrap_or_else(|error| panic!("{target} item tree should build: {error}"));
+        let item_tree_before_def_map =
+            rg_project::bench_support::build_item_tree(&mut parse_before_def_map, &mut names)
+                .unwrap_or_else(|error| panic!("{target} item tree should build: {error}"));
         let item_tree_items = count_item_tree_items(&workspace, &item_tree_before_def_map);
         let names_before_def_map = names.clone();
 
@@ -262,9 +262,9 @@ impl BenchFixture {
         .unwrap_or_else(|error| panic!("{target} def map should build: {error}"));
         let def_map_imports = def_map.stats(&workspace).import_count;
 
-        let semantic_ir = SemanticIrDb::builder(&item_tree_after_def_map, &def_map)
-            .build()
-            .unwrap_or_else(|error| panic!("{target} semantic IR should build: {error}"));
+        let semantic_ir =
+            rg_project::bench_support::build_semantic_ir(&item_tree_after_def_map, &def_map)
+                .unwrap_or_else(|error| panic!("{target} semantic IR should build: {error}"));
         let semantic_stats = semantic_ir.stats();
         let semantic_items = semantic_stats.struct_count
             + semantic_stats.union_count
@@ -277,11 +277,13 @@ impl BenchFixture {
             + semantic_stats.static_count;
         let names_after_semantic_ir = names.clone();
 
-        let body_ir = BodyIrDb::builder(&parse_after_def_map, &def_map, &semantic_ir)
-            .name_interners(&mut names)
-            .policy(BodyIrBuildPolicy::workspace_packages())
-            .build()
-            .unwrap_or_else(|error| panic!("{target} body IR should build: {error}"));
+        let body_ir = rg_project::bench_support::build_body_ir(
+            &parse_after_def_map,
+            &def_map,
+            &semantic_ir,
+            &mut names,
+        )
+        .unwrap_or_else(|error| panic!("{target} body IR should build: {error}"));
         let body_expressions = body_ir.stats().expression_count;
 
         Self {

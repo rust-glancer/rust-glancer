@@ -1,7 +1,7 @@
 use crate::DefMap;
 use rg_ir_model::CrateRef;
 use rg_item_tree::{ItemTreeDb, testonly::ItemTreeFixture};
-use rg_package_store::{PackageEntry, PackageLoader, PackageStore};
+use rg_package_store::{PackageLoader, PackageStore};
 use rg_parse::{CargoTarget, Package, ParseDb};
 use rg_text::PackageNameInterners;
 use rg_workspace::{SysrootSources, TargetKind, WorkspaceLoweringConfig, WorkspaceMetadata};
@@ -159,11 +159,7 @@ pub(crate) fn build_source_closed_def_map(
     names: &mut PackageNameInterners,
 ) -> DefMapDb {
     let package_count = parse.package_count();
-    let baseline_store: PackageStore<PackageDefMaps> = PackageStore::from_entries(
-        (0..package_count)
-            .map(|_| PackageEntry::offloaded())
-            .collect(),
-    );
+    let baseline_store: PackageStore<PackageDefMaps> = PackageStore::all_offloaded(package_count);
     let baseline = DefMapDb::from_package_store(baseline_store);
     let baseline_read =
         baseline.read_txn(PackageLoader::resident_only("source-closed DefMap fixture"));

@@ -1,15 +1,12 @@
 //! Semantic IR package store and transaction entry points.
 
-use rg_def_map::PackageDefMaps as DefMapPackage;
 use rg_def_map::PackageSlot;
 use rg_ir_model::{ImplRef, TraitDefRef, TypeDefRef};
 use rg_package_store::{PackageLoader, PackageStore, PackageSubset};
 use rg_std::{ExpectedUnique, MemorySize, Shrink};
 
-use crate::{
-    PackageIr, SemanticIrReadTxn, SemanticIrStats,
-    build::{SemanticIrDbBuilder, SemanticIrDbPackageRebuilder},
-};
+use crate::{PackageIr, SemanticIrReadTxn, SemanticIrStats};
+
 /// Semantic item graph for all analyzed packages and semantic crates.
 ///
 /// Semantic IR is the signature layer: it keeps named items, fields, impl headers, function
@@ -21,39 +18,6 @@ pub struct SemanticIrDb {
 }
 
 impl SemanticIrDb {
-    /// Starts building semantic IR from collected item trees and frozen name-resolution maps.
-    pub fn builder<'db>(
-        item_tree: &'db rg_item_tree::ItemTreeDb,
-        def_map: &'db rg_def_map::DefMapDb,
-    ) -> SemanticIrDbBuilder<'db> {
-        SemanticIrDbBuilder::new(item_tree, def_map)
-    }
-
-    /// Starts rebuilding selected packages against lazy read views.
-    pub fn package_rebuilder<'db>(
-        &'db self,
-        item_tree: &'db rg_item_tree::ItemTreeDb,
-        def_map: &'db rg_def_map::DefMapDb,
-        packages: &'db [PackageSlot],
-        def_map_loader: PackageLoader<'db, DefMapPackage>,
-        semantic_ir_loader: PackageLoader<'db, PackageIr>,
-        subset: &'db PackageSubset,
-    ) -> SemanticIrDbPackageRebuilder<'db> {
-        SemanticIrDbPackageRebuilder::new(
-            self,
-            item_tree,
-            def_map,
-            packages,
-            def_map_loader,
-            semantic_ir_loader,
-            subset,
-        )
-    }
-
-    pub(crate) fn from_packages(packages: Vec<PackageIr>) -> Self {
-        Self::from_package_store(PackageStore::from_vec(packages))
-    }
-
     /// Builds a semantic IR database from an already shaped package store.
     ///
     /// This keeps cache-loading code from reaching into the database internals while still letting
@@ -140,17 +104,6 @@ pub(crate) struct SemanticIrDbMutator<'db> {
 }
 
 impl SemanticIrDbMutator<'_> {
-    pub(crate) fn package_count(&self) -> usize {
-        self.db.package_count()
-    }
-
-    pub(crate) fn read_txn<'a>(
-        &'a self,
-        loader: PackageLoader<'a, PackageIr>,
-    ) -> SemanticIrReadTxn<'a> {
-        self.db.read_txn(loader)
-    }
-
     pub(crate) fn replace_package(
         &mut self,
         package: PackageSlot,
@@ -173,10 +126,6 @@ impl SemanticIrDbMutator<'_> {
 
     fn package_mut(&mut self, package: PackageSlot) -> Option<&mut PackageIr> {
         self.db.packages.make_mut(package)
-    }
-
-    pub(crate) fn compact_storage(&mut self) {
-        Shrink::shrink_to_fit(&mut self.db.packages);
     }
 
     pub(crate) fn compact_packages(&mut self, packages: &[PackageSlot]) {

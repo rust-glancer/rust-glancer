@@ -262,8 +262,9 @@ impl RebuildFixture {
     ) -> (ParseDb, ItemTreeDb, PackageNameInterners) {
         let mut parse = ParseDb::build(workspace).expect("fixture parse db should build");
         let mut names = PackageNameInterners::new(parse.package_count());
-        let item_tree =
-            ItemTreeDb::build(&mut parse, &mut names).expect("fixture item-tree db should build");
+        let packages = (0..parse.package_count()).collect::<Vec<_>>();
+        let item_tree = ItemTreeDb::build_packages(&mut parse, &packages, &mut names)
+            .expect("fixture item-tree db should build");
 
         (parse, item_tree, names)
     }

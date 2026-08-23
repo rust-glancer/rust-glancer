@@ -2,27 +2,13 @@
 
 use crate::ItemResolutionQuery;
 use crate::ItemStoreQuery;
-use rg_def_map::{DefMapDb, DefMapReadTxn, PackageSlot};
+use rg_def_map::{DefMapReadTxn, PackageSlot};
 use rg_ir_model::{CrateId, CrateRef, ImplRef, ModuleRef, TraitDefRef, TypeDefRef};
 use rg_item_tree::TypeRef;
 use rg_package_store::PackageStoreError;
 use rg_std::ExpectedUnique;
 
 use crate::{SemanticIrReadTxn, store::SemanticIrDbMutator};
-
-pub(super) fn resolve_impl_headers(
-    db: &mut SemanticIrDbMutator<'_>,
-    def_map: &DefMapDb,
-) -> Result<(), PackageStoreError> {
-    let packages = (0..db.package_count()).map(PackageSlot).collect::<Vec<_>>();
-    let def_map = def_map.read_txn(super::unexpected_package_loader());
-    let semantic_ir = db.read_txn(super::unexpected_package_loader());
-    let resolutions = impl_header_resolutions_for_packages(&semantic_ir, &def_map, &packages)?;
-
-    drop(semantic_ir);
-    apply_impl_header_resolutions(db, resolutions);
-    Ok(())
-}
 
 pub(super) struct ImplHeaderResolution {
     impl_ref: ImplRef,

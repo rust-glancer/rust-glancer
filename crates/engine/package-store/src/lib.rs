@@ -88,31 +88,22 @@ impl<T, OffloadedState> Default for PackageStore<T, OffloadedState> {
 }
 
 impl<T> PackageStore<T> {
-    /// Freezes phase payloads into a store whose offloaded entries retain no extra state.
-    pub fn from_vec(packages: Vec<T>) -> Self {
-        Self::from_resident_packages(packages)
+    /// Creates the package-shaped baseline used before selected source packages are built.
+    pub fn all_offloaded(package_count: usize) -> Self {
+        Self::from_entries(
+            (0..package_count)
+                .map(|_| PackageEntry::offloaded())
+                .collect(),
+        )
     }
 }
 
 impl<T, OffloadedState> PackageStore<T, OffloadedState> {
-    /// Freezes freshly built payloads into a store with this phase's offloaded-state type.
-    pub fn from_resident_packages(packages: Vec<T>) -> Self {
-        Self::from_entries(
-            packages
-                .into_iter()
-                .map(|package| PackageEntry {
-                    state: PackageEntryState::Resident(Arc::new(package)),
-                })
-                .collect(),
-        )
-    }
-
     /// Builds a store from explicit resident/offloaded package entries.
     ///
-    /// Fresh builds usually start through one of the resident constructors and then offload
-    /// selected slots after durable artifacts are written. Startup-cache loading already knows the
-    /// final residency decision, so it can build the same logical store shape without first
-    /// materializing every package.
+    /// Fresh phase construction starts with offloaded entries and replaces source-built packages.
+    /// Startup-cache loading can mix exact offloaded summaries with resident payloads while
+    /// preserving the same package-slot shape.
     pub fn from_entries(packages: Vec<PackageEntry<T, OffloadedState>>) -> Self {
         Self { packages }
     }
@@ -143,13 +134,6 @@ impl<T, OffloadedState> PackageStore<T, OffloadedState> {
             .iter()
             .enumerate()
             .map(|(package_idx, entry)| (PackageSlot(package_idx), entry))
-    }
-
-    /// Iterates over all mutable raw package storage entries, including offloaded slots.
-    pub fn raw_entries_mut(
-        &mut self,
-    ) -> impl Iterator<Item = &mut PackageEntry<T, OffloadedState>> + '_ {
-        self.packages.iter_mut()
     }
 
     /// Builds a logical read transaction over every package slot.
@@ -245,13 +229,6 @@ enum PackageEntryState<T, OffloadedState> {
 }
 
 impl<T> PackageEntry<T> {
-    /// Creates an immediately available package payload with no extra offloaded state.
-    pub fn resident(package: T) -> Self {
-        Self {
-            state: PackageEntryState::Resident(Arc::new(package)),
-        }
-    }
-
     /// Creates a lazy package slot that retains no state beyond its package identity.
     pub fn offloaded() -> Self {
         Self::offloaded_with(())
@@ -259,6 +236,13 @@ impl<T> PackageEntry<T> {
 }
 
 impl<T, OffloadedState> PackageEntry<T, OffloadedState> {
+    /// Creates an immediately available package payload.
+    pub fn resident(package: T) -> Self {
+        Self {
+            state: PackageEntryState::Resident(Arc::new(package)),
+        }
+    }
+
     /// Creates a lazy package slot with a small summary that remains directly queryable.
     pub fn offloaded_with(state: OffloadedState) -> Self {
         Self {
@@ -411,9 +395,13 @@ mod tests {
         }
     }
 
+    fn resident_store<T>(packages: Vec<T>) -> PackageStore<T> {
+        PackageStore::from_entries(packages.into_iter().map(PackageEntry::resident).collect())
+    }
+
     #[test]
     fn cloned_stores_replace_packages_independently() {
-        let original = PackageStore::from_vec(vec!["workspace", "dependency"]);
+        let original = resident_store(vec!["workspace", "dependency"]);
         let mut changed = original.clone();
 
         changed
@@ -439,7 +427,7 @@ mod tests {
     #[test]
     fn offloaded_entries_keep_phase_specific_state() {
         let mut store: PackageStore<&str, &str> =
-            PackageStore::from_resident_packages(vec!["resident bodies"]);
+            PackageStore::from_entries(vec![PackageEntry::resident("resident bodies")]);
         store
             .offload_with(PackageSlot(0), "complete coverage")
             .expect("package slot should exist");
@@ -463,7 +451,7 @@ mod tests {
 
     #[test]
     fn subset_read_transactions_preserve_original_package_slots() {
-        let store = PackageStore::from_vec(vec!["workspace", "hidden", "dependency"]);
+        let store = resident_store(vec!["workspace", "hidden", "dependency"]);
         let loader = Arc::new(TestLoader {
             loads: AtomicUsize::new(0),
             packages: vec!["workspace", "hidden", "dependency"],
@@ -490,7 +478,7 @@ mod tests {
 
     #[test]
     fn offloaded_packages_are_not_resident_until_materialized() {
-        let mut store = PackageStore::from_vec(vec!["workspace", "dependency"]);
+        let mut store = resident_store(vec!["workspace", "dependency"]);
 
         store
             .offload(PackageSlot(1))
@@ -559,7 +547,7 @@ mod tests {
 
     #[test]
     fn read_transactions_load_offloaded_packages_lazily() {
-        let mut store = PackageStore::from_vec(vec!["workspace", "dependency"]);
+        let mut store = resident_store(vec!["workspace", "dependency"]);
         store
             .offload(PackageSlot(1))
             .expect("package slot should exist");
@@ -616,7 +604,7 @@ mod tests {
 
     #[test]
     fn subset_read_transactions_exclude_out_of_subset_packages() {
-        let mut store = PackageStore::from_vec(vec!["workspace", "dependency", "unrelated"]);
+        let mut store = resident_store(vec!["workspace", "dependency", "unrelated"]);
         store
             .offload(PackageSlot(1))
             .expect("package slot should exist");
@@ -646,7 +634,7 @@ mod tests {
 
     #[test]
     fn raw_entries_preserve_original_package_slots() {
-        let mut store = PackageStore::from_vec(vec!["workspace", "offloaded", "dependency"]);
+        let mut store = resident_store(vec!["workspace", "offloaded", "dependency"]);
 
         store
             .offload(PackageSlot(1))

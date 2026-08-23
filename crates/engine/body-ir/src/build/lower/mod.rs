@@ -31,7 +31,7 @@ use rg_parse::ParseDb;
 use rg_semantic_ir::SemanticIrReadTxn;
 use rg_text::{NameInterner, PackageNameInterners};
 
-use crate::{BodyIrBuildPolicy, CrateBodiesCoverage};
+use crate::CrateBodiesCoverage;
 
 pub(super) use self::builder::{LoweredBodyData, PendingBindingResolution};
 use self::crate_lowering::CrateLowering;
@@ -84,37 +84,6 @@ impl LoweredCrateBodies {
     pub(super) fn into_bodies(self) -> Arena<BodyId, LoweredBodyData> {
         self.bodies
     }
-}
-
-pub(super) fn build_packages(
-    parse: &ParseDb,
-    def_map: &DefMapReadTxn<'_>,
-    semantic_ir: &SemanticIrReadTxn<'_>,
-    package_count: usize,
-    policy: BodyIrBuildPolicy,
-    interners: &mut PackageNameInterners,
-    worker_limit: Option<NonZeroUsize>,
-) -> anyhow::Result<Vec<LoweredPackageBodies>> {
-    validate_package_inputs(parse, package_count, interners)?;
-
-    let selected = vec![true; package_count];
-    let mut packages = Vec::new();
-    packages.resize_with(package_count, || None);
-    build_package_outputs(
-        parse,
-        def_map,
-        semantic_ir,
-        BodyIrMaterialization::ConfiguredBodies(policy),
-        interners,
-        &selected,
-        &mut packages,
-        worker_limit,
-    )?;
-
-    Ok(packages
-        .into_iter()
-        .map(|package| package.expect("all body IR package slots should be lowered"))
-        .collect())
 }
 
 pub(super) fn build_selected_packages(

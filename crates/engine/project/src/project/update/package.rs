@@ -106,7 +106,7 @@ fn try_rebuild_packages(state: &mut ProjectState, packages: &[PackageSlot]) -> a
         MacroExpansionLimitBuildSummary::capture(&def_map, packages.as_slice());
     let semantic_ir = state
         .semantic_ir
-        .package_rebuilder(
+        .build_packages(
             &item_tree,
             &def_map,
             packages.as_slice(),
@@ -114,12 +114,11 @@ fn try_rebuild_packages(state: &mut ProjectState, packages: &[PackageSlot]) -> a
             loaders.semantic_ir.clone(),
             &rebuild_subset,
         )
-        .build()
         .context("while attempting to rebuild affected semantic IR packages")?;
 
-    let body_rebuilder = state
+    let body_builder = state
         .body_ir
-        .package_rebuilder(
+        .builder(
             &state.parse,
             &def_map,
             &semantic_ir,
@@ -130,11 +129,11 @@ fn try_rebuild_packages(state: &mut ProjectState, packages: &[PackageSlot]) -> a
             &rebuild_subset,
         )
         .worker_limit(state.indexing_preference.body_ir_worker_limit());
-    let body_rebuilder = match state.split_indexing_mode {
-        SplitIndexingMode::Full => body_rebuilder.configured_bodies(state.body_ir_policy),
-        SplitIndexingMode::EarlyStart => body_rebuilder.coverage_only(state.body_ir_policy),
+    let body_builder = match state.split_indexing_mode {
+        SplitIndexingMode::Full => body_builder.configured_bodies(state.body_ir_policy),
+        SplitIndexingMode::EarlyStart => body_builder.coverage_only(state.body_ir_policy),
     };
-    let body_ir = body_rebuilder
+    let body_ir = body_builder
         .build()
         .context("while attempting to rebuild affected body IR packages")?;
     // Validate every late read and missing-path probe before the candidate replaces retained state.

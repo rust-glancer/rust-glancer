@@ -4,10 +4,7 @@ use divan::{
     Bencher, black_box, black_box_drop,
     counter::{BytesCount, ItemsCount},
 };
-use rg_body_ir::{BodyIrBuildPolicy, BodyIrDb};
-use rg_item_tree::ItemTreeDb;
 use rg_parse::ParseDb;
-use rg_semantic_ir::SemanticIrDb;
 use rg_text::PackageNameInterners;
 
 use self::shared::{BenchFixture, BenchTarget, bench_targets};
@@ -41,8 +38,8 @@ fn item_tree_db(bencher: Bencher<'_, '_>, target: BenchTarget) {
             )
         })
         .bench_local_values(|(mut parse, mut names)| {
-            let item_tree =
-                ItemTreeDb::build(&mut parse, &mut names).expect("item tree should build");
+            let item_tree = rg_project::bench_support::build_item_tree(&mut parse, &mut names)
+                .expect("item tree should build");
             black_box_drop(item_tree);
         });
 }
@@ -83,8 +80,7 @@ fn semantic_ir_db(bencher: Bencher<'_, '_>, target: BenchTarget) {
             )
         })
         .bench_local_values(|(item_tree, def_map)| {
-            let semantic_ir = SemanticIrDb::builder(&item_tree, &def_map)
-                .build()
+            let semantic_ir = rg_project::bench_support::build_semantic_ir(&item_tree, &def_map)
                 .expect("semantic IR should build");
             black_box_drop(semantic_ir);
         });
@@ -102,11 +98,13 @@ fn body_ir_db(bencher: Bencher<'_, '_>, target: BenchTarget) {
             )
         })
         .bench_local_values(|(parse, mut names)| {
-            let body_ir = BodyIrDb::builder(&parse, &fixture.def_map, &fixture.semantic_ir)
-                .name_interners(&mut names)
-                .policy(BodyIrBuildPolicy::workspace_packages())
-                .build()
-                .expect("body IR should build");
+            let body_ir = rg_project::bench_support::build_body_ir(
+                &parse,
+                &fixture.def_map,
+                &fixture.semantic_ir,
+                &mut names,
+            )
+            .expect("body IR should build");
             black_box_drop(body_ir);
         });
 }

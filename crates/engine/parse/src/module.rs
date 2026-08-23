@@ -314,7 +314,7 @@ pub struct ModuleFileResolution {
 }
 
 impl ModuleFileResolution {
-    pub fn path(&self) -> &Path {
+    fn path(&self) -> &Path {
         &self.path
     }
 
