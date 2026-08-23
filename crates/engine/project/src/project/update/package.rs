@@ -86,7 +86,7 @@ fn try_rebuild_packages(state: &mut ProjectState, packages: &[PackageSlot]) -> a
     // Keep Parse and ItemTree mutable until generated-module requests stop adding files. This uses
     // the same coordinator as fresh construction, while clean dependency packages stay lazy.
     let memory_hooks = Arc::clone(&state.memory_hooks);
-    let def_map = generated_modules::rebuild_packages(
+    let def_map = generated_modules::build_packages(
         &state.def_map,
         &old_def_map_txn,
         &state.workspace,

@@ -1,7 +1,7 @@
 //! Coordinates late source discovery requested by macro-generated module declarations.
 //!
 //! DefMap owns the semantic request, while this project boundary owns source capture, package-local
-//! file ids, and ItemTree growth. Each batch is loaded before resuming the retained dirty-package
+//! file ids, and ItemTree growth. Each batch is loaded before resuming the retained selected-package
 //! construction state. Already collected declarations and expanded macros are not replayed for
 //! each newly discovered file.
 
@@ -13,7 +13,7 @@ use std::{
 
 use anyhow::Context as _;
 use rg_def_map::{
-    DefMapBuildProgress, DefMapDb, DefMapReadTxn, DefMapRebuildSession, GeneratedModuleRequest,
+    DefMapBuildProgress, DefMapBuildSession, DefMapDb, DefMapReadTxn, GeneratedModuleRequest,
     MacroExpansionPerformancePreference, PackageSlot,
 };
 use rg_item_tree::ItemTreeDb;
@@ -30,15 +30,15 @@ use super::package_set::PhasePackageSet;
 // a valid but pathological chain that discovers one real file per project-owned source wave.
 const MAX_GENERATED_MODULE_DISCOVERY_WAVES: usize = 128;
 
-/// Rebuilds selected DefMap packages while allowing generated macros to add source files.
+/// Builds selected DefMap packages while allowing generated macros to add source files.
 ///
 /// One retained DefMap session alternates with project-owned source batches until expansion stops
 /// asking for new modules. Parse and ItemTree stay mutable for that loop; the returned DefMap no
 /// longer contains the requests or continuations used to reach the fixed point.
 #[allow(clippy::too_many_arguments)]
-pub(super) fn rebuild_packages(
+pub(super) fn build_packages(
     baseline: &DefMapDb,
-    old_read: &DefMapReadTxn<'_>,
+    baseline_read: &DefMapReadTxn<'_>,
     workspace: &WorkspaceMetadata,
     parse: &mut ParseDb,
     item_tree: &mut ItemTreeDb,
@@ -53,23 +53,22 @@ pub(super) fn rebuild_packages(
     let mut wave_count = 0;
     let mut resume_count = 0;
     let mut session = baseline
-        .package_rebuilder(
-            old_read,
+        .start_package_build(
+            baseline_read,
             workspace,
             parse,
             item_tree,
             packages.as_slice(),
             names,
+            performance_preference,
         )
-        .performance_preference(performance_preference)
-        .start_build_session()
         .context("while attempting to start resumable DefMap construction")?;
 
     loop {
         let resume_timer = (resume_count > 0)
             .then(|| metric::TIMING_GENERATED_MODULE_DEF_MAP_RESUMES.start_timer());
         let progress = session
-            .advance(old_read, parse, item_tree, names)
+            .advance(baseline_read, parse, item_tree, names)
             .context("while attempting to continue resumable DefMap construction")?;
         if let Some(timer) = resume_timer {
             timer.finish();
@@ -128,7 +127,7 @@ fn load_generated_module_sources(
     item_tree: &mut ItemTreeDb,
     names: &mut PackageNameInterners,
     source_packages: &PhasePackageSet,
-    session: &mut DefMapRebuildSession,
+    session: &mut DefMapBuildSession,
     requests: Vec<GeneratedModuleRequest>,
     captured_files_by_path: &mut HashMap<(PackageSlot, PathBuf), FileId>,
 ) -> anyhow::Result<bool> {

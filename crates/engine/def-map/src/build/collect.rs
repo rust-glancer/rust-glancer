@@ -30,9 +30,8 @@ use rg_ir_model::{
 };
 use rg_item_tree::{
     Documentation, EnumItem, ExternBlockItem, ExternCrateItem, FunctionItem, ItemKind, ItemNode,
-    ItemTreeDb, ItemTreeId, ItemTreeRef, MacroCallItem, MacroDefinitionAttrs, MacroDefinitionItem,
-    ModuleItem, ModuleSource, Package as ItemTreePackage, UseImport, UseItem, UserFacingAttrs,
-    VisibilityLevel,
+    ItemTreeId, ItemTreeRef, MacroCallItem, MacroDefinitionAttrs, MacroDefinitionItem, ModuleItem,
+    ModuleSource, Package as ItemTreePackage, UseImport, UseItem, UserFacingAttrs, VisibilityLevel,
 };
 use rg_parse::{CargoTarget, ModuleFileContext, Package};
 use rg_text::{Name, RustEdition};
@@ -198,35 +197,6 @@ impl KnownModuleFiles {
             })
             .map(|(file_id, context)| (file_id, Arc::new(context)))
     }
-}
-
-/// Collects unresolved crate states for every package/Cargo-target pair.
-///
-/// The nested return shape mirrors the parsed package/target layout so later resolution can move
-/// between semantic crates by package slot and crate id.
-pub(super) fn collect_crate_states(
-    packages: &[Package],
-    item_tree: &ItemTreeDb,
-    implicit_roots: &[Vec<HashMap<Name, ModuleRef>>],
-) -> anyhow::Result<Vec<Vec<CrateState>>> {
-    let mut states = Vec::with_capacity(packages.len());
-
-    for (package_slot, package) in packages.iter().enumerate() {
-        let item_tree_package = item_tree.package(package_slot).with_context(|| {
-            format!(
-                "while attempting to fetch item tree package for {}",
-                package.package_name()
-            )
-        })?;
-        states.push(collect_package_crate_states(
-            package_slot,
-            package,
-            item_tree_package,
-            implicit_roots,
-        )?);
-    }
-
-    Ok(states)
 }
 
 pub(super) fn collect_package_crate_states(

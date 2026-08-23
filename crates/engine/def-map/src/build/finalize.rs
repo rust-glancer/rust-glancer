@@ -3,16 +3,13 @@
 //! Collection records direct declarations and raw imports, but it intentionally leaves cross-crate
 //! facts unresolved. This module turns those mutable crate states into immutable def maps by
 //! selecting preludes, repeatedly applying imports until scopes stop changing, and then freezing
-//! the settled scopes back into the crate payloads. During package rebuilds, dirty package reads
-//! come from fresh crate states while clean package reads fall through to the old frozen database.
+//! the settled scopes back into the crate payloads. During package builds, selected package reads
+//! come from fresh crate states while other package reads fall through to the frozen baseline.
 //!
 //! Resumable package finalization can pause after a generated macro asks for an out-of-line module
 //! file. The project grows Parse and ItemTree, then calls this fixed-point machinery again with the
 //! source resolution; the macro runtime, expansion budget, mutable crate states, and settled scopes
 //! survive the pause.
-
-mod clean;
-mod rebuild;
 
 use std::sync::Arc;
 
@@ -49,10 +46,6 @@ use super::{
     },
 };
 
-pub use self::rebuild::DefMapRebuildSession;
-pub(super) use self::rebuild::start_package_build_session;
-pub(crate) use self::{clean::build_db, rebuild::rebuild_packages};
-
 /// Mutable crate states for every crate inside one package.
 pub(super) type PackageCrateStates = Vec<CrateState>;
 
@@ -69,18 +62,12 @@ const LOWER_PEAK_MEMORY_IMPORT_RESOLUTION_THREAD_LIMIT: usize = 2;
 /// Collected crate states that must be finalized.
 ///
 /// `Some` package slots are dirty and will be resolved/frozen. `None` slots are only valid when an
-/// old `DefMapDb` baseline exists; resolution reads them from that frozen baseline instead.
+/// frozen `DefMapDb` baseline exists; resolution reads them from that snapshot instead.
 pub(super) struct FinalizeCrateStates {
     packages: Vec<Option<PackageCrateStates>>,
 }
 
 impl FinalizeCrateStates {
-    pub(super) fn all(packages: Vec<PackageCrateStates>) -> Self {
-        Self {
-            packages: packages.into_iter().map(Some).collect(),
-        }
-    }
-
     pub(super) fn empty(package_count: usize) -> Self {
         Self {
             packages: (0..package_count).map(|_| None).collect(),
@@ -94,10 +81,6 @@ impl FinalizeCrateStates {
     ) -> Option<()> {
         *self.packages.get_mut(package.0)? = Some(states);
         Some(())
-    }
-
-    pub(super) fn take_package(&mut self, package: PackageSlot) -> Option<Vec<CrateState>> {
-        self.packages.get_mut(package.0)?.take()
     }
 
     pub(super) fn package(&self, package: PackageSlot) -> Option<&[CrateState]> {
@@ -172,7 +155,7 @@ impl FinalizeCrateStates {
     }
 
     /// Coalesces construction requests without retaining them in frozen package payloads.
-    fn generated_module_requests(&self) -> Vec<GeneratedModuleRequest> {
+    pub(super) fn generated_module_requests(&self) -> Vec<GeneratedModuleRequest> {
         let mut requests = UniqueVec::new();
 
         for package_states in self.iter_dirty() {
@@ -184,17 +167,6 @@ impl FinalizeCrateStates {
         }
 
         requests.into_vec()
-    }
-
-    /// Prevents one-shot builders from freezing unresolved generated module continuations.
-    pub(super) fn ensure_no_generated_module_requests(&self) -> anyhow::Result<()> {
-        let requests = self.generated_module_requests();
-        anyhow::ensure!(
-            requests.is_empty(),
-            "DefMap construction requires {} generated out-of-line module source request(s); use the project-owned resumable build path",
-            requests.len(),
-        );
-        Ok(())
     }
 }
 
@@ -732,41 +704,6 @@ impl CrateResolutionEnv for FinalizeResolutionEnv<'_> {
     }
 }
 
-/// Completes mutable crate states after collection and before freezing.
-///
-/// Collection records only local facts. This step attaches the edition prelude for each crate,
-/// resolves imports and item-position macros against the package graph, and writes the final
-/// module scopes back into the collected states.
-#[allow(clippy::too_many_arguments)]
-pub(super) fn finalize_crate_states(
-    old: Option<&DefMapReadTxn<'_>>,
-    workspace: &WorkspaceMetadata,
-    packages: &[Package],
-    item_tree: &ItemTreeDb,
-    crate_states: &mut FinalizeCrateStates,
-    interners: &mut PackageNameInterners,
-    performance_preference: MacroExpansionPerformancePreference,
-    generated_module_resolutions: Option<&GeneratedModuleResolutions>,
-) -> anyhow::Result<()> {
-    // Prelude selection needs the directly declared root modules and crate extern preludes, but it
-    // must happen before import resolution because prelude imports participate in normal lookup.
-    select_preludes(old, workspace, packages, crate_states, interners)
-        .context("while attempting to select crate preludes")?;
-
-    // Once each crate knows its prelude, imports and item-position macros can be resolved through
-    // the shared fixed-point loop.
-    let mut session = FinalizeScopeSession::new(performance_preference);
-    finalize_scopes(
-        old,
-        item_tree,
-        crate_states,
-        interners,
-        &mut session,
-        generated_module_resolutions,
-    )
-    .context("while attempting to resolve crate scopes")
-}
-
 /// Freezes collected crate states into the package payload stored by `DefMapDb`.
 pub(super) fn freeze_package(package: &Package, package_states: &[CrateState]) -> DefMapPackage {
     let package_name = package.package_name().to_string();
@@ -793,8 +730,8 @@ pub(super) fn freeze_package(package: &Package, package_states: &[CrateState]) -
 /// Selects the standard prelude module visible from each dirty crate.
 ///
 /// The prelude path depends on the crate_ref edition, and the module it resolves to can live in a
-/// clean package. Resolution therefore uses the same dirty-state-plus-old-baseline environment as
-/// the later import fixed point.
+/// unselected package. Resolution therefore uses the same fresh-state-plus-baseline environment
+/// as the later import fixed point.
 pub(super) fn select_preludes(
     old: Option<&DefMapReadTxn<'_>>,
     workspace: &WorkspaceMetadata,

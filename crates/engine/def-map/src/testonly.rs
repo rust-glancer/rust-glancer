@@ -1,11 +1,15 @@
 use crate::DefMap;
 use rg_ir_model::CrateRef;
 use rg_item_tree::{ItemTreeDb, testonly::ItemTreeFixture};
+use rg_package_store::{PackageEntry, PackageLoader, PackageStore};
 use rg_parse::{CargoTarget, Package, ParseDb};
+use rg_text::PackageNameInterners;
 use rg_workspace::{SysrootSources, TargetKind, WorkspaceLoweringConfig, WorkspaceMetadata};
 use test_fixture::{CrateFixture, fixture_crate};
 
-use crate::{DefMapDb, PackageSlot};
+use crate::{
+    DefMapBuildProgress, DefMapDb, MacroExpansionPerformancePreference, PackageDefMaps, PackageSlot,
+};
 
 /// End-to-end fixture for tests that need name resolution data.
 pub struct DefMapFixture {
@@ -54,9 +58,13 @@ impl DefMapFixture {
 
     pub fn build_from_crate(fixture: CrateFixture, workspace: WorkspaceMetadata) -> Self {
         let item_tree = ItemTreeFixture::build_from_crate(fixture, &workspace);
-        let def_map = DefMapDb::builder(&workspace, item_tree.parse_db(), item_tree.item_tree_db())
-            .build()
-            .expect("fixture def map db should build");
+        let mut names = PackageNameInterners::new(item_tree.parse_db().package_count());
+        let def_map = build_source_closed_def_map(
+            &workspace,
+            item_tree.parse_db(),
+            item_tree.item_tree_db(),
+            &mut names,
+        );
 
         Self {
             item_tree,
@@ -137,5 +145,49 @@ impl DefMapFixture {
 
     pub fn package(&self, package: PackageSlot) -> Option<&Package> {
         self.parse_db().package(package.0)
+    }
+}
+
+/// Builds lower-layer fixtures through the same resumable DefMap session used by the project.
+///
+/// These fixtures have no project source coordinator. Their source set must therefore be closed
+/// after ItemTree lowering; generated out-of-line module discovery belongs in project fixtures.
+pub(crate) fn build_source_closed_def_map(
+    workspace: &WorkspaceMetadata,
+    parse: &ParseDb,
+    item_tree: &ItemTreeDb,
+    names: &mut PackageNameInterners,
+) -> DefMapDb {
+    let package_count = parse.package_count();
+    let baseline_store: PackageStore<PackageDefMaps> = PackageStore::from_entries(
+        (0..package_count)
+            .map(|_| PackageEntry::offloaded())
+            .collect(),
+    );
+    let baseline = DefMapDb::from_package_store(baseline_store);
+    let baseline_read =
+        baseline.read_txn(PackageLoader::resident_only("source-closed DefMap fixture"));
+    let packages = (0..package_count).map(PackageSlot).collect::<Vec<_>>();
+    let mut session = baseline
+        .start_package_build(
+            &baseline_read,
+            workspace,
+            parse,
+            item_tree,
+            &packages,
+            names,
+            MacroExpansionPerformancePreference::default(),
+        )
+        .expect("fixture DefMap session should start");
+
+    match session
+        .advance(&baseline_read, parse, item_tree, names)
+        .expect("fixture DefMap session should advance")
+    {
+        DefMapBuildProgress::Complete(def_map) => def_map,
+        DefMapBuildProgress::NeedsGeneratedModules(requests) => panic!(
+            "fixture requested {} generated module source(s); use an rg_project fixture for source-discovery behavior",
+            requests.len(),
+        ),
     }
 }

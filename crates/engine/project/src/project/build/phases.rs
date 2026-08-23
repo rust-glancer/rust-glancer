@@ -149,13 +149,13 @@ pub(super) fn build(
     // through the same package artifact whenever a dependency query needs them.
     let baseline_def_map =
         DefMapDb::from_package_store(offloaded_package_store(parse.package_count()));
-    let old_def_map_txn =
+    let baseline_def_map_txn =
         baseline_def_map.read_txn_for_subset(loaders.def_map.clone(), &rebuild_subset);
     // Macro expansion may now request an out-of-line module. Keep Parse and ItemTree mutable while
     // the coordinator answers complete batches and resumes the same DefMap construction state.
-    let def_map = generated_modules::rebuild_packages(
+    let def_map = generated_modules::build_packages(
         &baseline_def_map,
-        &old_def_map_txn,
+        &baseline_def_map_txn,
         workspace,
         &mut parse,
         &mut item_tree,
@@ -165,7 +165,7 @@ pub(super) fn build(
         memory_hooks,
     )
     .context("while attempting to build def map db")?;
-    drop(old_def_map_txn);
+    drop(baseline_def_map_txn);
 
     // The fixed point has finalized every source-built package file table. Seal that exact source
     // union now, then replace only its provisional fingerprints. Cache-backed loaders keep the
