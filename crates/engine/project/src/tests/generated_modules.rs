@@ -675,6 +675,82 @@ pub struct Shared;
 }
 
 #[test]
+fn generated_module_source_waves_resume_one_def_map_fixed_point() {
+    let fixture = ProjectSourceFixture::build(
+        r#"
+//- /Cargo.toml
+[package]
+name = "generated_module_wave_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+macro_rules! make_outer {
+    () => {
+        pub mod outer;
+    };
+}
+
+make_outer!();
+pub use outer::inner::Deep;
+
+//- /src/outer.rs
+macro_rules! make_inner {
+    () => {
+        pub mod inner;
+    };
+}
+
+make_inner!();
+
+//- /src/outer/inner.rs
+pub struct Deep;
+"#,
+    );
+    let run = rg_profile::test_support::ProfileTest::start(
+        crate::profile_descriptors(),
+        "project.build.generated_modules,def_map.finalization",
+    );
+
+    let project = Project::builder(fixture.workspace_metadata())
+        .build()
+        .expect("nested generated-module fixture should build");
+    let profile = run.finish();
+
+    assert_eq!(
+        project
+            .snapshot()
+            .full_analysis()
+            .expect("nested generated-module analysis should build")
+            .workspace_symbols("Deep")
+            .expect("nested generated-module query should resolve")
+            .len(),
+        1,
+        "the second source wave should contribute its declarations",
+    );
+    profile.assert_counter_path_with_message(
+        "project.build.generated_modules.waves",
+        2,
+        "the nested macro chain should require two sequential source waves",
+    );
+    profile.assert_counter_path_with_message(
+        "project.build.generated_modules.def_map_resumes",
+        2,
+        "each answered source wave should resume the retained DefMap state",
+    );
+    profile.assert_counter_path_with_message(
+        "def_map.finalization.rounds",
+        2,
+        "source capture should suspend one fixed point instead of starting rounds per wave",
+    );
+    profile.assert_counter_path_with_message(
+        "def_map.finalization.import_resolution.runs",
+        2,
+        "imports should settle before expansion and once after the source chain drains",
+    );
+}
+
+#[test]
 fn generated_module_requests_coalesce_across_package_targets() {
     let fixture = ProjectSourceFixture::build(
         r#"
