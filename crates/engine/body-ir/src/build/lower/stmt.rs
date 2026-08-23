@@ -719,16 +719,15 @@ impl BodyLowering<'_> {
             Some(item_list) => ModuleSource::Inline {
                 items: self.lower_source_child_items(item_list.items()),
             },
-            None => ModuleSource::OutOfLine {
-                // TODO: Resolve out-of-line body-local modules once this lowering pass knows the
-                // module file context that normal item-tree lowering receives.
-                definition_file: None,
-            },
+            // TODO: Resolve out-of-line body-local modules once this lowering pass knows the
+            // module file context that normal item-tree lowering receives.
+            None => ModuleSource::OutOfLine,
         };
 
         ModuleItem {
             inner_docs: <Documentation as MaybeFromAst<InnerDocs>>::maybe_from_ast(item, InnerDocs),
             macro_use: MacroUseAttr::maybe_from_ast(item, &mut *self.interner),
+            path_override: rg_parse::module_path_override(item),
             source,
         }
     }

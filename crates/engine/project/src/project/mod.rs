@@ -5,6 +5,7 @@
 //! data that was left on disk, but loading that data does not create another source generation.
 
 mod build;
+mod generated_modules;
 pub(crate) mod loading;
 pub(crate) mod offloading;
 mod package_set;

@@ -3,6 +3,12 @@
 //! Generated definitions belong to the macro call's module and file identity. Their retained item
 //! payloads carry expansion spans where available, while generated imports and other provenance-only
 //! facts may still point at the macro call site.
+//!
+//! Inline modules can be collected immediately. For generated `mod child;`, this collector emits a
+//! project-owned source request and retains only the continuation needed to allocate the module
+//! after the real file has entered Parse and ItemTree.
+
+use std::sync::Arc;
 
 use anyhow::{Context as _, Result};
 
@@ -13,24 +19,31 @@ use crate::{
 };
 use rg_ir_model::{CrateRef, DefId, DefMapRef, LocalDefId, LocalDefRef, ModuleId, ModuleRef};
 use rg_item_tree::{
-    Documentation, ExternBlockItem, ImportAlias, ItemKind, ItemNode, ItemTreeId, ItemTreeRef,
-    MacroCallItem, MacroDefinitionAttrs, MacroDefinitionItem, ModuleItem, ModuleSource, UseImport,
-    UseItem,
+    Documentation, ExternBlockItem, ImportAlias, ItemKind, ItemNode, ItemTreeDb, ItemTreeId,
+    ItemTreeRef, MacroCallItem, MacroDefinitionAttrs, MacroDefinitionItem, ModuleItem,
+    ModuleSource, UseImport, UseItem,
 };
 use rg_macro_runtime::ExpansionSyntax;
-use rg_parse::{FileId, Span};
-use rg_text::{Name, NameInterner};
+use rg_parse::{FileId, ModuleFileContext, Span};
+use rg_text::{Name, NameInterner, PackageNameInterners};
 
-use crate::build::{collect::CrateState, finalize::ScopeMatrix};
+use crate::build::{
+    GeneratedModuleResolution, GeneratedModuleResolutions, collect::CrateState,
+    finalize::ScopeMatrix,
+};
 use crate::profile::metric;
-use crate::{GeneratedItemRef, GeneratedSourceId, ItemSource};
+use crate::{GeneratedItemRef, GeneratedModuleRequest, GeneratedSourceId, ItemSource};
 
 use super::{
     ItemOrder, MacroCallOrigin, MacroCallSite, MacroDefinitionRecord, MacroExpansionApplyResult,
     generated_tree::GeneratedSourceLowering,
+    source_fragment::{SourceFragmentCollector, SourceFragmentOrigin},
 };
 
 /// Call-site identity used for every item produced by one macro expansion.
+///
+/// The module-file context also stays call-site-relative. This matters when a dependency macro
+/// emits an out-of-line module: the child file belongs beside the invocation, not the definition.
 #[derive(Debug, Clone)]
 pub(super) struct GeneratedOrigin {
     pub(super) module: ModuleId,
@@ -40,6 +53,23 @@ pub(super) struct GeneratedOrigin {
     pub(super) order: ItemOrder,
     pub(super) dollar_crate: Option<CrateRef>,
     pub(super) parent_call: usize,
+    pub(super) module_file_context: Arc<ModuleFileContext>,
+}
+
+/// Continuation for one generated out-of-line module whose source is project-owned.
+///
+/// The generated source is already retained by the mutable DefMap builder, so resuming only needs
+/// the item id and the collection context that would have been used if the file resolution had been
+/// available immediately.
+#[derive(Debug, Clone)]
+pub(crate) struct PendingGeneratedModule {
+    request: GeneratedModuleRequest,
+    parent_module: ModuleId,
+    generated_source: GeneratedSourceId,
+    item_id: ItemTreeId,
+    order: ItemOrder,
+    module_file_context: Arc<ModuleFileContext>,
+    origin: GeneratedOrigin,
 }
 
 /// Small collector that mirrors normal def-map collection for already-expanded syntax.
@@ -47,6 +77,8 @@ pub(super) struct GeneratedCollector<'a> {
     pub(super) state: &'a mut CrateState,
     pub(super) interner: &'a mut NameInterner,
     pub(super) current_scopes: &'a mut ScopeMatrix,
+    pub(super) item_tree: &'a ItemTreeDb,
+    pub(super) generated_module_resolutions: Option<&'a GeneratedModuleResolutions>,
     pub(super) origin: GeneratedOrigin,
     pub(super) result: MacroExpansionApplyResult,
 }
@@ -101,7 +133,8 @@ impl GeneratedCollector<'_> {
                 generated_source_id,
                 item_id,
                 self.origin.order.generated_child(index),
-            );
+                Arc::clone(&self.origin.module_file_context),
+            )?;
         }
         timer.finish();
 
@@ -114,7 +147,8 @@ impl GeneratedCollector<'_> {
         generated_source: GeneratedSourceId,
         item_id: ItemTreeId,
         order: ItemOrder,
-    ) {
+        module_file_context: Arc<ModuleFileContext>,
+    ) -> Result<()> {
         let item = self
             .state
             .def_map_builder
@@ -124,13 +158,13 @@ impl GeneratedCollector<'_> {
             .expect("generated item id should exist while collecting def map")
             .clone();
         if !self.is_item_enabled(&item) {
-            return;
+            return Ok(());
         }
         metric::GENERATED_ITEMS_SEEN.inc();
 
         match &item.kind {
             ItemKind::MacroCall(macro_call) => {
-                self.collect_macro_call(module_id, &item, macro_call, order);
+                self.collect_macro_call(module_id, &item, macro_call, order, module_file_context);
             }
             ItemKind::MacroDefinition(macro_definition) => {
                 self.collect_macro_definition(
@@ -143,7 +177,15 @@ impl GeneratedCollector<'_> {
                 );
             }
             ItemKind::Module(module_item) => {
-                self.collect_inline_module(module_id, &item, module_item, generated_source, order);
+                self.collect_module(
+                    module_id,
+                    &item,
+                    module_item,
+                    generated_source,
+                    item_id,
+                    order,
+                    module_file_context,
+                )?;
             }
             ItemKind::Use(use_item) => self.collect_use(module_id, &item, use_item),
             ItemKind::Enum(enum_item) => {
@@ -166,6 +208,8 @@ impl GeneratedCollector<'_> {
                 );
             }
         }
+
+        Ok(())
     }
 
     /// Collects supported children of a generated extern block into the call-site module.
@@ -395,21 +439,91 @@ impl GeneratedCollector<'_> {
             .any(|predicate| cfg.is_predicate_enabled(predicate))
     }
 
-    fn collect_inline_module(
+    #[allow(clippy::too_many_arguments)]
+    fn collect_module(
         &mut self,
         parent_module: ModuleId,
         item: &ItemNode,
         module_item: &ModuleItem,
         generated_source: GeneratedSourceId,
+        item_id: ItemTreeId,
         order: ItemOrder,
-    ) {
+        module_file_context: Arc<ModuleFileContext>,
+    ) -> Result<()> {
         let Some(module_name) = item.name.clone() else {
-            return;
+            return Ok(());
         };
-        let ModuleSource::Inline { items } = &module_item.source else {
-            // Out-of-line generated modules need call-site module file resolution. Skipping them is
-            // a false negative, while inventing an empty module would create misleading scope data.
-            return;
+
+        // DefMap describes the requested source, while the project-owned coordinator resolves and
+        // lowers it before resuming this retained construction state. Until a resolution exists, do
+        // not fabricate an empty semantic module for a declaration with no file contents.
+        let (origin, inner_docs, resolved_file) = match &module_item.source {
+            ModuleSource::Inline { .. } => (
+                ModuleOrigin::Inline {
+                    declaration_file: item.file_id,
+                    declaration_span: item.span,
+                },
+                module_item.inner_docs.clone(),
+                None,
+            ),
+            ModuleSource::OutOfLine => {
+                let request = GeneratedModuleRequest::new(
+                    self.state.crate_ref.package,
+                    Arc::clone(&module_file_context),
+                    module_name.to_string(),
+                    module_item.path_override.clone(),
+                );
+                match self
+                    .generated_module_resolutions
+                    .and_then(|resolutions| resolutions.get(&request).cloned())
+                {
+                    None => {
+                        self.state.generated_module_requests.push(request.clone());
+                        self.state
+                            .pending_generated_modules
+                            .push(PendingGeneratedModule {
+                                request,
+                                parent_module,
+                                generated_source,
+                                item_id,
+                                order,
+                                module_file_context,
+                                origin: self.origin.clone(),
+                            });
+                        return Ok(());
+                    }
+                    Some(GeneratedModuleResolution::Missing) => return Ok(()),
+                    Some(GeneratedModuleResolution::Found {
+                        file_id: definition_file,
+                        child_context,
+                    }) => {
+                        let item_tree_package = self
+                            .item_tree
+                            .package(self.state.crate_ref.package.0)
+                            .context(
+                                "while attempting to fetch package for generated module source",
+                            )?;
+                        let inner_docs = item_tree_package
+                            .file(definition_file)
+                            .with_context(|| {
+                                format!(
+                                    "while attempting to fetch generated module file {definition_file:?}"
+                                )
+                            })?
+                            .docs
+                            .clone();
+                        (
+                            ModuleOrigin::OutOfLine {
+                                declaration_file: item.file_id,
+                                declaration_span: item.span,
+                                definition_file: Some(definition_file),
+                            },
+                            inner_docs,
+                            Some((definition_file, child_context)),
+                        )
+                    }
+                }
+            }
         };
 
         let visibility = item.visibility.clone();
@@ -420,7 +534,7 @@ impl GeneratedCollector<'_> {
         let child_module = self.state.def_map_builder.alloc_module(ModuleData {
             name: Some(module_name.clone()),
             name_span: item.name_span,
-            docs: Documentation::concat(item.docs.clone(), module_item.inner_docs.clone()),
+            docs: Documentation::concat(item.docs.clone(), inner_docs),
             user_facing_attrs: item.user_facing_attrs,
             visibility: semantic_visibility,
             parent: Some(parent_module),
@@ -430,13 +544,10 @@ impl GeneratedCollector<'_> {
             imports: Vec::new(),
             unresolved_imports: Vec::new(),
             scope: ModuleScope::default(),
-            origin: ModuleOrigin::Inline {
-                declaration_file: item.file_id,
-                declaration_span: item.span,
-            },
+            origin,
         });
-        // Inline generated modules extend all scope matrices in lockstep with the def-map module
-        // arena so later generated children can be collected into the new module.
+        // Generated modules extend all scope matrices in lockstep with the def-map module arena so
+        // later generated children or file-backed declarations can enter the new module.
         self.state.base_scopes.push(Default::default());
         self.state
             .textual_macro_scopes
@@ -468,14 +579,59 @@ impl GeneratedCollector<'_> {
             .expect("current scope should exist for generated child link")
             .insert_binding(&module_name, Namespace::Types, binding);
 
-        for (index, child_item) in items.iter().copied().enumerate() {
-            self.collect_item(
+        match &module_item.source {
+            ModuleSource::Inline { items } => {
+                let child_context = Arc::new(
+                    module_file_context
+                        .descend_inline(module_name.as_str(), module_item.path_override.as_deref()),
+                );
+                for (index, child_item) in items.iter().copied().enumerate() {
+                    self.collect_item(
+                        child_module,
+                        generated_source,
+                        child_item,
+                        order.generated_child(index),
+                        Arc::clone(&child_context),
+                    )?;
+                }
+            }
+            ModuleSource::OutOfLine => {
+                let (definition_file, child_context) = resolved_file.expect(
+                    "resolved out-of-line generated module should have a file and child context",
+                );
+                let item_tree_package = self
+                    .item_tree
+                    .package(self.state.crate_ref.package.0)
+                    .context("while attempting to fetch generated module item tree package")?;
+                let collected = SourceFragmentCollector {
+                    state: self.state,
+                    current_scopes: self.current_scopes,
+                    item_tree: item_tree_package,
+                    origin: SourceFragmentOrigin {
+                        module: child_module,
+                        order: ItemOrder::real(0),
+                        parent_call: self.origin.parent_call,
+                        module_file_context: child_context,
+                    },
+                    result: MacroExpansionApplyResult::default(),
+                }
+                .collect_module_file(definition_file)?;
+                self.result.merge(collected);
+            }
+        }
+
+        if let Some(macro_use) = &module_item.macro_use
+            && let Some(selector) = macro_use.active_selector(&self.state.cfg_evaluator())
+        {
+            self.state.textual_macro_scopes.import_module_definitions(
+                parent_module,
                 child_module,
-                generated_source,
-                child_item,
-                order.generated_child(index),
+                order,
+                &selector,
             );
         }
+
+        Ok(())
     }
 
     fn collect_macro_call(
@@ -484,9 +640,11 @@ impl GeneratedCollector<'_> {
         item: &ItemNode,
         macro_call: &MacroCallItem,
         order: ItemOrder,
+        module_file_context: Arc<ModuleFileContext>,
     ) {
-        // Macro-generated `include!("...")` would need a real file-relative expansion context to
-        // resolve safely. The generated lowerer therefore records no builtin payload here.
+        // Macro-generated `include!("...")` remains a separate source-splicing feature. Carrying
+        // module context is enough for `mod child;`, but it does not define include ownership or
+        // source identity, so the generated lowerer still records no builtin payload here.
         self.state.push_macro_call(
             MacroCallSite {
                 module: module_id,
@@ -499,6 +657,7 @@ impl GeneratedCollector<'_> {
                 file_id: item.file_id,
                 span: item.span,
                 order,
+                module_file_context,
             },
             MacroCallOrigin::Generated {
                 parent_call: self.origin.parent_call,
@@ -579,4 +738,72 @@ impl GeneratedCollector<'_> {
             },
         )
     }
+}
+
+/// Applies source resolutions to generated declarations whose surrounding macro is already collected.
+///
+/// Unresolved declarations remain in the continuation list and are re-emitted as construction
+/// requests. Missing sources finish without allocating a module. Found sources enter the same
+/// generated-module collector used when a resolution is available during the first pass.
+pub(crate) fn apply_pending_generated_modules(
+    item_tree: &ItemTreeDb,
+    states: &mut super::super::finalize::FinalizeCrateStates,
+    interners: &mut PackageNameInterners,
+    current_scopes: &mut ScopeMatrix,
+    generated_module_resolutions: Option<&GeneratedModuleResolutions>,
+) -> Result<()> {
+    for (package_slot, package_states) in states.iter_dirty_mut_enumerated() {
+        let interner = interners.package_mut(package_slot).with_context(|| {
+            format!("while attempting to fetch name interner for package {package_slot}")
+        })?;
+
+        for state in package_states {
+            let pending_modules = std::mem::take(&mut state.pending_generated_modules);
+            for pending in pending_modules {
+                match generated_module_resolutions
+                    .and_then(|resolutions| resolutions.get(&pending.request).cloned())
+                {
+                    None => {
+                        state
+                            .generated_module_requests
+                            .push(pending.request.clone());
+                        state.pending_generated_modules.push(pending);
+                    }
+                    Some(GeneratedModuleResolution::Missing) => {}
+                    Some(GeneratedModuleResolution::Found { .. }) => {
+                        let item = state
+                            .def_map_builder
+                            .partial()
+                            .generated_source(pending.generated_source)
+                            .and_then(|source| source.item(pending.item_id))
+                            .expect("pending generated module item should remain available")
+                            .clone();
+                        let ItemKind::Module(module_item) = &item.kind else {
+                            unreachable!("pending generated module should point to a module item");
+                        };
+                        GeneratedCollector {
+                            state,
+                            interner,
+                            current_scopes,
+                            item_tree,
+                            generated_module_resolutions,
+                            origin: pending.origin,
+                            result: MacroExpansionApplyResult::default(),
+                        }
+                        .collect_module(
+                            pending.parent_module,
+                            &item,
+                            module_item,
+                            pending.generated_source,
+                            pending.item_id,
+                            pending.order,
+                            pending.module_file_context,
+                        )?;
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(())
 }

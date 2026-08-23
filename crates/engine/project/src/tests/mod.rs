@@ -1,4 +1,5 @@
 mod current_body;
+mod generated_modules;
 mod split_indexing;
 mod utils;
 
@@ -40,6 +41,7 @@ impl ProjectMemoryHooks for RecordingMemoryHooks {
 #[derive(Debug)]
 struct SourceMutationMemoryHooks {
     armed: AtomicBool,
+    point: ProjectMemoryPurgePoint,
     path: PathBuf,
     replacement: &'static str,
 }
@@ -48,6 +50,16 @@ impl SourceMutationMemoryHooks {
     fn new(path: PathBuf, replacement: &'static str, armed: bool) -> Self {
         Self {
             armed: AtomicBool::new(armed),
+            point: ProjectMemoryPurgePoint::AfterItemTreeSyntaxEviction,
+            path,
+            replacement,
+        }
+    }
+
+    fn at_point(point: ProjectMemoryPurgePoint, path: PathBuf, replacement: &'static str) -> Self {
+        Self {
+            armed: AtomicBool::new(true),
+            point,
             path,
             replacement,
         }
@@ -60,9 +72,7 @@ impl SourceMutationMemoryHooks {
 
 impl ProjectMemoryHooks for SourceMutationMemoryHooks {
     fn purge(&self, point: ProjectMemoryPurgePoint) {
-        if point == ProjectMemoryPurgePoint::AfterItemTreeSyntaxEviction
-            && self.armed.swap(false, Ordering::AcqRel)
-        {
+        if point == self.point && self.armed.swap(false, Ordering::AcqRel) {
             std::fs::write(&self.path, self.replacement)
                 .expect("source mutation hook should replace fixture source");
         }

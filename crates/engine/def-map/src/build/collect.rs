@@ -8,9 +8,10 @@
 //! - immediate bindings such as child modules and `extern crate`
 //!
 //! Import resolution itself happens during build finalization, using the `base_scopes` produced
-//! here.
+//! here. Collection also carries each logical module's filesystem context into queued macro calls.
+//! That context is construction-only, but a later expansion needs it if it emits `mod child;`.
 
-use std::collections::HashMap;
+use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
 use anyhow::Context as _;
 
@@ -26,18 +27,20 @@ use rg_ir_model::{
 use rg_item_tree::{
     Documentation, EnumItem, ExternBlockItem, ExternCrateItem, FunctionItem, ItemKind, ItemNode,
     ItemTreeDb, ItemTreeId, ItemTreeRef, MacroCallItem, MacroDefinitionAttrs, MacroDefinitionItem,
-    MacroUseAttr, MacroUseSelector, ModuleItem, ModuleSource, Package as ItemTreePackage,
-    UseImport, UseItem, UserFacingAttrs, VisibilityLevel,
+    ModuleItem, ModuleSource, Package as ItemTreePackage, UseImport, UseItem, UserFacingAttrs,
+    VisibilityLevel,
 };
-use rg_parse::{CargoTarget, Package};
+use rg_parse::{CargoTarget, ModuleFileContext, Package};
 use rg_text::{Name, RustEdition};
 use rg_workspace::TargetKind;
 
+use crate::GeneratedModuleRequest;
 use crate::PackageSlot;
 
 use super::macros::{
     ItemOrder, MacroCallOrigin, MacroCallSite, MacroDefinitionRecord, MacroDirective,
-    MacroDirectiveState, MacroUseImport, PendingMacroExpansionLimitReport, TextualMacroScopes,
+    MacroDirectiveState, MacroUseImport, PendingGeneratedModule, PendingMacroExpansionLimitReport,
+    TextualMacroScopes,
 };
 
 /// Collected state for one crate before fixed-point import resolution.
@@ -53,6 +56,11 @@ pub(super) struct CrateState {
     /// Cargo-target-specific cfg values used to decide which collected items really exist.
     pub(super) cfg_options: CfgOptions,
     pub(super) target_kind: TargetKind,
+    /// Package-local files available to context-sensitive module traversal.
+    ///
+    /// Resumable finalization refreshes this construction-only map after the project adds late
+    /// source files. Frozen DefMaps retain only the selected `definition_file` ids.
+    pub(super) known_module_files: Arc<KnownModuleFiles>,
     pub(super) def_map_builder: DefMapBuilder,
     pub(super) base_scopes: Vec<ModuleScopeBuilder>,
     pub(super) extern_prelude: ExternPreludeBuilder,
@@ -61,6 +69,14 @@ pub(super) struct CrateState {
     pub(super) textual_macro_scopes: TextualMacroScopes,
     pub(super) macro_use_imports: Vec<MacroUseImport>,
     pub(super) macro_directives: Vec<MacroDirective>,
+    /// Requests emitted by the latest finalization step and cleared before the next resume.
+    pub(super) generated_module_requests: Vec<GeneratedModuleRequest>,
+    /// Generated module declarations waiting for the project boundary to capture their files.
+    ///
+    /// The surrounding macro has already been expanded and collected. Keeping this small
+    /// continuation lets construction resume without replaying that expansion or duplicating the
+    /// other items it produced.
+    pub(super) pending_generated_modules: Vec<PendingGeneratedModule>,
     pub(super) macro_expansion_limit: Option<PendingMacroExpansionLimitReport>,
 }
 
@@ -128,6 +144,56 @@ impl CrateState {
     pub(super) fn cfg_evaluator(&self) -> CfgEvaluator<'_> {
         CfgEvaluator::new(&self.cfg_options, self.target_kind.enables_test_cfg())
     }
+
+    pub(super) fn resolve_module_file(
+        &self,
+        context: &ModuleFileContext,
+        module_name: &str,
+        path_override: Option<&str>,
+    ) -> Option<(rg_parse::FileId, Arc<ModuleFileContext>)> {
+        self.known_module_files
+            .resolve(context, module_name, path_override)
+    }
+}
+
+/// Canonical package paths used to connect syntax-only module declarations to parsed files.
+pub(super) struct KnownModuleFiles {
+    by_path: HashMap<PathBuf, rg_parse::FileId>,
+}
+
+impl KnownModuleFiles {
+    pub(super) fn from_package(package: &Package, item_tree_package: &ItemTreePackage) -> Self {
+        Self {
+            // Parse retains stable ids for historical files across saved rebuilds. Only files with
+            // a current ItemTree belong to this generation's reachable module graph.
+            by_path: item_tree_package
+                .files()
+                .map(|file| {
+                    let path = package
+                        .file_path(file.file)
+                        .expect("lowered file should have a parsed path")
+                        .to_path_buf();
+                    (path, file.file)
+                })
+                .collect(),
+        }
+    }
+
+    fn resolve(
+        &self,
+        context: &ModuleFileContext,
+        module_name: &str,
+        path_override: Option<&str>,
+    ) -> Option<(rg_parse::FileId, Arc<ModuleFileContext>)> {
+        context
+            .resolve_known_module_name(module_name, path_override, |path| {
+                self.by_path.get(path).copied().or_else(|| {
+                    let canonical_path = path.canonicalize().ok()?;
+                    self.by_path.get(&canonical_path).copied()
+                })
+            })
+            .map(|(file_id, context)| (file_id, Arc::new(context)))
+    }
 }
 
 /// Collects unresolved crate states for every package/Cargo-target pair.
@@ -166,6 +232,7 @@ pub(super) fn collect_package_crate_states(
     implicit_roots: &[Vec<HashMap<Name, ModuleRef>>],
 ) -> anyhow::Result<Vec<CrateState>> {
     let mut package_states = Vec::with_capacity(package.targets().len());
+    let known_module_files = Arc::new(KnownModuleFiles::from_package(package, item_tree_package));
 
     for (crate_idx, target) in package.targets().iter().enumerate() {
         let crate_ref = CrateRef {
@@ -190,9 +257,19 @@ pub(super) fn collect_package_crate_states(
             package.cfg_options(),
             target.kind.clone(),
             crate_roots,
+            Arc::clone(&known_module_files),
         );
         let state = collector
-            .collect(item_tree_package, target, target_root.root_file)
+            .collect(
+                item_tree_package,
+                target,
+                target_root.root_file,
+                Arc::new(ModuleFileContext::for_target_root(
+                    package
+                        .file_path(target_root.root_file)
+                        .expect("target root should have a parsed path"),
+                )),
+            )
             .with_context(|| {
                 format!(
                     "while attempting to collect crate scope for {}",
@@ -216,6 +293,7 @@ struct CrateScopeCollector<'db> {
     edition: RustEdition,
     cfg_options: &'db CfgOptions,
     target_kind: TargetKind,
+    known_module_files: Arc<KnownModuleFiles>,
     extern_prelude: ExternPreludeBuilder,
     root_module: Option<ModuleId>,
     def_map_builder: DefMapBuilder,
@@ -234,6 +312,7 @@ impl<'db> CrateScopeCollector<'db> {
         cfg_options: &'db CfgOptions,
         target_kind: TargetKind,
         implicit_roots: &'db HashMap<Name, ModuleRef>,
+        known_module_files: Arc<KnownModuleFiles>,
     ) -> Self {
         Self {
             crate_ref,
@@ -241,6 +320,7 @@ impl<'db> CrateScopeCollector<'db> {
             edition,
             cfg_options,
             target_kind,
+            known_module_files,
             extern_prelude: ExternPreludeBuilder::new(implicit_roots),
             root_module: None,
             def_map_builder: DefMapBuilder::new(crate_ref),
@@ -258,6 +338,7 @@ impl<'db> CrateScopeCollector<'db> {
         item_tree: &ItemTreePackage,
         target: &CargoTarget,
         root_file: rg_parse::FileId,
+        root_context: Arc<ModuleFileContext>,
     ) -> anyhow::Result<CrateState> {
         let root_file_tree = item_tree.file(root_file).with_context(|| {
             format!(
@@ -279,8 +360,14 @@ impl<'db> CrateScopeCollector<'db> {
         );
         self.root_module = Some(root_module);
 
-        self.collect_items(item_tree, root_module, root_file, &root_file_tree.top_level)
-            .context("while attempting to collect root file items")?;
+        self.collect_items_in_context(
+            item_tree,
+            root_module,
+            root_file,
+            &root_file_tree.top_level,
+            root_context,
+        )
+        .context("while attempting to collect root file items")?;
 
         Ok(CrateState {
             crate_ref: self.crate_ref,
@@ -290,6 +377,7 @@ impl<'db> CrateScopeCollector<'db> {
             edition: self.edition,
             cfg_options: self.cfg_options.clone(),
             target_kind: self.target_kind.clone(),
+            known_module_files: self.known_module_files,
             def_map_builder: self.def_map_builder,
             base_scopes: self.base_scopes,
             extern_prelude: self.extern_prelude,
@@ -298,6 +386,8 @@ impl<'db> CrateScopeCollector<'db> {
             textual_macro_scopes: self.textual_macro_scopes,
             macro_use_imports: self.macro_use_imports,
             macro_directives: self.macro_directives,
+            generated_module_requests: Vec::new(),
+            pending_generated_modules: Vec::new(),
             macro_expansion_limit: None,
         })
     }
@@ -333,13 +423,17 @@ impl<'db> CrateScopeCollector<'db> {
         module_id
     }
 
-    /// Walks one module's items and records everything that is immediately knowable.
-    fn collect_items(
+    /// Walks items while preserving the filesystem base of this logical module.
+    ///
+    /// Inline children descend from this base, macro calls retain it until expansion, and an
+    /// out-of-line declaration supplies the next context selected along that module edge.
+    fn collect_items_in_context(
         &mut self,
         item_tree: &ItemTreePackage,
         module_id: ModuleId,
         file_id: rg_parse::FileId,
         items: &[ItemTreeId],
+        module_file_context: Arc<ModuleFileContext>,
     ) -> anyhow::Result<()> {
         for (item_index, item_id) in items.iter().enumerate() {
             let source = ItemTreeRef {
@@ -363,20 +457,34 @@ impl<'db> CrateScopeCollector<'db> {
                     self.collect_extern_crate(module_id, item, extern_crate);
                 }
                 ItemKind::Module(module_item) => {
-                    self.collect_module(item_tree, module_id, item, module_item, order)
-                        .with_context(|| {
-                            format!(
-                                "while attempting to collect module {}",
-                                item.name.as_deref().unwrap_or("<unnamed>")
-                            )
-                        })?;
+                    self.collect_module(
+                        item_tree,
+                        module_id,
+                        item,
+                        module_item,
+                        order,
+                        Arc::clone(&module_file_context),
+                    )
+                    .with_context(|| {
+                        format!(
+                            "while attempting to collect module {}",
+                            item.name.as_deref().unwrap_or("<unnamed>")
+                        )
+                    })?;
                 }
                 ItemKind::Use(use_item) => {
                     self.collect_use(module_id, item, source, use_item);
                 }
                 ItemKind::Impl(_) => self.collect_local_impl(module_id, item, source),
                 ItemKind::MacroCall(macro_call) => {
-                    self.collect_macro_call(module_id, item, source, macro_call, order);
+                    self.collect_macro_call(
+                        module_id,
+                        item,
+                        source,
+                        macro_call,
+                        order,
+                        Arc::clone(&module_file_context),
+                    );
                 }
                 ItemKind::MacroDefinition(macro_definition) => {
                     self.collect_macro_definition(module_id, item, source, macro_definition, order);
@@ -685,7 +793,11 @@ impl<'db> CrateScopeCollector<'db> {
             .any(|predicate| cfg.is_predicate_enabled(predicate))
     }
 
-    /// Keeps item-position macro calls for the later def-map expansion loop.
+    /// Keeps an item-position macro call and its logical filesystem base for later expansion.
+    ///
+    /// Expansion may happen after the source AST and ItemTree lowering context are gone. Retaining
+    /// the call-site base here lets a generated `mod child;` resolve beside the caller rather than
+    /// beside the macro definition.
     fn collect_macro_call(
         &mut self,
         module_id: ModuleId,
@@ -693,6 +805,7 @@ impl<'db> CrateScopeCollector<'db> {
         source: ItemTreeRef,
         macro_call: &MacroCallItem,
         order: ItemOrder,
+        module_file_context: Arc<ModuleFileContext>,
     ) {
         self.macro_directives.push(MacroDirective {
             call: MacroCallSite {
@@ -706,6 +819,7 @@ impl<'db> CrateScopeCollector<'db> {
                 file_id: item.file_id,
                 span: item.span,
                 order,
+                module_file_context,
             },
             origin: MacroCallOrigin::Source,
             state: MacroDirectiveState::Pending,
@@ -735,41 +849,48 @@ impl<'db> CrateScopeCollector<'db> {
         item: &ItemNode,
         module_item: &ModuleItem,
         order: ItemOrder,
+        module_file_context: Arc<ModuleFileContext>,
     ) -> anyhow::Result<()> {
         let Some(module_name) = item.name.clone() else {
             return Ok(());
         };
 
         let source = &module_item.source;
+        let resolved_file = match source {
+            ModuleSource::Inline { .. } => None,
+            ModuleSource::OutOfLine => self.known_module_files.resolve(
+                &module_file_context,
+                module_name.as_str(),
+                module_item.path_override.as_deref(),
+            ),
+        };
         let origin = match source {
             ModuleSource::Inline { .. } => ModuleOrigin::Inline {
                 declaration_file: item.file_id,
                 declaration_span: item.span,
             },
-            ModuleSource::OutOfLine { definition_file } => ModuleOrigin::OutOfLine {
+            ModuleSource::OutOfLine => ModuleOrigin::OutOfLine {
                 declaration_file: item.file_id,
                 declaration_span: item.span,
-                definition_file: *definition_file,
+                definition_file: resolved_file.as_ref().map(|(file_id, _)| *file_id),
             },
         };
 
         let inner_docs = match source {
             ModuleSource::Inline { .. } => module_item.inner_docs.clone(),
-            ModuleSource::OutOfLine {
-                definition_file: Some(definition_file),
-            } => item_tree
-                .file(*definition_file)
-                .with_context(|| {
-                    format!(
-                        "while attempting to fetch out-of-line module docs for {:?}",
-                        definition_file
-                    )
-                })?
-                .docs
-                .clone(),
-            ModuleSource::OutOfLine {
-                definition_file: None,
-            } => None,
+            ModuleSource::OutOfLine => match resolved_file.as_ref() {
+                Some((definition_file, _)) => item_tree
+                    .file(*definition_file)
+                    .with_context(|| {
+                        format!(
+                            "while attempting to fetch out-of-line module docs for {:?}",
+                            definition_file
+                        )
+                    })?
+                    .docs
+                    .clone(),
+                None => None,
+            },
         };
         let semantic_visibility = self
             .def_map_builder
@@ -795,33 +916,42 @@ impl<'db> CrateScopeCollector<'db> {
         match source {
             ModuleSource::Inline { items } => {
                 // Inline modules already carry their lowered items inside the parent file tree.
-                self.collect_items(item_tree, child_module, item.file_id, items)
-                    .context("while attempting to collect inline module items")?;
+                let child_context = Arc::new(
+                    module_file_context
+                        .descend_inline(module_name.as_str(), module_item.path_override.as_deref()),
+                );
+                self.collect_items_in_context(
+                    item_tree,
+                    child_module,
+                    item.file_id,
+                    items,
+                    child_context,
+                )
+                .context("while attempting to collect inline module items")?;
             }
-            ModuleSource::OutOfLine {
-                definition_file: Some(definition_file),
-            } => {
+            ModuleSource::OutOfLine => {
+                let Some((definition_file, child_context)) = resolved_file else {
+                    return Ok(());
+                };
                 // Out-of-line modules point at another lowered file tree.
-                let file_tree = item_tree.file(*definition_file).with_context(|| {
+                let file_tree = item_tree.file(definition_file).with_context(|| {
                     format!(
                         "while attempting to fetch out-of-line module item tree for {:?}",
                         definition_file
                     )
                 })?;
-                self.collect_items(
+                self.collect_items_in_context(
                     item_tree,
                     child_module,
-                    *definition_file,
+                    definition_file,
                     &file_tree.top_level,
+                    child_context,
                 )
                 .context("while attempting to collect out-of-line module items")?;
             }
-            ModuleSource::OutOfLine {
-                definition_file: None,
-            } => {}
         }
         if let Some(macro_use) = &module_item.macro_use
-            && let Some(selector) = self.active_macro_use_selector(macro_use)
+            && let Some(selector) = macro_use.active_selector(&self.cfg_evaluator())
         {
             self.textual_macro_scopes.import_module_definitions(
                 parent_module,
@@ -941,7 +1071,7 @@ impl<'db> CrateScopeCollector<'db> {
         };
 
         if let Some(macro_use) = &extern_crate.macro_use
-            && let Some(selector) = self.active_macro_use_selector(macro_use)
+            && let Some(selector) = macro_use.active_selector(&self.cfg_evaluator())
         {
             // `extern crate dep as _` hides the type binding but still imports macros. Record the
             // macro-use bridge before resolving the optional binding name.
@@ -982,23 +1112,6 @@ impl<'db> CrateScopeCollector<'db> {
                     ScopeBindingProvenance::ExternCrate,
                 ),
             );
-    }
-
-    fn active_macro_use_selector(&self, attr: &MacroUseAttr) -> Option<MacroUseSelector> {
-        let mut selector = attr.direct.clone();
-        let cfg = self.cfg_evaluator();
-
-        for cfg_attr in &attr.cfg_attr_macro_use {
-            if !cfg.is_predicate_enabled(&cfg_attr.predicate) {
-                continue;
-            }
-            match &mut selector {
-                Some(selector) => selector.merge(&cfg_attr.selector),
-                None => selector = Some(cfg_attr.selector.clone()),
-            }
-        }
-
-        selector
     }
 
     fn cfg_evaluator(&self) -> CfgEvaluator<'_> {

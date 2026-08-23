@@ -475,14 +475,7 @@ impl<'a> PackageItemTreeSnapshot<'a> {
     fn render_module_source(&self, source: &ModuleSource) -> String {
         match source {
             ModuleSource::Inline { .. } => "inline".to_string(),
-            ModuleSource::OutOfLine {
-                definition_file: Some(file_id),
-            } => {
-                format!("out_of_line {}", self.file_label(*file_id))
-            }
-            ModuleSource::OutOfLine {
-                definition_file: None,
-            } => "out_of_line <missing>".to_string(),
+            ModuleSource::OutOfLine => "out_of_line".to_string(),
         }
     }
 

@@ -1,4 +1,8 @@
 //! Builds the retained phase databases for a fresh project snapshot.
+//!
+//! Source-built package inventories remain open through DefMap construction because supported
+//! macro expansion can reveal more module files. Only after that discovery loop settles are the
+//! source set and the fingerprints retained by the project finalized.
 
 use anyhow::Context as _;
 
@@ -18,7 +22,7 @@ use crate::{
     memory::{ProjectMemoryHooks, ProjectMemoryPurgePoint},
     profile::{BuildMemorySampler, metric},
     project::{
-        SplitIndexingMode, StartupCacheLoad, loading::PackageReadLoaders,
+        SplitIndexingMode, StartupCacheLoad, generated_modules, loading::PackageReadLoaders,
         package_set::PhasePackageSet, stats::MacroExpansionLimitBuildSummary,
     },
 };
@@ -91,17 +95,16 @@ pub(super) fn build(
     let mut names = PackageNameInterners::new(parse.package_count());
 
     // -------------------
-    // 3. Lower item trees
+    // 3. Lower initial item trees
     // -------------------
     let package_indices = build_plan.source_packages.package_indices();
-    let item_tree = ItemTreeDb::build_packages(&mut parse, &package_indices, &mut names)
+    let mut item_tree = ItemTreeDb::build_packages(&mut parse, &package_indices, &mut names)
         .context("while attempting to build item tree db")?;
-    parse.seal_sources();
     let memory = checkpoint_memory!(names, parse, build_plan, item_tree);
     memory.checkpoint(sampler, metric::ITEM_TREE_MEMORY, &item_tree);
 
     // -------------------------
-    // 4. Evict item-tree syntax
+    // 4. Evict initial item-tree syntax
     // -------------------------
     // Later phases consume file ids, paths, line indexes, and lowered item trees. Body IR reparses
     // syntax file-by-file, so the global parse database can drop full trees before more phase
@@ -115,7 +118,10 @@ pub(super) fn build(
     // -------------------------------
     // 5. Prepare cache-backed loaders
     // -------------------------------
-    let source_fingerprints = cache_plan
+    // Cache-hit package tables are already final and these fingerprints validate their artifacts.
+    // Source-built package tables can still grow during DefMap, so exclude those slots from all
+    // cache readers and treat their values as provisional until discovery settles.
+    let mut source_fingerprints = cache_plan
         .source_fingerprints(workspace.workspace_root(), &parse)
         .context("while attempting to compute package cache source fingerprints")?;
     let memory = checkpoint_memory!(names, parse, build_plan, item_tree, source_fingerprints);
@@ -125,10 +131,11 @@ pub(super) fn build(
         &source_fingerprints,
     );
 
-    let loaders = PackageReadLoaders::from_cache(
+    let loaders = PackageReadLoaders::from_cache_excluding(
         cache_plan.clone(),
         cache_store.clone(),
         source_fingerprints.clone(),
+        build_plan.source_packages.as_slice(),
     );
     let rebuild_subset = build_plan
         .source_packages
@@ -144,20 +151,53 @@ pub(super) fn build(
         DefMapDb::from_package_store(offloaded_package_store(parse.package_count()));
     let old_def_map_txn =
         baseline_def_map.read_txn_for_subset(loaders.def_map.clone(), &rebuild_subset);
-    let def_map_rebuilder = baseline_def_map
-        .package_rebuilder(
-            &old_def_map_txn,
-            workspace,
-            &parse,
-            &item_tree,
-            build_plan.source_packages.as_slice(),
-            &mut names,
-        )
-        .performance_preference(indexing_preference.macro_expansion_preference());
-    let def_map = def_map_rebuilder
-        .build()
-        .context("while attempting to build def map db")?;
+    // Macro expansion may now request an out-of-line module. Keep Parse and ItemTree mutable while
+    // the coordinator answers complete batches and resumes the same DefMap construction state.
+    let def_map = generated_modules::rebuild_packages(
+        &baseline_def_map,
+        &old_def_map_txn,
+        workspace,
+        &mut parse,
+        &mut item_tree,
+        &build_plan.source_packages,
+        &mut names,
+        indexing_preference.macro_expansion_preference(),
+        memory_hooks,
+    )
+    .context("while attempting to build def map db")?;
     drop(old_def_map_txn);
+
+    // The fixed point has finalized every source-built package file table. Seal that exact source
+    // union now, then replace only its provisional fingerprints. Cache-backed loaders keep the
+    // validated values captured above, and dirty packages never read an old payload through them.
+    parse.seal_sources();
+    let provisional_source_fingerprints = build_plan
+        .source_packages
+        .as_slice()
+        .iter()
+        .map(|package| {
+            (
+                *package,
+                source_fingerprints.get(package.0).copied().flatten(),
+            )
+        })
+        .collect::<Vec<_>>();
+    cache_plan
+        .refresh_source_fingerprints(
+            workspace.workspace_root(),
+            &parse,
+            &mut source_fingerprints,
+            build_plan.source_packages.as_slice(),
+        )
+        .context("while attempting to finalize source-built package fingerprints")?;
+    let changed_fingerprint_count = provisional_source_fingerprints
+        .into_iter()
+        .filter(|(package, provisional)| {
+            source_fingerprints.get(package.0).copied().flatten() != *provisional
+        })
+        .count();
+    metric::GENERATED_MODULE_CACHE_FINGERPRINT_CHANGES
+        .add(changed_fingerprint_count.try_into().unwrap_or(u64::MAX));
     memory_hooks.purge(ProjectMemoryPurgePoint::AfterDefMapBuild);
     let memory = checkpoint_memory!(
         names,
@@ -243,6 +283,8 @@ pub(super) fn build(
     let body_ir = body_rebuilder
         .build()
         .context("while attempting to build body ir db")?;
+    // This validation covers both captured late files and the missing-path probes that answered
+    // generated module requests, so a concurrent source change rejects the whole candidate.
     parse
         .validate_saved_sources()
         .context("while attempting to validate captured project source generation")?;

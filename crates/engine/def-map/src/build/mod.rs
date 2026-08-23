@@ -7,9 +7,15 @@
 //! - packages without fresh states are read from an optional frozen baseline;
 //! - a clean build has no baseline and marks every package dirty;
 //! - a package rebuild has an old baseline and marks only affected packages dirty.
+//!
+//! Direct `build` methods do not consume generated module source requests, so generated out-of-line
+//! modules remain unavailable there. Project construction uses
+//! `DefMapDbPackageRebuilder::start_build_session` instead: that session exposes the requests and
+//! resumes after the project adds their files.
 
 mod collect;
 mod finalize;
+mod generated_modules;
 mod implicit_roots;
 mod imports;
 mod macros;
@@ -21,7 +27,13 @@ use rg_workspace::WorkspaceMetadata;
 
 use crate::{DefMapDb, DefMapReadTxn, PackageSlot};
 
-/// Builder for a fresh def-map snapshot.
+pub(crate) use self::generated_modules::{GeneratedModuleResolution, GeneratedModuleResolutions};
+pub use self::{
+    finalize::DefMapRebuildSession,
+    generated_modules::{DefMapBuildProgress, GeneratedModuleRequest},
+};
+
+/// Builder for a fresh def-map snapshot from an already-lowered source set.
 pub struct DefMapDbBuilder<'a, 'names> {
     workspace: &'a WorkspaceMetadata,
     parse: &'a rg_parse::ParseDb,
@@ -68,6 +80,9 @@ impl<'a, 'names> DefMapDbBuilder<'a, 'names> {
         self
     }
 
+    /// Finalizes without the project-owned late-source boundary.
+    ///
+    /// Generated out-of-line module requests remain unavailable in this direct build mode.
     pub fn build(mut self) -> anyhow::Result<DefMapDb> {
         let mut db = finalize::build_db(
             self.workspace,
@@ -137,6 +152,24 @@ impl<'a, 'db> DefMapDbPackageRebuilder<'a, 'db> {
         self
     }
 
+    /// Collects dirty crate state once, then lets the project pause construction for source
+    /// capture without replaying already expanded macros.
+    pub fn start_build_session(self) -> anyhow::Result<DefMapRebuildSession> {
+        finalize::start_package_build_session(
+            self.old,
+            self.old_read,
+            self.workspace,
+            self.parse,
+            self.item_tree,
+            self.packages,
+            self.interners,
+            self.performance_preference,
+        )
+    }
+
+    /// Rebuilds without consuming generated module source requests.
+    ///
+    /// Use `start_build_session` when generated module declarations should resolve to real files.
     pub fn build(self) -> anyhow::Result<DefMapDb> {
         let mut db = finalize::rebuild_packages(
             self.old,

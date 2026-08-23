@@ -1,9 +1,9 @@
-//! Package-local module graph discovery.
+//! Package-local module path resolution and ordinary module discovery.
 //!
-//! Parsing starts with Cargo target roots, but later lowering phases need every reachable
-//! out-of-line module file to already be present in the package file cache. This pass walks the
-//! Rust module declarations without allocating item-tree payloads, so syntax retention and
-//! item-tree lowering stay in separate lifetime windows.
+//! Parsing starts with Cargo target roots. Before the initial ItemTree pass, this module walks
+//! ordinary source declarations and captures their reachable out-of-line files without allocating
+//! item-tree payloads. Macro expansion can reveal more module declarations later, so late discovery
+//! reuses the same `ModuleFileContext` resolver instead of growing a second set of path rules.
 
 use std::{
     collections::{BTreeSet, HashSet},
@@ -37,20 +37,44 @@ pub fn enclosing_inline_module_path(node: &SyntaxNode) -> Vec<Name> {
 }
 
 impl Package {
-    /// Discovers reachable out-of-line module files before AST-consuming lowering allocates.
+    /// Discovers out-of-line files reachable from ordinary source before ItemTree lowering.
     pub fn discover_modules(&mut self, sources: &SourceInventory) -> anyhow::Result<()> {
         ModuleDiscovery::new(self, sources).discover()
     }
 }
 
-/// Filesystem context for resolving out-of-line child modules of the current logical module.
-#[derive(Debug, Clone)]
+/// Filesystem bases used to resolve children of one logical Rust module.
+///
+/// Rust has two related bases. A conventional `mod child;` inside `foo.rs` searches below
+/// `foo/`, while `#[path = "child.rs"] mod child;` remains relative to the directory containing
+/// `foo.rs`. Keeping both paths makes the context describe how the module was reached instead of
+/// trying to reconstruct that information from its `FileId` later.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ModuleFileContext {
     child_module_dir: PathBuf,
+    path_attr_dir: PathBuf,
 }
 
 impl ModuleFileContext {
-    /// Builds the child-module directory for a file-backed module.
+    /// Starts module traversal at a Cargo target root.
+    ///
+    /// A custom target such as `src/tool.rs` behaves like `lib.rs`: its children resolve beside
+    /// the target file rather than below `src/tool/`.
+    pub fn for_target_root(root_file: &Path) -> Self {
+        let parent_dir = root_file
+            .parent()
+            .expect("target root should have a parent directory")
+            .to_path_buf();
+        Self {
+            child_module_dir: parent_dir.clone(),
+            path_attr_dir: parent_dir,
+        }
+    }
+
+    /// Reconstructs the conventional context of a standalone module file.
+    ///
+    /// Semantic module traversal should use the context returned by `resolve_module_name`. This
+    /// constructor is for source-local queries that have only a file and no module provenance.
     pub fn from_definition_file(definition_file: &Path) -> Self {
         let parent_dir = definition_file
             .parent()
@@ -69,13 +93,20 @@ impl ModuleFileContext {
             _ => parent_dir.join(file_stem),
         };
 
-        Self { child_module_dir }
+        Self {
+            child_module_dir,
+            path_attr_dir: parent_dir.to_path_buf(),
+        }
     }
 
-    /// Builds the child-module directory for an inline child module.
-    pub fn descend(&self, module_name: &str) -> Self {
+    /// Enters an inline module, including the directory override introduced by `#[path]`.
+    pub fn descend_inline(&self, module_name: &str, path_override: Option<&str>) -> Self {
+        let child_module_dir = path_override
+            .and_then(|path| self.resolve_inline_path_attr(path))
+            .unwrap_or_else(|| self.child_module_dir.join(module_name));
         Self {
-            child_module_dir: self.child_module_dir.join(module_name),
+            path_attr_dir: child_module_dir.clone(),
+            child_module_dir,
         }
     }
 
@@ -154,58 +185,135 @@ impl ModuleFileContext {
         &self,
         sources: &SourceInventory,
         module: &ast::Module,
-    ) -> anyhow::Result<Option<PathBuf>> {
+    ) -> anyhow::Result<Option<ModuleFileResolution>> {
         let Some(module_name) = module.name().map(|name| {
             let text = name.text();
             identifier_text(&text).to_string()
         }) else {
             return Ok(None);
         };
-        if let Some(path_attr) = module_path_attr(module) {
-            return self.resolve_path_attr_file(sources, &path_attr);
-        }
-
-        self.resolve_child_file(sources, &module_name)
+        self.resolve_module_name(
+            sources,
+            &module_name,
+            module_path_override(module).as_deref(),
+        )
     }
 
-    /// Resolves `mod name;` according to conventional Rust module file rules.
-    fn resolve_child_file(
+    /// Resolves a module spelling retained after its source AST is no longer available.
+    ///
+    /// Declarative macro expansion happens after ItemTree lowering. Keeping this entry point next
+    /// to the ordinary AST resolver makes generated `mod child;` requests use exactly the same
+    /// conventional and direct-literal `#[path]` rules as source declarations.
+    pub fn resolve_module_name(
         &self,
         sources: &SourceInventory,
         module_name: &str,
-    ) -> anyhow::Result<Option<PathBuf>> {
-        let flat_file = self.child_module_dir.join(format!("{module_name}.rs"));
-        if sources.probe_exists(&flat_file)? {
-            return Ok(Some(flat_file));
+        path_override: Option<&str>,
+    ) -> anyhow::Result<Option<ModuleFileResolution>> {
+        for candidate in self.module_file_candidates(module_name, path_override) {
+            if sources.probe_exists(candidate.path())? {
+                return Ok(Some(candidate));
+            }
         }
-
-        let nested_file = self.child_module_dir.join(module_name).join("mod.rs");
-        if sources.probe_exists(&nested_file)? {
-            return Ok(Some(nested_file));
-        }
-
         Ok(None)
     }
 
-    /// Resolves the basic literal form of `#[path = "..."]` relative to the current module.
-    fn resolve_path_attr_file(
+    /// Resolves against files that an earlier source-discovery pass already captured.
+    ///
+    /// DefMap uses this after the source inventory is sealed. The callback only maps candidate
+    /// paths to existing package-local ids; it must not discover or parse new files.
+    pub fn resolve_known_module_name(
         &self,
-        sources: &SourceInventory,
-        path_attr: &str,
-    ) -> anyhow::Result<Option<PathBuf>> {
-        let Some(path) = fs::resolve_relative_path_literal(&self.child_module_dir, path_attr)
-        else {
-            return Ok(None);
-        };
-        Ok(sources.probe_exists(&path)?.then_some(path))
+        module_name: &str,
+        path_override: Option<&str>,
+        mut file_id_for_path: impl FnMut(&Path) -> Option<FileId>,
+    ) -> Option<(FileId, ModuleFileContext)> {
+        self.module_file_candidates(module_name, path_override)
+            .into_iter()
+            .find_map(|candidate| {
+                let file_id = file_id_for_path(candidate.path())?;
+                let (_, context) = candidate.into_parts();
+                Some((file_id, context))
+            })
+    }
+
+    /// Builds candidates in Rust's precedence order and attaches each candidate's next context.
+    fn module_file_candidates(
+        &self,
+        module_name: &str,
+        path_override: Option<&str>,
+    ) -> Vec<ModuleFileResolution> {
+        if let Some(path_override) = path_override {
+            let Some(path) = fs::resolve_relative_path_literal(&self.path_attr_dir, path_override)
+            else {
+                return Vec::new();
+            };
+            let child_module_dir = path
+                .parent()
+                .expect("relative module path should have a parent directory")
+                .to_path_buf();
+            return vec![ModuleFileResolution {
+                path,
+                context: Self {
+                    path_attr_dir: child_module_dir.clone(),
+                    child_module_dir,
+                },
+            }];
+        }
+
+        let flat_file = self.child_module_dir.join(format!("{module_name}.rs"));
+        let nested_module_dir = self.child_module_dir.join(module_name);
+        vec![
+            ModuleFileResolution {
+                path: flat_file,
+                context: Self {
+                    child_module_dir: nested_module_dir.clone(),
+                    path_attr_dir: self.child_module_dir.clone(),
+                },
+            },
+            ModuleFileResolution {
+                path: nested_module_dir.join("mod.rs"),
+                context: Self {
+                    path_attr_dir: nested_module_dir.clone(),
+                    child_module_dir: nested_module_dir,
+                },
+            },
+        ]
+    }
+
+    /// Resolves an inline `#[path]` as a directory. Empty paths intentionally keep the current
+    /// attribute base, matching `#[path = ""] mod inline { ... }`.
+    fn resolve_inline_path_attr(&self, path_attr: &str) -> Option<PathBuf> {
+        let path = Path::new(path_attr);
+        if path.is_absolute() {
+            return None;
+        }
+        Some(self.path_attr_dir.join(path))
+    }
+}
+
+/// A selected module source together with the context its contents must inherit.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModuleFileResolution {
+    path: PathBuf,
+    context: ModuleFileContext,
+}
+
+impl ModuleFileResolution {
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    pub fn into_parts(self) -> (PathBuf, ModuleFileContext) {
+        (self.path, self.context)
     }
 }
 
 struct ModuleDiscovery<'db> {
     package: &'db mut Package,
     sources: &'db SourceInventory,
-    visited: HashSet<FileId>,
-    active_stack: HashSet<FileId>,
+    visited: HashSet<(FileId, ModuleFileContext)>,
+    active_stack: HashSet<(FileId, ModuleFileContext)>,
 }
 
 impl<'db> ModuleDiscovery<'db> {
@@ -227,21 +335,32 @@ impl<'db> ModuleDiscovery<'db> {
             .collect::<Vec<_>>();
 
         for (target_name, root_file) in roots {
-            self.discover_file(root_file).with_context(|| {
-                format!("while attempting to discover modules for target {target_name}")
-            })?;
+            let root_path = self
+                .package
+                .file_path(root_file)
+                .expect("target root should have a parsed path");
+            let root_context = ModuleFileContext::for_target_root(root_path);
+            self.discover_file(root_file, root_context)
+                .with_context(|| {
+                    format!("while attempting to discover modules for target {target_name}")
+                })?;
         }
 
         Ok(())
     }
 
-    fn discover_file(&mut self, current_file_id: FileId) -> anyhow::Result<()> {
-        if self.visited.contains(&current_file_id) {
+    fn discover_file(
+        &mut self,
+        current_file_id: FileId,
+        module_file_context: ModuleFileContext,
+    ) -> anyhow::Result<()> {
+        let visit = (current_file_id, module_file_context.clone());
+        if self.visited.contains(&visit) {
             return Ok(());
         }
 
         // Recursive module graphs can revisit a file before the first traversal finishes.
-        if !self.active_stack.insert(current_file_id) {
+        if !self.active_stack.insert(visit.clone()) {
             return Ok(());
         }
 
@@ -251,7 +370,7 @@ impl<'db> ModuleDiscovery<'db> {
                 format!("while attempting to load syntax for {:?}", current_file_id)
             })?;
 
-        let (items, module_file_context) = {
+        let items = {
             let parsed_file = self.package.parsed_file(current_file_id).with_context(|| {
                 format!(
                     "while attempting to fetch parsed file {:?}",
@@ -264,10 +383,7 @@ impl<'db> ModuleDiscovery<'db> {
                     current_file_id
                 )
             })?;
-            (
-                syntax.items().collect::<Vec<_>>(),
-                ModuleFileContext::from_definition_file(parsed_file.path()),
-            )
+            syntax.items().collect::<Vec<_>>()
         };
 
         self.discover_items(items, &module_file_context)
@@ -278,8 +394,8 @@ impl<'db> ModuleDiscovery<'db> {
                 )
             })?;
 
-        self.active_stack.remove(&current_file_id);
-        self.visited.insert(current_file_id);
+        self.active_stack.remove(&visit);
+        self.visited.insert(visit);
         Ok(())
     }
 
@@ -308,24 +424,27 @@ impl<'db> ModuleDiscovery<'db> {
         if let Some(item_list) = module.item_list() {
             // Inline modules do not introduce a file, but their out-of-line children resolve under
             // a directory named after the inline module path.
-            let inline_module_context = module
-                .name()
-                .map(|name| {
+            let inline_module_context = module.name().map_or_else(
+                || module_file_context.clone(),
+                |name| {
                     let text = name.text();
-                    module_file_context.descend(identifier_text(&text))
-                })
-                .unwrap_or_else(|| module_file_context.clone());
+                    module_file_context.descend_inline(
+                        identifier_text(&text),
+                        module_path_override(module).as_deref(),
+                    )
+                },
+            );
             let inline_items = item_list.items().collect::<Vec<_>>();
             return self
                 .discover_items(inline_items, &inline_module_context)
                 .context("while attempting to discover inline module items");
         }
 
-        let Some(module_file_path) =
-            module_file_context.resolve_module_file(self.sources, module)?
+        let Some(resolution) = module_file_context.resolve_module_file(self.sources, module)?
         else {
             return Ok(());
         };
+        let (module_file_path, child_context) = resolution.into_parts();
         let module_file_id = self
             .package
             .parse_file(self.sources, &module_file_path)
@@ -336,12 +455,13 @@ impl<'db> ModuleDiscovery<'db> {
                 )
             })?;
 
-        self.discover_file(module_file_id).with_context(|| {
-            format!(
-                "while attempting to discover modules from {}",
-                module_file_path.display()
-            )
-        })
+        self.discover_file(module_file_id, child_context)
+            .with_context(|| {
+                format!(
+                    "while attempting to discover modules from {}",
+                    module_file_path.display()
+                )
+            })
     }
 }
 
@@ -349,7 +469,7 @@ impl<'db> ModuleDiscovery<'db> {
 ///
 /// This intentionally handles only direct string-literal attributes. More advanced forms such as
 /// `cfg_attr` can be added later when the rest of the module system needs them.
-fn module_path_attr(item: &ast::Module) -> Option<String> {
+pub fn module_path_override(item: &ast::Module) -> Option<String> {
     for attr in item.attrs() {
         if !attr.kind().is_outer() || attr.simple_name().as_deref() != Some("path") {
             continue;

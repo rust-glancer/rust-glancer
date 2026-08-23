@@ -56,6 +56,10 @@ impl PhasePackageSet {
         self.packages.is_empty()
     }
 
+    pub(super) fn contains(&self, package: PackageSlot) -> bool {
+        self.packages.contains(&package)
+    }
+
     pub(super) fn iter(&self) -> impl Iterator<Item = PackageSlot> + '_ {
         self.packages.iter().copied()
     }

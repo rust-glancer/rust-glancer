@@ -598,7 +598,7 @@ impl<'a> SavedSourceView<'a> {
 
         let mut context = ModuleFileContext::from_definition_file(parsed_file.path());
         for module_name in inline_module_path {
-            context = context.descend(module_name);
+            context = context.descend_inline(module_name, None);
         }
         context
             .candidate_module_names()

@@ -252,17 +252,17 @@ impl<'body> BodyDefMapCollector<'body> {
                 declaration_file: item.file_id,
                 declaration_span: item.span,
             },
-            ModuleSource::OutOfLine { definition_file } => ModuleOrigin::OutOfLine {
+            ModuleSource::OutOfLine => ModuleOrigin::OutOfLine {
                 declaration_file: item.file_id,
                 declaration_span: item.span,
-                definition_file: *definition_file,
+                definition_file: None,
             },
         };
         let docs = match &module_item.source {
             ModuleSource::Inline { .. } => {
                 Documentation::concat(item.docs.clone(), module_item.inner_docs.clone())
             }
-            ModuleSource::OutOfLine { .. } => item.docs.clone(),
+            ModuleSource::OutOfLine => item.docs.clone(),
         };
         let visibility = self.builder.resolve_visibility(parent, &item.visibility);
 

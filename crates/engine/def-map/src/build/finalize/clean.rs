@@ -46,6 +46,7 @@ pub(crate) fn build_db(
         &mut crate_states,
         interners,
         performance_preference,
+        None,
     )
     .context("while attempting to finish crate states")?;
 

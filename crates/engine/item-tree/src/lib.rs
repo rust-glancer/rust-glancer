@@ -10,7 +10,7 @@ pub mod testonly;
 mod tests;
 
 pub use self::{
-    db::ItemTreeDb,
+    db::{IncrementalItemTreeLowering, ItemTreeDb},
     item::{
         BuiltinMacroItem, BuiltinMacroKind, CfgAttrMacroUse, CfgSelectArmItem, CfgSelectArmPayload,
         ConstExpr, ConstItem, ConstParamData, Documentation, EnumItem, EnumVariantItem,

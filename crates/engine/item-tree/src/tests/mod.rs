@@ -177,8 +177,8 @@ fn main() {
             - pub fn run
 
             file lib.rs
-            - pub module cli [out_of_line cli.rs]
-            - pub module model [out_of_line model.rs]
+            - pub module cli [out_of_line]
+            - pub module model [out_of_line]
 
             file main.rs
             - use
@@ -318,13 +318,13 @@ pub struct CliThing;
             - pub struct CliThing
 
             file lib.rs
-            - pub module library [out_of_line library.rs]
+            - pub module library [out_of_line]
 
             file library.rs
             - pub struct LibraryThing
 
             file main.rs
-            - module cli [out_of_line cli.rs]
+            - module cli [out_of_line]
             - fn main
         "#]],
     );
@@ -368,10 +368,10 @@ pub struct Shared;
 
             files
             file lib.rs
-            - pub module shared [out_of_line shared.rs]
+            - pub module shared [out_of_line]
 
             file main.rs
-            - module shared [out_of_line shared.rs]
+            - module shared [out_of_line]
             - fn main
 
             file shared.rs
@@ -412,17 +412,17 @@ pub struct Leaf;
 
             files
             file lib.rs
-            - pub module outer [out_of_line outer.rs]
+            - pub module outer [out_of_line]
 
             file leaf.rs
             - pub struct Leaf
 
             file inner.rs
-            - pub module leaf [out_of_line leaf.rs]
+            - pub module leaf [out_of_line]
             - pub struct Inner
 
             file outer.rs
-            - pub module inner [out_of_line inner.rs]
+            - pub module inner [out_of_line]
             - pub struct Outer
         "#]],
     );
@@ -457,7 +457,7 @@ pub fn work() {}
             files
             file lib.rs
             - pub module outer [inline]
-              - pub module child [out_of_line child.rs]
+              - pub module child [out_of_line]
             - pub use
               - import named outer::child::work
 
@@ -506,9 +506,9 @@ pub fn work() {}
             - pub struct Api
 
             file lib.rs
-            - pub module api [out_of_line api_file.rs]
+            - pub module api [out_of_line]
             - pub module outer [inline]
-              - pub module implementation [out_of_line implementation.rs]
+              - pub module implementation [out_of_line]
             - pub use
               - import named api::Api
             - pub use
@@ -743,7 +743,7 @@ pub struct Unix;
             - macro_call [cfg_select]
               - args {unix => {mod os ;} _ => {pub struct Other ;}}
               - cfg_select_arm 0
-                - module os [out_of_line os.rs]
+                - module os [out_of_line]
               - cfg_select_arm 1
                 - pub struct Other
 
