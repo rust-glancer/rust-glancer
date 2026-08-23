@@ -14,8 +14,8 @@ pub use self::profile::profile_descriptors;
 pub use rg_ir_model::FieldKey;
 
 pub use self::build::{
-    CurrentBodyBuildCheckpoint, CurrentBodyBuildOutcome, CurrentBodyBuilder, CurrentBodySelection,
-    CurrentBodyUnavailable,
+    BodyIrDbBuilder, CurrentBodyBuildCheckpoint, CurrentBodyBuildOutcome, CurrentBodyBuilder,
+    CurrentBodySelection, CurrentBodyUnavailable,
 };
 
 #[cfg(test)]
@@ -87,14 +87,6 @@ pub struct BodyIrBuildPolicy {
 }
 
 impl BodyIrBuildPolicy {
-    /// Lower primary targets from workspace packages and defer secondary targets until requested.
-    pub fn workspace_packages() -> Self {
-        Self {
-            package_scope: BodyIrPackageScope::WorkspacePackages,
-            target_scope: BodyIrTargetScope::PrimaryTargets,
-        }
-    }
-
     /// Lower every target from every parsed package, including dependencies and sysroot crates.
     pub fn all_packages() -> Self {
         Self {

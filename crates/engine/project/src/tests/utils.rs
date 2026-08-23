@@ -20,6 +20,12 @@ impl HostFixture {
         Self::build_with_package_residency_policy(spec, PackageResidencyPolicy::default())
     }
 
+    pub(super) fn build_with_sysroot(spec: &str) -> Self {
+        Self {
+            fixture: ProjectFixture::build_with_sysroot(spec),
+        }
+    }
+
     pub(super) fn build_with_package_residency_policy(
         spec: &str,
         package_residency_policy: PackageResidencyPolicy,

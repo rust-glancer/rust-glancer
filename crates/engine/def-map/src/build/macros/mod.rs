@@ -4,12 +4,16 @@
 //! and its generated items may add new imports or new macros. This module keeps that loop local to
 //! def-map by parsing expanded token trees into generated syntax and collecting those items into
 //! the macro call's module.
+//!
+//! Most generated items can be collected immediately. Generated `mod child;` also needs a source
+//! file, so the collector keeps a small continuation and emits a request. Project construction
+//! captures and lowers the file, then resumes this same expansion/finalization session.
 
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
 
 use rg_ir_model::{CrateRef, LocalDefId, ModuleId, ModuleRef};
 use rg_item_tree::{BuiltinMacroItem, ItemTreeRef, MacroUseSelector};
-use rg_parse::{FileId, Span};
+use rg_parse::{FileId, ModuleFileContext, Span};
 use rg_text::Name;
 use rg_tt::TopSubtree;
 
@@ -24,12 +28,14 @@ mod generated_tree;
 mod resolve;
 mod source_fragment;
 
+pub(super) use self::generated::PendingGeneratedModule;
 pub(super) use self::{
     attempts::{
         MacroExpansionApplyResult, MacroExpansionAttempt, MacroExpansionCursors,
         MacroExpansionScan, apply_expansion_attempts, collect_expansion_attempts,
     },
     expand::expand_expansion_attempts,
+    generated::apply_pending_generated_modules,
 };
 
 // Recursive generated macro calls can otherwise keep the fixed-point loop alive forever. Keep the
@@ -331,6 +337,10 @@ struct TextualMacroDefinition {
     order: ItemOrder,
 }
 
+/// One queued item-position macro call plus the call-site state needed after ItemTree lowering.
+///
+/// In particular, `module_file_context` follows the caller. A macro imported from another crate
+/// must still resolve a generated `mod child;` next to the invocation, not next to its definition.
 #[derive(Debug, Clone)]
 pub(super) struct MacroCallSite {
     pub(super) module: ModuleId,
@@ -343,6 +353,8 @@ pub(super) struct MacroCallSite {
     pub(super) file_id: FileId,
     pub(super) span: Span,
     pub(super) order: ItemOrder,
+    /// Logical filesystem base inherited by declarations emitted from this call.
+    pub(super) module_file_context: Arc<ModuleFileContext>,
 }
 
 impl MacroCallSite {

@@ -10,7 +10,7 @@ use test_fixture::{CrateFixture, fixture_crate};
 use rg_ir_model::{CrateId, CrateRef};
 
 use crate::PackageDefMaps;
-use crate::{DefMapDb, PackageSlot};
+use crate::{DefMapBuildProgress, DefMapDb, PackageSlot};
 
 #[test]
 fn rebuild_resolves_dirty_imports_through_clean_packages() {
@@ -201,10 +201,9 @@ impl RebuildFixture {
             WorkspaceMetadata::for_tests(fixture.metadata(), WorkspaceLoweringConfig::default())
                 .expect("fixture workspace metadata should build");
         let (parse, item_tree, mut names) = Self::build_item_tree(&workspace);
-        let mut old = DefMapDb::builder(&workspace, &parse, &item_tree)
-            .name_interners(&mut names)
-            .build()
-            .expect("fixture def-map db should build");
+        let mut old = crate::testonly::build_source_closed_def_map(
+            &workspace, &parse, &item_tree, &mut names,
+        );
         let clean_package = package_slot(&parse, clean_package);
         let clean_payload = Arc::new(
             old.resident_package(clean_package)
@@ -232,18 +231,28 @@ impl RebuildFixture {
             package: self.clean_package,
             payload: Arc::clone(&self.clean_payload),
         }));
-        let def_map = self
+        let mut session = self
             .old
-            .package_rebuilder(
+            .start_package_build(
                 &old_read,
                 &self.workspace,
                 &parse,
                 &item_tree,
                 &[package],
                 &mut names,
+                crate::MacroExpansionPerformancePreference::default(),
             )
-            .build()
-            .expect("fixture def-map package rebuild should succeed");
+            .expect("fixture DefMap package rebuild session should start");
+        let def_map = match session
+            .advance(&old_read, &parse, &item_tree, &mut names)
+            .expect("fixture DefMap package rebuild session should advance")
+        {
+            DefMapBuildProgress::Complete(def_map) => def_map,
+            DefMapBuildProgress::NeedsGeneratedModules(requests) => panic!(
+                "source-closed rebuild fixture requested {} generated module source(s)",
+                requests.len(),
+            ),
+        };
 
         RebuiltDefMaps { parse, def_map }
     }
@@ -253,8 +262,9 @@ impl RebuildFixture {
     ) -> (ParseDb, ItemTreeDb, PackageNameInterners) {
         let mut parse = ParseDb::build(workspace).expect("fixture parse db should build");
         let mut names = PackageNameInterners::new(parse.package_count());
-        let item_tree =
-            ItemTreeDb::build(&mut parse, &mut names).expect("fixture item-tree db should build");
+        let packages = (0..parse.package_count()).collect::<Vec<_>>();
+        let item_tree = ItemTreeDb::build_packages(&mut parse, &packages, &mut names)
+            .expect("fixture item-tree db should build");
 
         (parse, item_tree, names)
     }

@@ -24,51 +24,7 @@ use super::{local_thread_pool, lower::LoweredPackageBodies, state::CrateBodyBuil
 // normal scheduling variance.
 const SLOW_PACKAGE_RESOLUTION: Duration = Duration::from_secs(2);
 
-/// Resolve all materialized packages against one semantic snapshot.
-///
-/// Each crate still needs its own trait-selection session because impl visibility and solver
-/// answers depend on the use-site crate. Canonical crate declaration shapes do not, so package
-/// workers share one build-scoped declaration cache.
-pub(super) fn resolve_packages(
-    packages: Vec<LoweredPackageBodies>,
-    parse: &rg_parse::ParseDb,
-    interners: &mut PackageNameInterners,
-    def_map: &DefMapReadTxn<'_>,
-    semantic_ir: &SemanticIrReadTxn<'_>,
-    worker_limit: Option<NonZeroUsize>,
-) -> anyhow::Result<Vec<PackageBodies>> {
-    let profile_context = rg_profile::ProfileThreadContext::capture();
-    let declarations = TraitSelectionDeclarationCache::new();
-    let item_lookup_cache = ItemLookupQueryCache::new();
-    let thread_pool = local_thread_pool("rg-body-resolve", worker_limit)?;
-    let resolved = thread_pool
-        .install(|| {
-            packages
-                .into_par_iter()
-                .zip(parse.packages().par_iter())
-                .zip(interners.packages_mut().par_iter_mut())
-                .enumerate()
-                .map(|(package_idx, ((package, parse_package), interner))| {
-                    let _profile_guard = profile_context.enter();
-                    resolve_package(
-                        PackageSlot(package_idx),
-                        parse_package,
-                        package,
-                        interner,
-                        def_map,
-                        semantic_ir,
-                        &declarations,
-                        &item_lookup_cache,
-                    )
-                })
-                .collect::<anyhow::Result<Vec<_>>>()
-        })
-        .context("while attempting to resolve body IR packages")?;
-    record_lookup_cache_stats(&item_lookup_cache);
-    Ok(resolved)
-}
-
-/// Resolve a sparse set of rebuilt packages while preserving package and crate identities.
+/// Resolve selected packages while preserving package and crate identities.
 ///
 /// Before starting Rayon jobs, give each package mutable access to its own name interner. No two
 /// workers can then touch the same interner, so package resolution needs no extra synchronization.
@@ -88,8 +44,8 @@ pub(super) fn resolve_selected_packages(
     let profile_context = rg_profile::ProfileThreadContext::capture();
     let declarations = TraitSelectionDeclarationCache::new();
     let item_lookup_cache = ItemLookupQueryCache::new();
-    // Selected rebuilds are sparse, but resolution may discover nested bodies and lower them,
-    // which needs mutable access to the matching package name interner. The rebuilder normalizes
+    // Selected builds can be sparse, but resolution may discover nested bodies and lower them,
+    // which needs mutable access to the matching package name interner. The builder normalizes
     // package slots, so walking the interner slice left-to-right lets us prepare disjoint jobs that
     // Rayon can resolve in parallel without hiding any aliasing behind helper abstractions.
     let parse_packages = parse.packages();

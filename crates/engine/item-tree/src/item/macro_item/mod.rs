@@ -1,4 +1,4 @@
-use rg_cfg_eval::CfgPredicate;
+use rg_cfg_eval::{CfgEvaluator, CfgPredicate};
 use rg_std::{MemorySize, Shrink};
 use rg_text::Name;
 use rg_tt::TopSubtree;
@@ -43,6 +43,28 @@ pub struct MacroDefinitionAttrs {
 pub struct MacroUseAttr {
     pub direct: Option<MacroUseSelector>,
     pub cfg_attr_macro_use: Vec<CfgAttrMacroUse>,
+}
+
+impl MacroUseAttr {
+    /// Evaluate every legacy macro-use attribute that is active for one target.
+    ///
+    /// Explicit lists such as `#[macro_use(first)]` are merged. If any active attribute uses bare
+    /// `#[macro_use]`, the result allows all exported macros.
+    pub fn active_selector(&self, cfg: &CfgEvaluator<'_>) -> Option<MacroUseSelector> {
+        let mut selector = self.direct.clone();
+
+        for cfg_attr in &self.cfg_attr_macro_use {
+            if !cfg.is_predicate_enabled(&cfg_attr.predicate) {
+                continue;
+            }
+            match &mut selector {
+                Some(selector) => selector.merge(&cfg_attr.selector),
+                None => selector = Some(cfg_attr.selector.clone()),
+            }
+        }
+
+        selector
+    }
 }
 
 /// Macro-use selector once cfg_attr gates have been evaluated for one target.

@@ -1,23 +1,26 @@
-//! Collects source-like builtin macro payloads into def-map state.
+//! Collects already-lowered source files and source-like builtin payloads into def-map state.
 //!
-//! Item-tree lowers supported builtin payloads ahead of time, so this collector can reuse real
+//! ItemTree lowers supported builtin payloads ahead of time and incrementally lowers files found
+//! through generated module requests. This collector handles both forms so they reuse real
 //! `ItemTreeRef`s, file-relative module resolution, impl lowering, extern crates, and macro-use
-//! handling instead of treating them as arbitrary generated syntax.
+//! behavior instead of taking a generated-only path.
+
+use std::{collections::HashSet, sync::Arc};
 
 use anyhow::{Context as _, Result};
 
 use crate::{
     ImportBinding, ImportData, ImportKind, ImportPath, LocalDefData, LocalDefKind, LocalImplData,
-    MacroDefinitionData, ModuleData, ModuleOrigin, ModuleScope, Namespace, ScopeBinding,
-    ScopeBindingProvenance, Visibility,
+    MacroDefinitionData, ModuleData, ModuleFileSelection, ModuleOrigin, ModuleScope, Namespace,
+    ScopeBinding, ScopeBindingProvenance, Visibility,
 };
 use rg_ir_model::{DefId, DefMapRef, LocalDefId, LocalDefRef, ModuleId, ModuleRef};
 use rg_item_tree::{
     Documentation, ExternBlockItem, ExternCrateItem, ImportAlias, ItemKind, ItemTreeId,
-    ItemTreeRef, MacroDefinitionAttrs, MacroDefinitionItem, MacroUseAttr, MacroUseSelector,
-    ModuleItem, ModuleSource, Package as ItemTreePackage, UseImport, UseItem, UserFacingAttrs,
+    ItemTreeRef, MacroDefinitionAttrs, MacroDefinitionItem, ModuleItem, ModuleSource,
+    Package as ItemTreePackage, UseImport, UseItem, UserFacingAttrs,
 };
-use rg_parse::FileId;
+use rg_parse::{FileId, ModuleFileContext};
 use rg_text::Name;
 
 use crate::build::{collect::CrateState, finalize::ScopeMatrix, macros::MacroExpansionApplyResult};
@@ -27,20 +30,28 @@ use super::{
     MacroDirectiveState, MacroUseImport,
 };
 
-/// Source-fragment collection starts at the macro call's module and textual order.
+/// Semantic module, ordering, and file context used to insert already-lowered items.
+///
+/// Builtin fragments use the macro call's position. A real module file starts in its already
+/// allocated child module and gives its top-level items ordinary file order.
 pub(super) struct SourceFragmentOrigin {
     pub(super) module: ModuleId,
     pub(super) order: ItemOrder,
     pub(super) parent_call: usize,
+    pub(super) module_file_context: Arc<ModuleFileContext>,
 }
 
-/// Collector for item-tree nodes that should behave like ordinary source at the call site.
+/// Collector for ItemTree nodes introduced after the initial crate-scope walk.
+///
+/// Source-like builtins enter the caller's module, while a late module file enters an allocated
+/// child module. Both keep their real source refs and use the ordinary item collection behavior.
 pub(super) struct SourceFragmentCollector<'a> {
     pub(super) state: &'a mut CrateState,
     pub(super) current_scopes: &'a mut ScopeMatrix,
     pub(super) item_tree: &'a ItemTreePackage,
     pub(super) origin: SourceFragmentOrigin,
     pub(super) result: MacroExpansionApplyResult,
+    pub(super) active_files: HashSet<FileId>,
 }
 
 impl SourceFragmentCollector<'_> {
@@ -52,9 +63,33 @@ impl SourceFragmentCollector<'_> {
         // `include!` inserts the referenced file at the call site. Top-level items therefore
         // belong to the caller's module, but their source refs and spans still point to `file_id`.
         let origin_order = self.origin.order.clone();
-        self.collect_items(self.origin.module, file_id, &file_tree.top_level, |index| {
-            origin_order.generated_child(index)
+        let module_file_context = Arc::clone(&self.origin.module_file_context);
+        self.collect_file_items(
+            self.origin.module,
+            file_id,
+            &file_tree.top_level,
+            |index| origin_order.generated_child(index),
+            module_file_context,
+        )?;
+        Ok(self.result)
+    }
+
+    /// Collects a real file as the contents of an already allocated module.
+    pub(super) fn collect_module_file(
+        mut self,
+        file_id: FileId,
+    ) -> Result<MacroExpansionApplyResult> {
+        let file_tree = self.item_tree.file(file_id).with_context(|| {
+            format!("while attempting to fetch module item tree for {file_id:?}")
         })?;
+        let module_file_context = Arc::clone(&self.origin.module_file_context);
+        self.collect_file_items(
+            self.origin.module,
+            file_id,
+            &file_tree.top_level,
+            ItemOrder::real,
+            module_file_context,
+        )?;
         Ok(self.result)
     }
 
@@ -67,10 +102,35 @@ impl SourceFragmentCollector<'_> {
         // file tree ahead of time. Def-map only picks the active fragment and collects those item
         // ids at the macro call position.
         let origin_order = self.origin.order.clone();
-        self.collect_items(self.origin.module, file_id, items, |index| {
-            origin_order.generated_child(index)
-        })?;
+        self.collect_file_items(
+            self.origin.module,
+            file_id,
+            items,
+            |index| origin_order.generated_child(index),
+            Arc::clone(&self.origin.module_file_context),
+        )?;
         Ok(self.result)
+    }
+
+    /// Walks one real file while stopping only cycles on the active source path.
+    ///
+    /// Completed files are removed from the set so another module interpretation can collect the
+    /// same file under a different context.
+    fn collect_file_items(
+        &mut self,
+        module_id: ModuleId,
+        file_id: FileId,
+        items: &[ItemTreeId],
+        order_for: impl Fn(usize) -> ItemOrder,
+        module_file_context: Arc<ModuleFileContext>,
+    ) -> Result<()> {
+        if !self.active_files.insert(file_id) {
+            return Ok(());
+        }
+        let collected =
+            self.collect_items(module_id, file_id, items, order_for, module_file_context);
+        self.active_files.remove(&file_id);
+        collected
     }
 
     fn collect_items(
@@ -79,9 +139,16 @@ impl SourceFragmentCollector<'_> {
         file_id: FileId,
         items: &[ItemTreeId],
         order_for: impl Fn(usize) -> ItemOrder,
+        module_file_context: Arc<ModuleFileContext>,
     ) -> Result<()> {
         for (item_index, item_id) in items.iter().enumerate() {
-            self.collect_item(module_id, file_id, *item_id, order_for(item_index))?;
+            self.collect_item(
+                module_id,
+                file_id,
+                *item_id,
+                order_for(item_index),
+                Arc::clone(&module_file_context),
+            )?;
         }
         Ok(())
     }
@@ -92,6 +159,7 @@ impl SourceFragmentCollector<'_> {
         file_id: FileId,
         item_id: ItemTreeId,
         order: ItemOrder,
+        module_file_context: Arc<ModuleFileContext>,
     ) -> Result<()> {
         let source = ItemTreeRef {
             file_id,
@@ -116,19 +184,32 @@ impl SourceFragmentCollector<'_> {
                 self.collect_extern_crate(module_id, item, extern_crate);
             }
             ItemKind::Module(module_item) => {
-                self.collect_module(module_id, item, module_item, order)
-                    .with_context(|| {
-                        format!(
-                            "while attempting to collect source fragment module {}",
-                            item.name.as_deref().unwrap_or("<unnamed>")
-                        )
-                    })?;
+                self.collect_module(
+                    module_id,
+                    item,
+                    module_item,
+                    order,
+                    Arc::clone(&module_file_context),
+                )
+                .with_context(|| {
+                    format!(
+                        "while attempting to collect source fragment module {}",
+                        item.name.as_deref().unwrap_or("<unnamed>")
+                    )
+                })?;
             }
             ItemKind::Use(use_item) => self.collect_use(module_id, item, source, use_item),
             ItemKind::Enum(enum_item) => self.collect_enum(module_id, item, source, enum_item),
             ItemKind::Impl(_) => self.collect_local_impl(module_id, item, source),
             ItemKind::MacroCall(macro_call) => {
-                self.collect_macro_call(module_id, item, source, macro_call, order);
+                self.collect_macro_call(
+                    module_id,
+                    item,
+                    source,
+                    macro_call,
+                    order,
+                    module_file_context,
+                );
             }
             ItemKind::MacroDefinition(macro_definition) => {
                 self.collect_macro_definition(module_id, item, source, macro_definition, order);
@@ -356,6 +437,7 @@ impl SourceFragmentCollector<'_> {
         source: ItemTreeRef,
         macro_call: &rg_item_tree::MacroCallItem,
         order: ItemOrder,
+        module_file_context: Arc<ModuleFileContext>,
     ) {
         // Source-like fragments can contain further item-position macro calls. Queue them exactly
         // like source-file calls so later passes can resolve them against refreshed scopes.
@@ -371,6 +453,7 @@ impl SourceFragmentCollector<'_> {
                 file_id: item.file_id,
                 span: item.span,
                 order,
+                module_file_context,
             },
             origin: MacroCallOrigin::Generated {
                 parent_call: self.origin.parent_call,
@@ -405,6 +488,7 @@ impl SourceFragmentCollector<'_> {
         item: &rg_item_tree::ItemNode,
         module_item: &ModuleItem,
         order: ItemOrder,
+        module_file_context: Arc<ModuleFileContext>,
     ) -> Result<()> {
         let Some(module_name) = item.name.clone() else {
             return Ok(());
@@ -413,35 +497,44 @@ impl SourceFragmentCollector<'_> {
         // Modules declared inside a source-like fragment are real modules in the caller's module
         // tree. Their declaration span stays with the fragment item, which keeps navigation precise.
         let source = &module_item.source;
+        let resolved_file = match source {
+            ModuleSource::Inline { .. } => None,
+            ModuleSource::OutOfLine => self.state.resolve_module_file(
+                &module_file_context,
+                module_name.as_str(),
+                module_item.path_override.as_deref(),
+            ),
+        };
         let origin = match source {
             ModuleSource::Inline { .. } => ModuleOrigin::Inline {
                 declaration_file: item.file_id,
                 declaration_span: item.span,
             },
-            ModuleSource::OutOfLine { definition_file } => ModuleOrigin::OutOfLine {
+            ModuleSource::OutOfLine => ModuleOrigin::OutOfLine {
                 declaration_file: item.file_id,
                 declaration_span: item.span,
-                definition_file: *definition_file,
+                definition_file: resolved_file.as_ref().map(|(file_id, _)| *file_id),
+                file_selection: ModuleFileSelection::from_path_override(
+                    module_item.path_override.as_deref(),
+                ),
             },
         };
         let inner_docs = match source {
             ModuleSource::Inline { .. } => module_item.inner_docs.clone(),
-            ModuleSource::OutOfLine {
-                definition_file: Some(definition_file),
-            } => self
-                .item_tree
-                .file(*definition_file)
-                .with_context(|| {
-                    format!(
-                        "while attempting to fetch source fragment out-of-line module docs for {:?}",
-                        definition_file
-                    )
-                })?
-                .docs
-                .clone(),
-            ModuleSource::OutOfLine {
-                definition_file: None,
-            } => None,
+            ModuleSource::OutOfLine => match resolved_file.as_ref() {
+                Some((definition_file, _)) => self
+                    .item_tree
+                    .file(*definition_file)
+                    .with_context(|| {
+                        format!(
+                            "while attempting to fetch source fragment out-of-line module docs for {:?}",
+                            definition_file
+                        )
+                    })?
+                    .docs
+                    .clone(),
+                None => None,
+            },
         };
         let semantic_visibility = self
             .state
@@ -466,39 +559,48 @@ impl SourceFragmentCollector<'_> {
             .textual_macro_scopes
             .record_module_declaration(child_module, order.clone());
 
-        // Once the child module exists, collect its contents using the child file's own source
-        // order. Only the module declaration itself is ordered as part of the include expansion.
+        // Once the child module exists, its contents start their own source order. The declaration
+        // keeps its position in the surrounding fragment or generated expansion.
         match source {
             ModuleSource::Inline { items } => {
-                self.collect_items(child_module, item.file_id, items, ItemOrder::real)
-                    .context("while attempting to collect source fragment inline module items")?;
+                let child_context = Arc::new(
+                    module_file_context
+                        .descend_inline(module_name.as_str(), module_item.path_override.as_deref()),
+                );
+                self.collect_items(
+                    child_module,
+                    item.file_id,
+                    items,
+                    ItemOrder::real,
+                    child_context,
+                )
+                .context("while attempting to collect source fragment inline module items")?;
             }
-            ModuleSource::OutOfLine {
-                definition_file: Some(definition_file),
-            } => {
-                let file_tree = self.item_tree.file(*definition_file).with_context(|| {
+            ModuleSource::OutOfLine => {
+                let Some((definition_file, child_context)) = resolved_file else {
+                    return Ok(());
+                };
+                let file_tree = self.item_tree.file(definition_file).with_context(|| {
                     format!(
                         "while attempting to fetch source fragment out-of-line module item tree for {:?}",
                         definition_file
                     )
                 })?;
-                self.collect_items(
+                self.collect_file_items(
                     child_module,
-                    *definition_file,
+                    definition_file,
                     &file_tree.top_level,
                     ItemOrder::real,
+                    child_context,
                 )
                 .context("while attempting to collect source fragment out-of-line module items")?;
             }
-            ModuleSource::OutOfLine {
-                definition_file: None,
-            } => {}
         }
 
         // Legacy `#[macro_use] mod child` makes child macro_rules definitions textually available
         // in the parent at the module declaration position.
         if let Some(macro_use) = &module_item.macro_use
-            && let Some(selector) = self.active_macro_use_selector(macro_use)
+            && let Some(selector) = macro_use.active_selector(&self.state.cfg_evaluator())
         {
             self.state.textual_macro_scopes.import_module_definitions(
                 parent_module,
@@ -646,7 +748,7 @@ impl SourceFragmentCollector<'_> {
         };
 
         if let Some(macro_use) = &extern_crate.macro_use
-            && let Some(selector) = self.active_macro_use_selector(macro_use)
+            && let Some(selector) = macro_use.active_selector(&self.state.cfg_evaluator())
         {
             self.state.macro_use_imports.push(MacroUseImport {
                 module: module_id,
@@ -686,24 +788,5 @@ impl SourceFragmentCollector<'_> {
             .module_scope_mut(self.state.crate_ref, module_id)
             .expect("current scope should exist for source fragment extern crate binding")
             .insert_binding(&binding_name, Namespace::Types, binding);
-    }
-
-    fn active_macro_use_selector(&self, attr: &MacroUseAttr) -> Option<MacroUseSelector> {
-        // Merge direct `#[macro_use]` with active `#[cfg_attr(..., macro_use)]` selectors into the
-        // single selector used by textual and extern-crate macro-use handling.
-        let mut selector = attr.direct.clone();
-        let cfg = self.state.cfg_evaluator();
-
-        for cfg_attr in &attr.cfg_attr_macro_use {
-            if !cfg.is_predicate_enabled(&cfg_attr.predicate) {
-                continue;
-            }
-            match &mut selector {
-                Some(selector) => selector.merge(&cfg_attr.selector),
-                None => selector = Some(cfg_attr.selector.clone()),
-            }
-        }
-
-        selector
     }
 }

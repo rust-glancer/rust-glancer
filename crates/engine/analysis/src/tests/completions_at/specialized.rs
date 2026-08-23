@@ -614,6 +614,71 @@ pub struct Child;
 }
 
 #[test]
+fn completes_modules_from_semantic_file_contexts() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "semantic_module_context_completions"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "semantic-context-tool"
+path = "src/tool.rs"
+
+//- /src/lib.rs
+#[path = "custom_imp.rs"]
+mod implementation;
+
+//- /src/custom_imp.rs
+mod bes$path_selected_file$;
+
+//- /src/beside.rs
+pub struct Beside;
+
+//- /src/custom_imp/below.rs
+pub struct Below;
+
+//- /src/tool.rs
+mod roo$custom_target_root$;
+
+//- /src/root_child.rs
+pub struct RootChild;
+
+//- /src/tool/wrong_child.rs
+pub struct WrongChild;
+"#,
+        &[
+            AnalysisQuery::complete_verbose_with_source(
+                "path-selected definition file",
+                "path_selected_file",
+            )
+            .matching("beside"),
+            AnalysisQuery::complete_verbose_with_source("custom target root", "custom_target_root")
+                .in_bin("semantic_module_context_completions")
+                .matching("root_child"),
+        ],
+        expect![[r#"
+            path-selected definition file
+            - module beside
+              detail: mod beside
+              sort: beside|03|00|Synthetic(ModuleDeclaration)
+              replace: 4..7
+
+            custom target root
+            - module root_child
+              detail: mod root_child
+              sort: root_child|03|00|Synthetic(ModuleDeclaration)
+              replace: 4..7
+        "#]],
+    );
+}
+
+#[test]
 fn preserves_the_existing_completion_site_behavior_matrix() {
     check_analysis_queries(
         r#"

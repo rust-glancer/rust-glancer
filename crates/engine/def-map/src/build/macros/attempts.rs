@@ -4,7 +4,7 @@
 //! scope snapshot, prepare any expansion work that can run outside the collector, and apply the
 //! generated syntax back into mutable crate state.
 
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
 
 use anyhow::Context as _;
 
@@ -21,6 +21,7 @@ use rg_std::ExpectedUnique;
 use rg_text::PackageNameInterners;
 
 use crate::build::{
+    GeneratedModuleResolutions,
     collect::CrateState,
     finalize::{FinalizeCrateStates, ScopeMatrix},
 };
@@ -137,13 +138,17 @@ where
     Ok(attempts)
 }
 
-/// Applies expansion results to crate state and returns whether new scope facts were added.
+/// Applies expansion results to crate state and reports whether visible scope facts were added.
+///
+/// Generated out-of-line modules without a resolution are retained as continuations and emitted
+/// through the source-request boundary instead of adding an empty module to the scope.
 pub(crate) fn apply_expansion_attempts(
     item_tree: &ItemTreeDb,
     states: &mut FinalizeCrateStates,
     interners: &mut PackageNameInterners,
     current_scopes: &mut ScopeMatrix,
     attempts: Vec<MacroExpansionAttempt>,
+    generated_module_resolutions: Option<&GeneratedModuleResolutions>,
 ) -> anyhow::Result<MacroExpansionApplyResult> {
     let mut result = MacroExpansionApplyResult::default();
 
@@ -177,8 +182,10 @@ pub(crate) fn apply_expansion_attempts(
                         module: attempt.origin.module,
                         order: attempt.origin.order,
                         parent_call: attempt.call_id,
+                        module_file_context: attempt.origin.module_file_context,
                     },
                     result: MacroExpansionApplyResult::default(),
+                    active_files: Default::default(),
                 }
                 .collect_file(file_id);
                 let directive_state = match collected {
@@ -210,8 +217,10 @@ pub(crate) fn apply_expansion_attempts(
                         module: attempt.origin.module,
                         order: attempt.origin.order,
                         parent_call: attempt.call_id,
+                        module_file_context: attempt.origin.module_file_context,
                     },
                     result: MacroExpansionApplyResult::default(),
+                    active_files: Default::default(),
                 }
                 .collect_fragment(file_id, &items);
                 let directive_state = match collected {
@@ -245,6 +254,8 @@ pub(crate) fn apply_expansion_attempts(
             state,
             interner,
             current_scopes,
+            item_tree,
+            generated_module_resolutions,
             origin: attempt.origin,
             result: MacroExpansionApplyResult::default(),
         }
@@ -275,7 +286,7 @@ impl MacroExpansionApplyResult {
         self.changed = true;
     }
 
-    fn merge(&mut self, other: Self) {
+    pub(super) fn merge(&mut self, other: Self) {
         self.changed |= other.changed;
     }
 }
@@ -493,6 +504,7 @@ impl MacroExpansionAttempt {
                 order: call.order.clone(),
                 dollar_crate: None,
                 parent_call: call_id,
+                module_file_context: Arc::clone(&call.module_file_context),
             },
             outcome,
             record,

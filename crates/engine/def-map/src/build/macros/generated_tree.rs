@@ -375,14 +375,15 @@ impl<'a> GeneratedSourceLowering<'a> {
                 .context("while attempting to lower generated inline module items")?;
             ModuleSource::Inline { items }
         } else {
-            ModuleSource::OutOfLine {
-                definition_file: None,
-            }
+            ModuleSource::OutOfLine
         };
 
         Ok(ModuleItem {
             inner_docs: <Documentation as MaybeFromAst<InnerDocs>>::maybe_from_ast(item, InnerDocs),
-            macro_use: None,
+            // Legacy macro-use affects the parent's textual macro scope after the generated module
+            // is collected, so it must survive the late-source pause too.
+            macro_use: rg_item_tree::MacroUseAttr::maybe_from_ast(item, &mut *self.interner),
+            path_override: rg_parse::module_path_override(item),
             source,
         })
     }

@@ -19,6 +19,7 @@ pub use rg_workspace::PackageSlot;
 pub use rg_macro_runtime::MacroExpansionPerformancePreference;
 
 pub use self::{
+    build::{DefMapBuildProgress, DefMapBuildSession, GeneratedModuleRequest},
     import::{ImportBinding, ImportData, ImportKind, ImportPath},
     local::{
         LocalDefData, LocalDefKind, LocalEnumVariantData, LocalEnumVariantEntry, LocalImplData,
@@ -30,7 +31,7 @@ pub use self::{
         BodyMacroStmtExpansionOutcome, BodyMacroTypeExpansionOutcome, ExpandedBodyMacro,
     },
     map::{DefMap, DefMapBuilder, PartialDefMap},
-    module::{ModuleData, ModuleOrigin},
+    module::{ModuleData, ModuleFileSelection, ModuleOrigin},
     package::{CrateData, MacroExpansionLimitGroup, MacroExpansionLimitReport, PackageDefMaps},
     profile::profile_descriptors,
     query::{

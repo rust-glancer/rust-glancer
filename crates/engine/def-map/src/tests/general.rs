@@ -207,6 +207,38 @@ pub fn work() {}
 }
 
 #[test]
+fn module_collection_terminates_on_file_cycles() {
+    utils::check_project_def_map(
+        r#"
+//- /Cargo.toml
+[package]
+name = "def_map_module_cycle"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub mod a;
+
+//- /src/a/mod.rs
+#[path = "../lib.rs"]
+pub mod root_again;
+"#,
+        expect![[r#"
+            package def_map_module_cycle
+
+            def_map_module_cycle [lib]
+            crate
+            - a : type [pub module def_map_module_cycle[lib]::crate::a]
+
+            crate::a
+            - root_again : type [pub module def_map_module_cycle[lib]::crate::a::root_again]
+
+            crate::a::root_again
+        "#]],
+    );
+}
+
+#[test]
 fn exposes_shared_out_of_line_modules_from_lib_and_bin_roots() {
     utils::check_project_def_map(
         r#"

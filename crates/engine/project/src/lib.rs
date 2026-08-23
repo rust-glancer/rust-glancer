@@ -45,6 +45,9 @@ pub use self::{
     residency::{PackageResidency, PackageResidencyPlan, PackageResidencyPolicy},
 };
 
+#[doc(hidden)]
+pub use self::project::bench_support;
+
 #[cfg(test)]
 pub mod testonly;
 

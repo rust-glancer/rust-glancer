@@ -30,106 +30,17 @@ pub use self::lower::{
     CurrentBodyUnavailable,
 };
 
-/// Builder for a fresh Body IR snapshot.
+/// Builds selected Body IR packages on top of one baseline snapshot.
+///
+/// Fresh construction and saved updates differ only in the baseline and selected package set.
+/// Keeping both on this builder makes materialization, lazy reads, worker limits, and compaction
+/// follow one path. Callers must choose one materialization mode before building.
 pub struct BodyIrDbBuilder<'db, 'names> {
+    baseline: &'db BodyIrDb,
     parse: &'db rg_parse::ParseDb,
     def_map: &'db rg_def_map::DefMapDb,
     semantic_ir: &'db rg_semantic_ir::SemanticIrDb,
-    policy: BodyIrBuildPolicy,
-    interners: NameInternerSource<'names>,
-}
-
-impl<'db> BodyIrDbBuilder<'db, 'static> {
-    pub(crate) fn new(
-        parse: &'db rg_parse::ParseDb,
-        def_map: &'db rg_def_map::DefMapDb,
-        semantic_ir: &'db rg_semantic_ir::SemanticIrDb,
-    ) -> Self {
-        Self {
-            parse,
-            def_map,
-            semantic_ir,
-            policy: BodyIrBuildPolicy::default(),
-            interners: NameInternerSource::Owned(PackageNameInterners::new(parse.package_count())),
-        }
-    }
-}
-
-impl<'db, 'names> BodyIrDbBuilder<'db, 'names> {
-    pub fn name_interners(
-        self,
-        interners: &'names mut PackageNameInterners,
-    ) -> BodyIrDbBuilder<'db, 'names> {
-        BodyIrDbBuilder {
-            parse: self.parse,
-            def_map: self.def_map,
-            semantic_ir: self.semantic_ir,
-            policy: self.policy,
-            interners: NameInternerSource::Borrowed(interners),
-        }
-    }
-
-    pub fn policy(mut self, policy: BodyIrBuildPolicy) -> Self {
-        self.policy = policy;
-        self
-    }
-
-    pub fn build(mut self) -> anyhow::Result<BodyIrDb> {
-        let def_map_txn = self
-            .def_map
-            .read_txn(PackageLoader::resident_only("resident body IR build"));
-        let semantic_ir_txn = self
-            .semantic_ir
-            .read_txn(PackageLoader::resident_only("resident body IR build"));
-        let packages = lower::build_packages(
-            self.parse,
-            &def_map_txn,
-            &semantic_ir_txn,
-            self.semantic_ir.package_count(),
-            self.policy,
-            self.interners.as_mut(),
-            None,
-        )?;
-        let resolved = resolve::resolve_packages(
-            packages,
-            self.parse,
-            self.interners.as_mut(),
-            &def_map_txn,
-            &semantic_ir_txn,
-            None,
-        )
-        .context("while attempting to resolve body IR packages")?;
-        let packages = compact_packages_two_phase(resolved);
-        let mut db = BodyIrDb::from_packages(packages);
-        {
-            let mut mutator = db.mutator();
-            mutator.compact_storage();
-        }
-        Ok(db)
-    }
-}
-
-enum NameInternerSource<'names> {
-    Owned(PackageNameInterners),
-    Borrowed(&'names mut PackageNameInterners),
-}
-
-impl NameInternerSource<'_> {
-    fn as_mut(&mut self) -> &mut PackageNameInterners {
-        match self {
-            Self::Owned(interners) => interners,
-            Self::Borrowed(interners) => interners,
-        }
-    }
-}
-
-/// Builder for a Body IR snapshot that replaces selected packages.
-pub struct BodyIrDbPackageRebuilder<'db, 'names> {
-    old: &'db BodyIrDb,
-    parse: &'db rg_parse::ParseDb,
-    def_map: &'db rg_def_map::DefMapDb,
-    semantic_ir: &'db rg_semantic_ir::SemanticIrDb,
-    materialization: BodyIrMaterializationPlan,
+    materialization: Option<BodyIrMaterializationPlan>,
     packages: &'db [PackageSlot],
     interners: &'names mut PackageNameInterners,
     def_map_loader: PackageLoader<'db, DefMapPackage>,
@@ -138,10 +49,10 @@ pub struct BodyIrDbPackageRebuilder<'db, 'names> {
     worker_limit: Option<NonZeroUsize>,
 }
 
-impl<'db, 'names> BodyIrDbPackageRebuilder<'db, 'names> {
+impl<'db, 'names> BodyIrDbBuilder<'db, 'names> {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
-        old: &'db BodyIrDb,
+        baseline: &'db BodyIrDb,
         parse: &'db rg_parse::ParseDb,
         def_map: &'db rg_def_map::DefMapDb,
         semantic_ir: &'db rg_semantic_ir::SemanticIrDb,
@@ -152,13 +63,11 @@ impl<'db, 'names> BodyIrDbPackageRebuilder<'db, 'names> {
         subset: &'db PackageSubset,
     ) -> Self {
         Self {
-            old,
+            baseline,
             parse,
             def_map,
             semantic_ir,
-            materialization: BodyIrMaterializationPlan::ConfiguredBodies(
-                BodyIrBuildPolicy::default(),
-            ),
+            materialization: None,
             packages,
             interners,
             def_map_loader,
@@ -170,24 +79,25 @@ impl<'db, 'names> BodyIrDbPackageRebuilder<'db, 'names> {
 
     /// Lowers body contents selected by the package-and-target policy.
     pub fn configured_bodies(mut self, policy: BodyIrBuildPolicy) -> Self {
-        self.materialization = BodyIrMaterializationPlan::ConfiguredBodies(policy);
+        self.materialization = Some(BodyIrMaterializationPlan::ConfiguredBodies(policy));
         self
     }
 
     /// Builds coverage records without lowering body contents selected by the policy.
     pub fn coverage_only(mut self, policy: BodyIrBuildPolicy) -> Self {
-        self.materialization = BodyIrMaterializationPlan::CoverageOnly(policy);
+        self.materialization = Some(BodyIrMaterializationPlan::CoverageOnly(policy));
         self
     }
 
+    /// Rebuilds bodies belonging to exact semantic interpretations of selected files.
     pub fn selected_files(mut self, files: Vec<BodyIrFile>) -> Self {
-        self.materialization = BodyIrMaterializationPlan::SelectedFiles(files);
+        self.materialization = Some(BodyIrMaterializationPlan::SelectedFiles(files));
         self
     }
 
     /// Rebuild complete Body IR for exact semantic crates without selecting sibling targets.
     pub fn selected_crates(mut self, crates: UniqueVec<CrateRef>) -> Self {
-        self.materialization = BodyIrMaterializationPlan::SelectedCrates(crates);
+        self.materialization = Some(BodyIrMaterializationPlan::SelectedCrates(crates));
         self
     }
 
@@ -222,16 +132,20 @@ impl<'db, 'names> BodyIrDbPackageRebuilder<'db, 'names> {
         priority_packages: Option<&(dyn Fn() -> Vec<PackageSlot> + Sync)>,
         publish_priority: &(dyn Fn(PackageSlot, PackageBodies) + Sync),
     ) -> anyhow::Result<BodyIrDb> {
-        // 1. Start with the old snapshot so untouched resident payloads remain shared and
+        // 1. Start with the baseline snapshot so untouched resident payloads remain shared and
         // offloaded slots keep their coverage summaries. The read transactions may load
         // dependencies from the bounded subset while selected packages are rebuilt in memory.
-        let rebuild_started = Instant::now();
+        let build_started = Instant::now();
         let clone_started = Instant::now();
-        let mut next = self.old.clone();
+        let mut next = self.baseline.clone();
         let clone_ms = clone_started.elapsed().as_millis();
         let setup_started = Instant::now();
         let packages = normalized_package_slots(self.packages);
-        let materialization = self.materialization.lowering();
+        let materialization = self
+            .materialization
+            .as_ref()
+            .context("Body IR package build requires a materialization selection")?
+            .lowering();
         let semantic_ir_txn = self
             .semantic_ir
             .read_txn_for_subset(self.semantic_ir_loader, self.subset);
@@ -252,11 +166,11 @@ impl<'db, 'names> BodyIrDbPackageRebuilder<'db, 'names> {
             self.interners,
             self.worker_limit,
         )
-        .context("while attempting to lower rebuilt body IR packages")?;
+        .context("while attempting to lower selected body IR packages")?;
         let lowering_ms = lowering_started.elapsed().as_millis();
 
-        // 3. Resolve the lowered bodies, then compact the rebuilt packages while the temporary
-        // allocations made by this rebuild are still grouped together.
+        // 3. Resolve the lowered bodies, then compact the selected packages while the temporary
+        // allocations made by this build are still grouped together.
         let resolution_started = Instant::now();
         let rebuilt_packages = resolve::resolve_selected_packages(
             rebuilt_packages,
@@ -268,7 +182,7 @@ impl<'db, 'names> BodyIrDbPackageRebuilder<'db, 'names> {
             publish_priority,
             self.worker_limit,
         )
-        .context("while attempting to resolve rebuilt body IR packages")?;
+        .context("while attempting to resolve selected body IR packages")?;
         let resolution_ms = resolution_started.elapsed().as_millis();
         let compaction_started = Instant::now();
         let compacted_packages = compact_rebuilt_packages_two_phase(rebuilt_packages);
@@ -281,7 +195,7 @@ impl<'db, 'names> BodyIrDbPackageRebuilder<'db, 'names> {
             let mut mutator = next.mutator();
             for (package, rebuilt) in compacted_packages {
                 let rebuilt =
-                    retain_unselected_crates(self.old, package, rebuilt, materialization)?;
+                    retain_unselected_crates(self.baseline, package, rebuilt, materialization)?;
                 mutator.replace_package(package, rebuilt).with_context(|| {
                     format!("while attempting to replace body IR package {}", package.0)
                 })?;
@@ -304,8 +218,8 @@ impl<'db, 'names> BodyIrDbPackageRebuilder<'db, 'names> {
             compaction_ms,
             replacement_ms,
             read_txn_drop_ms,
-            total_ms = rebuild_started.elapsed().as_millis(),
-            "Body IR package rebuild phases finished"
+            total_ms = build_started.elapsed().as_millis(),
+            "Body IR package build phases finished"
         );
         Ok(next)
     }
@@ -317,7 +231,7 @@ impl<'db, 'names> BodyIrDbPackageRebuilder<'db, 'names> {
 /// the selected crate slots prevents one integration test or example from resetting every other
 /// target in the same Cargo package.
 fn retain_unselected_crates(
-    old: &BodyIrDb,
+    baseline: &BodyIrDb,
     package: PackageSlot,
     rebuilt: PackageBodies,
     materialization: materialization::BodyIrMaterialization<'_>,
@@ -330,7 +244,7 @@ fn retain_unselected_crates(
         return Ok(rebuilt);
     }
 
-    let previous = old.resident_package(package).with_context(|| {
+    let previous = baseline.resident_package(package).with_context(|| {
         format!(
             "exact Body IR rebuild requires resident package {}",
             package.0
@@ -361,19 +275,6 @@ fn retain_unselected_crates(
         })
         .collect();
     Ok(PackageBodies::new(crates))
-}
-
-fn compact_packages_two_phase(packages: Vec<PackageBodies>) -> Vec<PackageBodies> {
-    // In-place shrinking reallocates and frees nested body vectors one at a time. Large builds can
-    // then leave the few final allocations scattered across allocator slabs that used to hold
-    // transient capacity. Compact copies are built while the source allocation set is still dense,
-    // then the source packages are dropped together so mostly-empty slabs can be reclaimed.
-    let compacted = packages
-        .iter()
-        .map(compact_package_copy)
-        .collect::<Vec<_>>();
-    drop(packages);
-    compacted
 }
 
 fn compact_rebuilt_packages_two_phase(

@@ -168,6 +168,52 @@ fn module_discovery_parses_reachable_out_of_line_files() {
 }
 
 #[test]
+fn module_discovery_carries_module_path_provenance() {
+    check_parse_db_after_module_discovery(
+        r#"
+        //- /Cargo.toml
+        [package]
+        name = "module_context_discovery"
+        version = "0.1.0"
+        edition = "2024"
+
+        [lib]
+        path = "src/tool.rs"
+
+        //- /src/tool.rs
+        pub mod flat;
+
+        #[path = "models"]
+        pub mod inline {
+            pub mod nested;
+        }
+
+        //- /src/flat.rs
+        #[path = "sibling.rs"]
+        pub mod sibling;
+
+        //- /src/sibling.rs
+        pub struct Sibling;
+
+        //- /src/models/nested.rs
+        pub struct Nested;
+        "#,
+        expect![[r#"
+            packages 1 (workspace members: 1, dependencies: 0)
+
+            package module_context_discovery [member]
+            targets
+            - module_context_discovery [lib] -> src/tool.rs
+            files
+            - src/flat.rs
+            - src/models/nested.rs
+            - src/sibling.rs
+            - src/tool.rs
+        "#]],
+    );
+}
+
+#[test]
 fn module_discovery_shares_files_across_targets() {
     check_parse_db_after_module_discovery(
         r#"

@@ -38,7 +38,7 @@ use rg_text::NameInterner;
 
 use super::occurrence::IndexedSignatureTypeScope;
 use super::scan::{
-    AssociatedPathQualifier, BodyQualifiedPathContext, ModuleSourceSiteScanner,
+    AssociatedPathQualifier, BodyQualifiedPathContext, ModuleFileBase, ModuleSourceSiteScanner,
     PathCompletionSiteScanner, PatternCompletionKind, SignatureCompletionSite,
     SignatureSourceScanner, SignatureTypePathScope, TraitImplSourceSiteScanner, TypeNamePosition,
 };
@@ -69,19 +69,43 @@ pub struct IndexedMemberAccessSite {
 /// }
 /// ```
 ///
-/// The inline path tells filesystem lookup which directories to descend below the current file.
+/// The file base distinguishes target roots, conventional module files, and `#[path]` files. The
+/// inline path then tells filesystem lookup which directories to descend below that base.
 /// `declared_children` lets module-name completion exclude siblings that already have a `mod`
 /// declaration; the declaration under the cursor is deliberately not included in that set.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IndexedModuleSourceSite {
     module: ModuleRef,
+    file_base: IndexedModuleFileBase,
     inline_module_path: Vec<String>,
     declared_children: Vec<String>,
+}
+
+/// Filesystem lookup rule inherited from the nearest file-backed semantic module.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IndexedModuleFileBase {
+    TargetRoot,
+    Conventional,
+    PathAttribute,
+}
+
+impl From<ModuleFileBase> for IndexedModuleFileBase {
+    fn from(file_base: ModuleFileBase) -> Self {
+        match file_base {
+            ModuleFileBase::TargetRoot => Self::TargetRoot,
+            ModuleFileBase::Conventional => Self::Conventional,
+            ModuleFileBase::PathAttribute => Self::PathAttribute,
+        }
+    }
 }
 
 impl IndexedModuleSourceSite {
     pub fn module(&self) -> ModuleRef {
         self.module
+    }
+
+    pub fn file_base(&self) -> IndexedModuleFileBase {
+        self.file_base
     }
 
     pub fn inline_module_path(&self) -> &[String] {
@@ -485,6 +509,7 @@ impl<'a, 'db> SourceCompletionView<'a, 'db> {
                 .context("scan module completion source site")?
                 .map(|site| IndexedModuleSourceSite {
                     module: site.module,
+                    file_base: site.file_base.into(),
                     inline_module_path: site.inline_module_path,
                     declared_children: site.declared_children,
                 }),
@@ -538,6 +563,7 @@ impl<'a, 'db> SourceCompletionView<'a, 'db> {
         .context("match current module syntax to saved module")?
         .map(|site| IndexedModuleSourceSite {
             module: site.module,
+            file_base: site.file_base.into(),
             inline_module_path: site.inline_module_path,
             declared_children: site.declared_children,
         }))

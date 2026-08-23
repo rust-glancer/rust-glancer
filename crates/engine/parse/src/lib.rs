@@ -18,7 +18,9 @@ pub use self::{
     declaration_header::{DeclarationAssociationIndex, DeclarationHeaderCursor},
     file::{FileId, ParsedFile, ParsedFileSnapshot, parse_source_file},
     line_index::{LineIndex, LineIndexSnapshot},
-    module::{ModuleFileContext, enclosing_inline_module_path},
+    module::{
+        ModuleFileContext, ModuleFileResolution, enclosing_inline_module_path, module_path_override,
+    },
     package::{Package, PackageParseSnapshot},
     span::{LineColumnSpan, Position, Span, TextSpan},
     target::{CargoTarget, CargoTargetId},

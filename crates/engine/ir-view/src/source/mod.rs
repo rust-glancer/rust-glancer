@@ -15,10 +15,10 @@ mod tests;
 
 pub use completion::{
     IndexedAssociatedPathQualifier, IndexedAssociatedTypeBindingScope,
-    IndexedAssociatedTypeBindingSite, IndexedMemberAccessSite, IndexedModuleSourceSite,
-    IndexedPatternCompletionKind, IndexedQualifiedPathContext, IndexedQualifiedPathScope,
-    IndexedQualifiedPathSite, IndexedRecordFieldListSite, IndexedRecordOwner,
-    IndexedSignatureTypeSite, IndexedTraitImplSite, IndexedTypeNamePosition,
+    IndexedAssociatedTypeBindingSite, IndexedMemberAccessSite, IndexedModuleFileBase,
+    IndexedModuleSourceSite, IndexedPatternCompletionKind, IndexedQualifiedPathContext,
+    IndexedQualifiedPathScope, IndexedQualifiedPathSite, IndexedRecordFieldListSite,
+    IndexedRecordOwner, IndexedSignatureTypeSite, IndexedTraitImplSite, IndexedTypeNamePosition,
     IndexedUnqualifiedNameContext, IndexedUnqualifiedNameScope, IndexedUnqualifiedNameSite,
     SourceCompletionView,
 };

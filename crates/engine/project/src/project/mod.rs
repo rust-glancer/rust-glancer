@@ -4,7 +4,9 @@
 //! only after it has been fully built and its source has been checked. Queries may load package
 //! data that was left on disk, but loading that data does not create another source generation.
 
+pub mod bench_support;
 mod build;
+mod generated_modules;
 pub(crate) mod loading;
 pub(crate) mod offloading;
 mod package_set;

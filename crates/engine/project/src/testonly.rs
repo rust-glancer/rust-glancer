@@ -5,7 +5,7 @@ use std::{
 
 use rg_def_map::PackageSlot;
 use rg_parse::{FileId, ParseDb};
-use rg_workspace::{WorkspaceLoweringConfig, WorkspaceMetadata};
+use rg_workspace::{SysrootSources, WorkspaceLoweringConfig, WorkspaceMetadata};
 use test_fixture::{CrateFixture, FixtureMarkers, FixtureSpec, fixture_crate_with_markers};
 
 use crate::{AnalysisChangeSummary, PackageResidencyPolicy, Project, SavedFileChange};
@@ -14,17 +14,41 @@ use crate::{AnalysisChangeSummary, PackageResidencyPolicy, Project, SavedFileCha
 pub struct ProjectSourceFixture {
     fixture: CrateFixture,
     markers: FixtureMarkers,
+    has_sysroot: bool,
 }
 
 impl ProjectSourceFixture {
     pub fn build(spec: &str) -> Self {
         let (fixture, markers) = fixture_crate_with_markers(spec);
-        Self { fixture, markers }
+        Self {
+            fixture,
+            markers,
+            has_sysroot: false,
+        }
+    }
+
+    pub fn build_with_sysroot(spec: &str) -> Self {
+        let (fixture, markers) = fixture_crate_with_markers(spec);
+        Self {
+            fixture,
+            markers,
+            has_sysroot: true,
+        }
     }
 
     pub fn workspace_metadata(&self) -> WorkspaceMetadata {
-        WorkspaceMetadata::for_tests(self.fixture.metadata(), WorkspaceLoweringConfig::default())
-            .expect("fixture workspace metadata should build")
+        let workspace = WorkspaceMetadata::for_tests(
+            self.fixture.metadata(),
+            WorkspaceLoweringConfig::default(),
+        )
+        .expect("fixture workspace metadata should build");
+        if !self.has_sysroot {
+            return workspace;
+        }
+
+        let sysroot = SysrootSources::from_library_root(self.fixture.path("sysroot/library"))
+            .expect("fixture sysroot should be complete");
+        workspace.with_sysroot_sources(Some(sysroot))
     }
 
     pub fn build_project(&self) -> Project {
@@ -71,6 +95,12 @@ impl ProjectFixture {
     ) -> Self {
         let source = ProjectSourceFixture::build(spec);
         let project = source.build_project_with_package_residency_policy(package_residency_policy);
+        Self { source, project }
+    }
+
+    pub fn build_with_sysroot(spec: &str) -> Self {
+        let source = ProjectSourceFixture::build_with_sysroot(spec);
+        let project = source.build_project();
         Self { source, project }
     }
 

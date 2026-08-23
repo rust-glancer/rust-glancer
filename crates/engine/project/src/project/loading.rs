@@ -50,6 +50,47 @@ impl PackageReadLoaders {
         )
     }
 
+    /// Creates cache readers for dependencies while excluding every package rebuilt from source.
+    ///
+    /// A dirty package's final fingerprint is unknown until generated-module discovery settles, so
+    /// allowing its old artifact into the build would mix two source generations.
+    pub(crate) fn for_package_rebuild(
+        project: &ProjectState,
+        source_packages: &[PackageSlot],
+    ) -> Self {
+        Self::from_cache_excluding(
+            project.cache_plan.clone(),
+            project.cache_store.clone(),
+            project.package_source_fingerprints.clone(),
+            source_packages,
+        )
+    }
+
+    /// Clears selected fingerprints before constructing artifact readers.
+    ///
+    /// Unselected packages keep their already validated fingerprints and remain available for lazy
+    /// dependency reads. A selected slot has no usable artifact identity until its source build has
+    /// produced the final file table and fingerprint.
+    pub(crate) fn from_cache_excluding(
+        cache_plan: WorkspaceCachePlan,
+        cache_store: PackageCacheStore,
+        mut package_source_fingerprints: Vec<Option<Fingerprint>>,
+        source_packages: &[PackageSlot],
+    ) -> Self {
+        for package in source_packages {
+            if let Some(fingerprint) = package_source_fingerprints.get_mut(package.0) {
+                *fingerprint = None;
+            }
+        }
+        debug_assert!(source_packages.iter().all(|package| {
+            package_source_fingerprints
+                .get(package.0)
+                .is_some_and(Option::is_none)
+        }));
+
+        Self::from_cache(cache_plan, cache_store, package_source_fingerprints)
+    }
+
     pub(crate) fn from_cache(
         cache_plan: WorkspaceCachePlan,
         cache_store: PackageCacheStore,

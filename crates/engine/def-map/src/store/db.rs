@@ -6,10 +6,7 @@ use rg_item_tree::ItemTreeDb;
 use rg_package_store::{PackageLoader, PackageStore, PackageSubset};
 use rg_text::PackageNameInterners;
 
-use crate::{
-    DefMapReadTxn, PackageSlot,
-    build::{DefMapDbBuilder, DefMapDbPackageRebuilder},
-};
+use crate::{DefMapBuildSession, DefMapReadTxn, MacroExpansionPerformancePreference, PackageSlot};
 use rg_std::{MemorySize, Shrink};
 use rg_workspace::{PackageOrigin, WorkspaceMetadata};
 
@@ -20,38 +17,35 @@ pub struct DefMapDb {
 }
 
 impl DefMapDb {
-    /// Starts building crate-local def maps from parsed metadata and lowered item trees.
-    pub fn builder<'a>(
-        workspace: &'a WorkspaceMetadata,
-        parse: &'a rg_parse::ParseDb,
-        item_tree: &'a ItemTreeDb,
-    ) -> DefMapDbBuilder<'a, 'static> {
-        DefMapDbBuilder::new(workspace, parse, item_tree)
-    }
-
-    /// Starts rebuilding selected packages against a logical old def-map view.
-    pub fn package_rebuilder<'a, 'db>(
-        &'a self,
-        old_read: &'a DefMapReadTxn<'db>,
-        workspace: &'a WorkspaceMetadata,
-        parse: &'a rg_parse::ParseDb,
-        item_tree: &'a ItemTreeDb,
-        packages: &'a [PackageSlot],
-        interners: &'a mut PackageNameInterners,
-    ) -> DefMapDbPackageRebuilder<'a, 'db> {
-        DefMapDbPackageRebuilder::new(
-            self, old_read, workspace, parse, item_tree, packages, interners,
+    /// Starts replacing selected packages while retaining state across generated-source pauses.
+    #[allow(clippy::too_many_arguments)]
+    pub fn start_package_build(
+        &self,
+        baseline_read: &DefMapReadTxn<'_>,
+        workspace: &WorkspaceMetadata,
+        parse: &rg_parse::ParseDb,
+        item_tree: &ItemTreeDb,
+        packages: &[PackageSlot],
+        interners: &mut PackageNameInterners,
+        performance_preference: MacroExpansionPerformancePreference,
+    ) -> anyhow::Result<DefMapBuildSession> {
+        DefMapBuildSession::start(
+            self,
+            baseline_read,
+            workspace,
+            parse,
+            item_tree,
+            packages,
+            interners,
+            performance_preference,
         )
-    }
-
-    pub(crate) fn from_packages(packages: Vec<PackageDefMaps>) -> Self {
-        Self::from_package_store(PackageStore::from_vec(packages))
     }
 
     /// Builds a def-map database from an already shaped package store.
     ///
-    /// Fresh builds use `from_packages`, while artifact-backed loading can construct resident and
-    /// offloaded package slots directly after validating the workspace snapshot.
+    /// Project construction starts with offloaded package slots and replaces every source-built
+    /// package through a resumable build session. Artifact-backed loading can mix resident and
+    /// offloaded slots after validating the workspace snapshot.
     pub fn from_package_store(packages: PackageStore<PackageDefMaps>) -> Self {
         Self { packages }
     }
@@ -206,10 +200,6 @@ impl DefMapDbMutator<'_> {
         self.db.replace_package(package_slot, package)
     }
 
-    pub(crate) fn compact_storage(&mut self) {
-        Shrink::shrink_to_fit(&mut self.db.packages);
-    }
-
     pub(crate) fn compact_packages(&mut self, packages: &[PackageSlot]) {
         // Build compact package copies before replacing the source packages. This keeps the final
         // allocations grouped together instead of interleaving each shrink allocation with frees
@@ -269,6 +259,7 @@ impl UnresolvedImportStats {
 mod tests {
     use crate::{CrateData, DefMapBuilder};
     use rg_ir_model::CrateRef;
+    use rg_package_store::PackageEntry;
     use rg_parse::CargoTargetId;
 
     use super::*;
@@ -276,10 +267,10 @@ mod tests {
     #[test]
     fn crate_maps_preserve_package_slots_when_middle_package_is_offloaded() {
         let mut db = DefMapDb {
-            packages: PackageStore::from_vec(vec![
-                package_with_one_crate("workspace"),
-                package_with_one_crate("offloaded"),
-                package_with_one_crate("dependency"),
+            packages: PackageStore::from_entries(vec![
+                PackageEntry::resident(package_with_one_crate("workspace")),
+                PackageEntry::resident(package_with_one_crate("offloaded")),
+                PackageEntry::resident(package_with_one_crate("dependency")),
             ]),
         };
 

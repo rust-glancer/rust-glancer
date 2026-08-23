@@ -7,9 +7,9 @@ use rg_def_map::{
     BodyItemSourceRef, CrateResolutionEnv, DefMap, DefMapBuilder, DefMapSource, ImportBinding,
     ImportData, ImportKind, ImportPath, ItemSource, LocalDefData, LocalDefKind,
     LocalEnumVariantData, LocalEnumVariantEntry, LocalImplData, MacroDefinitionEnv,
-    MacroDefinitionView, ModuleData, ModuleOrigin, ModuleScope, ModuleScopeBuilder, Namespace,
-    ScopeBinding, ScopeBindingProvenance, ScopeEntryRef, ScopeResolutionEnv, ScopeResolver,
-    Visibility,
+    MacroDefinitionView, ModuleData, ModuleFileSelection, ModuleOrigin, ModuleScope,
+    ModuleScopeBuilder, Namespace, ScopeBinding, ScopeBindingProvenance, ScopeEntryRef,
+    ScopeResolutionEnv, ScopeResolver, Visibility,
 };
 use rg_ir_model::{
     BodyRef, CrateRef, DefId, DefMapRef, ImportRef, LocalDefRef, LocalEnumVariantRef, ModuleId,
@@ -252,17 +252,20 @@ impl<'body> BodyDefMapCollector<'body> {
                 declaration_file: item.file_id,
                 declaration_span: item.span,
             },
-            ModuleSource::OutOfLine { definition_file } => ModuleOrigin::OutOfLine {
+            ModuleSource::OutOfLine => ModuleOrigin::OutOfLine {
                 declaration_file: item.file_id,
                 declaration_span: item.span,
-                definition_file: *definition_file,
+                definition_file: None,
+                file_selection: ModuleFileSelection::from_path_override(
+                    module_item.path_override.as_deref(),
+                ),
             },
         };
         let docs = match &module_item.source {
             ModuleSource::Inline { .. } => {
                 Documentation::concat(item.docs.clone(), module_item.inner_docs.clone())
             }
-            ModuleSource::OutOfLine { .. } => item.docs.clone(),
+            ModuleSource::OutOfLine => item.docs.clone(),
         };
         let visibility = self.builder.resolve_visibility(parent, &item.visibility);
 

@@ -9,6 +9,18 @@ use rg_text::PackageNameInterners;
 
 use crate::{Package, lower};
 
+/// File work performed while adding one captured source to an existing package tree.
+///
+/// The requested file may lead to ordinary descendants such as `mod nested;`, so both counts can
+/// cover more than the file passed to `ItemTreeDb::lower_package_file`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct IncrementalItemTreeLowering {
+    /// Files that received a new `FileTree` during this call.
+    pub newly_lowered_files: usize,
+    /// Files encountered through the module graph whose `FileTree` already existed.
+    pub reused_files: usize,
+}
+
 /// Lowered item trees for all parsed packages.
 #[derive(Debug, Clone, PartialEq, Eq, Default, MemorySize, Shrink)]
 pub struct ItemTreeDb {
@@ -16,16 +28,6 @@ pub struct ItemTreeDb {
 }
 
 impl ItemTreeDb {
-    /// Builds file-local item trees using caller-retained package-local name interners.
-    pub fn build(
-        parse: &mut ParseDb,
-        interners: &mut PackageNameInterners,
-    ) -> anyhow::Result<Self> {
-        let package_count = parse.package_count();
-        let packages = (0..package_count).collect::<Vec<_>>();
-        Self::build_packages(parse, &packages, interners)
-    }
-
     /// Builds item trees only for selected packages using caller-retained interners.
     ///
     /// Project rebuilds use this as a temporary lowering input: affected packages are populated,
@@ -58,6 +60,55 @@ impl ItemTreeDb {
     /// Returns one package tree set by slot.
     pub fn package(&self, package_slot: usize) -> Option<&Package> {
         self.packages.get(package_slot)?.as_ref()
+    }
+
+    /// Adds one captured package file through the ordinary package lowerer.
+    ///
+    /// The file may recursively add ordinary out-of-line descendants. Existing file trees and
+    /// target roots retain their package-local ids and are never replaced. Syntax loaded for this
+    /// incremental pass is evicted before the method returns.
+    pub fn lower_package_file(
+        &mut self,
+        parse: &mut ParseDb,
+        package_slot: usize,
+        file_id: rg_parse::FileId,
+        module_file_context: rg_parse::ModuleFileContext,
+        interners: &mut PackageNameInterners,
+    ) -> anyhow::Result<IncrementalItemTreeLowering> {
+        let sources = parse.source_inventory_handle();
+        let parse_package = parse
+            .package_mut(package_slot)
+            .with_context(|| format!("while attempting to fetch parsed package {package_slot}"))?;
+        let item_tree_package = self
+            .packages
+            .get_mut(package_slot)
+            .and_then(Option::as_mut)
+            .with_context(|| {
+                format!("while attempting to fetch item-tree package {package_slot}")
+            })?;
+        let interner = interners.package_mut(package_slot).with_context(|| {
+            format!("while attempting to fetch name interner for package {package_slot}")
+        })?;
+
+        let stats = lower::extend_package(
+            parse_package,
+            &sources,
+            interner,
+            item_tree_package,
+            file_id,
+            module_file_context,
+        )
+        .with_context(|| {
+            format!(
+                "while attempting to incrementally lower file {file_id:?} for package {package_slot}"
+            )
+        })?;
+        parse_package.evict_syntax_trees();
+
+        Ok(IncrementalItemTreeLowering {
+            newly_lowered_files: stats.lowered_files,
+            reused_files: stats.reused_files,
+        })
     }
 
     fn build_packages_parallel(

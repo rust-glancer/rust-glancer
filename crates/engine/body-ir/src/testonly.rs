@@ -1,12 +1,13 @@
 use std::convert::Infallible;
 
-use rg_def_map::{DefMap, DefMapDb, DefMapSource};
+use rg_def_map::{DefMap, DefMapDb, DefMapSource, PackageSlot};
 use rg_ir_model::{BodyRef, CrateRef, DefMapRef, ModuleRef};
+use rg_package_store::{PackageEntry, PackageLoader, PackageStore, PackageSubset};
 use rg_parse::ParseDb;
 use rg_semantic_ir::{ItemStore, ItemStoreSource, SemanticIrDb, testonly::SemanticIrFixture};
 use rg_text::PackageNameInterners;
 
-use crate::{BodyIrBuildPolicy, BodyIrDb, BodyView};
+use crate::{BodyIrBuildPolicy, BodyIrDb, BodyView, PackageBodiesCoverage};
 
 /// End-to-end fixture for tests that need body lowering and type propagation data.
 pub struct BodyIrFixture {
@@ -39,16 +40,34 @@ impl BodyIrFixture {
         semantic_ir: SemanticIrFixture,
         policy: BodyIrBuildPolicy,
     ) -> Self {
-        let mut names = PackageNameInterners::new(semantic_ir.parse_db().package_count());
-        let body_ir = BodyIrDb::builder(
-            semantic_ir.parse_db(),
-            semantic_ir.def_map_db(),
-            semantic_ir.semantic_ir_db(),
-        )
-        .name_interners(&mut names)
-        .policy(policy)
-        .build()
-        .expect("fixture body ir db should build");
+        let package_count = semantic_ir.parse_db().package_count();
+        let packages = (0..package_count).map(PackageSlot).collect::<Vec<_>>();
+        let subset = PackageSubset::all(package_count);
+        let mut names = PackageNameInterners::new(package_count);
+        let baseline = BodyIrDb::from_package_store(PackageStore::from_entries(
+            (0..package_count)
+                .map(|_| {
+                    PackageEntry::offloaded_with(PackageBodiesCoverage::from_crates(Vec::new()))
+                })
+                .collect(),
+        ));
+
+        // Every fixture package is selected, so provisional coverage is replaced before reads.
+        // The normal builder still owns lowering, resolution, and package replacement.
+        let body_ir = baseline
+            .builder(
+                semantic_ir.parse_db(),
+                semantic_ir.def_map_db(),
+                semantic_ir.semantic_ir_db(),
+                &packages,
+                &mut names,
+                PackageLoader::resident_only("fixture DefMap"),
+                PackageLoader::resident_only("fixture Semantic IR"),
+                &subset,
+            )
+            .configured_bodies(policy)
+            .build()
+            .expect("fixture body ir db should build");
 
         Self {
             semantic_ir,

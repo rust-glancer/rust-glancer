@@ -339,7 +339,7 @@ fn materialize_files(state: &mut ProjectState, files: &[(CrateRef, FileId)]) -> 
     let loaders = PackageReadLoaders::new(state);
     let body_ir = state
         .body_ir
-        .package_rebuilder(
+        .builder(
             &state.parse,
             &state.def_map,
             &state.semantic_ir,
@@ -420,7 +420,7 @@ fn materialize_crates(state: &mut ProjectState, crates: &[CrateRef]) -> anyhow::
     let loaders = PackageReadLoaders::new(state);
     let body_ir = state
         .body_ir
-        .package_rebuilder(
+        .builder(
             &state.parse,
             &state.def_map,
             &state.semantic_ir,
@@ -475,9 +475,9 @@ fn finish_resident_packages_with_sampler(
     let finish_subset =
         PhasePackageSet::from_slice(packages).visible_dependency_subset(&state.workspace);
     let loaders = PackageReadLoaders::new(state);
-    let rebuilder = state
+    let builder = state
         .body_ir
-        .package_rebuilder(
+        .builder(
             &state.parse,
             &state.def_map,
             &state.semantic_ir,
@@ -491,9 +491,9 @@ fn finish_resident_packages_with_sampler(
         .configured_bodies(state.body_ir_policy);
     let body_ir = match priority_packages {
         Some(priority_packages) => {
-            rebuilder.build_with_package_priority(priority_packages, publish_priority)
+            builder.build_with_package_priority(priority_packages, publish_priority)
         }
-        None => rebuilder.build(),
+        None => builder.build(),
     };
 
     // Fresh construction evicts this same reloadable text before exposing retained-state memory.

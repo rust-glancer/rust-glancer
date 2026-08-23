@@ -72,6 +72,7 @@ impl<'a, 'db> ModuleDeclarationCompletionResolver<'a, 'db> {
             .module_file_candidates(
                 self.crate_ref,
                 self.file_id,
+                site.source().file_base(),
                 site.source().inline_module_path(),
             )
             .context("list module declaration candidates")?

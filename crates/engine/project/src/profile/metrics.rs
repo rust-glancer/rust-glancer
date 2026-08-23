@@ -43,6 +43,35 @@ declare_metrics! {
             memory_snapshot DEF_MAP_MEMORY = "memory" [title "after def-map"];
         }
 
+        scope "project.build.generated_modules" {
+            /// Coalesced generated-module source requests returned across discovery waves.
+            counter GENERATED_MODULE_REQUESTS = "requests.seen";
+            /// Distinct construction keys resolved by the project boundary.
+            counter GENERATED_MODULE_UNIQUE_REQUESTS = "requests.unique";
+            /// Distinct package-local source paths resolved from those requests.
+            counter GENERATED_MODULE_UNIQUE_PATHS = "paths.unique";
+            /// Requests coalesced onto a path already handled earlier in this discovery run.
+            counter GENERATED_MODULE_COALESCED_PATHS = "paths.coalesced";
+            /// Requests whose supported module path did not exist.
+            counter GENERATED_MODULE_MISSING_PATHS = "paths.missing";
+            /// Parse package files added by late discovery, including ordinary descendants.
+            counter GENERATED_MODULE_DISCOVERED_FILES = "files.discovered";
+            /// File trees added by incremental ItemTree lowering.
+            counter GENERATED_MODULE_ITEM_TREE_FILES_LOWERED = "item_tree.files_lowered";
+            /// Existing file trees reused by incremental ItemTree lowering.
+            counter GENERATED_MODULE_ITEM_TREE_FILES_REUSED = "item_tree.files_reused";
+            /// Batches of generated module requests processed by the coordinator.
+            counter GENERATED_MODULE_DISCOVERY_WAVES = "waves";
+            /// Resumptions of retained mutable DefMap state after a source-answer batch.
+            counter GENERATED_MODULE_DEF_MAP_RESUMES = "def_map_resumes";
+            /// Whether the bounded discovery-wave guard stopped source discovery.
+            gauge GENERATED_MODULE_DISCOVERY_LIMIT_REACHED = "discovery_limit_reached" [None];
+            /// Time spent resuming DefMap construction after source discovery.
+            duration TIMING_GENERATED_MODULE_DEF_MAP_RESUMES = "timings.def_map_resumes";
+            /// Source-built package fingerprints changed by late discovery.
+            counter GENERATED_MODULE_CACHE_FINGERPRINT_CHANGES = "cache.fingerprint_changes";
+        }
+
         scope "project.build.semantic_ir" {
             memory_snapshot SEMANTIC_IR_MEMORY = "memory" [title "after semantic-ir"];
         }
