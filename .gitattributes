@@ -1,0 +1,3 @@
+# Normalize all text files to LF so test fixtures and expectations behave identically on
+# every platform, regardless of the local `core.autocrlf` setting.
+* text=auto eol=lf
