@@ -313,7 +313,7 @@ struct ModuleDiscovery<'db> {
     package: &'db mut Package,
     sources: &'db SourceInventory,
     visited: HashSet<(FileId, ModuleFileContext)>,
-    active_stack: HashSet<(FileId, ModuleFileContext)>,
+    active_files: HashSet<FileId>,
 }
 
 impl<'db> ModuleDiscovery<'db> {
@@ -322,7 +322,7 @@ impl<'db> ModuleDiscovery<'db> {
             package,
             sources,
             visited: HashSet::default(),
-            active_stack: HashSet::default(),
+            active_files: HashSet::default(),
         }
     }
 
@@ -359,8 +359,10 @@ impl<'db> ModuleDiscovery<'db> {
             return Ok(());
         }
 
-        // Recursive module graphs can revisit a file before the first traversal finishes.
-        if !self.active_stack.insert(visit.clone()) {
+        // Completed visits stay context-sensitive because one file can contribute modules from
+        // several logical locations. Re-entering a file already on this recursion path is always a
+        // cycle, even when each edge builds a different lexical context such as repeated `a/..`.
+        if !self.active_files.insert(current_file_id) {
             return Ok(());
         }
 
@@ -394,7 +396,7 @@ impl<'db> ModuleDiscovery<'db> {
                 )
             })?;
 
-        self.active_stack.remove(&visit);
+        self.active_files.remove(&current_file_id);
         self.visited.insert(visit);
         Ok(())
     }

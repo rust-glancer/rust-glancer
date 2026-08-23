@@ -84,7 +84,7 @@ struct PackageLowering<'db> {
     parse_package: &'db mut ParsePackage,
     sources: &'db rg_source::SourceInventory,
     interner: &'db mut NameInterner,
-    active_stack: HashSet<(FileId, ModuleFileContext)>,
+    active_files: HashSet<FileId>,
     file_trees: &'db mut Arena<FileId, Option<FileTree>>,
     stats: PackageLoweringStats,
 }
@@ -100,7 +100,7 @@ impl<'db> PackageLowering<'db> {
             parse_package,
             sources,
             interner,
-            active_stack: HashSet::default(),
+            active_files: HashSet::default(),
             file_trees,
             stats: PackageLoweringStats::default(),
         }
@@ -140,9 +140,9 @@ impl<'db> PackageLowering<'db> {
         current_file_id: FileId,
         module_file_context: ModuleFileContext,
     ) -> anyhow::Result<()> {
-        let visit = (current_file_id, module_file_context.clone());
-        // Recursive module/include graphs can revisit the same semantic edge before it finishes.
-        if !self.active_stack.insert(visit.clone()) {
+        // A completed file tree can be revisited under another logical context so its source edges
+        // resolve again. A file already on this recursion path is a cycle regardless of context.
+        if !self.active_files.insert(current_file_id) {
             return Ok(());
         }
 
@@ -179,7 +179,7 @@ impl<'db> PackageLowering<'db> {
         if self.file_trees[current_file_id].is_some() {
             self.stats.reused_files += 1;
             self.discover_items(current_file_id, items, &module_file_context)?;
-            self.active_stack.remove(&visit);
+            self.active_files.remove(&current_file_id);
             return Ok(());
         }
 
@@ -200,7 +200,7 @@ impl<'db> PackageLowering<'db> {
             items: builder.items,
         });
         self.stats.lowered_files += 1;
-        self.active_stack.remove(&visit);
+        self.active_files.remove(&current_file_id);
         Ok(())
     }
 

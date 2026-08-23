@@ -381,6 +381,39 @@ pub struct Shared;
 }
 
 #[test]
+fn module_lowering_terminates_on_file_cycles() {
+    utils::check_project_item_tree(
+        r#"
+//- /Cargo.toml
+[package]
+name = "cycle_lowering"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub mod a;
+
+//- /src/a/mod.rs
+#[path = "../lib.rs"]
+pub mod root_again;
+"#,
+        expect![[r#"
+            package cycle_lowering
+
+            targets
+            - cycle_lowering [lib] -> lib.rs
+
+            files
+            file mod.rs
+            - pub module root_again [out_of_line]
+
+            file lib.rs
+            - pub module a [out_of_line]
+        "#]],
+    );
+}
+
+#[test]
 fn resolves_out_of_line_multi_module_chains() {
     utils::check_project_item_tree(
         r#"
