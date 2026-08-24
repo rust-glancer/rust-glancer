@@ -131,6 +131,39 @@ fn program_work_exhaustion_does_not_publish_a_partial_extension() {
 }
 
 #[test]
+fn speculative_recursive_blanket_goal_stays_pending() {
+    let fixture = TraitSelectionFixture::new(
+        r#"
+            traits
+              trait#0 Marker
+            structs
+              struct#0 Box<T>
+              struct#1 User
+            impls
+              impl#0 impl Marker for User
+              impl#1 impl<T: Marker> Marker for Box<T>
+        "#,
+    );
+    let parsed = TraitSelectionQueryParser::new(&fixture).parse_goal("Box<?item>: Marker");
+    let clauses = [Clause::Implemented(parsed.goal.application)];
+    let item_paths = ItemPathQuery::new(&fixture, &fixture);
+    let crate_items = CrateItemQuery::new(&fixture, &fixture, fixture.target);
+    let outcome = ChalkTraitSolver::new()
+        .prove_clauses(
+            &item_paths,
+            &crate_items,
+            &fixture.lookup_query(),
+            &TraitSelectionSession::new(fixture.target),
+            &ChalkInferenceCache::new(),
+            &clauses,
+            &parsed.table,
+        )
+        .expect("recursive speculative Chalk query should not fail");
+
+    assert!(matches!(outcome, ChalkOutcome::Exhausted));
+}
+
+#[test]
 fn recursive_projection_normalization_stops_at_its_depth_limit() {
     let chain_len = NORMALIZATION_DEPTH_LIMIT + 6;
     let mut source = String::from("traits\n  trait#0 Next\nstructs\n");
