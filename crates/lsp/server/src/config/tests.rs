@@ -117,16 +117,21 @@ fn override_matches_exact_engine_root_only() {
 
 #[test]
 fn latest_duplicate_override_wins_without_warning() {
+    // Host-absolute so the override registers through its early-return branch on every platform;
+    // a Unix-shaped `/repo/project` would not be absolute on Windows.
+    let project_root = std::env::temp_dir()
+        .join("rust-glancer-override-duplicate")
+        .join("project");
     let options = json!({
         "cargo": {
             "overrides": [
                 {
-                    "path": "/repo/project",
+                    "path": project_root.to_string_lossy(),
                     "allFeatures": true,
                     "features": ["old"],
                 },
                 {
-                    "path": "/repo/project",
+                    "path": project_root.to_string_lossy(),
                     "allFeatures": false,
                     "features": ["new"],
                 },
@@ -135,7 +140,7 @@ fn latest_duplicate_override_wins_without_warning() {
     });
     let config = ServerConfig::from_initialization_options(Some(&options), &[])
         .expect("server config should parse");
-    let project_config = config.engine_config_for_root(Path::new("/repo/project"));
+    let project_config = config.engine_config_for_root(&project_root);
 
     assert!(
         !project_config

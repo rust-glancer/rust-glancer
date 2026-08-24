@@ -161,12 +161,13 @@ impl CargoConfigOverride {
 
 fn override_roots(path: &str, workspace_folders: &[PathBuf]) -> Vec<PathBuf> {
     let path = PathBuf::from(path);
-    // `has_root` also accepts rooted-but-driveless paths such as `/repo`, which are not
-    // `is_absolute()` on Windows yet still express an anchored location.
-    if path.has_root() {
+    if path.is_absolute() {
         return vec![normalize_path(path)];
     }
 
+    // Rooted-but-driveless paths (`/repo` on Windows) intentionally fall through to folder-relative
+    // resolution: such a path has no drive of its own, and joining preserves each workspace
+    // folder's drive, while an early return would silently bind it to the current drive.
     workspace_folders
         .iter()
         .map(|workspace_folder| normalize_path(workspace_folder.join(&path)))
