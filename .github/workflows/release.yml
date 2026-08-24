@@ -39,6 +39,7 @@ jobs:
     needs: release_please
     if: needs.release_please.outputs.release_created == 'true'
     runs-on: ${{ matrix.runner }}
+    container: ${{ matrix.container }}
     permissions:
       contents: read
     strategy:
@@ -46,9 +47,12 @@ jobs:
       matrix:
         include:
           - runner: ubuntu-24.04
+            # VS Code supports glibc 2.28, so build against that ABI instead of the runner's glibc.
+            container: quay.io/pypa/manylinux_2_28_x86_64@sha256:4dc41da7df20400310c80d162a2fe2d2c2f3d9734d8dec20f6b9843711618deb
             rust_target: x86_64-unknown-linux-gnu
             vscode_target: linux-x64
           - runner: ubuntu-24.04-arm
+            container: quay.io/pypa/manylinux_2_28_aarch64@sha256:29a6ceb78de5b00494e6e7456a72782a4cb54238de102e7491d15fe47789b4d1
             rust_target: aarch64-unknown-linux-gnu
             vscode_target: linux-arm64
           - runner: macos-15-intel
@@ -62,6 +66,11 @@ jobs:
         with:
           ref: ${{ needs.release_please.outputs.sha }}
           persist-credentials: false
+      - name: Install Rust in Linux compatibility container
+        if: ${{ matrix.container }}
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
       - uses: ./.github/actions/cargo-cache
         with:
           scope: release-${{ matrix.vscode_target }}
