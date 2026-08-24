@@ -12,7 +12,7 @@ use anyhow::Context as _;
 use rg_arena::Arena;
 use rg_macro_expand::{CfgSelect, ExpansionParseKind, ExpansionSyntax};
 use rg_syntax::{
-    AstNode as _, AstToken as _, SyntaxKind,
+    AstNode as _,
     ast::{self, HasDocComments, HasModuleItem, HasName, HasVisibility},
 };
 
@@ -26,11 +26,11 @@ use rg_tt::{
 use super::{
     BuiltinMacroItem, CfgExpr, CfgSelectArmItem, ConstItem, Documentation, EnumItem,
     ExternBlockItem, ExternCrateItem, FileTree, FromAst, FunctionItem, ImplItem, ImplItemContext,
-    InnerDocs, ItemKind, ItemNode, ItemTreeId, LangItem, MacroCallContext, MacroCallItem,
-    MacroDefAst, MacroDefContext, MacroDefinitionItem, MacroRulesAst, MacroRulesContext,
-    MacroUseAttr, MaybeFromAst, ModuleItem, ModuleSource, Package, StaticItem, StructItem,
-    TargetRoot, TraitItem, TraitItemContext, TypeAliasItem, UnionItem, UseItem, UserFacingAttrs,
-    VisibilityLevel,
+    IncludePathExpression, InnerDocs, ItemKind, ItemNode, ItemTreeId, LangItem, MacroCallContext,
+    MacroCallItem, MacroDefAst, MacroDefContext, MacroDefinitionItem, MacroRulesAst,
+    MacroRulesContext, MacroUseAttr, MaybeFromAst, ModuleItem, ModuleSource, Package, StaticItem,
+    StructItem, TargetRoot, TraitItem, TraitItemContext, TypeAliasItem, UnionItem, UseItem,
+    UserFacingAttrs, VisibilityLevel,
 };
 
 /// Lowers the files reachable from every target root and records those target entrypoints.
@@ -255,21 +255,30 @@ impl<'db> PackageLowering<'db> {
         Ok(())
     }
 
-    /// Replays only the source-discovery part of supported source-like builtin macros.
+    /// Follows real-file edges exposed by source-like builtin syntax.
+    ///
+    /// This walk happens before DefMap resolves macro names, so it only performs best-effort source
+    /// discovery. A direct `include!(...)` can already be parsed and lowered here; an `include!`
+    /// produced by a declarative macro does not exist yet and will use DefMap's late-source request
+    /// path instead. `cfg_select!` arms are walked for the same reason: any arm can contain a real
+    /// source edge that the later target-specific selection may need.
     fn discover_macro_source_edges(
         &mut self,
         current_file_id: FileId,
         item: &ast::MacroCall,
         module_file_context: &ModuleFileContext,
     ) -> anyhow::Result<()> {
-        if let Some(include_path) = literal_include_path(item) {
+        if let Some(include_path) =
+            IncludePathExpression::from_macro_call(item, self.parse_package.edition())
+        {
             let current_file = self
                 .parse_package
                 .parsed_file(current_file_id)
                 .with_context(|| {
                     format!("while attempting to fetch parsed file {current_file_id:?}")
                 })?;
-            if let Some(include_path) = current_file.resolve_path(&include_path)
+            if let Some(include_path) =
+                include_path.resolve(&current_file, self.parse_package.cargo_generated_sources())
                 && let Ok(include_file_id) =
                     self.parse_package.parse_file(self.sources, &include_path)
             {
@@ -638,10 +647,11 @@ impl<'db> PackageLowering<'db> {
         ExternBlockItem::from_ast(block, items)
     }
 
-    /// Eagerly lowers source-like builtin macros while this file context is still available.
+    /// Eagerly lowers source-like builtin payloads while this file context is still available.
     ///
-    /// Def-map later decides whether the call really resolves to a builtin; item-tree only records
-    /// enough pre-lowered payload for that decision to be applied without reparsing files.
+    /// DefMap later decides whether the call really resolves to a compiler builtin; a user macro
+    /// may have the same terminal name. ItemTree only records enough pre-lowered payload for that
+    /// semantic decision to reuse real source nodes without reparsing or rediscovering files.
     fn lower_builtin_macro(
         &mut self,
         builder: &mut FileTreeBuilder<'_>,
@@ -649,8 +659,8 @@ impl<'db> PackageLowering<'db> {
         module_file_context: &ModuleFileContext,
     ) -> anyhow::Result<Option<BuiltinMacroItem>> {
         if let Some(include_file) = self
-            .lower_literal_include_file(builder.current_file_id, item, module_file_context)
-            .context("while attempting to lower literal include macro file")?
+            .lower_include_file(builder.current_file_id, item, module_file_context)
+            .context("while attempting to lower include macro file")?
         {
             return Ok(Some(BuiltinMacroItem::Include { file: include_file }));
         }
@@ -658,15 +668,21 @@ impl<'db> PackageLowering<'db> {
         self.lower_cfg_select_arms(builder, item, module_file_context)
     }
 
-    /// Eagerly parses the simple `include!("file.rs")` form so def-map can splice real item-tree
-    /// nodes after macro resolution confirms that the builtin was not shadowed.
-    fn lower_literal_include_file(
+    /// Eagerly parses a direct `include!` source for later semantic splicing.
+    ///
+    /// Keeping the included file as a normal FileTree preserves source locations and lets nested
+    /// modules use ordinary lowering. DefMap will splice those nodes only after name resolution
+    /// confirms the compiler builtin was not shadowed. Calls produced by macro expansion arrive too
+    /// late for this method and are handled by the resumable macro source-file flow.
+    fn lower_include_file(
         &mut self,
         current_file_id: FileId,
         item: &ast::MacroCall,
         module_file_context: &ModuleFileContext,
     ) -> anyhow::Result<Option<FileId>> {
-        let Some(include_path) = literal_include_path(item) else {
+        let Some(include_path) =
+            IncludePathExpression::from_macro_call(item, self.parse_package.edition())
+        else {
             return Ok(None);
         };
 
@@ -676,7 +692,9 @@ impl<'db> PackageLowering<'db> {
             .with_context(|| {
                 format!("while attempting to fetch parsed file {current_file_id:?}")
             })?;
-        let Some(include_path) = current_file.resolve_path(&include_path) else {
+        let Some(include_path) =
+            include_path.resolve(&current_file, self.parse_package.cargo_generated_sources())
+        else {
             return Ok(None);
         };
 
@@ -1051,41 +1069,9 @@ fn macro_edition(edition: rg_text::RustEdition) -> rg_tt::Edition {
     }
 }
 
-fn literal_include_path(item: &ast::MacroCall) -> Option<String> {
-    if macro_call_terminal_name(item).as_deref() != Some("include") {
-        return None;
-    }
-
-    let token_tree = item.token_tree()?;
-    let tokens = token_tree
-        .syntax()
-        .descendants_with_tokens()
-        .filter_map(|element| element.into_token())
-        .filter(|token| !token.kind().is_trivia())
-        .collect::<Vec<_>>();
-    let [open, path, close] = tokens.as_slice() else {
-        return None;
-    };
-    if !matching_delimiters(open.kind(), close.kind()) {
-        return None;
-    }
-
-    ast::String::cast(path.clone())
-        .and_then(|path| path.value().ok().map(|value| value.into_owned()))
-}
-
 fn macro_call_terminal_name(item: &ast::MacroCall) -> Option<String> {
     item.path()?
         .segment()?
         .name_ref()
         .map(|name| name.text().to_string())
-}
-
-fn matching_delimiters(open: SyntaxKind, close: SyntaxKind) -> bool {
-    matches!(
-        (open, close),
-        (SyntaxKind::L_PAREN, SyntaxKind::R_PAREN)
-            | (SyntaxKind::L_CURLY, SyntaxKind::R_CURLY)
-            | (SyntaxKind::L_BRACK, SyntaxKind::R_BRACK)
-    )
 }

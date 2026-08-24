@@ -142,6 +142,20 @@ impl ProjectCoordinator {
             configuration.workspace_lowering_config.clone(),
         )
         .context("normalize Cargo metadata")?;
+        let cargo_build_outputs = workspace.cargo_build_output_stats();
+        tracing::info!(
+            target_directories = cargo_build_outputs.target_directories(),
+            deps_directories = cargo_build_outputs.deps_directories(),
+            dep_info_files = cargo_build_outputs.dep_info_files(),
+            build_script_packages = cargo_build_outputs.build_script_packages(),
+            matched_rustc_units = cargo_build_outputs.matched_rustc_units(),
+            build_output_candidates = cargo_build_outputs.build_output_candidates(),
+            selected_packages = cargo_build_outputs.selected_packages(),
+            generated_files = cargo_build_outputs.generated_files(),
+            generated_bytes = cargo_build_outputs.generated_bytes(),
+            scan_duration_ms = cargo_build_outputs.scan_duration().as_millis(),
+            "passive Cargo build-output scan finished"
+        );
         let workspace_root = workspace.workspace_root().to_path_buf();
         let sysroot = if configuration.discover_sysroot {
             let sysroot = SysrootSources::discover(workspace.workspace_root());

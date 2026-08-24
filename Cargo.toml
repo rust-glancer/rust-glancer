@@ -67,6 +67,7 @@ cargo_metadata = "0.23.1"
 chalk-engine = "0.104.0"
 chalk-ir = "0.104.0"
 chalk-solve = { version = "0.104.0", default-features = false }
+depinfo = "0.7.10"
 derive_more = { version = "2.1.1" }
 dissimilar = "1.0.11"
 divan = { package = "codspeed-divan-compat", version = "4.6.0" }

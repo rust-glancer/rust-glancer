@@ -52,7 +52,7 @@ impl PackageReadLoaders {
 
     /// Creates cache readers for dependencies while excluding every package rebuilt from source.
     ///
-    /// A dirty package's final fingerprint is unknown until generated-module discovery settles, so
+    /// A dirty package's final fingerprint is unknown until macro source-file discovery settles, so
     /// allowing its old artifact into the build would mix two source generations.
     pub(crate) fn for_package_rebuild(
         project: &ProjectState,

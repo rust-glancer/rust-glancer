@@ -22,7 +22,8 @@ pub use self::{
     lang_item::LangItem,
     macro_item::{
         BuiltinMacroItem, BuiltinMacroKind, CfgAttrMacroUse, CfgSelectArmItem, CfgSelectArmPayload,
-        MacroCallItem, MacroDefinitionAttrs, MacroDefinitionItem, MacroUseAttr, MacroUseSelector,
+        IncludePathExpression, MacroCallItem, MacroDefinitionAttrs, MacroDefinitionItem,
+        MacroUseAttr, MacroUseSelector,
     },
     module::{ModuleItem, ModuleSource},
     type_ref::{

@@ -10,7 +10,7 @@ use crate::{
 use rg_source::{SourceEntry, SourceInventory};
 use rg_std::MemorySize;
 use rg_text::RustEdition;
-use rg_workspace::{PackageId, PackageOrigin, TargetKind};
+use rg_workspace::{CargoGeneratedSources, PackageId, PackageOrigin, TargetKind};
 use wincode::{SchemaRead, SchemaWrite};
 
 /// Parsed package, including package-local files and target entrypoints.
@@ -30,6 +30,12 @@ pub struct Package {
     pub(crate) cfg_options: CfgOptions,
     /// Manifest feature names retained for request-local `cfg(feature = ...)` completion.
     pub(crate) declared_features: Vec<String>,
+    /// Generated sources recovered from a concrete Cargo compilation.
+    ///
+    /// ItemTree needs this while lowering direct `include!(env!(...))` calls, before DefMap exists.
+    /// DefMap may later expose the same expression from macro output, in which case the project
+    /// resolves it through this package again during late source discovery.
+    pub(crate) cargo_generated_sources: Option<CargoGeneratedSources>,
     /// All parsed files known to this package.
     pub(crate) files: FileDb,
     /// Parsed targets rooted in this package.
@@ -198,6 +204,11 @@ impl Package {
         &self.declared_features
     }
 
+    /// Returns passively recovered Cargo-generated sources used by direct and expanded includes.
+    pub fn cargo_generated_sources(&self) -> Option<&CargoGeneratedSources> {
+        self.cargo_generated_sources.as_ref()
+    }
+
     /// Returns all parsed targets for this package.
     pub fn targets(&self) -> &[CargoTarget] {
         self.targets.as_slice()
@@ -244,6 +255,7 @@ impl Package {
             origin: package.origin.clone(),
             cfg_options: package.cfg_options.clone(),
             declared_features: package.declared_features.clone(),
+            cargo_generated_sources: package.cargo_generated_sources.clone(),
             files,
             targets: parsed_targets,
         })

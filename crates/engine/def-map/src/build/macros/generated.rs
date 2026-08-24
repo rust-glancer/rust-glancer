@@ -4,9 +4,11 @@
 //! payloads carry expansion spans where available, while generated imports and other provenance-only
 //! facts may still point at the macro call site.
 //!
-//! Inline modules can be collected immediately. For generated `mod child;`, this collector emits a
-//! project-owned source request and retains only the continuation needed to allocate the module
-//! after the real file has entered Parse and ItemTree.
+//! Inline modules can be collected immediately. A generated `mod child;` instead emits a
+//! project-owned source request and retains the continuation needed to allocate the module after
+//! the real file has entered Parse and ItemTree. Generated `include!` calls take the same request
+//! boundary through the macro-attempt path, then reuse this module's pending-source application
+//! once their real file is available.
 
 use std::sync::Arc;
 
@@ -28,11 +30,11 @@ use rg_parse::{FileId, ModuleFileContext, Span};
 use rg_text::{Name, NameInterner, PackageNameInterners};
 
 use crate::build::{
-    GeneratedModuleResolution, GeneratedModuleResolutions, collect::CrateState,
+    MacroSourceFileResolution, MacroSourceFileResolutions, collect::CrateState,
     finalize::ScopeMatrix,
 };
 use crate::profile::metric;
-use crate::{GeneratedItemRef, GeneratedModuleRequest, GeneratedSourceId, ItemSource};
+use crate::{GeneratedItemRef, GeneratedSourceId, ItemSource, MacroSourceFileRequest};
 
 use super::{
     ItemOrder, MacroCallOrigin, MacroCallSite, MacroDefinitionRecord, MacroExpansionApplyResult,
@@ -56,14 +58,14 @@ pub(super) struct GeneratedOrigin {
     pub(super) module_file_context: Arc<ModuleFileContext>,
 }
 
-/// Continuation for one generated out-of-line module whose source is project-owned.
+/// Continuation for one generated out-of-line module whose real file is project-owned.
 ///
-/// The generated source is already retained by the mutable DefMap builder, so resuming only needs
-/// the item id and the collection context that would have been used if the file resolution had been
-/// available immediately.
+/// The `mod` declaration is already retained in DefMap's synthetic macro-output arena. Resuming
+/// therefore needs only that item id and the collection context that would have been used if the
+/// real file resolution had been available immediately.
 #[derive(Debug, Clone)]
 pub(crate) struct PendingGeneratedModule {
-    request: GeneratedModuleRequest,
+    request: MacroSourceFileRequest,
     parent_module: ModuleId,
     generated_source: GeneratedSourceId,
     item_id: ItemTreeId,
@@ -72,13 +74,25 @@ pub(crate) struct PendingGeneratedModule {
     origin: GeneratedOrigin,
 }
 
-/// Small collector that mirrors normal def-map collection for already-expanded syntax.
+/// Continuation for one builtin `include!` call produced by another macro.
+///
+/// ItemTree could not lower a payload for a call that did not exist in original source. The macro
+/// directive and its caller-module context are already retained, so resuming only needs to splice
+/// the project-lowered file into that module and mark the directive complete.
+#[derive(Debug, Clone)]
+pub(crate) struct PendingGeneratedInclude {
+    pub(super) request: MacroSourceFileRequest,
+    pub(super) call_id: usize,
+    pub(super) origin: GeneratedOrigin,
+}
+
+/// Collector that moves synthetic macro-output items into ordinary mutable DefMap state.
 pub(super) struct GeneratedCollector<'a> {
     pub(super) state: &'a mut CrateState,
     pub(super) interner: &'a mut NameInterner,
     pub(super) current_scopes: &'a mut ScopeMatrix,
     pub(super) item_tree: &'a ItemTreeDb,
-    pub(super) generated_module_resolutions: Option<&'a GeneratedModuleResolutions>,
+    pub(super) macro_source_file_resolutions: Option<&'a MacroSourceFileResolutions>,
     pub(super) origin: GeneratedOrigin,
     pub(super) result: MacroExpansionApplyResult,
 }
@@ -467,18 +481,18 @@ impl GeneratedCollector<'_> {
                 None,
             ),
             ModuleSource::OutOfLine => {
-                let request = GeneratedModuleRequest::new(
+                let request = MacroSourceFileRequest::module(
                     self.state.crate_ref.package,
                     Arc::clone(&module_file_context),
                     module_name.to_string(),
                     module_item.path_override.clone(),
                 );
                 match self
-                    .generated_module_resolutions
+                    .macro_source_file_resolutions
                     .and_then(|resolutions| resolutions.get(&request).cloned())
                 {
                     None => {
-                        self.state.generated_module_requests.push(request.clone());
+                        self.state.macro_source_file_requests.push(request.clone());
                         self.state
                             .pending_generated_modules
                             .push(PendingGeneratedModule {
@@ -492,8 +506,8 @@ impl GeneratedCollector<'_> {
                             });
                         return Ok(());
                     }
-                    Some(GeneratedModuleResolution::Missing) => return Ok(()),
-                    Some(GeneratedModuleResolution::Found {
+                    Some(MacroSourceFileResolution::Missing) => return Ok(()),
+                    Some(MacroSourceFileResolution::Module {
                         file_id: definition_file,
                         child_context,
                     }) => {
@@ -524,6 +538,9 @@ impl GeneratedCollector<'_> {
                             inner_docs,
                             Some((definition_file, child_context)),
                         )
+                    }
+                    Some(MacroSourceFileResolution::Include { .. }) => {
+                        unreachable!("generated module request received an include resolution")
                     }
                 }
             }
@@ -744,17 +761,19 @@ impl GeneratedCollector<'_> {
     }
 }
 
-/// Applies source resolutions to generated declarations whose surrounding macro is already collected.
+/// Applies answered source requests to macro work that paused during collection.
 ///
-/// Unresolved declarations remain in the continuation list and are re-emitted as construction
-/// requests. Missing sources finish without allocating a module. Found sources enter the same
-/// generated-module collector used when a resolution is available during the first pass.
-pub(crate) fn apply_pending_generated_modules(
+/// The two continuation lists encode different Rust operations. A found `mod generated;` answer
+/// allocates a child module, then collects the file inside it. A found `include!(...)` answer
+/// collects the file directly into the caller's existing module and completes that macro
+/// directive. Requests without answers remain pending and are re-emitted; an explicit missing
+/// answer finishes the corresponding operation without inventing an empty source.
+pub(crate) fn apply_pending_macro_source_files(
     item_tree: &ItemTreeDb,
     states: &mut super::super::finalize::FinalizeCrateStates,
     interners: &mut PackageNameInterners,
     current_scopes: &mut ScopeMatrix,
-    generated_module_resolutions: Option<&GeneratedModuleResolutions>,
+    macro_source_file_resolutions: Option<&MacroSourceFileResolutions>,
 ) -> Result<()> {
     for (package_slot, package_states) in states.iter_dirty_mut_enumerated() {
         let interner = interners.package_mut(package_slot).with_context(|| {
@@ -762,19 +781,21 @@ pub(crate) fn apply_pending_generated_modules(
         })?;
 
         for state in package_states {
+            // Generated modules could not be allocated before their child file and file context
+            // existed. Replay just that declaration through the normal generated-item collector.
             let pending_modules = std::mem::take(&mut state.pending_generated_modules);
             for pending in pending_modules {
-                match generated_module_resolutions
+                match macro_source_file_resolutions
                     .and_then(|resolutions| resolutions.get(&pending.request).cloned())
                 {
                     None => {
                         state
-                            .generated_module_requests
+                            .macro_source_file_requests
                             .push(pending.request.clone());
                         state.pending_generated_modules.push(pending);
                     }
-                    Some(GeneratedModuleResolution::Missing) => {}
-                    Some(GeneratedModuleResolution::Found { .. }) => {
+                    Some(MacroSourceFileResolution::Missing) => {}
+                    Some(MacroSourceFileResolution::Module { .. }) => {
                         let item = state
                             .def_map_builder
                             .partial()
@@ -790,7 +811,7 @@ pub(crate) fn apply_pending_generated_modules(
                             interner,
                             current_scopes,
                             item_tree,
-                            generated_module_resolutions,
+                            macro_source_file_resolutions,
                             origin: pending.origin,
                             result: MacroExpansionApplyResult::default(),
                         }
@@ -803,6 +824,61 @@ pub(crate) fn apply_pending_generated_modules(
                             pending.order,
                             pending.module_file_context,
                         )?;
+                    }
+                    Some(MacroSourceFileResolution::Include { .. }) => {
+                        unreachable!("pending module received an include resolution")
+                    }
+                }
+            }
+
+            // Included items do not create a module. Collect the answered file at the retained
+            // call-site order and module context, then settle the original macro directive.
+            let pending_includes = std::mem::take(&mut state.pending_generated_includes);
+            for pending in pending_includes {
+                match macro_source_file_resolutions
+                    .and_then(|resolutions| resolutions.get(&pending.request).cloned())
+                {
+                    None => {
+                        state
+                            .macro_source_file_requests
+                            .push(pending.request.clone());
+                        state.pending_generated_includes.push(pending);
+                    }
+                    Some(MacroSourceFileResolution::Missing) => {
+                        if let Some(directive) = state.macro_directives.get_mut(pending.call_id) {
+                            directive.state = super::MacroDirectiveState::Failed;
+                        }
+                    }
+                    Some(MacroSourceFileResolution::Include { file_id }) => {
+                        let item_tree_package =
+                            item_tree.package(state.crate_ref.package.0).context(
+                                "while attempting to fetch package for generated include source",
+                            )?;
+                        let collected = SourceFragmentCollector {
+                            state,
+                            current_scopes,
+                            item_tree: item_tree_package,
+                            origin: SourceFragmentOrigin {
+                                module: pending.origin.module,
+                                order: pending.origin.order,
+                                parent_call: pending.call_id,
+                                module_file_context: pending.origin.module_file_context,
+                            },
+                            result: MacroExpansionApplyResult::default(),
+                            active_files: Default::default(),
+                        }
+                        .collect_file(file_id);
+                        let directive_state = if collected.is_ok() {
+                            super::MacroDirectiveState::Expanded
+                        } else {
+                            super::MacroDirectiveState::Failed
+                        };
+                        if let Some(directive) = state.macro_directives.get_mut(pending.call_id) {
+                            directive.state = directive_state;
+                        }
+                    }
+                    Some(MacroSourceFileResolution::Module { .. }) => {
+                        unreachable!("pending include received a module resolution")
                     }
                 }
             }

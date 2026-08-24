@@ -43,33 +43,51 @@ declare_metrics! {
             memory_snapshot DEF_MAP_MEMORY = "memory" [title "after def-map"];
         }
 
-        scope "project.build.generated_modules" {
-            /// Coalesced generated-module source requests returned across discovery waves.
-            counter GENERATED_MODULE_REQUESTS = "requests.seen";
-            /// Distinct construction keys resolved by the project boundary.
-            counter GENERATED_MODULE_UNIQUE_REQUESTS = "requests.unique";
+        scope "project.build.cargo_build_outputs" {
+            /// Cargo target directories considered by the bounded passive scan.
+            counter CARGO_BUILD_OUTPUT_TARGET_DIRECTORIES = "target_directories";
+            counter CARGO_BUILD_OUTPUT_DEPS_DIRECTORIES = "deps_directories";
+            counter CARGO_BUILD_OUTPUT_DEP_INFO_FILES = "dep_info_files";
+            /// Packages with a custom build target and therefore possible build-script outputs.
+            counter CARGO_BUILD_OUTPUT_BUILD_SCRIPT_PACKAGES = "build_script_packages";
+            /// Rustc units attributed by an exact package target-root dependency.
+            counter CARGO_BUILD_OUTPUT_MATCHED_RUSTC_UNITS = "matched_rustc_units";
+            /// Internally consistent output-directory candidates recovered from attributed units.
+            counter CARGO_BUILD_OUTPUT_CANDIDATES = "build_output_candidates";
+            /// Packages for which one deterministic historical candidate was selected.
+            counter CARGO_BUILD_OUTPUT_SELECTED_PACKAGES = "selected_packages";
+            counter CARGO_BUILD_OUTPUT_GENERATED_FILES = "generated_files";
+            counter CARGO_BUILD_OUTPUT_GENERATED_BYTES = "generated_bytes";
+            duration CARGO_BUILD_OUTPUT_SCAN = "timings.scan";
+        }
+
+        scope "project.build.macro_source_files" {
+            /// Coalesced late `mod` and `include!` requests returned across discovery waves.
+            counter MACRO_SOURCE_FILE_REQUESTS = "requests.seen";
+            /// Distinct semantic lookup keys resolved by the project boundary.
+            counter MACRO_SOURCE_FILE_UNIQUE_REQUESTS = "requests.unique";
             /// Distinct package-local source paths resolved from those requests.
-            counter GENERATED_MODULE_UNIQUE_PATHS = "paths.unique";
+            counter MACRO_SOURCE_FILE_UNIQUE_PATHS = "paths.unique";
             /// Requests coalesced onto a path already handled earlier in this discovery run.
-            counter GENERATED_MODULE_COALESCED_PATHS = "paths.coalesced";
-            /// Requests whose supported module path did not exist.
-            counter GENERATED_MODULE_MISSING_PATHS = "paths.missing";
+            counter MACRO_SOURCE_FILE_COALESCED_PATHS = "paths.coalesced";
+            /// Requests whose supported path did not exist.
+            counter MACRO_SOURCE_FILE_MISSING_PATHS = "paths.missing";
             /// Parse package files added by late discovery, including ordinary descendants.
-            counter GENERATED_MODULE_DISCOVERED_FILES = "files.discovered";
+            counter MACRO_SOURCE_FILE_DISCOVERED_FILES = "files.discovered";
             /// File trees added by incremental ItemTree lowering.
-            counter GENERATED_MODULE_ITEM_TREE_FILES_LOWERED = "item_tree.files_lowered";
+            counter MACRO_SOURCE_FILE_ITEM_TREE_FILES_LOWERED = "item_tree.files_lowered";
             /// Existing file trees reused by incremental ItemTree lowering.
-            counter GENERATED_MODULE_ITEM_TREE_FILES_REUSED = "item_tree.files_reused";
-            /// Batches of generated module requests processed by the coordinator.
-            counter GENERATED_MODULE_DISCOVERY_WAVES = "waves";
+            counter MACRO_SOURCE_FILE_ITEM_TREE_FILES_REUSED = "item_tree.files_reused";
+            /// Batches of macro source-file requests processed by the coordinator.
+            counter MACRO_SOURCE_FILE_DISCOVERY_WAVES = "waves";
             /// Resumptions of retained mutable DefMap state after a source-answer batch.
-            counter GENERATED_MODULE_DEF_MAP_RESUMES = "def_map_resumes";
+            counter MACRO_SOURCE_FILE_DEF_MAP_RESUMES = "def_map_resumes";
             /// Whether the bounded discovery-wave guard stopped source discovery.
-            gauge GENERATED_MODULE_DISCOVERY_LIMIT_REACHED = "discovery_limit_reached" [None];
+            gauge MACRO_SOURCE_FILE_DISCOVERY_LIMIT_REACHED = "discovery_limit_reached" [None];
             /// Time spent resuming DefMap construction after source discovery.
-            duration TIMING_GENERATED_MODULE_DEF_MAP_RESUMES = "timings.def_map_resumes";
+            duration TIMING_MACRO_SOURCE_FILE_DEF_MAP_RESUMES = "timings.def_map_resumes";
             /// Source-built package fingerprints changed by late discovery.
-            counter GENERATED_MODULE_CACHE_FINGERPRINT_CHANGES = "cache.fingerprint_changes";
+            counter MACRO_SOURCE_FILE_CACHE_FINGERPRINT_CHANGES = "cache.fingerprint_changes";
         }
 
         scope "project.build.semantic_ir" {

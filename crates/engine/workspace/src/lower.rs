@@ -10,7 +10,8 @@ use rg_text::RustEdition;
 
 use crate::{
     CargoTarget, Package, PackageDependency, PackageId, PackageOrigin, PackageSource, TargetKind,
-    WorkspaceMetadata, WorkspaceMetadataError, WorkspaceMetadataResult, path::canonicalize_path,
+    WorkspaceMetadata, WorkspaceMetadataError, WorkspaceMetadataResult,
+    build_outputs::CargoBuildOutputDiscovery, path::canonicalize_path,
 };
 
 /// Analysis-facing cfg options applied while lowering Cargo metadata.
@@ -110,15 +111,35 @@ impl CargoMetadataLowerer {
     ) -> WorkspaceMetadataResult<WorkspaceMetadata> {
         let workspace_root = canonicalize_path(metadata.workspace_root.as_std_path())
             .map_err(WorkspaceMetadataError::Path)?;
+        let cargo_target_dir = canonicalize_path(metadata.target_directory.as_std_path())
+            .unwrap_or_else(|_| metadata.target_directory.as_std_path().to_path_buf());
+        let cargo_build_dir = metadata.build_directory.as_ref().map(|directory| {
+            canonicalize_path(directory.as_std_path())
+                .unwrap_or_else(|_| directory.as_std_path().to_path_buf())
+        });
         let lowerer = Self::new(&metadata, target_cfg, config);
-        let packages = metadata
+        let mut packages = metadata
             .packages
             .into_iter()
             .map(|package| lowerer.package(package))
             .collect::<WorkspaceMetadataResult<Vec<_>>>()?;
 
+        // Cargo build outputs are optional evidence left by a user build. Scan them while packages
+        // are still workspace metadata so recovered build-script cfg affects initial ItemTree
+        // lowering, and so Parse can retain the matching compile-time environment for eager
+        // `include!` paths.
+        // A missing or unfamiliar build directory must not prevent source-only analysis.
+        let cargo_build_output_stats = CargoBuildOutputDiscovery::apply(
+            &workspace_root,
+            cargo_build_dir.as_deref(),
+            &cargo_target_dir,
+            packages.as_mut_slice(),
+        );
+
         Ok(WorkspaceMetadata::from_parts(
             workspace_root,
+            cargo_target_dir,
+            cargo_build_output_stats,
             lowerer.target_cfg,
             packages,
         ))
@@ -216,6 +237,7 @@ impl CargoMetadataLowerer {
             manifest_path,
             cfg_options,
             declared_features,
+            cargo_generated_sources: None,
             targets,
             dependencies: self
                 .dependencies_by_package

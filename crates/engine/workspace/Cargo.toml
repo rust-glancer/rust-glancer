@@ -11,6 +11,7 @@ description.workspace = true
 
 [dependencies]
 cargo_metadata.workspace = true
+depinfo.workspace = true
 derive_more = { workspace = true, features = ["display"] }
 wincode.workspace = true
 rg_cfg_eval.workspace = true

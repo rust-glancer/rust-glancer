@@ -11,7 +11,9 @@ use anyhow::Context as _;
 use crate::{CrateResolutionEnv, MacroDefinitionEnv};
 use rg_ir_model::{CrateRef, Path};
 use rg_item_tree::BuiltinMacroKind;
-use rg_item_tree::{BuiltinMacroItem, CfgSelectArmPayload, ItemTreeDb, ItemTreeId};
+use rg_item_tree::{
+    BuiltinMacroItem, CfgSelectArmPayload, IncludePathExpression, ItemTreeDb, ItemTreeId,
+};
 use rg_macro_runtime::{
     ExpansionParseKind, ExpansionSyntax, MacroCompileRecord, MacroExpandRecord,
     MacroExpansionRequest, MacroExpansionRuntime, PendingMacroExpansion, PreparedMacroExpansion,
@@ -20,8 +22,9 @@ use rg_parse::FileId;
 use rg_std::ExpectedUnique;
 use rg_text::PackageNameInterners;
 
+use crate::MacroSourceFileRequest;
 use crate::build::{
-    GeneratedModuleResolutions,
+    MacroSourceFileResolution, MacroSourceFileResolutions,
     collect::CrateState,
     finalize::{FinalizeCrateStates, ScopeMatrix},
 };
@@ -29,7 +32,7 @@ use crate::profile::metric;
 
 use super::{
     MacroCallSite, MacroDirectiveState,
-    generated::{GeneratedCollector, GeneratedOrigin},
+    generated::{GeneratedCollector, GeneratedOrigin, PendingGeneratedInclude},
     resolve::ItemMacroResolver,
     source_fragment::{SourceFragmentCollector, SourceFragmentOrigin},
 };
@@ -95,6 +98,7 @@ pub(crate) fn collect_expansion_attempts<E>(
     states: &FinalizeCrateStates,
     scan: MacroExpansionScan<'_>,
     runtime: &mut MacroExpansionRuntime,
+    macro_source_file_resolutions: Option<&MacroSourceFileResolutions>,
 ) -> anyhow::Result<Vec<MacroExpansionAttempt>>
 where
     E: CrateResolutionEnv<Error = rg_package_store::PackageStoreError> + MacroDefinitionEnv,
@@ -122,6 +126,7 @@ where
                     state,
                     call_id,
                     &directive.call,
+                    macro_source_file_resolutions,
                 )
                 .with_context(|| {
                     format!(
@@ -140,15 +145,16 @@ where
 
 /// Applies expansion results to crate state and reports whether visible scope facts were added.
 ///
-/// Generated out-of-line modules without a resolution are retained as continuations and emitted
-/// through the source-request boundary instead of adding an empty module to the scope.
+/// Source-backed builtin payloads that ItemTree lowered eagerly can be collected immediately. A
+/// generated `include!` has no such payload because its call did not exist during initial lowering;
+/// it is retained as a continuation and emitted through the source-request boundary instead.
 pub(crate) fn apply_expansion_attempts(
     item_tree: &ItemTreeDb,
     states: &mut FinalizeCrateStates,
     interners: &mut PackageNameInterners,
     current_scopes: &mut ScopeMatrix,
     attempts: Vec<MacroExpansionAttempt>,
-    generated_module_resolutions: Option<&GeneratedModuleResolutions>,
+    macro_source_file_resolutions: Option<&MacroSourceFileResolutions>,
 ) -> anyhow::Result<MacroExpansionApplyResult> {
     let mut result = MacroExpansionApplyResult::default();
 
@@ -165,6 +171,17 @@ pub(crate) fn apply_expansion_attempts(
                 continue;
             }
             MacroExpansionAttemptOutcome::Generated(source) => source,
+            MacroExpansionAttemptOutcome::NeedsMacroIncludeFile(request) => {
+                state.macro_source_file_requests.push(request.clone());
+                state
+                    .pending_generated_includes
+                    .push(PendingGeneratedInclude {
+                        request,
+                        call_id: attempt.call_id,
+                        origin: attempt.origin,
+                    });
+                continue;
+            }
             MacroExpansionAttemptOutcome::ItemTreeFile(file_id) => {
                 let item_tree_package = item_tree
                     .package(attempt.crate_ref.package.0)
@@ -255,7 +272,7 @@ pub(crate) fn apply_expansion_attempts(
             interner,
             current_scopes,
             item_tree,
-            generated_module_resolutions,
+            macro_source_file_resolutions,
             origin: attempt.origin,
             result: MacroExpansionApplyResult::default(),
         }
@@ -368,24 +385,70 @@ impl MacroExpansionAttempt {
         )
     }
 
-    /// Builtin `include!` splices a real file that item-tree already lowered.
+    /// Prepares a builtin `include!` either from eager ItemTree data or as a late source request.
+    ///
+    /// A call written directly in source may already carry `BuiltinMacroItem::Include`. A call
+    /// produced by another macro did not exist during ItemTree lowering, so its retained arguments
+    /// are parsed into an [`IncludePathExpression`] and DefMap pauses until the project lowers the
+    /// named file. Resolution has already identified the builtin here; a user macro named
+    /// `include` never enters this path.
     fn include_file(
         crate_ref: CrateRef,
         call_id: usize,
         call: &MacroCallSite,
+        state: &CrateState,
         path_text: &str,
+        macro_source_file_resolutions: Option<&MacroSourceFileResolutions>,
     ) -> Self {
-        let Some(BuiltinMacroItem::Include { file }) = call.builtin.as_ref() else {
+        if let Some(BuiltinMacroItem::Include { file }) = call.builtin.as_ref() {
+            return Self::new(
+                crate_ref,
+                call_id,
+                call,
+                Some(path_text.to_string()),
+                MacroExpansionAttemptOutcome::ItemTreeFile(*file),
+                MacroExpansionAttemptRecord::builtin_expanded(),
+            );
+        }
+
+        let Some(path) = call.args.as_ref().and_then(|arguments| {
+            IncludePathExpression::from_macro_arguments(arguments, state.edition)
+        }) else {
             return Self::unsupported_builtin(crate_ref, call_id, call, path_text);
         };
+        let request = MacroSourceFileRequest::include(
+            crate_ref.package,
+            call.file_id,
+            Arc::clone(&call.module_file_context),
+            path,
+        );
+
+        let (outcome, record) =
+            match macro_source_file_resolutions.and_then(|resolutions| resolutions.get(&request)) {
+                None => (
+                    MacroExpansionAttemptOutcome::NeedsMacroIncludeFile(request),
+                    MacroExpansionAttemptRecord::default(),
+                ),
+                Some(MacroSourceFileResolution::Missing) => (
+                    MacroExpansionAttemptOutcome::NoSource(MacroDirectiveState::Failed),
+                    MacroExpansionAttemptRecord::builtin_failed(),
+                ),
+                Some(MacroSourceFileResolution::Include { file_id }) => (
+                    MacroExpansionAttemptOutcome::ItemTreeFile(*file_id),
+                    MacroExpansionAttemptRecord::builtin_expanded(),
+                ),
+                Some(MacroSourceFileResolution::Module { .. }) => {
+                    unreachable!("macro include-file request received a module resolution")
+                }
+            };
 
         Self::new(
             crate_ref,
             call_id,
             call,
             Some(path_text.to_string()),
-            MacroExpansionAttemptOutcome::ItemTreeFile(*file),
-            MacroExpansionAttemptRecord::builtin_expanded(),
+            outcome,
+            record,
         )
     }
 
@@ -518,6 +581,7 @@ impl MacroExpansionAttempt {
         state: &CrateState,
         call_id: usize,
         call: &MacroCallSite,
+        macro_source_file_resolutions: Option<&MacroSourceFileResolutions>,
     ) -> anyhow::Result<Self>
     where
         E: CrateResolutionEnv<Error = rg_package_store::PackageStoreError> + MacroDefinitionEnv,
@@ -555,6 +619,7 @@ impl MacroExpansionAttempt {
                 call,
                 state,
                 path_text,
+                macro_source_file_resolutions,
             ));
         }
         if resolved.definition.is_proc_macro() {
@@ -614,6 +679,7 @@ impl MacroExpansionAttempt {
         call: &MacroCallSite,
         state: &CrateState,
         macro_name: &str,
+        macro_source_file_resolutions: Option<&MacroSourceFileResolutions>,
     ) -> Self {
         match kind {
             BuiltinMacroKind::Expr(_) | BuiltinMacroKind::IgnoredByDefMap => {
@@ -622,7 +688,14 @@ impl MacroExpansionAttempt {
             BuiltinMacroKind::CfgSelect => {
                 Self::cfg_select(crate_ref, call_id, call, state, macro_name)
             }
-            BuiltinMacroKind::Include => Self::include_file(crate_ref, call_id, call, macro_name),
+            BuiltinMacroKind::Include => Self::include_file(
+                crate_ref,
+                call_id,
+                call,
+                state,
+                macro_name,
+                macro_source_file_resolutions,
+            ),
             BuiltinMacroKind::Unsupported => {
                 Self::unsupported_builtin(crate_ref, call_id, call, macro_name)
             }
@@ -782,6 +855,7 @@ impl MacroExpansionAttemptRecord {
 enum MacroExpansionAttemptOutcome {
     NoSource(MacroDirectiveState),
     Generated(ExpansionSyntax),
+    NeedsMacroIncludeFile(MacroSourceFileRequest),
     ItemTreeFile(FileId),
     ItemTreeFragment {
         file_id: FileId,

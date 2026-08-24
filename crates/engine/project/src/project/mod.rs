@@ -6,8 +6,8 @@
 
 pub mod bench_support;
 mod build;
-mod generated_modules;
 pub(crate) mod loading;
+mod macro_source_files;
 pub(crate) mod offloading;
 mod package_set;
 mod reference_search;
@@ -167,6 +167,10 @@ impl Project {
     }
 
     /// Rebuilds the whole project from the current workspace graph and saved source files.
+    ///
+    /// Manual reindex is the explicit freshness boundary for passive Cargo build outputs. It
+    /// bypasses startup cache restoration so the newly discovered artifact snapshot is rebuilt
+    /// from source even when an older cached snapshot still validates on disk.
     pub fn reindex_workspace(&mut self) -> anyhow::Result<()> {
         self.try_publish_generation(update::reindex_workspace)
     }

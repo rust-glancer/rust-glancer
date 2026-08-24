@@ -1,8 +1,8 @@
 //! Rebuilds selected packages inside an existing project snapshot.
 //!
 //! The candidate first resets each selected package to its Cargo roots, then rediscovers ordinary
-//! and macro-generated module files. Its source inventory is sealed only after that complete file
-//! set has converged.
+//! modules and files exposed by expanded `mod` or `include!` syntax. Its source inventory is sealed
+//! only after that complete file set has converged.
 
 use std::sync::Arc;
 
@@ -16,9 +16,9 @@ use crate::{
     ProjectMemoryPurgePoint,
     profile::BuildMemorySampler,
     project::{
-        SplitIndexingMode, StartupCacheLoad, build, generated_modules, loading::PackageReadLoaders,
-        offloading::ResidencyApplication, package_set::PhasePackageSet, state::ProjectState,
-        stats::MacroExpansionLimitBuildSummary,
+        SplitIndexingMode, StartupCacheLoad, build, loading::PackageReadLoaders,
+        macro_source_files, offloading::ResidencyApplication, package_set::PhasePackageSet,
+        state::ProjectState, stats::MacroExpansionLimitBuildSummary,
     },
 };
 
@@ -83,10 +83,11 @@ fn try_rebuild_packages(state: &mut ProjectState, packages: &[PackageSlot]) -> a
     // Fresh indexing exposes more allocator purge boundaries because it can build the whole
     // workspace at once. Saved package rebuilds are usually smaller, so avoid adding extra
     // def-map/body purges to this path.
-    // Keep Parse and ItemTree mutable until generated-module requests stop adding files. This uses
-    // the same coordinator as fresh construction, while clean dependency packages stay lazy.
+    // Keep Parse and ItemTree mutable until macro source-file requests stop adding files. This uses
+    // the same coordinator as fresh construction for both macro-generated modules and generated
+    // includes, while clean dependency packages stay lazy.
     let memory_hooks = Arc::clone(&state.memory_hooks);
-    let def_map = generated_modules::build_packages(
+    let def_map = macro_source_files::build_packages(
         &state.def_map,
         &old_def_map_txn,
         &state.workspace,
@@ -100,7 +101,7 @@ fn try_rebuild_packages(state: &mut ProjectState, packages: &[PackageSlot]) -> a
     .context("while attempting to rebuild affected def-map packages")?;
     drop(old_def_map_txn);
     // The selected package file tables now contain only sources reachable from this rebuild,
-    // including late generated modules and excluding generated paths that disappeared.
+    // including late macro source files and excluding generated paths that disappeared.
     state.parse.seal_sources();
     let macro_expansion_limit_summary =
         MacroExpansionLimitBuildSummary::capture(&def_map, packages.as_slice());

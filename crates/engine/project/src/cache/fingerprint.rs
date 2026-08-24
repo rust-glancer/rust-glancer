@@ -120,9 +120,11 @@ impl FingerprintBuilder {
         let mut files = package.parsed_files().collect::<Vec<_>>();
         files.sort_by(|left, right| left.path().cmp(right.path()));
 
-        // Package artifacts retain semantic analysis for a saved source snapshot. Cargo metadata
+        // Package artifacts retain semantic analysis for an exact source snapshot. Cargo metadata
         // chooses the artifact path, while this fingerprint rejects stale bytes after source-only
-        // edits that keep the package graph unchanged.
+        // edits that keep the package graph unchanged. Because it is computed again after DefMap's
+        // late-source fixed point, generated module and included build-output files participate
+        // like every other captured source file.
         builder.package_id(
             "package.id",
             workspace_root,

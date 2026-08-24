@@ -181,8 +181,8 @@ pub(crate) fn build_source_closed_def_map(
         .expect("fixture DefMap session should advance")
     {
         DefMapBuildProgress::Complete(def_map) => def_map,
-        DefMapBuildProgress::NeedsGeneratedModules(requests) => panic!(
-            "fixture requested {} generated module source(s); use an rg_project fixture for source-discovery behavior",
+        DefMapBuildProgress::NeedsMacroSourceFiles(requests) => panic!(
+            "fixture requested {} macro source file(s); use an rg_project fixture for source-discovery behavior",
             requests.len(),
         ),
     }

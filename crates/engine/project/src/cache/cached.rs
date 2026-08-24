@@ -243,6 +243,12 @@ impl CachedCfgKeyValue {
 }
 
 /// Cached view of one package's artifact-selecting metadata.
+///
+/// The passively selected Cargo output directory, generated-file inventory, and compile-time
+/// environment are intentionally absent. They help a source build discover one usable snapshot,
+/// but they do not make another still-valid historical snapshot semantically unusable. The
+/// package artifact's source fingerprint separately validates every file that snapshot parsed.
+/// Recovered build-script cfg remains in `cfg_options` because it controls which source is active.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize)]
 pub struct CachedPackage {
     pub package: CachedPackageSlot,

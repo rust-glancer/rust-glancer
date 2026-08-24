@@ -5,10 +5,12 @@ use rg_tt::TopSubtree;
 use wincode::{SchemaRead, SchemaWrite};
 
 mod builtin;
+mod include;
 
 pub use self::builtin::{
     BuiltinMacroItem, BuiltinMacroKind, CfgSelectArmItem, CfgSelectArmPayload,
 };
+pub use self::include::IncludePathExpression;
 
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub enum MacroDefinitionItem {

@@ -8,7 +8,7 @@ mod workspace_graph;
 use anyhow::Context as _;
 use rg_def_map::PackageSlot;
 
-use super::{AnalysisChangeSummary, ChangedFile, Project, SavedFileChange};
+use super::{AnalysisChangeSummary, ChangedFile, Project, SavedFileChange, StartupCacheLoad};
 use workspace_graph::WorkspaceGraphChanges;
 
 pub(crate) use package::rebuild_resident_from_source;
@@ -20,7 +20,7 @@ pub(super) enum ProjectChangeApplication {
 }
 
 pub(super) fn reindex_workspace(project: &mut Project) -> anyhow::Result<()> {
-    workspace::rebuild_workspace_graph(project, &[])
+    workspace::rebuild_workspace_graph(project, &[], StartupCacheLoad::Disabled)
         .context("while attempting to reindex analysis project from workspace root")?;
     Ok(())
 }
@@ -45,7 +45,7 @@ pub(super) fn apply_canonical_changes(
     });
 
     if graph_changed {
-        workspace::rebuild_workspace_graph(project, &changes)
+        workspace::rebuild_workspace_graph(project, &changes, StartupCacheLoad::Enabled)
             .map(ProjectChangeApplication::Applied)
             .context("while attempting to rebuild analysis project after workspace change")
     } else {

@@ -588,7 +588,7 @@ pub struct Shared;
     );
     let run = rg_profile::test_support::ProfileTest::start(
         crate::profile_descriptors(),
-        "project.build.generated_modules",
+        "project.build.macro_source_files",
     );
 
     let project = Project::builder(fixture.workspace_metadata())
@@ -620,52 +620,52 @@ pub struct Shared;
 
     for (path, expected, message) in [
         (
-            "project.build.generated_modules.requests.seen",
+            "project.build.macro_source_files.requests.seen",
             3,
             "one wave should return the two source aliases and one missing module",
         ),
         (
-            "project.build.generated_modules.requests.unique",
+            "project.build.macro_source_files.requests.unique",
             3,
             "each differently spelled generated declaration should retain one request",
         ),
         (
-            "project.build.generated_modules.paths.unique",
+            "project.build.macro_source_files.paths.unique",
             1,
             "the two path overrides should resolve to one package-local source",
         ),
         (
-            "project.build.generated_modules.paths.coalesced",
+            "project.build.macro_source_files.paths.coalesced",
             1,
             "the second alias should reuse the first path's captured file",
         ),
         (
-            "project.build.generated_modules.paths.missing",
+            "project.build.macro_source_files.paths.missing",
             1,
             "the absent conventional module should be recorded without a fake module",
         ),
         (
-            "project.build.generated_modules.files.discovered",
+            "project.build.macro_source_files.files.discovered",
             1,
             "only shared.rs should enter the parsed package",
         ),
         (
-            "project.build.generated_modules.item_tree.files_lowered",
+            "project.build.macro_source_files.item_tree.files_lowered",
             1,
             "shared.rs should be lowered exactly once",
         ),
         (
-            "project.build.generated_modules.waves",
+            "project.build.macro_source_files.waves",
             1,
             "the first request batch should discover every available source",
         ),
         (
-            "project.build.generated_modules.def_map_resumes",
+            "project.build.macro_source_files.def_map_resumes",
             1,
             "one resumable step should apply both source aliases",
         ),
         (
-            "project.build.generated_modules.cache.fingerprint_changes",
+            "project.build.macro_source_files.cache.fingerprint_changes",
             1,
             "late discovery should change the source-built package fingerprint once",
         ),
@@ -709,7 +709,7 @@ pub struct Deep;
     );
     let run = rg_profile::test_support::ProfileTest::start(
         crate::profile_descriptors(),
-        "project.build.generated_modules,def_map.finalization",
+        "project.build.macro_source_files,def_map.finalization",
     );
 
     let project = Project::builder(fixture.workspace_metadata())
@@ -729,12 +729,12 @@ pub struct Deep;
         "the second source wave should contribute its declarations",
     );
     profile.assert_counter_path_with_message(
-        "project.build.generated_modules.waves",
+        "project.build.macro_source_files.waves",
         2,
         "the nested macro chain should require two sequential source waves",
     );
     profile.assert_counter_path_with_message(
-        "project.build.generated_modules.def_map_resumes",
+        "project.build.macro_source_files.def_map_resumes",
         2,
         "each answered source wave should resume the retained DefMap state",
     );
@@ -791,29 +791,29 @@ pub struct SharedAcrossTargets;
     );
     let run = rg_profile::test_support::ProfileTest::start(
         crate::profile_descriptors(),
-        "project.build.generated_modules",
+        "project.build.macro_source_files",
     );
     let project = fixture.build_project();
     let profile = run.finish();
 
     for (path, expected, message) in [
         (
-            "project.build.generated_modules.requests.seen",
+            "project.build.macro_source_files.requests.seen",
             1,
             "equivalent requests from the library and binary should be deduplicated",
         ),
         (
-            "project.build.generated_modules.paths.unique",
+            "project.build.macro_source_files.paths.unique",
             1,
             "both targets should share one package-local generated source",
         ),
         (
-            "project.build.generated_modules.files.discovered",
+            "project.build.macro_source_files.files.discovered",
             1,
             "the shared source should enter the package file table once",
         ),
         (
-            "project.build.generated_modules.def_map_resumes",
+            "project.build.macro_source_files.def_map_resumes",
             1,
             "one resumable step should apply the shared answer to both targets",
         ),
@@ -1244,7 +1244,7 @@ pub struct CachedGenerated;
 
     let run = rg_profile::test_support::ProfileTest::start(
         crate::profile_descriptors(),
-        "project.build.cache_probe,project.build.generated_modules",
+        "project.build.cache_probe,project.build.macro_source_files",
     );
     let warm = Project::builder(workspace)
         .package_residency_policy(PackageResidencyPolicy::AllOffloadable)
@@ -1260,7 +1260,7 @@ pub struct CachedGenerated;
     assert_eq!(
         profile
             .inner()
-            .counter("project.build.generated_modules.requests.seen")
+            .counter("project.build.macro_source_files.requests.seen")
             .unwrap_or(0),
         0,
         "a valid artifact should restore the final parse table without repeating discovery",
