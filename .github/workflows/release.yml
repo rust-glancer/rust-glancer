@@ -34,8 +34,8 @@ jobs:
           config-file: .github/release-please/config.json
           manifest-file: .github/release-please/manifest.json
 
-  build_vsix:
-    name: build-vsix (${{ matrix.vscode_target }})
+  build_release_assets:
+    name: build-release-assets (${{ matrix.vscode_target }})
     needs: release_please
     if: needs.release_please.outputs.release_created == 'true'
     runs-on: ${{ matrix.runner }}
@@ -84,18 +84,30 @@ jobs:
       - name: Install client dependencies
         run: npm ci
         working-directory: editors/code
+      - name: Build language server
+        run: cargo build --release -p rust-glancer --target "${{ matrix.rust_target }}"
+      - name: Check language server executable
+        run: target/${{ matrix.rust_target }}/release/rust-glancer --help
+      - name: Package standalone language server
+        run: >-
+          python3 .github/scripts/package_server_archive.py
+          --target "${{ matrix.rust_target }}"
+          --version "${{ needs.release_please.outputs.version }}"
       - name: Package VSIX
         run: >-
           npm run package:vsix --
+          --skip-build
           --target "${{ matrix.rust_target }}"
           --vscode-target "${{ matrix.vscode_target }}"
           --out "../../dist/rust-glancer-${{ needs.release_please.outputs.version }}-${{ matrix.vscode_target }}.vsix"
         working-directory: editors/code
-      - name: Upload packaged VSIX
+      - name: Upload release assets
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: vsix-${{ matrix.vscode_target }}
-          path: dist/rust-glancer-${{ needs.release_please.outputs.version }}-${{ matrix.vscode_target }}.vsix
+          name: release-assets-${{ matrix.vscode_target }}
+          path: |
+            dist/rust-glancer-${{ needs.release_please.outputs.version }}-${{ matrix.vscode_target }}.vsix
+            dist/rust-glancer-${{ needs.release_please.outputs.version }}-${{ matrix.rust_target }}.tar.gz
           if-no-files-found: error
           retention-days: 7
 
@@ -103,7 +115,7 @@ jobs:
     name: publish
     needs:
       - release_please
-      - build_vsix
+      - build_release_assets
     if: needs.release_please.outputs.release_created == 'true'
     runs-on: ubuntu-latest
     permissions:
@@ -122,10 +134,10 @@ jobs:
       - name: Install Marketplace publisher
         run: npm ci
         working-directory: editors/code
-      - name: Download packaged VSIX files
+      - name: Download release assets
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
-          pattern: vsix-*
+          pattern: release-assets-*
           path: dist
           merge-multiple: true
       - name: Check release versions
@@ -156,8 +168,8 @@ jobs:
 
           ./node_modules/.bin/vsce publish --skip-duplicate --packagePath "${packages[@]}"
         working-directory: editors/code
-      - name: Attach VSIX files to the GitHub release
+      - name: Attach release assets to the GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ needs.release_please.outputs.tag_name }}
-        run: gh release upload "$RELEASE_TAG" dist/*.vsix --clobber
+        run: gh release upload "$RELEASE_TAG" dist/*.vsix dist/*.tar.gz --clobber

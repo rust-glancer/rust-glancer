@@ -1,6 +1,13 @@
+//! Zed adapter for starting Rust Glancer as the Rust language server.
+//!
+//! This crate owns the small amount of editor-specific policy around the server. It chooses a
+//! user-configured binary, a binary from the worktree environment, or the managed fallback. Once
+//! the command is chosen, Rust Glancer still owns its command-line and LSP configuration behavior.
+
 use zed_extension_api::{self as zed, settings::LspSettings};
 
-const SERVER_BINARY: &str = "rust-glancer";
+mod server;
+
 const SERVER_SUBCOMMAND: &str = "lsp";
 
 struct RustGlancerExtension;
@@ -18,18 +25,23 @@ impl zed::Extension for RustGlancerExtension {
         let settings = LspSettings::for_worktree(language_server_id.as_ref(), worktree)?;
         let binary = settings.binary;
 
-        // An explicit path makes local development and unusual installations predictable.
-        // Otherwise, use the project shell environment that Zed already resolved.
-        let command = binary
+        // User-controlled installations come first. This keeps local development and system
+        // packages predictable; the pinned managed release is only the zero-configuration path.
+        let installed_command = binary
             .as_ref()
             .and_then(|binary| binary.path.as_deref())
             .filter(|path| !path.trim().is_empty())
             .map(str::to_owned)
-            .or_else(|| worktree.which(SERVER_BINARY))
-            .ok_or_else(|| {
-                "rust-glancer was not found on PATH; configure lsp.rust-glancer.binary.path in Zed settings"
-                    .to_string()
-            })?;
+            .or_else(|| worktree.which(server::SERVER_BINARY));
+        let command = if let Some(command) = installed_command {
+            zed::set_language_server_installation_status(
+                language_server_id,
+                &zed::LanguageServerInstallationStatus::None,
+            );
+            command
+        } else {
+            server::ManagedServer::ensure_installed(language_server_id)?
+        };
         let args = binary
             .as_ref()
             .and_then(|binary| binary.arguments.clone())

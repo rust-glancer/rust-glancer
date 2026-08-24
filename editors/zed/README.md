@@ -1,9 +1,17 @@
 # Rust Glancer for Zed
 
 This extension connects Zed's built-in Rust language support to
-`rust-glancer lsp`. The proof of concept expects the Rust Glancer executable to
-be installed on `PATH` or configured explicitly; it does not download a server
-binary.
+`rust-glancer lsp`. It uses an explicitly configured executable or one installed
+on `PATH` when available. Otherwise, the extension downloads its pinned Rust
+Glancer release and keeps it in Zed's extension work directory.
+
+Managed installation is available for:
+
+- macOS on Apple Silicon and Intel
+- Linux with glibc 2.28 or newer on AArch64 and x86-64
+
+Other platforms can still use the extension by configuring a compatible
+`rust-glancer` executable explicitly.
 
 ## Development
 
@@ -40,7 +48,10 @@ the binary path with the path to this checkout:
 The extension uses `["lsp"]` when `binary.arguments` is omitted. If arguments
 are configured, they replace that default and must retain the `lsp` subcommand.
 When `binary.path` is omitted, the extension looks for `rust-glancer` on the
-project's `PATH`.
+project's `PATH` and then falls back to its managed binary. Managed downloads
+are versioned, so restarting Zed can use an already installed server without
+network access. A new extension release pins a new server release instead of
+following the latest GitHub release automatically.
 
 Rust Glancer applies its server-side configuration defaults when no
 initialization options are provided. Overrides use Zed's standard
@@ -99,6 +110,3 @@ build directly:
 rustup target add wasm32-wasip2
 cargo build -p rust-glancer-zed --target wasm32-wasip2
 ```
-
-The extension version in `extension.toml` and publication to the Zed extension
-registry are intentionally updated manually for now.
