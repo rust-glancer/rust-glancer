@@ -173,6 +173,9 @@ impl IncludePathExpression {
             };
             rendered.push_str(value);
         }
+        if !rendered.chars().next().is_some_and(std::path::is_separator) {
+            return None;
+        }
         Some(PathBuf::from(rendered))
     }
 
@@ -289,6 +292,10 @@ mod tests {
             .expect("supported environment expression should parse");
         assert!(expression.render_with(|_| None).is_none());
         assert!(expression.out_dir_suffix().is_none());
+
+        let missing_separator = parse(r#"include!(concat!(env!("OUT_DIR"), "file.rs"));"#)
+            .expect("supported include expression should parse");
+        assert!(missing_separator.out_dir_suffix().is_none());
     }
 
     fn parse(source: &str) -> Option<IncludePathExpression> {

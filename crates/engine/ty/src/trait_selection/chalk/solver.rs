@@ -483,20 +483,22 @@ impl ChalkTraitSolver {
         };
 
         // A known outer constructor does not make every speculative goal finite. For example,
-        // `Box<?T>: Trait` can select `impl<T: Trait> Trait for Box<T>`, which opens the same trait
-        // again over `?T`. Once one concrete base impl exists, Chalk can enumerate arbitrarily
-        // deep witnesses such as `User`, `Box<User>`, and `Box<Box<User>>`. Leave that obligation
-        // pending until inference supplies the recursive type instead of entering an unbounded
-        // existential search.
+        // `Box<?T>: Marker` may open `?T: Marker` directly, or it may open `?T: Step` whose blanket
+        // impl asks for `?T: Marker` again. Instead of constructing a second trait-dependency
+        // solver here, conservatively defer any matching impl whose trait-predicate `Self` still
+        // contains an inference variable. Body inference can retry once another source supplies
+        // that type.
         for trait_impl in candidates {
             let Some(header) =
                 session.impl_header_with(item_paths, item_paths, trait_impl.impl_ref)?
             else {
                 continue;
             };
-            if !header.clauses.iter().any(
-                |clause| matches!(clause, Clause::Implemented(bound) if bound.def == application.def),
-            ) {
+            if !header
+                .clauses
+                .iter()
+                .any(|clause| matches!(clause, Clause::Implemented(_)))
+            {
                 continue;
             }
             let Some(candidate) =
@@ -504,18 +506,17 @@ impl ChalkTraitSolver {
             else {
                 continue;
             };
-            let opens_same_trait = header.clauses.iter().any(|clause| {
+            let opens_variable_trait_predicate = header.clauses.iter().any(|clause| {
                 let Clause::Implemented(bound) =
                     candidate.subst.as_substitution().apply_clause(clause)
                 else {
                     return false;
                 };
-                bound.def == application.def
-                    && bound
-                        .self_ty()
-                        .is_some_and(|ty| candidate.table.canonicalize(ty).has_var())
+                bound
+                    .self_ty()
+                    .is_some_and(|ty| candidate.table.canonicalize(ty).has_var())
             });
-            if opens_same_trait {
+            if opens_variable_trait_predicate {
                 return Ok(usize::MAX);
             }
         }

@@ -1,14 +1,17 @@
 use std::{
+    any::type_name,
     fs::{self, File, FileTimes},
+    mem,
     path::Path,
+    sync::Arc,
     time::{Duration, UNIX_EPOCH},
 };
 
 use test_fixture::CrateFixture;
 
-use rg_std::{MemoryRecorder, MemorySize};
+use rg_std::{MemoryRecordKind, MemoryRecorder, MemorySize};
 
-use super::{CargoCompileEnvVar, CargoGeneratedSources};
+use super::{CargoCompileEnvVar, CargoGeneratedSources, CargoGeneratedSourcesData};
 use crate::{CargoMetadataConfig, WorkspaceLoweringConfig, WorkspaceMetadata};
 
 #[test]
@@ -23,13 +26,23 @@ fn cloned_generated_sources_count_their_shared_payload_once() {
     );
     let cloned = generated_sources.clone();
 
-    let mut one_handle = MemoryRecorder::total_only("one");
+    let mut one_handle = MemoryRecorder::new("one");
     generated_sources.record_memory_children(&mut one_handle);
     let mut both_handles = MemoryRecorder::total_only("both");
     generated_sources.record_memory_children(&mut both_handles);
     cloned.record_memory_children(&mut both_handles);
 
     assert_eq!(both_handles.total_bytes(), one_handle.total_bytes());
+    assert!(one_handle.records().iter().any(|record| {
+        record.kind == MemoryRecordKind::Heap
+            && record.type_name == type_name::<CargoGeneratedSourcesData>()
+            && record.bytes == mem::size_of::<CargoGeneratedSourcesData>()
+    }));
+    assert!(one_handle.records().iter().any(|record| {
+        record.kind == MemoryRecordKind::Approximate
+            && record.type_name == type_name::<Arc<CargoGeneratedSourcesData>>()
+            && record.bytes > 0
+    }));
 }
 
 #[test]
@@ -166,6 +179,90 @@ include!(concat!(env!("OUT_DIR"), "/generated.rs"));
         generated_sources.generated_files(),
         &[fs::canonicalize(selected_generated)
             .expect("selected generated source should canonicalize")]
+    );
+}
+
+#[test]
+fn combines_generated_files_from_package_targets_sharing_an_out_dir() {
+    let fixture = CrateFixture::from_fixture_spec(
+        r#"
+//- /Cargo.toml
+[package]
+name = "multi-target-fixture"
+version = "0.1.0"
+edition = "2024"
+build = "build.rs"
+
+[[bin]]
+name = "helper"
+path = "src/main.rs"
+
+//- /build.rs
+fn main() {}
+
+//- /src/lib.rs
+include!(concat!(env!("OUT_DIR"), "/library.rs"));
+
+//- /src/main.rs
+include!(concat!(env!("OUT_DIR"), "/binary.rs"));
+"#,
+    );
+    let metadata = fixture.metadata();
+    let target_dir = metadata.target_directory.as_std_path();
+    let out_dir = target_dir.join("debug/build/multi-target-fixture-unit/out");
+    let deps_dir = target_dir.join("debug/deps");
+    let library_generated = out_dir.join("library.rs");
+    let binary_generated = out_dir.join("binary.rs");
+    let library_dep_info = deps_dir.join("multi_target_fixture-1111111111111111.d");
+    let binary_dep_info = deps_dir.join("helper-2222222222222222.d");
+    fs::create_dir_all(&out_dir).expect("shared output directory should be created");
+    fs::create_dir_all(&deps_dir).expect("dep-info directory should be created");
+    fs::write(&library_generated, "pub struct FromLibrary;")
+        .expect("library-generated source should be written");
+    fs::write(&binary_generated, "pub struct FromBinary;")
+        .expect("binary-generated source should be written");
+    write_dep_info(
+        &library_dep_info,
+        &fs::canonicalize(fixture.path("src/lib.rs"))
+            .expect("library target root should canonicalize"),
+        &library_generated,
+    );
+    write_dep_info(
+        &binary_dep_info,
+        &fs::canonicalize(fixture.path("src/main.rs"))
+            .expect("binary target root should canonicalize"),
+        &binary_generated,
+    );
+    set_modified(&library_dep_info, Duration::from_secs(20));
+    set_modified(&binary_dep_info, Duration::from_secs(40));
+
+    let workspace = WorkspaceMetadata::for_tests(metadata, WorkspaceLoweringConfig::default())
+        .expect("multi-target workspace metadata should lower");
+    let package = workspace
+        .packages()
+        .iter()
+        .find(|package| package.name == "multi-target-fixture")
+        .expect("fixture package should exist");
+    let generated_sources = package
+        .cargo_generated_sources
+        .as_ref()
+        .expect("shared generated sources should be selected");
+    let library_generated =
+        fs::canonicalize(library_generated).expect("library-generated source should canonicalize");
+    let binary_generated =
+        fs::canonicalize(binary_generated).expect("binary-generated source should canonicalize");
+
+    assert_eq!(workspace.cargo_build_output_stats().generated_files(), 2);
+    assert_eq!(generated_sources.generated_files().len(), 2);
+    assert!(
+        generated_sources
+            .generated_files()
+            .contains(&library_generated)
+    );
+    assert!(
+        generated_sources
+            .generated_files()
+            .contains(&binary_generated)
     );
 }
 

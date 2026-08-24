@@ -18,8 +18,9 @@
 //!
 //! This is intentionally approximate, not a reimplementation of Cargo freshness or feature
 //! selection. Cargo's reported build directory wins when it contains a usable unit; otherwise the
-//! target-directory fallbacks participate. Within one root, one deterministic recent candidate is
-//! chosen. Missing files and unfamiliar layouts are ignored; if no usable candidate can be
+//! target-directory fallbacks participate. Within one root, one deterministic recent output
+//! directory is chosen, and generated inputs from package targets that used that same directory
+//! are combined. Missing files and unfamiliar layouts are ignored; if no usable candidate can be
 //! established, the package remains on ordinary source-only analysis.
 
 mod dep_info;
@@ -101,12 +102,13 @@ impl CargoBuildOutputScanStats {
     }
 }
 
-/// Generated source paths and compile-time environment recovered from one concrete rustc unit.
+/// Generated source paths and compile-time environment recovered from one Cargo output directory.
 ///
 /// This is evidence, not a promise that Cargo would select the same unit for another invocation.
 /// The files remain useful for indexing as long as they exist and form a consistent source
 /// snapshot. For example, the retained `OUT_DIR` value can render an `include!` path, while the
-/// generated-file list proves that the selected unit really consumed the rendered file.
+/// generated-file list proves that at least one attributed package target consumed the rendered
+/// file.
 ///
 /// The recovered sources belong to one [`crate::WorkspaceMetadata`] snapshot. Ordinary saved-file
 /// rebuilds reuse them without rescanning Cargo directories; loading a new workspace snapshot
@@ -182,7 +184,9 @@ impl CargoGeneratedSources {
 impl MemorySize for CargoGeneratedSources {
     fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
         if recorder.visit_shared_allocation(Arc::as_ptr(&self.0).cast::<()>()) {
-            self.0.record_memory_children(recorder);
+            // Delegate through `Arc`, not its dereferenced data, so the allocation payload and
+            // overhead are counted together with the data's owned buffers.
+            MemorySize::record_memory_children(&self.0, recorder);
         }
     }
 }
@@ -344,9 +348,10 @@ impl CargoBuildOutputDiscovery {
         }
 
         // Cargo's reported build directory is authoritative when it contains a usable candidate;
-        // the target-directory roots are historical fallbacks. Within one root, prefer the newest
-        // matching rustc unit and use the path as a stable tie-breaker. This does not recreate
-        // Cargo's active feature set; it chooses one useful, internally consistent source snapshot.
+        // the target-directory roots are historical fallbacks. Within one root, prefer the output
+        // directory used by the newest matching rustc unit and use the path as a stable
+        // tie-breaker. This does not recreate Cargo's active feature set; it chooses one useful,
+        // internally consistent source snapshot.
         for (package, mut candidates) in packages.iter_mut().zip(build_output_candidates) {
             candidates.sort_by(|left, right| {
                 left.target_directory_rank
@@ -354,9 +359,38 @@ impl CargoBuildOutputDiscovery {
                     .then_with(|| right.modified.cmp(&left.modified))
                     .then_with(|| left.dep_info_path.cmp(&right.dep_info_path))
             });
-            let Some(selected) = candidates.into_iter().next() else {
+            let Some(selected_out_dir) = candidates
+                .first()
+                .map(|candidate| candidate.generated_sources.out_dir().to_path_buf())
+            else {
                 continue;
             };
+
+            // A library and its binaries are separate rustc units, but they reuse the package's
+            // build-script output. Combine their dep-info allow-lists when they point at the
+            // selected output directory so each target's `include!` can see the file it consumed.
+            let mut generated_files = UniqueVec::new();
+            'candidates: for candidate in &candidates {
+                if candidate.generated_sources.out_dir() != selected_out_dir {
+                    continue;
+                }
+                for path in candidate.generated_sources.generated_files() {
+                    generated_files.push(path.clone());
+                    if generated_files.len() == MAX_GENERATED_FILES_PER_BUILD_OUTPUT {
+                        break 'candidates;
+                    }
+                }
+            }
+
+            let mut selected = candidates
+                .into_iter()
+                .next()
+                .expect("a selected output directory should have one candidate");
+            selected.generated_sources = CargoGeneratedSources::new(
+                selected.generated_sources.0.out_dir.clone(),
+                selected.generated_sources.0.compile_env.clone(),
+                generated_files.into_vec(),
+            );
 
             stats.selected_packages += 1;
             stats.generated_files += selected.generated_sources.generated_files().len();
