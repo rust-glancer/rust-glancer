@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use rg_cfg_eval::CfgOptions;
 use rg_text::RustEdition;
 
-use crate::SysrootCrate;
+use crate::{CargoGeneratedSources, SysrootCrate};
 use rg_std::{MemorySize, Shrink};
 use wincode::{SchemaRead, SchemaWrite};
 
@@ -91,6 +91,12 @@ pub struct Package {
     pub cfg_options: CfgOptions,
     /// Every feature declared in this package's manifest, including inactive features.
     pub declared_features: Vec<String>,
+    /// Generated sources recovered from one existing Cargo compilation.
+    ///
+    /// This remains separate from ordinary package metadata because it is an approximate snapshot
+    /// of user-produced build outputs. Parse carries it forward so `include!` path resolution can
+    /// use the captured compile-time environment without consulting or executing Cargo.
+    pub cargo_generated_sources: Option<CargoGeneratedSources>,
     pub targets: Vec<CargoTarget>,
     pub dependencies: Vec<PackageDependency>,
 }

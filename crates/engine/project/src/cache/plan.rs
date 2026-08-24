@@ -114,7 +114,11 @@ impl WorkspaceCachePlan {
             .collect()
     }
 
-    /// Refreshes source fingerprints for selected parsed packages.
+    /// Refreshes source fingerprints after selected package file inventories have converged.
+    ///
+    /// Initial Parse knows target roots and eagerly reachable files. DefMap can subsequently expose
+    /// macro-generated modules or includes, so source-built slots are recomputed only after that
+    /// resumable discovery loop has added every real file to the package snapshot.
     pub fn refresh_source_fingerprints(
         &self,
         workspace_root: &Path,

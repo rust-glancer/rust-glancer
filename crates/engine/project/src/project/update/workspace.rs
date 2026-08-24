@@ -10,13 +10,16 @@ use anyhow::Context as _;
 
 use rg_workspace::WorkspaceMetadata;
 
-use crate::project::{AnalysisChangeSummary, ChangedFile, Project, SavedFileChange};
+use crate::project::{
+    AnalysisChangeSummary, ChangedFile, Project, SavedFileChange, StartupCacheLoad,
+};
 
 use super::source;
 
 pub(super) fn rebuild_workspace_graph(
     project: &mut Project,
     changes: &[SavedFileChange],
+    startup_cache_load: StartupCacheLoad,
 ) -> anyhow::Result<AnalysisChangeSummary> {
     let manifest_path = project
         .state
@@ -52,6 +55,7 @@ pub(super) fn rebuild_workspace_graph(
         .split_indexing_mode(split_indexing_mode)
         .indexing_preference(indexing_preference)
         .package_residency_policy(package_residency_policy)
+        .startup_cache_load(startup_cache_load)
         .memory_hooks(memory_hooks)
         .build()
         .context("while attempting to build refreshed analysis project")?

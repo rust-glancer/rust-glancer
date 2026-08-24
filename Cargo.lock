@@ -509,6 +509,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "depinfo"
+version = "0.7.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "400eae7d5bbe496d8a6572e7f531d109a61325625b66fdf2c4529ffb23869846"
+dependencies = [
+ "thiserror",
+]
+
+[[package]]
 name = "derive_more"
 version = "2.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2047,6 +2056,7 @@ name = "rg_workspace"
 version = "0.0.0"
 dependencies = [
  "cargo_metadata",
+ "depinfo",
  "derive_more",
  "expect-test",
  "rg_cfg_eval",

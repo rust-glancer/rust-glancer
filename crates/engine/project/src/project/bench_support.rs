@@ -16,7 +16,7 @@ use rg_workspace::WorkspaceMetadata;
 
 use crate::{IndexingPerformancePreference, memory::NoopProjectMemoryHooks};
 
-use super::{generated_modules, package_set::PhasePackageSet};
+use super::{macro_source_files, package_set::PhasePackageSet};
 
 /// Builds ItemTree for every parsed benchmark package through the selected-package lowerer.
 pub fn build_item_tree(
@@ -44,7 +44,7 @@ pub fn build_def_map(
         &visible_packages,
     );
 
-    generated_modules::build_packages(
+    macro_source_files::build_packages(
         &baseline,
         &baseline_read,
         workspace,

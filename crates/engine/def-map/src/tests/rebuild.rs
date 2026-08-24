@@ -248,8 +248,8 @@ impl RebuildFixture {
             .expect("fixture DefMap package rebuild session should advance")
         {
             DefMapBuildProgress::Complete(def_map) => def_map,
-            DefMapBuildProgress::NeedsGeneratedModules(requests) => panic!(
-                "source-closed rebuild fixture requested {} generated module source(s)",
+            DefMapBuildProgress::NeedsMacroSourceFiles(requests) => panic!(
+                "source-closed rebuild fixture requested {} macro source file(s)",
                 requests.len(),
             ),
         };

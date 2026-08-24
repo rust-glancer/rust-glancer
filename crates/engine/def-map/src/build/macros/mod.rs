@@ -5,9 +5,11 @@
 //! def-map by parsing expanded token trees into generated syntax and collecting those items into
 //! the macro call's module.
 //!
-//! Most generated items can be collected immediately. Generated `mod child;` also needs a source
-//! file, so the collector keeps a small continuation and emits a request. Project construction
-//! captures and lowers the file, then resumes this same expansion/finalization session.
+//! Most generated items can be collected immediately. A generated `mod child;` still needs its
+//! child file, while a generated `include!(...)` needs a real file whose items belong to the
+//! caller's existing module. For those two source edges, the collector keeps the corresponding
+//! semantic continuation and emits a project-owned lookup request. Project construction captures
+//! and lowers the file, then resumes this same expansion/finalization session.
 
 use std::{collections::HashMap, sync::Arc};
 
@@ -28,14 +30,14 @@ mod generated_tree;
 mod resolve;
 mod source_fragment;
 
-pub(super) use self::generated::PendingGeneratedModule;
+pub(super) use self::generated::{PendingGeneratedInclude, PendingGeneratedModule};
 pub(super) use self::{
     attempts::{
         MacroExpansionApplyResult, MacroExpansionAttempt, MacroExpansionCursors,
         MacroExpansionScan, apply_expansion_attempts, collect_expansion_attempts,
     },
     expand::expand_expansion_attempts,
-    generated::apply_pending_generated_modules,
+    generated::apply_pending_macro_source_files,
 };
 
 // Recursive generated macro calls can otherwise keep the fixed-point loop alive forever. Keep the

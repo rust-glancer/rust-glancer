@@ -1,9 +1,14 @@
 //! Resumable package-scoped DefMap construction.
 //!
 //! A build collects fresh mutable state only for selected packages. Finalization reads that state
-//! for selected packages and falls through to the frozen baseline for everything else. Generated
-//! module requests can pause the build while the project grows Parse and ItemTree; completing the
-//! session swaps the selected package payloads into a cloned database.
+//! for selected packages and falls through to the frozen baseline for everything else.
+//!
+//! The session boundary exists for source edges that are visible only after macro expansion. If an
+//! expansion produces `mod generated;`, DefMap must wait for the project to lower the child file.
+//! If it produces an `OUT_DIR` `include!`, it must wait for the generated file and then splice its
+//! items into the caller's module. In both cases the session keeps collected declarations, import
+//! scopes, macro runtime state, and recursion budgets alive while Parse and ItemTree grow outside
+//! this crate. Completing the session swaps the selected package payloads into a cloned database.
 
 use std::sync::Arc;
 
@@ -16,27 +21,29 @@ use rg_text::PackageNameInterners;
 use rg_workspace::WorkspaceMetadata;
 
 use super::{
-    GeneratedModuleResolution, GeneratedModuleResolutions,
+    MacroSourceFileResolution, MacroSourceFileResolutions,
     collect::collect_package_crate_states,
     finalize::{
         FinalizeCrateStates, FinalizeScopeSession, finalize_scopes, freeze_package, select_preludes,
     },
     implicit_roots::build_implicit_roots,
 };
-use crate::{DefMapBuildProgress, DefMapDb, DefMapReadTxn, GeneratedModuleRequest, PackageSlot};
+use crate::{DefMapBuildProgress, DefMapDb, DefMapReadTxn, MacroSourceFileRequest, PackageSlot};
 
 /// Selected-package construction retained across project-owned source capture waves.
 ///
-/// The session owns every generated-module resolution recorded during the build. This keeps the
+/// The session owns every macro source-file resolution recorded during the build. This keeps the
 /// request ledger tied to the mutable crate states that consume it and prevents a caller from
-/// accidentally resuming one session with another session's resolutions.
+/// accidentally resuming one session with another session's resolutions. A caller repeatedly
+/// invokes [`DefMapBuildSession::advance`], answers every returned request on this same value, and
+/// advances again until [`DefMapBuildProgress::Complete`] is returned.
 pub struct DefMapBuildSession {
     baseline: DefMapDb,
     packages: Vec<PackageSlot>,
     crate_states: FinalizeCrateStates,
     scope_session: FinalizeScopeSession,
-    generated_module_resolutions: GeneratedModuleResolutions,
-    awaiting_generated_modules: Vec<GeneratedModuleRequest>,
+    macro_source_file_resolutions: MacroSourceFileResolutions,
+    awaiting_macro_source_files: Vec<MacroSourceFileRequest>,
     complete: bool,
 }
 
@@ -107,65 +114,84 @@ impl DefMapBuildSession {
             packages,
             crate_states,
             scope_session: FinalizeScopeSession::new(performance_preference),
-            generated_module_resolutions: GeneratedModuleResolutions::default(),
-            awaiting_generated_modules: Vec::new(),
+            macro_source_file_resolutions: MacroSourceFileResolutions::default(),
+            awaiting_macro_source_files: Vec::new(),
             complete: false,
         })
     }
 
-    /// Records a requested source after Parse captured it and ItemTree lowered its child context.
-    pub fn record_generated_module(
+    /// Records a module file after Parse captured it and ItemTree lowered it in its child context.
+    pub fn record_module_file(
         &mut self,
-        request: GeneratedModuleRequest,
+        request: MacroSourceFileRequest,
         file_id: FileId,
         child_context: Arc<ModuleFileContext>,
     ) -> anyhow::Result<()> {
-        self.record_generated_module_resolution(
+        anyhow::ensure!(
+            matches!(&request, MacroSourceFileRequest::Module { .. }),
+            "an include-file request cannot be answered as a module file",
+        );
+        self.record_macro_source_file_resolution(
             request,
-            GeneratedModuleResolution::Found {
+            MacroSourceFileResolution::Module {
                 file_id,
                 child_context,
             },
         )
     }
 
-    /// Records that the project probed every supported path without finding the requested source.
-    pub fn record_missing_generated_module(
+    /// Records one file that ItemTree lowered for a macro-generated builtin include.
+    pub fn record_include_file(
         &mut self,
-        request: GeneratedModuleRequest,
+        request: MacroSourceFileRequest,
+        file_id: FileId,
     ) -> anyhow::Result<()> {
-        self.record_generated_module_resolution(request, GeneratedModuleResolution::Missing)
+        anyhow::ensure!(
+            matches!(&request, MacroSourceFileRequest::Include { .. }),
+            "a module-file request cannot be answered as an include file",
+        );
+        self.record_macro_source_file_resolution(
+            request,
+            MacroSourceFileResolution::Include { file_id },
+        )
     }
 
-    fn record_generated_module_resolution(
+    /// Records that the project completed a supported lookup without finding a source.
+    pub fn record_missing_macro_source_file(
         &mut self,
-        request: GeneratedModuleRequest,
-        resolution: GeneratedModuleResolution,
+        request: MacroSourceFileRequest,
+    ) -> anyhow::Result<()> {
+        self.record_macro_source_file_resolution(request, MacroSourceFileResolution::Missing)
+    }
+
+    fn record_macro_source_file_resolution(
+        &mut self,
+        request: MacroSourceFileRequest,
+        resolution: MacroSourceFileResolution,
     ) -> anyhow::Result<()> {
         anyhow::ensure!(
-            self.awaiting_generated_modules.contains(&request),
-            "generated module {} for package {} was not requested by this DefMap build step",
-            request.module_name(),
-            request.package().0,
+            self.awaiting_macro_source_files.contains(&request),
+            "{} was not requested by this DefMap build step",
+            request.description(),
         );
         anyhow::ensure!(
-            !self.generated_module_resolutions.contains_key(&request),
-            "generated module {} for package {} was already resolved",
-            request.module_name(),
-            request.package().0,
+            !self.macro_source_file_resolutions.contains_key(&request),
+            "{} was already resolved",
+            request.description(),
         );
         let previous = self
-            .generated_module_resolutions
+            .macro_source_file_resolutions
             .insert(request, resolution);
         debug_assert!(previous.is_none());
         Ok(())
     }
 
-    /// Continue the same mutable crate states after Parse and ItemTree gained requested files.
+    /// Continues the same mutable crate states after Parse and ItemTree gained requested files.
     ///
     /// Every request from the previous step must be recorded before calling this method. The method
-    /// then refreshes the reachable package-file map and resumes the import/macro fixed point. New
-    /// requests pause the session again; a request-free result freezes every selected package once.
+    /// then refreshes the reachable package-file map and resumes the import/macro fixed point at
+    /// the exact batch that paused. New requests pause the session again; a request-free result
+    /// freezes every selected package once.
     pub fn advance(
         &mut self,
         baseline_read: &DefMapReadTxn<'_>,
@@ -175,18 +201,17 @@ impl DefMapBuildSession {
     ) -> anyhow::Result<DefMapBuildProgress> {
         anyhow::ensure!(!self.complete, "DefMap build session is already complete");
         if let Some(request) = self
-            .awaiting_generated_modules
+            .awaiting_macro_source_files
             .iter()
-            .find(|request| !self.generated_module_resolutions.contains_key(request))
+            .find(|request| !self.macro_source_file_resolutions.contains_key(request))
         {
             anyhow::bail!(
-                "generated module {} for package {} must be resolved before DefMap construction can continue",
-                request.module_name(),
-                request.package().0,
+                "{} must be resolved before DefMap construction can continue",
+                request.description(),
             );
         }
-        self.awaiting_generated_modules.clear();
-        self.crate_states.clear_generated_module_requests();
+        self.awaiting_macro_source_files.clear();
+        self.crate_states.clear_macro_source_file_requests();
         self.crate_states
             .refresh_known_module_files(parse.packages(), item_tree);
 
@@ -196,14 +221,14 @@ impl DefMapBuildSession {
             &mut self.crate_states,
             interners,
             &mut self.scope_session,
-            Some(&self.generated_module_resolutions),
+            Some(&self.macro_source_file_resolutions),
         )
-        .context("while attempting to resume generated-module DefMap construction")?;
+        .context("while attempting to resume macro source-file DefMap construction")?;
 
-        let requests = self.crate_states.generated_module_requests();
+        let requests = self.crate_states.macro_source_file_requests();
         if !requests.is_empty() {
-            self.awaiting_generated_modules = requests.clone();
-            return Ok(DefMapBuildProgress::NeedsGeneratedModules(requests));
+            self.awaiting_macro_source_files = requests.clone();
+            return Ok(DefMapBuildProgress::NeedsMacroSourceFiles(requests));
         }
 
         let mut next = self.baseline.clone();

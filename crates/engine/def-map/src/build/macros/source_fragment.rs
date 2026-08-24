@@ -1,9 +1,11 @@
 //! Collects already-lowered source files and source-like builtin payloads into def-map state.
 //!
 //! ItemTree lowers supported builtin payloads ahead of time and incrementally lowers files found
-//! through generated module requests. This collector handles both forms so they reuse real
-//! `ItemTreeRef`s, file-relative module resolution, impl lowering, extern crates, and macro-use
-//! behavior instead of taking a generated-only path.
+//! through macro source-file requests. For example, direct and macro-generated `include!` calls
+//! both insert a real file into the caller's module, while a macro-generated `mod child;` inserts a
+//! real file into an already allocated child module. This collector handles all of those forms so
+//! they reuse real `ItemTreeRef`s, file-relative module resolution, impl lowering, extern crates,
+//! and macro-use behavior instead of taking a synthetic generated-item path.
 
 use std::{collections::HashSet, sync::Arc};
 
@@ -44,7 +46,8 @@ pub(super) struct SourceFragmentOrigin {
 /// Collector for ItemTree nodes introduced after the initial crate-scope walk.
 ///
 /// Source-like builtins enter the caller's module, while a late module file enters an allocated
-/// child module. Both keep their real source refs and use the ordinary item collection behavior.
+/// child module. Both keep their real source refs and use ordinary item collection behavior. The
+/// distinction comes from [`SourceFragmentOrigin`]; it is not inferred from the physical filename.
 pub(super) struct SourceFragmentCollector<'a> {
     pub(super) state: &'a mut CrateState,
     pub(super) current_scopes: &'a mut ScopeMatrix,

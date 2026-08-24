@@ -1,3 +1,4 @@
+mod cargo_build_outputs;
 mod current_body;
 mod generated_modules;
 mod split_indexing;

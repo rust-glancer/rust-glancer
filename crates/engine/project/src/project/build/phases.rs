@@ -1,8 +1,10 @@
 //! Builds the retained phase databases for a fresh project snapshot.
 //!
-//! Source-built package inventories remain open through DefMap construction because supported
-//! macro expansion can reveal more module files. Only after that discovery loop settles are the
-//! source set and the fingerprints retained by the project finalized.
+//! Source-built package inventories remain open through DefMap construction because macro
+//! expansion can reveal more real files: an out-of-line `mod generated;` needs a child module file,
+//! while a generated `include!(...)` can splice a build-script output into the caller's module.
+//! Only after that discovery loop settles are the source set and the fingerprints retained by the
+//! project finalized.
 
 use anyhow::Context as _;
 
@@ -22,7 +24,7 @@ use crate::{
     memory::{ProjectMemoryHooks, ProjectMemoryPurgePoint},
     profile::{BuildMemorySampler, metric},
     project::{
-        SplitIndexingMode, StartupCacheLoad, generated_modules, loading::PackageReadLoaders,
+        SplitIndexingMode, StartupCacheLoad, loading::PackageReadLoaders, macro_source_files,
         package_set::PhasePackageSet, stats::MacroExpansionLimitBuildSummary,
     },
 };
@@ -151,9 +153,11 @@ pub(super) fn build(
         DefMapDb::from_package_store(PackageStore::all_offloaded(parse.package_count()));
     let baseline_def_map_txn =
         baseline_def_map.read_txn_for_subset(loaders.def_map.clone(), &rebuild_subset);
-    // Macro expansion may now request an out-of-line module. Keep Parse and ItemTree mutable while
-    // the coordinator answers complete batches and resumes the same DefMap construction state.
-    let def_map = generated_modules::build_packages(
+    // Macro expansion may now request an out-of-line module or include. Keep Parse and ItemTree
+    // mutable while the coordinator answers complete batches and resumes the same DefMap
+    // construction state. The coordinator preserves the semantic difference: modules receive a
+    // child context, while includes keep the call-site module context.
+    let def_map = macro_source_files::build_packages(
         &baseline_def_map,
         &baseline_def_map_txn,
         workspace,
@@ -167,9 +171,10 @@ pub(super) fn build(
     .context("while attempting to build def map db")?;
     drop(baseline_def_map_txn);
 
-    // The fixed point has finalized every source-built package file table. Seal that exact source
-    // union now, then replace only its provisional fingerprints. Cache-backed loaders keep the
-    // validated values captured above, and dirty packages never read an old payload through them.
+    // The fixed point has finalized every source-built package file table, including files reached
+    // through generated modules and build-script includes. Seal that exact source union now, then
+    // replace only its provisional fingerprints. Cache-backed loaders keep the validated values
+    // captured above, and dirty packages never read an old payload through them.
     parse.seal_sources();
     let provisional_source_fingerprints = build_plan
         .source_packages
@@ -196,7 +201,7 @@ pub(super) fn build(
             source_fingerprints.get(package.0).copied().flatten() != *provisional
         })
         .count();
-    metric::GENERATED_MODULE_CACHE_FINGERPRINT_CHANGES
+    metric::MACRO_SOURCE_FILE_CACHE_FINGERPRINT_CHANGES
         .add(changed_fingerprint_count.try_into().unwrap_or(u64::MAX));
     memory_hooks.purge(ProjectMemoryPurgePoint::AfterDefMapBuild);
     let memory = checkpoint_memory!(
@@ -283,7 +288,7 @@ pub(super) fn build(
         .build()
         .context("while attempting to build body ir db")?;
     // This validation covers both captured late files and the missing-path probes that answered
-    // generated module requests, so a concurrent source change rejects the whole candidate.
+    // macro source-file requests, so a concurrent source change rejects the whole candidate.
     parse
         .validate_saved_sources()
         .context("while attempting to validate captured project source generation")?;

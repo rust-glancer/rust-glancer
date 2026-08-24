@@ -29,7 +29,7 @@ use rg_def_map::DefMapSource;
 use rg_ir_model::{GenericDefRef, ImplRef, TraitApplicability};
 use rg_semantic_ir::{CrateItemQuery, ItemLookupQuery, ItemStoreSource};
 
-use super::super::matcher::TraitSelfHead;
+use super::super::{candidate::TraitCandidate, matcher::TraitSelfHead};
 use super::evidence::{ProjectionAliasLowering, SolverAnswerVars, SolverVariableEnv};
 use super::interner::RgChalkInterner;
 use super::lower::{ChalkLowerer, GenericBinderEnv};
@@ -37,7 +37,7 @@ use super::program::{ChalkProgramState, ProgramAvailability};
 use super::raise;
 use crate::inference::{InferVarKind, InferenceSubstitution, InferenceTable};
 use crate::trait_selection::{
-    AssocProjectionResult, TraitSelectionSession, session::TraitWorkKind,
+    AssocProjectionResult, TraitGoal, TraitSelectionSession, session::TraitWorkKind,
 };
 use crate::{Clause, GenericArg, GenericArgs, ItemPathQuery, TraitApplication};
 
@@ -473,7 +473,55 @@ impl ChalkTraitSolver {
             // distinction instead of making an unavailable index look like an empty impl set.
             return Ok(usize::MAX);
         };
-        Ok(candidates.len())
+        let candidate_count = candidates.len();
+        if candidate_count > SPECULATIVE_ROOT_IMPL_BUDGET {
+            return Ok(candidate_count);
+        }
+        let goal = TraitGoal {
+            application: application.clone(),
+            associated_types: Vec::new(),
+        };
+
+        // A known outer constructor does not make every speculative goal finite. For example,
+        // `Box<?T>: Marker` may open `?T: Marker` directly, or it may open `?T: Step` whose blanket
+        // impl asks for `?T: Marker` again. Instead of constructing a second trait-dependency
+        // solver here, conservatively defer any matching impl whose trait-predicate `Self` still
+        // contains an inference variable. Body inference can retry once another source supplies
+        // that type.
+        for trait_impl in candidates {
+            let Some(header) =
+                session.impl_header_with(item_paths, item_paths, trait_impl.impl_ref)?
+            else {
+                continue;
+            };
+            if !header
+                .clauses
+                .iter()
+                .any(|clause| matches!(clause, Clause::Implemented(_)))
+            {
+                continue;
+            }
+            let Some(candidate) =
+                TraitCandidate::probe_impl(item_paths, session, &goal, table, trait_impl)?
+            else {
+                continue;
+            };
+            let opens_variable_trait_predicate = header.clauses.iter().any(|clause| {
+                let Clause::Implemented(bound) =
+                    candidate.subst.as_substitution().apply_clause(clause)
+                else {
+                    return false;
+                };
+                bound
+                    .self_ty()
+                    .is_some_and(|ty| candidate.table.canonicalize(ty).has_var())
+            });
+            if opens_variable_trait_predicate {
+                return Ok(usize::MAX);
+            }
+        }
+
+        Ok(candidate_count)
     }
 }
 

@@ -37,13 +37,13 @@ use rg_parse::{CargoTarget, ModuleFileContext, Package};
 use rg_text::{Name, RustEdition};
 use rg_workspace::TargetKind;
 
-use crate::GeneratedModuleRequest;
+use crate::MacroSourceFileRequest;
 use crate::PackageSlot;
 
 use super::macros::{
     ItemOrder, MacroCallOrigin, MacroCallSite, MacroDefinitionRecord, MacroDirective,
-    MacroDirectiveState, MacroUseImport, PendingGeneratedModule, PendingMacroExpansionLimitReport,
-    TextualMacroScopes,
+    MacroDirectiveState, MacroUseImport, PendingGeneratedInclude, PendingGeneratedModule,
+    PendingMacroExpansionLimitReport, TextualMacroScopes,
 };
 
 /// Collected state for one crate before fixed-point import resolution.
@@ -73,13 +73,15 @@ pub(super) struct CrateState {
     pub(super) macro_use_imports: Vec<MacroUseImport>,
     pub(super) macro_directives: Vec<MacroDirective>,
     /// Requests emitted by the latest finalization step and cleared before the next resume.
-    pub(super) generated_module_requests: Vec<GeneratedModuleRequest>,
+    pub(super) macro_source_file_requests: Vec<MacroSourceFileRequest>,
     /// Generated module declarations waiting for the project boundary to capture their files.
     ///
     /// The surrounding macro has already been expanded and collected. Keeping this small
     /// continuation lets construction resume without replaying that expansion or duplicating the
     /// other items it produced.
     pub(super) pending_generated_modules: Vec<PendingGeneratedModule>,
+    /// Builtin includes waiting for the project boundary to capture their source files.
+    pub(super) pending_generated_includes: Vec<PendingGeneratedInclude>,
     pub(super) macro_expansion_limit: Option<PendingMacroExpansionLimitReport>,
 }
 
@@ -368,8 +370,9 @@ impl<'db> CrateScopeCollector<'db> {
             textual_macro_scopes: self.textual_macro_scopes,
             macro_use_imports: self.macro_use_imports,
             macro_directives: self.macro_directives,
-            generated_module_requests: Vec::new(),
+            macro_source_file_requests: Vec::new(),
             pending_generated_modules: Vec::new(),
+            pending_generated_includes: Vec::new(),
             macro_expansion_limit: None,
         })
     }

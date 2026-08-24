@@ -6,7 +6,7 @@ use std::{
 use rg_cfg_eval::CfgOptions;
 use rg_text::RustEdition;
 
-use crate::{SysrootCrate, SysrootSources};
+use crate::{CargoBuildOutputScanStats, SysrootCrate, SysrootSources};
 use rg_std::MemorySize;
 
 use super::{
@@ -21,9 +21,12 @@ use super::{
 /// canonicalized at construction so save handling can compare paths directly without each phase
 /// defending against the original path spelling. Missing non-workspace targets are omitted because
 /// they cannot be parsed or reached through local save handling.
-#[derive(Debug, Clone, PartialEq, Eq, MemorySize)]
+#[derive(Debug, Clone, MemorySize)]
 pub struct WorkspaceMetadata {
     workspace_root: PathBuf,
+    cargo_target_dir: PathBuf,
+    /// Diagnostics from loading this snapshot, not part of the workspace's semantic identity.
+    cargo_build_output_stats: CargoBuildOutputScanStats,
     // Target/platform cfg facts are kept separate from package cfgs, which additionally include
     // Cargo features active for that package.
     target_cfg_options: CfgOptions,
@@ -31,15 +34,31 @@ pub struct WorkspaceMetadata {
     package_by_id: HashMap<PackageId, PackageSlot>,
 }
 
+impl PartialEq for WorkspaceMetadata {
+    fn eq(&self, other: &Self) -> bool {
+        self.workspace_root == other.workspace_root
+            && self.cargo_target_dir == other.cargo_target_dir
+            && self.target_cfg_options == other.target_cfg_options
+            && self.packages == other.packages
+            && self.package_by_id == other.package_by_id
+    }
+}
+
+impl Eq for WorkspaceMetadata {}
+
 impl WorkspaceMetadata {
     pub(crate) fn from_parts(
         workspace_root: PathBuf,
+        cargo_target_dir: PathBuf,
+        cargo_build_output_stats: CargoBuildOutputScanStats,
         target_cfg_options: CfgOptions,
         packages: Vec<Package>,
     ) -> Self {
         let package_by_id = Self::package_index(&packages);
         Self {
             workspace_root,
+            cargo_target_dir,
+            cargo_build_output_stats,
             target_cfg_options,
             packages,
             package_by_id,
@@ -147,6 +166,7 @@ impl WorkspaceMetadata {
             manifest_path: sources.library_root().join(krate.name()).join("Cargo.toml"),
             cfg_options,
             declared_features: Vec::new(),
+            cargo_generated_sources: None,
             targets: vec![CargoTarget {
                 name: krate.name().to_string(),
                 kind: TargetKind::Lib,
@@ -171,6 +191,23 @@ impl WorkspaceMetadata {
     /// Returns the workspace root directory.
     pub fn workspace_root(&self) -> &Path {
         &self.workspace_root
+    }
+
+    /// Returns Cargo's artifact directory for this metadata snapshot.
+    ///
+    /// The passive Cargo build-output scan prefers Cargo's separately reported build directory.
+    /// This target directory and the conventional workspace-local `target` remain fallbacks for
+    /// older Cargo metadata and historical command-line builds.
+    pub fn cargo_target_dir(&self) -> &Path {
+        &self.cargo_target_dir
+    }
+
+    /// Returns diagnostic totals from the passive scan performed while this snapshot was lowered.
+    ///
+    /// These values describe startup work and are deliberately excluded from semantic equality;
+    /// the selected per-package generated sources are the part that can change analysis results.
+    pub fn cargo_build_output_stats(&self) -> CargoBuildOutputScanStats {
+        self.cargo_build_output_stats
     }
 
     /// Returns all known packages.

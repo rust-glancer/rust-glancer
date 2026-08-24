@@ -15,7 +15,7 @@ use crate::{
     PackageResidencyPolicy, ProjectMemoryHooks, ProjectMemoryPurgePoint,
     cache::{PackageCacheInstance, PackageCacheStore, WorkspaceCachePlan},
     memory::NoopProjectMemoryHooks,
-    profile::{BuildMemorySampler, record_build_checkpoint},
+    profile::{BuildMemorySampler, metric, record_build_checkpoint},
 };
 
 use super::{
@@ -189,6 +189,61 @@ pub(crate) fn build_resident_state(
     memory_hooks: Arc<dyn ProjectMemoryHooks>,
     memory_sampler: &mut BuildMemorySampler,
 ) -> anyhow::Result<ProjectState> {
+    // Workspace lowering already scanned passive Cargo build outputs because recovered cfg and
+    // compile-time environment must be present before Parse and ItemTree. Replay its bounded totals
+    // into the project profile here; the scan itself is not repeated during project construction.
+    let cargo_build_outputs = workspace.cargo_build_output_stats();
+    metric::CARGO_BUILD_OUTPUT_TARGET_DIRECTORIES.add(
+        cargo_build_outputs
+            .target_directories()
+            .try_into()
+            .unwrap_or(u64::MAX),
+    );
+    metric::CARGO_BUILD_OUTPUT_DEPS_DIRECTORIES.add(
+        cargo_build_outputs
+            .deps_directories()
+            .try_into()
+            .unwrap_or(u64::MAX),
+    );
+    metric::CARGO_BUILD_OUTPUT_DEP_INFO_FILES.add(
+        cargo_build_outputs
+            .dep_info_files()
+            .try_into()
+            .unwrap_or(u64::MAX),
+    );
+    metric::CARGO_BUILD_OUTPUT_BUILD_SCRIPT_PACKAGES.add(
+        cargo_build_outputs
+            .build_script_packages()
+            .try_into()
+            .unwrap_or(u64::MAX),
+    );
+    metric::CARGO_BUILD_OUTPUT_MATCHED_RUSTC_UNITS.add(
+        cargo_build_outputs
+            .matched_rustc_units()
+            .try_into()
+            .unwrap_or(u64::MAX),
+    );
+    metric::CARGO_BUILD_OUTPUT_CANDIDATES.add(
+        cargo_build_outputs
+            .build_output_candidates()
+            .try_into()
+            .unwrap_or(u64::MAX),
+    );
+    metric::CARGO_BUILD_OUTPUT_SELECTED_PACKAGES.add(
+        cargo_build_outputs
+            .selected_packages()
+            .try_into()
+            .unwrap_or(u64::MAX),
+    );
+    metric::CARGO_BUILD_OUTPUT_GENERATED_FILES.add(
+        cargo_build_outputs
+            .generated_files()
+            .try_into()
+            .unwrap_or(u64::MAX),
+    );
+    metric::CARGO_BUILD_OUTPUT_GENERATED_BYTES.add(cargo_build_outputs.generated_bytes());
+    metric::CARGO_BUILD_OUTPUT_SCAN.record(cargo_build_outputs.scan_duration());
+
     let package_residency = PackageResidencyPlan::build(&workspace, package_residency_policy);
     let cache_plan = WorkspaceCachePlan::build(&workspace);
     let cache_store = PackageCacheStore::for_instance(

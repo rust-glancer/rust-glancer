@@ -1,5 +1,6 @@
 use std::{error::Error, fmt, io};
 
+mod build_outputs;
 mod cargo;
 mod lower;
 mod model;
@@ -11,6 +12,7 @@ mod sysroot;
 mod tests;
 
 pub use self::{
+    build_outputs::{CargoBuildOutputScanStats, CargoGeneratedSources},
     cargo::{CargoMetadataConfig, CargoMetadataTarget, LoadedCargoMetadata},
     lower::WorkspaceLoweringConfig,
     model::{

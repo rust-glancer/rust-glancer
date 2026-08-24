@@ -32,16 +32,16 @@ use rg_std::UniqueVec;
 use rg_text::{Name, PackageNameInterners};
 use rg_workspace::{TargetKind, WorkspaceMetadata};
 
-use crate::{DefMapReadTxn, GeneratedModuleRequest, PackageSlot, profile::metric};
+use crate::{DefMapReadTxn, MacroSourceFileRequest, PackageSlot, profile::metric};
 
-use super::GeneratedModuleResolutions;
+use super::MacroSourceFileResolutions;
 
 use super::{
     collect::{CrateState, KnownModuleFiles},
     imports::{UnresolvedImports, apply_imports},
     macros::{
         MAX_MACRO_EXPANSION_PASSES, MacroExpansionCursors, MacroExpansionScan,
-        apply_expansion_attempts, apply_pending_generated_modules, collect_expansion_attempts,
+        apply_expansion_attempts, apply_pending_macro_source_files, collect_expansion_attempts,
         expand_expansion_attempts, mark_retryable_macros_skipped_by_limit,
     },
 };
@@ -126,10 +126,10 @@ impl FinalizeCrateStates {
     }
 
     /// Clears requests emitted by the previous resumable construction step.
-    pub(super) fn clear_generated_module_requests(&mut self) {
+    pub(super) fn clear_macro_source_file_requests(&mut self) {
         for package_states in self.iter_dirty_mut() {
             for state in package_states {
-                state.generated_module_requests.clear();
+                state.macro_source_file_requests.clear();
             }
         }
     }
@@ -155,12 +155,12 @@ impl FinalizeCrateStates {
     }
 
     /// Coalesces construction requests without retaining them in frozen package payloads.
-    pub(super) fn generated_module_requests(&self) -> Vec<GeneratedModuleRequest> {
+    pub(super) fn macro_source_file_requests(&self) -> Vec<MacroSourceFileRequest> {
         let mut requests = UniqueVec::new();
 
         for package_states in self.iter_dirty() {
             for state in package_states {
-                for request in &state.generated_module_requests {
+                for request in &state.macro_source_file_requests {
                     requests.push(request.clone());
                 }
             }
@@ -839,18 +839,23 @@ pub(super) fn select_preludes(
 /// splice generated items back into the mutable crate states, and refresh imports whenever those
 /// generated items may have introduced new imports or exported names.
 ///
-/// At the start of a resumed call, resolved generated modules are applied to the scope snapshot
-/// retained by the requesting macro batch. The newly collected calls then continue against that
-/// same snapshot. An unresolved module records a request and suspends finalization before another
-/// global import pass; freezing happens only after every request has been answered and the ordinary
-/// fixed point is stable.
+/// At the start of a resumed call, resolved generated modules and includes are applied to the scope
+/// snapshot retained by the requesting macro batch. The newly collected calls then continue
+/// against that same snapshot. An unresolved source records a request and suspends finalization
+/// before another global import pass; freezing happens only after every request has been answered
+/// and the ordinary fixed point is stable.
+///
+/// Concretely, `make_module!() -> mod generated;` resumes by allocating the child module and
+/// collecting its file. `make_bindings!() -> include!(...)` resumes by inserting the included
+/// file's declarations into the call-site module. Neither answer restarts the macro expansion or
+/// the workspace-wide import state that preceded it.
 pub(super) fn finalize_scopes(
     old: Option<&DefMapReadTxn<'_>>,
     item_tree: &ItemTreeDb,
     states: &mut FinalizeCrateStates,
     interners: &mut PackageNameInterners,
     session: &mut FinalizeScopeSession,
-    generated_module_resolutions: Option<&GeneratedModuleResolutions>,
+    macro_source_file_resolutions: Option<&MacroSourceFileResolutions>,
 ) -> anyhow::Result<()> {
     metric::EXPANSION_PASS_LIMIT.record_count(MAX_MACRO_EXPANSION_PASSES);
 
@@ -864,15 +869,15 @@ pub(super) fn finalize_scopes(
         None => (states.base_scopes(), None),
     };
 
-    // The surrounding macro was collected before its out-of-line module source became available.
-    // Apply the answered module before resuming its macro queue so declarations and calls from the
+    // The surrounding macro was collected before its real source became available. Apply the
+    // answered module/include before resuming its macro queue so declarations and calls from the
     // loaded file are visible without an intervening workspace-wide import pass.
-    apply_pending_generated_modules(
+    apply_pending_macro_source_files(
         item_tree,
         states,
         interners,
         &mut current_scopes,
-        generated_module_resolutions,
+        macro_source_file_resolutions,
     )?;
 
     loop {
@@ -926,7 +931,13 @@ pub(super) fn finalize_scopes(
                     .as_ref()
                     .map(MacroExpansionScan::NewCallsSince)
                     .unwrap_or(MacroExpansionScan::AllPending);
-                collect_expansion_attempts(&env, states, scan, &mut session.macro_runtime)?
+                collect_expansion_attempts(
+                    &env,
+                    states,
+                    scan,
+                    &mut session.macro_runtime,
+                    macro_source_file_resolutions,
+                )?
             };
             timer.finish();
 
@@ -953,7 +964,7 @@ pub(super) fn finalize_scopes(
                     interners,
                     &mut current_scopes,
                     expansion_attempts,
-                    generated_module_resolutions,
+                    macro_source_file_resolutions,
                 )?
             };
             timer.finish();
@@ -963,16 +974,16 @@ pub(super) fn finalize_scopes(
                 current_scopes.censor_proc_macro_exports(states);
             }
 
-            // A generated module request is an external source-loading effect, not a fixed-point
+            // A macro source-file request is an external source-loading effect, not a fixed-point
             // boundary. Retain the exact post-batch state and return immediately; after Project
             // supplies the files, calls appended by both the expansion and those files resume from
             // the pre-batch cursor.
-            let needs_generated_modules = states.iter_dirty().any(|package_states| {
+            let needs_macro_source_files = states.iter_dirty().any(|package_states| {
                 package_states
                     .iter()
-                    .any(|state| !state.generated_module_requests.is_empty())
+                    .any(|state| !state.macro_source_file_requests.is_empty())
             });
-            if needs_generated_modules {
+            if needs_macro_source_files {
                 session.continuation = Some(MacroExpansionContinuation {
                     current_scopes,
                     next_scan_cursors: scan_cursors_before_apply,

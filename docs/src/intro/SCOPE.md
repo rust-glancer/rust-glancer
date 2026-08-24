@@ -19,7 +19,7 @@ As a result, the following things are expected:
 - Type inference is not expected to be complete.
 - Trait solving is not expected to be complete.
 - No proc macro support.
-- No build script resolving.
+- No proactive/interactive build script resolving.
 - New or changed module-level things (declarations, impls, derives, imports, and so on) become fully
   available after save. While the file is dirty, we still analyze the current function body using
   the last saved project, but we don't build a second unsaved project in the background.

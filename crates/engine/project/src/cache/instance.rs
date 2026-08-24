@@ -39,7 +39,7 @@ impl PackageCacheInstance {
     pub(crate) fn for_workspace(workspace: &WorkspaceMetadata) -> anyhow::Result<Self> {
         let target_dir = std::env::var_os("CARGO_TARGET_DIR")
             .map(PathBuf::from)
-            .unwrap_or_else(|| workspace.workspace_root().join("target"));
+            .unwrap_or_else(|| workspace.cargo_target_dir().to_path_buf());
 
         let instances_root = Self::instances_root(workspace, target_dir);
         for slot in 1..=MAX_CACHE_INSTANCE_SLOTS {

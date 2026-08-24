@@ -19,7 +19,7 @@ pub use rg_workspace::PackageSlot;
 pub use rg_macro_runtime::MacroExpansionPerformancePreference;
 
 pub use self::{
-    build::{DefMapBuildProgress, DefMapBuildSession, GeneratedModuleRequest},
+    build::{DefMapBuildProgress, DefMapBuildSession, MacroSourceFileRequest},
     import::{ImportBinding, ImportData, ImportKind, ImportPath},
     local::{
         LocalDefData, LocalDefKind, LocalEnumVariantData, LocalEnumVariantEntry, LocalImplData,
