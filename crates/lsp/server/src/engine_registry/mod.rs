@@ -19,7 +19,7 @@ use tokio::sync::Mutex;
 use tower_lsp_server::{Client as LspClient, ls_types::MessageType};
 
 use crate::{
-    client_notifications::{ActiveWorkspaceChanged, ActiveWorkspaceStatus},
+    client_status::{ClientStatusCapabilities, ClientStatusPublisher},
     config::ServerConfig,
     engine_client::{EngineClient, EngineProjectStatus, EngineProjectUpdate},
     engine_process::{EngineProcess, EngineProcessExit, EngineProcessExitMonitor},
@@ -45,6 +45,7 @@ use self::{
 #[derive(Clone, Debug)]
 pub(crate) struct EngineRegistry {
     lsp_client: LspClient,
+    client_status: ClientStatusPublisher,
     editor: EditorStateHandle,
     inner: Arc<Mutex<EngineRegistryInner>>,
 }
@@ -95,9 +96,13 @@ impl EngineRegistry {
         workspace_folders: Vec<PathBuf>,
         config: ServerConfig,
         editor: EditorStateHandle,
+        client_status_capabilities: ClientStatusCapabilities,
     ) -> Self {
+        let client_status =
+            ClientStatusPublisher::new(lsp_client.clone(), client_status_capabilities);
         Self {
             lsp_client,
+            client_status,
             editor,
             inner: Arc::new(Mutex::new(EngineRegistryInner::new(
                 workspace_folders,
@@ -352,20 +357,7 @@ impl EngineRegistry {
             inner.workspace_status_update()
         };
 
-        Self::publish_active_workspace(&self.lsp_client, status).await;
-    }
-
-    async fn publish_active_workspace(
-        lsp_client: &LspClient,
-        status: Option<ActiveWorkspaceStatus>,
-    ) {
-        if let Some(status) = status {
-            lsp_client
-                .send_notification::<ActiveWorkspaceChanged>(ActiveWorkspaceChanged::params(
-                    &status,
-                ))
-                .await;
-        }
+        self.client_status.active_workspace_changed(status).await;
     }
 
     /// Materializes a reserved engine id into a ready engine process.
@@ -373,6 +365,7 @@ impl EngineRegistry {
         &self,
         start: ReservedEngineStart,
     ) -> anyhow::Result<EngineClient> {
+        self.client_status.workspace_indexing(&start.root).await;
         let spawned = self.spawn_engine(start.root.clone(), start.config).await;
         let (engine, exit_monitor) = match spawned {
             Ok(engine) => engine,
@@ -402,10 +395,11 @@ impl EngineRegistry {
             return Err(error);
         }
 
-        self.mark_ready(start.id, engine).await;
+        self.mark_ready(start.id, start.root.clone(), engine).await;
 
         let inner = Arc::downgrade(&self.inner);
         let lsp_client = self.lsp_client.clone();
+        let client_status = self.client_status.clone();
         let id = start.id;
         let root = start.root;
         // This is deliberately supervision, not recovery. An engine panic is a bug that should stay
@@ -418,7 +412,7 @@ impl EngineRegistry {
                 return;
             };
 
-            Self::mark_exited(inner, lsp_client, id, root, exit).await;
+            Self::mark_exited(inner, lsp_client, client_status, id, root, exit).await;
         });
 
         Ok(engine_client)
@@ -457,7 +451,7 @@ impl EngineRegistry {
     }
 
     /// Replaces a starting slot with a ready process and wakes waiters.
-    async fn mark_ready(&self, id: EngineId, process: EngineProcess) {
+    async fn mark_ready(&self, id: EngineId, root: PathBuf, process: EngineProcess) {
         let project_status = process.engine_client().project_status_changes();
         let (notify, status) = {
             let mut inner = self.inner.lock().await;
@@ -470,20 +464,23 @@ impl EngineRegistry {
             (notify, status)
         };
         notify.notify_waiters();
-        Self::publish_active_workspace(&self.lsp_client, status).await;
-        self.spawn_project_status_monitor(id, project_status);
+        self.client_status.workspace_ready(&root).await;
+        self.client_status.active_workspace_changed(status).await;
+        self.spawn_project_status_monitor(id, root, project_status);
     }
 
     /// Republish active-workspace status when a ready process starts or finishes foreground work.
     fn spawn_project_status_monitor(
         &self,
         id: EngineId,
+        root: PathBuf,
         mut project_status: tokio::sync::watch::Receiver<EngineProjectStatus>,
     ) {
         let inner = Arc::downgrade(&self.inner);
-        let lsp_client = self.lsp_client.clone();
+        let client_status = self.client_status.clone();
         tokio::spawn(async move {
             while project_status.changed().await.is_ok() {
+                let project_status = project_status.borrow_and_update().clone();
                 let Some(inner) = inner.upgrade() else {
                     return;
                 };
@@ -494,19 +491,30 @@ impl EngineRegistry {
                     }
                     inner.workspace_status_update()
                 };
-                Self::publish_active_workspace(&lsp_client, status).await;
+                match project_status {
+                    EngineProjectStatus::Ready => client_status.workspace_ready(&root).await,
+                    EngineProjectStatus::Updating => {
+                        client_status.workspace_indexing(&root).await;
+                    }
+                    EngineProjectStatus::Failed(error) => {
+                        client_status.workspace_failed(&root, error).await;
+                    }
+                }
+                client_status.active_workspace_changed(status).await;
             }
         });
     }
 
     /// Replaces a starting slot with a failure and wakes waiters.
     async fn mark_failed(&self, id: EngineId, root: PathBuf, error: String) {
+        let status_root = root.clone();
+        let status_error = Arc::<str>::from(error);
         let (notify, status) = {
             let mut inner = self.inner.lock().await;
             let notify = inner.engine(id).and_then(EngineSlot::notify);
             inner.engines[id.index()] = EngineSlot::Failed {
                 root,
-                error: Arc::from(error),
+                error: Arc::clone(&status_error),
             };
             let status = inner.workspace_status_update();
             (notify, status)
@@ -514,12 +522,16 @@ impl EngineRegistry {
         if let Some(notify) = notify {
             notify.notify_waiters();
         }
-        Self::publish_active_workspace(&self.lsp_client, status).await;
+        self.client_status
+            .workspace_unavailable(&status_root, status_error)
+            .await;
+        self.client_status.active_workspace_changed(status).await;
     }
 
     async fn mark_exited(
         inner: Weak<Mutex<EngineRegistryInner>>,
         lsp_client: LspClient,
+        client_status: ClientStatusPublisher,
         id: EngineId,
         root: PathBuf,
         exit: EngineProcessExit,
@@ -557,7 +569,10 @@ impl EngineRegistry {
         lsp_client
             .log_message(MessageType::ERROR, format!("Rust Glancer {error}"))
             .await;
-        Self::publish_active_workspace(&lsp_client, status).await;
+        client_status
+            .workspace_unavailable(&root, Arc::<str>::from(error))
+            .await;
+        client_status.active_workspace_changed(status).await;
     }
 
     /// Spawns the engine subprocess and sends its protocol initialize request.
@@ -569,6 +584,7 @@ impl EngineRegistry {
         let (engine, exit_monitor) = EngineProcess::spawn(
             self.lsp_client.clone(),
             self.editor.clone(),
+            self.client_status.clone(),
             &root,
             Self::engine_id(&root),
         )
@@ -611,7 +627,7 @@ mod tests {
         ls_types::{InitializeParams, InitializeResult},
     };
 
-    use crate::client_notifications::ActiveWorkspaceState;
+    use crate::client_status::ActiveWorkspaceState;
 
     use super::document_owner::DocumentOwnerSource;
     use super::*;
@@ -807,6 +823,7 @@ pub struct External;
                 workspace_folders.clone(),
                 ServerConfig::from_engine_config(EngineConfig::default()),
                 EditorStateHandle::default(),
+                ClientStatusCapabilities::default(),
             ),
         });
 

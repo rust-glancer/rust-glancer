@@ -6,7 +6,7 @@
 
 mod backend;
 mod capabilities;
-mod client_notifications;
+mod client_status;
 mod commands;
 mod completion_scheduler;
 mod config;

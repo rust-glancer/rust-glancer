@@ -8,6 +8,7 @@ editors/code/out
 editors/code/out-unit
 editors/code/server
 editors/code/.vscode-test
+editors/zed/extension.wasm
 
 .codex
 
