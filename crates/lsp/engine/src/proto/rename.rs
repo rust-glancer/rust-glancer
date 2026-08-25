@@ -8,7 +8,7 @@ use rg_lsp_proto::path_to_file_uri;
 use rg_parse::{FileId, Span};
 use rg_project::ProjectSnapshot;
 
-use crate::proto::position;
+use crate::proto::{position, text_edit};
 
 pub(crate) fn prepare_rename(
     snapshot: ProjectSnapshot<'_>,
@@ -44,11 +44,14 @@ pub(crate) fn workspace_edit(
                 edit.file_id
             )
         })?;
-        let range = range_for_file(snapshot, edit.crate_ref.package, edit.file_id, edit.span)?;
-        let text_edit = TextEdit {
-            range,
-            new_text: edit.new_text,
-        };
+        let line_index = snapshot
+            .file_line_index(edit.crate_ref.package, edit.file_id)?
+            .context("while attempting to find file for rename edit conversion")?;
+        let text_edit = text_edit::new(
+            line_index,
+            position::range(line_index, edit.span),
+            edit.new_text,
+        );
 
         let file_edits = changes.entry(uri).or_default();
         if !file_edits.contains(&text_edit) {
