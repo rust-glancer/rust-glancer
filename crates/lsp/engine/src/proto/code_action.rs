@@ -7,12 +7,12 @@
 use anyhow::Context as _;
 use ls_types::{
     CodeAction as LspCodeAction, CodeActionKind as LspCodeActionKind, DocumentChanges, OneOf,
-    OptionalVersionedTextDocumentIdentifier, TextDocumentEdit, TextEdit, Uri, WorkspaceEdit,
+    OptionalVersionedTextDocumentIdentifier, TextDocumentEdit, Uri, WorkspaceEdit,
 };
 use rg_analysis::{CodeAction, CodeActionKind};
 use rg_parse::LineIndex;
 
-use crate::proto::position;
+use crate::proto::{position, text_edit};
 
 /// Convert one validated single-document action into an LSP action with a versioned workspace
 /// edit.
@@ -32,10 +32,11 @@ pub(crate) fn code_action(
         .edits
         .into_iter()
         .map(|edit| {
-            OneOf::Left(TextEdit {
-                range: position::range(line_index, edit.replace),
-                new_text: edit.new_text,
-            })
+            OneOf::Left(text_edit::new(
+                line_index,
+                position::range(line_index, edit.replace),
+                edit.new_text,
+            ))
         })
         .collect();
     let document_edit = TextDocumentEdit {
@@ -62,4 +63,52 @@ pub(crate) fn code_action(
         disabled: None,
         data: None,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use ls_types::{DocumentChanges, OneOf};
+    use rg_analysis::{CodeAction, CodeActionEdit, CodeActionKind};
+    use rg_parse::{LineIndex, Span, TextSpan};
+
+    use super::code_action;
+
+    #[test]
+    fn renders_code_action_edits_with_crlf() {
+        let action = CodeAction {
+            title: "Import `crate::User`".to_string(),
+            kind: CodeActionKind::QuickFix,
+            is_preferred: true,
+            edits: vec![CodeActionEdit {
+                replace: Span {
+                    text: TextSpan { start: 0, end: 0 },
+                },
+                new_text: "use crate::User;\n\n".to_string(),
+            }],
+        };
+
+        let action = code_action(
+            Path::new("/workspace/main.rs"),
+            Some(7),
+            &LineIndex::new("fn main() {}\r\n"),
+            action,
+        )
+        .expect("code action should convert to LSP");
+        let Some(workspace_edit) = action.edit else {
+            panic!("code action should contain a workspace edit");
+        };
+        let Some(DocumentChanges::Edits(document_edits)) = workspace_edit.document_changes else {
+            panic!("workspace edit should contain versioned document edits");
+        };
+        let [document_edit] = document_edits.as_slice() else {
+            panic!("workspace edit should contain one document edit");
+        };
+        let [OneOf::Left(edit)] = document_edit.edits.as_slice() else {
+            panic!("document edit should contain one plain text edit");
+        };
+
+        assert_eq!(edit.new_text, "use crate::User;\r\n\r\n");
+    }
 }
