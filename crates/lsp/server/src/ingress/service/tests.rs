@@ -9,6 +9,7 @@ use std::{
 };
 
 use futures::{future::BoxFuture, sink, stream};
+use rg_std::NormalizedPathBuf;
 use serde_json::json;
 use test_fixture::fixture_crate;
 use tokio::sync::Notify;
@@ -22,6 +23,7 @@ use tower_lsp_server::{
 use crate::{
     completion_scheduler::CompletionScheduler, ingress::EditorStateHandle,
     inlay_refresher::InlayRefresher, recent_editor_saves::RecentEditorSaves,
+    tests::synthetic_test_path,
 };
 
 use super::{EditorIngress, completion_request, document_request};
@@ -69,8 +71,8 @@ async fn later_request_keeps_incrementally_changed_text_when_futures_finish_in_r
         RecentEditorSaves::default(),
         CompletionScheduler::default(),
     );
-    let uri =
-        Uri::from_file_path("/workspace/src/lib.rs").expect("test path should convert to URI");
+    let uri = rg_lsp_proto::path_to_file_uri(synthetic_test_path("workspace/src/lib.rs"))
+        .expect("test path should convert to URI");
 
     let open = service.call(
         Request::build("textDocument/didOpen")
@@ -135,8 +137,8 @@ async fn completion_ownership_is_decided_in_wire_order_before_handlers_are_polle
         RecentEditorSaves::default(),
         CompletionScheduler::default(),
     );
-    let uri =
-        Uri::from_file_path("/workspace/src/lib.rs").expect("test path should convert to URI");
+    let uri = rg_lsp_proto::path_to_file_uri(synthetic_test_path("workspace/src/lib.rs"))
+        .expect("test path should convert to URI");
 
     service
         .call(
@@ -178,7 +180,7 @@ fn save_echo_is_recorded_before_any_handler_future_is_polled() {
         "#,
     );
     let path = fixture.path("src/lib.rs");
-    let uri = Uri::from_file_path(&path).expect("fixture path should convert to URI");
+    let uri = rg_lsp_proto::path_to_file_uri(&path).expect("fixture path should convert to URI");
     let recent_editor_saves = RecentEditorSaves::default();
     let inner = CapturingService {
         captured: Arc::new(Mutex::new(Vec::new())),
@@ -212,6 +214,7 @@ fn save_echo_is_recorded_before_any_handler_future_is_polled() {
             .finish(),
     );
 
+    let path = NormalizedPathBuf::from_absolute(path).expect("fixture path should normalize");
     assert!(
         recent_editor_saves.saves_to_process(vec![path]).is_empty(),
         "watcher filtering must observe the save before async lifecycle routing starts",

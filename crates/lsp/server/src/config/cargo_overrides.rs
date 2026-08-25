@@ -1,9 +1,8 @@
-use std::{
-    collections::BTreeMap,
-    path::{Path, PathBuf},
-};
+use std::{collections::BTreeMap, path::PathBuf};
 
+use anyhow::Context as _;
 use rg_lsp_proto::{CargoMetadataConfig, CargoMetadataTarget};
+use rg_std::NormalizedPathBuf;
 use tower_lsp_server::ls_types::{LSPAny, LSPObject};
 
 /// Path-indexed Cargo metadata overrides for workspace engine startup.
@@ -13,13 +12,13 @@ use tower_lsp_server::ls_types::{LSPAny, LSPObject};
 /// resolving an engine config is just a root lookup.
 #[derive(Debug, Clone, Default)]
 pub(super) struct CargoConfigOverrides {
-    by_root: BTreeMap<PathBuf, CargoConfigOverride>,
+    by_root: BTreeMap<NormalizedPathBuf, CargoConfigOverride>,
 }
 
 impl CargoConfigOverrides {
     pub(super) fn from_initialization_options(
         options: Option<&LSPAny>,
-        workspace_folders: &[PathBuf],
+        workspace_folders: &[NormalizedPathBuf],
     ) -> anyhow::Result<Self> {
         let Some(overrides) = options
             .and_then(LSPAny::as_object)
@@ -51,7 +50,9 @@ impl CargoConfigOverrides {
                 })?;
             let cargo_override = CargoConfigOverride::parse(item, idx)?;
 
-            for root in override_roots(path, workspace_folders) {
+            for root in override_roots(path, workspace_folders).with_context(|| {
+                format!("while resolving rust-glancer cargo.overrides[{idx}].path `{path}`")
+            })? {
                 by_root.insert(root, cargo_override.clone());
             }
         }
@@ -59,8 +60,11 @@ impl CargoConfigOverrides {
         Ok(Self { by_root })
     }
 
-    pub(super) fn override_for_root(&self, root: &Path) -> Option<&CargoConfigOverride> {
-        self.by_root.get(&normalize_path(root))
+    pub(super) fn override_for_root(
+        &self,
+        root: &NormalizedPathBuf,
+    ) -> Option<&CargoConfigOverride> {
+        self.by_root.get(root)
     }
 }
 
@@ -159,19 +163,22 @@ impl CargoConfigOverride {
     }
 }
 
-fn override_roots(path: &str, workspace_folders: &[PathBuf]) -> Vec<PathBuf> {
+fn override_roots(
+    path: &str,
+    workspace_folders: &[NormalizedPathBuf],
+) -> anyhow::Result<Vec<NormalizedPathBuf>> {
     let path = PathBuf::from(path);
     if path.is_absolute() {
-        return vec![normalize_path(path)];
+        return NormalizedPathBuf::from_absolute(path)
+            .map(|path| vec![path])
+            .context("while normalizing absolute Cargo override path");
     }
 
     workspace_folders
         .iter()
-        .map(|workspace_folder| normalize_path(workspace_folder.join(&path)))
+        .map(|workspace_folder| {
+            NormalizedPathBuf::resolve_from(workspace_folder, &path)
+                .context("while resolving relative Cargo override path")
+        })
         .collect()
-}
-
-fn normalize_path(path: impl AsRef<Path>) -> PathBuf {
-    let path = path.as_ref();
-    path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
 }

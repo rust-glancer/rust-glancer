@@ -11,9 +11,10 @@ use std::{
 };
 
 use anyhow::Context as _;
+use rg_std::NormalizedPathBuf;
 
 use super::{
-    routing::{EngineId, normalize_path},
+    routing::EngineId,
     state::{EngineRegistryInner, ReservedEngineRoute},
 };
 
@@ -28,7 +29,7 @@ impl DocumentOwner {
     /// Resolves the engine that owns an opened document and remembers that route until close.
     pub(super) fn new(
         inner: &mut EngineRegistryInner,
-        path: &Path,
+        path: &NormalizedPathBuf,
     ) -> anyhow::Result<Option<Self>> {
         // Do we know this file? If yes, return it.
         if let Some(id) = inner.open_file_owner(path) {
@@ -50,11 +51,7 @@ impl DocumentOwner {
         //   "parent"?
         // Answering these questions is postponed until it _really_ becomes an issue and
         // there will be real users affected by this heuristic.
-        let Some(discovery_workspace) = inner
-            .routing
-            .discovery_workspace_for(path)
-            .map(Path::to_path_buf)
-        else {
+        let Some(discovery_workspace) = inner.routing.discovery_workspace_for(path).cloned() else {
             return Ok(Self::fallback(inner, path));
         };
 
@@ -80,11 +77,11 @@ impl DocumentOwner {
     /// Resolves Cargo's workspace root and reserves the workspace engine.
     fn for_cargo_workspace(
         inner: &mut EngineRegistryInner,
-        path: &Path,
-        workspace_root: PathBuf,
+        path: &NormalizedPathBuf,
+        workspace_root: NormalizedPathBuf,
     ) -> Option<Self> {
         let route = inner.reserve_workspace_root(workspace_root)?;
-        inner.set_open_file(path.to_path_buf(), route.id());
+        inner.set_open_file(path.clone(), route.id());
 
         Some(Self {
             route,
@@ -93,9 +90,9 @@ impl DocumentOwner {
     }
 
     /// Falls back to the last active ready engine for files outside known workspaces.
-    fn fallback(inner: &mut EngineRegistryInner, path: &Path) -> Option<Self> {
+    fn fallback(inner: &mut EngineRegistryInner, path: &NormalizedPathBuf) -> Option<Self> {
         let id = inner.active_ready_id()?;
-        inner.set_open_file(path.to_path_buf(), id);
+        inner.set_open_file(path.clone(), id);
 
         Some(Self::existing(id, DocumentOwnerSource::ActiveFallback))
     }
@@ -120,25 +117,25 @@ impl DocumentOwner {
     }
 
     fn locate_workspace_root(
-        path: &Path,
-        discovery_workspace: &Path,
-    ) -> anyhow::Result<Option<PathBuf>> {
-        let path = normalize_path(path);
-        let discovery_workspace = normalize_path(discovery_workspace);
+        path: &NormalizedPathBuf,
+        discovery_workspace: &NormalizedPathBuf,
+    ) -> anyhow::Result<Option<NormalizedPathBuf>> {
         let Some(document_dir) = path
+            .as_path()
             .is_dir()
             .then(|| path.to_path_buf())
-            .or_else(|| path.parent().map(Path::to_path_buf))
+            .or_else(|| path.parent().map(NormalizedPathBuf::into_path_buf))
         else {
             return Ok(None);
         };
-        let Some(manifest_path) = Self::nearest_manifest(&document_dir, &discovery_workspace)
+        let Some(manifest_path) =
+            Self::nearest_manifest(&document_dir, discovery_workspace.as_path())
         else {
             return Ok(None);
         };
 
-        let output =
-            Self::run_locate_project(&discovery_workspace, &manifest_path).with_context(|| {
+        let output = Self::run_locate_project(discovery_workspace.as_path(), &manifest_path)
+            .with_context(|| {
                 format!(
                     "while attempting to locate Cargo workspace from {}",
                     manifest_path.display()
@@ -174,23 +171,27 @@ impl DocumentOwner {
                 )
             })?;
         let workspace_manifest = if workspace_manifest.is_absolute() {
-            workspace_manifest
+            NormalizedPathBuf::from_absolute(&workspace_manifest).with_context(|| {
+                format!(
+                    "while attempting to normalize Cargo workspace manifest {}",
+                    workspace_manifest.display()
+                )
+            })?
         } else {
-            discovery_workspace.join(workspace_manifest)
+            NormalizedPathBuf::resolve_from(discovery_workspace, &workspace_manifest).with_context(
+                || {
+                    format!(
+                        "while attempting to resolve Cargo workspace manifest {}",
+                        workspace_manifest.display()
+                    )
+                },
+            )?
         };
-        let workspace_manifest = workspace_manifest.canonicalize().with_context(|| {
-            format!(
-                "while attempting to canonicalize Cargo workspace manifest {}",
-                workspace_manifest.display()
-            )
-        })?;
 
-        Ok(Some(
-            workspace_manifest
-                .parent()
-                .expect("Cargo workspace manifest path should have a parent directory")
-                .to_path_buf(),
-        ))
+        let workspace_root = workspace_manifest
+            .parent()
+            .expect("Cargo workspace manifest path should have a parent directory");
+        Ok(Some(workspace_root))
     }
 
     fn run_locate_project(cwd: &Path, manifest_path: &Path) -> std::io::Result<Output> {
@@ -230,9 +231,8 @@ pub(super) enum DocumentOwnerSource {
 
 #[cfg(test)]
 mod tests {
+    use rg_std::NormalizedPathBuf;
     use test_fixture::fixture_crate;
-
-    use crate::engine_registry::routing::normalize_path;
 
     use super::DocumentOwner;
 
@@ -255,15 +255,19 @@ edition = "2024"
 pub struct App;
 "#,
         );
-        let document_dir = normalize_path(fixture.path("workspace/crates/app/src/nested"));
-        let workspace = normalize_path(fixture.path("workspace"));
+        let normalized = |path| {
+            NormalizedPathBuf::from_absolute(fixture.path(path))
+                .expect("fixture path should normalize")
+        };
+        let document_dir = normalized("workspace/crates/app/src/nested");
+        let workspace = normalized("workspace");
 
-        let manifest = DocumentOwner::nearest_manifest(&document_dir, &workspace)
+        let manifest = DocumentOwner::nearest_manifest(document_dir.as_path(), workspace.as_path())
             .expect("nested source directory should resolve its package manifest");
 
         assert_eq!(
             manifest,
-            normalize_path(fixture.path("workspace/crates/app/Cargo.toml"))
+            normalized("workspace/crates/app/Cargo.toml").into_path_buf()
         );
     }
 }

@@ -11,7 +11,7 @@ use std::{
     sync::Arc,
 };
 
-use rg_std::{MemoryRecorder, MemorySize, Shrink};
+use rg_std::{MemoryRecorder, MemorySize, NativeOsString, Shrink};
 use wincode::{SchemaRead, SchemaWrite};
 
 /// Shared canonical filesystem path for one generation-backed source file.
@@ -62,8 +62,8 @@ impl Shrink for SourcePath {
     fn shrink_to_fit(&mut self) {}
 }
 
-// Cache paths remain plain strings on disk. This preserves the existing cache representation and
-// keeps Arc sharing a runtime detail of a restored project generation.
+// The native encoding keeps non-UTF-8 Unix names and Windows path units reversible while Arc
+// sharing remains a runtime-only detail of a restored project generation.
 unsafe impl<C> SchemaWrite<C> for SourcePath
 where
     C: wincode::config::Config,
@@ -71,13 +71,13 @@ where
     type Src = SourcePath;
 
     fn size_of(src: &Self::Src) -> wincode::WriteResult<usize> {
-        let path = src.as_path().to_string_lossy();
-        <str as SchemaWrite<C>>::size_of(path.as_ref())
+        let path = NativeOsString::from_os_str(src.as_path().as_os_str());
+        <NativeOsString as SchemaWrite<C>>::size_of(&path)
     }
 
     fn write(writer: impl wincode::io::Writer, src: &Self::Src) -> wincode::WriteResult<()> {
-        let path = src.as_path().to_string_lossy();
-        <str as SchemaWrite<C>>::write(writer, path.as_ref())
+        let path = NativeOsString::from_os_str(src.as_path().as_os_str());
+        <NativeOsString as SchemaWrite<C>>::write(writer, &path)
     }
 }
 
@@ -91,8 +91,13 @@ where
         reader: impl wincode::io::Reader<'de>,
         dst: &mut std::mem::MaybeUninit<Self::Dst>,
     ) -> wincode::ReadResult<()> {
-        let path = <String as SchemaRead<'de, C>>::get(reader)?;
-        dst.write(Self::new(PathBuf::from(path)));
+        let path = <NativeOsString as SchemaRead<'de, C>>::get(reader)?
+            .into_os_string()
+            .map(PathBuf::from)
+            .ok_or(wincode::ReadError::InvalidValue(
+                "cached source path has an invalid native encoding",
+            ))?;
+        dst.write(Self::new(path));
         Ok(())
     }
 }

@@ -1,8 +1,9 @@
 use ls_types::{
-    DocumentSymbol as LspDocumentSymbol, Location, OneOf, SymbolKind as LspSymbolKind, Uri,
+    DocumentSymbol as LspDocumentSymbol, Location, OneOf, SymbolKind as LspSymbolKind,
     WorkspaceSymbol as LspWorkspaceSymbol,
 };
 use rg_analysis::{DocumentSymbol, SymbolKind, WorkspaceSymbol};
+use rg_lsp_proto::path_to_file_uri;
 use rg_parse::LineIndex;
 use rg_project::ProjectSnapshot;
 
@@ -36,7 +37,7 @@ pub(crate) fn workspace_symbol(
     let Some(path) = snapshot.file_path(symbol.crate_ref.package, symbol.file_id) else {
         return Ok(None);
     };
-    let Some(uri) = Uri::from_file_path(path) else {
+    let Ok(uri) = path_to_file_uri(path) else {
         return Ok(None);
     };
     let range = navigation::range_for_file(

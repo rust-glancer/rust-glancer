@@ -4,6 +4,7 @@ use anyhow::Context as _;
 use ls_types::{PrepareRenameResponse, TextEdit, Uri, WorkspaceEdit};
 use rg_analysis::{RenameEdit, RenameTarget};
 use rg_def_map::PackageSlot;
+use rg_lsp_proto::path_to_file_uri;
 use rg_parse::{FileId, Span};
 use rg_project::ProjectSnapshot;
 
@@ -35,7 +36,7 @@ pub(crate) fn workspace_edit(
                     edit.crate_ref.package, edit.file_id
                 )
             })?;
-        let uri = Uri::from_file_path(path).with_context(|| {
+        let uri = path_to_file_uri(path).with_context(|| {
             format!(
                 "while attempting to convert file path `{}` to URI for rename edit in package {:?}, file {:?}",
                 path.display(),

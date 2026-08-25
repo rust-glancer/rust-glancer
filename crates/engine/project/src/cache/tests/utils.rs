@@ -15,9 +15,9 @@ use crate::cache::codec::{
 };
 use crate::cache::{
     CURRENT_PACKAGE_CACHE_SCHEMA_VERSION, CachedCfgOptions, CachedDependency, CachedPackage,
-    CachedPackageId, CachedPackageSlot, CachedPackageSource, CachedPath, CachedRustEdition,
-    CachedTarget, Fingerprint, PackageArtifactReader, PackageCacheCodec, PackageCacheHeader,
-    PackageCacheUpdate, PackageCacheWriteInput, WorkspaceCachePlan,
+    CachedPackageSlot, CachedPackageSource, CachedPath, CachedRustEdition, CachedTarget,
+    Fingerprint, PackageArtifactReader, PackageCacheCodec, PackageCacheHeader, PackageCacheUpdate,
+    PackageCacheWriteInput, WorkspaceCachePlan,
 };
 use crate::profile::metric;
 use crate::{
@@ -38,11 +38,13 @@ pub(super) fn check_minimal_cache_artifact_codec(expect: Expect) {
     let header = PackageCacheHeader::new(
         CachedPackage {
             package: CachedPackageSlot(7),
-            package_id: CachedPackageId("path+file:///workspace#empty@0.1.0".into()),
             name: String::new(),
             source: CachedPackageSource::Workspace,
             edition: CachedRustEdition::Edition2024,
-            manifest_path: CachedPath("/workspace/Cargo.toml".into()),
+            manifest_path: CachedPath::from_workspace_path(
+                Path::new("/workspace"),
+                Path::new("/workspace/Cargo.toml"),
+            ),
             cfg_options: CachedCfgOptions::default(),
             targets: Vec::new(),
             dependencies: Vec::new(),
@@ -1581,23 +1583,17 @@ fn render_package(
         .expect("string writes should not fail");
     writeln!(dump, "schema {}", CURRENT_PACKAGE_CACHE_SCHEMA_VERSION.0)
         .expect("string writes should not fail");
-    writeln!(
-        dump,
-        "id {}",
-        normalize_package_id(workspace.workspace_root(), &package.package_id.0),
-    )
-    .expect("string writes should not fail");
     writeln!(dump, "source {}", package.source).expect("string writes should not fail");
     writeln!(dump, "edition {}", package.edition).expect("string writes should not fail");
     writeln!(
         dump,
         "manifest {}",
-        relative_path(workspace.workspace_root(), package.manifest_path.as_path())
+        render_cached_path(workspace.workspace_root(), &package.manifest_path)
     )
     .expect("string writes should not fail");
 
     render_targets(workspace, package, dump);
-    render_dependencies(workspace, cache_plan, package, dump);
+    render_dependencies(cache_plan, package, dump);
 }
 
 fn render_cached_artifact(label: &str, reader: &PackageArtifactReader, dump: &mut String) {
@@ -1692,14 +1688,13 @@ fn render_targets(workspace: &WorkspaceMetadata, package: &CachedPackage, dump: 
             "- {} [{}] {}",
             target.name,
             target.kind,
-            relative_path(workspace.workspace_root(), target.src_path.as_path()),
+            render_cached_path(workspace.workspace_root(), &target.src_path),
         )
         .expect("string writes should not fail");
     }
 }
 
 fn render_dependencies(
-    workspace: &WorkspaceMetadata,
     cache_plan: &WorkspaceCachePlan,
     package: &CachedPackage,
     dump: &mut String,
@@ -1718,7 +1713,7 @@ fn render_dependencies(
             dump,
             "- {} -> {} {}",
             dependency.name,
-            render_dependency_package(workspace, cache_plan, &dependency.package_id),
+            render_dependency_package(cache_plan, dependency.package),
             render_dependency_kinds(dependency),
         )
         .expect("string writes should not fail");
@@ -1726,16 +1721,15 @@ fn render_dependencies(
 }
 
 fn render_dependency_package(
-    workspace: &WorkspaceMetadata,
     cache_plan: &WorkspaceCachePlan,
-    package_id: &CachedPackageId,
+    package_slot: CachedPackageSlot,
 ) -> String {
     cache_plan
         .packages()
         .iter()
-        .find(|package| &package.package_id == package_id)
+        .find(|package| package.package == package_slot)
         .map(|package| format!("{} (#{})", package.name, package.package.0))
-        .unwrap_or_else(|| normalize_package_id(workspace.workspace_root(), &package_id.0))
+        .unwrap_or_else(|| format!("unknown package (#{})", package_slot.0))
 }
 
 fn render_dependency_kinds(dependency: &CachedDependency) -> String {
@@ -1754,28 +1748,11 @@ fn render_dependency_kinds(dependency: &CachedDependency) -> String {
     format!("[{}]", kinds.join(", "))
 }
 
-fn normalize_package_id(root: &Path, package_id: &str) -> String {
-    let root_path = root.display().to_string();
-    let mut root_paths = vec![root_path];
-
-    // Cargo package IDs may preserve the non-canonical `/var` spelling on macOS while normalized
-    // workspace paths point at `/private/var`. Treat both as the same fixture root in snapshots.
-    let public_tmp_path = root_paths[0]
-        .strip_prefix("/private/")
-        .map(|path| format!("/{path}"));
-    if let Some(public_tmp_path) = public_tmp_path {
-        root_paths.push(public_tmp_path);
-    }
-
-    let mut package_id = package_id.to_string();
-    for root_path in &root_paths {
-        package_id = package_id.replace(&format!("file://{root_path}"), "file://./");
-    }
-    for root_path in root_paths {
-        package_id = package_id.replace(&root_path, ".");
-    }
-
-    package_id.replace("file://.//", "file://./")
+fn render_cached_path(root: &Path, path: &CachedPath) -> String {
+    let path = path
+        .to_path_buf(root)
+        .expect("production cache path should decode on its producing host");
+    relative_path(root, &path)
 }
 
 fn relative_path(root: &Path, path: &Path) -> String {
@@ -1784,7 +1761,11 @@ fn relative_path(root: &Path, path: &Path) -> String {
     if relative_path.as_os_str().is_empty() {
         ".".to_string()
     } else {
-        relative_path.display().to_string()
+        relative_path
+            .components()
+            .map(|component| component.as_os_str().to_string_lossy())
+            .collect::<Vec<_>>()
+            .join("/")
     }
 }
 

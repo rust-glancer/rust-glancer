@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::BTreeMap,
     io::Cursor,
     path::{Path, PathBuf},
 };
@@ -10,13 +10,14 @@ use cargo_metadata::{
 };
 use ls_types::{
     Diagnostic, DiagnosticRelatedInformation, DiagnosticSeverity, Location, NumberOrString,
-    Position, Range, Uri,
+    Position, Range,
 };
-use rg_std::UniqueVec;
+use rg_lsp_proto::path_to_file_uri;
+use rg_std::{NormalizedPathBuf, UniqueVec};
 
 #[derive(Debug, Default)]
 pub(crate) struct CargoDiagnostics {
-    by_path: BTreeMap<PathBuf, UniqueVec<Diagnostic>>,
+    by_path: BTreeMap<NormalizedPathBuf, UniqueVec<Diagnostic>>,
 }
 
 impl CargoDiagnostics {
@@ -31,11 +32,11 @@ impl CargoDiagnostics {
         self.by_path.is_empty()
     }
 
-    pub(crate) fn paths(&self) -> BTreeSet<PathBuf> {
-        self.by_path.keys().cloned().collect()
+    pub(crate) fn path_count(&self) -> usize {
+        self.by_path.len()
     }
 
-    pub(crate) fn into_inner(self) -> BTreeMap<PathBuf, Vec<Diagnostic>> {
+    pub(crate) fn into_inner(self) -> BTreeMap<NormalizedPathBuf, Vec<Diagnostic>> {
         self.by_path
             .into_iter()
             .map(|(path, diagnostics)| (path, diagnostics.into_vec()))
@@ -43,7 +44,7 @@ impl CargoDiagnostics {
     }
 
     #[cfg(test)]
-    pub(super) fn from_map(by_path: BTreeMap<PathBuf, Vec<Diagnostic>>) -> Self {
+    pub(super) fn from_map(by_path: BTreeMap<NormalizedPathBuf, Vec<Diagnostic>>) -> Self {
         Self {
             by_path: by_path
                 .into_iter()
@@ -89,7 +90,7 @@ impl CargoDiagnostics {
 
 #[derive(Debug)]
 struct MappedDiagnostic {
-    path: PathBuf,
+    path: NormalizedPathBuf,
     diagnostic: Diagnostic,
 }
 
@@ -121,7 +122,9 @@ impl<'a> CargoDiagnosticMapper<'a> {
         // Rustc can mark several spans as primary. Publishing one LSP diagnostic per primary span
         // keeps the important locations visible without trying to recreate rustc's rendered text.
         for span in self.diagnostic.spans.iter().filter(|span| span.is_primary) {
-            let path = self.resolve_span_path(span);
+            let Some(path) = self.resolve_span_path(span) else {
+                continue;
+            };
             let related_information = self.related_information();
             let diagnostic = Diagnostic {
                 range: Self::range(span),
@@ -174,8 +177,8 @@ impl<'a> CargoDiagnosticMapper<'a> {
             return None;
         }
 
-        let path = self.resolve_span_path(span);
-        let uri = Uri::from_file_path(path)?;
+        let path = self.resolve_span_path(span)?;
+        let uri = path_to_file_uri(path).ok()?;
         Some(DiagnosticRelatedInformation {
             location: Location {
                 uri,
@@ -185,28 +188,37 @@ impl<'a> CargoDiagnosticMapper<'a> {
         })
     }
 
-    fn resolve_span_path(&self, span: &DiagnosticSpan) -> PathBuf {
+    fn resolve_span_path(&self, span: &DiagnosticSpan) -> Option<NormalizedPathBuf> {
         let raw = PathBuf::from(&span.file_name);
-        if raw.is_absolute() {
-            return canonicalized(raw);
-        }
+        let candidate = if raw.is_absolute() {
+            raw
+        } else {
+            // Cargo usually reports span files relative to the command working directory. If a
+            // toolchain reports package-relative paths instead, the compiler message target root
+            // is enough to derive the package root without running cargo metadata twice.
+            let workspace_candidate = self.workspace_root.join(&raw);
+            if workspace_candidate.exists() {
+                workspace_candidate
+            } else {
+                self.package_root
+                    .as_ref()
+                    .map(|root| root.join(&raw))
+                    .unwrap_or(workspace_candidate)
+            }
+        };
 
-        // Cargo usually reports span files relative to the command working directory. If a
-        // toolchain reports package-relative paths instead, the compiler message target root is
-        // enough to derive the package root without running cargo metadata twice.
-        let workspace_candidate = self.workspace_root.join(&raw);
-        if workspace_candidate.exists() {
-            return canonicalized(workspace_candidate);
+        match NormalizedPathBuf::from_absolute(&candidate) {
+            Ok(path) => Some(path),
+            Err(error) => {
+                tracing::debug!(
+                    span_path = %span.file_name,
+                    candidate = %candidate.display(),
+                    error = %error,
+                    "ignored diagnostic span with an invalid filesystem path"
+                );
+                None
+            }
         }
-
-        let package_candidate = self.package_root.as_ref().map(|root| root.join(&raw));
-        if let Some(candidate) = package_candidate.as_ref()
-            && candidate.exists()
-        {
-            return canonicalized(candidate.clone());
-        }
-
-        package_candidate.unwrap_or(workspace_candidate)
     }
 
     fn package_root_from_target_src_path(target_src_path: &Path) -> Option<PathBuf> {
@@ -253,10 +265,6 @@ impl<'a> CargoDiagnosticMapper<'a> {
             character: character as u32,
         }
     }
-}
-
-fn canonicalized(path: PathBuf) -> PathBuf {
-    path.canonicalize().unwrap_or(path)
 }
 
 #[cfg(test)]

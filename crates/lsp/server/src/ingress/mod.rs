@@ -21,8 +21,5 @@ mod state;
 
 pub(crate) use self::{
     service::{EditorIngress, completion_request, document_request, lifecycle_event},
-    state::{
-        CapturedDocument, DiagnosticsPublication, DocumentRevisionWatch, EditorStateHandle,
-        LifecycleEvent,
-    },
+    state::{CapturedDocument, DocumentRevisionWatch, EditorStateHandle, LifecycleEvent},
 };

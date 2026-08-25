@@ -1,7 +1,7 @@
-use std::path::{Path, PathBuf};
-
 use rg_lsp_proto::{CargoMetadataTarget, PackageResidencyPolicy};
 use serde_json::json;
+
+use crate::tests::normalized_test_path;
 
 use super::ServerConfig;
 
@@ -25,10 +25,10 @@ fn exact_override_merges_with_base_cargo_config() {
     });
 
     let config =
-        ServerConfig::from_initialization_options(Some(&options), &[PathBuf::from("/repo")])
+        ServerConfig::from_initialization_options(Some(&options), &[normalized_test_path("repo")])
             .expect("server config should parse");
-    let project_config = config.engine_config_for_root(Path::new("/repo/project-a"));
-    let default_config = config.engine_config_for_root(Path::new("/repo/project-b"));
+    let project_config = config.engine_config_for_root(&normalized_test_path("repo/project-a"));
+    let default_config = config.engine_config_for_root(&normalized_test_path("repo/project-b"));
 
     assert_eq!(
         project_config.analysis.package_residency_policy,
@@ -84,12 +84,12 @@ fn override_matches_exact_engine_root_only() {
         },
     });
     let config =
-        ServerConfig::from_initialization_options(Some(&options), &[PathBuf::from("/repo")])
+        ServerConfig::from_initialization_options(Some(&options), &[normalized_test_path("repo")])
             .expect("server config should parse");
 
     assert_eq!(
         config
-            .engine_config_for_root(Path::new("/repo/project-a"))
+            .engine_config_for_root(&normalized_test_path("repo/project-a"))
             .analysis
             .cargo_metadata_config
             .features(),
@@ -97,7 +97,7 @@ fn override_matches_exact_engine_root_only() {
     );
     assert_eq!(
         config
-            .engine_config_for_root(Path::new("/repo/project-a/nested"))
+            .engine_config_for_root(&normalized_test_path("repo/project-a/nested"))
             .analysis
             .cargo_metadata_config
             .features(),
@@ -106,7 +106,7 @@ fn override_matches_exact_engine_root_only() {
     );
     assert_eq!(
         config
-            .engine_config_for_root(Path::new("/repo"))
+            .engine_config_for_root(&normalized_test_path("repo"))
             .analysis
             .cargo_metadata_config
             .features(),
@@ -117,16 +117,18 @@ fn override_matches_exact_engine_root_only() {
 
 #[test]
 fn latest_duplicate_override_wins_without_warning() {
+    let project = normalized_test_path("repo/project");
+    let project_text = project.as_path().to_string_lossy().into_owned();
     let options = json!({
         "cargo": {
             "overrides": [
                 {
-                    "path": "/repo/project",
+                    "path": project_text.clone(),
                     "allFeatures": true,
                     "features": ["old"],
                 },
                 {
-                    "path": "/repo/project",
+                    "path": project_text,
                     "allFeatures": false,
                     "features": ["new"],
                 },
@@ -135,7 +137,7 @@ fn latest_duplicate_override_wins_without_warning() {
     });
     let config = ServerConfig::from_initialization_options(Some(&options), &[])
         .expect("server config should parse");
-    let project_config = config.engine_config_for_root(Path::new("/repo/project"));
+    let project_config = config.engine_config_for_root(&project);
 
     assert!(
         !project_config
@@ -161,12 +163,12 @@ fn override_target_null_resets_inherited_target() {
         },
     });
     let config =
-        ServerConfig::from_initialization_options(Some(&options), &[PathBuf::from("/repo")])
+        ServerConfig::from_initialization_options(Some(&options), &[normalized_test_path("repo")])
             .expect("server config should parse");
 
     assert_eq!(
         config
-            .engine_config_for_root(Path::new("/repo/project-a"))
+            .engine_config_for_root(&normalized_test_path("repo/project-a"))
             .analysis
             .cargo_metadata_config
             .target(),
@@ -185,7 +187,7 @@ fn rejects_malformed_override_entries() {
         },
     });
     let error =
-        ServerConfig::from_initialization_options(Some(&options), &[PathBuf::from("/repo")])
+        ServerConfig::from_initialization_options(Some(&options), &[normalized_test_path("repo")])
             .expect_err("malformed override feature entries should be rejected");
 
     assert!(

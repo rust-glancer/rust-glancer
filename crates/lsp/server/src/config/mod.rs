@@ -3,9 +3,8 @@ mod cargo_overrides;
 #[cfg(test)]
 mod tests;
 
-use std::path::{Path, PathBuf};
-
 use rg_lsp_proto::EngineConfig;
+use rg_std::NormalizedPathBuf;
 use tower_lsp_server::ls_types::LSPAny;
 
 use self::cargo_overrides::CargoConfigOverrides;
@@ -24,7 +23,7 @@ pub(crate) struct ServerConfig {
 impl ServerConfig {
     pub(crate) fn from_initialization_options(
         options: Option<&LSPAny>,
-        workspace_folders: &[PathBuf],
+        workspace_folders: &[NormalizedPathBuf],
     ) -> anyhow::Result<Self> {
         Ok(Self {
             engine_config: EngineConfig::from_initialization_options(options)?,
@@ -43,7 +42,7 @@ impl ServerConfig {
         }
     }
 
-    pub(crate) fn engine_config_for_root(&self, root: &Path) -> EngineConfig {
+    pub(crate) fn engine_config_for_root(&self, root: &NormalizedPathBuf) -> EngineConfig {
         let mut config = self.engine_config.clone();
         if let Some(cargo_override) = self.cargo_overrides.override_for_root(root) {
             config.analysis.cargo_metadata_config =

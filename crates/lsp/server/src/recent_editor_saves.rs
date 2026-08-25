@@ -4,10 +4,12 @@
 //! files and ignore watched changes that still match the same file metadata.
 
 use std::{
-    path::{Path, PathBuf},
+    path::Path,
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
+
+use rg_std::NormalizedPathBuf;
 
 use crate::file_identity::FileIdentity;
 
@@ -33,7 +35,7 @@ impl RecentEditorSaves {
     }
 
     /// Drop watched paths whose current disk identity matches a recent editor save.
-    pub(crate) fn saves_to_process(&self, paths: Vec<PathBuf>) -> Vec<PathBuf> {
+    pub(crate) fn saves_to_process(&self, paths: Vec<NormalizedPathBuf>) -> Vec<NormalizedPathBuf> {
         let mut inner = self
             .inner
             .lock()
@@ -57,7 +59,7 @@ impl RecentEditorSavesInner {
     }
 
     /// Should we ignore save on this path, because the same save was recorded recently?
-    fn is_save_echo(&mut self, path: &Path) -> bool {
+    fn is_save_echo(&mut self, path: &NormalizedPathBuf) -> bool {
         self.is_save_echo_at(path, Instant::now())
     }
 
@@ -74,15 +76,15 @@ impl RecentEditorSavesInner {
         }
     }
 
-    fn is_save_echo_at(&mut self, path: &Path, now: Instant) -> bool {
+    fn is_save_echo_at(&mut self, path: &NormalizedPathBuf, now: Instant) -> bool {
         self.prune_expired(now);
-        let Some((path, identity)) = FileIdentity::read(path) else {
+        let Some(identity) = FileIdentity::read_normalized(path) else {
             return false;
         };
 
         self.entries
             .iter()
-            .any(|entry| entry.path == path && entry.identity == identity)
+            .any(|entry| entry.path == *path && entry.identity == identity)
     }
 
     fn prune_expired(&mut self, now: Instant) {
@@ -96,7 +98,7 @@ impl RecentEditorSavesInner {
 /// One recorded editor save plus the timestamp used for cache expiry.
 #[derive(Clone, Debug)]
 struct RecentEditorSave {
-    path: PathBuf,
+    path: NormalizedPathBuf,
     identity: FileIdentity,
     recorded_at: Instant,
 }
@@ -114,8 +116,9 @@ impl RecentEditorSave {
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
+    use std::{path::Path, time::Duration};
 
+    use rg_std::NormalizedPathBuf;
     use test_fixture::fixture_crate;
 
     use super::{RECENT_EDITOR_SAVE_TTL, RecentEditorSaves, RecentEditorSavesInner};
@@ -133,7 +136,7 @@ mod tests {
 
         saves.record_editor_save(&path);
 
-        assert!(saves.saves_to_process(vec![path]).is_empty());
+        assert!(saves.saves_to_process(vec![normalized(path)]).is_empty());
     }
 
     #[test]
@@ -151,6 +154,7 @@ mod tests {
         std::fs::write(&path, "pub fn external_edit() {}\n")
             .expect("fixture file should be writable");
 
+        let path = normalized(path);
         assert_eq!(saves.saves_to_process(vec![path.clone()]), vec![path]);
     }
 
@@ -170,6 +174,8 @@ mod tests {
         let saves = RecentEditorSaves::default();
 
         saves.record_editor_save(&saved_path);
+        let saved_path = normalized(saved_path);
+        let external_path = normalized(external_path);
 
         assert_eq!(
             saves.saves_to_process(vec![saved_path, external_path.clone()]),
@@ -190,10 +196,15 @@ mod tests {
         let mut saves = RecentEditorSavesInner::default();
 
         saves.record_at(&path, now);
+        let path = normalized(path);
 
         assert!(!saves.is_save_echo_at(
             &path,
             now + RECENT_EDITOR_SAVE_TTL + Duration::from_millis(1)
         ));
+    }
+
+    fn normalized(path: impl AsRef<Path>) -> NormalizedPathBuf {
+        NormalizedPathBuf::from_absolute(path).expect("test path should normalize")
     }
 }

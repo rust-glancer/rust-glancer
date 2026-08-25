@@ -25,11 +25,9 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use crate::PackageResidencyPolicy;
 use anyhow::Context as _;
 use atomic_write_file::AtomicWriteFile;
-use rg_workspace::WorkspaceMetadata;
-
-use crate::PackageResidencyPolicy;
 
 use super::super::{
     CachedPackage, Fingerprint, PackageCacheCodec, PackageCacheInstance, PackageCacheWriteInput,
@@ -45,11 +43,9 @@ const CACHE_UPDATE_MARKER_FILE_NAME: &str = "update-in-progress";
 /// Paths for one cache instance and one cache generation.
 ///
 /// `root` is the already-claimed instance directory. `generation` selects the subdirectory for the
-/// workspace graph and residency policy. `workspace_root` is kept so package fingerprints can
-/// normalize workspace-local paths the same way when constructing and looking up an artifact.
+/// workspace graph and residency policy.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PackageCacheStore {
-    workspace_root: PathBuf,
     root: PathBuf,
     generation: Fingerprint,
 }
@@ -60,7 +56,6 @@ impl PackageCacheStore {
     /// This does not touch the filesystem. Directory creation is delayed until an update begins,
     /// while cache reads can simply observe a missing artifact as a cache miss.
     pub(crate) fn for_instance(
-        workspace: &WorkspaceMetadata,
         cache_plan: &WorkspaceCachePlan,
         residency_policy: PackageResidencyPolicy,
         instance: &PackageCacheInstance,
@@ -71,10 +66,8 @@ impl PackageCacheStore {
         // ~10 seconds, so a residency-policy change simply selects a fresh cache generation and
         // rebuilds from source.
         Self {
-            workspace_root: workspace.workspace_root().to_path_buf(),
             root: instance.root().to_path_buf(),
-            generation: cache_plan
-                .generation_fingerprint(workspace.workspace_root(), residency_policy),
+            generation: cache_plan.generation_fingerprint(residency_policy),
         }
     }
 
@@ -89,18 +82,13 @@ impl PackageCacheStore {
     /// The slot and name make paths readable; the package fingerprint prevents two different Cargo
     /// package descriptions that occupy the same slot from sharing bytes accidentally.
     pub fn package_artifact_path(&self, package: &CachedPackage) -> PathBuf {
-        let fingerprint = self.package_fingerprint(package);
+        let fingerprint = package.fingerprint();
         let file_name = format!(
             "package-{}-{}-{}.{}",
             package.package.0, package.name, fingerprint, PACKAGE_ARTIFACT_EXTENSION,
         );
 
         self.generation_dir().join(file_name)
-    }
-
-    /// Fingerprint package metadata with paths interpreted relative to this workspace root.
-    pub fn package_fingerprint(&self, package: &CachedPackage) -> Fingerprint {
-        package.fingerprint(&self.workspace_root)
     }
 
     /// Removes cache data that cannot be reached through the current cache generation.

@@ -246,12 +246,8 @@ pub(crate) fn build_resident_state(
 
     let package_residency = PackageResidencyPlan::build(&workspace, package_residency_policy);
     let cache_plan = WorkspaceCachePlan::build(&workspace);
-    let cache_store = PackageCacheStore::for_instance(
-        &workspace,
-        &cache_plan,
-        package_residency_policy,
-        &cache_instance,
-    );
+    let cache_store =
+        PackageCacheStore::for_instance(&cache_plan, package_residency_policy, &cache_instance);
     cache_store
         .recover_incomplete_update()
         .context("while attempting to recover an incomplete package cache update")?;

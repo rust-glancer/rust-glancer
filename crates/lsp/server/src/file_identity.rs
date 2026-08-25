@@ -4,11 +4,9 @@
 //! metadata-only touch, but it keeps watcher filtering cheap and leaves exact source reads to the
 //! engine when a path is actually forwarded.
 
-use std::{
-    fs,
-    path::{Path, PathBuf},
-    time::SystemTime,
-};
+use std::{fs, path::Path, time::SystemTime};
+
+use rg_std::NormalizedPathBuf;
 
 /// File metadata precise enough to suppress repeated saved-file notifications.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -18,18 +16,21 @@ pub(crate) struct FileIdentity {
 }
 
 impl FileIdentity {
-    pub(crate) fn read(path: &Path) -> Option<(PathBuf, Self)> {
-        let metadata = fs::metadata(path).ok()?;
+    pub(crate) fn read(path: &Path) -> Option<(NormalizedPathBuf, Self)> {
+        let path = NormalizedPathBuf::from_absolute(path).ok()?;
+        let identity = Self::read_normalized(&path)?;
+        Some((path, identity))
+    }
+
+    pub(crate) fn read_normalized(path: &NormalizedPathBuf) -> Option<Self> {
+        let metadata = fs::metadata(path.as_path()).ok()?;
         if !metadata.is_file() {
             return None;
         }
 
-        Some((
-            path.canonicalize().unwrap_or_else(|_| path.to_path_buf()),
-            Self {
-                len: metadata.len(),
-                modified: metadata.modified().ok()?,
-            },
-        ))
+        Some(Self {
+            len: metadata.len(),
+            modified: metadata.modified().ok()?,
+        })
     }
 }

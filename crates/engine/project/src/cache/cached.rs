@@ -4,12 +4,12 @@
 //! the subset of workspace metadata that affects artifact selection instead of retaining
 //! Cargo/workspace transport types in the cache format.
 
-use rg_std::MemorySize;
-use std::path::Path;
+use std::path::{Component, Path};
 
 use rg_cfg_eval::CfgOptions;
+use rg_std::{MemorySize, NativeOsString};
 use rg_text::RustEdition;
-use rg_workspace::{PackageId, PackageSlot, PackageSource, TargetKind};
+use rg_workspace::{PackageSlot, PackageSource, TargetKind};
 use wincode::{SchemaRead, SchemaWrite};
 
 use super::{Fingerprint, fingerprint};
@@ -27,33 +27,51 @@ impl CachedPackageSlot {
     }
 }
 
-/// Stable Cargo package id text stored in cache metadata.
+/// Structural path stored in cache metadata without display-text or separator conversions.
 #[derive(
-    Debug, Clone, PartialEq, Eq, Hash, derive_more::Display, SchemaRead, SchemaWrite, MemorySize,
+    Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, SchemaRead, SchemaWrite, MemorySize,
 )]
-#[display("{_0}")]
-pub struct CachedPackageId(#[memsize(inline)] pub(crate) String);
-
-impl CachedPackageId {
-    pub(super) fn from_workspace(id: &PackageId) -> Self {
-        Self(id.to_string())
-    }
+pub enum CachedPath {
+    /// Components below the normalized workspace root. Component boundaries make this independent
+    /// from the host path separator and from the workspace's absolute checkout location.
+    WorkspaceRelative(Vec<NativeOsString>),
+    /// A host-local absolute path, used for registry, git, path, and sysroot dependencies.
+    NativeAbsolute(NativeOsString),
 }
 
-/// UTF-8 path text stored in cache metadata.
-#[derive(
-    Debug, Clone, PartialEq, Eq, Hash, derive_more::Display, SchemaRead, SchemaWrite, MemorySize,
-)]
-#[display("{_0}")]
-pub struct CachedPath(#[memsize(inline)] pub(crate) String);
-
 impl CachedPath {
-    pub(super) fn from_workspace_path(path: &Path) -> Self {
-        Self(path.display().to_string())
+    pub(super) fn from_workspace_path(workspace_root: &Path, path: &Path) -> Self {
+        if let Ok(relative) = path.strip_prefix(workspace_root) {
+            let mut components = Vec::new();
+            let mut is_plain_relative = true;
+            for component in relative.components() {
+                let Component::Normal(component) = component else {
+                    is_plain_relative = false;
+                    break;
+                };
+                components.push(NativeOsString::from_os_str(component));
+            }
+            if is_plain_relative {
+                return Self::WorkspaceRelative(components);
+            }
+        }
+
+        Self::NativeAbsolute(NativeOsString::from_os_str(path.as_os_str()))
     }
 
-    pub fn as_path(&self) -> &Path {
-        Path::new(&self.0)
+    /// Reconstructs the producing host's path, rejecting incompatible or malformed cache data.
+    #[cfg(test)]
+    pub(super) fn to_path_buf(&self, workspace_root: &Path) -> Option<std::path::PathBuf> {
+        match self {
+            Self::WorkspaceRelative(components) => {
+                let mut path = workspace_root.to_path_buf();
+                for component in components {
+                    path.push(component.clone().into_os_string()?);
+                }
+                Some(path)
+            }
+            Self::NativeAbsolute(path) => Some(path.clone().into_os_string()?.into()),
+        }
     }
 }
 
@@ -252,7 +270,6 @@ impl CachedCfgKeyValue {
 #[derive(Debug, Clone, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize)]
 pub struct CachedPackage {
     pub package: CachedPackageSlot,
-    pub package_id: CachedPackageId,
     pub name: String,
     pub source: CachedPackageSource,
     pub edition: CachedRustEdition,
@@ -264,12 +281,9 @@ pub struct CachedPackage {
 }
 
 impl CachedPackage {
-    /// Returns the canonical package fingerprint for one workspace root.
-    ///
-    /// The workspace root is explicit because Cargo package IDs and source paths can contain
-    /// absolute workspace paths that should not become part of the stable cache key.
-    pub fn fingerprint(&self, workspace_root: &Path) -> Fingerprint {
-        fingerprint::FingerprintBuilder::package_identity(workspace_root, self)
+    /// Returns the canonical fingerprint for this already-structured package identity.
+    pub fn fingerprint(&self) -> Fingerprint {
+        fingerprint::FingerprintBuilder::package_identity(self)
     }
 }
 
@@ -289,19 +303,15 @@ impl CachedTarget {
         targets
     }
 
-    fn sort_key(&self) -> (u8, &str, &Path) {
-        (
-            self.kind.sort_order(),
-            self.name.as_str(),
-            self.src_path.as_path(),
-        )
+    fn sort_key(&self) -> (u8, &str, &CachedPath) {
+        (self.kind.sort_order(), self.name.as_str(), &self.src_path)
     }
 }
 
 /// Dependency edge metadata that can affect package-local path resolution.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize)]
 pub struct CachedDependency {
-    pub package_id: CachedPackageId,
+    pub package: CachedPackageSlot,
     pub name: String,
     pub is_normal: bool,
     pub is_build: bool,
@@ -316,10 +326,10 @@ impl CachedDependency {
         dependencies
     }
 
-    fn sort_key(&self) -> (&str, String, bool, bool, bool) {
+    fn sort_key(&self) -> (&str, CachedPackageSlot, bool, bool, bool) {
         (
             self.name.as_str(),
-            self.package_id.to_string(),
+            self.package,
             self.is_normal,
             self.is_build,
             self.is_dev,
