@@ -62,6 +62,7 @@ impl Shrink for SourcePath {
     fn shrink_to_fit(&mut self) {}
 }
 
+// TODO (#182): Make cache workspace-relative
 // The native encoding keeps non-UTF-8 Unix names and Windows path units reversible while Arc
 // sharing remains a runtime-only detail of a restored project generation.
 unsafe impl<C> SchemaWrite<C> for SourcePath
