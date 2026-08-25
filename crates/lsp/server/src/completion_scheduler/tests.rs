@@ -12,7 +12,10 @@ use super::{
     attempt::{AttemptKey, AttemptWaiter},
     request::CompletionFuture,
 };
-use crate::ingress::{CapturedDocument, EditorStateHandle};
+use crate::{
+    ingress::{CapturedDocument, EditorStateHandle},
+    tests::synthetic_test_path,
+};
 
 #[tokio::test(flavor = "current_thread")]
 async fn document_advance_is_an_attempt_transition_not_a_query_error() {
@@ -39,7 +42,7 @@ async fn document_advance_is_an_attempt_transition_not_a_query_error() {
 async fn sibling_edits_do_not_interrupt_a_target_document_attempt() {
     let scheduler = CompletionScheduler::default();
     let (editor, _path, captured) = open_document();
-    let sibling = PathBuf::from("/workspace/src/sibling.rs");
+    let sibling = synthetic_test_path("workspace/src/sibling.rs");
     editor.open(sibling.clone(), Some(1), "pub struct Sibling;".to_string());
     let request = scheduler.capture_request(&captured, Position::new(0, 20));
     let (started, mut starts) = mpsc::unbounded_channel();
@@ -333,7 +336,7 @@ async fn query_errors_remain_completed_attempt_outcomes() {
 }
 
 fn open_document() -> (EditorStateHandle, PathBuf, CapturedDocument) {
-    let path = PathBuf::from("/workspace/src/lib.rs");
+    let path = synthetic_test_path("workspace/src/lib.rs");
     let editor = EditorStateHandle::default();
     editor.open(path.clone(), Some(1), "pub struct Original;".to_string());
     let captured = editor

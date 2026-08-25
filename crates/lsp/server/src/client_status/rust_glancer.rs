@@ -12,6 +12,8 @@ use tower_lsp_server::{
     ls_types::{LSPAny, LSPObject, notification::Notification},
 };
 
+use rg_lsp_proto::path_for_editor;
+
 const ACTIVE_WORKSPACE_CHANGED_METHOD: &str = "rust-glancer/activeWorkspaceChanged";
 const DEFERRED_INDEXING_STARTED_METHOD: &str = "rust-glancer/deferredIndexingStarted";
 const DEFERRED_INDEXING_FINISHED_METHOD: &str = "rust-glancer/deferredIndexingFinished";
@@ -50,7 +52,7 @@ impl ActiveWorkspaceChanged {
         let mut params = LSPObject::new();
         params.insert(
             "root".to_string(),
-            LSPAny::String(status.root.display().to_string()),
+            LSPAny::String(editor_path_display(&status.root)),
         );
         params.insert(
             "state".to_string(),
@@ -100,9 +102,16 @@ fn deferred_indexing_params(root: &Path) -> LSPAny {
     let mut params = LSPObject::new();
     params.insert(
         "root".to_string(),
-        LSPAny::String(root.display().to_string()),
+        LSPAny::String(editor_path_display(root)),
     );
     LSPAny::Object(params)
+}
+
+fn editor_path_display(path: &Path) -> String {
+    path_for_editor(path)
+        .unwrap_or_else(|_| path.to_path_buf())
+        .display()
+        .to_string()
 }
 
 /// Client-facing snapshot of the workspace currently selected by document routing.

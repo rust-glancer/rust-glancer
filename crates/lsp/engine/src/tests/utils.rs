@@ -24,7 +24,8 @@ use rg_lsp_proto::{
 use rg_parse::LineIndex;
 use tarpc::context;
 use test_fixture::{
-    CrateFixture, FixtureMarkers, fixture_crate_with_markers, testonly::MarkedText,
+    CrateFixture, FixtureMarkers, fixture_crate_with_markers, fixture_path_for_snapshot,
+    testonly::MarkedText,
 };
 
 use crate::{
@@ -1051,18 +1052,17 @@ impl LspEngineFixture {
     }
 
     fn render_path(&self, path: &Path) -> String {
-        let root = self
-            .fixture
-            .path("")
+        let display_root = self.fixture.path("");
+        let root = display_root
             .canonicalize()
             .expect("fixture root should canonicalize");
         let path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+        let relative = path
+            .strip_prefix(&root)
+            .or_else(|_| path.strip_prefix(&display_root))
+            .expect("LSP snapshot path should stay inside its fixture root");
 
-        if let Ok(relative) = path.strip_prefix(root) {
-            return format!("/{}", relative.display());
-        }
-
-        path.display().to_string()
+        format!("/{}", fixture_path_for_snapshot(relative))
     }
 
     fn render_range(range: Range) -> String {

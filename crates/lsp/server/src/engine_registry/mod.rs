@@ -13,8 +13,9 @@ use std::{
     sync::{Arc, Weak},
 };
 
+use anyhow::Context as _;
 use rg_lsp_proto::{CapturedSourceInput, EngineConfig, SavedProjectChanges};
-use rg_std::UniqueVec;
+use rg_std::{NormalizedPathBuf, UniqueVec};
 use tokio::sync::Mutex;
 use tower_lsp_server::{Client as LspClient, ls_types::MessageType};
 
@@ -33,7 +34,7 @@ mod state;
 
 use self::{
     document_owner::DocumentOwner,
-    routing::{EngineId, normalize_path},
+    routing::EngineId,
     slot::{EngineEntry, EngineSlot},
     state::{EngineRegistryInner, ReservedEngineRoute, ReservedEngineStart},
 };
@@ -57,11 +58,11 @@ pub(crate) struct EngineRegistry {
 #[derive(Clone, Debug)]
 pub(crate) struct OpenDocumentRoute {
     engine_client: EngineClient,
-    source_path: PathBuf,
+    source_path: NormalizedPathBuf,
 }
 
 impl OpenDocumentRoute {
-    pub(crate) fn new(engine_client: EngineClient, source_path: PathBuf) -> Self {
+    pub(crate) fn new(engine_client: EngineClient, source_path: NormalizedPathBuf) -> Self {
         Self {
             engine_client,
             source_path,
@@ -72,7 +73,7 @@ impl OpenDocumentRoute {
         &self.engine_client
     }
 
-    pub(crate) fn source_path(&self) -> &Path {
+    pub(crate) fn source_path(&self) -> &NormalizedPathBuf {
         &self.source_path
     }
 }
@@ -93,7 +94,7 @@ impl EngineRegistry {
     /// Creates a registry that can spawn engines and forward their notifications to the LSP client.
     pub(crate) fn new(
         lsp_client: LspClient,
-        workspace_folders: Vec<PathBuf>,
+        workspace_folders: Vec<NormalizedPathBuf>,
         config: ServerConfig,
         editor: EditorStateHandle,
         client_status_capabilities: ClientStatusCapabilities,
@@ -113,20 +114,24 @@ impl EngineRegistry {
 
     /// Capture existing Rust source once; preserve graph- and deletion-shaped inputs as paths.
     async fn capture_external_project_changes(
-        paths: Vec<PathBuf>,
+        paths: Vec<NormalizedPathBuf>,
     ) -> anyhow::Result<SavedProjectChanges> {
         let mut captured_sources = Vec::new();
         let mut fs_path_changes = Vec::new();
 
         for path in paths {
-            if path.extension().and_then(std::ffi::OsStr::to_str) != Some("rs") {
-                fs_path_changes.push(path);
+            if path.as_path().extension().and_then(std::ffi::OsStr::to_str) != Some("rs") {
+                fs_path_changes.push(path.into_path_buf());
                 continue;
             }
 
-            match tokio::fs::read_to_string(&path).await {
-                Ok(text) => captured_sources.push(CapturedSourceInput::new(path, text)),
-                Err(error) if error.kind() == ErrorKind::NotFound => fs_path_changes.push(path),
+            match tokio::fs::read_to_string(path.as_path()).await {
+                Ok(text) => {
+                    captured_sources.push(CapturedSourceInput::new(path.into_path_buf(), text));
+                }
+                Err(error) if error.kind() == ErrorKind::NotFound => {
+                    fs_path_changes.push(path.into_path_buf());
+                }
                 Err(error) => {
                     return Err(anyhow::anyhow!(
                         "read external Rust source `{}` before submission: {error}",
@@ -178,7 +183,9 @@ impl EngineRegistry {
         &self,
         path: &Path,
     ) -> anyhow::Result<Option<OpenDocumentRoute>> {
-        let path = normalize_path(path);
+        let path = NormalizedPathBuf::from_absolute(path).with_context(|| {
+            format!("while normalizing opened document path {}", path.display())
+        })?;
         let owner = {
             let mut inner = self.inner.lock().await;
             DocumentOwner::new(&mut inner, &path)?
@@ -191,18 +198,18 @@ impl EngineRegistry {
         match self.engine_for_document_owner(owner).await {
             Ok(Some(engine_client)) => Ok(Some(OpenDocumentRoute::new(engine_client, path))),
             Ok(None) => {
-                self.remove_open_file(path.as_path(), id).await;
+                self.remove_open_file(&path, id).await;
                 Ok(None)
             }
             Err(error) => {
-                self.remove_open_file(path.as_path(), id).await;
+                self.remove_open_file(&path, id).await;
                 Err(error)
             }
         }
     }
 
     /// Forgets the route remembered while a document was open.
-    pub(crate) async fn close_document(&self, path: &Path) {
+    pub(crate) async fn close_document(&self, path: &NormalizedPathBuf) {
         self.inner.lock().await.remove_open_file(path, None);
     }
 
@@ -213,7 +220,7 @@ impl EngineRegistry {
     /// for a workspace the editor has never routed to.
     pub(crate) async fn begin_external_project_changes(
         &self,
-        workspace_root: &Path,
+        workspace_root: &NormalizedPathBuf,
     ) -> ExternalProjectChanges {
         let inner = self.inner.lock().await;
         let updates = inner
@@ -237,17 +244,17 @@ impl EngineRegistry {
     /// out of scope as cancellations and therefore preserve any older failure.
     pub(crate) async fn finish_external_project_changes(
         &self,
-        paths: Vec<PathBuf>,
+        paths: Vec<NormalizedPathBuf>,
         mut changes: ExternalProjectChanges,
     ) {
         // One editor workspace folder can contain several Cargo roots. Route and deduplicate the
         // settled paths under one registry snapshot; unknown or non-ready engines stay untouched.
         let paths_by_engine = {
             let inner = self.inner.lock().await;
-            let mut grouped = BTreeMap::<EngineId, (EngineClient, UniqueVec<PathBuf>)>::new();
+            let mut grouped =
+                BTreeMap::<EngineId, (EngineClient, UniqueVec<NormalizedPathBuf>)>::new();
 
             for path in paths {
-                let path = normalize_path(path);
                 let Some(id) = inner.routing.engine_id_for_known_root_path(&path) else {
                     tracing::trace!(
                         path = %path.display(),
@@ -345,7 +352,7 @@ impl EngineRegistry {
         Ok(engine_client)
     }
 
-    async fn remove_open_file(&self, path: &Path, id: EngineId) {
+    async fn remove_open_file(&self, path: &NormalizedPathBuf, id: EngineId) {
         let mut inner = self.inner.lock().await;
         inner.remove_open_file(path, Some(id));
     }
@@ -651,9 +658,9 @@ pub struct ProjectA;
     #[tokio::test]
     async fn watcher_captures_existing_rust_text_and_preserves_graph_or_deletion_paths() {
         let fixture = fixture_crate(WORKSPACE_FIXTURE);
-        let source = fixture.path("workspace/project_a/src/lib.rs");
-        let manifest = fixture.path("workspace/project_a/Cargo.toml");
-        let deleted_source = fixture.path("workspace/project_a/src/deleted.rs");
+        let source = normalized(fixture.path("workspace/project_a/src/lib.rs"));
+        let manifest = normalized(fixture.path("workspace/project_a/Cargo.toml"));
+        let deleted_source = normalized(fixture.path("workspace/project_a/src/deleted.rs"));
         std::fs::write(&source, "pub struct Captured;\n")
             .expect("watcher fixture source should be writable");
 
@@ -668,13 +675,16 @@ pub struct ProjectA;
             .expect("disk should be able to advance after capture");
 
         assert_eq!(changes.captured_sources().len(), 1);
-        assert_eq!(changes.captured_sources()[0].path(), source);
+        assert_eq!(changes.captured_sources()[0].path(), source.as_path());
         assert_eq!(
             changes.captured_sources()[0].text(),
             "pub struct Captured;\n",
             "the RPC must retain the value from watcher capture"
         );
-        assert_eq!(changes.fs_paths(), [manifest, deleted_source]);
+        assert_eq!(
+            changes.fs_paths(),
+            [manifest.into_path_buf(), deleted_source.into_path_buf()]
+        );
     }
 
     #[tokio::test]
@@ -682,7 +692,7 @@ pub struct ProjectA;
         let fixture = fixture_crate(WORKSPACE_FIXTURE);
         let (service, _socket) = initialized_service(&fixture);
         let registry = &service.inner().registry;
-        let document = fixture.path("workspace/project_a/src/lib.rs");
+        let document = normalized(fixture.path("workspace/project_a/src/lib.rs"));
 
         let owner = {
             let mut inner = registry.inner.lock().await;
@@ -720,7 +730,7 @@ pub struct External;
         ));
         let (service, _socket) = initialized_service(&fixture);
         let registry = &service.inner().registry;
-        let document = fixture.path("external/src/lib.rs");
+        let document = normalized(fixture.path("external/src/lib.rs"));
 
         let owner = {
             let mut inner = registry.inner.lock().await;
@@ -736,8 +746,8 @@ pub struct External;
         let fixture = fixture_crate(WORKSPACE_FIXTURE);
         let (service, _socket) = initialized_service(&fixture);
         let registry = &service.inner().registry;
-        let document = fixture.path("workspace/project_a/src/lib.rs");
-        let workspace_root = normalize_path(fixture.path("workspace"));
+        let document = normalized(fixture.path("workspace/project_a/src/lib.rs"));
+        let workspace_root = normalized(fixture.path("workspace")).into_path_buf();
 
         let owner = {
             let mut inner = registry.inner.lock().await;
@@ -783,8 +793,8 @@ pub struct External;
         let fixture = fixture_crate(WORKSPACE_FIXTURE);
         let (service, _socket) = initialized_service(&fixture);
         let registry = &service.inner().registry;
-        let document = fixture.path("workspace/project_a/src/lib.rs");
-        let workspace_root = normalize_path(fixture.path("workspace"));
+        let document = normalized(fixture.path("workspace/project_a/src/lib.rs"));
+        let workspace_root = normalized(fixture.path("workspace")).into_path_buf();
 
         let id = {
             let mut inner = registry.inner.lock().await;
@@ -815,7 +825,7 @@ pub struct External;
     }
 
     fn initialized_service(fixture: &CrateFixture) -> (LspService<TestBackend>, ClientSocket) {
-        let root = fixture.path("workspace");
+        let root = normalized(fixture.path("workspace"));
         let workspace_folders = vec![root];
         let (service, socket) = LspService::new(|client| TestBackend {
             registry: EngineRegistry::new(
@@ -828,6 +838,10 @@ pub struct External;
         });
 
         (service, socket)
+    }
+
+    fn normalized(path: impl AsRef<Path>) -> NormalizedPathBuf {
+        NormalizedPathBuf::from_absolute(path).expect("test path should normalize")
     }
 
     #[derive(Debug)]

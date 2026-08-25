@@ -1,7 +1,8 @@
 use anyhow::Context as _;
-use ls_types::{DocumentHighlight, DocumentHighlightKind, Location, Uri};
+use ls_types::{DocumentHighlight, DocumentHighlightKind, Location};
 use rg_analysis::ReferenceLocation;
 use rg_def_map::PackageSlot;
+use rg_lsp_proto::path_to_file_uri;
 use rg_parse::{FileId, Span};
 use rg_project::ProjectSnapshot;
 
@@ -14,7 +15,7 @@ pub(crate) fn location_for_reference(
     let Some(path) = snapshot.file_path(reference.crate_ref.package, reference.file_id) else {
         return Ok(None);
     };
-    let Some(uri) = Uri::from_file_path(path) else {
+    let Ok(uri) = path_to_file_uri(path) else {
         return Ok(None);
     };
 

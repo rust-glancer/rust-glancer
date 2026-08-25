@@ -40,6 +40,7 @@ use rg_lsp_proto::{
     DocumentRevision, EditorDocumentSnapshot, GlobalPositionSnapshot, OpenDocumentSession,
     OpenDocumentsRevision, SaveProposal, TargetDocumentRevision,
 };
+use rg_std::NormalizedPathBuf;
 
 use crate::{engine_client::EngineClient, engine_registry::OpenDocumentRoute};
 
@@ -118,7 +119,7 @@ impl CapturedDocument {
         }
 
         let mut documents = Vec::new();
-        let mut text_by_source_path = HashMap::<PathBuf, &str>::new();
+        let mut text_by_source_path = HashMap::<&NormalizedPathBuf, &str>::new();
         for captured in self.open_documents.iter() {
             if !is_rust_path(&captured.path) {
                 continue;
@@ -136,7 +137,7 @@ impl CapturedDocument {
                 ));
             };
             if let Some(previous_text) =
-                text_by_source_path.insert(route.source_path().to_path_buf(), document.text())
+                text_by_source_path.insert(route.source_path(), document.text())
                 && previous_text != document.text()
             {
                 return Err(DocumentUnavailable::new(
@@ -404,11 +405,25 @@ impl DocumentUnavailable {
     }
 }
 
-/// Whether diagnostics for saved text may replace the diagnostics already shown by the editor.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum DiagnosticsPublication {
-    Publish { version: Option<i32> },
-    KeepVisible,
+/// One editor URI where saved-source diagnostics may replace the diagnostics already shown.
+///
+/// Several editor paths can resolve to the same source identity. Keeping the original path here
+/// lets diagnostics return through every matching URI instead of exposing the normalized
+/// filesystem spelling at the protocol boundary.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct DiagnosticsPublication {
+    path: PathBuf,
+    version: Option<i32>,
+}
+
+impl DiagnosticsPublication {
+    pub(crate) fn path(&self) -> &Path {
+        &self.path
+    }
+
+    pub(crate) fn version(&self) -> Option<i32> {
+        self.version
+    }
 }
 
 /// Thread-safe entry point to the server's live editor state.
@@ -479,15 +494,15 @@ impl EditorStateHandle {
         Ok(captured)
     }
 
-    pub(crate) fn diagnostics_publication(
+    pub(crate) fn diagnostics_publications(
         &self,
-        path: &Path,
+        source_path: &NormalizedPathBuf,
         saved_text: Option<&str>,
-    ) -> DiagnosticsPublication {
+    ) -> Vec<DiagnosticsPublication> {
         self.state
             .lock()
             .expect("editor state mutex should not be poisoned")
-            .diagnostics_publication(path, saved_text)
+            .diagnostics_publications(source_path, saved_text)
     }
 }
 
@@ -818,28 +833,51 @@ impl EditorState {
         }
     }
 
-    fn diagnostics_publication(
+    fn diagnostics_publications(
         &self,
-        path: &Path,
+        source_path: &NormalizedPathBuf,
         saved_text: Option<&str>,
-    ) -> DiagnosticsPublication {
-        let Some(open) = self
-            .documents
-            .get(path)
-            .and_then(|entry| entry.open.as_ref())
-        else {
-            return DiagnosticsPublication::Publish { version: None };
-        };
-        let Some(document) = &open.current else {
-            return DiagnosticsPublication::KeepVisible;
-        };
-        if saved_text != Some(document.text()) {
-            return DiagnosticsPublication::KeepVisible;
+    ) -> Vec<DiagnosticsPublication> {
+        let mut matched_open_document = false;
+        let mut publications = Vec::new();
+
+        // An editor URI is presentation identity, while an analysis route carries filesystem
+        // identity. Compare ready routes first so symlink and Windows spelling aliases converge,
+        // then retain exact-path matching for a document whose route has not finished resolving.
+        for (editor_path, entry) in &self.documents {
+            let Some(open) = &entry.open else {
+                continue;
+            };
+            let matches_source = editor_path == source_path.as_path()
+                || open
+                    .route
+                    .analysis_route()
+                    .is_ok_and(|route| route.source_path() == source_path);
+            if !matches_source {
+                continue;
+            }
+            matched_open_document = true;
+
+            let Some(document) = &open.current else {
+                continue;
+            };
+            if saved_text != Some(document.text()) {
+                continue;
+            }
+            publications.push(DiagnosticsPublication {
+                path: editor_path.clone(),
+                version: document.client_version(),
+            });
         }
 
-        DiagnosticsPublication::Publish {
-            version: document.client_version(),
+        if !matched_open_document {
+            publications.push(DiagnosticsPublication {
+                path: source_path.to_path_buf(),
+                version: None,
+            });
         }
+
+        publications
     }
 
     fn allocate_session(&mut self) -> OpenDocumentSession {

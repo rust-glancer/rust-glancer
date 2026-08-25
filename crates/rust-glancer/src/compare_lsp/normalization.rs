@@ -17,6 +17,7 @@ use ls_types::{
     OneOf, PrepareRenameResponse, Range, ResourceOp, SymbolInformation, SymbolKind, TextEdit, Uri,
     WorkspaceEdit, WorkspaceSymbol, WorkspaceSymbolResponse,
 };
+use rg_std::NormalizedPathBuf;
 use serde_json::Value;
 
 use crate::compare_lsp::{
@@ -42,6 +43,8 @@ impl NormalizedSummary {
                 fixture.root().display(),
             )
         })?;
+        let fixture_root = NormalizedPathBuf::from_absolute(fixture_root)
+            .context("Normalizing LSP comparison fixture root failed")?;
         let results = execution
             .results()
             .iter()
@@ -70,7 +73,7 @@ pub(crate) struct NormalizedQueryExecution {
 }
 
 impl NormalizedQueryExecution {
-    fn from_raw(fixture_root: &Path, query: &QueryExecution) -> Self {
+    fn from_raw(fixture_root: &NormalizedPathBuf, query: &QueryExecution) -> Self {
         Self {
             label: query.label(),
             kind: query.kind(),
@@ -128,7 +131,7 @@ pub(crate) struct NormalizedServerOutcome {
 
 impl NormalizedServerOutcome {
     fn from_raw(
-        fixture_root: &Path,
+        fixture_root: &NormalizedPathBuf,
         kind: QueryKind,
         target: QueryTarget,
         outcome: &RawServerOutcome,
@@ -173,7 +176,7 @@ pub(crate) enum NormalizedOutcome {
 
 impl NormalizedOutcome {
     fn from_raw(
-        fixture_root: &Path,
+        fixture_root: &NormalizedPathBuf,
         kind: QueryKind,
         target: QueryTarget,
         raw_outcome: &RawOutcome,
@@ -242,7 +245,7 @@ pub(crate) struct NormalizedPrepareRenameSet {
 
 impl NormalizedPrepareRenameSet {
     fn from_json(
-        fixture_root: &Path,
+        fixture_root: &NormalizedPathBuf,
         query_target: QueryTarget,
         raw: &Value,
     ) -> Result<Self, String> {
@@ -308,7 +311,7 @@ pub(crate) struct NormalizedTextEditSet {
 }
 
 impl NormalizedTextEditSet {
-    fn from_json(fixture_root: &Path, raw: &Value) -> Result<Self, String> {
+    fn from_json(fixture_root: &NormalizedPathBuf, raw: &Value) -> Result<Self, String> {
         if raw.is_null() {
             return Ok(Self {
                 edits: Vec::new(),
@@ -338,7 +341,7 @@ impl NormalizedTextEditSet {
     }
 
     fn push_document_changes(
-        fixture_root: &Path,
+        fixture_root: &NormalizedPathBuf,
         document_changes: DocumentChanges,
         edits: &mut BTreeSet<NormalizedTextEdit>,
         unmapped: &mut Vec<UnmappedLocation>,
@@ -377,7 +380,7 @@ impl NormalizedTextEditSet {
     }
 
     fn push_one_of_text_edit(
-        fixture_root: &Path,
+        fixture_root: &NormalizedPathBuf,
         uri: &Uri,
         edit: OneOf<TextEdit, AnnotatedTextEdit>,
         edits: &mut BTreeSet<NormalizedTextEdit>,
@@ -391,7 +394,7 @@ impl NormalizedTextEditSet {
     }
 
     fn push_text_edit(
-        fixture_root: &Path,
+        fixture_root: &NormalizedPathBuf,
         uri: &Uri,
         edit: TextEdit,
         edits: &mut BTreeSet<NormalizedTextEdit>,
@@ -506,7 +509,7 @@ pub(crate) struct NormalizedSymbolSet {
 }
 
 impl NormalizedSymbolSet {
-    fn from_document_json(fixture_root: &Path, raw: &Value) -> Result<Self, String> {
+    fn from_document_json(fixture_root: &NormalizedPathBuf, raw: &Value) -> Result<Self, String> {
         if raw.is_null() {
             return Ok(Self {
                 symbols: Vec::new(),
@@ -548,7 +551,7 @@ impl NormalizedSymbolSet {
         })
     }
 
-    fn from_workspace_json(fixture_root: &Path, raw: &Value) -> Result<Self, String> {
+    fn from_workspace_json(fixture_root: &NormalizedPathBuf, raw: &Value) -> Result<Self, String> {
         if raw.is_null() {
             return Ok(Self {
                 symbols: Vec::new(),
@@ -632,7 +635,7 @@ pub(crate) struct NormalizedLocationSet {
 }
 
 impl NormalizedLocationSet {
-    fn from_json(fixture_root: &Path, raw: &Value) -> Result<Self, String> {
+    fn from_json(fixture_root: &NormalizedPathBuf, raw: &Value) -> Result<Self, String> {
         let protocol_locations = ProtocolLocations::from_json(raw)?;
         let mut locations = BTreeSet::new();
         let mut unmapped = Vec::new();
@@ -836,7 +839,11 @@ pub(crate) struct NormalizedTextEdit {
 }
 
 impl NormalizedTextEdit {
-    fn from_lsp(fixture_root: &Path, uri: &Uri, edit: TextEdit) -> Result<Self, UnmappedLocation> {
+    fn from_lsp(
+        fixture_root: &NormalizedPathBuf,
+        uri: &Uri,
+        edit: TextEdit,
+    ) -> Result<Self, UnmappedLocation> {
         Ok(Self {
             path: fixture_relative_file_uri(fixture_root, uri)?,
             range: NormalizedRange::from_lsp(edit.range),
@@ -861,40 +868,12 @@ impl NormalizedLocation {
     }
 
     fn from_protocol(
-        fixture_root: &Path,
+        fixture_root: &NormalizedPathBuf,
         location: ProtocolLocation,
     ) -> Result<Self, UnmappedLocation> {
-        let uri = location.uri();
-        let range = location.range();
-        let uri_text = uri.as_str().to_string();
-
-        if !uri.scheme().as_str().eq_ignore_ascii_case("file") {
-            return Err(UnmappedLocation {
-                uri: uri_text,
-                reason: "URI is not a file URI".to_string(),
-            });
-        }
-
-        let Some(path) = uri.to_file_path() else {
-            return Err(UnmappedLocation {
-                uri: uri_text,
-                reason: "file URI has no path".to_string(),
-            });
-        };
-        let path = path.into_owned();
-        let relative = path
-            .strip_prefix(fixture_root)
-            .map_err(|_| UnmappedLocation {
-                uri: uri_text,
-                reason: format!(
-                    "file path is outside fixture root {}",
-                    fixture_root.display(),
-                ),
-            })?;
-
         Ok(Self {
-            path: fixture_relative_path(relative),
-            range: NormalizedRange::from_lsp(range),
+            path: fixture_relative_file_uri(fixture_root, location.uri())?,
+            range: NormalizedRange::from_lsp(location.range()),
         })
     }
 }
@@ -937,7 +916,7 @@ impl NormalizedSymbol {
     }
 
     fn from_symbol_information(
-        fixture_root: &Path,
+        fixture_root: &NormalizedPathBuf,
         symbol: SymbolInformation,
     ) -> Result<Self, UnmappedLocation> {
         let location = NormalizedLocation::from_protocol(
@@ -953,7 +932,7 @@ impl NormalizedSymbol {
     }
 
     fn from_document_symbol_information(
-        fixture_root: &Path,
+        fixture_root: &NormalizedPathBuf,
         symbol: SymbolInformation,
     ) -> Result<Self, UnmappedLocation> {
         let location = NormalizedLocation::from_protocol(
@@ -969,7 +948,7 @@ impl NormalizedSymbol {
     }
 
     fn from_workspace_symbol(
-        fixture_root: &Path,
+        fixture_root: &NormalizedPathBuf,
         symbol: WorkspaceSymbol,
     ) -> Result<Self, UnmappedLocation> {
         let (path, range) = match symbol.location {
@@ -980,34 +959,10 @@ impl NormalizedSymbol {
                 )?;
                 (Some(location.path), Some(location.range))
             }
-            OneOf::Right(location) => {
-                let uri_text = location.uri.as_str().to_string();
-                if !location.uri.scheme().as_str().eq_ignore_ascii_case("file") {
-                    return Err(UnmappedLocation {
-                        uri: uri_text,
-                        reason: "URI is not a file URI".to_string(),
-                    });
-                }
-
-                let Some(path) = location.uri.to_file_path() else {
-                    return Err(UnmappedLocation {
-                        uri: uri_text,
-                        reason: "file URI has no path".to_string(),
-                    });
-                };
-                let path = path.into_owned();
-                let relative = path
-                    .strip_prefix(fixture_root)
-                    .map_err(|_| UnmappedLocation {
-                        uri: uri_text,
-                        reason: format!(
-                            "file path is outside fixture root {}",
-                            fixture_root.display(),
-                        ),
-                    })?;
-
-                (Some(fixture_relative_path(relative)), None)
-            }
+            OneOf::Right(location) => (
+                Some(fixture_relative_file_uri(fixture_root, &location.uri)?),
+                None,
+            ),
         };
 
         Ok(Self {
@@ -1069,7 +1024,7 @@ impl NormalizedRange {
 
     fn source_text_for_query(
         self,
-        fixture_root: &Path,
+        fixture_root: &NormalizedPathBuf,
         query_target: QueryTarget,
     ) -> Result<String, String> {
         let source_path = match query_target {
@@ -1080,7 +1035,7 @@ impl NormalizedRange {
                 return Err("prepare-rename query does not identify a source position".to_string());
             }
         };
-        let path = fixture_root.join(source_path);
+        let path = fixture_root.as_path().join(source_path);
         let source = std::fs::read_to_string(&path).map_err(|error| {
             format!(
                 "reading prepare-rename source {} failed: {error}",
@@ -1169,24 +1124,25 @@ fn fixture_relative_path(path: &Path) -> String {
     components.join("/")
 }
 
-fn fixture_relative_file_uri(fixture_root: &Path, uri: &Uri) -> Result<String, UnmappedLocation> {
+fn fixture_relative_file_uri(
+    fixture_root: &NormalizedPathBuf,
+    uri: &Uri,
+) -> Result<String, UnmappedLocation> {
     let uri_text = uri.as_str().to_string();
-    if !uri.scheme().as_str().eq_ignore_ascii_case("file") {
-        return Err(UnmappedLocation {
-            uri: uri_text,
-            reason: "URI is not a file URI".to_string(),
-        });
-    }
+    let path = rg_lsp_proto::file_uri_to_path(uri).map_err(|error| UnmappedLocation {
+        uri: uri_text.clone(),
+        reason: error.to_string(),
+    })?;
 
-    let Some(path) = uri.to_file_path() else {
-        return Err(UnmappedLocation {
-            uri: uri_text,
-            reason: "file URI has no path".to_string(),
-        });
-    };
-    let path = path.into_owned();
+    // Windows file URIs contain conventional paths, while canonical fixture roots use verbatim
+    // paths. Assign filesystem identity to the response path before comparing the two spellings.
+    let path = NormalizedPathBuf::from_absolute(path).map_err(|error| UnmappedLocation {
+        uri: uri_text.clone(),
+        reason: format!("normalizing file URI path failed: {error}"),
+    })?;
     let relative = path
-        .strip_prefix(fixture_root)
+        .as_path()
+        .strip_prefix(fixture_root.as_path())
         .map_err(|_| UnmappedLocation {
             uri: uri_text,
             reason: format!(
@@ -1236,11 +1192,9 @@ fn json_shape(value: &Value) -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        fs,
-        path::{Path, PathBuf},
-    };
+    use std::fs;
 
+    use rg_std::NormalizedPathBuf;
     use serde_json::{Value, json};
 
     use crate::compare_lsp::query::{QueryTarget, SourcePosition};
@@ -1309,7 +1263,7 @@ mod tests {
     fn validates_prepare_rename_placeholders_against_utf16_source_ranges() {
         let root = fixture_root("prepare-rename-placeholder");
         let source_path = "src/lib.rs";
-        let path = root.join(source_path);
+        let path = root.as_path().join(source_path);
         fs::create_dir_all(path.parent().expect("source should have a parent"))
             .expect("source parent should be created");
         fs::write(&path, "let 😀user_name = 1;\n").expect("source should be written");
@@ -1336,7 +1290,7 @@ mod tests {
     fn keeps_incorrect_prepare_rename_placeholders_visible_to_comparison() {
         let root = fixture_root("prepare-rename-wrong-placeholder");
         let source_path = "src/lib.rs";
-        let path = root.join(source_path);
+        let path = root.as_path().join(source_path);
         fs::create_dir_all(path.parent().expect("source should have a parent"))
             .expect("source parent should be created");
         fs::write(&path, "let user_name = 1;\n").expect("source should be written");
@@ -1421,26 +1375,25 @@ mod tests {
         assert_eq!(locations.locations.len(), 0);
         assert_eq!(locations.unmapped.len(), 1);
         assert!(
-            locations.unmapped_summaries()[0].contains("URI is not a file URI"),
+            locations.unmapped_summaries()[0].contains("is not a file URI"),
             "unmapped details should explain why the location was not mapped",
         );
     }
 
-    fn fixture_root(name: &str) -> PathBuf {
+    fn fixture_root(name: &str) -> NormalizedPathBuf {
         let root = std::env::temp_dir()
             .join("rust-glancer-compare-lsp-normalization")
             .join(format!("{}-{}", name, std::process::id()));
         fs::create_dir_all(&root).expect("test fixture root should be created");
-        root.canonicalize()
-            .expect("test fixture root should canonicalize")
+        NormalizedPathBuf::from_absolute(root).expect("test fixture root should normalize")
     }
 
-    fn file_uri(root: &Path, relative_path: &str) -> String {
-        let path = root.join(relative_path);
+    fn file_uri(root: &NormalizedPathBuf, relative_path: &str) -> String {
+        let path = root.as_path().join(relative_path);
         let parent = path.parent().expect("test path should have a parent");
         fs::create_dir_all(parent).expect("test file parent should be created");
         fs::write(&path, "").expect("test file should be written");
-        ls_types::Uri::from_file_path(&path)
+        rg_lsp_proto::path_to_file_uri(&path)
             .expect("test path should convert to a file URI")
             .as_str()
             .to_string()

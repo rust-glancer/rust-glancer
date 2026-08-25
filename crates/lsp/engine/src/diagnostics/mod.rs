@@ -16,6 +16,7 @@ use std::{
 
 use ls_types::ProgressToken;
 use rg_lsp_proto::{AnalysisConfig, DiagnosticsConfig};
+use rg_std::NormalizedPathBuf;
 use tokio::{sync::Mutex, task::JoinHandle};
 
 use crate::{debounce::Debouncer, service::ServiceNotificationsSink};
@@ -193,7 +194,7 @@ struct DiagnosticsHandleInner {
     // stale files.
     // Paths ever reported by Cargo are retained so a skipped clear can be offered again after an
     // open editor buffer becomes compatible with saved-source diagnostics.
-    known_paths: BTreeSet<PathBuf>,
+    known_paths: BTreeSet<NormalizedPathBuf>,
 }
 
 #[derive(Debug)]

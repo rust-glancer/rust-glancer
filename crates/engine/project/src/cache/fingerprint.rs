@@ -3,14 +3,14 @@
 //! Fingerprints are built from explicit field tags and length-prefixed values. This keeps cache
 //! paths independent from Rust's `Hash`, debug formatting, and future serialization bytes.
 
-use rg_std::MemorySize;
+use rg_std::{MemorySize, NativeOsString};
 use std::{fmt, path::Path};
 use wincode::{SchemaRead, SchemaWrite};
 
 use crate::PackageResidencyPolicy;
 
 use super::{
-    CachedCfgOptions, CachedDependency, CachedPackage, CachedPackageId, CachedTarget,
+    CachedCfgOptions, CachedDependency, CachedPackage, CachedPath, CachedTarget,
     WorkspaceCachePlan, cached::CachedCfgKeyValue,
 };
 
@@ -48,7 +48,6 @@ pub(crate) struct FingerprintBuilder {
 impl FingerprintBuilder {
     /// Builds the stable identity of one reusable package-cache generation.
     pub(super) fn cache_generation(
-        workspace_root: &Path,
         cache_plan: &WorkspaceCachePlan,
         residency_policy: PackageResidencyPolicy,
     ) -> Fingerprint {
@@ -56,7 +55,7 @@ impl FingerprintBuilder {
 
         builder.bytes(
             "workspace.graph",
-            Self::workspace_graph(workspace_root, cache_plan).as_bytes(),
+            Self::workspace_graph(cache_plan).as_bytes(),
         );
         // Different residency policies require different data to be cached. Including the policy
         // here intentionally invalidates the cache when the configuration changes.
@@ -65,48 +64,40 @@ impl FingerprintBuilder {
         builder.finalize()
     }
 
-    pub(super) fn workspace_graph(
-        workspace_root: &Path,
-        cache_plan: &WorkspaceCachePlan,
-    ) -> Fingerprint {
+    pub(super) fn workspace_graph(cache_plan: &WorkspaceCachePlan) -> Fingerprint {
         let mut builder = Self::new("workspace-graph");
 
         builder.usize("packages.len", cache_plan.packages.len());
         for package in &cache_plan.packages {
             builder.bytes(
                 "package.identity",
-                Self::package_identity(workspace_root, package).as_bytes(),
+                Self::package_identity(package).as_bytes(),
             );
         }
 
         builder.finalize()
     }
 
-    pub(super) fn package_identity(workspace_root: &Path, package: &CachedPackage) -> Fingerprint {
+    pub(super) fn package_identity(package: &CachedPackage) -> Fingerprint {
         let mut builder = Self::new("package-identity");
 
         builder.u64("package.slot", package.package.0);
-        builder.package_id("package.id", workspace_root, &package.package_id);
         builder.str("package.name", &package.name);
         builder.str("package.source", &package.source.to_string());
         builder.str("package.edition", &package.edition.to_string());
-        builder.path(
-            "package.manifest_path",
-            workspace_root,
-            package.manifest_path.as_path(),
-        );
+        builder.cached_path("package.manifest_path", &package.manifest_path);
         builder.cfg_options(&package.cfg_options);
 
         let targets = CachedTarget::sorted(&package.targets);
         builder.usize("targets.len", targets.len());
         for target in targets {
-            builder.target(workspace_root, target);
+            builder.target(target);
         }
 
         let dependencies = CachedDependency::sorted(&package.dependencies);
         builder.usize("dependencies.len", dependencies.len());
         for dependency in dependencies {
-            builder.dependency(workspace_root, dependency);
+            builder.dependency(dependency);
         }
 
         builder.finalize()
@@ -114,6 +105,7 @@ impl FingerprintBuilder {
 
     pub(super) fn package_source(
         workspace_root: &Path,
+        cached_package: &CachedPackage,
         package: &rg_parse::Package,
     ) -> anyhow::Result<Fingerprint> {
         let mut builder = Self::new("package-source");
@@ -125,14 +117,16 @@ impl FingerprintBuilder {
         // edits that keep the package graph unchanged. Because it is computed again after DefMap's
         // late-source fixed point, generated module and included build-output files participate
         // like every other captured source file.
-        builder.package_id(
-            "package.id",
-            workspace_root,
-            &CachedPackageId::from_workspace(package.id()),
+        builder.bytes(
+            "package.identity",
+            Self::package_identity(cached_package).as_bytes(),
         );
         builder.usize("files.len", files.len());
         for file in files {
-            builder.path("file.path", workspace_root, file.path());
+            builder.cached_path(
+                "file.path",
+                &CachedPath::from_workspace_path(workspace_root, file.path()),
+            );
             builder.bytes("file.source", file.source_revision().as_bytes());
         }
 
@@ -148,7 +142,10 @@ impl FingerprintBuilder {
         let mut files = snapshot.files().iter().collect::<Vec<_>>();
         files.sort_by(|left, right| left.path().cmp(right.path()));
 
-        builder.package_id("package.id", workspace_root, &package.package_id);
+        builder.bytes(
+            "package.identity",
+            Self::package_identity(package).as_bytes(),
+        );
         builder.usize("files.len", files.len());
 
         // The artifact manifest is the authoritative file set for cache validation. Fresh parse
@@ -162,7 +159,10 @@ impl FingerprintBuilder {
         // Ctrl+S and enjoy the rebuilt cache. This is an absurd scenario that does not happen in
         // sane reality and is not worth supporting by persisting negative module paths.
         for file in files {
-            builder.path("file.path", workspace_root, file.path());
+            builder.cached_path(
+                "file.path",
+                &CachedPath::from_workspace_path(workspace_root, file.path()),
+            );
             builder.bytes(
                 "file.source",
                 file.source_descriptor().revision().as_bytes(),
@@ -180,18 +180,14 @@ impl FingerprintBuilder {
         this
     }
 
-    fn target(&mut self, workspace_root: &Path, target: &CachedTarget) {
+    fn target(&mut self, target: &CachedTarget) {
         self.str("target.name", &target.name);
         self.str("target.kind", &target.kind.to_string());
-        self.path("target.src_path", workspace_root, target.src_path.as_path());
+        self.cached_path("target.src_path", &target.src_path);
     }
 
-    fn dependency(&mut self, workspace_root: &Path, dependency: &CachedDependency) {
-        self.package_id(
-            "dependency.package_id",
-            workspace_root,
-            &dependency.package_id,
-        );
+    fn dependency(&mut self, dependency: &CachedDependency) {
+        self.u64("dependency.package_slot", dependency.package.0);
         self.str("dependency.name", &dependency.name);
         self.bool("dependency.is_normal", dependency.is_normal);
         self.bool("dependency.is_build", dependency.is_build);
@@ -215,40 +211,25 @@ impl FingerprintBuilder {
         }
     }
 
-    fn path(&mut self, field: &str, workspace_root: &Path, path: &Path) {
-        let path = path.strip_prefix(workspace_root).unwrap_or(path);
-        self.str(field, &path.display().to_string());
+    /// Hashes path kind, component boundaries, native encoding, and native units explicitly.
+    fn cached_path(&mut self, field: &str, path: &CachedPath) {
+        match path {
+            CachedPath::WorkspaceRelative(components) => {
+                self.bytes(field, &[0]);
+                self.usize("path.components.len", components.len());
+                for component in components {
+                    self.native_os_string("path.component", component);
+                }
+            }
+            CachedPath::NativeAbsolute(path) => {
+                self.bytes(field, &[1]);
+                self.native_os_string("path.absolute", path);
+            }
+        }
     }
 
-    fn package_id(&mut self, field: &str, workspace_root: &Path, package_id: &CachedPackageId) {
-        self.str(
-            field,
-            &Self::normalize_package_id(workspace_root, package_id),
-        );
-    }
-
-    fn normalize_package_id(workspace_root: &Path, package_id: &CachedPackageId) -> String {
-        let root_path = workspace_root.display().to_string();
-        let mut root_paths = vec![root_path];
-
-        // Cargo package IDs can preserve the non-canonical `/var` spelling on macOS while our
-        // normalized workspace paths point at `/private/var`; both describe the same workspace.
-        let public_tmp_path = root_paths[0]
-            .strip_prefix("/private/")
-            .map(|path| format!("/{path}"));
-        if let Some(public_tmp_path) = public_tmp_path {
-            root_paths.push(public_tmp_path);
-        }
-
-        let mut package_id = package_id.to_string();
-        for root_path in &root_paths {
-            package_id = package_id.replace(&format!("file://{root_path}"), "file://./");
-        }
-        for root_path in root_paths {
-            package_id = package_id.replace(&root_path, ".");
-        }
-
-        package_id.replace("file://.//", "file://./")
+    fn native_os_string(&mut self, field: &str, value: &NativeOsString) {
+        self.bytes(field, value.as_encoded_bytes());
     }
 
     fn str(&mut self, field: &str, value: &str) {

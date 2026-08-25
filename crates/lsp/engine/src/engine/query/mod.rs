@@ -600,9 +600,10 @@ impl<'a> QueryRunner<'a> {
                 .and_then(|context| snapshot.package_edition(context.package))
                 .unwrap_or(RustEdition::Edition2024)
         };
-        let formatted_text =
-            crate::formatting::rustfmt(text, edition).context("format Rust source")?;
-        let edits = formatting_proto::document_edits(text, formatted_text)
+        let line_index = LineIndex::new(text);
+        let formatted_text = crate::formatting::rustfmt(text, edition, line_index.line_endings())
+            .context("format Rust source")?;
+        let edits = formatting_proto::document_edits(text, formatted_text, &line_index)
             .context("build formatting edits")?;
 
         tracing::trace!(

@@ -6,16 +6,15 @@
 
 use rg_lsp_proto::{
     EngineError, EngineResult, NotificationsService, ServiceLogLevel, ServiceNotification,
+    path_to_file_uri,
 };
+use rg_std::NormalizedPathBuf;
 use tarpc::context;
-use tower_lsp_server::{
-    Client as LspClient,
-    ls_types::{MessageType, Uri},
-};
+use tower_lsp_server::{Client as LspClient, ls_types::MessageType};
 
 use crate::{
     client_status::{ClientStatusPublisher, work_done_progress},
-    ingress::{DiagnosticsPublication, EditorStateHandle},
+    ingress::EditorStateHandle,
 };
 
 /// Publishes service side effects to the real LSP client.
@@ -73,25 +72,40 @@ async fn publish_service_notification(
             diagnostics,
             saved_text,
         } => {
-            let DiagnosticsPublication::Publish { version } =
-                editor.diagnostics_publication(&path, saved_text.as_deref())
-            else {
+            // RPC paths are plain transport values. Reestablish their filesystem identity before
+            // comparing them with normalized analysis routes.
+            let path = match NormalizedPathBuf::from_absolute(&path) {
+                Ok(path) => path,
+                Err(error) => {
+                    tracing::debug!(
+                        path = %path.display(),
+                        error = %error,
+                        "ignored diagnostics with an invalid filesystem path"
+                    );
+                    return Ok(());
+                }
+            };
+            let publications = editor.diagnostics_publications(&path, saved_text.as_deref());
+            if publications.is_empty() {
                 tracing::debug!(
                     path = %path.display(),
                     "kept saved-source diagnostics unchanged for newer open document text"
                 );
                 return Ok(());
-            };
-            let Some(uri) = Uri::from_file_path(&path) else {
-                tracing::debug!(
-                    path = %path.display(),
-                    "failed to convert diagnostics path to URI"
-                );
-                return Ok(());
-            };
-            lsp_client
-                .publish_diagnostics(uri, diagnostics, version)
-                .await;
+            }
+
+            for publication in publications {
+                let Ok(uri) = path_to_file_uri(publication.path()) else {
+                    tracing::debug!(
+                        path = %publication.path().display(),
+                        "failed to convert diagnostics path to URI"
+                    );
+                    continue;
+                };
+                lsp_client
+                    .publish_diagnostics(uri, diagnostics.clone(), publication.version())
+                    .await;
+            }
         }
         ServiceNotification::BeginWorkDoneProgress {
             token,

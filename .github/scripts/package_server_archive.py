@@ -14,11 +14,12 @@ from typing import BinaryIO, Dict, Optional, Tuple
 
 WORKSPACE_ROOT = Path(__file__).resolve().parents[2]
 STABLE_SEMVER = re.compile(r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$")
-SUPPORTED_TARGETS = {
-    "aarch64-apple-darwin",
-    "aarch64-unknown-linux-gnu",
-    "x86_64-apple-darwin",
-    "x86_64-unknown-linux-gnu",
+TARGET_EXECUTABLES = {
+    "aarch64-apple-darwin": "rust-glancer",
+    "aarch64-unknown-linux-gnu": "rust-glancer",
+    "x86_64-apple-darwin": "rust-glancer",
+    "x86_64-pc-windows-msvc": "rust-glancer.exe",
+    "x86_64-unknown-linux-gnu": "rust-glancer",
 }
 
 
@@ -26,18 +27,19 @@ def main() -> None:
     arguments = parse_arguments()
     if STABLE_SEMVER.fullmatch(arguments.version) is None:
         raise SystemExit(f"Unsupported release version: {arguments.version!r}")
-    if arguments.target not in SUPPORTED_TARGETS:
+    if arguments.target not in TARGET_EXECUTABLES:
         raise SystemExit(f"Unsupported release target: {arguments.target!r}")
 
     archive_name = f"rust-glancer-{arguments.version}-{arguments.target}.tar.gz"
     output = arguments.out or WORKSPACE_ROOT / "dist" / archive_name
+    executable_name = TARGET_EXECUTABLES[arguments.target]
     sources = {
-        "rust-glancer": (
+        executable_name: (
             WORKSPACE_ROOT
             / "target"
             / arguments.target
             / "release"
-            / "rust-glancer",
+            / executable_name,
             0o755,
         ),
         "LICENSE-MIT": (WORKSPACE_ROOT / "LICENSE-MIT", 0o644),

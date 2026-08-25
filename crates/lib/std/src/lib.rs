@@ -11,12 +11,16 @@
 
 pub mod expected_unique;
 pub mod memsize;
+pub mod native_os_string;
+pub mod path;
 pub mod shrink;
 pub mod unique;
 
 pub use self::{
     expected_unique::ExpectedUnique,
     memsize::{MemoryRecord, MemoryRecordKind, MemoryRecorder, MemoryRecorderMode, MemorySize},
+    native_os_string::NativeOsString,
+    path::NormalizedPathBuf,
     shrink::Shrink,
     unique::UniqueVec,
 };

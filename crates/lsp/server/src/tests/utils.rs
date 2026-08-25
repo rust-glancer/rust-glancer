@@ -1,13 +1,9 @@
-use std::{
-    fmt::Write as _,
-    path::{Path, PathBuf},
-};
+use std::{fmt::Write as _, path::Path};
 
-use test_fixture::{CrateFixture, fixture_crate};
+use rg_std::NormalizedPathBuf;
+use test_fixture::{CrateFixture, fixture_crate, fixture_path_for_snapshot};
 
-use crate::engine_registry::routing::{
-    EngineId, EngineRouting, WorkspaceEngineRoute, normalize_path,
-};
+use crate::engine_registry::routing::{EngineId, EngineRouting, WorkspaceEngineRoute};
 
 pub(super) struct RoutingFixture {
     fixture: CrateFixture,
@@ -36,7 +32,8 @@ impl RoutingFixture {
         for step in steps {
             match step {
                 RoutingStep::CachedFileOwner { title, path } => {
-                    let owner = self.routing.open_file_owner(&self.path(path));
+                    let path = self.path(path);
+                    let owner = self.routing.open_file_owner(&path);
                     if let Some(id) = owner {
                         self.routing.set_active_id(id);
                     }
@@ -65,7 +62,7 @@ impl RoutingFixture {
                     let workspace = self
                         .routing
                         .discovery_workspace_for(&self.path(path))
-                        .map(|path| self.render_path(path))
+                        .map(|path| self.render_path(path.as_path()))
                         .unwrap_or_else(|| "none".to_string());
                     writeln!(rendered, "{title}: {workspace}")
                         .expect("routing snapshot should be writable");
@@ -128,7 +125,7 @@ impl RoutingFixture {
                 format!(
                     "spawn {} {}",
                     Self::render_id(*new_id),
-                    self.render_path(root)
+                    self.render_path(root.as_path())
                 )
             }
             None => "none".to_string(),
@@ -147,7 +144,11 @@ impl RoutingFixture {
             .routing
             .root_for_id(id)
             .expect("test engine id should have a root");
-        format!("{} {}", Self::render_id(id), self.render_path(root))
+        format!(
+            "{} {}",
+            Self::render_id(id),
+            self.render_path(root.as_path())
+        )
     }
 
     fn render_id(id: EngineId) -> String {
@@ -156,16 +157,19 @@ impl RoutingFixture {
 
     fn render_path(&self, path: &Path) -> String {
         let root = self.path("");
-        let path = normalize_path(path);
-        if let Ok(relative) = path.strip_prefix(root) {
-            return format!("/{}", relative.display());
-        }
+        let path =
+            NormalizedPathBuf::from_absolute(path).expect("routing fixture path should normalize");
+        let relative = path
+            .as_path()
+            .strip_prefix(root.as_path())
+            .expect("routing snapshot path should stay inside its fixture root");
 
-        path.display().to_string()
+        format!("/{}", fixture_path_for_snapshot(relative))
     }
 
-    fn path(&self, path: &str) -> PathBuf {
-        normalize_path(self.fixture.path(path))
+    fn path(&self, path: &str) -> NormalizedPathBuf {
+        NormalizedPathBuf::from_absolute(self.fixture.path(path))
+            .expect("routing fixture path should normalize")
     }
 }
 

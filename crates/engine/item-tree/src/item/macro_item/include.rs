@@ -98,8 +98,8 @@ impl IncludePathExpression {
     /// Literal-only paths are relative to `current_file`, matching normal `include!` behavior.
     /// Expressions with environment components first use values retained for the selected Cargo
     /// unit, and accept the result only when rustc dep-info named that concrete file. As an 80/20
-    /// fallback, `concat!(env!("OUT_DIR"), <literal suffix>)` can select a unique generated file by
-    /// its path below the recovered output directory. That structural path still requires one
+    /// fallback, `concat!(env!("OUT_DIR"), <captured suffix>)` can select a unique generated file
+    /// by its path below the recovered output directory. That structural path still requires one
     /// unique dep-info match; it does not guess from files that merely happen to exist.
     pub fn resolve(
         &self,
@@ -137,10 +137,11 @@ impl IncludePathExpression {
             }
         }
 
-        // Keep the common OUT_DIR-plus-literal form as a separate structural proof. This avoids
-        // depending entirely on string rendering: the suffix must name one unique dep-info input
-        // below the attributed unit's concrete output directory.
-        let suffix = self.out_dir_suffix()?;
+        // Resolve OUT_DIR expressions structurally as well. In particular, a canonical Windows
+        // OUT_DIR may use the verbatim path spelling while Rust source appends `/generated.rs`.
+        // Keeping the directory and rendered suffix separate avoids depending on that combined
+        // path's spelling; the suffix must still name one unique dep-info input below this unit.
+        let suffix = self.out_dir_suffix(|name| generated_sources.compile_env_value(name))?;
         generated_sources
             .generated_file_for_out_dir_suffix(&suffix)
             .map(Path::to_path_buf)
@@ -157,7 +158,7 @@ impl IncludePathExpression {
         Some(path)
     }
 
-    fn out_dir_suffix(&self) -> Option<PathBuf> {
+    fn out_dir_suffix<'a>(&self, compile_env: impl Fn(&str) -> Option<&'a str>) -> Option<PathBuf> {
         let [IncludePathComponent::Environment(name), suffix @ ..] = self.components.as_slice()
         else {
             return None;
@@ -168,10 +169,10 @@ impl IncludePathExpression {
 
         let mut rendered = String::new();
         for component in suffix {
-            let IncludePathComponent::Literal(value) = component else {
-                return None;
-            };
-            rendered.push_str(value);
+            match component {
+                IncludePathComponent::Literal(value) => rendered.push_str(value),
+                IncludePathComponent::Environment(name) => rendered.push_str(compile_env(name)?),
+            }
         }
         if !rendered.chars().next().is_some_and(std::path::is_separator) {
             return None;
@@ -248,6 +249,8 @@ enum IncludePathComponent {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use rg_syntax::{AstNode as _, Edition, SourceFile, ast};
     use rg_text::RustEdition;
 
@@ -275,6 +278,13 @@ mod tests {
             }),
             Some("/tmp/out/generated.rs".to_string())
         );
+        assert_eq!(
+            expression.out_dir_suffix(|name| match name {
+                "FILE" => Some("generated.rs"),
+                _ => None,
+            }),
+            Some(PathBuf::from("/generated.rs"))
+        );
     }
 
     #[test]
@@ -291,11 +301,11 @@ mod tests {
         let expression = parse(r#"include!(concat!(env!("CUSTOM_ROOT"), "/file.rs"));"#)
             .expect("supported environment expression should parse");
         assert!(expression.render_with(|_| None).is_none());
-        assert!(expression.out_dir_suffix().is_none());
+        assert!(expression.out_dir_suffix(|_| None).is_none());
 
         let missing_separator = parse(r#"include!(concat!(env!("OUT_DIR"), "file.rs"));"#)
             .expect("supported include expression should parse");
-        assert!(missing_separator.out_dir_suffix().is_none());
+        assert!(missing_separator.out_dir_suffix(|_| None).is_none());
     }
 
     fn parse(source: &str) -> Option<IncludePathExpression> {

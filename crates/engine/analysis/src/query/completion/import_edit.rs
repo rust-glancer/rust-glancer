@@ -121,7 +121,10 @@ impl<'syntax, 'source> AutoImportEditPlanner<'syntax, 'source> {
     ) -> Option<CompletionAdditionalEdit> {
         let item_text = use_item.syntax().text().to_string();
         let trimmed_item = item_text.trim_start();
-        if !(trimmed_item.starts_with("use ") || trimmed_item.starts_with("use\n")) {
+        if !(trimmed_item.starts_with("use ")
+            || trimmed_item.starts_with("use\n")
+            || trimmed_item.starts_with("use\r\n"))
+        {
             return None;
         }
         let use_tree = use_item.use_tree()?;
@@ -302,6 +305,10 @@ mod tests {
             (
                 "use std::collections::{BTreeMap};\nfn main() { let _: HashM; }",
                 ", HashMap",
+            ),
+            (
+                "use\r\nstd::collections::BTreeMap;\r\nfn main() { let _: HashM; }",
+                "std::collections::{BTreeMap, HashMap}",
             ),
         ];
         for (source, expected_edit) in cases {

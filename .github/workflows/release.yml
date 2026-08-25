@@ -51,16 +51,24 @@ jobs:
             container: quay.io/pypa/manylinux_2_28_x86_64@sha256:4dc41da7df20400310c80d162a2fe2d2c2f3d9734d8dec20f6b9843711618deb
             rust_target: x86_64-unknown-linux-gnu
             vscode_target: linux-x64
+            python: python3
           - runner: ubuntu-24.04-arm
             container: quay.io/pypa/manylinux_2_28_aarch64@sha256:29a6ceb78de5b00494e6e7456a72782a4cb54238de102e7491d15fe47789b4d1
             rust_target: aarch64-unknown-linux-gnu
             vscode_target: linux-arm64
+            python: python3
           - runner: macos-15-intel
             rust_target: x86_64-apple-darwin
             vscode_target: darwin-x64
+            python: python3
           - runner: macos-15
             rust_target: aarch64-apple-darwin
             vscode_target: darwin-arm64
+            python: python3
+          - runner: windows-latest
+            rust_target: x86_64-pc-windows-msvc
+            vscode_target: win32-x64
+            python: python
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
@@ -84,13 +92,11 @@ jobs:
       - name: Install client dependencies
         run: npm ci
         working-directory: editors/code
-      - name: Build language server
-        run: cargo build --release -p rust-glancer --target "${{ matrix.rust_target }}"
-      - name: Check language server executable
-        run: target/${{ matrix.rust_target }}/release/rust-glancer --help
+      - name: Build and check language server
+        run: cargo run --release -p rust-glancer --target "${{ matrix.rust_target }}" -- --help
       - name: Package standalone language server
         run: >-
-          python3 .github/scripts/package_server_archive.py
+          ${{ matrix.python }} .github/scripts/package_server_archive.py
           --target "${{ matrix.rust_target }}"
           --version "${{ needs.release_please.outputs.version }}"
       - name: Package VSIX
@@ -157,6 +163,7 @@ jobs:
             "../../dist/rust-glancer-${RELEASE_VERSION}-linux-arm64.vsix"
             "../../dist/rust-glancer-${RELEASE_VERSION}-darwin-x64.vsix"
             "../../dist/rust-glancer-${RELEASE_VERSION}-darwin-arm64.vsix"
+            "../../dist/rust-glancer-${RELEASE_VERSION}-win32-x64.vsix"
           )
 
           for package in "${packages[@]}"; do
@@ -166,7 +173,7 @@ jobs:
             fi
           done
 
-          ./node_modules/.bin/vsce publish --skip-duplicate --packagePath "${packages[@]}"
+          node ./node_modules/@vscode/vsce/vsce publish --skip-duplicate --packagePath "${packages[@]}"
         working-directory: editors/code
       - name: Attach release assets to the GitHub release
         env:

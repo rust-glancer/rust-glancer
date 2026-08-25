@@ -9,6 +9,7 @@ Managed installation is available for:
 
 - macOS on Apple Silicon and Intel
 - Linux with glibc 2.28 or newer on AArch64 and x86-64
+- Windows on x86-64
 
 Other platforms can still use the extension by configuring a compatible
 `rust-glancer` executable explicitly.

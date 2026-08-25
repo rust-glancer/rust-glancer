@@ -13,7 +13,7 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     ffi::OsStr,
-    path::{Component, Path, PathBuf},
+    path::{Component, Path},
     time::{Duration, Instant},
 };
 
@@ -26,6 +26,7 @@ use notify_debouncer_full::{
         event::{AccessKind, AccessMode},
     },
 };
+use rg_std::NormalizedPathBuf;
 use tokio::{sync::mpsc, task::JoinHandle};
 
 use crate::{
@@ -49,27 +50,22 @@ pub(crate) struct ProjectWatcher {
 /// One native watcher, filesystem snapshot, and async forwarder for an editor workspace folder.
 #[derive(Debug)]
 struct WorkspaceWatcher {
-    _root: PathBuf,
+    _root: NormalizedPathBuf,
     _debouncer: ProjectDebouncer,
     _forwarder: JoinHandle<()>,
 }
 
 impl ProjectWatcher {
+    /// Starts every watcher the host accepts and leaves rejected roots usable without native
+    /// external-change tracking. Editor saves remain an independent coherence boundary.
     pub(crate) fn spawn(
-        workspace_roots: Vec<PathBuf>,
+        workspace_roots: Vec<NormalizedPathBuf>,
         registry: EngineRegistry,
         recent_editor_saves: RecentEditorSaves,
-    ) -> anyhow::Result<Self> {
-        anyhow::ensure!(
-            !workspace_roots.is_empty(),
-            "no workspace roots were provided for saved-project watching"
-        );
+    ) -> Self {
         let mut workspaces = Vec::new();
 
-        for root in workspace_roots
-            .into_iter()
-            .map(WorkspaceWatcher::normalize_root)
-        {
+        for root in workspace_roots {
             let workspace = WorkspaceWatcher::spawn(
                 root.clone(),
                 registry.clone(),
@@ -80,19 +76,31 @@ impl ProjectWatcher {
                     "while attempting to start saved-project watcher for {}",
                     root.display()
                 )
-            })?;
-            workspaces.push(workspace);
+            });
+
+            match workspace {
+                Ok(workspace) => workspaces.push(workspace),
+                Err(error) => {
+                    // A native watcher is an optimization over the editor's saved-file boundary.
+                    // Keep the workspace usable when a filesystem backend rejects this root.
+                    tracing::warn!(
+                        root = %root.display(),
+                        error = %error,
+                        "workspace could not be watched; external changes for this root require an editor save or server restart"
+                    );
+                }
+            }
         }
 
-        Ok(Self {
+        Self {
             _workspaces: workspaces,
-        })
+        }
     }
 }
 
 impl WorkspaceWatcher {
     fn spawn(
-        root: PathBuf,
+        root: NormalizedPathBuf,
         registry: EngineRegistry,
         recent_editor_saves: RecentEditorSaves,
     ) -> anyhow::Result<Self> {
@@ -103,7 +111,7 @@ impl WorkspaceWatcher {
             WATCH_DEBOUNCE,
             Some(WATCH_DEBOUNCE),
             move |result| {
-                let Some(result) = Self::project_result(callback_root.as_path(), result) else {
+                let Some(result) = Self::project_result(&callback_root, result) else {
                     return;
                 };
                 if sender.send(result).is_err() {
@@ -119,7 +127,7 @@ impl WorkspaceWatcher {
         .context("while attempting to create project filesystem watcher")?;
 
         debouncer
-            .watch(&root, RecursiveMode::Recursive)
+            .watch(root.as_path(), RecursiveMode::Recursive)
             .with_context(|| {
                 format!(
                     "while attempting to watch workspace root {}",
@@ -133,7 +141,7 @@ impl WorkspaceWatcher {
         );
 
         let forwarder_root = root.clone();
-        let mut snapshot = ProjectPathSnapshot::scan(forwarder_root.as_path());
+        let mut snapshot = ProjectPathSnapshot::scan(&forwarder_root);
         let forwarder = tokio::spawn(async move {
             while let Some(result) = receiver.recv().await {
                 // The first relevant native event means the saved project may already disagree
@@ -141,12 +149,12 @@ impl WorkspaceWatcher {
                 // settle, so interactive requests do not queue behind a rebuild that has not yet
                 // been submitted.
                 let changes = registry
-                    .begin_external_project_changes(forwarder_root.as_path())
+                    .begin_external_project_changes(&forwarder_root)
                     .await;
                 let results = Self::collect_settled_results(result, &mut receiver).await;
                 Self::forward_watcher_results(
                     &mut snapshot,
-                    forwarder_root.as_path(),
+                    &forwarder_root,
                     &registry,
                     &recent_editor_saves,
                     results,
@@ -163,7 +171,10 @@ impl WorkspaceWatcher {
         })
     }
 
-    fn project_result(root: &Path, result: DebounceEventResult) -> Option<DebounceEventResult> {
+    fn project_result(
+        root: &NormalizedPathBuf,
+        result: DebounceEventResult,
+    ) -> Option<DebounceEventResult> {
         match result {
             Ok(mut events) => {
                 // Filter before the async queue so target-directory churn cannot keep extending
@@ -185,11 +196,9 @@ impl WorkspaceWatcher {
                         _ => true,
                     };
                     may_change_saved_input
-                        && event
-                            .event
-                            .paths
-                            .iter()
-                            .any(|path| WatchedProjectPath::is_watched_project_input(root, path))
+                        && event.event.paths.iter().any(|path| {
+                            WatchedProjectPath::is_watched_project_input(root.as_path(), path)
+                        })
                 });
                 (!events.is_empty()).then_some(Ok(events))
             }
@@ -221,7 +230,7 @@ impl WorkspaceWatcher {
     #[tracing::instrument(level = "trace", skip_all, fields(root = %root.display()))]
     async fn forward_watcher_results(
         snapshot: &mut ProjectPathSnapshot,
-        root: &Path,
+        root: &NormalizedPathBuf,
         registry: &EngineRegistry,
         recent_editor_saves: &RecentEditorSaves,
         results: Vec<DebounceEventResult>,
@@ -252,9 +261,9 @@ impl WorkspaceWatcher {
 
     fn changed_paths_for_results(
         snapshot: &mut ProjectPathSnapshot,
-        root: &Path,
+        root: &NormalizedPathBuf,
         results: Vec<DebounceEventResult>,
-    ) -> Vec<PathBuf> {
+    ) -> Vec<NormalizedPathBuf> {
         let batch_count = results.len();
         let mut events = Vec::new();
         let mut errors = Vec::new();
@@ -348,43 +357,36 @@ impl WorkspaceWatcher {
         }
         paths
     }
-
-    fn normalize_root(path: impl AsRef<Path>) -> PathBuf {
-        let path = path.as_ref();
-        path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
-    }
 }
 
 struct WatchedProjectPath;
 
 impl WatchedProjectPath {
-    fn from_event(root: &Path, path: &Path) -> Option<PathBuf> {
-        if !Self::is_watched_project_input(root, path) {
+    fn from_event(root: &NormalizedPathBuf, path: &Path) -> Option<NormalizedPathBuf> {
+        let path = NormalizedPathBuf::from_absolute(path).ok()?;
+        if !Self::is_watched_project_input(root.as_path(), path.as_path()) {
             return None;
         }
 
-        Some(Self::normalize(path))
+        Some(path)
     }
 
     fn is_watched_project_input(root: &Path, path: &Path) -> bool {
         !Self::is_ignored(root, path) && Self::is_project_input(path)
     }
 
-    fn identity(root: &Path, path: &Path) -> Option<(PathBuf, FileIdentity)> {
-        if Self::is_ignored(root, path) || !Self::is_project_input(path) {
+    fn identity(root: &NormalizedPathBuf, path: &NormalizedPathBuf) -> Option<FileIdentity> {
+        if Self::is_ignored(root.as_path(), path.as_path())
+            || !Self::is_project_input(path.as_path())
+        {
             return None;
         }
 
-        FileIdentity::read(&Self::normalize(path))
+        FileIdentity::read_normalized(path)
     }
 
     fn should_visit(root: &Path, path: &Path) -> bool {
         !Self::is_ignored(root, path)
-    }
-
-    fn normalize(path: impl AsRef<Path>) -> PathBuf {
-        let path = path.as_ref();
-        path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
     }
 
     fn is_project_input(path: &Path) -> bool {
@@ -414,7 +416,7 @@ impl WatchedProjectPath {
 
 #[derive(Debug)]
 struct ProjectPathSnapshot {
-    identities: BTreeMap<PathBuf, FileIdentity>,
+    identities: BTreeMap<NormalizedPathBuf, FileIdentity>,
 }
 
 impl ProjectPathSnapshot {
@@ -423,11 +425,11 @@ impl ProjectPathSnapshot {
     /// whether a watcher batch describes a real saved-input change. Metadata is intentionally
     /// enough here: a false positive only costs a small reindex, while hashing every file would
     /// make watcher rescans scale with source size.
-    fn scan(root: &Path) -> Self {
+    fn scan(root: &NormalizedPathBuf) -> Self {
         let started = Instant::now();
         let mut files_seen = 0usize;
         let mut identities = BTreeMap::new();
-        let mut builder = WalkBuilder::new(root);
+        let mut builder = WalkBuilder::new(root.as_path());
         let filter_root = root.to_path_buf();
         builder
             .hidden(false)
@@ -459,7 +461,10 @@ impl ProjectPathSnapshot {
             }
             files_seen += 1;
 
-            let Some((path, identity)) = WatchedProjectPath::identity(root, path) else {
+            let Ok(path) = NormalizedPathBuf::from_absolute(path) else {
+                continue;
+            };
+            let Some(identity) = WatchedProjectPath::identity(root, &path) else {
                 continue;
             };
             identities.insert(path, identity);
@@ -474,7 +479,7 @@ impl ProjectPathSnapshot {
         Self { identities }
     }
 
-    fn changed_paths_after_rescan(&mut self, root: &Path) -> Vec<PathBuf> {
+    fn changed_paths_after_rescan(&mut self, root: &NormalizedPathBuf) -> Vec<NormalizedPathBuf> {
         let next = Self::scan(root);
         let mut changed = BTreeSet::new();
 
@@ -493,22 +498,21 @@ impl ProjectPathSnapshot {
         changed.into_iter().collect()
     }
 
-    fn refresh_path(&mut self, root: &Path, path: &Path) -> bool {
-        let normalized = WatchedProjectPath::normalize(path);
-        match WatchedProjectPath::identity(root, &normalized) {
-            Some((path, identity)) => {
-                let changed = self.identities.get(&path) != Some(&identity);
-                self.identities.insert(path, identity);
+    fn refresh_path(&mut self, root: &NormalizedPathBuf, path: &NormalizedPathBuf) -> bool {
+        match WatchedProjectPath::identity(root, path) {
+            Some(identity) => {
+                let changed = self.identities.get(path) != Some(&identity);
+                self.identities.insert(path.clone(), identity);
                 changed
             }
-            None => self.identities.remove(&normalized).is_some(),
+            None => self.identities.remove(path).is_some(),
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::time::Instant;
+    use std::{path::PathBuf, time::Instant};
 
     use notify_debouncer_full::{
         DebouncedEvent,
@@ -523,9 +527,11 @@ mod tests {
 
     #[test]
     fn watcher_ingress_scopes_ignored_directories_to_workspace_root() {
-        let root = PathBuf::from("/checkout/target/project");
-        let target_source = root.join("target/debug/build/generated.rs");
-        let notes = root.join("notes.md");
+        let root =
+            NormalizedPathBuf::from_absolute(std::env::temp_dir().join("checkout/target/project"))
+                .expect("watcher test root should normalize");
+        let target_source = root.as_path().join("target/debug/build/generated.rs");
+        let notes = root.as_path().join("notes.md");
 
         assert!(
             WorkspaceWatcher::project_result(
@@ -539,7 +545,7 @@ mod tests {
             "target and non-project churn should not enter the async watcher queue"
         );
 
-        let project_source = root.join("src/lib.rs");
+        let project_source = root.as_path().join("src/lib.rs");
         let Some(Ok(events)) = WorkspaceWatcher::project_result(
             &root,
             Ok(vec![
@@ -561,8 +567,9 @@ mod tests {
 
     #[test]
     fn watcher_ingress_drops_read_only_project_accesses() {
-        let root = PathBuf::from("/workspace");
-        let source = root.join("src/lib.rs");
+        let root = NormalizedPathBuf::from_absolute(std::env::temp_dir().join("workspace"))
+            .expect("watcher test root should normalize");
+        let source = root.as_path().join("src/lib.rs");
 
         for kind in [
             EventKind::Access(AccessKind::Read),
@@ -612,9 +619,10 @@ mod tests {
             pub struct User;
             "#,
         );
-        let root = WorkspaceWatcher::normalize_root(fixture.path(""));
-        let account = root.join("src/account.rs");
-        let user = root.join("src/user.rs");
+        let root = NormalizedPathBuf::from_absolute(fixture.path(""))
+            .expect("watcher fixture root should normalize");
+        let account = root.as_path().join("src/account.rs");
+        let user = root.as_path().join("src/user.rs");
         let mut snapshot = ProjectPathSnapshot::scan(&root);
 
         std::fs::write(&account, "pub struct SavedAccount;\n")
@@ -636,12 +644,9 @@ mod tests {
             .expect("first watcher result should be available");
         let results = WorkspaceWatcher::collect_settled_results(first, &mut receiver).await;
         let paths = WorkspaceWatcher::changed_paths_for_results(&mut snapshot, &root, results);
-        let account = account
-            .canonicalize()
-            .expect("account fixture should canonicalize");
-        let user = user
-            .canonicalize()
-            .expect("user fixture should canonicalize");
+        let account =
+            NormalizedPathBuf::from_absolute(account).expect("account fixture should normalize");
+        let user = NormalizedPathBuf::from_absolute(user).expect("user fixture should normalize");
 
         assert_eq!(
             paths,

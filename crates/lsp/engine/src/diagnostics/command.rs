@@ -65,7 +65,7 @@ impl CargoDiagnosticsCommand {
         tracing::info!(
             generation = self.snapshot.generation,
             success = output.status.success(),
-            diagnostic_files = diagnostics.paths().len(),
+            diagnostic_files = diagnostics.path_count(),
             elapsed_ms = started.elapsed().as_millis(),
             "cargo diagnostics finished"
         );

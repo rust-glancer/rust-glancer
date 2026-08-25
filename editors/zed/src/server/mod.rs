@@ -103,12 +103,14 @@ impl ManagedServer {
 
 /// Turns one supported Zed host platform into a Rust release target.
 ///
-/// The target string feeds both the release asset name and the cache path. Keeping that choice in
-/// one place prevents the downloaded asset and extracted binary path from selecting different
-/// targets.
+/// The target string feeds both the release asset name and the cache path. The executable name is
+/// kept beside it because Windows archives contain `rust-glancer.exe`, while Unix archives contain
+/// `rust-glancer`. Keeping both choices here prevents the downloaded asset and extracted path from
+/// describing different platforms.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct ServerPlatform {
     target: &'static str,
+    executable: &'static str,
 }
 
 impl ServerPlatform {
@@ -118,11 +120,18 @@ impl ServerPlatform {
     }
 
     fn from_zed(os: zed::Os, architecture: zed::Architecture) -> zed::Result<Self> {
-        let target = match (os, architecture) {
-            (zed::Os::Mac, zed::Architecture::Aarch64) => "aarch64-apple-darwin",
-            (zed::Os::Mac, zed::Architecture::X8664) => "x86_64-apple-darwin",
-            (zed::Os::Linux, zed::Architecture::Aarch64) => "aarch64-unknown-linux-gnu",
-            (zed::Os::Linux, zed::Architecture::X8664) => "x86_64-unknown-linux-gnu",
+        let (target, executable) = match (os, architecture) {
+            (zed::Os::Mac, zed::Architecture::Aarch64) => ("aarch64-apple-darwin", "rust-glancer"),
+            (zed::Os::Mac, zed::Architecture::X8664) => ("x86_64-apple-darwin", "rust-glancer"),
+            (zed::Os::Linux, zed::Architecture::Aarch64) => {
+                ("aarch64-unknown-linux-gnu", "rust-glancer")
+            }
+            (zed::Os::Linux, zed::Architecture::X8664) => {
+                ("x86_64-unknown-linux-gnu", "rust-glancer")
+            }
+            (zed::Os::Windows, zed::Architecture::X8664) => {
+                ("x86_64-pc-windows-msvc", "rust-glancer.exe")
+            }
             _ => {
                 return Err(format!(
                     "managed Rust Glancer binaries are unavailable for {os:?}/{architecture:?}"
@@ -130,7 +139,7 @@ impl ServerPlatform {
             }
         };
 
-        Ok(Self { target })
+        Ok(Self { target, executable })
     }
 
     fn asset_name(self) -> String {
@@ -153,7 +162,7 @@ impl ServerPlatform {
     }
 
     fn binary_path(self) -> PathBuf {
-        self.install_dir().join(SERVER_BINARY)
+        self.install_dir().join(self.executable)
     }
 
     /// Build this platform's cache entry through a separate staging directory.
@@ -216,10 +225,11 @@ impl ServerPlatform {
         )
         .map_err(|error| format!("failed to download Rust Glancer asset {asset_name}: {error}"))?;
 
-        let downloaded_binary = staging_dir.join(SERVER_BINARY);
+        let downloaded_binary = staging_dir.join(self.executable);
         if !downloaded_binary.is_file() {
             return Err(format!(
-                "Rust Glancer asset {asset_name} did not contain {SERVER_BINARY} at its root"
+                "Rust Glancer asset {asset_name} did not contain {} at its root",
+                self.executable,
             ));
         }
 
@@ -253,25 +263,35 @@ mod tests {
                 zed::Os::Mac,
                 zed::Architecture::Aarch64,
                 "aarch64-apple-darwin",
+                "rust-glancer",
             ),
             (
                 zed::Os::Mac,
                 zed::Architecture::X8664,
                 "x86_64-apple-darwin",
+                "rust-glancer",
             ),
             (
                 zed::Os::Linux,
                 zed::Architecture::Aarch64,
                 "aarch64-unknown-linux-gnu",
+                "rust-glancer",
             ),
             (
                 zed::Os::Linux,
                 zed::Architecture::X8664,
                 "x86_64-unknown-linux-gnu",
+                "rust-glancer",
+            ),
+            (
+                zed::Os::Windows,
+                zed::Architecture::X8664,
+                "x86_64-pc-windows-msvc",
+                "rust-glancer.exe",
             ),
         ];
 
-        for (os, architecture, expected_target) in test_cases {
+        for (os, architecture, expected_target, expected_executable) in test_cases {
             let platform = ServerPlatform::from_zed(os, architecture)
                 .expect("test platform should be supported");
 
@@ -285,7 +305,7 @@ mod tests {
                 PathBuf::from(SERVER_CACHE_ROOT)
                     .join(MANAGED_SERVER_VERSION)
                     .join(expected_target)
-                    .join(SERVER_BINARY)
+                    .join(expected_executable)
             );
         }
     }

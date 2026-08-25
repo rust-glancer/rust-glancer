@@ -1,9 +1,10 @@
 use std::path::Path;
 
 use anyhow::Context as _;
-use ls_types::{Location, Range, Uri};
+use ls_types::{Location, Range};
 use rg_analysis::NavigationTarget;
 use rg_def_map::PackageSlot;
+use rg_lsp_proto::path_to_file_uri;
 use rg_parse::{FileId, Span};
 use rg_project::ProjectSnapshot;
 
@@ -16,7 +17,7 @@ pub(crate) fn location_for_target(
     let Some(path) = snapshot.file_path(target.crate_ref.package, target.file_id) else {
         return Ok(None);
     };
-    let Some(uri) = Uri::from_file_path(path) else {
+    let Ok(uri) = path_to_file_uri(path) else {
         return Ok(None);
     };
 
@@ -36,7 +37,7 @@ pub(crate) fn location_for_current_document(
     line_index: &rg_parse::LineIndex,
     target: &NavigationTarget,
 ) -> Option<Location> {
-    let uri = Uri::from_file_path(path)?;
+    let uri = path_to_file_uri(path).ok()?;
     let range = target
         .span
         .map(|span| position::range(line_index, span))
