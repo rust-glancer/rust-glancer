@@ -167,6 +167,105 @@ impl Service for Worker {$action$
 }
 
 #[tokio::test]
+async fn new_dirty_generic_trait_impl_supports_completion_and_bulk_implementation() {
+    let fixture = LspEngineFixture::initialized(
+        r#"
+        //- /Cargo.toml
+        [package]
+        name = "lsp_new_dirty_trait_impl"
+        version = "0.1.0"
+        edition = "2024"
+
+        //- /src/lib.rs
+        trait Service<T> {
+            fn handle(&self, value: T);
+        }
+
+        struct Worker<T>(T);
+        "#,
+    )
+    .await;
+
+    fixture.did_open_saved("src/lib.rs", 1).await;
+    let dirty = fixture
+        .did_change_full(
+            "src/lib.rs",
+            2,
+            MarkedText::parse(
+                r#"trait Service<T> {
+    fn handle(&self, value: T);
+}
+
+struct Worker<T>(T);
+
+impl<T> Service<T> for Worker<T> {$action$
+    $completion$
+}
+"#,
+            ),
+        )
+        .await;
+
+    fixture
+        .check_dirty(
+            &dirty,
+            &[
+                LspQuery::completion("complete new dirty trait impl", "completion"),
+                LspQuery::code_action_only(
+                    "implement new dirty trait impl",
+                    "action",
+                    ls_types::CodeActionKind::QUICKFIX,
+                ),
+            ],
+            expect![[r#"
+                complete new dirty trait impl
+                - unsafe Keyword
+                  detail: keyword unsafe
+                  edit: /src/lib.rs:7:4-7:4 -> unsafe
+                - async Keyword
+                  detail: keyword async
+                  edit: /src/lib.rs:7:4-7:4 -> async
+                - extern Keyword
+                  detail: keyword extern
+                  edit: /src/lib.rs:7:4-7:4 -> extern
+                - fn Keyword
+                  detail: keyword fn
+                  edit: /src/lib.rs:7:4-7:4 -> fn
+                - const Keyword
+                  detail: keyword const
+                  edit: /src/lib.rs:7:4-7:4 -> const
+                - type Keyword
+                  detail: keyword type
+                  edit: /src/lib.rs:7:4-7:4 -> type
+                - handle Function
+                  detail: required trait member: fn handle(&self, value: T)
+                  edit: /src/lib.rs:7:4-7:4 -> "fn handle(&self, value: T) {\n    todo!()\n}"
+
+                implement new dirty trait impl
+                - quickfix Implement missing trait members
+                  preferred: true
+                  document: /src/lib.rs version 2
+                  edit: 6:34-8:0 -> "\n    fn handle(&self, value: T) {\n        todo!()\n    }\n"
+                  result:
+                    trait Service<T> {
+                        fn handle(&self, value: T);
+                    }
+
+                    struct Worker<T>(T);
+
+                    impl<T> Service<T> for Worker<T> {
+                        fn handle(&self, value: T) {
+                            todo!()
+                        }
+                    }
+            "#]],
+        )
+        .await;
+
+    fixture.shutdown().await;
+}
+
+#[tokio::test]
 async fn qualified_rewrite_uses_utf16_ranges_and_respects_request_context() {
     let fixture = LspEngineFixture::initialized(
         r#"

@@ -102,6 +102,27 @@ impl<'db> BodyIrReadTxn<'db> {
         })
     }
 
+    /// Allocate a request-only body identity after saved and already rebuilt bodies.
+    ///
+    /// Query-local semantic contexts use the same `DefMapRef::Body` namespace as current Body IR.
+    /// Starting after both collections keeps those short-lived item stores from shadowing a body
+    /// that the request has already rebuilt.
+    pub fn next_synthetic_body_ref(
+        &self,
+        crate_ref: CrateRef,
+    ) -> Result<BodyRef, PackageStoreError> {
+        let mut next = self.first_synthetic_body_ref(crate_ref)?;
+        for body in self
+            .current
+            .bodies()
+            .iter()
+            .filter(|body| body.body_ref().crate_ref == crate_ref)
+        {
+            next.body.0 = next.body.0.max(body.body_ref().body.0.saturating_add(1));
+        }
+        Ok(next)
+    }
+
     /// Return the complete crate, loading every required Body IR storage unit when offloaded.
     ///
     /// Prefer the narrower query methods when the caller needs one body or one file.

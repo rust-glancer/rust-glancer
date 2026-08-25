@@ -1,19 +1,17 @@
 //! Bulk implementation of required members for one resolved trait impl.
 //!
 //! Given `trait Service { fn run(&self); }` and `impl Service for Worker {}`, the action inserts a
-//! plain `run` scaffold with a `todo!()` body. Saved semantics provide substituted member
-//! signatures, while the current syntax tree subtracts members typed since the last save. This
-//! keeps the generated block useful without duplicating dirty editor text.
+//! plain `run` scaffold with a `todo!()` body. The resolved impl header provides substituted
+//! member signatures, while the current syntax tree subtracts members typed since the last save.
+//! A new impl gets that header from a request-local semantic store, so the action does not require
+//! saving incomplete source first.
 //!
 //! Nominal types in those signatures are rendered by their declared short name. This provider
 //! does not add imports for them: if a generated method mentions `Request`, that name must already
 //! be visible from the impl module.
 
 use anyhow::Context as _;
-use rg_ir_view::{
-    source::SourceCompletionView,
-    trait_impl::{MissingTraitMember, MissingTraitMemberRef, TraitImplView},
-};
+use rg_ir_view::trait_impl::{MissingTraitMember, MissingTraitMemberRef};
 use rg_parse::{Span, TextSpan};
 use rg_syntax::{
     AstNode as _,
@@ -22,7 +20,7 @@ use rg_syntax::{
 
 use crate::{
     Analysis, CodeAction, CodeActionEdit, CodeActionKind, CodeActionQuery,
-    query::trait_member::RenderedTraitMember,
+    query::trait_member::{RenderedTraitMember, TraitImplMemberQuery},
 };
 
 use super::syntax::CodeActionSyntax;
@@ -106,44 +104,33 @@ impl<'analysis, 'db, 'source> TraitImplCodeActionProvider<'analysis, 'db, 'sourc
             return Ok(None);
         }
 
-        // 2. Pair the current impl header to its saved semantic declaration. If editing changed
-        // the header identity, declining the action is safer than borrowing another impl's trait.
-        let current_owner_start = u32::from(impl_.syntax().text_range().start());
-        let Some(saved_owner_start) = self
-            .analysis
-            .saved_header_offset_for_current(
-                self.query.crate_ref,
-                self.query.file_id,
-                current_owner_start,
-            )
-            .context("map current trait impl header to saved source")?
-        else {
-            return Ok(None);
-        };
-        let Some(site) = SourceCompletionView::new(self.analysis.view_db())
-            .trait_impl_site_at(self.query.crate_ref, self.query.file_id, saved_owner_start)
-            .context("resolve trait impl action owner")?
-        else {
-            return Ok(None);
-        };
-
-        // 3. Saved semantics suppress saved members. Repeat the same `(kind, name)` comparison over
-        // current syntax so a newly typed member cannot be inserted twice before the next save.
+        // 2. Resolve the impl from saved semantics when possible. A new or changed impl instead
+        // gets a request-local semantic header, so the editor does not need invalid source to be
+        // saved before this action becomes available.
+        //
+        // Repeat the `(kind, name)` comparison over current syntax as a recovery guard: even when
+        // an incomplete member cannot lower into the temporary item store, it must not be inserted
+        // twice.
         let current_members = item_list
             .assoc_items()
             .filter_map(CurrentMemberKey::from_assoc_item)
             .collect::<Vec<_>>();
-        let members = TraitImplView::new(self.analysis.view_db())
-            .missing_members(site.impl_ref(), site.trait_ref())
-            .context("collect required trait members for code action")?
-            .into_iter()
-            .filter(|member| member.is_required())
-            .filter(|member| {
-                !current_members
-                    .iter()
-                    .any(|current| current.matches(member))
-            })
-            .collect::<Vec<_>>();
+        let members = TraitImplMemberQuery::new(
+            self.analysis,
+            self.query.crate_ref,
+            self.query.file_id,
+            self.query.source_text,
+        )
+        .missing_members(&impl_)
+        .context("collect required trait members for code action")?
+        .into_iter()
+        .filter(|member| member.is_required())
+        .filter(|member| {
+            !current_members
+                .iter()
+                .any(|current| current.matches(member))
+        })
+        .collect::<Vec<_>>();
         if members.is_empty() {
             return Ok(None);
         }
@@ -152,7 +139,7 @@ impl<'analysis, 'db, 'source> TraitImplCodeActionProvider<'analysis, 'db, 'sourc
         // only `Request`. Before this action can always produce compiling source, either render a
         // path visible from the impl module or add the required imports.
         //
-        // 4. Render the remaining members together and replace only whitespace before the closing
+        // 3. Render the remaining members together and replace only whitespace before the closing
         // brace. Everything else in the possibly-unsaved impl stays untouched.
         let edit = Self::member_insertion(syntax.source(), &impl_, &item_list, &members)
             .context("build required trait member insertion")?;

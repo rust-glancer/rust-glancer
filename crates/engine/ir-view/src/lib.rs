@@ -6,6 +6,7 @@
 //! generic projections.
 
 pub mod body;
+pub mod current;
 pub mod db;
 pub mod display;
 pub mod implementation;

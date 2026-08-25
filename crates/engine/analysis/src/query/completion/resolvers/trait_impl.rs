@@ -19,7 +19,7 @@
 //! and every row retains the trait declaration as its navigation/documentation target.
 
 use anyhow::Context as _;
-use rg_ir_view::trait_impl::{MissingTraitMemberRef, MissingTraitMemberScaffold, TraitImplView};
+use rg_ir_view::trait_impl::{MissingTraitMemberRef, MissingTraitMemberScaffold};
 
 use crate::{
     Analysis,
@@ -28,7 +28,7 @@ use crate::{
         CompletionKind, CompletionTarget,
     },
     query::completion::site::{TraitImplCompletionSite, TraitImplMemberKind},
-    query::trait_member::RenderedTraitMember,
+    query::trait_member::{RenderedTraitMember, TraitImplMemberQuery},
 };
 
 use super::super::{
@@ -55,10 +55,17 @@ impl<'a, 'db, 'source> TraitImplCompletionResolver<'a, 'db, 'source> {
         &self,
         site: TraitImplCompletionSite,
     ) -> anyhow::Result<Vec<CompletionItem>> {
-        let indexed_site = site.source();
-        let members = TraitImplView::new(self.analysis.view_db())
-            .missing_members(indexed_site.impl_ref(), indexed_site.trait_ref())
-            .context("collect missing trait member completions")?;
+        let Some(source_text) = self.query.source_text else {
+            return Ok(Vec::new());
+        };
+        let members = TraitImplMemberQuery::new(
+            self.analysis,
+            self.query.crate_ref,
+            self.query.file_id,
+            source_text,
+        )
+        .missing_members_at(site.owner_start())
+        .context("collect missing trait member completions")?;
         let edit = CompletionEdit {
             replace: site.replace_span(),
         };

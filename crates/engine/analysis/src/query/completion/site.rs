@@ -18,8 +18,8 @@ use rg_ir_view::source::{
     IndexedAssociatedTypeBindingSite, IndexedMemberAccessSite, IndexedModuleSourceSite,
     IndexedPatternCompletionKind, IndexedQualifiedPathContext, IndexedQualifiedPathScope,
     IndexedQualifiedPathSite, IndexedRecordFieldListSite, IndexedSignatureTypeSite,
-    IndexedTraitImplSite, IndexedTypeNamePosition, IndexedUnqualifiedNameContext,
-    IndexedUnqualifiedNameScope, IndexedUnqualifiedNameSite, SourceCompletionView,
+    IndexedTypeNamePosition, IndexedUnqualifiedNameContext, IndexedUnqualifiedNameScope,
+    IndexedUnqualifiedNameSite, SourceCompletionView,
 };
 
 use crate::{Analysis, SavedSourceRelationship};
@@ -235,14 +235,14 @@ pub(crate) enum TraitImplMemberKind {
     Const,
 }
 
-/// A resolved trait implementation paired with the incomplete member prefix from the request.
+/// A current trait implementation paired with the incomplete member prefix from the request.
 ///
-/// The indexed site supplies the trait and impl identities. Request syntax supplies facts that do
-/// not lower until the declaration is complete: selected member kind, replacement range, and the
-/// lookup prefix used by the editor.
+/// The impl start locates the ordinary request AST after speculative parsing has selected this
+/// completion family. Missing-member lookup can then use a saved semantic identity or build a
+/// request-local header. The other fields retain edit facts that do not belong in semantic IR.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct TraitImplCompletionSite {
-    source: IndexedTraitImplSite,
+    owner_start: u32,
     member_kind: Option<TraitImplMemberKind>,
     replace_span: Span,
     lookup_prefix: Option<String>,
@@ -250,21 +250,21 @@ pub(crate) struct TraitImplCompletionSite {
 
 impl TraitImplCompletionSite {
     fn new(
-        source: IndexedTraitImplSite,
+        owner_start: u32,
         member_kind: Option<TraitImplMemberKind>,
         replace_span: Span,
         lookup_prefix: Option<String>,
     ) -> Self {
         Self {
-            source,
+            owner_start,
             member_kind,
             replace_span,
             lookup_prefix,
         }
     }
 
-    pub(crate) fn source(&self) -> IndexedTraitImplSite {
-        self.source
+    pub(crate) fn owner_start(&self) -> u32 {
+        self.owner_start
     }
 
     pub(crate) fn member_kind(&self) -> Option<TraitImplMemberKind> {
@@ -1049,24 +1049,14 @@ impl<'a, 'db> CompletionSiteDetector<'a, 'db> {
                             replace_span,
                             lookup_prefix,
                         } = syntax;
-                        let Some(saved_owner_start) =
-                            attachment
-                                .saved_header_offset(owner_start)
-                                .context("map current trait impl header to saved source")?
-                        else {
-                            return Ok(None);
-                        };
-                        return Ok(source
-                            .trait_impl_site_at(crate_ref, file_id, saved_owner_start)
-                            .context("scan trait impl completion site")?
-                            .map(|source| {
-                                CompletionSite::TraitImpl(TraitImplCompletionSite::new(
-                                    source,
-                                    member_kind,
-                                    replace_span,
-                                    lookup_prefix,
-                                ))
-                            }));
+                        return Ok(Some(CompletionSite::TraitImpl(
+                            TraitImplCompletionSite::new(
+                                owner_start,
+                                member_kind,
+                                replace_span,
+                                lookup_prefix,
+                            ),
+                        )));
                     }
                     StandaloneCompletionSiteSyntax::BodyMacro { qualifier } => {
                         if let Some(qualifier) = qualifier {
