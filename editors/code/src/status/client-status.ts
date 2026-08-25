@@ -27,12 +27,14 @@ export interface ClientStatusSnapshot {
 }
 
 export type ActiveWorkspaceState = "indexing" | "ready" | "failed";
+export type DeferredIndexingOutcome = "succeeded" | "failed";
 
 export interface ClientStatusView {
   starting(details: StatusDetails): void;
   indexing(details?: StatusDetails): void;
   ready(details?: StatusDetails): void;
   readyWithDeferredIndexing(details?: StatusDetails): void;
+  readyWithDeferredIndexingFailure(reason: string, details?: StatusDetails): void;
   stale(details?: StatusDetails): void;
   diagnosticsRunning(command: string | undefined, details?: StatusDetails): void;
   diagnosticsFailed(details?: StatusDetails): void;
@@ -56,6 +58,7 @@ export class ClientStatus {
   private activeWorkspaceState: ActiveWorkspaceState | undefined;
   private activeWorkspaceFailureReason: string | undefined;
   private readonly rootsWithPendingDeferredIndexing = new Set<string>();
+  private readonly deferredIndexingFailures = new Map<string, string>();
   private currentStatus: StatusSnapshot = {
     state: "created",
     text: "",
@@ -83,6 +86,7 @@ export class ClientStatus {
     this.activeWorkspaceState = undefined;
     this.activeWorkspaceFailureReason = undefined;
     this.rootsWithPendingDeferredIndexing.clear();
+    this.deferredIndexingFailures.clear();
     this.details = details;
     this.show("starting", "$(sync~spin) Rust Glancer: starting", () => this.view.starting(details));
   }
@@ -132,15 +136,26 @@ export class ClientStatus {
     }
 
     this.rootsWithPendingDeferredIndexing.add(root);
+    this.deferredIndexingFailures.delete(root);
     this.refresh(isActiveRustDocumentDirty);
   }
 
-  public deferredIndexingFinished(root: string, isActiveRustDocumentDirty: boolean): void {
+  public deferredIndexingFinished(
+    root: string,
+    outcome: DeferredIndexingOutcome,
+    message: string | undefined,
+    isActiveRustDocumentDirty: boolean,
+  ): void {
     if (this.details === undefined) {
       return;
     }
 
     this.rootsWithPendingDeferredIndexing.delete(root);
+    if (outcome === "failed") {
+      this.deferredIndexingFailures.set(root, message ?? "background indexing failed");
+    } else {
+      this.deferredIndexingFailures.delete(root);
+    }
     this.refresh(isActiveRustDocumentDirty);
   }
 
@@ -149,6 +164,7 @@ export class ClientStatus {
     this.resetDiagnostics();
     this.failureReason = undefined;
     this.rootsWithPendingDeferredIndexing.clear();
+    this.deferredIndexingFailures.clear();
     this.details = details;
     this.show("stopped", "$(circle-slash) Rust Glancer: stopped", () =>
       this.view.stopped(reason, details ?? {}),
@@ -160,6 +176,7 @@ export class ClientStatus {
     this.resetDiagnostics();
     this.failureReason = reason;
     this.rootsWithPendingDeferredIndexing.clear();
+    this.deferredIndexingFailures.clear();
     this.details = details;
     this.show("failed", "$(error) Rust Glancer: failed", () =>
       this.view.failed(reason, details ?? {}),
@@ -182,6 +199,7 @@ export class ClientStatus {
     if (!this.running || this.details === undefined) {
       return;
     }
+    const deferredIndexingFailure = this.deferredIndexingFailureForActiveWorkspace();
 
     // Engine lifecycle wins because the workspace may not have any analysis to serve yet.
     // Once the active engine is ready, file freshness and diagnostics become the useful signals.
@@ -213,6 +231,10 @@ export class ClientStatus {
       this.show("ready", "~ Rust Glancer: ready", () =>
         this.view.readyWithDeferredIndexing(this.details),
       );
+    } else if (deferredIndexingFailure !== undefined) {
+      this.show("ready", "$(warning) Rust Glancer: ready; background index failed", () =>
+        this.view.readyWithDeferredIndexingFailure(deferredIndexingFailure, this.details),
+      );
     } else {
       this.show("ready", "$(check) Rust Glancer: ready", () => this.view.ready(this.details));
     }
@@ -225,6 +247,14 @@ export class ClientStatus {
       root !== undefined &&
       this.rootsWithPendingDeferredIndexing.has(root)
     );
+  }
+
+  private deferredIndexingFailureForActiveWorkspace(): string | undefined {
+    const root = this.details?.activeWorkspaceRoot;
+    if (this.activeWorkspaceState !== "ready" || root === undefined) {
+      return undefined;
+    }
+    return this.deferredIndexingFailures.get(root);
   }
 
   public handleWorkDoneProgress(

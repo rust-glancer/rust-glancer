@@ -390,7 +390,7 @@ impl ProjectCoordinator {
         generation: u64,
         result: DeferredIndexingResult,
     ) {
-        let current_generation_finished =
+        let outcome =
             self.deferred_indexing_finish
                 .finish_returned(&mut self.project, generation, result);
 
@@ -399,11 +399,11 @@ impl ProjectCoordinator {
         // can actually leave allocator arenas instead of waiting for the next query cleanup.
         self.memory_hooks
             .purge(ProjectMemoryPurgePoint::AfterDeferredIndexingFinish);
-        if !current_generation_finished {
+        let Some(outcome) = outcome else {
             return;
-        }
+        };
 
-        self.send_deferred_indexing_finished(generation);
+        self.send_deferred_indexing_finished(generation, outcome);
         if let Ok(snapshot) = self.project.saved_snapshot() {
             Self::log_project_snapshot(snapshot, "deferred indexing finish");
         }
@@ -645,7 +645,11 @@ impl ProjectCoordinator {
             });
     }
 
-    fn send_deferred_indexing_finished(&self, generation: u64) {
+    fn send_deferred_indexing_finished(
+        &self,
+        generation: u64,
+        outcome: rg_lsp_proto::DeferredIndexingOutcome,
+    ) {
         let Some(root) = &self.workspace_root else {
             tracing::warn!("deferred indexing finished before workspace root was recorded");
             return;
@@ -655,6 +659,7 @@ impl ProjectCoordinator {
             .send(ServiceNotification::DeferredIndexingFinished {
                 root: root.clone(),
                 generation,
+                outcome,
             });
     }
 

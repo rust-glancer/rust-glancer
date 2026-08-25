@@ -43,11 +43,23 @@ pub enum ServiceNotification {
     DeferredIndexingFinished {
         root: PathBuf,
         generation: u64,
+        outcome: DeferredIndexingOutcome,
     },
     LogMessage {
         level: ServiceLogLevel,
         message: String,
     },
+}
+
+/// Terminal result of deferred work for one queryable saved-project generation.
+///
+/// Failure does not make the early-start project unusable. It means the background attempt did
+/// not finish materializing every deferred payload, so clients can present a degraded-ready state
+/// without leaving the indexing operation active forever.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DeferredIndexingOutcome {
+    Succeeded,
+    Failed { message: String },
 }
 
 /// Editor-neutral package progress for one indexing stage.

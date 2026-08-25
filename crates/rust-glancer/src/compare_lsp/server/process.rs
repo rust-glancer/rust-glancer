@@ -48,7 +48,7 @@ pub(super) struct RunningServer {
     client: TowerLspTransport,
     stderr: StderrCapture,
     exited: bool,
-    rust_glancer_deferred_indexing_finished: bool,
+    rust_glancer_deferred_indexing_completion: Option<DeferredIndexingCompletion>,
 }
 
 impl RunningServer {
@@ -97,7 +97,7 @@ impl RunningServer {
             client,
             stderr,
             exited: false,
-            rust_glancer_deferred_indexing_finished: false,
+            rust_glancer_deferred_indexing_completion: None,
         })
     }
 
@@ -184,12 +184,21 @@ impl RunningServer {
                 Ok(Duration::ZERO)
             }
             ServerKind::RustGlancer => {
-                if self.rust_glancer_deferred_indexing_finished {
-                    tracing::info!(
-                        server = self.kind.display_name(),
-                        "compare-lsp post-ready settle already observed"
-                    );
-                    return Ok(Duration::ZERO);
+                match &self.rust_glancer_deferred_indexing_completion {
+                    Some(DeferredIndexingCompletion::Succeeded) => {
+                        tracing::info!(
+                            server = self.kind.display_name(),
+                            "compare-lsp post-ready settle already observed"
+                        );
+                        return Ok(Duration::ZERO);
+                    }
+                    Some(DeferredIndexingCompletion::Failed(message)) => {
+                        anyhow::bail!(
+                            "{} deferred indexing failed before post-ready settle: {message}",
+                            self.kind.display_name(),
+                        );
+                    }
+                    None => {}
                 }
 
                 tracing::info!(
@@ -395,7 +404,14 @@ impl RunningServer {
                         self.stderr_note(),
                     )
                 })?;
-                self.observe_deferred_indexing_finished(&notification);
+                if let Some(DeferredIndexingCompletion::Failed(message)) =
+                    self.observe_deferred_indexing_finished(&notification)
+                {
+                    anyhow::bail!(
+                        "{} reported deferred-indexing failure while becoming ready: {message}",
+                        self.kind.display_name(),
+                    );
+                }
                 match self.readiness_notification(&notification) {
                     ReadinessNotification::Ready => return Ok(()),
                     ReadinessNotification::Failed(message) => anyhow::bail!(
@@ -426,8 +442,14 @@ impl RunningServer {
                         self.stderr_note(),
                     )
                 })?;
-                if self.observe_deferred_indexing_finished(&notification) {
-                    return Ok(());
+                if let Some(completion) = self.observe_deferred_indexing_finished(&notification) {
+                    return match completion {
+                        DeferredIndexingCompletion::Succeeded => Ok(()),
+                        DeferredIndexingCompletion::Failed(message) => anyhow::bail!(
+                            "{} reported deferred-indexing failure: {message}",
+                            self.kind.display_name(),
+                        ),
+                    };
                 }
                 if let ReadinessNotification::Failed(message) =
                     self.readiness_notification(&notification)
@@ -449,16 +471,16 @@ impl RunningServer {
         })?
     }
 
-    fn observe_deferred_indexing_finished(&mut self, notification: &ServerNotification) -> bool {
+    fn observe_deferred_indexing_finished(
+        &mut self,
+        notification: &ServerNotification,
+    ) -> Option<DeferredIndexingCompletion> {
         if !matches!(self.kind, ServerKind::RustGlancer) {
-            return false;
+            return None;
         }
-        if notification.method() != RUST_GLANCER_DEFERRED_INDEXING_FINISHED_METHOD {
-            return false;
-        }
-
-        self.rust_glancer_deferred_indexing_finished = true;
-        true
+        let completion = rust_glancer_deferred_indexing_completion(notification)?;
+        self.rust_glancer_deferred_indexing_completion = Some(completion.clone());
+        Some(completion)
     }
 
     fn readiness_notification(&self, notification: &ServerNotification) -> ReadinessNotification {
@@ -561,6 +583,44 @@ enum ReadinessNotification {
     Ignore,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum DeferredIndexingCompletion {
+    Succeeded,
+    Failed(String),
+}
+
+fn rust_glancer_deferred_indexing_completion(
+    notification: &ServerNotification,
+) -> Option<DeferredIndexingCompletion> {
+    if notification.method() != RUST_GLANCER_DEFERRED_INDEXING_FINISHED_METHOD {
+        return None;
+    }
+
+    Some(
+        match notification
+            .params()
+            .and_then(|params| params.get("outcome"))
+            .and_then(Value::as_str)
+        {
+            Some("succeeded") => DeferredIndexingCompletion::Succeeded,
+            Some("failed") => DeferredIndexingCompletion::Failed(
+                notification
+                    .params()
+                    .and_then(|params| params.get("message"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("background indexing failed")
+                    .to_string(),
+            ),
+            Some(outcome) => DeferredIndexingCompletion::Failed(format!(
+                "deferred indexing reported unknown outcome `{outcome}`"
+            )),
+            None => DeferredIndexingCompletion::Failed(
+                "deferred indexing finish notification omitted its outcome".to_string(),
+            ),
+        },
+    )
+}
+
 fn rust_glancer_readiness(notification: &ServerNotification) -> ReadinessNotification {
     if notification.method() != RUST_GLANCER_READY_METHOD {
         return ReadinessNotification::Ignore;
@@ -623,6 +683,39 @@ impl Drop for RunningServer {
                 self.exited = true;
             }
             Err(_error) => {}
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn deferred_indexing_completion_preserves_success_and_failure() {
+        let test_cases = [
+            (
+                serde_json::json!({"outcome": "succeeded"}),
+                DeferredIndexingCompletion::Succeeded,
+            ),
+            (
+                serde_json::json!({
+                    "outcome": "failed",
+                    "message": "body indexing failed",
+                }),
+                DeferredIndexingCompletion::Failed("body indexing failed".to_string()),
+            ),
+        ];
+
+        for (params, expected) in test_cases {
+            let notification = ServerNotification::new(
+                RUST_GLANCER_DEFERRED_INDEXING_FINISHED_METHOD.to_string(),
+                Some(params),
+            );
+            assert_eq!(
+                rust_glancer_deferred_indexing_completion(&notification),
+                Some(expected)
+            );
         }
     }
 }

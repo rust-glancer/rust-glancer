@@ -17,7 +17,9 @@ use std::{
     time::{Duration, Instant},
 };
 
+use anyhow::Context as _;
 use rg_def_map::PackageSlot;
+use rg_lsp_proto::DeferredIndexingOutcome;
 use rg_project::{DetachedSplitIndexing, SplitIndexingProgress};
 
 use crate::engine::{
@@ -129,35 +131,47 @@ impl DeferredIndexingFinish {
             return;
         }
 
-        Self::apply_finished_if_current(project, generation, finished, "priority package");
+        if let Err(error) =
+            Self::apply_finished_if_current(project, generation, finished, "priority package")
+        {
+            tracing::warn!(
+                generation,
+                error = %format!("{error:#}"),
+                "deferred indexing priority package could not merge into saved project"
+            );
+        }
     }
 
-    /// Reconcile the final background result and decide whether indexing is finished for the client.
+    /// Reconcile the final background result for the client-visible saved generation.
+    ///
+    /// `None` means this result cannot terminate the client's active operation because it is stale
+    /// or unknown. A current result remains terminal when its work failed, but carries that failure
+    /// instead of presenting it as successful completion.
     pub(super) fn finish_returned(
         &mut self,
         project: &mut ProjectState,
         generation: u64,
         result: DeferredIndexingResult,
-    ) -> bool {
+    ) -> Option<DeferredIndexingOutcome> {
         if self.in_flight_generation != Some(generation) {
             tracing::info!(
                 generation,
                 current_in_flight_generation = ?self.in_flight_generation,
                 "discarding unknown deferred indexing finish"
             );
-            return false;
+            return None;
         }
         self.in_flight_generation = None;
         self.worker_priority = None;
 
-        let is_current_generation = Self::apply_finish_if_current(project, generation, result);
-        let should_restart = self.restart_after_in_flight || !is_current_generation;
+        let outcome = Self::apply_finish_if_current(project, generation, result);
+        let should_restart = self.restart_after_in_flight || outcome.is_none();
         self.restart_after_in_flight = false;
         if should_restart {
             self.start_current(project);
         }
 
-        is_current_generation
+        outcome
     }
 
     fn start_current(&mut self, project: &ProjectState) -> bool {
@@ -310,29 +324,45 @@ impl DeferredIndexingFinish {
         project: &mut ProjectState,
         generation: u64,
         result: DeferredIndexingResult,
-    ) -> bool {
+    ) -> Option<DeferredIndexingOutcome> {
         if project.generation() != generation {
             tracing::info!(
                 generation,
                 current_generation = project.generation(),
                 "discarding stale deferred indexing finish"
             );
-            return false;
+            return None;
         }
 
-        match result {
+        let outcome = match result {
             Ok(finished) => {
-                Self::apply_finished_if_current(project, generation, *finished, "finish");
+                match Self::apply_finished_if_current(project, generation, *finished, "finish") {
+                    Ok(true) => DeferredIndexingOutcome::Succeeded,
+                    // The generation was checked immediately above on the serialized engine lane, but
+                    // retain the stale result in the type in case this helper's use changes later.
+                    Ok(false) => return None,
+                    Err(error) => {
+                        let message = format!("{error:#}");
+                        tracing::warn!(
+                            generation,
+                            error = %message,
+                            "deferred indexing finish could not merge into saved project"
+                        );
+                        DeferredIndexingOutcome::Failed { message }
+                    }
+                }
             }
             Err(error) => {
+                let message = format!("{error:#}");
                 tracing::warn!(
                     generation,
-                    error = %format!("{error:#}"),
+                    error = %message,
                     "deferred indexing finish did not update project"
                 );
+                DeferredIndexingOutcome::Failed { message }
             }
-        }
-        true
+        };
+        Some(outcome)
     }
 
     fn apply_finished_if_current(
@@ -340,7 +370,7 @@ impl DeferredIndexingFinish {
         generation: u64,
         finished: rg_project::FinishedSplitIndexing,
         label: &'static str,
-    ) -> bool {
+    ) -> anyhow::Result<bool> {
         if project.generation() != generation {
             tracing::info!(
                 generation,
@@ -348,22 +378,14 @@ impl DeferredIndexingFinish {
                 label,
                 "discarding stale deferred indexing publication"
             );
-            return false;
+            return Ok(false);
         }
 
         let updated = project
             .mutate_saved_preserving_generation(|saved| {
                 saved.split_indexing().merge_finished(finished)
             })
-            .unwrap_or_else(|error| {
-                tracing::warn!(
-                    generation,
-                    label,
-                    error = %format!("{error:#}"),
-                    "deferred indexing publication could not merge into saved project"
-                );
-                false
-            });
+            .with_context(|| format!("merge deferred indexing {label}"))?;
         if !updated {
             tracing::trace!(
                 generation,
@@ -371,7 +393,7 @@ impl DeferredIndexingFinish {
                 "deferred indexing publication completed without saved project changes"
             );
         }
-        true
+        Ok(true)
     }
 }
 

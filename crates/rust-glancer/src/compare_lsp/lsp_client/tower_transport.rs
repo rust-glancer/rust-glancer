@@ -290,7 +290,7 @@ pub(crate) struct ServerNotification {
 }
 
 impl ServerNotification {
-    fn new(method: String, params: Option<Value>) -> Self {
+    pub(crate) fn new(method: String, params: Option<Value>) -> Self {
         Self { method, params }
     }
 

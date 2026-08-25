@@ -12,7 +12,7 @@ use tower_lsp_server::{
     ls_types::{LSPAny, LSPObject, notification::Notification},
 };
 
-use rg_lsp_proto::path_for_editor;
+use rg_lsp_proto::{DeferredIndexingOutcome, path_for_editor};
 
 const ACTIVE_WORKSPACE_CHANGED_METHOD: &str = "rust-glancer/activeWorkspaceChanged";
 const DEFERRED_INDEXING_STARTED_METHOD: &str = "rust-glancer/deferredIndexingStarted";
@@ -33,9 +33,15 @@ pub(super) async fn deferred_indexing_started(lsp_client: &LspClient, root: &Pat
         .await;
 }
 
-pub(super) async fn deferred_indexing_finished(lsp_client: &LspClient, root: &Path) {
+pub(super) async fn deferred_indexing_finished(
+    lsp_client: &LspClient,
+    root: &Path,
+    outcome: &DeferredIndexingOutcome,
+) {
     lsp_client
-        .send_notification::<DeferredIndexingFinished>(DeferredIndexingFinished::params(root))
+        .send_notification::<DeferredIndexingFinished>(DeferredIndexingFinished::params(
+            root, outcome,
+        ))
         .await;
 }
 
@@ -79,11 +85,11 @@ impl Notification for DeferredIndexingStarted {
 
 impl DeferredIndexingStarted {
     fn params(root: &Path) -> LSPAny {
-        deferred_indexing_params(root)
+        LSPAny::Object(deferred_indexing_params(root))
     }
 }
 
-/// Marks completion of background work for the active saved project generation.
+/// Marks the terminal outcome of background work for the active saved project generation.
 struct DeferredIndexingFinished;
 
 impl Notification for DeferredIndexingFinished {
@@ -93,18 +99,31 @@ impl Notification for DeferredIndexingFinished {
 }
 
 impl DeferredIndexingFinished {
-    fn params(root: &Path) -> LSPAny {
-        deferred_indexing_params(root)
+    fn params(root: &Path, outcome: &DeferredIndexingOutcome) -> LSPAny {
+        let mut params = deferred_indexing_params(root);
+        match outcome {
+            DeferredIndexingOutcome::Succeeded => {
+                params.insert(
+                    "outcome".to_string(),
+                    LSPAny::String("succeeded".to_string()),
+                );
+            }
+            DeferredIndexingOutcome::Failed { message } => {
+                params.insert("outcome".to_string(), LSPAny::String("failed".to_string()));
+                params.insert("message".to_string(), LSPAny::String(message.clone()));
+            }
+        }
+        LSPAny::Object(params)
     }
 }
 
-fn deferred_indexing_params(root: &Path) -> LSPAny {
+fn deferred_indexing_params(root: &Path) -> LSPObject {
     let mut params = LSPObject::new();
     params.insert(
         "root".to_string(),
         LSPAny::String(editor_path_display(root)),
     );
-    LSPAny::Object(params)
+    params
 }
 
 fn editor_path_display(path: &Path) -> String {
@@ -180,14 +199,28 @@ mod tests {
     }
 
     #[test]
-    fn deferred_indexing_params_render_root() {
+    fn deferred_indexing_params_render_root_and_terminal_outcome() {
         let root = Path::new("workspace/project_a");
-        for params in [
-            DeferredIndexingStarted::params(root),
-            DeferredIndexingFinished::params(root),
-        ] {
-            assert_eq!(render_params(params), "root: workspace/project_a");
-        }
+        assert_eq!(
+            render_params(DeferredIndexingStarted::params(root)),
+            "root: workspace/project_a"
+        );
+        assert_eq!(
+            render_params(DeferredIndexingFinished::params(
+                root,
+                &DeferredIndexingOutcome::Succeeded,
+            )),
+            "outcome: succeeded\nroot: workspace/project_a"
+        );
+        assert_eq!(
+            render_params(DeferredIndexingFinished::params(
+                root,
+                &DeferredIndexingOutcome::Failed {
+                    message: "body indexing failed".to_string(),
+                },
+            )),
+            "message: body indexing failed\noutcome: failed\nroot: workspace/project_a"
+        );
     }
 
     fn render_params(params: LSPAny) -> String {

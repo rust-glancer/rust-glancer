@@ -26,7 +26,7 @@ use std::{
     sync::Arc,
 };
 
-use rg_lsp_proto::IndexingProgress;
+use rg_lsp_proto::{DeferredIndexingOutcome, IndexingProgress};
 use tokio::sync::Mutex;
 use tower_lsp_server::{Client as LspClient, ls_types::ClientCapabilities};
 
@@ -126,16 +126,17 @@ impl ClientStatusPublisher {
                 Some(WorkspaceLifecycle::Unavailable(_))
             );
             if workspace_is_available {
-                let previous_generation = state
-                    .deferred_indexing
-                    .get(root)
-                    .map(|deferred| deferred.generation);
-                let starts_new_generation = previous_generation
-                    .is_none_or(|previous_generation| generation > previous_generation);
+                let starts_new_generation = match state.deferred_indexing.get(root) {
+                    None => true,
+                    Some(previous) => {
+                        generation > previous.generation()
+                            || generation == previous.generation() && previous.is_failed()
+                    }
+                };
                 if starts_new_generation {
                     state.deferred_indexing.insert(
                         root.to_path_buf(),
-                        DeferredIndexingState {
+                        DeferredIndexingState::Running {
                             generation,
                             progress: None,
                         },
@@ -149,9 +150,7 @@ impl ClientStatusPublisher {
                             .begin_deferred(&self.lsp_client, root)
                             .await;
                     }
-                    if previous_generation.is_none() {
-                        self.publish_rust_analyzer_status(&mut state).await;
-                    }
+                    self.publish_rust_analyzer_status(&mut state).await;
                 }
             }
         }
@@ -170,13 +169,17 @@ impl ClientStatusPublisher {
     ) {
         let mut state = self.state.lock().await;
         {
-            let Some(deferred) = state.deferred_indexing.get_mut(root) else {
+            let Some(DeferredIndexingState::Running {
+                generation: active_generation,
+                progress: active_progress,
+            }) = state.deferred_indexing.get_mut(root)
+            else {
                 return;
             };
-            if deferred.generation != generation || deferred.progress == Some(progress) {
+            if *active_generation != generation || *active_progress == Some(progress) {
                 return;
             }
-            deferred.progress = Some(progress);
+            *active_progress = Some(progress);
         }
 
         if self.capabilities.work_done_progress
@@ -186,25 +189,53 @@ impl ClientStatusPublisher {
         }
     }
 
-    pub(crate) async fn deferred_indexing_finished(&self, root: &Path, generation: u64) {
+    pub(crate) async fn deferred_indexing_finished(
+        &self,
+        root: &Path,
+        generation: u64,
+        outcome: DeferredIndexingOutcome,
+    ) {
         {
             let mut state = self.state.lock().await;
-            let generation_is_active = state
-                .deferred_indexing
-                .get(root)
-                .is_some_and(|deferred| deferred.generation == generation);
+            let generation_is_active = state.deferred_indexing.get(root).is_some_and(|deferred| {
+                matches!(
+                    deferred,
+                    DeferredIndexingState::Running {
+                        generation: active_generation,
+                        ..
+                    } if *active_generation == generation
+                )
+            });
             if generation_is_active {
-                state.deferred_indexing.remove(root);
+                let progress_message = match &outcome {
+                    DeferredIndexingOutcome::Succeeded => {
+                        state.deferred_indexing.remove(root);
+                        "Finished"
+                    }
+                    DeferredIndexingOutcome::Failed { message } => {
+                        state.deferred_indexing.insert(
+                            root.to_path_buf(),
+                            DeferredIndexingState::Failed {
+                                generation,
+                                message: Arc::from(message.as_str()),
+                            },
+                        );
+                        "Failed"
+                    }
+                };
                 if self.capabilities.work_done_progress
                     && matches!(state.workspaces.get(root), Some(WorkspaceLifecycle::Ready))
                 {
-                    state.workspace_progress.finish(root, "Finished").await;
+                    state
+                        .workspace_progress
+                        .finish(root, progress_message)
+                        .await;
                 }
                 self.publish_rust_analyzer_status(&mut state).await;
             }
         }
 
-        rust_glancer::deferred_indexing_finished(&self.lsp_client, root).await;
+        rust_glancer::deferred_indexing_finished(&self.lsp_client, root, &outcome).await;
     }
 
     async fn finish_workspace_indexing(
@@ -235,19 +266,20 @@ impl ClientStatusPublisher {
         if workspace_failed {
             state.deferred_indexing.remove(root);
         } else if matches!(state.workspaces.get(root), Some(WorkspaceLifecycle::Ready))
-            && state.deferred_indexing.contains_key(root)
             && self.capabilities.work_done_progress
         {
             let progress = state
                 .deferred_indexing
                 .get(root)
-                .and_then(|deferred| deferred.progress);
-            state
-                .workspace_progress
-                .begin_deferred(&self.lsp_client, root)
-                .await;
+                .and_then(DeferredIndexingState::running_progress);
             if let Some(progress) = progress {
-                state.workspace_progress.report(root, progress).await;
+                state
+                    .workspace_progress
+                    .begin_deferred(&self.lsp_client, root)
+                    .await;
+                if let Some(progress) = progress {
+                    state.workspace_progress.report(root, progress).await;
+                }
             }
         }
         self.publish_rust_analyzer_status(&mut state).await;
@@ -276,10 +308,36 @@ struct ClientStatusState {
     last_rust_analyzer_status: Option<rust_analyzer::StatusSnapshot>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct DeferredIndexingState {
-    generation: u64,
-    progress: Option<IndexingProgress>,
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum DeferredIndexingState {
+    Running {
+        generation: u64,
+        progress: Option<IndexingProgress>,
+    },
+    Failed {
+        generation: u64,
+        message: Arc<str>,
+    },
+}
+
+impl DeferredIndexingState {
+    fn generation(&self) -> u64 {
+        match self {
+            Self::Running { generation, .. } | Self::Failed { generation, .. } => *generation,
+        }
+    }
+
+    fn is_failed(&self) -> bool {
+        matches!(self, Self::Failed { .. })
+    }
+
+    /// Preserve the distinction between no running operation and running without a first report.
+    fn running_progress(&self) -> Option<Option<IndexingProgress>> {
+        match self {
+            Self::Running { progress, .. } => Some(*progress),
+            Self::Failed { .. } => None,
+        }
+    }
 }
 
 impl ClientStatusState {
@@ -295,30 +353,54 @@ impl ClientStatusState {
                 WorkspaceLifecycle::Indexing | WorkspaceLifecycle::Ready => None,
             })
             .collect::<Vec<_>>();
-        let health = if failures.is_empty() {
-            rust_analyzer::Health::Ok
-        } else if failures.len() == self.workspaces.len() {
+        let deferred_failures = self
+            .deferred_indexing
+            .iter()
+            .filter_map(|(root, deferred)| match deferred {
+                DeferredIndexingState::Failed { message, .. } => Some((root, message)),
+                DeferredIndexingState::Running { .. } => None,
+            })
+            .collect::<Vec<_>>();
+        let health = if !failures.is_empty() && failures.len() == self.workspaces.len() {
             rust_analyzer::Health::Error
+        } else if failures.is_empty() && deferred_failures.is_empty() {
+            rust_analyzer::Health::Ok
         } else {
             rust_analyzer::Health::Warning
         };
-        let message = failures.first().map(|(root, error)| {
-            let additional = failures.len().saturating_sub(1);
-            let suffix = if additional == 0 {
-                String::new()
-            } else {
-                format!(" (+{additional} more)")
-            };
-            format!("Workspace `{}` failed: {error}{suffix}", root.display())
-        });
+        let issue_count = failures.len() + deferred_failures.len();
+        let message = failures
+            .first()
+            .map(|(root, error)| ("failed", root, error))
+            .or_else(|| {
+                deferred_failures
+                    .first()
+                    .map(|(root, error)| ("background indexing failed", root, error))
+            })
+            .map(|(description, root, error)| {
+                let additional = issue_count.saturating_sub(1);
+                let suffix = if additional == 0 {
+                    String::new()
+                } else {
+                    format!(" (+{additional} more)")
+                };
+                format!(
+                    "Workspace `{}` {description}: {error}{suffix}",
+                    root.display()
+                )
+            });
         let foreground_work = self
             .workspaces
             .values()
             .any(|lifecycle| matches!(lifecycle, WorkspaceLifecycle::Indexing));
+        let deferred_work = self
+            .deferred_indexing
+            .values()
+            .any(|deferred| matches!(deferred, DeferredIndexingState::Running { .. }));
 
         rust_analyzer::StatusSnapshot {
             health,
-            quiescent: !foreground_work && self.deferred_indexing.is_empty(),
+            quiescent: !foreground_work && !deferred_work,
             message,
         }
     }
@@ -403,8 +485,8 @@ mod tests {
         );
 
         state.deferred_indexing.insert(
-            ready,
-            DeferredIndexingState {
+            ready.clone(),
+            DeferredIndexingState::Running {
                 generation: 1,
                 progress: None,
             },
@@ -415,6 +497,25 @@ mod tests {
         assert_eq!(
             state.rust_analyzer_status().health,
             rust_analyzer::Health::Ok
+        );
+
+        state.deferred_indexing.insert(
+            ready,
+            DeferredIndexingState::Failed {
+                generation: 1,
+                message: Arc::from("body indexing failed"),
+            },
+        );
+        assert_eq!(
+            state.rust_analyzer_status(),
+            rust_analyzer::StatusSnapshot {
+                health: rust_analyzer::Health::Warning,
+                quiescent: true,
+                message: Some(
+                    "Workspace `/workspace/ready` background indexing failed: body indexing failed"
+                        .to_string()
+                ),
+            }
         );
     }
 
@@ -587,7 +688,9 @@ mod tests {
             client_status
                 .deferred_indexing_progress(root, 7, second_progress)
                 .await;
-            client_status.deferred_indexing_finished(root, 7).await;
+            client_status
+                .deferred_indexing_finished(root, 7, DeferredIndexingOutcome::Succeeded)
+                .await;
         };
         let observe = async {
             let foreground_create = socket
@@ -720,6 +823,159 @@ mod tests {
                 private_finish.method(),
                 "rust-glancer/deferredIndexingFinished"
             );
+            assert_eq!(
+                private_finish.params(),
+                Some(&serde_json::json!({
+                    "root": "/workspace/project_a",
+                    "outcome": "succeeded",
+                }))
+            );
+        };
+
+        tokio::join!(publish, observe);
+    }
+
+    #[tokio::test]
+    async fn deferred_failure_ends_progress_and_publishes_degraded_ready_status() {
+        let capabilities = ClientStatusCapabilities {
+            work_done_progress: true,
+            rust_analyzer_server_status: true,
+        };
+        let (mut service, mut socket) = LspService::new(move |client| TestBackend {
+            client_status: ClientStatusPublisher::new(client, capabilities),
+        });
+        let initialize = Request::build("initialize")
+            .params(serde_json::json!({"capabilities": {}}))
+            .id(1)
+            .finish();
+        service
+            .ready()
+            .await
+            .expect("test LSP service should become ready")
+            .call(initialize)
+            .await
+            .expect("initialize request should reach the test service")
+            .expect("initialize request should return a response");
+
+        let client_status = service.inner().client_status.clone();
+        let root = Path::new("/workspace/project_a");
+        let publish = async {
+            client_status.workspace_ready(root).await;
+            client_status.deferred_indexing_started(root, 7).await;
+            client_status
+                .deferred_indexing_finished(
+                    root,
+                    7,
+                    DeferredIndexingOutcome::Failed {
+                        message: "body indexing failed".to_string(),
+                    },
+                )
+                .await;
+        };
+        let observe = async {
+            let initially_ready = socket
+                .next()
+                .await
+                .expect("ready workspace should publish initial server status");
+            assert_eq!(
+                initially_ready.params(),
+                Some(&serde_json::json!({
+                    "health": "ok",
+                    "quiescent": true,
+                }))
+            );
+
+            let deferred_create = socket
+                .next()
+                .await
+                .expect("deferred indexing should create a progress token");
+            let deferred_token = deferred_create
+                .params()
+                .and_then(|params| params.get("token"))
+                .cloned()
+                .expect("deferred progress should name its token");
+            socket
+                .send(Response::from_ok(
+                    deferred_create
+                        .id()
+                        .cloned()
+                        .expect("progress creation should be a request"),
+                    serde_json::Value::Null,
+                ))
+                .await
+                .expect("test client should acknowledge deferred progress");
+
+            let deferred_begin = socket.next().await.expect("deferred progress should begin");
+            assert_eq!(
+                deferred_begin.params(),
+                Some(&serde_json::json!({
+                    "token": deferred_token.clone(),
+                    "value": {
+                        "kind": "begin",
+                        "title": "project_a ready · background",
+                        "cancellable": false,
+                    },
+                }))
+            );
+
+            let working = socket
+                .next()
+                .await
+                .expect("deferred indexing should make the server non-quiescent");
+            assert_eq!(
+                working.params(),
+                Some(&serde_json::json!({
+                    "health": "ok",
+                    "quiescent": false,
+                }))
+            );
+
+            let private_start = socket
+                .next()
+                .await
+                .expect("private deferred start should remain additive");
+            assert_eq!(
+                private_start.method(),
+                "rust-glancer/deferredIndexingStarted"
+            );
+
+            let deferred_end = socket
+                .next()
+                .await
+                .expect("failed deferred indexing should close its progress token");
+            assert_eq!(
+                deferred_end.params(),
+                Some(&serde_json::json!({
+                    "token": deferred_token,
+                    "value": {"kind": "end", "message": "Failed"},
+                }))
+            );
+
+            let degraded = socket
+                .next()
+                .await
+                .expect("failed deferred indexing should warn through server status");
+            assert_eq!(
+                degraded.params(),
+                Some(&serde_json::json!({
+                    "health": "warning",
+                    "quiescent": true,
+                    "message": "Workspace `/workspace/project_a` background indexing failed: body indexing failed",
+                }))
+            );
+
+            let private_finish = socket
+                .next()
+                .await
+                .expect("private deferred failure should remain additive");
+            assert_eq!(
+                private_finish.params(),
+                Some(&serde_json::json!({
+                    "root": "/workspace/project_a",
+                    "outcome": "failed",
+                    "message": "body indexing failed",
+                }))
+            );
         };
 
         tokio::join!(publish, observe);
@@ -742,12 +998,14 @@ mod tests {
         client_status
             .deferred_indexing_progress(root, 8, progress)
             .await;
-        client_status.deferred_indexing_finished(root, 8).await;
+        client_status
+            .deferred_indexing_finished(root, 8, DeferredIndexingOutcome::Succeeded)
+            .await;
 
         let state = client_status.state.lock().await;
         assert_eq!(
             state.deferred_indexing.get(root),
-            Some(&DeferredIndexingState {
+            Some(&DeferredIndexingState::Running {
                 generation: 9,
                 progress: None,
             })
@@ -809,7 +1067,15 @@ mod tests {
             Some(&serde_json::json!({"root": "/workspace/project_a"}))
         );
 
-        client_status.deferred_indexing_finished(root, 1).await;
+        client_status
+            .deferred_indexing_finished(
+                root,
+                1,
+                DeferredIndexingOutcome::Failed {
+                    message: "body indexing failed".to_string(),
+                },
+            )
+            .await;
         let deferred_finished = socket
             .next()
             .await
@@ -820,7 +1086,11 @@ mod tests {
         );
         assert_eq!(
             deferred_finished.params(),
-            Some(&serde_json::json!({"root": "/workspace/project_a"}))
+            Some(&serde_json::json!({
+                "root": "/workspace/project_a",
+                "outcome": "failed",
+                "message": "body indexing failed",
+            }))
         );
     }
 

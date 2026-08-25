@@ -7,7 +7,10 @@ use std::{
     time::Duration,
 };
 
-use rg_lsp_proto::{AnalysisConfig, PackageResidencyPolicy, ServiceNotification, SysrootDiscovery};
+use rg_lsp_proto::{
+    AnalysisConfig, DeferredIndexingOutcome, PackageResidencyPolicy, ServiceNotification,
+    SysrootDiscovery,
+};
 use rg_project::{ProjectMemoryHooks, ProjectMemoryPurgePoint, SavedFileChange};
 use test_fixture::fixture_crate;
 
@@ -154,7 +157,10 @@ fn assert_progress_then_finished(notifications: &[ServiceNotification]) {
     );
     assert!(matches!(
         notifications.last(),
-        Some(ServiceNotification::DeferredIndexingFinished { .. })
+        Some(ServiceNotification::DeferredIndexingFinished {
+            outcome: DeferredIndexingOutcome::Succeeded,
+            ..
+        })
     ));
 }
 
@@ -252,6 +258,60 @@ fn deferred_lifecycle_tracks_published_generations_not_foreground_activity() {
     assert_eq!(finished_stats.complete_crate_count, 1);
     assert_eq!(finished_stats.missing_crate_count, 0);
     assert_eq!(finished_stats.body_count, 1);
+}
+
+#[test]
+fn current_deferred_failure_is_published_without_discarding_the_queryable_project() {
+    let fixture = fixture_crate(
+        r#"
+            //- /Cargo.toml
+            [package]
+            name = "deferred_failure_fixture"
+            version = "0.1.0"
+            edition = "2024"
+
+            //- /src/lib.rs
+            pub fn still_queryable() {}
+            "#,
+    );
+    let (sender, receiver) = mpsc::channel();
+    let memory_control: Arc<dyn MemoryControl> = Arc::new(());
+    let recorded = RecordingNotifications::default();
+    let notifications = ServiceNotificationsSink::from_publisher(recorded.clone());
+    let mut project = ProjectCoordinator::new(sender, memory_control, notifications);
+    project
+        .initialize(
+            fixture.path(""),
+            ProjectConfiguration::from(AnalysisConfig {
+                sysroot_discovery: SysrootDiscovery::Disabled,
+                ..AnalysisConfig::default()
+            }),
+        )
+        .expect("fixture project should initialize");
+    assert!(matches!(
+        recorded.take().as_slice(),
+        [ServiceNotification::DeferredIndexingStarted { .. }]
+    ));
+
+    let finished = receive_non_progress_command(&mut project, &receiver);
+    let EngineCommand::DeferredIndexingFinished { generation, .. } = finished else {
+        panic!("background command should reach its terminal result");
+    };
+    project.deferred_indexing_finished(
+        generation,
+        Err(anyhow::anyhow!("synthetic body indexing failure")),
+    );
+
+    project
+        .saved_snapshot()
+        .expect("early-start project should remain queryable after deferred failure");
+    assert!(matches!(
+        recorded.take().last(),
+        Some(ServiceNotification::DeferredIndexingFinished {
+            outcome: DeferredIndexingOutcome::Failed { message },
+            ..
+        }) if message == "synthetic body indexing failure"
+    ));
 }
 
 #[test]

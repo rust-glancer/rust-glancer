@@ -26,7 +26,10 @@ pub use self::{
     },
     error::EngineError,
     file_uri::{FileUriError, file_uri_to_path, path_for_editor, path_to_file_uri},
-    notifications::{IndexingProgress, IndexingStage, ServiceLogLevel, ServiceNotification},
+    notifications::{
+        DeferredIndexingOutcome, IndexingProgress, IndexingStage, ServiceLogLevel,
+        ServiceNotification,
+    },
     query::{QueryError, QueryScope, QueryValue},
     saved_source::{CapturedSourceInput, SaveProposal, SavedProjectChanges},
     service::{

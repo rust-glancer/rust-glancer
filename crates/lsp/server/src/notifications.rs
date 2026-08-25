@@ -139,9 +139,13 @@ async fn publish_service_notification(
                 .deferred_indexing_progress(&root, generation, progress)
                 .await;
         }
-        ServiceNotification::DeferredIndexingFinished { root, generation } => {
+        ServiceNotification::DeferredIndexingFinished {
+            root,
+            generation,
+            outcome,
+        } => {
             client_status
-                .deferred_indexing_finished(&root, generation)
+                .deferred_indexing_finished(&root, generation, outcome)
                 .await;
         }
         ServiceNotification::LogMessage { level, message } => {
