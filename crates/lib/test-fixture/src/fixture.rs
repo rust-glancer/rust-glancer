@@ -1,4 +1,8 @@
-use std::{collections::BTreeMap, fs, path::PathBuf};
+use std::{
+    collections::BTreeMap,
+    fs,
+    path::{Component, Path, PathBuf},
+};
 
 use tempfile::TempDir;
 
@@ -266,6 +270,27 @@ pub struct FixtureMarker {
     pub offset: u32,
 }
 
+/// Renders a fixture-relative path in the portable form used by test snapshots.
+///
+/// Fixture paths still use host-native `Path` values for filesystem work. Snapshots use `/`
+/// between structural components so the same expected output can be shared by every host.
+pub fn fixture_path_for_snapshot(path: &Path) -> String {
+    assert!(
+        !path.is_absolute()
+            && !path.has_root()
+            && !path
+                .components()
+                .any(|component| matches!(component, Component::Prefix(_))),
+        "snapshot fixture path should be relative: {}",
+        path.display(),
+    );
+
+    path.components()
+        .map(|component| component.as_os_str().to_string_lossy())
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
 /// Creates temporary on-disk crate fixtures from inline file contents.
 ///
 /// Parser tests should exercise the same `cargo metadata` path as production code, but many of
@@ -411,7 +436,19 @@ pub fn fixture_crate_with_markers(fixture: &str) -> (CrateFixture, FixtureMarker
 
 #[cfg(test)]
 mod tests {
-    use crate::FixtureSpec;
+    use std::path::PathBuf;
+
+    use crate::{FixtureSpec, fixture_path_for_snapshot};
+
+    #[test]
+    fn renders_fixture_paths_with_snapshot_separators() {
+        let path = PathBuf::from("crates")
+            .join("app")
+            .join("src")
+            .join("lib.rs");
+
+        assert_eq!(fixture_path_for_snapshot(&path), "crates/app/src/lib.rs");
+    }
 
     #[test]
     fn strips_shared_source_markers_from_fixture_files() {

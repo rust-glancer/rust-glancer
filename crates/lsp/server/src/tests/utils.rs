@@ -1,7 +1,7 @@
 use std::{fmt::Write as _, path::Path};
 
 use rg_std::NormalizedPathBuf;
-use test_fixture::{CrateFixture, fixture_crate};
+use test_fixture::{CrateFixture, fixture_crate, fixture_path_for_snapshot};
 
 use crate::engine_registry::routing::{EngineId, EngineRouting, WorkspaceEngineRoute};
 
@@ -159,11 +159,12 @@ impl RoutingFixture {
         let root = self.path("");
         let path =
             NormalizedPathBuf::from_absolute(path).expect("routing fixture path should normalize");
-        if let Ok(relative) = path.as_path().strip_prefix(root.as_path()) {
-            return format!("/{}", relative.display());
-        }
+        let relative = path
+            .as_path()
+            .strip_prefix(root.as_path())
+            .expect("routing snapshot path should stay inside its fixture root");
 
-        path.as_path().display().to_string()
+        format!("/{}", fixture_path_for_snapshot(relative))
     }
 
     fn path(&self, path: &str) -> NormalizedPathBuf {

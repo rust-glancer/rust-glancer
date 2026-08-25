@@ -3,7 +3,7 @@ use std::{fmt::Write as _, path::Path};
 use expect_test::Expect;
 
 use crate::{PackageOrigin, SysrootSources, WorkspaceLoweringConfig, WorkspaceMetadata};
-use test_fixture::fixture_crate;
+use test_fixture::{fixture_crate, fixture_path_for_snapshot};
 
 pub(super) fn check_workspace_metadata(fixture: &str, expect: Expect) {
     let fixture = fixture_crate(fixture);
@@ -159,11 +159,13 @@ fn render_dependency_kinds(dependency: &crate::PackageDependency) -> String {
 }
 
 fn relative_path(root: &Path, path: &Path) -> String {
-    let relative_path = path.strip_prefix(root).unwrap_or(path);
+    let relative_path = path
+        .strip_prefix(root)
+        .expect("workspace snapshot path should stay inside its fixture root");
 
     if relative_path.as_os_str().is_empty() {
         ".".to_string()
     } else {
-        relative_path.display().to_string()
+        fixture_path_for_snapshot(relative_path)
     }
 }

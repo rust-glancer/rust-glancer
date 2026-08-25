@@ -2,7 +2,7 @@ use std::{fmt::Write as _, path::Path};
 
 use expect_test::Expect;
 use rg_workspace::{WorkspaceLoweringConfig, WorkspaceMetadata};
-use test_fixture::fixture_crate;
+use test_fixture::{fixture_crate, fixture_path_for_snapshot};
 
 use crate::{CargoTarget, Package, ParseDb};
 
@@ -138,17 +138,21 @@ impl<'a> ProjectParseSnapshot<'a> {
 
     fn path_label(&self, path: &Path) -> String {
         if let Ok(relative) = path.strip_prefix(self.root) {
-            return relative.display().to_string();
+            return fixture_path_for_snapshot(relative);
         }
         if let Ok(relative) = path.strip_prefix(self.display_root) {
-            return relative.display().to_string();
+            return fixture_path_for_snapshot(relative);
         }
         if let Ok(canonical_path) = path.canonicalize()
             && let Ok(relative) = canonical_path.strip_prefix(self.root)
         {
-            return relative.display().to_string();
+            return fixture_path_for_snapshot(relative);
         }
 
-        path.display().to_string()
+        panic!(
+            "parse snapshot path {} should stay inside fixture root {}",
+            path.display(),
+            self.display_root.display(),
+        )
     }
 }

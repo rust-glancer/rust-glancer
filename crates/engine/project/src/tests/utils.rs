@@ -6,6 +6,7 @@ use rg_def_map::PackageSlot;
 use rg_ir_model::CrateRef;
 use rg_package_store::PackageLoader;
 use rg_parse::FileId;
+use test_fixture::fixture_path_for_snapshot;
 
 use crate::{
     AnalysisChangeSummary, FileContext, PackageResidencyPolicy, Project, testonly::ProjectFixture,
@@ -443,11 +444,11 @@ impl HostFixture {
             .canonicalize()
             .expect("fixture root should canonicalize");
 
-        path.strip_prefix(&root)
+        let relative = path
+            .strip_prefix(&root)
             .or_else(|_| path.strip_prefix(&display_root))
-            .unwrap_or(path)
-            .display()
-            .to_string()
+            .expect("project snapshot path should stay inside its fixture root");
+        fixture_path_for_snapshot(relative)
     }
 }
 

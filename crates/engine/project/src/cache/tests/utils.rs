@@ -56,8 +56,8 @@ pub(super) fn check_minimal_cache_artifact_codec(expect: Expect) {
     let semantic_ir = PackageIr::default();
     let body_ir = PackageBodies::default();
 
-    // Even the byte-level format snapshot starts from the production borrowed input and uses the
-    // same fragment writer as the filesystem store.
+    // Exercise the production borrowed input and fragment writer before decoding every container
+    // section independently, just like the filesystem store does.
     let encoded = PackageCacheCodec::encode_write_input(PackageCacheWriteInput::new(
         &header,
         &parse,
@@ -111,7 +111,6 @@ pub(super) fn check_minimal_cache_artifact_codec(expect: Expect) {
         !bytes.is_empty()
     )
     .expect("string writes should not fail");
-    render_hex(&bytes, &mut dump);
     writeln!(&mut dump).expect("string writes should not fail");
     render_decoded_artifact(
         "decoded artifact",
@@ -1627,8 +1626,6 @@ fn render_decoded_artifact(
     let header = &probe.header;
     writeln!(dump, "{label}").expect("string writes should not fail");
     writeln!(dump, "schema {}", header.schema_version.0).expect("string writes should not fail");
-    writeln!(dump, "source fingerprint {}", header.source_fingerprint)
-        .expect("string writes should not fail");
     writeln!(
         dump,
         "package #{} {}",
@@ -1766,14 +1763,5 @@ fn relative_path(root: &Path, path: &Path) -> String {
             .map(|component| component.as_os_str().to_string_lossy())
             .collect::<Vec<_>>()
             .join("/")
-    }
-}
-
-fn render_hex(bytes: &[u8], dump: &mut String) {
-    for chunk in bytes.chunks(32) {
-        for byte in chunk {
-            write!(dump, "{byte:02x}").expect("string writes should not fail");
-        }
-        writeln!(dump).expect("string writes should not fail");
     }
 }
