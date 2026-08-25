@@ -2077,6 +2077,7 @@ dependencies = [
  "gungraun",
  "ls-types",
  "rg_lsp_engine",
+ "rg_lsp_proto",
  "rg_lsp_server",
  "rg_profile",
  "rg_project",
