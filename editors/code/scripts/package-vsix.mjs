@@ -87,9 +87,9 @@ const licenseTexts = workspaceLicenses.map((workspaceLicense) =>
 );
 writeFileSync(extensionLicense, `${[licenseNotice, ...licenseTexts].join("\n\n\n")}\n`);
 
-const vsce = vsceBin();
+const vsce = vsceCli();
 if (!existsSync(vsce)) {
-  fail(`Expected local vsce binary does not exist: ${vsce}. Run npm install in editors/code.`);
+  fail(`Expected local vsce CLI does not exist: ${vsce}. Run npm install in editors/code.`);
 }
 
 const vsceArgs = ["package", "-o", outPath, "--target", vsCodeTarget];
@@ -97,7 +97,7 @@ if (options.preRelease) {
   vsceArgs.push("--pre-release");
 }
 
-run(vsce, vsceArgs, { cwd: extensionRoot });
+run(process.execPath, [vsce, ...vsceArgs], { cwd: extensionRoot });
 console.log(`Packaged ${outPath}`);
 
 function parseArgs(args) {
@@ -157,9 +157,8 @@ function detectHostTarget() {
   return host;
 }
 
-function vsceBin() {
-  const name = process.platform === "win32" ? "vsce.cmd" : "vsce";
-  return join(extensionRoot, "node_modules", ".bin", name);
+function vsceCli() {
+  return join(extensionRoot, "node_modules", "@vscode", "vsce", "vsce");
 }
 
 function run(command, args, options) {

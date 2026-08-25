@@ -1,13 +1,13 @@
 use ls_types::{
     CompletionItem as LspCompletionItem, CompletionItemKind, CompletionTextEdit, Documentation,
-    InsertTextFormat, MarkupContent, MarkupKind, TextEdit,
+    InsertTextFormat, MarkupContent, MarkupKind,
 };
 use rg_analysis::{
     CompletionApplicability, CompletionEdit, CompletionInsertText, CompletionItem, CompletionKind,
 };
 use rg_parse::LineIndex;
 
-use crate::proto::{markdown, position};
+use crate::proto::{markdown, position, text_edit};
 
 pub(crate) fn completion_item(item: CompletionItem, line_index: &LineIndex) -> LspCompletionItem {
     let detail = completion_detail(item.detail, item.applicability);
@@ -16,9 +16,12 @@ pub(crate) fn completion_item(item: CompletionItem, line_index: &LineIndex) -> L
     let additional_text_edits = (!item.additional_edits.is_empty()).then(|| {
         item.additional_edits
             .into_iter()
-            .map(|edit| TextEdit {
-                range: position::range(line_index, edit.replace),
-                new_text: edit.new_text,
+            .map(|edit| {
+                text_edit::new(
+                    line_index,
+                    position::range(line_index, edit.replace),
+                    edit.new_text,
+                )
             })
             .collect()
     });
@@ -102,21 +105,25 @@ fn completion_text_edit(
             CompletionInsertText::Text(text) => text,
             CompletionInsertText::Snippet(snippet) => snippet,
         };
-        CompletionTextEdit::Edit(TextEdit {
-            range: position::range(line_index, edit.replace),
+        CompletionTextEdit::Edit(text_edit::new(
+            line_index,
+            position::range(line_index, edit.replace),
             new_text,
-        })
+        ))
     })
 }
 
 #[cfg(test)]
 mod tests {
     use ls_types::{CompletionTextEdit, Documentation, MarkupKind};
-    use rg_analysis::{CompletionApplicability, CompletionEdit, CompletionInsertText};
+    use rg_analysis::{
+        CompletionAdditionalEdit, CompletionApplicability, CompletionEdit, CompletionInsertText,
+        CompletionItem, CompletionKind, CompletionTarget, KeywordCompletion,
+    };
     use rg_parse::{LineIndex, Span, TextSpan};
 
     use super::{
-        completion_detail, completion_insert_text_format, completion_text_edit,
+        completion_detail, completion_insert_text_format, completion_item, completion_text_edit,
         markdown_documentation,
     };
 
@@ -162,8 +169,8 @@ mod tests {
     }
 
     #[test]
-    fn renders_snippet_completion_text() {
-        let line_index = LineIndex::new("fn");
+    fn renders_snippet_completion_text_with_crlf() {
+        let line_index = LineIndex::new("fn\r\n");
         let insert_text =
             CompletionInsertText::Snippet("fn ${1:name}(${2:args}) {\n    $0\n}".to_string());
         let edit = completion_text_edit(
@@ -184,6 +191,48 @@ mod tests {
         let Some(CompletionTextEdit::Edit(edit)) = edit else {
             panic!("snippet completion should use a replacement text edit");
         };
-        assert_eq!(edit.new_text, "fn ${1:name}(${2:args}) {\n    $0\n}");
+        assert_eq!(edit.new_text, "fn ${1:name}(${2:args}) {\r\n    $0\r\n}");
+    }
+
+    #[test]
+    fn renders_additional_completion_edits_with_crlf() {
+        let line_index = LineIndex::new("HashM\r\n");
+        let completion = completion_item(
+            CompletionItem {
+                label: "HashMap".to_string(),
+                filter_text: None,
+                kind: CompletionKind::Keyword,
+                target: CompletionTarget::Keyword(KeywordCompletion::Use),
+                applicability: CompletionApplicability::Known,
+                detail: None,
+                documentation: None,
+                sort_text: String::new(),
+                insert_text: CompletionInsertText::Plain,
+                edit: Some(CompletionEdit {
+                    replace: Span {
+                        text: TextSpan { start: 0, end: 5 },
+                    },
+                }),
+                additional_edits: vec![CompletionAdditionalEdit {
+                    replace: Span {
+                        text: TextSpan { start: 0, end: 0 },
+                    },
+                    new_text: "use std::collections::HashMap;\n".to_string(),
+                }],
+            },
+            &line_index,
+        );
+
+        let [additional_edit] = completion
+            .additional_text_edits
+            .as_deref()
+            .expect("completion should contain its auto-import edit")
+        else {
+            panic!("completion should contain one auto-import edit");
+        };
+        assert_eq!(
+            additional_edit.new_text,
+            "use std::collections::HashMap;\r\n"
+        );
     }
 }

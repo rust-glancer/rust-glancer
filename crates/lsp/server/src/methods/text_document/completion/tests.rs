@@ -11,6 +11,7 @@ use rg_lsp_proto::{
     EditorDocumentSnapshot, EngineConfig, EngineResult, EngineService, EngineServiceClient,
     GlobalPositionSnapshot, QueryError, QueryScope, QueryValue, SaveProposal, SavedProjectChanges,
 };
+use rg_std::NormalizedPathBuf;
 use tarpc::{
     client::Config as TarpcClientConfig,
     context,
@@ -42,6 +43,7 @@ use crate::{
     inlay_refresher::InlayRefresher,
     methods::{CompletionMethodContext, DocumentMethodContext},
     recent_editor_saves::RecentEditorSaves,
+    tests::synthetic_test_path,
 };
 
 const TEST_TIMEOUT: Duration = Duration::from_secs(2);
@@ -143,6 +145,7 @@ struct CompletionLspFixture {
     attempts: mpsc::UnboundedReceiver<ObservedCompletionAttempt>,
     opened: Arc<Notify>,
     changed: Arc<Notify>,
+    workspace: PathBuf,
     uri: Uri,
     cursor: Position,
     version: i32,
@@ -177,8 +180,12 @@ impl CompletionLspFixture {
         let (client_input, server_input) = tokio::io::duplex(64 * 1024);
         let (server_output, client_output) = tokio::io::duplex(64 * 1024);
         let server = tokio::spawn(Server::new(server_input, server_output, socket).serve(service));
-        let path = PathBuf::from("/workspace/src/lib.rs");
-        let uri = Uri::from_file_path(&path).expect("test path should convert to URI");
+        let workspace = synthetic_test_path("workspace");
+        let path = workspace.join("src/lib.rs");
+        let workspace_uri = rg_lsp_proto::path_to_file_uri(&workspace)
+            .expect("test workspace should convert to URI");
+        let uri =
+            rg_lsp_proto::path_to_file_uri(&path).expect("test document should convert to URI");
         let mut fixture = Self {
             client_input,
             client_output: BufReader::new(client_output),
@@ -186,6 +193,7 @@ impl CompletionLspFixture {
             attempts,
             opened,
             changed,
+            workspace,
             uri,
             cursor,
             version: 1,
@@ -199,8 +207,8 @@ impl CompletionLspFixture {
                 "method": "initialize",
                 "params": {
                     "capabilities": {},
-                    "rootUri": "file:///workspace",
-                    "workspaceFolders": [{ "uri": "file:///workspace", "name": "workspace" }]
+                    "rootUri": workspace_uri.as_str(),
+                    "workspaceFolders": [{ "uri": workspace_uri.as_str(), "name": "workspace" }]
                 }
             }))
             .await;
@@ -252,8 +260,8 @@ impl CompletionLspFixture {
     }
 
     async fn open_sibling(&mut self, text: &str) -> Uri {
-        let path = PathBuf::from("/workspace/src/sibling.rs");
-        let uri = Uri::from_file_path(path).expect("sibling path should convert to URI");
+        let path = self.workspace.join("src/sibling.rs");
+        let uri = rg_lsp_proto::path_to_file_uri(path).expect("sibling path should convert to URI");
         self.send(serde_json::json!({
             "jsonrpc": "2.0",
             "method": "textDocument/didOpen",
@@ -527,7 +535,8 @@ impl LanguageServer for RawCompletionBackend {
         };
         route.publish(Ok(Some(OpenDocumentRoute::new(
             self.engine_client.clone(),
-            document.path().to_path_buf(),
+            NormalizedPathBuf::from_absolute(document.path())
+                .expect("opened test document path should normalize"),
         ))));
         self.opened.notify_one();
     }

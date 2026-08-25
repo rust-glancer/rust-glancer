@@ -40,8 +40,8 @@ mod store;
 
 pub use self::{
     cached::{
-        CachedCfgOptions, CachedDependency, CachedPackage, CachedPackageId, CachedPackageSlot,
-        CachedPackageSource, CachedPath, CachedRustEdition, CachedTarget, CachedTargetKind,
+        CachedCfgOptions, CachedDependency, CachedPackage, CachedPackageSlot, CachedPackageSource,
+        CachedPath, CachedRustEdition, CachedTarget, CachedTargetKind,
     },
     codec::PackageCacheCodec,
     fingerprint::Fingerprint,

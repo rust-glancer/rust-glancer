@@ -11,8 +11,8 @@ use rg_parse::{PackageParseSnapshot, ParseDb};
 use rg_workspace::{PackageSlot, WorkspaceMetadata};
 
 use super::{
-    CachedDependency, CachedPackage, CachedPackageId, CachedPackageSlot, CachedPackageSource,
-    CachedPath, CachedRustEdition, CachedTarget, CachedTargetKind, Fingerprint, PackageCacheHeader,
+    CachedDependency, CachedPackage, CachedPackageSlot, CachedPackageSource, CachedPath,
+    CachedRustEdition, CachedTarget, CachedTargetKind, Fingerprint, PackageCacheHeader,
     fingerprint,
 };
 use crate::PackageResidencyPolicy;
@@ -33,10 +33,9 @@ impl WorkspaceCachePlan {
     /// select a different artifact directory and make the previous generation disposable.
     pub(crate) fn generation_fingerprint(
         &self,
-        workspace_root: &Path,
         residency_policy: PackageResidencyPolicy,
     ) -> Fingerprint {
-        fingerprint::FingerprintBuilder::cache_generation(workspace_root, self, residency_policy)
+        fingerprint::FingerprintBuilder::cache_generation(self, residency_policy)
     }
 
     /// Builds cache metadata for the package targets analyzed by the current project.
@@ -52,21 +51,29 @@ impl WorkspaceCachePlan {
             .enumerate()
             .map(|(package_slot, package)| CachedPackage {
                 package: CachedPackageSlot::from_workspace(PackageSlot(package_slot)),
-                package_id: CachedPackageId::from_workspace(&package.id),
                 name: package.name.clone(),
                 source: CachedPackageSource::from(package.source),
                 edition: CachedRustEdition::from(package.edition),
-                manifest_path: CachedPath::from_workspace_path(&package.manifest_path),
+                manifest_path: CachedPath::from_workspace_path(
+                    workspace.workspace_root(),
+                    &package.manifest_path,
+                ),
                 cfg_options: super::CachedCfgOptions::from_workspace(&package.cfg_options),
                 targets: rg_parse::Package::analyzed_targets(package)
                     .iter()
-                    .map(CachedTarget::from_workspace_target)
+                    .map(|target| {
+                        CachedTarget::from_workspace_target(workspace.workspace_root(), target)
+                    })
                     .collect(),
                 dependencies: package
                     .dependencies
                     .iter()
                     .map(|dependency| CachedDependency {
-                        package_id: CachedPackageId::from_workspace(dependency.package_id()),
+                        package: CachedPackageSlot::from_workspace(
+                            workspace
+                                .package_slot(dependency.package_id())
+                                .expect("normalized dependency should reference a package slot"),
+                        ),
                         name: dependency.name().to_string(),
                         is_normal: dependency.is_normal(),
                         is_build: dependency.is_build(),
@@ -109,7 +116,13 @@ impl WorkspaceCachePlan {
                     return Ok(None);
                 }
 
-                fingerprint::FingerprintBuilder::package_source(workspace_root, package).map(Some)
+                fingerprint::FingerprintBuilder::package_source(
+                    workspace_root,
+                    self.package(PackageSlot(package_idx))
+                        .expect("checked cache package should remain present"),
+                    package,
+                )
+                .map(Some)
             })
             .collect()
     }
@@ -141,6 +154,8 @@ impl WorkspaceCachePlan {
 
             *slot = Some(fingerprint::FingerprintBuilder::package_source(
                 workspace_root,
+                self.package(*package)
+                    .expect("checked cache package should remain present"),
                 parse_package,
             )?);
         }
@@ -171,11 +186,11 @@ impl WorkspaceCachePlan {
 }
 
 impl CachedTarget {
-    fn from_workspace_target(target: &rg_workspace::CargoTarget) -> Self {
+    fn from_workspace_target(workspace_root: &Path, target: &rg_workspace::CargoTarget) -> Self {
         Self {
             name: target.name.clone(),
             kind: CachedTargetKind::from_workspace(&target.kind),
-            src_path: CachedPath::from_workspace_path(&target.src_path),
+            src_path: CachedPath::from_workspace_path(workspace_root, &target.src_path),
         }
     }
 }

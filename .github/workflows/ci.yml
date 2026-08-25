@@ -28,8 +28,12 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
 
   tests:
-    name: tests
-    runs-on: ubuntu-latest
+    name: tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
       - uses: ./.github/actions/cargo-cache
@@ -61,14 +65,57 @@ jobs:
       - name: Check test targets
         run: just check-test-targets
 
+  compare-lsp-windows:
+    name: compare-lsp (windows)
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: ./.github/actions/cargo-cache
+        with:
+          scope: ci-${{ github.job }}
+          target-dir: target
+          dependency-key: ${{ hashFiles('Cargo.lock', 'Cargo.toml', 'crates/**/Cargo.toml', 'rust-toolchain.toml') }}
+      - name: Fetch rust-analyzer fixture
+        shell: bash
+        run: ./test_targets/bench_fixtures/fetch-rust-analyzer.sh
+      - name: Install rust-analyzer server
+        run: rustup component add rust-analyzer
+      - name: Build rust-glancer
+        run: cargo build --release --locked -p rust-glancer
+      - name: Run LSP comparison
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force .ci/lsp | Out-Null
+          $env:RUST_GLANCER_COMPARE_LSP_RUST_ANALYZER = rustup which rust-analyzer
+          & ./target/release/rust-glancer.exe compare-lsp rust_analyzer `
+            --path test_targets/bench_fixtures/rust-analyzer `
+            --format json > .ci/lsp/result.json
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
+      - name: Check LSP comparison liveness
+        run: >-
+          python .github/scripts/check_lsp_compatibility_liveness.py
+          --report .ci/lsp/result.json
+
   client:
-    name: client
-    runs-on: ubuntu-latest
+    name: client (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
     defaults:
       run:
         working-directory: editors/code
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: ./.github/actions/cargo-cache
+        with:
+          scope: ci-${{ github.job }}
+          target-dir: target
+          dependency-key: ${{ hashFiles('Cargo.lock', 'Cargo.toml', 'crates/**/Cargo.toml', 'rust-toolchain.toml') }}
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
         with:
           node-version: 24.18.0
@@ -86,12 +133,22 @@ jobs:
         run: npm run check:test
       - name: Check client unit tests
         run: npm run check:unit
-      - name: Run client smoke test
-        run: xvfb-run -a npm run test
+      - name: Run client unit tests
+        run: npm run test:unit
+      - name: Run client end-to-end tests on Linux
+        if: runner.os == 'Linux'
+        run: xvfb-run -a npm run test:e2e
+      - name: Run client end-to-end tests natively
+        if: runner.os != 'Linux'
+        run: npm run test:e2e
 
   vsix-package:
-    name: vsix-package
-    runs-on: ubuntu-latest
+    name: vsix-package (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
@@ -111,6 +168,11 @@ jobs:
         working-directory: editors/code
       - name: Package VSIX
         run: npm run package:vsix
+        working-directory: editors/code
+      - name: Verify packaged VSIX
+        run: >-
+          node -e "if (!require('node:fs').readdirSync('../../dist').some((name) => name.endsWith('.vsix')))
+          throw new Error('Expected a host-native VSIX to be created')"
         working-directory: editors/code
 
   cargo-deny:
@@ -142,6 +204,7 @@ jobs:
       - lints
       - tests
       - test-targets
+      - compare-lsp-windows
       - client
       - vsix-package
       - docs

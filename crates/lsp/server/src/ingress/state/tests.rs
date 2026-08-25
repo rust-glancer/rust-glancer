@@ -1,10 +1,14 @@
-use std::{path::PathBuf, sync::Arc};
+use std::sync::Arc;
 
 use rg_lsp_proto::EngineServiceClient;
 use tarpc::client::Config as TarpcClientConfig;
 use tower_lsp_server::ls_types::{Position, Range, TextDocumentContentChangeEvent};
 
-use crate::{engine_client::EngineClient, engine_registry::OpenDocumentRoute};
+use crate::{
+    engine_client::EngineClient,
+    engine_registry::OpenDocumentRoute,
+    tests::{normalized_test_path, synthetic_test_path},
+};
 
 use super::{
     DiagnosticsPublication, DocumentRevision, EditorStateHandle, LifecycleEvent,
@@ -13,7 +17,7 @@ use super::{
 
 #[test]
 fn internal_revisions_ignore_repeated_reset_and_missing_client_versions() {
-    let path = PathBuf::from("/workspace/src/lib.rs");
+    let path = synthetic_test_path("workspace/src/lib.rs");
     let state = EditorStateHandle::default();
 
     let opened = state.open(path.clone(), Some(8), "fn v1() {}".to_string());
@@ -52,7 +56,7 @@ fn internal_revisions_ignore_repeated_reset_and_missing_client_versions() {
 
 #[test]
 fn close_and_reopen_allocates_a_new_session_even_when_client_version_resets() {
-    let path = PathBuf::from("/workspace/src/lib.rs");
+    let path = synthetic_test_path("workspace/src/lib.rs");
     let state = EditorStateHandle::default();
 
     let opened = state.open(path.clone(), Some(41), "fn first() {}".to_string());
@@ -81,7 +85,7 @@ fn close_and_reopen_allocates_a_new_session_even_when_client_version_resets() {
 
 #[test]
 fn invalid_incremental_range_makes_requests_unavailable_until_next_full_text() {
-    let path = PathBuf::from("/workspace/src/lib.rs");
+    let path = synthetic_test_path("workspace/src/lib.rs");
     let state = EditorStateHandle::default();
     state.open(path.clone(), Some(1), "fn first() {}".to_string());
 
@@ -108,7 +112,7 @@ fn invalid_incremental_range_makes_requests_unavailable_until_next_full_text() {
 
 #[test]
 fn unresolved_or_failed_route_does_not_discard_captured_editor_text() {
-    let path = PathBuf::from("/workspace/src/lib.rs");
+    let path = synthetic_test_path("workspace/src/lib.rs");
     let state = EditorStateHandle::default();
     let opened = state.open(path.clone(), Some(1), "fn retained() {}".to_string());
     let LifecycleEvent::Open { route, .. } = opened.event() else {
@@ -152,9 +156,9 @@ async fn global_input_accepts_matching_aliases_and_rejects_conflicts() {
         EngineServiceClient::new(TarpcClientConfig::default(), client_transport).spawn();
     let engine_client = EngineClient::new(engine_service_client);
     let state = EditorStateHandle::default();
-    let primary_path = PathBuf::from("/workspace/src/lib.rs");
-    let alias_path = PathBuf::from("/workspace-link/src/lib.rs");
-    let source_path = PathBuf::from("/canonical/workspace/src/lib.rs");
+    let primary_path = synthetic_test_path("workspace/src/lib.rs");
+    let alias_path = synthetic_test_path("workspace-link/src/lib.rs");
+    let source_path = normalized_test_path("canonical/workspace/src/lib.rs");
 
     for path in [&primary_path, &alias_path] {
         let opened = state.open(path.clone(), Some(1), "pub struct Shared;".to_string());
@@ -196,8 +200,9 @@ async fn global_input_waits_for_every_rust_sibling_route() {
         EngineServiceClient::new(TarpcClientConfig::default(), client_transport).spawn();
     let engine_client = EngineClient::new(engine_service_client);
     let state = EditorStateHandle::default();
-    let target = PathBuf::from("/workspace/src/lib.rs");
-    let sibling = PathBuf::from("/workspace/src/sibling.rs");
+    let target = synthetic_test_path("workspace/src/lib.rs");
+    let target_source = normalized_test_path("workspace/src/lib.rs");
+    let sibling = synthetic_test_path("workspace/src/sibling.rs");
 
     let opened = state.open(target.clone(), Some(1), "mod sibling;".to_string());
     let LifecycleEvent::Open { route, .. } = opened.event() else {
@@ -205,7 +210,7 @@ async fn global_input_waits_for_every_rust_sibling_route() {
     };
     route.publish(Ok(Some(OpenDocumentRoute::new(
         engine_client.clone(),
-        target.clone(),
+        target_source,
     ))));
     state.open(sibling.clone(), Some(1), "pub struct Sibling;".to_string());
 
@@ -222,7 +227,7 @@ async fn global_input_waits_for_every_rust_sibling_route() {
 
 #[test]
 fn save_proposal_keeps_the_revision_seen_at_ingress() {
-    let path = PathBuf::from("/workspace/src/lib.rs");
+    let path = synthetic_test_path("workspace/src/lib.rs");
     let state = EditorStateHandle::default();
     state.open(path.clone(), Some(1), "fn saved() {}".to_string());
     let saved = state
@@ -251,7 +256,7 @@ fn save_proposal_keeps_the_revision_seen_at_ingress() {
 
 #[test]
 fn save_without_text_proposes_the_exact_current_editor_value() {
-    let path = PathBuf::from("/workspace/src/lib.rs");
+    let path = synthetic_test_path("workspace/src/lib.rs");
     let state = EditorStateHandle::default();
     state.open(path.clone(), Some(7), "fn current() {}".to_string());
 
@@ -269,7 +274,7 @@ fn save_without_text_proposes_the_exact_current_editor_value() {
 
 #[test]
 fn target_change_invalidates_both_target_and_open_document_identity() {
-    let path = PathBuf::from("/workspace/src/lib.rs");
+    let path = synthetic_test_path("workspace/src/lib.rs");
     let state = EditorStateHandle::default();
     state.open(path.clone(), Some(1), "fn first() {}".to_string());
     let captured = state
@@ -298,8 +303,8 @@ fn target_change_invalidates_both_target_and_open_document_identity() {
 
 #[test]
 fn sibling_edit_invalidates_only_the_open_document_set_identity() {
-    let target = PathBuf::from("/workspace/src/lib.rs");
-    let sibling = PathBuf::from("/workspace/src/sibling.rs");
+    let target = synthetic_test_path("workspace/src/lib.rs");
+    let sibling = synthetic_test_path("workspace/src/sibling.rs");
     let state = EditorStateHandle::default();
     state.open(target.clone(), Some(1), "mod sibling;".to_string());
     state.open(sibling.clone(), Some(1), "pub struct First;".to_string());
@@ -329,7 +334,7 @@ fn sibling_edit_invalidates_only_the_open_document_set_identity() {
 
 #[test]
 fn close_and_reopen_invalidates_the_captured_session_signal() {
-    let path = PathBuf::from("/workspace/src/lib.rs");
+    let path = synthetic_test_path("workspace/src/lib.rs");
     let state = EditorStateHandle::default();
     state.open(path.clone(), Some(7), "fn old_session() {}".to_string());
     let captured = state
@@ -350,29 +355,93 @@ fn close_and_reopen_invalidates_the_captured_session_signal() {
 
 #[test]
 fn saved_diagnostics_require_exact_open_editor_text() {
-    let path = PathBuf::from("/workspace/src/lib.rs");
+    let path = synthetic_test_path("workspace/src/lib.rs");
+    let source_path = normalized_test_path("workspace/src/lib.rs");
     let state = EditorStateHandle::default();
     state.open(path.clone(), Some(7), "fn editor() {}".to_string());
 
     assert_eq!(
-        state.diagnostics_publication(&path, Some("fn saved() {}")),
-        DiagnosticsPublication::KeepVisible
+        state.diagnostics_publications(&source_path, Some("fn saved() {}")),
+        Vec::<DiagnosticsPublication>::new(),
     );
     assert_eq!(
-        state.diagnostics_publication(&path, Some("fn editor() {}")),
-        DiagnosticsPublication::Publish { version: Some(7) }
+        state.diagnostics_publications(&source_path, Some("fn editor() {}")),
+        vec![DiagnosticsPublication {
+            path: path.clone(),
+            version: Some(7),
+        }],
     );
 
     state.close(&path).expect("open document should close");
     assert_eq!(
-        state.diagnostics_publication(&path, None),
-        DiagnosticsPublication::Publish { version: None }
+        state.diagnostics_publications(&source_path, None),
+        vec![DiagnosticsPublication {
+            path: source_path.to_path_buf(),
+            version: None,
+        }],
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn saved_diagnostics_return_through_each_matching_editor_alias() {
+    let (client_transport, _server_transport) = tarpc::transport::channel::unbounded();
+    let engine_service_client =
+        EngineServiceClient::new(TarpcClientConfig::default(), client_transport).spawn();
+    let engine_client = EngineClient::new(engine_service_client);
+    let state = EditorStateHandle::default();
+    let primary_path = synthetic_test_path("workspace/src/lib.rs");
+    let alias_path = synthetic_test_path("workspace-link/src/lib.rs");
+    let source_path = normalized_test_path("canonical/workspace/src/lib.rs");
+
+    for (path, version) in [(&primary_path, 3), (&alias_path, 5)] {
+        let opened = state.open(
+            path.clone(),
+            Some(version),
+            "pub struct Shared;".to_string(),
+        );
+        let LifecycleEvent::Open { route, .. } = opened.event() else {
+            panic!("expected open lifecycle event");
+        };
+        route.publish(Ok(Some(OpenDocumentRoute::new(
+            engine_client.clone(),
+            source_path.clone(),
+        ))));
+    }
+
+    let mut publications = state.diagnostics_publications(&source_path, Some("pub struct Shared;"));
+    publications.sort_by(|left, right| left.path.cmp(&right.path));
+
+    let mut expected = vec![
+        DiagnosticsPublication {
+            path: primary_path.clone(),
+            version: Some(3),
+        },
+        DiagnosticsPublication {
+            path: alias_path.clone(),
+            version: Some(5),
+        },
+    ];
+    expected.sort_by(|left, right| left.path.cmp(&right.path));
+    assert_eq!(publications, expected);
+
+    assert!(
+        state
+            .change(&alias_path, Some(6), &[full("pub struct Unsaved;")])
+            .expect("alias edit should apply")
+    );
+    assert_eq!(
+        state.diagnostics_publications(&source_path, Some("pub struct Shared;")),
+        vec![DiagnosticsPublication {
+            path: primary_path,
+            version: Some(3),
+        }],
+        "the dirty alias should keep its prior diagnostics while the saved alias updates",
     );
 }
 
 #[test]
 fn incremental_changes_keep_complete_text_and_rebase_with_right_affinity() {
-    let path = PathBuf::from("/workspace/src/lib.rs");
+    let path = synthetic_test_path("workspace/src/lib.rs");
     let state = EditorStateHandle::default();
     state.open(path.clone(), Some(1), "impl RwLo".to_string());
     let captured = state
@@ -395,7 +464,7 @@ fn incremental_changes_keep_complete_text_and_rebase_with_right_affinity() {
 
 #[test]
 fn a_late_request_can_traverse_several_already_accepted_changes() {
-    let path = PathBuf::from("/workspace/src/lib.rs");
+    let path = synthetic_test_path("workspace/src/lib.rs");
     let state = EditorStateHandle::default();
     state.open(path.clone(), Some(1), "Hash".to_string());
     let captured = state
@@ -428,8 +497,8 @@ fn a_late_request_can_traverse_several_already_accepted_changes() {
 
 #[test]
 fn sibling_change_refreshes_snapshot_without_moving_target_position() {
-    let target = PathBuf::from("/workspace/src/lib.rs");
-    let sibling = PathBuf::from("/workspace/src/sibling.rs");
+    let target = synthetic_test_path("workspace/src/lib.rs");
+    let sibling = synthetic_test_path("workspace/src/sibling.rs");
     let state = EditorStateHandle::default();
     state.open(target.clone(), Some(1), "impl RwLo".to_string());
     state.open(sibling.clone(), Some(1), "pub struct First;".to_string());
@@ -460,7 +529,7 @@ fn sibling_change_refreshes_snapshot_without_moving_target_position() {
 
 #[test]
 fn full_replacement_never_reuses_an_unproven_numeric_position() {
-    let path = PathBuf::from("/workspace/src/lib.rs");
+    let path = synthetic_test_path("workspace/src/lib.rs");
     let state = EditorStateHandle::default();
     state.open(path.clone(), Some(1), "impl OldName".to_string());
     let captured = state
@@ -482,7 +551,7 @@ fn full_replacement_never_reuses_an_unproven_numeric_position() {
 
 #[test]
 fn recapture_never_crosses_a_close_and_reopen_boundary() {
-    let path = PathBuf::from("/workspace/src/lib.rs");
+    let path = synthetic_test_path("workspace/src/lib.rs");
     let state = EditorStateHandle::default();
     state.open(path.clone(), Some(1), "impl Old".to_string());
     let captured = state
@@ -500,7 +569,7 @@ fn recapture_never_crosses_a_close_and_reopen_boundary() {
 
 #[test]
 fn forward_transformations_drop_with_the_oldest_capture() {
-    let path = PathBuf::from("/workspace/src/lib.rs");
+    let path = synthetic_test_path("workspace/src/lib.rs");
     let state = EditorStateHandle::default();
     state.open(path.clone(), Some(1), "RwLo".to_string());
     let captured = state

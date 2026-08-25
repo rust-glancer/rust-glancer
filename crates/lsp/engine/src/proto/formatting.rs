@@ -8,15 +8,17 @@ use dissimilar::Chunk;
 use ls_types::{Position, Range, TextEdit};
 use rg_parse::LineIndex;
 
+use crate::proto::text_edit;
+
 pub(crate) fn document_edits(
     old_text: &str,
     formatted_text: String,
+    line_index: &LineIndex,
 ) -> anyhow::Result<Vec<TextEdit>> {
     if formatted_text == old_text {
         return Ok(Vec::new());
     }
 
-    let line_index = LineIndex::new(old_text);
     let mut old_offset = 0;
     let mut edits = Vec::new();
 
@@ -28,17 +30,19 @@ pub(crate) fn document_edits(
             Chunk::Delete(text) => {
                 let start = old_offset;
                 let end = old_offset + text.len();
-                edits.push(TextEdit {
-                    range: range(&line_index, start, end)?,
-                    new_text: String::new(),
-                });
+                edits.push(text_edit::new(
+                    line_index,
+                    range(line_index, start, end)?,
+                    String::new(),
+                ));
                 old_offset = end;
             }
             Chunk::Insert(text) => {
-                edits.push(TextEdit {
-                    range: range(&line_index, old_offset, old_offset)?,
-                    new_text: text.to_owned(),
-                });
+                edits.push(text_edit::new(
+                    line_index,
+                    range(line_index, old_offset, old_offset)?,
+                    text.to_owned(),
+                ));
             }
         }
     }
@@ -60,11 +64,14 @@ fn range(line_index: &LineIndex, start: usize, end: usize) -> anyhow::Result<Ran
 
 #[cfg(test)]
 mod tests {
+    use rg_parse::LineIndex;
+
     use super::document_edits;
 
     #[test]
     fn unchanged_text_returns_no_edits() {
-        let edits = document_edits("fn main() {}\n", "fn main() {}\n".to_string())
+        let source = "fn main() {}\n";
+        let edits = document_edits(source, source.to_string(), &LineIndex::new(source))
             .expect("unchanged formatting should succeed");
 
         assert!(edits.is_empty());
@@ -72,9 +79,11 @@ mod tests {
 
     #[test]
     fn inserted_text_becomes_an_insert_edit() {
+        let source = "fn main() {\n}\n";
         let edits = document_edits(
-            "fn main() {\n}\n",
+            source,
             "fn main() {\n    work();\n}\n".to_string(),
+            &LineIndex::new(source),
         )
         .expect("changed formatting should succeed");
 
@@ -87,10 +96,28 @@ mod tests {
     }
 
     #[test]
-    fn deleted_text_becomes_a_delete_edit() {
+    fn inserted_text_uses_crlf_for_crlf_source() {
+        let source = "fn main() {\r\n}\r\n";
         let edits = document_edits(
-            "fn main() {\n    work();\n}\n",
+            source,
+            "fn main() {\r\n    work();\r\n}\r\n".to_string(),
+            &LineIndex::new(source),
+        )
+        .expect("changed formatting should succeed");
+
+        assert_eq!(edits.len(), 1);
+        assert_eq!(edits[0].range.start.line, 1);
+        assert_eq!(edits[0].range.start.character, 0);
+        assert_eq!(edits[0].new_text, "    work();\r\n");
+    }
+
+    #[test]
+    fn deleted_text_becomes_a_delete_edit() {
+        let source = "fn main() {\n    work();\n}\n";
+        let edits = document_edits(
+            source,
             "fn main() {\n}\n".to_string(),
+            &LineIndex::new(source),
         )
         .expect("changed formatting should succeed");
 
@@ -104,7 +131,8 @@ mod tests {
 
     #[test]
     fn edit_ranges_use_utf16_positions() {
-        let edits = document_edits("🦀value", "🦀value2".to_string())
+        let source = "🦀value";
+        let edits = document_edits(source, "🦀value2".to_string(), &LineIndex::new(source))
             .expect("changed formatting should succeed");
 
         assert_eq!(edits.len(), 1);

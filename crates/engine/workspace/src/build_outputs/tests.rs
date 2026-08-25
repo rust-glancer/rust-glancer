@@ -85,6 +85,18 @@ include!(concat!(env!("OUT_DIR"), "/generated.rs"));
     let older_generated = older_out.join("generated.rs");
     let selected_generated = selected_out.join("generated.rs");
     let fallback_generated = fallback_out.join("generated.rs");
+    let older_build_output = older_out
+        .parent()
+        .expect("older output directory should have a unit")
+        .join("output");
+    let selected_build_output = selected_out
+        .parent()
+        .expect("selected output directory should have a unit")
+        .join("output");
+    let fallback_build_output = fallback_out
+        .parent()
+        .expect("fallback output directory should have a unit")
+        .join("output");
     fs::write(&older_generated, "pub struct Older;")
         .expect("older generated source should be written");
     fs::write(&selected_generated, "pub struct Selected;")
@@ -92,27 +104,18 @@ include!(concat!(env!("OUT_DIR"), "/generated.rs"));
     fs::write(&fallback_generated, "pub struct Fallback;")
         .expect("fallback generated source should be written");
     fs::write(
-        older_out
-            .parent()
-            .expect("output directory should have a unit")
-            .join("output"),
+        &older_build_output,
         "cargo:rustc-env=GENERATED_NAME=older.rs\n",
     )
     .expect("older build output should be written");
     fs::write(
-        selected_out
-            .parent()
-            .expect("output directory should have a unit")
-            .join("output"),
+        &selected_build_output,
         "cargo::rustc-cfg=recovered_cfg\n\
          cargo:rustc-env=GENERATED_NAME=generated.rs\n",
     )
     .expect("selected build output should be written");
     fs::write(
-        fallback_out
-            .parent()
-            .expect("fallback output directory should have a unit")
-            .join("output"),
+        &fallback_build_output,
         "cargo:rustc-env=GENERATED_NAME=fallback.rs\n",
     )
     .expect("fallback build output should be written");
@@ -126,21 +129,13 @@ include!(concat!(env!("OUT_DIR"), "/generated.rs"));
 
     // The build output itself is deliberately newer for the losing candidate. Selection follows
     // the crate compilation record, because Cargo can reuse old build-script output in a new unit.
-    set_modified(
-        older_out.parent().expect("older output should have a unit"),
-        Duration::from_secs(30),
-    );
-    set_modified(
-        selected_out
-            .parent()
-            .expect("selected output should have a unit"),
-        Duration::from_secs(10),
-    );
-    set_modified(&older_dep_info, Duration::from_secs(20));
-    set_modified(&selected_dep_info, Duration::from_secs(40));
+    set_file_modified(&older_build_output, Duration::from_secs(30));
+    set_file_modified(&selected_build_output, Duration::from_secs(10));
+    set_file_modified(&older_dep_info, Duration::from_secs(20));
+    set_file_modified(&selected_dep_info, Duration::from_secs(40));
     // A newer historical unit in the target-directory fallback must not override a usable unit
     // from Cargo's reported build directory.
-    set_modified(&fallback_dep_info, Duration::from_secs(80));
+    set_file_modified(&fallback_dep_info, Duration::from_secs(80));
 
     let workspace = WorkspaceMetadata::for_tests(metadata, WorkspaceLoweringConfig::default())
         .expect("workspace metadata should lower");
@@ -233,8 +228,8 @@ include!(concat!(env!("OUT_DIR"), "/binary.rs"));
             .expect("binary target root should canonicalize"),
         &binary_generated,
     );
-    set_modified(&library_dep_info, Duration::from_secs(20));
-    set_modified(&binary_dep_info, Duration::from_secs(40));
+    set_file_modified(&library_dep_info, Duration::from_secs(20));
+    set_file_modified(&binary_dep_info, Duration::from_secs(40));
 
     let workspace = WorkspaceMetadata::for_tests(metadata, WorkspaceLoweringConfig::default())
         .expect("multi-target workspace metadata should lower");
@@ -480,9 +475,12 @@ fn write_dep_info(path: &Path, crate_root: &Path, generated: &Path) {
     .expect("dep-info should be written");
 }
 
-fn set_modified(path: &Path, since_epoch: Duration) {
-    File::open(path)
-        .expect("timestamp target should open")
+fn set_file_modified(path: &Path, since_epoch: Duration) {
+    // Windows requires write access on the file handle before it will update timestamps.
+    File::options()
+        .write(true)
+        .open(path)
+        .expect("timestamp target should open for writing")
         .set_times(FileTimes::new().set_modified(UNIX_EPOCH + since_epoch))
         .expect("timestamp should be set");
 }

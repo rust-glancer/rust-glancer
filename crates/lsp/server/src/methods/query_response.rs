@@ -152,7 +152,7 @@ mod tests {
         internal_error, into_lsp_error, validate_global_operation, validate_target_document,
         validate_workspace,
     };
-    use crate::ingress::EditorStateHandle;
+    use crate::{ingress::EditorStateHandle, tests::synthetic_test_path};
 
     #[test]
     fn internal_error_preserves_context_chain() {
@@ -182,7 +182,7 @@ mod tests {
 
     #[test]
     fn document_query_reports_an_edit_that_arrived_after_analysis() {
-        let path = PathBuf::from("/workspace/src/lib.rs");
+        let path = synthetic_test_path("workspace/src/lib.rs");
         let editor = EditorStateHandle::default();
         editor.open(path.clone(), Some(1), "fn first() {}".to_string());
         let captured = editor
@@ -210,8 +210,8 @@ mod tests {
 
     #[test]
     fn target_document_query_ignores_a_later_sibling_edit() {
-        let target = PathBuf::from("/workspace/src/lib.rs");
-        let sibling = PathBuf::from("/workspace/src/sibling.rs");
+        let target = synthetic_test_path("workspace/src/lib.rs");
+        let sibling = synthetic_test_path("workspace/src/sibling.rs");
         let editor = EditorStateHandle::default();
         editor.open(target.clone(), Some(1), "fn target() {}".to_string());
         editor.open(sibling.clone(), Some(1), "fn sibling() {}".to_string());

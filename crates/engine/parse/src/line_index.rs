@@ -4,8 +4,32 @@ use crate::span::Position;
 use rg_std::MemorySize;
 use wincode::{SchemaRead, SchemaWrite};
 
+/// Newline sequence used by source text when it contains at least one line break.
+///
+/// Mixed source is treated as CRLF when any CRLF sequence is present. Generated edits then use one
+/// predictable style instead of extending the mixture with new LF-only text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
+#[memsize(leaf)]
+pub enum LineEndings {
+    Lf,
+    Crlf,
+}
+
+impl LineEndings {
+    /// Rewrites actual line breaks to this source style without changing escaped `\\n` text.
+    pub fn normalize_text(self, text: String) -> String {
+        match self {
+            Self::Lf if text.contains("\r\n") => text.replace("\r\n", "\n"),
+            Self::Lf => text,
+            Self::Crlf if text.contains('\n') => text.replace("\r\n", "\n").replace('\n', "\r\n"),
+            Self::Crlf => text,
+        }
+    }
+}
+
 #[derive(Debug, Clone, MemorySize)]
 pub struct LineIndex {
+    line_endings: LineEndings,
     pub(crate) lines: LineIndexStorage<LineInfo>,
     pub(crate) non_ascii_lines: LineIndexStorage<LineUtf16Metrics>,
     pub(crate) non_ascii_ranges: LineIndexStorage<LineCharRange>,
@@ -15,15 +39,20 @@ impl LineIndex {
     /// Builds a fast line-start index for repeated offset-to-position lookups.
     pub fn new(source: &str) -> Self {
         let mut index = Self {
+            line_endings: LineEndings::Lf,
             lines: LineIndexStorage::new(),
             non_ascii_lines: LineIndexStorage::new(),
             non_ascii_ranges: LineIndexStorage::new(),
         };
         let mut line_start = 0;
         let mut line = 0;
+        let source_bytes = source.as_bytes();
 
-        for (idx, byte) in source.as_bytes().iter().enumerate() {
+        for (idx, byte) in source_bytes.iter().enumerate() {
             if *byte == b'\n' {
+                if idx > 0 && source_bytes[idx - 1] == b'\r' {
+                    index.line_endings = LineEndings::Crlf;
+                }
                 index.push_line(source, line, line_start, idx + 1);
                 line_start = idx + 1;
                 line += 1;
@@ -32,6 +61,10 @@ impl LineIndex {
         index.push_line(source, line, line_start, source.len());
 
         index
+    }
+
+    pub fn line_endings(&self) -> LineEndings {
+        self.line_endings
     }
 
     pub(crate) fn pack_many(indexes: &mut [&mut Self]) {
@@ -56,7 +89,9 @@ impl LineIndex {
         let non_ascii_ranges = Arc::<[LineCharRange]>::from(non_ascii_ranges.into_boxed_slice());
 
         for (index, range) in indexes.iter_mut().zip(ranges) {
+            let line_endings = index.line_endings;
             **index = Self {
+                line_endings,
                 lines: LineIndexStorage::shared(lines.clone(), range.lines),
                 non_ascii_lines: LineIndexStorage::shared(
                     non_ascii_lines.clone(),
@@ -72,6 +107,7 @@ impl LineIndex {
 
     pub fn to_snapshot(&self) -> LineIndexSnapshot {
         LineIndexSnapshot {
+            line_endings: self.line_endings,
             lines: self.lines.as_slice().to_vec(),
             non_ascii_lines: self.non_ascii_lines.as_slice().to_vec(),
             non_ascii_ranges: self.non_ascii_ranges.as_slice().to_vec(),
@@ -80,6 +116,7 @@ impl LineIndex {
 
     pub fn from_snapshot(snapshot: LineIndexSnapshot) -> Self {
         Self {
+            line_endings: snapshot.line_endings,
             lines: LineIndexStorage::Owned(snapshot.lines),
             non_ascii_lines: LineIndexStorage::Owned(snapshot.non_ascii_lines),
             non_ascii_ranges: LineIndexStorage::Owned(snapshot.non_ascii_ranges),
@@ -229,6 +266,7 @@ impl LineIndex {
 
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
 pub struct LineIndexSnapshot {
+    pub(crate) line_endings: LineEndings,
     pub(crate) lines: Vec<LineInfo>,
     pub(crate) non_ascii_lines: Vec<LineUtf16Metrics>,
     pub(crate) non_ascii_ranges: Vec<LineCharRange>,
@@ -467,8 +505,42 @@ impl LineCharRange {
 
 #[cfg(test)]
 mod tests {
-    use super::LineIndex;
+    use super::{LineEndings, LineIndex};
     use crate::Position;
+
+    #[test]
+    fn records_source_line_endings() {
+        let cases = [
+            ("no line breaks", "fn main() {}", LineEndings::Lf),
+            ("LF", "fn main() {}\n", LineEndings::Lf),
+            ("CRLF", "fn main() {}\r\n", LineEndings::Crlf),
+            ("mixed", "first\nsecond\r\n", LineEndings::Crlf),
+        ];
+
+        for (case, source, expected) in cases {
+            let index = LineIndex::new(source);
+            assert_eq!(index.line_endings(), expected, "{case}");
+            assert_eq!(
+                LineIndex::from_snapshot(index.to_snapshot()).line_endings(),
+                expected,
+                "{case} snapshot"
+            );
+        }
+    }
+
+    #[test]
+    fn normalizes_text_to_source_line_endings() {
+        let text = "first\r\nsecond\n".to_string();
+
+        assert_eq!(
+            LineEndings::Lf.normalize_text(text.clone()),
+            "first\nsecond\n"
+        );
+        assert_eq!(
+            LineEndings::Crlf.normalize_text(text),
+            "first\r\nsecond\r\n"
+        );
+    }
 
     #[test]
     fn converts_ascii_offsets_to_utf16_positions() {
@@ -516,6 +588,9 @@ mod tests {
         let mut first = LineIndex::new("é\n𝄞a");
         let mut second = LineIndex::new("a\r\nbb\n");
         LineIndex::pack_many(&mut [&mut first, &mut second]);
+
+        assert_eq!(first.line_endings(), LineEndings::Lf);
+        assert_eq!(second.line_endings(), LineEndings::Crlf);
 
         assert!(matches!(
             &first.lines,

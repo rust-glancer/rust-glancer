@@ -22,6 +22,7 @@ use std::{
 };
 
 use rg_lsp_proto::{EditorDocumentSnapshot, OpenDocumentSession, SaveProposal};
+use rg_std::NormalizedPathBuf;
 use tokio::sync::watch;
 
 use crate::{engine_client::EngineClient, engine_registry::OpenDocumentRoute};
@@ -144,6 +145,11 @@ impl SessionRoute {
     pub(crate) fn engine_client(&self) -> Result<EngineClient, Arc<str>> {
         self.analysis_route()
             .map(|route| route.engine_client().clone())
+    }
+
+    pub(crate) fn source_path(&self) -> Result<NormalizedPathBuf, Arc<str>> {
+        self.analysis_route()
+            .map(|route| route.source_path().clone())
     }
 
     pub(super) fn analysis_route(&self) -> Result<OpenDocumentRoute, Arc<str>> {

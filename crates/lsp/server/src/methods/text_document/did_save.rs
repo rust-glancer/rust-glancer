@@ -26,7 +26,7 @@ pub(crate) async fn did_save(
         return;
     };
     let path = proposal.path().to_path_buf();
-    if path != notified_path {
+    if path != notified_path.as_path() {
         tracing::error!("didSave proposal does not match its LSP notification path");
         return;
     }

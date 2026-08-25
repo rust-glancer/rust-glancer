@@ -4,10 +4,9 @@
 //! does not start processes or perform RPCs; the surrounding registry turns its route decisions
 //! into engine lifecycle actions.
 
-use std::{
-    collections::BTreeMap,
-    path::{Path, PathBuf},
-};
+use std::collections::BTreeMap;
+
+use rg_std::NormalizedPathBuf;
 
 /// Pure routing state for choosing which engine owns an LSP operation.
 ///
@@ -15,16 +14,19 @@ use std::{
 /// folders, Cargo workspace roots, and exact open-file ownership.
 #[derive(Debug, Default)]
 pub(crate) struct EngineRouting {
-    workspace_folders: Vec<PathBuf>,
-    engine_ids_by_root: BTreeMap<PathBuf, EngineId>,
-    engine_ids_by_open_file: BTreeMap<PathBuf, EngineId>,
+    workspace_folders: Vec<NormalizedPathBuf>,
+    engine_ids_by_root: BTreeMap<NormalizedPathBuf, EngineId>,
+    engine_ids_by_open_file: BTreeMap<NormalizedPathBuf, EngineId>,
     last_active_id: Option<EngineId>,
 }
 
 impl EngineRouting {
     /// Replaces the VS Code workspace folders that are allowed to auto-spawn engines.
-    pub(crate) fn set_workspace_folders(&mut self, folders: impl IntoIterator<Item = PathBuf>) {
-        self.workspace_folders = folders.into_iter().map(normalize_path).collect();
+    pub(crate) fn set_workspace_folders(
+        &mut self,
+        folders: impl IntoIterator<Item = NormalizedPathBuf>,
+    ) {
+        self.workspace_folders = folders.into_iter().collect();
         self.workspace_folders.sort();
         self.workspace_folders.dedup();
     }
@@ -38,13 +40,14 @@ impl EngineRouting {
     }
 
     /// Returns the workspace folder whose subtree may auto-spawn engines for this document.
-    pub(crate) fn discovery_workspace_for(&self, path: &Path) -> Option<&Path> {
-        let path = normalize_path(path);
+    pub(crate) fn discovery_workspace_for(
+        &self,
+        path: &NormalizedPathBuf,
+    ) -> Option<&NormalizedPathBuf> {
         self.workspace_folders
             .iter()
-            .filter(|workspace_folder| path.starts_with(workspace_folder.as_path()))
-            .max_by_key(|workspace_folder| workspace_folder.components().count())
-            .map(PathBuf::as_path)
+            .filter(|workspace_folder| path.starts_with(workspace_folder))
+            .max_by_key(|workspace_folder| workspace_folder.as_path().components().count())
     }
 
     /// Routes a Cargo-resolved workspace root into its owning workspace engine.
@@ -53,9 +56,8 @@ impl EngineRouting {
     /// Concurrent callers therefore converge on the same id while the registry starts the process.
     pub(crate) fn route_workspace_root(
         &mut self,
-        workspace_root: PathBuf,
+        workspace_root: NormalizedPathBuf,
     ) -> Option<WorkspaceEngineRoute> {
-        let workspace_root = normalize_path(workspace_root);
         if let Some(id) = self.engine_ids_by_root.get(&workspace_root).copied() {
             return Some(WorkspaceEngineRoute::Existing(id));
         }
@@ -74,42 +76,40 @@ impl EngineRouting {
     }
 
     /// Records which engine owns an opened document.
-    pub(crate) fn set_open_file(&mut self, path: PathBuf, id: EngineId) {
-        self.engine_ids_by_open_file
-            .insert(normalize_path(path), id);
+    pub(crate) fn set_open_file(&mut self, path: NormalizedPathBuf, id: EngineId) {
+        self.engine_ids_by_open_file.insert(path, id);
     }
 
     /// Removes ownership unconditionally, or only when it still belongs to the expected engine.
     pub(crate) fn remove_open_file(
         &mut self,
-        path: &Path,
+        path: &NormalizedPathBuf,
         owner: Option<EngineId>,
     ) -> Option<EngineId> {
-        let path = normalize_path(path);
-        if owner.is_none() || self.engine_ids_by_open_file.get(&path).copied() == owner {
-            return self.engine_ids_by_open_file.remove(&path);
+        if owner.is_none() || self.engine_ids_by_open_file.get(path).copied() == owner {
+            return self.engine_ids_by_open_file.remove(path);
         }
 
         None
     }
 
     /// Returns the engine that owns an open document, if the editor told us about it.
-    pub(crate) fn open_file_owner(&self, path: &Path) -> Option<EngineId> {
-        self.engine_ids_by_open_file
-            .get(&normalize_path(path))
-            .copied()
+    pub(crate) fn open_file_owner(&self, path: &NormalizedPathBuf) -> Option<EngineId> {
+        self.engine_ids_by_open_file.get(path).copied()
     }
 
     /// Returns the engine whose known workspace root contains this path.
     ///
     /// Watched-file notifications are filesystem facts, not document opens. Routing them through
     /// already-known roots avoids surprising engine startups for paths the editor never touched.
-    pub(crate) fn engine_id_for_known_root_path(&self, path: &Path) -> Option<EngineId> {
-        let path = normalize_path(path);
+    pub(crate) fn engine_id_for_known_root_path(
+        &self,
+        path: &NormalizedPathBuf,
+    ) -> Option<EngineId> {
         self.engine_ids_by_root
             .iter()
-            .filter(|(root, _)| path.starts_with(root.as_path()))
-            .max_by_key(|(root, _)| root.components().count())
+            .filter(|(root, _)| path.starts_with(root))
+            .max_by_key(|(root, _)| root.as_path().components().count())
             .map(|(_, id)| *id)
     }
 
@@ -118,26 +118,25 @@ impl EngineRouting {
     /// The native watcher is created per editor folder, while Cargo discovery can create several
     /// more specific engine roots below it. A filesystem burst must publish updating status for
     /// every such existing engine before waiting for the workspace-wide quiet period.
-    pub(crate) fn engine_ids_for_workspace(
-        &self,
-        workspace: &Path,
-    ) -> impl Iterator<Item = EngineId> + '_ {
-        let workspace = normalize_path(workspace);
+    pub(crate) fn engine_ids_for_workspace<'a>(
+        &'a self,
+        workspace: &'a NormalizedPathBuf,
+    ) -> impl Iterator<Item = EngineId> + 'a {
         self.engine_ids_by_root
             .iter()
-            .filter_map(move |(root, id)| root.starts_with(&workspace).then_some(*id))
+            .filter_map(move |(root, id)| root.starts_with(workspace).then_some(*id))
     }
 
-    pub(crate) fn root_for_id(&self, id: EngineId) -> Option<&Path> {
+    pub(crate) fn root_for_id(&self, id: EngineId) -> Option<&NormalizedPathBuf> {
         self.engine_ids_by_root
             .iter()
-            .find_map(|(root, candidate)| (*candidate == id).then_some(root.as_path()))
+            .find_map(|(root, candidate)| (*candidate == id).then_some(root))
     }
 
-    fn is_workspace_root_allowed(&self, root: &Path) -> bool {
+    fn is_workspace_root_allowed(&self, root: &NormalizedPathBuf) -> bool {
         self.workspace_folders
             .iter()
-            .any(|workspace_folder| root.starts_with(workspace_folder.as_path()))
+            .any(|workspace_folder| root.starts_with(workspace_folder))
     }
 }
 
@@ -155,10 +154,8 @@ impl EngineId {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum WorkspaceEngineRoute {
     Existing(EngineId),
-    Spawn { new_id: EngineId, root: PathBuf },
-}
-
-pub(crate) fn normalize_path(path: impl AsRef<Path>) -> PathBuf {
-    let path = path.as_ref();
-    path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+    Spawn {
+        new_id: EngineId,
+        root: NormalizedPathBuf,
+    },
 }

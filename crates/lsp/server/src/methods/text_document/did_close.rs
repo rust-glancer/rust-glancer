@@ -16,9 +16,12 @@ pub(crate) async fn did_close(registry: Result<&EngineRegistry>) {
         return;
     };
 
-    // Remove the old route before a later reopen for this path can store its new route.
-    if let Ok(registry) = registry {
-        registry.close_document(&path).await;
+    // Registry ownership uses the normalized source selected at open time. Reusing that route also
+    // handles editor spellings such as symlinks and Windows aliases without normalizing twice.
+    if let Ok(registry) = registry
+        && let Ok(source_path) = route.source_path()
+    {
+        registry.close_document(&source_path).await;
     }
     if let Ok(engine_client) = route.engine_client() {
         engine_client

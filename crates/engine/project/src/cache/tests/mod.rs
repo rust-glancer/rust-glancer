@@ -5,7 +5,39 @@ use expect_test::expect;
 use rg_workspace::{PackageSlot, WorkspaceLoweringConfig, WorkspaceMetadata};
 use test_fixture::fixture_crate;
 
-use crate::cache::WorkspaceCachePlan;
+use crate::{PackageResidencyPolicy, cache::WorkspaceCachePlan, testonly::ProjectSourceFixture};
+
+#[test]
+fn cache_identity_uses_structure_instead_of_checkout_or_cargo_id_text() {
+    let fixture = r#"
+//- /Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct App;
+"#;
+    let left = ProjectSourceFixture::build(fixture);
+    let right = ProjectSourceFixture::build(fixture);
+    let left_workspace = left.workspace_metadata();
+    let right_workspace = right.workspace_metadata();
+
+    assert_ne!(
+        left_workspace.packages()[0].id,
+        right_workspace.packages()[0].id,
+        "Cargo should report distinct opaque IDs for distinct fixture checkouts",
+    );
+
+    let left_plan = WorkspaceCachePlan::build(&left_workspace);
+    let right_plan = WorkspaceCachePlan::build(&right_workspace);
+    assert_eq!(left_plan, right_plan);
+    assert_eq!(
+        left_plan.generation_fingerprint(PackageResidencyPolicy::default()),
+        right_plan.generation_fingerprint(PackageResidencyPolicy::default()),
+    );
+}
 
 #[test]
 fn plans_cache_artifacts_from_analyzed_targets() {
@@ -89,7 +121,6 @@ pub struct DevHelper;
 
             package #0 app
             schema 7
-            id path+file://./#app@0.1.0
             source workspace
             edition 2024
             manifest Cargo.toml
@@ -106,7 +137,6 @@ pub struct DevHelper;
 
             package #1 build-helper
             schema 7
-            id path+file://./build-helper#0.1.0
             source path
             edition 2021
             manifest build-helper/Cargo.toml
@@ -117,7 +147,6 @@ pub struct DevHelper;
 
             package #2 dep-pkg
             schema 7
-            id path+file://./dep#dep-pkg@0.1.0
             source path
             edition 2021
             manifest dep/Cargo.toml
@@ -128,7 +157,6 @@ pub struct DevHelper;
 
             package #3 dev-helper
             schema 7
-            id path+file://./dev-helper#0.1.0
             source path
             edition 2018
             manifest dev-helper/Cargo.toml
@@ -183,22 +211,22 @@ pub struct Dep;
         normal_plan
             .package(app)
             .expect("normal app package should exist")
-            .fingerprint(normal_workspace.workspace_root()),
+            .fingerprint(),
         test_plan
             .package(app)
             .expect("test app package should exist")
-            .fingerprint(test_workspace.workspace_root()),
+            .fingerprint(),
         "cfg(test) should select a distinct workspace package cache identity",
     );
     assert_eq!(
         normal_plan
             .package(dep)
             .expect("normal dep package should exist")
-            .fingerprint(normal_workspace.workspace_root()),
+            .fingerprint(),
         test_plan
             .package(dep)
             .expect("test dep package should exist")
-            .fingerprint(test_workspace.workspace_root()),
+            .fingerprint(),
         "dependency package cache identity should not change for workspace cfg(test)",
     );
 }
@@ -216,20 +244,9 @@ fn package_slot(workspace: &WorkspaceMetadata, package_name: &str) -> PackageSlo
 fn roundtrips_minimal_package_cache_artifact_codec() {
     utils::check_minimal_cache_artifact_codec(expect![[r#"
         encoded artifact has bytes true
-        5247504b47000001bb000000000000001c000000000000001000000000000000
-        2000000000000000070000000700000000000000220000000000000070617468
-        2b66696c653a2f2f2f776f726b737061636523656d70747940302e312e300000
-        000000000000000000000300000015000000000000002f776f726b7370616365
-        2f436172676f2e746f6d6c000000000000000000000000000000000000000000
-        0000000000000000000000070707070707070707070707070707070707070707
-        0707070707070707070707000000000000000000000000000000000000000000
-        0000000000000000000000030000000000000000000000000000000000000000
-        0000000000000000000000000000005247424f44590002100000000000000000
-        000000000000000000000000000000
 
         decoded artifact
         schema 7
-        source fingerprint 0707070707070707070707070707070707070707070707070707070707070707
         package #7 
         header targets 0
         parse files 0
@@ -257,7 +274,6 @@ pub struct App;
             encoded artifact has bytes true
             decoded artifact
             schema 7
-            source fingerprint c15eefc2727539a098da6dc03624a62761f2c4787b8b0208a27cfbbc61073011
             package #0 app
             header targets 1
             parse files 1

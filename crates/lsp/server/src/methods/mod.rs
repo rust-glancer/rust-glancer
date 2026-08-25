@@ -53,11 +53,7 @@ pub(crate) async fn shutdown(engine_client: EngineClient) -> anyhow::Result<()> 
 }
 
 pub(crate) fn uri_to_path(uri: &Uri) -> Option<PathBuf> {
-    if !uri.as_str().starts_with("file:") {
-        return None;
-    }
-
-    uri.to_file_path().map(|path| path.into_owned())
+    rg_lsp_proto::file_uri_to_path(uri).ok()
 }
 
 #[cfg(test)]
@@ -72,7 +68,8 @@ mod tests {
         let file_path = std::env::current_dir()
             .expect("test process should have a current directory")
             .join("src/lib.rs");
-        let file_uri = Uri::from_file_path(&file_path).expect("test path should convert to URI");
+        let file_uri =
+            rg_lsp_proto::path_to_file_uri(&file_path).expect("test path should convert to URI");
         let cases = [
             (file_uri, Some(file_path)),
             (

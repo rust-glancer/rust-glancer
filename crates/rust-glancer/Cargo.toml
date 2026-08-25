@@ -28,6 +28,7 @@ rg_project.workspace = true
 rg_profile.workspace = true
 rg_workspace.workspace = true
 rg_lsp_engine.workspace = true
+rg_lsp_proto.workspace = true
 rg_lsp_server.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true

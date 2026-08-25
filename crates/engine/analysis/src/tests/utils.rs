@@ -1,4 +1,7 @@
-use std::fmt::Write as _;
+use std::{
+    fmt::Write as _,
+    path::{Path, PathBuf},
+};
 
 use expect_test::Expect;
 
@@ -16,7 +19,10 @@ use rg_ir_view::testonly::ViewFixture;
 use rg_parse::{FileId, ParseDb, Span};
 use rg_semantic_ir::testonly::SemanticIrFixture;
 use rg_workspace::{SysrootSources, TargetKind, WorkspaceLoweringConfig, WorkspaceMetadata};
-use test_fixture::{CrateFixture, FixtureMarkers, fixture_crate, fixture_crate_with_markers};
+use test_fixture::{
+    CrateFixture, FixtureMarkers, fixture_crate, fixture_crate_with_markers,
+    fixture_path_for_snapshot,
+};
 
 pub(super) fn check_analysis_queries(fixture: &str, queries: &[AnalysisQuery], expect: Expect) {
     let (fixture, markers) = fixture_crate_with_markers(fixture);
@@ -378,6 +384,7 @@ enum ReferenceQueryScope {
 
 struct AnalysisFixtureDb {
     fixture: ViewFixture,
+    package_roots: Vec<PathBuf>,
 }
 
 impl AnalysisFixtureDb {
@@ -403,10 +410,16 @@ impl AnalysisFixtureDb {
         fixture: CrateFixture,
         workspace: WorkspaceMetadata,
     ) -> Self {
+        let package_roots = workspace
+            .packages()
+            .iter()
+            .map(|package| package.root_dir().to_path_buf())
+            .collect();
         let def_map = DefMapFixture::build_from_crate(fixture, workspace);
         let semantic_ir = SemanticIrFixture::build_from_def_map(def_map);
         Self {
             fixture: ViewFixture::build_from_semantic_ir(semantic_ir),
+            package_roots,
         }
     }
 
@@ -419,6 +432,33 @@ impl AnalysisFixtureDb {
 
     fn parse_db(&self) -> &ParseDb {
         self.fixture.parse_db()
+    }
+
+    /// Renders source locations relative to their Cargo package instead of exposing temporary
+    /// fixture roots or host-native path separators in snapshots.
+    fn render_file_path(&self, package: PackageSlot, file_id: FileId) -> String {
+        let parsed_package = self
+            .parse_db()
+            .packages()
+            .get(package.0)
+            .expect("snapshot package should exist while rendering a file path");
+        let path = parsed_package
+            .file_path(file_id)
+            .expect("snapshot file should exist while rendering a file path");
+        let package_root = self
+            .package_roots
+            .get(package.0)
+            .expect("snapshot package root should exist while rendering a file path");
+
+        // Cargo-generated sources may sit outside their package root. Their build directory is
+        // temporary and does not help a query snapshot, so preserve the old filename-only shape.
+        let relative = path.strip_prefix(package_root).unwrap_or_else(|_| {
+            Path::new(
+                path.file_name()
+                    .expect("snapshot source path should have a file name"),
+            )
+        });
+        fixture_path_for_snapshot(relative)
     }
 
     fn target_and_file_for_path(
@@ -1315,29 +1355,16 @@ impl<'a> AnalysisQuerySnapshot<'a> {
     }
 
     fn render_file_path(&self, package: PackageSlot, file_id: FileId) -> String {
-        let package = self
+        let parsed_package = self
             .db
             .parse_db()
             .packages()
             .get(package.0)
             .expect("reference package should exist while rendering file path");
-        let path = package
-            .file_path(file_id)
-            .expect("reference file should exist while rendering file path");
-        let path = path.to_string_lossy();
-
-        let relative_path = path
-            .rfind("/src/")
-            .map(|idx| path[idx + 1..].to_string())
-            .unwrap_or_else(|| {
-                path.rsplit('/')
-                    .next()
-                    .expect("path string should contain a file name")
-                    .to_string()
-            });
+        let relative_path = self.db.render_file_path(package, file_id);
 
         if self.db.parse_db().packages().len() > 1 {
-            format!("{}/{relative_path}", package.package_name())
+            format!("{}/{relative_path}", parsed_package.package_name())
         } else {
             relative_path
         }
@@ -1531,25 +1558,7 @@ impl<'a> AnalysisSymbolSnapshot<'a> {
     }
 
     fn render_file_path(&self, package: PackageSlot, file_id: FileId) -> String {
-        let package = self
-            .db
-            .parse_db()
-            .packages()
-            .get(package.0)
-            .expect("symbol package should exist while rendering file path");
-        let path = package
-            .file_path(file_id)
-            .expect("symbol file should exist while rendering file path");
-        let path = path.to_string_lossy();
-
-        path.rfind("/src/")
-            .map(|idx| path[idx + 1..].to_string())
-            .unwrap_or_else(|| {
-                path.rsplit('/')
-                    .next()
-                    .expect("path string should contain a file name")
-                    .to_string()
-            })
+        self.db.render_file_path(package, file_id)
     }
 
     fn render_source_span(&self, package: PackageSlot, file_id: FileId, span: Span) -> String {

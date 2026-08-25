@@ -9,11 +9,9 @@
 //! document before any async handler can start. The trait method therefore has no remaining work
 //! to move into a separate handler file.
 
-use std::{
-    borrow::Cow,
-    path::{Path, PathBuf},
-};
+use std::{borrow::Cow, path::Path};
 
+use anyhow::Context as _;
 use tower_lsp_server::{
     Client as LspClient, LanguageServer,
     jsonrpc::{Error, ErrorCode, Result},
@@ -21,6 +19,7 @@ use tower_lsp_server::{
 };
 
 use rg_lsp_proto::ClientCapabilities as EngineClientCapabilities;
+use rg_std::NormalizedPathBuf;
 use tokio::sync::OnceCell;
 
 use crate::{
@@ -151,7 +150,9 @@ impl Backend {
 impl LanguageServer for Backend {
     #[tracing::instrument(skip_all, fields(rg.method = "initialize"))]
     async fn initialize(&self, params: InitializeParams) -> Result<InitializeResult> {
-        let workspace_folders = workspace_folders(&params);
+        let workspace_folders = workspace_folders(&params).map_err(|error| {
+            Error::invalid_params(format!("invalid workspace folder: {error:#}"))
+        })?;
         if workspace_folders.is_empty() {
             return Err(Error::invalid_params(
                 "rust-glancer requires at least one filesystem workspace folder",
@@ -182,14 +183,7 @@ impl LanguageServer for Backend {
             workspace_folders,
             engines.clone(),
             self.recent_editor_saves.clone(),
-        )
-        .map_err(|error| Error {
-            code: ErrorCode::ServerError(-32003),
-            message: Cow::Owned(format!(
-                "failed to start rust-glancer project watcher: {error}"
-            )),
-            data: None,
-        })?;
+        );
 
         self.engines.set(engines).map_err(|_| Error {
             code: ErrorCode::InvalidRequest,
@@ -468,23 +462,30 @@ impl LanguageServer for Backend {
     }
 }
 
-fn workspace_folders(params: &InitializeParams) -> Vec<PathBuf> {
+fn workspace_folders(params: &InitializeParams) -> anyhow::Result<Vec<NormalizedPathBuf>> {
     let mut folders = params
         .workspace_folders
         .as_ref()
         .into_iter()
         .flatten()
-        .filter_map(|folder| methods::uri_to_path(&folder.uri))
-        .collect::<Vec<_>>();
+        .map(|folder| {
+            let path = rg_lsp_proto::file_uri_to_path(&folder.uri).with_context(|| {
+                format!("while converting workspace URI `{}`", folder.uri.as_str())
+            })?;
+            NormalizedPathBuf::from_absolute(&path)
+                .with_context(|| format!("while normalizing workspace path `{}`", path.display()))
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
     folders.sort();
     folders.dedup();
-    folders
+    Ok(folders)
 }
 
 #[cfg(test)]
 mod tests {
     use std::{path::Path, str::FromStr};
 
+    use rg_std::NormalizedPathBuf;
     use tower_lsp_server::ls_types::{InitializeParams, Uri, WorkspaceFolder};
 
     use super::workspace_folders;
@@ -501,20 +502,38 @@ mod tests {
                 workspace_folder(&project_b),
                 workspace_folder(&project_a),
                 workspace_folder(&project_b),
-                WorkspaceFolder {
-                    uri: Uri::from_str("untitled:Scratch").expect("untitled URI should be valid"),
-                    name: "scratch".to_string(),
-                },
             ]),
             ..Default::default()
         };
 
-        assert_eq!(workspace_folders(&params), vec![project_a, project_b]);
+        let project_a =
+            NormalizedPathBuf::from_absolute(project_a).expect("project A path should normalize");
+        let project_b =
+            NormalizedPathBuf::from_absolute(project_b).expect("project B path should normalize");
+        assert_eq!(
+            workspace_folders(&params).expect("workspace folders should normalize"),
+            vec![project_a, project_b],
+        );
+    }
+
+    #[test]
+    fn workspace_folders_reject_non_file_uris() {
+        let params = InitializeParams {
+            workspace_folders: Some(vec![WorkspaceFolder {
+                uri: Uri::from_str("untitled:Scratch").expect("untitled URI should be valid"),
+                name: "scratch".to_string(),
+            }]),
+            ..Default::default()
+        };
+
+        let error = workspace_folders(&params)
+            .expect_err("non-file workspace folder should be rejected explicitly");
+        assert!(error.to_string().contains("converting workspace URI"));
     }
 
     fn workspace_folder(path: &Path) -> WorkspaceFolder {
         WorkspaceFolder {
-            uri: Uri::from_file_path(path).expect("test path should convert to URI"),
+            uri: rg_lsp_proto::path_to_file_uri(path).expect("test path should convert to URI"),
             name: path
                 .file_name()
                 .expect("test path should have a file name")

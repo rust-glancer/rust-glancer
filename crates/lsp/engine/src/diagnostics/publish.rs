@@ -1,7 +1,8 @@
-use std::{collections::BTreeSet, path::PathBuf};
+use std::collections::BTreeSet;
 
 use ls_types::Diagnostic;
 use rg_lsp_proto::ServiceNotification;
+use rg_std::NormalizedPathBuf;
 
 use crate::service::ServiceNotificationsSink;
 
@@ -14,11 +15,14 @@ use super::cargo::CargoDiagnostics;
 /// client version or leaves the client's prior diagnostics visible.
 pub(super) struct WorkspaceDiagnostics {
     file_diagnostics: Vec<FileDiagnostics>,
-    known_paths: BTreeSet<PathBuf>,
+    known_paths: BTreeSet<NormalizedPathBuf>,
 }
 
 impl WorkspaceDiagnostics {
-    pub(super) fn new(diagnostics: CargoDiagnostics, previous_paths: &BTreeSet<PathBuf>) -> Self {
+    pub(super) fn new(
+        diagnostics: CargoDiagnostics,
+        previous_paths: &BTreeSet<NormalizedPathBuf>,
+    ) -> Self {
         let mut diagnostics = diagnostics.into_inner();
         let mut known_paths = previous_paths.clone();
         known_paths.extend(diagnostics.keys().cloned());
@@ -30,7 +34,7 @@ impl WorkspaceDiagnostics {
             .iter()
             .cloned()
             .map(|path| {
-                let saved_text = match rg_source::read_source_text(&path) {
+                let saved_text = match rg_source::read_source_text(path.as_path()) {
                     Ok(text) => Some(text.to_string()),
                     Err(error) => {
                         tracing::trace!(
@@ -55,7 +59,7 @@ impl WorkspaceDiagnostics {
         }
     }
 
-    pub(super) fn take_known_paths(&mut self) -> BTreeSet<PathBuf> {
+    pub(super) fn take_known_paths(&mut self) -> BTreeSet<NormalizedPathBuf> {
         std::mem::take(&mut self.known_paths)
     }
 
@@ -68,7 +72,7 @@ impl WorkspaceDiagnostics {
 
 #[derive(Debug)]
 struct FileDiagnostics {
-    path: PathBuf,
+    path: NormalizedPathBuf,
     diagnostics: Vec<Diagnostic>,
     saved_text: Option<String>,
 }
@@ -76,7 +80,7 @@ struct FileDiagnostics {
 impl FileDiagnostics {
     fn publish(self, notifications: &ServiceNotificationsSink) {
         notifications.send(ServiceNotification::PublishDiagnostics {
-            path: self.path,
+            path: self.path.into_path_buf(),
             diagnostics: self.diagnostics,
             saved_text: self.saved_text,
         });
@@ -85,19 +89,17 @@ impl FileDiagnostics {
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        collections::{BTreeMap, BTreeSet},
-        path::PathBuf,
-    };
+    use std::collections::{BTreeMap, BTreeSet};
 
     use ls_types::{Diagnostic, Position, Range};
+    use rg_std::NormalizedPathBuf;
 
     use super::{super::cargo::CargoDiagnostics, WorkspaceDiagnostics};
 
     #[test]
     fn current_results_and_known_stale_paths_are_both_emitted() {
-        let stale = PathBuf::from("/workspace/src/lib.rs");
-        let current = PathBuf::from("/workspace/src/main.rs");
+        let stale = relative_path("src/lib.rs");
+        let current = relative_path("src/main.rs");
         let diagnostics = CargoDiagnostics::from_map(BTreeMap::from([(
             current.clone(),
             vec![diagnostic("still broken")],
@@ -119,6 +121,14 @@ mod tests {
             1
         );
         assert_eq!(workspace_diagnostics.known_paths.len(), 2);
+    }
+
+    fn relative_path(relative: &str) -> NormalizedPathBuf {
+        let path = std::fs::canonicalize(".")
+            .expect("test process should have a working directory")
+            .join("nonexistent-just-for-tests")
+            .join(relative);
+        NormalizedPathBuf::from_absolute(path).expect("test diagnostics path should normalize")
     }
 
     fn diagnostic(message: &str) -> Diagnostic {

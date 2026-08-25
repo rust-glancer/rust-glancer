@@ -4,11 +4,9 @@
 //! allocated. Concurrent opens therefore wait for or reuse one process instead of racing to create
 //! separate owners for the same workspace.
 
-use std::{
-    path::{Path, PathBuf},
-    sync::Arc,
-};
+use std::{path::PathBuf, sync::Arc};
 
+use rg_std::NormalizedPathBuf;
 use tokio::sync::Notify;
 
 use crate::{
@@ -37,7 +35,7 @@ pub(super) struct EngineRegistryInner {
 
 impl EngineRegistryInner {
     pub(super) fn new(
-        workspace_folders: impl IntoIterator<Item = PathBuf>,
+        workspace_folders: impl IntoIterator<Item = NormalizedPathBuf>,
         config: ServerConfig,
     ) -> Self {
         let mut routing = EngineRouting::default();
@@ -52,17 +50,17 @@ impl EngineRegistryInner {
         }
     }
 
-    pub(super) fn open_file_owner(&self, path: &Path) -> Option<EngineId> {
+    pub(super) fn open_file_owner(&self, path: &NormalizedPathBuf) -> Option<EngineId> {
         self.routing.open_file_owner(path)
     }
 
-    pub(super) fn set_open_file(&mut self, path: PathBuf, id: EngineId) {
+    pub(super) fn set_open_file(&mut self, path: NormalizedPathBuf, id: EngineId) {
         self.routing.set_open_file(path, id);
     }
 
     pub(super) fn remove_open_file(
         &mut self,
-        path: &Path,
+        path: &NormalizedPathBuf,
         owner: Option<EngineId>,
     ) -> Option<EngineId> {
         self.routing.remove_open_file(path, owner)
@@ -70,7 +68,7 @@ impl EngineRegistryInner {
 
     pub(super) fn reserve_workspace_root(
         &mut self,
-        workspace_root: PathBuf,
+        workspace_root: NormalizedPathBuf,
     ) -> Option<ReservedEngineRoute> {
         let route = self.routing.route_workspace_root(workspace_root)?;
         Some(self.reserve_workspace_route(route))
@@ -116,7 +114,7 @@ impl EngineRegistryInner {
         let root = self
             .routing
             .root_for_id(id)
-            .map(Path::to_path_buf)
+            .map(NormalizedPathBuf::to_path_buf)
             .expect("engine id should have a routing root");
         let slot = self.engine(id).expect("engine id should have a slot");
         let (state, message) = match slot {
@@ -156,7 +154,7 @@ impl EngineRegistryInner {
                 ReservedEngineRoute::Spawn(ReservedEngineStart {
                     id: new_id,
                     config: self.config.engine_config_for_root(&root),
-                    root,
+                    root: root.into_path_buf(),
                 })
             }
         }
@@ -201,6 +199,8 @@ mod tests {
     use rg_lsp_proto::CargoMetadataTarget;
     use serde_json::json;
 
+    use crate::tests::normalized_test_path;
+
     use super::*;
 
     #[test]
@@ -216,13 +216,16 @@ mod tests {
                 }],
             },
         });
-        let config =
-            ServerConfig::from_initialization_options(Some(&options), &[PathBuf::from("/repo")])
-                .expect("server config should parse");
-        let mut inner = EngineRegistryInner::new([PathBuf::from("/repo")], config);
+        let workspace = normalized_test_path("repo");
+        let config = ServerConfig::from_initialization_options(
+            Some(&options),
+            std::slice::from_ref(&workspace),
+        )
+        .expect("server config should parse");
+        let mut inner = EngineRegistryInner::new([workspace], config);
 
         let route = inner
-            .reserve_workspace_root(PathBuf::from("/repo/project-a"))
+            .reserve_workspace_root(normalized_test_path("repo/project-a"))
             .expect("configured root should reserve an engine");
         let ReservedEngineRoute::Spawn(start) = route else {
             panic!("first route for workspace root should spawn");
