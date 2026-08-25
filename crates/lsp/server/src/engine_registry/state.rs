@@ -10,7 +10,7 @@ use rg_std::NormalizedPathBuf;
 use tokio::sync::Notify;
 
 use crate::{
-    client_notifications::{ActiveWorkspaceState, ActiveWorkspaceStatus},
+    client_status::{ActiveWorkspaceState, ActiveWorkspaceStatus},
     config::ServerConfig,
     engine_client::EngineProjectStatus,
 };

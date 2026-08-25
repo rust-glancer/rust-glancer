@@ -14,17 +14,23 @@ use std::{
     path::PathBuf,
     sync::{Arc, Mutex, mpsc::Sender},
     thread,
-    time::Instant,
+    time::{Duration, Instant},
 };
 
+use anyhow::Context as _;
 use rg_def_map::PackageSlot;
-use rg_project::DetachedSplitIndexing;
+use rg_lsp_proto::DeferredIndexingOutcome;
+use rg_project::{DetachedSplitIndexing, SplitIndexingProgress};
 
 use crate::engine::{
     QueuedEngineCommand,
     command::{DeferredIndexingResult, EngineCommand},
     project::ProjectState,
 };
+
+// Human-visible progress should feel live without turning every parallel package completion into
+// an engine command and an RPC notification.
+const PROGRESS_PUBLICATION_INTERVAL: Duration = Duration::from_millis(200);
 
 /// Tracks the one detached indexing finish allowed to run beside the engine lane.
 ///
@@ -125,35 +131,47 @@ impl DeferredIndexingFinish {
             return;
         }
 
-        Self::apply_finished_if_current(project, generation, finished, "priority package");
+        if let Err(error) =
+            Self::apply_finished_if_current(project, generation, finished, "priority package")
+        {
+            tracing::warn!(
+                generation,
+                error = %format!("{error:#}"),
+                "deferred indexing priority package could not merge into saved project"
+            );
+        }
     }
 
-    /// Reconcile the final background result and decide whether indexing is finished for the client.
+    /// Reconcile the final background result for the client-visible saved generation.
+    ///
+    /// `None` means this result cannot terminate the client's active operation because it is stale
+    /// or unknown. A current result remains terminal when its work failed, but carries that failure
+    /// instead of presenting it as successful completion.
     pub(super) fn finish_returned(
         &mut self,
         project: &mut ProjectState,
         generation: u64,
         result: DeferredIndexingResult,
-    ) -> bool {
+    ) -> Option<DeferredIndexingOutcome> {
         if self.in_flight_generation != Some(generation) {
             tracing::info!(
                 generation,
                 current_in_flight_generation = ?self.in_flight_generation,
                 "discarding unknown deferred indexing finish"
             );
-            return false;
+            return None;
         }
         self.in_flight_generation = None;
         self.worker_priority = None;
 
-        let is_current_generation = Self::apply_finish_if_current(project, generation, result);
-        let should_restart = self.restart_after_in_flight || !is_current_generation;
+        let outcome = Self::apply_finish_if_current(project, generation, result);
+        let should_restart = self.restart_after_in_flight || outcome.is_none();
         self.restart_after_in_flight = false;
         if should_restart {
             self.start_current(project);
         }
 
-        is_current_generation
+        outcome
     }
 
     fn start_current(&mut self, project: &ProjectState) -> bool {
@@ -254,6 +272,7 @@ impl DeferredIndexingFinish {
             "deferred indexing package schedule prepared"
         );
 
+        let progress = DeferredIndexingProgressReporter::new(sender.clone(), generation);
         detached
             .finish_with_package_priority(
                 || {
@@ -275,6 +294,7 @@ impl DeferredIndexingFinish {
                         },
                     ));
                 },
+                |snapshot| progress.report(snapshot),
             )
             .map(Box::new)
     }
@@ -304,29 +324,45 @@ impl DeferredIndexingFinish {
         project: &mut ProjectState,
         generation: u64,
         result: DeferredIndexingResult,
-    ) -> bool {
+    ) -> Option<DeferredIndexingOutcome> {
         if project.generation() != generation {
             tracing::info!(
                 generation,
                 current_generation = project.generation(),
                 "discarding stale deferred indexing finish"
             );
-            return false;
+            return None;
         }
 
-        match result {
+        let outcome = match result {
             Ok(finished) => {
-                Self::apply_finished_if_current(project, generation, *finished, "finish");
+                match Self::apply_finished_if_current(project, generation, *finished, "finish") {
+                    Ok(true) => DeferredIndexingOutcome::Succeeded,
+                    // The generation was checked immediately above on the serialized engine lane, but
+                    // retain the stale result in the type in case this helper's use changes later.
+                    Ok(false) => return None,
+                    Err(error) => {
+                        let message = format!("{error:#}");
+                        tracing::warn!(
+                            generation,
+                            error = %message,
+                            "deferred indexing finish could not merge into saved project"
+                        );
+                        DeferredIndexingOutcome::Failed { message }
+                    }
+                }
             }
             Err(error) => {
+                let message = format!("{error:#}");
                 tracing::warn!(
                     generation,
-                    error = %format!("{error:#}"),
+                    error = %message,
                     "deferred indexing finish did not update project"
                 );
+                DeferredIndexingOutcome::Failed { message }
             }
-        }
-        true
+        };
+        Some(outcome)
     }
 
     fn apply_finished_if_current(
@@ -334,7 +370,7 @@ impl DeferredIndexingFinish {
         generation: u64,
         finished: rg_project::FinishedSplitIndexing,
         label: &'static str,
-    ) -> bool {
+    ) -> anyhow::Result<bool> {
         if project.generation() != generation {
             tracing::info!(
                 generation,
@@ -342,22 +378,14 @@ impl DeferredIndexingFinish {
                 label,
                 "discarding stale deferred indexing publication"
             );
-            return false;
+            return Ok(false);
         }
 
         let updated = project
             .mutate_saved_preserving_generation(|saved| {
                 saved.split_indexing().merge_finished(finished)
             })
-            .unwrap_or_else(|error| {
-                tracing::warn!(
-                    generation,
-                    label,
-                    error = %format!("{error:#}"),
-                    "deferred indexing publication could not merge into saved project"
-                );
-                false
-            });
+            .with_context(|| format!("merge deferred indexing {label}"))?;
         if !updated {
             tracing::trace!(
                 generation,
@@ -365,6 +393,81 @@ impl DeferredIndexingFinish {
                 "deferred indexing publication completed without saved project changes"
             );
         }
-        true
+        Ok(true)
+    }
+}
+
+/// Reduces parallel package completions to a small ordered stream on the engine lane.
+///
+/// Reporting stays synchronous and non-blocking from the Body IR workers' point of view: an
+/// accepted snapshot only enters the existing engine command queue. Stage transitions and exact
+/// terminal counts bypass the cadence so the client never misses a meaningful boundary.
+#[derive(Debug)]
+struct DeferredIndexingProgressReporter {
+    sender: Sender<QueuedEngineCommand>,
+    generation: u64,
+    publication: Mutex<ProgressPublication>,
+}
+
+#[derive(Debug, Default)]
+struct ProgressPublication {
+    last_progress: Option<SplitIndexingProgress>,
+    last_published_at: Option<Instant>,
+}
+
+impl DeferredIndexingProgressReporter {
+    fn new(sender: Sender<QueuedEngineCommand>, generation: u64) -> Self {
+        Self {
+            sender,
+            generation,
+            publication: Mutex::new(ProgressPublication::default()),
+        }
+    }
+
+    fn report(&self, progress: SplitIndexingProgress) {
+        debug_assert!(progress.completed_packages() <= progress.total_packages());
+
+        let now = Instant::now();
+        let mut publication = self
+            .publication
+            .lock()
+            .expect("deferred indexing progress publication should not be poisoned");
+        if let Some(previous) = publication.last_progress
+            && previous.stage() == progress.stage()
+            && previous.completed_packages() >= progress.completed_packages()
+        {
+            // The atomic counter gives every worker a newer count, but a worker can be
+            // descheduled before it invokes this callback. Do not let that delayed callback move
+            // an editor from, for example, 18/40 back to 17/40.
+            return;
+        }
+
+        let stage_changed = publication
+            .last_progress
+            .is_none_or(|previous| previous.stage() != progress.stage());
+        let stage_finished = progress.completed_packages() == progress.total_packages();
+        let cadence_elapsed = publication
+            .last_published_at
+            .is_none_or(|last_published_at| {
+                now.duration_since(last_published_at) >= PROGRESS_PUBLICATION_INTERVAL
+            });
+        if !stage_changed && !stage_finished && !cadence_elapsed {
+            return;
+        }
+
+        publication.last_progress = Some(progress);
+        publication.last_published_at = Some(now);
+        drop(publication);
+
+        let command = EngineCommand::DeferredIndexingProgress {
+            generation: self.generation,
+            progress,
+        };
+        if self.sender.send(QueuedEngineCommand::new(command)).is_err() {
+            tracing::debug!(
+                generation = self.generation,
+                "failed to enqueue deferred indexing progress"
+            );
+        }
     }
 }

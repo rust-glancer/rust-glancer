@@ -30,6 +30,47 @@ pub use self::lower::{
     CurrentBodyUnavailable,
 };
 
+/// Package-local stage of one Body IR build.
+///
+/// Lowering records source structure first. Resolution then attaches the semantic facts used by
+/// queries. Reporting these as separate stages avoids presenting package counts as an elapsed-time
+/// percentage: the two kinds of work can have very different costs for the same package.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BodyIrBuildStage {
+    Lowering,
+    Resolving,
+}
+
+/// Completed package count within one [`BodyIrBuildStage`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BodyIrBuildProgress {
+    stage: BodyIrBuildStage,
+    completed_packages: usize,
+    total_packages: usize,
+}
+
+impl BodyIrBuildProgress {
+    fn new(stage: BodyIrBuildStage, completed_packages: usize, total_packages: usize) -> Self {
+        Self {
+            stage,
+            completed_packages,
+            total_packages,
+        }
+    }
+
+    pub fn stage(self) -> BodyIrBuildStage {
+        self.stage
+    }
+
+    pub fn completed_packages(self) -> usize {
+        self.completed_packages
+    }
+
+    pub fn total_packages(self) -> usize {
+        self.total_packages
+    }
+}
+
 /// Builds selected Body IR packages on top of one baseline snapshot.
 ///
 /// Fresh construction and saved updates differ only in the baseline and selected package set.
@@ -111,26 +152,37 @@ impl<'db, 'names> BodyIrDbBuilder<'db, 'names> {
     }
 
     pub fn build(self) -> anyhow::Result<BodyIrDb> {
-        self.build_with_optional_package_priority(None, &|_, _| {})
+        self.build_with_optional_package_priority(None, &|_, _| {}, None)
     }
 
-    /// Build every selected package once while publishing priority packages as they resolve.
+    /// Build every selected package once, with observations for the detached-indexing caller.
     ///
-    /// The callback receives a compact copy. The ordinary build still retains all resolved
-    /// packages until its two-phase compaction, so publication does not change the final database
-    /// or split one build into cache-cold sub-builds.
+    /// `publish_priority` receives a compact copy when a package requested by
+    /// `priority_packages` resolves. The ordinary build still retains all resolved packages until
+    /// its two-phase compaction, so publication does not change the final database or split one
+    /// build into cache-cold sub-builds.
+    ///
+    /// `report_progress` describes package completion separately for lowering and resolution. It
+    /// is an observation of this build, not a scheduling hook: callers should return promptly and
+    /// move any editor or RPC work onto their own queue.
     pub fn build_with_package_priority(
         self,
         priority_packages: &(dyn Fn() -> Vec<PackageSlot> + Sync),
         publish_priority: &(dyn Fn(PackageSlot, PackageBodies) + Sync),
+        report_progress: &(dyn Fn(BodyIrBuildProgress) + Sync),
     ) -> anyhow::Result<BodyIrDb> {
-        self.build_with_optional_package_priority(Some(priority_packages), publish_priority)
+        self.build_with_optional_package_priority(
+            Some(priority_packages),
+            publish_priority,
+            Some(report_progress),
+        )
     }
 
     fn build_with_optional_package_priority(
         self,
         priority_packages: Option<&(dyn Fn() -> Vec<PackageSlot> + Sync)>,
         publish_priority: &(dyn Fn(PackageSlot, PackageBodies) + Sync),
+        report_progress: Option<&(dyn Fn(BodyIrBuildProgress) + Sync)>,
     ) -> anyhow::Result<BodyIrDb> {
         // 1. Start with the baseline snapshot so untouched resident payloads remain shared and
         // offloaded slots keep their coverage summaries. The read transactions may load
@@ -157,6 +209,13 @@ impl<'db, 'names> BodyIrDbBuilder<'db, 'names> {
         // 2. Lower only the requested bodies. Crates whose resulting coverage is unmaterialized
         // remain in the package shape, but skip lookup-query construction and body resolution.
         let lowering_started = Instant::now();
+        if let Some(report_progress) = report_progress.filter(|_| !packages.is_empty()) {
+            report_progress(BodyIrBuildProgress::new(
+                BodyIrBuildStage::Lowering,
+                0,
+                packages.len(),
+            ));
+        }
         let rebuilt_packages = lower::build_selected_packages(
             self.parse,
             &def_map_txn,
@@ -165,6 +224,7 @@ impl<'db, 'names> BodyIrDbBuilder<'db, 'names> {
             &packages,
             self.interners,
             self.worker_limit,
+            report_progress,
         )
         .context("while attempting to lower selected body IR packages")?;
         let lowering_ms = lowering_started.elapsed().as_millis();
@@ -172,6 +232,13 @@ impl<'db, 'names> BodyIrDbBuilder<'db, 'names> {
         // 3. Resolve the lowered bodies, then compact the selected packages while the temporary
         // allocations made by this build are still grouped together.
         let resolution_started = Instant::now();
+        if let Some(report_progress) = report_progress.filter(|_| !packages.is_empty()) {
+            report_progress(BodyIrBuildProgress::new(
+                BodyIrBuildStage::Resolving,
+                0,
+                packages.len(),
+            ));
+        }
         let rebuilt_packages = resolve::resolve_selected_packages(
             rebuilt_packages,
             self.parse,
@@ -181,6 +248,7 @@ impl<'db, 'names> BodyIrDbBuilder<'db, 'names> {
             priority_packages,
             publish_priority,
             self.worker_limit,
+            report_progress,
         )
         .context("while attempting to resolve selected body IR packages")?;
         let resolution_ms = resolution_started.elapsed().as_millis();

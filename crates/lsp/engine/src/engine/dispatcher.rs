@@ -336,6 +336,20 @@ impl EngineDispatcher {
                     self.project
                         .deferred_indexing_priority_package_finished(generation, *finished);
                 }
+                EngineCommand::DeferredIndexingProgress {
+                    generation,
+                    progress,
+                } => {
+                    tracing::trace!(
+                        generation,
+                        stage = ?progress.stage(),
+                        completed_packages = progress.completed_packages(),
+                        total_packages = progress.total_packages(),
+                        "engine command started: deferred_indexing_progress"
+                    );
+                    self.project
+                        .deferred_indexing_progress(generation, progress);
+                }
                 EngineCommand::DeferredIndexingFinished { generation, result } => {
                     tracing::trace!(
                         generation,

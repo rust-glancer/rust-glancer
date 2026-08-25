@@ -1,8 +1,9 @@
 //! Messages crossing from async RPC tasks onto the synchronous analysis lane.
 //!
 //! Editor requests carry a one-shot response endpoint with the command. Deferred indexing is the
-//! exception: its background thread sends an internal completion command back through the same
-//! queue, so project generation checks still happen in FIFO order with every other mutation.
+//! exception: its background thread sends internal progress and completion commands back through
+//! the same queue, so project generation checks still happen in FIFO order with every other
+//! mutation.
 
 use std::path::PathBuf;
 
@@ -110,6 +111,11 @@ pub(crate) enum EngineCommand {
     DeferredIndexingPriorityPackageFinished {
         generation: u64,
         finished: Box<rg_project::FinishedSplitIndexing>,
+    },
+    /// Publish one coalesced progress snapshot from the detached build.
+    DeferredIndexingProgress {
+        generation: u64,
+        progress: rg_project::SplitIndexingProgress,
     },
     /// Re-enters a background result onto the lane that owns the saved project.
     DeferredIndexingFinished {

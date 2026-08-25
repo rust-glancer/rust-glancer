@@ -31,7 +31,8 @@ use tokio::{
 use tower_lsp_server::Client as LspClient;
 
 use crate::{
-    engine_client::EngineClient, ingress::EditorStateHandle, notifications::NotificationsPublisher,
+    client_status::ClientStatusPublisher, engine_client::EngineClient, ingress::EditorStateHandle,
+    notifications::NotificationsPublisher,
 };
 
 const ENGINE_CONNECTION_TIMEOUT: Duration = Duration::from_secs(10);
@@ -51,6 +52,7 @@ impl EngineProcess {
     pub(crate) async fn spawn(
         lsp_client: LspClient,
         editor: EditorStateHandle,
+        client_status: ClientStatusPublisher,
         workspace_root: &Path,
         engine_id: String,
     ) -> anyhow::Result<(Self, EngineProcessExitMonitor)> {
@@ -91,7 +93,7 @@ impl EngineProcess {
         {
             // Accept the notification connection in the background. The main initialization path
             // only needs the engine client below; callback delivery can become ready independently.
-            let publisher = NotificationsPublisher::new(lsp_client, editor);
+            let publisher = NotificationsPublisher::new(lsp_client, editor, client_status);
             tokio::spawn(async move {
                 let accept =
                     tokio::time::timeout(ENGINE_CONNECTION_TIMEOUT, notifications_listener.next())

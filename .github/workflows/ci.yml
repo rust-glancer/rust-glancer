@@ -26,6 +26,10 @@ jobs:
         run: cargo fmt --check
       - name: Run clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Install Zed WebAssembly target
+        run: rustup target add wasm32-wasip2
+      - name: Check Zed WebAssembly extension
+        run: cargo check -p rust-glancer-zed --target wasm32-wasip2
 
   tests:
     name: tests (${{ matrix.os }})
@@ -142,13 +146,19 @@ jobs:
         if: runner.os != 'Linux'
         run: npm run test:e2e
 
-  vsix-package:
-    name: vsix-package (${{ matrix.os }})
+  build-editor-packages:
+    name: build-editor-packages (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        include:
+          - os: ubuntu-latest
+            python: python3
+          - os: windows-latest
+            python: python
+          - os: macos-latest
+            python: python3
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
@@ -174,6 +184,16 @@ jobs:
           node -e "if (!require('node:fs').readdirSync('../../dist').some((name) => name.endsWith('.vsix')))
           throw new Error('Expected a host-native VSIX to be created')"
         working-directory: editors/code
+      - name: Detect host Rust target
+        id: host
+        shell: bash
+        run: |
+          rustc -vV | sed -n 's/^host: /target=/p' >> "$GITHUB_OUTPUT"
+      - name: Package standalone language server
+        run: >-
+          ${{ matrix.python }} .github/scripts/package_server_archive.py
+          --target "${{ steps.host.outputs.target }}"
+          --version 0.0.0
 
   cargo-deny:
     name: cargo-deny
@@ -206,7 +226,7 @@ jobs:
       - test-targets
       - compare-lsp-windows
       - client
-      - vsix-package
+      - build-editor-packages
       - docs
     steps:
       - name: Decide on PR checks

@@ -1,0 +1,16 @@
+id = "rust-glancer"
+name = "Rust Glancer"
+description = "Rust language support powered by the Rust Glancer language server."
+version = "0.1.1"
+schema_version = 1
+authors = ["Igor Aleksanov <popzxc@yandex.ru>"]
+repository = "https://github.com/rust-glancer/rust-glancer"
+
+[[capabilities]]
+kind = "download_file"
+host = "github.com"
+path = ["rust-glancer", "rust-glancer", "releases", "download", "**"]
+
+[language_servers.rust-glancer]
+name = "Rust Glancer"
+languages = ["Rust"]

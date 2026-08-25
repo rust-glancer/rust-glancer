@@ -14,8 +14,8 @@ pub use self::profile::profile_descriptors;
 pub use rg_ir_model::FieldKey;
 
 pub use self::build::{
-    BodyIrDbBuilder, CurrentBodyBuildCheckpoint, CurrentBodyBuildOutcome, CurrentBodyBuilder,
-    CurrentBodySelection, CurrentBodyUnavailable,
+    BodyIrBuildProgress, BodyIrBuildStage, BodyIrDbBuilder, CurrentBodyBuildCheckpoint,
+    CurrentBodyBuildOutcome, CurrentBodyBuilder, CurrentBodySelection, CurrentBodyUnavailable,
 };
 
 #[cfg(test)]

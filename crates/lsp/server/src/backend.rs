@@ -23,6 +23,7 @@ use rg_std::NormalizedPathBuf;
 use tokio::sync::OnceCell;
 
 use crate::{
+    client_status::ClientStatusCapabilities,
     config::ServerConfig,
     engine_client::EngineClient,
     engine_registry::EngineRegistry,
@@ -166,6 +167,8 @@ impl LanguageServer for Backend {
         .map_err(|error| Error::invalid_params(error.to_string()))?;
         let client_capabilities =
             EngineClientCapabilities::from_lsp_client_capabilities(&params.capabilities);
+        let client_status_capabilities =
+            ClientStatusCapabilities::from_lsp_client_capabilities(&params.capabilities);
         self.client_capabilities
             .set(client_capabilities)
             .map_err(|_| Error {
@@ -178,6 +181,7 @@ impl LanguageServer for Backend {
             workspace_folders.clone(),
             config,
             self.editor.clone(),
+            client_status_capabilities,
         );
         let project_watcher = ProjectWatcher::spawn(
             workspace_folders,

@@ -7,13 +7,16 @@ use std::{
     time::Duration,
 };
 
-use rg_lsp_proto::{AnalysisConfig, PackageResidencyPolicy, ServiceNotification, SysrootDiscovery};
+use rg_lsp_proto::{
+    AnalysisConfig, DeferredIndexingOutcome, PackageResidencyPolicy, ServiceNotification,
+    SysrootDiscovery,
+};
 use rg_project::{ProjectMemoryHooks, ProjectMemoryPurgePoint, SavedFileChange};
 use test_fixture::fixture_crate;
 
 use super::{MAX_STALE_SOURCE_RETRIES, ProjectConfiguration, ProjectCoordinator};
 use crate::{
-    engine::command::EngineCommand,
+    engine::{QueuedEngineCommand, command::EngineCommand},
     memory::MemoryControl,
     service::{ServiceNotificationPublisher, ServiceNotificationsSink},
 };
@@ -124,6 +127,43 @@ impl ServiceNotificationPublisher for RecordingNotifications {
     }
 }
 
+/// Apply coalesced background progress the same way the real dispatcher does, then return the next
+/// command whose behavior the test is actually exercising.
+fn receive_non_progress_command(
+    project: &mut ProjectCoordinator,
+    receiver: &mpsc::Receiver<QueuedEngineCommand>,
+) -> EngineCommand {
+    loop {
+        let queued = receiver
+            .recv_timeout(Duration::from_secs(5))
+            .expect("deferred indexing should return an engine command");
+        match queued.command {
+            EngineCommand::DeferredIndexingProgress {
+                generation,
+                progress,
+            } => project.deferred_indexing_progress(generation, progress),
+            command => return command,
+        }
+    }
+}
+
+fn assert_progress_then_finished(notifications: &[ServiceNotification]) {
+    assert!(
+        notifications.iter().any(|notification| matches!(
+            notification,
+            ServiceNotification::DeferredIndexingProgress { .. }
+        )),
+        "deferred indexing should publish at least one package progress snapshot",
+    );
+    assert!(matches!(
+        notifications.last(),
+        Some(ServiceNotification::DeferredIndexingFinished {
+            outcome: DeferredIndexingOutcome::Succeeded,
+            ..
+        })
+    ));
+}
+
 #[test]
 fn deferred_lifecycle_tracks_published_generations_not_foreground_activity() {
     let fixture = fixture_crate(
@@ -165,10 +205,8 @@ fn deferred_lifecycle_tracks_published_generations_not_foreground_activity() {
         [ServiceNotification::DeferredIndexingStarted { .. }]
     ));
 
-    let initial = receiver
-        .recv_timeout(Duration::from_secs(5))
-        .expect("initial deferred indexing should return");
-    let EngineCommand::DeferredIndexingFinished { generation, result } = initial.command else {
+    let initial = receive_non_progress_command(&mut project, &receiver);
+    let EngineCommand::DeferredIndexingFinished { generation, result } = initial else {
         panic!("initial background command should finish deferred indexing");
     };
     let _ = memory_hooks.take();
@@ -178,10 +216,7 @@ fn deferred_lifecycle_tracks_published_generations_not_foreground_activity() {
         Some(&ProjectMemoryPurgePoint::AfterDeferredIndexingFinish),
         "the detached result should die before the final deferred-indexing purge",
     );
-    assert!(matches!(
-        recorded.take().as_slice(),
-        [ServiceNotification::DeferredIndexingFinished { .. }]
-    ));
+    assert_progress_then_finished(&recorded.take());
 
     project
         .saved_project_changes(vec![SavedFileChange::fs_path(source.clone())])
@@ -209,17 +244,12 @@ fn deferred_lifecycle_tracks_published_generations_not_foreground_activity() {
     assert_eq!(foreground_stats.missing_crate_count, 1);
     assert_eq!(foreground_stats.body_count, 0);
 
-    let updated = receiver
-        .recv_timeout(Duration::from_secs(5))
-        .expect("updated deferred indexing should return");
-    let EngineCommand::DeferredIndexingFinished { generation, result } = updated.command else {
+    let updated = receive_non_progress_command(&mut project, &receiver);
+    let EngineCommand::DeferredIndexingFinished { generation, result } = updated else {
         panic!("updated background command should finish deferred indexing");
     };
     project.deferred_indexing_finished(generation, result);
-    assert!(matches!(
-        recorded.take().as_slice(),
-        [ServiceNotification::DeferredIndexingFinished { .. }]
-    ));
+    assert_progress_then_finished(&recorded.take());
     let finished_stats = project
         .saved_snapshot()
         .expect("finished saved project should be available")
@@ -228,6 +258,60 @@ fn deferred_lifecycle_tracks_published_generations_not_foreground_activity() {
     assert_eq!(finished_stats.complete_crate_count, 1);
     assert_eq!(finished_stats.missing_crate_count, 0);
     assert_eq!(finished_stats.body_count, 1);
+}
+
+#[test]
+fn current_deferred_failure_is_published_without_discarding_the_queryable_project() {
+    let fixture = fixture_crate(
+        r#"
+            //- /Cargo.toml
+            [package]
+            name = "deferred_failure_fixture"
+            version = "0.1.0"
+            edition = "2024"
+
+            //- /src/lib.rs
+            pub fn still_queryable() {}
+            "#,
+    );
+    let (sender, receiver) = mpsc::channel();
+    let memory_control: Arc<dyn MemoryControl> = Arc::new(());
+    let recorded = RecordingNotifications::default();
+    let notifications = ServiceNotificationsSink::from_publisher(recorded.clone());
+    let mut project = ProjectCoordinator::new(sender, memory_control, notifications);
+    project
+        .initialize(
+            fixture.path(""),
+            ProjectConfiguration::from(AnalysisConfig {
+                sysroot_discovery: SysrootDiscovery::Disabled,
+                ..AnalysisConfig::default()
+            }),
+        )
+        .expect("fixture project should initialize");
+    assert!(matches!(
+        recorded.take().as_slice(),
+        [ServiceNotification::DeferredIndexingStarted { .. }]
+    ));
+
+    let finished = receive_non_progress_command(&mut project, &receiver);
+    let EngineCommand::DeferredIndexingFinished { generation, .. } = finished else {
+        panic!("background command should reach its terminal result");
+    };
+    project.deferred_indexing_finished(
+        generation,
+        Err(anyhow::anyhow!("synthetic body indexing failure")),
+    );
+
+    project
+        .saved_snapshot()
+        .expect("early-start project should remain queryable after deferred failure");
+    assert!(matches!(
+        recorded.take().last(),
+        Some(ServiceNotification::DeferredIndexingFinished {
+            outcome: DeferredIndexingOutcome::Failed { message },
+            ..
+        }) if message == "synthetic body indexing failure"
+    ));
 }
 
 #[test]
@@ -282,13 +366,11 @@ fn open_document_package_is_published_before_full_deferred_result() {
 
     // The worker is already live when this didOpen-derived hint reaches its package queue.
     project.set_deferred_indexing_priority(fixture.path("helper/src/lib.rs"), true);
-    let first = receiver
-        .recv_timeout(Duration::from_secs(5))
-        .expect("the prioritized package should return");
+    let first = receive_non_progress_command(&mut project, &receiver);
     let EngineCommand::DeferredIndexingPriorityPackageFinished {
         generation,
         finished,
-    } = first.command
+    } = first
     else {
         panic!("the open-document package should publish before the final background result");
     };
@@ -305,15 +387,15 @@ fn open_document_package_is_published_before_full_deferred_result() {
         "the three-body open-document package should be the first publication",
     );
     assert!(
-        recorded.take().is_empty(),
+        recorded.take().iter().all(|notification| !matches!(
+            notification,
+            ServiceNotification::DeferredIndexingFinished { .. }
+        )),
         "an intermediate package publication must not end deferred indexing",
     );
 
-    let final_command = receiver
-        .recv_timeout(Duration::from_secs(5))
-        .expect("the remaining background package should return");
-    let EngineCommand::DeferredIndexingFinished { generation, result } = final_command.command
-    else {
+    let final_command = receive_non_progress_command(&mut project, &receiver);
+    let EngineCommand::DeferredIndexingFinished { generation, result } = final_command else {
         panic!("the final package result should complete deferred indexing");
     };
     project.deferred_indexing_finished(generation, result);
@@ -326,8 +408,8 @@ fn open_document_package_is_published_before_full_deferred_result() {
     assert_eq!(finished_stats.complete_crate_count, 2);
     assert_eq!(finished_stats.body_count, 4);
     assert!(matches!(
-        recorded.take().as_slice(),
-        [ServiceNotification::DeferredIndexingFinished { .. }]
+        recorded.take().last(),
+        Some(ServiceNotification::DeferredIndexingFinished { .. })
     ));
 }
 
@@ -366,10 +448,8 @@ fn saved_project_change_retries_source_races_but_preserves_a_finite_lane_budget(
         .expect("fixture project should initialize");
 
     // Reconcile initial deferred indexing so any command observed below belongs to the update.
-    let initial = receiver
-        .recv_timeout(Duration::from_secs(5))
-        .expect("initial deferred indexing should return");
-    let EngineCommand::DeferredIndexingFinished { generation, result } = initial.command else {
+    let initial = receive_non_progress_command(&mut project, &receiver);
+    let EngineCommand::DeferredIndexingFinished { generation, result } = initial else {
         panic!("initial background command should finish deferred indexing");
     };
     project.deferred_indexing_finished(generation, result);
@@ -383,10 +463,8 @@ fn saved_project_change_retries_source_races_but_preserves_a_finite_lane_budget(
         .saved_project_changes(vec![SavedFileChange::fs_path(source.clone())])
         .expect("stale candidate should be retried from the newer disk revision");
 
-    let deferred = receiver
-        .recv_timeout(Duration::from_secs(5))
-        .expect("successful update should start deferred indexing");
-    let EngineCommand::DeferredIndexingFinished { generation, result } = deferred.command else {
+    let deferred = receive_non_progress_command(&mut project, &receiver);
+    let EngineCommand::DeferredIndexingFinished { generation, result } = deferred else {
         panic!("updated background command should finish deferred indexing");
     };
     assert_eq!(
@@ -470,10 +548,8 @@ fn saved_project_retry_collects_the_settled_source_burst() {
         )
         .expect("fixture project should initialize");
 
-    let initial = receiver
-        .recv_timeout(Duration::from_secs(5))
-        .expect("initial deferred indexing should return");
-    let EngineCommand::DeferredIndexingFinished { generation, result } = initial.command else {
+    let initial = receive_non_progress_command(&mut project, &receiver);
+    let EngineCommand::DeferredIndexingFinished { generation, result } = initial else {
         panic!("initial background command should finish deferred indexing");
     };
     project.deferred_indexing_finished(generation, result);

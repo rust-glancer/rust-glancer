@@ -229,7 +229,7 @@ impl PreparedEngine {
                     .expect("query benchmark notification channel should remain open");
                 if matches!(
                     notification,
-                    ServiceNotification::DeferredIndexingFinished { root }
+                    ServiceNotification::DeferredIndexingFinished { root, .. }
                         if root == workspace_root
                 ) {
                     break;

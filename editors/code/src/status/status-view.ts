@@ -54,6 +54,19 @@ export class StatusView implements vscode.Disposable {
     this.showState("ready", "~ Rust Glancer: ready", "Ready, finishing deferred indexing", details);
   }
 
+  public readyWithDeferredIndexingFailure(
+    reason: string,
+    details: StatusDetails = this.details,
+  ): void {
+    this.showState(
+      "ready",
+      "$(warning) Rust Glancer: ready; background index failed",
+      `Ready; background indexing failed: ${reason}`,
+      details,
+      new vscode.ThemeColor("statusBarItem.warningBackground"),
+    );
+  }
+
   public stale(details: StatusDetails = this.details): void {
     this.showState(
       "stale",

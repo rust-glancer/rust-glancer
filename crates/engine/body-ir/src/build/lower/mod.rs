@@ -5,6 +5,7 @@
 
 use std::{
     num::NonZeroUsize,
+    sync::atomic::{AtomicUsize, Ordering},
     time::{Duration, Instant},
 };
 
@@ -41,7 +42,10 @@ pub use self::current_body::{
 };
 pub(super) use self::macro_expansion::BodyMacroExpansion;
 pub(super) use self::task::{BodyLoweringTask, BodyTaskLowering, BodyTaskSource, LoweredBodyTask};
-use super::{local_thread_pool, materialization::BodyIrMaterialization};
+use super::{
+    BodyIrBuildProgress, BodyIrBuildStage, local_thread_pool,
+    materialization::BodyIrMaterialization,
+};
 
 // These thresholds are diagnostic filters, not build budgets. Debug logging should identify
 // unusually expensive units without producing one record for every ordinary package or crate.
@@ -86,6 +90,7 @@ impl LoweredCrateBodies {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn build_selected_packages(
     parse: &ParseDb,
     def_map: &DefMapReadTxn<'_>,
@@ -94,6 +99,7 @@ pub(super) fn build_selected_packages(
     package_slots: &[PackageSlot],
     interners: &mut PackageNameInterners,
     worker_limit: Option<NonZeroUsize>,
+    report_progress: Option<&(dyn Fn(BodyIrBuildProgress) + Sync)>,
 ) -> anyhow::Result<Vec<(PackageSlot, LoweredPackageBodies)>> {
     validate_package_inputs(parse, parse.package_count(), interners)?;
     validate_selected_packages(parse.package_count(), package_slots)?;
@@ -115,6 +121,7 @@ pub(super) fn build_selected_packages(
         &selected,
         &mut packages,
         worker_limit,
+        report_progress,
     )?;
 
     Ok(packages
@@ -134,6 +141,7 @@ fn build_package_outputs(
     selected: &[bool],
     packages: &mut [Option<LoweredPackageBodies>],
     worker_limit: Option<NonZeroUsize>,
+    report_progress: Option<&(dyn Fn(BodyIrBuildProgress) + Sync)>,
 ) -> anyhow::Result<()> {
     anyhow::ensure!(
         selected.len() == parse.package_count(),
@@ -143,6 +151,8 @@ fn build_package_outputs(
     );
 
     let thread_pool = local_thread_pool("rg-body-lower", worker_limit)?;
+    let completed_packages = AtomicUsize::new(0);
+    let total_packages = selected.iter().filter(|&&selected| selected).count();
 
     // Body lowering is package-local: each worker receives one parse package, one name interner,
     // and one output slot. Non-selected rebuild slots stay absent from this temporary output.
@@ -169,6 +179,15 @@ fn build_package_outputs(
                         package,
                         interner,
                     )?);
+                    if let Some(report_progress) = report_progress {
+                        let completed_packages =
+                            completed_packages.fetch_add(1, Ordering::Relaxed) + 1;
+                        report_progress(BodyIrBuildProgress::new(
+                            BodyIrBuildStage::Lowering,
+                            completed_packages,
+                            total_packages,
+                        ));
+                    }
                     Ok(())
                 },
             )

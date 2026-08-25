@@ -71,7 +71,31 @@ describe("client status state precedence", () => {
     status.deferredIndexingStarted("/workspace/project_c", false);
     assert.equal(render(status), "ready: ~ Rust Glancer: ready [project_c]");
 
-    status.deferredIndexingFinished("/workspace/project_c", false);
+    status.deferredIndexingFinished("/workspace/project_c", "succeeded", undefined, false);
+    assert.equal(render(status), "ready: $(check) Rust Glancer: ready [project_c]");
+  });
+
+  it("keeps the workspace ready but warns when deferred indexing fails", () => {
+    const status = clientStatus();
+    status.starting(DETAILS);
+    status.ready(DETAILS);
+    status.activeWorkspace("/workspace/project_c", "ready", undefined, false);
+    status.deferredIndexingStarted("/workspace/project_c", false);
+
+    status.deferredIndexingFinished(
+      "/workspace/project_c",
+      "failed",
+      "body indexing failed",
+      false,
+    );
+    assert.equal(
+      render(status),
+      "ready: $(warning) Rust Glancer: ready; background index failed [project_c]",
+    );
+
+    status.deferredIndexingStarted("/workspace/project_c", false);
+    assert.equal(render(status), "ready: ~ Rust Glancer: ready [project_c]");
+    status.deferredIndexingFinished("/workspace/project_c", "succeeded", undefined, false);
     assert.equal(render(status), "ready: $(check) Rust Glancer: ready [project_c]");
   });
 
@@ -80,7 +104,7 @@ describe("client status state precedence", () => {
     status.starting(DETAILS);
     status.ready(DETAILS);
     status.activeWorkspace("/workspace/project_c", "ready", undefined, false);
-    status.deferredIndexingFinished("/workspace/project_c", false);
+    status.deferredIndexingFinished("/workspace/project_c", "succeeded", undefined, false);
     assert.equal(render(status), "ready: $(check) Rust Glancer: ready [project_c]");
 
     status.activeWorkspace("/workspace/project_c", "indexing", undefined, false);
@@ -89,7 +113,7 @@ describe("client status state precedence", () => {
     status.deferredIndexingStarted("/workspace/project_c", false);
     status.activeWorkspace("/workspace/project_c", "ready", undefined, false);
     assert.equal(render(status), "ready: ~ Rust Glancer: ready [project_c]");
-    status.deferredIndexingFinished("/workspace/project_c", false);
+    status.deferredIndexingFinished("/workspace/project_c", "succeeded", undefined, false);
     assert.equal(render(status), "ready: $(check) Rust Glancer: ready [project_c]");
   });
 
@@ -99,7 +123,7 @@ describe("client status state precedence", () => {
     status.ready(DETAILS);
     status.activeWorkspace("/workspace/project_c", "ready", undefined, false);
     status.deferredIndexingStarted("/workspace/project_c", false);
-    status.deferredIndexingFinished("/workspace/project_c", false);
+    status.deferredIndexingFinished("/workspace/project_c", "succeeded", undefined, false);
 
     status.indexing();
     status.activeWorkspace("/workspace/project_c", "indexing", undefined, false);
@@ -127,7 +151,7 @@ describe("client status state precedence", () => {
     status.ready(DETAILS);
 
     status.deferredIndexingStarted("/workspace/project_e", false);
-    status.deferredIndexingFinished("/workspace/project_e", false);
+    status.deferredIndexingFinished("/workspace/project_e", "succeeded", undefined, false);
     status.activeWorkspace("/workspace/project_e", "ready", undefined, false);
 
     assert.equal(render(status), "ready: $(check) Rust Glancer: ready [project_e]");
@@ -168,6 +192,7 @@ function noopView(): ClientStatusView {
     indexing() {},
     ready() {},
     readyWithDeferredIndexing() {},
+    readyWithDeferredIndexingFailure() {},
     stale() {},
     diagnosticsRunning() {},
     diagnosticsFailed() {},

@@ -1,0 +1,16 @@
+[package]
+name = "rust-glancer-zed"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Zed language server adapter for Rust Glancer."
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+zed_extension_api.workspace = true

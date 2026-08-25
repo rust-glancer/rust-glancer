@@ -10,16 +10,10 @@ use rg_lsp_proto::{
 };
 use rg_std::NormalizedPathBuf;
 use tarpc::context;
-use tower_lsp_server::{
-    Client as LspClient,
-    ls_types::{
-        MessageType, ProgressParams, ProgressParamsValue, WorkDoneProgress, WorkDoneProgressBegin,
-        WorkDoneProgressEnd, notification::Progress,
-    },
-};
+use tower_lsp_server::{Client as LspClient, ls_types::MessageType};
 
 use crate::{
-    client_notifications::{DeferredIndexingFinished, DeferredIndexingStarted},
+    client_status::{ClientStatusPublisher, work_done_progress},
     ingress::EditorStateHandle,
 };
 
@@ -31,12 +25,21 @@ use crate::{
 #[derive(Clone, Debug)]
 pub(crate) struct NotificationsPublisher {
     lsp_client: LspClient,
+    client_status: ClientStatusPublisher,
     editor: EditorStateHandle,
 }
 
 impl NotificationsPublisher {
-    pub(crate) fn new(lsp_client: LspClient, editor: EditorStateHandle) -> Self {
-        Self { lsp_client, editor }
+    pub(crate) fn new(
+        lsp_client: LspClient,
+        editor: EditorStateHandle,
+        client_status: ClientStatusPublisher,
+    ) -> Self {
+        Self {
+            lsp_client,
+            client_status,
+            editor,
+        }
     }
 }
 
@@ -46,14 +49,20 @@ impl NotificationsService for NotificationsPublisher {
         _: context::Context,
         notification: ServiceNotification,
     ) -> EngineResult<()> {
-        publish_service_notification(&self.lsp_client, &self.editor, notification)
-            .await
-            .map_err(EngineError::from)
+        publish_service_notification(
+            &self.lsp_client,
+            &self.client_status,
+            &self.editor,
+            notification,
+        )
+        .await
+        .map_err(EngineError::from)
     }
 }
 
 async fn publish_service_notification(
     lsp_client: &LspClient,
+    client_status: &ClientStatusPublisher,
     editor: &EditorStateHandle,
     notification: ServiceNotification,
 ) -> anyhow::Result<()> {
@@ -103,36 +112,10 @@ async fn publish_service_notification(
             title,
             message,
         } => {
-            if let Err(error) = lsp_client.create_work_done_progress(token.clone()).await {
-                tracing::debug!(
-                    error = %error,
-                    "failed to create service progress token"
-                );
-                return Ok(());
-            }
-
-            let progress = WorkDoneProgressBegin {
-                title,
-                cancellable: Some(false),
-                message,
-                percentage: None,
-            };
-            lsp_client
-                .send_notification::<Progress>(ProgressParams {
-                    token,
-                    value: ProgressParamsValue::WorkDone(WorkDoneProgress::Begin(progress)),
-                })
-                .await;
+            work_done_progress::begin_engine_progress(lsp_client, token, title, message).await;
         }
         ServiceNotification::EndWorkDoneProgress { token, message } => {
-            lsp_client
-                .send_notification::<Progress>(ProgressParams {
-                    token,
-                    value: ProgressParamsValue::WorkDone(WorkDoneProgress::End(
-                        WorkDoneProgressEnd { message },
-                    )),
-                })
-                .await;
+            work_done_progress::end_engine_progress(lsp_client, token, message).await;
         }
         ServiceNotification::InlayHintRefresh => {
             if let Err(error) = lsp_client.inlay_hint_refresh().await {
@@ -142,18 +125,27 @@ async fn publish_service_notification(
                 );
             }
         }
-        ServiceNotification::DeferredIndexingStarted { root } => {
-            lsp_client
-                .send_notification::<DeferredIndexingStarted>(DeferredIndexingStarted::params(
-                    &root,
-                ))
+        ServiceNotification::DeferredIndexingStarted { root, generation } => {
+            client_status
+                .deferred_indexing_started(&root, generation)
                 .await;
         }
-        ServiceNotification::DeferredIndexingFinished { root } => {
-            lsp_client
-                .send_notification::<DeferredIndexingFinished>(DeferredIndexingFinished::params(
-                    &root,
-                ))
+        ServiceNotification::DeferredIndexingProgress {
+            root,
+            generation,
+            progress,
+        } => {
+            client_status
+                .deferred_indexing_progress(&root, generation, progress)
+                .await;
+        }
+        ServiceNotification::DeferredIndexingFinished {
+            root,
+            generation,
+            outcome,
+        } => {
+            client_status
+                .deferred_indexing_finished(&root, generation, outcome)
                 .await;
         }
         ServiceNotification::LogMessage { level, message } => {

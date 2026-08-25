@@ -34,8 +34,8 @@ jobs:
           config-file: .github/release-please/config.json
           manifest-file: .github/release-please/manifest.json
 
-  build_vsix:
-    name: build-vsix (${{ matrix.vscode_target }})
+  build_release_assets:
+    name: build-release-assets (${{ matrix.vscode_target }})
     needs: release_please
     if: needs.release_please.outputs.release_created == 'true'
     runs-on: ${{ matrix.runner }}
@@ -51,19 +51,24 @@ jobs:
             container: quay.io/pypa/manylinux_2_28_x86_64@sha256:4dc41da7df20400310c80d162a2fe2d2c2f3d9734d8dec20f6b9843711618deb
             rust_target: x86_64-unknown-linux-gnu
             vscode_target: linux-x64
+            python: python3
           - runner: ubuntu-24.04-arm
             container: quay.io/pypa/manylinux_2_28_aarch64@sha256:29a6ceb78de5b00494e6e7456a72782a4cb54238de102e7491d15fe47789b4d1
             rust_target: aarch64-unknown-linux-gnu
             vscode_target: linux-arm64
+            python: python3
           - runner: macos-15-intel
             rust_target: x86_64-apple-darwin
             vscode_target: darwin-x64
+            python: python3
           - runner: macos-15
             rust_target: aarch64-apple-darwin
             vscode_target: darwin-arm64
+            python: python3
           - runner: windows-latest
             rust_target: x86_64-pc-windows-msvc
             vscode_target: win32-x64
+            python: python
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
@@ -87,18 +92,28 @@ jobs:
       - name: Install client dependencies
         run: npm ci
         working-directory: editors/code
+      - name: Build and check language server
+        run: cargo run --release -p rust-glancer --target "${{ matrix.rust_target }}" -- --help
+      - name: Package standalone language server
+        run: >-
+          ${{ matrix.python }} .github/scripts/package_server_archive.py
+          --target "${{ matrix.rust_target }}"
+          --version "${{ needs.release_please.outputs.version }}"
       - name: Package VSIX
         run: >-
           npm run package:vsix --
+          --skip-build
           --target "${{ matrix.rust_target }}"
           --vscode-target "${{ matrix.vscode_target }}"
           --out "../../dist/rust-glancer-${{ needs.release_please.outputs.version }}-${{ matrix.vscode_target }}.vsix"
         working-directory: editors/code
-      - name: Upload packaged VSIX
+      - name: Upload release assets
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: vsix-${{ matrix.vscode_target }}
-          path: dist/rust-glancer-${{ needs.release_please.outputs.version }}-${{ matrix.vscode_target }}.vsix
+          name: release-assets-${{ matrix.vscode_target }}
+          path: |
+            dist/rust-glancer-${{ needs.release_please.outputs.version }}-${{ matrix.vscode_target }}.vsix
+            dist/rust-glancer-${{ needs.release_please.outputs.version }}-${{ matrix.rust_target }}.tar.gz
           if-no-files-found: error
           retention-days: 7
 
@@ -106,7 +121,7 @@ jobs:
     name: publish
     needs:
       - release_please
-      - build_vsix
+      - build_release_assets
     if: needs.release_please.outputs.release_created == 'true'
     runs-on: ubuntu-latest
     permissions:
@@ -125,10 +140,10 @@ jobs:
       - name: Install Marketplace publisher
         run: npm ci
         working-directory: editors/code
-      - name: Download packaged VSIX files
+      - name: Download release assets
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
-          pattern: vsix-*
+          pattern: release-assets-*
           path: dist
           merge-multiple: true
       - name: Check release versions
@@ -160,8 +175,8 @@ jobs:
 
           node ./node_modules/@vscode/vsce/vsce publish --skip-duplicate --packagePath "${packages[@]}"
         working-directory: editors/code
-      - name: Attach VSIX files to the GitHub release
+      - name: Attach release assets to the GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ needs.release_please.outputs.tag_name }}
-        run: gh release upload "$RELEASE_TAG" dist/*.vsix --clobber
+        run: gh release upload "$RELEASE_TAG" dist/*.vsix dist/*.tar.gz --clobber

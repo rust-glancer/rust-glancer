@@ -40,7 +40,7 @@ pub use self::{
         DetachedSplitIndexing, DocumentSourceView, FileContext, FinishedSplitIndexing,
         MacroExpansionLimitBuildSummary, Project, ProjectBuilder, ProjectGenerationId,
         ProjectSnapshot, ProjectStats, SavedFileChange, SplitIndexing, SplitIndexingMode,
-        StartupCacheLoad,
+        SplitIndexingProgress, SplitIndexingStage, StartupCacheLoad,
     },
     residency::{PackageResidency, PackageResidencyPlan, PackageResidencyPolicy},
 };

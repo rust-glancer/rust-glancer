@@ -22,6 +22,7 @@ use self::utils::{HostFixture, HostObservation};
 use crate::{
     AnalysisChangeSummary, AnalysisSurface, BuildProcessMemory, PackageResidencyPolicy, Project,
     ProjectMemoryHooks, ProjectMemoryPurgePoint, SavedFileChange, SplitIndexingMode,
+    SplitIndexingStage,
     testonly::{ProjectFixture, ProjectSourceFixture},
 };
 
@@ -1341,6 +1342,8 @@ pub fn value() -> usize {
         .expect("early-start offloadable project build should succeed");
     let priority_finished = Arc::new(Mutex::new(None));
     let priority_publication = Arc::clone(&priority_finished);
+    let progress = Arc::new(Mutex::new(Vec::new()));
+    let progress_publication = Arc::clone(&progress);
     let final_finished = project
         .detach_split_indexing()
         .finish_with_package_priority(
@@ -1355,8 +1358,29 @@ pub fn value() -> usize {
                     "one-package build should publish priority data once",
                 );
             },
+            move |snapshot| {
+                progress_publication
+                    .lock()
+                    .expect("split indexing progress should not be poisoned")
+                    .push((
+                        snapshot.stage(),
+                        snapshot.completed_packages(),
+                        snapshot.total_packages(),
+                    ));
+            },
         )
         .expect("background deferred indexing should succeed");
+    assert_eq!(
+        *progress
+            .lock()
+            .expect("split indexing progress should not be poisoned"),
+        [
+            (SplitIndexingStage::LoweringBodies, 0, 1),
+            (SplitIndexingStage::LoweringBodies, 1, 1),
+            (SplitIndexingStage::ResolvingBodies, 0, 1),
+            (SplitIndexingStage::ResolvingBodies, 1, 1),
+        ],
+    );
     let priority_finished = priority_finished
         .lock()
         .expect("priority publication should not be poisoned")

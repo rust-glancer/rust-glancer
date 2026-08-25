@@ -20,6 +20,7 @@ import {
   ClientStatus,
   type ActiveWorkspaceState,
   type ClientStatusSnapshot,
+  type DeferredIndexingOutcome,
 } from "../status/client-status";
 import { StatusView } from "../status/status-view";
 import {
@@ -140,8 +141,13 @@ export class LanguageClientSession implements vscode.Disposable {
         this.clientStatus.deferredIndexingStarted(status.root, this.isActiveRustDocumentDirty());
       }),
       client.onNotification(SERVER_NOTIFICATIONS.deferredIndexingFinished, (params) => {
-        const status = params as DeferredIndexingParams;
-        this.clientStatus.deferredIndexingFinished(status.root, this.isActiveRustDocumentDirty());
+        const status = params as DeferredIndexingFinishedParams;
+        this.clientStatus.deferredIndexingFinished(
+          status.root,
+          status.outcome,
+          status.message,
+          this.isActiveRustDocumentDirty(),
+        );
       }),
     );
 
@@ -257,4 +263,9 @@ interface ActiveWorkspaceChangedParams {
 
 interface DeferredIndexingParams {
   readonly root: string;
+}
+
+interface DeferredIndexingFinishedParams extends DeferredIndexingParams {
+  readonly outcome: DeferredIndexingOutcome;
+  readonly message?: string;
 }

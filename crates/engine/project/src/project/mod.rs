@@ -42,6 +42,7 @@ pub use self::{
     snapshot::{CurrentBodyBuildSummary, DocumentSourceView, ProjectSnapshot},
     split_indexing::{
         AnalysisSurface, DetachedSplitIndexing, FinishedSplitIndexing, SplitIndexing,
+        SplitIndexingProgress, SplitIndexingStage,
     },
     stats::{MacroExpansionLimitBuildSummary, ProjectStats},
 };

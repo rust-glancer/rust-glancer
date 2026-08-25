@@ -1,18 +1,51 @@
+//! Rust Glancer's private status notifications.
+//!
+//! The VS Code extension uses the active-workspace and deferred-indexing events to render its
+//! detailed status bar. `compare-lsp` also uses deferred-indexing completion as a precise barrier
+//! before measuring body-sensitive requests. These notifications predate the portable progress and
+//! rust-analyzer-compatible health flows, so they remain additive compatibility contracts.
+
 use std::path::{Path, PathBuf};
 
-use tower_lsp_server::ls_types::{LSPAny, LSPObject, notification::Notification};
+use tower_lsp_server::{
+    Client as LspClient,
+    ls_types::{LSPAny, LSPObject, notification::Notification},
+};
 
-use rg_lsp_proto::path_for_editor;
+use rg_lsp_proto::{DeferredIndexingOutcome, path_for_editor};
 
 const ACTIVE_WORKSPACE_CHANGED_METHOD: &str = "rust-glancer/activeWorkspaceChanged";
 const DEFERRED_INDEXING_STARTED_METHOD: &str = "rust-glancer/deferredIndexingStarted";
 const DEFERRED_INDEXING_FINISHED_METHOD: &str = "rust-glancer/deferredIndexingFinished";
 
-/// Custom notification that lets the VS Code client show which workspace currently owns requests.
-///
-/// This is intentionally UI-only. The reported root can be a user-facing display root rather than
-/// the exact engine root; routing remains server-owned.
-pub(crate) struct ActiveWorkspaceChanged;
+pub(super) async fn active_workspace_changed(
+    lsp_client: &LspClient,
+    status: &ActiveWorkspaceStatus,
+) {
+    lsp_client
+        .send_notification::<ActiveWorkspaceChanged>(ActiveWorkspaceChanged::params(status))
+        .await;
+}
+
+pub(super) async fn deferred_indexing_started(lsp_client: &LspClient, root: &Path) {
+    lsp_client
+        .send_notification::<DeferredIndexingStarted>(DeferredIndexingStarted::params(root))
+        .await;
+}
+
+pub(super) async fn deferred_indexing_finished(
+    lsp_client: &LspClient,
+    root: &Path,
+    outcome: &DeferredIndexingOutcome,
+) {
+    lsp_client
+        .send_notification::<DeferredIndexingFinished>(DeferredIndexingFinished::params(
+            root, outcome,
+        ))
+        .await;
+}
+
+struct ActiveWorkspaceChanged;
 
 impl Notification for ActiveWorkspaceChanged {
     type Params = LSPAny;
@@ -21,7 +54,7 @@ impl Notification for ActiveWorkspaceChanged {
 }
 
 impl ActiveWorkspaceChanged {
-    pub(crate) fn params(status: &ActiveWorkspaceStatus) -> LSPAny {
+    fn params(status: &ActiveWorkspaceStatus) -> LSPAny {
         let mut params = LSPObject::new();
         params.insert(
             "root".to_string(),
@@ -42,7 +75,7 @@ impl ActiveWorkspaceChanged {
 ///
 /// This event is separate from the foreground `indexing` workspace state. A watcher batch can be
 /// an exact replay that publishes no generation and therefore starts no deferred work.
-pub(crate) struct DeferredIndexingStarted;
+struct DeferredIndexingStarted;
 
 impl Notification for DeferredIndexingStarted {
     type Params = LSPAny;
@@ -51,17 +84,13 @@ impl Notification for DeferredIndexingStarted {
 }
 
 impl DeferredIndexingStarted {
-    pub(crate) fn params(root: &Path) -> LSPAny {
-        deferred_indexing_params(root)
+    fn params(root: &Path) -> LSPAny {
+        LSPAny::Object(deferred_indexing_params(root))
     }
 }
 
-/// Marks completion of background work for the active saved project generation.
-///
-/// Editors can ignore this notification. `compare-lsp` uses it as a precise post-ready barrier so
-/// its measured query latency does not include the first body-sensitive request materializing
-/// deferred indexes on demand.
-pub(crate) struct DeferredIndexingFinished;
+/// Marks the terminal outcome of background work for the active saved project generation.
+struct DeferredIndexingFinished;
 
 impl Notification for DeferredIndexingFinished {
     type Params = LSPAny;
@@ -70,18 +99,31 @@ impl Notification for DeferredIndexingFinished {
 }
 
 impl DeferredIndexingFinished {
-    pub(crate) fn params(root: &Path) -> LSPAny {
-        deferred_indexing_params(root)
+    fn params(root: &Path, outcome: &DeferredIndexingOutcome) -> LSPAny {
+        let mut params = deferred_indexing_params(root);
+        match outcome {
+            DeferredIndexingOutcome::Succeeded => {
+                params.insert(
+                    "outcome".to_string(),
+                    LSPAny::String("succeeded".to_string()),
+                );
+            }
+            DeferredIndexingOutcome::Failed { message } => {
+                params.insert("outcome".to_string(), LSPAny::String("failed".to_string()));
+                params.insert("message".to_string(), LSPAny::String(message.clone()));
+            }
+        }
+        LSPAny::Object(params)
     }
 }
 
-fn deferred_indexing_params(root: &Path) -> LSPAny {
+fn deferred_indexing_params(root: &Path) -> LSPObject {
     let mut params = LSPObject::new();
     params.insert(
         "root".to_string(),
         LSPAny::String(editor_path_display(root)),
     );
-    LSPAny::Object(params)
+    params
 }
 
 fn editor_path_display(path: &Path) -> String {
@@ -157,14 +199,28 @@ mod tests {
     }
 
     #[test]
-    fn deferred_indexing_params_render_root() {
+    fn deferred_indexing_params_render_root_and_terminal_outcome() {
         let root = Path::new("workspace/project_a");
-        for params in [
-            DeferredIndexingStarted::params(root),
-            DeferredIndexingFinished::params(root),
-        ] {
-            assert_eq!(render_params(params), "root: workspace/project_a");
-        }
+        assert_eq!(
+            render_params(DeferredIndexingStarted::params(root)),
+            "root: workspace/project_a"
+        );
+        assert_eq!(
+            render_params(DeferredIndexingFinished::params(
+                root,
+                &DeferredIndexingOutcome::Succeeded,
+            )),
+            "outcome: succeeded\nroot: workspace/project_a"
+        );
+        assert_eq!(
+            render_params(DeferredIndexingFinished::params(
+                root,
+                &DeferredIndexingOutcome::Failed {
+                    message: "body indexing failed".to_string(),
+                },
+            )),
+            "message: body indexing failed\noutcome: failed\nroot: workspace/project_a"
+        );
     }
 
     fn render_params(params: LSPAny) -> String {
