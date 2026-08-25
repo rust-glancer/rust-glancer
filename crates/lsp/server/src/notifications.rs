@@ -111,11 +111,24 @@ async fn publish_service_notification(
                 );
             }
         }
-        ServiceNotification::DeferredIndexingStarted { root } => {
-            client_status.deferred_indexing_started(&root).await;
+        ServiceNotification::DeferredIndexingStarted { root, generation } => {
+            client_status
+                .deferred_indexing_started(&root, generation)
+                .await;
         }
-        ServiceNotification::DeferredIndexingFinished { root } => {
-            client_status.deferred_indexing_finished(&root).await;
+        ServiceNotification::DeferredIndexingProgress {
+            root,
+            generation,
+            progress,
+        } => {
+            client_status
+                .deferred_indexing_progress(&root, generation, progress)
+                .await;
+        }
+        ServiceNotification::DeferredIndexingFinished { root, generation } => {
+            client_status
+                .deferred_indexing_finished(&root, generation)
+                .await;
         }
         ServiceNotification::LogMessage { level, message } => {
             lsp_client.log_message(message_type(level), message).await;

@@ -19,7 +19,9 @@
 //! with an older partial view.
 
 use anyhow::Context as _;
-use rg_body_ir::{BodyIrFile, CrateBodiesCoverage, PackageBodies};
+use rg_body_ir::{
+    BodyIrBuildProgress, BodyIrBuildStage, BodyIrFile, CrateBodiesCoverage, PackageBodies,
+};
 use rg_def_map::PackageSlot;
 use rg_ir_model::CrateRef;
 use rg_parse::FileId;
@@ -51,6 +53,51 @@ pub enum AnalysisSurface<'a> {
         files: &'a [(CrateRef, FileId)],
         crates: &'a [CrateRef],
     },
+}
+
+/// User-meaningful stage of finishing the deferred part of an early-start index.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SplitIndexingStage {
+    LoweringBodies,
+    ResolvingBodies,
+}
+
+/// Completed package count within one [`SplitIndexingStage`].
+///
+/// Package completion is deliberately reported instead of an elapsed-time percentage. Packages
+/// vary widely in size, but the count still tells callers that work is advancing and gives every
+/// stage an exact terminal value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SplitIndexingProgress {
+    stage: SplitIndexingStage,
+    completed_packages: usize,
+    total_packages: usize,
+}
+
+impl SplitIndexingProgress {
+    fn from_body_ir(progress: BodyIrBuildProgress) -> Self {
+        let stage = match progress.stage() {
+            BodyIrBuildStage::Lowering => SplitIndexingStage::LoweringBodies,
+            BodyIrBuildStage::Resolving => SplitIndexingStage::ResolvingBodies,
+        };
+        Self {
+            stage,
+            completed_packages: progress.completed_packages(),
+            total_packages: progress.total_packages(),
+        }
+    }
+
+    pub fn stage(self) -> SplitIndexingStage {
+        self.stage
+    }
+
+    pub fn completed_packages(self) -> usize {
+        self.completed_packages
+    }
+
+    pub fn total_packages(self) -> usize {
+        self.total_packages
+    }
 }
 
 /// Split-indexing operations for a live project.
@@ -154,28 +201,38 @@ impl DetachedSplitIndexing {
         package_slots_for_path(&self.project.state, path)
     }
 
-    /// Finish all deferred work while publishing priority packages as soon as they resolve.
+    /// Finish all deferred work while exposing package publication and progress observations.
     ///
-    /// Every package still belongs to one Body IR build. The callback is an early copy-out point,
-    /// not another build boundary, so the remaining background work keeps its ordinary parallel
-    /// scheduling and shared read transactions.
+    /// Every package still belongs to one Body IR build. `publish_priority` is an early copy-out
+    /// point for packages selected by `priority_packages`, not another build boundary, so the
+    /// remaining background work keeps its ordinary parallel scheduling and shared read
+    /// transactions.
+    ///
+    /// `report_progress` receives package counts for the lowering and resolution stages. It may be
+    /// called concurrently by Body IR workers, so callers should keep it cheap and thread-safe.
     pub fn finish_with_package_priority(
         self,
         priority_packages: impl Fn() -> Vec<PackageSlot> + Sync,
         publish_priority: impl Fn(FinishedSplitIndexing) + Sync,
+        report_progress: impl Fn(SplitIndexingProgress) + Sync,
     ) -> anyhow::Result<FinishedSplitIndexing> {
-        self.finish_with_optional_package_priority(Some(&priority_packages), &publish_priority)
+        self.finish_with_optional_package_priority(
+            Some(&priority_packages),
+            &publish_priority,
+            &report_progress,
+        )
     }
 
     /// Finish every remaining package inside the detached project clone.
     pub fn finish(self) -> anyhow::Result<FinishedSplitIndexing> {
-        self.finish_with_optional_package_priority(None, &|_| {})
+        self.finish_with_optional_package_priority(None, &|_| {}, &|_| {})
     }
 
     fn finish_with_optional_package_priority(
         mut self,
         priority_packages: Option<&(dyn Fn() -> Vec<PackageSlot> + Sync)>,
         publish_priority: &(dyn Fn(FinishedSplitIndexing) + Sync),
+        report_progress: &(dyn Fn(SplitIndexingProgress) + Sync),
     ) -> anyhow::Result<FinishedSplitIndexing> {
         let packages = unfinished_split_indexing_packages(&self.project.state);
         let publish_package = |package, bodies| {
@@ -189,6 +246,7 @@ impl DetachedSplitIndexing {
             &packages,
             priority_packages,
             &publish_package,
+            report_progress,
             &mut sampler,
         )
         .context("while attempting to finish detached deferred packages")?;
@@ -455,7 +513,7 @@ fn finish_resident_with_sampler(
     sampler: &mut BuildMemorySampler,
 ) -> anyhow::Result<Vec<PackageSlot>> {
     let packages = unfinished_split_indexing_packages(state);
-    finish_resident_packages_with_sampler(state, &packages, None, &|_, _| {}, sampler)
+    finish_resident_packages_with_sampler(state, &packages, None, &|_, _| {}, &|_| {}, sampler)
         .context("while attempting to finish resident deferred packages")?;
     Ok(packages)
 }
@@ -466,6 +524,7 @@ fn finish_resident_packages_with_sampler(
     packages: &[PackageSlot],
     priority_packages: Option<&(dyn Fn() -> Vec<PackageSlot> + Sync)>,
     publish_priority: &(dyn Fn(PackageSlot, PackageBodies) + Sync),
+    report_progress: &(dyn Fn(SplitIndexingProgress) + Sync),
     sampler: &mut BuildMemorySampler,
 ) -> anyhow::Result<()> {
     if packages.is_empty() {
@@ -491,7 +550,14 @@ fn finish_resident_packages_with_sampler(
         .configured_bodies(state.body_ir_policy);
     let body_ir = match priority_packages {
         Some(priority_packages) => {
-            builder.build_with_package_priority(priority_packages, publish_priority)
+            let report_body_ir_progress = |progress| {
+                report_progress(SplitIndexingProgress::from_body_ir(progress));
+            };
+            builder.build_with_package_priority(
+                priority_packages,
+                publish_priority,
+                &report_body_ir_progress,
+            )
         }
         None => builder.build(),
     };

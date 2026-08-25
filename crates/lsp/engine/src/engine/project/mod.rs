@@ -19,10 +19,10 @@ use std::{
 };
 
 use anyhow::Context as _;
-use rg_lsp_proto::ServiceNotification;
+use rg_lsp_proto::{IndexingProgress, IndexingStage, ServiceNotification};
 use rg_project::{
     AnalysisSurface, Project, ProjectMemoryHooks, ProjectMemoryPurgePoint, ProjectSnapshot,
-    SavedFileChange, SplitIndexingMode,
+    SavedFileChange, SplitIndexingMode, SplitIndexingProgress, SplitIndexingStage,
 };
 use rg_workspace::{CargoMetadataTarget, SysrootSources, WorkspaceMetadata};
 
@@ -403,10 +403,50 @@ impl ProjectCoordinator {
             return;
         }
 
-        self.send_deferred_indexing_finished();
+        self.send_deferred_indexing_finished(generation);
         if let Ok(snapshot) = self.project.saved_snapshot() {
             Self::log_project_snapshot(snapshot, "deferred indexing finish");
         }
+    }
+
+    /// Forward one current-generation progress snapshot to the editor-facing server.
+    pub(super) fn deferred_indexing_progress(
+        &self,
+        generation: u64,
+        progress: SplitIndexingProgress,
+    ) {
+        if self.project.generation() != generation {
+            tracing::trace!(
+                generation,
+                current_generation = self.project.generation(),
+                "discarding stale deferred indexing progress"
+            );
+            return;
+        }
+        let Some(root) = &self.workspace_root else {
+            tracing::warn!(
+                "deferred indexing reported progress before workspace root was recorded"
+            );
+            return;
+        };
+
+        let stage = match progress.stage() {
+            SplitIndexingStage::LoweringBodies => IndexingStage::LoweringBodies,
+            SplitIndexingStage::ResolvingBodies => IndexingStage::ResolvingBodies,
+        };
+        self.notifications
+            .send(ServiceNotification::DeferredIndexingProgress {
+                root: root.clone(),
+                generation,
+                progress: IndexingProgress {
+                    stage,
+                    completed_packages: progress
+                        .completed_packages()
+                        .try_into()
+                        .unwrap_or(u64::MAX),
+                    total_packages: progress.total_packages().try_into().unwrap_or(u64::MAX),
+                },
+            });
     }
 
     /// Publish one resolved priority package without ending the lifecycle.
@@ -599,17 +639,23 @@ impl ProjectCoordinator {
         };
 
         self.notifications
-            .send(ServiceNotification::DeferredIndexingStarted { root: root.clone() });
+            .send(ServiceNotification::DeferredIndexingStarted {
+                root: root.clone(),
+                generation: self.project.generation(),
+            });
     }
 
-    fn send_deferred_indexing_finished(&self) {
+    fn send_deferred_indexing_finished(&self, generation: u64) {
         let Some(root) = &self.workspace_root else {
             tracing::warn!("deferred indexing finished before workspace root was recorded");
             return;
         };
 
         self.notifications
-            .send(ServiceNotification::DeferredIndexingFinished { root: root.clone() });
+            .send(ServiceNotification::DeferredIndexingFinished {
+                root: root.clone(),
+                generation,
+            });
     }
 
     /// Log the retained project shape after a saved-state transition.

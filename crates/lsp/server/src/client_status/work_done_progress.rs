@@ -4,8 +4,9 @@
 //! protocol, while VS Code and other LSP clients can consume the same messages without knowing any
 //! Rust Glancer extensions.
 //!
-//! Workspace indexing uses server-owned handles so a later phase/count signal can update the same
-//! operation. Engine services can also supply their own tokens for bounded operations such as Cargo
+//! Foreground indexing and deferred completion use separate server-owned handles. Their titles make
+//! the queryable boundary explicit, while later phase/count signals update the deferred operation.
+//! Engine services can also supply their own tokens for bounded operations such as Cargo
 //! diagnostics; those begin/end messages are encoded here but do not change workspace lifecycle.
 
 use std::{
@@ -13,6 +14,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use rg_lsp_proto::{IndexingProgress, IndexingStage};
 use tower_lsp_server::{
     Client as LspClient, NotCancellable, OngoingProgress, Unbounded,
     ls_types::{
@@ -32,8 +34,6 @@ pub(super) fn is_supported(capabilities: &ClientCapabilities) -> bool {
 }
 
 /// Active workspace indexing operations keyed by the root shown to the user.
-// TODO: Forward coalesced phase/count snapshots through the stored handle once indexing reports
-// useful totals.
 #[derive(Debug, Default)]
 pub(super) struct WorkspaceProgressState {
     progress_by_root: BTreeMap<PathBuf, WorkspaceProgress>,
@@ -41,7 +41,17 @@ pub(super) struct WorkspaceProgressState {
 }
 
 impl WorkspaceProgressState {
-    pub(super) async fn begin(&mut self, lsp_client: &LspClient, root: &Path) {
+    pub(super) async fn begin_foreground(&mut self, lsp_client: &LspClient, root: &Path) {
+        self.begin(lsp_client, root, foreground_indexing_title(root))
+            .await;
+    }
+
+    pub(super) async fn begin_deferred(&mut self, lsp_client: &LspClient, root: &Path) {
+        self.begin(lsp_client, root, deferred_indexing_title(root))
+            .await;
+    }
+
+    async fn begin(&mut self, lsp_client: &LspClient, root: &Path, title: String) {
         if let Some(progress) = self.progress_by_root.remove(root) {
             progress.finish_with_message("Superseded").await;
         }
@@ -54,10 +64,7 @@ impl WorkspaceProgressState {
 
         match lsp_client.create_work_done_progress(token.clone()).await {
             Ok(()) => {
-                let progress = lsp_client
-                    .progress(token, indexing_title(root))
-                    .begin()
-                    .await;
+                let progress = lsp_client.progress(token, title).begin().await;
                 self.progress_by_root.insert(root.to_path_buf(), progress);
             }
             Err(error) => {
@@ -73,6 +80,13 @@ impl WorkspaceProgressState {
     pub(super) async fn finish(&mut self, root: &Path, message: &'static str) {
         if let Some(progress) = self.progress_by_root.remove(root) {
             progress.finish_with_message(message).await;
+        }
+    }
+
+    /// Update one active workspace operation with an editor-facing package count.
+    pub(super) async fn report(&self, root: &Path, progress: IndexingProgress) {
+        if let Some(operation) = self.progress_by_root.get(root) {
+            operation.report(indexing_progress_message(progress)).await;
         }
     }
 }
@@ -122,14 +136,31 @@ pub(crate) async fn end_engine_progress(
         .await;
 }
 
-fn indexing_title(root: &Path) -> String {
-    let workspace = root
-        .file_name()
+fn workspace_name(root: &Path) -> String {
+    root.file_name()
         .and_then(|name| name.to_str())
         .filter(|name| !name.is_empty())
         .map(str::to_owned)
-        .unwrap_or_else(|| root.display().to_string());
-    format!("Indexing {workspace}")
+        .unwrap_or_else(|| root.display().to_string())
+}
+
+fn foreground_indexing_title(root: &Path) -> String {
+    format!("Indexing {}", workspace_name(root))
+}
+
+fn deferred_indexing_title(root: &Path) -> String {
+    format!("{} ready · background", workspace_name(root))
+}
+
+fn indexing_progress_message(progress: IndexingProgress) -> String {
+    let stage = match progress.stage {
+        IndexingStage::LoweringBodies => "Lowering",
+        IndexingStage::ResolvingBodies => "Resolving",
+    };
+    format!(
+        "{stage} · {}/{}",
+        progress.completed_packages, progress.total_packages
+    )
 }
 
 #[cfg(test)]
@@ -137,10 +168,26 @@ mod tests {
     use super::*;
 
     #[test]
-    fn indexing_title_reserves_the_message_for_future_phase_details() {
+    fn progress_titles_distinguish_blocking_and_background_work() {
         assert_eq!(
-            indexing_title(Path::new("/workspace/project_a")),
+            foreground_indexing_title(Path::new("/workspace/project_a")),
             "Indexing project_a"
+        );
+        assert_eq!(
+            deferred_indexing_title(Path::new("/workspace/project_a")),
+            "project_a ready · background"
+        );
+    }
+
+    #[test]
+    fn indexing_progress_message_keeps_stage_and_count_explicit() {
+        assert_eq!(
+            indexing_progress_message(IndexingProgress {
+                stage: IndexingStage::ResolvingBodies,
+                completed_packages: 41,
+                total_packages: 286,
+            }),
+            "Resolving · 41/286",
         );
     }
 }

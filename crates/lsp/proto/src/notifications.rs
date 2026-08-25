@@ -33,14 +33,39 @@ pub enum ServiceNotification {
     InlayHintRefresh,
     DeferredIndexingStarted {
         root: PathBuf,
+        generation: u64,
+    },
+    DeferredIndexingProgress {
+        root: PathBuf,
+        generation: u64,
+        progress: IndexingProgress,
     },
     DeferredIndexingFinished {
         root: PathBuf,
+        generation: u64,
     },
     LogMessage {
         level: ServiceLogLevel,
         message: String,
     },
+}
+
+/// Editor-neutral package progress for one indexing stage.
+///
+/// The server decides how to render this snapshot. Keeping presentation text and LSP tokens out of
+/// the engine protocol lets native work-done progress and editor-specific status flows evolve
+/// independently.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct IndexingProgress {
+    pub stage: IndexingStage,
+    pub completed_packages: u64,
+    pub total_packages: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum IndexingStage {
+    LoweringBodies,
+    ResolvingBodies,
 }
 
 /// Client-facing log severity requested by the service.

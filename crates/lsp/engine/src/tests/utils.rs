@@ -381,6 +381,7 @@ impl LspEngineFixture {
                     }
                 }
                 ServiceNotification::DeferredIndexingStarted { .. }
+                | ServiceNotification::DeferredIndexingProgress { .. }
                 | ServiceNotification::DeferredIndexingFinished { .. } => {
                     // Initial deferred indexing finishes on a background thread, so this lifecycle
                     // notification can race with later fixture operations. These snapshots describe

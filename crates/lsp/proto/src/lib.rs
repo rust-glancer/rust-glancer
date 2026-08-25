@@ -24,7 +24,7 @@ pub use self::{
         SysrootDiscovery,
     },
     error::EngineError,
-    notifications::{ServiceLogLevel, ServiceNotification},
+    notifications::{IndexingProgress, IndexingStage, ServiceLogLevel, ServiceNotification},
     query::{QueryError, QueryScope, QueryValue},
     saved_source::{CapturedSourceInput, SaveProposal, SavedProjectChanges},
     service::{

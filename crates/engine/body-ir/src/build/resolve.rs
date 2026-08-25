@@ -3,7 +3,10 @@
 use std::{
     collections::{BTreeSet, VecDeque},
     num::NonZeroUsize,
-    sync::Mutex,
+    sync::{
+        Mutex,
+        atomic::{AtomicUsize, Ordering},
+    },
     time::{Duration, Instant},
 };
 
@@ -18,7 +21,10 @@ use rg_ty::TraitSelectionDeclarationCache;
 
 use crate::{CrateBodies, PackageBodies};
 
-use super::{local_thread_pool, lower::LoweredPackageBodies, state::CrateBodyBuildState};
+use super::{
+    BodyIrBuildProgress, BodyIrBuildStage, local_thread_pool, lower::LoweredPackageBodies,
+    state::CrateBodyBuildState,
+};
 
 // Package resolution runs in parallel, so report only packages large enough to stand out from
 // normal scheduling variance.
@@ -40,6 +46,7 @@ pub(super) fn resolve_selected_packages(
     priority_packages: Option<&(dyn Fn() -> Vec<PackageSlot> + Sync)>,
     publish_priority: &(dyn Fn(PackageSlot, PackageBodies) + Sync),
     worker_limit: Option<NonZeroUsize>,
+    report_progress: Option<&(dyn Fn(BodyIrBuildProgress) + Sync)>,
 ) -> anyhow::Result<Vec<(PackageSlot, PackageBodies)>> {
     let profile_context = rg_profile::ProfileThreadContext::capture();
     let declarations = TraitSelectionDeclarationCache::new();
@@ -81,6 +88,8 @@ pub(super) fn resolve_selected_packages(
     }
 
     let thread_pool = local_thread_pool("rg-body-resolve", worker_limit)?;
+    let total_packages = jobs.len();
+    let completed_packages = AtomicUsize::new(0);
     let Some(priority_packages) = priority_packages else {
         let resolved = thread_pool
             .install(|| {
@@ -97,6 +106,15 @@ pub(super) fn resolve_selected_packages(
                             &declarations,
                             &item_lookup_cache,
                         )?;
+                        if let Some(report_progress) = report_progress {
+                            let completed_packages =
+                                completed_packages.fetch_add(1, Ordering::Relaxed) + 1;
+                            report_progress(BodyIrBuildProgress::new(
+                                BodyIrBuildStage::Resolving,
+                                completed_packages,
+                                total_packages,
+                            ));
+                        }
                         Ok((package_slot, package))
                     })
                     .collect::<anyhow::Result<Vec<_>>>()
@@ -157,6 +175,17 @@ pub(super) fn resolve_selected_packages(
                             priority_published: false,
                         })
                     })();
+                    if result.is_ok()
+                        && let Some(report_progress) = report_progress
+                    {
+                        let completed_packages =
+                            completed_packages.fetch_add(1, Ordering::Relaxed) + 1;
+                        report_progress(BodyIrBuildProgress::new(
+                            BodyIrBuildStage::Resolving,
+                            completed_packages,
+                            total_packages,
+                        ));
+                    }
                     resolved
                         .lock()
                         .expect("Body IR package resolution results should not be poisoned")

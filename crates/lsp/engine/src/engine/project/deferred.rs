@@ -14,17 +14,21 @@ use std::{
     path::PathBuf,
     sync::{Arc, Mutex, mpsc::Sender},
     thread,
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 use rg_def_map::PackageSlot;
-use rg_project::DetachedSplitIndexing;
+use rg_project::{DetachedSplitIndexing, SplitIndexingProgress};
 
 use crate::engine::{
     QueuedEngineCommand,
     command::{DeferredIndexingResult, EngineCommand},
     project::ProjectState,
 };
+
+// Human-visible progress should feel live without turning every parallel package completion into
+// an engine command and an RPC notification.
+const PROGRESS_PUBLICATION_INTERVAL: Duration = Duration::from_millis(200);
 
 /// Tracks the one detached indexing finish allowed to run beside the engine lane.
 ///
@@ -254,6 +258,7 @@ impl DeferredIndexingFinish {
             "deferred indexing package schedule prepared"
         );
 
+        let progress = DeferredIndexingProgressReporter::new(sender.clone(), generation);
         detached
             .finish_with_package_priority(
                 || {
@@ -275,6 +280,7 @@ impl DeferredIndexingFinish {
                         },
                     ));
                 },
+                |snapshot| progress.report(snapshot),
             )
             .map(Box::new)
     }
@@ -366,5 +372,80 @@ impl DeferredIndexingFinish {
             );
         }
         true
+    }
+}
+
+/// Reduces parallel package completions to a small ordered stream on the engine lane.
+///
+/// Reporting stays synchronous and non-blocking from the Body IR workers' point of view: an
+/// accepted snapshot only enters the existing engine command queue. Stage transitions and exact
+/// terminal counts bypass the cadence so the client never misses a meaningful boundary.
+#[derive(Debug)]
+struct DeferredIndexingProgressReporter {
+    sender: Sender<QueuedEngineCommand>,
+    generation: u64,
+    publication: Mutex<ProgressPublication>,
+}
+
+#[derive(Debug, Default)]
+struct ProgressPublication {
+    last_progress: Option<SplitIndexingProgress>,
+    last_published_at: Option<Instant>,
+}
+
+impl DeferredIndexingProgressReporter {
+    fn new(sender: Sender<QueuedEngineCommand>, generation: u64) -> Self {
+        Self {
+            sender,
+            generation,
+            publication: Mutex::new(ProgressPublication::default()),
+        }
+    }
+
+    fn report(&self, progress: SplitIndexingProgress) {
+        debug_assert!(progress.completed_packages() <= progress.total_packages());
+
+        let now = Instant::now();
+        let mut publication = self
+            .publication
+            .lock()
+            .expect("deferred indexing progress publication should not be poisoned");
+        if let Some(previous) = publication.last_progress
+            && previous.stage() == progress.stage()
+            && previous.completed_packages() >= progress.completed_packages()
+        {
+            // The atomic counter gives every worker a newer count, but a worker can be
+            // descheduled before it invokes this callback. Do not let that delayed callback move
+            // an editor from, for example, 18/40 back to 17/40.
+            return;
+        }
+
+        let stage_changed = publication
+            .last_progress
+            .is_none_or(|previous| previous.stage() != progress.stage());
+        let stage_finished = progress.completed_packages() == progress.total_packages();
+        let cadence_elapsed = publication
+            .last_published_at
+            .is_none_or(|last_published_at| {
+                now.duration_since(last_published_at) >= PROGRESS_PUBLICATION_INTERVAL
+            });
+        if !stage_changed && !stage_finished && !cadence_elapsed {
+            return;
+        }
+
+        publication.last_progress = Some(progress);
+        publication.last_published_at = Some(now);
+        drop(publication);
+
+        let command = EngineCommand::DeferredIndexingProgress {
+            generation: self.generation,
+            progress,
+        };
+        if self.sender.send(QueuedEngineCommand::new(command)).is_err() {
+            tracing::debug!(
+                generation = self.generation,
+                "failed to enqueue deferred indexing progress"
+            );
+        }
     }
 }
