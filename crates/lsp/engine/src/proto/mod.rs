@@ -1,5 +1,6 @@
 //! Bridge between engine/analysis internal types and LSP types.
 
+pub(crate) mod code_action;
 pub(crate) mod completion;
 pub(crate) mod formatting;
 pub(crate) mod hover;

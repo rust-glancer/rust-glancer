@@ -29,6 +29,7 @@ use crate::{
     query::completion::site::{
         NameCompletionContext, PatternCompletionKind, UnqualifiedCompletionSite,
     },
+    query::import::{ImportEditPlan, ImportEditPlanner},
 };
 
 use super::super::{
@@ -37,7 +38,6 @@ use super::super::{
         CompletionCandidateSource, DefinitionCompletionCandidate, GenericScopeCompletionCandidate,
         LexicalCompletionCandidate,
     },
-    import_edit::AutoImportEditPlanner,
     pattern::{PatternCandidateRole, PatternCompletionPolicy},
     render::{
         CallCompletionKind, CompletionSortPolicy, CompletionSortPriority,
@@ -237,7 +237,7 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
                 .as_deref()
                 .and_then(|source| CompletionSyntaxContext::at(Some(source), self.query.offset));
             if let Some(syntax_context) = syntax_context.or(loaded_syntax.as_ref()) {
-                let planner = AutoImportEditPlanner::new(syntax_context, edit);
+                let planner = ImportEditPlanner::for_completion(syntax_context, edit);
                 self.push_auto_import_completions(
                     syntax,
                     auto_import_candidates,
@@ -601,7 +601,7 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
         candidates: Vec<DefinitionCompletionCandidate>,
         filter: UnqualifiedCompletionFilter,
         occupied: &HashSet<(String, NameNamespace)>,
-        planner: &AutoImportEditPlanner<'_, '_>,
+        planner: &ImportEditPlanner<'_, '_>,
         edit: CompletionEdit,
         completions: &mut Vec<CompletionItem>,
     ) -> anyhow::Result<()> {
@@ -617,7 +617,7 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
                 continue;
             };
             let rendered_path = syntax.path(path).to_string();
-            let Some(additional_edit) = planner.plan(path, &rendered_path) else {
+            let ImportEditPlan::Edit(additional_edit) = planner.plan(path, &rendered_path) else {
                 continue;
             };
             let path_len = candidate
@@ -639,7 +639,12 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
                 Some(detail) => format!("{detail} (use {rendered_path})"),
                 None => format!("use {rendered_path}"),
             });
-            completion.additional_edits.push(additional_edit);
+            completion
+                .additional_edits
+                .push(crate::CompletionAdditionalEdit {
+                    replace: additional_edit.replace,
+                    new_text: additional_edit.new_text,
+                });
             if completions.iter().any(|existing| {
                 existing.target == completion.target && existing.label == completion.label
             }) {

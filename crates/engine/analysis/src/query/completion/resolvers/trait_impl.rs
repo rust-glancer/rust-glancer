@@ -28,6 +28,7 @@ use crate::{
         CompletionKind, CompletionTarget,
     },
     query::completion::site::{TraitImplCompletionSite, TraitImplMemberKind},
+    query::trait_member::RenderedTraitMember,
 };
 
 use super::super::{
@@ -87,32 +88,23 @@ impl<'a, 'db, 'source> TraitImplCompletionResolver<'a, 'db, 'source> {
             {
                 continue;
             }
-            let (signature, plain, snippet) = match member.scaffold() {
-                MissingTraitMemberScaffold::Function { signature } => (
-                    signature.clone(),
-                    format!("{signature} {{\n    todo!()\n}}"),
-                    format!(
-                        "{} {{\n    ${{1:todo!()}}\n}}",
-                        escape_lsp_snippet_text(signature)
-                    ),
+            let rendered = RenderedTraitMember::new(member.scaffold());
+            let snippet = match member.scaffold() {
+                MissingTraitMemberScaffold::Function { signature } => format!(
+                    "{} {{\n    ${{1:todo!()}}\n}}",
+                    escape_lsp_snippet_text(signature)
                 ),
                 MissingTraitMemberScaffold::TypeAlias {
                     signature_prefix,
                     suggested_value,
-                } => (
-                    format!("{signature_prefix} = {suggested_value}"),
-                    format!("{signature_prefix} = {suggested_value};"),
-                    format!(
-                        "{} = ${{1:{}}};",
-                        escape_lsp_snippet_text(signature_prefix),
-                        escape_lsp_snippet_text(suggested_value)
-                    ),
+                } => format!(
+                    "{} = ${{1:{}}};",
+                    escape_lsp_snippet_text(signature_prefix),
+                    escape_lsp_snippet_text(suggested_value)
                 ),
-                MissingTraitMemberScaffold::Const { signature } => (
-                    signature.clone(),
-                    format!("{signature} = todo!();"),
-                    format!("{} = ${{1:todo!()}};", escape_lsp_snippet_text(signature)),
-                ),
+                MissingTraitMemberScaffold::Const { signature } => {
+                    format!("{} = ${{1:todo!()}};", escape_lsp_snippet_text(signature))
+                }
             };
             let requirement = if member.is_required() {
                 "required"
@@ -132,7 +124,10 @@ impl<'a, 'db, 'source> TraitImplCompletionResolver<'a, 'db, 'source> {
                 kind,
                 target,
                 applicability: CompletionApplicability::Known,
-                detail: Some(format!("{requirement} trait member: {signature}")),
+                detail: Some(format!(
+                    "{requirement} trait member: {}",
+                    rendered.signature
+                )),
                 documentation: member.documentation().map(ToString::to_string),
                 sort_text: format!(
                     "{}|{base_sort}",
@@ -145,7 +140,7 @@ impl<'a, 'db, 'source> TraitImplCompletionResolver<'a, 'db, 'source> {
                 insert_text: if self.query.client_capabilities.snippet_support {
                     CompletionInsertText::Snippet(snippet)
                 } else {
-                    CompletionInsertText::Text(plain)
+                    CompletionInsertText::Text(rendered.plain)
                 },
                 edit: Some(edit),
                 additional_edits: Vec::new(),

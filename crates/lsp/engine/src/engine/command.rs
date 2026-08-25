@@ -8,8 +8,8 @@
 use std::path::PathBuf;
 
 use rg_lsp_proto::{
-    CompletionClientCapabilities, DocumentPositionSnapshot, DocumentRangeSnapshot,
-    EditorDocumentSnapshot, GlobalPositionSnapshot, QueryError, QueryValue,
+    CodeActionRequestContext, CompletionClientCapabilities, DocumentPositionSnapshot,
+    DocumentRangeSnapshot, EditorDocumentSnapshot, GlobalPositionSnapshot, QueryError, QueryValue,
 };
 use rg_project::SavedFileChange;
 use tokio::sync::oneshot;
@@ -76,6 +76,11 @@ pub(crate) enum EngineCommand {
     Hover {
         input: DocumentPositionSnapshot,
         respond_to: QueryResponder<Option<ls_types::Hover>>,
+    },
+    CodeAction {
+        input: DocumentRangeSnapshot,
+        request_context: CodeActionRequestContext,
+        respond_to: QueryResponder<Vec<ls_types::CodeAction>>,
     },
     Completion {
         input: DocumentPositionSnapshot,

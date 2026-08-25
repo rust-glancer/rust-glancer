@@ -232,6 +232,27 @@ mod tests {
     }
 
     #[test]
+    fn target_document_query_rejects_an_action_overtaken_by_a_new_version() {
+        let path = PathBuf::from("/workspace/src/lib.rs");
+        let editor = EditorStateHandle::default();
+        editor.open(path.clone(), Some(7), "fn before() {}".to_string());
+        let captured = editor
+            .document(Some(path.clone()))
+            .expect("action document should be captured");
+        let scope = QueryScope::TargetDocument(captured.document().target().clone());
+
+        assert!(
+            editor
+                .change(&path, Some(8), &[full_change("fn after() {}")])
+                .expect("later action document change should apply")
+        );
+        let error = validate_target_document(Ok(QueryValue::new(vec!["action"], scope)), &captured)
+            .expect_err("an action for an older document version must not be published");
+
+        assert_eq!(error, QueryError::EditorChanged);
+    }
+
+    #[test]
     fn retryable_errors_remain_distinct_from_valid_empty_results() {
         for query_error in [
             QueryError::SavedSourceChanged,

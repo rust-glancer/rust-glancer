@@ -266,6 +266,21 @@ impl EngineService for Service {
             .await
     }
 
+    async fn code_action(
+        self,
+        _: context::Context,
+        input: DocumentRangeSnapshot,
+        request_context: rg_lsp_proto::CodeActionRequestContext,
+    ) -> Result<QueryValue<Vec<ls_types::CodeAction>>, QueryError> {
+        self.engine
+            .query(|respond_to| EngineCommand::CodeAction {
+                input,
+                request_context,
+                respond_to,
+            })
+            .await
+    }
+
     async fn completion(
         self,
         _: context::Context,

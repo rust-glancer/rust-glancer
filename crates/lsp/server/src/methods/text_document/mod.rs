@@ -9,6 +9,7 @@
 //! Open/save/close handlers are different. The immediate editor-state work has already happened,
 //! so those handlers perform only the async engine or registry work that remains.
 
+pub(crate) mod code_action;
 pub(crate) mod completion;
 pub(crate) mod definition;
 pub(crate) mod did_close;

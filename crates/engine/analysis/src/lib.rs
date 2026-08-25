@@ -15,6 +15,7 @@ mod tests;
 use std::{collections::HashMap, sync::Arc};
 
 pub use query::{
+    code_action::{CodeActionKinds, CodeActionQuery, CodeActionTrigger},
     completion::{CompletionClientCapabilities, CompletionQuery, CompletionSource},
     references::{ReferenceQuery, ReferenceSearchFile, ReferenceSearchLabel},
 };
@@ -32,11 +33,12 @@ use rg_syntax::SourceFile;
 use crate::source_symbol::{SourceSymbol, SourceSymbolIndex, SourceSymbolResolver};
 
 pub use self::model::{
-    CompletionAdditionalEdit, CompletionApplicability, CompletionEdit, CompletionInsertText,
-    CompletionItem, CompletionKind, CompletionTarget, DocumentOutline, DocumentSymbol, HoverBlock,
-    HoverInfo, InlayHint, InlayHintKind, InlayHintPosition, KeywordCompletion, NavigationTarget,
-    NavigationTargetKind, NavigationTargetSource, ReferenceLocation, RenameEdit, RenameResult,
-    RenameTarget, SymbolAt, SyntheticCompletionTarget, WorkspaceSymbol,
+    CodeAction, CodeActionEdit, CodeActionKind, CompletionAdditionalEdit, CompletionApplicability,
+    CompletionEdit, CompletionInsertText, CompletionItem, CompletionKind, CompletionTarget,
+    DocumentOutline, DocumentSymbol, HoverBlock, HoverInfo, InlayHint, InlayHintKind,
+    InlayHintPosition, KeywordCompletion, NavigationTarget, NavigationTargetKind,
+    NavigationTargetSource, ReferenceLocation, RenameEdit, RenameResult, RenameTarget, SymbolAt,
+    SyntheticCompletionTarget, WorkspaceSymbol,
 };
 
 /// Request-scoped façade for editor queries over one frozen project view.
@@ -459,6 +461,11 @@ impl<'a> Analysis<'a> {
         query: CompletionQuery<'_>,
     ) -> anyhow::Result<Vec<CompletionItem>> {
         query::completion::CompletionResolver::new(self, query).completions_at()
+    }
+
+    /// Returns source actions applicable to one range in the captured editor document.
+    pub fn code_actions(&self, query: CodeActionQuery<'_>) -> anyhow::Result<Vec<CodeAction>> {
+        query::code_action::CodeActionResolver::new(self, query).code_actions()
     }
 
     /// Returns a hierarchical outline for one file under the selected crate context.

@@ -225,6 +225,32 @@ impl EngineDispatcher {
                         |runner, cancellation| runner.hover(input, cancellation),
                     );
                 }
+                EngineCommand::CodeAction {
+                    input,
+                    request_context,
+                    respond_to,
+                } => {
+                    tracing::trace!(
+                        path = %input.document().path().display(),
+                        start_line = input.range().start.line,
+                        start_character = input.range().start.character,
+                        end_line = input.range().end.line,
+                        end_character = input.range().end.character,
+                        "engine command started: code_action"
+                    );
+                    let context = QueryContext::target_document(
+                        "code_action",
+                        queue_elapsed,
+                        input.document(),
+                    );
+                    self.query_runner().respond_to_query(
+                        context,
+                        respond_to,
+                        |runner, cancellation| {
+                            runner.code_action(input, request_context, cancellation)
+                        },
+                    );
+                }
                 EngineCommand::Completion {
                     input,
                     client_capabilities,

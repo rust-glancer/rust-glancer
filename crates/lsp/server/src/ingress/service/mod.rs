@@ -345,6 +345,7 @@ fn is_document_request(method: &str) -> bool {
             | "textDocument/rename"
             | "textDocument/documentHighlight"
             | "textDocument/hover"
+            | "textDocument/codeAction"
             | "textDocument/completion"
             | "textDocument/formatting"
             | "textDocument/documentSymbol"

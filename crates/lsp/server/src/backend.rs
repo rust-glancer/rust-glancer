@@ -398,6 +398,24 @@ impl LanguageServer for Backend {
     #[tracing::instrument(
         skip_all,
         fields(
+            rg.method = "codeAction",
+            rg.uri = %params.text_document.uri.as_str()
+        )
+    )]
+    async fn code_action(&self, params: CodeActionParams) -> Result<Option<CodeActionResponse>> {
+        let client_capabilities = self
+            .client_capabilities
+            .get()
+            .copied()
+            .unwrap_or_default()
+            .code_action;
+        let context = self.document_context_for(&params.text_document.uri).await?;
+        methods::text_document::code_action::code_action(context, params, client_capabilities).await
+    }
+
+    #[tracing::instrument(
+        skip_all,
+        fields(
             rg.method = "completion",
             rg.uri = %params.text_document_position.text_document.uri.as_str()
         )

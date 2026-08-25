@@ -24,6 +24,8 @@ use rg_ir_view::source::{
 
 use crate::{Analysis, SavedSourceRelationship};
 
+use super::CompletionSource;
+
 /// One normalized syntax family selected for the cursor.
 ///
 /// ```text
@@ -952,6 +954,63 @@ pub(crate) struct CompletionSiteDetector<'a, 'db> {
 impl<'a, 'db> CompletionSiteDetector<'a, 'db> {
     pub(crate) fn new(analysis: &'a Analysis<'db>) -> Self {
         Self { analysis }
+    }
+
+    /// Classify a complete unqualified name and retain the scope in which it is used.
+    ///
+    /// For `User` in `let _: User`, the result records a type position and the body containing it.
+    /// Qualified paths, fields, declarations, and other completion families return `None`.
+    pub(crate) fn unqualified_name_for_source(
+        &self,
+        crate_ref: CrateRef,
+        file_id: FileId,
+        source_text: &str,
+        offset: u32,
+    ) -> anyhow::Result<Option<UnqualifiedCompletionSite>> {
+        Ok(
+            match self.site_for_source(crate_ref, file_id, source_text, offset)? {
+                Some(CompletionSite::Unqualified(site)) => Some(site),
+                Some(_) | None => None,
+            },
+        )
+    }
+
+    /// Classify the last name of a complete qualified path and retain its semantic scope.
+    ///
+    /// For `crate::models::User`, the result records whether `User` is used as a type or value and
+    /// which body or signature contains it. Other completion families return `None`.
+    pub(crate) fn qualified_path_for_source(
+        &self,
+        crate_ref: CrateRef,
+        file_id: FileId,
+        source_text: &str,
+        offset: u32,
+    ) -> anyhow::Result<Option<PathCompletionSite>> {
+        Ok(
+            match self.site_for_source(crate_ref, file_id, source_text, offset)? {
+                Some(CompletionSite::Path(site)) => Some(site),
+                Some(_) | None => None,
+            },
+        )
+    }
+
+    /// Parse one complete source token with completion's marker and run the ordinary detector.
+    fn site_for_source(
+        &self,
+        crate_ref: CrateRef,
+        file_id: FileId,
+        source_text: &str,
+        offset: u32,
+    ) -> anyhow::Result<Option<CompletionSite>> {
+        let Some(source) = CompletionSource::new(source_text, offset) else {
+            return Ok(None);
+        };
+        self.site_at(
+            crate_ref,
+            file_id,
+            offset,
+            Some(source.syntax.site_syntax()),
+        )
     }
 
     /// Classifies the cursor offset by asking the scanner that owns each syntax shape.
