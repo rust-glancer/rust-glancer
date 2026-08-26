@@ -243,6 +243,16 @@ impl<'syntax, 'source> ImportEditPlanner<'syntax, 'source> {
             return None;
         }
         let use_tree = use_item.use_tree()?;
+
+        // `as` is separated from its names only by whitespace. Reject it in the syntax tree
+        // before compacting text below, where `Existing as Alias` would look like one identifier.
+        if use_tree.rename().is_some()
+            || use_tree
+                .use_tree_list()
+                .is_some_and(|list| list.use_trees().any(|child| child.rename().is_some()))
+        {
+            return None;
+        }
         let tree_text = use_tree.syntax().text().to_string();
         if tree_text.contains('\n') {
             return None;
@@ -489,6 +499,45 @@ mod tests {
                 panic!("compatible import should produce an edit");
             };
             assert_eq!(edit.new_text, expected_edit);
+        }
+    }
+
+    #[test]
+    fn keeps_renamed_imports_out_of_coalesced_use_trees() {
+        let missing = Path::from_macro_path_text("crate::models::Missing", None)
+            .expect("fixture path should parse");
+        for existing_import in [
+            "use crate::models::Existing as Alias;",
+            "use crate::models::Existing as _;",
+            "use crate::models::{Existing as Alias};",
+            "use crate::models::{Existing as _};",
+        ] {
+            let source = format!("{existing_import}\nfn main() {{ let _: Missing; }}");
+            let offset = u32::try_from(source.find("Missing").expect("fixture should have cursor"))
+                .expect("fixture offset should fit");
+            let syntax = CompletionSyntaxContext::at(Some(&source), offset + 7)
+                .expect("completion syntax should parse");
+            let planner =
+                ImportEditPlanner::for_source(&source, syntax.speculative_file_tree(), offset);
+            let ImportEditPlan::Edit(edit) = planner.plan(&missing, "crate::models::Missing")
+            else {
+                panic!("renamed import should allow a separate import: {existing_import}");
+            };
+
+            assert_eq!(
+                edit.new_text, "\nuse crate::models::Missing;",
+                "{existing_import}"
+            );
+            let insertion =
+                u32::try_from(existing_import.len()).expect("fixture offset should fit");
+            assert_eq!(
+                edit.replace.text,
+                TextSpan {
+                    start: insertion,
+                    end: insertion,
+                },
+                "{existing_import}"
+            );
         }
     }
 
