@@ -1,7 +1,10 @@
 //! Trait lookup in body context.
 
 use rg_def_map::DefMapSource;
-use rg_ir_model::{GenericDefRef, ScopeId, TraitImplRef};
+use rg_ir_model::{
+    DefMapRef, GenericDefRef, LocalDefRef, ModuleId, ModuleRef, ScopeId, SemanticItemRef,
+    TraitDefRef, TraitImplRef,
+};
 use rg_item_tree::TypeRef;
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::ItemStoreSource;
@@ -63,6 +66,78 @@ where
 {
     pub(crate) fn new(context: BodyResolutionContext<'query, D, I>) -> Self {
         Self { context }
+    }
+
+    /// Return the traits Rust makes available for implicit associated-item lookup at this scope.
+    ///
+    /// ```text
+    /// use api::Render as Painting;
+    /// use api::Inspect as _;
+    ///
+    /// value.render();  // `Render`, under the local path name `Painting`
+    /// value.inspect(); // unnamed import, available only to method lookup
+    /// ```
+    ///
+    /// Each lexical layer contributes traits independently. This differs from path lookup: an
+    /// inner `struct Paint;` can hide the path spelling without removing an outer imported trait
+    /// from method lookup. The unnamed lane is independent because `as _` occupies no path name.
+    pub(crate) fn traits_in_scope(
+        &self,
+        scope: ScopeId,
+    ) -> Result<UniqueVec<TraitDefRef>, PackageStoreError> {
+        let def_maps = self.context.def_map_query();
+        let body_scope = ModuleRef {
+            origin: DefMapRef::Body(self.context.body_ref()),
+            module: ModuleId(scope.0),
+        };
+        let mut traits = UniqueVec::new();
+
+        self.push_local_traits(&mut traits, def_maps.traits_in_lexical_scope(body_scope)?)?;
+
+        // Saved source overlays can resolve first through a body-owned module and then through
+        // the original crate module. Both modules may contribute trait candidates even when they
+        // use the same path spelling, matching the accumulation across ordinary lexical layers.
+        let owner_module = self.context.body().owner_module();
+        self.push_local_traits(
+            &mut traits,
+            def_maps.traits_in_unqualified_scope(owner_module)?,
+        )?;
+
+        let fallback_module = self.context.body().fallback_module();
+        if fallback_module != owner_module {
+            self.push_local_traits(
+                &mut traits,
+                def_maps.traits_in_unqualified_scope(fallback_module)?,
+            )?;
+        }
+
+        Ok(traits)
+    }
+
+    fn push_local_traits(
+        &self,
+        traits: &mut UniqueVec<TraitDefRef>,
+        local_defs: impl IntoIterator<Item = LocalDefRef>,
+    ) -> Result<(), PackageStoreError> {
+        for local_def in local_defs {
+            self.push_local_trait(traits, local_def)?;
+        }
+        Ok(())
+    }
+
+    fn push_local_trait(
+        &self,
+        traits: &mut UniqueVec<TraitDefRef>,
+        local_def: LocalDefRef,
+    ) -> Result<(), PackageStoreError> {
+        if let Some(SemanticItemRef::Trait(trait_ref)) = self
+            .context
+            .item_query()
+            .semantic_item_for_local_def(local_def)?
+        {
+            traits.push(trait_ref);
+        }
+        Ok(())
     }
 
     /// Resolve `<Self as Trait<Args>>` into receiver-specific trait impls.

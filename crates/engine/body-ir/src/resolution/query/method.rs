@@ -6,6 +6,7 @@
 //! return projection to become `array::IntoIter<User, 3>`.
 
 use rg_def_map::DefMapSource;
+use rg_ir_model::ScopeId;
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::ItemStoreSource;
 use rg_ty::{
@@ -33,6 +34,7 @@ where
     /// Return all methods that can be reached from this receiver type.
     pub fn method_candidates_for_ty(
         &self,
+        scope: ScopeId,
         ty: &Ty,
     ) -> Result<Vec<MemberMethodCandidateRef>, PackageStoreError> {
         let matcher = self.context.impl_matcher();
@@ -44,10 +46,11 @@ where
             .candidates(AutoderefMode::MethodReceiver, ty)
         {
             let candidate = candidate?;
-            let receiver = self
-                .context
-                .impls()
-                .matches_for_receiver_with_functions(candidate.ty(), &table)?;
+            let receiver = self.context.impls().matches_for_receiver_with_functions(
+                scope,
+                candidate.ty(),
+                &table,
+            )?;
             for function in matcher.function_candidates_for_matches(receiver.matches(), None)? {
                 let Some(function_data) = self
                     .context
@@ -79,6 +82,7 @@ where
     /// Return named method candidates at the first matching autoderef depth.
     pub(crate) fn named_method_candidates_for_ty(
         &self,
+        scope: ScopeId,
         receiver_ty: &Ty,
         method_name: &str,
         table: &InferenceTable,
@@ -107,7 +111,12 @@ where
             let receiver = self
                 .context
                 .impls()
-                .matches_for_receiver_with_function_name(candidate.ty(), method_name, table)?;
+                .matches_for_receiver_with_function_name(
+                    scope,
+                    candidate.ty(),
+                    method_name,
+                    table,
+                )?;
             for function in
                 matcher.function_candidates_for_matches(receiver.matches(), Some(method_name))?
             {

@@ -81,6 +81,9 @@ pub(super) fn apply_imports(
         for introduced in resolution.introduced {
             target_scope.insert_binding(&introduced.name, introduced.namespace, introduced.binding);
         }
+        for binding in resolution.unnamed_traits {
+            target_scope.insert_unnamed_trait_binding(binding);
+        }
     }
 
     Ok(())

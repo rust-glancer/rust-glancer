@@ -13,9 +13,8 @@ mod method;
 use anyhow::Context as _;
 use rg_ir_model::Path;
 use rg_ir_model::{
-    BodyRef, ConstRef, CrateRef, EnumVariantFieldRef, EnumVariantRef, FieldKey, FieldRef,
-    FunctionRef, ItemOwner, ScopeId, TraitApplicability, TypeAliasRef, TypeDefId,
-    identity::DeclarationRef,
+    BodyRef, ConstRef, EnumVariantFieldRef, EnumVariantRef, FieldKey, FieldRef, FunctionRef,
+    ItemOwner, ScopeId, TraitApplicability, TypeAliasRef, TypeDefId, identity::DeclarationRef,
 };
 use rg_item_tree::{Documentation, FieldList, ParamItem, ParamKind};
 use rg_semantic_ir::{
@@ -355,23 +354,6 @@ impl<'a> MemberMethodCandidate<'a> {
 
     pub fn origin(&self) -> MemberMethodOrigin {
         self.origin
-    }
-}
-
-/// Place where member lookup is requested.
-#[derive(Debug, Clone, Copy)]
-pub enum MemberUseSite {
-    Crate(CrateRef),
-    Body(BodyRef),
-}
-
-impl MemberUseSite {
-    pub fn krate(crate_ref: CrateRef) -> Self {
-        Self::Crate(crate_ref)
-    }
-
-    pub fn body(body: BodyRef) -> Self {
-        Self::Body(body)
     }
 }
 

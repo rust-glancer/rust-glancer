@@ -2,14 +2,15 @@
 //!
 //! One spelling can have separate type, value, and macro meanings. While scopes are built, each
 //! slot selects direct and named bindings over globs, keeps equal-priority ambiguity explicit, and
-//! merges multiple routes to the same definition. Frozen scopes retain that decision so queries do
-//! not have to reconstruct precedence from a list of candidates.
+//! merges multiple routes to the same definition. Imports written as `use Trait as _` live in a
+//! separate unnamed trait lane because they affect method lookup without creating a path binding.
+//! Frozen scopes retain both decisions so queries do not have to reconstruct them from imports.
 
 use std::cmp::Ordering;
 
 use rg_ir_model::{DefId, ImportRef, ModuleRef};
 use rg_item_tree::FieldList;
-use rg_std::{MemorySize, Shrink};
+use rg_std::{MemorySize, Shrink, UniqueVec};
 use rg_text::Name;
 use rustc_hash::FxHashMap;
 use wincode::{SchemaRead, SchemaWrite};
@@ -369,6 +370,12 @@ impl<'a> ScopeResolutionRef<'a> {
 #[derive(Debug, Clone, PartialEq, Eq, Default, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct ModuleScope {
     pub(crate) entries: Box<[ScopeNameEntry]>,
+    /// Traits imported with an underscore are in method scope without occupying a type name.
+    ///
+    /// For example, `use crate::Render as _;` makes `value.render()` legal while leaving
+    /// `Render` unavailable as a path. Keeping that fact outside `entries` preserves both sides
+    /// of the language rule instead of inventing a synthetic name for the import.
+    unnamed_trait_bindings: Box<[ScopeBinding]>,
 }
 
 impl ModuleScope {
@@ -382,6 +389,10 @@ impl ModuleScope {
     pub fn entries(&self) -> impl Iterator<Item = (&Name, &ScopeEntry)> {
         self.entries.iter().map(|entry| (&entry.name, &entry.entry))
     }
+
+    pub(crate) fn unnamed_trait_bindings(&self) -> &[ScopeBinding] {
+        &self.unnamed_trait_bindings
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
@@ -394,6 +405,7 @@ pub(crate) struct ScopeNameEntry {
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ModuleScopeBuilder {
     names: FxHashMap<Name, ScopeEntryBuilder>,
+    unnamed_trait_bindings: UniqueVec<ScopeBinding>,
 }
 
 impl ModuleScopeBuilder {
@@ -423,6 +435,11 @@ impl ModuleScopeBuilder {
             .map(|(name, entry)| (name, entry.as_ref()))
     }
 
+    /// Retain a resolved `use Trait as _` route without adding a path-visible name.
+    pub fn insert_unnamed_trait_binding(&mut self, binding: ScopeBinding) -> bool {
+        self.unnamed_trait_bindings.push(binding)
+    }
+
     /// Restrict public routes except for bindings explicitly allowed by the caller.
     ///
     /// Proc-macro targets use this after each import-resolution step: their implementation items
@@ -445,6 +462,13 @@ impl ModuleScopeBuilder {
                     });
             }
         }
+        let unnamed_trait_bindings = std::mem::take(&mut self.unnamed_trait_bindings);
+        for mut binding in unnamed_trait_bindings {
+            if !should_remain_public(Namespace::Types, &binding) {
+                binding.restrict_public_routes_to(visible_from);
+            }
+            self.unnamed_trait_bindings.push(binding);
+        }
     }
 
     pub fn freeze(self) -> ModuleScope {
@@ -460,6 +484,7 @@ impl ModuleScopeBuilder {
 
         ModuleScope {
             entries: entries.into_boxed_slice(),
+            unnamed_trait_bindings: self.unnamed_trait_bindings.into_vec().into_boxed_slice(),
         }
     }
 }

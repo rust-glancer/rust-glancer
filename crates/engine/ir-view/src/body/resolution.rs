@@ -191,6 +191,7 @@ impl<'a, 'db> BodyResolutionView<'a, 'db> {
     pub(crate) fn method_candidate_refs_for_ty(
         &self,
         body_ref: BodyRef,
+        scope: ScopeId,
         ty: &Ty,
     ) -> anyhow::Result<Option<Vec<MemberMethodCandidateRef>>> {
         let Some((body, item_lookup_query)) = self
@@ -211,7 +212,7 @@ impl<'a, 'db> BodyResolutionView<'a, 'db> {
                 trait_selection,
             )
             .methods()
-            .method_candidates_for_ty(ty)
+            .method_candidates_for_ty(scope, ty)
             .context("resolve body method candidates")?,
         ))
     }

@@ -1,18 +1,19 @@
-//! Member lookup over semantic-shaped item stores.
+//! Shared member identities and field lookup over semantic-shaped item stores.
 //!
-//! Field and method lookup is type reasoning: it needs autoderef, impl-header matching, and one
-//! coherent crate visibility/solver context, but it does not need source spans or UI labels. This
-//! query returns stable item refs so higher layers can decide how to present them.
+//! Member lookup is type reasoning, but it does not need source spans or UI labels. This module
+//! keeps the stable item refs used by higher layers and the crate-level field query, whose result
+//! does not depend on lexical trait scope. Method lookup lives in body context because Rust only
+//! makes trait methods callable when their trait is in scope at the use site.
 //!
-//! For `String::new().contains("x")`, lookup first checks the nominal `String` candidate, then
-//! autoderefs to `str`. `str` has no `TypeDefRef`, so that second step uses structural impl matching
-//! and returns the same stable function ref that hover, completion, and goto-definition consume.
+//! Body method lookup still returns the identities defined here. For
+//! `String::new().contains("x")`, it checks nominal `String` and then autoderefs to structural
+//! `str`, returning the same stable function ref to hover, completion, and goto-definition.
 
 use rg_def_map::DefMapSource;
 use rg_ir_model::{FieldRef, FunctionRef, TraitApplicability, TypeDefRef};
 use rg_semantic_ir::ItemStoreSource;
 
-use crate::{Autoderef, AutoderefMode, ImplMatcher, Ty, TyContext, inference::InferenceTable};
+use crate::{Autoderef, AutoderefMode, Ty, TyContext};
 
 /// One callable member selected for a receiver type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -52,7 +53,7 @@ pub enum MemberMethodOrigin {
     Trait { applicability: TraitApplicability },
 }
 
-/// Ref-level member lookup shared by analysis and view adapters.
+/// Ref-level field lookup shared by analysis and view adapters.
 pub struct MemberQuery<'query, D, I> {
     context: TyContext<'query, D, I>,
 }
@@ -83,52 +84,5 @@ where
     /// Returns fields declared directly on a nominal type definition.
     pub fn fields_for_type_def(&self, ty: TypeDefRef) -> Result<Vec<FieldRef>, D::Error> {
         self.context.item_paths().items().fields_for_type(ty)
-    }
-
-    /// Returns method candidates visible after method-receiver autoderef.
-    pub fn method_candidates_for_ty(
-        &self,
-        ty: &Ty,
-    ) -> Result<Vec<MemberMethodCandidateRef>, D::Error> {
-        // Method autoderef and impl classification are one lookup operation. Sharing their session
-        // keeps every trait proof in the same crate-visible solver program and lets later receiver
-        // depths reuse exact classifications from earlier ones.
-        let autoderef = Autoderef::new(self.context.clone());
-        let matcher = ImplMatcher::new(self.context.clone());
-        // Public member lookup consumes durable semantic types, so it has no body-owned inference
-        // slots to preserve. Body IR supplies its live table through its own lookup projection.
-        let table = InferenceTable::new();
-        let mut methods = Vec::new();
-        for candidate in autoderef.candidates(AutoderefMode::MethodReceiver, ty) {
-            let candidate = candidate?;
-            let matches = matcher.matches_for_receiver_with_traits(
-                candidate.ty(),
-                self.context.item_lookup().traits_with_functions(),
-                &table,
-            )?;
-            for function in matcher.function_candidates_for_matches(&matches, None)? {
-                let Some(function_data) = self
-                    .context
-                    .item_paths()
-                    .items()
-                    .function_data(function.function())?
-                else {
-                    continue;
-                };
-                if !function_data.has_self_receiver() {
-                    continue;
-                }
-
-                let candidate = match function.trait_selection() {
-                    Some(selection) => MemberMethodCandidateRef::trait_method(
-                        function.function(),
-                        selection.applicability,
-                    ),
-                    None => MemberMethodCandidateRef::inherent(function.function()),
-                };
-                methods.push(candidate);
-            }
-        }
-        Ok(methods)
     }
 }

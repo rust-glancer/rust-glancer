@@ -3,7 +3,7 @@
 use anyhow::Context as _;
 use rg_ir_model::{FieldKey, FieldRef, PrimitiveTy};
 use rg_ir_view::{
-    member::{MemberMethodCandidate, MemberMethodOrigin, MemberUseSite, MemberView},
+    member::{MemberMethodCandidate, MemberMethodOrigin, MemberView},
     source::IndexedRecordOwner,
     ty::locals::BodyView,
 };
@@ -119,7 +119,7 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
         let members = MemberView::new(self.db);
         let mut methods = Vec::new();
         for method in members
-            .method_candidates_for_ty(MemberUseSite::body(receiver.body_ir()), &receiver_ty)
+            .method_candidates_for_ty(site.source().scope(), &receiver_ty)
             .context("collect dot method candidates")?
         {
             methods.push(Self::dot_method_candidate(method));

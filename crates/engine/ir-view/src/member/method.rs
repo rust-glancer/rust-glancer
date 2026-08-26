@@ -1,73 +1,41 @@
 //! Receiver-method lookup across crate-level and body-local impl universes.
 
 use anyhow::Context as _;
-use rg_ir_model::{BodyRef, CrateRef};
-use rg_ty::{MemberMethodCandidateRef, MemberQuery, Ty, TyContext};
+use rg_ir_model::identity::LexicalScopeRef;
+use rg_ty::{MemberMethodCandidateRef, Ty};
 
-use super::{MemberFunction, MemberMethodCandidate, MemberUseSite, MemberView};
+use super::{MemberFunction, MemberMethodCandidate, MemberView};
 use crate::{body::BodyResolutionView, ty::IndexedType};
 
 impl<'a, 'db> MemberView<'a, 'db> {
-    /// Return methods visible for a type at a crate or body use site.
+    /// Return methods visible for a type at one lexical body scope.
     pub fn method_candidates_for_ty<'view>(
         &'view self,
-        use_site: MemberUseSite,
+        scope: LexicalScopeRef,
         ty: &IndexedType,
     ) -> anyhow::Result<Vec<MemberMethodCandidate<'view>>> {
         let candidates = self
-            .method_candidate_refs_for_ty(use_site, ty.raw())
+            .body_method_candidate_refs_for_ty(scope, ty.raw())
             .context("resolve method candidate references")?;
         self.method_candidates_from_refs(candidates)
             .context("project method candidates")
     }
 
-    /// Return method refs before loading borrowed function data.
-    fn method_candidate_refs_for_ty(
-        &self,
-        use_site: MemberUseSite,
-        ty: &Ty,
-    ) -> anyhow::Result<Vec<MemberMethodCandidateRef>> {
-        match use_site {
-            MemberUseSite::Crate(crate_ref) => {
-                self.crate_method_candidate_refs_for_ty(crate_ref, ty)
-            }
-            MemberUseSite::Body(body) => self.body_method_candidate_refs_for_ty(body, ty),
-        }
-    }
-
-    /// Return crate-level method refs.
-    fn crate_method_candidate_refs_for_ty(
-        &self,
-        use_site: CrateRef,
-        ty: &Ty,
-    ) -> anyhow::Result<Vec<MemberMethodCandidateRef>> {
-        let item_lookup_query = self
-            .db
-            .item_lookup_query(use_site)
-            .context("assemble method candidate item lookup")?;
-        let member_query = MemberQuery::new(TyContext::new(
-            self.db,
-            self.db,
-            item_lookup_query,
-            self.db.trait_selection(use_site),
-        ));
-        member_query
-            .method_candidates_for_ty(ty)
-            .context("resolve crate method candidates")
-    }
-
-    /// Return body-aware method refs, falling back to crate-level refs if the body is absent.
+    /// Return body-aware method refs.
     fn body_method_candidate_refs_for_ty(
         &self,
-        body: BodyRef,
+        scope: LexicalScopeRef,
         ty: &Ty,
     ) -> anyhow::Result<Vec<MemberMethodCandidateRef>> {
+        let body = scope.body_ir();
         let Some(candidates) = BodyResolutionView::new(self.db)
-            .method_candidate_refs_for_ty(body, ty)
+            .method_candidate_refs_for_ty(body, scope.scope_id(), ty)
             .context("resolve body method candidates")?
         else {
-            // Missing body facts should not hide crate-level methods from editor queries.
-            return self.crate_method_candidate_refs_for_ty(body.crate_ref, ty);
+            // Lexical trait scope belongs to the body's DefMap. If those facts disappeared between
+            // source-site discovery and lookup, a crate-wide fallback would reintroduce traits
+            // that Rust does not make callable here. Fail soft with no methods instead.
+            return Ok(Vec::new());
         };
 
         Ok(candidates)

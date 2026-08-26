@@ -93,6 +93,126 @@ pub fn use_it(user: User) {
 }
 
 #[test]
+fn trait_method_completion_respects_lexical_trait_scope() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[workspace]
+members = ["runtime", "app"]
+resolver = "3"
+
+//- /runtime/Cargo.toml
+[package]
+name = "runtime"
+version = "0.1.0"
+edition = "2024"
+
+//- /runtime/src/lib.rs
+pub struct Value;
+
+pub mod named {
+    pub trait Named { fn named(&self); }
+    impl Named for super::Value { fn named(&self) {} }
+}
+
+pub mod alias {
+    pub trait Aliased { fn aliased(&self); }
+    impl Aliased for super::Value { fn aliased(&self) {} }
+}
+
+pub mod wildcard {
+    pub trait Wildcard { fn wildcard(&self); }
+    impl Wildcard for super::Value { fn wildcard(&self) {} }
+}
+
+pub mod underscore {
+    pub trait Underscore { fn underscore(&self); }
+    impl Underscore for super::Value { fn underscore(&self) {} }
+}
+
+pub mod hidden {
+    pub trait Hidden { fn hidden(&self); }
+    impl Hidden for super::Value { fn hidden(&self) {} }
+}
+
+//- /app/Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+runtime = { path = "../runtime" }
+
+//- /app/src/lib.rs
+use runtime::Value;
+use runtime::alias::Aliased as Renamed;
+use runtime::named::Named;
+use runtime::underscore::Underscore as _;
+use runtime::wildcard::*;
+
+pub fn inspect(value: Value) {
+    value.$outer$;
+    {
+        use runtime::hidden::Hidden;
+        value.$inner$;
+    }
+    {
+        use runtime::hidden::Hidden as _;
+        value.$inner_underscore$;
+    }
+    value.$after$;
+    {
+        struct Named;
+        value.$shadowed$;
+    }
+}
+"#,
+        &[
+            AnalysisQuery::complete("outer trait scope", "outer").in_lib("app"),
+            AnalysisQuery::complete("block trait scope", "inner").in_lib("app"),
+            AnalysisQuery::complete("block underscore trait scope", "inner_underscore")
+                .in_lib("app"),
+            AnalysisQuery::complete("scope after block", "after").in_lib("app"),
+            AnalysisQuery::complete("type shadow keeps outer trait", "shadowed").in_lib("app"),
+        ],
+        expect![[r#"
+            outer trait scope
+            - trait_method aliased
+            - trait_method named
+            - trait_method underscore
+            - trait_method wildcard
+
+            block trait scope
+            - trait_method aliased
+            - trait_method hidden
+            - trait_method named
+            - trait_method underscore
+            - trait_method wildcard
+
+            block underscore trait scope
+            - trait_method aliased
+            - trait_method hidden
+            - trait_method named
+            - trait_method underscore
+            - trait_method wildcard
+
+            scope after block
+            - trait_method aliased
+            - trait_method named
+            - trait_method underscore
+            - trait_method wildcard
+
+            type shadow keeps outer trait
+            - trait_method aliased
+            - trait_method named
+            - trait_method underscore
+            - trait_method wildcard
+        "#]],
+    );
+}
+
+#[test]
 fn completion_ignores_unrelated_impls_in_speculative_trait_budget() {
     let mut fixture = String::from(
         r#"
@@ -815,7 +935,6 @@ pub fn use_it(owned: OwnedText, borrowed: &str, scalar: u32) {
         expect![[r#"
             primitive method through Deref
             - inherent_method contains
-            - trait_method project
 
             primitive method through reference
             - inherent_method contains

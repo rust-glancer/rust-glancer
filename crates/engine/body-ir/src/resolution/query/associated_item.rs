@@ -80,7 +80,7 @@ where
                 let owner_traits = session.trait_applications_for_type(&prefix_ty)?;
                 let direct_trait = session.lower_trait_ref(prefix_ty_ref, prefix_ty.clone())?;
 
-                let mut candidates = self.candidates_for_ty(&prefix_ty)?;
+                let mut candidates = self.candidates_for_ty(scope, &prefix_ty)?;
                 candidates.extend(self.candidates_for_trait_applications(owner_traits)?);
                 if let Some(direct_trait) = direct_trait {
                     candidates.extend(
@@ -125,6 +125,7 @@ where
     /// Combine body-local impls with crate-indexed impls for one lowered prefix type.
     fn candidates_for_ty(
         &self,
+        scope: ScopeId,
         ty: &Ty,
     ) -> Result<Vec<AssociatedItemCandidateRef>, PackageStoreError> {
         let query = AssociatedItemQuery::with_resolver(self.context.ty_context(), &self.context);
@@ -132,7 +133,7 @@ where
         let receiver = self
             .context
             .impls()
-            .matches_for_receiver_with_associated_items(ty, &table)?;
+            .matches_for_receiver_with_associated_items(scope, ty, &table)?;
         let item_query = self.context.item_query();
         let mut candidates = Vec::new();
         for candidate in query.candidates_for_matches(receiver.receiver_ty(), receiver.matches())? {
@@ -192,7 +193,7 @@ where
                     .map(Ty::Primitive)
             })
             .unwrap_or(Ty::Unknown);
-        self.resolve_for_type(&prefix_ty, last_segment)
+        self.resolve_for_type(scope, &prefix_ty, last_segment)
     }
 
     /// Resolve an associated value path that may use rich body syntax.
@@ -208,7 +209,7 @@ where
         match prefix {
             BodyAssociatedPathPrefix::Type(prefix_ty_ref) => {
                 let prefix_ty = self.context.type_refs(scope).resolve(&prefix_ty_ref)?;
-                self.resolve_for_type(&prefix_ty, last_segment)
+                self.resolve_for_type(scope, &prefix_ty, last_segment)
             }
             BodyAssociatedPathPrefix::QualifiedTrait { self_ty, trait_ref } => {
                 let Some(selection) = self
@@ -234,11 +235,13 @@ where
     /// Resolve an associated value path after its type prefix has already been typed.
     pub(crate) fn resolve_for_type(
         &self,
+        scope: ScopeId,
         prefix_ty: &Ty,
         last_segment: &str,
     ) -> Result<Option<(BodyResolution, Ty)>, PackageStoreError> {
         let table = InferenceTable::new();
         let const_receiver = self.context.impls().matches_for_receiver_with_const_name(
+            scope,
             prefix_ty,
             last_segment,
             &table,
@@ -286,7 +289,7 @@ where
         let function_receiver = self
             .context
             .impls()
-            .matches_for_receiver_with_function_name(prefix_ty, last_segment, &table)?;
+            .matches_for_receiver_with_function_name(scope, prefix_ty, last_segment, &table)?;
         let functions = self.associated_function_candidates_for_matches(
             &function_receiver,
             last_segment,
@@ -299,6 +302,7 @@ where
     /// Return associated functions selected by a typed prefix.
     pub(crate) fn function_candidates_for_type(
         &self,
+        scope: ScopeId,
         prefix_ty: &Ty,
         name: &str,
         table: &InferenceTable,
@@ -306,7 +310,7 @@ where
         let receiver = self
             .context
             .impls()
-            .matches_for_receiver_with_function_name(prefix_ty, name, table)?;
+            .matches_for_receiver_with_function_name(scope, prefix_ty, name, table)?;
         self.associated_function_candidates_for_matches(&receiver, name, None)
     }
 
@@ -324,7 +328,7 @@ where
         match prefix {
             BodyAssociatedPathPrefix::Type(prefix_ty_ref) => {
                 let prefix_ty = self.context.type_refs(scope).resolve(&prefix_ty_ref)?;
-                self.function_candidates_for_type(&prefix_ty, name, table)
+                self.function_candidates_for_type(scope, &prefix_ty, name, table)
             }
             BodyAssociatedPathPrefix::QualifiedTrait { self_ty, trait_ref } => {
                 let Some(selection) = self

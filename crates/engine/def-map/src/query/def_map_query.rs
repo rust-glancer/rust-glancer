@@ -4,22 +4,22 @@
 //! concrete storage that owns them; this query object keeps the operations that compose those raw
 //! maps into language-shaped answers.
 
+use super::{
+    path_resolution::ScopeResolver,
+    resolution_env::{CrateResolutionEnv, MacroDefinitionEnv, ScopeResolutionEnv},
+};
 use rg_ir_model::{
     CrateRef, DefId, DefMapRef, ImportRef, LocalDefRef, LocalEnumVariantRef, LocalImplRef,
     ModuleRef,
 };
 use rg_std::UniqueVec;
 use rg_text::Name;
-
-use super::{
-    path_resolution::ScopeResolver,
-    resolution_env::{CrateResolutionEnv, MacroDefinitionEnv, ScopeResolutionEnv},
-};
+use rustc_hash::FxHashSet;
 
 use crate::{
-    DefMap, ImportData, LocalDefData, LocalEnumVariantData, LocalEnumVariantEntry, LocalImplData,
-    MacroDefinitionView, ModuleData, Namespace, ScopeEntryRef, VisibleScopeDef, VisibleScopeDefs,
-    VisibleScopeOrigin,
+    DefMap, ImportData, LocalDefData, LocalDefKind, LocalEnumVariantData, LocalEnumVariantEntry,
+    LocalImplData, MacroDefinitionView, ModuleData, ModuleOrigin, ModuleScopeBuilder, Namespace,
+    ScopeEntryRef, VisibleScopeDef, VisibleScopeDefs, VisibleScopeOrigin,
 };
 
 /// Routes DefMap-origin refs and crate-level facts to concrete storage.
@@ -228,6 +228,128 @@ where
         let mut defs = VisibleScopeDefs::new(&scope, VisibleScopeOrigin::ModuleScope, false);
         defs.sort();
         Ok(defs)
+    }
+
+    /// Returns traits contributed by a lexical scope and its enclosing synthetic scopes.
+    ///
+    /// Trait candidates do not use ordinary path shadowing between nested scopes:
+    ///
+    /// ```text
+    /// use api::Render;
+    /// {
+    ///     struct Render;
+    ///     value.render(); // the outer trait remains eligible
+    /// }
+    /// ```
+    ///
+    /// Binding selection still happens *within* each scope. For example, a local type can suppress
+    /// a same-named glob import before that imported trait enters this candidate set. Imports using
+    /// `as _` join the set through the separate unnamed lane because they occupy no path name.
+    pub fn traits_in_lexical_scope(
+        &self,
+        importing_module: ModuleRef,
+    ) -> Result<UniqueVec<LocalDefRef>, S::Error> {
+        let resolver = self.scope_resolver();
+        let mut traits = UniqueVec::new();
+        let mut current = Some(importing_module);
+        let no_shadowed_names = FxHashSet::default();
+
+        while let Some(module_ref) = current {
+            let scope = resolver.visible_scope(importing_module, module_ref)?;
+            self.push_named_traits(&mut traits, &scope, &no_shadowed_names)?;
+
+            let Some(module) = self.source.module_data(module_ref)? else {
+                break;
+            };
+            self.push_unnamed_traits(&mut traits, &resolver, importing_module, module)?;
+
+            if !matches!(module.origin, ModuleOrigin::Synthetic { .. }) {
+                break;
+            }
+            current = module.parent.map(|module| ModuleRef {
+                origin: module_ref.origin,
+                module,
+            });
+        }
+
+        Ok(traits)
+    }
+
+    /// Returns traits available to unqualified lookup from one ordinary module.
+    ///
+    /// The standard prelude behaves like a low-priority glob: a selected type binding in the
+    /// module suppresses the same prelude spelling. Underscore imports from the module remain
+    /// method candidates, while underscore imports inside the prelude module itself do not
+    /// propagate through that implicit glob.
+    pub fn traits_in_unqualified_scope(
+        &self,
+        importing_module: ModuleRef,
+    ) -> Result<UniqueVec<LocalDefRef>, S::Error> {
+        let resolver = self.scope_resolver();
+        let current_scope = resolver.visible_scope(importing_module, importing_module)?;
+        let no_shadowed_names = FxHashSet::default();
+        let occupied_type_names = current_scope
+            .entries()
+            .filter(|(_, entry)| !entry.bindings(Namespace::Types).is_empty())
+            .map(|(name, _)| name.clone())
+            .collect::<FxHashSet<_>>();
+
+        let mut traits = UniqueVec::new();
+        self.push_named_traits(&mut traits, &current_scope, &no_shadowed_names)?;
+        if let Some(module) = self.source.module_data(importing_module)? {
+            self.push_unnamed_traits(&mut traits, &resolver, importing_module, module)?;
+        }
+
+        let crate_ref = importing_module.origin.origin_crate();
+        if let Some(prelude) = self.source.prelude_module(crate_ref)? {
+            let prelude_scope = resolver.visible_scope(importing_module, prelude)?;
+            self.push_named_traits(&mut traits, &prelude_scope, &occupied_type_names)?;
+        }
+
+        Ok(traits)
+    }
+
+    /// Add selected type bindings that are traits and whose spelling is not shadowed.
+    fn push_named_traits(
+        &self,
+        traits: &mut UniqueVec<LocalDefRef>,
+        scope: &ModuleScopeBuilder,
+        shadowed_names: &FxHashSet<Name>,
+    ) -> Result<(), S::Error> {
+        for (name, entry) in scope.entries() {
+            if shadowed_names.contains(name) {
+                continue;
+            }
+            for binding in entry.bindings(Namespace::Types) {
+                let DefId::Local(local_def) = binding.def else {
+                    continue;
+                };
+                if self.source.local_def_data(local_def)?.map(|data| data.kind)
+                    == Some(LocalDefKind::Trait)
+                {
+                    traits.push(local_def);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Add visible `as _` imports stored outside the ordinary namespace slots.
+    fn push_unnamed_traits(
+        &self,
+        traits: &mut UniqueVec<LocalDefRef>,
+        resolver: &ScopeResolver<'_, Self>,
+        importing_module: ModuleRef,
+        module: &ModuleData,
+    ) -> Result<(), S::Error> {
+        for binding in module.scope.unnamed_trait_bindings() {
+            if resolver.binding_is_visible(importing_module, binding)?
+                && let DefId::Local(local_def) = binding.def
+            {
+                traits.push(local_def);
+            }
+        }
+        Ok(())
     }
 
     /// Returns names visible from `importing_module` without a qualifier.

@@ -5,7 +5,7 @@
 //! asks `ImplMatcher` to consider impls only for those traits. Inherent impls remain receiver-first.
 
 use rg_def_map::DefMapSource;
-use rg_ir_model::{DefMapRef, TraitDefRef};
+use rg_ir_model::{DefMapRef, ScopeId, TraitDefRef};
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::ItemStoreSource;
 use rg_std::UniqueVec;
@@ -90,10 +90,11 @@ where
     /// Match current-body overlays and every trait that can expose an associated item.
     pub(crate) fn matches_for_receiver_with_associated_items(
         &self,
+        scope: ScopeId,
         receiver_ty: &Ty,
         table: &InferenceTable,
     ) -> Result<BodyReceiverImplMatches, PackageStoreError> {
-        let trait_refs = self.trait_refs_for_surface(TraitItemSurface::AssociatedItems)?;
+        let trait_refs = self.trait_refs_for_surface(scope, TraitItemSurface::AssociatedItems)?;
         self.matches_for_receiver_with_traits(receiver_ty, trait_refs, table)
     }
 
@@ -112,38 +113,43 @@ where
     /// Match current-body overlays and traits declaring one named function.
     pub(crate) fn matches_for_receiver_with_function_name(
         &self,
+        scope: ScopeId,
         receiver_ty: &Ty,
         name: &str,
         table: &InferenceTable,
     ) -> Result<BodyReceiverImplMatches, PackageStoreError> {
-        let trait_refs = self.trait_refs_for_surface(TraitItemSurface::FunctionNamed(name))?;
+        let trait_refs =
+            self.trait_refs_for_surface(scope, TraitItemSurface::FunctionNamed(name))?;
         self.matches_for_receiver_with_traits(receiver_ty, trait_refs, table)
     }
 
     /// Match current-body overlays and traits declaring one named associated const.
     pub(crate) fn matches_for_receiver_with_const_name(
         &self,
+        scope: ScopeId,
         receiver_ty: &Ty,
         name: &str,
         table: &InferenceTable,
     ) -> Result<BodyReceiverImplMatches, PackageStoreError> {
-        let trait_refs = self.trait_refs_for_surface(TraitItemSurface::ConstNamed(name))?;
+        let trait_refs = self.trait_refs_for_surface(scope, TraitItemSurface::ConstNamed(name))?;
         self.matches_for_receiver_with_traits(receiver_ty, trait_refs, table)
     }
 
     /// Match current-body overlays and every trait that can expose a function.
     pub(crate) fn matches_for_receiver_with_functions(
         &self,
+        scope: ScopeId,
         receiver_ty: &Ty,
         table: &InferenceTable,
     ) -> Result<BodyReceiverImplMatches, PackageStoreError> {
-        let trait_refs = self.trait_refs_for_surface(TraitItemSurface::Functions)?;
+        let trait_refs = self.trait_refs_for_surface(scope, TraitItemSurface::Functions)?;
         self.matches_for_receiver_with_traits(receiver_ty, trait_refs, table)
     }
 
     /// Merge body-origin declarations before saved-project declaration indexes.
     fn trait_refs_for_surface(
         &self,
+        scope: ScopeId,
         surface: TraitItemSurface<'_>,
     ) -> Result<UniqueVec<TraitDefRef>, PackageStoreError> {
         let body_items = self.context.body_local_items();
@@ -167,7 +173,16 @@ where
             ),
         };
         body_traits.extend(saved_traits);
-        Ok(body_traits)
+
+        // Declaration indexes answer which traits *could* provide this item. Rust's implicit
+        // lookup then asks the independent lexical question: which of those traits are in method
+        // scope at this use site? Filtering before impl matching keeps
+        // unrelated blanket impls out of both correctness results and completion work.
+        let traits_in_scope = self.context.traits().traits_in_scope(scope)?;
+        Ok(body_traits
+            .into_iter()
+            .filter(|trait_ref| traits_in_scope.contains(trait_ref))
+            .collect())
     }
 
     /// Match current-body inherent impls first, then impls of caller-selected traits.

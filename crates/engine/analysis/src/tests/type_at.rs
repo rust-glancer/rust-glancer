@@ -2505,6 +2505,120 @@ pub fn use_it(user: User) {
 }
 
 #[test]
+fn implicit_trait_items_require_scope_but_explicit_trait_paths_do_not() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[workspace]
+members = ["runtime", "app"]
+resolver = "3"
+
+//- /runtime/Cargo.toml
+[package]
+name = "runtime"
+version = "0.1.0"
+edition = "2024"
+
+//- /runtime/src/lib.rs
+pub struct Value;
+pub struct Output;
+
+pub trait Hidden {
+    const TOKEN: Output;
+    fn make() -> Output;
+    fn secret(&self) -> Output;
+}
+
+impl Hidden for Value {
+    const TOKEN: Output = Output;
+    fn make() -> Output { Output }
+    fn secret(&self) -> Output { Output }
+}
+
+//- /app/Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+runtime = { path = "../runtime" }
+
+//- /app/src/lib.rs
+use runtime::Value;
+
+pub fn inspect(value: Value) {
+    let missing_method$type_missing_method$ = value.secret();
+    let missing_const$type_missing_const$ = Value::TOKEN;
+    let missing_function$type_missing_function$ = Value::make();
+
+    let qualified_const$type_qualified_const$ = <Value as runtime::Hidden>::TOKEN;
+    let qualified_function$type_qualified_function$ = <Value as runtime::Hidden>::make();
+
+    {
+        use runtime::Hidden;
+        let visible_method$type_visible_method$ = value.secret();
+        let visible_const$type_visible_const$ = Value::TOKEN;
+        let visible_function$type_visible_function$ = Value::make();
+
+        {
+            struct Hidden;
+            let shadowed_name$type_shadowed_name$ = value.secret();
+        }
+    }
+}
+"#,
+        &[
+            AnalysisQuery::ty("method without trait import", "type_missing_method").in_lib("app"),
+            AnalysisQuery::ty("const without trait import", "type_missing_const").in_lib("app"),
+            AnalysisQuery::ty("function without trait import", "type_missing_function")
+                .in_lib("app"),
+            AnalysisQuery::ty("explicit qualified trait const", "type_qualified_const")
+                .in_lib("app"),
+            AnalysisQuery::ty(
+                "explicit qualified trait function",
+                "type_qualified_function",
+            )
+            .in_lib("app"),
+            AnalysisQuery::ty("method with block trait import", "type_visible_method")
+                .in_lib("app"),
+            AnalysisQuery::ty("const with block trait import", "type_visible_const").in_lib("app"),
+            AnalysisQuery::ty("function with block trait import", "type_visible_function")
+                .in_lib("app"),
+            AnalysisQuery::ty("type shadow keeps outer trait", "type_shadowed_name").in_lib("app"),
+        ],
+        expect![[r#"
+            method without trait import
+            - <unknown>
+
+            const without trait import
+            - <unknown>
+
+            function without trait import
+            - <unknown>
+
+            explicit qualified trait const
+            - nominal struct runtime[lib]::crate::Output
+
+            explicit qualified trait function
+            - nominal struct runtime[lib]::crate::Output
+
+            method with block trait import
+            - nominal struct runtime[lib]::crate::Output
+
+            const with block trait import
+            - nominal struct runtime[lib]::crate::Output
+
+            function with block trait import
+            - nominal struct runtime[lib]::crate::Output
+
+            type shadow keeps outer trait
+            - nominal struct runtime[lib]::crate::Output
+        "#]],
+    );
+}
+
+#[test]
 fn returns_body_local_field_access_types() {
     check_analysis_queries(
         r#"

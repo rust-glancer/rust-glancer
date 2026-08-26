@@ -85,6 +85,7 @@ impl<'txn, 'db> DotCompletionSiteScanner<'txn, 'db> {
                     DotCompletionSite {
                         body: body_ref,
                         receiver,
+                        scope: expr.scope,
                         receiver_span: receiver_data.source.span,
                         member_prefix_span,
                     },

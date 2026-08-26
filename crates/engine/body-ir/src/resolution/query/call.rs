@@ -417,11 +417,12 @@ where
     ) -> Result<ResolvedCallTargets, PackageStoreError> {
         let mut targets = ResolvedCallTargets::new();
 
-        for candidate in
-            self.context
-                .methods()
-                .named_method_candidates_for_ty(receiver_ty, site.name, table)?
-        {
+        for candidate in self.context.methods().named_method_candidates_for_ty(
+            site.scope,
+            receiver_ty,
+            site.name,
+            table,
+        )? {
             targets.push(ResolvedCallTarget::method_call(
                 candidate.function(),
                 site.scope,
