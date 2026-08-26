@@ -1,11 +1,14 @@
 //! Body-local item lookup for body-aware resolution.
 
+use std::collections::HashSet;
+
 use rg_def_map::DefMapSource;
 use rg_ir_model::{
-    AssocItemId, ConstRef, DefMapRef, FunctionRef, ImplRef, TraitImplRef, TypeAliasRef, TypeDefRef,
+    AssocItemId, ConstRef, DefMapRef, FunctionRef, ImplRef, TraitDefRef, TraitImplRef,
+    TypeAliasRef, TypeDefRef,
 };
 use rg_package_store::PackageStoreError;
-use rg_semantic_ir::{ItemStore, ItemStoreSource};
+use rg_semantic_ir::{ItemStore, ItemStoreSource, TraitData};
 use rg_std::UniqueVec;
 use rg_text::Name;
 
@@ -159,23 +162,25 @@ where
         Ok(trait_impls)
     }
 
-    /// Return body-local trait impls whose `Self` type has no nominal receiver key.
-    ///
-    /// `impl<T> Describe for [T]` cannot be stored under one `TypeDefRef`; the caller collects it
-    /// here and later matches its full `[T]` header against the concrete receiver.
-    pub(super) fn trait_impls_without_type_key(
+    /// Return body-local impls for already-selected traits in one store pass.
+    pub(super) fn trait_impls_for_traits(
         &self,
+        trait_refs: impl IntoIterator<Item = TraitDefRef>,
     ) -> Result<UniqueVec<TraitImplRef>, PackageStoreError> {
-        let mut trait_impls = UniqueVec::new();
+        let trait_refs = trait_refs.into_iter().collect::<HashSet<_>>();
+        if trait_refs.is_empty() {
+            return Ok(UniqueVec::new());
+        }
 
+        let mut trait_impls = UniqueVec::new();
         for store in self.body_lookup_stores()? {
             for (impl_ref, impl_data) in store.impls_with_refs() {
-                if impl_data.trait_ref.is_none() || !impl_data.resolved_self_ty.is_empty() {
-                    continue;
-                }
                 let Some(trait_ref) = impl_data.resolved_trait_ref.as_option() else {
                     continue;
                 };
+                if !trait_refs.contains(trait_ref) {
+                    continue;
+                }
                 trait_impls.push(TraitImplRef {
                     impl_ref,
                     trait_ref: *trait_ref,
@@ -184,6 +189,73 @@ where
         }
 
         Ok(trait_impls)
+    }
+
+    /// Return body-local traits declaring a function with this name.
+    pub(super) fn traits_with_function_name(
+        &self,
+        name: &str,
+    ) -> Result<UniqueVec<TraitDefRef>, PackageStoreError> {
+        self.trait_refs_matching(|store, trait_data| {
+            trait_data.items.iter().any(|item| {
+                let AssocItemId::Function(id) = item else {
+                    return false;
+                };
+                store
+                    .function_data(*id)
+                    .is_some_and(|data| data.name == name)
+            })
+        })
+    }
+
+    /// Return body-local traits declaring an associated const with this name.
+    pub(super) fn traits_with_const_name(
+        &self,
+        name: &str,
+    ) -> Result<UniqueVec<TraitDefRef>, PackageStoreError> {
+        self.trait_refs_matching(|store, trait_data| {
+            trait_data.items.iter().any(|item| {
+                let AssocItemId::Const(id) = item else {
+                    return false;
+                };
+                store.const_data(*id).is_some_and(|data| data.name == name)
+            })
+        })
+    }
+
+    /// Return body-local traits that declare at least one function.
+    pub(super) fn traits_with_functions(
+        &self,
+    ) -> Result<UniqueVec<TraitDefRef>, PackageStoreError> {
+        self.trait_refs_matching(|_, trait_data| {
+            trait_data
+                .items
+                .iter()
+                .any(|item| matches!(item, AssocItemId::Function(_)))
+        })
+    }
+
+    /// Return body-local traits that declare at least one associated item.
+    pub(super) fn traits_with_associated_items(
+        &self,
+    ) -> Result<UniqueVec<TraitDefRef>, PackageStoreError> {
+        self.trait_refs_matching(|_, trait_data| !trait_data.items.is_empty())
+    }
+
+    /// Filter body-local trait declarations without rebuilding the body-store routing in callers.
+    fn trait_refs_matching(
+        &self,
+        predicate: impl Fn(&ItemStore, &TraitData) -> bool,
+    ) -> Result<UniqueVec<TraitDefRef>, PackageStoreError> {
+        let mut traits = UniqueVec::new();
+        for store in self.body_lookup_stores()? {
+            for (trait_ref, trait_data) in store.traits_with_refs() {
+                if predicate(store, trait_data) {
+                    traits.push(trait_ref);
+                }
+            }
+        }
+        Ok(traits)
     }
 
     /// Gather body item stores that can affect the current body lookup.

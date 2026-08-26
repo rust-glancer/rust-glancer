@@ -129,7 +129,10 @@ where
     ) -> Result<Vec<AssociatedItemCandidateRef>, PackageStoreError> {
         let query = AssociatedItemQuery::with_resolver(self.context.ty_context(), &self.context);
         let table = InferenceTable::new();
-        let receiver = self.context.impls().matches_for_receiver(ty, &table)?;
+        let receiver = self
+            .context
+            .impls()
+            .matches_for_receiver_with_associated_items(ty, &table)?;
         let item_query = self.context.item_query();
         let mut candidates = Vec::new();
         for candidate in query.candidates_for_matches(receiver.receiver_ty(), receiver.matches())? {
@@ -235,16 +238,17 @@ where
         last_segment: &str,
     ) -> Result<Option<(BodyResolution, Ty)>, PackageStoreError> {
         let table = InferenceTable::new();
-        let receiver = self
-            .context
-            .impls()
-            .matches_for_receiver(prefix_ty, &table)?;
+        let const_receiver = self.context.impls().matches_for_receiver_with_const_name(
+            prefix_ty,
+            last_segment,
+            &table,
+        )?;
 
         // First treat the final segment as an enum variant. Variants are not ordinary associated
         // functions in either Semantic IR or Body IR, but value paths use the same syntax for
         // `Action::Start` and `Widget::new`, so they need an explicit pass.
         let mut variants = Vec::new();
-        for nominal_ty in receiver.receiver_ty().as_adts() {
+        for nominal_ty in const_receiver.receiver_ty().as_adts() {
             if let Some(candidate) =
                 self.enum_variant_candidate_for_type(nominal_ty, last_segment)?
             {
@@ -257,7 +261,7 @@ where
         }
 
         if let Some(candidate) =
-            self.inherent_associated_const_candidate(&receiver, last_segment)?
+            self.inherent_associated_const_candidate(&const_receiver, last_segment)?
         {
             return Ok(Some(Self::const_resolution([candidate])));
         }
@@ -267,8 +271,8 @@ where
         // falls back to the trait declaration. An unavailable proof remains a tentative lookup
         // candidate for editor features; definite rejection removes it.
         let trait_consts = self.trait_associated_const_candidates(
-            receiver.matches().traits(),
-            receiver.receiver_ty(),
+            const_receiver.matches().traits(),
+            const_receiver.receiver_ty(),
             last_segment,
             None,
         )?;
@@ -279,8 +283,15 @@ where
 
         // Inherent associated functions are exact candidates. Trait-associated functions retain
         // tentative matches when incomplete generic information cannot prove or reject the impl.
-        let functions =
-            self.associated_function_candidates_for_matches(&receiver, last_segment, None)?;
+        let function_receiver = self
+            .context
+            .impls()
+            .matches_for_receiver_with_function_name(prefix_ty, last_segment, &table)?;
+        let functions = self.associated_function_candidates_for_matches(
+            &function_receiver,
+            last_segment,
+            None,
+        )?;
 
         Ok((!functions.is_empty()).then_some(Self::function_resolution(functions)))
     }
@@ -295,7 +306,7 @@ where
         let receiver = self
             .context
             .impls()
-            .matches_for_receiver(prefix_ty, table)?;
+            .matches_for_receiver_with_function_name(prefix_ty, name, table)?;
         self.associated_function_candidates_for_matches(&receiver, name, None)
     }
 

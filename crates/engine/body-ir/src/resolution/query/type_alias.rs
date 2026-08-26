@@ -4,7 +4,7 @@ use rg_def_map::DefMapSource;
 use rg_ir_model::{AssocItemId, TypeAliasRef};
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::ItemStoreSource;
-use rg_ty::{AdtTy, Ty, inference::InferenceTable};
+use rg_ty::{AdtTy, Ty};
 
 use crate::resolution::BodyResolutionContext;
 
@@ -31,11 +31,10 @@ where
         name: &str,
     ) -> Result<Option<TypeAliasRef>, PackageStoreError> {
         let receiver_ty = Ty::adt(ty.clone());
-        let table = InferenceTable::new();
         let receiver = self
             .context
             .impls()
-            .matches_for_receiver(&receiver_ty, &table)?;
+            .inherent_matches_for_receiver(&receiver_ty)?;
         let item_query = self.context.item_query();
         for impl_match in receiver.matches().inherent() {
             let Some(impl_data) = item_query.impl_data(impl_match.impl_ref())? else {

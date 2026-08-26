@@ -45,7 +45,25 @@ use rg_std::UniqueVec;
 use rg_text::Name;
 
 use super::{CrateItemQuery, ItemLookupIndexSource, ItemStoreQuery, ItemStoreSource};
-use crate::{ItemLookupIndex, item::lang_item::VisibleLangItems};
+use crate::{
+    ItemLookupIndex,
+    item::{TraitItemTraitRefs, lang_item::VisibleLangItems},
+};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum TraitItemKind {
+    Function,
+    Const,
+}
+
+impl TraitItemKind {
+    fn declaring_traits(self, refs: &TraitItemTraitRefs) -> &UniqueVec<TraitDefRef> {
+        match self {
+            Self::Function => &refs.functions,
+            Self::Const => &refs.consts,
+        }
+    }
+}
 
 // ==============================================================================
 // Use-Site Lookup
@@ -253,23 +271,6 @@ impl<'item> ItemLookupQuery<'item> {
         impls
     }
 
-    /// Returns trait impls whose `Self` type has no nominal receiver key.
-    ///
-    /// Both `impl<T, const N: usize> IntoIterator for [T; N]` and
-    /// `impl<T> Describe for T` lack one `TypeDefRef` under which they can be indexed. Callers use
-    /// this bounded list only as candidate discovery, then match each full impl header against the
-    /// actual receiver type.
-    pub fn trait_impls_without_type_key(&self) -> UniqueVec<TraitImplRef> {
-        let mut impls = self
-            .local_index
-            .trait_impls_without_type_key
-            .iter()
-            .map(|trait_impl| trait_impl.expand())
-            .collect::<UniqueVec<_>>();
-        impls.extend(self.dependencies.trait_impls_without_type_key());
-        impls
-    }
-
     /// Returns trait impls, preserving whether the implemented trait was visible.
     pub fn trait_impls_for_trait(&self, trait_ref: TraitDefRef) -> Option<UniqueVec<TraitImplRef>> {
         let dependency_impls = self.dependencies.trait_impls_for_trait(trait_ref);
@@ -288,6 +289,41 @@ impl<'item> ItemLookupQuery<'item> {
             .collect::<UniqueVec<_>>();
         impls.extend(dependency_impls.unwrap_or_default());
         Some(impls)
+    }
+
+    /// Returns visible traits that declare at least one function.
+    pub fn traits_with_functions(&self) -> UniqueVec<TraitDefRef> {
+        let mut traits = self.local_index.traits_with_functions.clone();
+        traits.extend(self.dependencies.traits_with_functions());
+        traits
+    }
+
+    /// Returns visible traits that declare at least one associated item.
+    pub fn traits_with_associated_items(&self) -> UniqueVec<TraitDefRef> {
+        let mut traits = self.local_index.traits_with_associated_items.clone();
+        traits.extend(self.dependencies.traits_with_associated_items());
+        traits
+    }
+
+    /// Returns visible traits with a function declaration carrying this name.
+    pub fn traits_with_function_name(&self, name: &str) -> UniqueVec<TraitDefRef> {
+        self.traits_with_item_name(TraitItemKind::Function, name)
+    }
+
+    /// Returns visible traits with an associated const declaration carrying this name.
+    pub fn traits_with_const_name(&self, name: &str) -> UniqueVec<TraitDefRef> {
+        self.traits_with_item_name(TraitItemKind::Const, name)
+    }
+
+    fn traits_with_item_name(&self, kind: TraitItemKind, name: &str) -> UniqueVec<TraitDefRef> {
+        let mut traits = self
+            .local_index
+            .traits_by_item_name
+            .get(name)
+            .map(|refs| kind.declaring_traits(refs).clone())
+            .unwrap_or_default();
+        traits.extend(self.dependencies.traits_with_item_name(kind, name));
+        traits
     }
 
     /// Returns declared functions, preserving whether the trait was visible.
@@ -437,30 +473,6 @@ impl DependencyLookup<'_> {
         impls
     }
 
-    fn trait_impls_without_type_key(&self) -> UniqueVec<TraitImplRef> {
-        let mut results = self
-            .results
-            .lock()
-            .expect("dependency lookup results lock should not be poisoned");
-        if let Some(impls) = &results.trait_impls_without_type_key {
-            self.operation_cache.record_dependency_result_hit();
-            return impls.clone();
-        }
-
-        self.operation_cache.record_dependency_result_miss();
-        let mut impls = UniqueVec::new();
-        for index in self.indexes.iter() {
-            impls.extend(
-                index
-                    .trait_impls_without_type_key
-                    .iter()
-                    .map(|trait_impl| trait_impl.expand()),
-            );
-        }
-        results.trait_impls_without_type_key = Some(impls.clone());
-        impls
-    }
-
     fn trait_impls_for_trait(&self, trait_ref: TraitDefRef) -> Option<UniqueVec<TraitImplRef>> {
         let mut results = self
             .results
@@ -489,6 +501,66 @@ impl DependencyLookup<'_> {
             .trait_impls_by_trait
             .insert(trait_ref, result.clone());
         result
+    }
+
+    fn traits_with_functions(&self) -> UniqueVec<TraitDefRef> {
+        let mut results = self
+            .results
+            .lock()
+            .expect("dependency lookup results lock should not be poisoned");
+        if let Some(traits) = &results.traits_with_functions {
+            self.operation_cache.record_dependency_result_hit();
+            return traits.clone();
+        }
+
+        self.operation_cache.record_dependency_result_miss();
+        let mut traits = UniqueVec::new();
+        for index in self.indexes.iter() {
+            traits.extend(index.traits_with_functions.iter().copied());
+        }
+        results.traits_with_functions = Some(traits.clone());
+        traits
+    }
+
+    fn traits_with_associated_items(&self) -> UniqueVec<TraitDefRef> {
+        let mut results = self
+            .results
+            .lock()
+            .expect("dependency lookup results lock should not be poisoned");
+        if let Some(traits) = &results.traits_with_associated_items {
+            self.operation_cache.record_dependency_result_hit();
+            return traits.clone();
+        }
+
+        self.operation_cache.record_dependency_result_miss();
+        let mut traits = UniqueVec::new();
+        for index in self.indexes.iter() {
+            traits.extend(index.traits_with_associated_items.iter().copied());
+        }
+        results.traits_with_associated_items = Some(traits.clone());
+        traits
+    }
+
+    fn traits_with_item_name(&self, kind: TraitItemKind, name: &str) -> UniqueVec<TraitDefRef> {
+        let key = (kind, Name::new(name));
+        let mut results = self
+            .results
+            .lock()
+            .expect("dependency lookup results lock should not be poisoned");
+        if let Some(traits) = results.traits_by_item_name.get(&key) {
+            self.operation_cache.record_dependency_result_hit();
+            return traits.clone();
+        }
+
+        self.operation_cache.record_dependency_result_miss();
+        let mut traits = UniqueVec::new();
+        for index in self.indexes.iter() {
+            if let Some(indexed) = index.traits_by_item_name.get(&key.1) {
+                traits.extend(kind.declaring_traits(indexed).iter().copied());
+            }
+        }
+        results.traits_by_item_name.insert(key, traits.clone());
+        traits
     }
 
     fn trait_functions(&self, trait_ref: TraitDefRef) -> Option<UniqueVec<FunctionRef>> {
@@ -663,16 +735,16 @@ impl ItemLookupQueryCacheInner {
 /// - `Some(empty)` means the trait was visible but the narrower lookup found no candidate;
 /// - `Some(non-empty)` contains the dependency candidates.
 ///
-/// The unkeyed impl lists use their outer `Option` only to distinguish not-computed from a computed
-/// empty list.
 #[derive(Debug, Default)]
 struct DependencyLookupResults {
     inherent_impls_by_type: HashMap<TypeDefRef, UniqueVec<ImplRef>>,
     inherent_functions_by_type_and_name: HashMap<(TypeDefRef, Name), UniqueVec<FunctionRef>>,
     structural_inherent_impls: Option<UniqueVec<ImplRef>>,
     trait_impls_by_type: HashMap<TypeDefRef, UniqueVec<TraitImplRef>>,
-    trait_impls_without_type_key: Option<UniqueVec<TraitImplRef>>,
     trait_impls_by_trait: HashMap<TraitDefRef, Option<UniqueVec<TraitImplRef>>>,
+    traits_with_functions: Option<UniqueVec<TraitDefRef>>,
+    traits_with_associated_items: Option<UniqueVec<TraitDefRef>>,
+    traits_by_item_name: HashMap<(TraitItemKind, Name), UniqueVec<TraitDefRef>>,
     trait_functions_by_trait: HashMap<TraitDefRef, Option<UniqueVec<FunctionRef>>>,
     trait_functions_by_trait_and_name: HashMap<(TraitDefRef, Name), Option<UniqueVec<FunctionRef>>>,
 }

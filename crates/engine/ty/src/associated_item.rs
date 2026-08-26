@@ -116,7 +116,11 @@ where
         receiver_ty: &Ty,
     ) -> Result<Vec<AssociatedItemCandidateRef>, D::Error> {
         let table = InferenceTable::new();
-        let matches = self.matcher.matches_for_receiver(receiver_ty, &table)?;
+        let matches = self.matcher.matches_for_receiver_with_traits(
+            receiver_ty,
+            self.context.item_lookup().traits_with_associated_items(),
+            &table,
+        )?;
         self.candidates_for_matches(receiver_ty, &matches)
     }
 

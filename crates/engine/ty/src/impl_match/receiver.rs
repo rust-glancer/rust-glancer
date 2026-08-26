@@ -1,12 +1,12 @@
-//! Receiver-centric impl discovery.
+//! Receiver matching after the relevant impl universe has been discovered.
 //!
-//! The item index has two useful storage shapes: nominal impls are keyed by `TypeDefRef`, while
-//! structural and blanket impls live in compact fallback lists. That distinction stops here. A
-//! caller asks which impls match one receiver and receives the evidence needed to instantiate any
-//! item selected from those impls.
+//! Inherent items start from the receiver, because an inherent impl belongs to that receiver shape.
+//! Trait items start from a declaration name or completion surface, which identifies relevant
+//! traits before this module narrows each trait's impls by `Self`. Both paths finish here and retain
+//! the evidence needed to instantiate an item selected from the matching impl.
 
 use rg_def_map::DefMapSource;
-use rg_ir_model::{DefMapRef, FunctionRef, ImplRef, TraitApplicability, TraitImplRef};
+use rg_ir_model::{DefMapRef, FunctionRef, ImplRef, TraitApplicability, TraitDefRef, TraitImplRef};
 use rg_item_tree::LangItem;
 use rg_semantic_ir::ItemStoreSource;
 use rg_std::UniqueVec;
@@ -50,35 +50,26 @@ impl InherentImplMatch {
 /// associated functions, constants, or completion declarations.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ReceiverImplMatches {
-    inherent: Vec<InherentImplMatch>,
-    traits: Vec<TraitSelection>,
+    inherent: UniqueVec<InherentImplMatch>,
+    traits: UniqueVec<TraitSelection>,
 }
 
 impl ReceiverImplMatches {
     pub fn inherent(&self) -> &[InherentImplMatch] {
-        &self.inherent
+        self.inherent.as_slice()
     }
 
     pub fn traits(&self) -> &[TraitSelection] {
-        &self.traits
+        self.traits.as_slice()
     }
 
-    /// Append another visible impl universe without collapsing distinct proof results.
+    /// Append another visible impl universe while preserving discovery order.
     ///
-    /// Body lookup uses this to place current-body matches before saved-project matches. Exact
-    /// duplicates can arise when two lookup routes expose the same impl, but overlapping trait
-    /// impls with different selections remain separate candidates.
+    /// Exact duplicate matches collapse here. Overlapping trait impls with different selections
+    /// remain separate candidates because their proof evidence makes the values unequal.
     pub fn extend(&mut self, other: Self) {
-        for candidate in other.inherent {
-            if !self.inherent.contains(&candidate) {
-                self.inherent.push(candidate);
-            }
-        }
-        for selection in other.traits {
-            if !self.traits.contains(&selection) {
-                self.traits.push(selection);
-            }
-        }
+        self.inherent.extend(other.inherent);
+        self.traits.extend(other.traits);
     }
 }
 
@@ -121,33 +112,38 @@ where
     I: ItemStoreSource<'query, Error = D::Error>,
     R: TypePathResolver<Error = D::Error>,
 {
-    /// Match every saved-project impl that can apply to this receiver.
-    ///
-    /// `Widget` uses the nominal indexes and also checks blanket trait impls such as
-    /// `impl<T> Describe for T`. `[Widget]` uses the structural inherent list and the same trait
-    /// fallback. Callers never need to branch on those storage categories themselves.
-    pub fn matches_for_receiver(
+    /// Match inherent impls plus an already-discovered set of relevant traits.
+    pub fn matches_for_receiver_with_traits(
         &self,
         receiver_ty: &Ty,
+        trait_refs: impl IntoIterator<Item = TraitDefRef>,
         table: &InferenceTable,
     ) -> Result<ReceiverImplMatches, D::Error> {
+        let mut matches = self.inherent_matches_for_receiver(receiver_ty)?;
+        matches.traits.extend(self.trait_selections_for_receiver(
+            receiver_ty,
+            trait_refs,
+            table,
+        )?);
+        Ok(matches)
+    }
+
+    /// Match saved inherent impls for one receiver without opening any trait candidate universe.
+    fn inherent_matches_for_receiver(
+        &self,
+        receiver_ty: &Ty,
+    ) -> Result<ReceiverImplMatches, D::Error> {
         let mut inherent_impls = UniqueVec::new();
-        let mut trait_impls = UniqueVec::new();
         for receiver in receiver_ty.as_adts() {
             inherent_impls.extend(
                 self.context
                     .item_lookup()
                     .inherent_impls_for_type(receiver.def),
             );
-            trait_impls.extend(
-                self.context
-                    .item_lookup()
-                    .trait_impls_for_type(receiver.def),
-            );
         }
 
         let mut matches =
-            self.matches_for_receiver_from_impls(receiver_ty, inherent_impls, trait_impls, table)?;
+            self.inherent_matches_for_receiver_from_impls(receiver_ty, inherent_impls)?;
 
         // Concrete builtin-shaped receivers have no `TypeDefRef` index key. Keep this routing rule
         // beside the structural index it selects: being "unkeyed" is a property of the lookup
@@ -208,22 +204,66 @@ where
                     subst,
                     applicability: TraitApplicability::Yes,
                 };
-                if !matches.inherent.contains(&candidate) {
-                    matches.inherent.push(candidate);
-                }
+                matches.inherent.push(candidate);
             }
         }
 
-        // The fallback trait bucket also contains blanket impls, so it participates for nominal
-        // receivers as well as primitives and structural types.
-        let fallback = self.matches_for_receiver_from_impls(
-            receiver_ty,
-            UniqueVec::new(),
-            self.context.item_lookup().trait_impls_without_type_key(),
-            table,
-        )?;
-        matches.extend(fallback);
         Ok(matches)
+    }
+
+    /// Select saved impls for traits already discovered from an item name or completion surface.
+    fn trait_selections_for_receiver(
+        &self,
+        receiver_ty: &Ty,
+        trait_refs: impl IntoIterator<Item = TraitDefRef>,
+        table: &InferenceTable,
+    ) -> Result<UniqueVec<TraitSelection>, D::Error> {
+        let receiver_ty = table.resolve_root_var(receiver_ty);
+        let mut selections = UniqueVec::new();
+
+        for trait_ref in trait_refs {
+            let Some(candidates) = self
+                .context
+                .trait_selection()
+                .trait_impl_candidates_for_ty(
+                    self.context.item_paths(),
+                    self.context.item_lookup(),
+                    trait_ref,
+                    &receiver_ty,
+                )?
+            else {
+                // `None` means the body-wide work allowance was exhausted. Later traits share the
+                // same allowance, so keep the candidates collected so far instead of repeatedly
+                // asking a tracker that cannot reserve more work.
+                break;
+            };
+            selections.extend(self.trait_selections_for_receiver_from_impls(
+                &receiver_ty,
+                candidates,
+                table,
+            )?);
+        }
+
+        Ok(selections)
+    }
+
+    /// Select an explicit, already-narrowed impl set, such as a current-body overlay.
+    fn trait_selections_for_receiver_from_impls(
+        &self,
+        receiver_ty: &Ty,
+        trait_impls: impl IntoIterator<Item = TraitImplRef>,
+        table: &InferenceTable,
+    ) -> Result<UniqueVec<TraitSelection>, D::Error> {
+        let mut selections = UniqueVec::new();
+        for trait_impl in trait_impls {
+            let Some(selection) =
+                self.trait_impl_selection_for_ty(trait_impl, receiver_ty, table)?
+            else {
+                continue;
+            };
+            selections.push(selection);
+        }
+        Ok(selections)
     }
 
     /// Match a caller-selected impl universe while retaining all instantiation evidence.
@@ -237,6 +277,24 @@ where
         inherent_impls: UniqueVec<ImplRef>,
         trait_impls: UniqueVec<TraitImplRef>,
         table: &InferenceTable,
+    ) -> Result<ReceiverImplMatches, D::Error> {
+        let mut matches =
+            self.inherent_matches_for_receiver_from_impls(receiver_ty, inherent_impls)?;
+        matches
+            .traits
+            .extend(self.trait_selections_for_receiver_from_impls(
+                receiver_ty,
+                trait_impls,
+                table,
+            )?);
+        Ok(matches)
+    }
+
+    /// Match an explicit inherent impl set while retaining receiver substitutions.
+    fn inherent_matches_for_receiver_from_impls(
+        &self,
+        receiver_ty: &Ty,
+        inherent_impls: impl IntoIterator<Item = ImplRef>,
     ) -> Result<ReceiverImplMatches, D::Error> {
         let item_query = self.context.item_paths().items();
         let mut matches = ReceiverImplMatches::default();
@@ -261,20 +319,7 @@ where
                 subst,
                 applicability,
             };
-            if !matches.inherent.contains(&candidate) {
-                matches.inherent.push(candidate);
-            }
-        }
-
-        for trait_impl in trait_impls {
-            let Some(selection) =
-                self.trait_impl_selection_for_ty(trait_impl, receiver_ty, table)?
-            else {
-                continue;
-            };
-            if !matches.traits.contains(&selection) {
-                matches.traits.push(selection);
-            }
+            matches.inherent.push(candidate);
         }
 
         Ok(matches)

@@ -1,11 +1,11 @@
 //! Current-body and saved-project impl matching for one receiver.
 //!
-//! Body queries should not each assemble nominal indexes, structural fallbacks, and blanket impl
-//! lists. This query adds current-body candidates once, asks `ImplMatcher` for saved-project
-//! candidates, and preserves their matching evidence in lookup order.
+//! Body queries describe the trait declaration surface they need: a named function, a named const,
+//! or a broader completion surface. This query merges current-body and saved declarations, then
+//! asks `ImplMatcher` to consider impls only for those traits. Inherent impls remain receiver-first.
 
 use rg_def_map::DefMapSource;
-use rg_ir_model::DefMapRef;
+use rg_ir_model::{DefMapRef, TraitDefRef};
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::ItemStoreSource;
 use rg_std::UniqueVec;
@@ -70,6 +70,14 @@ pub(crate) struct BodyImplQuery<'query, D, I> {
     context: BodyResolutionContext<'query, D, I>,
 }
 
+/// Trait declaration surface that may expose an item for one receiver lookup.
+enum TraitItemSurface<'name> {
+    AssociatedItems,
+    Functions,
+    FunctionNamed(&'name str),
+    ConstNamed(&'name str),
+}
+
 impl<'query, D, I> BodyImplQuery<'query, D, I>
 where
     D: DefMapSource<Error = PackageStoreError> + Copy,
@@ -79,10 +87,94 @@ where
         Self { context }
     }
 
-    /// Match current-body overlays first, then append matching saved-project impls.
-    pub(crate) fn matches_for_receiver(
+    /// Match current-body overlays and every trait that can expose an associated item.
+    pub(crate) fn matches_for_receiver_with_associated_items(
         &self,
         receiver_ty: &Ty,
+        table: &InferenceTable,
+    ) -> Result<BodyReceiverImplMatches, PackageStoreError> {
+        let trait_refs = self.trait_refs_for_surface(TraitItemSurface::AssociatedItems)?;
+        self.matches_for_receiver_with_traits(receiver_ty, trait_refs, table)
+    }
+
+    /// Match current-body and saved inherent impls without considering any trait impl.
+    pub(crate) fn inherent_matches_for_receiver(
+        &self,
+        receiver_ty: &Ty,
+    ) -> Result<BodyReceiverImplMatches, PackageStoreError> {
+        self.matches_for_receiver_with_traits(
+            receiver_ty,
+            UniqueVec::<TraitDefRef>::new(),
+            &InferenceTable::new(),
+        )
+    }
+
+    /// Match current-body overlays and traits declaring one named function.
+    pub(crate) fn matches_for_receiver_with_function_name(
+        &self,
+        receiver_ty: &Ty,
+        name: &str,
+        table: &InferenceTable,
+    ) -> Result<BodyReceiverImplMatches, PackageStoreError> {
+        let trait_refs = self.trait_refs_for_surface(TraitItemSurface::FunctionNamed(name))?;
+        self.matches_for_receiver_with_traits(receiver_ty, trait_refs, table)
+    }
+
+    /// Match current-body overlays and traits declaring one named associated const.
+    pub(crate) fn matches_for_receiver_with_const_name(
+        &self,
+        receiver_ty: &Ty,
+        name: &str,
+        table: &InferenceTable,
+    ) -> Result<BodyReceiverImplMatches, PackageStoreError> {
+        let trait_refs = self.trait_refs_for_surface(TraitItemSurface::ConstNamed(name))?;
+        self.matches_for_receiver_with_traits(receiver_ty, trait_refs, table)
+    }
+
+    /// Match current-body overlays and every trait that can expose a function.
+    pub(crate) fn matches_for_receiver_with_functions(
+        &self,
+        receiver_ty: &Ty,
+        table: &InferenceTable,
+    ) -> Result<BodyReceiverImplMatches, PackageStoreError> {
+        let trait_refs = self.trait_refs_for_surface(TraitItemSurface::Functions)?;
+        self.matches_for_receiver_with_traits(receiver_ty, trait_refs, table)
+    }
+
+    /// Merge body-origin declarations before saved-project declaration indexes.
+    fn trait_refs_for_surface(
+        &self,
+        surface: TraitItemSurface<'_>,
+    ) -> Result<UniqueVec<TraitDefRef>, PackageStoreError> {
+        let body_items = self.context.body_local_items();
+        let item_lookup = self.context.item_lookup_query();
+        let (mut body_traits, saved_traits) = match surface {
+            TraitItemSurface::AssociatedItems => (
+                body_items.traits_with_associated_items()?,
+                item_lookup.traits_with_associated_items(),
+            ),
+            TraitItemSurface::Functions => (
+                body_items.traits_with_functions()?,
+                item_lookup.traits_with_functions(),
+            ),
+            TraitItemSurface::FunctionNamed(name) => (
+                body_items.traits_with_function_name(name)?,
+                item_lookup.traits_with_function_name(name),
+            ),
+            TraitItemSurface::ConstNamed(name) => (
+                body_items.traits_with_const_name(name)?,
+                item_lookup.traits_with_const_name(name),
+            ),
+        };
+        body_traits.extend(saved_traits);
+        Ok(body_traits)
+    }
+
+    /// Match current-body inherent impls first, then impls of caller-selected traits.
+    fn matches_for_receiver_with_traits(
+        &self,
+        receiver_ty: &Ty,
+        trait_refs: impl IntoIterator<Item = TraitDefRef>,
         table: &InferenceTable,
     ) -> Result<BodyReceiverImplMatches, PackageStoreError> {
         // Type-only paths can omit nominal arguments. Complete them before matching so every item
@@ -98,15 +190,15 @@ where
 
         let body_items = self.context.body_local_items();
         let mut inherent_impls = UniqueVec::new();
+        let trait_refs = trait_refs.into_iter().collect::<UniqueVec<_>>();
         let mut trait_impls = UniqueVec::new();
         let mut local_inherent_item_names = BodyLocalInherentItemNames::default();
         for receiver in receiver_ty.as_adts() {
             inherent_impls.extend(body_items.inherent_impls_for_type(receiver.def)?);
-            trait_impls.extend(body_items.trait_impls_for_type(receiver.def)?);
             local_inherent_item_names
                 .extend(body_items.inherent_item_names_for_type(receiver.def)?);
         }
-        trait_impls.extend(body_items.trait_impls_without_type_key()?);
+        trait_impls.extend(body_items.trait_impls_for_traits(trait_refs.iter().copied())?);
 
         let matcher = self.context.impl_matcher();
         let mut matches = matcher.matches_for_receiver_from_impls(
@@ -119,7 +211,11 @@ where
         // Current impl items replace saved declarations of the same kind and name. The names come
         // from every current impl with the receiver's nominal key, not only impls that match the
         // completed receiver today: an edited header must still hide its stale saved declaration.
-        matches.extend(matcher.matches_for_receiver(&receiver_ty, table)?);
+        matches.extend(matcher.matches_for_receiver_with_traits(
+            &receiver_ty,
+            trait_refs,
+            table,
+        )?);
         Ok(BodyReceiverImplMatches {
             receiver_ty,
             matches,

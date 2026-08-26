@@ -29,17 +29,22 @@ use crate::ItemStore;
 /// lookup time.
 #[derive(Debug, Clone, PartialEq, Eq, Default, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct ItemLookupIndex {
-    // Method lookup starts from a receiver type. These maps let callers jump directly to impls
-    // whose already-resolved `Self` type mentions that receiver, instead of re-scanning all impls.
+    // Inherent lookup starts from a receiver type. These maps jump directly to impls whose
+    // already-resolved `Self` type mentions that receiver.
     pub(crate) inherent_impls_by_type: HashMap<TypeDefRef, UniqueVec<ImplRef>>,
     pub(crate) inherent_functions_by_type_and_name:
         HashMap<TypeDefRef, HashMap<Name, UniqueVec<FunctionRef>>>,
     pub(crate) structural_inherent_impls: UniqueVec<ImplRef>,
+    // Implementation navigation and qualified paths still ask which impls mention one nominal
+    // type. Trait-item lookup uses the trait-keyed map below instead.
     pub(crate) trait_impls_by_type: HashMap<TypeDefRef, UniqueVec<IndexedTraitImplRef>>,
-    pub(crate) trait_impls_without_type_key: UniqueVec<IndexedTraitImplRef>,
     pub(crate) trait_impls_by_trait: HashMap<TraitDefRef, UniqueVec<IndexedImplRef>>,
-    // Trait impl lookup produces trait identities first; this cache then expands each trait into
-    // its associated function declarations without reopening the trait item every time.
+    // A named trait item selects its declaring traits before any impl proof. Completion starts
+    // from one of the two broad trait surfaces. Once a trait is selected, the function maps adapt
+    // its proof back into declarations without reopening the trait item every time.
+    pub(crate) traits_with_functions: UniqueVec<TraitDefRef>,
+    pub(crate) traits_with_associated_items: UniqueVec<TraitDefRef>,
+    pub(crate) traits_by_item_name: HashMap<Name, TraitItemTraitRefs>,
     pub(crate) trait_functions_by_trait: HashMap<TraitDefRef, UniqueVec<FunctionRef>>,
     pub(crate) trait_functions_by_trait_and_name:
         HashMap<TraitDefRef, HashMap<Name, UniqueVec<FunctionRef>>>,
@@ -75,11 +80,17 @@ impl ItemLookupIndex {
                 .values()
                 .map(UniqueVec::len)
                 .sum::<usize>()
-            + self.trait_impls_without_type_key.len()
             + self
                 .trait_impls_by_trait
                 .values()
                 .map(UniqueVec::len)
+                .sum::<usize>()
+            + self.traits_with_functions.len()
+            + self.traits_with_associated_items.len()
+            + self
+                .traits_by_item_name
+                .values()
+                .map(TraitItemTraitRefs::entry_count)
                 .sum::<usize>()
             + self
                 .trait_functions_by_trait
@@ -95,29 +106,53 @@ impl ItemLookupIndex {
     }
 
     fn extend_from_store(&mut self, store: &ItemStore) {
-        // Trait methods are independent of a receiver type, so cache them by trait before
-        // processing impls that later point back to these traits.
+        // Record trait declaration surfaces before processing impls. For `value.convert()`, the
+        // name `convert` should select `Convert` before its impl headers are compared with value's
+        // type. `value./* completion */` instead starts from every trait containing a function.
         for (trait_ref, trait_data) in store.traits_with_refs() {
+            if !trait_data.items.is_empty() {
+                self.traits_with_associated_items.push(trait_ref);
+            }
             let functions = self.trait_functions_by_trait.entry(trait_ref).or_default();
             self.trait_impls_by_trait.entry(trait_ref).or_default();
             self.trait_functions_by_trait_and_name
                 .entry(trait_ref)
                 .or_default();
             for item in &trait_data.items {
-                if let AssocItemId::Function(id) = item {
-                    let function_ref = FunctionRef {
-                        origin: trait_ref.origin,
-                        id: *id,
-                    };
-                    functions.push(function_ref);
-                    if let Some(function_data) = store.function_data(*id) {
-                        self.trait_functions_by_trait_and_name
-                            .entry(trait_ref)
-                            .or_default()
-                            .entry(function_data.name.clone())
-                            .or_default()
-                            .push(function_ref);
+                match item {
+                    AssocItemId::Function(id) => {
+                        let function_ref = FunctionRef {
+                            origin: trait_ref.origin,
+                            id: *id,
+                        };
+                        functions.push(function_ref);
+                        self.traits_with_functions.push(trait_ref);
+                        if let Some(function_data) = store.function_data(*id) {
+                            self.traits_by_item_name
+                                .entry(function_data.name.clone())
+                                .or_default()
+                                .functions
+                                .push(trait_ref);
+                            self.trait_functions_by_trait_and_name
+                                .entry(trait_ref)
+                                .or_default()
+                                .entry(function_data.name.clone())
+                                .or_default()
+                                .push(function_ref);
+                        }
                     }
+                    AssocItemId::Const(id) => {
+                        if let Some(const_data) = store.const_data(*id) {
+                            self.traits_by_item_name
+                                .entry(const_data.name.clone())
+                                .or_default()
+                                .consts
+                                .push(trait_ref);
+                        }
+                    }
+                    // Associated type completion uses the trait-wide surface above. Named type
+                    // projection follows written trait bounds, so it needs no reverse name index.
+                    AssocItemId::TypeAlias(_) => {}
                 }
             }
         }
@@ -180,15 +215,26 @@ impl ItemLookupIndex {
                         .entry(*self_ty)
                         .or_default()
                         .push(IndexedTraitImplRef::from_crate(trait_impl));
-                } else {
-                    // Primitive, structural, and blanket `Self` types have no nominal key. Method
-                    // lookup starts from a receiver rather than a trait, so retain this compact
-                    // fallback list instead of scanning every visible trait implementation.
-                    self.trait_impls_without_type_key
-                        .push(IndexedTraitImplRef::from_crate(trait_impl));
                 }
             }
         }
+    }
+}
+
+/// Declaring traits partitioned by the kind of one shared associated-item name.
+///
+/// Rust allows different traits to use the same spelling for different associated-item kinds.
+/// Keeping the lanes together gives name-first lookup one persisted map without making a method
+/// query consider an unrelated associated const.
+#[derive(Debug, Clone, PartialEq, Eq, Default, SchemaRead, SchemaWrite, MemorySize, Shrink)]
+pub(crate) struct TraitItemTraitRefs {
+    pub(crate) functions: UniqueVec<TraitDefRef>,
+    pub(crate) consts: UniqueVec<TraitDefRef>,
+}
+
+impl TraitItemTraitRefs {
+    fn entry_count(&self) -> usize {
+        self.functions.len() + self.consts.len()
     }
 }
 

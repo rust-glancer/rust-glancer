@@ -47,7 +47,7 @@ where
             let receiver = self
                 .context
                 .impls()
-                .matches_for_receiver(candidate.ty(), &table)?;
+                .matches_for_receiver_with_functions(candidate.ty(), &table)?;
             for function in matcher.function_candidates_for_matches(receiver.matches(), None)? {
                 let Some(function_data) = self
                     .context
@@ -107,7 +107,7 @@ where
             let receiver = self
                 .context
                 .impls()
-                .matches_for_receiver(candidate.ty(), table)?;
+                .matches_for_receiver_with_function_name(candidate.ty(), method_name, table)?;
             for function in
                 matcher.function_candidates_for_matches(receiver.matches(), Some(method_name))?
             {

@@ -101,7 +101,11 @@ where
         let mut methods = Vec::new();
         for candidate in autoderef.candidates(AutoderefMode::MethodReceiver, ty) {
             let candidate = candidate?;
-            let matches = matcher.matches_for_receiver(candidate.ty(), &table)?;
+            let matches = matcher.matches_for_receiver_with_traits(
+                candidate.ty(),
+                self.context.item_lookup().traits_with_functions(),
+                &table,
+            )?;
             for function in matcher.function_candidates_for_matches(&matches, None)? {
                 let Some(function_data) = self
                     .context

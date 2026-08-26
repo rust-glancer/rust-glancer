@@ -36,3 +36,5 @@ pub use self::{
     type_path_resolution::TypePathResolution,
     view::SemanticItemView,
 };
+
+pub(crate) use self::lookup_index::TraitItemTraitRefs;

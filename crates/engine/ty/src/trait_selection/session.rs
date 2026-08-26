@@ -538,10 +538,43 @@ impl TraitSelectionSession {
         ))
     }
 
-    /// Narrow one trait's visible impls to headers with this outer `Self` shape.
-    ///
-    /// The first request lowers all visible headers for the trait and builds the index. Later
-    /// requests reuse it, while blanket impls and other headless headers remain fallback entries.
+    /// Narrow one trait's visible impls using the receiver's established outer shape.
+    pub(crate) fn trait_impl_candidates_for_ty<'query, D, I>(
+        &self,
+        item_paths: &ItemPathQuery<'query, D, I>,
+        item_lookup: &ItemLookupQuery<'_>,
+        trait_ref: TraitDefRef,
+        self_ty: &Ty,
+    ) -> Result<Option<UniqueVec<TraitImplRef>>, I::Error>
+    where
+        D: DefMapSource<Error = I::Error>,
+        I: ItemStoreSource<'query>,
+    {
+        // A receiver with no established shape cannot use the impl universe as an inverse source
+        // of inference. Parameters and aliases are established types, but have no stable outer
+        // head, so they retain every impl of this one already-selected trait.
+        if matches!(self_ty, Ty::InferVar { .. } | Ty::Unknown) {
+            return Ok(Some(UniqueVec::new()));
+        }
+        let Some(visible_impls) = item_lookup.trait_impls_for_trait(trait_ref) else {
+            return Ok(Some(UniqueVec::new()));
+        };
+        if let Some(self_head) = TraitSelfHead::from_ty(self_ty) {
+            return self.indexed_trait_impl_candidates(
+                item_paths,
+                trait_ref,
+                visible_impls,
+                self_head,
+            );
+        }
+
+        let visible_impls = visible_impls.into_iter().collect::<Vec<_>>();
+        if !self.consume_work(TraitWorkKind::CandidateIndex, visible_impls.len()) {
+            return Ok(None);
+        }
+        Ok(Some(visible_impls.into_iter().collect()))
+    }
+
     pub(crate) fn indexed_trait_impl_candidates<'query, D, I>(
         &self,
         item_paths: &ItemPathQuery<'query, D, I>,

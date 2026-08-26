@@ -12,10 +12,10 @@ use rg_ir_model::{TraitApplicability, TraitImplRef};
 use rg_semantic_ir::{ItemLookupQuery, ItemStoreSource};
 use rg_std::UniqueVec;
 
-use super::matcher::{CandidateMatcher, TraitSelfHead};
-use super::{TraitGoal, TraitSelectionSession, session::TraitWorkKind};
+use super::matcher::CandidateMatcher;
+use super::{TraitGoal, TraitSelectionSession};
+use crate::ItemPathQuery;
 use crate::inference::{InferenceSubstitution, InferenceTable};
-use crate::{ItemPathQuery, Ty};
 
 /// One visible impl whose canonical header is compatible with a trait goal.
 ///
@@ -48,35 +48,12 @@ impl TraitCandidate {
         D: DefMapSource<Error = I::Error>,
         I: ItemStoreSource<'query>,
     {
-        // Narrow the visible impl set by the resolved outer shape of `Self`. Parameters and aliases
-        // have no useful head, so those established semantic shapes retain every visible impl.
+        // Narrow the visible impl set by the resolved outer shape of `Self`. The session owns the
+        // policy for receivers that have no useful head, so ordinary trait selection and item
+        // lookup cannot drift into different candidate universes.
         let self_ty = table.resolve_root_var(goal.self_ty());
-        // A trait obligation constrains `Self` after some other inference source gives it a shape;
-        // it is not an inverse lookup over today's impl set. Besides being order-dependent Rust
-        // semantics, probing a bare slot would clone the whole body table once for every concrete
-        // impl before eventually calling the result ambiguous.
-        if matches!(self_ty, Ty::InferVar { .. } | Ty::Unknown) {
-            return Ok(Some(UniqueVec::new()));
-        }
         let trait_ref = goal.trait_ref();
-        let Some(visible_impls) = item_lookup.trait_impls_for_trait(trait_ref) else {
-            return Ok(Some(UniqueVec::new()));
-        };
-        match TraitSelfHead::from_ty(&self_ty) {
-            Some(self_head) => session.indexed_trait_impl_candidates(
-                item_paths,
-                trait_ref,
-                visible_impls,
-                self_head,
-            ),
-            None => {
-                let visible_impls = visible_impls.into_vec();
-                if !session.consume_work(TraitWorkKind::CandidateIndex, visible_impls.len()) {
-                    return Ok(None);
-                }
-                Ok(Some(visible_impls.into_iter().collect()))
-            }
-        }
+        session.trait_impl_candidates_for_ty(item_paths, item_lookup, trait_ref, &self_ty)
     }
 
     /// Match one plausible impl against the goal using an isolated trial table.
