@@ -7,9 +7,10 @@
 use anyhow::Context as _;
 use ls_types::{
     CodeAction as LspCodeAction, CodeActionKind as LspCodeActionKind, DocumentChanges, OneOf,
-    OptionalVersionedTextDocumentIdentifier, TextDocumentEdit, Uri, WorkspaceEdit,
+    OptionalVersionedTextDocumentIdentifier, TextDocumentEdit, WorkspaceEdit,
 };
 use rg_analysis::{CodeAction, CodeActionKind};
+use rg_lsp_proto::path_to_file_uri;
 use rg_parse::LineIndex;
 
 use crate::proto::{position, text_edit};
@@ -22,7 +23,7 @@ pub(crate) fn code_action(
     line_index: &LineIndex,
     action: CodeAction,
 ) -> anyhow::Result<LspCodeAction> {
-    let uri = Uri::from_file_path(document_path).with_context(|| {
+    let uri = path_to_file_uri(document_path).with_context(|| {
         format!(
             "while attempting to convert code-action path `{}` to URI",
             document_path.display()
@@ -67,16 +68,16 @@ pub(crate) fn code_action(
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
-
     use ls_types::{DocumentChanges, OneOf};
     use rg_analysis::{CodeAction, CodeActionEdit, CodeActionKind};
     use rg_parse::{LineIndex, Span, TextSpan};
+    use test_fixture::synthetic_test_path;
 
     use super::code_action;
 
     #[test]
     fn renders_code_action_edits_with_crlf() {
+        let document_path = synthetic_test_path("workspace/main.rs");
         let action = CodeAction {
             title: "Import `crate::User`".to_string(),
             kind: CodeActionKind::QuickFix,
@@ -90,7 +91,7 @@ mod tests {
         };
 
         let action = code_action(
-            Path::new("/workspace/main.rs"),
+            &document_path,
             Some(7),
             &LineIndex::new("fn main() {}\r\n"),
             action,
