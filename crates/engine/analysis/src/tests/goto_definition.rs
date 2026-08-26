@@ -499,6 +499,57 @@ pub fn use_it(action: Action, value: i32) {
 }
 
 #[test]
+fn resolves_unkeyed_inherent_associated_paths() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[workspace]
+members = ["runtime", "app"]
+resolver = "3"
+
+//- /runtime/Cargo.toml
+[package]
+name = "runtime"
+version = "0.1.0"
+edition = "2024"
+
+//- /runtime/src/lib.rs
+impl u32 {
+    pub const MAX: u32 = 0;
+    pub fn from_be_bytes(_bytes: [u8; 4]) -> Self { 0 }
+}
+
+//- /app/Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+runtime = { path = "../runtime" }
+
+//- /app/src/lib.rs
+pub fn use_it(bytes: [u8; 4]) {
+    let _max = u32::M$primitive_const$AX;
+    let _value = u32::from_be_$primitive_function$bytes(bytes);
+}
+"#,
+        &[
+            AnalysisQuery::goto("goto primitive associated const", "primitive_const").in_lib("app"),
+            AnalysisQuery::goto("goto primitive associated function", "primitive_function")
+                .in_lib("app"),
+        ],
+        expect![[r#"
+            goto primitive associated const
+            - const MAX @ 2:15-2:18
+
+            goto primitive associated function
+            - fn from_be_bytes @ 3:12-3:25
+        "#]],
+    );
+}
+
+#[test]
 fn resolves_crate_prefixes_inside_body_type_paths() {
     check_analysis_queries(
         r#"

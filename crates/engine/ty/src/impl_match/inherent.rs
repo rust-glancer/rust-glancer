@@ -60,6 +60,44 @@ where
             .is_some_and(|(_, applicability)| applicability.is_applicable()))
     }
 
+    /// Expand applicable unkeyed inherent impls into their associated items and substitutions.
+    ///
+    /// The impl match belongs here because every consumer must agree that, for example,
+    /// `impl u32` contributes both `u32::MAX` and `u32::from_be_bytes`, while `impl<T> [T]`
+    /// contributes items with `T` bound from the concrete slice receiver. Callers can then select
+    /// constants, static functions, or self-receiver methods without repeating structural lookup.
+    pub(crate) fn unkeyed_inherent_item_candidates(
+        &self,
+        receiver_ty: &Ty,
+    ) -> Result<Vec<(ImplRef, AssocItemId, Substitution)>, D::Error> {
+        if !receiver_ty.has_unkeyed_self_head() {
+            return Ok(Vec::new());
+        }
+
+        let item_query = self.context.item_paths().items();
+        let mut candidates = Vec::new();
+
+        for impl_ref in self.context.item_lookup().structural_inherent_impls() {
+            let Some(impl_data) = item_query.impl_data(impl_ref)? else {
+                continue;
+            };
+            let Some(subst) = self.unkeyed_inherent_impl_subst(impl_ref, impl_data, receiver_ty)?
+            else {
+                continue;
+            };
+
+            candidates.extend(
+                impl_data
+                    .items
+                    .iter()
+                    .copied()
+                    .map(|item| (impl_ref, item, subst.clone())),
+            );
+        }
+
+        Ok(candidates)
+    }
+
     /// Expand applicable unkeyed inherent impls into self-receiver functions and substitutions.
     ///
     /// Receiver-based query layers share this operation because the impl data, canonical header
@@ -75,33 +113,23 @@ where
         let item_query = self.context.item_paths().items();
         let mut candidates = Vec::new();
 
-        for impl_ref in self.context.item_lookup().structural_inherent_impls() {
-            let Some(impl_data) = item_query.impl_data(impl_ref)? else {
+        for (impl_ref, item, subst) in self.unkeyed_inherent_item_candidates(receiver_ty)? {
+            let AssocItemId::Function(id) = item else {
                 continue;
             };
-            let Some(subst) = self.unkeyed_inherent_impl_subst(impl_ref, impl_data, receiver_ty)?
-            else {
+            let function = FunctionRef {
+                origin: impl_ref.origin,
+                id,
+            };
+            let Some(function_data) = item_query.function_data(function)? else {
                 continue;
             };
-
-            for item in &impl_data.items {
-                let AssocItemId::Function(id) = item else {
-                    continue;
-                };
-                let function = FunctionRef {
-                    origin: impl_ref.origin,
-                    id: *id,
-                };
-                let Some(function_data) = item_query.function_data(function)? else {
-                    continue;
-                };
-                if !function_data.has_self_receiver()
-                    || method_name.is_some_and(|name| function_data.name != name)
-                {
-                    continue;
-                }
-                candidates.push((function, subst.clone()));
+            if !function_data.has_self_receiver()
+                || method_name.is_some_and(|name| function_data.name != name)
+            {
+                continue;
             }
+            candidates.push((function, subst));
         }
 
         Ok(candidates)

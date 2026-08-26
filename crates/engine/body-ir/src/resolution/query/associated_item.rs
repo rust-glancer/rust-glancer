@@ -3,7 +3,7 @@
 use rg_def_map::DefMapSource;
 use rg_ir_model::{
     AssocItemId, ConstRef, DefMapRef, EnumVariantRef, FunctionRef, ImplRef, ItemOwner, Path,
-    ScopeId, TraitApplicability, TraitImplRef, TypeDefId, identity::DeclarationRef,
+    PrimitiveTy, ScopeId, TraitApplicability, TraitImplRef, TypeDefId, identity::DeclarationRef,
 };
 use rg_item_tree::TypeRef;
 use rg_package_store::PackageStoreError;
@@ -193,6 +193,15 @@ where
                 }
             }
         }
+        candidates.extend(
+            query.candidates_for_trait_impls_for_ty(
+                ty,
+                self.context
+                    .body_local_items()
+                    .trait_impls_without_type_key()?,
+            )?,
+        );
+        candidates.extend(query.candidates_for_unkeyed(ty)?);
         Ok(candidates)
     }
 
@@ -218,8 +227,14 @@ where
             .context
             .type_path_query()
             .resolve_in_scope(scope, prefix)?;
-        let prefix_ty =
-            Ty::from_type_path_resolution(prefix_resolution, Vec::new()).unwrap_or(Ty::Unknown);
+        let prefix_ty = Ty::from_type_path_resolution(prefix_resolution, Vec::new())
+            .or_else(|| {
+                prefix
+                    .single_name()
+                    .and_then(PrimitiveTy::from_name)
+                    .map(Ty::Primitive)
+            })
+            .unwrap_or(Ty::Unknown);
         self.resolve_for_type(&prefix_ty, last_segment)
     }
 
@@ -290,6 +305,11 @@ where
                 return Ok(Some(Self::const_resolution([candidate])));
             }
         }
+        if let Some(candidate) =
+            self.unkeyed_inherent_associated_const_candidate(prefix_ty, last_segment)?
+        {
+            return Ok(Some(Self::const_resolution([candidate])));
+        }
 
         // Trait associated const lookup is receiver-driven: `Type::CONST` submits each matching
         // impl to the shared selection boundary, then reads the concrete const from that impl or
@@ -300,6 +320,9 @@ where
             trait_consts
                 .extend(self.trait_associated_const_candidates_for_type(nominal_ty, last_segment)?);
         }
+        trait_consts.extend(
+            self.unkeyed_trait_associated_const_candidates_for_type(prefix_ty, last_segment)?,
+        );
 
         if !trait_consts.is_empty() {
             return Ok(Some(Self::const_resolution(trait_consts)));
@@ -316,6 +339,13 @@ where
                 &table,
             )?);
         }
+        functions
+            .extend(self.unkeyed_inherent_associated_function_candidates(prefix_ty, last_segment)?);
+        functions.extend(self.unkeyed_trait_associated_function_candidates(
+            prefix_ty,
+            last_segment,
+            &table,
+        )?);
 
         Ok((!functions.is_empty()).then_some(Self::function_resolution(functions)))
     }
@@ -335,6 +365,9 @@ where
                 table,
             )?);
         }
+        functions.extend(self.unkeyed_inherent_associated_function_candidates(prefix_ty, name)?);
+        functions
+            .extend(self.unkeyed_trait_associated_function_candidates(prefix_ty, name, table)?);
         Ok(functions)
     }
 
@@ -481,6 +514,32 @@ where
         )
     }
 
+    /// Find an inherent associated const on a primitive or structural prefix.
+    fn unkeyed_inherent_associated_const_candidate(
+        &self,
+        ty: &Ty,
+        name: &str,
+    ) -> Result<Option<BodyAssociatedItemCandidate>, PackageStoreError> {
+        let query = AssociatedItemQuery::with_resolver(self.context.ty_context(), &self.context);
+        let item_query = self.context.item_query();
+        for candidate in query.candidates_for_unkeyed_inherent(ty)? {
+            let AssociatedItemRef::Const(const_ref) = candidate.item() else {
+                continue;
+            };
+            let Some(const_data) = item_query.const_data(const_ref)? else {
+                continue;
+            };
+            if const_data.name != name || !matches!(const_data.owner, ItemOwner::Impl(_)) {
+                continue;
+            }
+            return Ok(Some(BodyAssociatedItemCandidate::Const(
+                const_ref,
+                self.semantic_const_ty_for_ty(const_ref, const_data.owner, ty, None, None)?,
+            )));
+        }
+        Ok(None)
+    }
+
     /// Find associated consts from applicable trait impls.
     fn trait_associated_const_candidates_for_type(
         &self,
@@ -488,14 +547,16 @@ where
         name: &str,
     ) -> Result<Vec<BodyAssociatedItemCandidate>, PackageStoreError> {
         let mut items = Vec::new();
+        let receiver_ty = Ty::adt(ty.clone());
 
         self.push_trait_associated_const_candidates_for_impls(
             &mut items,
             self.context
                 .body_local_items()
                 .trait_impls_for_type(ty.def)?,
-            ty,
+            &receiver_ty,
             name,
+            None,
         )?;
 
         if ty.def.origin == DefMapRef::Body(self.context.body_ref()) {
@@ -509,10 +570,28 @@ where
         self.push_trait_associated_const_candidates_for_impls(
             &mut items,
             semantic_trait_impls,
-            ty,
+            &receiver_ty,
             name,
+            None,
         )?;
 
+        Ok(items)
+    }
+
+    /// Find trait associated consts on a primitive or structural prefix.
+    fn unkeyed_trait_associated_const_candidates_for_type(
+        &self,
+        ty: &Ty,
+        name: &str,
+    ) -> Result<Vec<BodyAssociatedItemCandidate>, PackageStoreError> {
+        let mut items = Vec::new();
+        self.push_trait_associated_const_candidates_for_impls(
+            &mut items,
+            self.trait_impls_without_type_key()?,
+            ty,
+            name,
+            None,
+        )?;
         Ok(items)
     }
 
@@ -526,6 +605,7 @@ where
         let body_items = self.context.body_local_items();
         let matcher = self.context.impl_matcher();
         let mut functions = UniqueVec::new();
+        let receiver_ty = Ty::adt(ty.clone());
 
         for function_ref in body_items.inherent_functions_for_type(ty.def)? {
             if matcher.function_applies_to_receiver(function_ref, ty)? {
@@ -553,7 +633,7 @@ where
         {
             self.push_associated_function_with_subst(
                 &mut functions,
-                ty,
+                &receiver_ty,
                 function_ref,
                 name,
                 None,
@@ -567,7 +647,7 @@ where
             {
                 self.push_associated_function_with_subst(
                     &mut functions,
-                    ty,
+                    &receiver_ty,
                     function_ref,
                     name,
                     None,
@@ -576,6 +656,75 @@ where
             }
         }
 
+        Ok(functions)
+    }
+
+    /// Find static inherent functions on a primitive or structural prefix.
+    fn unkeyed_inherent_associated_function_candidates(
+        &self,
+        ty: &Ty,
+        name: &str,
+    ) -> Result<UniqueVec<BodyAssociatedFunctionCandidate>, PackageStoreError> {
+        let query = AssociatedItemQuery::with_resolver(self.context.ty_context(), &self.context);
+        let item_query = self.context.item_query();
+        let mut functions = UniqueVec::new();
+
+        for candidate in query.candidates_for_unkeyed_inherent(ty)? {
+            let AssociatedItemRef::Function(function) = candidate.item() else {
+                continue;
+            };
+            let Some(function_data) = item_query.function_data(function)? else {
+                continue;
+            };
+            if function_data.name != name
+                || function_data.has_self_receiver()
+                || !matches!(function_data.owner, ItemOwner::Impl(_))
+            {
+                continue;
+            }
+            let subst = self.context.generics().subst_for_receiver_ty_owner(
+                function.origin,
+                function_data.owner,
+                ty,
+            )?;
+            functions.push(BodyAssociatedFunctionCandidate {
+                function,
+                self_ty: ty.clone(),
+                subst,
+                trait_selection: None,
+            });
+        }
+
+        Ok(functions)
+    }
+
+    /// Find static trait functions on a primitive or structural prefix.
+    fn unkeyed_trait_associated_function_candidates(
+        &self,
+        ty: &Ty,
+        name: &str,
+        table: &InferenceTable,
+    ) -> Result<UniqueVec<BodyAssociatedFunctionCandidate>, PackageStoreError> {
+        let mut functions = UniqueVec::new();
+        for (function, selection) in self
+            .context
+            .impl_matcher()
+            .trait_function_candidates_from_impls_for_ty(
+                self.trait_impls_without_type_key()?,
+                ty,
+                Some(name),
+                table,
+            )?
+        {
+            self.push_associated_function_with_subst(
+                &mut functions,
+                ty,
+                function,
+                name,
+                None,
+                Some(selection),
+            )?;
+        }
         Ok(functions)
     }
 
@@ -588,6 +737,7 @@ where
     ) -> Result<UniqueVec<BodyAssociatedFunctionCandidate>, PackageStoreError> {
         let mut functions = UniqueVec::new();
         for receiver in selection.receivers() {
+            let receiver_ty = Ty::adt(receiver.receiver_ty().clone());
             for (function_ref, trait_selection) in self
                 .context
                 .impl_matcher()
@@ -600,7 +750,7 @@ where
             {
                 self.push_associated_function_with_subst(
                     &mut functions,
-                    receiver.receiver_ty(),
+                    &receiver_ty,
                     function_ref,
                     name,
                     Some(selection.subst()),
@@ -619,14 +769,30 @@ where
     ) -> Result<Vec<BodyAssociatedItemCandidate>, PackageStoreError> {
         let mut consts = Vec::new();
         for receiver in selection.receivers() {
+            let receiver_ty = Ty::adt(receiver.receiver_ty().clone());
             self.push_trait_associated_const_candidates_for_impls(
                 &mut consts,
                 receiver.impls().clone(),
-                receiver.receiver_ty(),
+                &receiver_ty,
                 name,
+                Some(selection.subst()),
             )?;
         }
         Ok(consts)
+    }
+
+    /// Combine unkeyed trait impls from body overlays and persisted visible crates.
+    fn trait_impls_without_type_key(&self) -> Result<UniqueVec<TraitImplRef>, PackageStoreError> {
+        let mut trait_impls = self
+            .context
+            .body_local_items()
+            .trait_impls_without_type_key()?;
+        trait_impls.extend(
+            self.context
+                .item_lookup_query()
+                .trait_impls_without_type_key(),
+        );
+        Ok(trait_impls)
     }
 
     /// Read crate-visible inherent functions from the semantic lookup query.
@@ -649,9 +815,10 @@ where
         function_ref: FunctionRef,
         name: &str,
     ) -> Result<(), PackageStoreError> {
+        let receiver_ty = Ty::adt(receiver_ty.clone());
         self.push_associated_function_with_subst(
             functions,
-            receiver_ty,
+            &receiver_ty,
             function_ref,
             name,
             None,
@@ -663,7 +830,7 @@ where
     fn push_associated_function_with_subst(
         &self,
         functions: &mut UniqueVec<BodyAssociatedFunctionCandidate>,
-        receiver_ty: &AdtTy,
+        receiver_ty: &Ty,
         function_ref: FunctionRef,
         name: &str,
         extra_subst: Option<&Substitution>,
@@ -673,17 +840,27 @@ where
             return Ok(());
         };
         if function_data.name == name && !function_data.has_self_receiver() {
-            let mut subst = self.context.generics().subst_for_receiver_owner(
+            let mut subst = self.context.generics().subst_for_receiver_ty_owner(
                 function_ref.origin,
                 function_data.owner,
                 receiver_ty,
             )?;
+            if let Some(selection) = trait_selection.as_ref() {
+                subst.extend(
+                    self.context
+                        .generics()
+                        .subst_for_trait_application(selection.application())?,
+                );
+            }
+            // Written qualification is the strongest evidence at this call site. Apply it last
+            // so `<Widget as Factory<u16>>::make` keeps `u16` even when impl selection retained an
+            // inference placeholder for that trait argument.
             if let Some(extra_subst) = extra_subst {
                 subst.extend(extra_subst.clone());
             }
             let candidate = BodyAssociatedFunctionCandidate {
                 function: function_ref,
-                self_ty: Ty::adt(receiver_ty.clone()),
+                self_ty: receiver_ty.clone(),
                 subst,
                 trait_selection,
             };
@@ -706,19 +883,19 @@ where
         &self,
         items: &mut Vec<BodyAssociatedItemCandidate>,
         trait_impls: UniqueVec<TraitImplRef>,
-        ty: &AdtTy,
+        receiver_ty: &Ty,
         name: &str,
+        extra_subst: Option<&Substitution>,
     ) -> Result<(), PackageStoreError> {
         let item_query = self.context.item_query();
         let matcher = self.context.impl_matcher();
         let table = InferenceTable::new();
         for trait_impl in trait_impls {
-            if !matcher
-                .trait_impl_applicability(trait_impl, ty, &table)?
-                .is_applicable()
-            {
+            let Some(selection) =
+                matcher.trait_impl_selection_for_ty(trait_impl, receiver_ty, &table)?
+            else {
                 continue;
-            }
+            };
 
             let Some(impl_data) = item_query.impl_data(trait_impl.impl_ref)? else {
                 continue;
@@ -730,8 +907,10 @@ where
             let mut candidate = self.associated_const_from_items(
                 trait_impl.impl_ref.origin,
                 &impl_data.items,
-                ty,
+                receiver_ty,
                 name,
+                Some(&selection),
+                extra_subst,
             )?;
             if candidate.is_none()
                 && let Some(trait_data) = item_query.trait_data(trait_impl.trait_ref)?
@@ -739,8 +918,10 @@ where
                 candidate = self.associated_const_from_items(
                     trait_impl.trait_ref.origin,
                     &trait_data.items,
-                    ty,
+                    receiver_ty,
                     name,
+                    Some(&selection),
+                    extra_subst,
                 )?;
             }
 
@@ -783,9 +964,15 @@ where
                 continue;
             }
 
-            if let Some(item) =
-                self.associated_const_from_items(impl_ref.origin, &impl_data.items, ty, name)?
-            {
+            let receiver_ty = Ty::adt(ty.clone());
+            if let Some(item) = self.associated_const_from_items(
+                impl_ref.origin,
+                &impl_data.items,
+                &receiver_ty,
+                name,
+                None,
+                None,
+            )? {
                 return Ok(Some(item));
             }
         }
@@ -798,8 +985,10 @@ where
         &self,
         origin: DefMapRef,
         assoc_items: &[AssocItemId],
-        receiver_ty: &AdtTy,
+        receiver_ty: &Ty,
         name: &str,
+        trait_selection: Option<&TraitSelection>,
+        extra_subst: Option<&Substitution>,
     ) -> Result<Option<BodyAssociatedItemCandidate>, PackageStoreError> {
         let item_query = self.context.item_query();
         for item in assoc_items {
@@ -813,7 +1002,13 @@ where
             if const_data.name == name {
                 return Ok(Some(BodyAssociatedItemCandidate::Const(
                     const_ref,
-                    self.semantic_const_ty_for_receiver(const_ref, const_data.owner, receiver_ty)?,
+                    self.semantic_const_ty_for_ty(
+                        const_ref,
+                        const_data.owner,
+                        receiver_ty,
+                        trait_selection,
+                        extra_subst,
+                    )?,
                 )));
             }
         }
@@ -821,23 +1016,43 @@ where
         Ok(None)
     }
 
-    /// Resolve an associated const type for a concrete receiver.
-    fn semantic_const_ty_for_receiver(
+    /// Project an associated const signature through any canonical receiver shape.
+    fn semantic_const_ty_for_ty(
         &self,
         const_ref: ConstRef,
         owner: ItemOwner,
-        receiver_ty: &AdtTy,
+        receiver_ty: &Ty,
+        trait_selection: Option<&TraitSelection>,
+        extra_subst: Option<&Substitution>,
     ) -> Result<Ty, PackageStoreError> {
-        let subst = self.context.generics().subst_for_receiver_owner(
+        let mut subst = self.context.generics().subst_for_receiver_ty_owner(
             const_ref.origin,
             owner,
             receiver_ty,
         )?;
+        if let Some(selection) = trait_selection {
+            // A concrete trait impl selects both impl-owned parameters and trait-owned arguments.
+            // `impl Convert<u16> for u8` therefore projects a trait declaration mentioning `T`
+            // to `u16`, while an impl-side const can still refer to its own generic parameters.
+            subst.extend(selection.subst.as_substitution().clone());
+            subst.extend(
+                self.context
+                    .generics()
+                    .subst_for_trait_application(selection.application())?,
+            );
+        }
+        if let Some(extra_subst) = extra_subst {
+            subst.extend(extra_subst.clone());
+        }
         let ty = self
             .context
             .signatures()
             .const_ty(const_ref)?
             .unwrap_or(Ty::Unknown);
-        Ok(subst.apply(&ty))
+        let ty = subst.apply(&ty);
+        let Some(selection) = trait_selection else {
+            return Ok(ty);
+        };
+        Ok(selection.table.finalize_without_numeric_defaults(&ty))
     }
 }

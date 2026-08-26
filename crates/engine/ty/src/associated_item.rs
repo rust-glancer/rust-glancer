@@ -146,6 +146,74 @@ where
         )
     }
 
+    /// Find associated items through impl indexes that have no nominal receiver key.
+    ///
+    /// Primitive and structural types obtain all of their impls from these compact fallback
+    /// indexes. A nominal type can also reach a blanket trait impl such as `impl<T> Factory for T`
+    /// here. Once the canonical `Self` header matches, every declaration uses the same path syntax:
+    /// `u32::MAX`, `u32::from_be_bytes`, or `Widget::make`.
+    pub fn candidates_for_unkeyed(
+        &self,
+        receiver_ty: &Ty,
+    ) -> Result<Vec<AssociatedItemCandidateRef>, D::Error> {
+        let mut candidates = self.candidates_for_unkeyed_inherent(receiver_ty)?;
+
+        // Trait declarations follow the same exact impl selection used by dot methods. This makes
+        // paths such as `u32::from` and user-defined trait constants available without treating a
+        // primitive as if it had a nominal index entry.
+        candidates.extend(self.candidates_for_trait_impls_for_ty(
+            receiver_ty,
+            self.context.item_lookup().trait_impls_without_type_key(),
+        )?);
+        Ok(candidates)
+    }
+
+    /// Find declarations supplied by matching unkeyed inherent impls.
+    pub fn candidates_for_unkeyed_inherent(
+        &self,
+        receiver_ty: &Ty,
+    ) -> Result<Vec<AssociatedItemCandidateRef>, D::Error> {
+        let mut candidates = Vec::new();
+        for (impl_ref, item, _) in self.matcher.unkeyed_inherent_item_candidates(receiver_ty)? {
+            self.push_assoc_items(
+                &mut candidates,
+                impl_ref.origin,
+                std::slice::from_ref(&item),
+                TraitApplicability::Yes,
+            );
+        }
+        Ok(candidates)
+    }
+
+    /// Expand a caller-selected trait impl universe for any canonical receiver shape.
+    ///
+    /// Body lookup supplies local impl overlays here; crate-level lookup passes its compact
+    /// unkeyed index. Candidate discovery stays shared so both paths follow supertraits and retain
+    /// the strongest applicability for duplicate declarations.
+    pub fn candidates_for_trait_impls_for_ty(
+        &self,
+        receiver_ty: &Ty,
+        trait_impls: UniqueVec<TraitImplRef>,
+    ) -> Result<Vec<AssociatedItemCandidateRef>, D::Error> {
+        let table = InferenceTable::new();
+        let mut candidates = Vec::new();
+        for trait_impl in trait_impls {
+            let Some(selection) =
+                self.matcher
+                    .trait_impl_selection_for_ty(trait_impl, receiver_ty, &table)?
+            else {
+                continue;
+            };
+            self.push_trait_hierarchy(
+                &mut candidates,
+                trait_impl.trait_ref,
+                selection.applicability,
+                &mut Vec::new(),
+            )?;
+        }
+        Ok(candidates)
+    }
+
     /// Return candidates from an explicitly selected impl universe.
     ///
     /// Body IR uses this entry point for its local-item overlay, while crate-level callers use

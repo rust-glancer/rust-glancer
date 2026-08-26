@@ -28,7 +28,7 @@ where
         table: &InferenceTable,
     ) -> Result<TraitApplicability, D::Error> {
         Ok(self
-            .trait_impl_match(trait_impl, receiver_ty, table)?
+            .trait_impl_selection_for_ty(trait_impl, &Ty::adt(receiver_ty.clone()), table)?
             .map(|selection| selection.applicability)
             .unwrap_or(TraitApplicability::No))
     }
@@ -100,7 +100,8 @@ where
                 indexed_trait_functions = Some(indexed_functions);
             }
 
-            let Some(selection) = self.trait_impl_match_for_ty(trait_impl, receiver_ty, table)?
+            let Some(selection) =
+                self.trait_impl_selection_for_ty(trait_impl, receiver_ty, table)?
             else {
                 continue;
             };
@@ -154,22 +155,12 @@ where
         Ok(functions)
     }
 
-    /// Matches one trait impl against a receiver.
+    /// Match one trait impl against any canonical receiver shape.
     ///
-    /// For `impl<T> Trait for Wrapper<T>` and receiver `Wrapper<User>`, header matching first binds
-    /// `T -> User`; Chalk then classifies the instantiated predicates before the applicability is
-    /// returned.
-    fn trait_impl_match(
-        &self,
-        trait_impl: TraitImplRef,
-        receiver_ty: &AdtTy,
-        table: &InferenceTable,
-    ) -> Result<Option<TraitSelection>, D::Error> {
-        self.trait_impl_match_for_ty(trait_impl, &Ty::adt(receiver_ty.clone()), table)
-    }
-
-    /// Match one trait impl against a canonical receiver shape.
-    fn trait_impl_match_for_ty(
+    /// Nominal, primitive, and structural associated-item queries use the same selection result.
+    /// For `impl<T> Trait for [T]` and receiver `[User]`, header matching first binds `T -> User`;
+    /// predicate proof then decides whether the impl can expose its trait declarations.
+    pub fn trait_impl_selection_for_ty(
         &self,
         trait_impl: TraitImplRef,
         receiver_ty: &Ty,

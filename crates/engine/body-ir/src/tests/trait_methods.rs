@@ -215,6 +215,79 @@ pub fn use_it(source: Source, primitive: u8) {
 }
 
 #[test]
+fn resolves_unkeyed_trait_associated_paths() {
+    check_project_body_ir(
+        r#"
+//- /Cargo.toml
+[package]
+name = "body_unkeyed_trait_associated_path_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub trait PrimitiveFactory<T> {
+    const DEFAULT: T;
+    fn make() -> T;
+}
+
+impl PrimitiveFactory<u16> for u32 {
+    const DEFAULT: u16 = 0;
+
+    fn make() -> u16 {
+        0
+    }
+}
+
+pub fn use_it() {
+    let default = u32::DEFAULT;
+    let made = u32::make();
+}
+"#,
+        expect![[r#"
+            package body_unkeyed_trait_associated_path_fixture
+
+            body_unkeyed_trait_associated_path_fixture [lib]
+            body b0 fn body_unkeyed_trait_associated_path_fixture[lib]::crate::use_it @ 14:1-17:2
+            scopes
+            - s0 parent <none>: <none>
+            - s1 parent s0: v0, v1
+            bindings
+            - v0 let default `default` => u16 @ 15:9-15:16
+            - v1 let made `made` => u16 @ 16:9-16:13
+            body
+            expr e3 block s1 => () @ 14:17-17:2
+              stmt s0 let v0 @ 15:5-15:32
+                initializer
+                  expr e0 path u32::DEFAULT -> const impl PrimitiveFactory<u16> for u32::DEFAULT => u16 @ 15:19-15:31
+              stmt s1 let v1 @ 16:5-16:28
+                initializer
+                  expr e2 call => u16 @ 16:16-16:27
+                    callee
+                      expr e1 path u32::make -> fn trait body_unkeyed_trait_associated_path_fixture[lib]::crate::PrimitiveFactory::make => <unknown> @ 16:16-16:25
+
+
+            body b1 fn impl PrimitiveFactory<u16> for u32::make @ 9:5-11:6
+            scopes
+            - s0 parent <none>: <none>
+            - s1 parent s0: <none>
+            bindings
+            body
+            expr e1 block s1 => u16 @ 9:22-11:6
+              tail
+                expr e0 literal int `0` => u16 @ 10:9-10:10
+
+
+            body b2 const impl PrimitiveFactory<u16> for u32::DEFAULT @ 7:5-7:28
+            scopes
+            - s0 parent <none>: <none>
+            bindings
+            body
+            expr e0 literal int `0` => i32 @ 7:26-7:27
+        "#]],
+    );
+}
+
+#[test]
 fn method_lookup_excludes_traits_from_unrelated_workspace_crates() {
     check_project_body_ir(
         r#"

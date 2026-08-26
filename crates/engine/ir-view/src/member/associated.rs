@@ -114,6 +114,11 @@ impl<'a, 'db> MemberView<'a, 'db> {
                             .context("resolve nominal associated item candidates")?,
                     );
                 }
+                candidates.extend(
+                    query
+                        .candidates_for_unkeyed(&prefix_ty)
+                        .context("resolve unkeyed associated item candidates")?,
+                );
 
                 // A generic prefix has no nominal impl universe of its own. Bounds written on the
                 // owning declaration, such as `T: Factory`, supply its associated-item surface.
