@@ -161,14 +161,19 @@ where
                         continue;
                     }
 
+                    let mut subst =
+                        self.nominal_method_subst(function_ref, function_data.owner, nominal_ty)?;
+                    if let Some(selection) = &method.trait_selection {
+                        subst.extend(
+                            self.context
+                                .generics()
+                                .subst_for_trait_application(selection.application())?,
+                        );
+                    }
                     candidates.push(BodyMethodCandidate {
                         function: function_ref,
                         receiver_ty: Ty::adt(nominal_ty.clone()),
-                        subst: self.nominal_method_subst(
-                            function_ref,
-                            function_data.owner,
-                            nominal_ty,
-                        )?,
+                        subst,
                         trait_selection: method.trait_selection,
                     });
                 }
@@ -337,16 +342,22 @@ where
             if !function_data.has_self_receiver() {
                 continue;
             }
+            let mut subst = self.context.generics().subst_for_receiver_ty_owner(
+                function.origin,
+                function_data.owner,
+                receiver_ty,
+            )?;
+            subst.extend(
+                self.context
+                    .generics()
+                    .subst_for_trait_application(selection.application())?,
+            );
             Self::push_unkeyed_candidate(
                 &mut candidates,
                 BodyMethodCandidate {
                     function,
                     receiver_ty: receiver_ty.clone(),
-                    subst: self.context.generics().subst_for_receiver_ty_owner(
-                        function.origin,
-                        function_data.owner,
-                        receiver_ty,
-                    )?,
+                    subst,
                     trait_selection: Some(selection),
                 },
             );

@@ -515,6 +515,42 @@ pub struct TokenStream;
 }
 
 #[test]
+fn cyclic_associated_include_expansions_remain_fail_soft() {
+    let fixture = HostFixture::build(
+        r#"
+//- /Cargo.toml
+[package]
+name = "cyclic_associated_include_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct User;
+
+#[rustc_builtin_macro]
+macro_rules! include {
+    ($($args:tt)*) => {};
+}
+
+impl User {
+    include!("methods.rs");
+}
+
+//- /src/methods.rs
+include!("methods.rs");
+"#,
+    );
+
+    fixture.check(
+        &[HostObservation::workspace_symbols("User")],
+        expect![[r#"
+            workspace symbols `User`
+            - struct User @ cyclic_associated_include_fixture[lib] src/lib.rs
+        "#]],
+    );
+}
+
+#[test]
 fn generated_module_files_preserve_cfg_and_macro_use_collection() {
     let fixture = HostFixture::build(
         r#"

@@ -61,9 +61,14 @@ impl CachedTraitSelection {
         }
     }
 
-    fn with_table(self, table: InferenceTable) -> TraitSelection {
+    fn with_table(
+        self,
+        application: crate::TraitApplication,
+        table: InferenceTable,
+    ) -> TraitSelection {
         TraitSelection {
             trait_impl: self.trait_impl,
+            application,
             subst: self.subst,
             applicability: self.applicability,
             table,
@@ -600,7 +605,10 @@ impl TraitSelectionSession {
             .expect("strict trait-selection cache lock should not be poisoned")
             .get(goal)
             .cloned()
-            .map(|selection| selection.map(|selection| selection.with_table(table.clone())))
+            .map(|selection| {
+                selection
+                    .map(|selection| selection.with_table(goal.application.clone(), table.clone()))
+            })
     }
 
     /// Cache a stable whole-goal result without retaining its trial table.

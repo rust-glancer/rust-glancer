@@ -149,6 +149,7 @@ impl TraitGoal {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TraitSelection {
     pub trait_impl: TraitImplRef,
+    application: TraitApplication,
     pub subst: InferenceSubstitution,
     pub applicability: TraitApplicability,
     /// Trial table after applying this candidate's direct equality evidence.
@@ -156,6 +157,17 @@ pub struct TraitSelection {
     /// Candidate evaluation never mutates the caller's table. Once a caller chooses this
     /// selection, it can explicitly adopt the table together with the selected impl.
     pub table: InferenceTable,
+}
+
+impl TraitSelection {
+    /// Return the concrete trait application proved for this selected impl.
+    ///
+    /// For `impl Convert<u16> for u8`, selecting the impl for a `u8` receiver retains
+    /// `Convert<Self = u8, T = u16>`. Consumers that instantiate the trait method declaration need
+    /// both arguments, not only the impl-generic substitution used to prove the candidate.
+    pub fn application(&self) -> &TraitApplication {
+        &self.application
+    }
 }
 
 /// Semantic result of proving a related set of trait predicates.
@@ -491,18 +503,29 @@ where
         let Some(mut trait_ref) = header.trait_ref.clone() else {
             return Ok(None);
         };
+        let mut subst = InferenceSubstitution::from_substitution(subst);
+        let mut table = table.clone();
+        let generics = self
+            .context
+            .item_paths()
+            .generics()
+            .generics(GenericDefRef::Impl(trait_impl.impl_ref))?;
+        // Impl parameters that appear only in the trait arguments are not learned from `Self`.
+        // Give them trial slots before constructing the selected application so those declaration
+        // parameters cannot leak into a trait method signature.
+        subst.instantiate_missing_type_params(&mut table, &generics);
         trait_ref.application.args = trait_ref
             .application
             .args
             .iter()
-            .map(|arg| subst.apply_arg(arg))
+            .map(|arg| subst.as_substitution().apply_arg(arg))
             .collect();
         trait_ref.associated_types = trait_ref
             .associated_types
             .into_iter()
             .map(|binding| AssocTypeBinding {
                 associated_ty: binding.associated_ty,
-                ty: subst.apply(&binding.ty),
+                ty: subst.as_substitution().apply(&binding.ty),
             })
             .collect();
         let goal = TraitGoal::from_lowering(trait_ref);
@@ -514,17 +537,18 @@ where
         {
             return Ok(applicability.is_applicable().then(|| TraitSelection {
                 trait_impl,
-                subst: InferenceSubstitution::from_substitution(subst),
+                application: goal.application.clone(),
+                subst,
                 applicability,
-                table: table.clone(),
+                table,
             }));
         }
 
         let candidate = TraitCandidate {
             trait_impl,
-            subst: InferenceSubstitution::from_substitution(subst),
+            subst,
             applicability: TraitApplicability::Yes,
-            table: table.clone(),
+            table,
         };
         // Preserve the matched candidate for an editor-facing `Maybe` when the bounded adapter
         // cannot classify it. The trial starts from the caller's live inference state, so any
@@ -555,6 +579,7 @@ where
             }
             SemanticOutcome::Unavailable => Some(TraitSelection {
                 trait_impl,
+                application: goal.application.clone(),
                 subst: unavailable.subst,
                 applicability: TraitApplicability::Maybe,
                 table: unavailable.table,
@@ -651,6 +676,7 @@ where
 
         Ok(SemanticOutcome::Available(TraitSelection {
             trait_impl,
+            application: goal.application.clone(),
             subst,
             applicability,
             table,

@@ -5,7 +5,7 @@ use rg_ir_model::{DefMapRef, GenericDefRef, ImplRef, ItemOwner, ScopeId, TraitDe
 use rg_item_tree::GenericArg as ItemGenericArg;
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::{GenericParamSource, ItemStoreSource};
-use rg_ty::{AdtTy, GenericArg, Substitution, Ty};
+use rg_ty::{AdtTy, GenericArg, Substitution, TraitApplication, Ty};
 
 use crate::resolution::BodyResolutionContext;
 
@@ -113,6 +113,23 @@ where
             }
         }
         Ok(subst)
+    }
+
+    /// Bind the selected trait application to the trait declaration's parameter identities.
+    ///
+    /// Method signatures are stored under the trait, not the impl. For
+    /// `impl Convert<u16> for u8`, the selection's application maps the trait's `Self` to `u8`
+    /// and its `T` to `u16`; the impl substitution alone has no trait-owned `T` key.
+    pub(crate) fn subst_for_trait_application(
+        &self,
+        application: &TraitApplication,
+    ) -> Result<Substitution, PackageStoreError> {
+        let generics = self
+            .context
+            .item_paths()
+            .generics()
+            .generics(GenericDefRef::Trait(application.def))?;
+        Ok(Substitution::from_args(&generics, &application.args))
     }
 
     /// Lower a turbofish against the declaration owner's canonical parameter order.

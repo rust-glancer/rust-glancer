@@ -128,6 +128,93 @@ pub fn use_it(user: User, wrapper: Wrapper<Error>) {
 }
 
 #[test]
+fn instantiates_trait_method_signatures_from_selected_impl_arguments() {
+    check_project_body_ir(
+        r#"
+//- /Cargo.toml
+[package]
+name = "body_trait_method_arguments_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct Source;
+
+pub trait Convert<T> {
+    fn convert(self) -> T;
+}
+
+impl Convert<u32> for Source {
+    fn convert(self) -> u32 {
+        0
+    }
+}
+
+impl Convert<u16> for u8 {
+    fn convert(self) -> u16 {
+        0
+    }
+}
+
+pub fn use_it(source: Source, primitive: u8) {
+    let nominal = source.convert();
+    let unkeyed = primitive.convert();
+}
+"#,
+        expect![[r#"
+            package body_trait_method_arguments_fixture
+
+            body_trait_method_arguments_fixture [lib]
+            body b0 fn body_trait_method_arguments_fixture[lib]::crate::use_it @ 19:1-22:2
+            scopes
+            - s0 parent <none>: v0, v1
+            - s1 parent s0: v2, v3
+            bindings
+            - v0 param source `source`: Source => nominal struct body_trait_method_arguments_fixture[lib]::crate::Source @ 19:15-19:21
+            - v1 param primitive `primitive`: u8 => u8 @ 19:31-19:40
+            - v2 let nominal `nominal` => u32 @ 20:9-20:16
+            - v3 let unkeyed `unkeyed` => u16 @ 21:9-21:16
+            body
+            expr e4 block s1 => () @ 19:46-22:2
+              stmt s0 let v2 @ 20:5-20:36
+                initializer
+                  expr e1 method_call convert -> fn trait body_trait_method_arguments_fixture[lib]::crate::Convert::convert => u32 @ 20:19-20:35
+                    receiver
+                      expr e0 path source -> local v0 => nominal struct body_trait_method_arguments_fixture[lib]::crate::Source @ 20:19-20:25
+              stmt s1 let v3 @ 21:5-21:39
+                initializer
+                  expr e3 method_call convert -> fn trait body_trait_method_arguments_fixture[lib]::crate::Convert::convert => u16 @ 21:19-21:38
+                    receiver
+                      expr e2 path primitive -> local v1 => u8 @ 21:19-21:28
+
+
+            body b1 fn impl Convert<u32> for Source::convert @ 8:5-10:6
+            scopes
+            - s0 parent <none>: v0
+            - s1 parent s0: <none>
+            bindings
+            - v0 self_param self `self` => nominal struct body_trait_method_arguments_fixture[lib]::crate::Source @ 8:16-8:20
+            body
+            expr e1 block s1 => u32 @ 8:29-10:6
+              tail
+                expr e0 literal int `0` => u32 @ 9:9-9:10
+
+
+            body b2 fn impl Convert<u16> for u8::convert @ 14:5-16:6
+            scopes
+            - s0 parent <none>: v0
+            - s1 parent s0: <none>
+            bindings
+            - v0 self_param self `self` => u8 @ 14:16-14:20
+            body
+            expr e1 block s1 => u16 @ 14:29-16:6
+              tail
+                expr e0 literal int `0` => u16 @ 15:9-15:10
+        "#]],
+    );
+}
+
+#[test]
 fn method_lookup_excludes_traits_from_unrelated_workspace_crates() {
     check_project_body_ir(
         r#"
