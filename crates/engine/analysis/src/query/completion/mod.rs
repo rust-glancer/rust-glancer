@@ -12,7 +12,6 @@
 //! and source-edit policy. Examples use `$0` to mark the cursor.
 
 mod candidates;
-mod import_edit;
 mod pattern;
 mod render;
 mod resolvers;
@@ -25,6 +24,8 @@ use rg_ir_model::CrateRef;
 use rg_parse::FileId;
 
 pub(crate) use resolvers::CompletionResolver;
+pub(crate) use site::{CompletionSiteDetector, PathCompletionSite};
+pub(crate) use syntax::CompletionSyntaxContext;
 
 /// One parsed and classified editor buffer shared across semantic crate interpretations.
 ///

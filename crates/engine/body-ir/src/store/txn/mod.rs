@@ -80,6 +80,21 @@ impl<'db> BodyIrReadTxn<'db> {
         self.current.contains_body(body_ref)
     }
 
+    /// Return only body identities rebuilt from the request source for one file.
+    ///
+    /// This avoids loading the saved file shard when a caller needs request-local declaration
+    /// stores rather than the complete body inventory.
+    pub fn current_body_refs(&self, crate_ref: CrateRef, file: FileId) -> Vec<BodyRef> {
+        self.current
+            .bodies()
+            .iter()
+            .filter(|body| {
+                body.body_ref().crate_ref == crate_ref && body.view().source().file_id == file
+            })
+            .map(|body| body.body_ref())
+            .collect()
+    }
+
     /// Allocate the first body id that cannot collide with a saved body in this crate.
     ///
     /// A rebuilt body still needs an id when early-start indexing did not keep any saved bodies.
@@ -100,6 +115,27 @@ impl<'db> BodyIrReadTxn<'db> {
             crate_ref,
             body: BodyId(body_count),
         })
+    }
+
+    /// Allocate a request-only body identity after saved and already rebuilt bodies.
+    ///
+    /// Query-local semantic contexts use the same `DefMapRef::Body` namespace as current Body IR.
+    /// Starting after both collections keeps those short-lived item stores from shadowing a body
+    /// that the request has already rebuilt.
+    pub fn next_synthetic_body_ref(
+        &self,
+        crate_ref: CrateRef,
+    ) -> Result<BodyRef, PackageStoreError> {
+        let mut next = self.first_synthetic_body_ref(crate_ref)?;
+        for body in self
+            .current
+            .bodies()
+            .iter()
+            .filter(|body| body.body_ref().crate_ref == crate_ref)
+        {
+            next.body.0 = next.body.0.max(body.body_ref().body.0.saturating_add(1));
+        }
+        Ok(next)
     }
 
     /// Return the complete crate, loading every required Body IR storage unit when offloaded.

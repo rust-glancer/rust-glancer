@@ -1,5 +1,6 @@
 mod utils;
 
+mod code_actions;
 mod completions_at;
 mod document_symbols;
 mod goto_definition;

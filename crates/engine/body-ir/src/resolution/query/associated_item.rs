@@ -130,15 +130,31 @@ where
         let query = AssociatedItemQuery::with_resolver(self.context.ty_context(), &self.context);
         let table = InferenceTable::new();
         let receiver = self.context.impls().matches_for_receiver(ty, &table)?;
+        let item_query = self.context.item_query();
         let mut candidates = Vec::new();
         for candidate in query.candidates_for_matches(receiver.receiver_ty(), receiver.matches())? {
-            if let AssociatedItemRef::Function(function) = candidate.item()
-                && let Some(function_data) = self.context.item_query().function_data(function)?
-                && receiver.saved_function_name_is_shadowed(function.origin, &function_data.name)
-            {
-                continue;
+            let shadows_current_item = match candidate.item() {
+                AssociatedItemRef::Function(function) => {
+                    item_query.function_data(function)?.is_some_and(|data| {
+                        receiver
+                            .saved_function_name_is_shadowed(function.origin, data.name.as_str())
+                    })
+                }
+                AssociatedItemRef::Const(konst) => {
+                    item_query.const_data(konst)?.is_some_and(|data| {
+                        receiver.saved_const_name_is_shadowed(konst.origin, data.name.as_str())
+                    })
+                }
+                AssociatedItemRef::TypeAlias(alias) => {
+                    item_query.type_alias_data(alias)?.is_some_and(|data| {
+                        receiver.saved_type_alias_name_is_shadowed(alias.origin, data.name.as_str())
+                    })
+                }
+                AssociatedItemRef::EnumVariant(_) => false,
+            };
+            if !shadows_current_item {
+                candidates.push(candidate);
             }
-            candidates.push(candidate);
         }
         Ok(candidates)
     }

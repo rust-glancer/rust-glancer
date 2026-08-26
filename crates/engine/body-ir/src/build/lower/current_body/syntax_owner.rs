@@ -9,6 +9,7 @@ use rg_parse::{Span, TextSpan, enclosing_inline_module_path};
 use rg_syntax::{AstNode as _, SourceFile, SyntaxNode, ast};
 use rg_text::Name;
 
+use super::super::syntax::associated_item_owner;
 use super::CurrentBodySelection;
 
 /// A function, const, or static that has a body in the editor's syntax tree.
@@ -55,12 +56,20 @@ impl SyntaxBodyOwner {
         enclosing_inline_module_path(self.syntax())
     }
 
-    /// Find the body that owns the cursor, including an unfinished body at the end of the buffer.
+    /// Return whether this declaration is an associated item of an impl block.
+    pub(super) fn belongs_to_impl(&self) -> bool {
+        associated_item_owner(self.syntax()).is_some_and(|owner| ast::Impl::can_cast(owner.kind()))
+    }
+
+    /// Find the declaration that owns the cursor, including its header and an unfinished body at
+    /// the end of the buffer.
     ///
-    /// Rust parser recovery can end a block immediately before an incomplete construct. For
-    /// example, the body parsed from `let _ = User { $0` ends at `{`, while the cursor follows its
-    /// trailing space. When the remaining gap is only whitespace and the parser reports an error
-    /// there, the nearest body is still the only body the cursor can belong to.
+    /// Header selection lets a new `fn load<T>(_: T$0)` use the same request-local signature as
+    /// its body. Rust parser recovery can also end a block immediately before an incomplete
+    /// construct. For example, the body parsed from `let _ = User { $0` ends at `{`, while the
+    /// cursor follows its trailing space. When the remaining gap is only whitespace and the parser
+    /// reports an error there, the nearest declaration is still the only owner the cursor can
+    /// belong to.
     fn at_cursor(
         file: &SourceFile,
         source: &str,
@@ -71,8 +80,8 @@ impl SyntaxBodyOwner {
             .syntax()
             .descendants()
             .filter_map(Self::cast_with_body)
-            .filter(|owner| owner.body_span().touches(offset));
-        if let Some(owner) = candidates.min_by_key(Self::body_len) {
+            .filter(|owner| Self::span(owner.syntax()).touches(offset));
+        if let Some(owner) = candidates.min_by_key(Self::syntax_len) {
             return Some(owner);
         }
 
@@ -136,8 +145,8 @@ impl SyntaxBodyOwner {
         None
     }
 
-    fn body_len(&self) -> u32 {
-        self.body_span().len()
+    fn syntax_len(&self) -> u32 {
+        Self::span(self.syntax()).len()
     }
 
     fn body_span(&self) -> Span {

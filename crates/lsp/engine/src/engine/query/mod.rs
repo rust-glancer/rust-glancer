@@ -19,10 +19,14 @@ pub(super) use self::lifecycle::{QueryCancellation, QueryContext};
 use std::{path::Path, sync::Arc, time::Instant};
 
 use anyhow::Context as _;
-use rg_analysis::{Analysis, CompletionQuery, CompletionSource, InlayHint as AnalysisInlayHint};
+use rg_analysis::{
+    Analysis, CodeActionKinds, CodeActionQuery, CodeActionTrigger, CompletionQuery,
+    CompletionSource, InlayHint as AnalysisInlayHint,
+};
 use rg_lsp_proto::{
-    CompletionClientCapabilities, DocumentPositionSnapshot, DocumentRangeSnapshot,
-    EditorDocumentSnapshot, GlobalPositionSnapshot,
+    CodeActionRequestContext, CodeActionRequestTrigger, CompletionClientCapabilities,
+    DocumentPositionSnapshot, DocumentRangeSnapshot, EditorDocumentSnapshot,
+    GlobalPositionSnapshot,
 };
 use rg_parse::{CurrentSource, LineIndex};
 use rg_project::{
@@ -35,7 +39,7 @@ use rg_text::RustEdition;
 use crate::{
     engine::project::ProjectCoordinator,
     memory::MemoryControl,
-    proto::{completion, formatting as formatting_proto, hover, inlay_hint, symbols},
+    proto::{code_action, completion, formatting as formatting_proto, hover, inlay_hint, symbols},
 };
 
 /// Borrows the engine state used by one dispatched analysis request.
@@ -486,6 +490,107 @@ impl<'a> QueryRunner<'a> {
         );
 
         Ok(completions)
+    }
+
+    /// Return source actions with complete edits for the captured document and selected range.
+    ///
+    /// The request range enters as LSP UTF-16 positions. This method maps it to the captured
+    /// source's UTF-8 offsets, asks every applicable crate interpretation for transport-neutral
+    /// actions, then attaches the same captured document version during protocol conversion. One
+    /// source file may belong to several crate targets, so all target interpretations are checked
+    /// and equivalent actions are kept only once.
+    pub(super) fn code_action(
+        &mut self,
+        input: DocumentRangeSnapshot,
+        request_context: CodeActionRequestContext,
+        cancellation: &QueryCancellation<'_>,
+    ) -> Result<Vec<ls_types::CodeAction>, QueryRunError> {
+        let (document, range) = input.into_parts();
+        let path = document.source_path().to_path_buf();
+        let started = Instant::now();
+
+        // 1. Capture analysis for the request's editor revision and translate both ends of the LSP
+        // range into byte offsets in that exact source text.
+        let Some(current) = self
+            .document_analysis(
+                "code_action",
+                &document,
+                DocumentSelection::Position(range.start),
+                cancellation,
+            )
+            .context("prepare code action analysis")?
+        else {
+            return Ok(Vec::new());
+        };
+        let Some(end) = current
+            .source
+            .line_index()
+            .offset_from_utf16_position(crate::proto::position::parse_position(range.end))
+        else {
+            return Ok(Vec::new());
+        };
+        let start = current.offset();
+        if start > end {
+            return Ok(Vec::new());
+        }
+
+        // 2. Translate protocol filters once, then run analysis for every crate target that owns
+        // this source file. `UniqueVec` removes the same action found through multiple targets.
+        let request_kinds = request_context.kinds();
+        let kinds = CodeActionKinds::none()
+            .with_quick_fix(request_kinds.quick_fix())
+            .with_refactor_rewrite(request_kinds.refactor_rewrite());
+        let trigger = match request_context.trigger() {
+            CodeActionRequestTrigger::Invoked => CodeActionTrigger::Invoked,
+            CodeActionRequestTrigger::Automatic => CodeActionTrigger::Automatic,
+            CodeActionRequestTrigger::Unspecified => CodeActionTrigger::Unspecified,
+        };
+        let mut actions = UniqueVec::new();
+        for target in &current.targets {
+            cancellation
+                .checkpoint("before code action crate interpretation")
+                .context("check cancellation before code action crate interpretation")?;
+            let query = CodeActionQuery::new(
+                target.crate_ref,
+                target.context.file,
+                rg_parse::TextSpan { start, end },
+                document.text(),
+            )
+            .with_kinds(kinds)
+            .with_trigger(trigger);
+            actions.extend(
+                current
+                    .analysis
+                    .code_actions(query)
+                    .context("compute code actions")?,
+            );
+            cancellation
+                .checkpoint("after code action crate interpretation")
+                .context("check cancellation after code action crate interpretation")?;
+        }
+
+        // 3. Convert UTF-8 edits only after analysis is finished, attaching the URI and captured
+        // document version to every action.
+        let mut lsp_actions = Vec::new();
+        for action in actions {
+            lsp_actions.push(
+                code_action::code_action(
+                    document.path(),
+                    document.client_version(),
+                    current.source.line_index(),
+                    action,
+                )
+                .context("convert code action")?,
+            );
+        }
+        tracing::trace!(
+            path = %path.display(),
+            result_count = lsp_actions.len(),
+            source = current.source.name(),
+            elapsed_ms = started.elapsed().as_millis(),
+            "code action query finished"
+        );
+        Ok(lsp_actions)
     }
 
     /// Return the first usable hover from the path's possible crate contexts.

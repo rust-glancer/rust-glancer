@@ -373,6 +373,36 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
         Ok(occurrences)
     }
 
+    /// Return signature occurrences lowered from the declaration selected in current source.
+    ///
+    /// These ranges belong to the editor buffer, unlike the saved signature index. The semantic
+    /// identities remain request-local, while referenced saved types and traits resolve through
+    /// the containing-module fallback recorded by the request database.
+    ///
+    /// For `impl<Current> Service for model::Worker<Current>`, `Service` and `model::Worker`
+    /// resolve from the saved module, while the final `Current` resolves to the request-local impl
+    /// generic.
+    pub fn current_signature_occurrences_at(
+        &self,
+        crate_ref: CrateRef,
+        file_id: FileId,
+        offset: u32,
+    ) -> anyhow::Result<Vec<IndexedSourceOccurrence>> {
+        let mut occurrences = Vec::new();
+        for origin in self.db.current_signature_origins(crate_ref, file_id)? {
+            for candidate in
+                SignatureSourceScanner::at_origin(self.db, origin, file_id, offset).scan()?
+            {
+                if let Some(occurrence) =
+                    self.signature_occurrence(crate_ref, candidate, Some(file_id))?
+                {
+                    occurrences.push(occurrence);
+                }
+            }
+        }
+        Ok(occurrences)
+    }
+
     /// Return a module-level import occurrence whose path and span come from current syntax.
     ///
     /// The saved DefMap contributes only the module namespace selected by the current inline-module
@@ -412,9 +442,7 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
                 occurrences.push(occurrence);
             }
         }
-        for candidate in
-            SignatureSourceScanner::at(&self.db.semantic_ir, crate_ref, file_id, offset).scan()?
-        {
+        for candidate in SignatureSourceScanner::at(self.db, crate_ref, file_id, offset).scan()? {
             if let Some(occurrence) =
                 self.signature_occurrence(crate_ref, candidate, Some(file_id))?
             {
@@ -443,9 +471,7 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
             }
         }
         occurrences.extend(self.body_occurrences_in_crate(crate_ref, file_id)?);
-        for candidate in
-            SignatureSourceScanner::in_crate(&self.db.semantic_ir, crate_ref, file_id).scan()?
-        {
+        for candidate in SignatureSourceScanner::in_crate(self.db, crate_ref, file_id).scan()? {
             if let Some(occurrence) = self.signature_occurrence(crate_ref, candidate, file_id)? {
                 occurrences.push(occurrence);
             }

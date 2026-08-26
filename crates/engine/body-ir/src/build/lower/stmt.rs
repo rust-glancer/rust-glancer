@@ -24,51 +24,6 @@ use crate::ir::{
 use super::body::BodyLowering;
 
 impl BodyLowering<'_> {
-    /// Keep a new or changed function's signature in the same temporary store as its body.
-    ///
-    /// A free function is a direct declaration in the function's outer scope. A method is wrapped
-    /// in a request-local copy of its enclosing impl header, with only this method attached. This
-    /// gives body analysis its parameters and `Self` type without publishing the function or any
-    /// other edited impl member to crate-wide lookup.
-    pub(super) fn lower_request_root_function(&mut self, function: &ast::Fn, scope: ScopeId) {
-        let source = self.source(function.syntax());
-        let Some(impl_item) = function
-            .syntax()
-            .parent()
-            .and_then(|parent| parent.parent())
-            .and_then(ast::Impl::cast)
-        else {
-            let node = self
-                .lower_source_item(&ast::Item::Fn(function.clone()))
-                .expect("a function should lower to a source item");
-            self.builder.alloc_scope_source_item(scope, node, source);
-            return;
-        };
-
-        let method = self
-            .lower_source_assoc_item(ast::AssocItem::Fn(function.clone()))
-            .expect("a function should lower to an associated source item");
-        let method = self.builder.alloc_scopeless_source_item(method, source);
-        let kind = ItemKind::Impl(ImplItem::from_ast(
-            &impl_item,
-            ImplItemContext {
-                items: vec![method],
-                line_index: self.line_index,
-                interner: &mut *self.interner,
-            },
-        ));
-        let impl_source = self.source(impl_item.syntax());
-        let node = self.named_source_item_node(
-            kind,
-            None,
-            VisibilityLevel::from_ast(&impl_item.visibility(), ()),
-            <Documentation as MaybeFromAst<OuterDocs>>::maybe_from_ast(&impl_item, OuterDocs),
-            impl_item.syntax(),
-        );
-        self.builder
-            .alloc_scope_source_item(scope, node, impl_source);
-    }
-
     pub(super) fn lower_params(
         &mut self,
         param_list: Option<ast::ParamList>,
@@ -436,7 +391,7 @@ impl BodyLowering<'_> {
         })
     }
 
-    fn lower_source_item(&mut self, item: &ast::Item) -> Option<ItemNode> {
+    pub(super) fn lower_source_item(&mut self, item: &ast::Item) -> Option<ItemNode> {
         match item {
             ast::Item::AsmExpr(item) => Some(self.named_source_item_node(
                 ItemKind::AsmExpr,
@@ -770,7 +725,7 @@ impl BodyLowering<'_> {
         item_ids
     }
 
-    fn lower_source_assoc_item(&mut self, item: ast::AssocItem) -> Option<ItemNode> {
+    pub(super) fn lower_source_assoc_item(&mut self, item: ast::AssocItem) -> Option<ItemNode> {
         match item {
             ast::AssocItem::Const(item) => {
                 let kind = ItemKind::Const(ConstItem::from_ast(
@@ -815,7 +770,7 @@ impl BodyLowering<'_> {
         }
     }
 
-    fn named_source_item_node(
+    pub(super) fn named_source_item_node(
         &mut self,
         kind: ItemKind,
         name: Option<ast::Name>,

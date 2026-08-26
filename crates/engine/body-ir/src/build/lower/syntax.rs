@@ -239,6 +239,21 @@ pub(super) fn source_for(file_id: FileId, syntax: &rg_syntax::SyntaxNode) -> Bod
     BodySource::written(file_id, Span::from_text_range(syntax.text_range()))
 }
 
+/// Return the impl or trait that owns an associated declaration.
+///
+/// The syntax tree places an associated item below an `AssocItemList`, so its semantic owner is
+/// two parents away. Checking the intermediate node keeps an unrelated nested declaration from
+/// being mistaken for an associated item.
+pub(super) fn associated_item_owner(
+    syntax: &rg_syntax::SyntaxNode,
+) -> Option<rg_syntax::SyntaxNode> {
+    let item_list = syntax.parent()?;
+    if !ast::AssocItemList::can_cast(item_list.kind()) {
+        return None;
+    }
+    item_list.parent()
+}
+
 #[cfg(test)]
 mod tests {
     use rg_ir_model::{FloatTy, PrimitiveTy, UnsignedIntTy};

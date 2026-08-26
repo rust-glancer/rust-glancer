@@ -92,7 +92,7 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
         &self,
         site: &UnqualifiedCompletionSite,
     ) -> anyhow::Result<Vec<GenericScopeCompletionCandidate>> {
-        let (owner, context) = match site.source().scope() {
+        let (owner, context, impl_self_visible) = match site.source().scope() {
             IndexedUnqualifiedNameScope::Body {
                 scope,
                 context,
@@ -110,11 +110,13 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
                     };
                     owner
                 };
-                (owner, *context)
+                (owner, *context, true)
             }
-            IndexedUnqualifiedNameScope::Signature { scope, context, .. } => {
-                (scope.generic_owner(), *context)
-            }
+            IndexedUnqualifiedNameScope::Signature { scope, context, .. } => (
+                scope.generic_owner(),
+                *context,
+                scope.context().impl_ref.is_some(),
+            ),
             IndexedUnqualifiedNameScope::Module { .. }
             | IndexedUnqualifiedNameScope::Import { .. } => return Ok(Vec::new()),
         };
@@ -124,6 +126,10 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
             .generic_scope_names(owner)
             .context("read completion generic scope names")?
         {
+            if matches!(name.target(), GenericScopeNameTarget::ImplSelf(_)) && !impl_self_visible {
+                continue;
+            }
+
             // A bare argument such as `Container<N>` is syntactically ambiguous without the
             // resolved container's parameter list, so both type and const parameters are useful.
             // TODO: Carry the expected generic parameter kind when the enclosing path resolves.

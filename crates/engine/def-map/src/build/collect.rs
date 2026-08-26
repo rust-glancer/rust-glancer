@@ -1084,6 +1084,7 @@ impl<'db> CrateScopeCollector<'db> {
             let import_id = self.def_map_builder.alloc_import(ImportData {
                 module: module_id,
                 visibility,
+                is_reexport: ImportData::source_visibility_reexports(&item.visibility),
                 kind: ImportKind::from_use_kind(import.kind),
                 path,
                 binding: ImportBinding::from_alias(&import.alias),

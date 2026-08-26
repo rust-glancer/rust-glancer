@@ -1,5 +1,6 @@
 //! Transport-neutral result models returned by editor analysis queries.
 
+mod code_action;
 mod completion;
 mod hover;
 mod inlay_hints;
@@ -9,6 +10,7 @@ mod rename;
 mod symbol;
 mod symbols;
 
+pub use code_action::{CodeAction, CodeActionEdit, CodeActionKind};
 pub use completion::{
     CompletionAdditionalEdit, CompletionApplicability, CompletionEdit, CompletionInsertText,
     CompletionItem, CompletionKind, CompletionTarget, KeywordCompletion, SyntheticCompletionTarget,

@@ -1,8 +1,8 @@
 //! Request-bounded discovery of definitions that can be reached by a `use` path.
 //!
-//! The frozen namespace graph already owns visibility, aliases, re-exports, and cfg filtering.
-//! Walking that graph on demand keeps auto-import honest without retaining a second global symbol
-//! index after the request finishes.
+//! The indexed module graph already knows which names are visible through ordinary items, aliases,
+//! re-exports, dependencies, and cfg filtering. Each import request walks that graph directly and
+//! drops its search state afterward, instead of keeping a second global symbol index in memory.
 
 use std::collections::{HashMap, HashSet, VecDeque};
 
@@ -37,7 +37,10 @@ impl ImportableName {
     }
 }
 
-/// Performs one prefix-aware graph walk and releases all traversal state with the request.
+/// Performs one bounded visible-name graph walk and releases all traversal state with the request.
+///
+/// Completion uses prefix matching, while explicit code actions use exact matching. Both entry
+/// points share visibility, path ranking, re-export handling, and traversal ceilings here.
 pub struct ImportableNameSearch<'a, 'db> {
     db: &'a IndexedViewDb<'db>,
 }
@@ -87,6 +90,37 @@ impl<'a, 'db> ImportableNameSearch<'a, 'db> {
             return Ok(Vec::new());
         }
 
+        self.search_matching(importing_module, |label| label.starts_with(prefix))
+    }
+
+    /// Find importable type/value names whose complete visible spelling equals `name`.
+    ///
+    /// Explicit code actions already know the token the user wants to repair, so they do not need
+    /// the completion prefix threshold. The same traversal ceilings still bound one-character
+    /// names and large external graphs.
+    pub fn search_exact(
+        &self,
+        importing_module: ModuleRef,
+        name: &str,
+    ) -> anyhow::Result<Vec<ImportableName>> {
+        if name.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        self.search_matching(importing_module, |label| label == name)
+    }
+
+    /// Walk paths visible from the importing module and collect leaves accepted by `matches`.
+    ///
+    /// For a nested importing module, the queue starts with `self` so nearby items get short paths.
+    /// The crate root and dependency roots are also searched because they are valid beginnings of
+    /// a `use` path. Entering a child module extends that path. When several paths reach the same
+    /// declaration, only the shortest, then lexically smallest path is kept.
+    fn search_matching(
+        &self,
+        importing_module: ModuleRef,
+        matches: impl Fn(&str) -> bool,
+    ) -> anyhow::Result<Vec<ImportableName>> {
         let mut pending = VecDeque::new();
         let importing_crate = importing_module.origin.origin_crate();
         let root_module = self
@@ -142,8 +176,32 @@ impl<'a, 'db> ImportableNameSearch<'a, 'db> {
                 .visible_scope_defs(importing_module, module.module)
                 .context("walk auto-import module scope")?;
             for visible_def in visible_defs {
+                // Descendants may legally spell a crate-root private import as `crate::Name`, but
+                // that binding is an implementation detail of the parent module. Reusing it would
+                // make the new import depend on an unrelated private `use`, and its short path
+                // would hide the declaration's stable public route. Direct declarations have no
+                // `attribute_imports`; imported aliases remain eligible only when at least one
+                // outer route was deliberately written as a re-export.
+                if !visible_def.attribute_imports.is_empty() {
+                    let mut has_reexport_route = false;
+                    for import_ref in &visible_def.attribute_imports {
+                        if self
+                            .db
+                            .import_data(*import_ref)
+                            .context("read auto-import re-export route")?
+                            .is_some_and(|import| import.is_reexport)
+                        {
+                            has_reexport_route = true;
+                            break;
+                        }
+                    }
+                    if !has_reexport_route {
+                        continue;
+                    }
+                }
+
                 let is_module = matches!(visible_def.def, DefId::Module(_));
-                if !is_module && !visible_def.label.starts_with(prefix) {
+                if !is_module && !matches(&visible_def.label) {
                     continue;
                 }
 
@@ -205,6 +263,7 @@ impl<'a, 'db> ImportableNameSearch<'a, 'db> {
     }
 }
 
+/// One module waiting to be searched and the `use` path that reaches it from the request site.
 #[derive(Debug)]
 struct PendingModule {
     module: ModuleRef,

@@ -5,40 +5,44 @@
 //! indexed occurrences or a completion site.
 
 use rg_ir_model::{
-    ConstRef, CrateRef, DefMapRef, EnumVariantRef, FieldRef, FunctionRef, GenericDefRef, ItemOwner,
+    ConstRef, DefMapRef, EnumVariantRef, FieldRef, FunctionRef, GenericDefRef, ItemOwner,
     StaticRef, TypeAliasRef, TypeDefId, TypeDefRef,
 };
 use rg_item_tree::{FieldList, GenericParams, TypeBound, TypeRef, WherePredicate};
 use rg_package_store::PackageStoreError;
 use rg_parse::{FileId, Span};
-use rg_semantic_ir::{ItemStoreQuery, SemanticIrReadTxn, TypePathContext};
+use rg_semantic_ir::{ItemStore, ItemStoreQuery, TypePathContext};
 
 use super::{SignatureSourceCandidate, SignatureTypePathScope, collector::SignatureScanCollector};
+use crate::IndexedViewDb;
 use crate::source::scan::{TypeNamePosition, type_path::walk_type_ref_paths};
 
-/// Walks every signature-bearing item in one crate and sends source facts to `C`.
+/// Walks every signature-bearing item in one semantic store and sends source facts to `C`.
 ///
 /// Each item first establishes the module and generic owner for its written paths. The walk then
 /// descends through fields, parameters, bounds, defaults, and return types. It deliberately knows
 /// nothing about cursor selection or occurrence filtering; those policies belong to the collector.
-pub(super) struct SignatureItemWalker<'txn, 'db, C> {
-    semantic_ir: &'txn SemanticIrReadTxn<'db>,
-    crate_ref: CrateRef,
+pub(super) struct SignatureItemWalker<'view, 'db, C> {
+    db: &'view IndexedViewDb<'db>,
+    items: &'view ItemStore,
+    origin: DefMapRef,
     collector: C,
 }
 
-impl<'txn, 'db, C> SignatureItemWalker<'txn, 'db, C>
+impl<'view, 'db, C> SignatureItemWalker<'view, 'db, C>
 where
     C: SignatureScanCollector,
 {
     pub(super) fn new(
-        semantic_ir: &'txn SemanticIrReadTxn<'db>,
-        crate_ref: CrateRef,
+        db: &'view IndexedViewDb<'db>,
+        items: &'view ItemStore,
+        origin: DefMapRef,
         collector: C,
     ) -> Self {
         Self {
-            semantic_ir,
-            crate_ref,
+            db,
+            items,
+            origin,
             collector,
         }
     }
@@ -62,29 +66,17 @@ where
     }
 
     fn scan_structs(&mut self) -> Result<(), PackageStoreError> {
-        let crate_ref = self.crate_ref;
-        let origin = DefMapRef::Crate(crate_ref);
-        for (ty, data) in self
-            .semantic_ir
-            .items(crate_ref)?
-            .into_iter()
-            .flat_map(move |items| {
-                items.structs().iter_with_ids().map(move |(id, data)| {
-                    (
-                        TypeDefRef {
-                            origin,
-                            id: TypeDefId::Struct(id),
-                        },
-                        data,
-                    )
-                })
-            })
-        {
+        let origin = self.origin;
+        for (id, data) in self.items.structs().iter_with_ids() {
             if !self.file_matches(data.source.file_id) {
                 continue;
             }
+            let ty = TypeDefRef {
+                origin,
+                id: TypeDefId::Struct(id),
+            };
             let scope = SignatureTypePathScope {
-                context: TypePathContext::module(data.owner),
+                context: self.current_context(TypePathContext::module(data.owner))?,
                 generic_owner: GenericDefRef::TypeDef(ty),
             };
             self.scan_generic_params(scope, &data.generics, data.source.file_id);
@@ -95,29 +87,17 @@ where
     }
 
     fn scan_unions(&mut self) -> Result<(), PackageStoreError> {
-        let crate_ref = self.crate_ref;
-        let origin = DefMapRef::Crate(crate_ref);
-        for (ty, data) in self
-            .semantic_ir
-            .items(crate_ref)?
-            .into_iter()
-            .flat_map(move |items| {
-                items.unions().iter_with_ids().map(move |(id, data)| {
-                    (
-                        TypeDefRef {
-                            origin,
-                            id: TypeDefId::Union(id),
-                        },
-                        data,
-                    )
-                })
-            })
-        {
+        let origin = self.origin;
+        for (id, data) in self.items.unions().iter_with_ids() {
             if !self.file_matches(data.source.file_id) {
                 continue;
             }
+            let ty = TypeDefRef {
+                origin,
+                id: TypeDefId::Union(id),
+            };
             let scope = SignatureTypePathScope {
-                context: TypePathContext::module(data.owner),
+                context: self.current_context(TypePathContext::module(data.owner))?,
                 generic_owner: GenericDefRef::TypeDef(ty),
             };
             self.scan_generic_params(scope, &data.generics, data.source.file_id);
@@ -142,29 +122,17 @@ where
     }
 
     fn scan_enums(&mut self) -> Result<(), PackageStoreError> {
-        let crate_ref = self.crate_ref;
-        let origin = DefMapRef::Crate(crate_ref);
-        for (ty, data) in self
-            .semantic_ir
-            .items(crate_ref)?
-            .into_iter()
-            .flat_map(move |items| {
-                items.enums().iter_with_ids().map(move |(id, data)| {
-                    (
-                        TypeDefRef {
-                            origin,
-                            id: TypeDefId::Enum(id),
-                        },
-                        data,
-                    )
-                })
-            })
-        {
+        let origin = self.origin;
+        for (id, data) in self.items.enums().iter_with_ids() {
             if !self.file_matches(data.source.file_id) {
                 continue;
             }
+            let ty = TypeDefRef {
+                origin,
+                id: TypeDefId::Enum(id),
+            };
             let scope = SignatureTypePathScope {
-                context: TypePathContext::module(data.owner),
+                context: self.current_context(TypePathContext::module(data.owner))?,
                 generic_owner: GenericDefRef::TypeDef(ty),
             };
             self.scan_generic_params(scope, &data.generics, data.source.file_id);
@@ -174,7 +142,7 @@ where
             for (variant_idx, variant) in data.variants.iter().enumerate() {
                 self.push_enum_variant(
                     EnumVariantRef {
-                        origin: DefMapRef::Crate(self.crate_ref),
+                        origin,
                         enum_id,
                         index: variant_idx,
                     },
@@ -198,16 +166,12 @@ where
     }
 
     fn scan_traits(&mut self) -> Result<(), PackageStoreError> {
-        let Some(items) = self.semantic_ir.items(self.crate_ref)? else {
-            return Ok(());
-        };
-
-        for (trait_ref, data) in items.traits_with_refs() {
+        for (trait_ref, data) in self.items.traits_with_refs() {
             if !self.file_matches(data.source.file_id) {
                 continue;
             }
             let scope = SignatureTypePathScope {
-                context: TypePathContext::module(data.owner),
+                context: self.current_context(TypePathContext::module(data.owner))?,
                 generic_owner: GenericDefRef::Trait(trait_ref),
             };
             self.scan_generic_params(scope, &data.generics, data.source.file_id);
@@ -218,11 +182,7 @@ where
     }
 
     fn scan_impls(&mut self) -> Result<(), PackageStoreError> {
-        let Some(items) = self.semantic_ir.items(self.crate_ref)? else {
-            return Ok(());
-        };
-
-        for (impl_ref, data) in items.impls_with_refs() {
+        for (impl_ref, data) in self.items.impls_with_refs() {
             if !self.file_matches(data.source.file_id) {
                 continue;
             }
@@ -234,16 +194,25 @@ where
                 generic_owner: GenericDefRef::Impl(impl_ref),
             };
             self.scan_generic_params(scope, &data.generics, data.source.file_id);
+
+            // The impl's generic parameters are in scope while its trait and self type are being
+            // written, but `Self` does not exist until that self type has been established.
+            // Associated items keep the full impl context through `owner_context`; only these two
+            // paths deliberately start from the containing module.
+            let header_scope = SignatureTypePathScope {
+                context: TypePathContext::module(scope.context.module),
+                ..scope
+            };
             if let Some(trait_ref) = &data.trait_ref {
                 self.push_type_ref(
-                    scope,
+                    header_scope,
                     trait_ref,
                     data.source.file_id,
                     TypeNamePosition::Type,
                 );
             }
             self.push_type_ref(
-                scope,
+                header_scope,
                 &data.self_ty,
                 data.source.file_id,
                 TypeNamePosition::Type,
@@ -254,11 +223,7 @@ where
     }
 
     fn scan_functions(&mut self) -> Result<(), PackageStoreError> {
-        let Some(items) = self.semantic_ir.items(self.crate_ref)? else {
-            return Ok(());
-        };
-
-        for (function_ref, data) in items.functions_with_refs() {
+        for (function_ref, data) in self.items.functions_with_refs() {
             if !self.file_matches(data.source.file_id) {
                 continue;
             }
@@ -290,13 +255,8 @@ where
     }
 
     fn scan_type_aliases(&mut self) -> Result<(), PackageStoreError> {
-        let origin = DefMapRef::Crate(self.crate_ref);
-        for (id, data) in self
-            .semantic_ir
-            .items(self.crate_ref)?
-            .into_iter()
-            .flat_map(move |items| items.type_aliases().iter_with_ids())
-        {
+        let origin = self.origin;
+        for (id, data) in self.items.type_aliases().iter_with_ids() {
             if !self.file_matches(data.source.file_id) {
                 continue;
             }
@@ -320,13 +280,8 @@ where
     }
 
     fn scan_consts(&mut self) -> Result<(), PackageStoreError> {
-        let origin = DefMapRef::Crate(self.crate_ref);
-        for (id, data) in self
-            .semantic_ir
-            .items(self.crate_ref)?
-            .into_iter()
-            .flat_map(move |items| items.consts().iter_with_ids())
-        {
+        let origin = self.origin;
+        for (id, data) in self.items.consts().iter_with_ids() {
             if !self.file_matches(data.source.file_id) {
                 continue;
             }
@@ -346,20 +301,15 @@ where
     }
 
     fn scan_statics(&mut self) -> Result<(), PackageStoreError> {
-        let origin = DefMapRef::Crate(self.crate_ref);
-        for (id, data) in self
-            .semantic_ir
-            .items(self.crate_ref)?
-            .into_iter()
-            .flat_map(move |items| items.statics().iter_with_ids())
-        {
+        let origin = self.origin;
+        for (id, data) in self.items.statics().iter_with_ids() {
             if !self.file_matches(data.source.file_id) {
                 continue;
             }
             if let Some(ty) = &data.ty {
                 self.push_type_ref(
                     SignatureTypePathScope {
-                        context: TypePathContext::module(data.owner),
+                        context: self.current_context(TypePathContext::module(data.owner))?,
                         generic_owner: GenericDefRef::Static(StaticRef { origin, id }),
                     },
                     ty,
@@ -463,8 +413,17 @@ where
         &self,
         owner: ItemOwner,
     ) -> Result<Option<TypePathContext>, PackageStoreError> {
-        ItemStoreQuery::new(self.semantic_ir)
-            .type_path_context_for_owner(DefMapRef::Crate(self.crate_ref), owner)
+        ItemStoreQuery::new(self.db)
+            .type_path_context_for_owner(self.origin, owner)?
+            .map(|context| self.current_context(context))
+            .transpose()
+    }
+
+    fn current_context(
+        &self,
+        context: TypePathContext,
+    ) -> Result<TypePathContext, PackageStoreError> {
+        self.db.current_signature_context(context)
     }
 
     fn file_matches(&self, file_id: FileId) -> bool {

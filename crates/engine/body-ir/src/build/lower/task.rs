@@ -22,15 +22,25 @@ use super::{
     syntax::source_for,
 };
 
+/// Current declarations that body lowering should copy into the root's temporary item store.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CurrentRootItems {
+    /// The root and all of its declaration context already exist in saved or parent-body storage.
+    None,
+    /// Copy a new or changed free declaration, or one associated with a trait declaration.
+    Declaration,
+    /// Copy the current enclosing impl and its associated-item signatures.
+    ///
+    /// An unchanged selected member keeps its saved identity and is omitted from the temporary
+    /// impl. A new or changed member has no saved identity, so the impl must own it as well.
+    EnclosingImpl { include_selected: bool },
+}
+
 /// A function body or item initializer that should become immutable `BodyData`.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct BodyLoweringTask {
     pub(crate) owner: BodyOwner,
-    /// Include the selected declaration in this body's temporary item store.
-    ///
-    /// Saved roots already have an item-store entry. A new or changed function does not, so its
-    /// current signature and enclosing impl are lowered beside its body for this request only.
-    pub(crate) request_root: bool,
+    pub(crate) current_root_items: CurrentRootItems,
     /// Module used for body-local lookup inside this body.
     ///
     /// Top-level semantic bodies use their normal module. Nested body-local owners use the
@@ -226,7 +236,7 @@ impl<'a> BodyTaskLowering<'a> {
                         self.interner,
                         &mut *macro_expansion,
                     )
-                    .lower_function(ast_fn, body_ast, task.request_root);
+                    .lower_function(ast_fn, body_ast, task.current_root_items);
                     lowered.push(LoweredBodyTask {
                         body: self.crate_bodies.alloc_body(body),
                         task: *task,
@@ -252,7 +262,7 @@ impl<'a> BodyTaskLowering<'a> {
                         self.interner,
                         &mut *macro_expansion,
                     )
-                    .lower_initializer(body_ast);
+                    .lower_const(ast_const, body_ast, task.current_root_items);
                     lowered.push(LoweredBodyTask {
                         body: self.crate_bodies.alloc_body(body),
                         task: *task,
@@ -278,7 +288,11 @@ impl<'a> BodyTaskLowering<'a> {
                         self.interner,
                         &mut *macro_expansion,
                     )
-                    .lower_initializer(body_ast);
+                    .lower_static(
+                        ast_static,
+                        body_ast,
+                        task.current_root_items,
+                    );
                     lowered.push(LoweredBodyTask {
                         body: self.crate_bodies.alloc_body(body),
                         task: *task,

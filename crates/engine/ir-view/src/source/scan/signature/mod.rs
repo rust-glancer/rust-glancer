@@ -1,11 +1,12 @@
 //! Source scanning over semantic item signatures.
 //!
-//! Semantic IR owns item signature data, while the indexed view owns the source interpretation of
-//! that data. This scanner finds fields, variants, associated functions, and nested type paths
-//! without making source-query APIs part of Semantic IR's storage transaction. Completion can
-//! select qualified or unqualified paths, explicit associated bindings, and a possible binding
-//! before `=`. When recovery leaves no path at all, the scanner can still return the narrowest item
-//! scope containing the cursor.
+//! Semantic item stores own signature data, while the indexed view owns the source interpretation
+//! of that data. The same scanner therefore works for retained Semantic IR and for one declaration
+//! lowered from the editor buffer. It finds fields, variants, associated functions, and nested
+//! type paths without making source-query APIs part of either storage layer. Completion can select
+//! qualified or unqualified paths, explicit associated bindings, and a possible binding before
+//! `=`. When recovery leaves no path at all, the scanner can still return the narrowest item scope
+//! containing the cursor.
 //!
 //! ```text
 //! struct Wrapper<T> {
@@ -24,12 +25,13 @@
 mod collector;
 mod walker;
 
-use rg_def_map::DefMapReadTxn;
-use rg_ir_model::{CrateRef, EnumVariantRef, FieldRef, FunctionRef, GenericDefRef, Path};
+use rg_ir_model::{
+    CrateRef, DefMapRef, EnumVariantRef, FieldRef, FunctionRef, GenericDefRef, Path,
+};
 use rg_item_tree::TypeRef;
 use rg_package_store::PackageStoreError;
 use rg_parse::{FileId, Span};
-use rg_semantic_ir::{ItemStoreQuery, SemanticIrReadTxn, TypePathContext};
+use rg_semantic_ir::{ItemStoreQuery, TypePathContext};
 
 use self::{
     collector::{
@@ -39,6 +41,7 @@ use self::{
     walker::SignatureItemWalker,
 };
 use super::{AssociatedPathQualifier, TypeNamePosition};
+use crate::IndexedViewDb;
 
 /// Semantic scope carried by a type path written in an item signature.
 ///
@@ -120,23 +123,37 @@ impl SignatureSourceCandidate {
 /// Type references are walked recursively through generic defaults, bounds, where predicates,
 /// fields, parameters, return types, and qualified anchors. For `Outer<Inner>`, both paths are
 /// emitted rather than treating the annotation as one opaque source span.
-pub(crate) struct SignatureSourceScanner<'txn, 'db> {
-    semantic_ir: &'txn SemanticIrReadTxn<'db>,
-    crate_ref: CrateRef,
+pub(crate) struct SignatureSourceScanner<'view, 'db> {
+    db: &'view IndexedViewDb<'db>,
+    origin: DefMapRef,
     file_id: Option<FileId>,
     offset: Option<u32>,
 }
 
-impl<'txn, 'db> SignatureSourceScanner<'txn, 'db> {
+impl<'view, 'db> SignatureSourceScanner<'view, 'db> {
     pub(crate) fn at(
-        semantic_ir: &'txn SemanticIrReadTxn<'db>,
+        db: &'view IndexedViewDb<'db>,
         crate_ref: CrateRef,
         file_id: FileId,
         offset: u32,
     ) -> Self {
         Self {
-            semantic_ir,
-            crate_ref,
+            db,
+            origin: DefMapRef::Crate(crate_ref),
+            file_id: Some(file_id),
+            offset: Some(offset),
+        }
+    }
+
+    pub(crate) fn at_origin(
+        db: &'view IndexedViewDb<'db>,
+        origin: DefMapRef,
+        file_id: FileId,
+        offset: u32,
+    ) -> Self {
+        Self {
+            db,
+            origin,
             file_id: Some(file_id),
             offset: Some(offset),
         }
@@ -149,14 +166,27 @@ impl<'txn, 'db> SignatureSourceScanner<'txn, 'db> {
     /// An explicit binding such as `fn load(_: Iterator<It$0 = u8>)` is selected before either
     /// ordinary path interpretation.
     pub(crate) fn completion_site_at(
-        semantic_ir: &'txn SemanticIrReadTxn<'db>,
+        db: &'view IndexedViewDb<'db>,
         crate_ref: CrateRef,
         file_id: FileId,
         offset: u32,
     ) -> Result<Option<SignatureCompletionSite>, PackageStoreError> {
+        Self::completion_site_at_origin(db, DefMapRef::Crate(crate_ref), file_id, offset)
+    }
+
+    pub(crate) fn completion_site_at_origin(
+        db: &'view IndexedViewDb<'db>,
+        origin: DefMapRef,
+        file_id: FileId,
+        offset: u32,
+    ) -> Result<Option<SignatureCompletionSite>, PackageStoreError> {
+        let Some(items) = db.item_store_for_origin(origin)? else {
+            return Ok(None);
+        };
         let collector = SignatureItemWalker::new(
-            semantic_ir,
-            crate_ref,
+            db,
+            items,
+            origin,
             SignatureCompletionCollector::new(file_id, offset),
         )
         .scan()?;
@@ -169,14 +199,32 @@ impl<'txn, 'db> SignatureSourceScanner<'txn, 'db> {
     /// nested type argument. This separate scan lets the caller add associated-type names without
     /// suppressing those normal type candidates.
     pub(crate) fn implicit_associated_type_binding_site_at(
-        semantic_ir: &'txn SemanticIrReadTxn<'db>,
+        db: &'view IndexedViewDb<'db>,
         crate_ref: CrateRef,
         file_id: FileId,
         offset: u32,
     ) -> Result<Option<SignatureCompletionSite>, PackageStoreError> {
+        Self::implicit_associated_type_binding_site_at_origin(
+            db,
+            DefMapRef::Crate(crate_ref),
+            file_id,
+            offset,
+        )
+    }
+
+    pub(crate) fn implicit_associated_type_binding_site_at_origin(
+        db: &'view IndexedViewDb<'db>,
+        origin: DefMapRef,
+        file_id: FileId,
+        offset: u32,
+    ) -> Result<Option<SignatureCompletionSite>, PackageStoreError> {
+        let Some(items) = db.item_store_for_origin(origin)? else {
+            return Ok(None);
+        };
         let collector = SignatureItemWalker::new(
-            semantic_ir,
-            crate_ref,
+            db,
+            items,
+            origin,
             ImplicitAssociatedTypeBindingCollector::new(file_id, offset),
         )
         .scan()?;
@@ -189,19 +237,27 @@ impl<'txn, 'db> SignatureSourceScanner<'txn, 'db> {
     /// instead selects the narrowest semantic item span containing the cursor, then returns that
     /// item's type-path context and generic owner so `T` remains visible.
     pub(crate) fn empty_type_scope_at(
-        semantic_ir: &'txn SemanticIrReadTxn<'db>,
-        def_maps: &DefMapReadTxn<'db>,
+        db: &'view IndexedViewDb<'db>,
         crate_ref: CrateRef,
         file_id: FileId,
         offset: u32,
     ) -> Result<Option<SignatureTypePathScope>, PackageStoreError> {
-        let Some(items) = semantic_ir.items(crate_ref)? else {
+        Self::empty_type_scope_at_origin(db, DefMapRef::Crate(crate_ref), file_id, offset)
+    }
+
+    pub(crate) fn empty_type_scope_at_origin(
+        db: &'view IndexedViewDb<'db>,
+        origin: DefMapRef,
+        file_id: FileId,
+        offset: u32,
+    ) -> Result<Option<SignatureTypePathScope>, PackageStoreError> {
+        let Some(items) = db.item_store_for_origin(origin)? else {
             return Ok(None);
         };
-        let Some(def_map) = def_maps.def_map(crate_ref)? else {
+        let Some(def_map) = db.def_map_for_origin(origin)? else {
             return Ok(None);
         };
-        let item_query = ItemStoreQuery::new(semantic_ir);
+        let item_query = ItemStoreQuery::new(db);
         let mut best = super::NarrowestSourceSite::new();
 
         for item in items.semantic_items() {
@@ -227,6 +283,7 @@ impl<'txn, 'db> SignatureSourceScanner<'txn, 'db> {
             let Some(context) = item_query.type_path_context_for_generic_def(generic_owner)? else {
                 continue;
             };
+            let context = db.current_signature_context(context)?;
             best.consider(
                 SignatureTypePathScope {
                     context,
@@ -240,23 +297,27 @@ impl<'txn, 'db> SignatureSourceScanner<'txn, 'db> {
     }
 
     pub(crate) fn in_crate(
-        semantic_ir: &'txn SemanticIrReadTxn<'db>,
+        db: &'view IndexedViewDb<'db>,
         crate_ref: CrateRef,
         file_id: Option<FileId>,
     ) -> Self {
         Self {
-            semantic_ir,
-            crate_ref,
+            db,
+            origin: DefMapRef::Crate(crate_ref),
             file_id,
             offset: None,
         }
     }
 
-    /// Collects the source facts owned by each semantic item family in the crate.
+    /// Collect the source facts owned by each semantic item family in the selected store.
     pub(crate) fn scan(self) -> Result<Vec<SignatureSourceCandidate>, PackageStoreError> {
+        let Some(items) = self.db.item_store_for_origin(self.origin)? else {
+            return Ok(Vec::new());
+        };
         let collector = SignatureItemWalker::new(
-            self.semantic_ir,
-            self.crate_ref,
+            self.db,
+            items,
+            self.origin,
             SignatureOccurrenceCollector::new(self.file_id, self.offset),
         )
         .scan()?;

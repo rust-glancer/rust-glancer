@@ -15,6 +15,7 @@ mod tests;
 use std::{collections::HashMap, sync::Arc};
 
 pub use query::{
+    code_action::{CodeActionKinds, CodeActionQuery, CodeActionTrigger},
     completion::{CompletionClientCapabilities, CompletionQuery, CompletionSource},
     references::{ReferenceQuery, ReferenceSearchFile, ReferenceSearchLabel},
 };
@@ -32,11 +33,12 @@ use rg_syntax::SourceFile;
 use crate::source_symbol::{SourceSymbol, SourceSymbolIndex, SourceSymbolResolver};
 
 pub use self::model::{
-    CompletionAdditionalEdit, CompletionApplicability, CompletionEdit, CompletionInsertText,
-    CompletionItem, CompletionKind, CompletionTarget, DocumentOutline, DocumentSymbol, HoverBlock,
-    HoverInfo, InlayHint, InlayHintKind, InlayHintPosition, KeywordCompletion, NavigationTarget,
-    NavigationTargetKind, NavigationTargetSource, ReferenceLocation, RenameEdit, RenameResult,
-    RenameTarget, SymbolAt, SyntheticCompletionTarget, WorkspaceSymbol,
+    CodeAction, CodeActionEdit, CodeActionKind, CompletionAdditionalEdit, CompletionApplicability,
+    CompletionEdit, CompletionInsertText, CompletionItem, CompletionKind, CompletionTarget,
+    DocumentOutline, DocumentSymbol, HoverBlock, HoverInfo, InlayHint, InlayHintKind,
+    InlayHintPosition, KeywordCompletion, NavigationTarget, NavigationTargetKind,
+    NavigationTargetSource, ReferenceLocation, RenameEdit, RenameResult, RenameTarget, SymbolAt,
+    SyntheticCompletionTarget, WorkspaceSymbol,
 };
 
 /// Request-scoped façade for editor queries over one frozen project view.
@@ -247,14 +249,24 @@ impl<'a> Analysis<'a> {
         file_id: FileId,
         offset: u32,
     ) -> anyhow::Result<Option<SourceSymbol>> {
-        // Saved and exact source can share one offset. Edited source is read in three explicit
-        // layers: current Body IR, module-level current syntax, then an unchanged header paired to
-        // saved semantics. None of those paths interpret the current offset in a saved scanner.
+        // Saved and exact source can share one offset. Edited source is read in four explicit
+        // layers: current Body IR, its request-local declaration header, module-level current
+        // syntax, then an unchanged header paired to saved semantics. None of those paths
+        // interpret the current offset in a saved scanner.
         match self.current_source_relationship(crate_ref.package, file_id) {
             Some(SavedSourceRelationship::Different) => {
                 let current_body_symbols = SourceSymbolIndex::new(self.view_db())
                     .body_symbols_at(crate_ref, file_id, offset)?;
-                if let Some(symbol) = Self::narrowest_source_symbol(current_body_symbols) {
+                let (body_roots, body_symbols): (Vec<_>, Vec<_>) = current_body_symbols
+                    .into_iter()
+                    .partition(|symbol| matches!(symbol.symbol(), SymbolAt::FunctionBody { .. }));
+                if let Some(symbol) = Self::narrowest_source_symbol(body_symbols) {
+                    return Ok(Some(symbol));
+                }
+
+                let current_signature_symbols = SourceSymbolIndex::new(self.view_db())
+                    .current_signature_symbols_at(crate_ref, file_id, offset)?;
+                if let Some(symbol) = Self::narrowest_source_symbol(current_signature_symbols) {
                     return Ok(Some(symbol));
                 }
 
@@ -264,7 +276,13 @@ impl<'a> Analysis<'a> {
                     return Ok(Some(symbol));
                 }
 
-                self.associated_header_source_symbol(crate_ref, file_id, offset)
+                // A body root spans its whole declaration so queries can identify the owning
+                // function. In a dirty header that broad structural fact must not hide a narrower
+                // unchanged token with saved semantics. Keep it only as the final fallback when
+                // none of the editor-facing source layers recognize the cursor.
+                Ok(self
+                    .associated_header_source_symbol(crate_ref, file_id, offset)?
+                    .or_else(|| Self::narrowest_source_symbol(body_roots)))
             }
             Some(SavedSourceRelationship::Exact) | None => Ok(Self::narrowest_source_symbol(
                 SourceSymbolIndex::new(self.view_db()).symbols_at(crate_ref, file_id, offset)?,
@@ -459,6 +477,11 @@ impl<'a> Analysis<'a> {
         query: CompletionQuery<'_>,
     ) -> anyhow::Result<Vec<CompletionItem>> {
         query::completion::CompletionResolver::new(self, query).completions_at()
+    }
+
+    /// Returns source actions applicable to one range in the captured editor document.
+    pub fn code_actions(&self, query: CodeActionQuery<'_>) -> anyhow::Result<Vec<CodeAction>> {
+        query::code_action::CodeActionResolver::new(self, query).code_actions()
     }
 
     /// Returns a hierarchical outline for one file under the selected crate context.

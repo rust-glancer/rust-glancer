@@ -7,8 +7,8 @@ use std::{
 
 use anyhow::Context as _;
 use rg_body_ir::{
-    BodyIrReadTxn, CurrentBodyBuildCheckpoint, CurrentBodyBuildOutcome, CurrentBodyBuilder,
-    CurrentBodySelection, CurrentBodySet,
+    BodyIrReadTxn, BodyLocalItems, CurrentBodyBuildCheckpoint, CurrentBodyBuildOutcome,
+    CurrentBodyBuilder, CurrentBodySelection, CurrentBodySet,
 };
 use rg_def_map::DefMapReadTxn;
 use rg_def_map::{DefMap, DefMapSource};
@@ -17,9 +17,10 @@ use rg_package_store::PackageStoreError;
 use rg_semantic_ir::SemanticIrReadTxn;
 use rg_semantic_ir::{
     CrateItemQuery, ItemLookupQuery, ItemLookupQueryCache, ItemStore, ItemStoreSource,
+    TypePathContext, TypePathResolution,
 };
 use rg_text::RustEdition;
-use rg_ty::TraitSelectionSession;
+use rg_ty::{ItemPathQuery, TraitSelectionSession, TypeLoweringAnchor, TypePathResolver};
 
 /// Read-only database handle used by all indexed-data views.
 ///
@@ -35,6 +36,18 @@ pub struct IndexedViewDb<'db> {
     trait_selection: Arc<Mutex<HashMap<CrateRef, TraitSelectionSession>>>,
     body_trait_selection: Arc<Mutex<HashMap<BodyRef, TraitSelectionSession>>>,
     item_lookup_cache: ItemLookupQueryCache,
+    /// Small semantic stores created by a view query from the request's source.
+    ///
+    /// They are deliberately absent from `included_stores`: an unsaved declaration may explain
+    /// the source currently under the cursor, but it must not become globally discoverable by
+    /// unrelated lookup in the same request.
+    request_local_items: Vec<Arc<BodyLocalItems>>,
+    /// Saved module in whose scope each header-only request module was written.
+    ///
+    /// The temporary DefMap gives an edited impl, its generics, and its members semantic
+    /// identities. Its synthetic module is only storage, however: paths such as `Service<Local>`
+    /// must still start lookup in the real module containing the current syntax.
+    request_local_module_fallbacks: HashMap<ModuleRef, ModuleRef>,
 }
 
 impl<'db> IndexedViewDb<'db> {
@@ -50,6 +63,8 @@ impl<'db> IndexedViewDb<'db> {
             trait_selection: Arc::new(Mutex::new(HashMap::new())),
             body_trait_selection: Arc::new(Mutex::new(HashMap::new())),
             item_lookup_cache: ItemLookupQueryCache::new(),
+            request_local_items: Vec::new(),
+            request_local_module_fallbacks: HashMap::new(),
         }
     }
 
@@ -93,15 +108,151 @@ impl<'db> IndexedViewDb<'db> {
         self.body_ir.first_synthetic_body_ref(crate_ref)
     }
 
+    /// Allocate an identity that cannot overlap saved or rebuilt bodies in this request.
+    pub(crate) fn next_synthetic_body_ref(
+        &self,
+        crate_ref: CrateRef,
+    ) -> Result<rg_ir_model::BodyRef, PackageStoreError> {
+        let mut next = self.body_ir.next_synthetic_body_ref(crate_ref)?;
+        for items in &self.request_local_items {
+            let DefMapRef::Body(body_ref) = items.def_map().own_ref() else {
+                continue;
+            };
+            if body_ref.crate_ref == crate_ref {
+                next.body.0 = next.body.0.max(body_ref.body.0.saturating_add(1));
+            }
+        }
+        Ok(next)
+    }
+
     /// Add request-local body replacements without changing the saved transactions.
     pub fn with_current_body_set(mut self, current: CurrentBodySet) -> Self {
         self.body_ir = self.body_ir.with_current_body_set(current);
         self
     }
 
+    /// Layer one source-derived item context over this cloned request view.
+    ///
+    /// The overlay is useful when a query needs semantic lowering for one declaration that has no
+    /// saved identity yet. It remains visible only through the returned view and is dropped with
+    /// that view.
+    pub(crate) fn with_request_local_items(
+        mut self,
+        items: BodyLocalItems,
+        fallback_module: ModuleRef,
+    ) -> Self {
+        self.request_local_module_fallbacks.extend(
+            items
+                .def_map()
+                .module_refs()
+                .map(|module| (module, fallback_module)),
+        );
+        self.request_local_items.push(Arc::new(items));
+        self
+    }
+
+    /// Return request-local declaration stores that may describe this source file.
+    ///
+    /// Rebuilt roots keep their declarations in Body IR. Header-only views use the explicit
+    /// overlay above. Neither collection participates in crate-wide discovery, so callers must
+    /// opt into this iterator when interpreting the current declaration under the cursor.
+    ///
+    /// ```text
+    /// fn load<Current>(_: Cur$0) {} -> item origin stored beside the rebuilt body
+    /// impl Service for Wor$0 {}      -> temporary item origin with no body
+    /// ```
+    pub(crate) fn current_signature_origins(
+        &self,
+        crate_ref: CrateRef,
+        file_id: rg_parse::FileId,
+    ) -> Result<Vec<DefMapRef>, PackageStoreError> {
+        let mut origins = Vec::new();
+        for body_ref in self.body_ir.current_body_refs(crate_ref, file_id) {
+            if self.body_ir.body_item_store(body_ref)?.is_some() {
+                origins.push(DefMapRef::Body(body_ref));
+            }
+        }
+        for origin in self
+            .request_local_items
+            .iter()
+            .map(|items| items.def_map().own_ref())
+            .filter(|origin| origin.origin_crate() == crate_ref)
+        {
+            if !origins.contains(&origin) {
+                origins.push(origin);
+            }
+        }
+        Ok(origins)
+    }
+
+    /// Replace a temporary declaration module with the saved module that supplies its names.
+    ///
+    /// A rebuilt body already records this fallback on `BodyData`. A header-only overlay has no
+    /// body, so its mapping is retained explicitly by this request database.
+    ///
+    /// For `impl<Local> Service for model::Worker<Local>`, this keeps the temporary impl identity
+    /// but starts lookup for `Service` and `model` in the saved containing module.
+    pub(crate) fn current_signature_context(
+        &self,
+        mut context: TypePathContext,
+    ) -> Result<TypePathContext, PackageStoreError> {
+        if let Some(fallback) = self.request_local_module_fallbacks.get(&context.module) {
+            context.module = *fallback;
+            return Ok(context);
+        }
+        let DefMapRef::Body(body_ref) = context.module.origin else {
+            return Ok(context);
+        };
+        let Some(body) = self.body_ir.body(body_ref)? else {
+            return Ok(context);
+        };
+        if context.module == body.owner_module() {
+            context.module = body.fallback_module();
+        }
+        Ok(context)
+    }
+
+    fn request_local_items(&self, origin: DefMapRef) -> Option<&BodyLocalItems> {
+        self.request_local_items
+            .iter()
+            .rev()
+            .find(|items| items.def_map().own_ref() == origin)
+            .map(Arc::as_ref)
+    }
+
+    pub(crate) fn item_store_for_origin(
+        &self,
+        origin: DefMapRef,
+    ) -> Result<Option<&ItemStore>, PackageStoreError> {
+        ItemStoreSource::item_store_for_origin(&self, origin)
+    }
+
+    pub(crate) fn def_map_for_origin(
+        &self,
+        origin: DefMapRef,
+    ) -> Result<Option<&DefMap>, PackageStoreError> {
+        if let Some(items) = self.request_local_items(origin) {
+            return Ok(Some(items.def_map()));
+        }
+        match origin {
+            DefMapRef::Crate(crate_ref) => self.def_map.def_map(crate_ref),
+            DefMapRef::Body(body_ref) => self.body_ir.body_def_map(body_ref),
+        }
+    }
+
     /// Return whether a body identity belongs to request-local current Body IR.
     pub fn is_current_body(&self, body_ref: BodyRef) -> bool {
         self.body_ir.is_current_body(body_ref)
+    }
+
+    /// Return whether a semantic origin was created from this request's editor source.
+    pub fn is_current_origin(&self, origin: DefMapRef) -> bool {
+        match origin {
+            DefMapRef::Crate(_) => false,
+            DefMapRef::Body(body_ref) => {
+                self.body_ir.is_current_body(body_ref) || self.request_local_items(origin).is_some()
+            }
+        }
     }
 
     /// Assemble the declarations visible from one crate without copying dependency indexes.
@@ -160,6 +311,27 @@ impl<'db> IndexedViewDb<'db> {
     }
 }
 
+/// Resolve request-local signature paths from their real containing module.
+///
+/// Generic and impl identities remain attached to the temporary declaration. Only the module
+/// lookup starting point is replaced; after that, the ordinary indexed path query owns all name
+/// resolution rules.
+impl TypePathResolver for IndexedViewDb<'_> {
+    type Error = PackageStoreError;
+
+    fn resolve_type_path(
+        &self,
+        anchor: TypeLoweringAnchor,
+        path: &rg_ir_model::Path,
+    ) -> Result<TypePathResolution, Self::Error> {
+        let TypeLoweringAnchor::Context(context) = anchor else {
+            return Ok(TypePathResolution::Unknown);
+        };
+        let context = self.current_signature_context(context)?;
+        ItemPathQuery::new(self, self).resolve_type_path(context, path)
+    }
+}
+
 impl<'a, 'db> ItemStoreSource<'a> for &'a IndexedViewDb<'db> {
     type Error = PackageStoreError;
 
@@ -167,6 +339,9 @@ impl<'a, 'db> ItemStoreSource<'a> for &'a IndexedViewDb<'db> {
         &self,
         origin: DefMapRef,
     ) -> Result<Option<&'a ItemStore>, PackageStoreError> {
+        if let Some(items) = self.request_local_items(origin) {
+            return Ok(Some(items.item_store()));
+        }
         match origin {
             DefMapRef::Crate(crate_ref) => self.semantic_ir.items(crate_ref),
             DefMapRef::Body(body_ref) => self.body_ir.body_item_store(body_ref),
@@ -182,6 +357,9 @@ impl DefMapSource for &IndexedViewDb<'_> {
     type Error = PackageStoreError;
 
     fn def_map_for_origin(&self, origin: DefMapRef) -> Result<Option<&DefMap>, PackageStoreError> {
+        if let Some(items) = self.request_local_items(origin) {
+            return Ok(Some(items.def_map()));
+        }
         match origin {
             DefMapRef::Crate(crate_ref) => self.def_map.def_map(crate_ref),
             DefMapRef::Body(body_ref) => self.body_ir.body_def_map(body_ref),

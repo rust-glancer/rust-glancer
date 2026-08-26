@@ -5,19 +5,21 @@
 //! candidates, and preserves their matching evidence in lookup order.
 
 use rg_def_map::DefMapSource;
+use rg_ir_model::DefMapRef;
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::ItemStoreSource;
 use rg_std::UniqueVec;
-use rg_text::Name;
 use rg_ty::{ReceiverFunctionCandidate, ReceiverImplMatches, Ty, inference::InferenceTable};
 
 use crate::resolution::BodyResolutionContext;
+
+use super::body_items::BodyLocalInherentItemNames;
 
 /// Receiver matches visible while resolving the current body.
 pub(crate) struct BodyReceiverImplMatches {
     receiver_ty: Ty,
     matches: ReceiverImplMatches,
-    local_inherent_function_names: UniqueVec<Name>,
+    local_inherent_item_names: BodyLocalInherentItemNames,
 }
 
 impl BodyReceiverImplMatches {
@@ -33,20 +35,33 @@ impl BodyReceiverImplMatches {
     pub(crate) fn saved_inherent_function_is_shadowed(
         &self,
         candidate: &ReceiverFunctionCandidate,
-        name: &Name,
+        name: &rg_text::Name,
     ) -> bool {
         candidate.inherent_match().is_some()
-            && self.saved_function_name_is_shadowed(candidate.function().origin, name)
+            && self.saved_function_name_is_shadowed(candidate.function().origin, name.as_str())
     }
 
     /// Completion expands functions from impl items before constructing function candidates.
     pub(crate) fn saved_function_name_is_shadowed(
         &self,
-        function_origin: rg_ir_model::DefMapRef,
-        name: &Name,
+        function_origin: DefMapRef,
+        name: &str,
     ) -> bool {
         function_origin.as_crate_ref().is_some()
-            && self.local_inherent_function_names.contains(name)
+            && self.local_inherent_item_names.contains_function(name)
+    }
+
+    pub(crate) fn saved_const_name_is_shadowed(&self, const_origin: DefMapRef, name: &str) -> bool {
+        const_origin.as_crate_ref().is_some() && self.local_inherent_item_names.contains_const(name)
+    }
+
+    pub(crate) fn saved_type_alias_name_is_shadowed(
+        &self,
+        alias_origin: DefMapRef,
+        name: &str,
+    ) -> bool {
+        alias_origin.as_crate_ref().is_some()
+            && self.local_inherent_item_names.contains_type_alias(name)
     }
 }
 
@@ -84,9 +99,12 @@ where
         let body_items = self.context.body_local_items();
         let mut inherent_impls = UniqueVec::new();
         let mut trait_impls = UniqueVec::new();
+        let mut local_inherent_item_names = BodyLocalInherentItemNames::default();
         for receiver in receiver_ty.as_adts() {
             inherent_impls.extend(body_items.inherent_impls_for_type(receiver.def)?);
             trait_impls.extend(body_items.trait_impls_for_type(receiver.def)?);
+            local_inherent_item_names
+                .extend(body_items.inherent_item_names_for_type(receiver.def)?);
         }
         trait_impls.extend(body_items.trait_impls_without_type_key()?);
 
@@ -98,27 +116,14 @@ where
             table,
         )?;
 
-        // Local inherent functions replace saved inherent functions with the same name. Record the
-        // policy beside candidate assembly so methods, associated calls, and completion cannot
-        // accidentally implement different overlay rules.
-        let item_query = self.context.item_query();
-        let mut local_inherent_function_names = UniqueVec::new();
-        for impl_match in matches.inherent() {
-            let Some(impl_data) = item_query.impl_data(impl_match.impl_ref())? else {
-                continue;
-            };
-            for function in impl_data.functions() {
-                if let Some(function_data) = item_query.function_data(function)? {
-                    local_inherent_function_names.push(function_data.name.clone());
-                }
-            }
-        }
-
+        // Current impl items replace saved declarations of the same kind and name. The names come
+        // from every current impl with the receiver's nominal key, not only impls that match the
+        // completed receiver today: an edited header must still hide its stale saved declaration.
         matches.extend(matcher.matches_for_receiver(&receiver_ty, table)?);
         Ok(BodyReceiverImplMatches {
             receiver_ty,
             matches,
-            local_inherent_function_names,
+            local_inherent_item_names,
         })
     }
 }

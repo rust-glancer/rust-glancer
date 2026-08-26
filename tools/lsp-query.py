@@ -20,6 +20,7 @@ MAX_TIMEOUT_MS = 300_000
 DEFAULT_TIMEOUT_MS = 180_000
 MAX_HINTS = 200
 MAX_COMPLETIONS = 200
+MAX_CODE_ACTIONS = 100
 STDERR_TAIL_BYTES = 64 * 1024
 MAX_SERVER_LOG_BYTES = 64 * 1024 * 1024
 MAX_PROTOCOL_MESSAGE_BYTES = 64 * 1024 * 1024
@@ -47,6 +48,7 @@ class Options:
     package_residency: str = "all-resident"
     max_hints: int = MAX_HINTS
     max_completions: int = MAX_COMPLETIONS
+    max_code_actions: int = MAX_CODE_ACTIONS
     label: Optional[str] = None
     file: Optional[str] = None
     binary: Optional[str] = None
@@ -75,6 +77,8 @@ Usage:
   just agent-debug lsp-query --file <path> hover --line <1-based> --col <1-based> [--label <name>]
   just agent-debug lsp-query --file <path> completion --marker <text> [--delta <n>] [--label <name>]
   just agent-debug lsp-query --file <path> completion --line <1-based> --col <1-based> [--label <name>]
+  just agent-debug lsp-query --file <path> code-action --marker <text> [--delta <n>] [--label <name>]
+  just agent-debug lsp-query --file <path> code-action --line <1-based> --col <1-based> [--label <name>]
   just agent-debug lsp-query --file <path> inlay --start-marker <text> --end-marker <text> [--label <name>]
   just agent-debug lsp-query --query-file <path> [--json]
   just agent-debug lsp-query --query-json <json> [--json]
@@ -90,6 +94,8 @@ Query file shape:
       {"kind": "hover", "label": "local", "marker": "let value", "delta": 5},
       {"kind": "completion", "label": "member", "marker": "value.", "delta": 6,
        "context": {"triggerKind": 2, "triggerCharacter": "."}},
+      {"kind": "code-action", "label": "fix", "marker": "MissingType",
+       "context": {"triggerKind": 1, "only": ["quickfix"]}},
       {"kind": "inlay", "label": "block", "range": {"startMarker": "let value", "endMarker": "next_line"}}
     ]
   }
@@ -136,6 +142,7 @@ def parse_args(argv: Sequence[str]) -> Options:
         "--timeout-ms": "timeout_ms",
         "--max-hints": "max_hints",
         "--max-completions": "max_completions",
+        "--max-code-actions": "max_code_actions",
         "--delta": "delta",
         "--occurrence": "occurrence",
         "--line": "line",
@@ -180,6 +187,8 @@ def parse_args(argv: Sequence[str]) -> Options:
         fail("--max-hints must be between 1 and 5000")
     if options.max_completions <= 0 or options.max_completions > 5000:
         fail("--max-completions must be between 1 and 5000")
+    if options.max_code_actions <= 0 or options.max_code_actions > 5000:
+        fail("--max-code-actions must be between 1 and 5000")
     if options.profile not in {"release", "debug"}:
         fail("--profile must be either release or debug")
     if options.query_file is not None and options.query_json is not None:
@@ -335,16 +344,16 @@ def query_range(query: Dict[str, Any], text: str) -> Dict[str, Dict[str, int]]:
 
 def single_query_from_options(options: Options) -> Dict[str, Any]:
     if not options.command:
-        fail("missing query command; expected hover, completion, or inlay")
+        fail("missing query command; expected hover, completion, code-action, or inlay")
     kind = "inlay" if options.command == "inlay-hints" else options.command
-    if kind not in {"hover", "completion", "inlay"}:
+    if kind not in {"hover", "completion", "code-action", "inlay"}:
         fail("unsupported query command: {}".format(options.command))
 
     query: Dict[str, Any] = {
         "kind": kind,
         "label": options.label if options.label is not None else kind,
     }
-    if kind in {"hover", "completion"}:
+    if kind in {"hover", "completion", "code-action"}:
         if options.marker is not None:
             query.update(
                 {"marker": options.marker, "delta": options.delta, "occurrence": options.occurrence}
@@ -426,19 +435,40 @@ def normalize_plan(plan_value: Any, root: Path, options: Options) -> Dict[str, A
     queries = []
     for query_value in query_values:
         query = dict(require_object(query_value, "each query"))
-        if query.get("kind") not in {"hover", "completion", "inlay", "inlay-hints"}:
+        if query.get("kind") == "codeAction":
+            query["kind"] = "code-action"
+        if query.get("kind") not in {
+            "hover",
+            "completion",
+            "code-action",
+            "inlay",
+            "inlay-hints",
+        }:
             fail("unsupported query kind: {}".format(query.get("kind")))
         if query["kind"] == "inlay-hints":
             query["kind"] = "inlay"
         if "context" in query and query["context"] is not None:
-            context = require_object(query["context"], "completion context")
-            if query["kind"] != "completion":
-                fail("query context is only supported for completion")
-            if context.get("triggerKind") not in {1, 2, 3}:
-                fail("completion context triggerKind must be 1, 2, or 3")
-            trigger_character = context.get("triggerCharacter")
-            if trigger_character is not None and not isinstance(trigger_character, str):
-                fail("completion context triggerCharacter must be a string")
+            context = require_object(query["context"], "query context")
+            if query["kind"] == "completion":
+                if context.get("triggerKind") not in {1, 2, 3}:
+                    fail("completion context triggerKind must be 1, 2, or 3")
+                trigger_character = context.get("triggerCharacter")
+                if trigger_character is not None and not isinstance(trigger_character, str):
+                    fail("completion context triggerCharacter must be a string")
+            elif query["kind"] == "code-action":
+                if context.get("triggerKind") not in {None, 1, 2}:
+                    fail("code-action context triggerKind must be 1 or 2")
+                only = context.get("only")
+                if only is not None and (
+                    not isinstance(only, list)
+                    or any(not isinstance(kind, str) for kind in only)
+                ):
+                    fail("code-action context only must be an array of strings")
+                diagnostics = context.get("diagnostics")
+                if diagnostics is not None and not isinstance(diagnostics, list):
+                    fail("code-action context diagnostics must be an array")
+            else:
+                fail("query context is only supported for completion and code-action")
         queries.append(query)
 
     output_format = plan.get("format", "text")
@@ -861,6 +891,48 @@ def normalize_completions(
     }
 
 
+def normalize_code_actions(actions_value: Any, max_actions: int) -> Dict[str, Any]:
+    if actions_value is None:
+        raw_actions = []
+    elif isinstance(actions_value, list):
+        raw_actions = actions_value
+    else:
+        fail("code-action result must be an array or null")
+
+    actions = []
+    for raw_action in raw_actions[:max_actions]:
+        if not isinstance(raw_action, dict):
+            fail("each code action must be an object")
+        document_changes = (raw_action.get("edit") or {}).get("documentChanges") or []
+        edit_count = 0
+        versions = []
+        for document_change in document_changes:
+            if not isinstance(document_change, dict):
+                continue
+            edits = document_change.get("edits")
+            if isinstance(edits, list):
+                edit_count += len(edits)
+            text_document = document_change.get("textDocument")
+            if isinstance(text_document, dict):
+                versions.append(text_document.get("version"))
+        actions.append(
+            {
+                "title": raw_action.get("title"),
+                "kind": raw_action.get("kind"),
+                "preferred": raw_action.get("isPreferred"),
+                "editCount": edit_count,
+                "documentVersions": versions,
+                "disabled": raw_action.get("disabled"),
+            }
+        )
+
+    return {
+        "actions": actions,
+        "totalCount": len(raw_actions),
+        "truncated": len(raw_actions) > max_actions,
+    }
+
+
 def without_none(value: Any) -> Any:
     if isinstance(value, dict):
         return {key: without_none(item) for key, item in value.items() if item is not None}
@@ -887,11 +959,20 @@ async def run(argv: Sequence[str]) -> None:
                 "rootUri": root.as_uri(),
                 "workspaceFolders": [{"uri": root.as_uri(), "name": root.name}],
                 "capabilities": {
+                    "workspace": {"workspaceEdit": {"documentChanges": True}},
                     "textDocument": {
                         "hover": {"contentFormat": ["markdown", "plaintext"]},
                         "completion": {
                             "dynamicRegistration": False,
                             "completionItem": {"snippetSupport": True},
+                        },
+                        "codeAction": {
+                            "codeActionLiteralSupport": {
+                                "codeActionKind": {
+                                    "valueSet": ["quickfix", "refactor.rewrite"]
+                                }
+                            },
+                            "isPreferredSupport": True,
                         },
                         "inlayHint": {"dynamicRegistration": False},
                     }
@@ -965,6 +1046,47 @@ async def run(argv: Sequence[str]) -> None:
                         },
                         "elapsedMs": round(elapsed_ms, 3),
                         **completions,
+                    }
+                )
+            elif query["kind"] == "code-action":
+                if query.get("range") is not None:
+                    query_range_value = query_range(query, plan["text"])
+                else:
+                    position = query_position(query, plan["text"])
+                    query_range_value = {"start": position, "end": position}
+                context = {"diagnostics": [], "triggerKind": 1}
+                context.update(query.get("context") or {})
+                request_started = time.perf_counter_ns()
+                response = await client.request(
+                    "textDocument/codeAction",
+                    {
+                        "textDocument": {"uri": uri},
+                        "range": query_range_value,
+                        "context": context,
+                    },
+                )
+                elapsed_ms = (time.perf_counter_ns() - request_started) / 1_000_000
+                actions = normalize_code_actions(
+                    response.get("result"), options.max_code_actions
+                )
+                results.append(
+                    {
+                        "kind": "code-action",
+                        "label": query.get("label")
+                        if query.get("label") is not None
+                        else "code-action",
+                        "range": {
+                            "start": {
+                                "line": query_range_value["start"]["line"] + 1,
+                                "col": query_range_value["start"]["character"] + 1,
+                            },
+                            "end": {
+                                "line": query_range_value["end"]["line"] + 1,
+                                "col": query_range_value["end"]["character"] + 1,
+                            },
+                        },
+                        "elapsedMs": round(elapsed_ms, 3),
+                        **actions,
                     }
                 )
             elif query["kind"] == "inlay":
@@ -1049,6 +1171,36 @@ async def run(argv: Sequence[str]) -> None:
             for item in result["items"]:
                 detail = " — {}".format(item["detail"]) if item.get("detail") else ""
                 print("  {}{}".format(item["label"], detail))
+            if result["truncated"]:
+                print("  <truncated>")
+        elif result["kind"] == "code-action":
+            print(
+                "\ncode-action{} @ {}:{}..{}:{} ({:.3f} ms, {} actions)".format(
+                    label,
+                    result["range"]["start"]["line"],
+                    result["range"]["start"]["col"],
+                    result["range"]["end"]["line"],
+                    result["range"]["end"]["col"],
+                    result["elapsedMs"],
+                    result["totalCount"],
+                )
+            )
+            for action in result["actions"]:
+                preferred = " preferred" if action.get("preferred") else ""
+                versions = ",".join(
+                    "none" if version is None else str(version)
+                    for version in action["documentVersions"]
+                )
+                version_detail = " versions={}".format(versions) if versions else ""
+                print(
+                    "  {} [{}]{} edits={}{}".format(
+                        action.get("title") or "<untitled>",
+                        action.get("kind") or "<none>",
+                        preferred,
+                        action["editCount"],
+                        version_detail,
+                    )
+                )
             if result["truncated"]:
                 print("  <truncated>")
         else:

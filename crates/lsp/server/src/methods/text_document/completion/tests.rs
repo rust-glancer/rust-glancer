@@ -7,9 +7,10 @@ use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use futures::StreamExt as _;
 use rg_lsp_proto::{
-    CompletionClientCapabilities, DocumentPositionSnapshot, DocumentRangeSnapshot,
-    EditorDocumentSnapshot, EngineConfig, EngineResult, EngineService, EngineServiceClient,
-    GlobalPositionSnapshot, QueryError, QueryScope, QueryValue, SaveProposal, SavedProjectChanges,
+    CodeActionRequestContext, CompletionClientCapabilities, DocumentPositionSnapshot,
+    DocumentRangeSnapshot, EditorDocumentSnapshot, EngineConfig, EngineResult, EngineService,
+    EngineServiceClient, GlobalPositionSnapshot, QueryError, QueryScope, QueryValue, SaveProposal,
+    SavedProjectChanges,
 };
 use rg_std::NormalizedPathBuf;
 use tarpc::{
@@ -732,6 +733,15 @@ impl EngineService for GatedCompletionEngine {
         _: context::Context,
         _: DocumentPositionSnapshot,
     ) -> Result<QueryValue<Option<Hover>>, QueryError> {
+        panic!("test engine only supports completion")
+    }
+
+    async fn code_action(
+        self,
+        _: context::Context,
+        _: DocumentRangeSnapshot,
+        _: CodeActionRequestContext,
+    ) -> Result<QueryValue<Vec<tower_lsp_server::ls_types::CodeAction>>, QueryError> {
         panic!("test engine only supports completion")
     }
 
