@@ -170,7 +170,7 @@ impl<'a, 'db> TypeRenderer<'a, 'db> {
                 Ok(Some(self.syntax.identifier(&source.name).to_string()))
             }
             GenericParamSource::ArgumentImplTrait(_) => {
-                let bounds = SemanticSignatureQuery::new(self.db, self.db)
+                let bounds = SemanticSignatureQuery::with_resolver(self.db, self.db, self.db)
                     .function_type_param_bounds(param)?
                     .iter()
                     .map(|bound| self.render_opaque_bound(bound))
@@ -236,7 +236,7 @@ impl<'a, 'db> TypeRenderer<'a, 'db> {
     }
 
     fn render_opaque(&self, opaque: &OpaqueTy) -> anyhow::Result<Option<String>> {
-        let bounds = SemanticSignatureQuery::new(self.db, self.db)
+        let bounds = SemanticSignatureQuery::with_resolver(self.db, self.db, self.db)
             .opaque_bounds(opaque)?
             .unwrap_or_default()
             .iter()

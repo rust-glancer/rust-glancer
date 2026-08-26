@@ -108,12 +108,12 @@ impl<'a, 'db> NavigationTargetProjection<'a, 'db> {
         })
     }
 
-    /// A declaration is current only when its identity belongs to a rebuilt current body.
+    /// A declaration is current only when its identity belongs to this request's source overlay.
     /// Numeric ranges cannot answer this: saved and current text may put unrelated declarations at
     /// the same offsets.
     fn source_for_declaration(&self, declaration: DeclarationRef) -> NavigationTargetSource {
         match declaration.origin() {
-            DefMapRef::Body(body_ref) if self.0.is_current_body(body_ref) => {
+            origin @ DefMapRef::Body(_) if self.0.is_current_origin(origin) => {
                 NavigationTargetSource::Current
             }
             DefMapRef::Crate(_) | DefMapRef::Body(_) => NavigationTargetSource::Saved,

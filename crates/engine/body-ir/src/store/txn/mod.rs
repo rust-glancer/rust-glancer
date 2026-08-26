@@ -80,6 +80,21 @@ impl<'db> BodyIrReadTxn<'db> {
         self.current.contains_body(body_ref)
     }
 
+    /// Return only body identities rebuilt from the request source for one file.
+    ///
+    /// This avoids loading the saved file shard when a caller needs request-local declaration
+    /// stores rather than the complete body inventory.
+    pub fn current_body_refs(&self, crate_ref: CrateRef, file: FileId) -> Vec<BodyRef> {
+        self.current
+            .bodies()
+            .iter()
+            .filter(|body| {
+                body.body_ref().crate_ref == crate_ref && body.view().source().file_id == file
+            })
+            .map(|body| body.body_ref())
+            .collect()
+    }
+
     /// Allocate the first body id that cannot collide with a saved body in this crate.
     ///
     /// A rebuilt body still needs an id when early-start indexing did not keep any saved bodies.

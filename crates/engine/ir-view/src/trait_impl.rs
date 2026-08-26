@@ -143,7 +143,7 @@ impl<'a, 'db> TraitImplView<'a, 'db> {
         // Lowering the header produces the substitution that turns trait-owned `T` and `Self`
         // references into syntax appropriate for this concrete impl. Compare its trait identity
         // as a second guard before applying that substitution to member signatures.
-        let signatures = SemanticSignatureQuery::new(self.db, self.db);
+        let signatures = SemanticSignatureQuery::with_resolver(self.db, self.db, self.db);
         let Some(header) = signatures
             .impl_header(impl_ref)
             .context("lower trait impl completion header")?
@@ -185,7 +185,7 @@ impl<'a, 'db> TraitImplView<'a, 'db> {
         else {
             return Ok(Vec::new());
         };
-        let signatures = SemanticSignatureQuery::new(self.db, self.db);
+        let signatures = SemanticSignatureQuery::with_resolver(self.db, self.db, self.db);
         let generics = GenericsQuery::new(self.db)
             .generics(GenericDefRef::Trait(trait_ref))
             .context("read implemented trait generics")?;

@@ -8,6 +8,8 @@
 //! namespace is specifically for module-level declarations that need a request-local semantic
 //! identity before an indexed view can answer questions about them.
 
+mod impl_;
 mod trait_impl;
 
+pub use impl_::CurrentImplView;
 pub use trait_impl::CurrentTraitImplView;

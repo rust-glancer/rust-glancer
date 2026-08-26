@@ -103,11 +103,36 @@ impl<'a> BodyLowering<'a> {
         )
     }
 
-    pub(super) fn lower_initializer(mut self, expr: ast::Expr) -> LoweredBodyData {
+    pub(super) fn lower_const(
+        mut self,
+        konst: ast::Const,
+        expr: ast::Expr,
+        request_root: bool,
+    ) -> LoweredBodyData {
+        let root_scope = self.builder.alloc_scope(None);
+        if request_root {
+            self.lower_request_root_const(&konst, root_scope);
+        }
+        self.lower_initializer(expr, root_scope)
+    }
+
+    pub(super) fn lower_static(
+        mut self,
+        static_: ast::Static,
+        expr: ast::Expr,
+        request_root: bool,
+    ) -> LoweredBodyData {
+        let root_scope = self.builder.alloc_scope(None);
+        if request_root {
+            self.lower_request_root_static(&static_, root_scope);
+        }
+        self.lower_initializer(expr, root_scope)
+    }
+
+    fn lower_initializer(mut self, expr: ast::Expr, root_scope: ScopeId) -> LoweredBodyData {
         // Item initializers are expression bodies without parameters. They still need a root scope
         // so ordinary body path resolution, type paths, and source scans can use the same pipeline
         // as function bodies.
-        let root_scope = self.builder.alloc_scope(None);
         let root_expr = self.lower_expr(expr, root_scope);
 
         self.builder.finish(

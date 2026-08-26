@@ -323,8 +323,8 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
     /// Find the semantic owner assigned to a new or changed request-local root.
     ///
     /// Its provisional owner uses this body's origin so it can be recognized before collection.
-    /// Nested functions use their parent body's origin instead and therefore do not enter this
-    /// path. Matching by the declaration span then attaches the exact function lowered from the
+    /// Nested declarations use their parent body's origin instead and therefore do not enter this
+    /// path. Matching by declaration family and span then attaches the exact item lowered from the
     /// current header.
     fn request_root_owner_context(
         body_ref: BodyRef,
@@ -336,24 +336,82 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
         }
 
         let source = body.source();
-        let mut matches =
-            items
-                .item_store()
-                .functions_with_refs()
-                .filter_map(|(function, data)| {
-                    (data.source.file_id == source.file_id && data.span == source.span)
-                        .then_some((function, data.owner))
-                });
-        let Some((function, item_owner)) = matches.next() else {
-            anyhow::bail!("request-local body root has no function declaration in its item store");
+        let (owner, owner_module) = match body.owner() {
+            BodyOwner::Function(_) => {
+                let mut matches =
+                    items
+                        .item_store()
+                        .functions_with_refs()
+                        .filter_map(|(function, data)| {
+                            (data.source.file_id == source.file_id && data.span == source.span)
+                                .then_some((BodyOwner::Function(function), data.owner))
+                        });
+                let Some((owner, item_owner)) = matches.next() else {
+                    anyhow::bail!(
+                        "request-local body root has no function declaration in its item store"
+                    );
+                };
+                anyhow::ensure!(
+                    matches.next().is_none(),
+                    "request-local body root has more than one function declaration in its item store",
+                );
+                let owner_module =
+                    Self::owner_module_for_body_item_owner(items.item_store(), item_owner)
+                        .context("request-local function root has no module in its item store")?;
+                (owner, owner_module)
+            }
+            BodyOwner::Const(_) => {
+                let origin = DefMapRef::Body(body_ref);
+                let mut matches =
+                    items
+                        .item_store()
+                        .consts()
+                        .iter_with_ids()
+                        .filter_map(|(id, data)| {
+                            (data.source.file_id == source.file_id && data.span == source.span)
+                                .then_some((BodyOwner::Const(ConstRef { origin, id }), data.owner))
+                        });
+                let Some((owner, item_owner)) = matches.next() else {
+                    anyhow::bail!(
+                        "request-local body root has no const declaration in its item store"
+                    );
+                };
+                anyhow::ensure!(
+                    matches.next().is_none(),
+                    "request-local body root has more than one const declaration in its item store",
+                );
+                let owner_module =
+                    Self::owner_module_for_body_item_owner(items.item_store(), item_owner)
+                        .context("request-local const root has no module in its item store")?;
+                (owner, owner_module)
+            }
+            BodyOwner::Static(_) => {
+                let origin = DefMapRef::Body(body_ref);
+                let mut matches =
+                    items
+                        .item_store()
+                        .statics()
+                        .iter_with_ids()
+                        .filter_map(|(id, data)| {
+                            (data.source.file_id == source.file_id && data.span == source.span)
+                                .then_some((
+                                    BodyOwner::Static(StaticRef { origin, id }),
+                                    data.owner,
+                                ))
+                        });
+                let Some((owner, owner_module)) = matches.next() else {
+                    anyhow::bail!(
+                        "request-local body root has no static declaration in its item store"
+                    );
+                };
+                anyhow::ensure!(
+                    matches.next().is_none(),
+                    "request-local body root has more than one static declaration in its item store",
+                );
+                (owner, owner_module)
+            }
         };
-        anyhow::ensure!(
-            matches.next().is_none(),
-            "request-local body root has more than one function declaration in its item store",
-        );
-        let owner_module = Self::owner_module_for_body_item_owner(items.item_store(), item_owner)
-            .context("request-local body root has no module in its item store")?;
-        Ok(Some((BodyOwner::Function(function), owner_module)))
+        Ok(Some((owner, owner_module)))
     }
 
     // Collects the local items within a single already-lowered body.
@@ -423,16 +481,20 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
         }
 
         for (const_id, const_data) in item_store.consts().iter_with_ids() {
+            let const_ref = ConstRef {
+                origin,
+                id: const_id,
+            };
+            if body_owner == BodyOwner::Const(const_ref) {
+                continue;
+            }
             let Some(owner_module) =
                 Self::owner_module_for_body_item_owner(item_store, const_data.owner)
             else {
                 continue;
             };
             tasks.push(BodyLoweringTask {
-                owner: BodyOwner::Const(ConstRef {
-                    origin,
-                    id: const_id,
-                }),
+                owner: BodyOwner::Const(const_ref),
                 request_root: false,
                 owner_module,
                 fallback_module,
@@ -444,6 +506,13 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
         // Foreign statics have no initializer to lower. Unlike functions, their declaration data
         // has no `has_body` bit, so the retained extern-block owner carries that distinction.
         for (static_id, static_data) in item_store.statics().iter_with_ids() {
+            let static_ref = StaticRef {
+                origin,
+                id: static_id,
+            };
+            if body_owner == BodyOwner::Static(static_ref) {
+                continue;
+            }
             if def_map
                 .foreign_block(static_data.local_def.local_def)
                 .is_some()
@@ -451,10 +520,7 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
                 continue;
             }
             tasks.push(BodyLoweringTask {
-                owner: BodyOwner::Static(StaticRef {
-                    origin,
-                    id: static_id,
-                }),
+                owner: BodyOwner::Static(static_ref),
                 request_root: false,
                 owner_module: static_data.owner,
                 fallback_module,

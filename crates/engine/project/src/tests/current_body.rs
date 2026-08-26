@@ -407,6 +407,131 @@ pub fn inspect() {
 }
 
 #[test]
+fn current_body_builds_const_static_and_trait_owned_roots() {
+    let fixture = CurrentBodyFixture::new(SAVED_FIXTURE);
+    let current = MarkedText::parse(
+        r#"
+const CURRENT_CONST: usize = {
+    let value = Saved { field: 0 };
+    value.saved_$const_member$;
+    0
+};
+
+static CURRENT_STATIC: usize = {
+    let value = Saved { field: 0 };
+    value.saved_$static_member$;
+    0
+};
+
+trait CurrentTrait<CurrentType> {
+    fn current_default(value: CurrentType) {
+        let _: CurrentT$trait_function_generic$ = value;
+    }
+
+    const CURRENT_ASSOCIATED: usize = {
+        let _: CurrentT$trait_const_generic$ = todo!();
+        0
+    };
+}
+"#,
+    );
+
+    for (marker, expected) in [
+        ("const_member", "saved_method"),
+        ("static_member", "saved_method"),
+        ("trait_function_generic", "CurrentType"),
+        ("trait_const_generic", "CurrentType"),
+    ] {
+        let (labels, summary) = fixture.completion_labels(&current, marker);
+        assert!(
+            summary.is_complete(),
+            "{marker} should have a request-local semantic root: {summary:?}",
+        );
+        assert!(
+            labels.iter().any(|label| label == expected),
+            "completion at {marker} should contain {expected}, got {labels:?}",
+        );
+    }
+}
+
+#[test]
+fn current_declaration_headers_use_request_local_semantics() {
+    let fixture = CurrentBodyFixture::new(SAVED_FIXTURE);
+
+    for (current, marker, expected) in [
+        (
+            MarkedText::parse("pub fn current<CurrentGeneric>(_: CurrentGen$cursor$) {}"),
+            "cursor",
+            "CurrentGeneric",
+        ),
+        (
+            MarkedText::parse("const CURRENT: Sav$cursor$ = Saved { field: 0 };"),
+            "cursor",
+            "Saved",
+        ),
+        (
+            MarkedText::parse("static CURRENT: Sav$cursor$ = Saved { field: 0 };"),
+            "cursor",
+            "Saved",
+        ),
+        (
+            MarkedText::parse("impl<CurrentGeneric> Factory for CurrentGen$cursor$ {}"),
+            "cursor",
+            "CurrentGeneric",
+        ),
+        (
+            MarkedText::parse("impl Factory for Sav$cursor$ {}"),
+            "cursor",
+            "Saved",
+        ),
+    ] {
+        let (labels, _) = fixture.completion_labels(&current, marker);
+        assert!(
+            labels.iter().any(|label| label == expected),
+            "current header completion should contain {expected}, got {labels:?}",
+        );
+    }
+
+    let current = MarkedText::parse("impl Factory for Sa$cursor$ved {}");
+    let offset = current
+        .offset("cursor")
+        .try_into()
+        .expect("header marker should fit into u32");
+    let snapshot = fixture.fixture.project().snapshot();
+    let targets = fixture.targets();
+    let (analysis, _) = snapshot
+        .analysis_for_current_bodies_at_offset(&targets, current.text(), offset, |_| Ok(()))
+        .expect("current impl header should build");
+    for (crate_ref, file) in targets {
+        let hover = analysis
+            .hover(crate_ref, file, offset)
+            .expect("current impl header hover should resolve")
+            .expect("Saved should have hover information");
+        assert!(
+            hover.blocks.iter().any(|block| block
+                .path
+                .as_deref()
+                .is_some_and(|path| path.ends_with("Saved"))),
+            "hover should resolve the current path to Saved: {hover:?}",
+        );
+        assert!(
+            analysis
+                .type_at(crate_ref, file, offset)
+                .expect("current impl header type should resolve")
+                .is_some(),
+            "type lookup should resolve the current path to Saved",
+        );
+        let targets = analysis
+            .goto_definition(crate_ref, file, offset)
+            .expect("current impl header navigation should resolve");
+        assert!(
+            targets.iter().any(|target| target.name == "Saved"),
+            "navigation should resolve the current path to Saved: {targets:?}",
+        );
+    }
+}
+
+#[test]
 fn request_local_method_root_uses_current_signature_without_publishing_current_items() {
     let fixture = CurrentBodyFixture::new(
         r#"

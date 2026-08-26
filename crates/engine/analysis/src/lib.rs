@@ -249,14 +249,21 @@ impl<'a> Analysis<'a> {
         file_id: FileId,
         offset: u32,
     ) -> anyhow::Result<Option<SourceSymbol>> {
-        // Saved and exact source can share one offset. Edited source is read in three explicit
-        // layers: current Body IR, module-level current syntax, then an unchanged header paired to
-        // saved semantics. None of those paths interpret the current offset in a saved scanner.
+        // Saved and exact source can share one offset. Edited source is read in four explicit
+        // layers: current Body IR, its request-local declaration header, module-level current
+        // syntax, then an unchanged header paired to saved semantics. None of those paths
+        // interpret the current offset in a saved scanner.
         match self.current_source_relationship(crate_ref.package, file_id) {
             Some(SavedSourceRelationship::Different) => {
                 let current_body_symbols = SourceSymbolIndex::new(self.view_db())
                     .body_symbols_at(crate_ref, file_id, offset)?;
                 if let Some(symbol) = Self::narrowest_source_symbol(current_body_symbols) {
+                    return Ok(Some(symbol));
+                }
+
+                let current_signature_symbols = SourceSymbolIndex::new(self.view_db())
+                    .current_signature_symbols_at(crate_ref, file_id, offset)?;
+                if let Some(symbol) = Self::narrowest_source_symbol(current_signature_symbols) {
                     return Ok(Some(symbol));
                 }
 

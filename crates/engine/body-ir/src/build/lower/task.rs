@@ -28,8 +28,8 @@ pub(crate) struct BodyLoweringTask {
     pub(crate) owner: BodyOwner,
     /// Include the selected declaration in this body's temporary item store.
     ///
-    /// Saved roots already have an item-store entry. A new or changed function does not, so its
-    /// current signature and enclosing impl are lowered beside its body for this request only.
+    /// Saved roots already have an item-store entry. A new or changed declaration does not, so its
+    /// current signature and enclosing impl or trait are lowered beside its body for this request.
     pub(crate) request_root: bool,
     /// Module used for body-local lookup inside this body.
     ///
@@ -252,7 +252,7 @@ impl<'a> BodyTaskLowering<'a> {
                         self.interner,
                         &mut *macro_expansion,
                     )
-                    .lower_initializer(body_ast);
+                    .lower_const(ast_const, body_ast, task.request_root);
                     lowered.push(LoweredBodyTask {
                         body: self.crate_bodies.alloc_body(body),
                         task: *task,
@@ -278,7 +278,7 @@ impl<'a> BodyTaskLowering<'a> {
                         self.interner,
                         &mut *macro_expansion,
                     )
-                    .lower_initializer(body_ast);
+                    .lower_static(ast_static, body_ast, task.request_root);
                     lowered.push(LoweredBodyTask {
                         body: self.crate_bodies.alloc_body(body),
                         task: *task,

@@ -613,6 +613,47 @@ impl<'a, 'db> SourceCompletionView<'a, 'db> {
         )
     }
 
+    /// Find a possible associated-type binding in the selected current declaration header.
+    ///
+    /// In `fn load(_: Iterator<It$0>) {}`, `It` can still be an ordinary type argument. This
+    /// returns the additional associated-type interpretation with the declaration's request-local
+    /// scope; the normal type-path site remains available beside it.
+    pub fn current_signature_implicit_associated_type_binding_site_at(
+        &self,
+        crate_ref: CrateRef,
+        file_id: FileId,
+        offset: u32,
+    ) -> anyhow::Result<Option<IndexedAssociatedTypeBindingSite>> {
+        for origin in self.db.current_signature_origins(crate_ref, file_id)? {
+            let Some(site) =
+                SignatureSourceScanner::implicit_associated_type_binding_site_at_origin(
+                    self.db, origin, file_id, offset,
+                )
+                .context("scan current signature associated type binding site")?
+            else {
+                continue;
+            };
+            let SignatureCompletionSite::AssociatedTypeBinding {
+                scope,
+                trait_ref,
+                member_prefix_span,
+                existing_bindings,
+            } = site
+            else {
+                continue;
+            };
+            return Ok(Some(IndexedAssociatedTypeBindingSite {
+                scope: IndexedAssociatedTypeBindingScope::Signature {
+                    scope: Self::signature_scope(scope),
+                },
+                trait_ref,
+                member_prefix_span,
+                existing_bindings,
+            }));
+        }
+        Ok(None)
+    }
+
     /// Find a possible associated-type binding in a saved declaration signature.
     ///
     /// `offset` is a saved-source coordinate. Callers starting from editor text must first prove
@@ -624,10 +665,7 @@ impl<'a, 'db> SourceCompletionView<'a, 'db> {
         offset: u32,
     ) -> anyhow::Result<Option<IndexedAssociatedTypeBindingSite>> {
         let Some(site) = SignatureSourceScanner::implicit_associated_type_binding_site_at(
-            &self.db.semantic_ir,
-            crate_ref,
-            file_id,
-            offset,
+            self.db, crate_ref, file_id, offset,
         )
         .context("scan implicit signature associated type binding site")?
         else {

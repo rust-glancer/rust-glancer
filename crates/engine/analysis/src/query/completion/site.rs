@@ -835,13 +835,13 @@ impl RecordFieldCompletionSite {
     }
 }
 
-/// The only completion-side entry point from current syntax into saved source scanners.
+/// Chooses the semantic owner to which recovered current completion syntax is attached.
 ///
-/// Body scanners already read request-local Body IR and do not need translation. Saved signature
-/// scanners require an exact source match or a uniquely associated declaration header. Module
-/// lookup can additionally use the inline-module path recovered from current syntax. Keeping
-/// those rules here prevents individual completion families from treating a current offset as a
-/// saved coordinate.
+/// Body and request-local signature scanners already use editor coordinates. A saved signature
+/// requires an exact source match or a uniquely associated declaration header. Module lookup can
+/// additionally use the inline-module path recovered from current syntax. Keeping those rules
+/// here prevents individual completion families from treating a current offset as a saved
+/// coordinate.
 pub(super) struct CompletionSourceAttachment<'a, 'db> {
     analysis: &'a Analysis<'db>,
     crate_ref: CrateRef,
@@ -885,7 +885,12 @@ impl<'a, 'db> CompletionSourceAttachment<'a, 'db> {
         source.module_syntax_source_site(self.crate_ref, self.file_id, inline_module_path)
     }
 
-    /// Attach current prefix syntax to a saved declaration-signature scope.
+    /// Attach current prefix syntax to a current declaration, then an associated saved signature.
+    ///
+    /// `fn load<Current>(_: Cur$0) {}` first tries the request-local declaration so `Current`
+    /// remains visible. If there is no current semantic store but the declaration maps uniquely to
+    /// a saved header, the prefix and replacement range still come from the editor while its scope
+    /// comes from the mapped saved declaration.
     pub(super) fn signature_name_site_at(
         &self,
         current_offset: u32,
@@ -893,10 +898,24 @@ impl<'a, 'db> CompletionSourceAttachment<'a, 'db> {
         current_prefix_span: Span,
         current_prefix: String,
     ) -> anyhow::Result<Option<IndexedUnqualifiedNameSite>> {
+        let source = SourceCompletionView::new(self.analysis.view_db());
+        if let Some(site) = source
+            .current_signature_syntax_name_site_at(
+                self.crate_ref,
+                self.file_id,
+                current_offset,
+                context,
+                current_prefix_span,
+                current_prefix.clone(),
+            )
+            .context("attach current name syntax to current signature")?
+        {
+            return Ok(Some(site));
+        }
         let Some(saved_offset) = self.saved_header_offset(current_offset)? else {
             return Ok(None);
         };
-        SourceCompletionView::new(self.analysis.view_db())
+        source
             .signature_syntax_name_site_at(
                 self.crate_ref,
                 self.file_id,
@@ -910,9 +929,9 @@ impl<'a, 'db> CompletionSourceAttachment<'a, 'db> {
 
     /// Add associated-type names beside ordinary type completions.
     ///
-    /// Body IR was built from the captured document, so its scanner accepts the current offset.
-    /// A signature scanner reads saved declarations and is tried only after this method maps the
-    /// cursor into one uniquely associated saved header.
+    /// Body IR and a request-local declaration accept the current offset directly. A saved
+    /// signature is tried only after this method maps the cursor into one uniquely associated
+    /// saved header.
     pub(super) fn implicit_associated_type_binding_site_at(
         &self,
         current_offset: u32,
@@ -925,6 +944,17 @@ impl<'a, 'db> CompletionSourceAttachment<'a, 'db> {
                 current_offset,
             )
             .context("scan current body for implicit associated type binding")?
+        {
+            return Ok(Some(site));
+        }
+
+        if let Some(site) = source
+            .current_signature_implicit_associated_type_binding_site_at(
+                self.crate_ref,
+                self.file_id,
+                current_offset,
+            )
+            .context("scan current signature for implicit associated type binding")?
         {
             return Ok(Some(site));
         }
@@ -1201,6 +1231,14 @@ impl<'a, 'db> CompletionSiteDetector<'a, 'db> {
                     )));
                 }
                 if let IndexedUnqualifiedNameContext::Type { position } = indexed_context {
+                    if let Some(site) = source
+                        .current_signature_empty_type_site_at(crate_ref, file_id, offset, position)
+                        .context("scan current empty signature completion site")?
+                    {
+                        return Ok(Some(CompletionSite::Unqualified(
+                            UnqualifiedCompletionSite::new(site),
+                        )));
+                    }
                     let Some(saved_offset) = saved_header_offset else {
                         return self.module_name_site(&source, crate_ref, file_id, module_name);
                     };
@@ -1245,6 +1283,20 @@ impl<'a, 'db> CompletionSiteDetector<'a, 'db> {
                     }
 
                     if matches!(path.context(), NameCompletionContext::Type)
+                        && let Some(site) = source
+                            .current_signature_syntax_rich_qualified_path_site_at(
+                                crate_ref,
+                                file_id,
+                                offset,
+                                path.qualifier(),
+                                syntax.member_prefix_span,
+                            )
+                            .context("scan current empty qualified signature path")?
+                    {
+                        return Ok(Some(CompletionSite::Path(PathCompletionSite::new(site))));
+                    }
+
+                    if matches!(path.context(), NameCompletionContext::Type)
                         && let Some(saved_offset) = saved_header_offset
                         && let Some(site) = source
                             .signature_syntax_rich_qualified_path_site_at(
@@ -1259,6 +1311,13 @@ impl<'a, 'db> CompletionSiteDetector<'a, 'db> {
                         return Ok(Some(CompletionSite::Path(PathCompletionSite::new(site))));
                     }
                     return Ok(None);
+                }
+
+                if let Some(site) = source
+                    .current_signature_type_site_at(crate_ref, file_id, offset)
+                    .context("scan current qualified signature completion site")?
+                {
+                    return Ok(Some(CompletionSite::from_signature_type_site(site)));
                 }
 
                 if let Some(site) = source
@@ -1313,6 +1372,13 @@ impl<'a, 'db> CompletionSiteDetector<'a, 'db> {
             return Ok(Some(CompletionSite::RecordField(
                 RecordFieldCompletionSite::new(site),
             )));
+        }
+
+        if let Some(site) = source
+            .current_signature_type_site_at(crate_ref, file_id, offset)
+            .context("scan current signature completion site")?
+        {
+            return Ok(Some(CompletionSite::from_signature_type_site(site)));
         }
 
         if let Some(site) = source

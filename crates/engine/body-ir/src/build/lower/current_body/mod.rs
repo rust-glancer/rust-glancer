@@ -2,9 +2,9 @@
 //!
 //! We do not rebuild a project after every keystroke. Instead, this module finds the nearest
 //! enclosing function, const, or static. A declaration with the same saved header keeps its saved
-//! identity. A new or changed function instead gets a request-only declaration, including its
-//! current signature and enclosing impl header. Either declaration becomes the root of the same
-//! small body worklist used by saved builds.
+//! identity. A new or changed declaration instead gets a request-only item, including the
+//! enclosing impl or trait header needed by an associated function or const. Either declaration
+//! becomes the root of the same small body worklist used by saved builds.
 //!
 //! The saved project still supplies module declarations, traits, impls, and crate-wide indexes.
 //! Locals, expressions, scopes, body-local impls, and nested bodies come from the current text. The
@@ -21,8 +21,8 @@ mod syntax_owner;
 use anyhow::Context as _;
 use rg_cfg_eval::CfgEvaluator;
 use rg_ir_model::{
-    BodyRef, CrateRef, DefMapRef, FunctionId, FunctionRef, ImplRef, ItemOwner, ModuleRef,
-    TraitDefRef,
+    BodyRef, ConstId, ConstRef, CrateRef, DefMapRef, FunctionId, FunctionRef, ImplRef, ItemOwner,
+    ModuleRef, StaticId, StaticRef, TraitDefRef,
 };
 use rg_parse::{CurrentSource, DeclarationAssociationIndex, FileId, Span, TextSpan};
 use rg_semantic_ir::{CrateItemQuery, ItemLookupQuery, ItemLookupQueryCache, ItemStoreQuery};
@@ -46,10 +46,10 @@ use super::{
 /// Why a body from the editor could not be attached to a saved or request-local declaration.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, derive_more::Display)]
 pub enum CurrentBodyUnavailable {
-    /// The cursor is outside every function, const, and static body.
-    #[display("the cursor is not inside a function, const, or static body")]
+    /// The cursor is outside every function, const, and static declaration that owns a body.
+    #[display("the cursor is not inside a function, const, or static declaration with a body")]
     NoBodyAtPosition,
-    /// The body has neither a saved owner nor a supported request-local function root.
+    /// The body has neither a saved owner nor a request-local declaration root.
     #[display("the current body has no usable semantic root")]
     NoSemanticRoot,
     /// More than one saved declaration has the same header and containing declarations.
@@ -112,7 +112,7 @@ pub struct CurrentBodyBuilder<'source, 'db> {
 /// explicit avoids pretending that a cursor is just a very short range.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CurrentBodySelection {
-    /// Select the innermost body that owns or can recover the cursor position.
+    /// Select the innermost body-owning declaration that contains or can recover the cursor.
     AtOffset(u32),
     /// Select every body whose source has a strict half-open overlap with the range.
     IntersectingRange(TextSpan),
@@ -200,8 +200,8 @@ impl<'source, 'db> CurrentBodyBuilder<'source, 'db> {
 
         // 2. Decide which declaration owns each selected body and where its worklist should start.
         // An unchanged declaration can reuse its saved owner. If no saved declaration matches, we
-        // widen to the outermost current function so request-local parameters, `Self`, and impl
-        // context remain available to nested bodies.
+        // widen to the outermost current declaration so request-local parameters, `Self`, and
+        // associated-item context remain available to nested bodies.
         let saved_items = self.semantic_ir.items(self.crate_ref)?;
         let saved_bodies = self.saved_body_ir.bodies(self.crate_ref, Some(self.file))?;
         let saved_owners = SavedRootOwnerIndex::new(saved_items, self.crate_ref, self.file);
@@ -241,12 +241,6 @@ impl<'source, 'db> CurrentBodyBuilder<'source, 'db> {
                 }
                 ExpectedUnique::Empty => {
                     let current_owner = selected_owner.outermost_body_owner();
-                    let SyntaxBodyOwner::Function(_) = &current_owner else {
-                        // TODO: Give new and changed const/static initializers request-local
-                        // declaration data before treating them as analyzable roots.
-                        unavailable.push(CurrentBodyUnavailable::NoSemanticRoot);
-                        continue;
-                    };
                     let Some(fallback_module) = self
                         .def_map
                         .module_for_inline_path(
@@ -261,15 +255,26 @@ impl<'source, 'db> CurrentBodyBuilder<'source, 'db> {
                     };
                     let body_ref =
                         synthetic_body_ref().context("allocate request-only body identity")?;
+                    let origin = DefMapRef::Body(body_ref);
+                    let owner = match &current_owner {
+                        SyntaxBodyOwner::Function(_) => {
+                            BodyOwner::Function(FunctionRef::new(origin, FunctionId(0)))
+                        }
+                        SyntaxBodyOwner::Const(_) => BodyOwner::Const(ConstRef {
+                            origin,
+                            id: ConstId(0),
+                        }),
+                        SyntaxBodyOwner::Static(_) => BodyOwner::Static(StaticRef {
+                            origin,
+                            id: StaticId(0),
+                        }),
+                    };
                     PreparedCurrentRoot {
                         current_span: Span::from_text_range(current_owner.syntax().text_range()),
-                        // The temporary item store assigns the final function id after it has
-                        // collected all declarations. Body lowering only needs the owner family;
-                        // the real id is attached before semantic resolution starts.
-                        owner: BodyOwner::Function(FunctionRef::new(
-                            DefMapRef::Body(body_ref),
-                            FunctionId(0),
-                        )),
+                        // The temporary item store assigns the final item id after it has collected
+                        // the current declaration. Body lowering only needs the owner family; the
+                        // real id is attached before semantic resolution starts.
+                        owner,
                         // Collection allocates the final body-local module. The saved module is the
                         // correct context for macro expansion until that temporary store exists.
                         owner_module: fallback_module,
@@ -517,9 +522,9 @@ impl<'source, 'db> CurrentBodyBuilder<'source, 'db> {
 
 /// A selected root with the identity and module context needed by shared body lowering.
 ///
-/// Saved roots already have declaration data in Semantic IR. A new or changed function instead
-/// asks lowering to include its current declaration in the temporary body-local item store. Until
-/// that store exists, its saved containing module is also its initial lookup context.
+/// Saved roots already have declaration data in Semantic IR. A new or changed declaration instead
+/// asks lowering to include its current item in the temporary body-local item store. Until that
+/// store exists, its saved containing module is also its initial lookup context.
 struct PreparedCurrentRoot {
     current_span: Span,
     owner: BodyOwner,
