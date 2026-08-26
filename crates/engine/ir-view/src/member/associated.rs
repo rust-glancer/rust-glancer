@@ -105,19 +105,12 @@ impl<'a, 'db> MemberView<'a, 'db> {
                     .lower(prefix_ty_ref, env.clone())
                     .context("lower associated path type qualifier")?;
 
-                // A concrete nominal prefix contributes enum variants, inherent items, and items
-                // from matching trait impls.
-                for receiver_ty in prefix_ty.as_adts() {
-                    candidates.extend(
-                        query
-                            .candidates_for_nominal(receiver_ty)
-                            .context("resolve nominal associated item candidates")?,
-                    );
-                }
+                // One receiver-centric query covers nominal, primitive, and structural prefixes.
+                // The impl matcher owns whether a candidate came from a keyed or fallback index.
                 candidates.extend(
                     query
-                        .candidates_for_unkeyed(&prefix_ty)
-                        .context("resolve unkeyed associated item candidates")?,
+                        .candidates_for_ty(&prefix_ty)
+                        .context("resolve associated item candidates")?,
                 );
 
                 // A generic prefix has no nominal impl universe of its own. Bounds written on the

@@ -19,7 +19,7 @@ use crate::{
     ir::{ExprData, ExprKind},
 };
 
-use super::associated_item::BodyAssociatedFunctionCandidate;
+use super::BodyCallableCandidate;
 
 /// Semantic function selected for one written call before body-local inference.
 ///
@@ -394,14 +394,14 @@ where
 
     fn associated_function_target(
         callee_data: &ExprData,
-        candidate: BodyAssociatedFunctionCandidate,
+        candidate: BodyCallableCandidate,
     ) -> ResolvedCallTarget {
         ResolvedCallTarget::associated_function_call(
             candidate.function(),
             callee_data.scope,
             Self::explicit_callee_generic_args(callee_data),
             CallSelf {
-                self_ty: candidate.self_ty().clone(),
+                self_ty: candidate.receiver_ty().clone(),
                 subst: candidate.subst().clone(),
             },
             candidate.trait_selection().cloned(),

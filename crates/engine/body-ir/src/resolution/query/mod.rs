@@ -1,9 +1,11 @@
 mod associated_item;
 mod body_items;
 mod call;
+mod callable;
 mod field;
 mod function;
 mod generics;
+mod impls;
 mod method;
 mod traits;
 mod type_alias;
@@ -17,9 +19,16 @@ pub use self::{
 };
 
 pub(crate) use self::{
-    associated_item::BodyAssociatedItemQuery, body_items::BodyLocalItemQuery,
-    field::BodyFieldQuery, function::BodyFunctionQuery, generics::BodyGenericsQuery,
-    traits::BodyTraitQuery, type_alias::BodyTypeAliasQuery, type_context::BodyTypeContextQuery,
+    associated_item::BodyAssociatedItemQuery,
+    body_items::BodyLocalItemQuery,
+    callable::BodyCallableCandidate,
+    field::BodyFieldQuery,
+    function::BodyFunctionQuery,
+    generics::BodyGenericsQuery,
+    impls::{BodyImplQuery, BodyReceiverImplMatches},
+    traits::BodyTraitQuery,
+    type_alias::BodyTypeAliasQuery,
+    type_context::BodyTypeContextQuery,
     type_ref::TypeRefResolutionQuery,
 };
 

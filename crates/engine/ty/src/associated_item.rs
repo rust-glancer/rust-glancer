@@ -34,15 +34,14 @@
 
 use rg_def_map::DefMapSource;
 use rg_ir_model::{
-    AssocItemId, ConstRef, EnumVariantRef, FunctionRef, ImplRef, TraitApplicability, TraitDefRef,
-    TraitImplRef, TypeAliasRef, TypeDefId,
+    AssocItemId, ConstRef, EnumVariantRef, FunctionRef, TraitApplicability, TraitDefRef,
+    TypeAliasRef, TypeDefId,
 };
 use rg_semantic_ir::ItemStoreSource;
-use rg_std::UniqueVec;
 
 use crate::{
-    AdtTy, Clause, ImplMatcher, ItemPathQuery, TraitApplication, Ty, TyContext, TypePathResolver,
-    inference::InferenceTable,
+    AdtTy, Clause, ImplMatcher, ItemPathQuery, ReceiverImplMatches, TraitApplication, Ty,
+    TyContext, TypePathResolver, inference::InferenceTable,
 };
 
 /// Stable declaration identity returned by associated-item discovery.
@@ -107,167 +106,57 @@ where
         Self { context, matcher }
     }
 
-    /// Find everything available through a concrete struct, enum, or union.
+    /// Find declarations exposed by every applicable impl for one receiver type.
     ///
-    /// For an enum, this combines three sources that share the same `Type::name` syntax:
-    ///
-    /// ```text
-    /// enum State { Ready }
-    ///
-    /// impl State {
-    ///     fn parse() -> State { State::Ready }
-    /// }
-    ///
-    /// trait Reset {
-    ///     fn reset() -> State;
-    /// }
-    ///
-    /// impl Reset for State { /* ... */ }
-    ///
-    /// State::/* Ready, parse, reset */
-    /// ```
-    ///
-    /// Trait-provided candidates come from the trait declaration, not the impl body. That keeps
-    /// default items and the trait's documentation available even when a concrete impl overrides
-    /// the item.
-    pub fn candidates_for_nominal(
-        &self,
-        receiver_ty: &AdtTy,
-    ) -> Result<Vec<AssociatedItemCandidateRef>, D::Error> {
-        self.candidates_for_nominal_from_impls(
-            receiver_ty,
-            self.context
-                .item_lookup()
-                .inherent_impls_for_type(receiver_ty.def),
-            self.context
-                .item_lookup()
-                .trait_impls_for_type(receiver_ty.def),
-            true,
-        )
-    }
-
-    /// Find associated items through impl indexes that have no nominal receiver key.
-    ///
-    /// Primitive and structural types obtain all of their impls from these compact fallback
-    /// indexes. A nominal type can also reach a blanket trait impl such as `impl<T> Factory for T`
-    /// here. Once the canonical `Self` header matches, every declaration uses the same path syntax:
-    /// `u32::MAX`, `u32::from_be_bytes`, or `Widget::make`.
-    pub fn candidates_for_unkeyed(
+    /// Index routing and canonical header matching stay inside [`ImplMatcher`]. A caller therefore
+    /// asks the same question for `Widget`, `u32`, or `[Widget]`; enum variants and item-kind
+    /// adaptation remain explicit here.
+    pub fn candidates_for_ty(
         &self,
         receiver_ty: &Ty,
     ) -> Result<Vec<AssociatedItemCandidateRef>, D::Error> {
-        let mut candidates = self.candidates_for_unkeyed_inherent(receiver_ty)?;
-
-        // Trait declarations follow the same exact impl selection used by dot methods. This makes
-        // paths such as `u32::from` and user-defined trait constants available without treating a
-        // primitive as if it had a nominal index entry.
-        candidates.extend(self.candidates_for_trait_impls_for_ty(
-            receiver_ty,
-            self.context.item_lookup().trait_impls_without_type_key(),
-        )?);
-        Ok(candidates)
+        let table = InferenceTable::new();
+        let matches = self.matcher.matches_for_receiver(receiver_ty, &table)?;
+        self.candidates_for_matches(receiver_ty, &matches)
     }
 
-    /// Find declarations supplied by matching unkeyed inherent impls.
-    pub fn candidates_for_unkeyed_inherent(
+    /// Expand already-matched impls into stable associated-item declarations.
+    ///
+    /// Body lookup supplies a match set that includes current-body overlays. Keeping expansion
+    /// separate lets it apply local shadowing without selecting the impl headers a second time.
+    pub fn candidates_for_matches(
         &self,
         receiver_ty: &Ty,
+        matches: &ReceiverImplMatches,
     ) -> Result<Vec<AssociatedItemCandidateRef>, D::Error> {
         let mut candidates = Vec::new();
-        for (impl_ref, item, _) in self.matcher.unkeyed_inherent_item_candidates(receiver_ty)? {
+
+        for nominal_ty in receiver_ty.as_adts() {
+            self.push_enum_variants(&mut candidates, nominal_ty)?;
+        }
+
+        for impl_match in matches.inherent() {
+            let Some(data) = self
+                .context
+                .item_paths()
+                .items()
+                .impl_data(impl_match.impl_ref())?
+            else {
+                continue;
+            };
             self.push_assoc_items(
                 &mut candidates,
-                impl_ref.origin,
-                std::slice::from_ref(&item),
-                TraitApplicability::Yes,
+                impl_match.impl_ref().origin,
+                &data.items,
+                impl_match.applicability(),
             );
         }
-        Ok(candidates)
-    }
 
-    /// Expand a caller-selected trait impl universe for any canonical receiver shape.
-    ///
-    /// Body lookup supplies local impl overlays here; crate-level lookup passes its compact
-    /// unkeyed index. Candidate discovery stays shared so both paths follow supertraits and retain
-    /// the strongest applicability for duplicate declarations.
-    pub fn candidates_for_trait_impls_for_ty(
-        &self,
-        receiver_ty: &Ty,
-        trait_impls: UniqueVec<TraitImplRef>,
-    ) -> Result<Vec<AssociatedItemCandidateRef>, D::Error> {
-        let table = InferenceTable::new();
-        let mut candidates = Vec::new();
-        for trait_impl in trait_impls {
-            let Some(selection) =
-                self.matcher
-                    .trait_impl_selection_for_ty(trait_impl, receiver_ty, &table)?
-            else {
-                continue;
-            };
+        for selection in matches.traits() {
             self.push_trait_hierarchy(
                 &mut candidates,
-                trait_impl.trait_ref,
+                selection.trait_impl.trait_ref,
                 selection.applicability,
-                &mut Vec::new(),
-            )?;
-        }
-        Ok(candidates)
-    }
-
-    /// Return candidates from an explicitly selected impl universe.
-    ///
-    /// Body IR uses this entry point for its local-item overlay, while crate-level callers use
-    /// [`Self::candidates_for_nominal`]. `include_variants` lets the overlay avoid adding the same
-    /// enum constructors a second time.
-    pub fn candidates_for_nominal_from_impls(
-        &self,
-        receiver_ty: &AdtTy,
-        inherent_impls: UniqueVec<ImplRef>,
-        trait_impls: UniqueVec<TraitImplRef>,
-        include_variants: bool,
-    ) -> Result<Vec<AssociatedItemCandidateRef>, D::Error> {
-        let mut candidates = Vec::new();
-
-        if include_variants {
-            self.push_enum_variants(&mut candidates, receiver_ty)?;
-        }
-
-        // Inherent items belong to the selected impl itself. Preserve a tentative structural
-        // match as `Maybe` when generic information is incomplete, but do not let downstream
-        // consumers mistake it for a proved match.
-        for impl_ref in inherent_impls {
-            let Some(data) = self.context.item_paths().items().impl_data(impl_ref)? else {
-                continue;
-            };
-            if !data.resolved_self_ty.is(&receiver_ty.def) {
-                continue;
-            }
-            let Some((_, applicability)) = self
-                .matcher
-                .impl_self_subst_for_impl(impl_ref, &Ty::adt(receiver_ty.clone()))?
-            else {
-                continue;
-            };
-            if !applicability.is_applicable() {
-                continue;
-            }
-            self.push_assoc_items(&mut candidates, impl_ref.origin, &data.items, applicability);
-        }
-
-        // Trait items are presented from the trait declaration rather than an implementation.
-        // This retains defaulted items and stable docs while impl selection supplies confidence.
-        let table = InferenceTable::new();
-        for trait_impl in trait_impls {
-            let applicability =
-                self.matcher
-                    .trait_impl_applicability(trait_impl, receiver_ty, &table)?;
-            if !applicability.is_applicable() {
-                continue;
-            }
-            self.push_trait_hierarchy(
-                &mut candidates,
-                trait_impl.trait_ref,
-                applicability,
                 &mut Vec::new(),
             )?;
         }

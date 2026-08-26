@@ -11,11 +11,8 @@
 use rg_def_map::DefMapSource;
 use rg_ir_model::{FieldRef, FunctionRef, TraitApplicability, TypeDefRef};
 use rg_semantic_ir::ItemStoreSource;
-use rg_std::UniqueVec;
 
-use crate::{
-    AdtTy, Autoderef, AutoderefMode, ImplMatcher, Ty, TyContext, inference::InferenceTable,
-};
+use crate::{Autoderef, AutoderefMode, ImplMatcher, Ty, TyContext, inference::InferenceTable};
 
 /// One callable member selected for a receiver type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -104,99 +101,30 @@ where
         let mut methods = Vec::new();
         for candidate in autoderef.candidates(AutoderefMode::MethodReceiver, ty) {
             let candidate = candidate?;
-            for receiver_ty in candidate.ty().as_adts() {
-                methods.extend(self.method_candidates_for_nominal(
-                    &matcher,
-                    receiver_ty,
-                    &table,
-                )?);
+            let matches = matcher.matches_for_receiver(candidate.ty(), &table)?;
+            for function in matcher.function_candidates_for_matches(&matches, None)? {
+                let Some(function_data) = self
+                    .context
+                    .item_paths()
+                    .items()
+                    .function_data(function.function())?
+                else {
+                    continue;
+                };
+                if !function_data.has_self_receiver() {
+                    continue;
+                }
+
+                let candidate = match function.trait_selection() {
+                    Some(selection) => MemberMethodCandidateRef::trait_method(
+                        function.function(),
+                        selection.applicability,
+                    ),
+                    None => MemberMethodCandidateRef::inherent(function.function()),
+                };
+                methods.push(candidate);
             }
-            methods.extend(self.method_candidates_for_unkeyed(&matcher, candidate.ty(), &table)?);
         }
         Ok(methods)
-    }
-
-    fn method_candidates_for_nominal(
-        &self,
-        matcher: &ImplMatcher<'query, D, I>,
-        receiver_ty: &AdtTy,
-        table: &InferenceTable,
-    ) -> Result<Vec<MemberMethodCandidateRef>, D::Error> {
-        let mut candidates = Vec::new();
-
-        for function in self.inherent_functions_for_nominal(receiver_ty)? {
-            if !matcher.function_applies_to_receiver(function, receiver_ty)? {
-                continue;
-            }
-            candidates.push(MemberMethodCandidateRef::inherent(function));
-        }
-
-        // Keep proof confidence with each trait method. Editor lookup can then distinguish a
-        // proved impl from one retained because Chalk reported ambiguity or unsupported evidence.
-        for (function, selection) in
-            matcher.trait_function_candidates_for_receiver(receiver_ty, None, table)?
-        {
-            candidates.push(MemberMethodCandidateRef::trait_method(
-                function,
-                selection.applicability,
-            ));
-        }
-
-        // A blanket impl has no nominal receiver index key, so match the compact fallback list
-        // against this concrete ADT after handling directly keyed impls.
-        let receiver_ty = Ty::adt(receiver_ty.clone());
-        for (function, selection) in matcher.trait_function_candidates_from_impls_for_ty(
-            self.context.item_lookup().trait_impls_without_type_key(),
-            &receiver_ty,
-            None,
-            table,
-        )? {
-            candidates.push(MemberMethodCandidateRef::trait_method(
-                function,
-                selection.applicability,
-            ));
-        }
-
-        Ok(candidates)
-    }
-
-    /// Returns inherent and trait methods for receiver shapes without a nominal lookup key.
-    fn method_candidates_for_unkeyed(
-        &self,
-        matcher: &ImplMatcher<'query, D, I>,
-        receiver_ty: &Ty,
-        table: &InferenceTable,
-    ) -> Result<Vec<MemberMethodCandidateRef>, D::Error> {
-        if !receiver_ty.has_unkeyed_self_head() {
-            return Ok(Vec::new());
-        }
-
-        let mut candidates = Vec::new();
-        for (function, _) in matcher.unkeyed_inherent_function_candidates(receiver_ty, None)? {
-            candidates.push(MemberMethodCandidateRef::inherent(function));
-        }
-
-        for (function, selection) in matcher.trait_function_candidates_from_impls_for_ty(
-            self.context.item_lookup().trait_impls_without_type_key(),
-            receiver_ty,
-            None,
-            table,
-        )? {
-            candidates.push(MemberMethodCandidateRef::trait_method(
-                function,
-                selection.applicability,
-            ));
-        }
-
-        Ok(candidates)
-    }
-
-    fn inherent_functions_for_nominal(
-        &self,
-        receiver_ty: &AdtTy,
-    ) -> Result<UniqueVec<FunctionRef>, D::Error> {
-        self.context
-            .item_lookup()
-            .inherent_functions_for_type(self.context.item_paths().items(), receiver_ty.def)
     }
 }

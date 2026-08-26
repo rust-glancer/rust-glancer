@@ -19,8 +19,8 @@ use crate::{BodyData, BodyView, ir::BodyQueryView};
 
 use crate::resolution::query::{
     BodyAssociatedItemQuery, BodyCallQuery, BodyFieldQuery, BodyFunctionQuery, BodyGenericsQuery,
-    BodyLocalItemQuery, BodyMethodQuery, BodyTraitQuery, BodyTypeAliasQuery, BodyTypeContextQuery,
-    BodyTypePathQuery, BodyValuePathQuery, TypeRefResolutionQuery,
+    BodyImplQuery, BodyLocalItemQuery, BodyMethodQuery, BodyTraitQuery, BodyTypeAliasQuery,
+    BodyTypeContextQuery, BodyTypePathQuery, BodyValuePathQuery, TypeRefResolutionQuery,
 };
 
 use super::BodyQuerySource;
@@ -262,6 +262,10 @@ where
 
     pub(crate) fn body_local_items(&self) -> BodyLocalItemQuery<'a, D, I> {
         BodyLocalItemQuery::new(self.clone())
+    }
+
+    pub(crate) fn impls(&self) -> BodyImplQuery<'a, D, I> {
+        BodyImplQuery::new(self.clone())
     }
 
     pub fn methods(&self) -> BodyMethodQuery<'a, D, I> {

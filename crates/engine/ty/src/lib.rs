@@ -36,7 +36,7 @@ pub use self::{
         AssocTypeBinding, Clause, ConstValue, GenericArg, GenericArgs, Lifetime, TraitApplication,
         TraitRefLowering,
     },
-    impl_match::ImplMatcher,
+    impl_match::{ImplMatcher, InherentImplMatch, ReceiverFunctionCandidate, ReceiverImplMatches},
     implementation::ImplementationQuery,
     item_path::ItemPathQuery,
     lowering::{

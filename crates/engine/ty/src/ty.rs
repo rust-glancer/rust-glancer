@@ -266,29 +266,6 @@ impl Ty {
         }
     }
 
-    /// Return whether this type has a concrete impl head without a nominal lookup key.
-    ///
-    /// These receiver shapes cannot use the `TypeDefRef` index, so member lookup must consider the
-    /// compact structural and blanket-impl fallback lists. `User` and `Vec<User>` are nominal and
-    /// return false; `str`, `[User]`, `[User; 3]`, and `*const User` return true. A generic `T` also
-    /// has no key, but it is not a concrete receiver shape and therefore returns false here.
-    pub fn has_unkeyed_self_head(&self) -> bool {
-        matches!(
-            self,
-            Self::Unit
-                | Self::Never
-                | Self::Primitive(_)
-                | Self::Tuple(_)
-                | Self::Array { .. }
-                | Self::Slice(_)
-                | Self::Reference { .. }
-                | Self::RawPointer { .. }
-                | Self::FnPointer { .. }
-                | Self::Closure(_)
-                | Self::FnDef(_)
-        )
-    }
-
     pub fn reference_inner(&self) -> Option<(&Self, Mutability)> {
         match self {
             Self::Reference {

@@ -4,8 +4,10 @@
 //! Syntax HIR remains available to declaration views, but receiver matching never interprets a
 //! `TypeRef` itself.
 
-mod inherent;
-mod trait_methods;
+mod receiver;
+mod trait_impl;
+
+pub use self::receiver::{InherentImplMatch, ReceiverFunctionCandidate, ReceiverImplMatches};
 
 use rg_def_map::DefMapSource;
 use rg_ir_model::{GenericDefRef, GenericParamRef, ImplRef, TraitApplicability};
