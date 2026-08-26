@@ -301,9 +301,11 @@ impl<'a, 'db> MemberView<'a, 'db> {
             TypePathResolution::SelfType(def) | TypePathResolution::TypeDef(def) => {
                 Some(Ty::adt(rg_ty::AdtTy::bare(def)))
             }
-            TypePathResolution::TypeAlias(alias) => SemanticSignatureQuery::new(self.db, self.db)
-                .type_alias_ty(alias)
-                .context("resolve import type alias target")?,
+            TypePathResolution::TypeAlias(alias) => {
+                SemanticSignatureQuery::with_resolver(self.db, self.db, self.db)
+                    .type_alias_ty(alias)
+                    .context("resolve import type alias target")?
+            }
             TypePathResolution::Trait(_) | TypePathResolution::Unknown => None,
         };
         let Some(ty) = ty else {

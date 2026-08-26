@@ -6,17 +6,17 @@ use std::{
 use expect_test::Expect;
 
 use crate::{
-    Analysis, CompletionApplicability, CompletionClientCapabilities, CompletionInsertText,
-    CompletionItem, CompletionKind, CompletionQuery, DocumentSymbol, HoverInfo, InlayHint,
-    NavigationTarget, ReferenceLocation, ReferenceQuery as AnalysisReferenceQuery,
-    ReferenceSearchFile, RenameEdit, RenameResult, RenameTarget, SavedSourceView, SymbolAt,
-    WorkspaceSymbol,
+    Analysis, CodeAction, CodeActionKind, CodeActionQuery, CodeActionTrigger,
+    CompletionApplicability, CompletionClientCapabilities, CompletionInsertText, CompletionItem,
+    CompletionKind, CompletionQuery, DocumentSymbol, HoverInfo, InlayHint, NavigationTarget,
+    ReferenceLocation, ReferenceQuery as AnalysisReferenceQuery, ReferenceSearchFile, RenameEdit,
+    RenameResult, RenameTarget, SavedSourceView, SymbolAt, WorkspaceSymbol,
 };
 use rg_body_ir::{ExprData, ExprKind};
 use rg_def_map::testonly::DefMapFixture;
 use rg_ir_model::{BodySource, CrateRef, PackageSlot};
 use rg_ir_view::testonly::ViewFixture;
-use rg_parse::{FileId, ParseDb, Span};
+use rg_parse::{FileId, ParseDb, Span, TextSpan};
 use rg_semantic_ir::testonly::SemanticIrFixture;
 use rg_workspace::{SysrootSources, TargetKind, WorkspaceLoweringConfig, WorkspaceMetadata};
 use test_fixture::{
@@ -134,6 +134,22 @@ impl AnalysisQuery {
 
     pub(super) fn complete(title: &'static str, marker: &'static str) -> Self {
         Self::new(title, marker, AnalysisQueryKind::CompletionsAt)
+    }
+
+    pub(super) fn code_actions(title: &'static str, marker: &'static str) -> Self {
+        Self::new(
+            title,
+            marker,
+            AnalysisQueryKind::CodeActions(CodeActionTrigger::Invoked),
+        )
+    }
+
+    pub(super) fn automatic_code_actions(title: &'static str, marker: &'static str) -> Self {
+        Self::new(
+            title,
+            marker,
+            AnalysisQueryKind::CodeActions(CodeActionTrigger::Automatic),
+        )
     }
 
     pub(super) fn complete_verbose(title: &'static str, marker: &'static str) -> Self {
@@ -316,6 +332,7 @@ enum AnalysisQueryKind {
     PrepareRename,
     Rename(&'static str),
     TypeAt,
+    CodeActions(CodeActionTrigger),
     CompletionsAt,
     CompletionsAtVerbose,
     CompletionsAtWithSource,
@@ -751,6 +768,34 @@ impl<'a> AnalysisQuerySnapshot<'a> {
                 )
                 .expect("string writes should not fail");
             }
+            AnalysisQueryKind::CodeActions(trigger) => {
+                let source_text = self
+                    .db
+                    .parse_db()
+                    .package(target.package.0)
+                    .expect("code action package should exist")
+                    .parsed_file(file_id)
+                    .expect("code action file should exist")
+                    .source_text()
+                    .expect("code action source text should load");
+                let actions = self
+                    .db
+                    .analysis()
+                    .code_actions(
+                        CodeActionQuery::new(
+                            target,
+                            file_id,
+                            TextSpan {
+                                start: offset,
+                                end: offset,
+                            },
+                            &source_text,
+                        )
+                        .with_trigger(trigger),
+                    )
+                    .expect("fixture code action query should resolve");
+                self.render_code_actions(actions, &source_text, &mut dump);
+            }
             AnalysisQueryKind::CompletionsAt => {
                 let completion_query = CompletionQuery::new(target, file_id, offset)
                     .with_client_capabilities(
@@ -1104,6 +1149,40 @@ impl<'a> AnalysisQuerySnapshot<'a> {
                     completion.kind, completion.label, completion.applicability
                 )
                 .expect("string writes should not fail");
+            }
+        }
+    }
+
+    fn render_code_actions(&self, actions: Vec<CodeAction>, source: &str, dump: &mut String) {
+        for action in actions {
+            let kind = match action.kind {
+                CodeActionKind::QuickFix => "quickfix",
+                CodeActionKind::RefactorRewrite => "refactor.rewrite",
+            };
+            writeln!(dump, "\n- {kind} {}", action.title).expect("string writes should not fail");
+            writeln!(dump, "  preferred: {}", action.is_preferred)
+                .expect("string writes should not fail");
+
+            // Apply from the end so every span remains in the captured source coordinate space.
+            let mut edits = action.edits.iter().collect::<Vec<_>>();
+            edits.sort_by_key(|edit| std::cmp::Reverse(edit.replace.text.start));
+            let mut result = source.to_string();
+            for edit in edits {
+                result.replace_range(
+                    usize::try_from(edit.replace.text.start)
+                        .expect("fixture edit start should fit usize")
+                        ..usize::try_from(edit.replace.text.end)
+                            .expect("fixture edit end should fit usize"),
+                    &edit.new_text,
+                );
+            }
+            writeln!(dump, "  result:").expect("string writes should not fail");
+            for line in result.lines() {
+                if line.is_empty() {
+                    writeln!(dump).expect("string writes should not fail");
+                } else {
+                    writeln!(dump, "    {line}").expect("string writes should not fail");
+                }
             }
         }
     }

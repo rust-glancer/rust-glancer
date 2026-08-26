@@ -14,10 +14,11 @@ use super::BodyLocalItems;
 
 /// One function, const, or static body rebuilt from the current editor text.
 ///
-/// An unchanged declaration reuses its saved identity. A new or changed function and a newly typed
-/// nested body receive request-only identities instead. All of them can still refer to saved types,
-/// traits, and impls, while their expressions, locals, and body-local items come from the editor.
-/// The value exists only for the request that built it and is never written back into saved Body IR.
+/// An unchanged declaration reuses its saved identity. A new or changed declaration and a newly
+/// typed nested body receive request-only identities instead. All of them can still refer to saved
+/// types, traits, and impls, while their expressions, locals, and body-local items come from the
+/// editor. The value exists only for the request that built it and is never written back into saved
+/// Body IR.
 #[derive(Debug)]
 pub struct CurrentBody {
     body_ref: BodyRef,

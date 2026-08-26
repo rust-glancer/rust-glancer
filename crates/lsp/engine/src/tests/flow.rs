@@ -83,8 +83,7 @@ async fn returns_protocol_edits_for_specialized_and_postfix_completions() {
 }
 
 #[tokio::test]
-#[ignore = "TODO(#160)"]
-async fn returns_protocol_additional_edits_for_auto_imports() {
+async fn returns_versioned_code_action_edits_for_exact_imports() {
     let fixture = LspEngineFixture::initialized(
         r#"
         //- /Cargo.toml
@@ -117,30 +116,31 @@ async fn returns_protocol_additional_edits_for_auto_imports() {
         use catalog::collections::BTreeMap;
 
         pub fn demo() {
-            let _: HashM$auto_import$;
+            let _: HashMap$auto_import$;
         }
         "#,
     )
     .await;
+    fixture.did_open_saved("app/src/lib.rs", 7).await;
 
     fixture
         .check(
-            &[LspQuery::completion(
-                "complete with auto-import",
+            &[LspQuery::code_action(
+                "import exact unresolved item",
                 "auto_import",
             )],
             expect![[r#"
-                complete with auto-import
-                - BTreeMap Struct
-                  detail: struct BTreeMap
-                  edit: /app/src/lib.rs:3:11-3:16 -> BTreeMap
-                - catalog Module
-                  detail: mod catalog
-                  edit: /app/src/lib.rs:3:11-3:16 -> catalog
-                - HashMap Struct
-                  detail: struct HashMap (use catalog::collections::HashMap)
-                  edit: /app/src/lib.rs:3:11-3:16 -> HashMap
-                  additional: /app/src/lib.rs:0:4-0:34 -> catalog::collections::{BTreeMap, HashMap}
+                import exact unresolved item
+                - quickfix Import `catalog::collections::HashMap`
+                  preferred: true
+                  document: /app/src/lib.rs version 7
+                  edit: 0:4-0:34 -> catalog::collections::{BTreeMap, HashMap}
+                  result:
+                    use catalog::collections::{BTreeMap, HashMap};
+
+                    pub fn demo() {
+                        let _: HashMap;
+                    }
             "#]],
         )
         .await;

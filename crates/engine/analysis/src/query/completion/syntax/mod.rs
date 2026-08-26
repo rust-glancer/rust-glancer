@@ -40,7 +40,7 @@ use rg_ir_view::source::{
 /// domain. This is separate from the ordinary current-source parse used by Body IR. Resolvers can
 /// inspect the same speculative tree for small source-shape facts, but cannot trigger another
 /// classification parse.
-pub(super) struct CompletionSyntaxContext<'source> {
+pub(crate) struct CompletionSyntaxContext<'source> {
     source: &'source str,
     offset: u32,
     prefix: CompletionPrefix<'source>,
@@ -56,7 +56,7 @@ impl<'source> CompletionSyntaxContext<'source> {
     const MARKER: &'static str = "__rg_completion";
 
     /// Builds syntax context from saved source or a request-local editor buffer.
-    pub(super) fn at(source_text: Option<&'source str>, offset: u32) -> Option<Self> {
+    pub(crate) fn at(source_text: Option<&'source str>, offset: u32) -> Option<Self> {
         Self::from_source(source_text?, offset)
     }
 
@@ -135,7 +135,7 @@ impl<'source> CompletionSyntaxContext<'source> {
     }
 
     /// Returns the exact editor buffer represented by original-source spans.
-    pub(super) fn source(&self) -> &'source str {
+    pub(crate) fn source(&self) -> &'source str {
         self.source
     }
 
@@ -489,17 +489,17 @@ impl<'source> CompletionSyntaxContext<'source> {
     }
 
     /// Returns the speculative file retained for source-aware completion edits.
-    pub(super) fn speculative_file_tree(&self) -> &SourceFile {
+    pub(crate) fn speculative_file_tree(&self) -> &SourceFile {
         &self.file
     }
 
     /// Returns a cursor inside the speculative marker for syntax containment queries.
-    pub(super) fn speculative_offset(&self) -> u32 {
+    pub(crate) fn speculative_offset(&self) -> u32 {
         self.source_map.speculative_marker.end
     }
 
     /// Maps a syntax-tree range back into the exact request buffer.
-    pub(super) fn original_span(&self, range: TextRange) -> Option<Span> {
+    pub(crate) fn original_span(&self, range: TextRange) -> Option<Span> {
         self.source_map.original_span(range)
     }
 

@@ -1,7 +1,9 @@
 //! Body-local item lookup for body-aware resolution.
 
 use rg_def_map::DefMapSource;
-use rg_ir_model::{AssocItemId, DefMapRef, FunctionRef, ImplRef, TraitImplRef, TypeDefRef};
+use rg_ir_model::{
+    AssocItemId, ConstRef, DefMapRef, FunctionRef, ImplRef, TraitImplRef, TypeAliasRef, TypeDefRef,
+};
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::{ItemStore, ItemStoreSource};
 use rg_std::UniqueVec;
@@ -12,6 +14,33 @@ use crate::resolution::BodyResolutionContext;
 /// Finds items declared in bodies, such as local impls and their methods.
 pub(crate) struct BodyLocalItemQuery<'query, D, I> {
     context: BodyResolutionContext<'query, D, I>,
+}
+
+/// Names declared by body-local inherent impls, separated by associated-item kind.
+pub(super) struct BodyLocalInherentItemNames {
+    functions: UniqueVec<Name>,
+    consts: UniqueVec<Name>,
+    type_aliases: UniqueVec<Name>,
+}
+
+impl BodyLocalInherentItemNames {
+    pub(super) fn contains_function(&self, name: &str) -> bool {
+        self.functions
+            .iter()
+            .any(|candidate| candidate.as_str() == name)
+    }
+
+    pub(super) fn contains_const(&self, name: &str) -> bool {
+        self.consts
+            .iter()
+            .any(|candidate| candidate.as_str() == name)
+    }
+
+    pub(super) fn contains_type_alias(&self, name: &str) -> bool {
+        self.type_aliases
+            .iter()
+            .any(|candidate| candidate.as_str() == name)
+    }
 }
 
 impl<'query, D, I> BodyLocalItemQuery<'query, D, I>
@@ -66,23 +95,60 @@ where
         Ok(functions)
     }
 
-    /// Return method names supplied by body-local inherent impls for this type.
+    /// Return names supplied by body-local inherent impls for this type.
     ///
-    /// Body-aware lookup combines these impls with a crate-wide index. A local method replaces a
-    /// crate-indexed method with the same name inside this body; unrelated saved methods remain
-    /// visible.
-    pub(super) fn inherent_function_names_for_type(
+    /// Body-aware lookup combines these impls with a crate-wide index. A current declaration
+    /// replaces a crate-indexed declaration of the same kind and name; unrelated saved members
+    /// remain visible.
+    pub(super) fn inherent_item_names_for_type(
         &self,
         ty: TypeDefRef,
-    ) -> Result<UniqueVec<Name>, PackageStoreError> {
+    ) -> Result<BodyLocalInherentItemNames, PackageStoreError> {
         let item_query = self.context.item_query();
-        let mut names = UniqueVec::new();
-        for function in self.inherent_functions_for_type(ty)? {
-            if let Some(data) = item_query.function_data(function)? {
-                names.push(data.name.clone());
+        let mut functions = UniqueVec::new();
+        let mut consts = UniqueVec::new();
+        let mut type_aliases = UniqueVec::new();
+        for impl_ref in self.inherent_impls_for_type(ty)? {
+            let Some(impl_data) = item_query.impl_data(impl_ref)? else {
+                continue;
+            };
+            for item in &impl_data.items {
+                match item {
+                    AssocItemId::Function(id) => {
+                        let function = FunctionRef {
+                            origin: impl_ref.origin,
+                            id: *id,
+                        };
+                        if let Some(data) = item_query.function_data(function)? {
+                            functions.push(data.name.clone());
+                        }
+                    }
+                    AssocItemId::Const(id) => {
+                        let konst = ConstRef {
+                            origin: impl_ref.origin,
+                            id: *id,
+                        };
+                        if let Some(data) = item_query.const_data(konst)? {
+                            consts.push(data.name.clone());
+                        }
+                    }
+                    AssocItemId::TypeAlias(id) => {
+                        let alias = TypeAliasRef {
+                            origin: impl_ref.origin,
+                            id: *id,
+                        };
+                        if let Some(data) = item_query.type_alias_data(alias)? {
+                            type_aliases.push(data.name.clone());
+                        }
+                    }
+                }
             }
         }
-        Ok(names)
+        Ok(BodyLocalInherentItemNames {
+            functions,
+            consts,
+            type_aliases,
+        })
     }
 
     /// Return body-local trait impls whose `Self` resolves to this type.

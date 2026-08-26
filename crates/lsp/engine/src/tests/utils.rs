@@ -11,15 +11,16 @@ use std::{
 
 use expect_test::Expect;
 use ls_types::{
-    CompletionItem, CompletionTextEdit, DocumentHighlight, DocumentHighlightKind, DocumentSymbol,
-    Hover, HoverContents, InlayHint, InlayHintKind, InlayHintLabel, Location, Position, Range,
-    TextEdit, WorkspaceEdit,
+    CodeAction, CompletionItem, CompletionTextEdit, DocumentChanges, DocumentHighlight,
+    DocumentHighlightKind, DocumentSymbol, Hover, HoverContents, InlayHint, InlayHintKind,
+    InlayHintLabel, Location, Position, Range, TextEdit, WorkspaceEdit,
 };
 use rg_lsp_proto::{
-    AnalysisConfig, CapturedSourceInput, CompletionClientCapabilities, DocumentRevision,
-    EditorDocumentSnapshot, EngineConfig, EngineResult, EngineService, GlobalPositionSnapshot,
-    OpenDocumentSession, OpenDocumentsRevision, QueryError, QueryValue, SaveProposal,
-    SavedProjectChanges, ServiceNotification, SysrootDiscovery, TargetDocumentRevision,
+    AnalysisConfig, CapturedSourceInput, CodeActionRequestContext, CompletionClientCapabilities,
+    DocumentRevision, EditorDocumentSnapshot, EngineConfig, EngineResult, EngineService,
+    GlobalPositionSnapshot, OpenDocumentSession, OpenDocumentsRevision, QueryError, QueryValue,
+    SaveProposal, SavedProjectChanges, ServiceNotification, SysrootDiscovery,
+    TargetDocumentRevision,
 };
 use rg_parse::LineIndex;
 use tarpc::context;
@@ -685,6 +686,41 @@ impl LspEngineFixture {
                 writeln!(rendered, "{title}").expect("snapshot should be writable");
                 self.render_completions(rendered, path.as_path(), &completions);
             }
+            LspQuery::CodeAction {
+                title,
+                marker,
+                only,
+                automatic,
+            } => {
+                let path = self.marker_path(markers, marker);
+                let position = self.marker_position(markers, marker);
+                let document = self.document_snapshot(path.clone());
+                let current_text = document.text().to_string();
+                let input = document.with_range(Range::new(position, position));
+                let lsp_context = ls_types::CodeActionContext {
+                    diagnostics: Vec::new(),
+                    only: only.clone().map(|kind| vec![kind]),
+                    trigger_kind: Some(if *automatic {
+                        ls_types::CodeActionTriggerKind::AUTOMATIC
+                    } else {
+                        ls_types::CodeActionTriggerKind::INVOKED
+                    }),
+                };
+                let outcome = self
+                    .service
+                    .clone()
+                    .code_action(
+                        context::current(),
+                        input,
+                        CodeActionRequestContext::from_lsp(&lsp_context),
+                    )
+                    .await
+                    .expect("code action query should succeed");
+                let actions = outcome.into_value();
+
+                writeln!(rendered, "{title}").expect("snapshot should be writable");
+                self.render_code_actions(rendered, path.as_path(), &current_text, &actions);
+            }
             LspQuery::DocumentSymbol { title, path } => {
                 let document = self.document_snapshot(self.fixture.path(path));
                 let outcome = self
@@ -878,6 +914,105 @@ impl LspEngineFixture {
                         Self::render_text(&edit.new_text),
                     )
                     .expect("snapshot should be writable");
+                }
+            }
+        }
+    }
+
+    fn render_code_actions(
+        &self,
+        rendered: &mut String,
+        path: &Path,
+        source: &str,
+        actions: &[CodeAction],
+    ) {
+        if actions.is_empty() {
+            writeln!(rendered, "- none").expect("snapshot should be writable");
+            return;
+        }
+
+        let line_index = LineIndex::new(source);
+        for action in actions {
+            let kind = action
+                .kind
+                .as_ref()
+                .map_or("<none>", ls_types::CodeActionKind::as_str);
+            writeln!(rendered, "- {kind} {}", action.title).expect("snapshot should be writable");
+            writeln!(
+                rendered,
+                "  preferred: {}",
+                action
+                    .is_preferred
+                    .map_or("unset".to_string(), |preferred| preferred.to_string())
+            )
+            .expect("snapshot should be writable");
+
+            let Some(edit) = action.edit.as_ref() else {
+                writeln!(rendered, "  edit: none").expect("snapshot should be writable");
+                continue;
+            };
+            let Some(DocumentChanges::Edits(documents)) = edit.document_changes.as_ref() else {
+                panic!("code action should contain only versioned document edits");
+            };
+            assert_eq!(documents.len(), 1, "code action should edit one document");
+            let document = &documents[0];
+            assert_eq!(
+                document.text_document.uri.to_file_path().as_deref(),
+                Some(path)
+            );
+            writeln!(
+                rendered,
+                "  document: {} version {}",
+                self.render_uri_path(&document.text_document.uri),
+                document
+                    .text_document
+                    .version
+                    .map_or("none".to_string(), |version| version.to_string())
+            )
+            .expect("snapshot should be writable");
+
+            let mut source_edits = Vec::new();
+            for edit in &document.edits {
+                let edit = match edit {
+                    ls_types::OneOf::Left(edit) => edit,
+                    ls_types::OneOf::Right(edit) => &edit.text_edit,
+                };
+                writeln!(
+                    rendered,
+                    "  edit: {} -> {}",
+                    Self::render_range(edit.range),
+                    Self::render_text(&edit.new_text),
+                )
+                .expect("snapshot should be writable");
+                let start = line_index
+                    .offset_from_utf16_position(crate::proto::position::parse_position(
+                        edit.range.start,
+                    ))
+                    .expect("code action edit start should fit captured source");
+                let end = line_index
+                    .offset_from_utf16_position(crate::proto::position::parse_position(
+                        edit.range.end,
+                    ))
+                    .expect("code action edit end should fit captured source");
+                assert!(start <= end, "code action edit should not be backwards");
+                source_edits.push((start, end, edit.new_text.as_str()));
+            }
+
+            source_edits.sort_by_key(|(start, end, _)| std::cmp::Reverse((*start, *end)));
+            let mut result = source.to_string();
+            for (start, end, new_text) in source_edits {
+                result.replace_range(
+                    usize::try_from(start).expect("code action edit start should fit usize")
+                        ..usize::try_from(end).expect("code action edit end should fit usize"),
+                    new_text,
+                );
+            }
+            writeln!(rendered, "  result:").expect("snapshot should be writable");
+            for line in result.lines() {
+                if line.is_empty() {
+                    writeln!(rendered).expect("snapshot should be writable");
+                } else {
+                    writeln!(rendered, "    {line}").expect("snapshot should be writable");
                 }
             }
         }
@@ -1140,6 +1275,12 @@ pub(super) enum LspQuery {
         title: &'static str,
         marker: &'static str,
     },
+    CodeAction {
+        title: &'static str,
+        marker: &'static str,
+        only: Option<ls_types::CodeActionKind>,
+        automatic: bool,
+    },
     DocumentSymbol {
         title: &'static str,
         path: &'static str,
@@ -1187,6 +1328,37 @@ impl LspQuery {
 
     pub(super) fn completion(title: &'static str, marker: &'static str) -> Self {
         Self::Completion { title, marker }
+    }
+
+    pub(super) fn code_action(title: &'static str, marker: &'static str) -> Self {
+        Self::CodeAction {
+            title,
+            marker,
+            only: None,
+            automatic: false,
+        }
+    }
+
+    pub(super) fn code_action_only(
+        title: &'static str,
+        marker: &'static str,
+        only: ls_types::CodeActionKind,
+    ) -> Self {
+        Self::CodeAction {
+            title,
+            marker,
+            only: Some(only),
+            automatic: false,
+        }
+    }
+
+    pub(super) fn automatic_code_action(title: &'static str, marker: &'static str) -> Self {
+        Self::CodeAction {
+            title,
+            marker,
+            only: None,
+            automatic: true,
+        }
     }
 
     pub(super) fn document_symbol(title: &'static str, path: &'static str) -> Self {

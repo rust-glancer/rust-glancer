@@ -9,9 +9,10 @@
 use std::path::PathBuf;
 
 use crate::{
-    CompletionClientCapabilities, DocumentPositionSnapshot, DocumentRangeSnapshot,
-    EditorDocumentSnapshot, EngineConfig, EngineError, GlobalPositionSnapshot, QueryError,
-    QueryValue, SaveProposal, SavedProjectChanges, ServiceNotification,
+    CodeActionRequestContext, CompletionClientCapabilities, DocumentPositionSnapshot,
+    DocumentRangeSnapshot, EditorDocumentSnapshot, EngineConfig, EngineError,
+    GlobalPositionSnapshot, QueryError, QueryValue, SaveProposal, SavedProjectChanges,
+    ServiceNotification,
 };
 
 pub type EngineResult<T> = Result<T, EngineError>;
@@ -71,6 +72,11 @@ pub trait EngineService {
     async fn hover(
         input: DocumentPositionSnapshot,
     ) -> Result<QueryValue<Option<ls_types::Hover>>, QueryError>;
+
+    async fn code_action(
+        input: DocumentRangeSnapshot,
+        request_context: CodeActionRequestContext,
+    ) -> Result<QueryValue<Vec<ls_types::CodeAction>>, QueryError>;
 
     async fn completion(
         input: DocumentPositionSnapshot,

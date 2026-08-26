@@ -31,7 +31,7 @@ use rg_ir_model::{
 };
 use rg_item_tree::Documentation;
 use rg_semantic_ir::{GenericsQuery, ItemStoreQuery};
-use rg_ty::{SemanticSignatureQuery, Substitution};
+use rg_ty::{SemanticSignatureQuery, Substitution, TraitApplication};
 
 use crate::{
     IndexedViewDb,
@@ -127,8 +127,8 @@ impl<'a, 'db> TraitImplView<'a, 'db> {
         impl_ref: ImplRef,
         trait_ref: TraitDefRef,
     ) -> anyhow::Result<Vec<MissingTraitMember>> {
-        // First verify that the source site and semantic impl header identify the same trait.
-        // Cursor recovery can hand this view stale or incomplete source during active editing.
+        // A saved source site is accepted only when indexing resolved the same trait. This keeps
+        // cursor recovery from turning an incomplete or ambiguous saved header into an action.
         let items = ItemStoreQuery::new(self.db);
         let Some(impl_data) = items
             .impl_data(impl_ref)
@@ -139,16 +139,11 @@ impl<'a, 'db> TraitImplView<'a, 'db> {
         if !impl_data.resolved_trait_ref.is(&trait_ref) {
             return Ok(Vec::new());
         }
-        let Some(trait_data) = items
-            .trait_data(trait_ref)
-            .context("read implemented trait members")?
-        else {
-            return Ok(Vec::new());
-        };
 
         // Lowering the header produces the substitution that turns trait-owned `T` and `Self`
-        // references into syntax appropriate for this concrete impl.
-        let signatures = SemanticSignatureQuery::new(self.db, self.db);
+        // references into syntax appropriate for this concrete impl. Compare its trait identity
+        // as a second guard before applying that substitution to member signatures.
+        let signatures = SemanticSignatureQuery::with_resolver(self.db, self.db, self.db);
         let Some(header) = signatures
             .impl_header(impl_ref)
             .context("lower trait impl completion header")?
@@ -162,6 +157,35 @@ impl<'a, 'db> TraitImplView<'a, 'db> {
         if application.def != trait_ref {
             return Ok(Vec::new());
         }
+
+        self.missing_members_for_application(impl_ref, trait_ref, &application)
+    }
+
+    /// Project members after the caller has already lowered the selected impl header.
+    ///
+    /// Current-source impls need a path resolver that falls back to their saved containing module.
+    /// Passing the resulting application here keeps that lookup policy out of the shared member
+    /// projection below.
+    pub(crate) fn missing_members_for_application(
+        &self,
+        impl_ref: ImplRef,
+        trait_ref: TraitDefRef,
+        application: &TraitApplication,
+    ) -> anyhow::Result<Vec<MissingTraitMember>> {
+        let items = ItemStoreQuery::new(self.db);
+        let Some(impl_data) = items
+            .impl_data(impl_ref)
+            .context("read trait impl completion owner")?
+        else {
+            return Ok(Vec::new());
+        };
+        let Some(trait_data) = items
+            .trait_data(trait_ref)
+            .context("read implemented trait members")?
+        else {
+            return Ok(Vec::new());
+        };
+        let signatures = SemanticSignatureQuery::with_resolver(self.db, self.db, self.db);
         let generics = GenericsQuery::new(self.db)
             .generics(GenericDefRef::Trait(trait_ref))
             .context("read implemented trait generics")?;
@@ -228,7 +252,7 @@ impl<'a, 'db> TraitImplView<'a, 'db> {
                                     data,
                                     &semantic,
                                     &substitution,
-                                    &application,
+                                    application,
                                 )
                                 .context("render missing trait function signature")?,
                         },
@@ -255,7 +279,7 @@ impl<'a, 'db> TraitImplView<'a, 'db> {
                             .context("lower default associated type")?
                             .map(|ty| substitution.apply(&ty));
                         ty.as_ref()
-                            .map(|ty| types.render_trait_impl_ty(ty, &application))
+                            .map(|ty| types.render_trait_impl_ty(ty, application))
                             .transpose()
                             .context("render default associated type")?
                             .flatten()
@@ -290,7 +314,7 @@ impl<'a, 'db> TraitImplView<'a, 'db> {
                         .map(|ty| substitution.apply(&ty));
                     let ty = ty
                         .as_ref()
-                        .map(|ty| types.render_trait_impl_ty(ty, &application))
+                        .map(|ty| types.render_trait_impl_ty(ty, application))
                         .transpose()
                         .context("render missing associated const type")?
                         .flatten()

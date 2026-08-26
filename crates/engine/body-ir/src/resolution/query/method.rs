@@ -196,7 +196,7 @@ where
         table: &InferenceTable,
     ) -> Result<Vec<NominalMethodCandidate>, PackageStoreError> {
         let body_items = self.context.body_local_items();
-        let body_inherent_names = body_items.inherent_function_names_for_type(receiver_ty.def)?;
+        let body_inherent_names = body_items.inherent_item_names_for_type(receiver_ty.def)?;
         let mut candidates = Vec::new();
 
         for function in self.body_inherent_functions(&body_items, receiver_ty, method_name)? {
@@ -214,7 +214,7 @@ where
                     .context
                     .item_query()
                     .function_data(function)?
-                    .is_some_and(|data| body_inherent_names.contains(&data.name))
+                    .is_some_and(|data| body_inherent_names.contains_function(data.name.as_str()))
                 {
                     continue;
                 }

@@ -22,6 +22,7 @@ use rg_body_ir::{
 };
 use rg_def_map::{DefMapReadTxn, PackageSlot};
 use rg_ir_model::{BodyId, BodyRef, CrateRef};
+use rg_ir_view::current::CurrentImplView;
 #[cfg(test)]
 use rg_parse::ParseDb;
 use rg_parse::{CurrentSource, DeclarationAssociationIndex, FileId, LineIndex, Span};
@@ -335,7 +336,35 @@ impl<'a> ProjectSnapshot<'a> {
 
         let current = CurrentBodySet::new(masked_files, bodies)
             .context("assemble current bodies for the request")?;
-        let view_db = txn.view_db().clone().with_current_body_set(current);
+        let mut view_db = txn.view_db().clone().with_current_body_set(current);
+
+        // A cursor on an impl header has no Body IR root to rebuild. Give that declaration the
+        // same request-local semantic shape as a saved impl, while leaving ordinary body requests
+        // on the smaller Body IR path above.
+        if let CurrentBodySelection::AtOffset(offset) = selection {
+            for &(crate_ref, file) in targets {
+                if current_source_view.relationship(crate_ref.package, file)
+                    != Some(SavedSourceRelationship::Different)
+                {
+                    continue;
+                }
+                let body_owns_offset =
+                    rebuilt_body_spans
+                        .iter()
+                        .any(|(body_crate, body_file, span)| {
+                            *body_crate == crate_ref && *body_file == file && span.touches(offset)
+                        });
+                if body_owns_offset {
+                    continue;
+                }
+                if let Some(current_impl) =
+                    CurrentImplView::at_offset(&view_db, crate_ref, file, current_source, offset)
+                        .context("build current impl header semantics")?
+                {
+                    view_db = current_impl.into_db();
+                }
+            }
+        }
         let analysis = Analysis::new(view_db, SavedSourceView::new(self.state.parse_db()))
             .with_current_source(current_source_view);
         Ok((

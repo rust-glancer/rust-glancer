@@ -156,6 +156,7 @@ where
         ty: &Ty,
     ) -> Result<Vec<AssociatedItemCandidateRef>, PackageStoreError> {
         let query = AssociatedItemQuery::with_resolver(self.context.ty_context(), &self.context);
+        let item_query = self.context.item_query();
         let mut candidates = Vec::new();
         for receiver_ty in ty.as_adts() {
             let receiver_ty = self
@@ -164,8 +165,7 @@ where
                 .complete_omitted_nominal_args(receiver_ty)?;
             let has_crate_index = receiver_ty.def.origin.as_crate_ref().is_some();
             let body_items = self.context.body_local_items();
-            let body_inherent_names =
-                body_items.inherent_function_names_for_type(receiver_ty.def)?;
+            let body_inherent_names = body_items.inherent_item_names_for_type(receiver_ty.def)?;
 
             candidates.extend(query.candidates_for_nominal_from_impls(
                 &receiver_ty,
@@ -180,12 +180,22 @@ where
             if has_crate_index {
                 for candidate in query.candidates_for_nominal(&receiver_ty)? {
                     let shadows_body_item = match candidate.item() {
-                        AssociatedItemRef::Function(function) => self
-                            .context
-                            .item_query()
-                            .function_data(function)?
-                            .is_some_and(|data| body_inherent_names.contains(&data.name)),
-                        _ => false,
+                        AssociatedItemRef::Function(function) => {
+                            item_query.function_data(function)?.is_some_and(|data| {
+                                body_inherent_names.contains_function(data.name.as_str())
+                            })
+                        }
+                        AssociatedItemRef::Const(konst) => {
+                            item_query.const_data(konst)?.is_some_and(|data| {
+                                body_inherent_names.contains_const(data.name.as_str())
+                            })
+                        }
+                        AssociatedItemRef::TypeAlias(alias) => {
+                            item_query.type_alias_data(alias)?.is_some_and(|data| {
+                                body_inherent_names.contains_type_alias(data.name.as_str())
+                            })
+                        }
+                        AssociatedItemRef::EnumVariant(_) => false,
                     };
                     if !shadows_body_item {
                         candidates.push(candidate);
@@ -534,11 +544,8 @@ where
         }
 
         if ty.def.origin.as_crate_ref().is_some() {
-            let body_inherent_names = body_items.inherent_function_names_for_type(ty.def)?;
-            if !body_inherent_names
-                .iter()
-                .any(|body_name| body_name.as_str() == name)
-            {
+            let body_inherent_names = body_items.inherent_item_names_for_type(ty.def)?;
+            if !body_inherent_names.contains_function(name) {
                 for function_ref in self.semantic_inherent_fn_defs_for_type(ty, name)? {
                     if matcher.function_applies_to_receiver(function_ref, ty)? {
                         self.push_associated_function(&mut functions, ty, function_ref, name)?;

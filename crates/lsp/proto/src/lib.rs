@@ -6,6 +6,7 @@
 //! common shape.
 
 mod client_capabilities;
+mod code_action;
 mod completion;
 mod config;
 mod error;
@@ -18,6 +19,10 @@ mod snapshot;
 
 pub use self::{
     client_capabilities::ClientCapabilities,
+    code_action::{
+        CodeActionClientCapabilities, CodeActionRequestContext, CodeActionRequestKinds,
+        CodeActionRequestTrigger,
+    },
     completion::CompletionClientCapabilities,
     config::{
         AnalysisCfgConfig, AnalysisConfig, CargoMetadataConfig, CargoMetadataTarget,

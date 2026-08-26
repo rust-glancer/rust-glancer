@@ -18,11 +18,13 @@ use rg_ir_view::source::{
     IndexedAssociatedTypeBindingSite, IndexedMemberAccessSite, IndexedModuleSourceSite,
     IndexedPatternCompletionKind, IndexedQualifiedPathContext, IndexedQualifiedPathScope,
     IndexedQualifiedPathSite, IndexedRecordFieldListSite, IndexedSignatureTypeSite,
-    IndexedTraitImplSite, IndexedTypeNamePosition, IndexedUnqualifiedNameContext,
-    IndexedUnqualifiedNameScope, IndexedUnqualifiedNameSite, SourceCompletionView,
+    IndexedTypeNamePosition, IndexedUnqualifiedNameContext, IndexedUnqualifiedNameScope,
+    IndexedUnqualifiedNameSite, SourceCompletionView,
 };
 
 use crate::{Analysis, SavedSourceRelationship};
+
+use super::CompletionSource;
 
 /// One normalized syntax family selected for the cursor.
 ///
@@ -233,14 +235,14 @@ pub(crate) enum TraitImplMemberKind {
     Const,
 }
 
-/// A resolved trait implementation paired with the incomplete member prefix from the request.
+/// A current trait implementation paired with the incomplete member prefix from the request.
 ///
-/// The indexed site supplies the trait and impl identities. Request syntax supplies facts that do
-/// not lower until the declaration is complete: selected member kind, replacement range, and the
-/// lookup prefix used by the editor.
+/// The impl start locates the ordinary request AST after speculative parsing has selected this
+/// completion family. Missing-member lookup can then use a saved semantic identity or build a
+/// request-local header. The other fields retain edit facts that do not belong in semantic IR.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct TraitImplCompletionSite {
-    source: IndexedTraitImplSite,
+    owner_start: u32,
     member_kind: Option<TraitImplMemberKind>,
     replace_span: Span,
     lookup_prefix: Option<String>,
@@ -248,21 +250,21 @@ pub(crate) struct TraitImplCompletionSite {
 
 impl TraitImplCompletionSite {
     fn new(
-        source: IndexedTraitImplSite,
+        owner_start: u32,
         member_kind: Option<TraitImplMemberKind>,
         replace_span: Span,
         lookup_prefix: Option<String>,
     ) -> Self {
         Self {
-            source,
+            owner_start,
             member_kind,
             replace_span,
             lookup_prefix,
         }
     }
 
-    pub(crate) fn source(&self) -> IndexedTraitImplSite {
-        self.source
+    pub(crate) fn owner_start(&self) -> u32 {
+        self.owner_start
     }
 
     pub(crate) fn member_kind(&self) -> Option<TraitImplMemberKind> {
@@ -833,13 +835,13 @@ impl RecordFieldCompletionSite {
     }
 }
 
-/// The only completion-side entry point from current syntax into saved source scanners.
+/// Chooses the semantic owner to which recovered current completion syntax is attached.
 ///
-/// Body scanners already read request-local Body IR and do not need translation. Saved signature
-/// scanners require an exact source match or a uniquely associated declaration header. Module
-/// lookup can additionally use the inline-module path recovered from current syntax. Keeping
-/// those rules here prevents individual completion families from treating a current offset as a
-/// saved coordinate.
+/// Body and request-local signature scanners already use editor coordinates. A saved signature
+/// requires an exact source match or a uniquely associated declaration header. Module lookup can
+/// additionally use the inline-module path recovered from current syntax. Keeping those rules
+/// here prevents individual completion families from treating a current offset as a saved
+/// coordinate.
 pub(super) struct CompletionSourceAttachment<'a, 'db> {
     analysis: &'a Analysis<'db>,
     crate_ref: CrateRef,
@@ -883,7 +885,12 @@ impl<'a, 'db> CompletionSourceAttachment<'a, 'db> {
         source.module_syntax_source_site(self.crate_ref, self.file_id, inline_module_path)
     }
 
-    /// Attach current prefix syntax to a saved declaration-signature scope.
+    /// Attach current prefix syntax to a current declaration, then an associated saved signature.
+    ///
+    /// `fn load<Current>(_: Cur$0) {}` first tries the request-local declaration so `Current`
+    /// remains visible. If there is no current semantic store but the declaration maps uniquely to
+    /// a saved header, the prefix and replacement range still come from the editor while its scope
+    /// comes from the mapped saved declaration.
     pub(super) fn signature_name_site_at(
         &self,
         current_offset: u32,
@@ -891,10 +898,24 @@ impl<'a, 'db> CompletionSourceAttachment<'a, 'db> {
         current_prefix_span: Span,
         current_prefix: String,
     ) -> anyhow::Result<Option<IndexedUnqualifiedNameSite>> {
+        let source = SourceCompletionView::new(self.analysis.view_db());
+        if let Some(site) = source
+            .current_signature_syntax_name_site_at(
+                self.crate_ref,
+                self.file_id,
+                current_offset,
+                context,
+                current_prefix_span,
+                current_prefix.clone(),
+            )
+            .context("attach current name syntax to current signature")?
+        {
+            return Ok(Some(site));
+        }
         let Some(saved_offset) = self.saved_header_offset(current_offset)? else {
             return Ok(None);
         };
-        SourceCompletionView::new(self.analysis.view_db())
+        source
             .signature_syntax_name_site_at(
                 self.crate_ref,
                 self.file_id,
@@ -908,9 +929,9 @@ impl<'a, 'db> CompletionSourceAttachment<'a, 'db> {
 
     /// Add associated-type names beside ordinary type completions.
     ///
-    /// Body IR was built from the captured document, so its scanner accepts the current offset.
-    /// A signature scanner reads saved declarations and is tried only after this method maps the
-    /// cursor into one uniquely associated saved header.
+    /// Body IR and a request-local declaration accept the current offset directly. A saved
+    /// signature is tried only after this method maps the cursor into one uniquely associated
+    /// saved header.
     pub(super) fn implicit_associated_type_binding_site_at(
         &self,
         current_offset: u32,
@@ -923,6 +944,17 @@ impl<'a, 'db> CompletionSourceAttachment<'a, 'db> {
                 current_offset,
             )
             .context("scan current body for implicit associated type binding")?
+        {
+            return Ok(Some(site));
+        }
+
+        if let Some(site) = source
+            .current_signature_implicit_associated_type_binding_site_at(
+                self.crate_ref,
+                self.file_id,
+                current_offset,
+            )
+            .context("scan current signature for implicit associated type binding")?
         {
             return Ok(Some(site));
         }
@@ -952,6 +984,63 @@ pub(crate) struct CompletionSiteDetector<'a, 'db> {
 impl<'a, 'db> CompletionSiteDetector<'a, 'db> {
     pub(crate) fn new(analysis: &'a Analysis<'db>) -> Self {
         Self { analysis }
+    }
+
+    /// Classify a complete unqualified name and retain the scope in which it is used.
+    ///
+    /// For `User` in `let _: User`, the result records a type position and the body containing it.
+    /// Qualified paths, fields, declarations, and other completion families return `None`.
+    pub(crate) fn unqualified_name_for_source(
+        &self,
+        crate_ref: CrateRef,
+        file_id: FileId,
+        source_text: &str,
+        offset: u32,
+    ) -> anyhow::Result<Option<UnqualifiedCompletionSite>> {
+        Ok(
+            match self.site_for_source(crate_ref, file_id, source_text, offset)? {
+                Some(CompletionSite::Unqualified(site)) => Some(site),
+                Some(_) | None => None,
+            },
+        )
+    }
+
+    /// Classify the last name of a complete qualified path and retain its semantic scope.
+    ///
+    /// For `crate::models::User`, the result records whether `User` is used as a type or value and
+    /// which body or signature contains it. Other completion families return `None`.
+    pub(crate) fn qualified_path_for_source(
+        &self,
+        crate_ref: CrateRef,
+        file_id: FileId,
+        source_text: &str,
+        offset: u32,
+    ) -> anyhow::Result<Option<PathCompletionSite>> {
+        Ok(
+            match self.site_for_source(crate_ref, file_id, source_text, offset)? {
+                Some(CompletionSite::Path(site)) => Some(site),
+                Some(_) | None => None,
+            },
+        )
+    }
+
+    /// Parse one complete source token with completion's marker and run the ordinary detector.
+    fn site_for_source(
+        &self,
+        crate_ref: CrateRef,
+        file_id: FileId,
+        source_text: &str,
+        offset: u32,
+    ) -> anyhow::Result<Option<CompletionSite>> {
+        let Some(source) = CompletionSource::new(source_text, offset) else {
+            return Ok(None);
+        };
+        self.site_at(
+            crate_ref,
+            file_id,
+            offset,
+            Some(source.syntax.site_syntax()),
+        )
     }
 
     /// Classifies the cursor offset by asking the scanner that owns each syntax shape.
@@ -990,24 +1079,14 @@ impl<'a, 'db> CompletionSiteDetector<'a, 'db> {
                             replace_span,
                             lookup_prefix,
                         } = syntax;
-                        let Some(saved_owner_start) =
-                            attachment
-                                .saved_header_offset(owner_start)
-                                .context("map current trait impl header to saved source")?
-                        else {
-                            return Ok(None);
-                        };
-                        return Ok(source
-                            .trait_impl_site_at(crate_ref, file_id, saved_owner_start)
-                            .context("scan trait impl completion site")?
-                            .map(|source| {
-                                CompletionSite::TraitImpl(TraitImplCompletionSite::new(
-                                    source,
-                                    member_kind,
-                                    replace_span,
-                                    lookup_prefix,
-                                ))
-                            }));
+                        return Ok(Some(CompletionSite::TraitImpl(
+                            TraitImplCompletionSite::new(
+                                owner_start,
+                                member_kind,
+                                replace_span,
+                                lookup_prefix,
+                            ),
+                        )));
                     }
                     StandaloneCompletionSiteSyntax::BodyMacro { qualifier } => {
                         if let Some(qualifier) = qualifier {
@@ -1152,6 +1231,14 @@ impl<'a, 'db> CompletionSiteDetector<'a, 'db> {
                     )));
                 }
                 if let IndexedUnqualifiedNameContext::Type { position } = indexed_context {
+                    if let Some(site) = source
+                        .current_signature_empty_type_site_at(crate_ref, file_id, offset, position)
+                        .context("scan current empty signature completion site")?
+                    {
+                        return Ok(Some(CompletionSite::Unqualified(
+                            UnqualifiedCompletionSite::new(site),
+                        )));
+                    }
                     let Some(saved_offset) = saved_header_offset else {
                         return self.module_name_site(&source, crate_ref, file_id, module_name);
                     };
@@ -1196,6 +1283,20 @@ impl<'a, 'db> CompletionSiteDetector<'a, 'db> {
                     }
 
                     if matches!(path.context(), NameCompletionContext::Type)
+                        && let Some(site) = source
+                            .current_signature_syntax_rich_qualified_path_site_at(
+                                crate_ref,
+                                file_id,
+                                offset,
+                                path.qualifier(),
+                                syntax.member_prefix_span,
+                            )
+                            .context("scan current empty qualified signature path")?
+                    {
+                        return Ok(Some(CompletionSite::Path(PathCompletionSite::new(site))));
+                    }
+
+                    if matches!(path.context(), NameCompletionContext::Type)
                         && let Some(saved_offset) = saved_header_offset
                         && let Some(site) = source
                             .signature_syntax_rich_qualified_path_site_at(
@@ -1210,6 +1311,13 @@ impl<'a, 'db> CompletionSiteDetector<'a, 'db> {
                         return Ok(Some(CompletionSite::Path(PathCompletionSite::new(site))));
                     }
                     return Ok(None);
+                }
+
+                if let Some(site) = source
+                    .current_signature_type_site_at(crate_ref, file_id, offset)
+                    .context("scan current qualified signature completion site")?
+                {
+                    return Ok(Some(CompletionSite::from_signature_type_site(site)));
                 }
 
                 if let Some(site) = source
@@ -1264,6 +1372,13 @@ impl<'a, 'db> CompletionSiteDetector<'a, 'db> {
             return Ok(Some(CompletionSite::RecordField(
                 RecordFieldCompletionSite::new(site),
             )));
+        }
+
+        if let Some(site) = source
+            .current_signature_type_site_at(crate_ref, file_id, offset)
+            .context("scan current signature completion site")?
+        {
+            return Ok(Some(CompletionSite::from_signature_type_site(site)));
         }
 
         if let Some(site) = source

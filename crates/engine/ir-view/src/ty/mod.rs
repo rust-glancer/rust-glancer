@@ -15,7 +15,7 @@ use rg_semantic_ir::{ItemStoreQuery, TypePathContext, TypePathResolution};
 use rg_std::ExpectedUnique;
 use rg_ty::{
     AdtTy, AliasTy, GenericArg, ItemPathQuery, ReferencePeelingCandidates, SemanticSignatureQuery,
-    Ty, TypeLoweringAnchor, TypeLoweringEnv, TypeLoweringQuery,
+    Ty, TypeLoweringAnchor, TypeLoweringEnv, TypeLoweringQuery, TypePathResolver as _,
 };
 
 use crate::{
@@ -201,8 +201,9 @@ impl<'a, 'db> TyView<'a, 'db> {
         context: TypePathContext,
         path: &Path,
     ) -> anyhow::Result<IndexedType> {
-        let resolution = ItemPathQuery::new(self.db, self.db)
-            .resolve_type_path(context, path)
+        let resolution = self
+            .db
+            .resolve_type_path(TypeLoweringAnchor::Context(context), path)
             .context("resolve signature type path")?;
         if matches!(resolution, TypePathResolution::Unknown)
             && let Some(primitive) = path.single_name().and_then(PrimitiveTy::from_name)
@@ -258,7 +259,7 @@ impl<'a, 'db> TyView<'a, 'db> {
         type_ref: &rg_item_tree::TypeRef,
     ) -> anyhow::Result<Ty> {
         let item_paths = ItemPathQuery::new(self.db, self.db);
-        TypeLoweringQuery::new(&item_paths, &item_paths)
+        TypeLoweringQuery::new(&item_paths, self.db)
             .lower(
                 type_ref,
                 TypeLoweringEnv::new(
@@ -309,7 +310,7 @@ impl<'a, 'db> TyView<'a, 'db> {
 
     /// Resolve the declared type of a field.
     fn ty_for_field(&self, field: FieldRef) -> anyhow::Result<Option<Ty>> {
-        SemanticSignatureQuery::new(self.db, self.db)
+        SemanticSignatureQuery::with_resolver(self.db, self.db, self.db)
             .field_ty(field)
             .map_err(Into::into)
     }
@@ -328,10 +329,12 @@ impl<'a, 'db> TyView<'a, 'db> {
     /// Convert a type-path result to `Ty`, lowering transparent aliases through their declaration.
     fn type_path_resolution_to_ty(&self, resolution: TypePathResolution) -> anyhow::Result<Ty> {
         if let TypePathResolution::TypeAlias(alias) = resolution {
-            return Ok(SemanticSignatureQuery::new(self.db, self.db)
-                .type_alias_ty(alias)
-                .context("lower transparent type alias")?
-                .unwrap_or(Ty::Unknown));
+            return Ok(
+                SemanticSignatureQuery::with_resolver(self.db, self.db, self.db)
+                    .type_alias_ty(alias)
+                    .context("lower transparent type alias")?
+                    .unwrap_or(Ty::Unknown),
+            );
         }
 
         Ok(Ty::from_type_path_resolution(resolution, Vec::new()).unwrap_or(Ty::Unknown))

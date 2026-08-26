@@ -23,6 +23,14 @@ pub(crate) fn server_capabilities() -> ServerCapabilities {
         })),
         document_highlight_provider: Some(OneOf::Left(true)),
         hover_provider: Some(HoverProviderCapability::Simple(true)),
+        code_action_provider: Some(CodeActionProviderCapability::Options(CodeActionOptions {
+            code_action_kinds: Some(vec![
+                CodeActionKind::QUICKFIX,
+                CodeActionKind::REFACTOR_REWRITE,
+            ]),
+            resolve_provider: Some(false),
+            ..Default::default()
+        })),
         completion_provider: Some(CompletionOptions {
             resolve_provider: Some(false),
             trigger_characters: Some(vec![".".to_string(), ":".to_string()]),
@@ -79,6 +87,25 @@ mod tests {
     fn advertises_hover_support() {
         let capabilities = server_capabilities();
         assert!(capabilities.hover_provider.is_some());
+    }
+
+    #[test]
+    fn advertises_eager_quick_fixes_and_rewrites() {
+        let capabilities = server_capabilities();
+        let Some(tower_lsp_server::ls_types::CodeActionProviderCapability::Options(options)) =
+            capabilities.code_action_provider
+        else {
+            panic!("code action capability should use explicit options");
+        };
+
+        assert_eq!(
+            options.code_action_kinds,
+            Some(vec![
+                tower_lsp_server::ls_types::CodeActionKind::QUICKFIX,
+                tower_lsp_server::ls_types::CodeActionKind::REFACTOR_REWRITE,
+            ])
+        );
+        assert_eq!(options.resolve_provider, Some(false));
     }
 
     #[test]

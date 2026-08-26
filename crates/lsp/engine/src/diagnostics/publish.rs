@@ -93,6 +93,7 @@ mod tests {
 
     use ls_types::{Diagnostic, Position, Range};
     use rg_std::NormalizedPathBuf;
+    use test_fixture::synthetic_test_path;
 
     use super::{super::cargo::CargoDiagnostics, WorkspaceDiagnostics};
 
@@ -124,11 +125,8 @@ mod tests {
     }
 
     fn relative_path(relative: &str) -> NormalizedPathBuf {
-        let path = std::fs::canonicalize(".")
-            .expect("test process should have a working directory")
-            .join("nonexistent-just-for-tests")
-            .join(relative);
-        NormalizedPathBuf::from_absolute(path).expect("test diagnostics path should normalize")
+        NormalizedPathBuf::from_absolute(synthetic_test_path(relative))
+            .expect("test diagnostics path should normalize")
     }
 
     fn diagnostic(message: &str) -> Diagnostic {
