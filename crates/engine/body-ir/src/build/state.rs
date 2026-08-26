@@ -10,7 +10,7 @@ use rg_arena::Arena;
 use rg_cfg_eval::CfgEvaluator;
 use rg_def_map::{DefMap, DefMapReadTxn};
 use rg_ir_model::{
-    BodyId, BodyRef, ConstRef, CrateRef, DefMapRef, ItemOwner, ModuleRef, StaticRef,
+    BodyId, BodyRef, BodySource, ConstRef, CrateRef, DefMapRef, ItemOwner, ModuleRef, StaticRef,
 };
 use rg_semantic_ir::{
     CrateItemQuery, ItemLookupQuery, ItemLookupQueryCache, ItemStore, SemanticIrReadTxn,
@@ -280,6 +280,7 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
             let body_data = self.crate_bodies.bodies()[body].body();
             let nested_tasks = Self::nested_body_tasks(
                 body_ref,
+                body_data.source(),
                 body_data.owner(),
                 body_data.fallback_module(),
                 items.def_map(),
@@ -443,6 +444,7 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
 
     fn nested_body_tasks(
         body_ref: BodyRef,
+        body_source: BodySource,
         body_owner: BodyOwner,
         fallback_module: ModuleRef,
         def_map: &DefMap,
@@ -460,6 +462,13 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
             if body_owner == BodyOwner::Function(function_ref) {
                 continue;
             }
+            if !Self::source_is_nested_in_body(
+                body_source,
+                function_data.source.file_id,
+                function_data.span,
+            ) {
+                continue;
+            }
             // Required trait methods and foreign functions live in the item store but do not own
             // a body that can become a nested lowering task.
             if !function_data.signature.has_body() {
@@ -472,7 +481,7 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
             };
             tasks.push(BodyLoweringTask {
                 owner: BodyOwner::Function(function_ref),
-                request_root: false,
+                current_root_items: super::lower::CurrentRootItems::None,
                 owner_module,
                 fallback_module,
                 file_id: function_data.source.file_id,
@@ -488,6 +497,13 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
             if body_owner == BodyOwner::Const(const_ref) {
                 continue;
             }
+            if !Self::source_is_nested_in_body(
+                body_source,
+                const_data.source.file_id,
+                const_data.span,
+            ) {
+                continue;
+            }
             let Some(owner_module) =
                 Self::owner_module_for_body_item_owner(item_store, const_data.owner)
             else {
@@ -495,7 +511,7 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
             };
             tasks.push(BodyLoweringTask {
                 owner: BodyOwner::Const(const_ref),
-                request_root: false,
+                current_root_items: super::lower::CurrentRootItems::None,
                 owner_module,
                 fallback_module,
                 file_id: const_data.source.file_id,
@@ -513,6 +529,13 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
             if body_owner == BodyOwner::Static(static_ref) {
                 continue;
             }
+            if !Self::source_is_nested_in_body(
+                body_source,
+                static_data.source.file_id,
+                static_data.span,
+            ) {
+                continue;
+            }
             if def_map
                 .foreign_block(static_data.local_def.local_def)
                 .is_some()
@@ -521,7 +544,7 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
             }
             tasks.push(BodyLoweringTask {
                 owner: BodyOwner::Static(static_ref),
-                request_root: false,
+                current_root_items: super::lower::CurrentRootItems::None,
                 owner_module: static_data.owner,
                 fallback_module,
                 file_id: static_data.source.file_id,
@@ -531,6 +554,21 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
 
         tasks.sort_by_key(|task| (task.file_id.0, task.span.text.start, task.span.text.end));
         tasks
+    }
+
+    /// Distinguish declarations written inside the selected body from contextual declarations.
+    ///
+    /// For a current method, the temporary item store also contains its enclosing impl and sibling
+    /// signatures. Those declarations participate in lookup, but their bodies are outside the
+    /// selected method and must not extend this request's body worklist.
+    fn source_is_nested_in_body(
+        body_source: BodySource,
+        item_file: rg_parse::FileId,
+        item_span: rg_parse::Span,
+    ) -> bool {
+        body_source.file_id == item_file
+            && body_source.span.contains_span(item_span)
+            && body_source.span != item_span
     }
 
     fn owner_module_for_body_item_owner(

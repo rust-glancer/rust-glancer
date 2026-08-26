@@ -11,6 +11,7 @@ use rg_text::NameInterner;
 use crate::ir::{BodyMacroCallData, BodyOwner, BodySource, ExprData, ExprKind};
 
 use super::{
+    CurrentRootItems,
     builder::{BodyBuilder, LoweredBodyData},
     macro_expansion::BodyMacroExpansionContext,
     syntax::source_for,
@@ -76,13 +77,23 @@ impl<'a> BodyLowering<'a> {
         mut self,
         function: ast::Fn,
         body: ast::BlockExpr,
-        request_root: bool,
+        current_root_items: CurrentRootItems,
     ) -> LoweredBodyData {
         // Parameters live in the function's outer lexical scope. The body block gets a child scope
         // so locals do not appear before the function boundary.
         let param_scope = self.builder.alloc_scope(None);
-        if request_root {
-            self.lower_request_root_function(&function, param_scope);
+        match current_root_items {
+            CurrentRootItems::None => {}
+            CurrentRootItems::Declaration => {
+                self.lower_request_root_function(&function, param_scope);
+            }
+            CurrentRootItems::EnclosingImpl { include_selected } => {
+                self.lower_current_enclosing_impl(
+                    ast::AssocItem::Fn(function.clone()),
+                    param_scope,
+                    include_selected,
+                );
+            }
         }
         let function_params = self.lower_params(function.param_list(), param_scope);
         let params = function_params
@@ -107,11 +118,21 @@ impl<'a> BodyLowering<'a> {
         mut self,
         konst: ast::Const,
         expr: ast::Expr,
-        request_root: bool,
+        current_root_items: CurrentRootItems,
     ) -> LoweredBodyData {
         let root_scope = self.builder.alloc_scope(None);
-        if request_root {
-            self.lower_request_root_const(&konst, root_scope);
+        match current_root_items {
+            CurrentRootItems::None => {}
+            CurrentRootItems::Declaration => {
+                self.lower_request_root_const(&konst, root_scope);
+            }
+            CurrentRootItems::EnclosingImpl { include_selected } => {
+                self.lower_current_enclosing_impl(
+                    ast::AssocItem::Const(konst.clone()),
+                    root_scope,
+                    include_selected,
+                );
+            }
         }
         self.lower_initializer(expr, root_scope)
     }
@@ -120,11 +141,17 @@ impl<'a> BodyLowering<'a> {
         mut self,
         static_: ast::Static,
         expr: ast::Expr,
-        request_root: bool,
+        current_root_items: CurrentRootItems,
     ) -> LoweredBodyData {
         let root_scope = self.builder.alloc_scope(None);
-        if request_root {
-            self.lower_request_root_static(&static_, root_scope);
+        match current_root_items {
+            CurrentRootItems::None => {}
+            CurrentRootItems::Declaration => {
+                self.lower_request_root_static(&static_, root_scope);
+            }
+            CurrentRootItems::EnclosingImpl { .. } => {
+                unreachable!("a static declaration cannot belong to an impl")
+            }
         }
         self.lower_initializer(expr, root_scope)
     }

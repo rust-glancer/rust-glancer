@@ -257,7 +257,10 @@ impl<'a> Analysis<'a> {
             Some(SavedSourceRelationship::Different) => {
                 let current_body_symbols = SourceSymbolIndex::new(self.view_db())
                     .body_symbols_at(crate_ref, file_id, offset)?;
-                if let Some(symbol) = Self::narrowest_source_symbol(current_body_symbols) {
+                let (body_roots, body_symbols): (Vec<_>, Vec<_>) = current_body_symbols
+                    .into_iter()
+                    .partition(|symbol| matches!(symbol.symbol(), SymbolAt::FunctionBody { .. }));
+                if let Some(symbol) = Self::narrowest_source_symbol(body_symbols) {
                     return Ok(Some(symbol));
                 }
 
@@ -273,7 +276,13 @@ impl<'a> Analysis<'a> {
                     return Ok(Some(symbol));
                 }
 
-                self.associated_header_source_symbol(crate_ref, file_id, offset)
+                // A body root spans its whole declaration so queries can identify the owning
+                // function. In a dirty header that broad structural fact must not hide a narrower
+                // unchanged token with saved semantics. Keep it only as the final fallback when
+                // none of the editor-facing source layers recognize the cursor.
+                Ok(self
+                    .associated_header_source_symbol(crate_ref, file_id, offset)?
+                    .or_else(|| Self::narrowest_source_symbol(body_roots)))
             }
             Some(SavedSourceRelationship::Exact) | None => Ok(Self::narrowest_source_symbol(
                 SourceSymbolIndex::new(self.view_db()).symbols_at(crate_ref, file_id, offset)?,

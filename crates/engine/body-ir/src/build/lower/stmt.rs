@@ -24,108 +24,6 @@ use crate::ir::{
 use super::body::BodyLowering;
 
 impl BodyLowering<'_> {
-    /// Keep a new or changed function's signature in the same temporary store as its body.
-    ///
-    /// A free function is a direct declaration in the function's outer scope. An associated
-    /// function is wrapped in a request-local copy of its enclosing impl or trait, with only this
-    /// function attached. This gives body analysis its parameters, inherited generics, and `Self`
-    /// type without publishing the declaration to crate-wide lookup.
-    pub(super) fn lower_request_root_function(&mut self, function: &ast::Fn, scope: ScopeId) {
-        if self.lower_request_root_associated_item(ast::AssocItem::Fn(function.clone()), scope) {
-            return;
-        }
-
-        self.lower_request_root_module_item(ast::Item::Fn(function.clone()), scope);
-    }
-
-    /// Keep a new or changed const's signature and associated owner beside its initializer.
-    pub(super) fn lower_request_root_const(&mut self, konst: &ast::Const, scope: ScopeId) {
-        if self.lower_request_root_associated_item(ast::AssocItem::Const(konst.clone()), scope) {
-            return;
-        }
-
-        self.lower_request_root_module_item(ast::Item::Const(konst.clone()), scope);
-    }
-
-    /// Keep a new or changed module static beside its initializer.
-    pub(super) fn lower_request_root_static(&mut self, static_: &ast::Static, scope: ScopeId) {
-        self.lower_request_root_module_item(ast::Item::Static(static_.clone()), scope);
-    }
-
-    /// Lower one request-root item directly into the root body's outer scope.
-    fn lower_request_root_module_item(&mut self, item: ast::Item, scope: ScopeId) {
-        let source = self.source(item.syntax());
-        let node = self
-            .lower_source_item(&item)
-            .expect("a request-root declaration should lower to a source item");
-        self.builder.alloc_scope_source_item(scope, node, source);
-    }
-
-    /// Wrap an associated request root in the impl or trait that supplies its inherited context.
-    ///
-    /// Only the selected declaration is copied into the wrapper. Sibling declarations remain
-    /// saved-project facts, so choosing one body does not turn the surrounding edited item list
-    /// into a new discoverable impl or trait.
-    ///
-    /// For `impl<T> Service<T> for Worker { fn edited(&self, _: T) {} fn sibling() {} }`, selecting
-    /// `edited` builds a temporary impl containing that method only. The wrapper still supplies
-    /// `T` and `Self`; `sibling` is not copied into the temporary item store.
-    fn lower_request_root_associated_item(&mut self, item: ast::AssocItem, scope: ScopeId) -> bool {
-        let Some(owner) = item.syntax().parent().and_then(|parent| parent.parent()) else {
-            return false;
-        };
-        let impl_item = ast::Impl::cast(owner.clone());
-        let trait_item = ast::Trait::cast(owner);
-        if impl_item.is_none() && trait_item.is_none() {
-            return false;
-        }
-        let source = self.source(item.syntax());
-        let Some(member) = self.lower_source_assoc_item(item) else {
-            return false;
-        };
-        let member = self.builder.alloc_scopeless_source_item(member, source);
-
-        let (kind, name, visibility, docs, syntax) = if let Some(impl_item) = impl_item {
-            (
-                ItemKind::Impl(ImplItem::from_ast(
-                    &impl_item,
-                    ImplItemContext {
-                        items: vec![member],
-                        line_index: self.line_index,
-                        interner: &mut *self.interner,
-                    },
-                )),
-                None,
-                VisibilityLevel::from_ast(&impl_item.visibility(), ()),
-                <Documentation as MaybeFromAst<OuterDocs>>::maybe_from_ast(&impl_item, OuterDocs),
-                impl_item.syntax().clone(),
-            )
-        } else if let Some(trait_item) = trait_item {
-            (
-                ItemKind::Trait(TraitItem::from_ast(
-                    &trait_item,
-                    TraitItemContext {
-                        items: vec![member],
-                        line_index: self.line_index,
-                        interner: &mut *self.interner,
-                    },
-                )),
-                trait_item.name(),
-                VisibilityLevel::from_ast(&trait_item.visibility(), ()),
-                <Documentation as MaybeFromAst<OuterDocs>>::maybe_from_ast(&trait_item, OuterDocs),
-                trait_item.syntax().clone(),
-            )
-        } else {
-            unreachable!("associated request root should have an impl or trait owner")
-        };
-
-        let node = self.named_source_item_node(kind, name, visibility, docs, &syntax);
-        let owner_source = self.source(&syntax);
-        self.builder
-            .alloc_scope_source_item(scope, node, owner_source);
-        true
-    }
-
     pub(super) fn lower_params(
         &mut self,
         param_list: Option<ast::ParamList>,
@@ -493,7 +391,7 @@ impl BodyLowering<'_> {
         })
     }
 
-    fn lower_source_item(&mut self, item: &ast::Item) -> Option<ItemNode> {
+    pub(super) fn lower_source_item(&mut self, item: &ast::Item) -> Option<ItemNode> {
         match item {
             ast::Item::AsmExpr(item) => Some(self.named_source_item_node(
                 ItemKind::AsmExpr,
@@ -827,7 +725,7 @@ impl BodyLowering<'_> {
         item_ids
     }
 
-    fn lower_source_assoc_item(&mut self, item: ast::AssocItem) -> Option<ItemNode> {
+    pub(super) fn lower_source_assoc_item(&mut self, item: ast::AssocItem) -> Option<ItemNode> {
         match item {
             ast::AssocItem::Const(item) => {
                 let kind = ItemKind::Const(ConstItem::from_ast(
@@ -872,7 +770,7 @@ impl BodyLowering<'_> {
         }
     }
 
-    fn named_source_item_node(
+    pub(super) fn named_source_item_node(
         &mut self,
         kind: ItemKind,
         name: Option<ast::Name>,

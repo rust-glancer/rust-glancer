@@ -6,12 +6,12 @@
 //! enclosing impl or trait header needed by an associated function or const. Either declaration
 //! becomes the root of the same small body worklist used by saved builds.
 //!
-//! The saved project still supplies module declarations, traits, impls, and crate-wide indexes.
-//! Locals, expressions, scopes, body-local impls, and nested bodies come from the current text. The
-//! saved project supplies crate-wide facts. A request-only root is visible from its own body but is
-//! not added to crate-wide indexes, so another function cannot discover an unsaved method. If a
-//! root cannot be identified safely, we skip it rather than attach current code to an unrelated
-//! declaration.
+//! The saved project still supplies module declarations, traits, and crate-wide indexes. Locals,
+//! expressions, scopes, body-local impls, and nested bodies come from the current text. For a body
+//! inside an impl, the current impl header and sibling signatures are added only to that body's
+//! temporary lookup context. They are not added to crate-wide indexes, so an unrelated body cannot
+//! discover the unsaved members. If a root cannot be identified safely, we skip it rather than
+//! attach current code to an unrelated declaration.
 
 use std::time::Instant;
 
@@ -40,7 +40,8 @@ use self::{
     syntax_owner::SyntaxBodyOwner,
 };
 use super::{
-    BodyLoweringTask, BodyMacroExpansion, BodyTaskLowering, BodyTaskSource, LoweredCrateBodies,
+    BodyLoweringTask, BodyMacroExpansion, BodyTaskLowering, BodyTaskSource, CurrentRootItems,
+    LoweredCrateBodies,
 };
 
 /// Why a body from the editor could not be attached to a saved or request-local declaration.
@@ -236,7 +237,7 @@ impl<'source, 'db> CurrentBodyBuilder<'source, 'db> {
                         owner_module,
                         fallback_module: owner_module,
                         body_ref,
-                        include_current_declaration: false,
+                        current_root_items: Self::current_root_items(&current_owner, false),
                     }
                 }
                 ExpectedUnique::Empty => {
@@ -280,7 +281,7 @@ impl<'source, 'db> CurrentBodyBuilder<'source, 'db> {
                         owner_module: fallback_module,
                         fallback_module,
                         body_ref,
-                        include_current_declaration: true,
+                        current_root_items: Self::current_root_items(&current_owner, true),
                     }
                 }
                 ExpectedUnique::Ambiguous => {
@@ -487,6 +488,22 @@ impl<'source, 'db> CurrentBodyBuilder<'source, 'db> {
         ))
     }
 
+    /// Choose how much declaration syntax the selected body's local store needs.
+    ///
+    /// Every current impl contributes its sibling signatures, including when the selected member
+    /// keeps a saved identity. Other owners need current declaration data only when no saved
+    /// identity could be reused.
+    fn current_root_items(owner: &SyntaxBodyOwner, include_selected: bool) -> CurrentRootItems {
+        if owner.belongs_to_impl() {
+            return CurrentRootItems::EnclosingImpl { include_selected };
+        }
+        if include_selected {
+            CurrentRootItems::Declaration
+        } else {
+            CurrentRootItems::None
+        }
+    }
+
     /// Find the module that gives a saved body root its normal name-resolution context.
     fn owner_module(&self, owner: BodyOwner) -> anyhow::Result<Option<ModuleRef>> {
         let items = ItemStoreQuery::new(self.semantic_ir);
@@ -522,9 +539,10 @@ impl<'source, 'db> CurrentBodyBuilder<'source, 'db> {
 
 /// A selected root with the identity and module context needed by shared body lowering.
 ///
-/// Saved roots already have declaration data in Semantic IR. A new or changed declaration instead
-/// asks lowering to include its current item in the temporary body-local item store. Until that
-/// store exists, its saved containing module is also its initial lookup context.
+/// A saved root reuses its Semantic IR identity; when it belongs to an impl, lowering still copies
+/// the current impl header and sibling signatures into its temporary lookup context. A new or
+/// changed declaration also needs its own current item there. Until that store exists, the saved
+/// containing module is the root's initial lookup context.
 struct PreparedCurrentRoot {
     current_span: Span,
     owner: BodyOwner,
@@ -536,15 +554,15 @@ struct PreparedCurrentRoot {
     /// The saved containing module to try when body-local lookup does not find a name.
     fallback_module: ModuleRef,
     body_ref: BodyRef,
-    /// Whether lowering must copy the current root declaration into its body-local item store.
-    include_current_declaration: bool,
+    /// Current declaration context copied into this body's temporary item store.
+    current_root_items: CurrentRootItems,
 }
 
 impl PreparedCurrentRoot {
     fn lowering_task(&self, file: FileId) -> BodyLoweringTask {
         BodyLoweringTask {
             owner: self.owner,
-            request_root: self.include_current_declaration,
+            current_root_items: self.current_root_items,
             owner_module: self.owner_module,
             fallback_module: self.fallback_module,
             file_id: file,

@@ -194,16 +194,25 @@ where
                 generic_owner: GenericDefRef::Impl(impl_ref),
             };
             self.scan_generic_params(scope, &data.generics, data.source.file_id);
+
+            // The impl's generic parameters are in scope while its trait and self type are being
+            // written, but `Self` does not exist until that self type has been established.
+            // Associated items keep the full impl context through `owner_context`; only these two
+            // paths deliberately start from the containing module.
+            let header_scope = SignatureTypePathScope {
+                context: TypePathContext::module(scope.context.module),
+                ..scope
+            };
             if let Some(trait_ref) = &data.trait_ref {
                 self.push_type_ref(
-                    scope,
+                    header_scope,
                     trait_ref,
                     data.source.file_id,
                     TypeNamePosition::Type,
                 );
             }
             self.push_type_ref(
-                scope,
+                header_scope,
                 &data.self_ty,
                 data.source.file_id,
                 TypeNamePosition::Type,

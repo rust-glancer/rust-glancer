@@ -93,7 +93,7 @@ impl<'a> CrateLowering<'a> {
             };
             tasks.push(BodyLoweringTask {
                 owner: BodyOwner::Function(function_ref),
-                request_root: false,
+                current_root_items: super::CurrentRootItems::None,
                 owner_module,
                 fallback_module: owner_module,
                 file_id,
@@ -110,7 +110,7 @@ impl<'a> CrateLowering<'a> {
             };
             tasks.push(BodyLoweringTask {
                 owner: BodyOwner::Const(const_ref),
-                request_root: false,
+                current_root_items: super::CurrentRootItems::None,
                 owner_module,
                 fallback_module: owner_module,
                 file_id,
@@ -149,7 +149,7 @@ impl<'a> CrateLowering<'a> {
             let owner_module = data.owner;
             tasks.push(BodyLoweringTask {
                 owner: BodyOwner::Static(static_ref),
-                request_root: false,
+                current_root_items: super::CurrentRootItems::None,
                 owner_module,
                 fallback_module: owner_module,
                 file_id,

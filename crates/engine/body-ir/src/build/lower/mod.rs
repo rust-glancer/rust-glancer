@@ -13,6 +13,7 @@ mod body;
 mod builder;
 mod crate_lowering;
 mod current_body;
+mod current_root;
 mod expr;
 mod macro_expansion;
 mod pat;
@@ -41,7 +42,9 @@ pub use self::current_body::{
     CurrentBodyUnavailable,
 };
 pub(super) use self::macro_expansion::BodyMacroExpansion;
-pub(super) use self::task::{BodyLoweringTask, BodyTaskLowering, BodyTaskSource, LoweredBodyTask};
+pub(super) use self::task::{
+    BodyLoweringTask, BodyTaskLowering, BodyTaskSource, CurrentRootItems, LoweredBodyTask,
+};
 use super::{
     BodyIrBuildProgress, BodyIrBuildStage, local_thread_pool,
     materialization::BodyIrMaterialization,

@@ -9,6 +9,7 @@ use rg_parse::{Span, TextSpan, enclosing_inline_module_path};
 use rg_syntax::{AstNode as _, SourceFile, SyntaxNode, ast};
 use rg_text::Name;
 
+use super::super::syntax::associated_item_owner;
 use super::CurrentBodySelection;
 
 /// A function, const, or static that has a body in the editor's syntax tree.
@@ -53,6 +54,11 @@ impl SyntaxBodyOwner {
     /// Describe the inline modules that contain this declaration in editor syntax.
     pub(super) fn inline_module_path(&self) -> Vec<Name> {
         enclosing_inline_module_path(self.syntax())
+    }
+
+    /// Return whether this declaration is an associated item of an impl block.
+    pub(super) fn belongs_to_impl(&self) -> bool {
+        associated_item_owner(self.syntax()).is_some_and(|owner| ast::Impl::can_cast(owner.kind()))
     }
 
     /// Find the declaration that owns the cursor, including its header and an unfinished body at

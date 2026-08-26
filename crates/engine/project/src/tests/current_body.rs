@@ -532,7 +532,7 @@ fn current_declaration_headers_use_request_local_semantics() {
 }
 
 #[test]
-fn request_local_method_root_uses_current_signature_without_publishing_current_items() {
+fn request_local_method_root_uses_current_impl_without_publishing_current_items() {
     let fixture = CurrentBodyFixture::new(
         r#"
 //- /Cargo.toml
@@ -553,6 +553,12 @@ impl Service {
 
     pub fn existing_static() {}
 
+    /// saved const
+    pub const EXISTING_CONST: u32 = 0;
+
+    /// saved type
+    pub type ExistingType = u32;
+
     pub fn existing_member(&self) {}
 }
 "#,
@@ -572,11 +578,16 @@ impl Service {
         Self { value: 0 }
     }
 
-    pub fn existing_static() {}
+    pub fn existing_static(current: bool) {}
+
+    pub fn sibling_added(&self) {
+        $sibling_body$
+    }
 
     pub fn existing_member(&self, other: Service) {
         let _ = Self::$associated$;
         self.$member$;
+        self.sibling_$current_sibling$;
         other.existing_$parameter$;
         fn nested() {
             let _ = Service::$nested_associated$;
@@ -600,13 +611,18 @@ impl Service {
         Self { value: 0 }
     }
 
-    pub fn existing_static() {}
+    pub fn existing_static(current: bool) {}
 
     pub fn existing_member(&self) {}
+
+    pub fn sibling_added(&self) {
+        $sibling_body$
+    }
 
     pub fn added_member(&self, other: Service) {
         let _ = Self::$associated$;
         self.$member$;
+        self.sibling_$current_sibling$;
         other.existing_$parameter$;
         fn nested() {
             let _ = Service::$nested_associated$;
@@ -639,12 +655,26 @@ impl Service {
                 .is_some_and(|detail| detail.contains("other: Service")),
             "the request-local method should keep its current signature: {current_rows:?}",
         );
-        for saved_name in ["existing_static", "new"] {
-            assert!(
-                associated.iter().any(|item| item.label == saved_name),
-                "the request-local root should retain saved associated item {saved_name}: {associated:?}",
-            );
-        }
+        assert!(
+            associated.iter().any(|item| item.label == "new"),
+            "the request-local root should retain saved associated item new: {associated:?}",
+        );
+        let current_sibling_rows = associated
+            .iter()
+            .filter(|item| item.label == "existing_static")
+            .collect::<Vec<_>>();
+        assert_eq!(
+            current_sibling_rows.len(),
+            1,
+            "a current sibling should replace its saved declaration: {associated:?}",
+        );
+        assert!(
+            current_sibling_rows[0]
+                .detail
+                .as_deref()
+                .is_some_and(|detail| detail.contains("current: bool")),
+            "the sibling candidate should use its current signature: {current_sibling_rows:?}",
+        );
 
         let (members, summary) = fixture.completion_items(&current, "member");
         assert!(summary.is_complete());
@@ -654,6 +684,24 @@ impl Service {
                 "the current receiver should expose {member_name}: {members:?}",
             );
         }
+
+        let (siblings, summary) = fixture.completion_items(&current, "current_sibling");
+        assert!(summary.is_complete());
+        assert!(
+            siblings.iter().any(|item| item.label == "sibling_added"),
+            "a request-local method should see a new sibling from its current impl: {siblings:?}",
+        );
+        let sibling_body = current
+            .offset("sibling_body")
+            .try_into()
+            .expect("sibling body marker should fit into u32");
+        assert!(
+            summary
+                .rebuilt_body_spans()
+                .iter()
+                .all(|(_, _, span)| !span.contains(sibling_body)),
+            "the sibling signature should not add its body to the selected worklist: {summary:?}",
+        );
 
         let (parameters, summary) = fixture.completion_items(&current, "parameter");
         assert!(summary.is_complete());
@@ -699,26 +747,100 @@ impl Service {
 
     pub fn existing_static() {}
 
-    pub fn added_member(&self) {}
+    /// current const
+    pub const EXISTING_CONST: bool = true;
+
+    /// current type
+    pub type ExistingType = bool;
+
+    pub fn added_member(&self) {
+        $dirty_method_body$
+    }
+
+    pub const ADDED_CONST: u32 = {
+        $dirty_const_body$
+        1
+    };
+
+    pub type AddedType = u32;
 
     pub fn existing_member(&self) {
         self.add$dirty_method$;
+        let _ = Self::ADDED_$dirty_const$;
+        let _ = Self::EXISTING_$dirty_existing_const$;
+        let _: Self::Added$dirty_type_alias$ = 0;
+        let _: Self::Existing$dirty_existing_type_alias$ = false;
         let _: Dir$dirty_type$ = todo!();
     }
+}
+
+pub fn outside(service: Service) {
+    service.add$outside_method$;
 }
 "#,
     );
     let (labels, summary) = fixture.completion_labels(&current, "dirty_method");
     assert!(summary.is_complete());
     assert!(
-        !labels.iter().any(|label| label == "added_member"),
-        "a new method must not become visible from a different body before save: {labels:?}",
+        labels.iter().any(|label| label == "added_member"),
+        "a saved method should see a new sibling from its current impl: {labels:?}",
     );
+    for sibling_body in ["dirty_method_body", "dirty_const_body"] {
+        let sibling_body = current
+            .offset(sibling_body)
+            .try_into()
+            .expect("sibling body marker should fit into u32");
+        assert!(
+            summary
+                .rebuilt_body_spans()
+                .iter()
+                .all(|(_, _, span)| !span.contains(sibling_body)),
+            "current impl siblings should contribute signatures without rebuilding bodies: {summary:?}",
+        );
+    }
+    for (marker, expected) in [
+        ("dirty_const", "ADDED_CONST"),
+        ("dirty_type_alias", "AddedType"),
+    ] {
+        let (labels, summary) = fixture.completion_labels(&current, marker);
+        assert!(summary.is_complete());
+        assert!(
+            labels.iter().any(|label| label == expected),
+            "a saved method should see current impl member {expected}: {labels:?}",
+        );
+    }
+    for (marker, expected, current_docs) in [
+        ("dirty_existing_const", "EXISTING_CONST", "current const"),
+        ("dirty_existing_type_alias", "ExistingType", "current type"),
+    ] {
+        let (items, summary) = fixture.completion_items(&current, marker);
+        assert!(summary.is_complete());
+        let rows = items
+            .iter()
+            .filter(|item| item.label == expected)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            rows.len(),
+            1,
+            "a current impl item should replace its saved same-name declaration: {items:?}",
+        );
+        assert_eq!(
+            rows[0].documentation.as_deref(),
+            Some(current_docs),
+            "the remaining candidate should come from current source",
+        );
+    }
     let (labels, summary) = fixture.completion_labels(&current, "dirty_type");
     assert!(summary.is_complete());
     assert!(
         !labels.iter().any(|label| label == "DirtyType"),
         "a new type must not enter saved module lookup before save: {labels:?}",
+    );
+    let (labels, summary) = fixture.completion_labels(&current, "outside_method");
+    assert!(summary.is_complete());
+    assert!(
+        !labels.iter().any(|label| label == "added_member"),
+        "a current impl member must not enter lookup from an unrelated body: {labels:?}",
     );
 }
 
