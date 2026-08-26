@@ -963,6 +963,19 @@ where
                     syntax_index += 1;
                     GenericArg::Const(self.lower_const(Some(value.as_str()))?)
                 }
+                (GenericParamRef::Const(_), Some(ItemGenericArg::Type(ty)))
+                    if ty.type_param_name().is_some() && !ty.has_generic_args() =>
+                {
+                    // In `array::IntoIter<T, N>`, bare `N` is syntactically ambiguous and the
+                    // parser represents it as a type argument. The declaration says this slot is a
+                    // const parameter, which resolves the ambiguity just as rustc does after
+                    // parsing the generic argument list.
+                    let name = ty
+                        .type_param_name()
+                        .expect("guard requires a plain single-segment path");
+                    syntax_index += 1;
+                    GenericArg::Const(self.lower_const(Some(name.as_str()))?)
+                }
                 (GenericParamRef::Type(_), _)
                     if matches!(
                         param.source(),

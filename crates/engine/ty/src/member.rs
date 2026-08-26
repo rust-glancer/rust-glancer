@@ -3,6 +3,10 @@
 //! Field and method lookup is type reasoning: it needs autoderef, impl-header matching, and one
 //! coherent crate visibility/solver context, but it does not need source spans or UI labels. This
 //! query returns stable item refs so higher layers can decide how to present them.
+//!
+//! For `String::new().contains("x")`, lookup first checks the nominal `String` candidate, then
+//! autoderefs to `str`. `str` has no `TypeDefRef`, so that second step uses structural impl matching
+//! and returns the same stable function ref that hover, completion, and goto-definition consume.
 
 use rg_def_map::DefMapSource;
 use rg_ir_model::{FieldRef, FunctionRef, TraitApplicability, TypeDefRef};
@@ -107,6 +111,7 @@ where
                     &table,
                 )?);
             }
+            methods.extend(self.method_candidates_for_unkeyed(&matcher, candidate.ty(), &table)?);
         }
         Ok(methods)
     }
@@ -131,6 +136,52 @@ where
         for (function, selection) in
             matcher.trait_function_candidates_for_receiver(receiver_ty, None, table)?
         {
+            candidates.push(MemberMethodCandidateRef::trait_method(
+                function,
+                selection.applicability,
+            ));
+        }
+
+        // A blanket impl has no nominal receiver index key, so match the compact fallback list
+        // against this concrete ADT after handling directly keyed impls.
+        let receiver_ty = Ty::adt(receiver_ty.clone());
+        for (function, selection) in matcher.trait_function_candidates_from_impls_for_ty(
+            self.context.item_lookup().trait_impls_without_type_key(),
+            &receiver_ty,
+            None,
+            table,
+        )? {
+            candidates.push(MemberMethodCandidateRef::trait_method(
+                function,
+                selection.applicability,
+            ));
+        }
+
+        Ok(candidates)
+    }
+
+    /// Returns inherent and trait methods for receiver shapes without a nominal lookup key.
+    fn method_candidates_for_unkeyed(
+        &self,
+        matcher: &ImplMatcher<'query, D, I>,
+        receiver_ty: &Ty,
+        table: &InferenceTable,
+    ) -> Result<Vec<MemberMethodCandidateRef>, D::Error> {
+        if !receiver_ty.has_unkeyed_self_head() {
+            return Ok(Vec::new());
+        }
+
+        let mut candidates = Vec::new();
+        for (function, _) in matcher.unkeyed_inherent_function_candidates(receiver_ty, None)? {
+            candidates.push(MemberMethodCandidateRef::inherent(function));
+        }
+
+        for (function, selection) in matcher.trait_function_candidates_from_impls_for_ty(
+            self.context.item_lookup().trait_impls_without_type_key(),
+            receiver_ty,
+            None,
+            table,
+        )? {
             candidates.push(MemberMethodCandidateRef::trait_method(
                 function,
                 selection.applicability,

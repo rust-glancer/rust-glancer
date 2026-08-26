@@ -1,15 +1,20 @@
-//! Expands item-position declarative macros during def-map construction.
+//! Expands item-shaped declarative macros during def-map construction.
 //!
 //! Macro expansion is tied to import resolution: a call may need imports to find its definition,
 //! and its generated items may add new imports or new macros. This module keeps that loop local to
-//! def-map by parsing expanded token trees into generated syntax and collecting those items into
-//! the macro call's module.
+//! def-map by parsing expanded token trees into generated syntax and splicing the result according
+//! to the call's placement. Module-position output enters the caller's module; associated output
+//! replaces the invocation inside its trait or impl, and nested calls preserve that owner slot.
 //!
-//! Most generated items can be collected immediately. A generated `mod child;` still needs its
-//! child file, while a generated `include!(...)` needs a real file whose items belong to the
-//! caller's existing module. For those two source edges, the collector keeps the corresponding
-//! semantic continuation and emits a project-owned lookup request. Project construction captures
-//! and lowers the file, then resumes this same expansion/finalization session.
+//! For example, `make_types!();` at module scope contributes ordinary module items, while
+//! `impl User { make_methods!(); }` contributes methods or associated consts to that `impl User`.
+//! If `make_methods!` expands to another macro call, that nested call stays in the same impl slot.
+//!
+//! Most generated items can be spliced immediately. A generated `mod child;` still needs its child
+//! file, while a generated `include!(...)` needs a real file whose items retain the include call's
+//! placement. For those two source edges, the collector keeps the corresponding semantic
+//! continuation and emits a project-owned lookup request. Project construction captures and lowers
+//! the file, then resumes this same expansion/finalization session.
 
 use std::{collections::HashMap, sync::Arc};
 
@@ -68,6 +73,15 @@ impl MacroDirective {
 pub(super) enum MacroCallOrigin {
     Source,
     Generated { parent_call: usize },
+}
+
+/// Says where a successful item-shaped expansion is spliced.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum MacroCallPlacement {
+    /// Ordinary module-position output, such as `make_types!();`, enters the caller's module.
+    ModuleItems,
+    /// Output from `impl User { make_methods!(); }` replaces the call inside that trait or impl.
+    AssociatedItems { call_source: crate::ItemSource },
 }
 
 /// Bounded diagnostic assembled before retryable macro calls are marked as skipped.
@@ -209,14 +223,14 @@ impl PendingMacroExpansionLimitGroup {
     }
 }
 
-/// Worklist state for an item-position macro call seen during def-map construction.
+/// Worklist state for an item-shaped macro call seen during def-map construction.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum MacroDirectiveState {
     /// The call has not yet been resolved against the current scope snapshot.
     Pending,
     /// Resolution failed, but a later import refresh may make the macro visible.
     Unresolved,
-    /// Expansion succeeded and generated items have been collected.
+    /// Expansion succeeded and its output was spliced according to the call placement.
     Expanded,
     /// Compilation, expansion, or generated-source parsing failed.
     Failed,
@@ -249,7 +263,8 @@ pub(super) struct MacroUseImport {
 ///
 /// Unlike ordinary macro namespace bindings, textual `macro_rules!` visibility depends on source
 /// order and on the declaration position of nested modules. We keep that ordering state only while
-/// expanding macros; generated items are collected into the frozen def-map afterwards.
+/// expanding macros; generated module items and associated replacement edges enter the frozen
+/// def-map afterwards.
 #[derive(Debug, Clone, Default)]
 pub(super) struct TextualMacroScopes {
     definitions: HashMap<ModuleId, HashMap<Name, Vec<TextualMacroDefinition>>>,
@@ -339,10 +354,12 @@ struct TextualMacroDefinition {
     order: ItemOrder,
 }
 
-/// One queued item-position macro call plus the call-site state needed after ItemTree lowering.
+/// One queued item-shaped macro call plus the call-site state needed after ItemTree lowering.
 ///
-/// In particular, `module_file_context` follows the caller. A macro imported from another crate
-/// must still resolve a generated `mod child;` next to the invocation, not next to its definition.
+/// `module` supplies the scope used to resolve the call and any nested macros, while `placement`
+/// says whether successful output enters that module or replaces an associated-item call. The
+/// `module_file_context` also follows the caller: a macro imported from another crate must still
+/// resolve a generated `mod child;` next to the invocation, not next to its definition.
 #[derive(Debug, Clone)]
 pub(super) struct MacroCallSite {
     pub(super) module: ModuleId,
@@ -355,6 +372,8 @@ pub(super) struct MacroCallSite {
     pub(super) file_id: FileId,
     pub(super) span: Span,
     pub(super) order: ItemOrder,
+    /// Destination retained by nested calls and source-backed continuations.
+    pub(super) placement: MacroCallPlacement,
     /// Logical filesystem base inherited by declarations emitted from this call.
     pub(super) module_file_context: Arc<ModuleFileContext>,
 }

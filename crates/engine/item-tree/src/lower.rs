@@ -426,7 +426,7 @@ impl<'db> PackageLowering<'db> {
             )),
             ast::Item::Impl(item) => {
                 let impl_item = self
-                    .lower_impl_item(builder, &item)
+                    .lower_impl_item(builder, &item, module_file_context)
                     .context("while attempting to lower impl declaration")?;
                 Some(builder.alloc_documented_item(
                     ItemKind::Impl(impl_item),
@@ -534,7 +534,7 @@ impl<'db> PackageLowering<'db> {
             )),
             ast::Item::Trait(item) => {
                 let trait_item = self
-                    .lower_trait_item(builder, &item)
+                    .lower_trait_item(builder, &item, module_file_context)
                     .context("while attempting to lower trait declaration")?;
                 Some(builder.alloc_documented_item(
                     ItemKind::Trait(trait_item),
@@ -847,13 +847,14 @@ impl<'db> PackageLowering<'db> {
         &mut self,
         builder: &mut FileTreeBuilder<'_>,
         item: &ast::Trait,
+        module_file_context: &ModuleFileContext,
     ) -> anyhow::Result<TraitItem> {
         let assoc_items = item
             .assoc_item_list()
             .map(|item_list| item_list.assoc_items().collect::<Vec<_>>())
             .unwrap_or_default();
         let items = self
-            .collect_assoc_items(builder, assoc_items)
+            .collect_assoc_items(builder, assoc_items, module_file_context)
             .context("while attempting to lower trait associated items")?;
 
         Ok(TraitItem::from_ast(
@@ -870,13 +871,14 @@ impl<'db> PackageLowering<'db> {
         &mut self,
         builder: &mut FileTreeBuilder<'_>,
         item: &ast::Impl,
+        module_file_context: &ModuleFileContext,
     ) -> anyhow::Result<ImplItem> {
         let assoc_items = item
             .assoc_item_list()
             .map(|item_list| item_list.assoc_items().collect::<Vec<_>>())
             .unwrap_or_default();
         let items = self
-            .collect_assoc_items(builder, assoc_items)
+            .collect_assoc_items(builder, assoc_items, module_file_context)
             .context("while attempting to lower impl associated items")?;
         Ok(ImplItem::from_ast(
             item,
@@ -892,11 +894,12 @@ impl<'db> PackageLowering<'db> {
         &mut self,
         builder: &mut FileTreeBuilder<'_>,
         items: Vec<ast::AssocItem>,
+        module_file_context: &ModuleFileContext,
     ) -> anyhow::Result<Vec<ItemTreeId>> {
         let mut item_ids = Vec::new();
 
         for item in items {
-            if let Some(item_id) = self.lower_assoc_item(builder, item)? {
+            if let Some(item_id) = self.lower_assoc_item(builder, item, module_file_context)? {
                 item_ids.push(item_id);
             }
         }
@@ -908,6 +911,7 @@ impl<'db> PackageLowering<'db> {
         &mut self,
         builder: &mut FileTreeBuilder<'_>,
         item: ast::AssocItem,
+        module_file_context: &ModuleFileContext,
     ) -> anyhow::Result<Option<ItemTreeId>> {
         let item_id = match item {
             ast::AssocItem::Const(item) => Some(builder.alloc_documented_item(
@@ -930,7 +934,32 @@ impl<'db> PackageLowering<'db> {
                 VisibilityLevel::from_ast(&item.visibility(), ()),
                 &item,
             )),
-            ast::AssocItem::MacroCall(_) => None,
+            ast::AssocItem::MacroCall(item) => {
+                // In `impl User { methods!(); }`, the call must remain in the impl's item list even
+                // though expansion happens after module macro resolution. Retain the same payload
+                // as an item-position macro so DefMap can replace it with generated functions,
+                // consts, and types without losing the `impl User` owner.
+                let builtin = self
+                    .lower_builtin_macro(builder, &item, module_file_context)
+                    .context("while attempting to lower associated builtin macro payload")?;
+                let mut span_for_range = |range| {
+                    builder.tt_span_for_range(range, macro_edition(self.parse_package.edition()))
+                };
+                Some(builder.alloc_documented_item(
+                    ItemKind::MacroCall(MacroCallItem::from_ast(
+                        &item,
+                        MacroCallContext {
+                            interner: &mut *self.interner,
+                            builtin,
+                            span_for_range: &mut span_for_range,
+                        },
+                    )),
+                    None,
+                    None,
+                    VisibilityLevel::Private,
+                    &item,
+                ))
+            }
             ast::AssocItem::TypeAlias(item) => Some(builder.alloc_documented_item(
                 ItemKind::TypeAlias(TypeAliasItem::from_ast(
                     &item,

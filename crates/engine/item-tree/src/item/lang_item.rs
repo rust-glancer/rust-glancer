@@ -29,6 +29,8 @@ pub enum LangItem {
     FnOnce,
     /// The `FnOnce::Output` associated type shared by the callable traits.
     FnOnceOutput,
+    /// The compiler-provided trait implemented by every possible pointee type.
+    PointeeSized,
 }
 
 impl LangItem {
@@ -36,7 +38,7 @@ impl LangItem {
     ///
     /// New enum variants belong here too; otherwise syntax can retain the identity but downstream
     /// queries will never see it.
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 8] = [
         Self::Deref,
         Self::DerefTarget,
         Self::IntoIter,
@@ -44,6 +46,7 @@ impl LangItem {
         Self::FnMut,
         Self::FnOnce,
         Self::FnOnceOutput,
+        Self::PointeeSized,
     ];
 
     /// Callable trait identities accepted by closure and function-call reasoning.
@@ -63,6 +66,7 @@ impl LangItem {
             "fn_mut" => Self::FnMut,
             "fn_once" => Self::FnOnce,
             "fn_once_output" => Self::FnOnceOutput,
+            "pointee_sized" => Self::PointeeSized,
             _ => return None,
         })
     }

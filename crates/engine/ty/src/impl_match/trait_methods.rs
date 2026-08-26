@@ -58,6 +58,29 @@ where
         method_name: Option<&str>,
         table: &InferenceTable,
     ) -> Result<Vec<(FunctionRef, TraitSelection)>, D::Error> {
+        self.trait_function_candidates_from_impls_for_ty(
+            trait_impls,
+            &Ty::adt(receiver_ty.clone()),
+            method_name,
+            table,
+        )
+    }
+
+    /// Expands already-collected trait impl candidates for any canonical receiver shape.
+    ///
+    /// Primitive, structural, and blanket impls have no `TypeDefRef` receiver key. Their callers
+    /// supply a bounded fallback candidate list, then this method performs the same exact header
+    /// match and predicate proof used for nominal receivers. For
+    /// `impl<T, const N: usize> IntoIterator for [T; N]`, matching `[User; 3]` binds `T = User` and
+    /// `N = 3`. Its instantiated predicates are then classified: a definite failure removes
+    /// `IntoIterator::into_iter`, while unsupported evidence retains it as a `Maybe` candidate.
+    pub fn trait_function_candidates_from_impls_for_ty(
+        &self,
+        trait_impls: UniqueVec<TraitImplRef>,
+        receiver_ty: &Ty,
+        method_name: Option<&str>,
+        table: &InferenceTable,
+    ) -> Result<Vec<(FunctionRef, TraitSelection)>, D::Error> {
         let item_query = self.context.item_paths().items();
         let mut functions = Vec::new();
         for trait_impl in trait_impls {
@@ -77,7 +100,8 @@ where
                 indexed_trait_functions = Some(indexed_functions);
             }
 
-            let Some(selection) = self.trait_impl_match(trait_impl, receiver_ty, table)? else {
+            let Some(selection) = self.trait_impl_match_for_ty(trait_impl, receiver_ty, table)?
+            else {
                 continue;
             };
 
@@ -141,12 +165,31 @@ where
         receiver_ty: &AdtTy,
         table: &InferenceTable,
     ) -> Result<Option<TraitSelection>, D::Error> {
+        self.trait_impl_match_for_ty(trait_impl, &Ty::adt(receiver_ty.clone()), table)
+    }
+
+    /// Match one trait impl against a canonical receiver shape.
+    fn trait_impl_match_for_ty(
+        &self,
+        trait_impl: TraitImplRef,
+        receiver_ty: &Ty,
+        table: &InferenceTable,
+    ) -> Result<Option<TraitSelection>, D::Error> {
         let item_query = self.context.item_paths().items();
         let Some(impl_data) = item_query.impl_data(trait_impl.impl_ref)? else {
             return Ok(None);
         };
-        if !impl_data.resolved_self_ty.is(&receiver_ty.def)
-            || !impl_data.resolved_trait_ref.is(&trait_impl.trait_ref)
+        if !impl_data.resolved_trait_ref.is(&trait_impl.trait_ref) {
+            return Ok(None);
+        }
+
+        // A nominal key is a cheap rejection before canonical header matching. Unkeyed impls are
+        // structural or blanket candidates and therefore proceed for every receiver shape.
+        if let Some(indexed_self_ty) = impl_data.resolved_self_ty.as_option()
+            && !receiver_ty
+                .as_adts()
+                .iter()
+                .any(|receiver| receiver.def == *indexed_self_ty)
         {
             return Ok(None);
         }
@@ -154,9 +197,7 @@ where
         let Some(header) = self.impl_header(trait_impl.impl_ref)? else {
             return Ok(None);
         };
-        let Some((subst, self_applicability)) =
-            Self::impl_self_subst(&header, &Ty::adt(receiver_ty.clone()))
-        else {
+        let Some((subst, self_applicability)) = Self::impl_self_subst(&header, receiver_ty) else {
             return Ok(None);
         };
         let Some(mut selection) = TraitSelectionQuery::new(self.context.clone())

@@ -199,6 +199,7 @@ pub(crate) fn apply_expansion_attempts(
                         module: attempt.origin.module,
                         order: attempt.origin.order,
                         parent_call: attempt.call_id,
+                        placement: attempt.origin.placement,
                         module_file_context: attempt.origin.module_file_context,
                     },
                     result: MacroExpansionApplyResult::default(),
@@ -234,6 +235,7 @@ pub(crate) fn apply_expansion_attempts(
                         module: attempt.origin.module,
                         order: attempt.origin.order,
                         parent_call: attempt.call_id,
+                        placement: attempt.origin.placement,
                         module_file_context: attempt.origin.module_file_context,
                     },
                     result: MacroExpansionApplyResult::default(),
@@ -319,7 +321,7 @@ pub(crate) struct MacroExpansionAttempt {
 }
 
 impl MacroExpansionAttempt {
-    /// The call shape is not usable by item-position macro expansion.
+    /// The call shape is not usable by item-shaped macro expansion.
     fn skipped(crate_ref: CrateRef, call_id: usize, call: &MacroCallSite) -> Self {
         Self::new(
             crate_ref,
@@ -565,6 +567,7 @@ impl MacroExpansionAttempt {
                 file_id: call.file_id,
                 span: call.span,
                 order: call.order.clone(),
+                placement: call.placement,
                 dollar_crate: None,
                 parent_call: call_id,
                 module_file_context: Arc::clone(&call.module_file_context),
@@ -587,7 +590,7 @@ impl MacroExpansionAttempt {
         E: CrateResolutionEnv<Error = rg_package_store::PackageStoreError> + MacroDefinitionEnv,
     {
         // First normalize the syntactic call into a path and argument list. Calls that are not
-        // item-position macro invocations are marked done so the worklist can move on.
+        // item-shaped macro invocations are marked done so the worklist can move on.
         let Some(path_text) = call.path.as_deref().or(call.callee.as_deref()) else {
             return Ok(Self::skipped(state.crate_ref, call_id, call));
         };

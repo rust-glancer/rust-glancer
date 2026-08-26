@@ -253,6 +253,23 @@ impl<'item> ItemLookupQuery<'item> {
         impls
     }
 
+    /// Returns trait impls whose `Self` type has no nominal receiver key.
+    ///
+    /// Both `impl<T, const N: usize> IntoIterator for [T; N]` and
+    /// `impl<T> Describe for T` lack one `TypeDefRef` under which they can be indexed. Callers use
+    /// this bounded list only as candidate discovery, then match each full impl header against the
+    /// actual receiver type.
+    pub fn trait_impls_without_type_key(&self) -> UniqueVec<TraitImplRef> {
+        let mut impls = self
+            .local_index
+            .trait_impls_without_type_key
+            .iter()
+            .map(|trait_impl| trait_impl.expand())
+            .collect::<UniqueVec<_>>();
+        impls.extend(self.dependencies.trait_impls_without_type_key());
+        impls
+    }
+
     /// Returns trait impls, preserving whether the implemented trait was visible.
     pub fn trait_impls_for_trait(&self, trait_ref: TraitDefRef) -> Option<UniqueVec<TraitImplRef>> {
         let dependency_impls = self.dependencies.trait_impls_for_trait(trait_ref);
@@ -417,6 +434,30 @@ impl DependencyLookup<'_> {
             }
         }
         results.trait_impls_by_type.insert(ty, impls.clone());
+        impls
+    }
+
+    fn trait_impls_without_type_key(&self) -> UniqueVec<TraitImplRef> {
+        let mut results = self
+            .results
+            .lock()
+            .expect("dependency lookup results lock should not be poisoned");
+        if let Some(impls) = &results.trait_impls_without_type_key {
+            self.operation_cache.record_dependency_result_hit();
+            return impls.clone();
+        }
+
+        self.operation_cache.record_dependency_result_miss();
+        let mut impls = UniqueVec::new();
+        for index in self.indexes.iter() {
+            impls.extend(
+                index
+                    .trait_impls_without_type_key
+                    .iter()
+                    .map(|trait_impl| trait_impl.expand()),
+            );
+        }
+        results.trait_impls_without_type_key = Some(impls.clone());
         impls
     }
 
@@ -622,14 +663,15 @@ impl ItemLookupQueryCacheInner {
 /// - `Some(empty)` means the trait was visible but the narrower lookup found no candidate;
 /// - `Some(non-empty)` contains the dependency candidates.
 ///
-/// `structural_inherent_impls` uses its outer `Option` only to distinguish not-computed from a
-/// computed empty list.
+/// The unkeyed impl lists use their outer `Option` only to distinguish not-computed from a computed
+/// empty list.
 #[derive(Debug, Default)]
 struct DependencyLookupResults {
     inherent_impls_by_type: HashMap<TypeDefRef, UniqueVec<ImplRef>>,
     inherent_functions_by_type_and_name: HashMap<(TypeDefRef, Name), UniqueVec<FunctionRef>>,
     structural_inherent_impls: Option<UniqueVec<ImplRef>>,
     trait_impls_by_type: HashMap<TypeDefRef, UniqueVec<TraitImplRef>>,
+    trait_impls_without_type_key: Option<UniqueVec<TraitImplRef>>,
     trait_impls_by_trait: HashMap<TraitDefRef, Option<UniqueVec<TraitImplRef>>>,
     trait_functions_by_trait: HashMap<TraitDefRef, Option<UniqueVec<FunctionRef>>>,
     trait_functions_by_trait_and_name: HashMap<(TraitDefRef, Name), Option<UniqueVec<FunctionRef>>>,

@@ -451,6 +451,32 @@ impl<'a> GeneratedSourceLowering<'a> {
                     let visibility = VisibilityLevel::from_ast(&item.visibility(), ());
                     Some(self.alloc_documented_item(kind, name, name_range, visibility, &item))
                 }
+                ast::AssocItem::MacroCall(item) => {
+                    // A generated associated-item macro remains attached to the same trait or
+                    // impl. Retain it so the macro fixed point can expand nested helper macros.
+                    let span_map = self.span_map.clone();
+                    let origin_file_id = self.origin.file_id;
+                    let origin_span = self.origin.span;
+                    let edition = self.edition;
+                    let mut span_for_range = move |range| {
+                        tt_span_for_range(&span_map, origin_file_id, origin_span, edition, range)
+                    };
+                    let kind = ItemKind::MacroCall(MacroCallItem::from_ast(
+                        &item,
+                        MacroCallContext {
+                            interner: &mut *self.interner,
+                            builtin: None,
+                            span_for_range: &mut span_for_range,
+                        },
+                    ));
+                    Some(self.alloc_documented_item(
+                        kind,
+                        None,
+                        None,
+                        VisibilityLevel::Private,
+                        &item,
+                    ))
+                }
                 ast::AssocItem::TypeAlias(item) => {
                     let kind = ItemKind::TypeAlias(TypeAliasItem::from_ast(
                         &item,
@@ -461,7 +487,6 @@ impl<'a> GeneratedSourceLowering<'a> {
                     let visibility = VisibilityLevel::from_ast(&item.visibility(), ());
                     Some(self.alloc_documented_item(kind, name, name_range, visibility, &item))
                 }
-                _ => None,
             };
 
             if let Some(item_id) = item_id {

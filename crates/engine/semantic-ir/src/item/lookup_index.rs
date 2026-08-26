@@ -36,6 +36,7 @@ pub struct ItemLookupIndex {
         HashMap<TypeDefRef, HashMap<Name, UniqueVec<FunctionRef>>>,
     pub(crate) structural_inherent_impls: UniqueVec<ImplRef>,
     pub(crate) trait_impls_by_type: HashMap<TypeDefRef, UniqueVec<IndexedTraitImplRef>>,
+    pub(crate) trait_impls_without_type_key: UniqueVec<IndexedTraitImplRef>,
     pub(crate) trait_impls_by_trait: HashMap<TraitDefRef, UniqueVec<IndexedImplRef>>,
     // Trait impl lookup produces trait identities first; this cache then expands each trait into
     // its associated function declarations without reopening the trait item every time.
@@ -74,6 +75,7 @@ impl ItemLookupIndex {
                 .values()
                 .map(UniqueVec::len)
                 .sum::<usize>()
+            + self.trait_impls_without_type_key.len()
             + self
                 .trait_impls_by_trait
                 .values()
@@ -177,6 +179,12 @@ impl ItemLookupIndex {
                     self.trait_impls_by_type
                         .entry(*self_ty)
                         .or_default()
+                        .push(IndexedTraitImplRef::from_crate(trait_impl));
+                } else {
+                    // Primitive, structural, and blanket `Self` types have no nominal key. Method
+                    // lookup starts from a receiver rather than a trait, so retain this compact
+                    // fallback list instead of scanning every visible trait implementation.
+                    self.trait_impls_without_type_key
                         .push(IndexedTraitImplRef::from_crate(trait_impl));
                 }
             }

@@ -1,9 +1,14 @@
 //! Method lookup for receiver types.
+//!
+//! Ref-level member lookup can stop after identifying a function. Body inference also keeps the
+//! receiver substitutions and trait-selection evidence needed to instantiate its signature. For
+//! `[User; 3].into_iter()`, the selected array impl carries `T = User` and `N = 3`, allowing the
+//! return projection to become `array::IntoIter<User, 3>`.
 
 use rg_def_map::DefMapSource;
-use rg_ir_model::{AssocItemId, FunctionRef, ImplRef, ItemOwner};
+use rg_ir_model::{FunctionRef, ItemOwner, TraitImplRef};
 use rg_package_store::PackageStoreError;
-use rg_semantic_ir::{ItemStoreQuery, ItemStoreSource};
+use rg_semantic_ir::ItemStoreSource;
 use rg_std::UniqueVec;
 use rg_ty::{
     AdtTy, AutoderefMode, ImplMatcher, MemberMethodCandidateRef, MemberMethodOrigin, Substitution,
@@ -101,11 +106,15 @@ where
                     Self::push_candidate(&mut candidates, candidate);
                 }
             }
-            for method in self.structural_method_candidates(&matcher, candidate.ty(), None)? {
-                Self::push_candidate(
-                    &mut candidates,
-                    MemberMethodCandidateRef::inherent(method.function()),
-                );
+            for method in self.unkeyed_method_candidates(&matcher, candidate.ty(), None, &table)? {
+                let candidate = match &method.trait_selection {
+                    Some(selection) => MemberMethodCandidateRef::trait_method(
+                        method.function,
+                        selection.applicability,
+                    ),
+                    None => MemberMethodCandidateRef::inherent(method.function),
+                };
+                Self::push_candidate(&mut candidates, candidate);
             }
         }
 
@@ -166,7 +175,7 @@ where
             }
 
             for structural in
-                self.structural_method_candidates(&matcher, candidate.ty(), Some(method_name))?
+                self.unkeyed_method_candidates(&matcher, candidate.ty(), Some(method_name), table)?
             {
                 let Some(function_data) = item_query.function_data(structural.function)? else {
                     continue;
@@ -179,7 +188,7 @@ where
                     function: structural.function,
                     receiver_ty: structural.receiver_ty,
                     subst: structural.subst,
-                    trait_selection: None,
+                    trait_selection: structural.trait_selection,
                 });
             }
         }
@@ -252,96 +261,112 @@ where
             }
         }
 
+        // Blanket impls such as `impl<T> Trait for T` have no nominal receiver key. They can
+        // still apply to this ADT, so run the compact fallback list through canonical matching.
+        let receiver_ty = Ty::adt(receiver_ty.clone());
+        let fallback_trait_functions = matcher.trait_function_candidates_from_impls_for_ty(
+            self.trait_impls_without_type_key(&body_items)?,
+            &receiver_ty,
+            method_name,
+            table,
+        )?;
+        for (function, selection) in fallback_trait_functions {
+            candidates.push(NominalMethodCandidate {
+                function,
+                trait_selection: Some(selection),
+            });
+        }
+
         Ok(candidates)
     }
 
-    /// Scan visible structural impls for builtin-shaped receiver types.
-    fn structural_method_candidates(
+    /// Scan visible impls for builtin-shaped receiver types.
+    ///
+    /// A receiver such as `[User; 3]` has no nominal index entry. Its inherent candidates come
+    /// from structural impl matching, while trait candidates come from the bounded unkeyed impl
+    /// list. The inherent path retains its substitution directly; the trait path retains the
+    /// selected impl and its bindings as trait-selection evidence.
+    fn unkeyed_method_candidates(
         &self,
         matcher: &BodyImplMatcher<'_, 'query, D, I>,
         receiver_ty: &Ty,
         method_name: Option<&str>,
+        table: &InferenceTable,
     ) -> Result<Vec<BodyMethodCandidate>, PackageStoreError> {
         // Nominal receivers are handled by the indexed path. Scanning visible impls is reserved
-        // for shaped builtin types such as `[T]`, where there is no `TypeDefRef` key to query.
-        if !Self::receiver_ty_uses_structural_impl_lookup(receiver_ty) {
+        // for builtin types such as `str` and `[T]`, where there is no `TypeDefRef` key to query.
+        if !receiver_ty.has_unkeyed_self_head() {
             return Ok(Vec::new());
         }
 
         let item_query = self.context.item_query();
         let mut candidates = Vec::new();
 
-        // Structural inherent impls model language/core-provided builtins such as `impl<T> [T]`.
+        // Unkeyed inherent impls model language/core-provided builtins such as `impl<T> [T]`.
         // Body-local impl lookup remains nominal-only because block-local impls are useful for
         // local structs, not for defining new inherent methods on builtin shaped types.
-        let impl_refs = self.context.item_lookup_query().structural_inherent_impls();
-        for impl_ref in impl_refs {
-            self.push_structural_inherent_functions_for_impl(
-                &item_query,
-                matcher,
-                impl_ref,
-                receiver_ty,
-                method_name,
+        for (function, subst) in
+            matcher.unkeyed_inherent_function_candidates(receiver_ty, method_name)?
+        {
+            Self::push_unkeyed_candidate(
                 &mut candidates,
-            )?;
+                BodyMethodCandidate {
+                    function,
+                    receiver_ty: receiver_ty.clone(),
+                    subst,
+                    trait_selection: None,
+                },
+            );
         }
 
-        Ok(candidates)
-    }
-
-    /// Add self-receiver functions from one structural impl when it applies.
-    fn push_structural_inherent_functions_for_impl(
-        &self,
-        item_query: &ItemStoreQuery<'query, BodyQuerySource<'query, D, I>>,
-        matcher: &BodyImplMatcher<'_, 'query, D, I>,
-        impl_ref: ImplRef,
-        receiver_ty: &Ty,
-        method_name: Option<&str>,
-        candidates: &mut Vec<BodyMethodCandidate>,
-    ) -> Result<(), PackageStoreError> {
-        let Some(impl_data) = item_query.impl_data(impl_ref)? else {
-            return Ok(());
-        };
-        let Some(subst) =
-            matcher.structural_inherent_impl_subst(impl_ref, impl_data, receiver_ty)?
-        else {
-            return Ok(());
-        };
-
-        for item in &impl_data.items {
-            let AssocItemId::Function(id) = item else {
-                continue;
-            };
-            let function = FunctionRef {
-                origin: impl_ref.origin,
-                id: *id,
-            };
+        // Trait impls for primitives, arrays, slices, and generic `Self` types share the same
+        // absence of a nominal index key. Canonical matching separates the applicable receiver
+        // shapes and classifies each impl's predicates before its trait functions become
+        // candidates.
+        let body_items = self.context.body_local_items();
+        let trait_functions = matcher.trait_function_candidates_from_impls_for_ty(
+            self.trait_impls_without_type_key(&body_items)?,
+            receiver_ty,
+            method_name,
+            table,
+        )?;
+        for (function, selection) in trait_functions {
             let Some(function_data) = item_query.function_data(function)? else {
                 continue;
             };
             if !function_data.has_self_receiver() {
                 continue;
             }
-            if method_name.is_some_and(|name| function_data.name != name) {
-                continue;
-            }
-            Self::push_structural_candidate(
-                candidates,
+            Self::push_unkeyed_candidate(
+                &mut candidates,
                 BodyMethodCandidate {
                     function,
                     receiver_ty: receiver_ty.clone(),
-                    subst: subst.clone(),
-                    trait_selection: None,
+                    subst: self.context.generics().subst_for_receiver_ty_owner(
+                        function.origin,
+                        function_data.owner,
+                        receiver_ty,
+                    )?,
+                    trait_selection: Some(selection),
                 },
             );
         }
 
-        Ok(())
+        Ok(candidates)
     }
 
-    /// Return whether this receiver has no nominal type-def key for impl lookup.
-    fn receiver_ty_uses_structural_impl_lookup(ty: &Ty) -> bool {
-        matches!(ty, Ty::Tuple(_) | Ty::Array { .. } | Ty::Slice(_))
+    /// Combine unkeyed trait impls from body overlays and persisted visible crates.
+    fn trait_impls_without_type_key(
+        &self,
+        body_items: &BodyLocalItemQuery<'query, D, I>,
+    ) -> Result<UniqueVec<TraitImplRef>, PackageStoreError> {
+        let mut trait_impls = body_items.trait_impls_without_type_key()?;
+        trait_impls.extend(
+            self.context
+                .item_lookup_query()
+                .trait_impls_without_type_key(),
+        );
+        Ok(trait_impls)
     }
 
     /// Read body-local inherent functions, optionally filtered by name.
@@ -422,14 +447,12 @@ where
         *existing = Self::merge_candidates(*existing, candidate);
     }
 
-    /// Deduplicate a structural candidate by function and subst.
-    fn push_structural_candidate(
+    /// Deduplicate a structural candidate without collapsing distinct trait proofs.
+    fn push_unkeyed_candidate(
         candidates: &mut Vec<BodyMethodCandidate>,
         candidate: BodyMethodCandidate,
     ) {
-        if !candidates.iter().any(|existing| {
-            existing.function == candidate.function && existing.subst == candidate.subst
-        }) {
+        if !candidates.contains(&candidate) {
             candidates.push(candidate);
         }
     }

@@ -31,6 +31,11 @@ struct DefMapData {
     macro_definitions: HashMap<LocalDefId, MacroDefinitionData>,
     /// Sparse ownership for declarations collected through an extern block.
     foreign_blocks: HashMap<LocalDefId, ItemSource>,
+    /// Generated associated items keyed by the macro call they replace.
+    ///
+    /// For `impl User { methods!(); }`, the call source maps to its generated functions, types,
+    /// consts, and any retained nested macro calls.
+    associated_macro_expansions: HashMap<ItemSource, Vec<ItemSource>>,
     local_impls: Arena<LocalImplId, LocalImplData>,
     imports: Arena<ImportId, ImportData>,
     generated_sources: Arena<GeneratedSourceId, GeneratedSourceData>,
@@ -127,6 +132,18 @@ impl DefMapBuilder {
 
     pub fn alloc_local_impl(&mut self, local_impl: LocalImplData) -> LocalImplId {
         self.def_map.data.local_impls.alloc(local_impl)
+    }
+
+    /// Records the generated items that replace one trait/impl macro invocation.
+    pub fn insert_associated_macro_expansion(
+        &mut self,
+        call: ItemSource,
+        generated_items: Vec<ItemSource>,
+    ) {
+        self.def_map
+            .data
+            .associated_macro_expansions
+            .insert(call, generated_items);
     }
 
     pub fn alloc_import(&mut self, import: ImportData) -> ImportId {
@@ -456,6 +473,14 @@ impl DefMap {
     /// Returns the retained extern-block owner for a foreign declaration.
     pub fn foreign_block(&self, local_def: LocalDefId) -> Option<ItemSource> {
         self.data.foreign_blocks.get(&local_def).copied()
+    }
+
+    /// Returns generated items that replace one associated-item macro call.
+    pub fn associated_macro_expansion(&self, call: ItemSource) -> Option<&[ItemSource]> {
+        self.data
+            .associated_macro_expansions
+            .get(&call)
+            .map(Vec::as_slice)
     }
 
     /// Returns impl block data by id.

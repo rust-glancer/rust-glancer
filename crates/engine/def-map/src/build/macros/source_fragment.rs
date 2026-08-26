@@ -1,20 +1,25 @@
 //! Collects already-lowered source files and source-like builtin payloads into def-map state.
 //!
 //! ItemTree lowers supported builtin payloads ahead of time and incrementally lowers files found
-//! through macro source-file requests. For example, direct and macro-generated `include!` calls
-//! both insert a real file into the caller's module, while a macro-generated `mod child;` inserts a
-//! real file into an already allocated child module. This collector handles all of those forms so
-//! they reuse real `ItemTreeRef`s, file-relative module resolution, impl lowering, extern crates,
-//! and macro-use behavior instead of taking a synthetic generated-item path.
+//! through macro source-file requests. Direct and macro-generated `include!` calls preserve the
+//! invocation placement: module calls insert a real file into the caller's module, while associated
+//! calls retain replacement items inside their trait or impl. A macro-generated `mod child;`
+//! instead inserts a real file into an already allocated child module. This collector handles all
+//! of those forms so they reuse real `ItemTreeRef`s, file-relative module resolution, impl lowering,
+//! extern crates, and macro-use behavior instead of taking a synthetic generated-item path.
+//!
+//! Thus `impl User { include!("user_methods.rs"); }`, where that file contains
+//! `fn label(&self) -> Label`, retains `label` as an associated method of `User`. By contrast,
+//! `include!("helpers.rs");` at module scope contributes that file's functions to the module.
 
 use std::{collections::HashSet, sync::Arc};
 
 use anyhow::{Context as _, Result};
 
 use crate::{
-    ImportBinding, ImportData, ImportKind, ImportPath, LocalDefData, LocalDefKind, LocalImplData,
-    MacroDefinitionData, ModuleData, ModuleFileSelection, ModuleOrigin, ModuleScope, Namespace,
-    ScopeBinding, ScopeBindingProvenance, Visibility,
+    ImportBinding, ImportData, ImportKind, ImportPath, ItemSource, LocalDefData, LocalDefKind,
+    LocalImplData, MacroDefinitionData, ModuleData, ModuleFileSelection, ModuleOrigin, ModuleScope,
+    Namespace, ScopeBinding, ScopeBindingProvenance, Visibility,
 };
 use rg_ir_model::{DefId, DefMapRef, LocalDefId, LocalDefRef, ModuleId, ModuleRef};
 use rg_item_tree::{
@@ -28,8 +33,8 @@ use rg_text::Name;
 use crate::build::{collect::CrateState, finalize::ScopeMatrix, macros::MacroExpansionApplyResult};
 
 use super::{
-    ItemOrder, MacroCallOrigin, MacroCallSite, MacroDefinitionRecord, MacroDirective,
-    MacroDirectiveState, MacroUseImport,
+    ItemOrder, MacroCallOrigin, MacroCallPlacement, MacroCallSite, MacroDefinitionRecord,
+    MacroDirective, MacroDirectiveState, MacroUseImport,
 };
 
 /// Semantic module, ordering, and file context used to insert already-lowered items.
@@ -40,14 +45,16 @@ pub(super) struct SourceFragmentOrigin {
     pub(super) module: ModuleId,
     pub(super) order: ItemOrder,
     pub(super) parent_call: usize,
+    pub(super) placement: MacroCallPlacement,
     pub(super) module_file_context: Arc<ModuleFileContext>,
 }
 
 /// Collector for ItemTree nodes introduced after the initial crate-scope walk.
 ///
-/// Source-like builtins enter the caller's module, while a late module file enters an allocated
-/// child module. Both keep their real source refs and use ordinary item collection behavior. The
-/// distinction comes from [`SourceFragmentOrigin`]; it is not inferred from the physical filename.
+/// Source-like builtins enter the placement retained by their call, while a late module file enters
+/// an allocated child module. Both keep their real source refs and use ordinary item collection
+/// behavior. The distinction comes from [`SourceFragmentOrigin`]; it is not inferred from the
+/// physical filename.
 pub(super) struct SourceFragmentCollector<'a> {
     pub(super) state: &'a mut CrateState,
     pub(super) current_scopes: &'a mut ScopeMatrix,
@@ -64,11 +71,11 @@ impl SourceFragmentCollector<'_> {
         })?;
 
         // `include!` inserts the referenced file at the call site. Top-level items therefore
-        // belong to the caller's module, but their source refs and spans still point to `file_id`.
+        // retain the call's module or associated-item placement, but their source refs and spans
+        // still point to `file_id`.
         let origin_order = self.origin.order.clone();
         let module_file_context = Arc::clone(&self.origin.module_file_context);
-        self.collect_file_items(
-            self.origin.module,
+        self.collect_at_origin_placement(
             file_id,
             &file_tree.top_level,
             |index| origin_order.generated_child(index),
@@ -105,14 +112,100 @@ impl SourceFragmentCollector<'_> {
         // file tree ahead of time. Def-map only picks the active fragment and collects those item
         // ids at the macro call position.
         let origin_order = self.origin.order.clone();
-        self.collect_file_items(
-            self.origin.module,
+        let module_file_context = Arc::clone(&self.origin.module_file_context);
+        self.collect_at_origin_placement(
             file_id,
             items,
             |index| origin_order.generated_child(index),
-            Arc::clone(&self.origin.module_file_context),
+            module_file_context,
         )?;
         Ok(self.result)
+    }
+
+    /// Splices source-backed items according to the macro call that introduced them.
+    ///
+    /// A module `include!("helpers.rs")` uses module placement, while
+    /// `impl User { include!("user_methods.rs"); }` uses associated placement. The physical file
+    /// does not decide ownership.
+    fn collect_at_origin_placement(
+        &mut self,
+        file_id: FileId,
+        items: &[ItemTreeId],
+        order_for: impl Fn(usize) -> ItemOrder,
+        module_file_context: Arc<ModuleFileContext>,
+    ) -> Result<()> {
+        match self.origin.placement {
+            MacroCallPlacement::ModuleItems => self.collect_file_items(
+                self.origin.module,
+                file_id,
+                items,
+                order_for,
+                module_file_context,
+            ),
+            MacroCallPlacement::AssociatedItems { call_source } => self.collect_associated_items(
+                call_source,
+                file_id,
+                items,
+                order_for,
+                module_file_context,
+            ),
+        }
+    }
+
+    /// Retains source-backed associated items instead of exposing them in the caller's module.
+    fn collect_associated_items(
+        &mut self,
+        call_source: ItemSource,
+        file_id: FileId,
+        items: &[ItemTreeId],
+        order_for: impl Fn(usize) -> ItemOrder,
+        module_file_context: Arc<ModuleFileContext>,
+    ) -> Result<()> {
+        if !self.active_files.insert(file_id) {
+            return Ok(());
+        }
+
+        let mut generated_items = Vec::new();
+        for (index, item_id) in items.iter().copied().enumerate() {
+            let source = ItemTreeRef {
+                file_id,
+                item: item_id,
+            };
+            let item = self
+                .item_tree
+                .item(source)
+                .expect("associated source-fragment item should exist while collecting def map");
+            if !self.is_item_enabled(item) {
+                continue;
+            }
+            self.result.mark_changed();
+
+            match &item.kind {
+                ItemKind::Const(_) | ItemKind::Function(_) | ItemKind::TypeAlias(_) => {
+                    generated_items.push(source.into());
+                }
+                ItemKind::MacroCall(macro_call) => {
+                    generated_items.push(source.into());
+                    self.collect_macro_call(
+                        self.origin.module,
+                        item,
+                        source,
+                        macro_call,
+                        order_for(index),
+                        MacroCallPlacement::AssociatedItems {
+                            call_source: source.into(),
+                        },
+                        Arc::clone(&module_file_context),
+                    );
+                }
+                _ => {}
+            }
+        }
+        self.state
+            .def_map_builder
+            .insert_associated_macro_expansion(call_source, generated_items);
+        self.active_files.remove(&file_id);
+        Ok(())
     }
 
     /// Walks one real file while stopping only cycles on the active source path.
@@ -203,7 +296,16 @@ impl SourceFragmentCollector<'_> {
             }
             ItemKind::Use(use_item) => self.collect_use(module_id, item, source, use_item),
             ItemKind::Enum(enum_item) => self.collect_enum(module_id, item, source, enum_item),
-            ItemKind::Impl(_) => self.collect_local_impl(module_id, item, source),
+            ItemKind::Impl(impl_item) => {
+                self.collect_local_impl(module_id, item, source);
+                self.collect_associated_macro_calls(
+                    module_id,
+                    source,
+                    &impl_item.items,
+                    &order,
+                    &module_file_context,
+                );
+            }
             ItemKind::MacroCall(macro_call) => {
                 self.collect_macro_call(
                     module_id,
@@ -211,11 +313,26 @@ impl SourceFragmentCollector<'_> {
                     source,
                     macro_call,
                     order,
+                    MacroCallPlacement::ModuleItems,
                     module_file_context,
                 );
             }
             ItemKind::MacroDefinition(macro_definition) => {
                 self.collect_macro_definition(module_id, item, source, macro_definition, order);
+            }
+            ItemKind::Trait(trait_item) => {
+                if self
+                    .collect_local_def(module_id, item, source, ScopeBindingProvenance::Direct)
+                    .is_some()
+                {
+                    self.collect_associated_macro_calls(
+                        module_id,
+                        source,
+                        &trait_item.items,
+                        &order,
+                        &module_file_context,
+                    );
+                }
             }
             _ => {
                 self.collect_local_def(module_id, item, source, ScopeBindingProvenance::Direct);
@@ -433,6 +550,7 @@ impl SourceFragmentCollector<'_> {
             .any(|predicate| cfg.is_predicate_enabled(predicate))
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn collect_macro_call(
         &mut self,
         module_id: ModuleId,
@@ -440,9 +558,10 @@ impl SourceFragmentCollector<'_> {
         source: ItemTreeRef,
         macro_call: &rg_item_tree::MacroCallItem,
         order: ItemOrder,
+        placement: MacroCallPlacement,
         module_file_context: Arc<ModuleFileContext>,
     ) {
-        // Source-like fragments can contain further item-position macro calls. Queue them exactly
+        // Source-like fragments can contain further item-shaped macro calls. Queue them exactly
         // like source-file calls so later passes can resolve them against refreshed scopes.
         self.state.macro_directives.push(MacroDirective {
             call: MacroCallSite {
@@ -456,6 +575,7 @@ impl SourceFragmentCollector<'_> {
                 file_id: item.file_id,
                 span: item.span,
                 order,
+                placement,
                 module_file_context,
             },
             origin: MacroCallOrigin::Generated {
@@ -463,6 +583,43 @@ impl SourceFragmentCollector<'_> {
             },
             state: MacroDirectiveState::Pending,
         });
+    }
+
+    /// Queues associated-item macros from an included or builtin-selected source fragment.
+    fn collect_associated_macro_calls(
+        &mut self,
+        module_id: ModuleId,
+        parent_source: ItemTreeRef,
+        item_ids: &[ItemTreeId],
+        order: &ItemOrder,
+        module_file_context: &Arc<ModuleFileContext>,
+    ) {
+        for (index, item_id) in item_ids.iter().copied().enumerate() {
+            let source = ItemTreeRef {
+                file_id: parent_source.file_id,
+                item: item_id,
+            };
+            let Some(item) = self.item_tree.item(source) else {
+                continue;
+            };
+            if !self.is_item_enabled(item) {
+                continue;
+            }
+            let ItemKind::MacroCall(macro_call) = &item.kind else {
+                continue;
+            };
+            self.collect_macro_call(
+                module_id,
+                item,
+                source,
+                macro_call,
+                order.generated_child(index),
+                MacroCallPlacement::AssociatedItems {
+                    call_source: source.into(),
+                },
+                Arc::clone(module_file_context),
+            );
+        }
     }
 
     fn collect_local_impl(

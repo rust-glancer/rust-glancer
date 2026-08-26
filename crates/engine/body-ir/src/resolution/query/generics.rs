@@ -65,7 +65,25 @@ where
         owner: ItemOwner,
         receiver_ty: &AdtTy,
     ) -> Result<Substitution, PackageStoreError> {
-        let mut subst = self.subst_for_nominal_ty(receiver_ty)?;
+        self.subst_for_receiver_ty_owner(origin, owner, &Ty::adt(receiver_ty.clone()))
+    }
+
+    /// Combine any canonical receiver shape with bindings learned from its declaration owner.
+    ///
+    /// For a function declared by `impl<T> [T]`, receiver `[User]` contributes `T = User`. For a
+    /// trait method called on `[User; 3]`, the declaration owner contributes
+    /// `Self = [User; 3]`; the candidate's separate trait selection retains the array impl's
+    /// `T = User, N = 3` evidence.
+    pub(crate) fn subst_for_receiver_ty_owner(
+        &self,
+        origin: DefMapRef,
+        owner: ItemOwner,
+        receiver_ty: &Ty,
+    ) -> Result<Substitution, PackageStoreError> {
+        let mut subst = match receiver_ty {
+            Ty::Adt(receiver_ty) => self.subst_for_nominal_ty(receiver_ty)?,
+            _ => Substitution::new(),
+        };
         match owner {
             ItemOwner::Module(_) => {}
             ItemOwner::Trait(id) => {
@@ -77,10 +95,7 @@ where
                 if let Some(self_param) = generics.iter().find_map(|param| {
                     matches!(param.source(), GenericParamSource::TraitSelf).then_some(param.param())
                 }) {
-                    subst.push(
-                        self_param,
-                        GenericArg::Type(Box::new(Ty::adt(receiver_ty.clone()))),
-                    );
+                    subst.push(self_param, GenericArg::Type(Box::new(receiver_ty.clone())));
                 }
             }
             ItemOwner::Impl(impl_id) => {
@@ -91,7 +106,7 @@ where
                 if let Some((impl_subst, _)) = self
                     .context
                     .impl_matcher()
-                    .impl_self_subst_for_impl(impl_ref, &Ty::adt(receiver_ty.clone()))?
+                    .impl_self_subst_for_impl(impl_ref, receiver_ty)?
                 {
                     subst.extend(impl_subst);
                 }

@@ -110,6 +110,33 @@ where
         Ok(trait_impls)
     }
 
+    /// Return body-local trait impls whose `Self` type has no nominal receiver key.
+    ///
+    /// `impl<T> Describe for [T]` cannot be stored under one `TypeDefRef`; the caller collects it
+    /// here and later matches its full `[T]` header against the concrete receiver.
+    pub(super) fn trait_impls_without_type_key(
+        &self,
+    ) -> Result<UniqueVec<TraitImplRef>, PackageStoreError> {
+        let mut trait_impls = UniqueVec::new();
+
+        for store in self.body_lookup_stores()? {
+            for (impl_ref, impl_data) in store.impls_with_refs() {
+                if impl_data.trait_ref.is_none() || !impl_data.resolved_self_ty.is_empty() {
+                    continue;
+                }
+                let Some(trait_ref) = impl_data.resolved_trait_ref.as_option() else {
+                    continue;
+                };
+                trait_impls.push(TraitImplRef {
+                    impl_ref,
+                    trait_ref: *trait_ref,
+                });
+            }
+        }
+
+        Ok(trait_impls)
+    }
+
     /// Gather body item stores that can affect the current body lookup.
     fn body_lookup_stores(&self) -> Result<Vec<&'query ItemStore>, PackageStoreError> {
         let mut origins = UniqueVec::new();
