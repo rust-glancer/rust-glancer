@@ -261,6 +261,129 @@ fn load() {
 }
 
 #[test]
+fn imports_std_type_used_as_qualified_path_root() {
+    check_analysis_queries_with_fake_sysroot(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_std_import_actions"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+fn load() {
+    let _ = Arc$action$::new(1);
+}
+"#,
+        &[
+            AnalysisQuery::code_actions("unresolved std path root", "action")
+                .in_lib("analysis_std_import_actions"),
+        ],
+        expect![[r#"
+            unresolved std path root
+            - quickfix Import `alloc::sync::Arc`
+              preferred: true
+              result:
+                use alloc::sync::Arc;
+
+                fn load() {
+                    let _ = Arc::new(1);
+                }
+        "#]],
+    );
+}
+
+#[test]
+fn import_action_distinguishes_private_imports_from_reexports() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[workspace]
+members = ["catalog", "app"]
+resolver = "3"
+
+//- /catalog/Cargo.toml
+[package]
+name = "catalog"
+version = "0.1.0"
+edition = "2024"
+
+//- /catalog/src/lib.rs
+pub mod collections {
+    pub struct BTreeMap;
+    pub struct HashMap;
+}
+
+//- /app/Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+catalog = { path = "../catalog" }
+
+//- /app/src/lib.rs
+use catalog::collections::HashMap;
+pub(crate) use catalog::collections::BTreeMap;
+
+mod nested {
+    fn load_private_import() {
+        let _ = HashMap$private$::new();
+    }
+
+    fn load_reexport() {
+        let _ = BTreeMap$reexport$::new();
+    }
+}
+"#,
+        &[
+            AnalysisQuery::code_actions("private parent import", "private").in_lib("app"),
+            AnalysisQuery::code_actions("crate re-export", "reexport").in_lib("app"),
+        ],
+        expect![[r#"
+            private parent import
+            - quickfix Import `catalog::collections::HashMap`
+              preferred: true
+              result:
+                use catalog::collections::HashMap;
+                pub(crate) use catalog::collections::BTreeMap;
+
+                mod nested {
+                    use catalog::collections::HashMap;
+
+                    fn load_private_import() {
+                        let _ = HashMap::new();
+                    }
+
+                    fn load_reexport() {
+                        let _ = BTreeMap::new();
+                    }
+                }
+
+            crate re-export
+            - quickfix Import `crate::BTreeMap`
+              preferred: true
+              result:
+                use catalog::collections::HashMap;
+                pub(crate) use catalog::collections::BTreeMap;
+
+                mod nested {
+                    use crate::BTreeMap;
+
+                    fn load_private_import() {
+                        let _ = HashMap::new();
+                    }
+
+                    fn load_reexport() {
+                        let _ = BTreeMap::new();
+                    }
+                }
+        "#]],
+    );
+}
+
+#[test]
 fn import_actions_preserve_ambiguity_and_require_explicit_invocation() {
     check_analysis_queries(
         r#"

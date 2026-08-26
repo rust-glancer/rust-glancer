@@ -333,6 +333,7 @@ impl<'body> BodyDefMapCollector<'body> {
             let import = self.builder.alloc_import(ImportData {
                 module,
                 visibility,
+                is_reexport: ImportData::source_visibility_reexports(&item.visibility),
                 kind: ImportKind::from_use_kind(import.kind),
                 path,
                 binding: ImportBinding::from_alias(&import.alias),

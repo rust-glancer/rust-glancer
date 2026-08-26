@@ -21,6 +21,12 @@ use crate::{ItemSource, scope::Visibility};
 pub struct ImportData {
     pub module: ModuleId,
     pub visibility: Visibility,
+    /// Whether the source wrote this `use` as a re-export rather than a private binding.
+    ///
+    /// At a crate root, `use item` and `pub(crate) use item` have the same semantic visibility:
+    /// both can be named by descendant modules. Import discovery still needs their source-level
+    /// distinction so it does not build new imports through another module's private bindings.
+    pub is_reexport: bool,
     pub kind: ImportKind,
     pub path: ImportPath,
     pub binding: ImportBinding,
@@ -32,6 +38,22 @@ pub struct ImportData {
 }
 
 impl ImportData {
+    /// Preserve whether source deliberately exposed a `use` beyond a private binding.
+    ///
+    /// `pub(self)` and `pub(in self)` are still private to the declaring module. Invalid
+    /// visibility syntax is also excluded because it does not establish a reusable route.
+    pub fn source_visibility_reexports(visibility: &rg_item_tree::VisibilityLevel) -> bool {
+        match visibility {
+            rg_item_tree::VisibilityLevel::Public
+            | rg_item_tree::VisibilityLevel::Crate
+            | rg_item_tree::VisibilityLevel::Super => true,
+            rg_item_tree::VisibilityLevel::Restricted(path) => path != "self",
+            rg_item_tree::VisibilityLevel::Private
+            | rg_item_tree::VisibilityLevel::Self_
+            | rg_item_tree::VisibilityLevel::Unknown(_) => false,
+        }
+    }
+
     /// Returns the binding name introduced by this import when it is not a glob import.
     pub fn binding_name(&self) -> Option<Name> {
         let inferred_name = match self.kind {

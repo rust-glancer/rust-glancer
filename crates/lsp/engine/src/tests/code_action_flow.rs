@@ -4,7 +4,7 @@ use test_fixture::testonly::MarkedText;
 use super::utils::{LspEngineFixture, LspQuery};
 
 #[tokio::test]
-async fn dirty_qualified_path_root_offers_an_import_action() {
+async fn dirty_qualified_path_root_uses_the_type_namespace() {
     let fixture = LspEngineFixture::initialized(
         r#"
         //- /Cargo.toml
@@ -37,7 +37,11 @@ async fn dirty_qualified_path_root_offers_an_import_action() {
         catalog = { path = "../catalog" }
 
         //- /app/src/lib.rs
-        pub fn demo() {}
+        pub fn demo() {
+            let before = 1;
+            let HashMap = ();
+            let after = 2;
+        }
         "#,
     )
     .await;
@@ -48,7 +52,10 @@ async fn dirty_qualified_path_root_offers_an_import_action() {
             8,
             MarkedText::parse(
                 r#"pub fn demo() {
+    let before = 1;
+    let HashMap = ();
     let _ = HashMap$action$::new();
+    let after = 2;
 }
 "#,
             ),
@@ -73,7 +80,10 @@ async fn dirty_qualified_path_root_offers_an_import_action() {
                     use catalog::collections::HashMap;
 
                     pub fn demo() {
+                        let before = 1;
+                        let HashMap = ();
                         let _ = HashMap::new();
+                        let after = 2;
                     }
             "#]],
         )

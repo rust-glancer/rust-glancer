@@ -176,6 +176,30 @@ impl<'a, 'db> ImportableNameSearch<'a, 'db> {
                 .visible_scope_defs(importing_module, module.module)
                 .context("walk auto-import module scope")?;
             for visible_def in visible_defs {
+                // Descendants may legally spell a crate-root private import as `crate::Name`, but
+                // that binding is an implementation detail of the parent module. Reusing it would
+                // make the new import depend on an unrelated private `use`, and its short path
+                // would hide the declaration's stable public route. Direct declarations have no
+                // `attribute_imports`; imported aliases remain eligible only when at least one
+                // outer route was deliberately written as a re-export.
+                if !visible_def.attribute_imports.is_empty() {
+                    let mut has_reexport_route = false;
+                    for import_ref in &visible_def.attribute_imports {
+                        if self
+                            .db
+                            .import_data(*import_ref)
+                            .context("read auto-import re-export route")?
+                            .is_some_and(|import| import.is_reexport)
+                        {
+                            has_reexport_route = true;
+                            break;
+                        }
+                    }
+                    if !has_reexport_route {
+                        continue;
+                    }
+                }
+
                 let is_module = matches!(visible_def.def, DefId::Module(_));
                 if !is_module && !matches(&visible_def.label) {
                     continue;
