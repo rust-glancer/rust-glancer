@@ -300,7 +300,6 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use serde_json::Value;
-    use tracing_subscriber::prelude::*;
 
     use super::*;
 
