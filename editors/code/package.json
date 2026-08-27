@@ -15,6 +15,7 @@
   "categories": [
     "Programming Languages"
   ],
+  "icon": "images/icon.png",
   "main": "./dist/extension.js",
   "activationEvents": [
     "workspaceContains:Cargo.toml"
