@@ -8,4 +8,12 @@ describe("command identifiers", () => {
     assert.equal(EXTENSION_COMMANDS.reindexWorkspace, "rust-glancer.reindexWorkspace");
     assert.equal(SERVER_COMMANDS.reindexWorkspace, "rust-glancer.internal.reindexWorkspace");
   });
+
+  it("exposes the status menu lifecycle commands", () => {
+    assert.equal(EXTENSION_COMMANDS.showServerActions, "rust-glancer.showServerActions");
+    assert.equal(EXTENSION_COMMANDS.startServer, "rust-glancer.startServer");
+    assert.equal(EXTENSION_COMMANDS.restartServer, "rust-glancer.restartServer");
+    assert.equal(EXTENSION_COMMANDS.stopServer, "rust-glancer.stopServer");
+    assert.equal(EXTENSION_COMMANDS.openLogs, "rust-glancer.openLogs");
+  });
 });

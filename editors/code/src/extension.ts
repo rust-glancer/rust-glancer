@@ -54,6 +54,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     status,
     controller,
     registerHoverActionCommands(extensionLog),
+    vscode.commands.registerCommand(EXTENSION_COMMANDS.showServerActions, async () => {
+      await controller?.showServerActions();
+    }),
+    vscode.commands.registerCommand(EXTENSION_COMMANDS.startServer, async () => {
+      await controller?.start();
+    }),
     vscode.commands.registerCommand(EXTENSION_COMMANDS.restartServer, async () => {
       await controller?.restart();
     }),
@@ -62,6 +68,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     }),
     vscode.commands.registerCommand(EXTENSION_COMMANDS.reindexWorkspace, async () => {
       await controller?.reindexWorkspace();
+    }),
+    vscode.commands.registerCommand(EXTENSION_COMMANDS.openLogs, () => {
+      serverOutput.output.show();
     }),
   );
 

@@ -30,7 +30,7 @@ export class StatusView implements vscode.Disposable {
   public constructor() {
     this.item = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
     this.item.name = "Rust Glancer";
-    this.item.command = EXTENSION_COMMANDS.restartServer;
+    this.item.command = EXTENSION_COMMANDS.showServerActions;
   }
 
   public starting(details: StatusDetails): void {
@@ -176,7 +176,7 @@ export class StatusView implements vscode.Disposable {
       appendTextField(tooltip, "Source", this.details.serverSource);
     }
 
-    tooltip.appendMarkdown("Click to restart the server.");
+    tooltip.appendMarkdown("Click for server actions.");
     return tooltip;
   }
 }
