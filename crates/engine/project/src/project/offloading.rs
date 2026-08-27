@@ -259,8 +259,8 @@ impl<'a> ResidencyApplication<'a> {
     fn finish_offloading(&mut self, offloaded_packages: &PhasePackageSet) {
         if !offloaded_packages.is_empty() {
             // Offloading drops many strong `Name` handles from phase payloads. Prune the interner
-            // immediately so dead weak entries and their Arc control blocks do not pin allocator
-            // pages until a later rebuild happens to compact the project.
+            // immediately so dead weak entries and their Arc control blocks are not carried into
+            // the idle-boundary project compaction.
             Shrink::shrink_to_fit(&mut self.project.names);
 
             // File ids and paths remain resident as the source inventory. Line indexes are larger

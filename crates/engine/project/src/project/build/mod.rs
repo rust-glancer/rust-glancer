@@ -160,6 +160,9 @@ impl ProjectBuilder {
         ResidencyApplication::fresh(&mut state)
             .apply_profiled(&mut memory_sampler)
             .context("while attempting to apply package cache residency")?;
+        // Once offloading separates the small saved state from transient indexing data, move that
+        // retained state out of the allocator pages fragmented during the build.
+        state.compact_if_fully_offloaded();
         self.memory_hooks
             .purge(ProjectMemoryPurgePoint::AfterProjectBuild);
 
