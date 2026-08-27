@@ -6,6 +6,7 @@
  */
 import * as vscode from "vscode";
 
+import { EXTENSION_COMMANDS } from "./commands";
 import { LanguageClientSlot } from "./language-client/language-client-slot";
 import type { LanguageClientSessionSnapshot } from "./language-client/language-client-session";
 import { isRustFile } from "./utils/lsp-utils";
@@ -19,6 +20,7 @@ export interface ExtensionControllerSnapshot {
 export class ExtensionController implements vscode.Disposable {
   private readonly clientSlot: LanguageClientSlot;
   private readonly workspaceListeners: vscode.Disposable;
+  private serverEnabled = true;
 
   /** Wires VS Code workspace/editor events to the window-level LSP client lifecycle. */
   public constructor(
@@ -52,6 +54,7 @@ export class ExtensionController implements vscode.Disposable {
 
   /** Starts the window-level LSP session when the window has a filesystem workspace folder. */
   public async start(): Promise<void> {
+    this.serverEnabled = true;
     const workspaceFolder = this.selectedWorkspaceFolder();
     if (workspaceFolder === undefined) {
       this.extensionLog.info("no workspace folder found; rust-glancer server was not started");
@@ -59,12 +62,21 @@ export class ExtensionController implements vscode.Disposable {
       return;
     }
 
-    const client = await this.clientSlot.getSession(workspaceFolder);
+    // A session can remain in the slot after its process exits. Replace that stopped session so
+    // the explicit start action always creates a live client instead of only refreshing its UI.
+    const current = this.clientSlot.current();
+    const client =
+      current === undefined
+        ? await this.clientSlot.getSession(workspaceFolder)
+        : current.isRunning()
+          ? current
+          : await this.clientSlot.replace(workspaceFolder);
     client?.refreshStatus();
   }
 
   /** Restarts the window-level LSP session, or starts it if it is not currently running. */
   public async restart(): Promise<void> {
+    this.serverEnabled = true;
     const workspaceFolder = this.selectedWorkspaceFolder();
     if (workspaceFolder === undefined) {
       void vscode.window.showWarningMessage("Rust Glancer needs an open workspace folder.");
@@ -75,15 +87,19 @@ export class ExtensionController implements vscode.Disposable {
     client?.refreshStatus();
   }
 
-  /** Stops the window-level LSP session. Engine-specific stopping will live in the server later. */
+  /** Stops the window-level LSP session until the user explicitly starts it again. */
   public async stopServer(): Promise<void> {
     const client = this.clientSlot.current();
-    if (client === undefined || !client.isRunning()) {
-      void vscode.window.showWarningMessage("Rust Glancer has no running server to stop.");
-      return;
-    }
+    const statusState = this.status.snapshot().state;
+    const serverWasActive = client?.isRunning() === true || statusState === "starting";
+    this.serverEnabled = false;
 
     await this.clientSlot.stop();
+    this.status.stopped("stopped by user");
+
+    if (!serverWasActive) {
+      void vscode.window.showWarningMessage("Rust Glancer has no running server to stop.");
+    }
   }
 
   /** Runs workspace reindexing against the active engine selected by the LSP server. */
@@ -94,6 +110,55 @@ export class ExtensionController implements vscode.Disposable {
     }
 
     await this.clientSlot.current()?.reindexWorkspace();
+  }
+
+  /** Lets the status item expose common server operations without giving one action precedence. */
+  public async showServerActions(): Promise<void> {
+    const running = this.clientSlot.current()?.isRunning() === true;
+    const lifecycleActions: ServerActionQuickPickItem[] = running
+      ? [
+          {
+            label: "$(refresh) Reindex Workspace",
+            description: "Refresh analysis from the workspace on disk",
+            command: EXTENSION_COMMANDS.reindexWorkspace,
+          },
+          {
+            label: "$(debug-restart) Restart Server",
+            description: "Restart the language server and reinitialize the workspace",
+            command: EXTENSION_COMMANDS.restartServer,
+          },
+          {
+            label: "$(stop-circle) Stop Server",
+            description: "Keep the language server stopped until it is started manually",
+            command: EXTENSION_COMMANDS.stopServer,
+          },
+        ]
+      : [
+          {
+            label: "$(play-circle) Start Server",
+            description: "Start the language server for this window",
+            command: EXTENSION_COMMANDS.startServer,
+          },
+        ];
+    const selected = await vscode.window.showQuickPick<ServerActionQuickPickItem>(
+      [
+        ...lifecycleActions,
+        {
+          label: "$(output) Open Logs",
+          description: "Show language-server output",
+          command: EXTENSION_COMMANDS.openLogs,
+        },
+      ],
+      {
+        title: "Rust Glancer Server Actions",
+        placeHolder: running ? "Choose a server action" : "The server is not running",
+        matchOnDescription: true,
+      },
+    );
+
+    if (selected !== undefined) {
+      await vscode.commands.executeCommand(selected.command);
+    }
   }
 
   /** Stops the managed language-client session and leaves the status view globally stopped. */
@@ -136,6 +201,10 @@ export class ExtensionController implements vscode.Disposable {
       this.refreshActiveStatus();
       return false;
     }
+    if (!this.serverEnabled) {
+      this.status.stopped("stopped by user");
+      return false;
+    }
 
     const client = await this.clientSlot.getSession(workspaceFolder);
     client?.refreshStatus();
@@ -153,6 +222,10 @@ export class ExtensionController implements vscode.Disposable {
     const workspaceFolder = this.selectedWorkspaceFolder();
     if (workspaceFolder === undefined) {
       await this.stop();
+      return;
+    }
+    if (!this.serverEnabled) {
+      this.status.stopped("stopped by user");
       return;
     }
 
@@ -190,6 +263,10 @@ export class ExtensionController implements vscode.Disposable {
       return;
     }
 
-    this.status.stopped("no active Rust workspace");
+    this.status.stopped(this.serverEnabled ? "no active Rust workspace" : "stopped by user");
   }
+}
+
+interface ServerActionQuickPickItem extends vscode.QuickPickItem {
+  readonly command: string;
 }

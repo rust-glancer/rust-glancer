@@ -5,9 +5,12 @@
  * links, tests, and LSP execute-command calls from drifting apart.
  */
 export const EXTENSION_COMMANDS = {
+  showServerActions: "rust-glancer.showServerActions",
+  startServer: "rust-glancer.startServer",
   restartServer: "rust-glancer.restartServer",
   stopServer: "rust-glancer.stopServer",
   reindexWorkspace: "rust-glancer.reindexWorkspace",
+  openLogs: "rust-glancer.openLogs",
   goToTypeFromHover: "rust-glancer.gotoTypeFromHover",
   goToImplementationFromHover: "rust-glancer.gotoImplementationFromHover",
   testGetState: "rust-glancer.test.getState",

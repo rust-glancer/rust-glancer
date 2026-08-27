@@ -38,9 +38,12 @@ suite("Rust Glancer extension", () => {
     );
 
     const commands = await vscode.commands.getCommands(true);
+    assert.ok(commands.includes(EXTENSION_COMMANDS.showServerActions));
+    assert.ok(commands.includes(EXTENSION_COMMANDS.startServer));
     assert.ok(commands.includes(EXTENSION_COMMANDS.restartServer));
     assert.ok(commands.includes(EXTENSION_COMMANDS.stopServer));
     assert.ok(commands.includes(EXTENSION_COMMANDS.reindexWorkspace));
+    assert.ok(commands.includes(EXTENSION_COMMANDS.openLogs));
 
     await vscode.commands.executeCommand(EXTENSION_COMMANDS.reindexWorkspace);
     const reindexed = await waitForClientState((state) => readySession(state) !== undefined);
@@ -77,6 +80,13 @@ suite("Rust Glancer extension", () => {
 
     await vscode.window.showTextDocument(simpleDocument);
     await vscode.window.showTextDocument(moderateDocument);
+    const stillStopped = await vscode.commands.executeCommand<ExtensionControllerState>(
+      EXTENSION_COMMANDS.testGetState,
+    );
+    assert.equal(stillStopped?.session, undefined);
+    assert.equal(stillStopped?.status.state, "stopped");
+
+    await vscode.commands.executeCommand(EXTENSION_COMMANDS.startServer);
     const restartedModerate = await waitForClientState(
       (state) => readySession(state) !== undefined && state.session !== undefined,
     );
@@ -108,6 +118,13 @@ interface ProjectUris {
   readonly testTargets: vscode.Uri;
   readonly simple: vscode.Uri;
   readonly moderate: vscode.Uri;
+}
+
+interface ExtensionControllerState {
+  readonly status: {
+    readonly state: string;
+  };
+  readonly session: unknown;
 }
 
 function rustGlancerExtension(): vscode.Extension<unknown> {

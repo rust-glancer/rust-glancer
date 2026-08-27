@@ -48,6 +48,14 @@
     ],
     "commands": [
       {
+        "command": "rust-glancer.showServerActions",
+        "title": "Rust Glancer: Show Server Actions"
+      },
+      {
+        "command": "rust-glancer.startServer",
+        "title": "Rust Glancer: Start Server"
+      },
+      {
         "command": "rust-glancer.restartServer",
         "title": "Rust Glancer: Restart Server"
       },
@@ -58,6 +66,10 @@
       {
         "command": "rust-glancer.reindexWorkspace",
         "title": "Rust Glancer: Reindex Workspace"
+      },
+      {
+        "command": "rust-glancer.openLogs",
+        "title": "Rust Glancer: Open Logs"
       }
     ],
     "configuration": {

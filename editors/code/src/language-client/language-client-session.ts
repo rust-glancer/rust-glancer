@@ -63,7 +63,7 @@ export class LanguageClientSession implements vscode.Disposable {
   }
 
   public isRunning(): boolean {
-    return this.client !== undefined;
+    return this.client !== undefined && this.clientStatus.isRunning();
   }
 
   public async start(): Promise<boolean> {
