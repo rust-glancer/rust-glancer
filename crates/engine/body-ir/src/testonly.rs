@@ -2,7 +2,7 @@ use std::convert::Infallible;
 
 use rg_def_map::{DefMap, DefMapDb, DefMapSource, PackageSlot};
 use rg_ir_model::{BodyRef, CrateRef, DefMapRef, ModuleRef};
-use rg_package_store::{PackageEntry, PackageLoader, PackageStore, PackageSubset};
+use rg_package_store::{PackageEntry, PackageStore, PackageSubset};
 use rg_parse::ParseDb;
 use rg_semantic_ir::{ItemStore, ItemStoreSource, SemanticIrDb, testonly::SemanticIrFixture};
 use rg_text::PackageNameInterners;
@@ -61,8 +61,8 @@ impl BodyIrFixture {
                 semantic_ir.semantic_ir_db(),
                 &packages,
                 &mut names,
-                PackageLoader::resident_only("fixture DefMap"),
-                PackageLoader::resident_only("fixture Semantic IR"),
+                rg_def_map::DefMapLoader::resident_only("fixture DefMap"),
+                rg_semantic_ir::SemanticIrLoader::resident_only("fixture Semantic IR"),
                 &subset,
             )
             .configured_bodies(policy)
@@ -210,7 +210,7 @@ impl<'a> ItemStoreSource<'a> for &'a BodyIrFixture {
                 self.semantic_ir_db()
                     .resident_package(rg_def_map::PackageSlot(index))
             })
-            .flat_map(|package| package.crates())
+            .flat_map(|package| package.crates().iter().map(rg_semantic_ir::CrateIr::items))
             .collect())
     }
 }

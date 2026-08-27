@@ -793,12 +793,11 @@ fn crate_needs_materialization(state: &ProjectState, crate_ref: CrateRef) -> boo
         .unwrap_or(true)
 }
 
-/// Restore the package containers needed to rebuild one target from an offloaded package.
+/// Restore the Body IR package container needed to replace one cached crate slot.
 ///
-/// DefMap and Semantic IR are restored as ordinary package payloads because Body IR rebuilding
-/// reads them. Body IR restores only crate manifests: the builder replaces requested crate slots,
-/// and the cache writer later copies untouched sibling shards from the old artifact. The temporary
-/// mixed package is never published to ordinary Body IR queries.
+/// Declaration phases stay offloaded and are read through their crate-granular transactions. Body
+/// IR restores only crate manifests; the cache writer later copies untouched sibling shards and
+/// the unchanged declaration sections from the old artifact.
 fn restore_offloaded_packages_for_body_rebuild(
     state: &mut ProjectState,
     packages: &[PackageSlot],
@@ -819,8 +818,8 @@ fn restore_offloaded_packages_for_body_rebuild(
         .into_iter()
         .map(|package| {
             loaders
-                .load_package_payloads(package)
-                .map(|payloads| (package, payloads))
+                .load_body_ir_package_manifest(package)
+                .map(|bodies| (package, bodies))
                 .with_context(|| {
                     format!(
                         "restore offloaded package {} for exact target materialization",
@@ -830,15 +829,7 @@ fn restore_offloaded_packages_for_body_rebuild(
         })
         .collect::<anyhow::Result<Vec<_>>>()?;
 
-    for (package, (def_map, semantic_ir, bodies)) in restored {
-        state
-            .def_map
-            .replace_package(package, def_map)
-            .context("offloaded DefMap package slot should exist")?;
-        state
-            .semantic_ir
-            .replace_package(package, semantic_ir)
-            .context("offloaded Semantic IR package slot should exist")?;
+    for (package, bodies) in restored {
         state
             .body_ir
             .replace_package(package, bodies)

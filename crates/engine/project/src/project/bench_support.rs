@@ -8,7 +8,7 @@ use anyhow::Context as _;
 use rg_body_ir::{BodyIrBuildPolicy, BodyIrDb, PackageBodiesCoverage};
 use rg_def_map::{DefMapDb, PackageSlot};
 use rg_item_tree::ItemTreeDb;
-use rg_package_store::{PackageEntry, PackageLoader, PackageStore, PackageSubset};
+use rg_package_store::{PackageEntry, PackageStore, PackageSubset};
 use rg_parse::ParseDb;
 use rg_semantic_ir::SemanticIrDb;
 use rg_text::PackageNameInterners;
@@ -37,10 +37,10 @@ pub fn build_def_map(
 ) -> anyhow::Result<DefMapDb> {
     let source_packages =
         PhasePackageSet::from_packages((0..parse.package_count()).map(PackageSlot).collect());
-    let baseline = DefMapDb::from_package_store(PackageStore::all_offloaded(parse.package_count()));
+    let baseline = DefMapDb::all_offloaded(parse.package_count());
     let visible_packages = source_packages.visible_dependency_subset(workspace);
     let baseline_read = baseline.read_txn_for_subset(
-        PackageLoader::resident_only("all-source DefMap benchmark"),
+        rg_def_map::DefMapLoader::resident_only("all-source DefMap benchmark"),
         &visible_packages,
     );
 
@@ -73,8 +73,8 @@ pub fn build_semantic_ir(
             item_tree,
             def_map,
             &packages,
-            PackageLoader::resident_only("all-source benchmark DefMap"),
-            PackageLoader::resident_only("all-source benchmark Semantic IR"),
+            rg_def_map::DefMapLoader::resident_only("all-source benchmark DefMap"),
+            rg_semantic_ir::SemanticIrLoader::resident_only("all-source benchmark Semantic IR"),
             &subset,
         )
         .context("while attempting to build benchmark Semantic IR packages")
@@ -105,8 +105,8 @@ pub fn build_body_ir(
             semantic_ir,
             &packages,
             names,
-            PackageLoader::resident_only("all-source benchmark DefMap"),
-            PackageLoader::resident_only("all-source benchmark Semantic IR"),
+            rg_def_map::DefMapLoader::resident_only("all-source benchmark DefMap"),
+            rg_semantic_ir::SemanticIrLoader::resident_only("all-source benchmark Semantic IR"),
             &subset,
         )
         .configured_bodies(BodyIrBuildPolicy::default())

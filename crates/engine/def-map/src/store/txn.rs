@@ -1,27 +1,81 @@
-//! Read transactions over frozen def-map package data.
+//! Read transactions over frozen DefMap package data.
+//!
+//! A transaction keeps package slots aligned with the project database, but each slot may be fully
+//! resident, lazily backed by an artifact, or excluded by a query subset. Exact accessors preserve
+//! the storage boundary: package metadata comes from the compact directory and one crate lookup
+//! decodes only that crate. [`DefMapReadTxn::package`] remains the explicit broad-access path.
 
-use crate::{DefMap, DefMapSource, ModuleOrigin, PackageDefMaps};
+use std::sync::Arc;
+
+use crate::{CrateData, CrateDefMapManifest, DefMap, DefMapSource, ModuleOrigin, PackageDefMaps};
 use rg_ir_model::{CrateId, CrateRef, DefMapRef, ModuleRef};
-use rg_package_store::{PackageStoreError, PackageStoreReadTxn};
+use rg_package_store::PackageStoreError;
 use rg_parse::FileId;
-use rg_std::ExpectedUnique;
+use rg_std::{ExpectedUnique, UniqueVec};
 
+use super::{DefMapLoader, lazy::PackageReadEntry};
 use crate::PackageSlot;
 
-/// Read-only def-map access for one query transaction.
+/// Read-only DefMap access for one query transaction.
+///
+/// Lazily decoded crate maps are shared by accessors on this value and released with the transaction.
 #[derive(Debug, Clone)]
 pub struct DefMapReadTxn<'db> {
-    packages: PackageStoreReadTxn<'db, PackageDefMaps>,
+    packages: Vec<PackageReadEntry<'db>>,
 }
 
 impl<'db> DefMapReadTxn<'db> {
-    pub(crate) fn from_package_store(packages: PackageStoreReadTxn<'db, PackageDefMaps>) -> Self {
-        Self { packages }
+    /// Builds transaction entries without changing their package-slot indexes.
+    ///
+    /// Included packages use their resident value when available. An offloaded package receives a
+    /// lazy entry, optionally seeded with the manifest retained during startup; excluded slots keep
+    /// a sentinel so an accidental access reports [`PackageStoreError::ExcludedSlot`].
+    pub(crate) fn from_store_entries(
+        packages: impl IntoIterator<
+            Item = (
+                bool,
+                Option<Arc<PackageDefMaps>>,
+                Option<Arc<crate::PackageDefMapsManifest>>,
+            ),
+        >,
+        loader: DefMapLoader<'db>,
+    ) -> Self {
+        Self {
+            packages: packages
+                .into_iter()
+                .map(|(included, package, manifest)| {
+                    if !included {
+                        return PackageReadEntry::Excluded;
+                    }
+                    match package {
+                        Some(package) => PackageReadEntry::Resident(package),
+                        None => PackageReadEntry::Lazy(super::lazy::LazyPackage::new(
+                            loader.clone(),
+                            manifest,
+                        )),
+                    }
+                })
+                .collect(),
+        }
     }
 
-    /// Returns one package by package slot.
+    /// Returns the broad package representation, loading every crate map when it is offloaded.
+    ///
+    /// Prefer exact accessors such as [`Self::crate_data`] when the caller names one crate.
     pub fn package(&self, package_slot: PackageSlot) -> Result<&PackageDefMaps, PackageStoreError> {
-        self.packages.read(package_slot)
+        match self.entry(package_slot)? {
+            PackageReadEntry::Resident(package) => Ok(package),
+            PackageReadEntry::Lazy(package) => package.package(package_slot),
+            PackageReadEntry::Excluded => unreachable!("excluded entries fail in entry()"),
+        }
+    }
+
+    pub fn package_name(&self, package: PackageSlot) -> Result<&str, PackageStoreError> {
+        match self.entry(package)? {
+            PackageReadEntry::Resident(package) => Ok(package.package_name()),
+            PackageReadEntry::Lazy(lazy) => Ok(lazy.manifest(package)?.package_name()),
+            PackageReadEntry::Excluded => unreachable!("excluded entries fail in entry()"),
+        }
     }
 
     /// Returns the Rust edition used by one frozen package.
@@ -29,31 +83,68 @@ impl<'db> DefMapReadTxn<'db> {
         &self,
         package_slot: PackageSlot,
     ) -> Result<rg_text::RustEdition, PackageStoreError> {
-        Ok(self.package(package_slot)?.edition())
+        match self.entry(package_slot)? {
+            PackageReadEntry::Resident(package) => Ok(package.edition()),
+            PackageReadEntry::Lazy(package) => Ok(package.manifest(package_slot)?.edition()),
+            PackageReadEntry::Excluded => unreachable!("excluded entries fail in entry()"),
+        }
+    }
+
+    /// Returns one crate's DefMap data without loading sibling targets from an offloaded package.
+    pub fn crate_data(&self, crate_ref: CrateRef) -> Result<Option<&CrateData>, PackageStoreError> {
+        match self.entry(crate_ref.package)? {
+            PackageReadEntry::Resident(package) => Ok(package.crate_data(crate_ref.crate_id)),
+            PackageReadEntry::Lazy(package) => package.crate_data(crate_ref),
+            PackageReadEntry::Excluded => unreachable!("excluded entries fail in entry()"),
+        }
+    }
+
+    /// Returns an offloaded crate's compact routing entry without loading its module scopes.
+    ///
+    /// Resident packages return `None`: their [`CrateData`] is already authoritative, so keeping a
+    /// second manifest representation would add memory without making those reads cheaper.
+    fn crate_manifest(
+        &self,
+        crate_ref: CrateRef,
+    ) -> Result<Option<&CrateDefMapManifest>, PackageStoreError> {
+        match self.entry(crate_ref.package)? {
+            PackageReadEntry::Resident(_) => Ok(None),
+            PackageReadEntry::Lazy(package) => Ok(package
+                .manifest(crate_ref.package)?
+                .crate_manifest(crate_ref.crate_id)),
+            PackageReadEntry::Excluded => unreachable!("excluded entries fail in entry()"),
+        }
     }
 
     /// Returns one crate def map by project-wide crate reference.
     pub fn def_map(&self, crate_ref: CrateRef) -> Result<Option<&DefMap>, PackageStoreError> {
-        let package = self.package(crate_ref.package)?;
-        Ok(package.def_map(crate_ref.crate_id))
+        Ok(self.crate_data(crate_ref)?.map(CrateData::def_map))
     }
 
     /// Returns crate contexts whose module tree contains a package-local file.
+    ///
+    /// Offloaded packages answer from the compact file-routing directory. Resident packages scan
+    /// their module origins because they do not retain a duplicate manifest.
     pub fn crates_for_file(
         &self,
         package: PackageSlot,
         file: FileId,
     ) -> Result<Vec<CrateRef>, PackageStoreError> {
-        let mut crates = Vec::new();
-        let def_map_package = self.package(package)?;
+        let PackageReadEntry::Resident(def_map_package) = self.entry(package)? else {
+            let PackageReadEntry::Lazy(lazy) = self.entry(package)? else {
+                unreachable!("excluded entries fail in entry()")
+            };
+            return lazy.crates_for_file(package, file);
+        };
 
+        let mut crates = Vec::new();
         for (crate_idx, crate_data) in def_map_package.crates().iter().enumerate() {
-            let def_map = crate_data.def_map();
-            let owns_file = def_map
+            if crate_data
+                .def_map()
                 .modules()
                 .iter()
-                .any(|module| module.origin.contains_file(file));
-            if owns_file {
+                .any(|module| module.origin.contains_file(file))
+            {
                 crates.push(CrateRef {
                     package,
                     crate_id: CrateId(crate_idx),
@@ -139,6 +230,16 @@ impl<'db> DefMapReadTxn<'db> {
             module: module_id,
         }))
     }
+
+    fn entry(&self, package: PackageSlot) -> Result<&PackageReadEntry<'db>, PackageStoreError> {
+        let Some(entry) = self.packages.get(package.0) else {
+            return Err(PackageStoreError::MissingSlot { slot: package });
+        };
+        if matches!(entry, PackageReadEntry::Excluded) {
+            return Err(PackageStoreError::ExcludedSlot { slot: package });
+        }
+        Ok(entry)
+    }
 }
 
 impl DefMapSource for DefMapReadTxn<'_> {
@@ -152,10 +253,12 @@ impl DefMapSource for DefMapReadTxn<'_> {
     }
 
     fn crate_is_proc_macro(&self, crate_ref: CrateRef) -> Result<bool, PackageStoreError> {
+        if let Some(manifest) = self.crate_manifest(crate_ref)? {
+            return Ok(manifest.is_proc_macro());
+        }
         Ok(self
-            .package(crate_ref.package)?
-            .crate_data(crate_ref.crate_id)
-            .is_some_and(crate::CrateData::is_proc_macro))
+            .crate_data(crate_ref)?
+            .is_some_and(CrateData::is_proc_macro))
     }
 
     fn extern_root(
@@ -164,8 +267,7 @@ impl DefMapSource for DefMapReadTxn<'_> {
         name: &str,
     ) -> Result<Option<ModuleRef>, PackageStoreError> {
         Ok(self
-            .package(crate_ref.package)?
-            .crate_data(crate_ref.crate_id)
+            .crate_data(crate_ref)?
             .and_then(|data| data.extern_prelude().get(name).copied()))
     }
 
@@ -174,8 +276,7 @@ impl DefMapSource for DefMapReadTxn<'_> {
         crate_ref: CrateRef,
     ) -> Result<Vec<(String, ModuleRef)>, PackageStoreError> {
         Ok(self
-            .package(crate_ref.package)?
-            .crate_data(crate_ref.crate_id)
+            .crate_data(crate_ref)?
             .map(|data| {
                 data.extern_prelude()
                     .iter()
@@ -186,21 +287,28 @@ impl DefMapSource for DefMapReadTxn<'_> {
     }
 
     fn prelude_module(&self, crate_ref: CrateRef) -> Result<Option<ModuleRef>, PackageStoreError> {
+        Ok(self.crate_data(crate_ref)?.and_then(|data| data.prelude()))
+    }
+
+    fn item_lookup_dependencies(
+        &self,
+        crate_ref: CrateRef,
+    ) -> Result<UniqueVec<CrateRef>, PackageStoreError> {
+        if let Some(manifest) = self.crate_manifest(crate_ref)? {
+            return Ok(manifest.item_lookup_dependencies().clone());
+        }
         Ok(self
-            .package(crate_ref.package)?
-            .crate_data(crate_ref.crate_id)
-            .and_then(|data| data.prelude()))
+            .crate_data(crate_ref)?
+            .map(CrateData::item_lookup_dependencies)
+            .unwrap_or_default())
     }
 
     fn root_module(&self, crate_ref: CrateRef) -> Result<Option<ModuleRef>, PackageStoreError> {
-        Ok(self
-            .package(crate_ref.package)?
-            .crate_data(crate_ref.crate_id)
-            .and_then(|data| {
-                Some(ModuleRef {
-                    origin: DefMapRef::Crate(crate_ref),
-                    module: data.root_module()?,
-                })
-            }))
+        Ok(self.crate_data(crate_ref)?.and_then(|data| {
+            Some(ModuleRef {
+                origin: DefMapRef::Crate(crate_ref),
+                module: data.root_module()?,
+            })
+        }))
     }
 }

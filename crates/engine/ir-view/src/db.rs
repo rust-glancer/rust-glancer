@@ -19,6 +19,7 @@ use rg_semantic_ir::{
     CrateItemQuery, ItemLookupQuery, ItemLookupQueryCache, ItemStore, ItemStoreSource,
     TypePathContext, TypePathResolution,
 };
+use rg_std::UniqueVec;
 use rg_text::RustEdition;
 use rg_ty::{ItemPathQuery, TraitSelectionSession, TypeLoweringAnchor, TypePathResolver};
 
@@ -387,6 +388,13 @@ impl DefMapSource for &IndexedViewDb<'_> {
 
     fn prelude_module(&self, crate_ref: CrateRef) -> Result<Option<ModuleRef>, PackageStoreError> {
         self.def_map.prelude_module(crate_ref)
+    }
+
+    fn item_lookup_dependencies(
+        &self,
+        crate_ref: CrateRef,
+    ) -> Result<UniqueVec<CrateRef>, PackageStoreError> {
+        self.def_map.item_lookup_dependencies(crate_ref)
     }
 
     fn root_module(&self, crate_ref: CrateRef) -> Result<Option<ModuleRef>, PackageStoreError> {

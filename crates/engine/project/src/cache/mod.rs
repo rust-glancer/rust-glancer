@@ -13,9 +13,9 @@
 //! ```
 //!
 //! The probe contains the package header, frozen parse snapshot, and Body IR coverage. Startup
-//! reads only the fixed directory and probe to validate source identity. A query that touches an
-//! offloaded package opens one immutable artifact revision and decodes only the required phase.
-//! Body IR has its own nested directory because it is normally read one source file at a time.
+//! reads it plus the compact DefMap routing directory to validate source identity and retain crate
+//! routing. A query that touches an offloaded package opens one immutable artifact revision and
+//! decodes only the required DefMap crate, Semantic IR half, or Body IR source-file shard.
 //!
 //! Individual package files are replaced atomically. A package-set update also leaves an
 //! `update-in-progress` marker until every artifact is committed. If the process stops halfway,
@@ -52,7 +52,9 @@ pub use self::{
 
 pub(crate) use self::{
     instance::PackageCacheInstance,
-    payload::{PackageCacheProbe, PackageCacheWriteInput},
+    payload::{
+        PackageCacheBodyUpdateInput, PackageCacheProbe, PackageCacheStartup, PackageCacheWriteInput,
+    },
     store::{PackageArtifactReader, PackageCacheUpdate},
 };
 

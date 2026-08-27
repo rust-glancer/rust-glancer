@@ -4,10 +4,10 @@ use std::collections::HashMap;
 
 use rg_def_map::PackageSlot;
 use rg_ir_model::{ImplRef, TraitDefRef, TypeDefRef};
-use rg_package_store::{PackageLoader, PackageStore, PackageSubset};
+use rg_package_store::{PackageStore, PackageSubset};
 use rg_std::{ExpectedUnique, MemorySize, Shrink};
 
-use crate::{PackageIr, SemanticIrReadTxn, SemanticIrStats, TraitImplSelfHead};
+use crate::{PackageIr, SemanticIrLoader, SemanticIrReadTxn, SemanticIrStats, TraitImplSelfHead};
 
 /// Semantic item graph for all analyzed packages and semantic crates.
 ///
@@ -40,7 +40,8 @@ impl SemanticIrDb {
             let Some(package) = entry.as_resident() else {
                 continue;
             };
-            for (crate_idx, items) in package.crates().iter().enumerate() {
+            for (crate_idx, crate_ir) in package.crates().iter().enumerate() {
+                let items = crate_ir.items();
                 stats.crate_count += 1;
                 stats.struct_count += items.structs().len();
                 stats.union_count += items.unions().len();
@@ -73,29 +74,48 @@ impl SemanticIrDb {
             .and_then(|entry| entry.as_resident())
     }
 
-    /// Replaces one package payload while preserving the surrounding package-store shape.
+    pub fn package_is_offloaded(&self, package: PackageSlot) -> bool {
+        self.packages
+            .raw_entry(package)
+            .is_some_and(|entry| entry.is_offloaded())
+    }
+
+    /// Opens a read transaction over every package slot in this snapshot.
     ///
-    /// Exact on-demand Body IR rebuilds use this to temporarily restore an artifact-backed
-    /// package. Rewriting that artifact requires every phase payload to be resident together.
-    pub fn replace_package(&mut self, package: PackageSlot, package_ir: PackageIr) -> Option<()> {
-        self.packages.replace(package, package_ir)
+    /// Resident packages are borrowed directly. Exact item or lookup-index reads from offloaded
+    /// packages go through the supplied loader and remain request-local.
+    pub fn read_txn<'db>(&'db self, loader: SemanticIrLoader<'db>) -> SemanticIrReadTxn<'db> {
+        SemanticIrReadTxn::from_store_entries(
+            self.packages
+                .raw_entries()
+                .map(|entry| (true, entry.resident_arc())),
+            loader,
+        )
     }
 
-    pub fn read_txn<'db>(
-        &'db self,
-        loader: PackageLoader<'db, PackageIr>,
-    ) -> SemanticIrReadTxn<'db> {
-        SemanticIrReadTxn::from_package_store(self.packages.read_txn(loader))
-    }
-
+    /// Opens a read transaction that rejects packages outside `subset`.
+    ///
+    /// Keeping excluded slots in place preserves project-wide package references while preventing
+    /// a scoped query from loading unrelated artifacts.
     pub fn read_txn_for_subset<'db>(
         &'db self,
-        loader: PackageLoader<'db, PackageIr>,
+        loader: SemanticIrLoader<'db>,
         subset: &PackageSubset,
     ) -> SemanticIrReadTxn<'db> {
-        SemanticIrReadTxn::from_package_store(self.packages.read_txn_for_subset(loader, subset))
+        debug_assert_eq!(
+            subset.raw_len(),
+            self.packages.len(),
+            "package subset should belong to the same Semantic IR snapshot",
+        );
+        SemanticIrReadTxn::from_store_entries(
+            self.packages
+                .raw_entries_with_slots()
+                .map(|(package, entry)| (subset.contains(package), entry.resident_arc())),
+            loader,
+        )
     }
 
+    /// Releases a resident package after its independently readable artifact has been written.
     pub fn offload_package(&mut self, package: PackageSlot) -> Option<()> {
         self.packages.offload(package)
     }
@@ -111,7 +131,7 @@ impl SemanticIrDbMutator<'_> {
         package: PackageSlot,
         package_ir: PackageIr,
     ) -> Option<()> {
-        self.db.replace_package(package, package_ir)
+        self.db.packages.replace(package, package_ir)
     }
 
     pub(crate) fn set_impl_header_facts(

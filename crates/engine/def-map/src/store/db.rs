@@ -1,19 +1,28 @@
 //! Def-map package store and transaction entry points.
 
-use crate::{DefMap, MacroExpansionLimitReport, PackageDefMaps};
+use std::sync::Arc;
+
+use crate::{DefMap, MacroExpansionLimitReport, PackageDefMaps, PackageDefMapsManifest};
 use rg_ir_model::{CrateId, CrateRef};
 use rg_item_tree::ItemTreeDb;
-use rg_package_store::{PackageLoader, PackageStore, PackageSubset};
+use rg_package_store::{PackageEntry, PackageStore, PackageSubset};
 use rg_text::PackageNameInterners;
 
-use crate::{DefMapBuildSession, DefMapReadTxn, MacroExpansionPerformancePreference, PackageSlot};
+use crate::{
+    DefMapBuildSession, DefMapLoader, DefMapReadTxn, MacroExpansionPerformancePreference,
+    PackageSlot,
+};
 use rg_std::{MemorySize, Shrink};
 use rg_workspace::{PackageOrigin, WorkspaceMetadata};
 
-/// Frozen def maps for all parsed packages and semantic crates.
+/// Frozen DefMaps for all parsed packages and semantic crates.
+///
+/// Each package slot contains either a resident [`PackageDefMaps`] or an offloaded marker. An
+/// offloaded slot may retain its compact [`PackageDefMapsManifest`] so routing and dependency
+/// queries stay cheap while exact crate maps are loaded through a read transaction.
 #[derive(Debug, Clone, PartialEq, Eq, Default, MemorySize)]
 pub struct DefMapDb {
-    packages: PackageStore<PackageDefMaps>,
+    packages: PackageStore<PackageDefMaps, Option<Arc<PackageDefMapsManifest>>>,
 }
 
 impl DefMapDb {
@@ -41,13 +50,23 @@ impl DefMapDb {
         )
     }
 
-    /// Builds a def-map database from an already shaped package store.
+    /// Builds the offloaded baseline used before selected source packages are replaced.
     ///
-    /// Project construction starts with offloaded package slots and replaces every source-built
-    /// package through a resumable build session. Artifact-backed loading can mix resident and
-    /// offloaded slots after validating the workspace snapshot.
-    pub fn from_package_store(packages: PackageStore<PackageDefMaps>) -> Self {
-        Self { packages }
+    /// Cache hits retain their compact directories. Source-built packages use `None` because
+    /// their old artifact is excluded and the build replaces the slot before it becomes visible.
+    pub fn from_offloaded_manifests(manifests: Vec<Option<PackageDefMapsManifest>>) -> Self {
+        Self {
+            packages: PackageStore::from_entries(
+                manifests
+                    .into_iter()
+                    .map(|manifest| PackageEntry::offloaded_with(manifest.map(Arc::new)))
+                    .collect(),
+            ),
+        }
+    }
+
+    pub fn all_offloaded(package_count: usize) -> Self {
+        Self::from_offloaded_manifests((0..package_count).map(|_| None).collect())
     }
 
     pub(crate) fn mutator(&mut self) -> DefMapDbMutator<'_> {
@@ -155,35 +174,67 @@ impl DefMapDb {
             .and_then(|entry| entry.as_resident())
     }
 
-    /// Replaces one package payload while preserving the surrounding package-store shape.
+    pub fn package_is_offloaded(&self, package: PackageSlot) -> bool {
+        self.packages
+            .raw_entry(package)
+            .is_some_and(|entry| entry.is_offloaded())
+    }
+
+    /// Opens a read transaction over every package slot in this snapshot.
     ///
-    /// Exact on-demand Body IR rebuilds use this to temporarily restore an artifact-backed
-    /// package. Rewriting that artifact requires every phase payload to be resident together.
-    pub fn replace_package(
-        &mut self,
-        package_slot: PackageSlot,
-        package: PackageDefMaps,
-    ) -> Option<()> {
-        self.packages.replace(package_slot, package)
+    /// Resident packages are borrowed directly. Exact reads from offloaded packages go through the
+    /// supplied loader and remain request-local.
+    pub fn read_txn<'db>(&'db self, loader: DefMapLoader<'db>) -> DefMapReadTxn<'db> {
+        DefMapReadTxn::from_store_entries(
+            self.packages.raw_entries().map(|entry| {
+                (
+                    true,
+                    entry.resident_arc(),
+                    entry.as_offloaded().cloned().flatten(),
+                )
+            }),
+            loader,
+        )
     }
 
-    pub fn read_txn<'db>(
-        &'db self,
-        loader: PackageLoader<'db, PackageDefMaps>,
-    ) -> DefMapReadTxn<'db> {
-        DefMapReadTxn::from_package_store(self.packages.read_txn(loader))
-    }
-
+    /// Opens a read transaction that rejects packages outside `subset`.
+    ///
+    /// Keeping excluded slots in place preserves project-wide package references while preventing
+    /// a scoped query from loading unrelated artifacts.
     pub fn read_txn_for_subset<'db>(
         &'db self,
-        loader: PackageLoader<'db, PackageDefMaps>,
+        loader: DefMapLoader<'db>,
         subset: &PackageSubset,
     ) -> DefMapReadTxn<'db> {
-        DefMapReadTxn::from_package_store(self.packages.read_txn_for_subset(loader, subset))
+        debug_assert_eq!(
+            subset.raw_len(),
+            self.packages.len(),
+            "package subset should belong to the same DefMap snapshot",
+        );
+        DefMapReadTxn::from_store_entries(
+            self.packages
+                .raw_entries_with_slots()
+                .map(|(package, entry)| {
+                    (
+                        subset.contains(package),
+                        entry.resident_arc(),
+                        entry.as_offloaded().cloned().flatten(),
+                    )
+                }),
+            loader,
+        )
     }
 
+    /// Replaces a resident package with its compact directory and an offloaded marker.
+    ///
+    /// The full crate maps can be released after their artifact is written, while the directory
+    /// remains available for exact query routing.
     pub fn offload_package(&mut self, package_slot: PackageSlot) -> Option<()> {
-        self.packages.offload(package_slot)
+        if self.package_is_offloaded(package_slot) {
+            return Some(());
+        }
+        let manifest = Arc::new(self.resident_package(package_slot)?.manifest());
+        self.packages.offload_with(package_slot, Some(manifest))
     }
 }
 
@@ -197,7 +248,7 @@ impl DefMapDbMutator<'_> {
         package_slot: PackageSlot,
         package: PackageDefMaps,
     ) -> Option<()> {
-        self.db.replace_package(package_slot, package)
+        self.db.packages.replace(package_slot, package)
     }
 
     pub(crate) fn compact_packages(&mut self, packages: &[PackageSlot]) {

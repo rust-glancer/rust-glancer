@@ -81,22 +81,27 @@ impl ModuleFileSelection {
 }
 
 impl ModuleOrigin {
-    /// Returns whether this module's source touches the requested file.
-    pub fn contains_file(&self, file_id: FileId) -> bool {
-        match self {
-            Self::Root { file_id: root_file } => *root_file == file_id,
-            Self::Synthetic {
-                file_id: synthetic_file,
-                ..
-            } => *synthetic_file == file_id,
+    /// Iterates every source file that participates in this module origin.
+    ///
+    /// An out-of-line module contributes both the file containing `mod child;` and the resolved
+    /// definition file. Other origin forms contribute their single source file.
+    pub(crate) fn files(&self) -> impl Iterator<Item = FileId> {
+        let files = match self {
+            Self::Root { file_id } | Self::Synthetic { file_id, .. } => [Some(*file_id), None],
             Self::Inline {
                 declaration_file, ..
-            } => *declaration_file == file_id,
+            } => [Some(*declaration_file), None],
             Self::OutOfLine {
                 declaration_file,
                 definition_file,
                 ..
-            } => *declaration_file == file_id || *definition_file == Some(file_id),
-        }
+            } => [Some(*declaration_file), *definition_file],
+        };
+        files.into_iter().flatten()
+    }
+
+    /// Returns whether this module's source touches the requested file.
+    pub fn contains_file(&self, file_id: FileId) -> bool {
+        self.files().any(|candidate| candidate == file_id)
     }
 }

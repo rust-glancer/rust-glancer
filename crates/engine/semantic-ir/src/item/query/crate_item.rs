@@ -46,18 +46,21 @@ where
     /// not enter this item universe when the macro crate is an external dependency.
     pub fn visible_stores(&self) -> Result<Vec<&'item ItemStore>, I::Error> {
         let crates = self.def_maps.item_lookup_crates_from(self.use_site)?;
-        self.items.stores_for_crates(&crates)
+        self.items.stores_for_crates(crates.as_slice())
     }
 
-    /// Returns the visible semantic stores paired with declaration-local lookup indexes.
-    pub fn visible_indexed_stores(
+    /// Returns visible crate identities paired with declaration-local lookup indexes.
+    ///
+    /// Crate identities stay beside the indexes so language-item entries can recover their complete
+    /// semantic origins without loading the corresponding declaration stores.
+    pub(super) fn visible_indexes(
         &self,
-    ) -> Result<Vec<(&'item ItemStore, &'item ItemLookupIndex)>, I::Error>
+    ) -> Result<Vec<(CrateRef, &'item ItemLookupIndex)>, I::Error>
     where
         I: ItemLookupIndexSource<'item>,
     {
         let crates = self.def_maps.item_lookup_crates_from(self.use_site)?;
-        self.items.indexed_stores_for_crates(&crates)
+        self.items.indexes_for_crates(crates.as_slice())
     }
 
     /// Searches visible impls for a trait ref while keeping duplicate refs out of the result.

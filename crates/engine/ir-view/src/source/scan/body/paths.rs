@@ -11,7 +11,7 @@
 //!               ^^^^ -> `crate::model::User`
 //! ```
 
-use rg_ir_model::{BodyRef, FieldKey, Path, ScopeId};
+use rg_ir_model::{BodyRef, ExprId, FieldKey, Path, ScopeId};
 use rg_item_tree::TypePath;
 use rg_parse::{FileId, Span};
 
@@ -193,16 +193,18 @@ impl<'a> BodyPathSourceScanner<'a> {
         // Expression source-node lookup deliberately picks one smallest AST-ish node. Qualified
         // paths need finer granularity: in `Action::Start()`, `Action` and `Start` should produce
         // different symbols even though they belong to the same lowered expression.
-        for expr_data in self.body.exprs() {
+        for (expr_idx, expr_data) in self.body.exprs().iter().enumerate() {
             if !expr_data.source.is_written_in_selected_file(self.file_id) {
                 continue;
             }
+            let expr = ExprId(expr_idx);
             match &expr_data.kind {
                 ExprKind::Path { path } => self.scan_body_path(
                     expr_data.scope,
                     path,
                     expr_data.source.file_id,
                     false,
+                    Some(expr),
                     BodyPathFinalSegment::ValuePath,
                 ),
                 ExprKind::Record {
@@ -212,6 +214,7 @@ impl<'a> BodyPathSourceScanner<'a> {
                     path,
                     expr_data.source.file_id,
                     false,
+                    Some(expr),
                     BodyPathFinalSegment::Expression,
                 ),
                 _ => {}
@@ -242,6 +245,7 @@ impl<'a> BodyPathSourceScanner<'a> {
                 path,
                 data.source.file_id,
                 self.include_single_segment,
+                None,
                 BodyPathFinalSegment::TypePath,
             );
         } else if let Some(path) = data.kind.value_path() {
@@ -250,6 +254,7 @@ impl<'a> BodyPathSourceScanner<'a> {
                 path,
                 data.source.file_id,
                 self.include_single_segment,
+                None,
                 BodyPathFinalSegment::ValuePath,
             );
         }
@@ -262,6 +267,7 @@ impl<'a> BodyPathSourceScanner<'a> {
         path: &BodyPath,
         file_id: FileId,
         include_single_segment: bool,
+        expression: Option<ExprId>,
         final_segment: BodyPathFinalSegment,
     ) {
         // Expression paths already have an expression candidate for single-segment names. Segment
@@ -307,7 +313,14 @@ impl<'a> BodyPathSourceScanner<'a> {
                         scope,
                         file_id,
                         span,
-                        source: ValueReferenceSource::Path(def_map_path),
+                        // Body IR already records the chosen declaration for an expression. Point
+                        // the final segment at that expression so hover can reuse the exact identity
+                        // instead of repeating visibility-wide name lookup. Pattern paths have no
+                        // expression identity and remain query-time value paths.
+                        source: match expression {
+                            Some(expr) => ValueReferenceSource::Expr(expr),
+                            None => ValueReferenceSource::Path(def_map_path),
+                        },
                         surface: ValueReferenceSurface::Plain,
                     });
                 }

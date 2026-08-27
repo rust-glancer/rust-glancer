@@ -125,18 +125,16 @@ pub struct Library;
             })
             .collect::<Vec<_>>();
 
-        let def_maps =
-            fixture
-                .def_map_db()
-                .read_txn(rg_package_store::PackageLoader::resident_only(
-                    "resident fanout fixture",
-                ));
-        let items =
-            fixture
-                .semantic_ir_db()
-                .read_txn(rg_package_store::PackageLoader::resident_only(
-                    "resident fanout fixture",
-                ));
+        let def_maps = fixture
+            .def_map_db()
+            .read_txn(rg_def_map::DefMapLoader::resident_only(
+                "resident fanout fixture",
+            ));
+        let items = fixture
+            .semantic_ir_db()
+            .read_txn(crate::SemanticIrLoader::resident_only(
+                "resident fanout fixture",
+            ));
         let cache = crate::ItemLookupQueryCache::new();
         let dependency_sets = test_crates
             .iter()
@@ -402,12 +400,12 @@ pub struct Parser;
     let parser = crate_ref("parser", rg_workspace::TargetKind::Lib);
     let def_maps = fixture
         .def_map_db()
-        .read_txn(rg_package_store::PackageLoader::resident_only(
+        .read_txn(rg_def_map::DefMapLoader::resident_only(
             "resident item visibility fixture",
         ));
     let items = fixture
         .semantic_ir_db()
-        .read_txn(rg_package_store::PackageLoader::resident_only(
+        .read_txn(crate::SemanticIrLoader::resident_only(
             "resident item visibility fixture",
         ));
     let visible_from = |use_site| {

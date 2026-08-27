@@ -212,27 +212,30 @@ fn build_package_with_interner(
     );
     let _entered = span.enter();
     let started = Instant::now();
-    let package_ir = semantic_ir.package(package).with_context(|| {
-        format!(
-            "while attempting to fetch semantic IR package {} for body lowering",
-            package.0,
-        )
-    })?;
-    let crate_count = package_ir.crates().len();
+    let crate_count = parse_package.targets().len();
     let mut crates = Vec::with_capacity(crate_count);
-    let def_map_package = def_map.package(package).with_context(|| {
-        format!(
-            "while attempting to fetch def-map package {} for body lowering",
-            package.0
-        )
-    })?;
 
-    // A semantic crate retains the Cargo target that provides its source and cfg context. Keep the
-    // conversion at this boundary instead of relying on matching arena indexes in later phases.
+    // When a query materializes one target, cached Body IR still supplies a package container with
+    // one empty slot per sibling target. Test selection before reading declarations: hovering one
+    // example should not decode DefMap and Semantic IR for every other example in the package. The
+    // unselected empty slots are removed after lowering by `retain_unselected_crates`.
     for crate_idx in 0..crate_count {
         let crate_id = CrateId(crate_idx);
-        let cargo_target = def_map_package
-            .crate_data(crate_id)
+        let crate_ref = CrateRef { package, crate_id };
+        if !scope.selects_crate(crate_ref) {
+            crates.push(LoweredCrateBodies::with_coverage(
+                CrateBodiesCoverage::Missing,
+            ));
+            continue;
+        }
+
+        // A semantic crate retains the Cargo target that provides its source and cfg context. Keep
+        // the conversion at this boundary instead of relying on matching indexes after this point.
+        let cargo_target = def_map
+            .crate_data(crate_ref)
+            .with_context(|| {
+                format!("while attempting to fetch DefMap data for crate {crate_idx}")
+            })?
             .context("semantic crate should have definition data")?
             .cargo_target();
 
@@ -240,7 +243,6 @@ fn build_package_with_interner(
         let parse_target = parse_package.target(cargo_target).with_context(|| {
             format!("while attempting to fetch parsed target for crate {crate_idx}")
         })?;
-        let crate_ref = CrateRef { package, crate_id };
         let cfg = CfgEvaluator::new(parse_package.cfg_options(), parse_target.enables_test_cfg());
 
         // Collect known semantic items.

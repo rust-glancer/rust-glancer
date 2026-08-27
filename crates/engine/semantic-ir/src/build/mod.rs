@@ -5,11 +5,10 @@ mod lower;
 
 use anyhow::Context as _;
 
-use rg_def_map::PackageDefMaps as DefMapPackage;
-use rg_def_map::PackageSlot;
-use rg_package_store::{PackageLoader, PackageSubset};
+use rg_def_map::{DefMapLoader, PackageSlot};
+use rg_package_store::PackageSubset;
 
-use crate::{PackageIr, SemanticIrDb};
+use crate::{SemanticIrDb, SemanticIrLoader};
 
 impl SemanticIrDb {
     /// Builds selected Semantic IR packages on top of this snapshot.
@@ -22,8 +21,8 @@ impl SemanticIrDb {
         item_tree: &'db rg_item_tree::ItemTreeDb,
         def_map: &'db rg_def_map::DefMapDb,
         packages: &'db [PackageSlot],
-        def_map_loader: PackageLoader<'db, DefMapPackage>,
-        semantic_ir_loader: PackageLoader<'db, PackageIr>,
+        def_map_loader: DefMapLoader<'db>,
+        semantic_ir_loader: SemanticIrLoader<'db>,
         subset: &'db PackageSubset,
     ) -> anyhow::Result<Self> {
         let mut next = self.clone();
@@ -73,6 +72,6 @@ fn normalized_package_slots(packages: &[PackageSlot]) -> Vec<PackageSlot> {
     slots
 }
 
-fn unexpected_package_loader<T: 'static>() -> PackageLoader<'static, T> {
-    PackageLoader::resident_only("resident semantic IR build")
+fn unexpected_package_loader() -> DefMapLoader<'static> {
+    DefMapLoader::resident_only("resident semantic IR build")
 }

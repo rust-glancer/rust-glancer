@@ -18,11 +18,15 @@ use rg_text::NameInterner;
 use super::{PackageArtifactReader, PackageArtifactReaderInner, PackageCacheReadError};
 use crate::{
     cache::{
-        CachedPackage, PackageCacheCodec, PackageCacheHeader, PackageCacheProbe, PackageCacheStore,
+        CachedPackage, PackageCacheCodec, PackageCacheHeader, PackageCacheStartup,
+        PackageCacheStore,
         codec::{PACKAGE_CACHE_CONTAINER_PREFIX_BYTES, PackageCacheLayout},
     },
     profile::metric,
 };
+
+#[cfg(test)]
+use crate::cache::PackageCacheProbe;
 
 impl PackageCacheStore {
     /// Open an artifact expected to match this complete header.
@@ -46,6 +50,7 @@ impl PackageCacheStore {
     /// Read only the outer directory and probe for startup cache validation.
     ///
     /// Dropping the temporary reader closes the file without decoding any retained IR section.
+    #[cfg(test)]
     pub(crate) fn read_probe_for_package(
         &self,
         package: &CachedPackage,
@@ -53,6 +58,23 @@ impl PackageCacheStore {
         Ok(self
             .open_artifact_for_package(package)?
             .map(|reader| reader.probe().clone()))
+    }
+
+    /// Reads startup validation data and the compact DefMap directory from one pinned revision.
+    ///
+    /// Startup retains the directory because later file routing and dependency traversal should not
+    /// reopen every artifact. No crate DefMap, Semantic IR, or Body IR payload is read here.
+    pub(crate) fn read_startup_for_package(
+        &self,
+        package: &CachedPackage,
+    ) -> Result<Option<PackageCacheStartup>, PackageCacheReadError> {
+        let Some(reader) = self.open_artifact_for_package(package)? else {
+            return Ok(None);
+        };
+        Ok(Some(PackageCacheStartup {
+            probe: reader.probe().clone(),
+            def_map_manifest: reader.read_def_map_manifest()?,
+        }))
     }
 
     /// Open one package path, validate its shallow framing, and construct a pinned reader.
@@ -121,14 +143,16 @@ impl PackageCacheStore {
             return Err(self.header_mismatch(package, &probe.header.package));
         }
 
-        // 4. Keep the open file, validated ranges, and probe together. Body IR's nested index and
-        // the shared name table start empty and grow only when later phase queries need them.
+        // 4. Keep the open file, validated ranges, and probe together. The nested phase indexes
+        // and shared name table start empty and grow only when later queries need them.
         Ok(Some(PackageArtifactReader {
             inner: Arc::new(PackageArtifactReaderInner {
                 path,
                 file: Mutex::new(file),
                 layout,
                 probe,
+                def_map_index: OnceLock::new(),
+                semantic_ir_index: OnceLock::new(),
                 body_index: OnceLock::new(),
                 names: Mutex::new(NameInterner::new()),
             }),

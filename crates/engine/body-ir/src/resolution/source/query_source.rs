@@ -4,6 +4,7 @@ use rg_def_map::{DefMap, DefMapSource};
 use rg_ir_model::{BodyRef, CrateRef, DefMapRef, ModuleRef};
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::{ItemStore, ItemStoreSource};
+use rg_std::UniqueVec;
 
 use crate::{BodyData, BodyView, ir::BodyQueryView};
 
@@ -130,6 +131,13 @@ where
 
     fn prelude_module(&self, crate_ref: CrateRef) -> Result<Option<ModuleRef>, PackageStoreError> {
         self.def_maps.prelude_module(crate_ref)
+    }
+
+    fn item_lookup_dependencies(
+        &self,
+        crate_ref: CrateRef,
+    ) -> Result<UniqueVec<CrateRef>, PackageStoreError> {
+        self.def_maps.item_lookup_dependencies(crate_ref)
     }
 
     fn root_module(&self, crate_ref: CrateRef) -> Result<Option<ModuleRef>, PackageStoreError> {

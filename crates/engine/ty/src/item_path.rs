@@ -1,7 +1,7 @@
 //! Definition path queries over semantic item stores.
 
 use rg_def_map::DefMapSource;
-use rg_ir_model::{Path, SemanticItemRef};
+use rg_ir_model::{ModuleRef, Path, SemanticItemRef};
 use rg_semantic_ir::{
     GenericsQuery, ItemResolutionQuery, ItemStoreQuery, ItemStoreSource, TypePathContext,
     TypePathResolution,
@@ -41,6 +41,18 @@ where
         path: &Path,
     ) -> Result<TypePathResolution, D::Error> {
         self.definitions.resolve_type_path(context, path)
+    }
+
+    /// Resolves a type path from a synthetic body scope without applying owner-context fallbacks.
+    ///
+    /// Callers use this exact lookup before constructing the richer body type context needed for
+    /// `Self` and associated aliases.
+    pub fn resolve_lexical_type_path(
+        &self,
+        from: ModuleRef,
+        path: &Path,
+    ) -> Result<TypePathResolution, D::Error> {
+        self.definitions.resolve_lexical_type_path(from, path)
     }
 
     pub fn semantic_items_for_type_path(

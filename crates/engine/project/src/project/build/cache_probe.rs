@@ -1,13 +1,20 @@
 //! Startup cache probing for fresh project builds.
+//!
+//! Probing is generally shallow: it validates package/source identity, restores the parse
+//! snapshot, and retains only Body IR coverage plus the compact DefMap routing directory. Larger
+//! phase payloads remain behind the artifact readers used by later queries.
 
 use rg_body_ir::{BodyIrBuildPolicy, PackageBodiesCoverage};
-use rg_def_map::PackageSlot;
+use rg_def_map::{PackageDefMapsManifest, PackageSlot};
 use rg_parse::{PackageParseSnapshot, ParseDb};
 use rg_workspace::WorkspaceMetadata;
 
 use crate::{
     PackageResidency, PackageResidencyPlan,
-    cache::{CachedPackage, PackageCacheProbe, PackageCacheStore, WorkspaceCachePlan},
+    cache::{
+        CachedPackage, PackageCacheProbe, PackageCacheStartup, PackageCacheStore,
+        WorkspaceCachePlan,
+    },
     profile::metric,
 };
 
@@ -15,16 +22,18 @@ use crate::{
 pub(super) enum StartupPackageSelection {
     /// Rebuild this package because it or one of its dependencies missed cache validation.
     BuildFromSource,
-    /// Keep this validated package lazy and retain only the coverage needed before payload reads.
+    /// Keep this package lazy with validated Body IR coverage and a compact DefMap directory.
     Cached {
         body_ir_coverage: PackageBodiesCoverage,
+        def_map_manifest: PackageDefMapsManifest,
     },
 }
 
 /// Checks whether offloadable packages can be seeded from existing cache artifacts.
 ///
-/// A probe hit restores parse metadata and lets later phase stores lazy-load the heavier payloads
-/// from disk. Any cache uncertainty is treated as a miss so the package rebuilds from source.
+/// A probe hit restores parse metadata, Body IR coverage, and the compact DefMap directory. Later
+/// phase stores load exact crate or file payloads from disk. Any cache uncertainty is treated as a
+/// miss so the package rebuilds from source.
 pub(super) struct StartupCacheProbe<'a> {
     body_ir_policy: BodyIrBuildPolicy,
     package_residency: &'a PackageResidencyPlan,
@@ -61,7 +70,8 @@ impl<'a> StartupCacheProbe<'a> {
     /// A package-local cache hit is only tentative. If one dependency must rebuild, every reverse
     /// dependent must rebuild with it because cached scopes can retain dependency-local arena IDs.
     /// Parse restoration therefore happens only after the miss closure stops growing. The result
-    /// remains in package-slot order, and every accepted hit carries its validated Body IR coverage.
+    /// remains in package-slot order, and every accepted hit carries its validated Body IR coverage
+    /// and DefMap routing directory.
     pub(super) fn select(&mut self) -> Vec<StartupPackageSelection> {
         let package_count = self.parse.package_count();
         let mut probes = (0..package_count).map(|_| None).collect::<Vec<_>>();
@@ -94,7 +104,7 @@ impl<'a> StartupCacheProbe<'a> {
                     found_new_miss = true;
                     continue;
                 };
-                if !Self::restore_parse(&mut candidate, package, probe.parse.clone()) {
+                if !Self::restore_parse(&mut candidate, package, probe.probe.parse.clone()) {
                     source_packages[package_idx] = true;
                     found_new_miss = true;
                 }
@@ -123,14 +133,17 @@ impl<'a> StartupCacheProbe<'a> {
                 }
                 let probe = probe.expect("cache-hit package should retain its probe");
                 StartupPackageSelection::Cached {
-                    body_ir_coverage: PackageBodiesCoverage::from_crates(probe.body_ir_coverage),
+                    body_ir_coverage: PackageBodiesCoverage::from_crates(
+                        probe.probe.body_ir_coverage,
+                    ),
+                    def_map_manifest: probe.def_map_manifest,
                 }
             })
             .collect()
     }
 
     /// Returns a package-local tentative hit without mutating the parse database.
-    fn probe_package(&mut self, package: PackageSlot) -> Option<PackageCacheProbe> {
+    fn probe_package(&mut self, package: PackageSlot) -> Option<PackageCacheStartup> {
         if self.package_residency.package(package) != Some(PackageResidency::Offloadable) {
             metric::CACHE_PROBE_RESIDENT_PACKAGES.inc();
             return None;
@@ -142,21 +155,21 @@ impl<'a> StartupCacheProbe<'a> {
             return None;
         };
         let probe = self.read_probe(cached_package)?;
-        if !self.snapshot_matches_header(&probe) {
+        if !self.snapshot_matches_header(&probe.probe) {
             return None;
         }
-        if !self.body_ir_matches_policy(package, &probe) {
+        if !self.body_ir_matches_policy(package, &probe.probe) {
             return None;
         }
 
         Some(probe)
     }
 
-    fn read_probe(&mut self, package: &CachedPackage) -> Option<PackageCacheProbe> {
+    fn read_probe(&mut self, package: &CachedPackage) -> Option<PackageCacheStartup> {
         // Cache reads fail open. A stale, corrupt, or missing artifact simply means this
         // offloadable package joins the source build and will overwrite its artifact later.
         let timer = metric::CACHE_PROBE_ARTIFACT_READ.start_timer();
-        let probe = self.cache_store.read_probe_for_package(package);
+        let probe = self.cache_store.read_startup_for_package(package);
         timer.finish();
 
         match probe {

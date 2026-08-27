@@ -1,8 +1,7 @@
 //! Lazy phase loading from sectioned package cache artifacts.
 //!
-//! One request shares an artifact revision and its decoded declaration payloads across
-//! phase-specific package stores. Body IR sections remain independently lazy, but DefMap and
-//! Semantic IR packages are decoded at most once while this loader set is alive.
+//! One request shares an artifact revision across phase-specific package stores. DefMap and
+//! Semantic IR load crate shards, while Body IR loads source-file shards.
 //!
 //! All phase loaders in one request read the same immutable artifact revision, so callers do not
 //! have to coordinate revisions themselves.
@@ -13,22 +12,27 @@ use std::{
 };
 
 use rg_body_ir::{BodyFileShard, BodyIrLoader, CrateBodies, LoadBodyIr, PackageBodiesManifest};
-use rg_def_map::PackageDefMaps as DefMapPackage;
-use rg_def_map::PackageSlot;
+use rg_def_map::{CrateData, DefMapLoader, LoadDefMap, PackageDefMapsManifest, PackageSlot};
 use rg_ir_model::CrateId;
-use rg_package_store::{LoadPackage, PackageLoader, PackageStoreError};
+use rg_package_store::PackageStoreError;
 use rg_parse::FileId;
-use rg_semantic_ir::PackageIr;
+use rg_semantic_ir::{
+    ItemLookupIndex, ItemStore, LoadSemanticIr, PackageIrManifest, SemanticIrLoader,
+};
 
 use crate::cache::{Fingerprint, PackageArtifactReader, PackageCacheStore, WorkspaceCachePlan};
 
 use super::state::ProjectState;
 
-/// Phase-specific loaders and validation queries backed by the same artifact revisions.
+/// Phase-specific loaders backed by one request-local set of artifact revisions.
+///
+/// DefMap, Semantic IR, and Body IR expose different storage units, but all three adapters resolve a
+/// package slot through the same [`PackageArtifactReader`]. Decoded values belong to their phase read
+/// transactions; only the open reader is shared for the duration of this loader set.
 #[derive(Clone)]
 pub(crate) struct PackageReadLoaders {
-    pub(crate) def_map: PackageLoader<'static, DefMapPackage>,
-    pub(crate) semantic_ir: PackageLoader<'static, PackageIr>,
+    pub(crate) def_map: DefMapLoader<'static>,
+    pub(crate) semantic_ir: SemanticIrLoader<'static>,
     pub(crate) body_ir: BodyIrLoader<'static>,
     artifacts: Arc<PackageArtifactReaders>,
 }
@@ -102,10 +106,10 @@ impl PackageReadLoaders {
             package_source_fingerprints,
         ));
         Self {
-            def_map: PackageLoader::new(DefMapPackageLoader {
+            def_map: DefMapLoader::new(DefMapPackageLoader {
                 artifacts: Arc::clone(&artifacts),
             }),
-            semantic_ir: PackageLoader::new(SemanticIrPackageLoader {
+            semantic_ir: SemanticIrLoader::new(SemanticIrPackageLoader {
                 artifacts: Arc::clone(&artifacts),
             }),
             body_ir: BodyIrLoader::new(BodyIrPackageLoader {
@@ -115,19 +119,25 @@ impl PackageReadLoaders {
         }
     }
 
-    /// Restore declarations plus a manifest-only Body IR overlay for an exact target rebuild.
+    /// Restores a manifest-only Body IR package shape for an exact target rebuild.
     ///
-    /// Untouched Body IR shards remain encoded in the old artifact. The synchronous residency
-    /// transition copies them into the rewritten artifact after replacing the requested target.
-    pub(crate) fn load_package_payloads(
+    /// The builder needs aligned crate slots so it can replace the selected target. Sibling slots
+    /// retain only their file routing and coverage; their body shards remain in the artifact.
+    pub(crate) fn load_body_ir_package_manifest(
         &self,
         package: PackageSlot,
-    ) -> Result<(DefMapPackage, PackageIr, rg_body_ir::PackageBodies), PackageStoreError> {
-        self.artifacts.package_payloads(package)
+    ) -> Result<rg_body_ir::PackageBodies, PackageStoreError> {
+        let reader = self.artifacts.reader(package)?;
+        let body_manifest = reader
+            .read_body_ir_manifest()
+            .map_err(|error| error.into_package_store_error(package))?;
+        Ok(rg_body_ir::PackageBodies::from_cached_manifest(
+            &body_manifest,
+        ))
     }
 }
 
-/// Shared request cache for package artifact revisions and decoded declaration payloads.
+/// Shared request cache for package artifact revisions.
 ///
 /// The cache lives behind `PackageReadLoaders`, so several read transactions can share it without
 /// making decoded dependencies permanent project state. Operations drop their loader set on
@@ -137,18 +147,7 @@ struct PackageArtifactReaders {
     cache_plan: WorkspaceCachePlan,
     cache_store: PackageCacheStore,
     package_source_fingerprints: Vec<Option<Fingerprint>>,
-    packages: Vec<PackageArtifactReadCache>,
-}
-
-/// Lazily opened and decoded sections for one package slot.
-///
-/// Keeping the three cells together makes their shared package-slot index structural. Each cell
-/// is still populated only after success, so a failed open or decode remains retryable.
-#[derive(Debug, Default)]
-struct PackageArtifactReadCache {
-    reader: OnceLock<PackageArtifactReader>,
-    def_map: OnceLock<Arc<DefMapPackage>>,
-    semantic_ir: OnceLock<Arc<PackageIr>>,
+    packages: Vec<OnceLock<PackageArtifactReader>>,
 }
 
 impl PackageArtifactReaders {
@@ -162,72 +161,19 @@ impl PackageArtifactReaders {
             cache_plan,
             cache_store,
             package_source_fingerprints,
-            packages: (0..package_count)
-                .map(|_| PackageArtifactReadCache::default())
-                .collect(),
+            packages: (0..package_count).map(|_| OnceLock::new()).collect(),
         }
     }
 
-    fn def_map(&self, package: PackageSlot) -> Result<Arc<DefMapPackage>, PackageStoreError> {
-        let cell = &self.package_cache(package)?.def_map;
-        if let Some(def_map) = cell.get() {
-            return Ok(Arc::clone(def_map));
-        }
-
-        // Failed decodes are deliberately not cached: a later load keeps the package-store
-        // transaction's existing retry behavior. Concurrent first loads may duplicate work, but
-        // every successful caller converges on the one value retained by the cell.
-        let def_map = self
-            .reader(package)?
-            .read_def_map()
-            .map(Arc::new)
-            .map_err(|error| error.into_package_store_error(package))?;
-        let _ = cell.set(def_map);
-        Ok(Arc::clone(cell.get().expect(
-            "decoded def-map cell should be initialized after successful load",
-        )))
-    }
-
-    fn semantic_ir(&self, package: PackageSlot) -> Result<Arc<PackageIr>, PackageStoreError> {
-        let cell = &self.package_cache(package)?.semantic_ir;
-        if let Some(semantic_ir) = cell.get() {
-            return Ok(Arc::clone(semantic_ir));
-        }
-
-        let semantic_ir = self
-            .reader(package)?
-            .read_semantic_ir()
-            .map(Arc::new)
-            .map_err(|error| error.into_package_store_error(package))?;
-        let _ = cell.set(semantic_ir);
-        Ok(Arc::clone(cell.get().expect(
-            "decoded semantic-IR cell should be initialized after successful load",
-        )))
-    }
-
-    fn package_payloads(
-        &self,
-        package: PackageSlot,
-    ) -> Result<(DefMapPackage, PackageIr, rg_body_ir::PackageBodies), PackageStoreError> {
-        let reader = self.reader(package)?;
-        let def_map = reader
-            .read_def_map()
-            .map_err(|error| error.into_package_store_error(package))?;
-        let semantic_ir = reader
-            .read_semantic_ir()
-            .map_err(|error| error.into_package_store_error(package))?;
-        // Exact rebuilding still needs a resident package shape so it can replace one crate slot.
-        // Keep only each sibling's routing manifest here; decoding those body shards would restore
-        // the target fan-out that on-demand materialization is intended to avoid.
-        let body_manifest = reader
-            .read_body_ir_manifest()
-            .map_err(|error| error.into_package_store_error(package))?;
-        let body_ir = rg_body_ir::PackageBodies::from_cached_manifest(&body_manifest);
-        Ok((def_map, semantic_ir, body_ir))
-    }
-
+    /// Opens a package artifact once and shares that pinned revision across all phase adapters.
+    ///
+    /// Failed opens are not cached, so a storage error is returned with its package context rather
+    /// than leaving a permanently initialized error sentinel in the request.
     fn reader(&self, package: PackageSlot) -> Result<&PackageArtifactReader, PackageStoreError> {
-        let cell = &self.package_cache(package)?.reader;
+        let cell = self
+            .packages
+            .get(package.0)
+            .ok_or(PackageStoreError::MissingSlot { slot: package })?;
 
         if let Some(reader) = cell.get() {
             return Ok(reader);
@@ -240,15 +186,7 @@ impl PackageArtifactReaders {
             .expect("package artifact reader cell should be initialized after successful open"))
     }
 
-    fn package_cache(
-        &self,
-        package: PackageSlot,
-    ) -> Result<&PackageArtifactReadCache, PackageStoreError> {
-        self.packages
-            .get(package.0)
-            .ok_or(PackageStoreError::MissingSlot { slot: package })
-    }
-
+    /// Reconstructs the expected artifact header from the cache plan before opening the file.
     fn open_reader(
         &self,
         package: PackageSlot,
@@ -276,9 +214,28 @@ struct DefMapPackageLoader {
     artifacts: Arc<PackageArtifactReaders>,
 }
 
-impl LoadPackage<DefMapPackage> for DefMapPackageLoader {
-    fn load(&self, slot: PackageSlot) -> Result<Arc<DefMapPackage>, PackageStoreError> {
-        self.artifacts.def_map(slot)
+impl LoadDefMap for DefMapPackageLoader {
+    fn load_manifest(
+        &self,
+        package: PackageSlot,
+    ) -> Result<Arc<PackageDefMapsManifest>, PackageStoreError> {
+        self.artifacts
+            .reader(package)?
+            .read_def_map_manifest()
+            .map(Arc::new)
+            .map_err(|error| error.into_package_store_error(package))
+    }
+
+    fn load_crate(
+        &self,
+        package: PackageSlot,
+        crate_id: CrateId,
+    ) -> Result<Arc<CrateData>, PackageStoreError> {
+        self.artifacts
+            .reader(package)?
+            .read_def_map_crate(crate_id)
+            .map(Arc::new)
+            .map_err(|error| error.into_package_store_error(package))
     }
 }
 
@@ -287,9 +244,40 @@ struct SemanticIrPackageLoader {
     artifacts: Arc<PackageArtifactReaders>,
 }
 
-impl LoadPackage<PackageIr> for SemanticIrPackageLoader {
-    fn load(&self, slot: PackageSlot) -> Result<Arc<PackageIr>, PackageStoreError> {
-        self.artifacts.semantic_ir(slot)
+impl LoadSemanticIr for SemanticIrPackageLoader {
+    fn load_manifest(
+        &self,
+        package: PackageSlot,
+    ) -> Result<Arc<PackageIrManifest>, PackageStoreError> {
+        self.artifacts
+            .reader(package)?
+            .read_semantic_ir_manifest()
+            .map(Arc::new)
+            .map_err(|error| error.into_package_store_error(package))
+    }
+
+    fn load_items(
+        &self,
+        package: PackageSlot,
+        crate_id: CrateId,
+    ) -> Result<Arc<ItemStore>, PackageStoreError> {
+        self.artifacts
+            .reader(package)?
+            .read_semantic_ir_items(crate_id)
+            .map(Arc::new)
+            .map_err(|error| error.into_package_store_error(package))
+    }
+
+    fn load_lookup_index(
+        &self,
+        package: PackageSlot,
+        crate_id: CrateId,
+    ) -> Result<Arc<ItemLookupIndex>, PackageStoreError> {
+        self.artifacts
+            .reader(package)?
+            .read_semantic_ir_lookup_index(crate_id)
+            .map(Arc::new)
+            .map_err(|error| error.into_package_store_error(package))
     }
 }
 

@@ -18,8 +18,9 @@ const MAX_LISTED_MACRO_EXPANSION_LIMIT_CRATES: usize = 8;
 /// Bounded diagnostics from the packages expanded during the latest def-map build.
 ///
 /// Cache-hit packages are not expanded again, so they do not contribute to this build summary.
-/// The detailed per-macro reports remain in their package artifacts and are exposed separately for
-/// `analyze`; this type retains only the small amount of data needed for operational logging.
+/// Detailed per-macro reports belong to resident DefMap packages and leave memory when those
+/// packages are offloaded. This type retains only the small amount of data needed for operational
+/// logging after that residency transition.
 #[derive(Debug, Clone, PartialEq, Eq, Default, MemorySize)]
 pub struct MacroExpansionLimitBuildSummary {
     affected_crate_count: usize,

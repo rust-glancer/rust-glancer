@@ -13,11 +13,10 @@ use std::{num::NonZeroUsize, time::Instant};
 
 use anyhow::Context as _;
 
-use rg_def_map::PackageDefMaps as DefMapPackage;
-use rg_def_map::PackageSlot;
+use rg_def_map::{DefMapLoader, PackageSlot};
 use rg_ir_model::{CrateId, CrateRef};
-use rg_package_store::{PackageLoader, PackageSubset};
-use rg_semantic_ir::PackageIr;
+use rg_package_store::PackageSubset;
+use rg_semantic_ir::SemanticIrLoader;
 use rg_std::{Shrink, UniqueVec};
 use rg_text::PackageNameInterners;
 
@@ -84,8 +83,8 @@ pub struct BodyIrDbBuilder<'db, 'names> {
     materialization: Option<BodyIrMaterializationPlan>,
     packages: &'db [PackageSlot],
     interners: &'names mut PackageNameInterners,
-    def_map_loader: PackageLoader<'db, DefMapPackage>,
-    semantic_ir_loader: PackageLoader<'db, PackageIr>,
+    def_map_loader: DefMapLoader<'db>,
+    semantic_ir_loader: SemanticIrLoader<'db>,
     subset: &'db PackageSubset,
     worker_limit: Option<NonZeroUsize>,
 }
@@ -99,8 +98,8 @@ impl<'db, 'names> BodyIrDbBuilder<'db, 'names> {
         semantic_ir: &'db rg_semantic_ir::SemanticIrDb,
         packages: &'db [PackageSlot],
         interners: &'names mut PackageNameInterners,
-        def_map_loader: PackageLoader<'db, DefMapPackage>,
-        semantic_ir_loader: PackageLoader<'db, PackageIr>,
+        def_map_loader: DefMapLoader<'db>,
+        semantic_ir_loader: SemanticIrLoader<'db>,
         subset: &'db PackageSubset,
     ) -> Self {
         Self {

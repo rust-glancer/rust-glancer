@@ -1,12 +1,14 @@
-//! Type-path lookup.
+//! Type-path lookup inside a lowered body.
+//!
+//! A body has lexical DefMap scopes for local declarations, but it also inherits the module and impl
+//! context of its owner. This query keeps that lookup order in one place and handles associated type
+//! aliases, which are not ordinary entries in either scope graph.
 
 use rg_def_map::{DefMapSource, NamespaceSet};
-use rg_ir_model::{
-    DefId, DefMapRef, EnumVariantRef, ModuleId, ModuleRef, Path, ScopeId, SemanticItemRef,
-};
+use rg_ir_model::{DefId, DefMapRef, EnumVariantRef, ModuleId, ModuleRef, Path, ScopeId};
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::{ItemStoreSource, TypePathContext, TypePathResolution};
-use rg_std::{ExpectedUnique, UniqueVec};
+use rg_std::ExpectedUnique;
 use rg_ty::Ty;
 
 use crate::resolution::BodyResolutionContext;
@@ -27,12 +29,17 @@ where
         Self { context }
     }
 
-    /// Resolve a path such as `Self` or `foo::bar` within a body scope.
+    /// Resolves a path such as `Self` or `foo::bar` within a body scope.
+    ///
+    /// Associated aliases are checked first. Ordinary names then search the lexical body scopes, the
+    /// owner's module/impl context, and finally the surrounding module inherited by a body-local item.
     pub fn resolve_in_scope(
         &self,
         scope: ScopeId,
         path: &Path,
     ) -> Result<TypePathResolution, PackageStoreError> {
+        // `Type::Alias` is selected from impls rather than a DefMap module entry. Resolve it before
+        // applying the ordinary lexical/module lookup order below.
         if let Some((prefix, name)) = path.split_prefix_name() {
             let prefix_resolution = self.resolve_in_scope(scope, &prefix)?;
             let prefix_ty =
@@ -52,11 +59,21 @@ where
             }
         }
 
-        let body_items = self.resolve_body_type_items_from_def_map(scope, path)?;
-        if !body_items.is_empty() {
-            return Ok(self.type_resolution_from_items(body_items));
+        // A declaration such as `struct Local;` inside the body shadows names inherited from the
+        // owner, so the synthetic body module is the first ordinary lookup location.
+        let from = ModuleRef {
+            origin: DefMapRef::Body(self.context.body_ref()),
+            module: ModuleId(scope.0),
+        };
+        let lexical_resolution = self
+            .context
+            .item_paths()
+            .resolve_lexical_type_path(from, path)?;
+        if !matches!(lexical_resolution, TypePathResolution::Unknown) {
+            return Ok(lexical_resolution);
         }
 
+        // Names absent from the body may still come from the item's module or impl, including `Self`.
         let item_paths = self.context.item_paths();
         let context = self.context.type_contexts().for_body_owner()?;
         let resolution = item_paths.resolve_type_path(context, path)?;
@@ -64,6 +81,8 @@ where
             return Ok(resolution);
         }
 
+        // A body-local owner can itself live in a synthetic module. Its fallback points back to the
+        // ordinary surrounding module where imports and sibling items are declared.
         let fallback_module = self.context.body().fallback_module();
         if fallback_module == context.module {
             return Ok(resolution);
@@ -82,7 +101,8 @@ where
     ///
     /// All variants have a type-namespace binding, but they are not themselves Rust types and
     /// therefore cannot be represented by `TypePathResolution`. Record syntax such as
-    /// `Choice::Record { value: 1 }` asks for the variant identity through this separate path.
+    /// `Choice::Record { value: 1 }` asks for the variant identity through this separate path. The
+    /// lookup order still mirrors [`Self::resolve_in_scope`]: lexical body, owner, then fallback.
     pub fn resolve_enum_variant_in_scope(
         &self,
         scope: ScopeId,
@@ -164,85 +184,28 @@ where
             }
         }
 
-        if !matches!(context.module.origin, DefMapRef::Body(_)) {
-            let items = self
-                .context
-                .item_paths()
-                .semantic_items_for_type_path(context, path)?;
-            return Ok(self.type_resolution_from_items(items));
-        }
-
-        let body_items = self.resolve_body_type_items_from_module(context.module, path)?;
-        Ok(self.type_resolution_from_items(body_items))
-    }
-
-    /// Resolve a lexical body type path from a scope.
-    fn resolve_body_type_items_from_def_map(
-        &self,
-        scope: ScopeId,
-        path: &Path,
-    ) -> Result<UniqueVec<SemanticItemRef>, PackageStoreError> {
-        let from = ModuleRef {
-            origin: DefMapRef::Body(self.context.body_ref()),
-            module: ModuleId(scope.0),
-        };
-        let result = self
-            .context
-            .def_map_query()
-            .scope_resolver()
-            .resolve_lexical_path(from, path, NamespaceSet::TYPES)?;
-
-        self.semantic_items_for_defs(result.resolved)
-    }
-
-    /// Resolve a body-module type path, then try the fallback module.
-    fn resolve_body_type_items_from_module(
-        &self,
-        module: ModuleRef,
-        path: &Path,
-    ) -> Result<UniqueVec<SemanticItemRef>, PackageStoreError> {
-        let def_maps = self.context.def_map_query();
-        let result = def_maps
-            .scope_resolver()
-            .resolve_path(module, path, NamespaceSet::TYPES)?;
-        let items = self.semantic_items_for_defs(result.resolved)?;
-        if !items.is_empty() {
-            return Ok(items);
+        let item_paths = self.context.item_paths();
+        let resolution = item_paths.resolve_type_path(context, path)?;
+        if !matches!(context.module.origin, DefMapRef::Body(_))
+            || !matches!(resolution, TypePathResolution::Unknown)
+        {
+            return Ok(resolution);
         }
 
         // A body-local module only carries the lexical body facts. The inherited fallback keeps
         // signatures on parent body-local items able to name ordinary surrounding module items.
         let fallback_module = self.context.body().fallback_module();
-        if fallback_module == module {
-            return Ok(items);
+        if fallback_module == context.module {
+            return Ok(resolution);
         }
 
-        let result =
-            def_maps
-                .scope_resolver()
-                .resolve_path(fallback_module, path, NamespaceSet::TYPES)?;
-        self.semantic_items_for_defs(result.resolved)
-    }
-
-    /// Convert local defs into semantic item refs.
-    fn semantic_items_for_defs(
-        &self,
-        defs: Vec<DefId>,
-    ) -> Result<UniqueVec<SemanticItemRef>, PackageStoreError> {
-        let mut items = UniqueVec::new();
-        for def in defs {
-            let DefId::Local(local_def) = def else {
-                continue;
-            };
-            if let Some(item) = self
-                .context
-                .item_query()
-                .semantic_item_for_local_def(local_def)?
-            {
-                items.push(item);
-            }
-        }
-        Ok(items)
+        item_paths.resolve_type_path(
+            TypePathContext {
+                module: fallback_module,
+                impl_ref: context.impl_ref,
+            },
+            path,
+        )
     }
 
     fn enum_variant_from_defs(
@@ -266,39 +229,5 @@ where
             }
         }
         Ok(variants.into_option())
-    }
-
-    /// Group semantic items into a type-namespace resolution.
-    fn type_resolution_from_items(&self, items: UniqueVec<SemanticItemRef>) -> TypePathResolution {
-        let mut type_defs = ExpectedUnique::new();
-        let mut type_aliases = ExpectedUnique::new();
-        let mut traits = ExpectedUnique::new();
-        for item in items {
-            match item {
-                SemanticItemRef::TypeDef(type_def) => {
-                    type_defs.push(type_def);
-                }
-                SemanticItemRef::TypeAlias(type_alias) => {
-                    type_aliases.push(type_alias);
-                }
-                SemanticItemRef::Trait(trait_ref) => {
-                    traits.push(trait_ref);
-                }
-                SemanticItemRef::Impl(_)
-                | SemanticItemRef::Function(_)
-                | SemanticItemRef::Const(_)
-                | SemanticItemRef::Static(_) => {}
-            }
-        }
-
-        if !type_defs.is_empty() {
-            TypePathResolution::type_def(type_defs)
-        } else if !type_aliases.is_empty() {
-            TypePathResolution::type_alias(type_aliases)
-        } else if !traits.is_empty() {
-            TypePathResolution::trait_ref(traits)
-        } else {
-            TypePathResolution::Unknown
-        }
     }
 }

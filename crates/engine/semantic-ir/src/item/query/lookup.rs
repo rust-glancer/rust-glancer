@@ -25,7 +25,7 @@
 //!
 //! Language items take a smaller, separate path. There are only a fixed number of them, and the
 //! first visible declaration matters, so each query resolves them eagerly while it still has the
-//! complete ordered store list.
+//! complete ordered index list.
 
 use std::{
     collections::HashMap,
@@ -103,29 +103,29 @@ impl<'item> ItemLookupQuery<'item> {
         D: DefMapSource<Error = I::Error>,
         I: ItemLookupIndexSource<'item>,
     {
-        let mut indexed_stores = crate_items.visible_indexed_stores()?;
+        let mut indexes = crate_items.visible_indexes()?;
 
         // 1. Resolve the small fixed language-item set while the complete visibility order is
         // available. The first visible declaration wins, including an ambiguous declaration.
         let mut lang_items = VisibleLangItems::default();
-        for (store, _) in &indexed_stores {
+        for (crate_ref, index) in &indexes {
             for lang_item in LangItem::ALL {
-                lang_items.merge_prefer_existing(lang_item, store.lang_item(lang_item));
+                lang_items.merge_prefer_existing(lang_item, index.lang_item(*crate_ref, lang_item));
             }
         }
 
         // 2. Remove the use-site index from the dependency set. It is a cheap local overlay and
         // must not become part of results shared by sibling integration-test targets.
-        let local_position = indexed_stores
+        let local_position = indexes
             .iter()
-            .position(|(store, _)| store.crate_ref() == crate_items.use_site())
-            .expect("visible indexed stores should contain the use-site crate");
-        let (_, local_index) = indexed_stores.remove(local_position);
-        let dependency_crates = indexed_stores
+            .position(|(crate_ref, _)| *crate_ref == crate_items.use_site())
+            .expect("visible indexes should contain the use-site crate");
+        let (_, local_index) = indexes.remove(local_position);
+        let dependency_crates = indexes
             .iter()
-            .map(|(store, _)| store.crate_ref())
+            .map(|(crate_ref, _)| *crate_ref)
             .collect::<Vec<_>>();
-        let dependency_indexes = indexed_stores
+        let dependency_indexes = indexes
             .into_iter()
             .map(|(_, index)| index)
             .collect::<Vec<_>>();

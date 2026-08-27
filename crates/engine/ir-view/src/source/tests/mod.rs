@@ -66,7 +66,7 @@ pub fn use_it(action: Action) {
 }
 
 #[test]
-fn source_scan_exposes_qualified_value_path_final_segments_as_values() {
+fn source_scan_uses_saved_expr_for_qualified_value_expressions() {
     check_source_occurrences(
         "Configure",
         r#"
@@ -90,7 +90,7 @@ pub fn use_it(action: Action) {
         "#,
         r#"
             enum_variant @ 2:5-2:14
-            value_path Action::Configure @ 6:27-6:36
+            expr @ 6:27-6:36
             value_path Action::Configure @ 8:17-8:26
         "#,
     );
