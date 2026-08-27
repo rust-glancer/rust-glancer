@@ -451,28 +451,19 @@ impl ChalkTraitSolver {
         D: DefMapSource<Error = I::Error>,
         I: ItemStoreSource<'query>,
     {
-        let Some(visible_impls) = item_lookup.trait_impls_for_trait(application.def) else {
-            return Ok(0);
-        };
         let Some(self_head) = application
             .self_ty()
             .map(|self_ty| table.resolve_root_var(self_ty))
             .as_ref()
             .and_then(TraitSelfHead::from_ty)
         else {
-            return Ok(visible_impls.len());
+            return Ok(item_lookup
+                .trait_impls_for_trait(application.def)
+                .map_or(0, |impls| impls.len()));
         };
-        let Some(candidates) = session.indexed_trait_impl_candidates(
-            item_paths,
-            application.def,
-            visible_impls,
-            self_head,
-        )?
-        else {
-            // The caller classifies a count above its admission limit as exhausted. Preserve that
-            // distinction instead of making an unavailable index look like an empty impl set.
-            return Ok(usize::MAX);
-        };
+        let candidates = item_lookup
+            .trait_impl_candidates_for_self_head(application.def, self_head.impl_lookup_head())
+            .unwrap_or_default();
         let candidate_count = candidates.len();
         if candidate_count > SPECULATIVE_ROOT_IMPL_BUDGET {
             return Ok(candidate_count);

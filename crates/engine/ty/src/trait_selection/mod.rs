@@ -30,6 +30,7 @@ pub use self::declaration_cache::TraitSelectionDeclarationCache;
 use self::native_proof::NativeProofQuery;
 pub use self::projection::AssocProjectionResult;
 use self::projection::CandidateEvidence;
+pub(crate) use self::session::CachedImplSelfMatch;
 pub use self::session::TraitSelectionSession;
 use self::session::TraitWorkKind;
 use crate::inference::{InferenceSubstitution, InferenceTable};
@@ -414,13 +415,11 @@ where
         }
 
         let Some(plausible_impls) = TraitCandidate::plausible_impls(
-            self.context.item_paths(),
             self.context.item_lookup(),
             self.context.trait_selection(),
             goal,
             table,
-        )?
-        else {
+        ) else {
             return Ok((ExpectedUnique::new(), false));
         };
 

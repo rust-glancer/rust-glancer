@@ -21,6 +21,13 @@
   fitting concept into existing family just for the sake of it.
 - The ultimate value of this project is preserving low idle memory, bursts during rebuild
   are fine and not a primary optimization target
+- When all you need is add one argument to a function, try to avoid creating a new function
+  unless both the old and the new one will be widely used. For example, if there exists a `Foo::new(bar: Bar)`,
+  and you need `Foo` to have `Baz` as well, avoid doing `fn new_with_baz(bar: Bar, baz: Baz)` and making
+  `fn new(bar: Bar) { Self::new_with_baz(bar, Baz::default()) }` or similar approach. In most cases,
+  it just bloats public API, and better solution is to add `baz` to `new` directly. This approach _can_
+  be used, but only if it genuinely helps the ergonomics of the production code. Consumers in tests do not
+  count as justification.
 
 ## Helpers
 

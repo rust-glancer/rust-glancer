@@ -24,7 +24,7 @@ pub use self::{
         StructData, TraitData, TypeAliasData, UnionData,
     },
     generics::{GenericParamSource, GenericParamView, Generics},
-    lookup_index::ItemLookupIndex,
+    lookup_index::{ItemLookupIndex, TraitImplSelfHead},
     lowering::{ItemStoreLowerer, ItemStoreSourceReader},
     query::{
         CrateItemQuery, GenericsQuery, ItemLookupIndexSource, ItemLookupQuery,

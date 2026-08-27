@@ -1,3 +1,4 @@
+mod trait_impl_lookup;
 mod utils;
 
 use std::fmt::Write as _;
@@ -73,6 +74,12 @@ pub trait Shared {{
     fn shared(&self);
 }}
 
+pub struct SharedType;
+
+impl Shared for SharedType {{
+    fn shared(&self) {{}}
+}}
+
 //- /app/Cargo.toml
 {app_manifest}
 //- /app/src/lib.rs
@@ -91,6 +98,16 @@ pub struct Library;
             .next()
             .expect("dependency should declare one trait")
             .0;
+        let shared_type = fixture
+            .resident_crate_ir(dep)
+            .expect("dependency semantic store should exist")
+            .semantic_items()
+            .find_map(|item| {
+                (item.name()?.as_str() == "SharedType")
+                    .then(|| item.type_def())
+                    .flatten()
+            })
+            .expect("dependency should declare SharedType");
         let (app_package_idx, app_package) = fixture
             .parse_db()
             .packages()
@@ -162,10 +179,16 @@ pub struct Library;
             })
             .collect::<Vec<_>>();
         for query in &queries {
-            assert!(
-                query.trait_functions(shared_trait).is_some(),
-                "shared dependency trait should be visible from every test target",
-            );
+            let candidates = query
+                .trait_impl_candidates_for_self_head(
+                    shared_trait,
+                    Some(crate::TraitImplSelfHead::Adt(shared_type)),
+                )
+                .expect("shared dependency trait should be visible from every test target");
+            let candidate = candidates
+                .as_one()
+                .expect("SharedType should have one direct dependency impl");
+            assert_eq!(candidate.impl_ref.origin.as_crate_ref(), Some(dep));
         }
 
         let cache_stats = cache.stats();

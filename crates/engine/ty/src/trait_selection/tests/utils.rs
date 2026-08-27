@@ -503,7 +503,7 @@ fn fixture_with_traits_impls_aliases_and_structs(
             .trait_refs_by_name
             .insert(data.name.to_string(), trait_ref);
     }
-    fixture.lookup_index = ItemLookupIndex::build_from_store(&fixture.store);
+    fixture.lookup_index = ItemLookupIndex::build_from_store(&fixture.store, &HashMap::new());
     fixture
 }
 

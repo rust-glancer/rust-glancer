@@ -12,14 +12,57 @@
 use std::collections::HashMap;
 
 use rg_ir_model::{
-    AssocItemId, CrateRef, FunctionRef, ImplId, ImplRef, TraitDefRef, TraitId, TraitImplRef,
-    TypeDefRef,
+    AssocItemId, CrateRef, FunctionRef, ImplId, ImplRef, Mutability, PrimitiveTy, TraitDefRef,
+    TraitId, TraitImplRef, TypeDefRef,
 };
 use rg_std::{MemorySize, Shrink, UniqueVec};
 use rg_text::Name;
 use wincode::{SchemaRead, SchemaWrite};
 
 use crate::ItemStore;
+
+/// Outer receiver shape used to narrow saved trait impl declarations before semantic proof.
+///
+/// The value comes directly from the impl's source-shaped `Self` type. For example:
+///
+/// ```text
+/// impl Marker for ()             -> Unit
+/// impl Marker for u32            -> Primitive(UnsignedInt(U32))
+/// impl Marker for (u8, bool)     -> Tuple(2)
+/// impl<T> Marker for [T; 4]      -> Array
+/// impl<T> Marker for [T]         -> Slice
+/// impl Marker for &mut u8        -> Reference(Mutable)
+/// impl Marker for *const u8      -> RawPointer(Shared)
+/// impl Marker for fn(u8, bool)   -> FnPointer(2)
+/// impl<T> Marker for Vec<T>      -> Adt(Vec)
+/// ```
+///
+/// This is a candidate-routing key, not a shortened type. A tuple head keeps its arity but not its
+/// field types, and an ADT head keeps the definition but not its generic arguments. The type layer
+/// still checks the complete impl header before accepting a candidate.
+///
+/// This vocabulary is deliberately smaller than `rg_ty`'s canonical type vocabulary. Semantic IR
+/// can identify direct structural syntax and a resolved nominal definition without normalizing
+/// aliases or carrying body-owned identities. `impl<T> Marker for T`, an alias-headed impl, or an
+/// incomplete header therefore has no head and enters the conservative fallback lane.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize, Shrink)]
+#[memsize(leaf)]
+#[shrink(leaf)]
+pub enum TraitImplSelfHead {
+    Unit,
+    Never,
+    Primitive(PrimitiveTy),
+    /// Tuple shape and field count, such as `(u8, bool) -> Tuple(2)`.
+    Tuple(u32),
+    Array,
+    Slice,
+    Reference(Mutability),
+    RawPointer(Mutability),
+    /// Function-pointer shape and parameter count, such as `fn(u8) -> FnPointer(1)`.
+    FnPointer(u32),
+    /// Resolved nominal definition without its generic arguments, such as `Vec<u8> -> Adt(Vec)`.
+    Adt(TypeDefRef),
+}
 
 /// Receiver- and trait-keyed candidates declared by one semantic crate.
 ///
@@ -38,7 +81,7 @@ pub struct ItemLookupIndex {
     // Implementation navigation and qualified paths still ask which impls mention one nominal
     // type. Trait-item lookup uses the trait-keyed map below instead.
     pub(crate) trait_impls_by_type: HashMap<TypeDefRef, UniqueVec<IndexedTraitImplRef>>,
-    pub(crate) trait_impls_by_trait: HashMap<TraitDefRef, UniqueVec<IndexedImplRef>>,
+    pub(crate) trait_impls_by_trait: HashMap<TraitDefRef, IndexedTraitImpls>,
     // A named trait item selects its declaring traits before any impl proof. Completion starts
     // from one of the two broad trait surfaces. Once a trait is selected, the function maps adapt
     // its proof back into declarations without reopening the trait item every time.
@@ -53,12 +96,16 @@ pub struct ItemLookupIndex {
 impl ItemLookupIndex {
     /// Builds the declaration-local candidate tables for one semantic crate.
     ///
-    /// Impl header facts must already be resolved before this runs, because receiver and trait
-    /// keys are derived from those facts. Visibility composition belongs to
-    /// [`crate::ItemLookupQuery`] and is intentionally not performed by this constructor.
-    pub fn build_from_store(store: &ItemStore) -> Self {
+    /// Production lowering supplies the conservative receiver heads resolved by the semantic
+    /// header pass. Synthetic stores without a definition resolver can pass an empty map; their
+    /// trait impls then enter the fallback lane. Visibility composition belongs to
+    /// [`crate::ItemLookupQuery`] and is intentionally not performed here.
+    pub fn build_from_store(
+        store: &ItemStore,
+        self_heads: &HashMap<ImplRef, TraitImplSelfHead>,
+    ) -> Self {
         let mut index = Self::default();
-        index.extend_from_store(store);
+        index.extend_from_store(store, self_heads);
         index
     }
 
@@ -83,7 +130,7 @@ impl ItemLookupIndex {
             + self
                 .trait_impls_by_trait
                 .values()
-                .map(UniqueVec::len)
+                .map(IndexedTraitImpls::entry_count)
                 .sum::<usize>()
             + self.traits_with_functions.len()
             + self.traits_with_associated_items.len()
@@ -105,7 +152,11 @@ impl ItemLookupIndex {
                 .sum::<usize>()
     }
 
-    fn extend_from_store(&mut self, store: &ItemStore) {
+    fn extend_from_store(
+        &mut self,
+        store: &ItemStore,
+        self_heads: &HashMap<ImplRef, TraitImplSelfHead>,
+    ) {
         // Record trait declaration surfaces before processing impls. For `value.convert()`, the
         // name `convert` should select `Convert` before its impl headers are compared with value's
         // type. `value./* completion */` instead starts from every trait containing a function.
@@ -159,8 +210,8 @@ impl ItemLookupIndex {
 
         // Item-store lowering has already resolved impl headers into an expected-unique `Self`
         // type. Ambiguous nominal headers are not receiver-indexed. Structural inherent impls
-        // need a small side list, while trait impls remain discoverable through their implemented
-        // trait and are partitioned by canonical `Self` shape on demand.
+        // need a small side list. Trait impls use the conservative source-level head computed by
+        // the header pass, so receiver lookup does not need to reopen every canonical header.
         for (impl_ref, impl_data) in store.impls_with_refs() {
             if impl_data.trait_ref.is_none() {
                 if impl_data.resolved_self_ty.is_empty() {
@@ -202,13 +253,16 @@ impl ItemLookupIndex {
                     trait_ref: *trait_ref,
                 };
 
-                // Structural and blanket impls may not have a nominal receiver key, but trait
-                // selection starts from the implemented trait and partitions these canonical
-                // headers by their top-level `Self` shape later.
+                // `impl Marker for [u8]` enters the slice lane, while `impl<T> Marker for T` and
+                // alias-headed impls stay in the fallback lane. Both are still grouped under the
+                // selected trait before the type layer performs exact matching and proof.
                 self.trait_impls_by_trait
                     .entry(*trait_ref)
                     .or_default()
-                    .push(IndexedImplRef::from_crate(impl_ref));
+                    .push(
+                        IndexedImplRef::from_crate(impl_ref),
+                        self_heads.get(&impl_ref).copied(),
+                    );
 
                 if let Some(self_ty) = impl_data.resolved_self_ty.as_option() {
                     self.trait_impls_by_type
@@ -218,6 +272,100 @@ impl ItemLookupIndex {
                 }
             }
         }
+    }
+
+    /// Return one trait's direct receiver-head candidates followed by conservative fallbacks.
+    ///
+    /// Given these declarations:
+    ///
+    /// ```text
+    /// impl Marker for u32 {}
+    /// impl<T> Marker for [T] {}
+    /// impl<T> Marker for T {}
+    /// ```
+    ///
+    /// a `Primitive(UnsignedInt(U32))` lookup returns the first and third impls. A `Slice` lookup
+    /// returns the second and third. The exact matcher later checks everything omitted by the head
+    /// key.
+    ///
+    /// `None` asks only for fallbacks. Closure and function-item receivers use that lane because a
+    /// concrete source impl cannot name their body-owned identity.
+    pub(crate) fn trait_impl_candidates_for_self_head(
+        &self,
+        trait_ref: TraitDefRef,
+        self_head: Option<TraitImplSelfHead>,
+    ) -> Option<UniqueVec<IndexedImplRef>> {
+        let indexed = self.trait_impls_by_trait.get(&trait_ref)?;
+        let mut impls = UniqueVec::new();
+
+        match self_head {
+            Some(TraitImplSelfHead::Adt(type_def)) => {
+                if let Some(candidates) = self.trait_impls_by_type.get(&type_def) {
+                    impls.extend(candidates.iter().filter_map(|candidate| {
+                        (candidate.expand().trait_ref == trait_ref).then_some(candidate.impl_ref)
+                    }));
+                }
+            }
+            Some(self_head) => {
+                if let Some(candidates) = indexed.direct_by_self_head.get(&self_head) {
+                    impls.extend(candidates.iter().copied());
+                }
+            }
+            None => {}
+        }
+        impls.extend(indexed.fallbacks.iter().copied());
+        Some(impls)
+    }
+}
+
+/// All impls of one trait plus the receiver lanes used by native candidate discovery.
+///
+/// For `impl Marker for u32`, `impl<T> Marker for [T]`, and `impl<T> Marker for T`, `all` contains
+/// all three declarations, `direct_by_self_head` has primitive and slice entries, and `fallbacks`
+/// contains only the blanket impl. This lets a known `u32` receiver avoid reopening the slice impl
+/// while still considering the blanket one.
+///
+/// Nominal direct impls already live in `trait_impls_by_type`, so this value duplicates only
+/// structural and fallback impl identities. The complete list remains necessary for Chalk roots,
+/// implementation navigation, and unresolved receiver fallbacks.
+#[derive(Debug, Clone, PartialEq, Eq, Default, SchemaRead, SchemaWrite, MemorySize, Shrink)]
+pub(crate) struct IndexedTraitImpls {
+    pub(crate) all: UniqueVec<IndexedImplRef>,
+    fallbacks: UniqueVec<IndexedImplRef>,
+    direct_by_self_head: HashMap<TraitImplSelfHead, UniqueVec<IndexedImplRef>>,
+}
+
+impl IndexedTraitImpls {
+    fn push(&mut self, impl_ref: IndexedImplRef, self_head: Option<TraitImplSelfHead>) {
+        if !self.all.push(impl_ref) {
+            return;
+        }
+
+        match self_head {
+            Some(TraitImplSelfHead::Adt(_)) => {
+                // The exact definition key and implemented trait are already retained by
+                // `trait_impls_by_type`; avoid storing a third copy here.
+            }
+            Some(self_head) => {
+                self.direct_by_self_head
+                    .entry(self_head)
+                    .or_default()
+                    .push(impl_ref);
+            }
+            None => {
+                self.fallbacks.push(impl_ref);
+            }
+        }
+    }
+
+    fn entry_count(&self) -> usize {
+        self.all.len()
+            + self.fallbacks.len()
+            + self
+                .direct_by_self_head
+                .values()
+                .map(UniqueVec::len)
+                .sum::<usize>()
     }
 }
 

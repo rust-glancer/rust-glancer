@@ -38,6 +38,23 @@ where
     for<'source> &'source D: DefMapSource<Error = PackageStoreError>,
     for<'source> &'source I: ItemStoreSource<'source, Error = PackageStoreError>,
 {
+    /// Populate editor-facing declarations for method-call expressions after inference settles.
+    pub(super) fn resolve_method_declarations(&mut self) -> Result<(), PackageStoreError> {
+        let expr_count = self.pass.body.exprs().len();
+        for expr_idx in 0..expr_count {
+            let expr = ExprId(expr_idx);
+            let ExprKind::MethodCall { receiver, .. } = &self.pass.body.expr_unchecked(expr).kind
+            else {
+                continue;
+            };
+            let receiver = *receiver;
+
+            let resolution = self.resolve_method_call_expr(expr, receiver)?;
+            self.pass.set_expr_resolution(expr, resolution);
+        }
+        Ok(())
+    }
+
     pub(super) fn resolve_expr(&mut self, expr: ExprId) -> Result<bool, PackageStoreError> {
         let old_resolution = self.pass.expr_resolution(expr).clone();
         let expr_data = self.pass.body.expr_unchecked(expr);
@@ -140,10 +157,10 @@ where
                 };
                 self.pass.set_expr_facts(expr, resolution, ty);
             }
-            ExprKind::MethodCall { receiver, .. } => {
-                let resolution = self.resolve_method_call_expr(expr, receiver)?;
-                self.pass.set_expr_resolution(expr, resolution);
-            }
+            // Call inference owns target selection and signature transfer. The editor-facing
+            // declaration is populated once by `resolve_method_declarations` after inference
+            // settles, so the general fixed-point walker deliberately skips this expression.
+            ExprKind::MethodCall { .. } => {}
             ExprKind::Wrapper { kind, inner } => {
                 let (resolution, ty) = self.resolve_wrapper_expr(kind, inner);
                 self.pass
@@ -419,6 +436,16 @@ where
         call: ExprId,
         receiver: Option<ExprId>,
     ) -> Result<BodyResolution, PackageStoreError> {
+        // Call inference retains a target only after lookup found one unique, proven function.
+        // Later fixed-point rounds keep refining that target's substitution; repeating method and
+        // trait lookup cannot select a different function without disagreeing with the inference
+        // state that already owns the call. Reuse the selected declaration directly.
+        if let Some(function) = self.pass.inference.selected_call_function(call) {
+            return Ok(BodyResolution::Declarations(
+                [DeclarationRef::from(function)].into_iter().collect(),
+            ));
+        }
+
         let Some(receiver) = receiver else {
             return Ok(BodyResolution::Unknown);
         };

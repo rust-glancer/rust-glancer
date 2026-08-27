@@ -115,14 +115,34 @@ where
     pub(crate) fn resolve(mut self) -> Result<BodyFacts, PackageStoreError> {
         self.resolve_bindings()?;
 
+        let has_method_calls = self
+            .body
+            .exprs()
+            .iter()
+            .any(|expr| matches!(&expr.kind, crate::ir::ExprKind::MethodCall { .. }));
+
         // Seed syntax-directed expression facts before annotations introduce inference holes.
-        // Calls and patterns that need later evidence are retried by the shared fixed point below.
+        // Method declarations are deferred until call inference has had a chance to retain a
+        // unique target: resolving them here would perform the same impl search once for the
+        // expression fact and again for the call signature.
         self.transfer_expressions_and_patterns()?;
         InferenceTransferPass::new(&mut self).initialize()?;
 
+        // Reapply syntax after annotations have reached their expressions, then let calls retain
+        // their unique target before the ordinary fixed point asks for declaration facts. For
+        // `value.convert()`, the following expression pass can read that target directly. Calls
+        // that remain ambiguous have no retained state and still use full editor-facing lookup.
+        // Bodies without method syntax keep the ordinary path and do not pay for an extra seed.
+        if has_method_calls {
+            self.transfer_expressions_and_patterns()?;
+            InferenceTransferPass::new(&mut self).apply_once()?;
+        }
+
         // Expressions, patterns, calls, and expected types all exchange evidence through the same
-        // inference context. Revisit the transfer rules while that context or declaration
-        // resolution changes; there is no ordinary-fact pass to refresh afterward.
+        // inference context. Method declarations are editor-facing facts rather than inference
+        // inputs: call inference performs the lookup that can retain a unique target. Defer the
+        // declaration-only lookup so an unresolved `value.method()` is not expanded once here and
+        // once in call inference on every fixed-point round.
         let mut converged = false;
         let mut final_resolution_changed = false;
         let mut final_inference_changed = false;
@@ -144,6 +164,8 @@ where
             crate::profile::metric::FIXED_POINT_EXHAUSTIONS.inc();
             tracing::warn!(
                 body = ?self.env.body_ref(),
+                owner = ?self.body.owner(),
+                source = ?self.body.source(),
                 max_passes = MAX_BODY_INFERENCE_PASSES,
                 expression_count = self.body.exprs().len(),
                 binding_count = self.body.bindings().len(),
@@ -151,6 +173,14 @@ where
                 final_inference_changed,
                 "body inference stopped at the fixed-point pass limit; unresolved facts remain unknown"
             );
+        }
+
+        // Selected calls already retain their declaration, while ambiguous calls still need the
+        // broader editor-facing result. Resolve both once from the strongest receiver types the
+        // fixed point produced. This fact cannot make another inference rule applicable, so it
+        // deliberately sits outside the convergence loop.
+        if has_method_calls {
+            ExprResolutionPass::new(&mut self).resolve_method_declarations()?;
         }
 
         Ok(self.inference.finish(self.facts, converged))

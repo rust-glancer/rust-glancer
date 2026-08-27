@@ -19,8 +19,9 @@ use crate::{BodyData, BodyView, ir::BodyQueryView};
 
 use crate::resolution::query::{
     BodyAssociatedItemQuery, BodyCallQuery, BodyFieldQuery, BodyFunctionQuery, BodyGenericsQuery,
-    BodyImplQuery, BodyLocalItemQuery, BodyMethodQuery, BodyTraitQuery, BodyTypeAliasQuery,
-    BodyTypeContextQuery, BodyTypePathQuery, BodyValuePathQuery, TypeRefResolutionQuery,
+    BodyImplQuery, BodyLocalItemCache, BodyLocalItemQuery, BodyMethodCache, BodyMethodQuery,
+    BodyTraitLookupCache, BodyTraitQuery, BodyTypeAliasQuery, BodyTypeContextQuery,
+    BodyTypePathQuery, BodyValuePathQuery, TypeRefResolutionQuery,
 };
 
 use super::BodyQuerySource;
@@ -39,6 +40,24 @@ type BodyImplMatcher<'context, 'query, D, I> = ImplMatcher<
     &'context BodyResolutionContext<'query, D, I>,
 >;
 
+/// Request-local semantic caches shared by every short-lived context for one body.
+///
+/// Fixed-point resolution repeatedly creates contexts over newer inference snapshots. The facts
+/// below do not change with those snapshots, so all contexts for the body share one handle:
+///
+/// - `traits` retains lexical trait sets and name-filtered declaration surfaces;
+/// - `body_local_items` indexes active-overlay and body-local declarations once;
+/// - `methods` remembers receiver/name combinations with no extension method.
+///
+/// Receiver-specific positive proofs stay in the inference-owned trait-selection scope instead.
+/// A new body receives a new cache group, so none of these body identities escape their request.
+#[derive(Clone, Default)]
+pub(crate) struct BodyResolutionCaches {
+    traits: BodyTraitLookupCache,
+    body_local_items: BodyLocalItemCache,
+    methods: BodyMethodCache,
+}
+
 /// Read-only provider bundle shared by body semantic queries.
 ///
 /// The context keeps DefMap, item-store, item-lookup-query, trait-selection, and active-body routing
@@ -50,6 +69,7 @@ type BodyImplMatcher<'context, 'query, D, I> = ImplMatcher<
 pub struct BodyResolutionContext<'a, D, I> {
     source: BodyQuerySource<'a, D, I>,
     ty: TyContext<'a, BodyQuerySource<'a, D, I>, BodyQuerySource<'a, D, I>>,
+    caches: BodyResolutionCaches,
 }
 
 impl<'a, D, I> BodyResolutionContext<'a, D, I>
@@ -69,6 +89,7 @@ where
             BodyQuerySource::new(def_maps, item_stores, body_ref, body),
             item_lookup_query,
             trait_selection,
+            BodyResolutionCaches::default(),
         )
     }
 
@@ -88,6 +109,7 @@ where
             BodyQuerySource::for_structure(def_maps, item_stores, body_ref, body),
             item_lookup_query,
             trait_selection,
+            BodyResolutionCaches::default(),
         )
     }
 
@@ -99,11 +121,13 @@ where
         body: BodyQueryView<'a>,
         item_lookup_query: &ItemLookupQuery<'a>,
         trait_selection: TraitSelectionSession,
+        caches: BodyResolutionCaches,
     ) -> Self {
         Self::from_source(
             BodyQuerySource::for_query(def_maps, item_stores, body_ref, body),
             item_lookup_query,
             trait_selection,
+            caches,
         )
     }
 
@@ -111,6 +135,7 @@ where
         source: BodyQuerySource<'a, D, I>,
         item_lookup_query: &ItemLookupQuery<'a>,
         trait_selection: TraitSelectionSession,
+        caches: BodyResolutionCaches,
     ) -> Self {
         assert_eq!(
             source.body_ref().crate_ref,
@@ -123,7 +148,7 @@ where
             item_lookup_query.clone(),
             trait_selection,
         );
-        Self { source, ty }
+        Self { source, ty, caches }
     }
 }
 
@@ -142,6 +167,18 @@ impl<'a, D, I> BodyResolutionContext<'a, D, I> {
 
     pub(crate) fn item_lookup_query(&self) -> &ItemLookupQuery<'a> {
         self.ty.item_lookup()
+    }
+
+    pub(crate) fn trait_cache(&self) -> &BodyTraitLookupCache {
+        &self.caches.traits
+    }
+
+    pub(crate) fn body_local_item_cache(&self) -> &BodyLocalItemCache {
+        &self.caches.body_local_items
+    }
+
+    pub(crate) fn method_cache(&self) -> &BodyMethodCache {
+        &self.caches.methods
     }
 
     pub(crate) fn ty_context(
@@ -260,12 +297,12 @@ where
         BodyFunctionQuery::new(self.clone())
     }
 
-    pub(crate) fn body_local_items(&self) -> BodyLocalItemQuery<'a, D, I> {
-        BodyLocalItemQuery::new(self.clone())
+    pub(crate) fn body_local_items(&self) -> BodyLocalItemQuery<'_, 'a, D, I> {
+        BodyLocalItemQuery::new(self)
     }
 
-    pub(crate) fn impls(&self) -> BodyImplQuery<'a, D, I> {
-        BodyImplQuery::new(self.clone())
+    pub(crate) fn impls(&self) -> BodyImplQuery<'_, 'a, D, I> {
+        BodyImplQuery::new(self)
     }
 
     pub fn methods(&self) -> BodyMethodQuery<'a, D, I> {

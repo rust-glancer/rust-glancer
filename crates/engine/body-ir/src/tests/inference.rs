@@ -161,6 +161,108 @@ pub fn use_it(user: User) {
 }
 
 #[test]
+fn resolves_inherent_method_after_later_receiver_refinement() {
+    check_project_body_ir(
+        r#"
+//- /Cargo.toml
+[package]
+name = "body_late_receiver_refinement"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct Pair<A, B> {
+    first: A,
+    second: B,
+}
+
+pub struct Found;
+
+impl<T> Pair<T, T> {
+    pub fn same(&self) -> Found {
+        Found
+    }
+}
+
+pub fn make_pair<T>() -> Pair<T, u8> {}
+pub fn require_u8_pair(_: &Pair<u8, u8>) {}
+
+pub fn use_it() {
+    let pair = make_pair();
+    let found = pair.same();
+    require_u8_pair(&pair);
+    let _: Found = found;
+}
+"#,
+        expect![[r#"
+            package body_late_receiver_refinement
+
+            body_late_receiver_refinement [lib]
+            body b0 fn body_late_receiver_refinement[lib]::crate::make_pair @ 14:1-14:40
+            scopes
+            - s0 parent <none>: <none>
+            - s1 parent s0: <none>
+            bindings
+            body
+            expr e0 block s1 => () @ 14:38-14:40
+
+
+            body b1 fn body_late_receiver_refinement[lib]::crate::require_u8_pair @ 15:1-15:44
+            scopes
+            - s0 parent <none>: <none>
+            - s1 parent s0: <none>
+            bindings
+            body
+            expr e0 block s1 => () @ 15:42-15:44
+
+
+            body b2 fn body_late_receiver_refinement[lib]::crate::use_it @ 17:1-22:2
+            scopes
+            - s0 parent <none>: <none>
+            - s1 parent s0: v0, v1
+            bindings
+            - v0 let pair `pair` => nominal struct body_late_receiver_refinement[lib]::crate::Pair<u8, u8> @ 18:9-18:13
+            - v1 let found `found` => nominal struct body_late_receiver_refinement[lib]::crate::Found @ 19:9-19:14
+            body
+            expr e9 block s1 => () @ 17:17-22:2
+              stmt s0 let v0 @ 18:5-18:28
+                initializer
+                  expr e1 call => nominal struct body_late_receiver_refinement[lib]::crate::Pair<u8, u8> @ 18:16-18:27
+                    callee
+                      expr e0 path make_pair -> fn body_late_receiver_refinement[lib]::crate::make_pair => function item fn body_late_receiver_refinement[lib]::crate::make_pair<<unknown>> @ 18:16-18:25
+              stmt s1 let v1 @ 19:5-19:29
+                initializer
+                  expr e3 method_call same -> fn impl Pair<T, T>::same => nominal struct body_late_receiver_refinement[lib]::crate::Found @ 19:17-19:28
+                    receiver
+                      expr e2 path pair -> local v0 => nominal struct body_late_receiver_refinement[lib]::crate::Pair<u8, u8> @ 19:17-19:21
+              stmt s2 expr; @ 20:5-20:28
+                expr e7 call => () @ 20:5-20:27
+                  callee
+                    expr e4 path require_u8_pair -> fn body_late_receiver_refinement[lib]::crate::require_u8_pair => function item fn body_late_receiver_refinement[lib]::crate::require_u8_pair @ 20:5-20:20
+                  arg
+                    expr e6 wrapper ref => &nominal struct body_late_receiver_refinement[lib]::crate::Pair<u8, u8> @ 20:21-20:26
+                      inner
+                        expr e5 path pair -> local v0 => nominal struct body_late_receiver_refinement[lib]::crate::Pair<u8, u8> @ 20:22-20:26
+              stmt s3 let : Found @ 21:5-21:26
+                initializer
+                  expr e8 path found -> local v1 => nominal struct body_late_receiver_refinement[lib]::crate::Found @ 21:20-21:25
+
+
+            body b3 fn impl Pair<T, T>::same @ 9:5-11:6
+            scopes
+            - s0 parent <none>: v0
+            - s1 parent s0: <none>
+            bindings
+            - v0 self_param self `&self` => &nominal struct body_late_receiver_refinement[lib]::crate::Pair<param T, param T> @ 9:17-9:22
+            body
+            expr e1 block s1 => nominal struct body_late_receiver_refinement[lib]::crate::Found @ 9:33-11:6
+              tail
+                expr e0 path Found -> struct body_late_receiver_refinement[lib]::crate::Found => nominal struct body_late_receiver_refinement[lib]::crate::Found @ 10:9-10:14
+        "#]],
+    );
+}
+
+#[test]
 fn infers_imported_enum_variant_constructors() {
     check_project_body_ir(
         r#"

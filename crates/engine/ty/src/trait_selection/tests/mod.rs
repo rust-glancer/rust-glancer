@@ -50,8 +50,9 @@ fn named_trait_discovery_ignores_unrelated_blanket_impls() {
             .expect("fixture should contain Target")]
     );
 
-    // Building the selected trait's head index and probing its one impl fit this small allowance.
-    // A receiver-wide scan would spend it on the preceding blanket impls before reaching Target.
+    // Selecting the trait by its declaration surface and probing its one impl fit this small
+    // allowance. A receiver-wide scan would spend it on the preceding blanket impls before
+    // reaching Target.
     let session = TraitSelectionSession::new(fixture.target).with_work_limit(4);
     let context = TyContext::new(&fixture, &fixture, lookup, session);
     let matcher = ImplMatcher::new(context);
@@ -72,6 +73,44 @@ fn named_trait_discovery_ignores_unrelated_blanket_impls() {
             .trait_ref_by_name("Target")
             .expect("fixture should contain Target")
     );
+}
+
+#[test]
+fn broad_trait_candidates_are_charged_once_per_inference_scope() {
+    let fixture = TraitSelectionFixture::new(
+        r#"
+            traits
+              trait#0 Marker
+            structs
+              struct#0 First
+              struct#1 Second
+            impls
+              impl#0 impl Marker for First
+              impl#1 impl Marker for Second
+        "#,
+    );
+    let lookup = fixture.lookup_query();
+    let trait_ref = fixture
+        .trait_ref_by_name("Marker")
+        .expect("fixture should contain Marker");
+    let unresolved_projection = Ty::Alias(AliasTy::Projection(ProjectionTy {
+        associated_ty: TypeAliasRef {
+            origin: origin(),
+            id: TypeAliasId(0),
+        },
+        args: Vec::new().into(),
+    }));
+    let session = TraitSelectionSession::new(fixture.target).with_work_limit(2);
+
+    let first = session
+        .trait_impl_candidates_for_ty(&lookup, trait_ref, &unresolved_projection)
+        .expect("the first broad lookup should fit the exact allowance");
+    let repeated = session
+        .trait_impl_candidates_for_ty(&lookup, trait_ref, &unresolved_projection)
+        .expect("reusing the same broad lookup should consume no more work");
+
+    assert_eq!(first.len(), 2);
+    assert_eq!(repeated, first);
 }
 
 #[test]
@@ -137,7 +176,7 @@ fn body_work_exhaustion_keeps_candidate_search_incomplete() {
     );
     profile.finish().assert_keyed_counter(
         crate::profile::metric::WORK_LIMIT_EXHAUSTIONS,
-        "body_work.candidate_index",
+        "body_work.candidate_probe",
         1,
     );
 }

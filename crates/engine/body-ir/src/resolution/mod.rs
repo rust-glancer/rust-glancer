@@ -9,7 +9,7 @@ mod pass;
 mod query;
 mod source;
 
-pub(crate) use self::pass::BodyResolutionPass;
+pub(crate) use self::{pass::BodyResolutionPass, source::BodyResolutionCaches};
 
 pub use self::{
     query::{BodyMethodQuery, BodyTypePathQuery, BodyValuePathQuery},

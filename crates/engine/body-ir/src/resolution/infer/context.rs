@@ -119,6 +119,13 @@ impl BodyInferenceCtx {
         self.call_inference[call.0].clone()
     }
 
+    /// Return a target that this body's call inference has already selected uniquely.
+    pub(crate) fn selected_call_function(&self, call: ExprId) -> Option<rg_ir_model::FunctionRef> {
+        self.call_inference[call.0]
+            .as_ref()
+            .map(CallInferenceState::function)
+    }
+
     pub(super) fn set_call_inference(&mut self, call: ExprId, call_inference: CallInferenceState) {
         if self.call_inference[call.0].as_ref() == Some(&call_inference) {
             return;

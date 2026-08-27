@@ -37,10 +37,20 @@ pub(super) struct CallInferenceState {
     subst: InferenceSubstitution,
     first_written_param_idx: usize,
     return_projection_complete: bool,
+    /// Canonical return type used by the last associated-type normalization attempt.
+    ///
+    /// `Iterator::Item` may remain unresolved across many body rounds. The call retries only when
+    /// inference changes this input key; `None` means normalization has not been attempted yet.
+    last_return_projection_input: Option<Ty>,
     generic_obligations_complete: bool,
 }
 
 impl CallInferenceState {
+    /// Return the function whose signature owns this call's live inference state.
+    pub(super) fn function(&self) -> rg_ir_model::FunctionRef {
+        self.function
+    }
+
     /// Collapse the call-owned inference substitution into its persistent semantic form.
     pub(super) fn finalize(&self, table: &InferenceTable, inference_complete: bool) -> CallFacts {
         let params = self.generic_params.iter().copied();
@@ -179,6 +189,7 @@ where
                 subst: InferenceSubstitution::from_substitution(base),
                 first_written_param_idx: target.first_written_param_idx(),
                 return_projection_complete: false,
+                last_return_projection_input: None,
                 generic_obligations_complete: false,
             }
         };
@@ -380,6 +391,17 @@ where
             .subst
             .as_substitution()
             .apply(&state.projection.signature().ret);
+
+        // An unresolved projection can survive many body fixed-point rounds. Retry only after the
+        // variables inside its input have gained evidence; unrelated body progress cannot change
+        // this projection's candidate set. Canonicalization is deliberately only the comparison
+        // key—the live return type and table below retain their inference-variable connections.
+        let projection_input = inference.table.canonicalize(&return_ty);
+        if state.last_return_projection_input.as_ref() == Some(&projection_input) {
+            return Ok(());
+        }
+        state.last_return_projection_input = Some(projection_input);
+
         let (ty, table) = self
             .context
             .trait_selection()

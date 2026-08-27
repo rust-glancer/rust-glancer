@@ -62,19 +62,21 @@ where
             return Ok(None);
         }
 
-        let Some(header) = self.impl_header(trait_impl.impl_ref)? else {
-            return Ok(None);
-        };
-        let Some((subst, self_applicability)) = Self::impl_self_subst(&header, receiver_ty) else {
+        // Fixed-point retries see the same receiver representation many times. The conservative
+        // fallback lane also presents impls such as `impl<T> Trait for T` to many receiver shapes.
+        // Cache this table-independent header comparison, including a negative result. Its
+        // inference-scope owner keeps live variables and closure identities request-local.
+        let Some(header_match) = self.impl_self_match_for_impl(trait_impl.impl_ref, receiver_ty)?
+        else {
             return Ok(None);
         };
         let Some(mut selection) = TraitSelectionQuery::new(self.context.clone())
-            .probe_instantiated_impl(trait_impl, &header, subst, table)?
+            .probe_instantiated_impl(trait_impl, &header_match.header, header_match.subst, table)?
         else {
             return Ok(None);
         };
 
-        selection.applicability = self_applicability.and(selection.applicability);
+        selection.applicability = header_match.applicability.and(selection.applicability);
         Ok(selection.applicability.is_applicable().then_some(selection))
     }
 }

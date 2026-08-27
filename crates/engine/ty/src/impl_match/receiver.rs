@@ -120,6 +120,22 @@ where
         table: &InferenceTable,
     ) -> Result<ReceiverImplMatches, D::Error> {
         let mut matches = self.inherent_matches_for_receiver(receiver_ty)?;
+        matches.extend(self.trait_matches_for_receiver(receiver_ty, trait_refs, table)?);
+        Ok(matches)
+    }
+
+    /// Match only impls of already-discovered traits for one receiver.
+    ///
+    /// Named method calls use this after the inherent lane produced no applicable method. Broad
+    /// completion still uses [`Self::matches_for_receiver_with_traits`] so it can expose both
+    /// declaration families at once.
+    pub fn trait_matches_for_receiver(
+        &self,
+        receiver_ty: &Ty,
+        trait_refs: impl IntoIterator<Item = TraitDefRef>,
+        table: &InferenceTable,
+    ) -> Result<ReceiverImplMatches, D::Error> {
+        let mut matches = ReceiverImplMatches::default();
         matches.traits.extend(self.trait_selections_for_receiver(
             receiver_ty,
             trait_refs,
@@ -222,16 +238,11 @@ where
         let mut selections = UniqueVec::new();
 
         for trait_ref in trait_refs {
-            let Some(candidates) = self
-                .context
-                .trait_selection()
-                .trait_impl_candidates_for_ty(
-                    self.context.item_paths(),
-                    self.context.item_lookup(),
-                    trait_ref,
-                    &receiver_ty,
-                )?
-            else {
+            let Some(candidates) = self.context.trait_selection().trait_impl_candidates_for_ty(
+                self.context.item_lookup(),
+                trait_ref,
+                &receiver_ty,
+            ) else {
                 // `None` means the body-wide work allowance was exhausted. Later traits share the
                 // same allowance, so keep the candidates collected so far instead of repeatedly
                 // asking a tracker that cannot reserve more work.

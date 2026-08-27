@@ -46,7 +46,7 @@ use rg_text::Name;
 
 use super::{CrateItemQuery, ItemLookupIndexSource, ItemStoreQuery, ItemStoreSource};
 use crate::{
-    ItemLookupIndex,
+    ItemLookupIndex, TraitImplSelfHead,
     item::{TraitItemTraitRefs, lang_item::VisibleLangItems},
 };
 
@@ -281,7 +281,42 @@ impl<'item> ItemLookupQuery<'item> {
 
         let mut impls = local_impls
             .into_iter()
-            .flat_map(|impls| impls.iter())
+            .flat_map(|impls| impls.all.iter())
+            .map(|impl_ref| TraitImplRef {
+                impl_ref: impl_ref.expand(),
+                trait_ref,
+            })
+            .collect::<UniqueVec<_>>();
+        impls.extend(dependency_impls.unwrap_or_default());
+        Some(impls)
+    }
+
+    /// Returns direct receiver-head impls followed by blanket or unresolved-head fallbacks.
+    ///
+    /// With `impl Marker for u32`, `impl<T> Marker for [T]`, and `impl<T> Marker for T`, a
+    /// `Primitive(UnsignedInt(U32))` query returns the direct `u32` impl followed by the blanket
+    /// impl. It does not return the slice impl, and it does not prove either returned header.
+    ///
+    /// `None` as the head asks only for fallbacks. This is used for closure and function-item
+    /// receivers, whose concrete identities cannot be named by a source impl header.
+    pub fn trait_impl_candidates_for_self_head(
+        &self,
+        trait_ref: TraitDefRef,
+        self_head: Option<TraitImplSelfHead>,
+    ) -> Option<UniqueVec<TraitImplRef>> {
+        let dependency_impls = self
+            .dependencies
+            .trait_impl_candidates_for_self_head(trait_ref, self_head);
+        let local_impls = self
+            .local_index
+            .trait_impl_candidates_for_self_head(trait_ref, self_head);
+        if local_impls.is_none() && dependency_impls.is_none() {
+            return None;
+        }
+
+        let mut impls = local_impls
+            .into_iter()
+            .flatten()
             .map(|impl_ref| TraitImplRef {
                 impl_ref: impl_ref.expand(),
                 trait_ref,
@@ -491,7 +526,7 @@ impl DependencyLookup<'_> {
                 continue;
             };
             trait_was_indexed = true;
-            impls.extend(indexed.iter().map(|impl_ref| TraitImplRef {
+            impls.extend(indexed.all.iter().map(|impl_ref| TraitImplRef {
                 impl_ref: impl_ref.expand(),
                 trait_ref,
             }));
@@ -500,6 +535,42 @@ impl DependencyLookup<'_> {
         results
             .trait_impls_by_trait
             .insert(trait_ref, result.clone());
+        result
+    }
+
+    fn trait_impl_candidates_for_self_head(
+        &self,
+        trait_ref: TraitDefRef,
+        self_head: Option<TraitImplSelfHead>,
+    ) -> Option<UniqueVec<TraitImplRef>> {
+        let key = (trait_ref, self_head);
+        let mut results = self
+            .results
+            .lock()
+            .expect("dependency lookup results lock should not be poisoned");
+        if let Some(impls) = results.trait_impl_candidates_by_self_head.get(&key) {
+            self.operation_cache.record_dependency_result_hit();
+            return impls.clone();
+        }
+
+        self.operation_cache.record_dependency_result_miss();
+        let mut trait_was_indexed = false;
+        let mut impls = UniqueVec::new();
+        for index in self.indexes.iter() {
+            let Some(indexed) = index.trait_impl_candidates_for_self_head(trait_ref, self_head)
+            else {
+                continue;
+            };
+            trait_was_indexed = true;
+            impls.extend(indexed.iter().map(|impl_ref| TraitImplRef {
+                impl_ref: impl_ref.expand(),
+                trait_ref,
+            }));
+        }
+        let result = trait_was_indexed.then_some(impls);
+        results
+            .trait_impl_candidates_by_self_head
+            .insert(key, result.clone());
         result
     }
 
@@ -735,6 +806,9 @@ impl ItemLookupQueryCacheInner {
 /// - `Some(empty)` means the trait was visible but the narrower lookup found no candidate;
 /// - `Some(non-empty)` contains the dependency candidates.
 ///
+/// For example, `(DisplayLike, Primitive(UnsignedInt(U32)))` caches the union of direct `u32`
+/// impls and conservative blanket impls from dependencies. It does not cache the later type proof,
+/// which may depend on inference state owned by the caller.
 #[derive(Debug, Default)]
 struct DependencyLookupResults {
     inherent_impls_by_type: HashMap<TypeDefRef, UniqueVec<ImplRef>>,
@@ -742,6 +816,8 @@ struct DependencyLookupResults {
     structural_inherent_impls: Option<UniqueVec<ImplRef>>,
     trait_impls_by_type: HashMap<TypeDefRef, UniqueVec<TraitImplRef>>,
     trait_impls_by_trait: HashMap<TraitDefRef, Option<UniqueVec<TraitImplRef>>>,
+    trait_impl_candidates_by_self_head:
+        HashMap<(TraitDefRef, Option<TraitImplSelfHead>), Option<UniqueVec<TraitImplRef>>>,
     traits_with_functions: Option<UniqueVec<TraitDefRef>>,
     traits_with_associated_items: Option<UniqueVec<TraitDefRef>>,
     traits_by_item_name: HashMap<(TraitItemKind, Name), UniqueVec<TraitDefRef>>,
