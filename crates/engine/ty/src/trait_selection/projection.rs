@@ -249,7 +249,12 @@ where
         self.normalize_assoc_type_once(&goal, alias.associated_ty, table, candidate_evidence)
     }
 
-    /// Instantiate a plain associated value from an already-proved nominal impl.
+    /// Instantiate a plain associated value from an already-proved concrete impl.
+    ///
+    /// Once the array `IntoIterator` impl is selected, this turns
+    /// `<[User; 3] as IntoIterator>::IntoIter` into `array::IntoIter<User, 3>`. A bound such as
+    /// `type IntoIter: Iterator` constrains that exact value but does not hide it; generic
+    /// associated types still need their own binder-aware path.
     fn project_selected_impl(
         &self,
         goal: &TraitGoal,
@@ -257,22 +262,19 @@ where
         selection: &TraitSelection,
     ) -> Result<Option<AssocProjectionResult>, I::Error> {
         // A blanket impl selected for an opaque receiver may derive its value from that opaque's
-        // declared equality. Leave that environment evidence to Chalk; this shortcut exists for
-        // the indexed nominal receiver that native selection proved directly.
-        if !matches!(selection.table.resolve_root_var(goal.self_ty()), Ty::Adt(_)) {
+        // declared equality. Leave that environment evidence to Chalk. Concrete structural heads
+        // are as stable as nominal ones here because native selection already proved the exact impl.
+        let self_ty = selection.table.resolve_root_var(goal.self_ty());
+        if TraitSelfHead::from_ty(&self_ty).is_none() {
             return Ok(None);
         }
 
-        // Generic associated types and required bounds need binders or additional predicates.
-        // Relaxed bounds such as `?Sized` add no requirement in rust-glancer's semantic model.
-        let can_project_directly = |data: &rg_semantic_ir::TypeAliasData| {
-            data.signature.generics().is_none()
-                && data
-                    .signature
-                    .bounds()
-                    .iter()
-                    .all(rg_item_tree::TypeBound::is_relaxed_trait)
-        };
+        // Generic associated types need their own argument binders before their value can be
+        // instantiated here. Plain associated-type bounds do not change that value: for
+        // `type IntoIter: Iterator`, the bound constrains every valid implementation, while an
+        // exact selected impl still supplies `IntoIter` directly.
+        let can_project_directly =
+            |data: &rg_semantic_ir::TypeAliasData| data.signature.generics().is_none();
         let Some(trait_alias_data) = self
             .context
             .item_paths()

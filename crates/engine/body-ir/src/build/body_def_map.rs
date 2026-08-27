@@ -449,6 +449,9 @@ impl BodyDefMapBuildState {
                     introduced.binding,
                 );
             }
+            for binding in resolution.unnamed_traits {
+                target_scope.insert_unnamed_trait_binding(binding);
+            }
         }
 
         Ok(())

@@ -24,7 +24,7 @@ pub use self::{
         StructData, TraitData, TypeAliasData, UnionData,
     },
     generics::{GenericParamSource, GenericParamView, Generics},
-    lookup_index::ItemLookupIndex,
+    lookup_index::{ItemLookupIndex, TraitImplSelfHead},
     lowering::{ItemStoreLowerer, ItemStoreSourceReader},
     query::{
         CrateItemQuery, GenericsQuery, ItemLookupIndexSource, ItemLookupQuery,
@@ -36,3 +36,5 @@ pub use self::{
     type_path_resolution::TypePathResolution,
     view::SemanticItemView,
 };
+
+pub(crate) use self::lookup_index::TraitItemTraitRefs;

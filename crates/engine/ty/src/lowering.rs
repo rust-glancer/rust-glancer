@@ -663,6 +663,17 @@ where
                 .unwrap_or(Ty::Param(param)));
         }
 
+        // An impl on `u32`, `[T]`, or another unkeyed shape cannot resolve `Self` through a
+        // `TypeDefRef`. Its canonical impl header still owns the exact type, so consult that
+        // header from the literal `Self` spelling before falling back to definition-path lookup.
+        if path
+            .single_name()
+            .is_some_and(|name| name.as_str() == "Self")
+            && let Some(self_ty) = self.lower_impl_self()?
+        {
+            return Ok(self_ty);
+        }
+
         let Some(path_key) = path.as_def_map_path() else {
             return Ok(Ty::Unknown);
         };
@@ -678,7 +689,7 @@ where
 
         match resolution {
             TypePathResolution::SelfType(def) => {
-                if let Some(self_ty) = self.lower_inherent_self()? {
+                if let Some(self_ty) = self.lower_impl_self()? {
                     return Ok(self_ty);
                 }
                 let generics = self
@@ -722,12 +733,12 @@ where
         }
     }
 
-    /// Lower inherent `Self` through the impl header that defines it.
+    /// Lower `Self` through the impl header that defines it.
     ///
     /// `Self` and the concrete spelling must produce the same `Adt` and argument list. Rebuilding
     /// an ADT directly from the resolved definition would lose relationships such as
     /// `impl<T> Wrapper<T> { fn get(&self) -> Self }`.
-    fn lower_inherent_self(&mut self) -> Result<Option<Ty>, D::Error> {
+    fn lower_impl_self(&mut self) -> Result<Option<Ty>, D::Error> {
         let TypeLoweringAnchor::Context(context) = self.anchor else {
             return Ok(None);
         };
@@ -962,6 +973,19 @@ where
                 (GenericParamRef::Const(_), Some(ItemGenericArg::Const(value))) => {
                     syntax_index += 1;
                     GenericArg::Const(self.lower_const(Some(value.as_str()))?)
+                }
+                (GenericParamRef::Const(_), Some(ItemGenericArg::Type(ty)))
+                    if ty.type_param_name().is_some() && !ty.has_generic_args() =>
+                {
+                    // In `array::IntoIter<T, N>`, bare `N` is syntactically ambiguous and the
+                    // parser represents it as a type argument. The declaration says this slot is a
+                    // const parameter, which resolves the ambiguity just as rustc does after
+                    // parsing the generic argument list.
+                    let name = ty
+                        .type_param_name()
+                        .expect("guard requires a plain single-segment path");
+                    syntax_index += 1;
+                    GenericArg::Const(self.lower_const(Some(name.as_str()))?)
                 }
                 (GenericParamRef::Type(_), _)
                     if matches!(

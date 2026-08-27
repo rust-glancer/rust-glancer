@@ -1,4 +1,4 @@
-use std::marker::PhantomData;
+use std::{collections::HashSet, marker::PhantomData};
 
 use anyhow::Context as _;
 
@@ -251,41 +251,79 @@ where
         owner: ItemOwner,
     ) -> Vec<AssocItemId> {
         let mut assoc_items = Vec::new();
+        let mut active_expansions = HashSet::new();
 
         // Associated items share the same stores as module items, but they do not have def-map
         // local definitions because they are reached through their trait/impl owner.
         for item_id in item_ids {
             let source = parent_source.with_item(*item_id);
-            let Ok(item) = self.reader.item(source) else {
-                continue;
-            };
-
-            let semantic_item = match &item.kind {
-                ItemKind::Const(const_item) => {
-                    ItemId::Const(self.lower_const(None, source, owner, item, const_item))
-                }
-                ItemKind::Function(fn_def) => {
-                    ItemId::Function(self.lower_function(None, source, owner, item, fn_def))
-                }
-                ItemKind::TypeAlias(type_alias) => {
-                    ItemId::TypeAlias(self.lower_type_alias(None, source, owner, item, type_alias))
-                }
-                _ => continue,
-            };
-            self.items.register_lang_item(item.lang_item, semantic_item);
-            assoc_items.push(match semantic_item {
-                ItemId::Const(id) => AssocItemId::Const(id),
-                ItemId::Function(id) => AssocItemId::Function(id),
-                ItemId::TypeAlias(id) => AssocItemId::TypeAlias(id),
-                ItemId::Struct(_)
-                | ItemId::Union(_)
-                | ItemId::Enum(_)
-                | ItemId::Trait(_)
-                | ItemId::Static(_) => unreachable!("associated item lowering chose module item"),
-            });
+            self.lower_assoc_source(source, owner, &mut assoc_items, &mut active_expansions);
         }
 
         assoc_items
+    }
+
+    /// Lowers one associated source, recursively replacing retained macro calls with their output.
+    ///
+    /// If `methods!()` expands to `fn direct(&self) {}` and `nested!()`, then `nested!()` expands
+    /// to `fn nested(&self) {}`, this walk emits the two functions in source order and no macro
+    /// placeholder.
+    fn lower_assoc_source(
+        &mut self,
+        source: ItemSource,
+        owner: ItemOwner,
+        assoc_items: &mut Vec<AssocItemId>,
+        active_expansions: &mut HashSet<ItemSource>,
+    ) {
+        let Ok(item) = self.reader.item(source) else {
+            return;
+        };
+
+        if matches!(item.kind, ItemKind::MacroCall(_)) {
+            // Included source can be reused by separate impls, so a global visited set would drop
+            // valid associated items. Only reject a source already present in this expansion's
+            // ancestry: `include!("methods.rs")` inside that same file then becomes a skipped
+            // cyclic edge instead of unbounded recursion.
+            if !active_expansions.insert(source) {
+                return;
+            }
+            // Clone the small sparse replacement list before recursing so mutable semantic
+            // lowering does not retain a borrow into the DefMap that owns the expansion graph.
+            let generated_items = self
+                .def_map
+                .associated_macro_expansion(source)
+                .unwrap_or_default()
+                .to_vec();
+            for generated in generated_items {
+                self.lower_assoc_source(generated, owner, assoc_items, active_expansions);
+            }
+            active_expansions.remove(&source);
+            return;
+        }
+
+        let semantic_item = match &item.kind {
+            ItemKind::Const(const_item) => {
+                ItemId::Const(self.lower_const(None, source, owner, item, const_item))
+            }
+            ItemKind::Function(fn_def) => {
+                ItemId::Function(self.lower_function(None, source, owner, item, fn_def))
+            }
+            ItemKind::TypeAlias(type_alias) => {
+                ItemId::TypeAlias(self.lower_type_alias(None, source, owner, item, type_alias))
+            }
+            _ => return,
+        };
+        self.items.register_lang_item(item.lang_item, semantic_item);
+        assoc_items.push(match semantic_item {
+            ItemId::Const(id) => AssocItemId::Const(id),
+            ItemId::Function(id) => AssocItemId::Function(id),
+            ItemId::TypeAlias(id) => AssocItemId::TypeAlias(id),
+            ItemId::Struct(_)
+            | ItemId::Union(_)
+            | ItemId::Enum(_)
+            | ItemId::Trait(_)
+            | ItemId::Static(_) => unreachable!("associated item lowering chose module item"),
+        });
     }
 
     fn lower_function(

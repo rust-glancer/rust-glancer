@@ -47,6 +47,7 @@ pub(crate) use self::{
 pub(crate) struct DotCompletionSite {
     pub body: BodyRef,
     pub receiver: ExprId,
+    pub scope: ScopeId,
     /// Exact written source range of the receiver expression before the dot.
     pub receiver_span: Span,
     /// Member-name prefix already typed after the dot.

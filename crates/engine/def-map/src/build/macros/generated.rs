@@ -1,8 +1,9 @@
 //! Collects syntax produced by macro expansion back into mutable crate state.
 //!
-//! Generated definitions belong to the macro call's module and file identity. Their retained item
-//! payloads carry expansion spans where available, while generated imports and other provenance-only
-//! facts may still point at the macro call site.
+//! Module-position definitions enter the macro call's module, while associated-item output is
+//! retained as a replacement list for the invocation inside its trait or impl. In both cases item
+//! payloads carry expansion spans where available, while generated imports and other
+//! provenance-only facts may still point at the macro call site.
 //!
 //! Inline modules can be collected immediately. A generated `mod child;` instead emits a
 //! project-owned source request and retains the continuation needed to allocate the module after
@@ -37,15 +38,17 @@ use crate::profile::metric;
 use crate::{GeneratedItemRef, GeneratedSourceId, ItemSource, MacroSourceFileRequest};
 
 use super::{
-    ItemOrder, MacroCallOrigin, MacroCallSite, MacroDefinitionRecord, MacroExpansionApplyResult,
+    ItemOrder, MacroCallOrigin, MacroCallPlacement, MacroCallSite, MacroDefinitionRecord,
+    MacroExpansionApplyResult,
     generated_tree::GeneratedSourceLowering,
     source_fragment::{SourceFragmentCollector, SourceFragmentOrigin},
 };
 
 /// Call-site identity used for every item produced by one macro expansion.
 ///
-/// The module-file context also stays call-site-relative. This matters when a dependency macro
-/// emits an out-of-line module: the child file belongs beside the invocation, not the definition.
+/// Placement and module-file context also stay call-site-relative. Placement keeps associated
+/// output in its trait or impl, while the file context makes an out-of-line child module belong
+/// beside the invocation rather than the macro definition.
 #[derive(Debug, Clone)]
 pub(super) struct GeneratedOrigin {
     pub(super) module: ModuleId,
@@ -53,6 +56,7 @@ pub(super) struct GeneratedOrigin {
     pub(super) file_id: FileId,
     pub(super) span: Span,
     pub(super) order: ItemOrder,
+    pub(super) placement: MacroCallPlacement,
     pub(super) dollar_crate: Option<CrateRef>,
     pub(super) parent_call: usize,
     pub(super) module_file_context: Arc<ModuleFileContext>,
@@ -77,8 +81,8 @@ pub(crate) struct PendingGeneratedModule {
 /// Continuation for one builtin `include!` call produced by another macro.
 ///
 /// ItemTree could not lower a payload for a call that did not exist in original source. The macro
-/// directive and its caller-module context are already retained, so resuming only needs to splice
-/// the project-lowered file into that module and mark the directive complete.
+/// directive and its call placement are already retained, so resuming only needs to splice the
+/// project-lowered file into the module or associated owner and mark the directive complete.
 #[derive(Debug, Clone)]
 pub(crate) struct PendingGeneratedInclude {
     pub(super) request: MacroSourceFileRequest,
@@ -104,7 +108,7 @@ impl GeneratedCollector<'_> {
         macro_name: Option<&str>,
     ) -> Result<MacroExpansionApplyResult> {
         // Macro expansion has already run the parser over token trees. At this point we only check
-        // syntax errors and collect item-position declarations from the generated root.
+        // syntax errors and splice item-shaped declarations from the generated root.
         let timer = metric::TIMING_PARSE_GENERATED_SOURCES.start_timer();
         let errors = expansion.parse.errors();
         timer.finish();
@@ -138,17 +142,25 @@ impl GeneratedCollector<'_> {
             .top_level
             .clone();
 
-        // Generated items may introduce further macro calls, imports, and inline modules. Those are
-        // appended to the same mutable state so the surrounding fixed-point loop can see them.
+        // Generated items may introduce further macro calls. Module output enters ordinary
+        // collection, while associated output is retained as a sparse replacement list for the
+        // trait/impl call site that owns it.
         let timer = metric::TIMING_COLLECT_GENERATED_ITEMS.start_timer();
-        for (index, item_id) in top_level.into_iter().enumerate() {
-            self.collect_item(
-                self.origin.module,
-                generated_source_id,
-                item_id,
-                self.origin.order.generated_child(index),
-                Arc::clone(&self.origin.module_file_context),
-            )?;
+        match self.origin.placement {
+            MacroCallPlacement::ModuleItems => {
+                for (index, item_id) in top_level.into_iter().enumerate() {
+                    self.collect_item(
+                        self.origin.module,
+                        generated_source_id,
+                        item_id,
+                        self.origin.order.generated_child(index),
+                        Arc::clone(&self.origin.module_file_context),
+                    )?;
+                }
+            }
+            MacroCallPlacement::AssociatedItems { call_source } => {
+                self.collect_associated_expansion(call_source, generated_source_id, &top_level);
+            }
         }
         timer.finish();
 
@@ -178,7 +190,14 @@ impl GeneratedCollector<'_> {
 
         match &item.kind {
             ItemKind::MacroCall(macro_call) => {
-                self.collect_macro_call(module_id, &item, macro_call, order, module_file_context);
+                self.collect_macro_call(
+                    module_id,
+                    &item,
+                    macro_call,
+                    order,
+                    MacroCallPlacement::ModuleItems,
+                    module_file_context,
+                );
             }
             ItemKind::MacroDefinition(macro_definition) => {
                 self.collect_macro_definition(
@@ -205,13 +224,40 @@ impl GeneratedCollector<'_> {
             ItemKind::Enum(enum_item) => {
                 self.collect_enum(module_id, &item, enum_item, generated_source, item_id)
             }
-            ItemKind::Impl(_) => {
-                self.collect_local_impl(module_id, &item, generated_source, item_id)
+            ItemKind::Impl(impl_item) => {
+                self.collect_local_impl(module_id, &item, generated_source, item_id);
+                self.collect_associated_macro_calls(
+                    module_id,
+                    generated_source,
+                    &impl_item.items,
+                    &order,
+                    &module_file_context,
+                );
             }
             ItemKind::ExternBlock(extern_block) => {
                 self.collect_extern_block(module_id, extern_block, generated_source, item_id)
             }
             ItemKind::AsmExpr | ItemKind::ExternCrate(_) => {}
+            ItemKind::Trait(trait_item) => {
+                if self
+                    .collect_named_def(
+                        module_id,
+                        &item,
+                        generated_source,
+                        item_id,
+                        ScopeBindingProvenance::Direct,
+                    )
+                    .is_some()
+                {
+                    self.collect_associated_macro_calls(
+                        module_id,
+                        generated_source,
+                        &trait_item.items,
+                        &order,
+                        &module_file_context,
+                    );
+                }
+            }
             _ => {
                 self.collect_named_def(
                     module_id,
@@ -631,6 +677,7 @@ impl GeneratedCollector<'_> {
                         module: child_module,
                         order: ItemOrder::real(0),
                         parent_call: self.origin.parent_call,
+                        placement: MacroCallPlacement::ModuleItems,
                         module_file_context: child_context,
                     },
                     result: MacroExpansionApplyResult::default(),
@@ -661,6 +708,7 @@ impl GeneratedCollector<'_> {
         item: &ItemNode,
         macro_call: &MacroCallItem,
         order: ItemOrder,
+        placement: MacroCallPlacement,
         module_file_context: Arc<ModuleFileContext>,
     ) {
         // Macro-generated `include!("...")` remains a separate source-splicing feature. Carrying
@@ -678,12 +726,100 @@ impl GeneratedCollector<'_> {
                 file_id: item.file_id,
                 span: item.span,
                 order,
+                placement,
                 module_file_context,
             },
             MacroCallOrigin::Generated {
                 parent_call: self.origin.parent_call,
             },
         );
+    }
+
+    /// Queues macros retained inside a generated trait or impl declaration.
+    fn collect_associated_macro_calls(
+        &mut self,
+        module_id: ModuleId,
+        generated_source: GeneratedSourceId,
+        item_ids: &[ItemTreeId],
+        order: &ItemOrder,
+        module_file_context: &Arc<ModuleFileContext>,
+    ) {
+        for (index, item_id) in item_ids.iter().copied().enumerate() {
+            let item = self
+                .state
+                .def_map_builder
+                .partial()
+                .generated_source(generated_source)
+                .and_then(|source| source.item(item_id))
+                .expect("generated associated item should exist while collecting def map")
+                .clone();
+            if !self.is_item_enabled(&item) {
+                continue;
+            }
+            let ItemKind::MacroCall(macro_call) = &item.kind else {
+                continue;
+            };
+            let call_source = self.item_source(generated_source, item_id);
+            self.collect_macro_call(
+                module_id,
+                &item,
+                macro_call,
+                order.generated_child(index),
+                MacroCallPlacement::AssociatedItems { call_source },
+                Arc::clone(module_file_context),
+            );
+        }
+    }
+
+    /// Retains one associated macro's output and queues nested calls in the same owner slot.
+    ///
+    /// If `impl User { methods!(); }` expands to `fn direct(&self) {}` plus `more_methods!();`,
+    /// both sources replace `methods!`. The nested call is also queued as associated, so its later
+    /// output replaces `more_methods!` inside the same impl rather than entering the module.
+    fn collect_associated_expansion(
+        &mut self,
+        call_source: ItemSource,
+        generated_source: GeneratedSourceId,
+        item_ids: &[ItemTreeId],
+    ) {
+        let mut generated_items = Vec::new();
+        for (index, item_id) in item_ids.iter().copied().enumerate() {
+            let item = self
+                .state
+                .def_map_builder
+                .partial()
+                .generated_source(generated_source)
+                .and_then(|source| source.item(item_id))
+                .expect("generated associated expansion item should exist")
+                .clone();
+            if !self.is_item_enabled(&item) {
+                continue;
+            }
+
+            let source = self.item_source(generated_source, item_id);
+            match &item.kind {
+                ItemKind::Const(_) | ItemKind::Function(_) | ItemKind::TypeAlias(_) => {
+                    generated_items.push(source);
+                }
+                ItemKind::MacroCall(macro_call) => {
+                    generated_items.push(source);
+                    self.collect_macro_call(
+                        self.origin.module,
+                        &item,
+                        macro_call,
+                        self.origin.order.generated_child(index),
+                        MacroCallPlacement::AssociatedItems {
+                            call_source: source,
+                        },
+                        Arc::clone(&self.origin.module_file_context),
+                    );
+                }
+                _ => {}
+            }
+        }
+        self.state
+            .def_map_builder
+            .insert_associated_macro_expansion(call_source, generated_items);
     }
 
     fn collect_local_impl(
@@ -766,9 +902,9 @@ impl GeneratedCollector<'_> {
 ///
 /// The two continuation lists encode different Rust operations. A found `mod generated;` answer
 /// allocates a child module, then collects the file inside it. A found `include!(...)` answer
-/// collects the file directly into the caller's existing module and completes that macro
-/// directive. Requests without answers remain pending and are re-emitted; an explicit missing
-/// answer finishes the corresponding operation without inventing an empty source.
+/// splices the file according to the retained call placement and completes that macro directive.
+/// Requests without answers remain pending and are re-emitted; an explicit missing answer finishes
+/// the corresponding operation without inventing an empty source.
 pub(crate) fn apply_pending_macro_source_files(
     item_tree: &ItemTreeDb,
     states: &mut super::super::finalize::FinalizeCrateStates,
@@ -863,6 +999,7 @@ pub(crate) fn apply_pending_macro_source_files(
                                 module: pending.origin.module,
                                 order: pending.origin.order,
                                 parent_call: pending.call_id,
+                                placement: pending.origin.placement,
                                 module_file_context: pending.origin.module_file_context,
                             },
                             result: MacroExpansionApplyResult::default(),

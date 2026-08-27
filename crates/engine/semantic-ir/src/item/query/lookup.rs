@@ -45,7 +45,25 @@ use rg_std::UniqueVec;
 use rg_text::Name;
 
 use super::{CrateItemQuery, ItemLookupIndexSource, ItemStoreQuery, ItemStoreSource};
-use crate::{ItemLookupIndex, item::lang_item::VisibleLangItems};
+use crate::{
+    ItemLookupIndex, TraitImplSelfHead,
+    item::{TraitItemTraitRefs, lang_item::VisibleLangItems},
+};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum TraitItemKind {
+    Function,
+    Const,
+}
+
+impl TraitItemKind {
+    fn declaring_traits(self, refs: &TraitItemTraitRefs) -> &UniqueVec<TraitDefRef> {
+        match self {
+            Self::Function => &refs.functions,
+            Self::Const => &refs.consts,
+        }
+    }
+}
 
 // ==============================================================================
 // Use-Site Lookup
@@ -263,7 +281,7 @@ impl<'item> ItemLookupQuery<'item> {
 
         let mut impls = local_impls
             .into_iter()
-            .flat_map(|impls| impls.iter())
+            .flat_map(|impls| impls.all.iter())
             .map(|impl_ref| TraitImplRef {
                 impl_ref: impl_ref.expand(),
                 trait_ref,
@@ -271,6 +289,76 @@ impl<'item> ItemLookupQuery<'item> {
             .collect::<UniqueVec<_>>();
         impls.extend(dependency_impls.unwrap_or_default());
         Some(impls)
+    }
+
+    /// Returns direct receiver-head impls followed by blanket or unresolved-head fallbacks.
+    ///
+    /// With `impl Marker for u32`, `impl<T> Marker for [T]`, and `impl<T> Marker for T`, a
+    /// `Primitive(UnsignedInt(U32))` query returns the direct `u32` impl followed by the blanket
+    /// impl. It does not return the slice impl, and it does not prove either returned header.
+    ///
+    /// `None` as the head asks only for fallbacks. This is used for closure and function-item
+    /// receivers, whose concrete identities cannot be named by a source impl header.
+    pub fn trait_impl_candidates_for_self_head(
+        &self,
+        trait_ref: TraitDefRef,
+        self_head: Option<TraitImplSelfHead>,
+    ) -> Option<UniqueVec<TraitImplRef>> {
+        let dependency_impls = self
+            .dependencies
+            .trait_impl_candidates_for_self_head(trait_ref, self_head);
+        let local_impls = self
+            .local_index
+            .trait_impl_candidates_for_self_head(trait_ref, self_head);
+        if local_impls.is_none() && dependency_impls.is_none() {
+            return None;
+        }
+
+        let mut impls = local_impls
+            .into_iter()
+            .flatten()
+            .map(|impl_ref| TraitImplRef {
+                impl_ref: impl_ref.expand(),
+                trait_ref,
+            })
+            .collect::<UniqueVec<_>>();
+        impls.extend(dependency_impls.unwrap_or_default());
+        Some(impls)
+    }
+
+    /// Returns visible traits that declare at least one function.
+    pub fn traits_with_functions(&self) -> UniqueVec<TraitDefRef> {
+        let mut traits = self.local_index.traits_with_functions.clone();
+        traits.extend(self.dependencies.traits_with_functions());
+        traits
+    }
+
+    /// Returns visible traits that declare at least one associated item.
+    pub fn traits_with_associated_items(&self) -> UniqueVec<TraitDefRef> {
+        let mut traits = self.local_index.traits_with_associated_items.clone();
+        traits.extend(self.dependencies.traits_with_associated_items());
+        traits
+    }
+
+    /// Returns visible traits with a function declaration carrying this name.
+    pub fn traits_with_function_name(&self, name: &str) -> UniqueVec<TraitDefRef> {
+        self.traits_with_item_name(TraitItemKind::Function, name)
+    }
+
+    /// Returns visible traits with an associated const declaration carrying this name.
+    pub fn traits_with_const_name(&self, name: &str) -> UniqueVec<TraitDefRef> {
+        self.traits_with_item_name(TraitItemKind::Const, name)
+    }
+
+    fn traits_with_item_name(&self, kind: TraitItemKind, name: &str) -> UniqueVec<TraitDefRef> {
+        let mut traits = self
+            .local_index
+            .traits_by_item_name
+            .get(name)
+            .map(|refs| kind.declaring_traits(refs).clone())
+            .unwrap_or_default();
+        traits.extend(self.dependencies.traits_with_item_name(kind, name));
+        traits
     }
 
     /// Returns declared functions, preserving whether the trait was visible.
@@ -438,7 +526,7 @@ impl DependencyLookup<'_> {
                 continue;
             };
             trait_was_indexed = true;
-            impls.extend(indexed.iter().map(|impl_ref| TraitImplRef {
+            impls.extend(indexed.all.iter().map(|impl_ref| TraitImplRef {
                 impl_ref: impl_ref.expand(),
                 trait_ref,
             }));
@@ -448,6 +536,102 @@ impl DependencyLookup<'_> {
             .trait_impls_by_trait
             .insert(trait_ref, result.clone());
         result
+    }
+
+    fn trait_impl_candidates_for_self_head(
+        &self,
+        trait_ref: TraitDefRef,
+        self_head: Option<TraitImplSelfHead>,
+    ) -> Option<UniqueVec<TraitImplRef>> {
+        let key = (trait_ref, self_head);
+        let mut results = self
+            .results
+            .lock()
+            .expect("dependency lookup results lock should not be poisoned");
+        if let Some(impls) = results.trait_impl_candidates_by_self_head.get(&key) {
+            self.operation_cache.record_dependency_result_hit();
+            return impls.clone();
+        }
+
+        self.operation_cache.record_dependency_result_miss();
+        let mut trait_was_indexed = false;
+        let mut impls = UniqueVec::new();
+        for index in self.indexes.iter() {
+            let Some(indexed) = index.trait_impl_candidates_for_self_head(trait_ref, self_head)
+            else {
+                continue;
+            };
+            trait_was_indexed = true;
+            impls.extend(indexed.iter().map(|impl_ref| TraitImplRef {
+                impl_ref: impl_ref.expand(),
+                trait_ref,
+            }));
+        }
+        let result = trait_was_indexed.then_some(impls);
+        results
+            .trait_impl_candidates_by_self_head
+            .insert(key, result.clone());
+        result
+    }
+
+    fn traits_with_functions(&self) -> UniqueVec<TraitDefRef> {
+        let mut results = self
+            .results
+            .lock()
+            .expect("dependency lookup results lock should not be poisoned");
+        if let Some(traits) = &results.traits_with_functions {
+            self.operation_cache.record_dependency_result_hit();
+            return traits.clone();
+        }
+
+        self.operation_cache.record_dependency_result_miss();
+        let mut traits = UniqueVec::new();
+        for index in self.indexes.iter() {
+            traits.extend(index.traits_with_functions.iter().copied());
+        }
+        results.traits_with_functions = Some(traits.clone());
+        traits
+    }
+
+    fn traits_with_associated_items(&self) -> UniqueVec<TraitDefRef> {
+        let mut results = self
+            .results
+            .lock()
+            .expect("dependency lookup results lock should not be poisoned");
+        if let Some(traits) = &results.traits_with_associated_items {
+            self.operation_cache.record_dependency_result_hit();
+            return traits.clone();
+        }
+
+        self.operation_cache.record_dependency_result_miss();
+        let mut traits = UniqueVec::new();
+        for index in self.indexes.iter() {
+            traits.extend(index.traits_with_associated_items.iter().copied());
+        }
+        results.traits_with_associated_items = Some(traits.clone());
+        traits
+    }
+
+    fn traits_with_item_name(&self, kind: TraitItemKind, name: &str) -> UniqueVec<TraitDefRef> {
+        let key = (kind, Name::new(name));
+        let mut results = self
+            .results
+            .lock()
+            .expect("dependency lookup results lock should not be poisoned");
+        if let Some(traits) = results.traits_by_item_name.get(&key) {
+            self.operation_cache.record_dependency_result_hit();
+            return traits.clone();
+        }
+
+        self.operation_cache.record_dependency_result_miss();
+        let mut traits = UniqueVec::new();
+        for index in self.indexes.iter() {
+            if let Some(indexed) = index.traits_by_item_name.get(&key.1) {
+                traits.extend(kind.declaring_traits(indexed).iter().copied());
+            }
+        }
+        results.traits_by_item_name.insert(key, traits.clone());
+        traits
     }
 
     fn trait_functions(&self, trait_ref: TraitDefRef) -> Option<UniqueVec<FunctionRef>> {
@@ -622,8 +806,9 @@ impl ItemLookupQueryCacheInner {
 /// - `Some(empty)` means the trait was visible but the narrower lookup found no candidate;
 /// - `Some(non-empty)` contains the dependency candidates.
 ///
-/// `structural_inherent_impls` uses its outer `Option` only to distinguish not-computed from a
-/// computed empty list.
+/// For example, `(DisplayLike, Primitive(UnsignedInt(U32)))` caches the union of direct `u32`
+/// impls and conservative blanket impls from dependencies. It does not cache the later type proof,
+/// which may depend on inference state owned by the caller.
 #[derive(Debug, Default)]
 struct DependencyLookupResults {
     inherent_impls_by_type: HashMap<TypeDefRef, UniqueVec<ImplRef>>,
@@ -631,6 +816,11 @@ struct DependencyLookupResults {
     structural_inherent_impls: Option<UniqueVec<ImplRef>>,
     trait_impls_by_type: HashMap<TypeDefRef, UniqueVec<TraitImplRef>>,
     trait_impls_by_trait: HashMap<TraitDefRef, Option<UniqueVec<TraitImplRef>>>,
+    trait_impl_candidates_by_self_head:
+        HashMap<(TraitDefRef, Option<TraitImplSelfHead>), Option<UniqueVec<TraitImplRef>>>,
+    traits_with_functions: Option<UniqueVec<TraitDefRef>>,
+    traits_with_associated_items: Option<UniqueVec<TraitDefRef>>,
+    traits_by_item_name: HashMap<(TraitItemKind, Name), UniqueVec<TraitDefRef>>,
     trait_functions_by_trait: HashMap<TraitDefRef, Option<UniqueVec<FunctionRef>>>,
     trait_functions_by_trait_and_name: HashMap<(TraitDefRef, Name), Option<UniqueVec<FunctionRef>>>,
 }

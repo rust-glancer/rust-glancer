@@ -41,9 +41,9 @@ use crate::MacroSourceFileRequest;
 use crate::PackageSlot;
 
 use super::macros::{
-    ItemOrder, MacroCallOrigin, MacroCallSite, MacroDefinitionRecord, MacroDirective,
-    MacroDirectiveState, MacroUseImport, PendingGeneratedInclude, PendingGeneratedModule,
-    PendingMacroExpansionLimitReport, TextualMacroScopes,
+    ItemOrder, MacroCallOrigin, MacroCallPlacement, MacroCallSite, MacroDefinitionRecord,
+    MacroDirective, MacroDirectiveState, MacroUseImport, PendingGeneratedInclude,
+    PendingGeneratedModule, PendingMacroExpansionLimitReport, TextualMacroScopes,
 };
 
 /// Collected state for one crate before fixed-point import resolution.
@@ -460,7 +460,17 @@ impl<'db> CrateScopeCollector<'db> {
                 ItemKind::Use(use_item) => {
                     self.collect_use(module_id, item, source, use_item);
                 }
-                ItemKind::Impl(_) => self.collect_local_impl(module_id, item, source),
+                ItemKind::Impl(impl_item) => {
+                    self.collect_local_impl(module_id, item, source);
+                    self.collect_associated_macro_calls(
+                        item_tree,
+                        module_id,
+                        source,
+                        &impl_item.items,
+                        &order,
+                        &module_file_context,
+                    );
+                }
                 ItemKind::MacroCall(macro_call) => {
                     self.collect_macro_call(
                         module_id,
@@ -468,6 +478,7 @@ impl<'db> CrateScopeCollector<'db> {
                         source,
                         macro_call,
                         order,
+                        MacroCallPlacement::ModuleItems,
                         Arc::clone(&module_file_context),
                     );
                 }
@@ -493,6 +504,21 @@ impl<'db> CrateScopeCollector<'db> {
                 }
                 ItemKind::Enum(enum_item) => {
                     self.collect_enum(module_id, item, source, enum_item);
+                }
+                ItemKind::Trait(trait_item) => {
+                    if self
+                        .collect_local_def(module_id, item, source, ScopeBindingProvenance::Direct)
+                        .is_some()
+                    {
+                        self.collect_associated_macro_calls(
+                            item_tree,
+                            module_id,
+                            source,
+                            &trait_item.items,
+                            &order,
+                            &module_file_context,
+                        );
+                    }
                 }
                 _ => {
                     self.collect_local_def(module_id, item, source, ScopeBindingProvenance::Direct);
@@ -783,6 +809,7 @@ impl<'db> CrateScopeCollector<'db> {
     /// Expansion may happen after the source AST and ItemTree lowering context are gone. Retaining
     /// the call-site base here lets a generated `mod child;` resolve beside the caller rather than
     /// beside the macro definition.
+    #[allow(clippy::too_many_arguments)]
     fn collect_macro_call(
         &mut self,
         module_id: ModuleId,
@@ -790,6 +817,7 @@ impl<'db> CrateScopeCollector<'db> {
         source: ItemTreeRef,
         macro_call: &MacroCallItem,
         order: ItemOrder,
+        placement: MacroCallPlacement,
         module_file_context: Arc<ModuleFileContext>,
     ) {
         self.macro_directives.push(MacroDirective {
@@ -804,11 +832,50 @@ impl<'db> CrateScopeCollector<'db> {
                 file_id: item.file_id,
                 span: item.span,
                 order,
+                placement,
                 module_file_context,
             },
             origin: MacroCallOrigin::Source,
             state: MacroDirectiveState::Pending,
         });
+    }
+
+    /// Queues macros nested in a source trait or impl without exposing them as module items.
+    fn collect_associated_macro_calls(
+        &mut self,
+        item_tree: &ItemTreePackage,
+        module_id: ModuleId,
+        parent_source: ItemTreeRef,
+        item_ids: &[ItemTreeId],
+        order: &ItemOrder,
+        module_file_context: &Arc<ModuleFileContext>,
+    ) {
+        for (index, item_id) in item_ids.iter().copied().enumerate() {
+            let source = ItemTreeRef {
+                file_id: parent_source.file_id,
+                item: item_id,
+            };
+            let Some(item) = item_tree.item(source) else {
+                continue;
+            };
+            if !self.is_item_enabled(item) {
+                continue;
+            }
+            let ItemKind::MacroCall(macro_call) = &item.kind else {
+                continue;
+            };
+            self.collect_macro_call(
+                module_id,
+                item,
+                source,
+                macro_call,
+                order.generated_child(index),
+                MacroCallPlacement::AssociatedItems {
+                    call_source: source.into(),
+                },
+                Arc::clone(module_file_context),
+            );
+        }
     }
 
     /// Records one module-scope impl block without inserting a namespace binding.

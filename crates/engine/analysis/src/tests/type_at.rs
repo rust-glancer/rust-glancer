@@ -939,6 +939,203 @@ pub fn use_it(packages: &[Package], array: [Package; 3], array_ref: &[Package; 3
 }
 
 #[test]
+fn resolves_trait_method_types_for_unkeyed_and_blanket_impl_receivers() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[workspace]
+members = ["runtime", "app"]
+resolver = "3"
+
+//- /runtime/Cargo.toml
+[package]
+name = "runtime"
+version = "0.1.0"
+edition = "2024"
+
+//- /runtime/src/lib.rs
+pub struct Label;
+
+pub trait ScalarLabel {
+    fn scalar_label(&self) -> Label;
+}
+
+impl ScalarLabel for u32 {
+    fn scalar_label(&self) -> Label {
+        missing()
+    }
+}
+
+pub trait ArrayElement {
+    type Element;
+
+    fn array_element(&self) -> &Self::Element;
+}
+
+impl<T, const N: usize> ArrayElement for [T; N] {
+    type Element = T;
+
+    fn array_element(&self) -> &Self::Element {
+        missing()
+    }
+}
+
+pub trait ReferenceIdentity {
+    fn reference_identity(self) -> Self;
+}
+
+impl<T> ReferenceIdentity for &T {
+    fn reference_identity(self) -> Self {
+        self
+    }
+}
+
+pub trait BlanketLabel {
+    fn blanket_label(&self) -> Label;
+}
+
+impl<T> BlanketLabel for T {
+    fn blanket_label(&self) -> Label {
+        missing()
+    }
+}
+
+//- /app/Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+runtime = { path = "../runtime" }
+
+//- /app/src/lib.rs
+use runtime::{ArrayElement, BlanketLabel, ReferenceIdentity, ScalarLabel};
+
+pub struct User;
+
+pub fn use_it(scalar: u32, array: [User; 3], user: User, reference: &User) {
+    let scalar_label = scalar.scalar_$type_scalar$label();
+    let array_element = array.array_$type_array$element();
+    let blanket_label = user.blanket_$type_blanket$label();
+    let same_reference = reference.reference_$type_reference$identity();
+}
+"#,
+        &[
+            AnalysisQuery::ty("primitive trait method return", "type_scalar").in_lib("app"),
+            AnalysisQuery::ty("array trait associated return", "type_array").in_lib("app"),
+            AnalysisQuery::ty("blanket trait method return", "type_blanket").in_lib("app"),
+            AnalysisQuery::ty("reference trait method return", "type_reference").in_lib("app"),
+        ],
+        expect![[r#"
+            primitive trait method return
+            - nominal struct runtime[lib]::crate::Label
+
+            array trait associated return
+            - &nominal struct app[lib]::crate::User
+
+            blanket trait method return
+            - nominal struct runtime[lib]::crate::Label
+
+            reference trait method return
+            - &nominal struct app[lib]::crate::User
+        "#]],
+    );
+}
+
+#[test]
+fn resolves_fake_sysroot_array_into_iter_method_return_type() {
+    check_analysis_queries_with_fake_sysroot(
+        r#"
+//- /Cargo.toml
+[workspace]
+members = ["app"]
+resolver = "3"
+
+//- /app/Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+//- /app/src/lib.rs
+pub struct Package;
+
+pub fn use_it(array: [Package; 3]) {
+    let iterator = array.into_$type_iterator$iter();
+}
+"#,
+        &[AnalysisQuery::ty("array into_iter return", "type_iterator").in_lib("app")],
+        expect![[r#"
+            array into_iter return
+            - nominal struct core[lib]::crate::array::IntoIter<nominal struct app[lib]::crate::Package, 3>
+        "#]],
+    );
+}
+
+#[test]
+fn resolves_source_backed_builtin_associated_macro_items() {
+    check_analysis_queries_with_fake_sysroot(
+        r#"
+//- /Cargo.toml
+[workspace]
+members = ["app"]
+resolver = "3"
+
+//- /app/Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+//- /app/src/lib.rs
+pub struct Selected;
+pub struct Included;
+pub struct Value;
+
+#[rustc_builtin_macro]
+macro_rules! include {
+    ($($args:tt)*) => {};
+}
+
+impl Value {
+    core::cfg_select! {
+        true => {
+            pub fn selected(&self) -> Selected {
+                missing()
+            }
+        }
+    }
+
+    include!("included.rs");
+}
+
+pub fn use_it(value: Value) {
+    let selected = value.$type_selected$selected();
+    let included = value.$type_included$included();
+}
+
+//- /app/src/included.rs
+pub fn included(&self) -> Included {
+    missing()
+}
+"#,
+        &[
+            AnalysisQuery::ty("cfg-selected associated method return", "type_selected")
+                .in_lib("app"),
+            AnalysisQuery::ty("included associated method return", "type_included").in_lib("app"),
+        ],
+        expect![[r#"
+            cfg-selected associated method return
+            - nominal struct app[lib]::crate::Selected
+
+            included associated method return
+            - nominal struct app[lib]::crate::Included
+        "#]],
+    );
+}
+
+#[test]
 fn propagates_for_loop_item_types_from_into_iterator() {
     check_analysis_queries_with_fake_sysroot(
         r#"
@@ -2303,6 +2500,120 @@ pub fn use_it(user: User) {
         expect![[r#"
             direct trait method return
             - nominal struct analysis_direct_trait_type_at[lib]::crate::UserId
+        "#]],
+    );
+}
+
+#[test]
+fn implicit_trait_items_require_scope_but_explicit_trait_paths_do_not() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[workspace]
+members = ["runtime", "app"]
+resolver = "3"
+
+//- /runtime/Cargo.toml
+[package]
+name = "runtime"
+version = "0.1.0"
+edition = "2024"
+
+//- /runtime/src/lib.rs
+pub struct Value;
+pub struct Output;
+
+pub trait Hidden {
+    const TOKEN: Output;
+    fn make() -> Output;
+    fn secret(&self) -> Output;
+}
+
+impl Hidden for Value {
+    const TOKEN: Output = Output;
+    fn make() -> Output { Output }
+    fn secret(&self) -> Output { Output }
+}
+
+//- /app/Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+runtime = { path = "../runtime" }
+
+//- /app/src/lib.rs
+use runtime::Value;
+
+pub fn inspect(value: Value) {
+    let missing_method$type_missing_method$ = value.secret();
+    let missing_const$type_missing_const$ = Value::TOKEN;
+    let missing_function$type_missing_function$ = Value::make();
+
+    let qualified_const$type_qualified_const$ = <Value as runtime::Hidden>::TOKEN;
+    let qualified_function$type_qualified_function$ = <Value as runtime::Hidden>::make();
+
+    {
+        use runtime::Hidden;
+        let visible_method$type_visible_method$ = value.secret();
+        let visible_const$type_visible_const$ = Value::TOKEN;
+        let visible_function$type_visible_function$ = Value::make();
+
+        {
+            struct Hidden;
+            let shadowed_name$type_shadowed_name$ = value.secret();
+        }
+    }
+}
+"#,
+        &[
+            AnalysisQuery::ty("method without trait import", "type_missing_method").in_lib("app"),
+            AnalysisQuery::ty("const without trait import", "type_missing_const").in_lib("app"),
+            AnalysisQuery::ty("function without trait import", "type_missing_function")
+                .in_lib("app"),
+            AnalysisQuery::ty("explicit qualified trait const", "type_qualified_const")
+                .in_lib("app"),
+            AnalysisQuery::ty(
+                "explicit qualified trait function",
+                "type_qualified_function",
+            )
+            .in_lib("app"),
+            AnalysisQuery::ty("method with block trait import", "type_visible_method")
+                .in_lib("app"),
+            AnalysisQuery::ty("const with block trait import", "type_visible_const").in_lib("app"),
+            AnalysisQuery::ty("function with block trait import", "type_visible_function")
+                .in_lib("app"),
+            AnalysisQuery::ty("type shadow keeps outer trait", "type_shadowed_name").in_lib("app"),
+        ],
+        expect![[r#"
+            method without trait import
+            - <unknown>
+
+            const without trait import
+            - <unknown>
+
+            function without trait import
+            - <unknown>
+
+            explicit qualified trait const
+            - nominal struct runtime[lib]::crate::Output
+
+            explicit qualified trait function
+            - nominal struct runtime[lib]::crate::Output
+
+            method with block trait import
+            - nominal struct runtime[lib]::crate::Output
+
+            const with block trait import
+            - nominal struct runtime[lib]::crate::Output
+
+            function with block trait import
+            - nominal struct runtime[lib]::crate::Output
+
+            type shadow keeps outer trait
+            - nominal struct runtime[lib]::crate::Output
         "#]],
     );
 }

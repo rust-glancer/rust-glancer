@@ -4,19 +4,25 @@ use rg_package_store::PackageStoreError;
 use rg_semantic_ir::{ItemLookupQuery, ItemStoreSource};
 use rg_ty::TraitSelectionSession;
 
-use crate::{ir::BodyQueryView, resolution::BodyResolutionContext};
+use crate::{
+    ir::BodyQueryView,
+    resolution::{BodyResolutionCaches, BodyResolutionContext},
+};
 
 /// Stable query inputs retained while a resolution pass derives facts for one immutable body.
 ///
 /// `BodyResolutionContext` borrows both structure and the facts accumulated so far, so it cannot
 /// be stored while those facts are being updated. The environment keeps only body-independent
-/// inputs and creates a context from each short-lived query view taken by a pass step.
+/// inputs and creates a context from each short-lived query view taken by a pass step. The cloned
+/// `BodyResolutionCaches` and body-owned trait-selection scope make those contexts share stable
+/// lookup work without sharing the changing query view itself.
 pub(super) struct BodyResolutionEnv<'query, D, I> {
     def_maps: &'query D,
     item_stores: &'query I,
     item_lookup_query: &'query ItemLookupQuery<'query>,
     body_ref: BodyRef,
     trait_selection: TraitSelectionSession,
+    caches: BodyResolutionCaches,
 }
 
 impl<D, I> Clone for BodyResolutionEnv<'_, D, I> {
@@ -27,6 +33,7 @@ impl<D, I> Clone for BodyResolutionEnv<'_, D, I> {
             item_lookup_query: self.item_lookup_query,
             body_ref: self.body_ref,
             trait_selection: self.trait_selection.clone(),
+            caches: self.caches.clone(),
         }
     }
 }
@@ -49,6 +56,7 @@ where
             item_lookup_query,
             body_ref,
             trait_selection,
+            caches: BodyResolutionCaches::default(),
         }
     }
 
@@ -67,6 +75,7 @@ where
             body,
             self.item_lookup_query,
             self.trait_selection.clone(),
+            self.caches.clone(),
         )
     }
 }

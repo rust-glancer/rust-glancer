@@ -184,13 +184,11 @@ where
             associated_types: Vec::new(),
         };
         let Some(plausible_impls) = TraitCandidate::plausible_impls(
-            self.selection.context.item_paths(),
             self.selection.context.item_lookup(),
             self.selection.context.trait_selection(),
             &goal,
             table,
-        )?
-        else {
+        ) else {
             return Ok(None);
         };
         for trait_impl in plausible_impls {
@@ -275,13 +273,11 @@ where
             associated_types: Vec::new(),
         };
         let Some(plausible_impls) = TraitCandidate::plausible_impls(
-            self.selection.context.item_paths(),
             self.selection.context.item_lookup(),
             self.selection.context.trait_selection(),
             &goal,
             table,
-        )?
-        else {
+        ) else {
             return Ok(None);
         };
         let mut exact = ExpectedUnique::new();

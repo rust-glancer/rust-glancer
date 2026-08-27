@@ -11,7 +11,107 @@ use super::TraitSelectionSession;
 use super::chalk::{ChalkInferenceCache, ChalkOutcome, ChalkTraitSolver};
 use super::projection::NORMALIZATION_DEPTH_LIMIT;
 use crate::inference::InferenceTable;
-use crate::{AliasTy, Clause, GenericArg, ItemPathQuery, ProjectionTy, Ty};
+use crate::{
+    AdtTy, AliasTy, Clause, GenericArg, ImplMatcher, ItemPathQuery, ProjectionTy, Ty, TyContext,
+};
+
+#[test]
+fn named_trait_discovery_ignores_unrelated_blanket_impls() {
+    const UNRELATED_TRAITS: usize = 24;
+
+    let mut source = String::from("traits\n");
+    for index in 0..UNRELATED_TRAITS {
+        writeln!(source, "  trait#{index} Noise{index}")
+            .expect("writing to a string should not fail");
+    }
+    writeln!(source, "  trait#{UNRELATED_TRAITS} Target")
+        .expect("writing to a string should not fail");
+    source.push_str("structs\n  struct#0 User\nimpls\n");
+    for index in 0..UNRELATED_TRAITS {
+        writeln!(
+            source,
+            "  impl#{index} impl<T> Noise{index} for T [resolved self: empty]"
+        )
+        .expect("writing to a string should not fail");
+    }
+    writeln!(
+        source,
+        "  impl#{UNRELATED_TRAITS} impl Target for User\nfunctions\n  fn#0 Target::target -> User"
+    )
+    .expect("writing to a string should not fail");
+
+    let fixture = TraitSelectionFixture::new(&source);
+    let lookup = fixture.lookup_query();
+    let relevant_traits = lookup.traits_with_function_name("target");
+    assert_eq!(
+        relevant_traits.as_slice(),
+        &[fixture
+            .trait_ref_by_name("Target")
+            .expect("fixture should contain Target")]
+    );
+
+    // Selecting the trait by its declaration surface and probing its one impl fit this small
+    // allowance. A receiver-wide scan would spend it on the preceding blanket impls before
+    // reaching Target.
+    let session = TraitSelectionSession::new(fixture.target).with_work_limit(4);
+    let context = TyContext::new(&fixture, &fixture, lookup, session);
+    let matcher = ImplMatcher::new(context);
+    let receiver_ty = Ty::adt(AdtTy {
+        def: fixture
+            .type_ref_by_name("User")
+            .expect("fixture should contain User"),
+        args: Vec::new().into(),
+    });
+    let matches = matcher
+        .matches_for_receiver_with_traits(&receiver_ty, relevant_traits, &InferenceTable::new())
+        .expect("bounded named trait lookup should succeed");
+
+    assert_eq!(matches.traits().len(), 1);
+    assert_eq!(
+        matches.traits()[0].trait_impl.trait_ref,
+        fixture
+            .trait_ref_by_name("Target")
+            .expect("fixture should contain Target")
+    );
+}
+
+#[test]
+fn broad_trait_candidates_are_charged_once_per_inference_scope() {
+    let fixture = TraitSelectionFixture::new(
+        r#"
+            traits
+              trait#0 Marker
+            structs
+              struct#0 First
+              struct#1 Second
+            impls
+              impl#0 impl Marker for First
+              impl#1 impl Marker for Second
+        "#,
+    );
+    let lookup = fixture.lookup_query();
+    let trait_ref = fixture
+        .trait_ref_by_name("Marker")
+        .expect("fixture should contain Marker");
+    let unresolved_projection = Ty::Alias(AliasTy::Projection(ProjectionTy {
+        associated_ty: TypeAliasRef {
+            origin: origin(),
+            id: TypeAliasId(0),
+        },
+        args: Vec::new().into(),
+    }));
+    let session = TraitSelectionSession::new(fixture.target).with_work_limit(2);
+
+    let first = session
+        .trait_impl_candidates_for_ty(&lookup, trait_ref, &unresolved_projection)
+        .expect("the first broad lookup should fit the exact allowance");
+    let repeated = session
+        .trait_impl_candidates_for_ty(&lookup, trait_ref, &unresolved_projection)
+        .expect("reusing the same broad lookup should consume no more work");
+
+    assert_eq!(first.len(), 2);
+    assert_eq!(repeated, first);
+}
 
 #[test]
 fn projection_cycle_identity_ignores_fresh_inference_slots() {
@@ -76,7 +176,7 @@ fn body_work_exhaustion_keeps_candidate_search_incomplete() {
     );
     profile.finish().assert_keyed_counter(
         crate::profile::metric::WORK_LIMIT_EXHAUSTIONS,
-        "body_work.candidate_index",
+        "body_work.candidate_probe",
         1,
     );
 }

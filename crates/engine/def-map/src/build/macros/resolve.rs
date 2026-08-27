@@ -31,7 +31,7 @@ impl PartialEq for ResolvedMacroDefinition<'_> {
 
 impl Eq for ResolvedMacroDefinition<'_> {}
 
-/// Applies item-position macro lookup rules on top of ordinary path resolution.
+/// Applies item-shaped macro lookup rules on top of ordinary path resolution.
 ///
 /// Macro calls are mostly path-shaped, but one-segment calls have extra Rust-specific behavior:
 /// textual `macro_rules!` definitions can shadow namespace bindings, legacy `#[macro_use]` imports

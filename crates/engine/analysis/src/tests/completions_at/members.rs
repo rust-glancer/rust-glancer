@@ -93,6 +93,126 @@ pub fn use_it(user: User) {
 }
 
 #[test]
+fn trait_method_completion_respects_lexical_trait_scope() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[workspace]
+members = ["runtime", "app"]
+resolver = "3"
+
+//- /runtime/Cargo.toml
+[package]
+name = "runtime"
+version = "0.1.0"
+edition = "2024"
+
+//- /runtime/src/lib.rs
+pub struct Value;
+
+pub mod named {
+    pub trait Named { fn named(&self); }
+    impl Named for super::Value { fn named(&self) {} }
+}
+
+pub mod alias {
+    pub trait Aliased { fn aliased(&self); }
+    impl Aliased for super::Value { fn aliased(&self) {} }
+}
+
+pub mod wildcard {
+    pub trait Wildcard { fn wildcard(&self); }
+    impl Wildcard for super::Value { fn wildcard(&self) {} }
+}
+
+pub mod underscore {
+    pub trait Underscore { fn underscore(&self); }
+    impl Underscore for super::Value { fn underscore(&self) {} }
+}
+
+pub mod hidden {
+    pub trait Hidden { fn hidden(&self); }
+    impl Hidden for super::Value { fn hidden(&self) {} }
+}
+
+//- /app/Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+runtime = { path = "../runtime" }
+
+//- /app/src/lib.rs
+use runtime::Value;
+use runtime::alias::Aliased as Renamed;
+use runtime::named::Named;
+use runtime::underscore::Underscore as _;
+use runtime::wildcard::*;
+
+pub fn inspect(value: Value) {
+    value.$outer$;
+    {
+        use runtime::hidden::Hidden;
+        value.$inner$;
+    }
+    {
+        use runtime::hidden::Hidden as _;
+        value.$inner_underscore$;
+    }
+    value.$after$;
+    {
+        struct Named;
+        value.$shadowed$;
+    }
+}
+"#,
+        &[
+            AnalysisQuery::complete("outer trait scope", "outer").in_lib("app"),
+            AnalysisQuery::complete("block trait scope", "inner").in_lib("app"),
+            AnalysisQuery::complete("block underscore trait scope", "inner_underscore")
+                .in_lib("app"),
+            AnalysisQuery::complete("scope after block", "after").in_lib("app"),
+            AnalysisQuery::complete("type shadow keeps outer trait", "shadowed").in_lib("app"),
+        ],
+        expect![[r#"
+            outer trait scope
+            - trait_method aliased
+            - trait_method named
+            - trait_method underscore
+            - trait_method wildcard
+
+            block trait scope
+            - trait_method aliased
+            - trait_method hidden
+            - trait_method named
+            - trait_method underscore
+            - trait_method wildcard
+
+            block underscore trait scope
+            - trait_method aliased
+            - trait_method hidden
+            - trait_method named
+            - trait_method underscore
+            - trait_method wildcard
+
+            scope after block
+            - trait_method aliased
+            - trait_method named
+            - trait_method underscore
+            - trait_method wildcard
+
+            type shadow keeps outer trait
+            - trait_method aliased
+            - trait_method named
+            - trait_method underscore
+            - trait_method wildcard
+        "#]],
+    );
+}
+
+#[test]
 fn completion_ignores_unrelated_impls_in_speculative_trait_budget() {
     let mut fixture = String::from(
         r#"
@@ -739,6 +859,325 @@ pub fn use_it(packages: &[Package], array: [Package; 3], array_ref: &[Package; 3
             array ref method completions
             - inherent_method first_ref
             - inherent_method len
+        "#]],
+    );
+}
+
+#[test]
+fn completes_primitive_inherent_methods_directly_and_through_deref() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[workspace]
+members = ["runtime", "app"]
+resolver = "3"
+
+//- /runtime/Cargo.toml
+[package]
+name = "runtime"
+version = "0.1.0"
+edition = "2024"
+
+//- /runtime/src/lib.rs
+#[lang = "deref"]
+pub trait Project {
+    #[lang = "deref_target"]
+    type Target: ?Sized;
+
+    fn project(&self) -> &Self::Target;
+}
+
+impl str {
+    pub fn contains(&self, needle: &str) -> bool {
+        missing()
+    }
+}
+
+impl u32 {
+    pub fn count_ones(self) -> u32 {
+        missing()
+    }
+}
+
+pub struct OwnedText;
+
+impl Project for OwnedText {
+    type Target = str;
+
+    fn project(&self) -> &Self::Target {
+        missing()
+    }
+}
+
+//- /app/Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+runtime = { path = "../runtime" }
+
+//- /app/src/lib.rs
+use runtime::OwnedText;
+
+pub fn use_it(owned: OwnedText, borrowed: &str, scalar: u32) {
+    owned.$owned$;
+    borrowed.$borrowed$;
+    scalar.$scalar$;
+}
+"#,
+        &[
+            AnalysisQuery::complete("primitive method through Deref", "owned").in_lib("app"),
+            AnalysisQuery::complete("primitive method through reference", "borrowed").in_lib("app"),
+            AnalysisQuery::complete("scalar primitive method", "scalar").in_lib("app"),
+        ],
+        expect![[r#"
+            primitive method through Deref
+            - inherent_method contains
+
+            primitive method through reference
+            - inherent_method contains
+
+            scalar primitive method
+            - inherent_method count_ones
+        "#]],
+    );
+}
+
+#[test]
+fn completes_methods_generated_by_associated_item_macros() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[workspace]
+members = ["runtime", "app"]
+resolver = "3"
+
+//- /runtime/Cargo.toml
+[package]
+name = "runtime"
+version = "0.1.0"
+edition = "2024"
+
+//- /runtime/src/lib.rs
+pub struct Label;
+
+macro_rules! nested_integer_methods {
+    () => {
+        pub fn generated_nested(self) -> Label {
+            missing()
+        }
+    };
+}
+
+macro_rules! integer_methods {
+    () => {
+        pub fn generated_count(self) -> u32 {
+            missing()
+        }
+
+        nested_integer_methods!();
+    };
+}
+
+impl u32 {
+    integer_methods!();
+}
+
+macro_rules! trait_items {
+    () => {
+        fn generated_trait(&self) -> Label;
+    };
+}
+
+pub trait GeneratedTrait {
+    trait_items!();
+}
+
+impl GeneratedTrait for u32 {
+    fn generated_trait(&self) -> Label {
+        missing()
+    }
+}
+
+//- /app/Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+runtime = { path = "../runtime" }
+
+//- /app/src/lib.rs
+use runtime::GeneratedTrait;
+
+pub fn use_it(value: u32) {
+    value.$methods$;
+}
+"#,
+        &[AnalysisQuery::complete("macro-generated methods", "methods").in_lib("app")],
+        expect![[r#"
+            macro-generated methods
+            - inherent_method generated_count
+            - inherent_method generated_nested
+            - trait_method generated_trait
+        "#]],
+    );
+}
+
+#[test]
+fn completes_raw_pointer_inherent_methods_with_compiler_provided_bounds() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[workspace]
+members = ["runtime", "app"]
+resolver = "3"
+
+//- /runtime/Cargo.toml
+[package]
+name = "runtime"
+version = "0.1.0"
+edition = "2024"
+
+//- /runtime/src/lib.rs
+#[lang = "pointee_sized"]
+pub trait PointeeSized {}
+
+impl<T: PointeeSized> *const T {
+    pub fn is_null(self) -> bool {
+        missing()
+    }
+}
+
+//- /app/Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+runtime = { path = "../runtime" }
+
+//- /app/src/lib.rs
+pub fn use_it(pointer: *const u8) {
+    pointer.$pointer$;
+}
+"#,
+        &[AnalysisQuery::complete("raw pointer methods", "pointer").in_lib("app")],
+        expect![[r#"
+            raw pointer methods
+            - inherent_method is_null
+        "#]],
+    );
+}
+
+#[test]
+fn completes_trait_methods_for_unkeyed_and_blanket_impl_receivers() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[workspace]
+members = ["runtime", "app"]
+resolver = "3"
+
+//- /runtime/Cargo.toml
+[package]
+name = "runtime"
+version = "0.1.0"
+edition = "2024"
+
+//- /runtime/src/lib.rs
+pub struct Label;
+
+pub trait ScalarLabel {
+    fn scalar_label(&self) -> Label;
+}
+
+impl ScalarLabel for u32 {
+    fn scalar_label(&self) -> Label {
+        missing()
+    }
+}
+
+pub trait ArrayElement {
+    type Element;
+
+    fn array_element(&self) -> &Self::Element;
+}
+
+impl<T, const N: usize> ArrayElement for [T; N] {
+    type Element = T;
+
+    fn array_element(&self) -> &Self::Element {
+        missing()
+    }
+}
+
+pub trait ReferenceIdentity {
+    fn reference_identity(self) -> Self;
+}
+
+impl<T> ReferenceIdentity for &T {
+    fn reference_identity(self) -> Self {
+        self
+    }
+}
+
+pub trait BlanketLabel {
+    fn blanket_label(&self) -> Label;
+}
+
+impl<T> BlanketLabel for T {
+    fn blanket_label(&self) -> Label {
+        missing()
+    }
+}
+
+//- /app/Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+runtime = { path = "../runtime" }
+
+//- /app/src/lib.rs
+use runtime::{ArrayElement, BlanketLabel, ReferenceIdentity, ScalarLabel};
+
+pub struct User;
+
+pub fn use_it(scalar: u32, array: [User; 3], user: User, reference: &User) {
+    scalar.$scalar$;
+    array.$array$;
+    user.$blanket$;
+    reference.$reference$;
+}
+"#,
+        &[
+            AnalysisQuery::complete("primitive trait methods", "scalar").in_lib("app"),
+            AnalysisQuery::complete("array trait methods", "array").in_lib("app"),
+            AnalysisQuery::complete("blanket trait methods", "blanket").in_lib("app"),
+            AnalysisQuery::complete("reference trait methods", "reference").in_lib("app"),
+        ],
+        expect![[r#"
+            primitive trait methods
+            - trait_method blanket_label
+            - trait_method scalar_label
+
+            array trait methods
+            - trait_method array_element
+            - trait_method blanket_label
+
+            blanket trait methods
+            - trait_method blanket_label
+
+            reference trait methods
+            - trait_method blanket_label
+            - trait_method reference_identity
         "#]],
     );
 }

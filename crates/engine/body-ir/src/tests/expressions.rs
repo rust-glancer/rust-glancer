@@ -1326,6 +1326,78 @@ pub fn use_it() {
 }
 
 #[test]
+fn resolves_unkeyed_inherent_associated_paths() {
+    check_project_body_ir(
+        r#"
+//- /Cargo.toml
+[package]
+name = "body_primitive_associated_path_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+impl u32 {
+    pub const MAX: u32 = 0;
+
+    pub fn from_be_bytes(_bytes: [u8; 4]) -> Self {
+        0
+    }
+}
+
+pub fn use_it(bytes: [u8; 4]) {
+    let max = u32::MAX;
+    let value = u32::from_be_bytes(bytes);
+}
+"#,
+        expect![[r#"
+            package body_primitive_associated_path_fixture
+
+            body_primitive_associated_path_fixture [lib]
+            body b0 fn body_primitive_associated_path_fixture[lib]::crate::use_it @ 9:1-12:2
+            scopes
+            - s0 parent <none>: v0
+            - s1 parent s0: v1, v2
+            bindings
+            - v0 param bytes `bytes`: [u8; 4] => [u8; 4] @ 9:15-9:20
+            - v1 let max `max` => u32 @ 10:9-10:12
+            - v2 let value `value` => u32 @ 11:9-11:14
+            body
+            expr e4 block s1 => () @ 9:31-12:2
+              stmt s0 let v1 @ 10:5-10:24
+                initializer
+                  expr e0 path u32::MAX -> const impl u32::MAX => u32 @ 10:15-10:23
+              stmt s1 let v2 @ 11:5-11:43
+                initializer
+                  expr e3 call => u32 @ 11:17-11:42
+                    callee
+                      expr e1 path u32::from_be_bytes -> fn impl u32::from_be_bytes => <unknown> @ 11:17-11:35
+                    arg
+                      expr e2 path bytes -> local v0 => [u8; 4] @ 11:36-11:41
+
+
+            body b1 fn impl u32::from_be_bytes @ 4:5-6:6
+            scopes
+            - s0 parent <none>: v0
+            - s1 parent s0: <none>
+            bindings
+            - v0 param _bytes `_bytes`: [u8; 4] => [u8; 4] @ 4:26-4:32
+            body
+            expr e1 block s1 => u32 @ 4:51-6:6
+              tail
+                expr e0 literal int `0` => u32 @ 5:9-5:10
+
+
+            body b2 const impl u32::MAX @ 2:5-2:28
+            scopes
+            - s0 parent <none>: <none>
+            bindings
+            body
+            expr e0 literal int `0` => i32 @ 2:26-2:27
+        "#]],
+    );
+}
+
+#[test]
 fn resolves_tuple_field_accesses() {
     check_project_body_ir(
         r#"

@@ -1,11 +1,13 @@
 //! Semantic IR package store and transaction entry points.
 
+use std::collections::HashMap;
+
 use rg_def_map::PackageSlot;
 use rg_ir_model::{ImplRef, TraitDefRef, TypeDefRef};
 use rg_package_store::{PackageLoader, PackageStore, PackageSubset};
 use rg_std::{ExpectedUnique, MemorySize, Shrink};
 
-use crate::{PackageIr, SemanticIrReadTxn, SemanticIrStats};
+use crate::{PackageIr, SemanticIrReadTxn, SemanticIrStats, TraitImplSelfHead};
 
 /// Semantic item graph for all analyzed packages and semantic crates.
 ///
@@ -136,10 +138,14 @@ impl SemanticIrDbMutator<'_> {
         }
     }
 
-    pub(crate) fn rebuild_lookup_indexes(&mut self, packages: &[PackageSlot]) {
+    pub(crate) fn rebuild_lookup_indexes(
+        &mut self,
+        packages: &[PackageSlot],
+        self_heads: &HashMap<ImplRef, TraitImplSelfHead>,
+    ) {
         for package in packages {
             if let Some(package) = self.db.packages.make_mut(*package) {
-                package.rebuild_lookup_indexes();
+                package.rebuild_lookup_indexes(self_heads);
             }
         }
     }

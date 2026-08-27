@@ -61,11 +61,11 @@ impl TraitSelectionFixture {
             .expect("fixture lookup query should build")
     }
 
-    fn type_ref_by_name(&self, name: &str) -> Option<TypeDefRef> {
+    pub(super) fn type_ref_by_name(&self, name: &str) -> Option<TypeDefRef> {
         self.type_refs_by_name.get(name).copied()
     }
 
-    fn trait_ref_by_name(&self, name: &str) -> Option<TraitDefRef> {
+    pub(super) fn trait_ref_by_name(&self, name: &str) -> Option<TraitDefRef> {
         self.trait_refs_by_name.get(name).copied()
     }
 
@@ -503,7 +503,7 @@ fn fixture_with_traits_impls_aliases_and_structs(
             .trait_refs_by_name
             .insert(data.name.to_string(), trait_ref);
     }
-    fixture.lookup_index = ItemLookupIndex::build_from_store(&fixture.store);
+    fixture.lookup_index = ItemLookupIndex::build_from_store(&fixture.store, &HashMap::new());
     fixture
 }
 
@@ -710,12 +710,24 @@ impl<'a> TraitSelectionFixtureParser<'a> {
         let (name, ret_ty) = rest
             .split_once(" -> ")
             .expect("function fixture should be written as `name -> ReturnType`");
+        let (owner, name) = if let Some((trait_name, function_name)) = name.split_once("::") {
+            let trait_ref = *self
+                .trait_refs_by_name
+                .get(trait_name)
+                .unwrap_or_else(|| panic!("fixture should declare trait `{trait_name}` first"));
+            self.traits[trait_ref.id.0]
+                .items
+                .push(AssocItemId::Function(FunctionId(id)));
+            (ItemOwner::Trait(trait_ref.id), function_name)
+        } else {
+            (ItemOwner::Module(module()), name)
+        };
         self.functions.push(FunctionData {
             local_def: None,
             source: dummy_source(),
             span: fixture_span(),
             name_span: None,
-            owner: ItemOwner::Module(module()),
+            owner,
             name: Name::new(name),
             visibility: VisibilityLevel::Public,
             docs: None,

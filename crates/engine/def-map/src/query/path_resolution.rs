@@ -14,8 +14,8 @@ use rg_std::UniqueVec;
 use rg_text::Name;
 
 use crate::{
-    ImportData, ImportKind, LocalDefKind, ModuleOrigin, ModuleScopeBuilder, Namespace,
-    NamespaceSet, ScopeBinding, ScopeBindingProvenance, Visibility,
+    ImportBinding, ImportData, ImportKind, LocalDefKind, ModuleOrigin, ModuleScopeBuilder,
+    Namespace, NamespaceSet, ScopeBinding, ScopeBindingProvenance, Visibility,
 };
 
 use super::resolution_env::{CrateResolutionEnv, ScopeResolutionEnv};
@@ -69,6 +69,9 @@ pub struct ImportedScopeBinding {
 pub struct ImportResolution {
     /// Binding facts for the caller to insert into its mutable scope storage.
     pub introduced: Vec<ImportedScopeBinding>,
+    /// Traits imported through `use Trait as _`, which affect method lookup without introducing
+    /// an ordinary path binding.
+    pub unnamed_traits: Vec<ScopeBinding>,
     source_resolved: bool,
 }
 
@@ -467,6 +470,7 @@ impl<E: CrateResolutionEnv + ?Sized> ScopeResolver<'_, E> {
 
                 Ok(ImportResolution {
                     introduced,
+                    unnamed_traits: Vec::new(),
                     source_resolved,
                 })
             }
@@ -477,9 +481,41 @@ impl<E: CrateResolutionEnv + ?Sized> ScopeResolver<'_, E> {
                     NamespaceSet::ALL,
                 )?;
                 let source_resolved = !source_bindings.is_empty();
+                if matches!(&import.binding, ImportBinding::Hidden) {
+                    let mut unnamed_traits = UniqueVec::new();
+                    for (namespace, source_binding) in source_bindings {
+                        let DefId::Local(local_def) = source_binding.def else {
+                            continue;
+                        };
+                        if namespace != Namespace::Types
+                            || self.env.local_def_kind(local_def)? != Some(LocalDefKind::Trait)
+                        {
+                            continue;
+                        }
+
+                        let Some(binding) = self.imported_binding(
+                            importing_module,
+                            &source_binding,
+                            import.visibility,
+                            ScopeBindingProvenance::NamedImport(import_ref),
+                        )?
+                        else {
+                            continue;
+                        };
+                        unnamed_traits.push(binding);
+                    }
+
+                    return Ok(ImportResolution {
+                        introduced: Vec::new(),
+                        unnamed_traits: unnamed_traits.into_vec(),
+                        source_resolved,
+                    });
+                }
+
                 let Some(name) = import.binding_name() else {
                     return Ok(ImportResolution {
                         introduced: Vec::new(),
+                        unnamed_traits: Vec::new(),
                         source_resolved,
                     });
                 };
@@ -504,6 +540,7 @@ impl<E: CrateResolutionEnv + ?Sized> ScopeResolver<'_, E> {
 
                 Ok(ImportResolution {
                     introduced,
+                    unnamed_traits: Vec::new(),
                     source_resolved,
                 })
             }

@@ -1,6 +1,8 @@
-use crate::{ItemLookupIndex, ItemStore};
+use std::collections::HashMap;
+
+use crate::{ItemLookupIndex, ItemStore, TraitImplSelfHead};
 use rg_arena::Arena;
-use rg_ir_model::CrateId;
+use rg_ir_model::{CrateId, ImplRef};
 use rg_std::{MemorySize, Shrink};
 use wincode::{SchemaRead, SchemaWrite};
 
@@ -45,10 +47,13 @@ impl PackageIr {
     }
 
     /// Rebuild aligned crate-local indexes after impl-header resolution changes their lookup keys.
-    pub(crate) fn rebuild_lookup_indexes(&mut self) {
+    pub(crate) fn rebuild_lookup_indexes(
+        &mut self,
+        self_heads: &HashMap<ImplRef, TraitImplSelfHead>,
+    ) {
         debug_assert_eq!(self.crates.len(), self.lookup_indexes.len());
         for (crate_id, store) in self.crates.iter_with_ids() {
-            self.lookup_indexes[crate_id] = ItemLookupIndex::build_from_store(store);
+            self.lookup_indexes[crate_id] = ItemLookupIndex::build_from_store(store, self_heads);
         }
     }
 }

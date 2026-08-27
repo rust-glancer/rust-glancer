@@ -4,8 +4,10 @@
 //! Syntax HIR remains available to declaration views, but receiver matching never interprets a
 //! `TypeRef` itself.
 
-mod inherent;
-mod trait_methods;
+mod receiver;
+mod trait_impl;
+
+pub use self::receiver::{InherentImplMatch, ReceiverFunctionCandidate, ReceiverImplMatches};
 
 use rg_def_map::DefMapSource;
 use rg_ir_model::{GenericDefRef, GenericParamRef, ImplRef, TraitApplicability};
@@ -13,7 +15,7 @@ use rg_semantic_ir::ItemStoreSource;
 
 use crate::{
     ConstValue, GenericArg, ImplHeader, ItemPathQuery, Lifetime, Substitution, Ty, TyContext,
-    TypePathResolver,
+    TypePathResolver, trait_selection::CachedImplSelfMatch,
 };
 
 /// Matcher for canonical impl headers stored in semantic item stores.
@@ -58,10 +60,45 @@ where
         impl_ref: ImplRef,
         receiver_ty: &Ty,
     ) -> Result<Option<(Substitution, TraitApplicability)>, D::Error> {
-        let Some(header) = self.impl_header(impl_ref)? else {
+        let Some(header_match) = self.impl_self_match_for_impl(impl_ref, receiver_ty)? else {
             return Ok(None);
         };
-        Ok(Self::impl_self_subst(&header, receiver_ty))
+        Ok(Some((header_match.subst, header_match.applicability)))
+    }
+
+    /// Match one canonical impl header against the receiver's exact stored representation.
+    ///
+    /// Method resolution revisits the same raw `Ty` during fixed-point inference. This structural
+    /// comparison deliberately does not read an [`InferenceTable`](crate::inference::InferenceTable):
+    /// substitutions keep the receiver's live variables, while the later trait proof receives the
+    /// caller's table. The cache key therefore uses that same raw `Ty`; a table-aware matcher would
+    /// need to change the semantic input and cache identity together.
+    fn impl_self_match_for_impl(
+        &self,
+        impl_ref: ImplRef,
+        receiver_ty: &Ty,
+    ) -> Result<Option<CachedImplSelfMatch>, D::Error> {
+        self.context
+            .trait_selection()
+            .impl_self_match_or_try_init(receiver_ty, impl_ref, || {
+                let Some(header) = self.context.trait_selection().impl_header_with(
+                    self.context.item_paths(),
+                    &self.resolver,
+                    impl_ref,
+                )?
+                else {
+                    return Ok(None);
+                };
+                let Some((subst, applicability)) = Self::impl_self_subst(&header, receiver_ty)
+                else {
+                    return Ok(None);
+                };
+                Ok(Some(CachedImplSelfMatch {
+                    header,
+                    subst,
+                    applicability,
+                }))
+            })
     }
 
     /// Match an already-lowered impl header without interpreting its source syntax again.

@@ -30,7 +30,11 @@ impl LangItemIndex {
         let target_matches = matches!(
             (lang_item, target),
             (
-                LangItem::Deref | LangItem::Fn | LangItem::FnMut | LangItem::FnOnce,
+                LangItem::Deref
+                    | LangItem::Fn
+                    | LangItem::FnMut
+                    | LangItem::FnOnce
+                    | LangItem::PointeeSized,
                 ItemId::Trait(_)
             ) | (LangItem::IntoIter, ItemId::Function(_))
                 | (

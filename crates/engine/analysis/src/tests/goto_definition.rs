@@ -499,6 +499,57 @@ pub fn use_it(action: Action, value: i32) {
 }
 
 #[test]
+fn resolves_unkeyed_inherent_associated_paths() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[workspace]
+members = ["runtime", "app"]
+resolver = "3"
+
+//- /runtime/Cargo.toml
+[package]
+name = "runtime"
+version = "0.1.0"
+edition = "2024"
+
+//- /runtime/src/lib.rs
+impl u32 {
+    pub const MAX: u32 = 0;
+    pub fn from_be_bytes(_bytes: [u8; 4]) -> Self { 0 }
+}
+
+//- /app/Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+runtime = { path = "../runtime" }
+
+//- /app/src/lib.rs
+pub fn use_it(bytes: [u8; 4]) {
+    let _max = u32::M$primitive_const$AX;
+    let _value = u32::from_be_$primitive_function$bytes(bytes);
+}
+"#,
+        &[
+            AnalysisQuery::goto("goto primitive associated const", "primitive_const").in_lib("app"),
+            AnalysisQuery::goto("goto primitive associated function", "primitive_function")
+                .in_lib("app"),
+        ],
+        expect![[r#"
+            goto primitive associated const
+            - const MAX @ 2:15-2:18
+
+            goto primitive associated function
+            - fn from_be_bytes @ 3:12-3:25
+        "#]],
+    );
+}
+
+#[test]
 fn resolves_crate_prefixes_inside_body_type_paths() {
     check_analysis_queries(
         r#"
@@ -598,6 +649,93 @@ pub fn use_it(user: User) {
         expect![[r#"
             goto direct trait method
             - fn id @ 4:8-4:10
+        "#]],
+    );
+}
+
+#[test]
+fn resolves_structural_and_macro_generated_method_calls() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[workspace]
+members = ["runtime", "app"]
+resolver = "3"
+
+//- /runtime/Cargo.toml
+[package]
+name = "runtime"
+version = "0.1.0"
+edition = "2024"
+
+//- /runtime/src/lib.rs
+#[lang = "deref"]
+pub trait Project {
+    #[lang = "deref_target"]
+    type Target: ?Sized;
+
+    fn project(&self) -> &Self::Target;
+}
+
+impl str {
+    /// Finds a substring.
+    pub fn contains(&self, needle: &str) -> bool {
+        missing()
+    }
+}
+
+macro_rules! integer_methods {
+    () => {
+        /// Counts the set bits.
+        pub fn generated_count(self) -> u32 {
+            missing()
+        }
+    };
+}
+
+impl u32 {
+    integer_methods!();
+}
+
+pub struct OwnedText;
+
+impl Project for OwnedText {
+    type Target = str;
+
+    fn project(&self) -> &Self::Target {
+        missing()
+    }
+}
+
+//- /app/Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+runtime = { path = "../runtime" }
+
+//- /app/src/lib.rs
+use runtime::OwnedText;
+
+pub fn use_it(text: OwnedText, value: u32) {
+    let _found = text.con$goto_contains$tains("needle");
+    let _count = value.generated_$goto_generated$count();
+}
+"#,
+        &[
+            AnalysisQuery::goto("goto primitive method through Deref", "goto_contains")
+                .in_lib("app"),
+            AnalysisQuery::goto("goto macro-generated primitive method", "goto_generated")
+                .in_lib("app"),
+        ],
+        expect![[r#"
+            goto primitive method through Deref
+            - fn contains @ 11:12-11:20
+
+            goto macro-generated primitive method
+            - fn generated_count @ 26:5-26:24
         "#]],
     );
 }

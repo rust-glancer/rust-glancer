@@ -53,6 +53,7 @@ impl<'a, 'db> SourceCompletionView<'a, 'db> {
                 .context("scan member access completion site")?
                 .map(|site| IndexedMemberAccessSite {
                     receiver: ExprRef::new(site.body, site.receiver),
+                    scope: LexicalScopeRef::new(site.body, site.scope),
                     receiver_span: site.receiver_span,
                     member_prefix_span: site.member_prefix_span,
                 }),

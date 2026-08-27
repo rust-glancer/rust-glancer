@@ -12,10 +12,10 @@ use rg_ir_model::{TraitApplicability, TraitImplRef};
 use rg_semantic_ir::{ItemLookupQuery, ItemStoreSource};
 use rg_std::UniqueVec;
 
-use super::matcher::{CandidateMatcher, TraitSelfHead};
-use super::{TraitGoal, TraitSelectionSession, session::TraitWorkKind};
+use super::matcher::CandidateMatcher;
+use super::{TraitGoal, TraitSelectionSession};
+use crate::ItemPathQuery;
 use crate::inference::{InferenceSubstitution, InferenceTable};
-use crate::{ItemPathQuery, Ty};
 
 /// One visible impl whose canonical header is compatible with a trait goal.
 ///
@@ -34,49 +34,26 @@ pub(super) struct TraitCandidate {
 impl TraitCandidate {
     /// Enumerate the cheap impl identities that may have a compatible header.
     ///
+    /// For a `Vec<u8>: Marker` goal, this admits direct `impl Marker for Vec<u8>`-shaped headers and
+    /// conservative declarations such as `impl<T> Marker for T`, but skips a direct `u32` impl.
+    /// [`Self::probe_impl`] still compares the complete canonical header afterwards.
+    ///
     /// Matching is deliberately separate: every match owns a cloned trial table, so callers must
     /// consume one candidate before constructing the next instead of retaining one full table per
-    /// visible impl.
-    pub(super) fn plausible_impls<'query, D, I>(
-        item_paths: &ItemPathQuery<'query, D, I>,
+    /// visible impl. `None` reports inference-scope work exhaustion; an ordinary search with no
+    /// candidates returns `Some(empty)`.
+    pub(super) fn plausible_impls(
         item_lookup: &ItemLookupQuery<'_>,
         session: &TraitSelectionSession,
         goal: &TraitGoal,
         table: &InferenceTable,
-    ) -> Result<Option<UniqueVec<TraitImplRef>>, I::Error>
-    where
-        D: DefMapSource<Error = I::Error>,
-        I: ItemStoreSource<'query>,
-    {
-        // Narrow the visible impl set by the resolved outer shape of `Self`. Parameters and aliases
-        // have no useful head, so those established semantic shapes retain every visible impl.
+    ) -> Option<UniqueVec<TraitImplRef>> {
+        // Narrow the visible impl set by the resolved outer shape of `Self`. The session owns the
+        // policy for receivers that have no useful head, so ordinary trait selection and item
+        // lookup cannot drift into different candidate universes.
         let self_ty = table.resolve_root_var(goal.self_ty());
-        // A trait obligation constrains `Self` after some other inference source gives it a shape;
-        // it is not an inverse lookup over today's impl set. Besides being order-dependent Rust
-        // semantics, probing a bare slot would clone the whole body table once for every concrete
-        // impl before eventually calling the result ambiguous.
-        if matches!(self_ty, Ty::InferVar { .. } | Ty::Unknown) {
-            return Ok(Some(UniqueVec::new()));
-        }
         let trait_ref = goal.trait_ref();
-        let Some(visible_impls) = item_lookup.trait_impls_for_trait(trait_ref) else {
-            return Ok(Some(UniqueVec::new()));
-        };
-        match TraitSelfHead::from_ty(&self_ty) {
-            Some(self_head) => session.indexed_trait_impl_candidates(
-                item_paths,
-                trait_ref,
-                visible_impls,
-                self_head,
-            ),
-            None => {
-                let visible_impls = visible_impls.into_vec();
-                if !session.consume_work(TraitWorkKind::CandidateIndex, visible_impls.len()) {
-                    return Ok(None);
-                }
-                Ok(Some(visible_impls.into_iter().collect()))
-            }
-        }
+        session.trait_impl_candidates_for_ty(item_lookup, trait_ref, &self_ty)
     }
 
     /// Match one plausible impl against the goal using an isolated trial table.
@@ -91,7 +68,7 @@ impl TraitCandidate {
         D: DefMapSource<Error = I::Error>,
         I: ItemStoreSource<'query>,
     {
-        // The candidate index identifies plausible self-type heads. Load the canonical header,
+        // Declaration lookup identifies plausible self-type heads. Load the canonical header,
         // then confirm that its declaration still names the requested trait before matching the
         // full application and collecting equality evidence.
         let Some(header) = session.impl_header_with(item_paths, item_paths, trait_impl.impl_ref)?
@@ -133,7 +110,7 @@ impl TraitCandidate {
         I: ItemStoreSource<'query>,
     {
         let mut candidates = Vec::new();
-        let plausible_impls = Self::plausible_impls(item_paths, item_lookup, session, goal, table)?
+        let plausible_impls = Self::plausible_impls(item_lookup, session, goal, table)
             .expect("unbounded candidate fixture query should not exhaust work");
         for trait_impl in plausible_impls {
             if let Some(candidate) = Self::probe_impl(item_paths, session, goal, table, trait_impl)?

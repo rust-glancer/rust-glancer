@@ -1,6 +1,67 @@
 use expect_test::expect;
 
 use super::super::utils::{AnalysisQuery, check_analysis_queries};
+
+#[test]
+fn completes_unkeyed_associated_items() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[workspace]
+members = ["runtime", "app"]
+resolver = "3"
+
+//- /runtime/Cargo.toml
+[package]
+name = "runtime"
+version = "0.1.0"
+edition = "2024"
+
+//- /runtime/src/lib.rs
+impl u32 {
+    pub const MAX: u32 = 0;
+    pub fn from_be_bytes(_bytes: [u8; 4]) -> Self { 0 }
+    pub fn count_ones(self) -> u32 { 0 }
+}
+
+pub trait PrimitiveFactory<T> {
+    const DEFAULT: T;
+    fn make() -> T;
+}
+
+impl PrimitiveFactory<u16> for u32 {
+    const DEFAULT: u16 = 0;
+    fn make() -> u16 { 0 }
+}
+
+//- /app/Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+runtime = { path = "../runtime" }
+
+//- /app/src/lib.rs
+use runtime::PrimitiveFactory;
+
+pub fn use_it() {
+    let _ = u32::$primitive$;
+}
+"#,
+        &[AnalysisQuery::complete("primitive associated items", "primitive").in_lib("app")],
+        expect![[r#"
+            primitive associated items
+            - const DEFAULT
+            - const MAX
+            - fn count_ones
+            - fn from_be_bytes
+            - fn make
+        "#]],
+    );
+}
+
 #[test]
 fn completes_associated_items_for_types_traits_aliases_and_qualified_anchors() {
     check_analysis_queries(

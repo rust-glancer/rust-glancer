@@ -542,6 +542,149 @@ pub fn demo(maybe: shared::Maybe<shared::User>) {
 }
 
 #[test]
+fn hovers_over_primitive_method_reached_through_deref() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[workspace]
+members = ["runtime", "app"]
+resolver = "3"
+
+//- /runtime/Cargo.toml
+[package]
+name = "runtime"
+version = "0.1.0"
+edition = "2024"
+
+//- /runtime/src/lib.rs
+#[lang = "deref"]
+pub trait Project {
+    #[lang = "deref_target"]
+    type Target: ?Sized;
+
+    fn project(&self) -> &Self::Target;
+}
+
+impl str {
+    /// Finds a substring.
+    pub fn contains(&self, needle: &str) -> bool {
+        missing()
+    }
+}
+
+pub struct OwnedText;
+
+impl Project for OwnedText {
+    type Target = str;
+
+    fn project(&self) -> &Self::Target {
+        missing()
+    }
+}
+
+//- /app/Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+runtime = { path = "../runtime" }
+
+//- /app/src/lib.rs
+use runtime::OwnedText;
+pub fn use_it(text: OwnedText) {
+    let _found = text.con$method_hover$tains("needle");
+}
+"#,
+        &[
+            AnalysisQuery::hover("hover primitive method through Deref", "method_hover")
+                .in_lib("app"),
+        ],
+        expect![[r#"
+            hover primitive method through Deref
+            - range: 3:23-3:31
+            - block:
+              kind: method
+              path: runtime::contains
+              signature:
+                pub fn contains(&self, needle: &str) -> bool
+              docs:
+                Finds a substring.
+        "#]],
+    );
+}
+
+#[test]
+fn hovers_over_unkeyed_inherent_associated_paths() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[workspace]
+members = ["runtime", "app"]
+resolver = "3"
+
+//- /runtime/Cargo.toml
+[package]
+name = "runtime"
+version = "0.1.0"
+edition = "2024"
+
+//- /runtime/src/lib.rs
+impl u32 {
+    /// Largest represented value.
+    pub const MAX: u32 = 0;
+
+    /// Builds an integer from big-endian bytes.
+    pub fn from_be_bytes(_bytes: [u8; 4]) -> Self { 0 }
+}
+
+//- /app/Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+runtime = { path = "../runtime" }
+
+//- /app/src/lib.rs
+pub fn use_it(bytes: [u8; 4]) {
+    let _max = u32::M$primitive_const$AX;
+    let _value = u32::from_be_$primitive_function$bytes(bytes);
+}
+"#,
+        &[
+            AnalysisQuery::hover("hover primitive associated const", "primitive_const")
+                .in_lib("app"),
+            AnalysisQuery::hover("hover primitive associated function", "primitive_function")
+                .in_lib("app"),
+        ],
+        expect![[r#"
+            hover primitive associated const
+            - range: 2:21-2:24
+            - block:
+              kind: const
+              path: runtime::MAX
+              signature:
+                pub const MAX: u32
+              docs:
+                Largest represented value.
+
+            hover primitive associated function
+            - range: 3:23-3:36
+            - block:
+              kind: method
+              path: runtime::from_be_bytes
+              signature:
+                pub fn from_be_bytes(_bytes: [u8; 4]) -> Self
+              docs:
+                Builds an integer from big-endian bytes.
+        "#]],
+    );
+}
+
+#[test]
 fn hovers_with_bounded_item_previews() {
     check_analysis_queries(
         r#"

@@ -700,7 +700,7 @@ pub fn use_it() -> User {
                               arg
                                 expr e5 wrapper ref => &nominal struct body_never_closure_callable_fixture[lib]::crate::ReportedError @ 48:16-48:32
                                   inner
-                                    expr e4 method_call convert => nominal struct body_never_closure_callable_fixture[lib]::crate::ReportedError @ 48:17-48:32
+                                    expr e4 method_call convert -> fn trait body_never_closure_callable_fixture[lib]::crate::Convert::convert => nominal struct body_never_closure_callable_fixture[lib]::crate::ReportedError @ 48:17-48:32
                                       receiver
                                         expr e3 path error -> local v0 => nominal struct body_never_closure_callable_fixture[lib]::crate::Error @ 48:17-48:22
                           tail

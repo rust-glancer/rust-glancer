@@ -4,10 +4,8 @@
 //! same `Ty` and `GenericArg` vocabulary used by inference and Chalk, and the only bindable values
 //! are owner-scoped impl parameters.
 
-use std::collections::HashMap;
-
 use rg_ir_model::{FunctionRef, GenericDefRef, TraitApplicability, TraitImplRef, TypeDefRef};
-use rg_std::UniqueVec;
+use rg_semantic_ir::TraitImplSelfHead;
 
 use super::TraitGoal;
 use crate::inference::{InferenceConflict, InferenceSubstitution, InferenceTable};
@@ -15,11 +13,25 @@ use crate::{
     ClosureTyId, ConstValue, GenericArg, ImplHeader, Lifetime, Mutability, PrimitiveTy, Ty,
 };
 
-/// Top-level semantic type fingerprint used to index trait impl headers.
+/// Top-level semantic type fingerprint used to route trait impl discovery and proof.
+///
+/// Unlike [`TraitImplSelfHead`], this value is made from a fully lowered receiver rather than an
+/// impl declaration. The two vocabularies line up for source-nameable types:
+///
+/// ```text
+/// receiver `u32`          -> Primitive(UnsignedInt(U32))
+/// receiver `(u8, bool)`   -> Tuple(2)
+/// receiver `Vec<u8>`      -> Adt(Vec)
+/// receiver `|x| x + 1`   -> Closure(the body-owned closure identity)
+/// receiver `parse`        -> FnDef(the function declaration)
+/// ```
 ///
 /// `impl Trait for Vec<T>` can only match another `Vec<_>`, while `impl<T> Trait for T` must remain
-/// available for every receiver. Associated aliases are also left unindexed because the bounded
-/// matcher deliberately treats their hidden shape as uncertain.
+/// available for every receiver. A type parameter, alias, unknown type, or inference variable has
+/// no stable outer shape and therefore produces no head.
+///
+/// The fingerprint only chooses candidates. For `Vec<u8>`, `Adt(Vec)` says nothing about the `u8`;
+/// the canonical header matcher below still compares every generic argument and predicate.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum TraitSelfHead {
     Unit,
@@ -54,28 +66,26 @@ impl TraitSelfHead {
             Ty::Param(_) | Ty::Alias(_) | Ty::Unknown | Ty::InferVar { .. } => None,
         }
     }
-}
 
-/// Visible trait impls partitioned by the top-level shape of their canonical `Self` type.
-#[derive(Clone, Default)]
-pub(super) struct TraitImplCandidateIndex {
-    by_self_head: HashMap<TraitSelfHead, UniqueVec<TraitImplRef>>,
-    fallbacks: UniqueVec<TraitImplRef>,
-}
-
-impl TraitImplCandidateIndex {
-    pub(super) fn push(&mut self, trait_impl: TraitImplRef, header: &ImplHeader) {
-        if let Some(head) = TraitSelfHead::from_ty(&header.self_ty) {
-            self.by_self_head.entry(head).or_default().push(trait_impl);
-        } else {
-            self.fallbacks.push(trait_impl);
+    /// Project a canonical type head into the declaration index's source-nameable vocabulary.
+    ///
+    /// `Slice` maps directly to the declaration index's `Slice` lane. Closures and function items
+    /// have concrete type-layer identities, but no source impl header can name one, so they map to
+    /// `None`. That asks the declaration query for blanket and other fallback impls only.
+    pub(super) fn impl_lookup_head(self) -> Option<TraitImplSelfHead> {
+        match self {
+            Self::Unit => Some(TraitImplSelfHead::Unit),
+            Self::Never => Some(TraitImplSelfHead::Never),
+            Self::Primitive(primitive) => Some(TraitImplSelfHead::Primitive(primitive)),
+            Self::Tuple(fields) => u32::try_from(fields).ok().map(TraitImplSelfHead::Tuple),
+            Self::Array => Some(TraitImplSelfHead::Array),
+            Self::Slice => Some(TraitImplSelfHead::Slice),
+            Self::Reference(mutability) => Some(TraitImplSelfHead::Reference(mutability)),
+            Self::RawPointer(mutability) => Some(TraitImplSelfHead::RawPointer(mutability)),
+            Self::FnPointer(params) => u32::try_from(params).ok().map(TraitImplSelfHead::FnPointer),
+            Self::Adt(type_def) => Some(TraitImplSelfHead::Adt(type_def)),
+            Self::Closure(_) | Self::FnDef(_) => None,
         }
-    }
-
-    pub(super) fn candidates(&self, head: TraitSelfHead) -> UniqueVec<TraitImplRef> {
-        let mut candidates = self.by_self_head.get(&head).cloned().unwrap_or_default();
-        candidates.extend(self.fallbacks.iter().copied());
-        candidates
     }
 }
 

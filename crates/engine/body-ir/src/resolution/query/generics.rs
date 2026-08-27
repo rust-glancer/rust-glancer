@@ -1,11 +1,11 @@
 //! Owner-scoped generic substitution helpers for body queries.
 
 use rg_def_map::DefMapSource;
-use rg_ir_model::{DefMapRef, GenericDefRef, ImplRef, ItemOwner, ScopeId, TraitDefRef};
+use rg_ir_model::{DefMapRef, GenericDefRef, ItemOwner, ScopeId, TraitDefRef};
 use rg_item_tree::GenericArg as ItemGenericArg;
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::{GenericParamSource, ItemStoreSource};
-use rg_ty::{AdtTy, GenericArg, Substitution, Ty};
+use rg_ty::{AdtTy, GenericArg, Substitution, TraitApplication, Ty};
 
 use crate::resolution::BodyResolutionContext;
 
@@ -58,14 +58,23 @@ where
         })
     }
 
-    /// Combine the receiver ADT arguments with bindings learned from its selected impl header.
-    pub(crate) fn subst_for_receiver_owner(
+    /// Build an item substitution from receiver facts and already-selected impl evidence.
+    ///
+    /// Receiver lookup has already matched `impl<T> [T]` against `[User]`, so an impl-owned item
+    /// receives that `T = User` substitution directly. Passing it through this boundary avoids a
+    /// second header match and makes the absence of impl evidence explicit for module- and
+    /// trait-owned declarations.
+    pub(crate) fn subst_for_selected_item_owner(
         &self,
         origin: DefMapRef,
         owner: ItemOwner,
-        receiver_ty: &AdtTy,
+        receiver_ty: &Ty,
+        impl_subst: Option<&Substitution>,
     ) -> Result<Substitution, PackageStoreError> {
-        let mut subst = self.subst_for_nominal_ty(receiver_ty)?;
+        let mut subst = match receiver_ty {
+            Ty::Adt(receiver_ty) => self.subst_for_nominal_ty(receiver_ty)?,
+            _ => Substitution::new(),
+        };
         match owner {
             ItemOwner::Module(_) => {}
             ItemOwner::Trait(id) => {
@@ -77,27 +86,36 @@ where
                 if let Some(self_param) = generics.iter().find_map(|param| {
                     matches!(param.source(), GenericParamSource::TraitSelf).then_some(param.param())
                 }) {
-                    subst.push(
-                        self_param,
-                        GenericArg::Type(Box::new(Ty::adt(receiver_ty.clone()))),
-                    );
+                    subst.push(self_param, GenericArg::Type(Box::new(receiver_ty.clone())));
                 }
             }
-            ItemOwner::Impl(impl_id) => {
-                let impl_ref = ImplRef {
-                    origin,
-                    id: impl_id,
-                };
-                if let Some((impl_subst, _)) = self
-                    .context
-                    .impl_matcher()
-                    .impl_self_subst_for_impl(impl_ref, &Ty::adt(receiver_ty.clone()))?
-                {
-                    subst.extend(impl_subst);
+            ItemOwner::Impl(_) => {
+                // Malformed or incomplete code can leave an impl-owned declaration without a
+                // usable header match. Keep the receiver's nominal bindings and fail soft rather
+                // than reconstructing evidence that receiver discovery deliberately rejected.
+                if let Some(impl_subst) = impl_subst {
+                    subst.extend(impl_subst.clone());
                 }
             }
         }
         Ok(subst)
+    }
+
+    /// Bind the selected trait application to the trait declaration's parameter identities.
+    ///
+    /// Method signatures are stored under the trait, not the impl. For
+    /// `impl Convert<u16> for u8`, the selection's application maps the trait's `Self` to `u8`
+    /// and its `T` to `u16`; the impl substitution alone has no trait-owned `T` key.
+    pub(crate) fn subst_for_trait_application(
+        &self,
+        application: &TraitApplication,
+    ) -> Result<Substitution, PackageStoreError> {
+        let generics = self
+            .context
+            .item_paths()
+            .generics()
+            .generics(GenericDefRef::Trait(application.def))?;
+        Ok(Substitution::from_args(&generics, &application.args))
     }
 
     /// Lower a turbofish against the declaration owner's canonical parameter order.

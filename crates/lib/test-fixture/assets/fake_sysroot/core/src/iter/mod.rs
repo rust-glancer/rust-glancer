@@ -6,7 +6,7 @@ pub trait FromIterator<A> {}
 
 pub trait IntoIterator {
     type Item;
-    type IntoIter;
+    type IntoIter: Iterator<Item = Self::Item>;
 
     #[lang = "into_iter"]
     fn into_iter(self) -> Self::IntoIter;

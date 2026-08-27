@@ -52,6 +52,7 @@ use crate::IndexedViewDb;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct IndexedMemberAccessSite {
     receiver: ExprRef,
+    scope: LexicalScopeRef,
     receiver_span: Span,
     member_prefix_span: Span,
 }
@@ -140,6 +141,10 @@ impl IndexedTraitImplSite {
 impl IndexedMemberAccessSite {
     pub fn receiver(self) -> ExprRef {
         self.receiver
+    }
+
+    pub fn scope(self) -> LexicalScopeRef {
+        self.scope
     }
 
     pub fn receiver_span(self) -> Span {

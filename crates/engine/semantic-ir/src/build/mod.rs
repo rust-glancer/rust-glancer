@@ -56,8 +56,9 @@ impl SemanticIrDb {
 
         {
             let mut mutator = next.mutator();
-            impl_headers::apply_impl_header_resolutions(&mut mutator, impl_resolutions);
-            mutator.rebuild_lookup_indexes(&packages);
+            let self_heads =
+                impl_headers::apply_impl_header_resolutions(&mut mutator, impl_resolutions);
+            mutator.rebuild_lookup_indexes(&packages, &self_heads);
             mutator.compact_packages(&packages);
         }
 
