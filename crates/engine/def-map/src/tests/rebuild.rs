@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use rg_item_tree::ItemTreeDb;
-use rg_package_store::{LoadPackage, PackageLoader, PackageStoreError};
+use rg_package_store::PackageStoreError;
 use rg_parse::ParseDb;
 use rg_text::PackageNameInterners;
 use rg_workspace::{WorkspaceLoweringConfig, WorkspaceMetadata};
@@ -9,8 +9,10 @@ use test_fixture::{CrateFixture, fixture_crate};
 
 use rg_ir_model::{CrateId, CrateRef};
 
-use crate::PackageDefMaps;
-use crate::{DefMapBuildProgress, DefMapDb, PackageSlot};
+use crate::{
+    CrateData, DefMapBuildProgress, DefMapDb, DefMapLoader, LoadDefMap, PackageDefMaps,
+    PackageDefMapsManifest, PackageSlot,
+};
 
 #[test]
 fn rebuild_resolves_dirty_imports_through_clean_packages() {
@@ -227,7 +229,7 @@ impl RebuildFixture {
 
         let (parse, item_tree, mut names) = Self::build_item_tree(&self.workspace);
         let package = package_slot(&parse, package_name);
-        let old_read = self.old.read_txn(PackageLoader::new(ExpectedPackageLoader {
+        let old_read = self.old.read_txn(DefMapLoader::new(ExpectedPackageLoader {
             package: self.clean_package,
             payload: Arc::clone(&self.clean_payload),
         }));
@@ -329,12 +331,32 @@ struct ExpectedPackageLoader {
     payload: Arc<PackageDefMaps>,
 }
 
-impl LoadPackage<PackageDefMaps> for ExpectedPackageLoader {
-    fn load(&self, package: PackageSlot) -> Result<Arc<PackageDefMaps>, PackageStoreError> {
+impl LoadDefMap for ExpectedPackageLoader {
+    fn load_manifest(
+        &self,
+        package: PackageSlot,
+    ) -> Result<Arc<PackageDefMapsManifest>, PackageStoreError> {
         assert_eq!(
             package, self.package,
             "only the expected clean dependency package should be loaded"
         );
-        Ok(Arc::clone(&self.payload))
+        Ok(Arc::new(self.payload.manifest()))
+    }
+
+    fn load_crate(
+        &self,
+        package: PackageSlot,
+        crate_id: CrateId,
+    ) -> Result<Arc<CrateData>, PackageStoreError> {
+        assert_eq!(
+            package, self.package,
+            "only the expected clean dependency package should be loaded"
+        );
+        Ok(Arc::new(
+            self.payload
+                .crate_data(crate_id)
+                .expect("requested clean dependency crate should exist")
+                .clone(),
+        ))
     }
 }

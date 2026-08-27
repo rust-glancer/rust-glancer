@@ -104,6 +104,30 @@ pub trait DefMapSource {
 
     fn prelude_module(&self, crate_ref: CrateRef) -> Result<Option<ModuleRef>, Self::Error>;
 
+    /// Returns the unique dependency crates whose ordinary items are visible from this crate.
+    ///
+    /// Item lookup needs only crate identities, not the names used to import their roots. A source
+    /// backed by compact package directories overrides this method and can therefore walk a chain
+    /// such as `app -> library -> core` without loading any of those crates' module scopes. Body-local
+    /// and test sources can use this default, which derives the same identities from extern roots and
+    /// the standard prelude.
+    fn item_lookup_dependencies(
+        &self,
+        crate_ref: CrateRef,
+    ) -> Result<UniqueVec<CrateRef>, Self::Error> {
+        let mut dependencies = self
+            .extern_roots(crate_ref)?
+            .into_iter()
+            .filter_map(|(_, module)| module.origin.as_crate_ref())
+            .collect::<UniqueVec<_>>();
+        if let Some(module) = self.prelude_module(crate_ref)?
+            && let Some(crate_ref) = module.origin.as_crate_ref()
+        {
+            dependencies.push(crate_ref);
+        }
+        Ok(dependencies)
+    }
+
     fn root_module(&self, crate_ref: CrateRef) -> Result<Option<ModuleRef>, Self::Error>;
 }
 
@@ -132,6 +156,13 @@ impl<T: DefMapSource + ?Sized> DefMapSource for &T {
 
     fn prelude_module(&self, crate_ref: CrateRef) -> Result<Option<ModuleRef>, Self::Error> {
         (**self).prelude_module(crate_ref)
+    }
+
+    fn item_lookup_dependencies(
+        &self,
+        crate_ref: CrateRef,
+    ) -> Result<UniqueVec<CrateRef>, Self::Error> {
+        (**self).item_lookup_dependencies(crate_ref)
     }
 
     fn root_module(&self, crate_ref: CrateRef) -> Result<Option<ModuleRef>, Self::Error> {
@@ -168,9 +199,9 @@ where
     ///
     /// For example, `app -> runtime -> derive_macro -> parser` contributes `app` and `runtime` to
     /// the app's item lookup. Analysing `derive_macro` itself contributes `derive_macro` and
-    /// `parser`.
-    pub fn item_lookup_crates_from(&self, root: CrateRef) -> Result<Vec<CrateRef>, S::Error> {
-        let mut visible_crates = Vec::new();
+    /// `parser`. Each crate appears at most once in traversal order.
+    pub fn item_lookup_crates_from(&self, root: CrateRef) -> Result<UniqueVec<CrateRef>, S::Error> {
+        let mut visible_crates = UniqueVec::new();
         let mut visited_crates = UniqueVec::new();
         let mut pending_crates = vec![root];
 
@@ -184,17 +215,7 @@ where
             }
             visible_crates.push(crate_ref);
 
-            for (_, module) in self.source.extern_roots(crate_ref)? {
-                if let Some(crate_ref) = module.origin.as_crate_ref() {
-                    pending_crates.push(crate_ref);
-                }
-            }
-
-            if let Some(module) = self.source.prelude_module(crate_ref)?
-                && let Some(crate_ref) = module.origin.as_crate_ref()
-            {
-                pending_crates.push(crate_ref);
-            }
+            pending_crates.extend(self.source.item_lookup_dependencies(crate_ref)?);
         }
 
         Ok(visible_crates)

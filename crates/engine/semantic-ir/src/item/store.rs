@@ -175,8 +175,8 @@ impl ItemStore {
         self.local_items.get(local_def).copied().flatten()
     }
 
-    pub(crate) fn lang_item(&self, lang_item: LangItem) -> ExpectedUnique<SemanticItemRef> {
-        self.lang_items.target(lang_item, self.origin)
+    pub(super) fn lang_items(&self) -> &LangItemIndex {
+        &self.lang_items
     }
 
     pub fn traits_with_refs(&self) -> impl Iterator<Item = (TraitDefRef, &TraitData)> {

@@ -150,7 +150,7 @@ pub(super) fn build(
     // replaced in every phase DB; omitted packages remain cache-backed and are loaded lazily
     // through the same package artifact whenever a dependency query needs them.
     let baseline_def_map =
-        DefMapDb::from_package_store(PackageStore::all_offloaded(parse.package_count()));
+        DefMapDb::from_offloaded_manifests(std::mem::take(&mut build_plan.def_map_manifests));
     let baseline_def_map_txn =
         baseline_def_map.read_txn_for_subset(loaders.def_map.clone(), &rebuild_subset);
     // Macro expansion may now request an out-of-line module or include. Keep Parse and ItemTree
@@ -342,11 +342,14 @@ pub(super) fn build(
 /// Phase inputs retained after optional startup cache probing.
 ///
 /// Packages omitted from `source_packages` already have matching offloaded artifacts, so later
-/// build phases can read them lazily instead of lowering them from source. Body IR coverage gives
-/// each provisional package-store entry the small state it needs before the payload is available.
+/// build phases can read them lazily instead of lowering them from source. The compact DefMap
+/// directories route dependency and file queries, while Body IR coverage tells its provisional
+/// package-store entry which deferred data is already available.
 #[derive(MemorySize)]
 pub(super) struct PackageBuildPlan {
     source_packages: PhasePackageSet,
+    /// One compact DefMap directory per cache hit; source-built slots have no usable old directory.
+    def_map_manifests: Vec<Option<rg_def_map::PackageDefMapsManifest>>,
     /// Exact cache-hit coverage plus a conservative seed for packages rebuilt immediately.
     body_ir_coverage: Vec<PackageBodiesCoverage>,
 }
@@ -399,33 +402,40 @@ impl PackageBuildPlan {
                 .collect(),
         );
 
-        // BodyIrDb needs one package-shaped offloaded entry before its builder starts. Cache hits
-        // already have exact coverage. Source packages receive a conservative policy-shaped value
-        // that is replaced by their actual build output before the database escapes.
-        let body_ir_coverage = parse
+        // Shape both provisional stores in package-slot order. Cache hits keep the DefMap directory
+        // and exact Body IR coverage accepted by probing. Source packages have no valid old
+        // directory and receive conservative Body coverage that their build output replaces.
+        let (def_map_manifests, body_ir_coverage) = parse
             .packages()
             .iter()
             .zip(package_selections)
             .map(|(package, selection)| match selection {
-                StartupPackageSelection::Cached { body_ir_coverage } => body_ir_coverage,
-                StartupPackageSelection::BuildFromSource => PackageBodiesCoverage::from_crates(
-                    package
-                        .targets()
-                        .iter()
-                        .map(|target| {
-                            if body_ir_policy.should_lower_target(package, target) {
-                                CrateBodiesCoverage::Missing
-                            } else {
-                                CrateBodiesCoverage::SkippedByPolicy
-                            }
-                        })
-                        .collect(),
+                StartupPackageSelection::Cached {
+                    body_ir_coverage,
+                    def_map_manifest,
+                } => (Some(def_map_manifest), body_ir_coverage),
+                StartupPackageSelection::BuildFromSource => (
+                    None,
+                    PackageBodiesCoverage::from_crates(
+                        package
+                            .targets()
+                            .iter()
+                            .map(|target| {
+                                if body_ir_policy.should_lower_target(package, target) {
+                                    CrateBodiesCoverage::Missing
+                                } else {
+                                    CrateBodiesCoverage::SkippedByPolicy
+                                }
+                            })
+                            .collect(),
+                    ),
                 ),
             })
-            .collect();
+            .unzip();
 
         Self {
             source_packages,
+            def_map_manifests,
             body_ir_coverage,
         }
     }

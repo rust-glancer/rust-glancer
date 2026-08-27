@@ -9,6 +9,7 @@ use rg_ir_model::{BodyId, BodyRef, CrateRef, DefMapRef, ModuleRef};
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::SemanticIrReadTxn;
 use rg_semantic_ir::{ItemStore, ItemStoreSource};
+use rg_std::UniqueVec;
 
 use crate::BodyLocalItems;
 
@@ -86,6 +87,13 @@ impl DefMapSource for BodyBuildQuerySource<'_, '_> {
 
     fn prelude_module(&self, crate_ref: CrateRef) -> Result<Option<ModuleRef>, PackageStoreError> {
         self.def_map.prelude_module(crate_ref)
+    }
+
+    fn item_lookup_dependencies(
+        &self,
+        crate_ref: CrateRef,
+    ) -> Result<UniqueVec<CrateRef>, PackageStoreError> {
+        self.def_map.item_lookup_dependencies(crate_ref)
     }
 
     fn root_module(&self, crate_ref: CrateRef) -> Result<Option<ModuleRef>, PackageStoreError> {

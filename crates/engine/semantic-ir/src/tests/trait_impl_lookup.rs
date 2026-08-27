@@ -73,12 +73,12 @@ impl<T> Marker for T {}
 
     let def_maps = fixture
         .def_map_db()
-        .read_txn(rg_package_store::PackageLoader::resident_only(
+        .read_txn(rg_def_map::DefMapLoader::resident_only(
             "resident trait-head fixture",
         ));
     let items = fixture
         .semantic_ir_db()
-        .read_txn(rg_package_store::PackageLoader::resident_only(
+        .read_txn(crate::SemanticIrLoader::resident_only(
             "resident trait-head fixture",
         ));
     let lookup = crate::ItemLookupQuery::build_from(&crate::CrateItemQuery::new(

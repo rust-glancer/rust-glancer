@@ -30,8 +30,8 @@ use anyhow::Context as _;
 use atomic_write_file::AtomicWriteFile;
 
 use super::super::{
-    CachedPackage, Fingerprint, PackageCacheCodec, PackageCacheInstance, PackageCacheWriteInput,
-    WorkspaceCachePlan,
+    CachedPackage, Fingerprint, PackageCacheBodyUpdateInput, PackageCacheCodec,
+    PackageCacheInstance, PackageCacheWriteInput, WorkspaceCachePlan,
 };
 use super::artifact::PackageArtifactReader;
 
@@ -287,15 +287,18 @@ impl PackageCacheUpdate<'_> {
     /// Encode and atomically replace one artifact inside this still-incomplete package set.
     ///
     /// Success here is not a package-set commit. The marker remains until the owner has written all
-    /// affected packages and calls `commit`.
-    /// Encode borrowed resident phases and write their final fragments in format order.
+    /// affected packages and calls `commit`. The borrowed resident phases are encoded directly into
+    /// write-ready fragments rather than cloned into an owned aggregate first.
     pub(crate) fn write_input(&self, input: PackageCacheWriteInput<'_>) -> anyhow::Result<()> {
         let encoded = PackageCacheCodec::encode_write_input(input)?;
         let path = self.store.package_artifact_path(&input.header.package);
         PackageCacheStore::write_atomically(&path, |file| encoded.write_to(file))
     }
 
-    /// Rewrite one package while copying encoded Body IR for untouched cached targets.
+    /// Rewrites one package while copying encoded Body IR shards for untouched cached targets.
+    ///
+    /// DefMap and Semantic IR are newly encoded because their resident packages were rebuilt. Only
+    /// sibling Body IR files outside the exact build scope are copied from the pinned reader.
     pub(crate) fn write_input_reusing_cached_body_ir(
         &self,
         input: PackageCacheWriteInput<'_>,
@@ -309,6 +312,41 @@ impl PackageCacheUpdate<'_> {
                     .map_err(anyhow::Error::new)
             },
         )?;
+        let path = self.store.package_artifact_path(&input.header.package);
+        PackageCacheStore::write_atomically(&path, |file| encoded.write_to(file))
+    }
+
+    /// Rewrites Body IR while copying both declaration sections from the prior artifact.
+    ///
+    /// This path is used after exact Body materialization leaves declarations offloaded. The reader
+    /// pins the old revision while the new atomic artifact is assembled, so copied sections and
+    /// untouched Body shards cannot come from different revisions.
+    pub(crate) fn write_body_update_reusing_cached_sections(
+        &self,
+        input: PackageCacheBodyUpdateInput<'_>,
+        reader: &PackageArtifactReader,
+    ) -> anyhow::Result<()> {
+        // The outer ranges were validated when the reader opened. Preserve their bytes without
+        // decoding sibling crates; later exact reads still validate the nested declarations.
+        let def_map = reader
+            .read_encoded_def_map_section()
+            .map_err(anyhow::Error::new)
+            .context("read cached DefMap section")?;
+        let semantic_ir = reader
+            .read_encoded_semantic_ir_section()
+            .map_err(anyhow::Error::new)
+            .context("read cached Semantic IR section")?;
+        let encoded = PackageCacheCodec::encode_body_update_reusing_cached_sections(
+            input,
+            def_map,
+            semantic_ir,
+            |crate_id, file| {
+                reader
+                    .read_encoded_body_file_shard(crate_id, file)
+                    .map_err(anyhow::Error::new)
+            },
+        )
+        .context("encode Body IR update with cached declaration sections")?;
         let path = self.store.package_artifact_path(&input.header.package);
         PackageCacheStore::write_atomically(&path, |file| encoded.write_to(file))
     }

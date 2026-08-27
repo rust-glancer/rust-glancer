@@ -1,10 +1,9 @@
 //! Body IR package store and transaction entry points.
 
-use rg_def_map::PackageDefMaps as DefMapPackage;
-use rg_def_map::PackageSlot;
+use rg_def_map::{DefMapLoader, PackageSlot};
 use rg_ir_model::CrateRef;
-use rg_package_store::{PackageLoader, PackageStore, PackageSubset};
-use rg_semantic_ir::PackageIr;
+use rg_package_store::{PackageStore, PackageSubset};
+use rg_semantic_ir::SemanticIrLoader;
 use rg_std::MemorySize;
 use rg_text::PackageNameInterners;
 
@@ -53,8 +52,8 @@ impl BodyIrDb {
         semantic_ir: &'db rg_semantic_ir::SemanticIrDb,
         packages: &'db [PackageSlot],
         interners: &'names mut PackageNameInterners,
-        def_map_loader: PackageLoader<'db, DefMapPackage>,
-        semantic_ir_loader: PackageLoader<'db, PackageIr>,
+        def_map_loader: DefMapLoader<'db>,
+        semantic_ir_loader: SemanticIrLoader<'db>,
         subset: &'db PackageSubset,
     ) -> BodyIrDbBuilder<'db, 'names> {
         BodyIrDbBuilder::new(

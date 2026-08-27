@@ -228,7 +228,7 @@ pub fn use_it() {
             - expr path CURRENT @ 17:20-17:27
 
             symbol at local variant path
-            - value path Action::Start @ 18:27-18:32
+            - expr path Action::Start @ 18:19-18:32
         "#]],
     );
 }

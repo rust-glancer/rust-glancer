@@ -19,7 +19,7 @@ pub mod testonly;
 mod tests;
 
 pub use self::{
-    ir::{PackageIr, SemanticIrStats},
+    ir::{CrateIr, PackageIr, PackageIrManifest, SemanticIrStats},
     item::{
         ConstData, ConstSignature, CrateItemQuery, EnumData, EnumVariantData, FieldData,
         FunctionData, FunctionSignature, GenericParamSource, GenericParamView, Generics,
@@ -29,5 +29,5 @@ pub use self::{
         SemanticItemView, StaticData, StructData, TraitData, TraitImplSelfHead, TypeAliasData,
         TypeAliasSignature, TypePathContext, TypePathResolution, UnionData,
     },
-    store::{SemanticIrDb, SemanticIrReadTxn},
+    store::{LoadSemanticIr, SemanticIrDb, SemanticIrLoader, SemanticIrReadTxn},
 };

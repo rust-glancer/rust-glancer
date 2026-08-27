@@ -1,15 +1,12 @@
 use crate::DefMap;
 use rg_ir_model::CrateRef;
 use rg_item_tree::{ItemTreeDb, testonly::ItemTreeFixture};
-use rg_package_store::{PackageLoader, PackageStore};
 use rg_parse::{CargoTarget, Package, ParseDb};
 use rg_text::PackageNameInterners;
 use rg_workspace::{SysrootSources, TargetKind, WorkspaceLoweringConfig, WorkspaceMetadata};
 use test_fixture::{CrateFixture, fixture_crate};
 
-use crate::{
-    DefMapBuildProgress, DefMapDb, MacroExpansionPerformancePreference, PackageDefMaps, PackageSlot,
-};
+use crate::{DefMapBuildProgress, DefMapDb, MacroExpansionPerformancePreference, PackageSlot};
 
 /// End-to-end fixture for tests that need name resolution data.
 pub struct DefMapFixture {
@@ -159,10 +156,10 @@ pub(crate) fn build_source_closed_def_map(
     names: &mut PackageNameInterners,
 ) -> DefMapDb {
     let package_count = parse.package_count();
-    let baseline_store: PackageStore<PackageDefMaps> = PackageStore::all_offloaded(package_count);
-    let baseline = DefMapDb::from_package_store(baseline_store);
-    let baseline_read =
-        baseline.read_txn(PackageLoader::resident_only("source-closed DefMap fixture"));
+    let baseline = DefMapDb::all_offloaded(package_count);
+    let baseline_read = baseline.read_txn(crate::DefMapLoader::resident_only(
+        "source-closed DefMap fixture",
+    ));
     let packages = (0..package_count).map(PackageSlot).collect::<Vec<_>>();
     let mut session = baseline
         .start_package_build(

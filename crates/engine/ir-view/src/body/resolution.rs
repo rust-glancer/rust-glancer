@@ -7,10 +7,13 @@
 
 use anyhow::Context as _;
 use rg_body_ir::{BodyAssociatedPathPrefix, BodyResolutionContext, BodyView};
-use rg_ir_model::{BodyRef, EnumVariantRef, Path, ScopeId, identity::DeclarationRef};
+use rg_ir_model::{
+    BodyRef, DefMapRef, EnumVariantRef, ModuleId, ModuleRef, Path, ScopeId,
+    identity::DeclarationRef,
+};
 use rg_item_tree::TypeRef;
 use rg_semantic_ir::{ItemLookupQuery, TypePathResolution};
-use rg_ty::{AssociatedItemCandidateRef, MemberMethodCandidateRef, Ty};
+use rg_ty::{AssociatedItemCandidateRef, ItemPathQuery, MemberMethodCandidateRef, Ty};
 
 use crate::IndexedViewDb;
 
@@ -44,19 +47,44 @@ impl<'a, 'db> BodyResolutionView<'a, 'db> {
         Ok(Some((body, item_lookup_query)))
     }
 
-    /// Resolve a type path in a body scope.
+    /// Resolves a type path while keeping the common lexical lookup on the exact-read path.
+    ///
+    /// Ordinary names return before visibility-wide item lookup is assembled. `Self`, associated
+    /// aliases, and unresolved lexical paths continue through the complete body resolution context.
     pub(crate) fn type_path_resolution(
         &self,
         body_ref: BodyRef,
         scope: ScopeId,
         path: &Path,
     ) -> anyhow::Result<Option<TypePathResolution>> {
-        let Some((body, item_lookup_query)) = self
-            .body_with_lookup(body_ref)
-            .context("load body type path context")?
+        let Some(body) = self
+            .db
+            .body_ir
+            .body(body_ref)
+            .context("load body type path")?
         else {
             return Ok(None);
         };
+
+        // Paths such as `App` or `bevy::prelude::App` already have an identity in DefMap. Resolve
+        // them from the lexical body scope first so the query reads only the DefMap and item stores
+        // on that path. Associated aliases and `Self` need the richer context built below.
+        let from = ModuleRef {
+            origin: DefMapRef::Body(body_ref),
+            module: ModuleId(scope.0),
+        };
+        let item_paths = ItemPathQuery::new(self.db, self.db);
+        let direct_resolution = item_paths
+            .resolve_lexical_type_path(from, path)
+            .context("resolve lexical body type path")?;
+        if !matches!(direct_resolution, TypePathResolution::Unknown) {
+            return Ok(Some(direct_resolution));
+        }
+
+        let item_lookup_query = self
+            .db
+            .item_lookup_query(body_ref.crate_ref)
+            .context("assemble item lookup query for body type path")?;
         let trait_selection = self.db.trait_selection_for_body(body_ref);
 
         Ok(Some(

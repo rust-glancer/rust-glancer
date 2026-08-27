@@ -6,6 +6,7 @@
 
 use std::fmt::Write as _;
 
+use anyhow::Context as _;
 use rg_def_map::DefMapSource;
 use rg_ir_model::{
     ConstRef, DefMapRef, FunctionRef, ImplId, ImplRef, ItemOwner, ModuleRef, StaticRef,
@@ -30,12 +31,19 @@ impl<'a, 'db> PathView<'a, 'db> {
         }
     }
 
-    /// Return the full path for a crate-owned module.
+    /// Returns the full path for a crate-owned module without loading sibling Cargo targets.
+    ///
+    /// Module parents and the crate name come from the exact crate DefMap. The package name is used
+    /// only when the crate slot has no dedicated crate metadata.
     pub fn module_path(&self, module_ref: ModuleRef) -> anyhow::Result<Option<String>> {
         let Some(crate_ref) = module_ref.origin.as_crate_ref() else {
             return Ok(None);
         };
-        let package = self.db.def_map.package(crate_ref.package)?;
+        let crate_data = self
+            .db
+            .def_map
+            .crate_data(crate_ref)
+            .context("load crate data for module path")?;
         let mut names = Vec::new();
         let mut current = module_ref.module;
 
@@ -59,10 +67,14 @@ impl<'a, 'db> PathView<'a, 'db> {
             current = parent;
         }
 
-        let root_name = package
-            .crate_data(crate_ref.crate_id)
-            .map(|data| data.name())
-            .unwrap_or_else(|| package.package_name());
+        let root_name = match crate_data {
+            Some(crate_data) => crate_data.name(),
+            None => self
+                .db
+                .def_map
+                .package_name(crate_ref.package)
+                .context("load package name for module path")?,
+        };
         let mut path = self.syntax.identifier(root_name).to_string();
         for name in names.iter().rev() {
             write!(path, "::{}", self.syntax.identifier(name))

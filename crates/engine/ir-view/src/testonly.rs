@@ -5,7 +5,6 @@ use rg_ir_model::{
     BodyRef, BodySource, CrateRef, DefMapRef, ExprId, FunctionRef, GenericParamRef, ItemOwner,
     ModuleRef, TraitDefRef, TypeDefId, TypeDefRef,
 };
-use rg_package_store::PackageLoader;
 use rg_parse::ParseDb;
 use rg_semantic_ir::{
     GenericParamSource, GenericsQuery, ItemStore, ItemStoreQuery, SemanticIrDb,
@@ -42,10 +41,12 @@ impl ViewFixture {
         IndexedViewDb::new(
             self.body_ir
                 .def_map_db()
-                .read_txn(PackageLoader::resident_only("resident view fixture")),
-            self.body_ir
-                .semantic_ir_db()
-                .read_txn(PackageLoader::resident_only("resident view fixture")),
+                .read_txn(rg_def_map::DefMapLoader::resident_only(
+                    "resident view fixture",
+                )),
+            self.body_ir.semantic_ir_db().read_txn(
+                rg_semantic_ir::SemanticIrLoader::resident_only("resident view fixture"),
+            ),
             self.body_ir
                 .body_ir_db()
                 .read_txn(BodyIrLoader::resident_only("resident view fixture")),

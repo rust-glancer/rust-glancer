@@ -2,7 +2,7 @@ use crate::ItemStore;
 use rg_def_map::testonly::DefMapFixture;
 use rg_def_map::{DefMap, PackageSlot};
 use rg_ir_model::CrateRef;
-use rg_package_store::{PackageLoader, PackageStore, PackageSubset};
+use rg_package_store::{PackageStore, PackageSubset};
 use rg_parse::ParseDb;
 
 use crate::SemanticIrDb;
@@ -39,8 +39,8 @@ impl SemanticIrFixture {
                 def_map.item_tree_db(),
                 def_map.def_map_db(),
                 &packages,
-                PackageLoader::resident_only("fixture DefMap"),
-                PackageLoader::resident_only("fixture Semantic IR"),
+                rg_def_map::DefMapLoader::resident_only("fixture DefMap"),
+                crate::SemanticIrLoader::resident_only("fixture Semantic IR"),
                 &subset,
             )
             .expect("fixture semantic ir db should build");

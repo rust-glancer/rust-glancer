@@ -12,14 +12,15 @@
 use std::collections::HashMap;
 
 use rg_ir_model::{
-    AssocItemId, CrateRef, FunctionRef, ImplId, ImplRef, Mutability, PrimitiveTy, TraitDefRef,
-    TraitId, TraitImplRef, TypeDefRef,
+    AssocItemId, CrateRef, DefMapRef, FunctionRef, ImplId, ImplRef, Mutability, PrimitiveTy,
+    SemanticItemRef, TraitDefRef, TraitId, TraitImplRef, TypeDefRef,
 };
-use rg_std::{MemorySize, Shrink, UniqueVec};
+use rg_item_tree::LangItem;
+use rg_std::{ExpectedUnique, MemorySize, Shrink, UniqueVec};
 use rg_text::Name;
 use wincode::{SchemaRead, SchemaWrite};
 
-use crate::ItemStore;
+use crate::{ItemStore, item::lang_item::LangItemIndex};
 
 /// Outer receiver shape used to narrow saved trait impl declarations before semantic proof.
 ///
@@ -64,14 +65,18 @@ pub enum TraitImplSelfHead {
     Adt(TypeDefRef),
 }
 
-/// Receiver- and trait-keyed candidates declared by one semantic crate.
+/// Candidate tables and compiler language identities declared by one semantic crate.
 ///
 /// For example, an index contains `impl Widget { fn draw(...) }` when that impl is declared in the
 /// indexed crate. It does not contain a method declared by a dependency merely because that
 /// dependency is visible; [`crate::ItemLookupQuery`] brings the two crate-local indexes together at
-/// lookup time.
+/// lookup time. Sparse language-item entries live here for the same reason: discovering a compiler
+/// identity should not require loading the crate's complete declaration store.
 #[derive(Debug, Clone, PartialEq, Eq, Default, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct ItemLookupIndex {
+    // Language items are lookup metadata too. Keeping this sparse index here lets a use-site query
+    // assemble compiler identities without restoring every visible declaration store.
+    lang_items: LangItemIndex,
     // Inherent lookup starts from a receiver type. These maps jump directly to impls whose
     // already-resolved `Self` type mentions that receiver.
     pub(crate) inherent_impls_by_type: HashMap<TypeDefRef, UniqueVec<ImplRef>>,
@@ -104,9 +109,22 @@ impl ItemLookupIndex {
         store: &ItemStore,
         self_heads: &HashMap<ImplRef, TraitImplSelfHead>,
     ) -> Self {
-        let mut index = Self::default();
+        let mut index = Self {
+            lang_items: store.lang_items().clone(),
+            ..Self::default()
+        };
         index.extend_from_store(store, self_heads);
         index
+    }
+
+    /// Projects one crate-local language-item entry into its project-wide semantic identity.
+    pub(crate) fn lang_item(
+        &self,
+        crate_ref: CrateRef,
+        lang_item: LangItem,
+    ) -> ExpectedUnique<SemanticItemRef> {
+        self.lang_items
+            .target(lang_item, DefMapRef::Crate(crate_ref))
     }
 
     /// Count retained candidate references across every declaration-local lookup table.

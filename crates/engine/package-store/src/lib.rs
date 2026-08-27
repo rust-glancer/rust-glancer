@@ -1,28 +1,24 @@
 //! Package-slot-indexed storage for retained analysis package data.
 //!
 //! Package payloads are retained behind `Arc` while resident, and selected slots can be marked as
-//! offloaded after a durable package artifact is written by the project cache layer. Read
-//! transactions can receive a loader for offloaded slots, so callers still work with logical
-//! package slots instead of treating residency as project topology. A phase may also retain a
-//! compact summary inside an offloaded slot when a query needs metadata without loading the full
-//! payload.
+//! offloaded after a durable package artifact is written by the project cache layer. A phase may
+//! retain a compact summary inside an offloaded slot when queries need metadata without loading the
+//! full payload.
+//!
+//! Loading is deliberately owned by each analysis phase. DefMap, Semantic IR, and Body IR use
+//! different storage shards, so their read transactions decide independently what an access needs
+//! to materialize. This crate only owns the shared resident/offloaded package state.
 
 mod error;
-mod loader;
-mod txn;
 
 use std::sync::Arc;
 
 use rg_std::{MemoryRecorder, MemorySize, Shrink};
 use rg_workspace::PackageSlot;
 
-pub use self::{
-    error::{MalformedCacheError, PackageLoadError, PackageStoreError},
-    loader::{LoadPackage, PackageLoader},
-    txn::PackageStoreReadTxn,
-};
+pub use self::error::{MalformedCacheError, PackageLoadError, PackageStoreError};
 
-/// Package slots visible inside one read transaction.
+/// Package slots selected for one phase-specific read transaction.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PackageSubset {
     packages: Vec<bool>,
@@ -134,47 +130,6 @@ impl<T, OffloadedState> PackageStore<T, OffloadedState> {
             .iter()
             .enumerate()
             .map(|(package_idx, entry)| (PackageSlot(package_idx), entry))
-    }
-
-    /// Builds a logical read transaction over every package slot.
-    ///
-    /// Resident packages are available immediately. Offloaded packages are represented by lazy
-    /// entries and loaded through the injected loader only if a query touches that slot.
-    pub fn read_txn<'db>(&'db self, loader: PackageLoader<'db, T>) -> PackageStoreReadTxn<'db, T> {
-        PackageStoreReadTxn::from_store_entries(
-            self.packages
-                .iter()
-                .map(|entry| (true, entry.resident_arc())),
-            loader,
-        )
-    }
-
-    /// Builds a logical read transaction over selected package slots.
-    ///
-    /// Excluded packages remain present as logical slots, but direct reads fail with an explicit
-    /// subset error while broad materialization helpers skip them.
-    pub fn read_txn_for_subset<'db>(
-        &'db self,
-        loader: PackageLoader<'db, T>,
-        subset: &PackageSubset,
-    ) -> PackageStoreReadTxn<'db, T> {
-        debug_assert_eq!(
-            subset.raw_len(),
-            self.packages.len(),
-            "package subset should belong to the same package-store snapshot",
-        );
-
-        PackageStoreReadTxn::from_store_entries(
-            self.packages
-                .iter()
-                .enumerate()
-                .map(|(package_idx, entry)| {
-                    let package = PackageSlot(package_idx);
-                    let resident_package = entry.resident_arc();
-                    (subset.contains(package), resident_package)
-                }),
-            loader,
-        )
     }
 
     /// Replaces one package payload while preserving all other cloned snapshot entries.
@@ -356,23 +311,10 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{
-        Arc,
-        atomic::{AtomicUsize, Ordering},
-    };
-
     use rg_std::Shrink;
     use rg_workspace::PackageSlot;
 
-    use crate::{
-        LoadPackage, PackageEntry, PackageLoader, PackageStore, PackageStoreError, PackageSubset,
-    };
-
-    #[derive(Debug)]
-    struct TestLoader {
-        loads: AtomicUsize,
-        packages: Vec<&'static str>,
-    }
+    use crate::{PackageEntry, PackageStore};
 
     #[derive(Debug, Clone, PartialEq, Eq)]
     struct ShrinkProbe {
@@ -382,16 +324,6 @@ mod tests {
     impl Shrink for ShrinkProbe {
         fn shrink_to_fit(&mut self) {
             self.calls += 1;
-        }
-    }
-
-    impl LoadPackage<&'static str> for TestLoader {
-        fn load(&self, slot: PackageSlot) -> Result<Arc<&'static str>, PackageStoreError> {
-            self.loads.fetch_add(1, Ordering::Relaxed);
-            let Some(package) = self.packages.get(slot.0) else {
-                return Err(PackageStoreError::MissingSlot { slot });
-            };
-            Ok(Arc::new(*package))
         }
     }
 
@@ -447,33 +379,6 @@ mod tests {
             .expect("package slot should exist");
         assert_eq!(resident.as_resident(), Some(&"resident bodies"));
         assert!(resident.as_offloaded().is_none());
-    }
-
-    #[test]
-    fn subset_read_transactions_preserve_original_package_slots() {
-        let store = resident_store(vec!["workspace", "hidden", "dependency"]);
-        let loader = Arc::new(TestLoader {
-            loads: AtomicUsize::new(0),
-            packages: vec!["workspace", "hidden", "dependency"],
-        });
-        let mut subset = PackageSubset::empty(store.len());
-        subset.insert(PackageSlot(0));
-        subset.insert(PackageSlot(2));
-        let txn = store.read_txn_for_subset(PackageLoader::from_arc(loader), &subset);
-
-        let included_packages = txn
-            .included_packages()
-            .map(|p| p.expect("Must exist"))
-            .collect::<Vec<_>>();
-
-        assert_eq!(txn.read(PackageSlot(0)).unwrap(), included_packages[0]);
-        assert!(matches!(
-            txn.read(PackageSlot(1)),
-            Err(PackageStoreError::ExcludedSlot {
-                slot: PackageSlot(1)
-            }),
-        ));
-        assert_eq!(txn.read(PackageSlot(2)).unwrap(), included_packages[1]);
     }
 
     #[test]
@@ -546,40 +451,6 @@ mod tests {
     }
 
     #[test]
-    fn read_transactions_load_offloaded_packages_lazily() {
-        let mut store = resident_store(vec!["workspace", "dependency"]);
-        store
-            .offload(PackageSlot(1))
-            .expect("package slot should exist");
-
-        let loader = Arc::new(TestLoader {
-            loads: AtomicUsize::new(0),
-            packages: vec!["workspace", "dependency"],
-        });
-        let txn = store.read_txn(PackageLoader::from_arc(loader.clone()));
-
-        assert_eq!(loader.loads.load(Ordering::Relaxed), 0);
-        assert_eq!(
-            *txn.read(PackageSlot(0))
-                .expect("resident package should be readable"),
-            "workspace",
-        );
-        assert_eq!(loader.loads.load(Ordering::Relaxed), 0);
-
-        assert_eq!(
-            *txn.read(PackageSlot(1))
-                .expect("offloaded package should be loaded"),
-            "dependency",
-        );
-        assert_eq!(
-            *txn.read(PackageSlot(1))
-                .expect("offloaded package should stay cached"),
-            "dependency",
-        );
-        assert_eq!(loader.loads.load(Ordering::Relaxed), 1);
-    }
-
-    #[test]
     fn explicit_entries_can_start_with_offloaded_slots() {
         let store = PackageStore::from_entries(vec![
             PackageEntry::resident("workspace"),
@@ -600,36 +471,6 @@ mod tests {
                 (2, Some("local"), false),
             ],
         );
-    }
-
-    #[test]
-    fn subset_read_transactions_exclude_out_of_subset_packages() {
-        let mut store = resident_store(vec!["workspace", "dependency", "unrelated"]);
-        store
-            .offload(PackageSlot(1))
-            .expect("package slot should exist");
-
-        let loader = Arc::new(TestLoader {
-            loads: AtomicUsize::new(0),
-            packages: vec!["workspace", "dependency", "unrelated"],
-        });
-        let mut subset = PackageSubset::empty(store.len());
-        subset.insert(PackageSlot(0));
-        subset.insert(PackageSlot(1));
-        let txn = store.read_txn_for_subset(PackageLoader::from_arc(loader.clone()), &subset);
-
-        assert_eq!(
-            *txn.read(PackageSlot(1))
-                .expect("included offloaded package should be loaded"),
-            "dependency",
-        );
-        assert!(matches!(
-            txn.read(PackageSlot(2)),
-            Err(PackageStoreError::ExcludedSlot {
-                slot: PackageSlot(2)
-            }),
-        ));
-        assert_eq!(loader.loads.load(Ordering::Relaxed), 1);
     }
 
     #[test]

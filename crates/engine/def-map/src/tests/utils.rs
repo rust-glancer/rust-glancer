@@ -8,7 +8,6 @@ use crate::{
 use crate::{DefMapDb, testonly::DefMapFixture};
 use rg_ir_model::{CrateId, CrateRef, DefId, DefMapRef, ModuleId, ModuleRef, Path};
 use rg_item_tree::VisibilityLevel;
-use rg_package_store::PackageLoader;
 use rg_parse::{CargoTarget, FileId, Package, ParseDb};
 use rg_workspace::{TargetKind, WorkspaceLoweringConfig};
 
@@ -502,7 +501,7 @@ impl<'a> ProjectPathResolutionSnapshot<'a> {
         let def_map = self
             .project
             .def_map_db()
-            .read_txn(PackageLoader::resident_only("def-map fixture query"));
+            .read_txn(crate::DefMapLoader::resident_only("def-map fixture query"));
         let result = crate::DefMapQuery::new(&def_map)
             .scope_resolver()
             .resolve_path(

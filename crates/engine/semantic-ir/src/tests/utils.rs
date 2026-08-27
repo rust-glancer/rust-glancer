@@ -8,7 +8,6 @@ use crate::{SemanticIrReadTxn, testonly::SemanticIrFixture};
 use rg_ir_model::Path;
 use rg_ir_model::{CrateId, CrateRef, DefMapRef, ModuleId, ModuleRef, TypeAliasId};
 use rg_item_tree::{FieldItem, FieldList, ParamKind, VisibilityLevel};
-use rg_package_store::PackageLoader;
 use rg_parse::{CargoTarget, Package, ParseDb};
 use rg_std::UniqueVec;
 use rg_workspace::TargetKind;
@@ -151,14 +150,18 @@ impl<'a> ProjectSemanticQuerySnapshot<'a> {
         let (crate_ref, target) = self.crate_ref(query);
         let module_id = self.module_id(crate_ref, query.module_path);
         let path = Self::parse_path(query.path);
-        let def_map_txn = self
-            .project
-            .def_map_db()
-            .read_txn(PackageLoader::resident_only("resident semantic IR fixture"));
-        let semantic_ir_txn = self
-            .project
-            .semantic_ir_db()
-            .read_txn(PackageLoader::resident_only("resident semantic IR fixture"));
+        let def_map_txn =
+            self.project
+                .def_map_db()
+                .read_txn(rg_def_map::DefMapLoader::resident_only(
+                    "resident semantic IR fixture",
+                ));
+        let semantic_ir_txn =
+            self.project
+                .semantic_ir_db()
+                .read_txn(crate::SemanticIrLoader::resident_only(
+                    "resident semantic IR fixture",
+                ));
         let crate_items = CrateItemQuery::new(&def_map_txn, &semantic_ir_txn, crate_ref);
         let lookup_query = ItemLookupQuery::build_from(&crate_items)
             .expect("fixture semantic lookup query should build");

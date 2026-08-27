@@ -13,7 +13,7 @@ use rg_std::Shrink;
 
 use crate::{
     PackageResidency, ProjectMemoryPurgePoint,
-    cache::{PackageCacheUpdate, PackageCacheWriteInput},
+    cache::{PackageCacheBodyUpdateInput, PackageCacheUpdate, PackageCacheWriteInput},
     profile::{BuildMemorySampler, record_build_checkpoint},
 };
 
@@ -40,7 +40,7 @@ impl<'a> ResidencyApplication<'a> {
         // Cache artifacts are the durable backing store for offloadable packages. Resident packages
         // stay in memory and should not pay serialization/write cost until policy asks for it.
         let packages_to_write = packages_to_offload
-            .filter(|package| Self::package_artifact_is_resident(project, package));
+            .filter(|package| Self::package_artifact_is_writable(project, package));
 
         Self {
             project,
@@ -60,7 +60,7 @@ impl<'a> ResidencyApplication<'a> {
         Self {
             refresh_source_fingerprints_for: PhasePackageSet::from_slice(rebuilt_packages),
             packages_to_write: Self::rebuilt_offloadable_packages(project, rebuilt_packages)
-                .filter(|package| Self::package_artifact_is_resident(project, package)),
+                .filter(|package| Self::package_artifact_is_writable(project, package)),
             packages_to_offload: Self::offloadable_packages(project)
                 .filter(|package| Self::package_can_be_offloaded(project, package)),
             project,
@@ -196,22 +196,42 @@ impl<'a> ResidencyApplication<'a> {
         )
     }
 
-    /// Returns whether all artifact-backed phase payloads are resident and durable for this package.
-    fn package_artifact_is_resident(project: &ProjectState, package: PackageSlot) -> bool {
-        project.def_map.resident_package(package).is_some()
-            && project.semantic_ir.resident_package(package).is_some()
-            && split_indexing::package_deferred_payload_is_durable(project, package)
+    /// Return whether this package can produce a coherent replacement artifact.
+    ///
+    /// A normal build writes three resident phases. An exact Body IR rebuild instead keeps both
+    /// declaration phases offloaded and copies their encoded sections from the prior artifact.
+    fn package_artifact_is_writable(project: &ProjectState, package: PackageSlot) -> bool {
+        if !split_indexing::package_deferred_payload_is_durable(project, package) {
+            return false;
+        }
+        let Some(body_ir) = project.body_ir.resident_package(package) else {
+            return false;
+        };
+        let declarations_resident = project.def_map.resident_package(package).is_some()
+            && project.semantic_ir.resident_package(package).is_some();
+        let declarations_offloaded = project.def_map.package_is_offloaded(package)
+            && project.semantic_ir.package_is_offloaded(package)
+            && body_ir.has_cached_payloads();
+        declarations_resident || declarations_offloaded
     }
 
+    /// Returns whether dropping this package would leave every resident value durably backed.
+    ///
+    /// A package with no resident phase data is already offloaded. If any phase is resident, the
+    /// package must be writable as one coherent artifact before residency can release it.
     fn package_can_be_offloaded(project: &ProjectState, package: PackageSlot) -> bool {
         let has_resident_payload = project.def_map.resident_package(package).is_some()
             || project.semantic_ir.resident_package(package).is_some()
             || project.body_ir.resident_package(package).is_some();
 
-        !has_resident_payload || Self::package_artifact_is_resident(project, package)
+        !has_resident_payload || Self::package_artifact_is_writable(project, package)
     }
 
-    /// Writes durable cache artifacts for packages whose resident payloads are about to be dropped.
+    /// Writes every replacement artifact before any selected resident payload is dropped.
+    ///
+    /// A replacement may encode all three resident phases or copy offloaded declaration sections
+    /// while updating Body IR. Package-local writes can run in parallel, but the package-set marker
+    /// is committed only after every artifact succeeds.
     fn write_package_artifacts(&self, packages: &PhasePackageSet) -> anyhow::Result<()> {
         if packages.is_empty() {
             return Ok(());
@@ -252,7 +272,11 @@ impl<'a> ResidencyApplication<'a> {
         }
     }
 
-    /// Writes one package artifact from currently resident phase payloads.
+    /// Writes one coherent package artifact from the phase data available at this boundary.
+    ///
+    /// Jointly resident declaration phases are encoded normally and may reuse untouched Body shards.
+    /// If both declaration phases are offloaded, an exact Body rebuild instead copies their encoded
+    /// sections from the pinned prior revision. A mixed declaration residency state is rejected.
     fn write_package_artifact(
         project: &ProjectState,
         update: &PackageCacheUpdate<'_>,
@@ -267,27 +291,12 @@ impl<'a> ResidencyApplication<'a> {
                     package.0,
                 )
             })?;
-        let def_map = project.def_map.resident_package(package).with_context(|| {
-            format!(
-                "while attempting to fetch resident def-map package {}",
-                package.0,
-            )
-        })?;
         let parse = project.parse.package(package.0).with_context(|| {
             format!(
                 "while attempting to fetch parsed package {} for cache artifact",
                 package.0,
             )
         })?;
-        let semantic_ir = project
-            .semantic_ir
-            .resident_package(package)
-            .with_context(|| {
-                format!(
-                    "while attempting to fetch resident semantic IR package {}",
-                    package.0,
-                )
-            })?;
         let body_ir = project.body_ir.resident_package(package).with_context(|| {
             format!(
                 "while attempting to fetch resident body IR package {}",
@@ -302,29 +311,75 @@ impl<'a> ResidencyApplication<'a> {
             )
         })?;
 
-        let input = PackageCacheWriteInput::new(&header, &parse, def_map, semantic_ir, body_ir);
-        let write = if body_ir.has_cached_payloads() {
-            // An exact on-demand rebuild owns only the changed target. Pin the prior artifact
-            // revision and copy untouched target shards from it while the atomic replacement is
-            // assembled. The package returns to lazy residency immediately after this write.
-            let reader = project
-                .cache_store
-                .open_artifact(&header)
-                .with_context(|| {
-                    format!(
-                        "while attempting to open prior cache artifact for package {}",
-                        package.0,
-                    )
-                })?
-                .with_context(|| {
-                    format!(
-                        "prior cache artifact is missing for package {} with cached Body IR payloads",
-                        package.0,
-                    )
-                })?;
-            update.write_input_reusing_cached_body_ir(input, &reader)
-        } else {
-            update.write_input(input)
+        let def_map = project.def_map.resident_package(package);
+        let semantic_ir = project.semantic_ir.resident_package(package);
+        let write = match (def_map, semantic_ir) {
+            (Some(def_map), Some(semantic_ir)) => {
+                let input =
+                    PackageCacheWriteInput::new(&header, &parse, def_map, semantic_ir, body_ir);
+                if body_ir.has_cached_payloads() {
+                    let reader = project
+                        .cache_store
+                        .open_artifact(&header)
+                        .with_context(|| {
+                            format!(
+                                "while attempting to open prior cache artifact for package {}",
+                                package.0,
+                            )
+                        })?
+                        .with_context(|| {
+                            format!(
+                                "prior cache artifact is missing for package {} with cached Body IR payloads",
+                                package.0,
+                            )
+                        })?;
+                    update.write_input_reusing_cached_body_ir(input, &reader)
+                } else {
+                    update.write_input(input)
+                }
+            }
+            (None, None) => {
+                // Exact target materialization starts from a fully offloaded artifact. It restores
+                // a manifest-backed Body IR package and rebuilds only the requested target;
+                // declaration reads belong to short-lived transactions, so DefMap and Semantic IR
+                // remain offloaded. Cached Body placeholders distinguish that rewrite overlay from
+                // an arbitrary mixed-residency state.
+                anyhow::ensure!(
+                    project.def_map.package_is_offloaded(package)
+                        && project.semantic_ir.package_is_offloaded(package),
+                    "package {} declaration phases are neither jointly resident nor offloaded",
+                    package.0,
+                );
+                anyhow::ensure!(
+                    body_ir.has_cached_payloads(),
+                    "package {} needs cached declaration sections without cached Body IR siblings",
+                    package.0,
+                );
+
+                // Pin the old revision before the atomic replacement. The changed Body IR is
+                // encoded normally; sibling Body shards and both declaration sections are copied.
+                let input = PackageCacheBodyUpdateInput::new(&header, &parse, body_ir);
+                let reader = project
+                    .cache_store
+                    .open_artifact(&header)
+                    .with_context(|| {
+                        format!(
+                            "while attempting to open prior cache artifact for package {}",
+                            package.0,
+                        )
+                    })?
+                    .with_context(|| {
+                        format!(
+                            "prior cache artifact is missing for package {} with cached declarations",
+                            package.0,
+                        )
+                    })?;
+                update.write_body_update_reusing_cached_sections(input, &reader)
+            }
+            _ => anyhow::bail!(
+                "package {} has inconsistent DefMap and Semantic IR residency",
+                package.0,
+            ),
         };
 
         write.with_context(|| {

@@ -1,14 +1,14 @@
 //! Reading one immutable package artifact revision.
 //!
 //! Opening the artifact reads only its fixed directory and probe. Later phase loaders share the
-//! same file handle, parsed directory, and package-local name interner. [`body`] adds the nested
-//! Body IR directory; [`open`] binds a filesystem path to this reader; [`error`] translates storage
-//! failures into the package-store boundary.
+//! same file handle, parsed directory, and package-local name interner. The phase modules add their
+//! nested directories; [`open`] binds a filesystem path to this reader; [`error`] translates
+//! storage failures into the package-store boundary.
 //!
 //! After opening, an ordinary phase read has three steps:
 //!
-//! 1. Take the validated byte range from `layout` and read exactly those bytes.
-//! 2. Decode them while reusing the package-local `NameInterner`.
+//! 1. Use the phase directory to select one validated nested byte range.
+//! 2. Decode those bytes while reusing the package-local `NameInterner`.
 //! 3. Validate the decoded phase against the already-decoded probe.
 //!
 //! The file and interner use mutexes because DefMap, Semantic IR, and Body IR loaders may share
@@ -16,8 +16,10 @@
 //! revision even if an atomic cache update later replaces the path.
 
 mod body;
+mod def_map;
 mod error;
 mod open;
+mod semantic_ir;
 
 use std::{
     fs::File,
@@ -34,14 +36,17 @@ use crate::profile::metric;
 
 pub(crate) use self::error::PackageCacheReadError;
 use super::super::{
-    PackageCacheCodec, PackageCacheProbe,
-    codec::{PackageBodyCacheIndex, PackageCacheLayout, PackageCacheSectionRange},
+    PackageCacheProbe,
+    codec::{
+        PackageBodyCacheIndex, PackageCacheLayout, PackageCacheSectionRange,
+        PackageDefMapCacheIndex, PackageSemanticIrCacheIndex,
+    },
 };
 
 /// One open package artifact revision shared by phase loaders in a read transaction.
 ///
-/// Clones share the file handle, parsed layout, probe, lazy Body IR index, and name interner. They do
-/// not reopen the path and do not keep decoded DefMap or Semantic IR values after returning them;
+/// Clones share the file handle, parsed layout, lazy phase indexes, probe, and name interner. They do
+/// not reopen the path and do not retain decoded DefMap or Semantic IR values after returning them;
 /// those values are owned by the phase-specific read transaction.
 #[derive(Debug, Clone)]
 pub(crate) struct PackageArtifactReader {
@@ -58,6 +63,10 @@ struct PackageArtifactReaderInner {
     layout: PackageCacheLayout,
     /// Small package identity and parse snapshot loaded during open.
     probe: PackageCacheProbe,
+    /// Nested DefMap directory, decoded only when a DefMap query needs it.
+    def_map_index: OnceLock<PackageDefMapCacheIndex>,
+    /// Nested Semantic IR directory, decoded only when a declaration query needs it.
+    semantic_ir_index: OnceLock<PackageSemanticIrCacheIndex>,
     /// Nested Body IR directory, decoded only when a Body IR query needs it.
     body_index: OnceLock<PackageBodyCacheIndex>,
     /// Package-local names shared by all independently decoded sections in this request.
@@ -69,27 +78,118 @@ impl PackageArtifactReader {
         &self.inner.probe
     }
 
-    /// Read and decode only the package DefMap section.
-    pub(crate) fn read_def_map(&self) -> Result<rg_def_map::PackageDefMaps, PackageCacheReadError> {
-        let bytes = self.read_section("def_map", self.inner.layout.def_map)?;
-        let started = Instant::now();
-        let decoded = self
-            .decode_with_names(|| PackageCacheCodec::decode_def_map(&bytes, &self.inner.probe))
-            .map_err(|error| self.decode_error(error));
-        metric::CACHE_SECTION_DECODE.record("def_map", started.elapsed());
-        decoded
+    /// Reads the complete encoded DefMap section for a Body-only artifact rewrite.
+    ///
+    /// The outer range was validated when this reader opened. Nested manifests and crate payloads
+    /// remain encoded here and are validated normally when a later exact read opens them.
+    pub(crate) fn read_encoded_def_map_section(&self) -> Result<Vec<u8>, PackageCacheReadError> {
+        self.read_section("def_map.copy", self.inner.layout.def_map)
     }
 
-    /// Read and decode only the package Semantic IR section.
-    pub(crate) fn read_semantic_ir(
+    /// Reads the complete encoded Semantic IR section for a Body-only artifact rewrite.
+    ///
+    /// Copying preserves all nested crate boundaries without decoding declaration data that the
+    /// rebuild did not change.
+    pub(crate) fn read_encoded_semantic_ir_section(
         &self,
-    ) -> Result<rg_semantic_ir::PackageIr, PackageCacheReadError> {
-        let bytes = self.read_section("semantic_ir", self.inner.layout.semantic_ir)?;
+    ) -> Result<Vec<u8>, PackageCacheReadError> {
+        self.read_section("semantic_ir.copy", self.inner.layout.semantic_ir)
+    }
+
+    /// Validate a nested section-relative range and translate it into outer-file coordinates.
+    fn read_nested_range(
+        &self,
+        label: &'static str,
+        section: PackageCacheSectionRange,
+        range: PackageCacheSectionRange,
+    ) -> Result<Vec<u8>, PackageCacheReadError> {
+        let end = range
+            .offset
+            .checked_add(range.len)
+            .ok_or_else(|| self.decode_error(anyhow::anyhow!("{label} range overflows u64")))?;
+        if end > section.len {
+            return Err(self.decode_error(anyhow::anyhow!(
+                "{label} range ends at byte {end}, section has {} bytes",
+                section.len,
+            )));
+        }
+        let offset = section.offset.checked_add(range.offset).ok_or_else(|| {
+            self.decode_error(anyhow::anyhow!("{label} file offset overflows u64"))
+        })?;
+        self.read_section(
+            label,
+            PackageCacheSectionRange {
+                offset,
+                len: range.len,
+            },
+        )
+    }
+
+    /// Read and decode a prefix-framed nested directory without touching its payload bytes.
+    ///
+    /// DefMap, Semantic IR, and Body IR have different logical indexes, but their artifact readers
+    /// all discover those indexes through the same fixed-prefix and variable-manifest sequence.
+    /// Keeping the bounds checks, diagnostics, and metrics here prevents the lazy phase paths from
+    /// drifting apart.
+    fn read_nested_index<T>(
+        &self,
+        section_name: &'static str,
+        label: &'static str,
+        section: PackageCacheSectionRange,
+        prefix_len: usize,
+        decode_prefix: fn(&[u8]) -> anyhow::Result<usize>,
+        decode_index: fn(&[u8], u64, &PackageCacheProbe) -> anyhow::Result<T>,
+    ) -> Result<T, PackageCacheReadError> {
+        // The outer layout has already been validated, but the nested section still needs enough
+        // bytes for its own magic and manifest-length field.
+        let prefix_len = u64::try_from(prefix_len).map_err(|error| {
+            self.decode_error(anyhow::anyhow!(
+                "{section_name} prefix length does not fit u64: {error}"
+            ))
+        })?;
+        if section.len < prefix_len {
+            return Err(self.decode_error(anyhow::anyhow!(
+                "{section_name} section is shorter than its {prefix_len}-byte prefix"
+            )));
+        }
+
+        // Read the fixed prefix first so a corrupt length cannot make the following allocation
+        // escape the phase section.
+        let prefix = self.read_nested_range(
+            label,
+            section,
+            PackageCacheSectionRange {
+                offset: 0,
+                len: prefix_len,
+            },
+        )?;
+        let manifest_len = decode_prefix(&prefix).map_err(|error| self.decode_error(error))?;
+        let manifest_len = u64::try_from(manifest_len)
+            .map_err(|error| self.decode_error(anyhow::anyhow!(error)))?;
+        let manifest_end = prefix_len.checked_add(manifest_len).ok_or_else(|| {
+            self.decode_error(anyhow::anyhow!("{section_name} manifest overflows u64"))
+        })?;
+        if manifest_end > section.len {
+            return Err(self.decode_error(anyhow::anyhow!(
+                "{section_name} manifest ends at byte {manifest_end}, section has {} bytes",
+                section.len,
+            )));
+        }
+
+        // Decode only the bounded manifest. The returned phase index owns all payload ranges, so
+        // later reads no longer need to know about this framing.
+        let bytes = self.read_nested_range(
+            label,
+            section,
+            PackageCacheSectionRange {
+                offset: prefix_len,
+                len: manifest_len,
+            },
+        )?;
         let started = Instant::now();
-        let decoded = self
-            .decode_with_names(|| PackageCacheCodec::decode_semantic_ir(&bytes, &self.inner.probe))
+        let decoded = decode_index(&bytes, section.len, &self.inner.probe)
             .map_err(|error| self.decode_error(error));
-        metric::CACHE_SECTION_DECODE.record("semantic_ir", started.elapsed());
+        metric::CACHE_SECTION_DECODE.record(label, started.elapsed());
         decoded
     }
 

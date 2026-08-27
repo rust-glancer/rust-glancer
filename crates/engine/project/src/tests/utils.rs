@@ -4,7 +4,6 @@ use expect_test::Expect;
 use rg_analysis::WorkspaceSymbol;
 use rg_def_map::PackageSlot;
 use rg_ir_model::CrateRef;
-use rg_package_store::PackageLoader;
 use rg_parse::FileId;
 use test_fixture::fixture_path_for_snapshot;
 
@@ -520,14 +519,18 @@ fn nominal_type_names_at(
         return Vec::new();
     };
 
-    let semantic_ir = host
-        .state
-        .semantic_ir
-        .read_txn(PackageLoader::resident_only("resident project fixture"));
+    let semantic_ir =
+        host.state
+            .semantic_ir
+            .read_txn(rg_semantic_ir::SemanticIrLoader::resident_only(
+                "resident project fixture",
+            ));
     let def_map = host
         .state
         .def_map
-        .read_txn(PackageLoader::resident_only("resident project fixture"));
+        .read_txn(rg_def_map::DefMapLoader::resident_only(
+            "resident project fixture",
+        ));
     let mut names = Vec::new();
     for ty in ty.nominal_type_defs() {
         let Some(crate_ref) = ty.origin.as_crate_ref() else {
