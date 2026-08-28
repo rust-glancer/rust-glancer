@@ -43,7 +43,10 @@ pub struct BodyIrDb {
 impl BodyIrDb {
     /// Starts replacing selected packages on top of this snapshot.
     ///
-    /// The returned builder requires one explicit materialization selection before it can build.
+    /// `packages` selects what to rebuild. `copy_compact_packages` selects which rebuilt payloads
+    /// should be cloned and shrunk for long-term residency; passing `packages` for both arguments
+    /// requests compact retained output for every rebuilt package. The returned builder still
+    /// requires one explicit materialization selection before it can build.
     #[allow(clippy::too_many_arguments)]
     pub fn builder<'db, 'names>(
         &'db self,
@@ -51,6 +54,7 @@ impl BodyIrDb {
         def_map: &'db rg_def_map::DefMapDb,
         semantic_ir: &'db rg_semantic_ir::SemanticIrDb,
         packages: &'db [PackageSlot],
+        copy_compact_packages: &[PackageSlot],
         interners: &'names mut PackageNameInterners,
         def_map_loader: DefMapLoader<'db>,
         semantic_ir_loader: SemanticIrLoader<'db>,
@@ -62,6 +66,7 @@ impl BodyIrDb {
             def_map,
             semantic_ir,
             packages,
+            copy_compact_packages,
             interners,
             def_map_loader,
             semantic_ir_loader,

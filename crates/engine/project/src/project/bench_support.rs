@@ -44,6 +44,8 @@ pub fn build_def_map(
         &visible_packages,
     );
 
+    // The benchmark returns every built package as resident phase data, so all source packages are
+    // part of the compaction set as well as the build set.
     macro_source_files::build_packages(
         &baseline,
         &baseline_read,
@@ -51,6 +53,7 @@ pub fn build_def_map(
         parse,
         item_tree,
         &source_packages,
+        source_packages.as_slice(),
         names,
         IndexingPerformancePreference::default().macro_expansion_preference(),
         &NoopProjectMemoryHooks,
@@ -103,6 +106,7 @@ pub fn build_body_ir(
             parse,
             def_map,
             semantic_ir,
+            &packages,
             &packages,
             names,
             rg_def_map::DefMapLoader::resident_only("all-source benchmark DefMap"),

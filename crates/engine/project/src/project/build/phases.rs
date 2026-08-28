@@ -142,6 +142,10 @@ pub(super) fn build(
     let rebuild_subset = build_plan
         .source_packages
         .visible_dependency_subset(workspace);
+    // Freezing still produces every source-built package, but copy-compaction briefly duplicates a
+    // complete payload. Pay that peak only for packages that survive the later cache/offload step.
+    let resident_source_packages =
+        package_residency.resident_packages(build_plan.source_packages.as_slice());
 
     // ----------------
     // 6. Build def-map
@@ -164,6 +168,7 @@ pub(super) fn build(
         &mut parse,
         &mut item_tree,
         &build_plan.source_packages,
+        &resident_source_packages,
         &mut names,
         indexing_preference.macro_expansion_preference(),
         memory_hooks,
@@ -274,6 +279,7 @@ pub(super) fn build(
             &def_map,
             &semantic_ir,
             build_plan.source_packages.as_slice(),
+            &resident_source_packages,
             &mut names,
             loaders.def_map,
             loaders.semantic_ir,

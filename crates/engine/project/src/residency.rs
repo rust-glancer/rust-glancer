@@ -1,3 +1,14 @@
+//! Chooses which package analysis payloads stay in memory after indexing.
+//!
+//! Parse keeps the lightweight package and source tables needed to route later work. DefMap,
+//! Semantic IR, and Body IR are much larger, so an offloadable package can be written to one cache
+//! artifact and replaced by compact routing metadata. A [`PackageResidencyPlan`] records that
+//! decision in stable Cargo package order.
+//!
+//! Build phases consult the same plan before offloading. A package that remains resident is worth
+//! copy-compacting into dense retained storage; a package headed directly to the cache should avoid
+//! creating a second full payload solely to shrink allocations that will soon be released.
+
 use rg_std::MemorySize;
 use std::collections::HashSet;
 
@@ -25,15 +36,21 @@ pub enum PackageResidencyPolicy {
     AllOffloadable,
 }
 
-/// Storage decision for one package in a built project snapshot.
+/// Storage decision for the heavy phase payloads of one package.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, MemorySize)]
 #[memsize(leaf)]
 pub enum PackageResidency {
+    /// Keep decoded DefMap, Semantic IR, and Body IR package data in the project snapshot.
     Resident,
+    /// Persist the package artifact when needed, then replace decoded phase data with lazy backing.
     Offloadable,
 }
 
-/// Per-package residency decisions for one workspace metadata snapshot.
+/// Per-package residency decisions aligned with one workspace metadata snapshot.
+///
+/// The plan is computed once from package sources and direct dependency edges. Project build,
+/// rebuild, deferred indexing, and final offloading all read the same decisions so a package is not
+/// compacted as retained data and then immediately discarded by a different policy interpretation.
 #[derive(Debug, Clone, PartialEq, Eq, MemorySize)]
 pub struct PackageResidencyPlan {
     pub(crate) policy: PackageResidencyPolicy,
@@ -65,6 +82,19 @@ impl PackageResidencyPlan {
     /// Returns one package decision by stable package slot.
     pub fn package(&self, package: PackageSlot) -> Option<PackageResidency> {
         self.packages.get(package.0).copied()
+    }
+
+    /// Intersect rebuilt packages with the set whose decoded payload will survive cache application.
+    ///
+    /// Builders use this result as their copy-compaction set. If `A` is resident and rebuilt
+    /// alongside offloadable `B`, the result contains only `A`; `B` can keep spare build capacity
+    /// until its artifact is written and its decoded payload is dropped.
+    pub(crate) fn resident_packages(&self, rebuilt: &[PackageSlot]) -> Vec<PackageSlot> {
+        rebuilt
+            .iter()
+            .copied()
+            .filter(|package| self.package(*package) == Some(PackageResidency::Resident))
+            .collect()
     }
 
     fn classify_package(

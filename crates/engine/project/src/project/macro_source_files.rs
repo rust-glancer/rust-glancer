@@ -49,6 +49,10 @@ const MAX_MACRO_SOURCE_FILE_DISCOVERY_WAVES: usize = 128;
 /// One retained DefMap session alternates with project-owned file batches until expansion stops
 /// asking for more files. Parse and ItemTree stay mutable for that loop; the returned DefMap no
 /// longer contains the requests or continuations used to reach the fixed point.
+///
+/// `packages` selects the payloads rebuilt by the session. `copy_compact_packages` is the subset
+/// whose frozen DefMaps will remain resident afterward. Keeping those inputs separate avoids making
+/// a compact second copy of a package that the project will serialize and offload immediately.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn build_packages(
     baseline: &DefMapDb,
@@ -57,6 +61,7 @@ pub(super) fn build_packages(
     parse: &mut ParseDb,
     item_tree: &mut ItemTreeDb,
     packages: &PhasePackageSet,
+    copy_compact_packages: &[PackageSlot],
     names: &mut PackageNameInterners,
     performance_preference: MacroExpansionPerformancePreference,
     memory_hooks: &dyn ProjectMemoryHooks,
@@ -73,6 +78,7 @@ pub(super) fn build_packages(
             parse,
             item_tree,
             packages.as_slice(),
+            copy_compact_packages,
             names,
             performance_preference,
         )

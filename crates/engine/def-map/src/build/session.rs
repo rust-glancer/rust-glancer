@@ -37,9 +37,15 @@ use crate::{DefMapBuildProgress, DefMapDb, DefMapReadTxn, MacroSourceFileRequest
 /// accidentally resuming one session with another session's resolutions. A caller repeatedly
 /// invokes [`DefMapBuildSession::advance`], answers every returned request on this same value, and
 /// advances again until [`DefMapBuildProgress::Complete`] is returned.
+///
+/// Completion first freezes every selected package. It then copy-compacts the subset supplied when
+/// the session starts. Project builds derive that subset from residency, while fixtures pass their
+/// complete package set. Keeping the choice on the session matters because a macro source request
+/// can pause between collection and the final package replacement.
 pub struct DefMapBuildSession {
     baseline: DefMapDb,
     packages: Vec<PackageSlot>,
+    copy_compact_packages: Vec<PackageSlot>,
     crate_states: FinalizeCrateStates,
     scope_session: FinalizeScopeSession,
     macro_source_file_resolutions: MacroSourceFileResolutions,
@@ -57,10 +63,15 @@ impl DefMapBuildSession {
         parse: &rg_parse::ParseDb,
         item_tree: &ItemTreeDb,
         packages: &[PackageSlot],
+        copy_compact_packages: &[PackageSlot],
         interners: &mut PackageNameInterners,
         performance_preference: MacroExpansionPerformancePreference,
     ) -> anyhow::Result<Self> {
         let packages = normalized_package_slots(packages);
+        let copy_compact_packages = normalized_package_slots(copy_compact_packages)
+            .into_iter()
+            .filter(|package| packages.binary_search(package).is_ok())
+            .collect();
         let implicit_roots = build_implicit_roots(workspace, parse.packages(), interners)
             .context("while attempting to build implicit crate roots")?;
         let mut crate_states = FinalizeCrateStates::empty(parse.packages().len());
@@ -112,6 +123,7 @@ impl DefMapBuildSession {
         Ok(Self {
             baseline: baseline.clone(),
             packages,
+            copy_compact_packages,
             crate_states,
             scope_session: FinalizeScopeSession::new(performance_preference),
             macro_source_file_resolutions: MacroSourceFileResolutions::default(),
@@ -254,7 +266,7 @@ impl DefMapBuildSession {
                     )
                 })?;
         }
-        next.mutator().compact_packages(&self.packages);
+        next.mutator().compact_packages(&self.copy_compact_packages);
         self.complete = true;
         Ok(DefMapBuildProgress::Complete(next))
     }
