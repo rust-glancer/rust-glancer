@@ -39,8 +39,7 @@ pub use self::{
     profile::profile_descriptors,
     query::{
         CrateResolutionEnv, DefMapQuery, DefMapSource, GlobImportSource, ImportResolution,
-        ImportedScopeBinding, MacroDefinitionEnv, ResolvePathResult, ScopeResolutionEnv,
-        ScopeResolver,
+        MacroDefinitionEnv, ResolvePathResult, ScopeResolutionEnv, ScopeResolver,
     },
     scope::{
         ModuleScope, ModuleScopeBuilder, Namespace, NamespaceSet, PerNs, ScopeBinding,
