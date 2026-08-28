@@ -38,7 +38,7 @@ tower-lsp-server.workspace = true
 tracing.workspace = true
 tracing-subscriber = { workspace = true, features = ["env-filter", "fmt"] }
 
-[target.'cfg(not(target_env = "msvc"))'.dependencies]
+[target.'cfg(not(any(target_env = "msvc", target_os = "openbsd")))'.dependencies]
 tikv-jemallocator = { workspace = true, optional = true }
 tikv-jemalloc-sys = { workspace = true, optional = true }
 
