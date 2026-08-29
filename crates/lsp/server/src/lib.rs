@@ -25,4 +25,6 @@ mod stdio;
 #[cfg(test)]
 mod tests;
 
+/// Version of the published rust-glancer artifacts.
+pub use self::methods::SERVER_VERSION as VERSION;
 pub use self::stdio::serve_stdio;

@@ -142,4 +142,11 @@ impl ProjectState {
             saved.release_query_memory();
         }
     }
+
+    /// Reallocate a fully cache-backed saved project after transient indexing state has died.
+    pub(super) fn compact_if_fully_offloaded(&mut self) -> bool {
+        self.saved
+            .as_mut()
+            .is_some_and(Project::compact_if_fully_offloaded)
+    }
 }

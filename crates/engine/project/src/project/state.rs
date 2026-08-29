@@ -115,6 +115,28 @@ impl ProjectState {
         &mut self.parse
     }
 
+    /// Reallocate the small cache-backed state after indexing allocations have died.
+    ///
+    /// Fresh indexing interleaves long-lived project metadata with much larger transient phase
+    /// data. Purging releases wholly unused pages, but pages that contain even one retained value
+    /// stay active. Cloning only after every phase payload is offloaded gives the allocator a
+    /// densely allocated replacement, then dropping the old state makes its fragmented pages
+    /// purgeable.
+    pub(crate) fn compact_if_fully_offloaded(&mut self) -> bool {
+        let fully_offloaded = (0..self.parse.package_count()).all(|package_idx| {
+            let package = PackageSlot(package_idx);
+            self.def_map.resident_package(package).is_none()
+                && self.semantic_ir.resident_package(package).is_none()
+                && self.body_ir.package_is_offloaded(package)
+        });
+        if !fully_offloaded {
+            return false;
+        }
+
+        *self = self.clone();
+        true
+    }
+
     /// Starts a read transaction over resident and lazy-loadable offloaded packages.
     pub(crate) fn read_txn(&self) -> anyhow::Result<ProjectReadTxn<'_>> {
         ProjectReadTxn::new(self)

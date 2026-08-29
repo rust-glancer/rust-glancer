@@ -1729,6 +1729,7 @@ pub fn answer() -> i32 {
             "after package payload offload",
             "after package offload cleanup",
             "after deferred indexing cleanup",
+            "after deferred indexing compaction",
         ],
         "deferred indexing should profile both lowering and the follow-up residency pass",
     );

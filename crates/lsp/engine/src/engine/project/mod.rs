@@ -397,6 +397,19 @@ impl ProjectCoordinator {
             self.deferred_indexing_finish
                 .finish_returned(&mut self.project, generation, result);
 
+        // A successful finish is the first point where every package has completed its configured
+        // residency transition. If that offloaded every analysis payload, reallocate the small
+        // saved state now so the purge can release pages fragmented by the indexing build. The
+        // compaction method stays a no-op for policies that keep any payload resident.
+        if terminal.as_ref().is_some_and(|terminal| {
+            matches!(
+                &terminal.outcome,
+                rg_lsp_proto::DeferredIndexingOutcome::Succeeded
+            )
+        }) {
+            self.project.compact_if_fully_offloaded();
+        }
+
         // Reconciliation consumes the detached result on every path: merged, stale, failed, or
         // unknown. Purge only after that ownership boundary so the background project's Body IR
         // can actually leave allocator arenas instead of waiting for the next query cleanup.

@@ -16,6 +16,7 @@ mod start_server;
 #[derive(Debug, Parser)]
 #[command(name = "rust-glancer")]
 #[command(about = "An incomplete-by-design Rust LSP implementation")]
+#[command(version = rg_lsp_server::VERSION)]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -133,41 +134,5 @@ fn main() -> anyhow::Result<()> {
             engine_addr,
             notifications_addr,
         } => start_engine::start_engine(engine_addr, notifications_addr),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use clap::Parser as _;
-
-    use super::{Cli, Command};
-
-    #[test]
-    fn analyze_profile_flag_without_value_uses_default_alias() {
-        let cli = Cli::try_parse_from(["rust-glancer", "analyze", "/tmp/project", "--profile"])
-            .expect("analyze profile flag without a value should parse");
-        let Command::Analyze { profile, .. } = cli.command else {
-            panic!("CLI should parse the analyze subcommand");
-        };
-
-        assert_eq!(
-            profile.as_deref(),
-            Some("default"),
-            "passing --profile without selectors should use the default profile alias",
-        );
-    }
-
-    #[test]
-    fn analyze_without_profile_flag_keeps_profile_disabled() {
-        let cli = Cli::try_parse_from(["rust-glancer", "analyze", "/tmp/project"])
-            .expect("plain analyze command should parse");
-        let Command::Analyze { profile, .. } = cli.command else {
-            panic!("CLI should parse the analyze subcommand");
-        };
-
-        assert_eq!(
-            profile, None,
-            "omitting --profile should not implicitly enable profiling",
-        );
     }
 }

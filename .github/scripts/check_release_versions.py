@@ -11,7 +11,7 @@ WORKSPACE_ROOT = Path(__file__).resolve().parents[2]
 RELEASE_PLEASE_ROOT = WORKSPACE_ROOT / ".github" / "release-please"
 STABLE_SEMVER = re.compile(r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$")
 SERVER_VERSION = re.compile(
-    r'^const SERVER_VERSION: &str = "([^"]+)"; // x-release-please-version$',
+    r'^pub const SERVER_VERSION: &str = "([^"]+)"; // x-release-please-version$',
     re.MULTILINE,
 )
 

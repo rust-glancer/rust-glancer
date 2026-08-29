@@ -294,7 +294,16 @@ fn finish_with_sampler(
     sampler: &mut BuildMemorySampler,
 ) -> anyhow::Result<()> {
     let packages = finish_resident_with_sampler(state, sampler)?;
-    apply_finished_residency_with_sampler(state, &packages, sampler)
+    apply_finished_residency_with_sampler(state, &packages, sampler)?;
+
+    if state.compact_if_fully_offloaded() {
+        state
+            .memory_hooks
+            .purge(ProjectMemoryPurgePoint::AfterDeferredIndexingFinish);
+        record_project_checkpoint(state, sampler, "after deferred indexing compaction");
+    }
+
+    Ok(())
 }
 
 /// Make a query-shaped analysis surface available in the saved project before analysis runs.

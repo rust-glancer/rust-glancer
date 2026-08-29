@@ -316,9 +316,11 @@ jobs:
             --benchmark .ci/performance/benchmark/comment.md \
             --lsp .ci/performance/lsp/comment.md \
             --output .ci/performance/comment.md
-          cat .ci/performance/comment.md >> "$GITHUB_STEP_SUMMARY"
+          tee -a "$GITHUB_STEP_SUMMARY" < .ci/performance/comment.md
 
       - name: Comment on pull request
+        # Fork pull requests receive a read-only token, so their report stays in the log and summary.
+        if: github.event.pull_request.head.repo.full_name == github.repository
         uses: marocchino/sticky-pull-request-comment@0ea0beb66eb9baf113663a64ec522f60e49231c0 # v3.0.4
         with:
           header: rust-glancer-performance

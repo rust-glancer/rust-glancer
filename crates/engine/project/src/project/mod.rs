@@ -103,6 +103,15 @@ impl Project {
         self.state.stats()
     }
 
+    /// Compact a project whose analysis phase payloads are all cache-backed.
+    ///
+    /// Returns `false` without cloning when any phase payload is still resident. Hosts should call
+    /// this only at an idle lifecycle boundary, then run their allocator cleanup hook after the
+    /// replaced state has been dropped.
+    pub fn compact_if_fully_offloaded(&mut self) -> bool {
+        self.state.compact_if_fully_offloaded()
+    }
+
     /// Iterates bounded macro-expansion-limit diagnostics from resident packages.
     pub fn macro_expansion_limit_reports(
         &self,
