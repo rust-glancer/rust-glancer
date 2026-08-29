@@ -40,6 +40,13 @@ impl ProjectState {
             .unwrap_or(0)
     }
 
+    /// Return whether cloning the saved project would start real deferred work.
+    pub(super) fn has_unfinished_split_indexing(&self) -> bool {
+        self.saved
+            .as_ref()
+            .is_some_and(Project::has_unfinished_split_indexing)
+    }
+
     /// Clone saved analysis into a generation-paired deferred-finish handle.
     ///
     /// Raw `Project` ownership stays on the coordinator lane. Background split-indexing only needs

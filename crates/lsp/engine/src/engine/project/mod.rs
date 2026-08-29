@@ -205,11 +205,10 @@ impl ProjectCoordinator {
                 }
             }
         };
-        // Publish the saved project before starting detached work. From this point on, any later
-        // source generation makes this detached result stale.
+        // Publish the saved project before deciding whether detached work remains. If a worker is
+        // needed, any later source generation makes its result stale.
         self.workspace_root = Some(workspace_root.clone());
-        let detached = project.detach_split_indexing();
-        let generation = self.project.replace_saved(project);
+        self.project.replace_saved(project);
         self.stale_source = None;
         let snapshot = self
             .project
@@ -225,7 +224,7 @@ impl ProjectCoordinator {
         );
         if self
             .deferred_indexing_finish
-            .start_initial(generation, detached)
+            .saved_project_changed(&self.project)
         {
             self.send_deferred_indexing_started();
         }
@@ -394,7 +393,7 @@ impl ProjectCoordinator {
         generation: u64,
         result: DeferredIndexingResult,
     ) {
-        let outcome =
+        let terminal =
             self.deferred_indexing_finish
                 .finish_returned(&mut self.project, generation, result);
 
@@ -403,11 +402,11 @@ impl ProjectCoordinator {
         // can actually leave allocator arenas instead of waiting for the next query cleanup.
         self.memory_hooks
             .purge(ProjectMemoryPurgePoint::AfterDeferredIndexingFinish);
-        let Some(outcome) = outcome else {
+        let Some(terminal) = terminal else {
             return;
         };
 
-        self.send_deferred_indexing_finished(generation, outcome);
+        self.send_deferred_indexing_finished(terminal.generation, terminal.outcome);
         if let Ok(snapshot) = self.project.saved_snapshot() {
             Self::log_project_snapshot(snapshot, "deferred indexing finish");
         }

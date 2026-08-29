@@ -30,8 +30,12 @@ impl PackageBatchSchedule {
 
         let mut batches = Vec::new();
         let mut cycle_blocked_package_count = 0;
-        while pending.iter().any(|is_pending| *is_pending) {
-            let mut batch = Vec::with_capacity(batch_size.get());
+        loop {
+            let remaining_package_count = pending.iter().filter(|is_pending| **is_pending).count();
+            if remaining_package_count == 0 {
+                break;
+            }
+            let mut batch = Vec::with_capacity(batch_size.get().min(remaining_package_count));
 
             // A dependent may join the same batch after its dependency has been added because
             // DefMap resolves all packages in the batch together. Check dependencies again while
@@ -136,6 +140,36 @@ mod tests {
     use crate::{PackageBatchSize, project::package_set::PhasePackageSet};
 
     use super::PackageBatchSchedule;
+
+    #[test]
+    fn caps_batch_reservation_to_the_source_package_count() {
+        let fixture = fixture_crate(
+            r#"
+//- /Cargo.toml
+[package]
+name = "one_package"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct OnePackage;
+"#,
+        );
+        let workspace =
+            WorkspaceMetadata::for_tests(fixture.metadata(), WorkspaceLoweringConfig::default())
+                .expect("fixture workspace metadata should normalize");
+        let packages = PhasePackageSet::from_packages(vec![PackageSlot(0)]);
+
+        let schedule = PackageBatchSchedule::build(
+            &workspace,
+            &packages,
+            PackageBatchSize::new(usize::MAX)
+                .expect("maximum usize should remain a positive batch size"),
+        );
+
+        assert_eq!(schedule.batches.len(), 1);
+        assert_eq!(schedule.batches[0].as_slice(), [PackageSlot(0)]);
+    }
 
     #[test]
     fn continues_filling_a_batch_after_adding_a_dependency() {

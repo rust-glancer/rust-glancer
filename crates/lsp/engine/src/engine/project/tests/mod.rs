@@ -8,8 +8,8 @@ use std::{
 };
 
 use rg_lsp_proto::{
-    AnalysisConfig, DeferredIndexingOutcome, PackageResidencyPolicy, ServiceNotification,
-    SysrootDiscovery,
+    AnalysisConfig, DeferredIndexingOutcome, IndexingPerformancePreference, PackageResidencyPolicy,
+    ServiceNotification, SysrootDiscovery,
 };
 use rg_project::{ProjectMemoryHooks, ProjectMemoryPurgePoint, SavedFileChange};
 use test_fixture::fixture_crate;
@@ -41,8 +41,11 @@ impl ProjectMemoryHooks for SourceMutations {
         else {
             return;
         };
-        std::fs::write(&self.path, format!("pub struct Concurrent{previous};\n"))
-            .expect("source mutation hook should replace fixture source");
+        std::fs::write(
+            &self.path,
+            format!("pub struct Concurrent{previous};\npub fn deferred_body() {{}}\n"),
+        )
+        .expect("source mutation hook should replace fixture source");
     }
 }
 
@@ -162,6 +165,139 @@ fn assert_progress_then_finished(notifications: &[ServiceNotification]) {
             ..
         })
     ));
+}
+
+#[test]
+fn lower_memory_builds_do_not_start_empty_deferred_finishes() {
+    let fixture = fixture_crate(
+        r#"
+            //- /Cargo.toml
+            [package]
+            name = "completed_batch_fixture"
+            version = "0.1.0"
+            edition = "2024"
+
+            //- /src/lib.rs
+            pub fn completed_in_batch() -> usize {
+                1
+            }
+            "#,
+    );
+    let (sender, receiver) = mpsc::channel();
+    let memory_control: Arc<dyn MemoryControl> = Arc::new(());
+    let recorded = RecordingNotifications::default();
+    let notifications = ServiceNotificationsSink::from_publisher(recorded.clone());
+    let mut project = ProjectCoordinator::new(sender, memory_control, notifications);
+    project
+        .initialize(
+            fixture.path(""),
+            ProjectConfiguration::from(AnalysisConfig {
+                indexing_preference: IndexingPerformancePreference::LowerPeakMemory,
+                package_residency_policy: PackageResidencyPolicy::AllResident,
+                sysroot_discovery: SysrootDiscovery::Disabled,
+                ..AnalysisConfig::default()
+            }),
+        )
+        .expect("lower-memory fixture project should initialize");
+
+    assert!(
+        recorded.take().is_empty(),
+        "completed package batches should not announce deferred indexing",
+    );
+    assert!(
+        matches!(receiver.try_recv(), Err(mpsc::TryRecvError::Empty)),
+        "completed package batches should not spawn a deferred worker",
+    );
+    let initial_body_ir = project
+        .saved_snapshot()
+        .expect("lower-memory fixture project should be saved")
+        .stats()
+        .body_ir;
+    assert_eq!(initial_body_ir.complete_crate_count, 1);
+    assert_eq!(initial_body_ir.missing_crate_count, 0);
+
+    project
+        .reindex_workspace()
+        .expect("lower-memory workspace reindex should succeed");
+    assert!(
+        recorded.take().is_empty(),
+        "completed workspace reindex should not announce deferred indexing",
+    );
+    assert!(
+        matches!(receiver.try_recv(), Err(mpsc::TryRecvError::Empty)),
+        "completed workspace reindex should not spawn a deferred worker",
+    );
+}
+
+#[test]
+fn completed_successor_terminates_superseded_deferred_lifecycle() {
+    let fixture = fixture_crate(
+        r#"
+            //- /Cargo.toml
+            [package]
+            name = "superseded_deferred_fixture"
+            version = "0.1.0"
+            edition = "2024"
+
+            //- /src/lib.rs
+            pub fn deferred_body() {}
+            "#,
+    );
+    let source = fixture.path("src/lib.rs");
+    let (sender, receiver) = mpsc::channel();
+    let memory_control: Arc<dyn MemoryControl> = Arc::new(());
+    let recorded = RecordingNotifications::default();
+    let notifications = ServiceNotificationsSink::from_publisher(recorded.clone());
+    let mut project = ProjectCoordinator::new(sender, memory_control, notifications);
+    project
+        .initialize(
+            fixture.path(""),
+            ProjectConfiguration::from(AnalysisConfig {
+                package_residency_policy: PackageResidencyPolicy::AllResident,
+                sysroot_discovery: SysrootDiscovery::Disabled,
+                ..AnalysisConfig::default()
+            }),
+        )
+        .expect("early-start fixture project should initialize");
+    let superseded_generation = match recorded.take().as_slice() {
+        [ServiceNotification::DeferredIndexingStarted { generation, .. }] => *generation,
+        notifications => {
+            panic!("initial project should announce deferred indexing: {notifications:?}")
+        }
+    };
+
+    // Leave the worker result in the engine queue while publishing a bodyless generation. Its
+    // Body IR is already complete, so this generation must not announce or start another worker.
+    std::fs::write(&source, "pub struct CompleteGeneration;\n")
+        .expect("fixture source should become bodyless");
+    project
+        .saved_project_changes(vec![SavedFileChange::fs_path(source)])
+        .expect("bodyless successor generation should publish");
+    assert_ne!(project.project.generation(), superseded_generation);
+    assert!(
+        recorded.take().is_empty(),
+        "the complete successor should not announce replacement work",
+    );
+
+    let stale = receive_non_progress_command(&mut project, &receiver);
+    let EngineCommand::DeferredIndexingFinished { generation, result } = stale else {
+        panic!("superseded worker should return its terminal command");
+    };
+    assert_eq!(generation, superseded_generation);
+    project.deferred_indexing_finished(generation, result);
+
+    assert!(matches!(
+        recorded.take().as_slice(),
+        [ServiceNotification::DeferredIndexingFinished {
+            generation,
+            outcome: DeferredIndexingOutcome::Succeeded,
+            ..
+        }] if *generation == superseded_generation
+    ));
+    assert!(
+        matches!(receiver.try_recv(), Err(mpsc::TryRecvError::Empty)),
+        "reconciling the stale worker should not spawn a replacement",
+    );
 }
 
 #[test]
@@ -425,6 +561,7 @@ fn saved_project_change_retries_source_races_but_preserves_a_finite_lane_budget(
 
             //- /src/lib.rs
             pub struct Published;
+            pub fn deferred_body() {}
             "#,
     );
     let source = fixture.path("src/lib.rs");
@@ -454,8 +591,11 @@ fn saved_project_change_retries_source_races_but_preserves_a_finite_lane_budget(
     };
     project.deferred_indexing_finished(generation, result);
 
-    std::fs::write(&source, "pub struct Candidate;\n")
-        .expect("candidate fixture source should be written");
+    std::fs::write(
+        &source,
+        "pub struct Candidate;\npub fn deferred_body() {}\n",
+    )
+    .expect("candidate fixture source should be written");
     // Two writes force the replacement candidate itself to become stale once more. Recovery
     // must remain indexing until the third attempt captures a quiet generation.
     hooks.remaining.store(2, Ordering::Release);
@@ -478,8 +618,11 @@ fn saved_project_change_retries_source_races_but_preserves_a_finite_lane_budget(
     // failed attempt leaves the published generation untouched, so the next watcher batch can
     // safely retry after this command reports the race.
     let published_generation = project.project.generation();
-    std::fs::write(&source, "pub struct NeverSettles;\n")
-        .expect("unsettled fixture source should be written");
+    std::fs::write(
+        &source,
+        "pub struct NeverSettles;\npub fn deferred_body() {}\n",
+    )
+    .expect("unsettled fixture source should be written");
     hooks
         .remaining
         .store(MAX_STALE_SOURCE_RETRIES + 1, Ordering::Release);
@@ -516,6 +659,7 @@ fn saved_project_retry_collects_the_settled_source_burst() {
             mod account;
             mod user;
             pub struct Published;
+            pub fn deferred_body() {}
 
             //- /src/account.rs
             pub struct Account;
@@ -570,8 +714,11 @@ fn saved_project_retry_collects_the_settled_source_burst() {
 
     hooks.attempts.store(0, Ordering::Release);
     hooks.armed.store(true, Ordering::Release);
-    std::fs::write(&root, "mod account;\nmod user;\npub struct Candidate;\n")
-        .expect("candidate fixture source should be written");
+    std::fs::write(
+        &root,
+        "mod account;\nmod user;\npub struct Candidate;\npub fn deferred_body() {}\n",
+    )
+    .expect("candidate fixture source should be written");
     project
         .saved_project_changes(vec![SavedFileChange::fs_path(root)])
         .expect("settled source burst should publish after one retry");

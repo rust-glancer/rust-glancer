@@ -88,10 +88,11 @@ fn try_rebuild_packages(state: &mut ProjectState, packages: &[PackageSlot]) -> a
     // includes, while clean dependency packages stay lazy.
     let memory_hooks = Arc::clone(&state.memory_hooks);
     // The rebuild must produce every selected package before one coherent cache update can run.
-    // Copy-compact only the subset that residency will keep decoded after that update.
-    let resident_packages = state
-        .package_residency
-        .resident_packages(packages.as_slice());
+    // Early-start packages cannot be offloaded until deferred Body IR becomes durable, so compact
+    // those temporary residents as well as packages selected for final resident storage.
+    let copy_compact_packages = state
+        .split_indexing_mode
+        .copy_compact_packages(&state.package_residency, packages.as_slice());
     let def_map = macro_source_files::build_packages(
         &state.def_map,
         &old_def_map_txn,
@@ -99,7 +100,7 @@ fn try_rebuild_packages(state: &mut ProjectState, packages: &[PackageSlot]) -> a
         &mut state.parse,
         &mut item_tree,
         &packages,
-        &resident_packages,
+        &copy_compact_packages,
         &mut state.names,
         state.indexing_preference.macro_expansion_preference(),
         memory_hooks.as_ref(),
@@ -130,7 +131,7 @@ fn try_rebuild_packages(state: &mut ProjectState, packages: &[PackageSlot]) -> a
             &def_map,
             &semantic_ir,
             packages.as_slice(),
-            &resident_packages,
+            &copy_compact_packages,
             &mut state.names,
             loaders.def_map.clone(),
             loaders.semantic_ir.clone(),

@@ -9,6 +9,7 @@ use anyhow::Context as _;
 use std::sync::Arc;
 
 use rg_body_ir::BodyIrBuildPolicy;
+use rg_def_map::PackageSlot;
 use rg_workspace::{CargoMetadataConfig, WorkspaceLoweringConfig, WorkspaceMetadata};
 
 use crate::{
@@ -51,6 +52,26 @@ pub enum SplitIndexingMode {
     Full,
     /// Build structural data now and leave deferred payloads for on-demand/background work.
     EarlyStart,
+}
+
+impl SplitIndexingMode {
+    /// Select rebuilt packages whose build-time allocation capacity must be removed before return.
+    ///
+    /// A full build can immediately write and offload packages selected by the residency policy,
+    /// so only resident packages need a compact copy. An ordinary early-start build does not yet
+    /// have durable Body IR and must keep every rebuilt package decoded until deferred finishing.
+    /// The selection happens before Body IR can prove that an individual package has no deferred
+    /// bodies, so the early-start case deliberately includes the complete rebuilt set.
+    pub(crate) fn copy_compact_packages(
+        self,
+        package_residency: &PackageResidencyPlan,
+        rebuilt_packages: &[PackageSlot],
+    ) -> Vec<PackageSlot> {
+        match self {
+            Self::Full => package_residency.resident_packages(rebuilt_packages),
+            Self::EarlyStart => rebuilt_packages.to_vec(),
+        }
+    }
 }
 
 /// Fluent construction API for a fresh analysis project.
@@ -301,4 +322,33 @@ pub(crate) fn build_resident_state(
         semantic_ir: phases.semantic_ir,
         body_ir: phases.body_ir,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use rg_def_map::PackageSlot;
+
+    use crate::{PackageResidency, PackageResidencyPlan, PackageResidencyPolicy};
+
+    use super::SplitIndexingMode;
+
+    #[test]
+    fn early_start_compacts_packages_waiting_for_deferred_artifacts() {
+        let residency = PackageResidencyPlan {
+            policy: PackageResidencyPolicy::WorkspaceResident,
+            packages: vec![PackageResidency::Offloadable, PackageResidency::Resident],
+        };
+        let rebuilt = [PackageSlot(0), PackageSlot(1)];
+
+        assert_eq!(
+            SplitIndexingMode::Full.copy_compact_packages(&residency, &rebuilt),
+            [PackageSlot(1)],
+            "a full build can release its offloadable package immediately",
+        );
+        assert_eq!(
+            SplitIndexingMode::EarlyStart.copy_compact_packages(&residency, &rebuilt),
+            rebuilt,
+            "an early-start build retains the offloadable package until Body IR is durable",
+        );
+    }
 }

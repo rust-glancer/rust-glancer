@@ -187,6 +187,15 @@ impl Project {
         SplitIndexing::new(self)
     }
 
+    /// Returns whether the configured split-indexing policy still has Body IR work to finish.
+    ///
+    /// Callers can use this check before cloning the project for detached work. A full build and
+    /// lower-memory package batches have already completed that work, so cloning them would only
+    /// duplicate retained project state before an empty finish.
+    pub fn has_unfinished_split_indexing(&self) -> bool {
+        split_indexing::has_unfinished_split_indexing(&self.state)
+    }
+
     /// Clone this project into an owned background-finish handle.
     ///
     /// Early-start indexing lets the saved project become queryable while deferred payloads are
