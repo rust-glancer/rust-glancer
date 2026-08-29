@@ -109,11 +109,18 @@
             "faster-builds"
           ],
           "enumDescriptions": [
-            "Prioritize lower peak memory while keeping indexing reasonably fast.",
+            "Process packages in batches to reduce peak memory. The editor may wait longer for initial indexing.",
             "Prioritize faster indexing builds while allowing higher peak memory."
           ],
           "default": "faster-builds",
           "description": "Controls which indexing performance trade-off rust-glancer should prioritize. Restart the rust-glancer server after changing this setting."
+        },
+        "rust-glancer.indexing.packageBatchSize": {
+          "scope": "window",
+          "type": "integer",
+          "minimum": 1,
+          "default": 512,
+          "description": "Number of packages indexed together when the performance preference is lower-peak-memory. Smaller values usually reduce peak memory and make indexing slower. A value of 1 processes one package at a time when possible. This setting is ignored by faster-builds. Restart the rust-glancer server after changing it."
         },
         "rust-glancer.cargo.target": {
           "scope": "window",

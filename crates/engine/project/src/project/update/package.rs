@@ -174,6 +174,7 @@ pub(crate) fn rebuild_resident_from_source(state: &mut ProjectState) -> anyhow::
     let body_ir_policy = state.body_ir_policy;
     let split_indexing_mode = state.split_indexing_mode;
     let indexing_preference = state.indexing_preference;
+    let package_batch_size = state.package_batch_size;
     let package_residency_policy = state.package_residency_policy;
     let cache_instance = state.cache_instance.clone();
     let memory_hooks = Arc::clone(&state.memory_hooks);
@@ -189,6 +190,7 @@ pub(crate) fn rebuild_resident_from_source(state: &mut ProjectState) -> anyhow::
         body_ir_policy,
         split_indexing_mode,
         indexing_preference,
+        package_batch_size,
         package_residency_policy,
         StartupCacheLoad::Disabled,
         memory_hooks,

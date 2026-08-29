@@ -19,7 +19,7 @@ use rg_text::PackageNameInterners;
 use rg_workspace::WorkspaceMetadata;
 
 use crate::{
-    IndexingPerformancePreference, PackageResidencyPlan,
+    IndexingPerformancePreference, PackageBatchSize, PackageResidencyPlan,
     cache::{Fingerprint, PackageCacheStore, WorkspaceCachePlan},
     memory::{ProjectMemoryHooks, ProjectMemoryPurgePoint},
     profile::{BuildMemorySampler, metric},
@@ -31,18 +31,8 @@ use crate::{
 
 use super::{
     cache_probe::{StartupCacheProbe, StartupPackageSelection},
-    checkpoint_memory::CheckpointMemory,
+    checkpoint_memory::{CheckpointMemory, checkpoint_memory},
 };
-
-macro_rules! checkpoint_memory {
-    ($($value:expr),+ $(,)?) => {{
-        let mut memory = CheckpointMemory::default();
-        $(
-            memory = memory.merge(CheckpointMemory::from(&$value));
-        )+
-        memory
-    }};
-}
 
 /// Phase payloads built for one project snapshot.
 ///
@@ -64,6 +54,7 @@ pub(super) fn build(
     workspace: &WorkspaceMetadata,
     body_ir_policy: BodyIrBuildPolicy,
     indexing_preference: IndexingPerformancePreference,
+    package_batch_size: PackageBatchSize,
     package_residency: &PackageResidencyPlan,
     cache_plan: &WorkspaceCachePlan,
     cache_store: &PackageCacheStore,
@@ -72,6 +63,23 @@ pub(super) fn build(
     memory_hooks: &dyn ProjectMemoryHooks,
     sampler: &mut BuildMemorySampler,
 ) -> anyhow::Result<BuiltPhases> {
+    if indexing_preference == IndexingPerformancePreference::LowerPeakMemory {
+        return super::batch_indexing::build(
+            workspace,
+            body_ir_policy,
+            indexing_preference,
+            package_residency,
+            cache_plan,
+            cache_store,
+            startup_cache_load,
+            split_indexing_mode,
+            memory_hooks,
+            sampler,
+            package_batch_size,
+        )
+        .context("while attempting to build project in package batches");
+    }
+
     // ---------------------
     // 1. Parse all packages
     // ---------------------
@@ -353,11 +361,11 @@ pub(super) fn build(
 /// package-store entry which deferred data is already available.
 #[derive(MemorySize)]
 pub(super) struct PackageBuildPlan {
-    source_packages: PhasePackageSet,
+    pub(super) source_packages: PhasePackageSet,
     /// One compact DefMap directory per cache hit; source-built slots have no usable old directory.
-    def_map_manifests: Vec<Option<rg_def_map::PackageDefMapsManifest>>,
+    pub(super) def_map_manifests: Vec<Option<rg_def_map::PackageDefMapsManifest>>,
     /// Exact cache-hit coverage plus a conservative seed for packages rebuilt immediately.
-    body_ir_coverage: Vec<PackageBodiesCoverage>,
+    pub(super) body_ir_coverage: Vec<PackageBodiesCoverage>,
 }
 
 impl PackageBuildPlan {
@@ -366,7 +374,7 @@ impl PackageBuildPlan {
     /// For cache hits we also restore the parse snapshot from the artifact. That keeps source file
     /// ids, paths, and line indexes in sync with the offloaded phase payloads that lazy readers will
     /// load later.
-    fn build(
+    pub(super) fn build(
         startup_cache_load: StartupCacheLoad,
         body_ir_policy: BodyIrBuildPolicy,
         package_residency: &PackageResidencyPlan,

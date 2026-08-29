@@ -2118,6 +2118,7 @@ dependencies = [
  "rg_workspace",
  "serde",
  "test_fixture",
+ "tracing",
  "wincode",
 ]
 

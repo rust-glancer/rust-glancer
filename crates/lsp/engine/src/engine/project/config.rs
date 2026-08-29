@@ -6,7 +6,7 @@ use rg_lsp_proto::{
     PackageResidencyPolicy as ProtoPackageResidencyPolicy,
     SysrootDiscovery as ProtoSysrootDiscovery,
 };
-use rg_project::{IndexingPerformancePreference, PackageResidencyPolicy};
+use rg_project::{IndexingPerformancePreference, PackageBatchSize, PackageResidencyPolicy};
 use rg_workspace::{CargoMetadataConfig, WorkspaceLoweringConfig};
 
 /// Project settings after client-facing enum and option shapes have been removed.
@@ -16,6 +16,7 @@ pub(crate) struct ProjectConfiguration {
     pub(super) cargo_metadata_config: CargoMetadataConfig,
     pub(super) workspace_lowering_config: WorkspaceLoweringConfig,
     pub(super) indexing_preference: IndexingPerformancePreference,
+    pub(super) package_batch_size: PackageBatchSize,
     pub(super) discover_sysroot: bool,
 }
 
@@ -55,12 +56,15 @@ impl From<AnalysisConfig> for ProjectConfiguration {
                 IndexingPerformancePreference::FasterBuilds
             }
         };
+        let package_batch_size = PackageBatchSize::new(config.package_batch_size.get())
+            .expect("protocol package batch size should remain positive");
 
         Self {
             package_residency_policy,
             cargo_metadata_config,
             workspace_lowering_config,
             indexing_preference,
+            package_batch_size,
             discover_sysroot: matches!(config.sysroot_discovery, ProtoSysrootDiscovery::Auto),
         }
     }

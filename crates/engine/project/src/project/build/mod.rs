@@ -1,5 +1,6 @@
 //! Fresh project construction.
 
+mod batch_indexing;
 mod cache_probe;
 mod checkpoint_memory;
 mod phases;
@@ -11,7 +12,7 @@ use rg_body_ir::BodyIrBuildPolicy;
 use rg_workspace::{CargoMetadataConfig, WorkspaceLoweringConfig, WorkspaceMetadata};
 
 use crate::{
-    BuildProcessMemory, IndexingPerformancePreference, PackageResidencyPlan,
+    BuildProcessMemory, IndexingPerformancePreference, PackageBatchSize, PackageResidencyPlan,
     PackageResidencyPolicy, ProjectMemoryHooks, ProjectMemoryPurgePoint,
     cache::{PackageCacheInstance, PackageCacheStore, WorkspaceCachePlan},
     memory::NoopProjectMemoryHooks,
@@ -60,6 +61,7 @@ pub struct ProjectBuilder {
     body_ir_policy: BodyIrBuildPolicy,
     split_indexing_mode: SplitIndexingMode,
     indexing_preference: IndexingPerformancePreference,
+    package_batch_size: PackageBatchSize,
     package_residency_policy: PackageResidencyPolicy,
     startup_cache_load: StartupCacheLoad,
     memory_sampler: BuildMemorySampler,
@@ -75,6 +77,7 @@ impl ProjectBuilder {
             body_ir_policy: BodyIrBuildPolicy::default(),
             split_indexing_mode: SplitIndexingMode::default(),
             indexing_preference: IndexingPerformancePreference::default(),
+            package_batch_size: PackageBatchSize::default(),
             package_residency_policy: PackageResidencyPolicy::default(),
             startup_cache_load: StartupCacheLoad::default(),
             memory_sampler: BuildMemorySampler::disabled(),
@@ -94,6 +97,14 @@ impl ProjectBuilder {
 
     pub fn indexing_preference(mut self, preference: IndexingPerformancePreference) -> Self {
         self.indexing_preference = preference;
+        self
+    }
+
+    /// Selects how many source packages batch indexing should process together.
+    ///
+    /// This setting is used only with [`IndexingPerformancePreference::LowerPeakMemory`].
+    pub fn package_batch_size(mut self, size: PackageBatchSize) -> Self {
+        self.package_batch_size = size;
         self
     }
 
@@ -151,6 +162,7 @@ impl ProjectBuilder {
             self.body_ir_policy,
             self.split_indexing_mode,
             self.indexing_preference,
+            self.package_batch_size,
             self.package_residency_policy,
             self.startup_cache_load,
             Arc::clone(&self.memory_hooks),
@@ -184,6 +196,7 @@ pub(crate) fn build_resident_state(
     body_ir_policy: BodyIrBuildPolicy,
     split_indexing_mode: SplitIndexingMode,
     indexing_preference: IndexingPerformancePreference,
+    package_batch_size: PackageBatchSize,
     package_residency_policy: PackageResidencyPolicy,
     startup_cache_load: StartupCacheLoad,
     memory_hooks: Arc<dyn ProjectMemoryHooks>,
@@ -255,6 +268,7 @@ pub(crate) fn build_resident_state(
         &workspace,
         body_ir_policy,
         indexing_preference,
+        package_batch_size,
         &package_residency,
         &cache_plan,
         &cache_store,
@@ -276,6 +290,7 @@ pub(crate) fn build_resident_state(
         body_ir_policy,
         split_indexing_mode,
         indexing_preference,
+        package_batch_size,
         package_residency_policy,
         package_residency,
         memory_hooks,

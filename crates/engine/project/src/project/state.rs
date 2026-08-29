@@ -19,7 +19,7 @@ use rg_text::PackageNameInterners;
 use rg_workspace::{CargoMetadataConfig, WorkspaceLoweringConfig, WorkspaceMetadata};
 
 use crate::{
-    IndexingPerformancePreference, PackageResidencyPlan, PackageResidencyPolicy,
+    IndexingPerformancePreference, PackageBatchSize, PackageResidencyPlan, PackageResidencyPolicy,
     ProjectMemoryHooks,
     cache::{Fingerprint, PackageCacheInstance, PackageCacheStore, WorkspaceCachePlan},
 };
@@ -72,6 +72,8 @@ pub(crate) struct ProjectState {
     pub(crate) split_indexing_mode: SplitIndexingMode,
     #[memsize(skip)]
     pub(crate) indexing_preference: IndexingPerformancePreference,
+    #[memsize(skip)]
+    pub(crate) package_batch_size: PackageBatchSize,
     pub(crate) package_residency_policy: PackageResidencyPolicy,
     pub(crate) package_residency: PackageResidencyPlan,
     #[memsize(skip)]

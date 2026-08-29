@@ -75,6 +75,8 @@ just client lint
   "rust-glancer.cargo.target": null,
   "rust-glancer.cfg.test": true,
   "rust-glancer.cfg.atoms": [],
+  "rust-glancer.indexing.performancePreference": "faster-builds",
+  "rust-glancer.indexing.packageBatchSize": 512,
   "rust-glancer.cache.packageResidency": "all-offloadable",
   "rust-glancer.trace.server": "off",
   "rust-glancer.diagnostics.onStartup": false,

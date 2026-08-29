@@ -1,9 +1,10 @@
+use anyhow::Context as _;
 use ls_types::LSPAny;
 use serde::{Deserialize, Serialize};
 
 use super::{
-    AnalysisCfgConfig, CargoMetadataConfig, IndexingPerformancePreference, PackageResidencyPolicy,
-    SysrootDiscovery,
+    AnalysisCfgConfig, CargoMetadataConfig, IndexingPerformancePreference, PackageBatchSize,
+    PackageResidencyPolicy, SysrootDiscovery,
 };
 
 /// Analysis configuration sent by the LSP client during initialization.
@@ -14,6 +15,7 @@ pub struct AnalysisConfig {
     #[serde(default)]
     pub sysroot_discovery: SysrootDiscovery,
     pub indexing_preference: IndexingPerformancePreference,
+    pub package_batch_size: PackageBatchSize,
     pub cfg: AnalysisCfgConfig,
 }
 
@@ -21,12 +23,18 @@ impl AnalysisConfig {
     pub fn from_initialization_options(options: Option<&LSPAny>) -> anyhow::Result<Self> {
         Ok(Self {
             package_residency_policy: PackageResidencyPolicy::from_initialization_options(options),
-            cargo_metadata_config: CargoMetadataConfig::from_initialization_options(options)?,
-            sysroot_discovery: SysrootDiscovery::from_initialization_options(options)?,
+            cargo_metadata_config: CargoMetadataConfig::from_initialization_options(options)
+                .context("parse Cargo metadata configuration")?,
+            sysroot_discovery: SysrootDiscovery::from_initialization_options(options)
+                .context("parse sysroot discovery configuration")?,
             indexing_preference: IndexingPerformancePreference::from_initialization_options(
                 options,
-            )?,
-            cfg: AnalysisCfgConfig::from_initialization_options(options)?,
+            )
+            .context("parse indexing performance preference")?,
+            package_batch_size: PackageBatchSize::from_initialization_options(options)
+                .context("parse package batch size")?,
+            cfg: AnalysisCfgConfig::from_initialization_options(options)
+                .context("parse cfg configuration")?,
         })
     }
 }
@@ -35,7 +43,7 @@ impl AnalysisConfig {
 mod tests {
     use super::{
         AnalysisCfgConfig, AnalysisConfig, CargoMetadataConfig, IndexingPerformancePreference,
-        PackageResidencyPolicy, SysrootDiscovery,
+        PackageBatchSize, PackageResidencyPolicy, SysrootDiscovery,
     };
 
     #[test]
@@ -54,6 +62,7 @@ mod tests {
             config.indexing_preference,
             IndexingPerformancePreference::FasterBuilds,
         );
+        assert_eq!(config.package_batch_size, PackageBatchSize::default());
         assert_eq!(config.cfg, AnalysisCfgConfig::default());
     }
 }

@@ -87,12 +87,12 @@ impl ProjectCoordinator {
         }
     }
 
-    /// Build the first queryable project, then finish its deferred portion in the background.
+    /// Build the first queryable project, then finish any remaining work in the background.
     ///
-    /// Early-start indexing deliberately publishes a usable saved project before all Body IR is
-    /// resident. The detached clone continues that work, and query-time materialization can fill
-    /// individual files or crates on the saved side while the clone runs. If workspace files keep
-    /// changing during the initial build, only a coherent attempt is published.
+    /// Faster indexing deliberately publishes a usable saved project before all Body IR is
+    /// available. Lower-memory batch indexing finishes that work before publication so completed
+    /// packages can be released. If workspace files keep changing during either build, only a
+    /// coherent attempt is published.
     pub(super) fn initialize(
         &mut self,
         root: PathBuf,
@@ -107,6 +107,7 @@ impl ProjectCoordinator {
             root = %root.display(),
             package_residency = configuration.package_residency_policy.config_name(),
             indexing_preference = configuration.indexing_preference.config_name(),
+            package_batch_size = configuration.package_batch_size.get(),
             cargo_target = configured_target,
             cargo_all_features = configuration.cargo_metadata_config.all_features_enabled(),
             cargo_no_default_features = configuration.cargo_metadata_config.no_default_features_enabled(),
@@ -176,7 +177,8 @@ impl ProjectCoordinator {
             None
         };
 
-        // Build only through the early-start boundary. This is the first state queries may see.
+        // The faster path stops at its early-start boundary. Lower-memory indexing uses the same
+        // builder contract but completes Body IR inside each package batch before returning.
         let workspace = workspace.with_sysroot_sources(sysroot);
         let mut stale_retries = 0usize;
         let project = loop {
@@ -184,6 +186,7 @@ impl ProjectCoordinator {
                 .workspace_lowering_config(configuration.workspace_lowering_config.clone())
                 .cargo_metadata_config(configuration.cargo_metadata_config.clone())
                 .indexing_preference(configuration.indexing_preference)
+                .package_batch_size(configuration.package_batch_size)
                 .split_indexing_mode(SplitIndexingMode::EarlyStart)
                 .package_residency_policy(configuration.package_residency_policy)
                 .memory_hooks(Arc::clone(&self.memory_hooks))
@@ -212,12 +215,13 @@ impl ProjectCoordinator {
             .project
             .saved_snapshot()
             .context("borrow initialized project snapshot")?;
-        Self::log_project_build(snapshot, "initial early-start index");
+        Self::log_project_build(snapshot, "initial index");
         tracing::info!(
             workspace_root = %workspace_root.display(),
             elapsed_ms = started.elapsed().as_millis(),
             stale_retries,
-            "workspace early-start indexing finished"
+            indexing_preference = configuration.indexing_preference.config_name(),
+            "workspace indexing finished"
         );
         if self
             .deferred_indexing_finish

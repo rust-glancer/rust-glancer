@@ -34,6 +34,7 @@ rg_ty.workspace = true
 rg_workspace.workspace = true
 rg_text.workspace = true
 serde = { workspace = true, features = ["derive"] }
+tracing.workspace = true
 
 [dev-dependencies]
 cargo_metadata.workspace = true
