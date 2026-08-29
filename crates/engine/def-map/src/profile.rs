@@ -1,6 +1,14 @@
-//! Profile descriptor vocabulary for def-map construction.
+//! Metrics emitted while collecting and finalizing DefMaps.
+//!
+//! Most metrics are standalone counters or timers declared below. Import resolution also records
+//! one table row per wave, so its column schema and the code which builds a row live together here.
+//! This keeps profiling details out of the fixed-point loop and makes column changes update one
+//! small area.
 
-use rg_profile::{ProfileDescriptor, ProfileReport, ProfileReportSort, declare_metrics};
+use rg_profile::{
+    ProfileCheckpointColumn, ProfileCheckpointValue, ProfileDescriptor, ProfileMeasurement,
+    ProfileReport, ProfileReportSort, declare_metrics,
+};
 
 const BY_COUNT: ProfileReport = ProfileReport {
     sort: Some(ProfileReportSort::CountDescending),
@@ -11,15 +19,81 @@ const BY_DURATION: ProfileReport = ProfileReport {
     limit: Some(20),
 };
 
+const IMPORT_RESOLUTION_PASS_COLUMN_COUNT: usize = 9;
+
+static IMPORT_RESOLUTION_PASS_COLUMNS: [ProfileCheckpointColumn;
+    IMPORT_RESOLUTION_PASS_COLUMN_COUNT] = [
+    ProfileCheckpointColumn::count("evaluated_packages", "packages"),
+    ProfileCheckpointColumn::count("evaluated_crates", "crates"),
+    ProfileCheckpointColumn::count("evaluated_modules", "modules"),
+    ProfileCheckpointColumn::count("changed_packages", "pkg changed"),
+    ProfileCheckpointColumn::count("changed_crates", "crate changed"),
+    ProfileCheckpointColumn::count("changed_modules", "mod changed"),
+    ProfileCheckpointColumn::count("imports_evaluated", "imports"),
+    ProfileCheckpointColumn::count("glob_imports_evaluated", "globs"),
+    ProfileCheckpointColumn::count("glob_bindings_emitted", "glob bindings"),
+];
+
+/// Values shown in one import-resolution checkpoint row.
+///
+/// “Evaluated” is the worklist at the start of the wave. “Changed” is the subset whose rebuilt
+/// scope differed from that input snapshot. The remaining fields describe how many imports and
+/// glob bindings the workers processed while producing those candidates.
+pub(crate) struct ImportResolutionPassMetrics {
+    pub(crate) evaluated_packages: usize,
+    pub(crate) evaluated_crates: usize,
+    pub(crate) evaluated_modules: usize,
+    pub(crate) changed_packages: usize,
+    pub(crate) changed_crates: usize,
+    pub(crate) changed_modules: usize,
+    pub(crate) imports_evaluated: usize,
+    pub(crate) glob_imports_evaluated: usize,
+    pub(crate) glob_bindings_emitted: usize,
+}
+
+/// Turn one wave's counts into the checkpoint columns declared above.
+///
+/// The column and value arrays share `IMPORT_RESOLUTION_PASS_COLUMN_COUNT`. If a column is added or
+/// removed, the compiler requires the value list to be updated as well.
+pub(crate) fn record_import_resolution_pass(
+    run_ordinal: usize,
+    pass_ordinal: usize,
+    metrics: ImportResolutionPassMetrics,
+) {
+    let counts: [usize; IMPORT_RESOLUTION_PASS_COLUMN_COUNT] = [
+        metrics.evaluated_packages,
+        metrics.evaluated_crates,
+        metrics.evaluated_modules,
+        metrics.changed_packages,
+        metrics.changed_crates,
+        metrics.changed_modules,
+        metrics.imports_evaluated,
+        metrics.glob_imports_evaluated,
+        metrics.glob_bindings_emitted,
+    ];
+    let values = IMPORT_RESOLUTION_PASS_COLUMNS
+        .iter()
+        .zip(counts)
+        .map(|(column, count)| {
+            ProfileCheckpointValue::new(column.key, ProfileMeasurement::count(count))
+        })
+        .collect();
+
+    metric::IMPORT_RESOLUTION_PASS_CHECKPOINTS
+        .record(format!("run {run_ordinal} pass {pass_ordinal}"), values);
+}
+
 declare_metrics! {
     pub(crate) mod metric {
         scope "def_map.finalization" {
-            /// Number of fixpoint rounds required to finalize all def maps.
+            /// Number of fixed-point rounds required to finalize all def maps.
             counter ROUNDS = "rounds";
             /// Number of complete import fixed-point runs.
             counter IMPORT_RESOLUTION_RUNS = "import_resolution.runs";
-            /// Number of scope snapshots evaluated across all import fixed-point runs.
+            /// Number of synchronous worklist waves across all import fixed-point runs.
             counter IMPORT_RESOLUTION_PASSES = "import_resolution.passes";
+            /// Per-pass import work and the part of the project whose resulting scopes changed.
+            checkpoint IMPORT_RESOLUTION_PASS_CHECKPOINTS = "import_resolution.pass_checkpoints" [columns &super::IMPORT_RESOLUTION_PASS_COLUMNS, title "Import resolution passes"];
             /// Number of macro-expansion passes performed during finalization.
             counter EXPANSION_PASSES = "expansion_passes";
             /// Maximum number of macro-expansion passes allowed for one finalization run.

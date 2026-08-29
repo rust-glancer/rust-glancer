@@ -6,7 +6,11 @@
 //! separate unnamed trait lane because they affect method lookup without creating a path binding.
 //! Frozen scopes retain both decisions so queries do not have to reconstruct them from imports.
 
-use std::cmp::Ordering;
+mod namespace_bindings;
+
+use self::namespace_bindings::{
+    FrozenScopeBindings, MutableNamespaceBindingArena, ScopeEntryBuilder,
+};
 
 use rg_ir_model::{DefId, ImportRef, ModuleRef};
 use rg_item_tree::FieldList;
@@ -19,7 +23,9 @@ use wincode::{SchemaRead, SchemaWrite};
 ///
 /// For example, a record struct and a function can share one spelling because the struct occupies
 /// the type slot and the function occupies the value slot.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize, Shrink)]
+#[memsize(leaf)]
+#[shrink(leaf)]
 pub enum Namespace {
     Types,
     Values,
@@ -29,6 +35,7 @@ pub enum Namespace {
 impl Namespace {
     pub const ALL: [Self; 3] = [Self::Types, Self::Values, Self::Macros];
 
+    /// Canonical retained-storage order. This is not binding precedence.
     pub(crate) fn sort_rank(self) -> u8 {
         match self {
             Self::Types => 0,
@@ -184,6 +191,10 @@ impl ScopeBindingProvenance {
     }
 }
 
+/// Precedence class used when two definitions compete for one name and namespace.
+///
+/// Direct declarations, named imports, and extern roots are all explicit. They replace glob
+/// candidates regardless of which binding happened to be processed first.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum ScopeBindingPriority {
     Glob,
@@ -267,6 +278,11 @@ impl ScopeBinding {
     }
 }
 
+/// Compact storage for the independently visible routes retained by one selected definition.
+///
+/// Most bindings have one route. Multiple routes are needed when several imports reach the same
+/// definition with different visibility regions; they still form one resolved binding rather than
+/// an ambiguity.
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 enum ScopeBindingRoutes {
     One(ScopeBindingRoute),
@@ -395,6 +411,10 @@ impl ModuleScope {
     }
 }
 
+/// Name and namespace selections stored together in the sorted frozen module scope.
+///
+/// `ModuleScope::entry` binary-searches these values by `name`; the separate `ScopeEntry` owns the
+/// sparse type/value/macro results for that spelling.
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub(crate) struct ScopeNameEntry {
     pub(crate) name: Name,
@@ -402,11 +422,38 @@ pub(crate) struct ScopeNameEntry {
 }
 
 /// Mutable module scope used while collecting declarations and applying imports.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+///
+/// Each fixed-point pass needs fast lookup and insertion, so names live in a hash map. One
+/// `ScopeEntryBuilder` keeps the first occupied namespace inline, while the scope-owned arena holds
+/// second and third slots. Arena ids are only storage handles: equality follows the selected
+/// namespace contents because `ModuleScopeBuilder` equality decides when import resolution has
+/// converged.
+#[derive(Debug, Clone, Default)]
 pub struct ModuleScopeBuilder {
     names: FxHashMap<Name, ScopeEntryBuilder>,
+    additional_namespace_bindings: MutableNamespaceBindingArena,
     unnamed_trait_bindings: UniqueVec<ScopeBinding>,
 }
+
+// Do not derive this equality. Arena ids depend on name and namespace insertion order, but the
+// import fixed point must stop when two scopes expose the same semantic bindings.
+impl PartialEq for ModuleScopeBuilder {
+    fn eq(&self, other: &Self) -> bool {
+        self.names.len() == other.names.len()
+            && self.unnamed_trait_bindings == other.unnamed_trait_bindings
+            && self.names.iter().all(|(name, entry)| {
+                other.names.get(name).is_some_and(|other_entry| {
+                    entry.has_same_bindings(
+                        &self.additional_namespace_bindings,
+                        other_entry,
+                        &other.additional_namespace_bindings,
+                    )
+                })
+            })
+    }
+}
+
+impl Eq for ModuleScopeBuilder {}
 
 impl ModuleScopeBuilder {
     /// Insert one route and update the selected result for only this namespace.
@@ -419,20 +466,23 @@ impl ModuleScopeBuilder {
         namespace: Namespace,
         binding: ScopeBinding,
     ) -> bool {
-        self.names
-            .entry(name.clone())
-            .or_default()
-            .insert_binding(namespace, binding)
+        self.names.entry(name.clone()).or_default().insert_binding(
+            namespace,
+            binding,
+            &mut self.additional_namespace_bindings,
+        )
     }
 
     pub fn entry(&self, name: &str) -> Option<ScopeEntryRef<'_>> {
-        self.names.get(name).map(ScopeEntryBuilder::as_ref)
+        self.names
+            .get(name)
+            .map(|entry| entry.as_ref(&self.additional_namespace_bindings))
     }
 
     pub fn entries(&self) -> impl Iterator<Item = (&Name, ScopeEntryRef<'_>)> {
         self.names
             .iter()
-            .map(|(name, entry)| (name, entry.as_ref()))
+            .map(|(name, entry)| (name, entry.as_ref(&self.additional_namespace_bindings)))
     }
 
     /// Retain a resolved `use Trait as _` route without adding a path-visible name.
@@ -451,16 +501,14 @@ impl ModuleScopeBuilder {
         mut should_remain_public: impl FnMut(Namespace, &ScopeBinding) -> bool,
     ) {
         for entry in self.names.values_mut() {
-            for namespace in Namespace::ALL {
-                entry
-                    .bindings
-                    .get_mut(namespace)
-                    .for_each_binding_mut(|binding| {
-                        if !should_remain_public(namespace, binding) {
-                            binding.restrict_public_routes_to(visible_from);
-                        }
-                    });
-            }
+            entry.for_each_binding_mut(
+                &mut self.additional_namespace_bindings,
+                |namespace, binding| {
+                    if !should_remain_public(namespace, binding) {
+                        binding.restrict_public_routes_to(visible_from);
+                    }
+                },
+            );
         }
         let unnamed_trait_bindings = std::mem::take(&mut self.unnamed_trait_bindings);
         for mut binding in unnamed_trait_bindings {
@@ -471,15 +519,24 @@ impl ModuleScopeBuilder {
         }
     }
 
+    /// Turn a settled build scope into the compact representation retained by queries.
+    ///
+    /// Every name drains the extra namespace nodes it owns. Names are then sorted so lookup,
+    /// equality, and serialization are independent of hash-map and import insertion order.
     pub fn freeze(self) -> ModuleScope {
+        let mut additional_namespace_bindings = self.additional_namespace_bindings;
         let mut entries = self
             .names
             .into_iter()
             .map(|(name, entry)| ScopeNameEntry {
                 name,
-                entry: entry.freeze(),
+                entry: entry.freeze(&mut additional_namespace_bindings),
             })
             .collect::<Vec<_>>();
+        debug_assert!(
+            additional_namespace_bindings.is_drained(),
+            "every additional namespace binding should belong to one frozen scope entry"
+        );
         entries.sort_by(|left, right| left.name.cmp(&right.name));
 
         ModuleScope {
@@ -489,15 +546,19 @@ impl ModuleScopeBuilder {
     }
 }
 
-/// Frozen namespace slots for one textual name.
+/// Frozen namespace selections for one textual name.
+///
+/// Empty namespaces occupy no retained slot. `resolution` reconstructs an empty result when the
+/// requested type, value, or macro slot is absent, so query code does not need to know about the
+/// sparse representation.
 #[derive(Debug, Clone, PartialEq, Eq, Default, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct ScopeEntry {
-    bindings: PerNs<ScopeResolution>,
+    bindings: FrozenScopeBindings,
 }
 
 impl ScopeEntry {
     pub fn resolution(&self, namespace: Namespace) -> ScopeResolutionRef<'_> {
-        self.bindings.get(namespace).as_ref()
+        self.bindings.resolution(namespace)
     }
 
     pub fn bindings(&self, namespace: Namespace) -> &[ScopeBinding] {
@@ -505,139 +566,25 @@ impl ScopeEntry {
     }
 
     pub fn is_empty(&self) -> bool {
-        Namespace::ALL
-            .into_iter()
-            .all(|namespace| self.bindings(namespace).is_empty())
+        self.bindings.is_empty()
     }
 
     pub fn as_ref(&self) -> ScopeEntryRef<'_> {
         ScopeEntryRef {
             bindings: PerNs::new(
-                self.bindings.get(Namespace::Types).as_ref(),
-                self.bindings.get(Namespace::Values).as_ref(),
-                self.bindings.get(Namespace::Macros).as_ref(),
+                self.resolution(Namespace::Types),
+                self.resolution(Namespace::Values),
+                self.resolution(Namespace::Macros),
             ),
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-struct ScopeEntryBuilder {
-    bindings: PerNs<ScopeResolutionBuilder>,
-}
-
-impl ScopeEntryBuilder {
-    fn insert_binding(&mut self, namespace: Namespace, binding: ScopeBinding) -> bool {
-        self.bindings.get_mut(namespace).insert(binding)
-    }
-
-    fn as_ref(&self) -> ScopeEntryRef<'_> {
-        ScopeEntryRef {
-            bindings: PerNs::new(
-                self.bindings.get(Namespace::Types).as_ref(),
-                self.bindings.get(Namespace::Values).as_ref(),
-                self.bindings.get(Namespace::Macros).as_ref(),
-            ),
-        }
-    }
-
-    fn freeze(self) -> ScopeEntry {
-        ScopeEntry {
-            bindings: PerNs::new(
-                self.bindings.types.freeze(),
-                self.bindings.values.freeze(),
-                self.bindings.macros.freeze(),
-            ),
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-enum ScopeResolutionBuilder {
-    #[default]
-    Empty,
-    Resolved(ScopeBinding),
-    Ambiguous(Vec<ScopeBinding>),
-}
-
-impl ScopeResolutionBuilder {
-    /// Apply binding precedence and route merging to one namespace slot.
-    fn insert(&mut self, binding: ScopeBinding) -> bool {
-        match self {
-            Self::Empty => {
-                *self = Self::Resolved(binding);
-                true
-            }
-            Self::Resolved(existing) => match binding.priority().cmp(&existing.priority()) {
-                Ordering::Less => false,
-                Ordering::Greater => {
-                    *self = Self::Resolved(binding);
-                    true
-                }
-                Ordering::Equal if binding.def == existing.def => existing.merge_routes(binding),
-                Ordering::Equal => {
-                    let existing = existing.clone();
-                    *self = Self::Ambiguous(vec![existing, binding]);
-                    true
-                }
-            },
-            Self::Ambiguous(existing) => {
-                let priority = existing
-                    .first()
-                    .expect("ambiguous scope slot should contain bindings")
-                    .priority();
-                match binding.priority().cmp(&priority) {
-                    Ordering::Less => false,
-                    Ordering::Greater => {
-                        *self = Self::Resolved(binding);
-                        true
-                    }
-                    Ordering::Equal => {
-                        if let Some(same_def) = existing
-                            .iter_mut()
-                            .find(|candidate| candidate.def == binding.def)
-                        {
-                            same_def.merge_routes(binding)
-                        } else {
-                            existing.push(binding);
-                            true
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    fn as_ref(&self) -> ScopeResolutionRef<'_> {
-        match self {
-            Self::Empty => ScopeResolutionRef::Empty,
-            Self::Resolved(binding) => ScopeResolutionRef::Resolved(binding),
-            Self::Ambiguous(bindings) => ScopeResolutionRef::Ambiguous(bindings),
-        }
-    }
-
-    fn for_each_binding_mut(&mut self, mut apply: impl FnMut(&mut ScopeBinding)) {
-        match self {
-            Self::Empty => {}
-            Self::Resolved(binding) => apply(binding),
-            Self::Ambiguous(bindings) => {
-                for binding in bindings {
-                    apply(binding);
-                }
-            }
-        }
-    }
-
-    fn freeze(self) -> ScopeResolution {
-        match self {
-            Self::Empty => ScopeResolution::Empty,
-            Self::Resolved(binding) => ScopeResolution::Resolved(binding),
-            Self::Ambiguous(bindings) => ScopeResolution::Ambiguous(bindings.into_boxed_slice()),
         }
     }
 }
 
 /// Borrowed view over either a mutable-build or frozen scope entry.
+///
+/// Path resolution reads this common shape while finalization is still changing scopes and after
+/// those scopes have been frozen. Keeping the storage distinction behind this view prevents the
+/// resolver from having separate mutable and retained lookup paths.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ScopeEntryRef<'a> {
     bindings: PerNs<ScopeResolutionRef<'a>>,
@@ -761,6 +708,57 @@ mod tests {
             1
         );
         assert!(frozen.entry("missing").is_none());
+    }
+
+    #[test]
+    fn frozen_scope_preserves_occupied_namespace_combinations() {
+        let cases: [(&str, &[Namespace]); 4] = [
+            ("type only", &[Namespace::Types]),
+            ("value only", &[Namespace::Values]),
+            ("type and value", &[Namespace::Types, Namespace::Values]),
+            ("all", &Namespace::ALL),
+        ];
+
+        for (case, occupied) in cases {
+            let mut scope = ModuleScopeBuilder::default();
+            let name = Name::new("Item");
+            for (index, namespace) in occupied.iter().copied().enumerate() {
+                scope.insert_binding(&name, namespace, direct_binding(index));
+            }
+
+            let frozen = scope.freeze();
+            let entry = frozen.entry("Item").expect("inserted name should freeze");
+            for namespace in Namespace::ALL {
+                assert_eq!(
+                    !entry.bindings(namespace).is_empty(),
+                    occupied.contains(&namespace),
+                    "{case}: unexpected {namespace:?} occupancy",
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn scope_equality_ignores_sparse_namespace_allocation_order() {
+        let alpha = Name::new("Alpha");
+        let beta = Name::new("Beta");
+
+        let mut left = ModuleScopeBuilder::default();
+        left.insert_binding(&alpha, Namespace::Types, direct_binding(0));
+        left.insert_binding(&alpha, Namespace::Values, direct_binding(1));
+        left.insert_binding(&beta, Namespace::Types, direct_binding(2));
+        left.insert_binding(&beta, Namespace::Macros, direct_binding(3));
+
+        // Reverse both name and namespace insertion. The sparse arena now assigns different IDs
+        // and each entry chooses a different inline slot, but its visible scope is unchanged.
+        let mut right = ModuleScopeBuilder::default();
+        right.insert_binding(&beta, Namespace::Macros, direct_binding(3));
+        right.insert_binding(&beta, Namespace::Types, direct_binding(2));
+        right.insert_binding(&alpha, Namespace::Values, direct_binding(1));
+        right.insert_binding(&alpha, Namespace::Types, direct_binding(0));
+
+        assert_eq!(left, right);
+        assert_eq!(left.freeze(), right.freeze());
     }
 
     fn direct_binding(module: usize) -> ScopeBinding {

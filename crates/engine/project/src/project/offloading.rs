@@ -7,17 +7,21 @@
 use std::sync::Arc;
 
 use anyhow::Context as _;
-use rayon::prelude::*;
 use rg_def_map::PackageSlot;
 use rg_std::Shrink;
 
 use crate::{
     PackageResidency, ProjectMemoryPurgePoint,
-    cache::{PackageCacheBodyUpdateInput, PackageCacheUpdate, PackageCacheWriteInput},
     profile::{BuildMemorySampler, record_build_checkpoint},
 };
 
-use super::{package_set::PhasePackageSet, split_indexing, state::ProjectState, update};
+use super::{
+    package_artifacts::{PackageArtifactPhases, PackageArtifactWriter},
+    package_set::PhasePackageSet,
+    split_indexing,
+    state::ProjectState,
+    update,
+};
 
 /// Planned residency transition for one mutable project snapshot.
 pub(crate) struct ResidencyApplication<'a> {
@@ -110,14 +114,20 @@ impl<'a> ResidencyApplication<'a> {
         if record_residency_profile {
             self.record_project_checkpoint(&mut sampler, "before package cache write");
         }
-        self.write_package_artifacts(&self.packages_to_write)?;
+        self.write_package_artifacts(&self.packages_to_write)
+            .context("while attempting to persist selected package artifacts")?;
         if record_residency_profile {
             self.record_project_checkpoint(&mut sampler, "after package cache write");
         }
 
         let packages_to_offload = std::mem::take(&mut self.packages_to_offload);
-        for package in packages_to_offload.iter() {
-            self.offload_package(package)?;
+        {
+            let mut artifact_phases = PackageArtifactPhases::for_project(self.project);
+            for package in packages_to_offload.iter() {
+                artifact_phases.offload_package(package).with_context(|| {
+                    format!("while attempting to apply package {} residency", package.0)
+                })?;
+            }
         }
         if record_residency_profile {
             self.record_project_checkpoint(&mut sampler, "after package payload offload");
@@ -237,18 +247,13 @@ impl<'a> ResidencyApplication<'a> {
             return Ok(());
         }
 
-        let update = self.project.cache_store.begin_artifact_update()?;
-        let thread_pool = Self::local_thread_pool("rg-cache-write")?;
-        let project = &*self.project;
-
-        // Artifact serialization is package-local and usually more expensive than the final state
-        // mutation. Write every durable artifact first; only then can callers safely drop residents.
-        thread_pool
-            .install(|| {
-                packages.as_slice().par_iter().try_for_each(|package| {
-                    Self::write_package_artifact(project, &update, *package)
-                })
-            })
+        let update = self
+            .project
+            .cache_store
+            .begin_artifact_update()
+            .context("while attempting to begin package cache artifact update")?;
+        PackageArtifactWriter::for_project(self.project)
+            .write_packages(&update, packages.as_slice())
             .context("while attempting to write package cache artifacts")?;
         update
             .commit()
@@ -270,160 +275,5 @@ impl<'a> ResidencyApplication<'a> {
                 .parse
                 .offload_line_indexes_for_packages(&offloaded_package_indices);
         }
-    }
-
-    /// Writes one coherent package artifact from the phase data available at this boundary.
-    ///
-    /// Jointly resident declaration phases are encoded normally and may reuse untouched Body shards.
-    /// If both declaration phases are offloaded, an exact Body rebuild instead copies their encoded
-    /// sections from the pinned prior revision. A mixed declaration residency state is rejected.
-    fn write_package_artifact(
-        project: &ProjectState,
-        update: &PackageCacheUpdate<'_>,
-        package: PackageSlot,
-    ) -> anyhow::Result<()> {
-        let header = project
-            .cache_plan
-            .artifact_header(package, &project.package_source_fingerprints)
-            .with_context(|| {
-                format!(
-                    "while attempting to build package cache header for package {}",
-                    package.0,
-                )
-            })?;
-        let parse = project.parse.package(package.0).with_context(|| {
-            format!(
-                "while attempting to fetch parsed package {} for cache artifact",
-                package.0,
-            )
-        })?;
-        let body_ir = project.body_ir.resident_package(package).with_context(|| {
-            format!(
-                "while attempting to fetch resident body IR package {}",
-                package.0,
-            )
-        })?;
-
-        let parse = parse.parse_snapshot().with_context(|| {
-            format!(
-                "while attempting to snapshot parse metadata for package {}",
-                package.0,
-            )
-        })?;
-
-        let def_map = project.def_map.resident_package(package);
-        let semantic_ir = project.semantic_ir.resident_package(package);
-        let write = match (def_map, semantic_ir) {
-            (Some(def_map), Some(semantic_ir)) => {
-                let input =
-                    PackageCacheWriteInput::new(&header, &parse, def_map, semantic_ir, body_ir);
-                if body_ir.has_cached_payloads() {
-                    let reader = project
-                        .cache_store
-                        .open_artifact(&header)
-                        .with_context(|| {
-                            format!(
-                                "while attempting to open prior cache artifact for package {}",
-                                package.0,
-                            )
-                        })?
-                        .with_context(|| {
-                            format!(
-                                "prior cache artifact is missing for package {} with cached Body IR payloads",
-                                package.0,
-                            )
-                        })?;
-                    update.write_input_reusing_cached_body_ir(input, &reader)
-                } else {
-                    update.write_input(input)
-                }
-            }
-            (None, None) => {
-                // Exact target materialization starts from a fully offloaded artifact. It restores
-                // a manifest-backed Body IR package and rebuilds only the requested target;
-                // declaration reads belong to short-lived transactions, so DefMap and Semantic IR
-                // remain offloaded. Cached Body placeholders distinguish that rewrite overlay from
-                // an arbitrary mixed-residency state.
-                anyhow::ensure!(
-                    project.def_map.package_is_offloaded(package)
-                        && project.semantic_ir.package_is_offloaded(package),
-                    "package {} declaration phases are neither jointly resident nor offloaded",
-                    package.0,
-                );
-                anyhow::ensure!(
-                    body_ir.has_cached_payloads(),
-                    "package {} needs cached declaration sections without cached Body IR siblings",
-                    package.0,
-                );
-
-                // Pin the old revision before the atomic replacement. The changed Body IR is
-                // encoded normally; sibling Body shards and both declaration sections are copied.
-                let input = PackageCacheBodyUpdateInput::new(&header, &parse, body_ir);
-                let reader = project
-                    .cache_store
-                    .open_artifact(&header)
-                    .with_context(|| {
-                        format!(
-                            "while attempting to open prior cache artifact for package {}",
-                            package.0,
-                        )
-                    })?
-                    .with_context(|| {
-                        format!(
-                            "prior cache artifact is missing for package {} with cached declarations",
-                            package.0,
-                        )
-                    })?;
-                update.write_body_update_reusing_cached_sections(input, &reader)
-            }
-            _ => anyhow::bail!(
-                "package {} has inconsistent DefMap and Semantic IR residency",
-                package.0,
-            ),
-        };
-
-        write.with_context(|| {
-            format!(
-                "while attempting to write package cache artifact for package {}",
-                package.0,
-            )
-        })
-    }
-
-    /// Offloads one package from every artifact-backed phase database.
-    fn offload_package(&mut self, package: PackageSlot) -> anyhow::Result<()> {
-        // Only drop resident data after the full cross-phase package artifact is durable. If a
-        // future implementation downgrades write errors to warnings, this invariant should remain.
-        self.project
-            .def_map
-            .offload_package(package)
-            .with_context(|| {
-                format!("while attempting to offload def-map package {}", package.0)
-            })?;
-        self.project
-            .semantic_ir
-            .offload_package(package)
-            .with_context(|| {
-                format!(
-                    "while attempting to offload semantic IR package {}",
-                    package.0
-                )
-            })?;
-        self.project
-            .body_ir
-            .offload_package(package)
-            .with_context(|| {
-                format!("while attempting to offload body IR package {}", package.0)
-            })?;
-
-        Ok(())
-    }
-
-    /// Creates a short-lived Rayon pool for package artifact serialization.
-    fn local_thread_pool(thread_name_prefix: &'static str) -> anyhow::Result<rayon::ThreadPool> {
-        rayon::ThreadPoolBuilder::new()
-            .thread_name(move |index| format!("{thread_name_prefix}-{index}"))
-            .build()
-            .with_context(|| format!("while attempting to create {thread_name_prefix} thread pool"))
     }
 }

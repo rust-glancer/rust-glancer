@@ -36,13 +36,26 @@ const PROGRESS_PUBLICATION_INTERVAL: Duration = Duration::from_millis(200);
 ///
 /// The background worker cannot mutate saved state. Its only external capabilities are receiving
 /// best-effort path priorities and enqueueing package copies for generation-checked publication.
+/// A newer saved generation can be announced while an older worker drains, so the client-visible
+/// lifecycle generation is tracked separately from the generation that owns the worker.
 #[derive(Debug)]
 pub(super) struct DeferredIndexingFinish {
     sender: Sender<QueuedEngineCommand>,
     in_flight_generation: Option<u64>,
     worker_priority: Option<Arc<Mutex<Vec<PackageSlot>>>>,
     restart_after_in_flight: bool,
+    /// Latest generation whose deferred lifecycle was announced but has not been terminated.
+    active_lifecycle_generation: Option<u64>,
     priority_paths: BTreeSet<PathBuf>,
+}
+
+/// Terminal lifecycle event produced while reconciling one worker result.
+///
+/// The generation belongs to the latest announced lifecycle. It can differ from both the worker
+/// that returned and the saved project that made that worker stale.
+pub(super) struct DeferredIndexingTerminal {
+    pub(super) generation: u64,
+    pub(super) outcome: DeferredIndexingOutcome,
 }
 
 impl DeferredIndexingFinish {
@@ -52,17 +65,9 @@ impl DeferredIndexingFinish {
             in_flight_generation: None,
             worker_priority: None,
             restart_after_in_flight: false,
+            active_lifecycle_generation: None,
             priority_paths: BTreeSet::new(),
         }
-    }
-
-    /// Start deferred indexing for the freshly saved project.
-    pub(super) fn start_initial(
-        &mut self,
-        generation: u64,
-        detached: DetachedSplitIndexing,
-    ) -> bool {
-        self.spawn_finish(generation, detached)
     }
 
     /// Ensure the current saved project will eventually finish deferred indexing.
@@ -70,11 +75,16 @@ impl DeferredIndexingFinish {
     /// Starting another clone immediately would double peak memory. Record one restart and let the
     /// old build return first; its generation-tagged publications are harmless in the meantime.
     pub(super) fn saved_project_changed(&mut self, project: &ProjectState) -> bool {
-        if self.in_flight_generation.is_some() {
-            self.restart_after_in_flight = true;
-            return true;
+        let should_announce_start = if self.in_flight_generation.is_some() {
+            self.restart_after_in_flight = project.has_unfinished_split_indexing();
+            self.restart_after_in_flight
+        } else {
+            self.start_current(project)
+        };
+        if should_announce_start {
+            self.active_lifecycle_generation = Some(project.generation());
         }
-        self.start_current(project)
+        should_announce_start
     }
 
     /// Record whether an editor path should be scheduled ahead of ordinary background packages.
@@ -144,15 +154,16 @@ impl DeferredIndexingFinish {
 
     /// Reconcile the final background result for the client-visible saved generation.
     ///
-    /// `None` means this result cannot terminate the client's active operation because it is stale
-    /// or unknown. A current result remains terminal when its work failed, but carries that failure
-    /// instead of presenting it as successful completion.
+    /// `None` means this result cannot terminate the client's active operation because it is
+    /// unknown or a replacement worker started. A current result remains terminal when its work
+    /// failed. A stale result also becomes terminal when the latest saved generation is already
+    /// complete and therefore needs no replacement worker.
     pub(super) fn finish_returned(
         &mut self,
         project: &mut ProjectState,
         generation: u64,
         result: DeferredIndexingResult,
-    ) -> Option<DeferredIndexingOutcome> {
+    ) -> Option<DeferredIndexingTerminal> {
         if self.in_flight_generation != Some(generation) {
             tracing::info!(
                 generation,
@@ -164,17 +175,55 @@ impl DeferredIndexingFinish {
         self.in_flight_generation = None;
         self.worker_priority = None;
 
-        let outcome = Self::apply_finish_if_current(project, generation, result);
-        let should_restart = self.restart_after_in_flight || outcome.is_none();
+        let worker_outcome = Self::apply_finish_if_current(project, generation, result);
+        let should_restart = self.restart_after_in_flight || worker_outcome.is_none();
         self.restart_after_in_flight = false;
         if should_restart {
-            self.start_current(project);
+            if self.start_current(project) {
+                return None;
+            }
+
+            // The latest generation may have completed while the older worker was running. Close
+            // the latest announced lifecycle successfully when no replacement work remains.
+            let outcome = if project.has_unfinished_split_indexing() {
+                DeferredIndexingOutcome::Failed {
+                    message: "deferred indexing could not start for the latest project generation"
+                        .to_string(),
+                }
+            } else {
+                DeferredIndexingOutcome::Succeeded
+            };
+            return self.finish_active_lifecycle(outcome);
         }
 
-        outcome
+        worker_outcome.and_then(|outcome| self.finish_active_lifecycle(outcome))
+    }
+
+    fn finish_active_lifecycle(
+        &mut self,
+        outcome: DeferredIndexingOutcome,
+    ) -> Option<DeferredIndexingTerminal> {
+        let Some(generation) = self.active_lifecycle_generation.take() else {
+            tracing::warn!("deferred indexing finished without an active client lifecycle");
+            return None;
+        };
+        Some(DeferredIndexingTerminal {
+            generation,
+            outcome,
+        })
     }
 
     fn start_current(&mut self, project: &ProjectState) -> bool {
+        // Check the saved project before detaching it. Lower-memory package batches finish Body IR
+        // before publication, and an empty worker would otherwise pay for a complete project clone.
+        if !project.has_unfinished_split_indexing() {
+            tracing::debug!(
+                generation = project.generation(),
+                "deferred indexing already complete"
+            );
+            return false;
+        }
+
         let (generation, detached) = match project.detach_saved_split_indexing() {
             Ok(detached) => detached,
             Err(error) => {

@@ -1,10 +1,58 @@
 //! User-facing indexing trade-offs passed down to build phases.
 
-use std::num::NonZeroUsize;
+use std::{
+    fmt,
+    num::{NonZeroUsize, ParseIntError},
+    str::FromStr,
+};
 
 use rg_def_map::MacroExpansionPerformancePreference;
 
 const LOWER_PEAK_MEMORY_BODY_IR_WORKER_LIMIT: usize = 4;
+const DEFAULT_PACKAGE_BATCH_SIZE: usize = 512;
+
+/// Number of source packages taken through the main indexing phases together.
+///
+/// This is a package-level working-set target, not a strict memory limit. A dependency cycle and
+/// packages waiting on it may have to stay in one larger batch. Packages retained by the residency
+/// policy are not released after their batch finishes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct PackageBatchSize(NonZeroUsize);
+
+impl PackageBatchSize {
+    /// Creates a package batch size, returning `None` for zero packages.
+    pub fn new(packages: usize) -> Option<Self> {
+        NonZeroUsize::new(packages).map(Self)
+    }
+
+    /// Returns the configured number of packages.
+    pub fn get(self) -> usize {
+        self.0.get()
+    }
+}
+
+impl Default for PackageBatchSize {
+    fn default() -> Self {
+        Self(
+            NonZeroUsize::new(DEFAULT_PACKAGE_BATCH_SIZE)
+                .expect("default package batch size should be non-zero"),
+        )
+    }
+}
+
+impl fmt::Display for PackageBatchSize {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl FromStr for PackageBatchSize {
+    type Err = ParseIntError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        value.parse::<NonZeroUsize>().map(Self)
+    }
+}
 
 /// High-level indexing preference selected by users or frontends.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -57,7 +105,26 @@ impl IndexingPerformancePreference {
 
 #[cfg(test)]
 mod tests {
-    use super::IndexingPerformancePreference;
+    use super::{IndexingPerformancePreference, PackageBatchSize};
+
+    #[test]
+    fn package_batch_size_is_positive() {
+        assert!(PackageBatchSize::new(0).is_none());
+        assert_eq!(
+            PackageBatchSize::new(16)
+                .expect("positive package batch size should be accepted")
+                .get(),
+            16,
+        );
+        assert_eq!(PackageBatchSize::default().get(), 512);
+        assert_eq!(
+            "32".parse::<PackageBatchSize>()
+                .expect("positive package batch size should parse")
+                .get(),
+            32,
+        );
+        assert!("0".parse::<PackageBatchSize>().is_err());
+    }
 
     #[test]
     fn parses_public_preference_names() {

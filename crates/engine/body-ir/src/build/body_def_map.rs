@@ -420,9 +420,11 @@ impl BodyDefMapBuildState {
         }
     }
 
-    /// Apply shared import-resolution results to the body scope matrix.
+    /// Apply every body-local import to the matching synthetic module scope.
     ///
-    /// Import meaning stays in `ScopeResolver`; this loop only owns body-specific scope storage.
+    /// Body DefMaps run their own small fixed point, but import lookup and insertion must match
+    /// crate DefMaps. Passing each destination scope to `ScopeResolver` keeps named imports, globs,
+    /// and hidden trait imports on that shared path.
     fn apply_imports<S>(
         &self,
         env: &BodyDefMapFinalizationEnv<'_, S>,
@@ -438,26 +440,19 @@ impl BodyDefMapBuildState {
                 origin: DefMapRef::Body(self.body_ref),
                 import: import_id,
             };
-            let resolution = resolver.resolve_import(importing_module, import_ref, import)?;
             let target_scope = next_scopes
                 .get_mut(import.module.0)
                 .expect("crate scope should exist for body import");
-            for introduced in resolution.introduced {
-                target_scope.insert_binding(
-                    &introduced.name,
-                    introduced.namespace,
-                    introduced.binding,
-                );
-            }
-            for binding in resolution.unnamed_traits {
-                target_scope.insert_unnamed_trait_binding(binding);
-            }
+            resolver.apply_import(importing_module, import_ref, import, target_scope)?;
         }
 
         Ok(())
     }
 
-    /// Classify unresolved imports with the same operation used during fixed-point application.
+    /// Record imports whose source still fails to resolve in the settled body scopes.
+    ///
+    /// The status-only resolver runs the same lookup as fixed-point application, so this report
+    /// cannot disagree with the operation which built the scopes.
     fn collect_unresolved_imports<S>(
         &self,
         def_maps: S,

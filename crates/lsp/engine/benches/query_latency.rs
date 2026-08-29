@@ -221,23 +221,38 @@ impl PreparedEngine {
             .await
             .expect("query benchmark engine should accept initialized notification");
 
-        tokio::time::timeout(DEFERRED_INDEXING_TIMEOUT, async {
-            loop {
-                let notification = notifications
-                    .recv()
-                    .await
-                    .expect("query benchmark notification channel should remain open");
-                if matches!(
-                    notification,
-                    ServiceNotification::DeferredIndexingFinished { root, .. }
-                        if root == workspace_root
-                ) {
-                    break;
-                }
+        // The initialize request returns after the engine has decided whether this generation
+        // needs deferred work. A cold build emits `Started` before returning, while a complete
+        // cache-backed build deliberately emits no deferred lifecycle at all. Only wait for the
+        // terminal event when this particular initialization actually started a worker.
+        let mut deferred_generation = None;
+        while let Ok(notification) = notifications.try_recv() {
+            if let ServiceNotification::DeferredIndexingStarted { root, generation } = notification
+                && root == workspace_root
+            {
+                deferred_generation = Some(generation);
+                break;
             }
-        })
-        .await
-        .expect("query benchmark deferred indexing should finish before its deadline");
+        }
+        if let Some(deferred_generation) = deferred_generation {
+            tokio::time::timeout(DEFERRED_INDEXING_TIMEOUT, async {
+                loop {
+                    let notification = notifications
+                        .recv()
+                        .await
+                        .expect("query benchmark notification channel should remain open");
+                    if matches!(
+                        notification,
+                        ServiceNotification::DeferredIndexingFinished { root, generation, .. }
+                            if root == workspace_root && generation == deferred_generation
+                    ) {
+                        break;
+                    }
+                }
+            })
+            .await
+            .expect("query benchmark deferred indexing should finish before its deadline");
+        }
 
         // Later lifecycle notifications are deliberately ignored, but keeping the receiver active
         // preserves the service's ordinary fire-and-forget behavior during measured requests.

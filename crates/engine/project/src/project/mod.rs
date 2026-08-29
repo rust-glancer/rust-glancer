@@ -9,6 +9,7 @@ mod build;
 pub(crate) mod loading;
 mod macro_source_files;
 pub(crate) mod offloading;
+mod package_artifacts;
 mod package_set;
 mod reference_search;
 mod snapshot;
@@ -31,7 +32,7 @@ use rg_workspace::WorkspaceMetadata;
 
 use self::state::ProjectState;
 use crate::{
-    indexing::IndexingPerformancePreference,
+    indexing::{IndexingPerformancePreference, PackageBatchSize},
     residency::{PackageResidency, PackageResidencyPlan},
 };
 use rg_std::MemorySize;
@@ -90,6 +91,11 @@ impl Project {
     /// Returns the indexing speed/memory trade-off used by this project.
     pub fn indexing_preference(&self) -> IndexingPerformancePreference {
         self.state.indexing_preference
+    }
+
+    /// Returns the package batch size configured for lower-memory indexing.
+    pub fn package_batch_size(&self) -> PackageBatchSize {
+        self.state.package_batch_size
     }
 
     /// Returns coarse status counters without exposing raw phase databases.
@@ -188,6 +194,15 @@ impl Project {
     /// Returns the split-indexing control surface for deferred analysis work.
     pub fn split_indexing(&mut self) -> SplitIndexing<'_> {
         SplitIndexing::new(self)
+    }
+
+    /// Returns whether the configured split-indexing policy still has Body IR work to finish.
+    ///
+    /// Callers can use this check before cloning the project for detached work. A full build and
+    /// lower-memory package batches have already completed that work, so cloning them would only
+    /// duplicate retained project state before an empty finish.
+    pub fn has_unfinished_split_indexing(&self) -> bool {
+        split_indexing::has_unfinished_split_indexing(&self.state)
     }
 
     /// Clone this project into an owned background-finish handle.

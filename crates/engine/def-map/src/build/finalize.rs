@@ -1,10 +1,10 @@
 //! Finalizes crate scopes into frozen def maps.
 //!
-//! Collection records direct declarations and raw imports, but it intentionally leaves cross-crate
-//! facts unresolved. This module turns those mutable crate states into immutable def maps by
-//! selecting preludes, repeatedly applying imports until scopes stop changing, and then freezing
-//! the settled scopes back into the crate payloads. During package builds, selected package reads
-//! come from fresh crate states while other package reads fall through to the frozen baseline.
+//! Collection records direct declarations and raw imports, but leaves cross-crate facts unresolved.
+//! This module turns those mutable crate states into immutable def maps by selecting preludes,
+//! repeatedly applying imports until scopes stop changing, and then freezing the settled scopes
+//! back into the crate payloads. During package builds, selected package reads come from fresh
+//! crate states while other package reads fall through to the frozen baseline.
 //!
 //! Resumable package finalization can pause after a generated macro asks for an out-of-line module
 //! file. The project grows Parse and ItemTree, then calls this fixed-point machinery again with the
@@ -14,7 +14,6 @@
 use std::sync::Arc;
 
 use anyhow::Context as _;
-use rayon::prelude::*;
 
 use crate::{
     CrateData, CrateResolutionEnv, LocalDefData, LocalEnumVariantData, LocalEnumVariantEntry,
@@ -32,13 +31,16 @@ use rg_std::UniqueVec;
 use rg_text::{Name, PackageNameInterners};
 use rg_workspace::{TargetKind, WorkspaceMetadata};
 
-use crate::{DefMapReadTxn, MacroSourceFileRequest, PackageSlot, profile::metric};
+use crate::{
+    DefMapReadTxn, MacroSourceFileRequest, PackageSlot,
+    profile::{ImportResolutionPassMetrics, metric, record_import_resolution_pass},
+};
 
 use super::MacroSourceFileResolutions;
 
 use super::{
     collect::{CrateState, KnownModuleFiles},
-    imports::{UnresolvedImports, apply_imports},
+    imports::{ImportResolutionExecutor, ImportWorklist, UnresolvedImports},
     macros::{
         MAX_MACRO_EXPANSION_PASSES, MacroExpansionCursors, MacroExpansionScan,
         apply_expansion_attempts, apply_pending_macro_source_files, collect_expansion_attempts,
@@ -55,13 +57,9 @@ type CrateScopeMatrix = Vec<ModuleScopeBuilder>;
 /// Mutable module scopes for every crate inside one package.
 type PackageScopeMatrix = Vec<CrateScopeMatrix>;
 
-// Below this size, dispatching packages through a worker pool costs more than the import work.
-const PARALLEL_IMPORT_RESOLUTION_PACKAGE_THRESHOLD: usize = 32;
-const LOWER_PEAK_MEMORY_IMPORT_RESOLUTION_THREAD_LIMIT: usize = 2;
-
 /// Collected crate states that must be finalized.
 ///
-/// `Some` package slots are dirty and will be resolved/frozen. `None` slots are only valid when an
+/// `Some` package slots are dirty and will be resolved/frozen. `None` slots are only valid when a
 /// frozen `DefMapDb` baseline exists; resolution reads them from that snapshot instead.
 pub(super) struct FinalizeCrateStates {
     packages: Vec<Option<PackageCrateStates>>,
@@ -121,10 +119,6 @@ impl FinalizeCrateStates {
             })
     }
 
-    fn base_scopes(&self) -> ScopeMatrix {
-        ScopeMatrix::from_crate_states(self)
-    }
-
     /// Clears requests emitted by the previous resumable construction step.
     pub(super) fn clear_macro_source_file_requests(&mut self) {
         for package_states in self.iter_dirty_mut() {
@@ -168,6 +162,10 @@ impl FinalizeCrateStates {
 
         requests.into_vec()
     }
+
+    fn base_scopes(&self) -> ScopeMatrix {
+        ScopeMatrix::from_crate_states(self)
+    }
 }
 
 /// Fixed-point machinery retained across project-owned source discovery pauses.
@@ -179,8 +177,22 @@ impl FinalizeCrateStates {
 pub(super) struct FinalizeScopeSession {
     macro_runtime: MacroExpansionRuntime,
     import_executor: ImportResolutionExecutor,
+    /// Keeps profile run labels increasing across source-discovery pauses in this session.
+    import_resolution_runs: usize,
     expansion_passes: usize,
     continuation: Option<MacroExpansionContinuation>,
+}
+
+impl FinalizeScopeSession {
+    pub(super) fn new(performance_preference: MacroExpansionPerformancePreference) -> Self {
+        Self {
+            macro_runtime: MacroExpansionRuntime::new(performance_preference),
+            import_executor: ImportResolutionExecutor::new(performance_preference),
+            import_resolution_runs: 0,
+            expansion_passes: 0,
+            continuation: None,
+        }
+    }
 }
 
 /// The point immediately after an expansion batch requested project-owned source files.
@@ -191,17 +203,6 @@ pub(super) struct FinalizeScopeSession {
 struct MacroExpansionContinuation {
     current_scopes: ScopeMatrix,
     next_scan_cursors: MacroExpansionCursors,
-}
-
-impl FinalizeScopeSession {
-    pub(super) fn new(performance_preference: MacroExpansionPerformancePreference) -> Self {
-        Self {
-            macro_runtime: MacroExpansionRuntime::new(performance_preference),
-            import_executor: ImportResolutionExecutor::new(performance_preference),
-            expansion_passes: 0,
-            continuation: None,
-        }
-    }
 }
 
 /// Import-resolution scopes for dirty packages.
@@ -241,7 +242,7 @@ impl ScopeMatrix {
             .map(Vec::as_slice)
     }
 
-    fn module_scope(&self, module: ModuleRef) -> Option<&ModuleScopeBuilder> {
+    pub(super) fn module_scope(&self, module: ModuleRef) -> Option<&ModuleScopeBuilder> {
         self.crate_scopes(module.origin.as_crate_ref()?)?
             .get(module.module.0)
     }
@@ -290,139 +291,47 @@ impl ScopeMatrix {
     fn censor_proc_macro_exports(&mut self, states: &FinalizeCrateStates) {
         for package_states in states.iter_dirty() {
             for state in package_states {
-                if state.target_kind != TargetKind::ProcMacro {
-                    continue;
-                }
-
-                let root = ModuleRef::krate(state.crate_ref, state.root_module);
-                let def_map = state.def_map_builder.partial();
-                self.module_scope_mut(state.crate_ref, state.root_module)
-                    .expect("proc-macro root scope should exist")
-                    .censor_public_bindings(root, |namespace, binding| {
-                        if namespace != Namespace::Macros
-                            || !binding
-                                .routes()
-                                .iter()
-                                .any(|route| route.provenance == ScopeBindingProvenance::Direct)
-                        {
-                            return false;
-                        }
-
-                        let DefId::Local(local_def) = binding.def else {
-                            return false;
-                        };
-                        local_def.origin == root.origin
-                            && def_map
-                                .macro_definition(local_def.local_def)
-                                .and_then(|data| data.proc_macro_implementation())
-                                .is_some()
-                    });
+                let scope = self
+                    .module_scope_mut(state.crate_ref, state.root_module)
+                    .expect("crate root scope should exist while censoring exports");
+                state.censor_proc_macro_scope(state.root_module, scope);
             }
         }
     }
 }
 
-/// Owns the worker pool used to apply imports for large package sets.
-///
-/// One fixed-point pass reads only from the immutable previous `ScopeMatrix`, while each dirty
-/// package writes to its own part of the next matrix. That makes package-level work independent;
-/// fixed-point passes themselves remain serial so later passes observe a complete snapshot. The
-/// pool is local to finalization, so its worker threads do not become retained LSP state.
-struct ImportResolutionExecutor {
-    performance_preference: MacroExpansionPerformancePreference,
-    thread_pool: Option<rayon::ThreadPool>,
-}
-
-impl ImportResolutionExecutor {
-    fn new(performance_preference: MacroExpansionPerformancePreference) -> Self {
-        Self {
-            performance_preference,
-            thread_pool: None,
+impl CrateState {
+    /// Make one rebuilt scope obey the external export rules of a proc-macro crate.
+    ///
+    /// A function marked `#[proc_macro]` is a normal value inside its own source crate, but another
+    /// crate may see only its macro identity. Worklist candidates call this before comparison so
+    /// the hidden function value cannot look like a scope change and wake more import groups.
+    pub(super) fn censor_proc_macro_scope(&self, module: ModuleId, scope: &mut ModuleScopeBuilder) {
+        if self.target_kind != TargetKind::ProcMacro || module != self.root_module {
+            return;
         }
-    }
 
-    /// Apply one complete import pass, using parallel package jobs only when there is enough work.
-    fn apply_pass(
-        &mut self,
-        states: &FinalizeCrateStates,
-        env: &FinalizeResolutionEnv<'_>,
-        next_scopes: &mut ScopeMatrix,
-    ) -> anyhow::Result<()> {
-        let apply_package = |(next_package, package_states): (
-            &mut Option<PackageScopeMatrix>,
-            &Option<PackageCrateStates>,
-        )|
-         -> anyhow::Result<()> {
-            let (Some(next_package), Some(package_states)) =
-                (next_package.as_mut(), package_states.as_ref())
-            else {
-                assert!(
-                    next_package.is_none() && package_states.is_none(),
-                    "scope and crate-state package slots should match"
-                );
-                return Ok(());
+        let root = ModuleRef::krate(self.crate_ref, self.root_module);
+        let def_map = self.def_map_builder.partial();
+        scope.censor_public_bindings(root, |namespace, binding| {
+            if namespace != Namespace::Macros
+                || !binding
+                    .routes()
+                    .iter()
+                    .any(|route| route.provenance == ScopeBindingProvenance::Direct)
+            {
+                return false;
+            }
+
+            let DefId::Local(local_def) = binding.def else {
+                return false;
             };
-            assert_eq!(
-                next_package.len(),
-                package_states.len(),
-                "scope and crate-state crate slots should match"
-            );
-
-            for (next_crate, state) in next_package.iter_mut().zip(package_states) {
-                apply_imports(state, env, next_crate).with_context(|| {
-                    format!(
-                        "while attempting to resolve imports for {}",
-                        state.crate_name
-                    )
-                })?;
-            }
-
-            Ok(())
-        };
-
-        let dirty_package_count = states.iter_dirty().count();
-        if dirty_package_count < PARALLEL_IMPORT_RESOLUTION_PACKAGE_THRESHOLD {
-            return next_scopes
-                .packages
-                .iter_mut()
-                .zip(&states.packages)
-                .try_for_each(apply_package);
-        }
-
-        self.thread_pool()?.install(|| {
-            next_scopes
-                .packages
-                .par_iter_mut()
-                .zip(states.packages.par_iter())
-                .try_for_each(apply_package)
-        })
-    }
-
-    fn thread_pool(&mut self) -> anyhow::Result<&rayon::ThreadPool> {
-        if self.thread_pool.is_none() {
-            let mut builder = rayon::ThreadPoolBuilder::new()
-                .thread_name(|index| format!("rg-def-map-imports-{index}"));
-            if self.performance_preference == MacroExpansionPerformancePreference::LowerPeakMemory {
-                // Import jobs are smaller than macro expansion jobs, but their transient scope
-                // tables still multiply with worker count. Honor the same build preference here.
-                let worker_count = std::thread::available_parallelism()
-                    .map(usize::from)
-                    .unwrap_or(LOWER_PEAK_MEMORY_IMPORT_RESOLUTION_THREAD_LIMIT)
-                    .min(LOWER_PEAK_MEMORY_IMPORT_RESOLUTION_THREAD_LIMIT);
-                builder = builder.num_threads(worker_count);
-            }
-
-            self.thread_pool = Some(
-                builder
-                    .build()
-                    .context("while attempting to create import resolution thread pool")?,
-            );
-        }
-
-        Ok(self
-            .thread_pool
-            .as_ref()
-            .expect("import resolution thread pool should be initialized"))
+            local_def.origin == root.origin
+                && def_map
+                    .macro_definition(local_def.local_def)
+                    .and_then(|data| data.proc_macro_implementation())
+                    .is_some()
+        });
     }
 }
 
@@ -430,7 +339,7 @@ impl ImportResolutionExecutor {
 ///
 /// Dirty package reads come from fresh crate state and the current fixed-point scope snapshot.
 /// Clean package reads fall through to the frozen baseline when one exists.
-struct FinalizeResolutionEnv<'a> {
+pub(super) struct FinalizeResolutionEnv<'a> {
     old: Option<&'a DefMapReadTxn<'a>>,
     states: &'a FinalizeCrateStates,
     current_scopes: &'a ScopeMatrix,
@@ -447,6 +356,11 @@ impl<'a> FinalizeResolutionEnv<'a> {
             states,
             current_scopes,
         }
+    }
+
+    /// Return the input scope a module worker uses to decide whether its candidate changed.
+    pub(super) fn current_module_scope(&self, module: ModuleRef) -> Option<&ModuleScopeBuilder> {
+        self.current_scopes.module_scope(module)
     }
 }
 
@@ -704,29 +618,6 @@ impl CrateResolutionEnv for FinalizeResolutionEnv<'_> {
     }
 }
 
-/// Freezes collected crate states into the package payload stored by `DefMapDb`.
-pub(super) fn freeze_package(package: &Package, package_states: &[CrateState]) -> DefMapPackage {
-    let package_name = package.package_name().to_string();
-    let macro_expansion_limits = package_states
-        .iter()
-        .filter_map(|state| {
-            let report = state.macro_expansion_limit.as_ref()?;
-            Some(MacroExpansionLimitReport {
-                package_name: package_name.clone(),
-                crate_name: state.crate_name.clone(),
-                groups: report.groups.clone(),
-                omitted_call_count: report.omitted_call_count,
-            })
-        })
-        .collect();
-    DefMapPackage::new(
-        package_name,
-        package.edition(),
-        package_states.iter().map(freeze_crate_data).collect(),
-        macro_expansion_limits,
-    )
-}
-
 /// Selects the standard prelude module visible from each dirty crate.
 ///
 /// The prelude path depends on the crate_ref edition, and the module it resolves to can live in a
@@ -879,25 +770,26 @@ pub(super) fn finalize_scopes(
         &mut current_scopes,
         macro_source_file_resolutions,
     )?;
+    let mut current_unresolved_imports = None;
 
     loop {
         // Source capture resumes inside a macro pass. Every other iteration starts a normal fixed-
         // point round by settling imports over all declarations collected so far.
-        let (mut next_scan_cursors, mut needs_import_refresh) = if let Some(scan_cursors) =
-            resumed_macro_pass.take()
-        {
-            // Even a missing answer belongs to an expansion that may have added other imports or
-            // declarations. Continue new macro calls first, but require one import refresh before
-            // treating the retained scopes as stable.
-            (Some(scan_cursors), true)
-        } else {
-            metric::ROUNDS.inc();
-            let timer = metric::TIMING_RESOLVE_IMPORT_SCOPES.start_timer();
-            current_scopes =
-                resolve_import_scopes(old, states, &mut session.import_executor, current_scopes)?;
-            timer.finish();
-            (None, false)
-        };
+        let (mut next_scan_cursors, mut needs_import_refresh) =
+            if let Some(scan_cursors) = resumed_macro_pass.take() {
+                // Even a missing answer belongs to an expansion that may have added other imports or
+                // declarations. Continue new macro calls first, but require one import refresh before
+                // treating the retained scopes as stable.
+                (Some(scan_cursors), true)
+            } else {
+                metric::ROUNDS.inc();
+                let timer = metric::TIMING_RESOLVE_IMPORT_SCOPES.start_timer();
+                let resolved = resolve_import_scopes(old, states, session, current_scopes)?;
+                timer.finish();
+                current_scopes = resolved.scopes;
+                current_unresolved_imports = Some(resolved.unresolved_imports);
+                (None, false)
+            };
 
         // Macro expansion can introduce more macro calls that are visible in the same scope
         // snapshot. Keep consuming that local queue before paying for another full import pass.
@@ -907,14 +799,9 @@ pub(super) fn finalize_scopes(
                 // names generated before the cap settle into module scopes.
                 mark_retryable_macros_skipped_by_limit(states);
                 let timer = metric::TIMING_RESOLVE_IMPORT_SCOPES.start_timer();
-                current_scopes = resolve_import_scopes(
-                    old,
-                    states,
-                    &mut session.import_executor,
-                    current_scopes,
-                )?;
+                let resolved = resolve_import_scopes(old, states, session, current_scopes)?;
                 timer.finish();
-                freeze_resolved_scopes(old, states, current_scopes)?;
+                freeze_resolved_scopes(states, resolved.scopes, resolved.unresolved_imports);
                 return Ok(());
             }
 
@@ -971,6 +858,9 @@ pub(super) fn finalize_scopes(
 
             needs_import_refresh |= expansion.changed;
             if expansion.changed {
+                // These reports describe scopes from before the generated items were inserted.
+                // Require the next import run to produce matching reports before anything freezes.
+                current_unresolved_imports = None;
                 current_scopes.censor_proc_macro_exports(states);
             }
 
@@ -1006,49 +896,97 @@ pub(super) fn finalize_scopes(
 
             // No imports and no macros changed the visible declarations, so this is the stable
             // scope matrix that can be written into the frozen def maps.
-            freeze_resolved_scopes(old, states, current_scopes)?;
+            freeze_resolved_scopes(
+                states,
+                current_scopes,
+                current_unresolved_imports
+                    .expect("stable scopes should have import status from their fixed-point run"),
+            );
             return Ok(());
         }
     }
 }
 
+/// Scope and unresolved-import results settled by the same import run.
+///
+/// Keeping them together matters because a later wave can make an import resolve or stop resolving
+/// at the same time that it changes the destination scope. Freezing one result from an older wave
+/// would leave query-visible status out of sync with the bindings.
+struct ResolvedImportScopes {
+    scopes: ScopeMatrix,
+    unresolved_imports: UnresolvedImports,
+}
+
+/// Settle import-derived bindings without rebuilding every import group on every wave.
+///
+/// The worklist starts with every module that owns imports. Each wave rebuilds only the active
+/// modules against one shared scope snapshot, installs all changed candidates together, and wakes
+/// groups which read a changed scope. For a chain such as `root -> bridge -> source`, this lets
+/// `bridge` gain a binding first and wakes `root` for the following wave.
+///
+/// When no changed scope has a reader, both the scopes and their latest unresolved-import reports
+/// are ready to freeze.
 fn resolve_import_scopes(
     old: Option<&DefMapReadTxn<'_>>,
     states: &FinalizeCrateStates,
-    executor: &mut ImportResolutionExecutor,
+    session: &mut FinalizeScopeSession,
     mut current_scopes: ScopeMatrix,
-) -> anyhow::Result<ScopeMatrix> {
+) -> anyhow::Result<ResolvedImportScopes> {
     metric::IMPORT_RESOLUTION_RUNS.inc();
+    session.import_resolution_runs += 1;
+    let run_index = session.import_resolution_runs;
+    let mut pass_index = 0;
+    let mut worklist = ImportWorklist::new(states);
 
-    loop {
+    while !worklist.active_modules().is_empty() {
+        pass_index += 1;
         metric::IMPORT_RESOLUTION_PASSES.inc();
-        let mut next_scopes = states.base_scopes();
 
-        // Every iteration starts from the directly declared names, then layers import-derived
-        // bindings on top of that snapshot.
-        let env = FinalizeResolutionEnv::new(old, states, &current_scopes);
-        executor.apply_pass(states, &env, &mut next_scopes)?;
-        next_scopes.censor_proc_macro_exports(states);
+        // Finish the active wave before changing `current_scopes`. If `root` imports from `bridge`
+        // and `bridge` imports from `source`, `root` must not see `bridge`'s new binding until the
+        // next wave; otherwise the result would depend on which worker happened to finish first.
+        let updates = {
+            let env = FinalizeResolutionEnv::new(old, states, &current_scopes);
+            session
+                .import_executor
+                .apply_wave(&worklist, states, &env)
+                .context("while attempting to resolve import wave")?
+        };
+        let outcome = worklist.apply_updates(&mut current_scopes, updates);
+        record_import_resolution_pass(
+            run_index,
+            pass_index,
+            ImportResolutionPassMetrics {
+                evaluated_packages: outcome.evaluated.packages,
+                evaluated_crates: outcome.evaluated.crates,
+                evaluated_modules: outcome.evaluated.modules,
+                changed_packages: outcome.changed.packages,
+                changed_crates: outcome.changed.crates,
+                changed_modules: outcome.changed.modules,
+                imports_evaluated: outcome.stats.imports_evaluated,
+                glob_imports_evaluated: outcome.stats.glob_imports_evaluated,
+                glob_bindings_emitted: outcome.stats.glob_bindings_emitted,
+            },
+        );
 
-        if next_scopes == current_scopes {
-            return Ok(current_scopes);
+        if outcome.finished {
+            break;
         }
-
-        current_scopes = next_scopes;
     }
+
+    Ok(ResolvedImportScopes {
+        scopes: current_scopes,
+        unresolved_imports: worklist.into_unresolved_imports(),
+    })
 }
 
 fn freeze_resolved_scopes(
-    old: Option<&DefMapReadTxn<'_>>,
     states: &mut FinalizeCrateStates,
     current_scopes: ScopeMatrix,
-) -> anyhow::Result<()> {
-    // Once the import graph reaches a fixed point, freeze the resolved scopes into the public
-    // def-map payload and preserve unresolved imports for query consumers.
-    let unresolved_imports = {
-        let env = FinalizeResolutionEnv::new(old, states, &current_scopes);
-        UnresolvedImports::collect(states, &env)?
-    };
+    unresolved_imports: UnresolvedImports,
+) {
+    // The worklist produced each scope and unresolved-import list from the same final wave. Write
+    // both into the public DefMap now; there is no need to traverse every import one more time.
 
     for (package_slot, crate_scopes) in current_scopes.packages.into_iter().enumerate() {
         let Some(crate_scopes) = crate_scopes else {
@@ -1069,8 +1007,6 @@ fn freeze_resolved_scopes(
             freeze_crate_scopes(state, scopes, &unresolved_imports);
         }
     }
-
-    Ok(())
 }
 
 fn freeze_crate_scopes(
@@ -1093,6 +1029,29 @@ fn freeze_crate_scopes(
             .expect("unresolved imports should exist for every dirty module")
             .clone();
     }
+}
+
+/// Freezes collected crate states into the package payload stored by `DefMapDb`.
+pub(super) fn freeze_package(package: &Package, package_states: &[CrateState]) -> DefMapPackage {
+    let package_name = package.package_name().to_string();
+    let macro_expansion_limits = package_states
+        .iter()
+        .filter_map(|state| {
+            let report = state.macro_expansion_limit.as_ref()?;
+            Some(MacroExpansionLimitReport {
+                package_name: package_name.clone(),
+                crate_name: state.crate_name.clone(),
+                groups: report.groups.clone(),
+                omitted_call_count: report.omitted_call_count,
+            })
+        })
+        .collect();
+    DefMapPackage::new(
+        package_name,
+        package.edition(),
+        package_states.iter().map(freeze_crate_data).collect(),
+        macro_expansion_limits,
+    )
 }
 
 fn freeze_crate_data(state: &CrateState) -> CrateData {

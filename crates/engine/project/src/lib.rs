@@ -32,7 +32,7 @@ pub use rg_body_ir::{CurrentBodyBuildCheckpoint, CurrentBodySelection};
 pub use rg_def_map::{MacroExpansionLimitGroup, MacroExpansionLimitReport};
 
 pub use self::{
-    indexing::IndexingPerformancePreference,
+    indexing::{IndexingPerformancePreference, PackageBatchSize},
     memory::{ProjectMemoryHooks, ProjectMemoryPurgePoint},
     profile::{BUILD_CHECKPOINTS, BuildProcessMemory, ProcessMemorySampler},
     project::{

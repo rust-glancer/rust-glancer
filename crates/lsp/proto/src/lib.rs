@@ -26,8 +26,8 @@ pub use self::{
     completion::CompletionClientCapabilities,
     config::{
         AnalysisCfgConfig, AnalysisConfig, CargoMetadataConfig, CargoMetadataTarget,
-        DiagnosticsConfig, EngineConfig, IndexingPerformancePreference, PackageResidencyPolicy,
-        SysrootDiscovery,
+        DiagnosticsConfig, EngineConfig, IndexingPerformancePreference, PackageBatchSize,
+        PackageResidencyPolicy, SysrootDiscovery,
     },
     error::EngineError,
     file_uri::{FileUriError, file_uri_to_path, path_for_editor, path_to_file_uri},

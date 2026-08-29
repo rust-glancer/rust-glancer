@@ -50,36 +50,47 @@ pub enum GlobImportSource {
     Enum(LocalDefRef),
 }
 
-/// One name and namespace slot introduced by a resolved import directive.
+/// Status and work count from resolving one import against a scope snapshot.
 ///
-/// A single `use Unit as LocalUnit` can produce two of these facts: one for the struct type and one
-/// for its unit constructor in the value namespace.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ImportedScopeBinding {
-    pub name: Name,
-    pub namespace: Namespace,
-    pub binding: ScopeBinding,
-}
-
-/// Result of resolving one import against a fixed-point scope snapshot.
-///
-/// A source can resolve without introducing a named binding, as with `use path as _`. Keeping that
-/// status separate lets import application and unresolved-import reporting share one authority.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// Resolution status is separate from emitted bindings. For example, `use Trait as _` resolves its
+/// source even though it introduces no named path, while `use missing::*` remains unresolved and
+/// emits nothing. This lets scope construction and unresolved-import reporting use the same lookup
+/// operation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ImportResolution {
-    /// Binding facts for the caller to insert into its mutable scope storage.
-    pub introduced: Vec<ImportedScopeBinding>,
-    /// Traits imported through `use Trait as _`, which affect method lookup without introducing
-    /// an ordinary path binding.
-    pub unnamed_traits: Vec<ScopeBinding>,
     source_resolved: bool,
+    emitted_binding_count: usize,
 }
 
 impl ImportResolution {
-    /// Whether the source path resolved, even if the import intentionally introduced no name.
+    /// Whether the source path resolved, even if the import introduced no named path.
     pub fn is_resolved(&self) -> bool {
         self.source_resolved
     }
+
+    /// Number of bindings produced, used to profile the fan-out of glob imports.
+    pub(crate) fn emitted_binding_count(&self) -> usize {
+        self.emitted_binding_count
+    }
+}
+
+/// One binding flowing from import lookup into a mutable destination scope.
+///
+/// `use Unit as LocalUnit` can emit two `Named` values: one for the type and one for its unit
+/// constructor. `use Trait as _` emits `UnnamedTrait` instead because the trait participates in
+/// method lookup without occupying a path name.
+///
+/// This protocol stays inside `ScopeResolver`; callers either ask it to apply an import or ask only
+/// for resolution status. A named binding borrows its spelling so a large glob does not need to
+/// clone every name into a temporary result vector.
+#[derive(Debug)]
+enum ImportedScopeBinding<'name> {
+    Named {
+        name: &'name Name,
+        namespace: Namespace,
+        binding: ScopeBinding,
+    },
+    UnnamedTrait(ScopeBinding),
 }
 
 /// Applies name lookup rules over one abstract scope source.
@@ -426,52 +437,134 @@ impl<E: ScopeResolutionEnv + ?Sized> ScopeResolver<'_, E> {
 }
 
 impl<E: CrateResolutionEnv + ?Sized> ScopeResolver<'_, E> {
-    /// Resolve one import and return every binding it introduces.
+    /// Resolve one import and write its bindings into `target_scope` as they are found.
     ///
-    /// Both crate and body DefMap builders apply these facts to their own mutable scope storage.
-    /// This method does not mutate either scope: the same operation can be used again after the
-    /// fixed point to classify unresolved imports. Lookup, provenance, and visibility intersection
-    /// therefore have one authority.
+    /// Crate and body DefMaps use different fixed-point loops, but both need the same insertion
+    /// rules. In particular, ordinary imports occupy name/namespace slots while `use Trait as _`
+    /// adds an unnamed trait binding. Keeping both cases here prevents the two builders from
+    /// implementing that split separately.
+    ///
+    /// Glob bindings are inserted one at a time instead of first collecting an owned result.
+    pub fn apply_import(
+        &self,
+        importing_module: ModuleRef,
+        import_ref: ImportRef,
+        import: &ImportData,
+        target_scope: &mut ModuleScopeBuilder,
+    ) -> Result<ImportResolution, E::Error> {
+        self.resolve_import_streaming(importing_module, import_ref, import, |introduced| {
+            match introduced {
+                ImportedScopeBinding::Named {
+                    name,
+                    namespace,
+                    binding,
+                } => {
+                    target_scope.insert_binding(name, namespace, binding);
+                }
+                ImportedScopeBinding::UnnamedTrait(binding) => {
+                    target_scope.insert_unnamed_trait_binding(binding);
+                }
+            }
+        })
+    }
+
+    /// Resolve one import and return its status without changing a scope.
+    ///
+    /// After a body fixed point settles, the builder uses this form to collect unresolved imports.
+    /// It runs the same lookup as `apply_import` and discards the emitted bindings, so the reported
+    /// status describes the operation used during construction.
     pub fn resolve_import(
         &self,
         importing_module: ModuleRef,
         import_ref: ImportRef,
         import: &ImportData,
     ) -> Result<ImportResolution, E::Error> {
+        self.resolve_import_streaming(importing_module, import_ref, import, |_| {})
+    }
+
+    /// Shared lookup behind the applying and status-only import APIs.
+    ///
+    /// A glob may expose thousands of bindings. The private callback consumes each binding as soon
+    /// as lookup produces it, avoiding an intermediate `Vec` while keeping the callback protocol
+    /// out of the crate's public API.
+    fn resolve_import_streaming<F>(
+        &self,
+        importing_module: ModuleRef,
+        import_ref: ImportRef,
+        import: &ImportData,
+        mut emit: F,
+    ) -> Result<ImportResolution, E::Error>
+    where
+        F: for<'name> FnMut(ImportedScopeBinding<'name>),
+    {
         match import.kind {
             ImportKind::Glob => {
+                // `path::*` can name either a module or an enum. Finding either source resolves the
+                // import even when visibility filtering leaves it with no bindings to emit.
                 let sources = self.import_glob_sources(importing_module, import.path.semantic())?;
                 let source_resolved = !sources.is_empty();
-                let mut introduced = Vec::new();
+                let mut emitted_binding_count = 0;
 
                 for source in sources {
-                    let source_scope = self.visible_glob_source_scope(importing_module, source)?;
-                    for (name, entry) in source_scope.entries() {
-                        for namespace in Namespace::ALL {
-                            for source_binding in entry.bindings(namespace) {
-                                let Some(binding) = self.imported_binding(
-                                    importing_module,
-                                    source_binding,
-                                    import.visibility,
-                                    ScopeBindingProvenance::GlobImport(import_ref),
-                                )?
-                                else {
-                                    continue;
-                                };
-                                introduced.push(ImportedScopeBinding {
-                                    name: name.clone(),
-                                    namespace,
-                                    binding,
-                                });
+                    match source {
+                        GlobImportSource::Module(source_module) => {
+                            for (name, entry) in self.env.module_scope_entries(source_module)? {
+                                for namespace in Namespace::ALL {
+                                    for source_binding in entry.bindings(namespace) {
+                                        let Some(binding) = self.imported_binding(
+                                            importing_module,
+                                            source_binding,
+                                            import.visibility,
+                                            ScopeBindingProvenance::GlobImport(import_ref),
+                                        )?
+                                        else {
+                                            continue;
+                                        };
+                                        emitted_binding_count += 1;
+                                        emit(ImportedScopeBinding::Named {
+                                            name,
+                                            namespace,
+                                            binding,
+                                        });
+                                    }
+                                }
+                            }
+                        }
+                        GlobImportSource::Enum(enum_def) => {
+                            if self.env.local_def_kind(enum_def)? != Some(LocalDefKind::Enum) {
+                                continue;
+                            }
+                            for entry in self.env.local_enum_variant_entries_for_enum(enum_def)? {
+                                let source_binding = ScopeBinding::new(
+                                    DefId::EnumVariant(entry.variant_ref),
+                                    entry.data.visibility,
+                                    ScopeBindingProvenance::Direct,
+                                );
+                                for namespace in entry.data.namespaces.iter() {
+                                    let Some(binding) = self.imported_binding(
+                                        importing_module,
+                                        &source_binding,
+                                        import.visibility,
+                                        ScopeBindingProvenance::GlobImport(import_ref),
+                                    )?
+                                    else {
+                                        continue;
+                                    };
+                                    emitted_binding_count += 1;
+                                    emit(ImportedScopeBinding::Named {
+                                        name: &entry.data.name,
+                                        namespace,
+                                        binding,
+                                    });
+                                }
                             }
                         }
                     }
                 }
 
                 Ok(ImportResolution {
-                    introduced,
-                    unnamed_traits: Vec::new(),
                     source_resolved,
+                    emitted_binding_count,
                 })
             }
             ImportKind::Named | ImportKind::SelfImport => {
@@ -482,6 +575,8 @@ impl<E: CrateResolutionEnv + ?Sized> ScopeResolver<'_, E> {
                 )?;
                 let source_resolved = !source_bindings.is_empty();
                 if matches!(&import.binding, ImportBinding::Hidden) {
+                    // A hidden import affects method lookup only when its type-namespace source is
+                    // a trait. Deduplicate it in case lookup reached the same trait by several routes.
                     let mut unnamed_traits = UniqueVec::new();
                     for (namespace, source_binding) in source_bindings {
                         let DefId::Local(local_def) = source_binding.def else {
@@ -505,22 +600,24 @@ impl<E: CrateResolutionEnv + ?Sized> ScopeResolver<'_, E> {
                         unnamed_traits.push(binding);
                     }
 
+                    let emitted_binding_count = unnamed_traits.len();
+                    for binding in unnamed_traits {
+                        emit(ImportedScopeBinding::UnnamedTrait(binding));
+                    }
                     return Ok(ImportResolution {
-                        introduced: Vec::new(),
-                        unnamed_traits: unnamed_traits.into_vec(),
                         source_resolved,
+                        emitted_binding_count,
                     });
                 }
 
                 let Some(name) = import.binding_name() else {
                     return Ok(ImportResolution {
-                        introduced: Vec::new(),
-                        unnamed_traits: Vec::new(),
                         source_resolved,
+                        emitted_binding_count: 0,
                     });
                 };
 
-                let mut introduced = Vec::new();
+                let mut emitted_binding_count = 0;
                 for (namespace, source_binding) in source_bindings {
                     let Some(binding) = self.imported_binding(
                         importing_module,
@@ -531,17 +628,17 @@ impl<E: CrateResolutionEnv + ?Sized> ScopeResolver<'_, E> {
                     else {
                         continue;
                     };
-                    introduced.push(ImportedScopeBinding {
-                        name: name.clone(),
+                    emitted_binding_count += 1;
+                    emit(ImportedScopeBinding::Named {
+                        name: &name,
                         namespace,
                         binding,
                     });
                 }
 
                 Ok(ImportResolution {
-                    introduced,
-                    unnamed_traits: Vec::new(),
                     source_resolved,
+                    emitted_binding_count,
                 })
             }
         }
@@ -699,58 +796,6 @@ impl<E: CrateResolutionEnv + ?Sized> ScopeResolver<'_, E> {
         }
 
         Ok(sources.into_vec())
-    }
-
-    /// Build the visible bindings exported by one glob import source.
-    pub fn visible_glob_source_scope(
-        &self,
-        importing_module: ModuleRef,
-        glob_source: GlobImportSource,
-    ) -> Result<ModuleScopeBuilder, E::Error> {
-        match glob_source {
-            GlobImportSource::Module(source_module) => {
-                self.visible_scope(importing_module, source_module)
-            }
-            GlobImportSource::Enum(enum_def) => {
-                let mut visible_scope = ModuleScopeBuilder::default();
-                for (name, namespace, binding) in
-                    self.visible_enum_variant_bindings(importing_module, enum_def)?
-                {
-                    visible_scope.insert_binding(&name, namespace, binding);
-                }
-                Ok(visible_scope)
-            }
-        }
-    }
-
-    /// Return every namespace binding that a glob import from an enum should introduce.
-    fn visible_enum_variant_bindings(
-        &self,
-        importing_module: ModuleRef,
-        enum_def: LocalDefRef,
-    ) -> Result<Vec<(Name, Namespace, ScopeBinding)>, E::Error> {
-        if !self
-            .env
-            .local_def_kind(enum_def)?
-            .is_some_and(|kind| kind == LocalDefKind::Enum)
-        {
-            return Ok(Vec::new());
-        }
-
-        let mut bindings = Vec::new();
-        for entry in self.env.local_enum_variant_entries_for_enum(enum_def)? {
-            let binding = ScopeBinding::new(
-                DefId::EnumVariant(entry.variant_ref),
-                entry.data.visibility,
-                ScopeBindingProvenance::Direct,
-            );
-            if self.binding_is_visible(importing_module, &binding)? {
-                for namespace in entry.data.namespaces.iter() {
-                    bindings.push((entry.data.name.clone(), namespace, binding.clone()));
-                }
-            }
-        }
-        Ok(bindings)
     }
 
     /// Resolve a macro path by walking any prefix and reading the terminal macro bucket.

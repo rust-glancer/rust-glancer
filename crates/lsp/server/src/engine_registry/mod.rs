@@ -347,7 +347,7 @@ impl EngineRegistry {
 
         let engine_client = match route {
             ReservedEngineRoute::Existing(id) => self.engine_for_existing_id(id).await?,
-            ReservedEngineRoute::Spawn(start) => Some(self.start_reserved_engine(start).await?),
+            ReservedEngineRoute::Spawn(start) => Some(self.start_reserved_engine(*start).await?),
         };
         Ok(engine_client)
     }

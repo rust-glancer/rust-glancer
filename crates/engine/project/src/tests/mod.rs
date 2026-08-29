@@ -20,9 +20,9 @@ use rg_std::MemorySize as _;
 
 use self::utils::{HostFixture, HostObservation};
 use crate::{
-    AnalysisChangeSummary, AnalysisSurface, BuildProcessMemory, PackageResidencyPolicy, Project,
-    ProjectMemoryHooks, ProjectMemoryPurgePoint, SavedFileChange, SplitIndexingMode,
-    SplitIndexingStage,
+    AnalysisChangeSummary, AnalysisSurface, BuildProcessMemory, IndexingPerformancePreference,
+    PackageBatchSize, PackageResidencyPolicy, Project, ProjectMemoryHooks, ProjectMemoryPurgePoint,
+    SavedFileChange, SplitIndexingMode, SplitIndexingStage,
     testonly::{ProjectFixture, ProjectSourceFixture},
 };
 
@@ -948,6 +948,40 @@ pub fn value() -> usize {
         evicted_source_memory,
         "deferred finishing should release source text reloaded by Body IR",
     );
+}
+
+#[test]
+fn lower_memory_build_finishes_body_ir_inside_package_batches() {
+    let fixture = ProjectSourceFixture::build(
+        r#"
+//- /Cargo.toml
+[package]
+name = "lower_memory_batch_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub fn value() -> usize {
+    1
+}
+"#,
+    );
+
+    let project = Project::builder(fixture.workspace_metadata())
+        .split_indexing_mode(SplitIndexingMode::EarlyStart)
+        .indexing_preference(IndexingPerformancePreference::LowerPeakMemory)
+        .package_batch_size(
+            PackageBatchSize::new(1).expect("fixture package batch size should be positive"),
+        )
+        .package_residency_policy(PackageResidencyPolicy::AllResident)
+        .build()
+        .expect("lower-memory project build should succeed");
+
+    let stats = project.stats().body_ir;
+    assert_eq!(stats.crate_count, 1);
+    assert_eq!(stats.complete_crate_count, 1);
+    assert_eq!(stats.missing_crate_count, 0);
+    assert_eq!(stats.body_count, 1);
 }
 
 #[test]

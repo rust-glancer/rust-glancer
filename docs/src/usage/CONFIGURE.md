@@ -48,11 +48,24 @@ For example:
 }
 ```
 
-Another (maybe) important configuration is `Indexing: Performance Preference`:
-`lower-peak-memory` makes the indexer use less concurrency, making it slower, but also reducing peak
-allocations during indexing. Exact reduction can vary by machine/os/project, so if the default
-(faster builds) does not work for you and you are affected by high peak RAM, you can try changing
-this option.
+Another (maybe) important configuration is `Indexing: Performance Preference`.
+`lower-peak-memory` indexes packages in batches. It finishes all main indexing phases for one
+package group, saves packages that can be offloaded, and then starts the next group. This keeps less
+unfinished indexing data in RAM, but the editor will not have deferred indexing, and thus it will take
+longer for initial indexing to finish.
+
+`Indexing: Package Batch Size` controls the size of a package batch and is used only by
+`lower-peak-memory`. Smaller values normally lower peak memory, but make indexing slower. A value of
+1 processes one package at a time when possible; this is the slowest option but has the lowest peak RSS.
+If dependencies form a cycle, that cycle and packages waiting on it may have to stay in one larger batch.
+The default size is 512: the value has been chosen empirically as a good enough tradeoff, on a very big
+workspace it resulted in ~4% slowdown and 2x less memory (but keep in mind that 4% slowdown is compared to
+a _full_ indexing, and with lower peak memory you don't have deferred indexing, you must wait until indexing
+is fully complete).
+
+Exact memory and indexing-time differences vary by machine, operating system, and project. If the
+default `faster-builds` mode uses too much RAM, try `lower-peak-memory` first and adjust the batch
+size only if needed.
 
 ## Tweaking options
 

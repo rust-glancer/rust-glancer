@@ -404,12 +404,16 @@ fn materialize_files(state: &mut ProjectState, files: &[(CrateRef, FileId)]) -> 
     let body_packages = PhasePackageSet::from_body_files(body_files.as_slice());
     let rebuild_subset = body_packages.visible_dependency_subset(&state.workspace);
     let loaders = PackageReadLoaders::new(state);
+    // One selected file can leave its package only partially materialized and therefore not yet
+    // durable enough to offload. Compact every touched package because that partial payload may
+    // remain resident until background finishing reaches it.
     let body_ir = state
         .body_ir
         .builder(
             &state.parse,
             &state.def_map,
             &state.semantic_ir,
+            body_packages.as_slice(),
             body_packages.as_slice(),
             &mut state.names,
             loaders.def_map,
@@ -485,12 +489,15 @@ fn materialize_crates(state: &mut ProjectState, crates: &[CrateRef]) -> anyhow::
     restore_offloaded_packages_for_body_rebuild(state, packages.as_slice())?;
     let rebuild_subset = packages.visible_dependency_subset(&state.workspace);
     let loaders = PackageReadLoaders::new(state);
+    // Sibling targets can still be incomplete after exact-crate materialization, so the rebuilt
+    // package may remain resident even when its eventual residency policy is offloadable.
     let body_ir = state
         .body_ir
         .builder(
             &state.parse,
             &state.def_map,
             &state.semantic_ir,
+            packages.as_slice(),
             packages.as_slice(),
             &mut state.names,
             loaders.def_map,
@@ -542,6 +549,9 @@ fn finish_resident_packages_with_sampler(
 
     let finish_subset =
         PhasePackageSet::from_slice(packages).visible_dependency_subset(&state.workspace);
+    // Deferred work can finish offloadable packages so their cache artifacts become durable. Only
+    // the packages that remain decoded after residency are worth copy-compacting here.
+    let resident_packages = state.package_residency.resident_packages(packages);
     let loaders = PackageReadLoaders::new(state);
     let builder = state
         .body_ir
@@ -550,6 +560,7 @@ fn finish_resident_packages_with_sampler(
             &state.def_map,
             &state.semantic_ir,
             packages,
+            &resident_packages,
             &mut state.names,
             loaders.def_map,
             loaders.semantic_ir,
@@ -704,23 +715,26 @@ fn merge_finished_packages(
     Ok(merged_packages)
 }
 
+/// Return whether detached finishing would have any package work to perform.
+pub(super) fn has_unfinished_split_indexing(state: &ProjectState) -> bool {
+    (0..state.parse.package_count())
+        .map(PackageSlot)
+        .any(|package| package_has_unfinished_split_indexing(state, package))
+}
+
 /// Return resident packages whose configured deferred payload is still incomplete.
 fn unfinished_split_indexing_packages(state: &ProjectState) -> Vec<PackageSlot> {
-    let mut packages = Vec::new();
+    (0..state.parse.package_count())
+        .map(PackageSlot)
+        .filter(|&package| package_has_unfinished_split_indexing(state, package))
+        .collect()
+}
 
-    for package_idx in 0..state.parse.package_count() {
-        let package = PackageSlot(package_idx);
-        let Some(body_ir) = state.body_ir.resident_package(package) else {
-            continue;
-        };
-        if configured_package_is_finished(state, package, body_ir) {
-            continue;
-        }
-
-        packages.push(package);
-    }
-
-    packages
+fn package_has_unfinished_split_indexing(state: &ProjectState, package: PackageSlot) -> bool {
+    state
+        .body_ir
+        .resident_package(package)
+        .is_some_and(|body_ir| !configured_package_is_finished(state, package, body_ir))
 }
 
 /// Return packages from this set that have become complete after a partial rebuild.

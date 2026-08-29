@@ -15,7 +15,7 @@ pub use self::{
     cargo::{CargoMetadataConfig, CargoMetadataTarget},
     cfg::AnalysisCfgConfig,
     diagnostics::DiagnosticsConfig,
-    indexing::IndexingPerformancePreference,
+    indexing::{IndexingPerformancePreference, PackageBatchSize},
     sysroot::SysrootDiscovery,
 };
 
@@ -65,6 +65,7 @@ mod tests {
             },
             "indexing": {
                 "performancePreference": "faster-builds",
+                "packageBatchSize": 64,
             },
             "sysroot": {
                 "discovery": "disabled",
@@ -108,6 +109,7 @@ mod tests {
             config.analysis.indexing_preference,
             IndexingPerformancePreference::FasterBuilds,
         );
+        assert_eq!(config.analysis.package_batch_size.get(), 64);
         assert_eq!(
             config.analysis.sysroot_discovery,
             SysrootDiscovery::Disabled,

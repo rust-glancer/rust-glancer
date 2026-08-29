@@ -168,6 +168,7 @@ pub(crate) fn build_source_closed_def_map(
             parse,
             item_tree,
             &packages,
+            &packages,
             names,
             MacroExpansionPerformancePreference::default(),
         )

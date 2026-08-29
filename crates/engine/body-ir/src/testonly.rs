@@ -60,6 +60,7 @@ impl BodyIrFixture {
                 semantic_ir.def_map_db(),
                 semantic_ir.semantic_ir_db(),
                 &packages,
+                &packages,
                 &mut names,
                 rg_def_map::DefMapLoader::resident_only("fixture DefMap"),
                 rg_semantic_ir::SemanticIrLoader::resident_only("fixture Semantic IR"),

@@ -2,7 +2,7 @@ use std::{net::SocketAddr, path::PathBuf};
 
 use anyhow::Context as _;
 use clap::{Parser, Subcommand};
-use rg_project::StartupCacheLoad;
+use rg_project::{PackageBatchSize, StartupCacheLoad};
 
 mod analyze;
 mod compare_lsp;
@@ -52,6 +52,9 @@ enum Command {
             default_value_t = analyze::CliIndexingPreference::default()
         )]
         indexing_preference: analyze::CliIndexingPreference,
+        /// Packages processed together by lower-peak-memory batch indexing.
+        #[clap(long, default_value_t = PackageBatchSize::default())]
+        package_batch_size: PackageBatchSize,
         /// Target triple used to filter Cargo metadata. Defaults to the current rustc host target.
         #[clap(long)]
         target: Option<String>,
@@ -93,6 +96,7 @@ fn main() -> anyhow::Result<()> {
             load,
             package_residency,
             indexing_preference,
+            package_batch_size,
             target,
             format,
         } => {
@@ -108,6 +112,7 @@ fn main() -> anyhow::Result<()> {
                 },
                 package_residency.into(),
                 indexing_preference.into(),
+                package_batch_size,
                 target,
                 format,
             )

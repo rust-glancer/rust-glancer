@@ -59,6 +59,21 @@ impl MacroExpansionLimitBuildSummary {
         summary
     }
 
+    /// Adds one package batch while preserving the bounded user-facing crate list.
+    pub(crate) fn extend(&mut self, other: Self) {
+        self.affected_crate_count = self
+            .affected_crate_count
+            .saturating_add(other.affected_crate_count);
+        self.skipped_macro_call_count = self
+            .skipped_macro_call_count
+            .saturating_add(other.skipped_macro_call_count);
+
+        let remaining =
+            MAX_LISTED_MACRO_EXPANSION_LIMIT_CRATES.saturating_sub(self.listed_crates.len());
+        self.listed_crates
+            .extend(other.listed_crates.into_iter().take(remaining));
+    }
+
     pub fn is_empty(&self) -> bool {
         self.affected_crate_count == 0
     }

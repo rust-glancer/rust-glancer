@@ -233,6 +233,7 @@ impl RebuildFixture {
             package: self.clean_package,
             payload: Arc::clone(&self.clean_payload),
         }));
+        let packages = [package];
         let mut session = self
             .old
             .start_package_build(
@@ -240,7 +241,8 @@ impl RebuildFixture {
                 &self.workspace,
                 &parse,
                 &item_tree,
-                &[package],
+                &packages,
+                &packages,
                 &mut names,
                 crate::MacroExpansionPerformancePreference::default(),
             )

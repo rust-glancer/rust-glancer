@@ -27,6 +27,10 @@ pub struct DefMapDb {
 
 impl DefMapDb {
     /// Starts replacing selected packages while retaining state across generated-source pauses.
+    ///
+    /// `packages` selects what to rebuild. `copy_compact_packages` selects which frozen payloads
+    /// should be cloned and shrunk for long-term residency; passing `packages` for both arguments
+    /// requests compact retained output for every rebuilt package.
     #[allow(clippy::too_many_arguments)]
     pub fn start_package_build(
         &self,
@@ -35,6 +39,7 @@ impl DefMapDb {
         parse: &rg_parse::ParseDb,
         item_tree: &ItemTreeDb,
         packages: &[PackageSlot],
+        copy_compact_packages: &[PackageSlot],
         interners: &mut PackageNameInterners,
         performance_preference: MacroExpansionPerformancePreference,
     ) -> anyhow::Result<DefMapBuildSession> {
@@ -45,6 +50,7 @@ impl DefMapDb {
             parse,
             item_tree,
             packages,
+            copy_compact_packages,
             interners,
             performance_preference,
         )

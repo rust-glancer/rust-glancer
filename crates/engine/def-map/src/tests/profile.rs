@@ -90,3 +90,94 @@ fn filtered_profile_records_requested_macro_scope() {
         "profile collection should not depend on retaining legacy stats",
     );
 }
+
+#[test]
+fn profile_snapshot_records_import_pass_work_and_changes() {
+    let run =
+        rg_profile::test_support::ProfileTest::start(profile_descriptors(), "def_map.finalization");
+
+    // `source -> bridge -> root` takes several import waves. The unrelated branch settles without
+    // feeding the chain, so later checkpoints should show that its import group was not rerun.
+    let project = utils::DefMapFixtureDb::build(
+        r#"
+//- /Cargo.toml
+[package]
+name = "def_map_import_profile_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+mod source {
+    pub struct User;
+}
+
+mod bridge {
+    pub use crate::source::*;
+}
+
+mod unrelated_source {
+    pub struct Unrelated;
+}
+
+mod unrelated_importer {
+    pub use crate::unrelated_source::*;
+}
+
+use bridge::*;
+"#,
+    );
+    let snapshot = run.finish();
+
+    project
+        .lib("def_map_import_profile_fixture")
+        .entry("User")
+        .assert_type_exists("profile collection should not change glob import output");
+
+    let passes = snapshot
+        .inner()
+        .checkpoints(metric::IMPORT_RESOLUTION_PASS_CHECKPOINTS.path())
+        .expect("import resolution pass checkpoints should be recorded");
+    assert!(
+        passes.len() >= 2,
+        "one changing pass and one stable pass should be observed"
+    );
+    assert_eq!(
+        checkpoint_count(&passes[0], "imports_evaluated"),
+        3,
+        "the first wave should evaluate every module import group"
+    );
+    assert_eq!(
+        checkpoint_count(&passes[0], "glob_imports_evaluated"),
+        3,
+        "all fixture imports should be classified as globs"
+    );
+    assert!(
+        checkpoint_count(&passes[0], "glob_bindings_emitted") > 0,
+        "the glob should expose at least one source binding"
+    );
+    let initially_evaluated_modules = checkpoint_count(&passes[0], "evaluated_modules");
+    assert!(
+        passes.iter().skip(1).any(|pass| {
+            checkpoint_count(pass, "evaluated_modules") < initially_evaluated_modules
+        }),
+        "later waves should skip the unrelated import module once its inputs settle"
+    );
+    assert!(
+        passes
+            .iter()
+            .any(|pass| checkpoint_count(pass, "changed_modules") == 0),
+        "the final checkpoint should describe the stable pass"
+    );
+}
+
+fn checkpoint_count(checkpoint: &rg_profile::ProfileCheckpoint, key: &str) -> u64 {
+    let value = checkpoint
+        .values
+        .iter()
+        .find(|value| value.key == key)
+        .unwrap_or_else(|| panic!("checkpoint should include {key:?}"));
+    match value.value {
+        rg_profile::ProfileMeasurement::Count(count) => count,
+        ref value => panic!("checkpoint value {key:?} should be a count, got {value:?}"),
+    }
+}

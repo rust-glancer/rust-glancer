@@ -151,11 +151,11 @@ impl EngineRegistryInner {
                     },
                 );
 
-                ReservedEngineRoute::Spawn(ReservedEngineStart {
+                ReservedEngineRoute::Spawn(Box::new(ReservedEngineStart {
                     id: new_id,
                     config: self.config.engine_config_for_root(&root),
                     root: root.into_path_buf(),
-                })
+                }))
             }
         }
     }
@@ -174,7 +174,7 @@ impl EngineRegistryInner {
 #[derive(Debug)]
 pub(super) enum ReservedEngineRoute {
     Existing(EngineId),
-    Spawn(ReservedEngineStart),
+    Spawn(Box<ReservedEngineStart>),
 }
 
 impl ReservedEngineRoute {

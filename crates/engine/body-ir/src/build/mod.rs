@@ -75,6 +75,12 @@ impl BodyIrBuildProgress {
 /// Fresh construction and saved updates differ only in the baseline and selected package set.
 /// Keeping both on this builder makes materialization, lazy reads, worker limits, and compaction
 /// follow one path. Callers must choose one materialization mode before building.
+///
+/// Resolution leaves extra capacity in the mutable arenas it produced. The builder can create a
+/// compact copy before publishing a package, but that briefly keeps both payloads alive. Project
+/// construction therefore supplies a copy-compaction package set separately from the build set.
+/// Packages headed to a cache artifact can be serialized and released in their ordinary build
+/// representation, while packages that remain resident receive the denser copy.
 pub struct BodyIrDbBuilder<'db, 'names> {
     baseline: &'db BodyIrDb,
     parse: &'db rg_parse::ParseDb,
@@ -87,6 +93,7 @@ pub struct BodyIrDbBuilder<'db, 'names> {
     semantic_ir_loader: SemanticIrLoader<'db>,
     subset: &'db PackageSubset,
     worker_limit: Option<NonZeroUsize>,
+    copy_compact_packages: Vec<PackageSlot>,
 }
 
 impl<'db, 'names> BodyIrDbBuilder<'db, 'names> {
@@ -97,6 +104,7 @@ impl<'db, 'names> BodyIrDbBuilder<'db, 'names> {
         def_map: &'db rg_def_map::DefMapDb,
         semantic_ir: &'db rg_semantic_ir::SemanticIrDb,
         packages: &'db [PackageSlot],
+        copy_compact_packages: &[PackageSlot],
         interners: &'names mut PackageNameInterners,
         def_map_loader: DefMapLoader<'db>,
         semantic_ir_loader: SemanticIrLoader<'db>,
@@ -109,6 +117,7 @@ impl<'db, 'names> BodyIrDbBuilder<'db, 'names> {
             semantic_ir,
             materialization: None,
             packages,
+            copy_compact_packages: normalized_package_slots(copy_compact_packages),
             interners,
             def_map_loader,
             semantic_ir_loader,
@@ -158,7 +167,7 @@ impl<'db, 'names> BodyIrDbBuilder<'db, 'names> {
     ///
     /// `publish_priority` receives a compact copy when a package requested by
     /// `priority_packages` resolves. The ordinary build still retains all resolved packages until
-    /// its two-phase compaction, so publication does not change the final database or split one
+    /// final package replacement, so publication does not change the final database or split one
     /// build into cache-cold sub-builds.
     ///
     /// `report_progress` describes package completion separately for lowering and resolution. It
@@ -192,6 +201,7 @@ impl<'db, 'names> BodyIrDbBuilder<'db, 'names> {
         let clone_ms = clone_started.elapsed().as_millis();
         let setup_started = Instant::now();
         let packages = normalized_package_slots(self.packages);
+        let copy_compact_packages = self.copy_compact_packages;
         let materialization = self
             .materialization
             .as_ref()
@@ -228,8 +238,9 @@ impl<'db, 'names> BodyIrDbBuilder<'db, 'names> {
         .context("while attempting to lower selected body IR packages")?;
         let lowering_ms = lowering_started.elapsed().as_millis();
 
-        // 3. Resolve the lowered bodies, then compact the selected packages while the temporary
-        // allocations made by this build are still grouped together.
+        // 3. Resolve the lowered bodies, then compact packages that will remain resident. Packages
+        // headed directly to the cache keep some spare capacity for a short time instead of
+        // creating a second complete payload at this build's memory peak.
         let resolution_started = Instant::now();
         if let Some(report_progress) = report_progress.filter(|_| !packages.is_empty()) {
             report_progress(BodyIrBuildProgress::new(
@@ -252,7 +263,7 @@ impl<'db, 'names> BodyIrDbBuilder<'db, 'names> {
         .context("while attempting to resolve selected body IR packages")?;
         let resolution_ms = resolution_started.elapsed().as_millis();
         let compaction_started = Instant::now();
-        let compacted_packages = compact_rebuilt_packages_two_phase(rebuilt_packages);
+        let compacted_packages = compact_rebuilt_packages(rebuilt_packages, &copy_compact_packages);
         let compaction_ms = compaction_started.elapsed().as_millis();
 
         // 4. Replace package slots only after every fallible build phase has succeeded, then close
@@ -344,15 +355,27 @@ fn retain_unselected_crates(
     Ok(PackageBodies::new(crates))
 }
 
-fn compact_rebuilt_packages_two_phase(
-    rebuilt_packages: Vec<(PackageSlot, PackageBodies)>,
+/// Replace selected build payloads with compact copies while preserving every rebuilt package.
+///
+/// The selected slots are sorted by the builder, so membership checks remain allocation-free here.
+/// Unselected payloads stay in their build representation for an imminent cache write and offload.
+fn compact_rebuilt_packages(
+    mut rebuilt_packages: Vec<(PackageSlot, PackageBodies)>,
+    copy_compact_packages: &[PackageSlot],
 ) -> Vec<(PackageSlot, PackageBodies)> {
+    // Build all compact copies before releasing their source payloads. Their retained allocations
+    // are then grouped together instead of being interleaved with frees from each source package.
     let compacted = rebuilt_packages
         .iter()
+        .filter(|(package, _)| copy_compact_packages.binary_search(package).is_ok())
         .map(|(package, rebuilt)| (*package, compact_package_copy(rebuilt)))
         .collect::<Vec<_>>();
-    drop(rebuilt_packages);
-    compacted
+
+    // Keep ordinary payloads only for packages that were not copied, then return one payload for
+    // every rebuilt slot regardless of its residency choice.
+    rebuilt_packages.retain(|(package, _)| copy_compact_packages.binary_search(package).is_err());
+    rebuilt_packages.extend(compacted);
+    rebuilt_packages
 }
 
 fn compact_package_copy(package: &PackageBodies) -> PackageBodies {

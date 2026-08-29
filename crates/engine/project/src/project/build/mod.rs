@@ -1,5 +1,6 @@
 //! Fresh project construction.
 
+mod batch_indexing;
 mod cache_probe;
 mod checkpoint_memory;
 mod phases;
@@ -8,10 +9,11 @@ use anyhow::Context as _;
 use std::sync::Arc;
 
 use rg_body_ir::BodyIrBuildPolicy;
+use rg_def_map::PackageSlot;
 use rg_workspace::{CargoMetadataConfig, WorkspaceLoweringConfig, WorkspaceMetadata};
 
 use crate::{
-    BuildProcessMemory, IndexingPerformancePreference, PackageResidencyPlan,
+    BuildProcessMemory, IndexingPerformancePreference, PackageBatchSize, PackageResidencyPlan,
     PackageResidencyPolicy, ProjectMemoryHooks, ProjectMemoryPurgePoint,
     cache::{PackageCacheInstance, PackageCacheStore, WorkspaceCachePlan},
     memory::NoopProjectMemoryHooks,
@@ -52,6 +54,26 @@ pub enum SplitIndexingMode {
     EarlyStart,
 }
 
+impl SplitIndexingMode {
+    /// Select rebuilt packages whose build-time allocation capacity must be removed before return.
+    ///
+    /// A full build can immediately write and offload packages selected by the residency policy,
+    /// so only resident packages need a compact copy. An ordinary early-start build does not yet
+    /// have durable Body IR and must keep every rebuilt package decoded until deferred finishing.
+    /// The selection happens before Body IR can prove that an individual package has no deferred
+    /// bodies, so the early-start case deliberately includes the complete rebuilt set.
+    pub(crate) fn copy_compact_packages(
+        self,
+        package_residency: &PackageResidencyPlan,
+        rebuilt_packages: &[PackageSlot],
+    ) -> Vec<PackageSlot> {
+        match self {
+            Self::Full => package_residency.resident_packages(rebuilt_packages),
+            Self::EarlyStart => rebuilt_packages.to_vec(),
+        }
+    }
+}
+
 /// Fluent construction API for a fresh analysis project.
 pub struct ProjectBuilder {
     workspace: WorkspaceMetadata,
@@ -60,6 +82,7 @@ pub struct ProjectBuilder {
     body_ir_policy: BodyIrBuildPolicy,
     split_indexing_mode: SplitIndexingMode,
     indexing_preference: IndexingPerformancePreference,
+    package_batch_size: PackageBatchSize,
     package_residency_policy: PackageResidencyPolicy,
     startup_cache_load: StartupCacheLoad,
     memory_sampler: BuildMemorySampler,
@@ -75,6 +98,7 @@ impl ProjectBuilder {
             body_ir_policy: BodyIrBuildPolicy::default(),
             split_indexing_mode: SplitIndexingMode::default(),
             indexing_preference: IndexingPerformancePreference::default(),
+            package_batch_size: PackageBatchSize::default(),
             package_residency_policy: PackageResidencyPolicy::default(),
             startup_cache_load: StartupCacheLoad::default(),
             memory_sampler: BuildMemorySampler::disabled(),
@@ -94,6 +118,14 @@ impl ProjectBuilder {
 
     pub fn indexing_preference(mut self, preference: IndexingPerformancePreference) -> Self {
         self.indexing_preference = preference;
+        self
+    }
+
+    /// Selects how many source packages batch indexing should process together.
+    ///
+    /// This setting is used only with [`IndexingPerformancePreference::LowerPeakMemory`].
+    pub fn package_batch_size(mut self, size: PackageBatchSize) -> Self {
+        self.package_batch_size = size;
         self
     }
 
@@ -151,6 +183,7 @@ impl ProjectBuilder {
             self.body_ir_policy,
             self.split_indexing_mode,
             self.indexing_preference,
+            self.package_batch_size,
             self.package_residency_policy,
             self.startup_cache_load,
             Arc::clone(&self.memory_hooks),
@@ -187,6 +220,7 @@ pub(crate) fn build_resident_state(
     body_ir_policy: BodyIrBuildPolicy,
     split_indexing_mode: SplitIndexingMode,
     indexing_preference: IndexingPerformancePreference,
+    package_batch_size: PackageBatchSize,
     package_residency_policy: PackageResidencyPolicy,
     startup_cache_load: StartupCacheLoad,
     memory_hooks: Arc<dyn ProjectMemoryHooks>,
@@ -258,6 +292,7 @@ pub(crate) fn build_resident_state(
         &workspace,
         body_ir_policy,
         indexing_preference,
+        package_batch_size,
         &package_residency,
         &cache_plan,
         &cache_store,
@@ -279,6 +314,7 @@ pub(crate) fn build_resident_state(
         body_ir_policy,
         split_indexing_mode,
         indexing_preference,
+        package_batch_size,
         package_residency_policy,
         package_residency,
         memory_hooks,
@@ -289,4 +325,33 @@ pub(crate) fn build_resident_state(
         semantic_ir: phases.semantic_ir,
         body_ir: phases.body_ir,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use rg_def_map::PackageSlot;
+
+    use crate::{PackageResidency, PackageResidencyPlan, PackageResidencyPolicy};
+
+    use super::SplitIndexingMode;
+
+    #[test]
+    fn early_start_compacts_packages_waiting_for_deferred_artifacts() {
+        let residency = PackageResidencyPlan {
+            policy: PackageResidencyPolicy::WorkspaceResident,
+            packages: vec![PackageResidency::Offloadable, PackageResidency::Resident],
+        };
+        let rebuilt = [PackageSlot(0), PackageSlot(1)];
+
+        assert_eq!(
+            SplitIndexingMode::Full.copy_compact_packages(&residency, &rebuilt),
+            [PackageSlot(1)],
+            "a full build can release its offloadable package immediately",
+        );
+        assert_eq!(
+            SplitIndexingMode::EarlyStart.copy_compact_packages(&residency, &rebuilt),
+            rebuilt,
+            "an early-start build retains the offloadable package until Body IR is durable",
+        );
+    }
 }
