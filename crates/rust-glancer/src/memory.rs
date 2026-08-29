@@ -11,7 +11,10 @@ use rg_project::{ProjectMemoryHooks, ProjectMemoryPurgePoint};
 
 const JEMALLOC_PURGE_AFTER_BUILD_ENV: &str = "RUST_GLANCER_PURGE_MEMORY_AFTER_BUILD";
 
-#[cfg(all(feature = "jemalloc", not(target_env = "msvc")))]
+#[cfg(all(
+    feature = "jemalloc",
+    not(any(target_env = "msvc", target_os = "openbsd"))
+))]
 #[global_allocator]
 static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
@@ -59,7 +62,10 @@ impl ProjectMemoryHooks for ProjectProcessMemoryHooks {
 
 impl ProcessMemoryControl {
     pub(crate) fn allocator_name() -> &'static str {
-        if cfg!(all(feature = "jemalloc", not(target_env = "msvc"))) {
+        if cfg!(all(
+            feature = "jemalloc",
+            not(any(target_env = "msvc", target_os = "openbsd"))
+        )) {
             "jemalloc"
         } else {
             "system"
@@ -67,12 +73,18 @@ impl ProcessMemoryControl {
     }
 
     pub(crate) fn allocator_stats() -> Option<AllocatorStats> {
-        #[cfg(all(feature = "jemalloc-stats", not(target_env = "msvc")))]
+        #[cfg(all(
+            feature = "jemalloc-stats",
+            not(any(target_env = "msvc", target_os = "openbsd"))
+        ))]
         {
             jemalloc_stats::capture()
         }
 
-        #[cfg(not(all(feature = "jemalloc-stats", not(target_env = "msvc"))))]
+        #[cfg(not(all(
+            feature = "jemalloc-stats",
+            not(any(target_env = "msvc", target_os = "openbsd"))
+        )))]
         {
             None
         }
@@ -90,13 +102,19 @@ impl ProcessMemoryControl {
             return false;
         }
 
-        #[cfg(all(feature = "jemalloc-stats", not(target_env = "msvc")))]
+        #[cfg(all(
+            feature = "jemalloc-stats",
+            not(any(target_env = "msvc", target_os = "openbsd"))
+        ))]
         {
             jemalloc_stats::purge();
             true
         }
 
-        #[cfg(not(all(feature = "jemalloc-stats", not(target_env = "msvc"))))]
+        #[cfg(not(all(
+            feature = "jemalloc-stats",
+            not(any(target_env = "msvc", target_os = "openbsd"))
+        )))]
         {
             false
         }
