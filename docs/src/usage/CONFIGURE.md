@@ -74,5 +74,3 @@ Following settings _can_ be changed, but probably shouldn't.
 - `Cache: Package Residency`: you can make it so that not everything is offloaded to the filesystem.
   In theory, it can make Rust Glancer faster. In practice, if you don't care about memory usage,
   `rust-analyzer` will probably work better for you.
-- `Server: Purge Memory After Build`: probably shouldn't even be a configuration option. Returns
-  unused memory back to OS with no visible downsides.
