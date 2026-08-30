@@ -7,10 +7,10 @@ use super::BuildProcessMemory;
 static BUILD_CHECKPOINT_COLUMNS: &[ProfileCheckpointColumn] = &[
     ProfileCheckpointColumn::bytes("retained_bytes", "rg_sampled"),
     ProfileCheckpointColumn::bytes("active_retained_bytes", "rg_total"),
-    ProfileCheckpointColumn::bytes("allocated_bytes", "j_allocated"),
-    ProfileCheckpointColumn::bytes("active_bytes", "j_active"),
-    ProfileCheckpointColumn::bytes("resident_bytes", "j_resident"),
-    ProfileCheckpointColumn::bytes("mapped_bytes", "j_mapped"),
+    ProfileCheckpointColumn::bytes("allocated_bytes", "a_allocated"),
+    ProfileCheckpointColumn::bytes("active_bytes", "a_backed"),
+    ProfileCheckpointColumn::bytes("resident_bytes", "a_resident"),
+    ProfileCheckpointColumn::bytes("mapped_bytes", "a_mapped"),
 ];
 
 declare_metrics! {
@@ -155,19 +155,19 @@ pub(crate) fn record_build_checkpoint(
             ProfileCheckpointValue::optional_bytes("active_retained_bytes", active_retained_bytes),
             ProfileCheckpointValue::optional_bytes(
                 "allocated_bytes",
-                process_memory.map(|memory| memory.allocated_bytes),
+                process_memory.and_then(|memory| memory.allocated_bytes),
             ),
             ProfileCheckpointValue::optional_bytes(
                 "active_bytes",
-                process_memory.map(|memory| memory.active_bytes),
+                process_memory.and_then(|memory| memory.active_bytes),
             ),
             ProfileCheckpointValue::optional_bytes(
                 "resident_bytes",
-                process_memory.map(|memory| memory.resident_bytes),
+                process_memory.and_then(|memory| memory.resident_bytes),
             ),
             ProfileCheckpointValue::optional_bytes(
                 "mapped_bytes",
-                process_memory.map(|memory| memory.mapped_bytes),
+                process_memory.and_then(|memory| memory.mapped_bytes),
             ),
         ],
     );

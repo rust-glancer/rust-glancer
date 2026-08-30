@@ -116,7 +116,6 @@ Runner options (must appear before the mode):
 Examples:
   just agent-debug --measure analyze ~/workspace/rust-glancer/reference/rust-analyzer --profile -m
   just agent-debug --log 'rg_lsp_engine=debug' lsp-query --file crates/example.rs hover --marker 'let value'
-  just agent-debug --env RUST_GLANCER_PURGE_MEMORY_AFTER_BUILD=0 analyze . --profile
   just agent-debug --timeout 60s --sample-on-timeout test -p rg_analysis inference_test
 
 Everything after the mode is forwarded as an argv array. Shell metacharacters are never evaluated.

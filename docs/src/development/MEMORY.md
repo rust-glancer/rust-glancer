@@ -11,12 +11,15 @@ The two biggest memory savers in this project are offloading and memory purging.
 Offloading lets us write computed analysis data to disk and only load
 the relevant bits for the duration of the query.
 
-Purging is a `jemalloc` feature that lets us force the allocator to return
-memory to the system. Typically, even if some allocations were freed, the allocator
-will not rush to return memory to the system, since this memory may be reused for
-new allocations. In our case, however, we care about idle RAM much more than
-about peak performance: LSP is human-driven, so the queries appear on the "seconds"
-timeline, not "microseconds", and we don't really worry about a few more syscalls.
+Purging is an allocator feature that lets us force the allocator to return
+memory to the system. System allocators are usually do not eagerly return
+the memory to the OS, but customized allocators give us a way to do it.
+This project supports two different allocators: `mimalloc` and `jemalloc`,
+both built with purging in mind. For `jemalloc`, purging is an on-demand action,
+which we make use of when the project is built with `jemalloc`; while `mimalloc`
+itself tries to return the memory to the system once it's not needed. I still
+refer to `mimalloc` built-in behavior as "purging", since it does basically the same
+thing automatically.
 
 That said, while these techniques reduce idle memory usage, they are not a replacement
 for optimizing the phase itself. Purging can reduce RSS across phases, but it does
@@ -28,6 +31,27 @@ be able to give big enough chunks back to the OS.
 
 So, the rest of the document is focused on the particular memory optimization
 techniques we use _outside_ of purging and offloading.
+
+### Allocator choice
+
+Rust Glancer supports two main allocators:
+- `jemalloc`
+- `mimalloc`
+
+`mimalloc` is the default one, since benchmarks show that it provides _significantly_
+better performance in nearly all the cases, while being generally as memory efficient
+as jemalloc. We use it without arenas and do not use purging: with arenas enabled, RSS
+is actually noticeably higher and performance boost is very modest, while purging, even
+though supported, does not change the situation much (most likely because purging in
+`mimalloc` does not purge process-wide, it only purges thread-local memory).
+Additionally, unlike `jemalloc`, `mimalloc` supports more platforms, e.g. Windows and OpenBSD.
+
+`jemalloc` was used to build the application up until its first release, and for now it
+remains a supported option. It can offer lower peak RSS with `lower-peak-memory` configuration,
+but it's generally its only advantage right now. If `mimalloc` allocations are too high for
+you even with `lower-peak-memory`, you might consider building the app with `jemalloc` and try it.
+Otherwise, it's slower, and is mostly left "just in case"; there is a good chance that support
+will be removed in the future.
 
 ### Startup cache loading
 
@@ -42,12 +66,17 @@ re-index the corresponding package from source.
 
 ## Memory optimizations
 
-### Jemalloc stats & notation
+### Allocator stats & notation
 
 The core command for analyzing memory allocations is `just analyze`, and it prints
 plenty of stats. The "default fixture" for that is `rust-analyzer` on a specific
 commit, since it's a big enough, stable, and complex "real-world" project. It can
 be fetched by running [`test_targets/bench_fixtures/fetch-rust-analyzer.sh`][ra].
+
+Note that alocator stats are bound to the allocator in use; `jemalloc` supports
+more metrics than `mimalloc`. This section primarily described `jemalloc` use case,
+since it supports more metrics, but remember that switching allocators might not
+transfer the behavior: what's optimal for `jemalloc` might not be optimal for `mimalloc`.
 
 One key part of the output is the `project.build.checkpoints` profile table:
 
@@ -55,7 +84,7 @@ One key part of the output is the `project.build.checkpoints` profile table:
 $ just analyze path/to/rust-analyzer --profile --package-residency all-offloadable -m
 # .. some parts omitted
 profile snapshot:
- phase     elapsed    rg_sampled      rg_total   j_allocated      j_active    j_resident      j_mapped  checkpoint
+ phase     elapsed    rg_sampled      rg_total   a_allocated      a_backed    a_resident      a_mapped  checkpoint
 150 ms      150 ms      60.8 MiB      60.8 MiB      70.6 MiB      76.9 MiB      83.3 MiB      85.7 MiB  after parse
   0 ms      151 ms       2.3 KiB      60.8 MiB      70.6 MiB      76.9 MiB      83.3 MiB      85.7 MiB  after cache probe
 1.21 s      1.36 s     227.2 MiB     285.0 MiB     282.7 MiB     500.7 MiB     602.9 MiB     628.0 MiB  after item-tree
@@ -80,27 +109,28 @@ The information should be interpreted as follows:
 - `elapsed` is the duration since the start of the indexing
 - `rg_sampled` is memory measured for the checkpoint's main data structure
 - `rg_total` is memory measured for all known live build state
-- `j_allocated` is the jemalloc stat for memory the program is actually using
-- `j_active` is the jemalloc stat for internal allocated pages that serve `j_allocated`.
+- `a_allocated` is the allocator stat for memory the program is actually using
+- `a_backed` is the allocator stat for internal allocated pages that serve `a_allocated`.
     It is normal for it to be somewhat higher, since memory is allocated in pages, and
-    `j_allocated` typically does not fully utilize each page.
-- `j_resident` is the jemalloc stat that includes dirty pages and other jemalloc-internal state.
-- `j_mapped` is the mapped OS range, not necessarily fully allocated.
+    `a_allocated` typically does not fully utilize each page.
+- `a_resident` is the allocator stat that includes allocator-internal state.
+- `a_mapped` is the mapped OS range, not necessarily fully allocated.
 
 Note: `rg_total` is an _estimate_, since we can't count everything perfectly, but it should be
-_close enough_ to `j_allocated`. The reason why it's important is because our internal
+_close enough_ to `a_allocated`. The reason why it's important is because our internal
 harness also records _what_ is allocated and _where_: as long as it's accurate, we can make
 educated guesses on where we can save on allocations themselves.
 
 Here are some heuristics that can be used to reason about this table:
 
-1. `j_allocated << j_active ~= j_resident` -- likely active memory fragmentation issue.
+1. `a_allocated << a_backed ~= a_resident` -- likely active memory fragmentation issue.
   Rough explanation: there are few allocations, but they take a lot of allocated pages.
-2. `j_allocated < j_active << j_resident` -- purging might help.
+2. `a_allocated < a_backed << a_resident` -- purging might help; should generally not be the
+  case with `mimalloc`.
   Rough explanation: we have experimented with different jemalloc configurations, but the default
   configuration appears to be a good fit for this project, so in most cases explicit purging is the
   lever we care about.
-3. `j_resident << j_mapped` -- not necessarily bad, but might be worth investigation, might
+3. `a_resident << a_mapped` -- not necessarily bad, but might be worth investigation, might
   signal excessive transient allocations in the past and _could_ signal unexpected peak RSS.
 
 Important caveat: this table prints data _after the phase_, so it does not represent _peak_
@@ -209,7 +239,7 @@ Useful flags:
 - `--profile [selectors]` collects dynamic profile data. Without a value, it uses
   the `default` alias, which records build checkpoints. `--profile all` collects
   every registered profile.
-- `-m` / `--memory` adds retained-memory and jemalloc stats to build checkpoints,
+- `-m` / `--memory` adds retained-memory and allocator stats to build checkpoints,
   plus the final retained-memory breakdown.
 - `--profile memory:def-map` records a detailed memory breakdown for the def-map
   checkpoint. Other available aliases and selectors are listed in `just analyze --help`.
@@ -259,9 +289,6 @@ If defmap is suspicious, add macro stats:
 ```
 just analyze path/to/rust-analyzer --profile default,macros --package-residency all-offloadable -m
 ```
-
-To disable memory purging, you can set `RUST_GLANCER_PURGE_MEMORY_AFTER_BUILD=0`
-environment variable.
 
 ### Peak RSS
 

@@ -113,12 +113,17 @@ The approach to memory allocations is twofold:
 - If you don't need to allocate, do not allocate.
 - If you allocate, try to do it in a way that minimizes fragmentation.
 
+### Mimalloc
+
+We use `mimalloc` by default, since it reduces memory fragmentation and eagerly returns
+unused memory to the system, while having great performance.
+
 ### Jemalloc
 
-We use jemalloc, since it reduces memory fragmentation, exposes memory statistics, and
-gives control over the allocator.
+`jemalloc` was used as the allocator initially, but is only left as an optional configuration
+now, since `mimalloc` is better in overwhelming majority of cases and supports more platforms.
 
-Using jemalloc-ctl, we try to purge memory each time we assume that we've done
+Using `jemalloc-ctl`, we try to purge memory each time we assume that we've done
 a bunch of allocations that are no longer used. It's fast enough for users to not notice
 during normal LSP interaction flow, and it keeps RSS as low as possible.
 

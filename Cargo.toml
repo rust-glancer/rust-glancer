@@ -79,8 +79,12 @@ futures = "0.3.32"
 gungraun = "=0.18.2"
 ignore = "0.4.26"
 itertools = "0.14.0"
+# The arena-free allocator wrapper uses a numeric mimalloc v3 option that the Rust bindings do not
+# expose. Keep both layers pinned so that option cannot silently address a different enum member.
+libmimalloc-sys = { version = "=0.1.49", default-features = false }
 ls_types = { package = "ls-types", version = "0.0.6" }
 memchr = "2.8.0"
+mimalloc = { version = "=0.1.52", default-features = false }
 notify-debouncer-full = "0.7.0"
 parser = { package = "rg_parser", path = "crates/vendor/parser" }
 proc-macro2 = "1.0.106"

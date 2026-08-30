@@ -9,14 +9,10 @@ pub(crate) use self::report::MemoryReporter;
 /// Runtime memory controls supplied by the executable.
 ///
 /// The default implementation is intentionally empty. The binary can provide allocator-specific
-/// controls, while tests and non-jemalloc builds keep the server behavior deterministic.
+/// controls, while tests and builds using the system allocator keep server behavior deterministic.
 pub trait MemoryControl: std::fmt::Debug + Send + Sync {
     fn allocator_name(&self) -> &'static str {
         "unknown"
-    }
-
-    fn allocator_purge_enabled(&self) -> bool {
-        false
     }
 
     fn allocator_stats(&self) -> Option<AllocatorStats> {
@@ -54,11 +50,16 @@ impl ProjectMemoryHooks for ProjectMemoryReporter {
 /// without depending on, or accidentally choosing, a concrete global allocator itself.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AllocatorStats {
-    pub allocated_bytes: usize,
-    pub active_bytes: usize,
-    pub resident_bytes: usize,
-    pub mapped_bytes: usize,
-    pub retained_bytes: usize,
+    /// Bytes held by live application allocations, when cheaply tracked by the allocator.
+    pub allocated_bytes: Option<usize>,
+    /// Bytes in allocator pages that are active or committed.
+    pub active_bytes: Option<usize>,
+    /// Resident bytes reported by the allocator or its process-memory integration.
+    pub resident_bytes: Option<usize>,
+    /// Virtual address space mapped or reserved by the allocator.
+    pub mapped_bytes: Option<usize>,
+    /// Reusable virtual address space retained by the allocator.
+    pub retained_bytes: Option<usize>,
 }
 
 #[derive(Clone, Copy, derive_more::Debug, derive_more::Display)]
@@ -80,11 +81,11 @@ impl MemoryStats {
     fn capture(memory_control: &dyn MemoryControl) -> Self {
         let allocator = memory_control.allocator_stats();
         Self {
-            allocated: allocator.map(|stats| stats.allocated_bytes),
-            active: allocator.map(|stats| stats.active_bytes),
-            resident: allocator.map(|stats| stats.resident_bytes),
-            mapped: allocator.map(|stats| stats.mapped_bytes),
-            retained: allocator.map(|stats| stats.retained_bytes),
+            allocated: allocator.and_then(|stats| stats.allocated_bytes),
+            active: allocator.and_then(|stats| stats.active_bytes),
+            resident: allocator.and_then(|stats| stats.resident_bytes),
+            mapped: allocator.and_then(|stats| stats.mapped_bytes),
+            retained: allocator.and_then(|stats| stats.retained_bytes),
         }
     }
 }

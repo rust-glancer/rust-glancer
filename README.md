@@ -33,6 +33,8 @@ wrong. This way I will be able to learn something and hopefully make the project
 
 Without [jemalloc](https://github.com/jemalloc/jemalloc) and [tikv-jemallocator](https://github.com/tikv/jemallocator) this project wouldn't have been possible. Not only it's awesome as an allocator, but it's also saved me hundreds of hours profiling allocations.
 
+On the same note, [mimalloc](https://github.com/microsoft/mimalloc) and [mimalloc_rust](https://github.com/purpleprotocol/mimalloc_rust) turned out to work even better for the purpose of this project.
+
 ## Contributing
 
 See [CONTRIBUTING.md](docs/src/intro/CONTRIBUTING.md).

@@ -1643,10 +1643,10 @@ pub struct User;
     Project::builder(workspace)
         .process_memory_sampler(|| {
             Some(BuildProcessMemory {
-                allocated_bytes: 11,
-                active_bytes: 13,
-                resident_bytes: 17,
-                mapped_bytes: 19,
+                allocated_bytes: None,
+                active_bytes: Some(13),
+                resident_bytes: Some(17),
+                mapped_bytes: None,
             })
         })
         .build()
@@ -1663,8 +1663,13 @@ pub struct User;
     );
     assert_eq!(
         checkpoint_optional_bytes(after_parse, "allocated_bytes"),
-        Some(11),
-        "process memory sampling should still record allocator counters"
+        None,
+        "process memory sampling should preserve unavailable allocator counters"
+    );
+    assert_eq!(
+        checkpoint_optional_bytes(after_parse, "resident_bytes"),
+        Some(17),
+        "process memory sampling should still record each available allocator counter"
     );
 }
 
@@ -1693,10 +1698,10 @@ pub fn answer() -> i32 {
         .package_residency_policy(PackageResidencyPolicy::AllOffloadable)
         .process_memory_sampler(|| {
             Some(BuildProcessMemory {
-                allocated_bytes: 11,
-                active_bytes: 13,
-                resident_bytes: 17,
-                mapped_bytes: 19,
+                allocated_bytes: Some(11),
+                active_bytes: Some(13),
+                resident_bytes: Some(17),
+                mapped_bytes: Some(19),
             })
         })
         .build()
@@ -1705,10 +1710,10 @@ pub fn answer() -> i32 {
         .split_indexing()
         .finish_profiled(|| {
             Some(BuildProcessMemory {
-                allocated_bytes: 31,
-                active_bytes: 37,
-                resident_bytes: 41,
-                mapped_bytes: 43,
+                allocated_bytes: Some(31),
+                active_bytes: Some(37),
+                resident_bytes: Some(41),
+                mapped_bytes: Some(43),
             })
         })
         .expect("profiled deferred indexing should succeed");

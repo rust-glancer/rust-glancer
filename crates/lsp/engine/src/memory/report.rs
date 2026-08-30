@@ -32,10 +32,6 @@ impl MemoryReporter {
     }
 
     fn purge_after(memory_control: &dyn MemoryControl, before_purge: MemoryStats) -> MemoryStats {
-        if !memory_control.allocator_purge_enabled() {
-            return before_purge;
-        }
-
         if memory_control.try_purge_allocator() {
             MemoryStats::capture(memory_control)
         } else {
