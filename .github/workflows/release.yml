@@ -86,7 +86,7 @@ jobs:
           dependency-key: ${{ hashFiles('Cargo.lock', 'Cargo.toml', 'crates/**/Cargo.toml', 'rust-toolchain.toml') }}
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
         with:
-          node-version: 24.18.0
+          node-version: 24.19.0
           cache: npm
           cache-dependency-path: editors/code/package-lock.json
       - name: Install client dependencies
@@ -134,7 +134,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
         with:
-          node-version: 24.18.0
+          node-version: 24.19.0
           cache: npm
           cache-dependency-path: editors/code/package-lock.json
       - name: Install extension publishers

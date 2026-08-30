@@ -130,7 +130,7 @@ jobs:
           version: valgrind-cache-v1
 
       - name: Install Gungraun runner
-        uses: taiki-e/install-action@16b05812d776ae1dfaabc8277e421fb6d2506419 # v2.82.7
+        uses: taiki-e/install-action@6cd13508893c0e7eab5f273c2575d3859bd7229a # v2.86.6
         with:
           # Renovate keeps this CLI version grouped with the gungraun crate so
           # the bench harness and runner stay protocol-compatible.
@@ -321,7 +321,7 @@ jobs:
       - name: Comment on pull request
         # Fork pull requests receive a read-only token, so their report stays in the log and summary.
         if: github.event.pull_request.head.repo.full_name == github.repository
-        uses: marocchino/sticky-pull-request-comment@0ea0beb66eb9baf113663a64ec522f60e49231c0 # v3.0.4
+        uses: marocchino/sticky-pull-request-comment@5770ad5eb8f42dd2c4f34da00c94c5381e49af88 # v3.0.5
         with:
           header: rust-glancer-performance
           path: .ci/performance/comment.md
