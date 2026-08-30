@@ -25,7 +25,6 @@ export type IndexingPerformancePreferenceSetting =
 export interface ExtensionConfig {
   readonly serverPath: string | undefined;
   readonly extraEnv: Record<string, string>;
-  readonly purgeMemoryAfterBuild: boolean;
   readonly cfg: CfgConfig;
   readonly indexing: IndexingConfig;
   readonly cargo: CargoConfig;
@@ -86,7 +85,6 @@ export namespace ExtensionConfig {
     return {
       serverPath: normalizeOptionalString(readStringOrNull(config, "server.path", null)),
       extraEnv: normalizeStringRecord(readUnknownRecord(config, "server.extraEnv")),
-      purgeMemoryAfterBuild: readBoolean(config, "server.purgeMemoryAfterBuild", true),
       cfg: {
         test: readBoolean(config, "cfg.test", true),
         atoms: normalizeCfgAtoms(readUnknownArray(config, "cfg.atoms")),

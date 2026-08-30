@@ -10,19 +10,27 @@ readme.workspace = true
 description.workspace = true
 
 [features]
-default = ["jemalloc-stats"]
+default = ["mimalloc-stats"]
 jemalloc = ["dep:tikv-jemallocator", "dep:tikv-jemalloc-sys"]
 jemalloc-stats = [
   "jemalloc",
   "tikv-jemallocator/stats",
   "tikv-jemalloc-sys/stats",
 ]
+mimalloc = [
+  "dep:libmimalloc-sys",
+  "dep:mimalloc",
+  "libmimalloc-sys/extended",
+]
+mimalloc-stats = ["mimalloc"]
 
 [dependencies]
 anyhow.workspace = true
 clap = { workspace = true, features = ["derive"] }
 futures.workspace = true
+libmimalloc-sys = { workspace = true, optional = true }
 ls_types.workspace = true
+mimalloc = { workspace = true, optional = true }
 rg_std.workspace = true
 rg_project.workspace = true
 rg_profile.workspace = true

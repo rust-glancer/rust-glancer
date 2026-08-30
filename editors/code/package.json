@@ -95,12 +95,6 @@
           },
           "description": "Additional environment variables for the rust-glancer server process."
         },
-        "rust-glancer.server.purgeMemoryAfterBuild": {
-          "scope": "window",
-          "type": "boolean",
-          "default": true,
-          "description": "Ask the language server to purge allocator memory after project indexing and saved-file reindexing. This lowers idle RSS after large indexing spikes."
-        },
         "rust-glancer.indexing.performancePreference": {
           "scope": "window",
           "type": "string",

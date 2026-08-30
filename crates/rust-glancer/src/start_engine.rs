@@ -16,7 +16,6 @@ pub(crate) fn start_engine(
         Arc::new(crate::memory::memory_control());
     tracing::info!(
         allocator = memory_control.allocator_name(),
-        allocator_purge_enabled = memory_control.allocator_purge_enabled(),
         "starting rust-glancer LSP engine process"
     );
 

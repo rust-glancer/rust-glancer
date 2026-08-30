@@ -260,9 +260,6 @@ If defmap is suspicious, add macro stats:
 just analyze path/to/rust-analyzer --profile default,macros --package-residency all-offloadable -m
 ```
 
-To disable memory purging, you can set `RUST_GLANCER_PURGE_MEMORY_AFTER_BUILD=0`
-environment variable.
-
 ### Peak RSS
 
 The above commands will _not_ give you peak RSS. For peak RSS, a good idea is to use

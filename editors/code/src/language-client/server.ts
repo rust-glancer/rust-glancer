@@ -12,7 +12,6 @@ import type { ServerOptions } from "vscode-languageclient/node";
 import type { ExtensionConfig } from "../config";
 
 const SERVER_ENV_OVERRIDE = "__RUST_GLANCER_SERVER";
-const PURGE_MEMORY_AFTER_BUILD_ENV = "RUST_GLANCER_PURGE_MEMORY_AFTER_BUILD";
 
 export interface ResolvedServer {
   readonly command: string;
@@ -113,10 +112,6 @@ function buildEnv(config: ExtensionConfig): NodeJS.ProcessEnv {
   for (const [key, value] of Object.entries(config.extraEnv)) {
     env[key] = expandEnv(value, env);
   }
-
-  // Dedicated settings are applied after user-provided extraEnv so the visible setting controls the
-  // server behavior even when VS Code inherits stale environment variables from a shell.
-  env[PURGE_MEMORY_AFTER_BUILD_ENV] = config.purgeMemoryAfterBuild ? "1" : "0";
 
   return env;
 }
